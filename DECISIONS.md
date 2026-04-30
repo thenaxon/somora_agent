@@ -76,6 +76,35 @@ in `~/.somora/logs/server-YYYY-MM-DD.log`. Pretty-Print im Terminal wenn TTY.
 Daily-Rotation, Cleanup manuell. **Kein** Conversation-Inhalt im Server-Log
 (liegt in `agents/<name>/sessions/`). Levels über `SOMORA_LOG_LEVEL`-env.
 
+### 19. OpenAI-Engine: klassisches `openai`-SDK, nicht `@openai/agents`
+Für die zweite Engine wird das **klassische `openai`-SDK** verwendet
+(`chat.completions.create`), nicht `@openai/agents`. Grund: das Agents SDK
+setzt OpenAI's Assistants-API mit serverseitigen Threads voraus, die nur in
+OpenAI's Cloud existieren. Renes interner LLM-Server (Ollama/vLLM-Stil mit
+OpenAI-Kompatibilität) spricht nur `/v1/chat/completions` — die klassische
+stateless-API. Das Agents SDK würde dort nicht funktionieren.
+
+**Konsequenz:** asymmetrische Engines.
+
+| | Anthropic | OpenAI |
+|---|---|---|
+| SDK | Agent SDK (high-level) | klassisches openai (low-level) |
+| Compaction | SDK intern | nicht eingebaut |
+| History | resume + sdkSessionId (SDK-internal JSONL) | wir, jeder Turn alle messages |
+
+Das passt sogar besser zu DECISION #10 (stateless engine) — bei OpenAI ist
+unser Interface natürlich, bei Anthropic mussten wir tricksen.
+
+**Wie wir mit fehlender Compaction umgehen:**
+- Anfangs: gar nicht. Wenn Context-Fenster knallt, Error → User macht `/new`.
+- Mittelfristig: Memory-Schicht (Phase 2) löst das strukturell — wichtige
+  Fakten leben in MEMORY.md, Konversation darf vergessen.
+- Notfall-Fallback (falls vor Memory-Schicht nötig): einfache lokale
+  Compaction (älteste Turns durch Summary ersetzen) — weglassen bis nötig.
+
+**Asymmetrie ist okay**, war so im CONTEXT.md vorgesehen
+(„OpenAI Agents SDK … asymmetrisch genutzt, nicht gleichberechtigt").
+
 ### 18. Phase-2-Reihenfolge: zweite Engine vor Memory & Tools
 Nach Phase 1 (CLI-Polish + dann fertig) **erst die OpenAI-Engine** als zweiten
 Adapter bauen — angebunden an Renes internen LLM-Server (OpenAI-kompatibler
