@@ -80,7 +80,120 @@ function resolveEffectiveModel(
   return resolveAnyRef(config, ref);
 }
 
-let config;
+// Runs the primary engine. If the primary fails before yielding any
+// assistant content (delta or message), AND the persona has a fallback
+// configured, transparently switches to the fallback and resumes the turn
+// from there. On success, on partial-success-then-fail, or no fallback —
+// behaves like a plain engine.runTurn() pass-through.
+//
+// The fallback path emits its own turn_start/turn_end, so the JSONL ends
+// up with two turn_starts and one set of assistant content. That's
+// intentional — the audit log shows we tried twice.
+async function* runTurnWithFallback(args: {
+  primary: ReturnType<typeof resolveEffectiveModel>;
+  fallbackRef: string | undefined;
+  baseInput: Omit<Parameters<typeof engineRegistry[keyof typeof engineRegistry]['runTurn']>[0], 'resolvedModel'>;
+}): AsyncGenerator<NormalizedEvent> {
+  const { primary, fallbackRef, baseInput } = args;
+  if (!primary) return;
+  const primaryEngine = engineRegistry[primary.provider.engine];
+  if (!primaryEngine) {
+    yield {
+      kind: 'error',
+      ts: Date.now(),
+      engine: primary.provider.engine,
+      message: `engine '${primary.provider.engine}' not registered`,
+    };
+    return;
+  }
+
+  let hasContent = false;
+  let primaryError: string | null = null;
+
+  try {
+    for await (const ev of primaryEngine.runTurn({ ...baseInput, resolvedModel: primary })) {
+      if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message') hasContent = true;
+      if (ev.kind === 'error' && !hasContent) {
+        // Hold back the error event — fallback will replace this whole turn
+        primaryError = ev.message;
+        continue;
+      }
+      if (ev.kind === 'turn_end' && primaryError) {
+        // Hold back the trailing turn_end too while we plan a fallback
+        continue;
+      }
+      yield ev;
+    }
+  } catch (err) {
+    if (hasContent) throw err;
+    primaryError = (err as Error).message;
+  }
+
+  if (!primaryError) return;
+
+  // Primary failed before any content — try fallback
+  if (!fallbackRef) {
+    yield {
+      kind: 'error',
+      ts: Date.now(),
+      engine: primary.provider.engine,
+      message: primaryError,
+    };
+    yield {
+      kind: 'turn_end',
+      ts: Date.now(),
+      engine: primary.provider.engine,
+      turnId: `t-${Date.now()}`,
+    };
+    return;
+  }
+
+  const fallbackResolved = resolveAnyRef(config, fallbackRef);
+  if (!fallbackResolved) {
+    yield {
+      kind: 'error',
+      ts: Date.now(),
+      engine: primary.provider.engine,
+      message: `primary failed (${primaryError}); fallback '${fallbackRef}' not found in config`,
+    };
+    yield {
+      kind: 'turn_end',
+      ts: Date.now(),
+      engine: primary.provider.engine,
+      turnId: `t-${Date.now()}`,
+    };
+    return;
+  }
+  const fallbackEngine = engineRegistry[fallbackResolved.provider.engine];
+  if (!fallbackEngine) {
+    yield {
+      kind: 'error',
+      ts: Date.now(),
+      engine: fallbackResolved.provider.engine,
+      message: `fallback engine '${fallbackResolved.provider.engine}' not registered`,
+    };
+    yield {
+      kind: 'turn_end',
+      ts: Date.now(),
+      engine: fallbackResolved.provider.engine,
+      turnId: `t-${Date.now()}`,
+    };
+    return;
+  }
+
+  logger.warn({
+    msg: 'engine.fallback',
+    primary: `${primary.providerName}/${primary.modelId}`,
+    fallback: `${fallbackResolved.providerName}/${fallbackResolved.modelId}`,
+    reason: primaryError,
+  });
+
+  for await (const ev of fallbackEngine.runTurn({ ...baseInput, resolvedModel: fallbackResolved })) {
+    yield ev;
+  }
+}
+
+let config: Config;
 try {
   config = await loadConfig();
 } catch (err) {
@@ -339,14 +452,17 @@ app.post('/chat/send', async (c) => {
     let lastUsage: { tokens_in: number; tokens_out: number } | undefined;
     try {
       const history = await getHistory(agent, session);
-      const stream = engine.runTurn({
-        agent,
-        session,
-        systemPrompt: persona.systemPrompt,
-        userMessage: text,
-        history,
-        metaStore: sessionMetaStore,
-        resolvedModel,
+      const stream = runTurnWithFallback({
+        primary: resolvedModel,
+        fallbackRef: persona.fallback,
+        baseInput: {
+          agent,
+          session,
+          systemPrompt: persona.systemPrompt,
+          userMessage: text,
+          history,
+          metaStore: sessionMetaStore,
+        },
       });
       for await (const ev of stream) {
         if (ev.kind !== 'assistant_delta') {
