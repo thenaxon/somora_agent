@@ -76,6 +76,23 @@ in `~/.somora/logs/server-YYYY-MM-DD.log`. Pretty-Print im Terminal wenn TTY.
 Daily-Rotation, Cleanup manuell. **Kein** Conversation-Inhalt im Server-Log
 (liegt in `agents/<name>/sessions/`). Levels über `SOMORA_LOG_LEVEL`-env.
 
+### 18. Phase-2-Reihenfolge: zweite Engine vor Memory & Tools
+Nach Phase 1 (CLI-Polish + dann fertig) **erst die OpenAI-Engine** als zweiten
+Adapter bauen — angebunden an Renes internen LLM-Server (OpenAI-kompatibler
+Endpoint). Beide Engines auf Gleichstand bringen. **Danach** Model-Config
+(per-Agent Engine- und Modell-Wahl). **Erst dann** Memory-Schicht und eigene
+Tools.
+
+**Why:** Memory und Tools nur auf Anthropic zu bauen würde das Engine-Interface
+zur Lüge machen — Anthropic-spezifische Annahmen würden in die Memory-/Tool-
+Schicht leaken. Sobald OpenAI dazukommt, müsste das nachträglich entkoppelt
+werden. Zwei lebende Engines vor Memory/Tools = die Abstraktion wird ehrlich
+gehärtet, bevor wir Schichten draufsetzen die sie voraussetzen.
+
+**How to apply:** CLI-Polish als nächster Schritt; dann OpenAI-Adapter (mit
+konfigurierbarer Base-URL für Renes internen LLM-Server); dann Model-Config;
+dann Phase 2 (Memory + Tools).
+
 ### 17. SDK-Defaults aus — Vier-Schichten-Defense
 `settingSources: []` allein reicht **nicht**. Das Claude-Code-Binary bringt die
 User-claude.ai-MCPs (Gmail/Drive/Calendar) auch ohne File-Settings mit, weil die
