@@ -8,6 +8,13 @@ import { join } from 'node:path';
 import { query, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import {
+  computeReplayDelta,
+  getLastSeenTs,
+  renderReplayPrefix,
+  withLastSeenTs,
+  type EngineLastSeen,
+} from './replay.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 
 async function* userInputStream(text: string): AsyncIterable<SDKUserMessage> {
@@ -19,7 +26,9 @@ async function* userInputStream(text: string): AsyncIterable<SDKUserMessage> {
 }
 
 const ENGINE = 'claude-cli';
-const LEGACY_ENGINE_NAME = 'anthropic'; // honored when reading old session meta
+// Legacy sessions tagged with `engine: 'anthropic'` still resume cleanly:
+// we now resume on `sdkSessionId` presence alone, regardless of the
+// `engine` field, so no special-case is needed.
 
 const KNOWN_ACCOUNT_TOOLS = [
   'mcp__claude_ai_Gmail__authenticate',
@@ -50,19 +59,29 @@ const CLAUDE_BIN = resolveClaudeBin();
 interface ClaudeCliMeta {
   engine?: string;
   sdkSessionId?: string;
+  engineLastSeen?: EngineLastSeen;
 }
 
 export const claudeCliEngine: AgentEngine = {
   name: ENGINE,
 
   async *runTurn(input: TurnInput): AsyncIterable<NormalizedEvent> {
-    const { agent, session, systemPrompt, userMessage, metaStore, resolvedModel } = input;
+    const { agent, session, systemPrompt, userMessage, history, metaStore, resolvedModel } =
+      input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`claude-cli engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
     }
     const meta = (await metaStore.get(agent, session)) as ClaudeCliMeta;
-    const isOurSession = meta.engine === ENGINE || meta.engine === LEGACY_ENGINE_NAME;
-    const resume = isOurSession ? meta.sdkSessionId : undefined;
+
+    // Always resume our own SDK session if one exists — even if another
+    // engine was last active. The internal session knows every turn that
+    // _claude-cli_ ever made on this somora-session; the gap (turns made
+    // by other engines) is bridged via delta-replay below.
+    const resume = meta.sdkSessionId;
+    const lastSeenTs = getLastSeenTs(meta, ENGINE);
+    const replayPairs = computeReplayDelta(history, lastSeenTs);
+    const replayPrefix = renderReplayPrefix(replayPairs);
+    const effectiveUserMessage = replayPrefix + userMessage;
 
     const turnId = `t-${Date.now()}`;
     const ts = () => Date.now();
@@ -75,8 +94,17 @@ export const claudeCliEngine: AgentEngine = {
     let usage: { tokens_in: number; tokens_out: number } | undefined;
 
     try {
+      logger.info({
+        msg: 'engine.replay',
+        engine: ENGINE,
+        agent,
+        session,
+        lastSeenTs,
+        replayPairs: replayPairs.length,
+        resumeSdkSessionId: Boolean(resume),
+      });
       const stream = query({
-        prompt: userInputStream(userMessage),
+        prompt: userInputStream(effectiveUserMessage),
         options: {
           model: resolvedModel.modelId,
           systemPrompt,
@@ -174,9 +202,26 @@ export const claudeCliEngine: AgentEngine = {
         } else if (msg.type === 'result') {
           if (msg.subtype === 'success') {
             finalText = msg.result;
+            // Anthropic returns input_tokens (uncached new) separate from
+            // cache_read_input_tokens and cache_creation_input_tokens.
+            // For somora's display we want TOTAL context size used this
+            // turn so the X/contextWindow ratio is honest and comparable
+            // across engines (codex-cli/openai-compatible already report
+            // totals in their `input_tokens`/`prompt_tokens`).
+            const u = msg.usage as
+              | {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  cache_read_input_tokens?: number;
+                  cache_creation_input_tokens?: number;
+                }
+              | undefined;
+            const newIn = u?.input_tokens ?? 0;
+            const cacheRead = u?.cache_read_input_tokens ?? 0;
+            const cacheCreate = u?.cache_creation_input_tokens ?? 0;
             usage = {
-              tokens_in: msg.usage?.input_tokens ?? 0,
-              tokens_out: msg.usage?.output_tokens ?? 0,
+              tokens_in: newIn + cacheRead + cacheCreate,
+              tokens_out: u?.output_tokens ?? 0,
             };
             logger.info({
               msg: 'engine.turn',
@@ -186,6 +231,9 @@ export const claudeCliEngine: AgentEngine = {
               agent,
               session,
               tokens_in: usage.tokens_in,
+              tokens_in_new: newIn,
+              tokens_in_cache_read: cacheRead,
+              tokens_in_cache_create: cacheCreate,
               tokens_out: usage.tokens_out,
               cost_usd: msg.total_cost_usd,
               duration_ms: msg.duration_ms,
@@ -217,6 +265,7 @@ export const claudeCliEngine: AgentEngine = {
           ...meta,
           engine: ENGINE,
           sdkSessionId: lastSdkSessionId,
+          engineLastSeen: withLastSeenTs(meta, ENGINE, ts()),
         });
       }
     } catch (err) {

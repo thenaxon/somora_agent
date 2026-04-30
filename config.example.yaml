@@ -31,6 +31,27 @@ providers:
         contextWindow: 200000
         capabilities: [text, image]
 
+  # OpenAI via Codex CLI subscription. Uses the local `codex` binary;
+  # auth is handled by the binary itself via `codex login` (ChatGPT
+  # Plus/Pro/Business subscription preferred) or OPENAI_API_KEY env.
+  # No baseUrl / apiKey needed here. Override binary path with
+  # SOMORA_CODEX_BIN env if not at ~/.npm-global/bin/codex or on PATH.
+  openai:
+    engine: codex-cli
+    models:
+      - id: gpt-5
+        alias: gpt5
+        contextWindow: 400000
+        capabilities: [text, image]
+      - id: gpt-5-codex
+        alias: codex5
+        contextWindow: 400000
+        capabilities: [text]
+      - id: o3
+        alias: o3
+        contextWindow: 200000
+        capabilities: [text]
+
   # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).
   # Multiple providers of the same engine are fine — just give each a unique key.
   omlx:

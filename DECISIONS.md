@@ -145,3 +145,160 @@ mitlaufen zu lassen.
 **Annahme die wir verworfen haben:** `allowedTools: []` als Whitelist nutzen.
 Laut SDK-Doku ist `allowedTools` nur eine Auto-Approval-Liste (no-prompt),
 kein Filter. `disallowedTools` ist das richtige Werkzeug zum Blocken.
+
+---
+
+## 2026-04-30 — Phase-2-Architektur
+
+### 20. Drei Engines, klare Domain-Aufteilung
+Phase 2 erweitert von zwei auf drei Engines. Keine ersetzt die andere,
+jede deckt eine eigene Domain ab:
+
+| Engine | Domain | Loop / Compaction / Tools | Auth |
+|---|---|---|---|
+| `claude-cli` | Anthropic-Modelle via Claude-Subscription | im CLI-Subprozess | Claude Max / Pro |
+| `codex-cli` | OpenAI-Modelle via ChatGPT-Subscription | im CLI-Subprozess | ChatGPT Plus / Pro / Business |
+| `openai-compatible` | alles andere — omlx, ollama, OpenRouter, Groq, Fireworks, _und_ api.openai.com mit reinem API-Key | **selbst gebaut** | API-Key pro Provider |
+
+**Why:** Rene hat sowohl Claude-Sub als auch ChatGPT-Pro (200 €) und
+will beide voll nutzen. `openai-compatible` ist nicht ersetzbar —
+auch wer OpenAI-Modelle ohne ChatGPT-Sub nutzen will (CI, headless,
+lokal) braucht den API-Key-Pfad. Lokale Modelle (omlx/ollama) sowieso.
+
+**How to apply:** Phase-2-Reihenfolge: codex-cli zuerst (einfach,
+analog claude-cli, schnell zur Drei-Engine-Parität auf
+Konversationsebene), dann Compaction für openai-compatible (siehe
+#21), dann Memory, dann Tools.
+
+### 21. Compaction-Strategie: OpenCode-style, non-destructive
+Für die `openai-compatible`-Engine bauen wir Compaction selbst,
+weil dort kein Subprozess das übernimmt. Strategie nach Recherche
+(Codex CLI vs. Claude Code vs. OpenCode, April 2026):
+
+- **Pattern: OpenCode** — Marker statt Löschen. Originale bleiben
+  im JSONL, ein `throughTs`-Marker im Meta-File definiert die
+  Range; `buildMessages` ignoriert markierte Events und fügt
+  stattdessen die Summary als pseudo-system-message ein.
+- **Trigger: 70% warn, 80–85% compact** (configurable). Nicht 95%,
+  damit doppelte Compaction (unsere + interne der CLI-Engines)
+  nicht gleichzeitig feuert.
+- **Summary: 5-Sektion-Template** — Goal, Constraints, Decisions,
+  Recent Context, Open Questions. Direct-quote bevorzugt
+  (Claude-Code-Inspiration).
+- **Safety-Cushion:** letzte N Turns / X Tokens immer unangetastet.
+- **Stapelbar:** Array von Compactions, jede umfasst alle vorherigen.
+- **Engine-Modell:** Default = gleiches Modell wie Session, per Config
+  überschreibbar (`compactionModel` für günstigere Summaries).
+
+**Why:** Codex-Style (all-or-nothing, verbatim-only-user) wäre
+destruktiv und passt nicht zur JSONL-Ground-Truth-Philosophie
+(DECISION #11). Claude-Code-3-Stufen-System ist über-engineered:
+Tier 1 (Tool-Result-Trim) macht erst Sinn mit Tools, Prompt-Cache-
+Reorder ist provider-spezifisch. OpenCode-Pattern passt nativ zu
+unserem Append-only-JSONL-Layout.
+
+**How to apply:** Compaction-Logik lebt in `src/compaction/`,
+wird beim Turn-Build im openai-compatible-Adapter aufgerufen.
+CLI-Engines respektieren den Marker bei der History-Übergabe;
+ihre _interne_ Compaction läuft zusätzlich als Sicherheitsnetz.
+
+### 22a. Cross-Engine-Continuity über Session-Resume + Delta-Replay
+Die ursprüngliche Annahme im Phase-2-Plan — „beim Engine-Wechsel
+verliert die neue Engine den Kontext, kann durch Memory-Layer später
+gemildert werden" — war falsch und nie mit Rene besprochen.
+
+Die richtige Lösung kombiniert beide Mechanismen:
+
+- **Jede CLI-Engine reaktiviert ihre eigene interne Session immer**
+  (claude-cli via `sdkSessionId`, codex-cli via `codexSessionId`),
+  unabhängig davon welche Engine zuletzt aktiv war. Damit kennt
+  sie alle Turns die _sie selbst_ gemacht hat.
+- **Die Lücke (Turns die _andere_ Engines gemacht haben) wird als
+  Delta-Replay nachgeschüttelt** — formatiert als Markdown-Block
+  vor der eigentlichen User-Message, mit klarer Anweisung „nicht
+  drauf antworten, ist nur Kontext".
+- **`engineLastSeen[engine] = ts`** im Meta-File trackt pro Engine,
+  bis wann sie zuletzt selbst aktiv war. Replay holt nur Turns mit
+  `ts > engineLastSeen[engine]`.
+
+**Why:** Token-effizienter als Full-History-Replay (interne Session
+trägt den Großteil), und erhält die Erfahrung dass beim
+Hin-und-her-Wechseln keine Konversation „verloren" geht.
+`openai-compatible` braucht das nicht, weil es bei jedem Turn die
+volle History sowieso einbaut.
+
+**How to apply:** Logik in `src/engine/replay.ts`. Bei sehr langen
+Sessions (1000+ Turns Lücke) wird der Replay durch Compaction
+(siehe #21) automatisch auf Summary + frische Pairs verkürzt — der
+gleiche Mechanismus dient zwei Zwecken: kürzere History fürs
+Modell, kürzerer Replay für andere Engines.
+
+### 22. Meta-File als shared container für engine-state und session-views
+Das `*.meta.json` pro Session ist absichtlich ein offenes
+`Record<string, unknown>` (siehe `src/engine/types.ts:7`). Mehrere
+Engines und Subsysteme dürfen nebeneinander Felder reinschreiben,
+ohne sich zu stören:
+
+- `engine` — welche Engine zuletzt die Session betrieb
+- `sdkSessionId` — claude-cli's interne Session-ID
+- `codexSessionId` — codex-cli's `thread_id` (NEU, kommt mit DECISION #20)
+- `modelOverride` — pro-Session Modell-Override (`/model` im CLI)
+- `engineLastSeen` — Map `engine → ts` für Delta-Replay (NEU, DECISION #22a)
+- `compactions[]` — non-destructive Marker + Summaries (NEU, DECISION #21)
+- `memory` — reserviert für Phase-2.4-Memory-Schicht
+
+**Why:** Append-only-JSONL als Wahrheit, abgeleitete Sichten und
+Pointer im Meta. Reduziert Risiko (kein In-Place-Modify am
+Event-Log), erlaubt mehrere Sichten parallel (Compaction-Index,
+Memory-Pointer, Engine-State), und skaliert auf zukünftige
+Use-Cases ohne Schema-Migration. Pattern direkt parallel zu
+filesystem-DB-Trennung in klassischen Systemen.
+
+**How to apply:** Beim Hinzufügen eines neuen Subsystems _nicht_
+JSONL-Events erweitern, sondern ein neues Meta-Feld einführen.
+Niemals JSONL-Zeilen modifizieren — nur appenden oder via
+Marker im Meta logisch ausblenden.
+
+### 23. Eigene Tools statt CLI-Built-ins (Phase 2.5)
+Sobald Tool-System gebaut wird, bauen wir alle Tools selbst
+(`somora_exec`, `somora_memory_*`, etc.) und deaktivieren — soweit
+möglich — die Built-ins von claude-cli und codex-cli.
+
+**Why:** Engine-übergreifend identisches Tool-Verhalten. Was
+`somora_exec` tut, ist *eine* Codepath, *eine* Allowlist, *ein*
+Audit-Log — egal ob Claude, GPT-5, Gemma oder Llama es aufruft.
+Mit Built-ins parallel hätte jede Engine ihre eigene
+Bash-Implementierung mit eigenem Sandbox-Verhalten und keinem
+einheitlichen Audit.
+
+**How to apply:** Tool-Registry in `src/tools/`, MCP-Server-Wrapper
+für CLI-Engines, Direct-Call-Bridge für openai-compatible. Built-in
+deaktivieren via:
+- claude-cli: `--disallowedTools` für `Bash`, `Read`, `Write`, `Edit`, etc.
+- codex-cli: `--sandbox read-only` + Tool-Disable wo möglich
+
+**Caveat:** Manche Built-ins lassen sich nicht 100% stumm schalten.
+Falls so ein Tool-Use-Event durchrutscht, im Adapter filtern.
+
+### 24. Phase-2-Reihenfolge: codex-cli → compaction → memory → tools
+Revidiert DECISION #18, weil dort nur zwei Engines geplant waren.
+Aktuelle Reihenfolge:
+
+1. `codex-cli`-Engine bauen (analog claude-cli)
+2. Compaction für `openai-compatible` (siehe #21)
+3. Smoke-Test alle drei Engines (Konversations-Parität)
+4. Memory-Schicht designen + bauen (Renes Spezialwünsche, Diskussion zuerst)
+5. Tool-System bauen (bringt automatisch Loop für openai-compatible
+   und MCP-Bridge zu CLI-Engines)
+6. Polish-Punkte 4–9 aus STATUS-Delta-Tabelle
+
+**Why:** Memory vor Tools, weil Memory-Design entscheidet, ob
+Memory ein Tool wird, eine Prompt-Injection oder beides. Tools
+ohne Memory-Klarheit gebaut riskieren falsche Abstraktion.
+Konversations-Parität vor Memory, damit Memory von Anfang an
+über alle drei Engines konsistent funktioniert (nicht erst auf
+einer und dann nachträglich entkoppelt).
+
+**How to apply:** Schritte sind semi-seriell — innerhalb eines
+Schritts können Polish-Sub-Tasks (z.B. exaktes Token-Counting)
+parallel laufen. Aber kein Schritt-Vorziehen ohne Diskussion.

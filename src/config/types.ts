@@ -31,6 +31,14 @@ export const ClaudeCliProviderSchema = z.object({
   models: z.array(ModelSchema).min(1),
 });
 
+// codex-cli: auth handled by the binary itself via `codex login`
+// (ChatGPT subscription preferred) or OPENAI_API_KEY env. No baseUrl /
+// apiKey here — they would do nothing.
+export const CodexCliProviderSchema = z.object({
+  engine: z.literal('codex-cli'),
+  models: z.array(ModelSchema).min(1),
+});
+
 export const OpenAiCompatibleProviderSchema = z.object({
   engine: z.literal('openai-compatible'),
   baseUrl: z.string().url(),
@@ -40,6 +48,7 @@ export const OpenAiCompatibleProviderSchema = z.object({
 
 export const ProviderSchema = z.discriminatedUnion('engine', [
   ClaudeCliProviderSchema,
+  CodexCliProviderSchema,
   OpenAiCompatibleProviderSchema,
 ]);
 export type Provider = z.infer<typeof ProviderSchema>;

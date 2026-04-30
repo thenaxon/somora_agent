@@ -91,6 +91,7 @@ export const openAiCompatibleEngine: AgentEngine = {
 
     let cumulative = '';
     let usage: { tokens_in: number; tokens_out: number } | undefined;
+    let tokensInCached: number | undefined;
 
     try {
       logger.info({
@@ -117,6 +118,12 @@ export const openAiCompatibleEngine: AgentEngine = {
           yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
         }
         if (chunk.usage) {
+          // OpenAI-compatible providers return `prompt_tokens` as TOTAL
+          // input size (cached + uncached). Some expose a cached subset
+          // via `prompt_tokens_details.cached_tokens` — diagnostics only.
+          tokensInCached = (
+            chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } }
+          ).prompt_tokens_details?.cached_tokens;
           usage = {
             tokens_in: chunk.usage.prompt_tokens ?? 0,
             tokens_out: chunk.usage.completion_tokens ?? 0,
@@ -136,6 +143,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         agent,
         session,
         tokens_in: usage?.tokens_in,
+        tokens_in_cached: tokensInCached,
         tokens_out: usage?.tokens_out,
       });
 
