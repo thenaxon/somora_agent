@@ -4,7 +4,7 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-01, commits `phase 2a/b/c`)
+## Wo wir stehen (Stand: 2026-05-01, commits `phase 2a/b/c/d`)
 
 **Phase 1 + Phase 2-Stufe-A komplett.** Drei Engines im Gleichstand auf
 Konversations- und Compaction-Ebene. System ist funktional benutzbar —
@@ -289,11 +289,12 @@ resume → ohne. Siehe `src/engine/codex-cli.ts`.
 ## Pickup für nächste Session
 
 Erster Satz beim Wiedereinstieg sollte sein:
-> „Wir stehen bei `phase 2c`. Drei-Engine-Parität ist durch:
+> „Wir stehen bei `phase 2d`. Drei-Engine-Parität ist durch:
 > claude-cli, codex-cli, openai-compatible. Cross-Engine-Continuity
 > via Session-Resume + Delta-Replay funktioniert. Compaction für
 > openai-compatible ist da, mit dynamischer engine-agnostic
-> Worker-Wahl. Du wolltest jetzt über die Memory-Schicht reden —
+> Worker-Wahl. `GET /env` und `somora.env`-Log zeigen den effektiven
+> Stand der Env-Vars. Du wolltest jetzt über die Memory-Schicht reden —
 > du hast da Spezialwünsche. Ich hör erst zu, nicht vorbauen."
 
 Wichtig: Memory ist bewusst noch unangerührt. Nicht spontan starten,
@@ -305,8 +306,8 @@ dann gemeinsam designen.
 Während Stufe A wurden mehrere Test-Sessions in
 `~/.somora/agents/hans/sessions/` angelegt: `codex-smoke`,
 `codex-smoke2`, `codex-resume`, `tokens-test`, `crossengine`,
-`compaction-test`, `smartcompact`, `crossworker`. Können bei
-Gelegenheit per `rm` weg.
+`compaction-test`, `smartcompact`, `crossworker`, `codexworker`,
+`codexworker2`. Können bei Gelegenheit per `rm` weg.
 
 ---
 
