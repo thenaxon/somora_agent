@@ -10,7 +10,16 @@
 //
 // `lastSeenTurnTs` is tracked per engine inside the session meta-file:
 // `meta.engineLastSeen = { 'claude-cli': 173..., 'codex-cli': 174... }`.
+//
+// The delta is _compaction-aware_: if `meta.compactions[]` covers part
+// of the gap (which can happen when openai-compatible compacted between
+// this engine's last turn and now), the replay folds the summary in and
+// only emits the user/assistant pairs that occurred AFTER the latest
+// applicable compaction. That bounds the replay size: after very long
+// gaps the engine sees `[summary] + recent pairs` instead of thousands
+// of raw turns.
 
+import { pickLatestApplicable, type Compaction } from '../compaction/index.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
 export interface ReplayPair {
@@ -18,20 +27,35 @@ export interface ReplayPair {
   assistant: string;
 }
 
+export interface ReplayDelta {
+  /** If a compaction covers part of the gap, its summary lives here. */
+  summary?: string;
+  /** Pairs since `max(sinceTs, latestApplicableCompaction.throughTs)`. */
+  pairs: ReplayPair[];
+}
+
 /**
- * Extract user/assistant pairs from the event stream that occurred
- * strictly after `sinceTs`. The current turn's user_message (the last
- * user_message in history without a paired assistant_message) is
- * naturally excluded because the pair is incomplete.
+ * Compute what this engine missed since `sinceTs`. If
+ * `compactions[]` contains an entry whose `throughTs > sinceTs`, the
+ * delta is `{ summary: latestApplicable.summary, pairs: pairs after
+ * compaction.throughTs }`. Otherwise it is `{ pairs: pairs after
+ * sinceTs }`.
+ *
+ * The current turn's user_message (the last user_message in history
+ * without a paired assistant_message) is naturally excluded because
+ * the pair is incomplete.
  */
 export function computeReplayDelta(
   history: NormalizedEvent[],
   sinceTs: number,
-): ReplayPair[] {
+  compactions?: Compaction[],
+): ReplayDelta {
+  const applicable = pickLatestApplicable(compactions, sinceTs);
+  const effectiveSinceTs = applicable ? applicable.throughTs : sinceTs;
   const pairs: ReplayPair[] = [];
   let pendingUser: string | undefined;
   for (const ev of history) {
-    if (ev.ts <= sinceTs) continue;
+    if (ev.ts <= effectiveSinceTs) continue;
     if (ev.kind === 'user_message') {
       pendingUser = ev.text;
     } else if (ev.kind === 'assistant_message' && pendingUser !== undefined) {
@@ -39,15 +63,16 @@ export function computeReplayDelta(
       pendingUser = undefined;
     }
   }
-  return pairs;
+  return { ...(applicable ? { summary: applicable.summary } : {}), pairs };
 }
 
 /**
  * Render a delta as a Markdown context block for engine-bridges.
- * Empty delta returns an empty string — caller can skip the prefix.
+ * Empty delta (no summary, no pairs) returns an empty string — caller
+ * can skip the prefix entirely.
  */
-export function renderReplayPrefix(pairs: ReplayPair[]): string {
-  if (pairs.length === 0) return '';
+export function renderReplayPrefix(delta: ReplayDelta): string {
+  if (!delta.summary && delta.pairs.length === 0) return '';
   const lines = [
     '<context-from-other-engines>',
     'In dieser laufenden Session wurden zwischen deinem letzten Beitrag',
@@ -57,10 +82,20 @@ export function renderReplayPrefix(pairs: ReplayPair[]): string {
     'auf die aktuelle Frage am Ende.',
     '',
   ];
-  for (const p of pairs) {
-    lines.push(`User: ${p.user}`);
-    lines.push(`Assistant: ${p.assistant}`);
+  if (delta.summary) {
+    lines.push('<earlier-summary>');
+    lines.push(delta.summary);
+    lines.push('</earlier-summary>');
     lines.push('');
+  }
+  if (delta.pairs.length > 0) {
+    lines.push('<recent-pairs>');
+    for (const p of delta.pairs) {
+      lines.push(`User: ${p.user}`);
+      lines.push(`Assistant: ${p.assistant}`);
+      lines.push('');
+    }
+    lines.push('</recent-pairs>');
   }
   lines.push('</context-from-other-engines>');
   lines.push('');

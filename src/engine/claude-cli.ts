@@ -56,10 +56,13 @@ function resolveClaudeBin(): string | undefined {
 
 const CLAUDE_BIN = resolveClaudeBin();
 
+import type { Compaction } from '../compaction/index.ts';
+
 interface ClaudeCliMeta {
   engine?: string;
   sdkSessionId?: string;
   engineLastSeen?: EngineLastSeen;
+  compactions?: Compaction[];
 }
 
 export const claudeCliEngine: AgentEngine = {
@@ -79,8 +82,8 @@ export const claudeCliEngine: AgentEngine = {
     // by other engines) is bridged via delta-replay below.
     const resume = meta.sdkSessionId;
     const lastSeenTs = getLastSeenTs(meta, ENGINE);
-    const replayPairs = computeReplayDelta(history, lastSeenTs);
-    const replayPrefix = renderReplayPrefix(replayPairs);
+    const replayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
+    const replayPrefix = renderReplayPrefix(replayDelta);
     const effectiveUserMessage = replayPrefix + userMessage;
 
     const turnId = `t-${Date.now()}`;
@@ -100,7 +103,8 @@ export const claudeCliEngine: AgentEngine = {
         agent,
         session,
         lastSeenTs,
-        replayPairs: replayPairs.length,
+        replayPairs: replayDelta.pairs.length,
+        replaySummary: Boolean(replayDelta.summary),
         resumeSdkSessionId: Boolean(resume),
       });
       const stream = query({

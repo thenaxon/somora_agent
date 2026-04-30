@@ -1,8 +1,21 @@
 // openai-compatible engine: speaks /v1/chat/completions against any provider
 // configured with baseUrl + apiKey. Stateless — we feed full message history
 // each turn (no thread management on the server side, by design).
+//
+// Compaction (DECISIONS #21): before each turn we estimate the prompt
+// size and, if it crosses the configured threshold, run a compaction
+// pass via the same provider. The result is persisted to
+// `meta.compactions[]` (non-destructive — JSONL stays untouched) and
+// the next message-build uses the summary in place of compacted events.
 
 import OpenAI from 'openai';
+import {
+  DEFAULT_COMPACTION_CONFIG,
+  pickLatest,
+  runCompaction,
+  shouldCompact,
+  type Compaction,
+} from '../compaction/index.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
@@ -11,11 +24,39 @@ const ENGINE = 'openai-compatible';
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
+interface OpenAiCompatibleMeta {
+  engine?: string;
+  compactions?: Compaction[];
+}
+
 function buildMessages(
   systemPrompt: string,
   history: NormalizedEvent[],
+  compactions: Compaction[] | undefined,
 ): ChatMessage[] {
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
+
+  // Prepend the latest compaction summary as a second system message.
+  // Most OpenAI-compatible providers accept multiple system messages;
+  // those that don't will collapse them on their side.
+  const latest = pickLatest(compactions);
+  if (latest) {
+    messages.push({
+      role: 'system',
+      content: [
+        '<conversation-summary>',
+        'Eine vorherige Compaction hat den älteren Verlauf der',
+        'Session zusammengefasst. Behandle den folgenden Block als',
+        'verlässlichen Kontext für alle nicht weiter unten explizit',
+        'wiederholten Fakten:',
+        '',
+        latest.summary,
+        '</conversation-summary>',
+      ].join('\n'),
+    });
+  }
+  const sinceTs = latest?.throughTs ?? 0;
+
   let pendingRole: 'user' | 'assistant' | null = null;
   let pendingText = '';
 
@@ -28,6 +69,7 @@ function buildMessages(
   };
 
   for (const ev of history) {
+    if (ev.ts <= sinceTs) continue; // skip events covered by compaction
     if (ev.kind === 'user_message') {
       if (pendingRole !== 'user') flush();
       pendingRole = 'user';
@@ -66,7 +108,77 @@ export const openAiCompatibleEngine: AgentEngine = {
 
     yield { kind: 'turn_start', ts: ts(), engine: ENGINE, turnId };
 
-    const messages = buildMessages(systemPrompt, history);
+    let meta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
+    let compactions = meta.compactions;
+
+    // Pre-turn compaction check. Compaction config is currently fixed
+    // to the defaults; per-provider override can be added later.
+    const compactionConfig = DEFAULT_COMPACTION_CONFIG;
+    const decision = shouldCompact({
+      systemPrompt,
+      history,
+      compactions,
+      contextWindow: resolvedModel.model.contextWindow,
+      config: compactionConfig,
+    });
+    if (decision.shouldCompact) {
+      logger.info({
+        msg: 'engine.compaction_trigger',
+        engine: ENGINE,
+        agent,
+        session,
+        estimatedTokens: decision.estimatedTokens,
+        triggerTokens: decision.triggerTokens,
+        ratio: Math.round(decision.ratio * 100) / 100,
+        existingCompactions: compactions?.length ?? 0,
+      });
+      try {
+        const newCompaction = await runCompaction({
+          systemPrompt,
+          history,
+          resolvedModel,
+          compactions,
+          config: compactionConfig,
+        });
+        if (newCompaction) {
+          compactions = [...(compactions ?? []), newCompaction];
+          await metaStore.set(agent, session, {
+            ...meta,
+            compactions,
+          });
+          meta = { ...meta, compactions };
+          logger.info({
+            msg: 'engine.compaction_done',
+            engine: ENGINE,
+            agent,
+            session,
+            throughTs: newCompaction.throughTs,
+            tokensBefore: newCompaction.tokensBefore,
+            tokensAfter: newCompaction.tokensAfter,
+            summaryChars: newCompaction.summary.length,
+          });
+        } else {
+          logger.info({
+            msg: 'engine.compaction_skip',
+            engine: ENGINE,
+            agent,
+            session,
+            reason: 'extractCompactionRange returned null (cushion covers everything or empty summary)',
+          });
+        }
+      } catch (err) {
+        // Don't kill the turn if compaction itself fails — degrade gracefully.
+        logger.warn({
+          msg: 'engine.compaction_fail',
+          engine: ENGINE,
+          agent,
+          session,
+          err: String(err),
+        });
+      }
+    }
+
+    const messages = buildMessages(systemPrompt, history, compactions);
     const estTokens = estimateTokens(messages);
     const ctxRatio = estTokens / resolvedModel.model.contextWindow;
     if (ctxRatio > 0.7) {
@@ -80,7 +192,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         estimatedTokens: estTokens,
         contextWindow: resolvedModel.model.contextWindow,
         ratio: Math.round(ctxRatio * 100) / 100,
-        hint: 'history nähert sich dem context-window-Limit. Memory-Schicht (Phase 2) ist die Lösung; vorerst /new bei Hans empfehlen.',
+        hint: 'history nähert sich dem context-window-Limit auch nach Compaction. Mehr Polster via niedrigeren triggerRatio.',
       });
     }
 
@@ -101,6 +213,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         model: resolvedModel.modelId,
         baseUrl: resolvedModel.provider.baseUrl,
         estimatedTokens: estTokens,
+        compactionsApplied: compactions?.length ?? 0,
       });
 
       const stream = await client.chat.completions.create({
@@ -149,10 +262,11 @@ export const openAiCompatibleEngine: AgentEngine = {
 
       yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...(usage ? { usage } : {}) };
 
-      // Tag the session with the engine that owns it now (for future routing logic)
-      const meta = await metaStore.get(agent, session);
-      if (meta.engine !== ENGINE) {
-        await metaStore.set(agent, session, { ...meta, engine: ENGINE });
+      // Tag the session with the engine that owns it now (for future routing logic).
+      // Re-read in case compaction wrote in-between to avoid clobbering.
+      const fresh = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
+      if (fresh.engine !== ENGINE) {
+        await metaStore.set(agent, session, { ...fresh, engine: ENGINE });
       }
     } catch (err) {
       logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });

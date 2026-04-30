@@ -29,10 +29,13 @@ import type { AgentEngine, TurnInput } from './types.ts';
 
 const ENGINE = 'codex-cli';
 
+import type { Compaction } from '../compaction/index.ts';
+
 interface CodexCliMeta {
   engine?: string;
   codexSessionId?: string;
   engineLastSeen?: EngineLastSeen;
+  compactions?: Compaction[];
 }
 
 function resolveCodexBin(): string {
@@ -69,8 +72,8 @@ export const codexCliEngine: AgentEngine = {
     // the codex-side turns; the gap is bridged via delta-replay below.
     const resumeId = meta.codexSessionId;
     const lastSeenTs = getLastSeenTs(meta, ENGINE);
-    const replayPairs = computeReplayDelta(history, lastSeenTs);
-    const replayPrefix = renderReplayPrefix(replayPairs);
+    const replayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
+    const replayPrefix = renderReplayPrefix(replayDelta);
 
     const turnId = `t-${Date.now()}`;
     const ts = () => Date.now();
@@ -107,7 +110,8 @@ export const codexCliEngine: AgentEngine = {
       resumed: Boolean(resumeId),
       threadId: resumeId,
       lastSeenTs,
-      replayPairs: replayPairs.length,
+      replayPairs: replayDelta.pairs.length,
+      replaySummary: Boolean(replayDelta.summary),
     });
 
     const child = spawn(CODEX_BIN, args, { stdio: ['pipe', 'pipe', 'pipe'] });
