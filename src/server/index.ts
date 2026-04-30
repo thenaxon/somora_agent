@@ -2,13 +2,10 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { anthropicEngine } from '../engine/anthropic.ts';
+import { ensureDefaultAgent, listAgents, loadPersona } from '../persona/loader.ts';
 import { appendEvent, getHistory, sessionMetaStore } from '../storage/sessions.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
-
-// Hardcoded persona — proper loader from AGENTS.md/SOUL.md/USER.md comes in step 2.
-const STUB_SYSTEM_PROMPT = `Du bist Hans, ein freundlicher persönlicher Assistent von Rene.
-Antworte knapp, klar und auf Deutsch. Wenn du etwas nicht weißt, sag es ehrlich.`;
 
 function eventToSse(ev: NormalizedEvent): SseEvent | null {
   switch (ev.kind) {
@@ -71,9 +68,7 @@ app.use('*', async (c, next) => {
 
 app.get('/healthz', (c) => c.text('ok'));
 
-app.get('/agents', (c) =>
-  c.json([{ name: 'hans', description: 'Stub agent — placeholder until persona loading (step 2)' }]),
-);
+app.get('/agents', async (c) => c.json(await listAgents()));
 
 app.get('/chat/stream', (c) => {
   const session = c.req.query('session') ?? 'main';
@@ -99,6 +94,13 @@ app.post('/chat/send', async (c) => {
   const agent = body.agent ?? 'hans';
   const session = body.session ?? 'main';
   const text = body.text ?? '';
+
+  const persona = await loadPersona(agent);
+  if (!persona) {
+    logger.warn({ msg: 'chat.send.unknown_agent', agent });
+    return c.json({ error: `agent '${agent}' nicht gefunden — lege ~/.somora/agents/${agent}/AGENTS.md an` }, 404);
+  }
+
   logger.info({ msg: 'chat.send', agent, session, len: text.length });
 
   await appendEvent(agent, session, {
@@ -115,7 +117,7 @@ app.post('/chat/send', async (c) => {
       const stream = anthropicEngine.runTurn({
         agent,
         session,
-        systemPrompt: STUB_SYSTEM_PROMPT,
+        systemPrompt: persona.systemPrompt,
         userMessage: text,
         history,
         metaStore: sessionMetaStore,
@@ -136,6 +138,11 @@ app.post('/chat/send', async (c) => {
 });
 
 const port = Number(process.env.SOMORA_PORT ?? 18737);
+
+await ensureDefaultAgent();
+const agentList = await listAgents();
+logger.info({ msg: 'agents.loaded', count: agentList.length, names: agentList.map((a) => a.name).join(',') });
+
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });
 });
