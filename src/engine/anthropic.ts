@@ -35,6 +35,11 @@ const denyAllTools: CanUseTool = async (toolName) => ({
   message: `Tool '${toolName}' ist in dieser somora-Session nicht freigegeben.`,
 });
 
+// Leak warnings should fire once per server lifetime — the situation can't
+// change mid-process, so per-turn spam is just noise.
+let toolsLeakWarned = false;
+let mcpLeakWarned = false;
+
 function resolveClaudeBin(): string | undefined {
   if (process.env.SOMORA_CLAUDE_BIN) return process.env.SOMORA_CLAUDE_BIN;
   const localBin = join(homedir(), '.local', 'bin', 'claude');
@@ -99,21 +104,23 @@ export const anthropicEngine: AgentEngine = {
             tools: msg.tools,
             mcpServers: msg.mcp_servers,
           });
-          if (msg.tools.length > 0) {
+          if (msg.tools.length > 0 && !toolsLeakWarned) {
             logger.warn({
               msg: 'engine.tools_leaked',
               engine: ENGINE,
               tools: msg.tools,
-              hint: 'Tools reached Claude despite disallowedTools/mcpServers/canUseTool. Update KNOWN_ACCOUNT_TOOLS in anthropic.ts.',
+              hint: 'Tools reached Claude despite disallowedTools/mcpServers/canUseTool. Update KNOWN_ACCOUNT_TOOLS in anthropic.ts. (Logged once per server lifetime.)',
             });
+            toolsLeakWarned = true;
           }
-          if (msg.mcp_servers.length > 0) {
+          if (msg.mcp_servers.length > 0 && !mcpLeakWarned) {
             logger.warn({
               msg: 'engine.mcp_servers_leaked',
               engine: ENGINE,
               mcpServers: msg.mcp_servers,
-              hint: 'Account-level MCP servers leaked into the session despite mcpServers: {}.',
+              hint: 'Account-level MCP servers leaked into the session despite mcpServers: {}. (Logged once per server lifetime.)',
             });
+            mcpLeakWarned = true;
           }
         } else if (msg.type === 'assistant') {
           for (const block of msg.message.content) {
