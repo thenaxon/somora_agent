@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { configPath, loadConfig } from '../config/loader.ts';
 import { type Config, listAllModels, resolveAnyRef } from '../config/types.ts';
+import { getEffectiveEnv } from './env.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import {
   ensureDefaultAgent,
@@ -211,6 +212,11 @@ logger.info({
   port: config.server.port,
 });
 
+logger.info({
+  msg: 'somora.env',
+  env: getEffectiveEnv(),
+});
+
 const app = new Hono();
 
 app.use('*', async (c, next) => {
@@ -226,6 +232,8 @@ app.use('*', async (c, next) => {
 });
 
 app.get('/healthz', (c) => c.text('ok'));
+
+app.get('/env', (c) => c.json(getEffectiveEnv()));
 
 app.get('/agents', async (c) => c.json(await listAgents()));
 

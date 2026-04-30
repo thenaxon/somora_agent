@@ -97,6 +97,35 @@ DELETE /agents/:agent/sessions/:session/model
 
 ---
 
+## Env-Variablen (kanonische Liste)
+
+Alle `SOMORA_*`-Env-Vars im laufenden Server. Default-Werte werden
+benutzt wenn die Var unset ist oder ihr Wert ungültig ist.
+
+| Var | Default | Zweck |
+|---|---|---|
+| `SOMORA_HOME` | `~/.somora` | Root für config/sessions/logs/agents |
+| `SOMORA_PORT` | aus `config.yaml` (`server.port`, default 18737) | Server-Port (Override für beide Seiten) |
+| `SOMORA_HOST` | `127.0.0.1` | Connect-Host der CLI (server-side ignoriert) |
+| `SOMORA_LOG_LEVEL` | `info` | Pino-Log-Level (`debug`, `info`, `warn`, `error`) |
+| `SOMORA_CLAUDE_BIN` | `~/.local/bin/claude` falls vorhanden, sonst Anthropic-SDK-Default | Claude-CLI Binary-Pfad |
+| `SOMORA_CODEX_BIN` | `~/.npm-global/bin/codex` falls vorhanden, sonst `codex` (PATH) | Codex-CLI Binary-Pfad |
+| `SOMORA_COMPACTION_TRIGGER_RATIO` | `0.8` | Trigger-Schwelle als Anteil des aktuellen Modell-Windows (0..1) |
+| `SOMORA_COMPACTION_SAFETY_PAIRS` | `4` | Anzahl jüngster Pairs die unkomprimiert bleiben |
+| `SOMORA_COMPACTION_MODEL` | _unset_ → Auto-Pick (kleinstes passendes) | Override für Compaction-Worker (Alias oder `provider/modelId`). Wenn unauflösbar: Warning + Auto-Pick-Fallback. |
+
+### Live abrufen
+
+- **Beim Server-Start:** Log-Event `somora.env` mit allen effektiven
+  Werten (in `~/.somora/logs/server-YYYY-MM-DD.log`).
+- **Während des Betriebs:** `GET http://127.0.0.1:18737/env` —
+  liefert dasselbe als JSON inklusive `isDefault`-Flag und ggf.
+  `note` (z.B. „filesystem-fallback").
+
+Beide nutzen denselben `getEffectiveEnv()`-Helper aus
+`src/server/env.ts`. Wenn ein neuer SOMORA_*-env dazukommt: bitte dort
+eintragen, sonst taucht er nicht im Log/Endpoint auf.
+
 ## Was bewusst NICHT da ist
 
 - **Memory-Layer** — Phase-2-Stufe-B (nächster Schritt). Rene hat

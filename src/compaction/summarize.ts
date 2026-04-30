@@ -355,14 +355,26 @@ export async function runCompaction(
 
   const tokensBefore = estimateTokens(system + user);
 
-  // Worker model selection (DECISION #21a). If a per-config override
-  // is added later, plumb it through `config.modelOverride` — for now
-  // we just pick the smallest fitting model.
-  const override = config.modelOverride
-    ? availableModels.find(
-        (m) => m.model.alias === config.modelOverride || m.modelId === config.modelOverride,
-      )
-    : undefined;
+  // Worker model selection (DECISION #21a). The override (typically
+  // SOMORA_COMPACTION_MODEL env) wins if it resolves to a configured
+  // model. If the override string doesn't match any alias/ref, we
+  // warn and fall through to auto-pick — silent typo-fall-through
+  // would be a debugging nightmare.
+  let override: ResolvedModel | undefined;
+  if (config.modelOverride) {
+    override = availableModels.find(
+      (m) => m.model.alias === config.modelOverride || m.modelId === config.modelOverride,
+    );
+    if (!override) {
+      logger.warn({
+        msg: 'compaction.override_unresolved',
+        requested: config.modelOverride,
+        availableAliases: availableModels.flatMap((m) => (m.model.alias ? [m.model.alias] : [])),
+        availableRefs: availableModels.map((m) => `${m.providerName}/${m.modelId}`),
+        hint: 'SOMORA_COMPACTION_MODEL did not match any configured alias or provider/modelId; falling back to auto-pick.',
+      });
+    }
+  }
   const worker = pickCompactionModel(tokensBefore, availableModels, override);
   if (!worker) {
     logger.warn({
