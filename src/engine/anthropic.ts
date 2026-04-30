@@ -114,11 +114,13 @@ export const anthropicEngine: AgentEngine = {
             toolsLeakWarned = true;
           }
           if (msg.mcp_servers.length > 0 && !mcpLeakWarned) {
+            const summary = msg.mcp_servers.map((s) => `${s.name}(${s.status})`).join(', ');
             logger.warn({
               msg: 'engine.mcp_servers_leaked',
               engine: ENGINE,
-              mcpServers: msg.mcp_servers,
-              hint: 'Account-level MCP servers leaked into the session despite mcpServers: {}. (Logged once per server lifetime.)',
+              servers: summary,
+              count: msg.mcp_servers.length,
+              hint: 'Account-MCPs sichtbar im Init-Header, aber inert (tools=[]). Einmal pro Server-Lifetime.',
             });
             mcpLeakWarned = true;
           }

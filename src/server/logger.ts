@@ -17,7 +17,17 @@ const transport = pino.transport({
   targets: [
     { target: 'pino/file', options: { destination: logFile, mkdir: true }, level },
     isTty
-      ? { target: 'pino-pretty', options: { destination: 1, colorize: true, translateTime: 'HH:MM:ss', ignore: 'pid,hostname' }, level }
+      ? {
+          target: 'pino-pretty',
+          options: {
+            destination: 1,
+            colorize: true,
+            translateTime: 'HH:MM:ss',
+            ignore: 'pid,hostname',
+            singleLine: true,
+          },
+          level,
+        }
       : { target: 'pino/file', options: { destination: 1 }, level },
   ],
 });
