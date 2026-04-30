@@ -1,3 +1,7 @@
+// claude-cli engine: Anthropic via the local Claude Code binary
+// (Subscription auth path). The provider config has no baseUrl/apiKey —
+// the binary at ~/.local/bin/claude already holds the user's session.
+
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -14,13 +18,9 @@ async function* userInputStream(text: string): AsyncIterable<SDKUserMessage> {
   };
 }
 
-const ENGINE = 'anthropic';
-const MODEL = 'claude-opus-4-7';
+const ENGINE = 'claude-cli';
+const LEGACY_ENGINE_NAME = 'anthropic'; // honored when reading old session meta
 
-// Known account-level MCP tools that leak in via the Claude Code binary's
-// user profile (claude.ai web connectors). settingSources: [] doesn't keep
-// these out — we have to disallow them explicitly. Plus canUseTool denies
-// anything else that might appear later.
 const KNOWN_ACCOUNT_TOOLS = [
   'mcp__claude_ai_Gmail__authenticate',
   'mcp__claude_ai_Gmail__complete_authentication',
@@ -35,8 +35,6 @@ const denyAllTools: CanUseTool = async (toolName) => ({
   message: `Tool '${toolName}' ist in dieser somora-Session nicht freigegeben.`,
 });
 
-// Leak warnings should fire once per server lifetime — the situation can't
-// change mid-process, so per-turn spam is just noise.
 let toolsLeakWarned = false;
 let mcpLeakWarned = false;
 
@@ -49,18 +47,22 @@ function resolveClaudeBin(): string | undefined {
 
 const CLAUDE_BIN = resolveClaudeBin();
 
-interface AnthropicMeta {
+interface ClaudeCliMeta {
   engine?: string;
   sdkSessionId?: string;
 }
 
-export const anthropicEngine: AgentEngine = {
+export const claudeCliEngine: AgentEngine = {
   name: ENGINE,
 
   async *runTurn(input: TurnInput): AsyncIterable<NormalizedEvent> {
-    const { agent, session, systemPrompt, userMessage, metaStore } = input;
-    const meta = (await metaStore.get(agent, session)) as AnthropicMeta;
-    const resume = meta.engine === ENGINE ? meta.sdkSessionId : undefined;
+    const { agent, session, systemPrompt, userMessage, metaStore, resolvedModel } = input;
+    if (resolvedModel.provider.engine !== ENGINE) {
+      throw new Error(`claude-cli engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
+    }
+    const meta = (await metaStore.get(agent, session)) as ClaudeCliMeta;
+    const isOurSession = meta.engine === ENGINE || meta.engine === LEGACY_ENGINE_NAME;
+    const resume = isOurSession ? meta.sdkSessionId : undefined;
 
     const turnId = `t-${Date.now()}`;
     const ts = () => Date.now();
@@ -76,7 +78,7 @@ export const anthropicEngine: AgentEngine = {
       const stream = query({
         prompt: userInputStream(userMessage),
         options: {
-          model: MODEL,
+          model: resolvedModel.modelId,
           systemPrompt,
           settingSources: [],
           tools: [],
@@ -97,8 +99,9 @@ export const anthropicEngine: AgentEngine = {
           logger.info({
             msg: 'engine.init',
             engine: ENGINE,
+            provider: resolvedModel.providerName,
+            model: resolvedModel.modelId,
             apiKeySource: msg.apiKeySource,
-            model: msg.model,
             sessionId: msg.session_id,
             resumed: Boolean(resume),
             tools: msg.tools,
@@ -109,7 +112,7 @@ export const anthropicEngine: AgentEngine = {
               msg: 'engine.tools_leaked',
               engine: ENGINE,
               tools: msg.tools,
-              hint: 'Tools reached Claude despite disallowedTools/mcpServers/canUseTool. Update KNOWN_ACCOUNT_TOOLS in anthropic.ts. (Logged once per server lifetime.)',
+              hint: 'Tools reached Claude despite disallowedTools/mcpServers/canUseTool. Update KNOWN_ACCOUNT_TOOLS in claude-cli.ts. (Logged once per server lifetime.)',
             });
             toolsLeakWarned = true;
           }
@@ -163,6 +166,8 @@ export const anthropicEngine: AgentEngine = {
             logger.info({
               msg: 'engine.turn',
               engine: ENGINE,
+              provider: resolvedModel.providerName,
+              model: resolvedModel.modelId,
               agent,
               session,
               tokens_in: usage.tokens_in,

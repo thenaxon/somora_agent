@@ -1,0 +1,42 @@
+# Example somora config. Real config lives at ~/.somora/config.yaml
+# (created with sane defaults on first server start). API keys go in plain
+# text in the real file — that file stays local, never committed.
+
+server:
+  port: 18737
+
+providers:
+  # Anthropic via Claude Code subscription. Uses the local Claude Code
+  # binary (~/.local/bin/claude). No baseUrl / apiKey needed — the binary
+  # already holds the user's session.
+  anthropic:
+    engine: claude-cli
+    models:
+      - id: claude-opus-4-7
+        contextWindow: 200000
+        capabilities: [text]
+
+  # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).
+  # Multiple providers of the same engine are fine — pick a unique name.
+  omlx:
+    engine: openai-compatible
+    baseUrl: http://192.168.60.47:11434/v1
+    apiKey: lm-studio
+    models:
+      - id: gemma-4-31b-it-8bit
+        contextWindow: 131072
+        capabilities: [text, image]
+      - id: gemma-4-26b-a4b-it-4bit
+        contextWindow: 131072
+        capabilities: [text, image]
+
+  # Another example: an OpenAI-compatible proxy / hub.
+  # naxxen-openai:
+  #   engine: openai-compatible
+  #   baseUrl: https://api.example.com/v1
+  #   apiKey: sk-...
+  #   models:
+  #     - id: gpt-4o
+  #       contextWindow: 128000
+  #       maxTokens: 16384
+  #       capabilities: [text, image]

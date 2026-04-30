@@ -24,6 +24,7 @@ const FrontmatterSchema = z
     name: z.string().optional(),
     description: z.string().optional(),
     model: z.string().optional(),
+    fallback: z.string().optional(),
   })
   .passthrough();
 
@@ -38,6 +39,7 @@ export interface Persona {
   name: string;
   description: string;
   model: string | undefined;
+  fallback: string | undefined;
   systemPrompt: string;
 }
 
@@ -102,6 +104,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     name,
     description: agentMd.data.description ?? '',
     model: agentMd.data.model,
+    fallback: agentMd.data.fallback,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
 }
@@ -109,7 +112,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
 const SAMPLE_AGENTS_MD = `---
 name: hans
 description: Freundlicher persönlicher Assistent
-model: claude-opus-4-7
+model: anthropic/claude-opus-4-7
 ---
 
 - Antworte knapp und klar.

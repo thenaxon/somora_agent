@@ -1,8 +1,15 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { anthropicEngine } from '../engine/anthropic.ts';
-import { ensureDefaultAgent, listAgents, loadPersona } from '../persona/loader.ts';
+import { loadConfig } from '../config/loader.ts';
+import { type Config, resolveModelRef } from '../config/types.ts';
+import { engineRegistry } from '../engine/registry.ts';
+import {
+  ensureDefaultAgent,
+  listAgents,
+  loadPersona,
+  type Persona,
+} from '../persona/loader.ts';
 import {
   appendEvent,
   createSession,
@@ -58,6 +65,28 @@ async function publish(session: string, event: SseEvent): Promise<void> {
     }
   }
 }
+
+// Resolve a persona's model reference against the loaded config. Supports both
+// the canonical `provider/modelId` form and the bare `modelId` form (which we
+// match against the first provider that exposes that model — backwards compat
+// for older AGENTS.md files). Returns null if nothing matches.
+function resolveForPersona(config: Config, persona: Persona) {
+  const ref = persona.model;
+  if (!ref) return null;
+  if (ref.includes('/')) return resolveModelRef(config, ref);
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    const model = provider.models.find((m) => m.id === ref);
+    if (model) return { providerName, provider, modelId: ref, model };
+  }
+  return null;
+}
+
+const config = await loadConfig();
+logger.info({
+  msg: 'config.loaded',
+  providers: Object.keys(config.providers).join(','),
+  port: config.server.port,
+});
 
 const app = new Hono();
 
@@ -161,6 +190,21 @@ app.post('/chat/send', async (c) => {
     return c.json({ error: `agent '${agent}' nicht gefunden — lege ~/.somora/agents/${agent}/AGENTS.md an` }, 404);
   }
 
+  const resolvedModel = resolveForPersona(config, persona);
+  if (!resolvedModel) {
+    logger.error({ msg: 'chat.send.model_unresolved', agent, ref: persona.model });
+    return c.json(
+      {
+        error: `model '${persona.model ?? '(none)'}' für agent '${agent}' lässt sich nicht aus config.yaml auflösen — Format: provider/modelId`,
+      },
+      500,
+    );
+  }
+  const engine = engineRegistry[resolvedModel.provider.engine];
+  if (!engine) {
+    return c.json({ error: `keine engine '${resolvedModel.provider.engine}' registriert` }, 500);
+  }
+
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) {
     return c.json(
@@ -171,12 +215,20 @@ app.post('/chat/send', async (c) => {
     );
   }
 
-  logger.info({ msg: 'chat.send', agent, session, ref: sessionRef, len: text.length });
+  logger.info({
+    msg: 'chat.send',
+    agent,
+    session,
+    ref: sessionRef,
+    provider: resolvedModel.providerName,
+    model: resolvedModel.modelId,
+    len: text.length,
+  });
 
   await appendEvent(agent, session, {
     kind: 'user_message',
     ts: Date.now(),
-    engine: anthropicEngine.name,
+    engine: engine.name,
     text,
   });
 
@@ -184,13 +236,14 @@ app.post('/chat/send', async (c) => {
     await publish(session, { event: 'agent', data: { phase: 'start' } });
     try {
       const history = await getHistory(agent, session);
-      const stream = anthropicEngine.runTurn({
+      const stream = engine.runTurn({
         agent,
         session,
         systemPrompt: persona.systemPrompt,
         userMessage: text,
         history,
         metaStore: sessionMetaStore,
+        resolvedModel,
       });
       for await (const ev of stream) {
         await appendEvent(agent, session, ev);
@@ -207,7 +260,7 @@ app.post('/chat/send', async (c) => {
   return c.json({ ok: true }, 202);
 });
 
-const port = Number(process.env.SOMORA_PORT ?? 18737);
+const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 
 await ensureDefaultAgent();
 const agentList = await listAgents();
