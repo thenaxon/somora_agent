@@ -19,6 +19,13 @@ export interface TurnInput {
   history: NormalizedEvent[];
   metaStore: SessionMetaStore;
   resolvedModel: ResolvedModel;
+  /**
+   * All (provider, model) pairs configured in the server. Used by
+   * compaction to pick a worker model whose window can fit the
+   * to-be-summarized history (DECISION #21a). Engines that don't run
+   * compaction can ignore this field.
+   */
+  availableModels: ResolvedModel[];
 }
 
 export interface AgentEngine {

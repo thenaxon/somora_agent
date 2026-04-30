@@ -2,7 +2,7 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { configPath, loadConfig } from '../config/loader.ts';
-import { type Config, resolveAnyRef } from '../config/types.ts';
+import { type Config, listAllModels, resolveAnyRef } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import {
   ensureDefaultAgent,
@@ -462,6 +462,7 @@ app.post('/chat/send', async (c) => {
           userMessage: text,
           history,
           metaStore: sessionMetaStore,
+          availableModels: listAllModels(config),
         },
       });
       for await (const ev of stream) {

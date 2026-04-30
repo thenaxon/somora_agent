@@ -98,7 +98,8 @@ export const openAiCompatibleEngine: AgentEngine = {
   name: ENGINE,
 
   async *runTurn(input: TurnInput): AsyncIterable<NormalizedEvent> {
-    const { agent, session, systemPrompt, history, metaStore, resolvedModel } = input;
+    const { agent, session, systemPrompt, history, metaStore, resolvedModel, availableModels } =
+      input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`openai-compatible engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
     }
@@ -137,6 +138,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           systemPrompt,
           history,
           resolvedModel,
+          availableModels,
           compactions,
           config: compactionConfig,
         });

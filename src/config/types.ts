@@ -109,6 +109,22 @@ export function resolveAnyRef(config: Config, ref: string): ResolvedModel | null
 }
 
 /**
+ * Enumerate every (provider, model) pair in the config as a ResolvedModel.
+ * Used by compaction to pick a worker model with appropriate context
+ * window (DECISION #21a) — independent of which model the current
+ * turn is on.
+ */
+export function listAllModels(config: Config): ResolvedModel[] {
+  const list: ResolvedModel[] = [];
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    for (const model of provider.models) {
+      list.push({ providerName, provider, modelId: model.id, model });
+    }
+  }
+  return list;
+}
+
+/**
  * Walks the config and asserts that no alias is shared by two models.
  * Throws with a descriptive error if duplicates are found.
  */

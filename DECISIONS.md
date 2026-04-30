@@ -187,8 +187,7 @@ weil dort kein Subprozess das übernimmt. Strategie nach Recherche
   (Claude-Code-Inspiration).
 - **Safety-Cushion:** letzte N Turns / X Tokens immer unangetastet.
 - **Stapelbar:** Array von Compactions, jede umfasst alle vorherigen.
-- **Engine-Modell:** Default = gleiches Modell wie Session, per Config
-  überschreibbar (`compactionModel` für günstigere Summaries).
+- **Engine-Modell:** dynamisch gewählt — siehe DECISION #21a.
 
 **Why:** Codex-Style (all-or-nothing, verbatim-only-user) wäre
 destruktiv und passt nicht zur JSONL-Ground-Truth-Philosophie
@@ -201,6 +200,56 @@ unserem Append-only-JSONL-Layout.
 wird beim Turn-Build im openai-compatible-Adapter aufgerufen.
 CLI-Engines respektieren den Marker bei der History-Übergabe;
 ihre _interne_ Compaction läuft zusätzlich als Sicherheitsnetz.
+
+### 21a. Compaction-Worker dynamisch wählen, Trigger am aktuellen Modell
+Die naive Lösung „Trigger am kleinsten Modell-Window" verschenkt
+große Modelle (Opus mit 1M würde wie ein 131k-Modell behandelt).
+Sauberere Aufteilung:
+
+- **Trigger** orientiert sich am **aktuellen Modell** des Turns.
+  - Auf Opus chatten → Trigger erst bei 80% × 1M = 800k. Buffer voll genutzt.
+  - Auf Gemma chatten → Trigger bei 80% × 131k = 105k. Gemmas Buffer.
+  - Wechsel von Opus (mit 500k history) zu Gemma → openai-compatible's
+    pre-turn-check sieht 500k vs Gemma's 105k → triggert sofort.
+- **Compaction-Worker** ist NICHT zwingend dasselbe Modell wie der Turn.
+  Wir wählen das _kleinste_ konfigurierte Modell, dessen Window die
+  zu summarisierende History fasst (mit ~30% Headroom für
+  Template-Overhead und Output).
+  - Estimate 50k → Gemma (131k) reicht → wähle Gemma (günstig+schnell)
+  - Estimate 200k → gpt-5.4-mini (400k codex-cli) als kleinstes passendes
+  - Estimate 500k → opus (1M claude-cli)
+  - Estimate 2M → kein Modell reicht → **Map-Reduce** (Phase 3, noch
+    nicht implementiert; aktuell hard fail mit klarer Meldung)
+- **`compactionModel`-Override** im Config kann diese Auto-Wahl überschreiben
+  (für „immer Opus benutzen" o.ä.).
+
+**Why:** Trigger und Worker haben verschiedene Constraints. Trigger
+ist user-experience (wann lohnt sich Compaction). Worker ist
+technisches Können (passt die History rein). Sie zu trennen erlaubt:
+„Opus' großes Window voll nutzen UND beim Wechsel zu Gemma trotzdem
+sauber compacten — durch das vorhandene große Modell."
+
+**How to apply:** `pickCompactionModel(estimate, candidates, override)`
+in `src/compaction/summarize.ts`. Iteriert über alle in der Config
+konfigurierten `(provider, model)`-Paare, filtert auf Window-Fit, sortiert
+aufsteigend nach Window, nimmt das kleinste. Engine-agnostic — kann
+claude-cli- ODER codex-cli- ODER openai-compatible-Modelle wählen.
+
+**Engine-Worker-Adapter:** für jede Engine eine separate
+`summarizeVia<Engine>(model, systemPrompt, userPrompt)`-Funktion in
+`src/compaction/summarize.ts`. Diese sind nicht-streaming, weil wir
+nur den finalen Summary-Text wollen. Logging (`engine.compaction_done`)
+nennt explizit `byEngine` und `byModel`, damit man im Betrieb sieht
+wer den Job gemacht hat.
+
+**Aktuelle Beschränkung:** Nur openai-compatible hat den pre-turn-check
+implementiert. Das deckt das wichtigste Failure-Szenario („Wechsel zu
+kleinem Window") ab, weil openai-compatible-Provider typisch die
+kleinsten Windows haben (Gemma 131k, lokale Modelle). Wechsel von
+großer History zu sonnet/haiku (claude-cli, 200k) wäre theoretisch
+auch problematisch — fängt aktuell die Anthropic-SDK-interne
+Compaction ODER der Fallback ab. Falls das in der Praxis bricht:
+pre-turn-check auch in claude-cli/codex-cli ausrollen. Heute YAGNI.
 
 ### 22a. Cross-Engine-Continuity über Session-Resume + Delta-Replay
 Die ursprüngliche Annahme im Phase-2-Plan — „beim Engine-Wechsel

@@ -59,6 +59,7 @@ export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   triggerRatio: parsePositiveFloat(process.env.SOMORA_COMPACTION_TRIGGER_RATIO) ?? 0.8,
   safetyCushionPairs:
     parsePositiveInt(process.env.SOMORA_COMPACTION_SAFETY_PAIRS) ?? 4,
+  modelOverride: process.env.SOMORA_COMPACTION_MODEL || undefined,
 };
 
 /** Picks the latest compaction whose `throughTs > sinceTs` (covers `sinceTs`). */
