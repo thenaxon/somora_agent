@@ -76,7 +76,26 @@ in `~/.somora/logs/server-YYYY-MM-DD.log`. Pretty-Print im Terminal wenn TTY.
 Daily-Rotation, Cleanup manuell. **Kein** Conversation-Inhalt im Server-Log
 (liegt in `agents/<name>/sessions/`). Levels über `SOMORA_LOG_LEVEL`-env.
 
-### 17. SDK-Defaults aus
-Bei jedem `query()`-Call: `settingSources: []` und `allowedTools` strikt auf eigene
-Tool-Liste. Keine impliziten SDK-Defaults (kein automatisches Skill-Loading,
-keine Built-in Tools wie Bash/Edit/WebSearch).
+### 17. SDK-Defaults aus — Vier-Schichten-Defense
+`settingSources: []` allein reicht **nicht**. Das Claude-Code-Binary bringt die
+User-claude.ai-MCPs (Gmail/Drive/Calendar) auch ohne File-Settings mit, weil die
+aus dem Account-Profil kommen — nicht aus settings-files. Bei jedem `query()`-Call
+deshalb:
+
+- `settingSources: []` — keine User/Project/Local-Settings-Files
+- `tools: []` — keine Built-ins (Bash/Edit/WebSearch/...)
+- `disallowedTools: KNOWN_ACCOUNT_TOOLS` — die bekannten claude.ai-Connector-Tools
+  hardcodiert blocken (siehe `src/engine/anthropic.ts`)
+- `mcpServers: {}` — leere Map; schließt User-MCPs nicht aus (sie bleiben im
+  Init-Header sichtbar), neutralisiert sie aber wenn keine Tools registriert sind
+- `canUseTool: () => deny` — Safety-Net: jeder unbekannte Tool-Call wird denied
+
+**Diagnose-Pflicht:** Im `engine.init`-Log werden `tools[]` und `mcp_servers[]`
+geloggt. Wenn `tools.length > 0` → `engine.tools_leaked`-Warning;
+wenn `mcp_servers.length > 0` → `engine.mcp_servers_leaked`-Warning.
+So sieht man neue Leaks (z.B. neue claude.ai-Connectors) sofort statt sie still
+mitlaufen zu lassen.
+
+**Annahme die wir verworfen haben:** `allowedTools: []` als Whitelist nutzen.
+Laut SDK-Doku ist `allowedTools` nur eine Auto-Approval-Liste (no-prompt),
+kein Filter. `disallowedTools` ist das richtige Werkzeug zum Blocken.
