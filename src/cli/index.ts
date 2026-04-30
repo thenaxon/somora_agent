@@ -12,13 +12,39 @@ let waiting = false;
 const promptStr = () => `[${agent}:${session}]> `;
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
-function clearLine(): void {
-  stdout.write('\r\x1b[K');
+// Append-only message rendering. Cumulative deltas: each new delta is the full
+// text so far, so we only print the suffix beyond what's already on screen.
+let displayedText = '';
+let firstChunkOfMessage = true;
+let messageFinalized = false;
+
+function startNewMessage(): void {
+  if (!firstChunkOfMessage && !messageFinalized) {
+    stdout.write('\n');
+  }
+  displayedText = '';
+  firstChunkOfMessage = true;
+  messageFinalized = false;
 }
 
 function renderDelta(text: string): void {
-  clearLine();
-  stdout.write(`${agent}: ${text}`);
+  if (firstChunkOfMessage) {
+    stdout.write(`${agent}: `);
+    firstChunkOfMessage = false;
+  }
+  if (text.startsWith(displayedText)) {
+    stdout.write(text.slice(displayedText.length));
+  } else {
+    // text diverged from what's on screen — break to a new line and reprint
+    stdout.write(`\n${agent}: ${text}`);
+  }
+  displayedText = text;
+}
+
+function finalizeMessage(text: string): void {
+  renderDelta(text);
+  stdout.write('\n');
+  messageFinalized = true;
 }
 
 async function consumeStream(): Promise<void> {
@@ -55,14 +81,11 @@ async function consumeStream(): Promise<void> {
       }
 
       if (evName === 'chat') {
-        if (data.state === 'delta') {
-          renderDelta(data.text);
-        } else if (data.state === 'final') {
-          renderDelta(data.text);
-          stdout.write('\n');
-        }
+        if (data.state === 'delta') renderDelta(data.text);
+        else if (data.state === 'final') finalizeMessage(data.text);
       } else if (evName === 'agent') {
-        if (data.phase === 'end') {
+        if (data.phase === 'start') startNewMessage();
+        else if (data.phase === 'end') {
           waiting = false;
           rl.prompt();
         }
