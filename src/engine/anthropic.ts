@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
@@ -16,6 +16,24 @@ async function* userInputStream(text: string): AsyncIterable<SDKUserMessage> {
 
 const ENGINE = 'anthropic';
 const MODEL = 'claude-opus-4-7';
+
+// Known account-level MCP tools that leak in via the Claude Code binary's
+// user profile (claude.ai web connectors). settingSources: [] doesn't keep
+// these out — we have to disallow them explicitly. Plus canUseTool denies
+// anything else that might appear later.
+const KNOWN_ACCOUNT_TOOLS = [
+  'mcp__claude_ai_Gmail__authenticate',
+  'mcp__claude_ai_Gmail__complete_authentication',
+  'mcp__claude_ai_Google_Calendar__authenticate',
+  'mcp__claude_ai_Google_Calendar__complete_authentication',
+  'mcp__claude_ai_Google_Drive__authenticate',
+  'mcp__claude_ai_Google_Drive__complete_authentication',
+];
+
+const denyAllTools: CanUseTool = async (toolName) => ({
+  behavior: 'deny',
+  message: `Tool '${toolName}' ist in dieser somora-Session nicht freigegeben.`,
+});
 
 function resolveClaudeBin(): string | undefined {
   if (process.env.SOMORA_CLAUDE_BIN) return process.env.SOMORA_CLAUDE_BIN;
@@ -57,6 +75,9 @@ export const anthropicEngine: AgentEngine = {
           systemPrompt,
           settingSources: [],
           tools: [],
+          disallowedTools: KNOWN_ACCOUNT_TOOLS,
+          mcpServers: {},
+          canUseTool: denyAllTools,
           ...(CLAUDE_BIN ? { pathToClaudeCodeExecutable: CLAUDE_BIN } : {}),
           ...(resume ? { resume } : {}),
         },
@@ -75,7 +96,25 @@ export const anthropicEngine: AgentEngine = {
             model: msg.model,
             sessionId: msg.session_id,
             resumed: Boolean(resume),
+            tools: msg.tools,
+            mcpServers: msg.mcp_servers,
           });
+          if (msg.tools.length > 0) {
+            logger.warn({
+              msg: 'engine.tools_leaked',
+              engine: ENGINE,
+              tools: msg.tools,
+              hint: 'Tools reached Claude despite disallowedTools/mcpServers/canUseTool. Update KNOWN_ACCOUNT_TOOLS in anthropic.ts.',
+            });
+          }
+          if (msg.mcp_servers.length > 0) {
+            logger.warn({
+              msg: 'engine.mcp_servers_leaked',
+              engine: ENGINE,
+              mcpServers: msg.mcp_servers,
+              hint: 'Account-level MCP servers leaked into the session despite mcpServers: {}.',
+            });
+          }
         } else if (msg.type === 'assistant') {
           for (const block of msg.message.content) {
             if (block.type === 'text') {
