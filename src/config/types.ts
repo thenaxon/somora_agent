@@ -10,6 +10,16 @@ export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
 
 export const ModelSchema = z.object({
   id: z.string().min(1),
+  /**
+   * Optional shorthand. Must be globally unique across the whole config.
+   * Lets you write `model: opus` in a persona instead of
+   * `model: anthropic/claude-opus-4-7`.
+   */
+  alias: z
+    .string()
+    .min(1)
+    .regex(/^[A-Za-z0-9_-]+$/, 'alias must match [A-Za-z0-9_-]+')
+    .optional(),
   contextWindow: z.number().int().positive(),
   capabilities: z.array(ModelCapabilitySchema).default(['text']),
   maxTokens: z.number().int().positive().optional(),
@@ -63,4 +73,47 @@ export function resolveModelRef(config: Config, ref: string): ResolvedModel | nu
   const model = provider.models.find((m) => m.id === modelId);
   if (!model) return null;
   return { providerName, provider, modelId, model };
+}
+
+/**
+ * Resolve a string ref to a model. Tries (in order): alias → provider/id → bare id.
+ * Aliases are global and take precedence; bare ids are backwards-compat for older
+ * AGENTS.md files written before the provider/id format existed.
+ */
+export function resolveAnyRef(config: Config, ref: string): ResolvedModel | null {
+  // 1. alias lookup (global unique)
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    for (const model of provider.models) {
+      if (model.alias === ref) {
+        return { providerName, provider, modelId: model.id, model };
+      }
+    }
+  }
+  // 2. provider/modelId
+  if (ref.includes('/')) return resolveModelRef(config, ref);
+  // 3. bare modelId (backwards-compat)
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    const model = provider.models.find((m) => m.id === ref);
+    if (model) return { providerName, provider, modelId: ref, model };
+  }
+  return null;
+}
+
+/**
+ * Walks the config and asserts that no alias is shared by two models.
+ * Throws with a descriptive error if duplicates are found.
+ */
+export function assertUniqueAliases(config: Config): void {
+  const seen = new Map<string, string>();
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    for (const model of provider.models) {
+      if (!model.alias) continue;
+      const previous = seen.get(model.alias);
+      const here = `${providerName}/${model.id}`;
+      if (previous) {
+        throw new Error(`alias '${model.alias}' is used by both '${previous}' and '${here}' — aliases must be globally unique`);
+      }
+      seen.set(model.alias, here);
+    }
+  }
 }

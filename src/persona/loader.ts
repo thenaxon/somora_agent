@@ -112,7 +112,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
 const SAMPLE_AGENTS_MD = `---
 name: hans
 description: Freundlicher persönlicher Assistent
-model: anthropic/claude-opus-4-7
+model: opus
 ---
 
 - Antworte knapp und klar.

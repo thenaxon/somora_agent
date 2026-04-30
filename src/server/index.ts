@@ -2,7 +2,7 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { loadConfig } from '../config/loader.ts';
-import { type Config, resolveModelRef } from '../config/types.ts';
+import { type Config, resolveAnyRef } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import {
   ensureDefaultAgent,
@@ -66,19 +66,11 @@ async function publish(session: string, event: SseEvent): Promise<void> {
   }
 }
 
-// Resolve a persona's model reference against the loaded config. Supports both
-// the canonical `provider/modelId` form and the bare `modelId` form (which we
-// match against the first provider that exposes that model — backwards compat
-// for older AGENTS.md files). Returns null if nothing matches.
+// Resolve a persona's model reference against the loaded config. Tries alias,
+// provider/modelId, and bare modelId in order — see resolveAnyRef for details.
 function resolveForPersona(config: Config, persona: Persona) {
-  const ref = persona.model;
-  if (!ref) return null;
-  if (ref.includes('/')) return resolveModelRef(config, ref);
-  for (const [providerName, provider] of Object.entries(config.providers)) {
-    const model = provider.models.find((m) => m.id === ref);
-    if (model) return { providerName, provider, modelId: ref, model };
-  }
-  return null;
+  if (!persona.model) return null;
+  return resolveAnyRef(config, persona.model);
 }
 
 const config = await loadConfig();

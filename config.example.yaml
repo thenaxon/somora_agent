@@ -1,42 +1,59 @@
 # Example somora config. Real config lives at ~/.somora/config.yaml
 # (created with sane defaults on first server start). API keys go in plain
 # text in the real file — that file stays local, never committed.
+#
+# Provider names are free-form keys. Pick whatever's memorable for you:
+# 'anthropic', 'ollama', 'lmstudio', 'naxxen-cloud', 'pi-im-keller', etc.
+#
+# Per-model 'alias' lets you reference a model by short nickname anywhere
+# (persona frontmatter, later /model in the CLI). Aliases must be globally
+# unique across the whole config — server refuses to start otherwise.
 
 server:
   port: 18737
 
 providers:
   # Anthropic via Claude Code subscription. Uses the local Claude Code
-  # binary (~/.local/bin/claude). No baseUrl / apiKey needed — the binary
-  # already holds the user's session.
+  # binary (~/.local/bin/claude) — no baseUrl / apiKey needed.
   anthropic:
     engine: claude-cli
     models:
       - id: claude-opus-4-7
+        alias: opus
+        contextWindow: 1000000
+        capabilities: [text, image]
+      - id: claude-sonnet-4-6
+        alias: sonnet
         contextWindow: 200000
-        capabilities: [text]
+        capabilities: [text, image]
+      - id: claude-haiku-4-5
+        alias: haiku
+        contextWindow: 200000
+        capabilities: [text, image]
 
   # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).
-  # Multiple providers of the same engine are fine — pick a unique name.
+  # Multiple providers of the same engine are fine — just give each a unique key.
   omlx:
     engine: openai-compatible
     baseUrl: http://192.168.60.47:11434/v1
     apiKey: lm-studio
     models:
       - id: gemma-4-31b-it-8bit
+        alias: gemma4big
         contextWindow: 131072
         capabilities: [text, image]
       - id: gemma-4-26b-a4b-it-4bit
+        alias: gemma4small
         contextWindow: 131072
         capabilities: [text, image]
 
-  # Another example: an OpenAI-compatible proxy / hub.
-  # naxxen-openai:
+  # Same engine, different host — totally fine.
+  # ollama:
   #   engine: openai-compatible
-  #   baseUrl: https://api.example.com/v1
-  #   apiKey: sk-...
+  #   baseUrl: http://192.168.60.99:11434/v1
+  #   apiKey: dummy
   #   models:
-  #     - id: gpt-4o
-  #       contextWindow: 128000
-  #       maxTokens: 16384
-  #       capabilities: [text, image]
+  #     - id: llama3.3:70b
+  #       alias: llama
+  #       contextWindow: 131072
+  #       capabilities: [text]
