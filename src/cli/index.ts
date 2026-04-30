@@ -10,7 +10,34 @@ let session = 'main';
 let waiting = false;
 let streamAbort: AbortController | null = null;
 
-const promptStr = () => `[${agent}:${session}]> `;
+interface TurnStats {
+  tokensIn: number;
+  tokensOut: number;
+  contextWindow: number | null;
+  provider: string | null;
+  model: string | null;
+}
+let lastTurn: TurnStats | null = null;
+
+function formatTokens(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 100_000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+const promptStr = () => {
+  const parts = [`${agent}:${session}`];
+  if (lastTurn) {
+    if (lastTurn.contextWindow) {
+      parts.push(`${formatTokens(lastTurn.tokensIn)}/${formatTokens(lastTurn.contextWindow)}`);
+    } else {
+      parts.push(`${formatTokens(lastTurn.tokensIn)}↑`);
+    }
+    parts.push(`↓${formatTokens(lastTurn.tokensOut)}`);
+  }
+  return `[${parts.join(' · ')}]> `;
+};
 const rl = readline.createInterface({ input: stdin, output: stdout });
 
 // Append-only message rendering. Cumulative deltas: each delta is the full
@@ -104,6 +131,16 @@ async function consumeStream(): Promise<void> {
         } else if (evName === 'agent') {
           if (data.phase === 'start') startNewMessage();
           else if (data.phase === 'end') {
+            if (data.usage) {
+              lastTurn = {
+                tokensIn: data.usage.tokens_in ?? 0,
+                tokensOut: data.usage.tokens_out ?? 0,
+                contextWindow: data.contextWindow ?? null,
+                provider: data.provider ?? null,
+                model: data.model ?? null,
+              };
+              rl.setPrompt(promptStr());
+            }
             waiting = false;
             rl.prompt();
           }
@@ -224,6 +261,7 @@ async function clearSessionModel(forAgent: string, forSession: string): Promise<
 async function switchTo(newAgent: string, newSession: string): Promise<void> {
   agent = newAgent;
   session = newSession;
+  lastTurn = null; // stats are session-scoped; clear on switch
   rl.setPrompt(promptStr());
   reconnectStream();
 }

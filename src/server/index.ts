@@ -328,7 +328,15 @@ app.post('/chat/send', async (c) => {
   });
 
   void (async () => {
-    await publish(session, { event: 'agent', data: { phase: 'start' } });
+    await publish(session, {
+      event: 'agent',
+      data: {
+        phase: 'start',
+        provider: resolvedModel.providerName,
+        model: resolvedModel.modelId,
+      },
+    });
+    let lastUsage: { tokens_in: number; tokens_out: number } | undefined;
     try {
       const history = await getHistory(agent, session);
       const stream = engine.runTurn({
@@ -341,13 +349,10 @@ app.post('/chat/send', async (c) => {
         resolvedModel,
       });
       for await (const ev of stream) {
-        // Streaming deltas are transient — only relevant for the live SSE
-        // feed. The canonical record is `assistant_message` (final). Persisting
-        // every delta would duplicate the same cumulative text dozens of times
-        // and bloat the session JSONL for no replay benefit.
         if (ev.kind !== 'assistant_delta') {
           await appendEvent(agent, session, ev);
         }
+        if (ev.kind === 'turn_end' && ev.usage) lastUsage = ev.usage;
         const sse = eventToSse(ev);
         if (sse) await publish(session, sse);
       }
@@ -355,7 +360,16 @@ app.post('/chat/send', async (c) => {
       logger.error({ msg: 'turn.fail', agent, session, err: String(err) });
       await publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     }
-    await publish(session, { event: 'agent', data: { phase: 'end' } });
+    await publish(session, {
+      event: 'agent',
+      data: {
+        phase: 'end',
+        ...(lastUsage ? { usage: lastUsage } : {}),
+        contextWindow: resolvedModel.model.contextWindow,
+        provider: resolvedModel.providerName,
+        model: resolvedModel.modelId,
+      },
+    });
   })();
 
   return c.json({ ok: true }, 202);

@@ -13,6 +13,15 @@ export type NormalizedEvent =
 // Wire format over SSE — orbit-compatible. Deltas are cumulative.
 export type SseEvent =
   | { event: 'chat'; data: { state: 'delta' | 'final'; text: string } }
-  | { event: 'agent'; data: { phase: 'start' | 'end' } }
+  | {
+      event: 'agent';
+      data: {
+        phase: 'start' | 'end';
+        usage?: { tokens_in: number; tokens_out: number };
+        contextWindow?: number;
+        provider?: string;
+        model?: string;
+      };
+    }
   | { event: 'tool'; data: { phase: 'call' | 'result'; tool?: string; input?: unknown; output?: unknown; error?: string } }
   | { event: 'status'; data: { msg: string } };
