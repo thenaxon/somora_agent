@@ -4,20 +4,24 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-04-30, commit `polish-3` + Phase-2-Architekturplanung)
+## Wo wir stehen (Stand: 2026-05-01, commits `phase 2a/b/c`)
 
-**Phase 1 ist komplett**, plus drei Polish-Schritte. Das System ist
-funktional benutzbar — `npm run dev:server` + `npm run dev:cli` läuft,
-beide Engines reden, Sessions persistieren, Provider/Model-Switching
-ist live.
+**Phase 1 + Phase 2-Stufe-A komplett.** Drei Engines im Gleichstand auf
+Konversations- und Compaction-Ebene. System ist funktional benutzbar —
+`npm run dev:server` + `npm run dev:cli` läuft, alle drei Engines
+reden, Sessions persistieren, `/model`-Switching ist live, Compaction
+greift automatisch + cross-engine.
 
 ### Was funktioniert
 
 - **Server** (Hono auf 18737, SSE) — `src/server/index.ts`
 - **CLI** mit Slash-Commands — `src/cli/index.ts`
-- **Engine-Layer** mit zwei Adaptern:
+- **Engine-Layer** mit drei Adaptern:
   - `claude-cli` — Anthropic via Claude-Code-Subscription, Token-Streaming via
     `includePartialMessages`, 4-Schicht-Defense gegen Account-MCP-Leak
+  - `codex-cli` — OpenAI via ChatGPT-Subscription (Pro/Plus/Business), Subprozess
+    `codex exec --json` mit NDJSON-Event-Parser, `codex exec resume <thread_id>`
+    für Folge-Turns
   - `openai-compatible` — `chat.completions` gegen jede BaseUrl, getestet
     gegen `omlx`-Server mit Gemma-Modellen
 - **Provider/Model/Alias-System** — `src/config/types.ts`, `src/config/loader.ts`
@@ -27,10 +31,37 @@ ist live.
 - **Persona-System** — AGENTS.md/SOUL.md/USER.md pro Agent in
   `~/.somora/agents/<name>/`, Frontmatter mit `model:` und `fallback:`
 - **Sessions** — `<YYYYMMDD-HHMMSS>_<slug>.jsonl` + `*.meta.json` companion;
-  `main` als magic always-present-name
+  `main` als magic always-present-name. Meta-File hält additiv:
+  `engine`, `sdkSessionId` (claude-cli), `codexSessionId` (codex-cli),
+  `modelOverride`, `engineLastSeen[]`, `compactions[]`
+- **Cross-Engine-Continuity** — jede CLI-Engine reaktiviert ihre eigene
+  interne Session immer (durch `sdkSessionId`/`codexSessionId`); Lücken
+  durch andere Engines werden via Delta-Replay als Markdown-Kontext-
+  Block vor der user-message nachgeschüttelt. Replay ist
+  compaction-aware: bei langer Lücke kommt Summary statt vieler Pairs
+- **Compaction** für `openai-compatible` (DECISION #21 + #21a):
+  - Pre-turn-check ab 80% des aktuellen Modell-Windows (configurierbar
+    via `SOMORA_COMPACTION_TRIGGER_RATIO`)
+  - Non-destructive: JSONL bleibt unangetastet, `compactions[]`-Array
+    im Meta wächst stapelbar
+  - 5-Sektion-Summary-Template (Goal/Constraints/Decisions/Recent/Open)
+  - Worker-Modell **dynamisch gewählt**: kleinstes konfiguriertes Modell
+    dessen Window die History fasst (estimate × 1.3 Headroom). Engine-
+    agnostic — claude-cli/codex-cli/openai-compatible-Modelle alle
+    valide. Override per `SOMORA_COMPACTION_MODEL` env (alias oder
+    `provider/modelId`)
+  - Safety-Cushion: konfigurierbar via `SOMORA_COMPACTION_SAFETY_PAIRS`
+    (default 4), behält die N jüngsten Pairs unkomprimiert
+  - Map-Reduce für Histories die selbst das größte Modell sprengen
+    würden ist NICHT implementiert — fail mit klarer Meldung
+- **Token-Counting konsistent** — alle drei Engines reporten `tokens_in`
+  als TOTAL Context-Tokens (cached + uncached) damit das `X/window`-
+  Display ehrlich ist
 - **CLI-Polish** — Token/Context-Display im Prompt: `[hans:main · 12k/1000k · ↓42]>`
 - **Fallback-Logik** — wenn primary vor Output failt → `persona.fallback`
-- **Logging** — Pino, daily JSONL, Pretty-TTY mit `singleLine`
+- **Logging** — Pino, daily JSONL, Pretty-TTY mit `singleLine`. Wichtige
+  Compaction-Events: `engine.compaction_trigger`, `compaction.worker_chosen`,
+  `engine.compaction_done`, `engine.replay`
 
 ### Slash-Commands im CLI
 
@@ -68,12 +99,16 @@ DELETE /agents/:agent/sessions/:session/model
 
 ## Was bewusst NICHT da ist
 
-- **Memory-Layer** — Phase 2. Rene hat hier Spezialwünsche, deshalb in
-  der nächsten Session erst **diskutieren**, dann bauen. Mein erster
-  Anlauf (Memory.md → System-Prompt) wurde verworfen.
-- **Eigenes Tool-System** — Phase 2 nach Memory. Definition, MCP-Hookup
-  beim Anthropic-SDK, Tool-Call-Loop beim OpenAI-Adapter, Allowlist
-  pro Agent. Nichts davon existiert.
+- **Memory-Layer** — Phase-2-Stufe-B (nächster Schritt). Rene hat
+  Spezialwünsche, deshalb in der nächsten Session erst **diskutieren**,
+  dann bauen. Mein erster Anlauf (Memory.md → System-Prompt) wurde
+  verworfen.
+- **Eigenes Tool-System** — Phase-2-Stufe-C, nach Memory. Definition,
+  MCP-Hookup bei den CLI-Engines, Tool-Call-Loop beim OpenAI-Adapter,
+  Allowlist pro Agent. Nichts davon existiert.
+- **Map-Reduce-Compaction** — Phase 3, falls je benötigt. Wird erst
+  relevant wenn das größte konfigurierte Modell (typisch Opus 1M) als
+  Compaction-Worker nicht mehr reicht.
 - **Voice / Realtime** — Phase 3.
 - **Telegram-Channel** — Phase 3.
 
@@ -225,14 +260,24 @@ resume → ohne. Siehe `src/engine/codex-cli.ts`.
 ## Pickup für nächste Session
 
 Erster Satz beim Wiedereinstieg sollte sein:
-> „Wir stehen bei `polish-3`. Phase 1 ist durch, beide Engines auf
-> Gleichstand. Du wolltest in der nächsten Session über die
-> Memory-Schicht reden — du hast da Spezialwünsche. Ich hör erst zu,
-> nicht vorbauen."
+> „Wir stehen bei `phase 2c`. Drei-Engine-Parität ist durch:
+> claude-cli, codex-cli, openai-compatible. Cross-Engine-Continuity
+> via Session-Resume + Delta-Replay funktioniert. Compaction für
+> openai-compatible ist da, mit dynamischer engine-agnostic
+> Worker-Wahl. Du wolltest jetzt über die Memory-Schicht reden —
+> du hast da Spezialwünsche. Ich hör erst zu, nicht vorbauen."
 
 Wichtig: Memory ist bewusst noch unangerührt. Nicht spontan starten,
 auch wenn Auto-Mode aktiv ist. Erst Renes Vorstellungen aufnehmen,
 dann gemeinsam designen.
+
+### Test-Sessions zum Aufräumen
+
+Während Stufe A wurden mehrere Test-Sessions in
+`~/.somora/agents/hans/sessions/` angelegt: `codex-smoke`,
+`codex-smoke2`, `codex-resume`, `tokens-test`, `crossengine`,
+`compaction-test`, `smartcompact`, `crossworker`. Können bei
+Gelegenheit per `rm` weg.
 
 ---
 
