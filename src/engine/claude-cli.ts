@@ -85,10 +85,18 @@ export const claudeCliEngine: AgentEngine = {
           disallowedTools: KNOWN_ACCOUNT_TOOLS,
           mcpServers: {},
           canUseTool: denyAllTools,
+          includePartialMessages: true,
           ...(CLAUDE_BIN ? { pathToClaudeCodeExecutable: CLAUDE_BIN } : {}),
           ...(resume ? { resume } : {}),
         },
       });
+
+      // When includePartialMessages is on, text arrives via stream_event /
+      // content_block_delta tokens. The trailing 'assistant' message then
+      // contains the same text again — we skip its text blocks to avoid
+      // double-emitting. Tool-use blocks still come from the assistant
+      // message because they're not streamed as deltas.
+      let receivedTextViaStream = false;
 
       for await (const msg of stream) {
         if ('session_id' in msg && typeof msg.session_id === 'string') {
@@ -127,9 +135,16 @@ export const claudeCliEngine: AgentEngine = {
             });
             mcpLeakWarned = true;
           }
+        } else if (msg.type === 'stream_event') {
+          const ev = msg.event;
+          if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta') {
+            cumulative += ev.delta.text;
+            receivedTextViaStream = true;
+            yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
+          }
         } else if (msg.type === 'assistant') {
           for (const block of msg.message.content) {
-            if (block.type === 'text') {
+            if (block.type === 'text' && !receivedTextViaStream) {
               cumulative += block.text;
               yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
             } else if (block.type === 'tool_use') {
