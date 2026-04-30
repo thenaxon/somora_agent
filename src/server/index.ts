@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { loadConfig } from '../config/loader.ts';
+import { configPath, loadConfig } from '../config/loader.ts';
 import { type Config, resolveAnyRef } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import {
@@ -73,7 +73,18 @@ function resolveForPersona(config: Config, persona: Persona) {
   return resolveAnyRef(config, persona.model);
 }
 
-const config = await loadConfig();
+let config;
+try {
+  config = await loadConfig();
+} catch (err) {
+  // pino's worker transport can swallow the error during fast crash; print
+  // directly to stderr so the operator sees what's wrong with their config.
+  console.error('\n\x1b[31m[!] somora konnte ~/.somora/config.yaml nicht laden:\x1b[0m\n');
+  console.error((err as Error).message);
+  console.error(`\nDatei: ${configPath()}`);
+  console.error('Bitte YAML / Schema fixen und Server neu starten.\n');
+  process.exit(1);
+}
 logger.info({
   msg: 'config.loaded',
   providers: Object.keys(config.providers).join(','),
@@ -238,7 +249,13 @@ app.post('/chat/send', async (c) => {
         resolvedModel,
       });
       for await (const ev of stream) {
-        await appendEvent(agent, session, ev);
+        // Streaming deltas are transient — only relevant for the live SSE
+        // feed. The canonical record is `assistant_message` (final). Persisting
+        // every delta would duplicate the same cumulative text dozens of times
+        // and bloat the session JSONL for no replay benefit.
+        if (ev.kind !== 'assistant_delta') {
+          await appendEvent(agent, session, ev);
+        }
         const sse = eventToSse(ev);
         if (sse) await publish(session, sse);
       }
