@@ -1,8 +1,31 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import type { SseEvent } from '../types/events.ts';
+import { anthropicEngine } from '../engine/anthropic.ts';
+import { appendEvent, getHistory, sessionMetaStore } from '../storage/sessions.ts';
+import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
+
+// Hardcoded persona — proper loader from AGENTS.md/SOUL.md/USER.md comes in step 2.
+const STUB_SYSTEM_PROMPT = `Du bist Hans, ein freundlicher persönlicher Assistent von Rene.
+Antworte knapp, klar und auf Deutsch. Wenn du etwas nicht weißt, sag es ehrlich.`;
+
+function eventToSse(ev: NormalizedEvent): SseEvent | null {
+  switch (ev.kind) {
+    case 'assistant_delta':
+      return { event: 'chat', data: { state: 'delta', text: ev.text } };
+    case 'assistant_message':
+      return { event: 'chat', data: { state: 'final', text: ev.text } };
+    case 'tool_call':
+      return { event: 'tool', data: { phase: 'call', tool: ev.tool, input: ev.input } };
+    case 'tool_result':
+      return { event: 'tool', data: { phase: 'result', output: ev.output, ...(ev.error ? { error: ev.error } : {}) } };
+    case 'error':
+      return { event: 'status', data: { msg: `error: ${ev.message}` } };
+    default:
+      return null;
+  }
+}
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 const streams = new Map<string, Set<Subscriber>>();
@@ -78,17 +101,33 @@ app.post('/chat/send', async (c) => {
   const text = body.text ?? '';
   logger.info({ msg: 'chat.send', agent, session, len: text.length });
 
-  // Stub turn — emits a fake reply as cumulative deltas. Real engine comes in step 1b.
+  appendEvent(agent, session, {
+    kind: 'user_message',
+    ts: Date.now(),
+    engine: anthropicEngine.name,
+    text,
+  });
+
   void (async () => {
     await publish(session, { event: 'agent', data: { phase: 'start' } });
-    const reply = `(stub) Du sagtest: "${text}"`;
-    let acc = '';
-    for (const chunk of reply.match(/.{1,6}/g) ?? []) {
-      acc += chunk;
-      await publish(session, { event: 'chat', data: { state: 'delta', text: acc } });
-      await new Promise((r) => setTimeout(r, 60));
+    try {
+      const stream = anthropicEngine.runTurn({
+        agent,
+        session,
+        systemPrompt: STUB_SYSTEM_PROMPT,
+        userMessage: text,
+        history: getHistory(agent, session),
+        metaStore: sessionMetaStore,
+      });
+      for await (const ev of stream) {
+        appendEvent(agent, session, ev);
+        const sse = eventToSse(ev);
+        if (sse) await publish(session, sse);
+      }
+    } catch (err) {
+      logger.error({ msg: 'turn.fail', agent, session, err: String(err) });
+      await publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     }
-    await publish(session, { event: 'chat', data: { state: 'final', text: acc } });
     await publish(session, { event: 'agent', data: { phase: 'end' } });
   })();
 
