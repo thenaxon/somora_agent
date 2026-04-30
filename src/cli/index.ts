@@ -172,6 +172,55 @@ async function createNewSession(forAgent: string, slug: string): Promise<string>
   return data.id;
 }
 
+interface ModelInfo {
+  provider: string;
+  id: string;
+  alias: string | null;
+  engine: string;
+  contextWindow: number;
+  capabilities: string[];
+  ref: string;
+}
+
+async function fetchModels(): Promise<ModelInfo[]> {
+  const res = await fetch(`${base}/models`);
+  if (!res.ok) return [];
+  return (await res.json()) as ModelInfo[];
+}
+
+interface SessionModelInfo {
+  provider: string;
+  modelId: string;
+  alias: string | null;
+  engine: string;
+  contextWindow: number;
+  source: 'session-override' | 'persona-default';
+  override: string | null;
+  personaDefault: string | null;
+}
+
+async function fetchSessionModel(forAgent: string, forSession: string): Promise<SessionModelInfo | null> {
+  const res = await fetch(`${base}/agents/${encodeURIComponent(forAgent)}/sessions/${encodeURIComponent(forSession)}/model`);
+  if (!res.ok) return null;
+  return (await res.json()) as SessionModelInfo;
+}
+
+async function setSessionModel(forAgent: string, forSession: string, ref: string): Promise<void> {
+  const res = await fetch(`${base}/agents/${encodeURIComponent(forAgent)}/sessions/${encodeURIComponent(forSession)}/model`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: ref }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+async function clearSessionModel(forAgent: string, forSession: string): Promise<void> {
+  const res = await fetch(`${base}/agents/${encodeURIComponent(forAgent)}/sessions/${encodeURIComponent(forSession)}/model`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 async function switchTo(newAgent: string, newSession: string): Promise<void> {
   agent = newAgent;
   session = newSession;
@@ -188,6 +237,10 @@ Available commands:
   /session <slug-or-id>       — switch to another session of current agent
   /new <slug>                 — create new session and switch to it
   /main                       — back to main session of current agent
+  /models                     — list all configured models with aliases
+  /model                      — show current effective model for this session
+  /model <alias-or-ref>       — override model for this session
+  /model default              — clear override, fall back to persona model
   /quit, /exit                — leave somora
 `;
 
@@ -263,6 +316,58 @@ async function handleCommand(line: string): Promise<void> {
     case '/main':
       await switchTo(agent, 'main');
       return;
+    case '/models': {
+      const models = await fetchModels();
+      stdout.write('\nModels:\n');
+      const aliasW = Math.max(5, ...models.map((m) => (m.alias ?? '-').length));
+      const refW = Math.max(20, ...models.map((m) => `${m.provider}/${m.id}`.length));
+      stdout.write(`  ${'alias'.padEnd(aliasW)}  ${'provider/id'.padEnd(refW)}  engine                 ctx     caps\n`);
+      for (const m of models) {
+        const alias = (m.alias ?? '-').padEnd(aliasW);
+        const ref = `${m.provider}/${m.id}`.padEnd(refW);
+        const engine = m.engine.padEnd(22);
+        const ctx = `${(m.contextWindow / 1000).toFixed(0)}k`.padStart(6);
+        const caps = m.capabilities.join(',');
+        stdout.write(`  ${alias}  ${ref}  ${engine}  ${ctx}  ${caps}\n`);
+      }
+      rl.prompt();
+      return;
+    }
+    case '/model': {
+      const ref = args[0];
+      if (!ref) {
+        const info = await fetchSessionModel(agent, session);
+        if (!info) {
+          stdout.write('\n[!] could not fetch session model\n');
+        } else {
+          const aliasPart = info.alias ? ` (alias: ${info.alias})` : '';
+          const sourcePart = info.source === 'session-override'
+            ? ` — session-override (persona default: ${info.personaDefault ?? '(none)'})`
+            : ' — persona default';
+          stdout.write(`\nEffective: ${info.provider}/${info.modelId}${aliasPart}\n  engine: ${info.engine}, context: ${info.contextWindow}${sourcePart}\n`);
+        }
+        rl.prompt();
+        return;
+      }
+      if (ref === 'default' || ref === '-') {
+        try {
+          await clearSessionModel(agent, session);
+          stdout.write('\nmodel override cleared, back to persona default\n');
+        } catch (err) {
+          stdout.write(`\n[!] ${(err as Error).message}\n`);
+        }
+        rl.prompt();
+        return;
+      }
+      try {
+        await setSessionModel(agent, session, ref);
+        stdout.write(`\nmodel set to: ${ref} (for session ${session})\n`);
+      } catch (err) {
+        stdout.write(`\n[!] ${(err as Error).message}\n`);
+      }
+      rl.prompt();
+      return;
+    }
     default:
       stdout.write(`unknown command: ${cmd}. Try /help\n`);
       rl.prompt();

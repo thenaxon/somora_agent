@@ -66,11 +66,18 @@ async function publish(session: string, event: SseEvent): Promise<void> {
   }
 }
 
-// Resolve a persona's model reference against the loaded config. Tries alias,
-// provider/modelId, and bare modelId in order — see resolveAnyRef for details.
-function resolveForPersona(config: Config, persona: Persona) {
-  if (!persona.model) return null;
-  return resolveAnyRef(config, persona.model);
+// Resolve the effective model for a turn: a per-session override (set via
+// /model) wins over the persona's default. Either way: resolveAnyRef handles
+// the alias → provider/id → bare id lookup chain.
+function resolveEffectiveModel(
+  config: Config,
+  persona: Persona,
+  sessionMeta: Record<string, unknown>,
+) {
+  const override = sessionMeta.modelOverride;
+  const ref = (typeof override === 'string' && override.length > 0 ? override : persona.model);
+  if (!ref) return null;
+  return resolveAnyRef(config, ref);
 }
 
 let config;
@@ -109,6 +116,32 @@ app.get('/healthz', (c) => c.text('ok'));
 
 app.get('/agents', async (c) => c.json(await listAgents()));
 
+app.get('/models', (c) => {
+  const list: Array<{
+    provider: string;
+    id: string;
+    alias: string | null;
+    engine: string;
+    contextWindow: number;
+    capabilities: string[];
+    ref: string;
+  }> = [];
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    for (const model of provider.models) {
+      list.push({
+        provider: providerName,
+        id: model.id,
+        alias: model.alias ?? null,
+        engine: provider.engine,
+        contextWindow: model.contextWindow,
+        capabilities: model.capabilities,
+        ref: model.alias ?? `${providerName}/${model.id}`,
+      });
+    }
+  }
+  return c.json(list);
+});
+
 app.get('/agents/:agent/sessions', async (c) => {
   const agent = c.req.param('agent');
   if (!(await loadPersona(agent))) {
@@ -136,6 +169,64 @@ app.post('/agents/:agent/sessions', async (c) => {
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }
+});
+
+app.get('/agents/:agent/sessions/:session/model', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const meta = await sessionMetaStore.get(agent, session);
+  const resolved = resolveEffectiveModel(config, persona, meta);
+  if (!resolved) {
+    return c.json({ error: `model für agent '${agent}' kann nicht aufgelöst werden` }, 500);
+  }
+  const override = typeof meta.modelOverride === 'string' ? meta.modelOverride : null;
+  return c.json({
+    agent,
+    session,
+    provider: resolved.providerName,
+    modelId: resolved.modelId,
+    alias: resolved.model.alias ?? null,
+    engine: resolved.provider.engine,
+    contextWindow: resolved.model.contextWindow,
+    source: override ? 'session-override' : 'persona-default',
+    override,
+    personaDefault: persona.model ?? null,
+  });
+});
+
+app.put('/agents/:agent/sessions/:session/model', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { model?: string };
+  if (!body.model) return c.json({ error: 'body field "model" required' }, 400);
+  const resolved = resolveAnyRef(config, body.model);
+  if (!resolved) {
+    return c.json({ error: `model '${body.model}' nicht gefunden in config.yaml` }, 400);
+  }
+  const meta = await sessionMetaStore.get(agent, session);
+  await sessionMetaStore.set(agent, session, { ...meta, modelOverride: body.model });
+  logger.info({ msg: 'session.model_set', agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
+  return c.json({ agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
+});
+
+app.delete('/agents/:agent/sessions/:session/model', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const meta = await sessionMetaStore.get(agent, session);
+  const { modelOverride: _drop, ...rest } = meta;
+  await sessionMetaStore.set(agent, session, rest);
+  logger.info({ msg: 'session.model_clear', agent, session });
+  return c.json({ agent, session, cleared: true });
 });
 
 app.get('/chat/history', async (c) => {
@@ -193,21 +284,6 @@ app.post('/chat/send', async (c) => {
     return c.json({ error: `agent '${agent}' nicht gefunden — lege ~/.somora/agents/${agent}/AGENTS.md an` }, 404);
   }
 
-  const resolvedModel = resolveForPersona(config, persona);
-  if (!resolvedModel) {
-    logger.error({ msg: 'chat.send.model_unresolved', agent, ref: persona.model });
-    return c.json(
-      {
-        error: `model '${persona.model ?? '(none)'}' für agent '${agent}' lässt sich nicht aus config.yaml auflösen — Format: provider/modelId`,
-      },
-      500,
-    );
-  }
-  const engine = engineRegistry[resolvedModel.provider.engine];
-  if (!engine) {
-    return c.json({ error: `keine engine '${resolvedModel.provider.engine}' registriert` }, 500);
-  }
-
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) {
     return c.json(
@@ -216,6 +292,22 @@ app.post('/chat/send', async (c) => {
       },
       404,
     );
+  }
+
+  const sessionMeta = await sessionMetaStore.get(agent, session);
+  const resolvedModel = resolveEffectiveModel(config, persona, sessionMeta);
+  if (!resolvedModel) {
+    logger.error({ msg: 'chat.send.model_unresolved', agent, ref: persona.model });
+    return c.json(
+      {
+        error: `model '${persona.model ?? '(none)'}' für agent '${agent}' lässt sich nicht aus config.yaml auflösen — Format: provider/modelId oder alias`,
+      },
+      500,
+    );
+  }
+  const engine = engineRegistry[resolvedModel.provider.engine];
+  if (!engine) {
+    return c.json({ error: `keine engine '${resolvedModel.provider.engine}' registriert` }, 500);
   }
 
   logger.info({
