@@ -101,7 +101,7 @@ app.post('/chat/send', async (c) => {
   const text = body.text ?? '';
   logger.info({ msg: 'chat.send', agent, session, len: text.length });
 
-  appendEvent(agent, session, {
+  await appendEvent(agent, session, {
     kind: 'user_message',
     ts: Date.now(),
     engine: anthropicEngine.name,
@@ -111,16 +111,17 @@ app.post('/chat/send', async (c) => {
   void (async () => {
     await publish(session, { event: 'agent', data: { phase: 'start' } });
     try {
+      const history = await getHistory(agent, session);
       const stream = anthropicEngine.runTurn({
         agent,
         session,
         systemPrompt: STUB_SYSTEM_PROMPT,
         userMessage: text,
-        history: getHistory(agent, session),
+        history,
         metaStore: sessionMetaStore,
       });
       for await (const ev of stream) {
-        appendEvent(agent, session, ev);
+        await appendEvent(agent, session, ev);
         const sse = eventToSse(ev);
         if (sse) await publish(session, sse);
       }
