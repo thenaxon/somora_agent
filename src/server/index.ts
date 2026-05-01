@@ -644,6 +644,7 @@ app.post('/chat/send', async (c) => {
           availableModels: listAllModels(config),
           compactionConfig: resolveCompactionConfig(config),
           tools: toolInvoker,
+          agentLoopConfig: config.agentLoop,
         },
       });
       for await (const ev of stream) {

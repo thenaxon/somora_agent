@@ -1,5 +1,5 @@
 import type { CompactionConfig } from '../compaction/types.ts';
-import type { ResolvedModel } from '../config/types.ts';
+import type { AgentLoopConfig, ResolvedModel } from '../config/types.ts';
 import type { ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
@@ -61,6 +61,12 @@ export interface TurnInput {
    * Optional — when absent, the engine runs in plain chat mode.
    */
   tools?: ToolInvoker;
+  /**
+   * Agent-loop tunables (max rounds, per-tool timeout). Same scope as
+   * `tools` — only consumed by engines with their own loop. Resolved
+   * server-side from config.yaml `agentLoop:` section.
+   */
+  agentLoopConfig?: AgentLoopConfig;
 }
 
 export interface AgentEngine {

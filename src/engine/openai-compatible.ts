@@ -30,10 +30,11 @@ import type { AgentEngine, TurnInput } from './types.ts';
 
 const ENGINE = 'openai-compatible';
 
-/** Defensive cap on tool-call rounds per turn — prevents a confused or
- *  adversarial model from looping forever. Real conversations bottom out
- *  in 1-3 rounds; 8 is comfortable headroom. */
-const MAX_TOOL_ROUNDS = 8;
+// Hard fallbacks if the server forgot to pass an agent-loop config.
+// Should never fire in practice — `config.agentLoop` is non-optional in
+// the Zod schema and defaults itself.
+const DEFAULT_MAX_TOOL_ROUNDS = 8;
+const DEFAULT_TOOL_CALL_TIMEOUT_MS = 30_000;
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type ChatTool = OpenAI.Chat.Completions.ChatCompletionTool;
@@ -265,6 +266,9 @@ export const openAiCompatibleEngine: AgentEngine = {
     const tools = input.tools;
     const openAiTools: ChatTool[] | undefined = tools ? toOpenAiTools(tools.list()) : undefined;
     const loopMessages = [...messages]; // mutable copy; tool rounds append
+    const maxRounds = input.agentLoopConfig?.maxRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+    const toolTimeoutMs =
+      input.agentLoopConfig?.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
 
     try {
       logger.info({
@@ -279,7 +283,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       });
 
       let round = 0;
-      while (round < MAX_TOOL_ROUNDS) {
+      while (round < maxRounds) {
         round++;
         const stream = await client.chat.completions.create({
           model: resolvedModel.modelId,
@@ -390,7 +394,21 @@ export const openAiCompatibleEngine: AgentEngine = {
             tool: call.function.name,
             input: parsedArgs,
           };
-          const result = await tools.invoke(call.function.name, parsedArgs);
+          // Race the tool invocation against a timeout. On timeout we feed
+          // an error back to the model — same shape as a regular tool error.
+          const result = await Promise.race([
+            tools.invoke(call.function.name, parsedArgs),
+            new Promise<{ ok: false; error: string }>((resolve) =>
+              setTimeout(
+                () =>
+                  resolve({
+                    ok: false,
+                    error: `tool '${call.function.name}' timed out after ${toolTimeoutMs}ms`,
+                  }),
+                toolTimeoutMs,
+              ),
+            ),
+          ]);
           const outputText = result.ok
             ? JSON.stringify(result.data)
             : (result.error ?? 'tool failed');
@@ -411,14 +429,15 @@ export const openAiCompatibleEngine: AgentEngine = {
 
         // Defensive: if we hit the round cap with tools still pending, log
         // and stop. The loop guard at the top will exit on the next check.
-        if (round >= MAX_TOOL_ROUNDS) {
+        if (round >= maxRounds) {
           logger.warn({
             msg: 'engine.tool_loop_cap',
             engine: ENGINE,
             agent,
             session,
             rounds: round,
-            hint: 'model still wanted to call tools at MAX_TOOL_ROUNDS; stopping to prevent runaway',
+            maxRounds,
+            hint: 'model still wanted to call tools at agentLoop.maxRounds; stopping to prevent runaway. Increase via config.yaml agentLoop.maxRounds.',
           });
         }
       }

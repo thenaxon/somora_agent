@@ -67,6 +67,12 @@ providers:
 #   safetyCushionPairs: 4      # die N jüngsten user/assistant-Pairs bleiben unkomprimiert
 #   modelOverride: opus        # festes Worker-Modell für Summarisation (alias oder provider/id)
 
+# Agent-Loop-Tunables (Phase 2-Stufe-C). Greifen nur bei openai-compatible —
+# claude-cli und codex-cli haben eigene interne Loops.
+# agentLoop:
+#   maxRounds: 8               # max Tool-Call-Rounds pro Turn (1..100)
+#   toolCallTimeoutMs: 30000   # per-Tool-Call Timeout in ms
+
 # Memory-Layer-Tunables (DECISIONS #25-#27). Greifen automatisch mit
 # Default-Werten — Block hier nur wenn du tunen willst. Pro-Agent-
 # Overrides können später in agent.yaml leben.

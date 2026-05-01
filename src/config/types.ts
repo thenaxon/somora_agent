@@ -109,6 +109,28 @@ export const MemoryConfigSchema = z.object({
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
+// Agent-loop tunables for engines that run their own tool-call loop
+// (currently only openai-compatible — Phase 2-Stufe-C). claude-cli and
+// codex-cli have their own internal loops and ignore these values.
+export const AgentLoopConfigSchema = z.object({
+  /**
+   * Max tool-call rounds per turn. The vast majority of conversations
+   * finish in 1-3 rounds; this is a defensive cap that prevents a confused
+   * or adversarial model from looping forever. Most agent frameworks
+   * default to 10-25; we pick 8 for somora since memory tools are
+   * narrow and a higher cap rarely helps.
+   */
+  maxRounds: z.number().int().positive().max(100).default(8),
+  /**
+   * Per-tool-call timeout in milliseconds. If a single tool invocation
+   * exceeds this, we cancel it and feed an error back to the model.
+   * memory_* tools are fast (~1s); the cap is mostly insurance against
+   * future slow tools (web fetch, large file reads, etc.) that hang.
+   */
+  toolCallTimeoutMs: z.number().int().positive().default(30_000),
+}).default({ maxRounds: 8, toolCallTimeoutMs: 30_000 });
+export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
+
 export const ConfigSchema = z.object({
   server: z
     .object({
@@ -118,6 +140,7 @@ export const ConfigSchema = z.object({
   providers: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/), ProviderSchema),
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,
+  agentLoop: AgentLoopConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

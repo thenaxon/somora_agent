@@ -89,6 +89,19 @@ providers:
 # Memory-Layer tunables (DECISIONS #25–#27). All optional. Per-agent
 # overrides can live in agent.yaml later. (Phase 2-Stufe-B — not yet
 # wired into the runtime.)
+# Agent-loop tunables (DECISION #31, Phase 2-Stufe-C). Apply only to
+# engines that run their own tool-call loop — currently openai-compatible.
+# claude-cli and codex-cli have their own internal loops and ignore these.
+# agentLoop:
+#   maxRounds: 8              # max tool-call rounds per turn (1..100). Most
+#                             # conversations finish in 1-3; 8 is defensive
+#                             # headroom against runaway models.
+#   toolCallTimeoutMs: 30000  # per-tool-call timeout. On timeout, an error
+#                             # is fed back to the model — same shape as a
+#                             # regular tool error. 30s covers slow embed
+#                             # calls etc.; lower (5000) for snappier UX
+#                             # when tools are all known-fast.
+
 # memory:
 #   embedding:
 #     provider: local                     # 'local' (@huggingface/transformers) | future: openai/gemini/...
