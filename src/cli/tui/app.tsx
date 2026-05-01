@@ -214,15 +214,10 @@ export function App({ base, initialAgent, initialSession }: Props) {
       if (picked) setInput(picked.name + ' ');
       return;
     }
-    // Esc: close autocomplete or clear input
+    // Esc: clear the input. This naturally hides the autocomplete popup
+    // too (no `/` prefix → matchCommands returns []).
     if (key.escape) {
-      if (slashMatches.length > 0) {
-        // Closing means the user wants to keep typing without seeing the
-        // popup. Inserting a space breaks the prefix match → matches go to
-        // [], popup hides naturally. Cleaner than a separate "popup-open"
-        // flag.
-        setInput((prev) => prev + ' ');
-      } else if (input.length > 0) {
+      if (input.length > 0) {
         setInput('');
         setHistoryIndex(null);
       }
