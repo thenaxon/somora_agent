@@ -35,4 +35,9 @@ if (process.stdout.isTTY) {
   if (padding > 0) process.stdout.write('\n'.repeat(padding));
 }
 
-render(<App base={base} initialAgent="hans" initialSession="main" />);
+// exitOnCtrlC: false lets us implement a soft-cancel pattern: first Ctrl+C
+// clears the current input or closes the autocomplete popup; only when
+// there's nothing to clear does it exit.
+render(<App base={base} initialAgent="hans" initialSession="main" />, {
+  exitOnCtrlC: false,
+});

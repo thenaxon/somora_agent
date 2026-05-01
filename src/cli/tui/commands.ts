@@ -14,6 +14,35 @@ export type CommandAction =
   | { kind: 'exit' }
   | { kind: 'clearStats' };
 
+export interface CommandMeta {
+  name: string;   // the bare slash command (used for prefix-match)
+  usage: string;  // user-facing display in the autocomplete popup
+}
+
+// Surfaced via the slash-autocomplete popup. Order = display order.
+export const COMMANDS: readonly CommandMeta[] = [
+  { name: '/help', usage: '/help' },
+  { name: '/agents', usage: '/agents' },
+  { name: '/agent', usage: '/agent <name> [session]' },
+  { name: '/sessions', usage: '/sessions' },
+  { name: '/session', usage: '/session <slug-or-id>' },
+  { name: '/new', usage: '/new <slug>' },
+  { name: '/main', usage: '/main' },
+  { name: '/reset', usage: '/reset [YES]' },
+  { name: '/models', usage: '/models' },
+  { name: '/model', usage: '/model [<alias>|default]' },
+  { name: '/quit', usage: '/quit' },
+  { name: '/exit', usage: '/exit' },
+];
+
+// Returns commands whose name starts with the given prefix (typically the
+// raw input value while the user is still typing the command name —
+// caller should bail out if there's already a space in the input,
+// meaning the user is typing args, not the command name).
+export function matchCommands(prefix: string): CommandMeta[] {
+  return COMMANDS.filter((c) => c.name.startsWith(prefix));
+}
+
 const HELP_TEXT = `Available commands:
   /help                       — show this help
   /agents                     — list agents

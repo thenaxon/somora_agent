@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 
 const COMMAND_HINTS = '/agent  /session  /model  /reset  /help';
-const KEY_HINTS = '⏎ send · ⌃C exit';
+const KEY_HINTS = '↹ complete · ↑↓ history · ⌃C clear/exit';
 
 export function Footer() {
   return (

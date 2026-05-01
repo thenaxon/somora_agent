@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { Box, Static, Text, useApp } from 'ink';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Static, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 
 import { Api } from './api.ts';
 import { openStream, type StreamHandle } from './stream.ts';
-import { runCommand } from './commands.ts';
+import { matchCommands, runCommand } from './commands.ts';
 import { Header } from './header.tsx';
 import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
+import { SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
 import { nextId, summarize } from './format.ts';
 import type { AgentInfo, StreamEvent, Turn, TurnStats } from './types.ts';
@@ -17,6 +18,8 @@ interface Props {
   initialAgent: string;
   initialSession: string;
 }
+
+const HISTORY_MAX = 100;
 
 export function App({ base, initialAgent, initialSession }: Props) {
   const { exit } = useApp();
@@ -33,7 +36,33 @@ export function App({ base, initialAgent, initialSession }: Props) {
   const [busy, setBusy] = useState(false);
   const [agentIcons, setAgentIcons] = useState<Record<string, string>>({});
 
+  // Submit-history (newest at the end). Up/Down step through it.
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [historyDraft, setHistoryDraft] = useState<string>('');
+
+  // Slash-autocomplete: matched against the input prefix, only when the
+  // input is a single token starting with `/`. Index is the highlighted
+  // suggestion (Tab cycles).
+  const [autocompleteIndex, setAutocompleteIndex] = useState(0);
+
   const agentIcon = agentIcons[agent] ?? '';
+
+  const slashMatches = useMemo(() => {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('/')) return [];
+    if (trimmed.includes(' ')) return []; // user is typing args, hide popup
+    return matchCommands(trimmed);
+  }, [input]);
+
+  const safeAutocompleteIndex =
+    slashMatches.length > 0 ? autocompleteIndex % slashMatches.length : 0;
+
+  // Reset highlight to first match whenever the match-set changes (typing
+  // narrows the list).
+  useEffect(() => {
+    setAutocompleteIndex(0);
+  }, [slashMatches.length, slashMatches[0]?.name]);
 
   // Fetch agents on mount and whenever we switch — populates icon-by-name
   // map. Cheap call, the listing is tiny.
@@ -103,7 +132,6 @@ export function App({ base, initialAgent, initialSession }: Props) {
         setStreamingText(ev.text);
         return;
       case 'agent-end': {
-        // Move streamingText into a finalized agent turn.
         setStreamingText((current) => {
           if (current.length > 0) {
             appendTurn({ kind: 'agent', id: nextId(), text: current });
@@ -152,10 +180,97 @@ export function App({ base, initialAgent, initialSession }: Props) {
     }
   }
 
+  function pushHistory(text: string): void {
+    setHistory((prev) => {
+      // Don't add a literal duplicate of the most recent entry.
+      if (prev[prev.length - 1] === text) return prev;
+      const next = [...prev, text];
+      return next.length > HISTORY_MAX ? next.slice(next.length - HISTORY_MAX) : next;
+    });
+    setHistoryIndex(null);
+    setHistoryDraft('');
+  }
+
+  // Wraps setInput so any modification while history-navigating clears the
+  // history-cursor — typing breaks you out of the history walk.
+  function handleInputChange(next: string): void {
+    if (historyIndex !== null && next !== history[historyIndex]) {
+      setHistoryIndex(null);
+    }
+    setInput(next);
+  }
+
+  // useInput captures every keypress. ink-text-input also reads stdin and
+  // handles its own keys (typing, left/right, backspace, enter); we only
+  // react to keys it doesn't touch (Tab, Up, Down, Esc, Ctrl+C/L).
+  useInput((char, key) => {
+    // Tab: cycle through autocomplete + replace input with selected command
+    if (key.tab && slashMatches.length > 0) {
+      const dir = key.shift ? -1 : 1;
+      const next =
+        (safeAutocompleteIndex + dir + slashMatches.length) % slashMatches.length;
+      setAutocompleteIndex(next);
+      const picked = slashMatches[next];
+      if (picked) setInput(picked.name + ' ');
+      return;
+    }
+    // Esc: close autocomplete or clear input
+    if (key.escape) {
+      if (slashMatches.length > 0) {
+        // Closing means the user wants to keep typing without seeing the
+        // popup. Inserting a space breaks the prefix match → matches go to
+        // [], popup hides naturally. Cleaner than a separate "popup-open"
+        // flag.
+        setInput((prev) => prev + ' ');
+      } else if (input.length > 0) {
+        setInput('');
+        setHistoryIndex(null);
+      }
+      return;
+    }
+    // History navigation
+    if (key.upArrow && history.length > 0) {
+      if (historyIndex === null) {
+        setHistoryDraft(input);
+        const idx = history.length - 1;
+        setHistoryIndex(idx);
+        setInput(history[idx] ?? '');
+      } else if (historyIndex > 0) {
+        const idx = historyIndex - 1;
+        setHistoryIndex(idx);
+        setInput(history[idx] ?? '');
+      }
+      return;
+    }
+    if (key.downArrow && historyIndex !== null) {
+      if (historyIndex < history.length - 1) {
+        const idx = historyIndex + 1;
+        setHistoryIndex(idx);
+        setInput(history[idx] ?? '');
+      } else {
+        setHistoryIndex(null);
+        setInput(historyDraft);
+      }
+      return;
+    }
+    // Ctrl+C: first press soft-cancels (clear input / close popup), second
+    // press exits when there's nothing to clear.
+    if (key.ctrl && char === 'c') {
+      if (input.length > 0) {
+        setInput('');
+        setHistoryIndex(null);
+        return;
+      }
+      exit();
+      return;
+    }
+  });
+
   async function handleSubmit(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed || busy) return;
     setInput('');
+    pushHistory(trimmed);
     if (trimmed.startsWith('/')) {
       try {
         const actions = await runCommand(trimmed, {
@@ -169,8 +284,6 @@ export function App({ base, initialAgent, initialSession }: Props) {
           } else if (a.kind === 'exit') {
             exit();
           } else if (a.kind === 'switchTo') {
-            // Clearing stats + streamingText happens implicitly via state
-            // changes triggered by the agent/session deps in useEffect.
             setStats(null);
             setStreamingText('');
             setStreaming(false);
@@ -225,9 +338,10 @@ export function App({ base, initialAgent, initialSession }: Props) {
         </Box>
       ) : null}
 
-      {/* Bottom panel: separator → status → input → hints. Stays anchored
-          to the bottom of the visible terminal frame because nothing below
-          it ever changes height. */}
+      {/* Bottom panel: separator → status → autocomplete (if any) → input →
+          hints. Stays anchored to the bottom of the visible terminal frame
+          because nothing below it ever changes height except the
+          autocomplete popup. */}
       <Box marginTop={1}>
         <Separator />
       </Box>
@@ -239,11 +353,12 @@ export function App({ base, initialAgent, initialSession }: Props) {
         streaming={streaming}
         connected={connected}
       />
+      <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>
         <Text color="cyan">{'> '}</Text>
         <TextInput
           value={input}
-          onChange={setInput}
+          onChange={handleInputChange}
           onSubmit={handleSubmit}
           placeholder={busy ? '(waiting for response…)' : ''}
           showCursor={!busy}
