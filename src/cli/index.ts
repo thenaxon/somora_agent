@@ -471,10 +471,16 @@ async function handleCommand(line: string): Promise<void> {
       // archive path; user has to follow up with `/reset YES` to commit.
       // This is destructive enough that a single keystroke shouldn't do it.
       if (args[0] !== 'YES') {
+        const altHint =
+          session !== 'main'
+            ? `\n        Alternative for non-main sessions: /new <new-slug>` +
+              `\n        leaves this session intact and starts a fresh one.`
+            : '';
         stdout.write(
           `\n[/reset] would archive the CURRENT session (${agent}:${session}) and start fresh.` +
             `\n        Existing JSONL + meta are preserved as a timestamped archive` +
             `\n        you can resume any time with /session <id>.` +
+            altHint +
             `\n        To commit: /reset YES\n`,
         );
         rl.prompt();
