@@ -61,8 +61,18 @@ function buildVaultRecallQuery(events: Awaited<ReturnType<typeof getHistory>>): 
 
 /**
  * Render the human-readable Markdown body for a completed dream.
+ * Optional sources block lets the caller surface which memory + vault
+ * notes were considered as input — useful to verify the extractor saw
+ * the right source material.
  */
-function renderBody(meta: DreamMeta, sourceTitle: string): string {
+function renderBody(
+  meta: DreamMeta,
+  sourceTitle: string,
+  sources?: {
+    memorySlugs: string[];
+    vaultSlugsWithScore: string[]; // pre-formatted "slug@0.74"
+  },
+): string {
   const triggerWord = meta.trigger === 'manual' ? 'manual' : 'auto';
   const lines: string[] = [
     `# Dream — ${sourceTitle} (${triggerWord})`,
@@ -74,6 +84,16 @@ function renderBody(meta: DreamMeta, sourceTitle: string): string {
     `Status: **${meta.status}**`,
     '',
   ];
+  if (sources) {
+    lines.push('## Sources analyzed', '');
+    lines.push(
+      `- Memory notes (full content): ${sources.memorySlugs.length === 0 ? '_none_' : sources.memorySlugs.map((s) => `\`${s}\``).join(', ')}`,
+    );
+    lines.push(
+      `- Vault notes (recall hits): ${sources.vaultSlugsWithScore.length === 0 ? '_none_' : sources.vaultSlugsWithScore.map((s) => `\`${s}\``).join(', ')}`,
+    );
+    lines.push('');
+  }
   if (meta.findings.length === 0) {
     lines.push('No memory-worthy findings extracted from this range.', '');
   } else {
@@ -149,6 +169,8 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       worker_model_ref: args.dream.model,
       findings: [],
     };
+    // No `sources` block here — we never got past resolveDreamModel,
+    // there's nothing to attribute.
     await writeDreamFile(args.agent, { meta, body: renderBody(meta, args.sourceSession) });
     return { id, finalStatus: 'failed' };
   }
@@ -171,20 +193,25 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     }
   }
 
-  // Vault references — single combined query, take top-K vault hits.
-  const referencedVault: Array<{ slug: string; markdown: string }> = [];
+  // Vault references — single combined query. We bump the limit (40) high
+  // enough that vault hits don't get crowded out by memory hits in the
+  // mixed search results: existing memory is already passed in full (see
+  // listNotes() above), so memory-source hits in this search are
+  // effectively duplicates and we drop them. Up to 15 vault notes pass
+  // through to the extractor.
+  const referencedVault: Array<{ slug: string; markdown: string; score: number }> = [];
   const recallQuery = buildVaultRecallQuery(eventsInRange);
   if (recallQuery.trim().length > 0) {
     try {
-      const hits = await args.mgr.search(recallQuery, { limit: 20, minScore: 0.4 });
-      const vaultHits = hits.filter((h) => h.source === 'vault');
+      const hits = await args.mgr.search(recallQuery, { limit: 40, minScore: 0.4 });
+      const vaultHits = hits.filter((h) => h.source === 'vault').slice(0, 15);
       const seenSlugs = new Set<string>();
       for (const h of vaultHits) {
         if (seenSlugs.has(h.slug)) continue;
         seenSlugs.add(h.slug);
         try {
           const raw = await readFile(h.filePath, 'utf8');
-          referencedVault.push({ slug: h.slug, markdown: raw });
+          referencedVault.push({ slug: h.slug, markdown: raw, score: h.score });
         } catch (err) {
           logger.debug({
             msg: 'dream.vault_read_failed',
@@ -197,6 +224,14 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       logger.warn({ msg: 'dream.vault_recall_failed', err: (err as Error).message });
     }
   }
+
+  // Sources block — used by renderBody for the audit section in the
+  // dream file's Markdown body. Same shape across all subsequent
+  // renderBody calls so the file always shows what was considered.
+  const sources = {
+    memorySlugs: existingMemory.map((m) => m.slug),
+    vaultSlugsWithScore: referencedVault.map((v) => `${v.slug}@${v.score.toFixed(2)}`),
+  };
 
   // Initial running file. chunks_total is set after the first chunk-plan
   // happens inside extractFromSession; we backfill once we know.
@@ -216,7 +251,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   };
   let file: DreamFile = {
     meta,
-    body: renderBody(meta, args.sourceSession),
+    body: renderBody(meta, args.sourceSession, sources),
   };
   await writeDreamFile(args.agent, file);
 
@@ -228,7 +263,9 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     sourceSession: args.sourceSession,
     eventsInRange: eventsInRange.length,
     existingMemoryCount: existingMemory.length,
+    existingMemorySlugs: existingMemory.map((m) => m.slug),
     referencedVaultCount: referencedVault.length,
+    referencedVaultSlugs: referencedVault.map((v) => `${v.slug}@${v.score.toFixed(2)}`),
     workerModel: meta.worker_model_ref,
   });
 
@@ -246,7 +283,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
         // Persist progress so a crash mid-flight leaves a recoverable file.
         meta.chunks_done = chunkIndex;
         meta.chunks_total = totalChunks;
-        file = { meta, body: renderBody(meta, args.sourceSession) };
+        file = { meta, body: renderBody(meta, args.sourceSession, sources) };
         await writeDreamFile(args.agent, file);
       },
     });
@@ -265,7 +302,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
         meta.processed_at = meta.completed_at;
         await transitionDreamStatus(
           args.agent,
-          { meta, body: renderBody(meta, args.sourceSession) },
+          { meta, body: renderBody(meta, args.sourceSession, sources) },
           'processed',
           { completed_at: meta.completed_at, processed_at: meta.processed_at },
         );
@@ -279,7 +316,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       }
       await transitionDreamStatus(
         args.agent,
-        { meta, body: renderBody(meta, args.sourceSession) },
+        { meta, body: renderBody(meta, args.sourceSession, sources) },
         'completed',
         { completed_at: meta.completed_at },
       );
@@ -294,7 +331,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     // Cancelled mid-way — only auto-trigger should hit this path.
     await transitionDreamStatus(
       args.agent,
-      { meta, body: renderBody(meta, args.sourceSession) },
+      { meta, body: renderBody(meta, args.sourceSession, sources) },
       'paused',
     );
     logger.info({
@@ -309,7 +346,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     meta.error = (err as Error).message;
     await transitionDreamStatus(
       args.agent,
-      { meta, body: renderBody(meta, args.sourceSession) },
+      { meta, body: renderBody(meta, args.sourceSession, sources) },
       'failed',
       { error: meta.error },
     );
