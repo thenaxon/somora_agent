@@ -11,7 +11,6 @@
     "dev:server": "tsx watch src/server/index.ts",
     "start:server": "tsx src/server/index.ts",
     "dev:cli": "tsx src/cli/tui/index.tsx",
-    "dev:cli:legacy": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
