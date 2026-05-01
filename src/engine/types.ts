@@ -1,3 +1,4 @@
+import type { CompactionConfig } from '../compaction/types.ts';
 import type { ResolvedModel } from '../config/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
@@ -26,6 +27,12 @@ export interface TurnInput {
    * compaction can ignore this field.
    */
   availableModels: ResolvedModel[];
+  /**
+   * Resolved compaction tunables (config.yaml `compaction:` section, with
+   * env-var overrides applied). Server resolves this once at turn-build
+   * time so engines don't need to know about config-vs-env precedence.
+   */
+  compactionConfig: CompactionConfig;
 }
 
 export interface AgentEngine {

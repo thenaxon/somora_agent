@@ -351,3 +351,114 @@ einer und dann nachträglich entkoppelt).
 **How to apply:** Schritte sind semi-seriell — innerhalb eines
 Schritts können Polish-Sub-Tasks (z.B. exaktes Token-Counting)
 parallel laufen. Aber kein Schritt-Vorziehen ohne Diskussion.
+
+---
+
+## 2026-05-01 — Memory-Layer + Config-Migration
+
+### 25. Memory-Layer: Markdown-as-Source-of-Truth + SQLite/sqlite-vec-Index
+Memory pro Agent unter `~/.somora/agents/<name>/memory/notes/<slug>.md`
+als Markdown-Files mit Frontmatter (created/updated/tags). SQLite-DB
+in `<agent-dir>/memory.db` als abgeleiteter Index — `files`/`chunks`
+mit FTS5 + sqlite-vec-Vector-Spalte. SQLite ist jederzeit aus den
+Markdown-Files rekonstruierbar.
+
+**Inspiration:** OpenClaw (`openclaw/openclaw`) für Storage-Architektur,
+Hermes (`NousResearch/hermes-agent`) für Auto-Inject-Mechanik.
+Bewusst _ohne_ OpenClaws Komplexitäts-Aufschlag (kein Dreaming-Cron im
+ersten Wurf, keine drei Backends parallel, keine 42k LOC).
+
+**Why:** Markdown bleibt user-editierbar (`vim`, `git diff`,
+versionierbar), Embeddings + FTS sind Implementierungs-Detail das wir
+ändern können ohne User-Daten zu touchen. Bei Index-Korruption: rm
+memory.db → automatischer Rebuild aus Markdown.
+
+**How to apply:** Storage in `src/memory/`. File-Watcher (chokidar)
+mit Debounce für Re-Index. Lokale Embeddings via `node-llama-cpp`
+(default `embeddinggemma-300m`), Remote-Provider via Config-Schalter.
+
+### 26. Auto-Inject by Runtime, nicht Agent-getriggert
+Recall passiert **automatisch pro Turn** durch die Runtime, ohne dass
+der Agent ein Tool callen muss. Query: letzte 3 Turns (configurierbar).
+Hybrid-Retrieval (Vector + BM25, default 0.7/0.3). Top-N mit Score-
+Schwelle und Token-Cap. Format: `<memory>...</memory>`-Block vor der
+User-Message.
+
+**Why:** Bei Tool-getriggertem Recall (OpenClaw-Modell) muss der Agent
+den Reflex haben zu suchen. Vergisst er's → Memory unsichtbar. Mit
+Auto-Inject ist relevanter Kontext per Default da. Agent kann
+zusätzlich `memory_search` callen für gezielte Tiefe-Suche.
+
+**How to apply:** In Server-Turn-Pipeline VOR `engine.runTurn`
+einhängen. Runtime baut Query aus den letzten N Turns, fragt Memory-
+Manager, prepended Block. Agent sieht das wie eine Pre-Message von
+sich selbst, nicht wie ein Tool-Result.
+
+### 27. Memory-Tools für Self-Edit
+Hans braucht Tool-Zugriff auf sein Memory: `memory_search`,
+`memory_get`, `memory_write`, `memory_edit`, `memory_delete`,
+`memory_list`. File-basiert mit Slug-IDs (stable references).
+
+**Why:** Auto-Inject deckt 80% ab, aber Hans muss aktiv schreiben können
+(„merk dir: ich fahre jetzt einen Mercedes"), gezielt nachladen wenn
+Auto-Inject was Wichtiges nicht gefunden hat („such mal alles zu
+italienischen Autos"), und Inkonsistenzen aufräumen.
+
+**How to apply:** Tool-Registry in `src/tools/registry.ts`. Exposed
+als lokaler MCP-Server für claude-cli/codex-cli. Direct-Bridge für
+openai-compatible kommt mit Agent-Loop in Phase 2-Stufe-C.
+
+### 28. Obsidian-Vault als optionale Memory-Quelle (pro Agent)
+`agent.yaml` bekommt optional einen `obsidian.vault`-Pfad plus
+`obsidian.readOnlyPaths`-Liste. Bei aktiviertem Vault: dessen
+Markdown-Files werden in dieselbe `memory.db` indiziert (mit
+`source=vault` Tag). Auto-Inject + `memory_search` treffen beide
+Quellen.
+
+**Hans schreibt nicht automatisch in den Vault.** Vault ist primär
+read-source für Recall. Schreiben passiert nur über separates
+`obsidian_write`-Tool, auf explizite User-Aufforderung. Privacy-
+Subpfade (z.B. `private/`) sind tabu zum Schreiben — Lese-Verhalten
+optional konfigurierbar.
+
+**Why:** Renes Vault enthält viel Wissen das Hans nutzen kann.
+Aber: Vault ist User-Domäne, Hans soll nicht autonom darin
+herumfuhrwerken. Saubere Trennung „Recall ja, Auto-Schreiben nein,
+Schreiben nur wenn explizit gewünscht" hält den Vault unter
+User-Kontrolle.
+
+**How to apply:** Indexer hat `source`-aware-Modus. Embeddings
+agnostisch ob Quelle eigenes Memory oder Vault. Tool-Surface
+trennt: `memory_*` für eigenes Memory, `obsidian_*` für
+Vault-Schreiben.
+
+### 29. Workspace pro Agent (für Tool-Phase)
+`agent.yaml` bekommt ein `workspace`-Feld. Wenn Hans später
+Files anlegt die _nicht_ ins Memory gehören (Skripte, Code,
+freie Notizen), landen sie hier. Default optional bei
+`<agent-dir>/workspace/`, frei umlegbar.
+
+**Why:** Drei Datenklassen sauber trennen: Memory (auto-managed),
+Vault (User-Domäne, Recall-Quelle, selektiver Write), Workspace
+(freie Files via Tool-Befehl). Vermeidet die OpenClaw-Variante
+„alles in einem Ordner".
+
+**How to apply:** Erst Tool-Phase. Jetzt nur ins Schema
+aufnehmen, damit `agent.yaml`-Format stabil bleibt.
+
+### 30. Config-File bevorzugt gegenüber Env-Vars
+Tunables gehören standardmäßig in `config.yaml` (oder `agent.yaml`
+für pro-Agent-Overrides), nicht als Env-Var. Existierende
+`SOMORA_*`-Env-Vars werden bei Gelegenheit in entsprechende
+config-Sektionen migriert, mit Env-Var als Override für
+Container/CI-Use-Cases.
+
+**Why:** Config-File ist transparenter — ein Ort, mit Kommentaren,
+im Repo dokumentierbar via `config.example.yaml`. Verstreute Env-
+Vars sind schwerer zu auditieren („was ist gerade gesetzt?").
+Bestätigt mehrfach von Rene während Phase-2-B-Diskussion.
+
+**How to apply:** Config-Schema mit `.optional().default(...)`,
+Defaults im Code. Env als override layer obendrauf. Konkrete
+Migration zuerst: `SOMORA_COMPACTION_*` → `compaction:`-Sektion.
+Pure-Bootstrap-Werte (`SOMORA_HOME`, `SOMORA_PORT`) bleiben Env.

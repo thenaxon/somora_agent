@@ -1,9 +1,12 @@
 // Persona loader: reads AGENTS.md / SOUL.md / USER.md per agent and assembles
 // a single system prompt. Layout under ~/.somora/agents/<name>/:
 //
-//   AGENTS.md   ← required. operational rules. frontmatter holds metadata.
+//   AGENTS.md   ← required. behavioral material. frontmatter: identity only
+//                 (name, description, icon). Eligible for agent self-edit later.
 //   SOUL.md     ← optional. personality / voice.
 //   USER.md     ← optional. context about the human.
+//   agent.yaml  ← optional. operator-config: model, fallback, (later) tool
+//                 allow/deny lists, sampling overrides. Not for agent self-edit.
 //
 // Files are re-read on every loadPersona() call so editing them takes effect
 // on the next turn — no server restart needed.
@@ -12,7 +15,9 @@ import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import matter from 'gray-matter';
+import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
+import { logger } from '../server/logger.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const AGENTS_DIR = join(SOMORA_HOME, 'agents');
@@ -23,21 +28,30 @@ const FrontmatterSchema = z
   .object({
     name: z.string().optional(),
     description: z.string().optional(),
+    icon: z.string().optional(),
+  })
+  .passthrough();
+
+const AgentYamlSchema = z
+  .object({
     model: z.string().optional(),
     fallback: z.string().optional(),
   })
   .passthrough();
 
 type Frontmatter = z.infer<typeof FrontmatterSchema>;
+type AgentYaml = z.infer<typeof AgentYamlSchema>;
 
 export interface AgentInfo {
   name: string;
   description: string;
+  icon: string | undefined;
 }
 
 export interface Persona {
   name: string;
   description: string;
+  icon: string | undefined;
   model: string | undefined;
   fallback: string | undefined;
   systemPrompt: string;
@@ -56,9 +70,46 @@ async function readMd(path: string): Promise<ParsedMd | null> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw err;
   }
-  const parsed = matter(raw);
-  const data = FrontmatterSchema.parse(parsed.data ?? {});
-  return { data, content: parsed.content.trim() };
+  // gray-matter throws on malformed YAML frontmatter. We don't want a single
+  // misplaced colon to make an agent unloadable — log and degrade to plain
+  // body, no metadata.
+  try {
+    const parsed = matter(raw);
+    const data = FrontmatterSchema.parse(parsed.data ?? {});
+    return { data, content: parsed.content.trim() };
+  } catch (err) {
+    logger.warn({
+      msg: 'persona.frontmatter_parse_failed',
+      path,
+      err: (err as Error).message,
+    });
+    return { data: {}, content: raw.trim() };
+  }
+}
+
+async function readAgentYaml(path: string): Promise<AgentYaml> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
+  try {
+    const doc = parseYaml(raw) ?? {};
+    if (typeof doc !== 'object' || Array.isArray(doc)) {
+      logger.warn({ msg: 'persona.agent_yaml_not_object', path });
+      return {};
+    }
+    return AgentYamlSchema.parse(doc);
+  } catch (err) {
+    logger.warn({
+      msg: 'persona.agent_yaml_parse_failed',
+      path,
+      err: (err as Error).message,
+    });
+    return {};
+  }
 }
 
 export async function listAgents(): Promise<AgentInfo[]> {
@@ -82,7 +133,11 @@ export async function listAgents(): Promise<AgentInfo[]> {
     if (!s.isDirectory()) continue;
     const agentMd = await readMd(join(dir, 'AGENTS.md'));
     if (!agentMd) continue;
-    out.push({ name: entry, description: agentMd.data.description ?? '' });
+    out.push({
+      name: entry,
+      description: agentMd.data.description ?? '',
+      icon: agentMd.data.icon,
+    });
   }
   return out;
 }
@@ -94,6 +149,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
   if (!agentMd) return null;
   const soulMd = await readMd(join(dir, 'SOUL.md'));
   const userMd = await readMd(join(dir, 'USER.md'));
+  const agentYaml = await readAgentYaml(join(dir, 'agent.yaml'));
 
   const sections: string[] = [];
   if (soulMd?.content) sections.push(soulMd.content);
@@ -103,8 +159,9 @@ export async function loadPersona(name: string): Promise<Persona | null> {
   return {
     name,
     description: agentMd.data.description ?? '',
-    model: agentMd.data.model,
-    fallback: agentMd.data.fallback,
+    icon: agentMd.data.icon,
+    model: agentYaml.model,
+    fallback: agentYaml.fallback,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
 }
@@ -112,13 +169,24 @@ export async function loadPersona(name: string): Promise<Persona | null> {
 const SAMPLE_AGENTS_MD = `---
 name: hans
 description: Freundlicher persönlicher Assistent
-model: opus
+icon: 🤖
 ---
 
 - Antworte knapp und klar.
 - Sag ehrlich, wenn du etwas nicht weißt — keine Halluzinationen.
 - Spiele keine Rollen, du bist Hans.
 - Wenn der User nach deinen Tools fragt: aktuell hast du keine externen Tools.
+`;
+
+const SAMPLE_AGENT_YAML = `# Operator config for this agent. Edit by hand — not subject to agent
+# self-edit (which targets AGENTS.md / SOUL.md / USER.md / MEMORY.md).
+#
+# model:    primary model. Alias or 'provider/modelId'. If unset, falls back
+#           to the first configured model in config.yaml.
+# fallback: secondary model used when the primary fails before first output.
+
+model: opus
+# fallback: sonnet
 `;
 
 const SAMPLE_SOUL_MD = `# Wer ich bin
@@ -143,6 +211,7 @@ export async function ensureDefaultAgent(): Promise<void> {
   const dir = join(AGENTS_DIR, 'hans');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'AGENTS.md'), SAMPLE_AGENTS_MD, 'utf8');
+  await writeFile(join(dir, 'agent.yaml'), SAMPLE_AGENT_YAML, 'utf8');
   await writeFile(join(dir, 'SOUL.md'), SAMPLE_SOUL_MD, 'utf8');
   await writeFile(join(dir, 'USER.md'), SAMPLE_USER_MD, 'utf8');
 }

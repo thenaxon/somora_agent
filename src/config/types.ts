@@ -54,6 +54,61 @@ export const ProviderSchema = z.discriminatedUnion('engine', [
 export type Provider = z.infer<typeof ProviderSchema>;
 export type EngineName = Provider['engine'];
 
+export const CompactionConfigSchema = z
+  .object({
+    /** Fraction of contextWindow at which compaction triggers (0..1). Default 0.8. */
+    triggerRatio: z.number().positive().max(1).optional(),
+    /** Recent user/assistant pairs that stay uncompacted. Default 4. */
+    safetyCushionPairs: z.number().int().nonnegative().optional(),
+    /** Optional override for the worker model (alias or `provider/modelId`). */
+    modelOverride: z.string().min(1).optional(),
+  })
+  .optional();
+export type CompactionConfigSchema = z.infer<typeof CompactionConfigSchema>;
+
+// Memory-Layer config (DECISIONS #25–#27). All optional with sensible defaults.
+// Per-agent overrides may live in agent.yaml later. (Phase 2-Stufe-B)
+export const MemoryEmbeddingConfigSchema = z.object({
+  /** Embedding provider. 'local' uses node-llama-cpp with a GGUF; remote providers TBD. */
+  provider: z.enum(['local', 'openai', 'gemini', 'mistral', 'ollama']).default('local'),
+  /** Model identifier — semantics depend on provider. For 'local': GGUF model name. */
+  model: z.string().min(1).default('embeddinggemma-300m'),
+}).default({ provider: 'local', model: 'embeddinggemma-300m' });
+
+export const MemoryChunkingConfigSchema = z.object({
+  targetTokens: z.number().int().positive().default(400),
+  overlapTokens: z.number().int().nonnegative().default(80),
+}).default({ targetTokens: 400, overlapTokens: 80 });
+
+export const MemoryAutoInjectConfigSchema = z.object({
+  /** How many last conversation turns feed the embedding query. */
+  queryTurns: z.number().int().positive().default(3),
+  /** Top-N matches injected per turn. */
+  maxResults: z.number().int().positive().default(5),
+  /** Discard matches below this hybrid score (0..1). */
+  minScore: z.number().min(0).max(1).default(0.5),
+  /** Hard cap on tokens of the injected memory block (Heuristik 4 chars/token). */
+  maxTokens: z.number().int().positive().default(1500),
+}).default({ queryTurns: 3, maxResults: 5, minScore: 0.5, maxTokens: 1500 });
+
+export const MemoryHybridConfigSchema = z.object({
+  vectorWeight: z.number().min(0).max(1).default(0.7),
+  bm25Weight: z.number().min(0).max(1).default(0.3),
+}).default({ vectorWeight: 0.7, bm25Weight: 0.3 });
+
+export const MemoryConfigSchema = z.object({
+  embedding: MemoryEmbeddingConfigSchema,
+  chunking: MemoryChunkingConfigSchema,
+  autoInject: MemoryAutoInjectConfigSchema,
+  hybrid: MemoryHybridConfigSchema,
+}).default({
+  embedding: { provider: 'local', model: 'embeddinggemma-300m' },
+  chunking: { targetTokens: 400, overlapTokens: 80 },
+  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.5, maxTokens: 1500 },
+  hybrid: { vectorWeight: 0.7, bm25Weight: 0.3 },
+});
+export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
+
 export const ConfigSchema = z.object({
   server: z
     .object({
@@ -61,6 +116,8 @@ export const ConfigSchema = z.object({
     })
     .default({ port: 18737 }),
   providers: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/), ProviderSchema),
+  compaction: CompactionConfigSchema,
+  memory: MemoryConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

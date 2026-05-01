@@ -74,6 +74,11 @@ function finalizeMessage(text: string): void {
   messageFinalized = true;
 }
 
+// Auto-reconnect with backoff. Resets on every successful `connected` event,
+// so a long healthy run isn't penalized by an early hiccup.
+let reconnectDelayMs = 500;
+const RECONNECT_DELAY_MAX = 10_000;
+
 async function consumeStream(): Promise<void> {
   if (streamAbort) streamAbort.abort();
   const ctrl = new AbortController();
@@ -85,7 +90,9 @@ async function consumeStream(): Promise<void> {
     res = await fetch(url, { headers: { Accept: 'text/event-stream' }, signal: ctrl.signal });
   } catch (err) {
     if (ctrl.signal.aborted) return;
-    throw err;
+    stdout.write(`\n[!] stream-connect failed: ${(err as Error).message} — retrying in ${reconnectDelayMs}ms\n`);
+    scheduleReconnect(ctrl);
+    return;
   }
   if (!res.ok) {
     const body = await res.text();
@@ -147,17 +154,41 @@ async function consumeStream(): Promise<void> {
         } else if (evName === 'tool') {
           stdout.write(`\n[tool ${data.phase}: ${data.tool ?? ''}]\n`);
         } else if (evName === 'status' && data.msg === 'connected') {
+          // Healthy connect — reset backoff
+          reconnectDelayMs = 500;
           rl.prompt();
+        } else if (evName === 'heartbeat') {
+          // Server keep-alive, nothing to render
+          continue;
         }
       }
     }
+    // EOF without abort means server closed the stream — try to reconnect
+    if (!ctrl.signal.aborted) {
+      stdout.write(`\n[!] stream closed by server — reconnecting in ${reconnectDelayMs}ms\n`);
+      scheduleReconnect(ctrl);
+    }
   } catch (err) {
     if (ctrl.signal.aborted) return;
-    stdout.write(`\nstream error: ${(err as Error).message}\n`);
+    stdout.write(`\n[!] stream error: ${(err as Error).message} — reconnecting in ${reconnectDelayMs}ms\n`);
+    scheduleReconnect(ctrl);
   }
 }
 
+function scheduleReconnect(ctrl: AbortController): void {
+  // Only fire if this controller is still the active one — prevents a stale
+  // connection's reconnect from racing with an explicit agent/session switch
+  // that already started a fresh consumeStream().
+  const delay = reconnectDelayMs;
+  reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_DELAY_MAX);
+  setTimeout(() => {
+    if (streamAbort !== ctrl) return;
+    void consumeStream();
+  }, delay);
+}
+
 function reconnectStream(): void {
+  reconnectDelayMs = 500;
   void consumeStream();
 }
 
@@ -176,6 +207,7 @@ async function send(text: string): Promise<void> {
 interface AgentInfo {
   name: string;
   description: string;
+  icon?: string;
 }
 
 interface SessionSummary {
@@ -298,8 +330,9 @@ async function handleCommand(line: string): Promise<void> {
       stdout.write('\nAgents:\n');
       for (const a of agents) {
         const marker = a.name === agent ? '*' : ' ';
+        const icon = a.icon ? `${a.icon} ` : '';
         const desc = a.description ? ` — ${a.description}` : '';
-        stdout.write(`  ${marker} ${a.name}${desc}\n`);
+        stdout.write(`  ${marker} ${icon}${a.name}${desc}\n`);
       }
       rl.prompt();
       return;

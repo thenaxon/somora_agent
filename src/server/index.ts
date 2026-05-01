@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { resolveCompactionConfig } from '../compaction/index.ts';
 import { configPath, loadConfig } from '../config/loader.ts';
 import { type Config, listAllModels, resolveAnyRef } from '../config/types.ts';
 import { getEffectiveEnv } from './env.ts';
@@ -58,11 +59,22 @@ function subscribe(session: string, sub: Subscriber): () => void {
 async function publish(session: string, event: SseEvent): Promise<void> {
   const subs = streams.get(session);
   if (!subs) return;
-  for (const sub of subs) {
+  // Snapshot — failed subscribers get evicted mid-iteration
+  const dead: Subscriber[] = [];
+  for (const sub of [...subs]) {
     try {
       await sub(event);
     } catch (err) {
       logger.warn({ msg: 'sse.publish_fail', session, err: String(err) });
+      dead.push(sub);
+    }
+  }
+  if (dead.length > 0) {
+    const set = streams.get(session);
+    if (set) {
+      for (const d of dead) set.delete(d);
+      if (set.size === 0) streams.delete(session);
+      logger.info({ msg: 'sse.publish_evict_dead', session, count: dead.length });
     }
   }
 }
@@ -383,8 +395,16 @@ app.get('/chat/stream', async (c) => {
       await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
     });
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected', session }) });
+    // Heartbeat keeps TCP alive past Undici's idle-body timeout (~5 min default)
+    // and gives the client a positive signal the link is still healthy.
+    const heartbeat = setInterval(() => {
+      stream
+        .writeSSE({ event: 'heartbeat', data: String(Date.now()) })
+        .catch((err) => logger.debug({ msg: 'sse.heartbeat_fail', session, err: String(err) }));
+    }, 20_000);
     await new Promise<void>((resolve) => {
       stream.onAbort(() => {
+        clearInterval(heartbeat);
         unsub();
         logger.info({ msg: 'sse.disconnect', agent, session });
         resolve();
@@ -471,6 +491,7 @@ app.post('/chat/send', async (c) => {
           history,
           metaStore: sessionMetaStore,
           availableModels: listAllModels(config),
+          compactionConfig: resolveCompactionConfig(config),
         },
       });
       for await (const ev of stream) {

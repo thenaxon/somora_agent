@@ -55,12 +55,46 @@ function parsePositiveInt(raw: string | undefined): number | undefined {
   return v;
 }
 
-export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
-  triggerRatio: parsePositiveFloat(process.env.SOMORA_COMPACTION_TRIGGER_RATIO) ?? 0.8,
-  safetyCushionPairs:
-    parsePositiveInt(process.env.SOMORA_COMPACTION_SAFETY_PAIRS) ?? 4,
-  modelOverride: process.env.SOMORA_COMPACTION_MODEL || undefined,
-};
+const DEFAULTS = {
+  triggerRatio: 0.8,
+  safetyCushionPairs: 4,
+} as const;
+
+/**
+ * Resolve the effective compaction config. Precedence (high → low):
+ *   1. SOMORA_COMPACTION_* env vars (operator escape hatch)
+ *   2. config.yaml `compaction:` section
+ *   3. built-in defaults
+ *
+ * DECISION #30: config.yaml is the canonical place for tunables; env vars
+ * are an override layer. Pure config-only consumers can read this with no
+ * env vars set and get the right behavior.
+ */
+export function resolveCompactionConfig(
+  raw?: { compaction?: { triggerRatio?: number; safetyCushionPairs?: number; modelOverride?: string } },
+): CompactionConfig {
+  const cfg = raw?.compaction ?? {};
+  return {
+    triggerRatio:
+      parsePositiveFloat(process.env.SOMORA_COMPACTION_TRIGGER_RATIO)
+      ?? cfg.triggerRatio
+      ?? DEFAULTS.triggerRatio,
+    safetyCushionPairs:
+      parsePositiveInt(process.env.SOMORA_COMPACTION_SAFETY_PAIRS)
+      ?? cfg.safetyCushionPairs
+      ?? DEFAULTS.safetyCushionPairs,
+    modelOverride:
+      process.env.SOMORA_COMPACTION_MODEL?.trim()
+      || cfg.modelOverride
+      || undefined,
+  };
+}
+
+/**
+ * Convenience for callers that don't have a Config object handy yet.
+ * Equivalent to `resolveCompactionConfig(undefined)` — env + defaults only.
+ */
+export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = resolveCompactionConfig();
 
 /** Picks the latest compaction whose `throughTs > sinceTs` (covers `sinceTs`). */
 export function pickLatestApplicable(

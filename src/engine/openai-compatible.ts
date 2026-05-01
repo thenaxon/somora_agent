@@ -10,7 +10,6 @@
 
 import OpenAI from 'openai';
 import {
-  DEFAULT_COMPACTION_CONFIG,
   pickLatest,
   runCompaction,
   shouldCompact,
@@ -112,9 +111,8 @@ export const openAiCompatibleEngine: AgentEngine = {
     let meta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
     let compactions = meta.compactions;
 
-    // Pre-turn compaction check. Compaction config is currently fixed
-    // to the defaults; per-provider override can be added later.
-    const compactionConfig = DEFAULT_COMPACTION_CONFIG;
+    // Compaction tunables come from the server-resolved config (env > yaml > defaults).
+    const compactionConfig = input.compactionConfig;
     const decision = shouldCompact({
       systemPrompt,
       history,

@@ -77,10 +77,16 @@ export function getEffectiveEnv(): EffectiveEnv {
     SOMORA_LOG_LEVEL: envString('SOMORA_LOG_LEVEL', 'info'),
     SOMORA_CLAUDE_BIN: resolveClaudeBin(),
     SOMORA_CODEX_BIN: resolveCodexBin(),
-    SOMORA_COMPACTION_TRIGGER_RATIO: envFloat01('SOMORA_COMPACTION_TRIGGER_RATIO', 0.8),
-    SOMORA_COMPACTION_SAFETY_PAIRS: envInt('SOMORA_COMPACTION_SAFETY_PAIRS', 4),
+    // Compaction env vars are now an _override layer_ on top of config.yaml
+    // `compaction:` (DECISION #30). Unset = config-or-default takes over.
+    SOMORA_COMPACTION_TRIGGER_RATIO: process.env.SOMORA_COMPACTION_TRIGGER_RATIO
+      ? envFloat01('SOMORA_COMPACTION_TRIGGER_RATIO', 0.8)
+      : { value: null, isDefault: true, note: 'unset → uses config.yaml compaction.triggerRatio (default 0.8)' },
+    SOMORA_COMPACTION_SAFETY_PAIRS: process.env.SOMORA_COMPACTION_SAFETY_PAIRS
+      ? envInt('SOMORA_COMPACTION_SAFETY_PAIRS', 4)
+      : { value: null, isDefault: true, note: 'unset → uses config.yaml compaction.safetyCushionPairs (default 4)' },
     SOMORA_COMPACTION_MODEL: process.env.SOMORA_COMPACTION_MODEL
       ? { value: process.env.SOMORA_COMPACTION_MODEL, isDefault: false }
-      : { value: null, isDefault: true, note: 'unset → auto-pick smallest fitting candidate' },
+      : { value: null, isDefault: true, note: 'unset → uses config.yaml compaction.modelOverride (default auto-pick)' },
   };
 }

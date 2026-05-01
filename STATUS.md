@@ -4,13 +4,32 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-01, commits `phase 2a/b/c/d`)
+## Wo wir stehen (Stand: 2026-05-01 abend, Phase 2-Stufe-B startet)
 
 **Phase 1 + Phase 2-Stufe-A komplett.** Drei Engines im Gleichstand auf
 Konversations- und Compaction-Ebene. System ist funktional benutzbar —
 `npm run dev:server` + `npm run dev:cli` läuft, alle drei Engines
 reden, Sessions persistieren, `/model`-Switching ist live, Compaction
 greift automatisch + cross-engine.
+
+**Phase 2-Stufe-B startet** mit Memory-Konzept-Diskussion (siehe
+DECISIONS #25–#30, FUTURE.md). Konzept-Doku + Foundation steht:
+
+- DECISIONS #25–#30 dokumentieren Memory-Layer + Config-Migration
+- FUTURE.md hält Dream-Mode + Agent-Loop für openai-compatible fest
+- `compaction:`- und `memory:`-Sektion im config.yaml verfügbar
+  (DECISION #30: config statt Env-Var). Schema-Defaults greifen wenn
+  config-Block leer
+- `SOMORA_COMPACTION_*` Env-Vars sind jetzt Override-Layer über
+  `config.yaml.compaction`, nicht mehr Primärquelle
+- AGENTS.md-Frontmatter aufgeräumt: model/fallback in `agent.yaml`,
+  Frontmatter nur noch Identity (name/description/icon)
+- CLI-SSE-Stream-Bug behoben (Server-Heartbeat alle 20s, Cleanup toter
+  Subscriber on writeSSE-Fail, Client-Auto-Reconnect mit Backoff)
+
+**Memory-Layer-Implementation (Storage/Embeddings/Tools/MCP/Obsidian)
+steht als nächstes an.** Konzept ist fix, Bauentscheidungen siehe
+Decisions #25–#28.
 
 ### Was funktioniert
 
@@ -128,13 +147,23 @@ eintragen, sonst taucht er nicht im Log/Endpoint auf.
 
 ## Was bewusst NICHT da ist
 
-- **Memory-Layer** — Phase-2-Stufe-B (nächster Schritt). Rene hat
-  Spezialwünsche, deshalb in der nächsten Session erst **diskutieren**,
-  dann bauen. Mein erster Anlauf (Memory.md → System-Prompt) wurde
-  verworfen.
-- **Eigenes Tool-System** — Phase-2-Stufe-C, nach Memory. Definition,
-  MCP-Hookup bei den CLI-Engines, Tool-Call-Loop beim OpenAI-Adapter,
-  Allowlist pro Agent. Nichts davon existiert.
+- **Memory-Layer-Implementation** — Konzept ist 2026-05-01 abgesegnet
+  (siehe DECISIONS #25–#28), Bau läuft als Phase-2-Stufe-B. Storage
+  (Markdown + sqlite-vec), Embeddings (lokal via node-llama-cpp),
+  Auto-Inject (Hermes-style, Runtime nicht Agent), Memory-Tools,
+  Obsidian-Vault als optionale Read-Source — alles entschieden,
+  nicht gebaut.
+- **Agent-Loop für `openai-compatible`** — Phase-2-Stufe-C, kommt
+  direkt nach Memory. Sodass openai-compatible Memory-Tools + andere
+  Tools genauso aufrufen kann wie claude-cli/codex-cli es eingebaut
+  haben. Siehe FUTURE.md.
+- **Dream-Mode** — Phase-2-Stufe-D oder später. Konzept in FUTURE.md
+  fixiert: Read-Only-Träumer findet Inkonsistenzen Memory ↔ Sessions
+  ↔ Vault, hinterlässt Findings, User+Hans approven manuell. KEIN
+  Auto-Promotion à la OpenClaw.
+- **Eigenes Tool-System** — Memory-Tools sind der Anfang davon.
+  Allgemeines Tool-System mit Allowlist pro Agent, MCP-Hookup, etc.
+  baut darauf auf in späteren Phasen.
 - **Map-Reduce-Compaction** — Phase 3, falls je benötigt. Wird erst
   relevant wenn das größte konfigurierte Modell (typisch Opus 1M) als
   Compaction-Worker nicht mehr reicht.
@@ -289,17 +318,37 @@ resume → ohne. Siehe `src/engine/codex-cli.ts`.
 ## Pickup für nächste Session
 
 Erster Satz beim Wiedereinstieg sollte sein:
-> „Wir stehen bei `phase 2d`. Drei-Engine-Parität ist durch:
-> claude-cli, codex-cli, openai-compatible. Cross-Engine-Continuity
-> via Session-Resume + Delta-Replay funktioniert. Compaction für
-> openai-compatible ist da, mit dynamischer engine-agnostic
-> Worker-Wahl. `GET /env` und `somora.env`-Log zeigen den effektiven
-> Stand der Env-Vars. Du wolltest jetzt über die Memory-Schicht reden —
-> du hast da Spezialwünsche. Ich hör erst zu, nicht vorbauen."
+> „Wir stehen bei Phase 2-Stufe-B. Memory-Konzept ist abgesegnet
+> (DECISIONS #25–#30, FUTURE.md). Foundation steht: config.yaml
+> hat memory:- und compaction:-Sektionen, AGENTS.md-Frontmatter
+> ist aufgeräumt, CLI-SSE-Bug behoben. Memory-Implementation
+> (Storage/Embeddings/Tools/MCP/Obsidian) ist als nächstes an
+> der Reihe."
 
-Wichtig: Memory ist bewusst noch unangerührt. Nicht spontan starten,
-auch wenn Auto-Mode aktiv ist. Erst Renes Vorstellungen aufnehmen,
-dann gemeinsam designen.
+Memory-Layer-Konzept (Kurzform, Details in DECISIONS #25–#28):
+
+- Markdown auf Disk = Source-of-Truth (`memory/notes/<slug>.md`)
+- SQLite + sqlite-vec als abgeleiteter Index (`memory.db`)
+- Lokale Embeddings (`embeddinggemma-300m` via node-llama-cpp)
+- Auto-Inject pro Turn (letzte 3 Turns als Query, Top-5, Score+Token-Cap)
+- Tools: `memory_search`, `memory_get`, `memory_write`, `memory_edit`,
+  `memory_delete`, `memory_list`
+- MCP-Server für claude-cli/codex-cli; openai-compatible bekommt
+  Direct-Bridge wenn Agent-Loop in Stufe-C gebaut ist
+- Obsidian-Vault als optionale Read-Source pro Agent
+  (`agent.yaml` → `obsidian.vault`, `obsidian.readOnlyPaths`),
+  Schreiben nur über `obsidian_write` auf User-Aufforderung
+- Pro-Agent `workspace`-Pfad in `agent.yaml` (für freie Files via Tools)
+
+Vorgehen:
+1. SQLite + sqlite-vec einbinden (Schema, File-Watcher, Re-Index)
+2. Embeddings (node-llama-cpp + GGUF download), Chunking
+3. Hybrid-Retrieval (Vector + FTS5)
+4. Auto-Inject in Server-Turn-Pipeline
+5. Memory-Tools + lokaler MCP-Server
+6. claude-cli/codex-cli MCP-Hookup
+7. Obsidian-Source-Indexer
+8. STATUS-Update auf Stufe-B-Done
 
 ### Test-Sessions zum Aufräumen
 

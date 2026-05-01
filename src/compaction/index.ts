@@ -13,6 +13,7 @@
 export type { Compaction, CompactionConfig } from './types.ts';
 export {
   DEFAULT_COMPACTION_CONFIG,
+  resolveCompactionConfig,
   pickLatest,
   pickLatestApplicable,
 } from './types.ts';
