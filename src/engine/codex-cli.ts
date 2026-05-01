@@ -30,6 +30,39 @@ import type { AgentEngine, TurnInput } from './types.ts';
 
 const ENGINE = 'codex-cli';
 
+// codex feature flags we explicitly disable for somora sessions (DECISION
+// #23). These are codex's default-on built-in tools that would otherwise
+// give the model filesystem read, file editing, web search, browser
+// automation, JS execution, and image generation — all way outside what
+// a somora agent should be able to do.
+//
+// The somora-memory MCP server is unaffected because MCP tool dispatch
+// is infrastructure (`tool_call_mcp_elicitation`), not gated by these
+// feature flags.
+//
+// Maintained as a list of feature names from `codex features list`. If
+// the codex binary version changes and a feature gets renamed, the
+// `--disable <feature>` flag for the missing name is silently ignored,
+// so this list is forward-compatible (no hard break) but might miss
+// newly-introduced tools — re-audit with `codex features list` when
+// upgrading codex.
+const CODEX_DISABLED_FEATURES = [
+  'shell_tool', // direct shell command execution
+  'unified_exec', // newer exec mechanism
+  'apply_patch_freeform', // free-form file editing
+  'apply_patch_streaming_events', // streaming patch events
+  'browser_use', // browser automation
+  'in_app_browser', // in-app browser
+  'computer_use', // desktop / screen control
+  'image_generation', // image generation
+  'js_repl', // arbitrary JS execution
+  'apps', // codex "apps" tool
+  'web_search_cached', // web search
+  'tool_search', // meta-tool that lets the model search for tools
+  'tool_suggest', // meta-tool that suggests tools
+  'multi_agent', // sub-agent spawning
+] as const;
+
 import type { Compaction } from '../compaction/index.ts';
 
 interface CodexCliMeta {
@@ -112,6 +145,14 @@ export const codexCliEngine: AgentEngine = {
     // before evaluating the rest of the command (codex's CLI lib expects
     // global flags up front).
     args.push(...somoraMemoryCodexFlags(agent));
+    // Disable all of codex's built-in tools (DECISION #23 — engine-agnostic
+    // tool surface; only somora-defined tools should be available). codex's
+    // default-on tools include shell, file-editing, browser, image-gen,
+    // js-repl, etc., which would let the model touch the filesystem and
+    // network well outside the somora memory scope. The somora-memory MCP
+    // continues to work because MCP tool dispatch is infrastructure, not
+    // gated by these feature flags.
+    for (const feat of CODEX_DISABLED_FEATURES) args.push('--disable', feat);
     args.push('--json', '--skip-git-repo-check');
     if (!resumeId) args.push('--sandbox', 'read-only');
     args.push('-m', resolvedModel.modelId);
