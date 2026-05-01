@@ -105,6 +105,58 @@ zusammenfassung weg (oder als „processed" markiert).
 
 ---
 
+## Obsidian-Verbesserung — Wikilink-/Backlink-Awareness
+
+**Status:** Idee aus Diskussion 2026-05-01, nach Phase-2g-Obsidian-Integration.
+
+**Heute:** Vault-Markdown wird als reiner Text behandelt. Embeddings + BM25
+matchen Tokens innerhalb des Inhalts (inklusive der wörtlichen Link-Strings
+wie `[[../devices/Voice-Satellites|Voice Satellites]]`), aber die
+**Graph-Struktur** zwischen Notes ist für die Runtime unsichtbar.
+
+**Was fehlt:**
+
+- **Link-Extraktion** beim Chunking: `[[target|display]]`-Patterns parsen,
+  Target-Pfad relativ zum Vault auflösen, in Chunk-Metadaten speichern
+  (z.B. neue `chunk_links`-Tabelle mit `from_chunk_id`, `to_file_path`).
+- **Backlinks-Index:** „welche Notes verlinken auf X?" — beim Re-Index
+  pro File eine Liste seiner ausgehenden Links bauen, dadurch entsteht
+  implizit der Eingangs-Index.
+- **Recall-Expansion:** wenn ein Treffer in Note A landet und A linkt auf
+  B, dann B mit reduziertem Score-Boost (z.B. 0.6 × A's Score) als
+  zusätzlichen Recall-Hit aufnehmen — bis zu N Hops oder Token-Cap.
+  Das löst Renes Beispiel: Note A sagt „siehe [[B]] für Geräte-Übersicht",
+  User fragt nach Geräten → A wird gefunden, B kommt automatisch mit.
+- **Hit-Boost durch Link-Popularität:** vielverlinkte Notes (=zentrale
+  Knoten im Vault-Graph) bei Score-Ties bevorzugen. Optional, eher
+  Sahnehäubchen.
+
+**Wert:** in echten Obsidian-Vaults ist die Link-Struktur _bewusst gepflegt_ —
+sie ist kuratierte semantische Information. Die zu nutzen ist deutlich
+billiger als sie via Embeddings zu rekonstruieren.
+
+**Dream-Synergie:** der Träumer könnte Inkonsistenzen quer durch
+verlinkte Note-Cluster aufdecken — „Note A sagt X, verlinkte Note B
+sagt nicht-X, reconcile?". Das ist genau die Art Inkonsistenz die
+Embedding-Suche allein schlecht findet.
+
+**Implementierungs-Notizen:**
+
+- Link-Resolution muss tolerant sein: Obsidian erlaubt sowohl
+  `[[target]]` (basename-match) als auch `[[path/target]]` (relativ).
+  Beim ersten Resolve-Pass über den ganzen Vault scannen, dann
+  Slug-Map bauen.
+- Renames: wenn der User eine Note umbenennt, brechen Links bis zum
+  nächsten manuellen Sweep. Kann später automatisiert werden, aber für
+  v1 reicht „beim Re-Index die Edge-List neu aufbauen".
+- Obsidian-Aliases (`---\naliases: [...]\n---` in Frontmatter) ggf.
+  mit-resolven für robusteres Linking.
+
+**Dependencies:** keine spezifischen — könnte parallel zu Memory-Tools
+oder vor Dream-Mode kommen. Lebensqualität-Upgrade, kein Blocker.
+
+---
+
 ## Polish-Punkte aus dem Engine-Delta (DECISIONS #20-Tabelle)
 
 Stehen offen, kommen wenn passt. Reihenfolge frei nach Bedarf:
