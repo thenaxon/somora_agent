@@ -46,31 +46,32 @@ const SearchInput = z.object({
 export const memorySearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   name: 'memory_search',
   description:
-    'Durchsuche dein gesamtes Wissen: dein eigenes Memory plus angebundene Vaults. ' +
-    'Liefert Top-N Treffer mit `reference`, `score` und Snippet. Treffer sind nach Source ' +
-    'getagged: `memory/<slug>` für eigene Notizen, `vault/<slug>` für Vault-Files. ' +
-    'Die `reference` kannst du 1:1 in `memory_get` einsetzen, um den vollen Inhalt zu lesen. ' +
-    'Nutze dieses Tool wenn der vor-injizierte <memory-context>-Block nicht ausreicht oder ' +
-    'du gezielt etwas Bestimmtes nachschlagen willst.',
+    'Search across all your knowledge sources: your own memory notes plus any attached vault. ' +
+    'Returns top-N hits with `reference`, `score`, and a snippet. Hits are tagged by source: ' +
+    '`memory/<slug>` for your own notes, `vault/<slug>` for vault files. ' +
+    'Pass the `reference` value directly to `memory_get` to read the full content. ' +
+    'Use this when the pre-injected <memory-context> block is insufficient or you need to ' +
+    'look up something specific that was not surfaced automatically.',
   inputSchema: SearchInput,
   jsonSchema: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
-        description: 'Was du suchst — Schlagwort, Frage, Synonyme. Embeddings finden auch nicht-wörtliche Treffer.',
+        description:
+          'What to search for — keyword, question, or synonym. Embedding-based recall also finds non-literal matches.',
       },
       limit: {
         type: 'integer',
         minimum: 1,
         maximum: 50,
-        description: 'Maximal so viele Treffer (default 5).',
+        description: 'Maximum number of hits to return (default 5).',
       },
       minScore: {
         type: 'number',
         minimum: 0,
         maximum: 1,
-        description: 'Treffer unter diesem Score verwerfen (default 0.5).',
+        description: 'Discard hits below this score (0..1, default 0.5).',
       },
     },
     required: ['query'],
@@ -108,10 +109,10 @@ const GetInput = z.object({
 export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
   name: 'memory_get',
   description:
-    'Hol den vollen Inhalt einer Notiz oder eines Vault-Files anhand der `reference` aus einem ' +
-    'Recall-Treffer (oder aus dem <memory-context>-Block). ' +
-    'Format: `memory/<slug>` für eigenes Memory, `vault/<slug>` für Vault. Liefert ' +
-    'Markdown-Inhalt, Frontmatter und Pfad.',
+    'Fetch the full content of a note or vault file by its `reference` from a recall hit ' +
+    '(or from the <memory-context> block). ' +
+    'Format: `memory/<slug>` for your own memory, `vault/<slug>` for vault files. ' +
+    'Returns the full markdown content, parsed frontmatter, and file path.',
   inputSchema: GetInput,
   jsonSchema: {
     type: 'object',
@@ -119,7 +120,7 @@ export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
       reference: {
         type: 'string',
         pattern: '^(memory|vault)/.+$',
-        description: 'Recall-Referenz, exakt wie sie in memory_search-Treffern oder im memory-context-Block stand.',
+        description: 'Recall reference, exactly as it appeared in a memory_search hit or in the memory-context block.',
       },
     },
     required: ['reference'],
@@ -144,16 +145,16 @@ const ListInput = z.object({
 export const memoryList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'memory_list',
   description:
-    'Liste deiner eigenen Memory-Notizen mit Slug, Description und Tags. Optional nach Tag filtern. ' +
-    'Listet NICHT Vault-Files (der User kennt seinen Vault selbst und der kann groß sein). ' +
-    'Wenn du Vault-Inhalt brauchst, nutze `memory_search` mit konkreter Query.',
+    'List your own memory notes with slug, description, and tags. Optionally filter by tag. ' +
+    'Does NOT list vault files — the user knows their own vault, and it may be large. ' +
+    'For vault content, use `memory_search` with a specific query.',
   inputSchema: ListInput,
   jsonSchema: {
     type: 'object',
     properties: {
       tag: {
         type: 'string',
-        description: 'Optional: nur Notizen mit diesem Tag im Frontmatter zurückgeben.',
+        description: 'Optional: only return notes whose frontmatter contains this tag.',
       },
     },
     additionalProperties: false,
@@ -184,11 +185,11 @@ const WriteInput = z.object({
 export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
   name: 'memory_write',
   description:
-    'Erstelle oder überschreibe eine Notiz in DEINEM eigenen Memory. ' +
-    'Slug muss lowercase sein und nur [a-z0-9_-] enthalten — keine Pfade, keine Slashes. ' +
-    'Schreibt nach `~/.somora/agents/<dein-name>/memory/<slug>.md`. ' +
-    'Vault-Files kannst du mit diesem Tool nicht ändern. ' +
-    '`created` wird beim Überschreiben erhalten, `updated` wird automatisch gesetzt.',
+    'Create or overwrite a note in YOUR OWN memory. ' +
+    'Slug must be lowercase and contain only [a-z0-9_-] — no paths, no slashes. ' +
+    'Writes to `~/.somora/agents/<your-name>/memory/<slug>.md`. ' +
+    'Cannot modify vault files — vaults are read-only via this tool. ' +
+    'On overwrite, `created` is preserved; `updated` is always set to now.',
   inputSchema: WriteInput,
   jsonSchema: {
     type: 'object',
@@ -196,24 +197,24 @@ export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
       slug: {
         type: 'string',
         pattern: '^[a-z0-9][a-z0-9_-]*$',
-        description: 'Datei-Identifier — z.B. "auto", "wohnung", "arbeit-naxon". Lowercase, ohne Endung.',
+        description: 'File identifier — e.g. "auto", "apartment", "work-naxon". Lowercase, no extension.',
       },
       content: {
         type: 'string',
-        description: 'Markdown-Body (ohne YAML-Frontmatter — den verwaltet das Tool).',
+        description: 'Markdown body (no YAML frontmatter — the tool manages that).',
       },
       frontmatter: {
         type: 'object',
         properties: {
-          description: { type: 'string', description: 'Kurzbeschreibung (für memory_list).' },
+          description: { type: 'string', description: 'Short description (shown by memory_list).' },
           tags: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Tags für Filterung.',
+            description: 'Tags for filtering.',
           },
         },
         additionalProperties: true,
-        description: 'Optional. Beliebige weitere Felder werden mitgespeichert.',
+        description: 'Optional. Any additional fields are persisted as-is.',
       },
     },
     required: ['slug', 'content'],
@@ -242,9 +243,9 @@ const EditInput = z.object({
 export const memoryEdit: ToolDefinition<z.infer<typeof EditInput>> = {
   name: 'memory_edit',
   description:
-    'Ersetze den Inhalt einer EXISTIERENDEN Memory-Notiz. Verhalten wie `memory_write`, ' +
-    'aber bricht ab wenn die Notiz noch nicht existiert (verhindert versehentliches Anlegen ' +
-    'durch Tippfehler im Slug). Wenn du eine neue Notiz anlegen willst: `memory_write`.',
+    'Replace the content of an EXISTING memory note. Same shape as `memory_write`, ' +
+    'but fails if the note does not exist (prevents accidental creation from a typo in the slug). ' +
+    'To create a new note, use `memory_write` instead.',
   inputSchema: EditInput,
   jsonSchema: {
     type: 'object',
@@ -252,11 +253,11 @@ export const memoryEdit: ToolDefinition<z.infer<typeof EditInput>> = {
       slug: {
         type: 'string',
         pattern: '^[a-z0-9][a-z0-9_-]*$',
-        description: 'Slug der bestehenden Notiz.',
+        description: 'Slug of the existing note to edit.',
       },
       content: {
         type: 'string',
-        description: 'Neuer kompletter Markdown-Body. Frontmatter wird vom Tool verwaltet.',
+        description: 'New full markdown body. Frontmatter is managed by the tool.',
       },
       frontmatter: {
         type: 'object',
@@ -292,8 +293,8 @@ const DeleteInput = z.object({
 export const memoryDelete: ToolDefinition<z.infer<typeof DeleteInput>> = {
   name: 'memory_delete',
   description:
-    'Lösche eine eigene Memory-Notiz. Vault-Files kannst du mit diesem Tool nicht löschen. ' +
-    'Ist idempotent: gibt deleted=false zurück wenn die Notiz nicht (mehr) existiert.',
+    'Delete one of your own memory notes. Cannot delete vault files via this tool. ' +
+    'Idempotent: returns deleted=false if the note does not (or no longer) exist.',
   inputSchema: DeleteInput,
   jsonSchema: {
     type: 'object',
@@ -301,7 +302,7 @@ export const memoryDelete: ToolDefinition<z.infer<typeof DeleteInput>> = {
       slug: {
         type: 'string',
         pattern: '^[a-z0-9][a-z0-9_-]*$',
-        description: 'Slug der zu löschenden Notiz.',
+        description: 'Slug of the note to delete.',
       },
     },
     required: ['slug'],

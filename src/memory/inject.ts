@@ -85,12 +85,15 @@ function buildRecallQuery(
 }
 
 function formatMemoryBlock(hits: Hit[], maxTokens: number): string {
-  // Heuristik: 4 Zeichen pro Token (project-wide).
+  // Heuristic: 4 chars per token (project-wide).
   const maxChars = maxTokens * 4;
+  // English meta-instruction — the actual note content (German for this user)
+  // sits inside. English routing instructions are more reliable across
+  // model sizes than mixing locales for the meta layer.
   const header =
-    'Folgende Notizen aus deinem Memory könnten für diesen Turn relevant sein. ' +
-    'Sie wurden automatisch von der Runtime herausgesucht (kein Tool-Call erforderlich). ' +
-    'Wenn Du tiefer nachsehen willst, ruf `memory_search` oder `memory_get` auf.';
+    'The following notes from your memory may be relevant to this turn. ' +
+    'They were retrieved automatically by the runtime (no tool call required). ' +
+    'If you need to look deeper, call `memory_search` or `memory_get`.';
   const lines: string[] = ['<memory-context>', header, ''];
 
   // Conservative budget: header + closing tag eats some chars
