@@ -7,6 +7,7 @@ import { openStream, type StreamHandle } from './stream.ts';
 import { runCommand } from './commands.ts';
 import { Header } from './header.tsx';
 import { Footer } from './footer.tsx';
+import { Separator } from './separator.tsx';
 import { TurnView } from './turn-views.tsx';
 import { nextId, summarize } from './format.ts';
 import type { StreamEvent, Turn, TurnStats } from './types.ts';
@@ -183,17 +184,9 @@ export function App({ base, initialAgent, initialSession }: Props) {
 
   return (
     <Box flexDirection="column">
-      <Header
-        agent={agent}
-        session={session}
-        stats={stats}
-        streaming={streaming}
-        connected={connected}
-      />
-
-      {/* Static logs every finalized turn exactly once. The terminal's own
-          scrollback handles history; Ink only re-renders the dynamic part
-          below. */}
+      {/* Scrollback: every finalized turn flushes to terminal scrollback once
+          via Static, then is owned by the terminal — older messages scroll
+          up and out as new ones arrive. The dynamic frame below stays put. */}
       <Static items={turns}>{(turn) => <TurnView key={turn.id} turn={turn} agentName={agent} />}</Static>
 
       {streamingText.length > 0 ? (
@@ -207,7 +200,20 @@ export function App({ base, initialAgent, initialSession }: Props) {
         </Box>
       ) : null}
 
+      {/* Bottom panel: separator → status → input → hints. Stays anchored
+          to the bottom of the visible terminal frame because nothing below
+          it ever changes height. */}
       <Box marginTop={1}>
+        <Separator />
+      </Box>
+      <Header
+        agent={agent}
+        session={session}
+        stats={stats}
+        streaming={streaming}
+        connected={connected}
+      />
+      <Box>
         <Text color="cyan">{'> '}</Text>
         <TextInput
           value={input}
@@ -217,7 +223,6 @@ export function App({ base, initialAgent, initialSession }: Props) {
           showCursor={!busy}
         />
       </Box>
-
       <Footer />
     </Box>
   );

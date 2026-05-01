@@ -1,9 +1,17 @@
 // One component per Turn-kind. Kept dumb — no state, no fetches, just
-// rendering. Layout-conventions:
-//   - 2-space role tag + content, single line tag where possible
-//   - dim secondary text (tool args, memory refs, system notices)
-//   - color-code role tags (user=cyan dim, agent=cyan bright, tool=blue,
-//     memory=magenta dim, system=yellow/red by tone)
+// rendering.
+//
+// Color palette (chosen for readability on dark AND light terminals):
+//   user role tag:    green
+//   agent role tag:   cyan bold
+//   tool ▸:           blue + bold
+//   tool result ↳:    gray (a real color, NOT dimColor — dimColor is
+//                     near-invisible on dark backgrounds)
+//   tool error:       red bold
+//   memory ◇:         magenta bold (no dim)
+//   system info:      gray
+//   system warn:      yellow
+//   system error:     red bold
 
 import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
@@ -27,7 +35,7 @@ export function TurnView({ turn, agentName }: { turn: Turn; agentName: string })
 function UserTurn({ text }: { text: string }) {
   return (
     <Box marginTop={1}>
-      <Text color="cyan" dimColor>
+      <Text color="green" bold>
         {'user  '}
       </Text>
       <Text>{text}</Text>
@@ -66,21 +74,23 @@ function ToolEvent({
     const args = summarize(input, 100);
     return (
       <Box marginTop={1}>
-        <Text color="blue">▸ </Text>
-        <Text color="blue">{name}</Text>
-        {args ? (
-          <Text dimColor> · {args}</Text>
-        ) : null}
+        <Text color="blue" bold>
+          ▸{' '}
+        </Text>
+        <Text color="blue" bold>
+          {name}
+        </Text>
+        {args ? <Text color="gray"> · {args}</Text> : null}
       </Box>
     );
   }
   if (phase === 'error') {
     return (
       <Box>
-        <Text color="red">  ↳ error · </Text>
-        <Text color="red" dimColor>
-          {summarize(error, 200)}
+        <Text color="red" bold>
+          {'  ↳ error · '}
         </Text>
+        <Text color="red">{summarize(error, 200)}</Text>
       </Box>
     );
   }
@@ -88,8 +98,8 @@ function ToolEvent({
   const out = summarize(output, 100);
   return (
     <Box>
-      <Text dimColor>  ↳ </Text>
-      <Text dimColor>{out || '(ok)'}</Text>
+      <Text color="gray">{'  ↳ '}</Text>
+      <Text color="gray">{out || '(ok)'}</Text>
     </Box>
   );
 }
@@ -107,7 +117,7 @@ function MemoryEvent({
   const refList = refs.length ? ` · ${refs.join(', ')}` : '';
   return (
     <Box marginTop={1}>
-      <Text color="magenta" dimColor>
+      <Text color="magenta" bold>
         ◇ memory · {count} hits
         {score}
         {refList}
@@ -124,11 +134,12 @@ function SystemNotice({
   tone: 'info' | 'warn' | 'error';
 }) {
   const color = tone === 'error' ? 'red' : tone === 'warn' ? 'yellow' : 'gray';
+  const bold = tone === 'error';
   const prefix = tone === 'error' ? '✗' : tone === 'warn' ? '!' : 'i';
   return (
     <Box marginTop={1} flexDirection="column">
       {text.split('\n').map((line, i) => (
-        <Text key={i} color={color}>
+        <Text key={i} color={color} bold={bold}>
           {i === 0 ? `${prefix} ` : '  '}
           {line}
         </Text>

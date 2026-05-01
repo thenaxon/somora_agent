@@ -12,41 +12,49 @@ interface Props {
   connected: boolean;
 }
 
+// Status line. Sits right above the input, NOT at the top of the terminal —
+// keeps the bottom-panel (status / input / hints) anchored while older
+// turns scroll up and out via Ink's <Static>.
+//
+// Color choice: explicit `gray` instead of dimColor wherever the text needs
+// to be readable. dimColor halves intensity, which on dark terminals turns
+// near-black; gray is a real color that survives both backgrounds.
 export function Header({ agent, session, stats, streaming, connected }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   return (
-    <Box flexDirection="column">
-      <Box>
-        <Text color="yellow">🐨 somora </Text>
-        <Text dimColor>· </Text>
-        <Text color="cyan">
-          {agent}:{session}
-        </Text>
-        {stats?.model ? (
-          <>
-            <Text dimColor> · </Text>
-            <Text color="magenta">{stats.model}</Text>
-          </>
-        ) : null}
-        {tokenSegment ? (
-          <>
-            <Text dimColor>   </Text>
-            {tokenSegment}
-          </>
-        ) : null}
-        <Box flexGrow={1} justifyContent="flex-end">
-          {streaming ? (
-            <Text color="yellow">
-              <Spinner type="dots" /> streaming
-            </Text>
-          ) : connected ? (
-            <Text dimColor>● connected</Text>
-          ) : (
-            <Text color="red">● disconnected</Text>
-          )}
-        </Box>
+    <Box>
+      <Text color="yellow" bold>
+        🐨 somora{' '}
+      </Text>
+      <Text color="gray">· </Text>
+      <Text color="cyan" bold>
+        {agent}:{session}
+      </Text>
+      {stats?.model ? (
+        <>
+          <Text color="gray"> · </Text>
+          <Text color="magentaBright">{stats.model}</Text>
+        </>
+      ) : null}
+      {tokenSegment ? (
+        <>
+          <Text>{'   '}</Text>
+          {tokenSegment}
+        </>
+      ) : null}
+      <Box flexGrow={1} justifyContent="flex-end">
+        {streaming ? (
+          <Text color="yellow" bold>
+            <Spinner type="dots" /> streaming
+          </Text>
+        ) : connected ? (
+          <Text color="green">● connected</Text>
+        ) : (
+          <Text color="red" bold>
+            ● disconnected
+          </Text>
+        )}
       </Box>
-      <Text dimColor>{'─'.repeat(80)}</Text>
     </Box>
   );
 }
@@ -62,18 +70,18 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
     const uncached = total - cached;
     inSegment = (
       <Text>
-        ↑ {formatTokens(uncached)}
+        <Text color="white">↑ {formatTokens(uncached)}</Text>
         <Text color="green">+{formatTokens(cached)}¢</Text>
       </Text>
     );
   } else {
-    inSegment = <Text>↑ {formatTokens(total)}</Text>;
+    inSegment = <Text color="white">↑ {formatTokens(total)}</Text>;
   }
   return (
     <Text>
       {inSegment}
-      {window ? <Text dimColor> / {formatTokens(window)}</Text> : null}
-      <Text>   ↓ {formatTokens(stats.tokensOut)}</Text>
+      {window ? <Text color="gray"> / {formatTokens(window)}</Text> : null}
+      <Text color="white">   ↓ {formatTokens(stats.tokensOut)}</Text>
     </Text>
   );
 }
