@@ -16,6 +16,7 @@
 import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
 import { shortToolName, summarize } from './format.ts';
+import { renderInline } from './markdown.tsx';
 
 export function TurnView({
   turn,
@@ -62,14 +63,25 @@ function AgentTurn({
 }) {
   const tag = agentIcon ? `${agentIcon} ${agentName}` : agentName;
   return (
-    <Box marginTop={1} flexDirection="row">
+    <Box marginTop={1} flexDirection="column">
       <Text color="cyan" bold>
         {tag}
-        {'  '}
       </Text>
-      <Box flexDirection="column" flexGrow={1}>
-        <Text>{text}</Text>
-      </Box>
+      <AgentBody text={text} />
+    </Box>
+  );
+}
+
+// Tag on its own row, body indented 2 spaces uniformly. Each line is its
+// own Text element so paragraph breaks (empty lines) remain visible and
+// inline markdown gets per-line rendering.
+export function AgentBody({ text }: { text: string }) {
+  const lines = text.split('\n');
+  return (
+    <Box paddingLeft={2} flexDirection="column">
+      {lines.map((line, i) => (
+        <Text key={i}>{line.length > 0 ? renderInline(line) : ' '}</Text>
+      ))}
     </Box>
   );
 }

@@ -8,7 +8,7 @@ import { runCommand } from './commands.ts';
 import { Header } from './header.tsx';
 import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
-import { TurnView } from './turn-views.tsx';
+import { AgentBody, TurnView } from './turn-views.tsx';
 import { nextId, summarize } from './format.ts';
 import type { AgentInfo, StreamEvent, Turn, TurnStats } from './types.ts';
 
@@ -217,14 +217,11 @@ export function App({ base, initialAgent, initialSession }: Props) {
       </Static>
 
       {streamingText.length > 0 ? (
-        <Box marginTop={1} flexDirection="row">
+        <Box marginTop={1} flexDirection="column">
           <Text color="cyan" bold>
             {agentTag}
-            {'  '}
           </Text>
-          <Box flexDirection="column" flexGrow={1}>
-            <Text>{streamingText}</Text>
-          </Box>
+          <AgentBody text={streamingText} />
         </Box>
       ) : null}
 
