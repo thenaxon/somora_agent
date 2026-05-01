@@ -109,15 +109,39 @@ export class MemoryManager {
     this.watcher.start();
   }
 
-  private buildIgnored(): Array<string | RegExp> {
-    const ignored: Array<string | RegExp> = [/(^|[\\/])\../]; // dotfiles
-    if (this.obsidian?.excludePaths) {
-      for (const p of this.obsidian.excludePaths) {
-        ignored.push(join(this.obsidian.vaultPath, p));
-        ignored.push(join(this.obsidian.vaultPath, p) + '/**');
-      }
-    }
-    return ignored;
+  private buildIgnored(): Array<(path: string) => boolean> {
+    // chokidar 5 evaluates `ignored` against absolute paths. A naive
+    // dotfile-regex like `/(^|[\\/])\../` blocks the entire ~/.somora tree
+    // because `.somora` itself contains a dot. We therefore go function-
+    // based and only exclude components RELATIVE to a watched root.
+    const memRoot = this.memoryRoot;
+    const vault = this.obsidian?.vaultPath;
+    const vaultExcludes = this.obsidian?.excludePaths ?? [];
+    const roots = [memRoot, ...(vault ? [vault] : [])];
+
+    return [
+      (path: string) => {
+        // Never exclude the watched root itself.
+        if (roots.includes(path)) return false;
+        for (const root of roots) {
+          if (path.startsWith(root + '/')) {
+            const rel = path.slice(root.length + 1);
+            const parts = rel.split('/');
+            // Skip dot-prefixed components below the root (.dreams, .cache, …)
+            if (parts.some((c) => c.startsWith('.'))) return true;
+            // Vault: skip configured no-touch subpaths
+            if (root === vault) {
+              for (const ex of vaultExcludes) {
+                if (rel === ex || rel.startsWith(ex + '/')) return true;
+              }
+            }
+            return false;
+          }
+        }
+        // Path isn't under a watched root — let chokidar decide (false = include)
+        return false;
+      },
+    ];
   }
 
   async close(): Promise<void> {

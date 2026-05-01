@@ -65,7 +65,7 @@ export class MarkdownWatcher {
       if (existing) clearTimeout(existing);
       const t = setTimeout(() => {
         this.timers.delete(path);
-        logger.debug({ msg: 'memory.watcher_fired', kind, path });
+        logger.info({ msg: 'memory.watcher_fired', kind, path });
         Promise.resolve(this.opts.onEvent({ kind, path })).catch((err) =>
           logger.error({ msg: 'memory.watcher_event_handler_failed', path, err: String(err) }),
         );
