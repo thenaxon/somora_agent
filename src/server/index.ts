@@ -30,6 +30,7 @@ import {
 import { dreamTools, memoryTools, ToolRegistry } from '../tools/index.ts';
 import { archiveEmptyCompletedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
+import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 
@@ -632,6 +633,11 @@ app.post('/chat/send', async (c) => {
     text,
   });
 
+  // User just spoke → cancel any in-flight auto-dream for this agent
+  // and reset the idle countdown. resetActivity is a no-op if the agent
+  // isn't dream-enabled.
+  autoDreamWorker.resetActivity(agent);
+
   void (async () => {
     await publish(session, {
       event: 'agent',
@@ -775,6 +781,25 @@ try {
   logger.warn({ msg: 'dream.empty_housekeep_failed', err: String(err) });
 }
 
+// Auto-Dream-Worker: per-agent idle-trigger that picks up dream-enabled
+// agents and runs background extractions. Registers each enabled agent
+// once at startup; the first idle timer runs idleMinutes from now,
+// which gives any paused-from-crash dreams a quiet window to be picked up.
+const autoDreamWorker = new AutoDreamWorker({
+  config,
+  getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory }),
+});
+for (const a of agentList) {
+  try {
+    const persona = await loadPersona(a.name);
+    if (persona?.dream?.enabled) {
+      autoDreamWorker.register(a.name, persona.dream);
+    }
+  } catch (err) {
+    logger.warn({ msg: 'dream.auto.register_failed', agent: a.name, err: String(err) });
+  }
+}
+
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });
 });
@@ -783,6 +808,7 @@ serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.
 async function shutdown(signal: string): Promise<void> {
   logger.info({ msg: 'server.shutdown', signal });
+  autoDreamWorker.shutdown();
   await shutdownMemoryRegistry();
   process.exit(0);
 }
