@@ -119,7 +119,7 @@ async function readObsidianConfigForAgent(agent: string): Promise<ObsidianSource
   }
   return {
     vaultPath: expandHome(parsed.data.vault),
-    excludePaths: parsed.data.readOnlyPaths,
+    readOnlyPaths: parsed.data.readOnlyPaths,
   };
 }
 

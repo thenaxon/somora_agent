@@ -39,8 +39,13 @@ const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 export interface ObsidianSource {
   vaultPath: string;
-  /** Paths relative to vaultPath that the indexer must skip entirely. */
-  excludePaths?: string[];
+  /**
+   * Paths relative to vaultPath where the (future) `obsidian_write` tool
+   * is forbidden from writing. These ARE still indexed and surfaced via
+   * recall — `read-only` literally: readable but not writable. For full
+   * privacy/no-index, use a different mechanism (TBD).
+   */
+  readOnlyPaths?: string[];
 }
 
 export interface ManagerOptions {
@@ -114,9 +119,12 @@ export class MemoryManager {
     // dotfile-regex like `/(^|[\\/])\../` blocks the entire ~/.somora tree
     // because `.somora` itself contains a dot. We therefore go function-
     // based and only exclude components RELATIVE to a watched root.
+    //
+    // readOnlyPaths are NOT excluded here — they're meant to be indexed
+    // and surfaced via recall, just write-protected for the future
+    // obsidian_write tool. See isVaultPathReadOnly().
     const memRoot = this.memoryRoot;
     const vault = this.obsidian?.vaultPath;
-    const vaultExcludes = this.obsidian?.excludePaths ?? [];
     const roots = [memRoot, ...(vault ? [vault] : [])];
 
     return [
@@ -127,21 +135,29 @@ export class MemoryManager {
           if (path.startsWith(root + '/')) {
             const rel = path.slice(root.length + 1);
             const parts = rel.split('/');
-            // Skip dot-prefixed components below the root (.dreams, .cache, …)
+            // Skip dot-prefixed components below the root (.dreams, .cache,
+            // .obsidian/, .trash/, .git/, …)
             if (parts.some((c) => c.startsWith('.'))) return true;
-            // Vault: skip configured no-touch subpaths
-            if (root === vault) {
-              for (const ex of vaultExcludes) {
-                if (rel === ex || rel.startsWith(ex + '/')) return true;
-              }
-            }
             return false;
           }
         }
-        // Path isn't under a watched root — let chokidar decide (false = include)
         return false;
       },
     ];
+  }
+
+  /**
+   * True if the given absolute path lives in a vault subpath marked
+   * read-only via agent.yaml. Used by the (future) obsidian_write tool
+   * to refuse writes — has no effect on indexing/recall.
+   */
+  isVaultPathReadOnly(absolutePath: string): boolean {
+    if (!this.obsidian) return false;
+    const { vaultPath, readOnlyPaths } = this.obsidian;
+    if (!readOnlyPaths || readOnlyPaths.length === 0) return false;
+    if (!absolutePath.startsWith(vaultPath + '/')) return false;
+    const rel = absolutePath.slice(vaultPath.length + 1);
+    return readOnlyPaths.some((p) => rel === p || rel.startsWith(p + '/'));
   }
 
   async close(): Promise<void> {
@@ -198,12 +214,6 @@ export class MemoryManager {
   private classifySource(path: string): 'memory' | 'vault' | null {
     if (path.startsWith(this.memoryRoot)) return 'memory';
     if (this.obsidian && path.startsWith(this.obsidian.vaultPath)) {
-      // Filter out excluded subpaths defensively (chokidar should already
-      // skip them, but Obsidian users sometimes add paths after init).
-      const rel = relative(this.obsidian.vaultPath, path);
-      for (const ex of this.obsidian.excludePaths ?? []) {
-        if (rel === ex || rel.startsWith(ex + '/')) return null;
-      }
       return 'vault';
     }
     return null;
@@ -242,13 +252,6 @@ export class MemoryManager {
       const full = join(root, e.name);
       if (e.name.startsWith('.')) continue;
       if (e.isDirectory()) {
-        // Honor obsidian excludes during full-sweep walk
-        if (this.obsidian && full.startsWith(this.obsidian.vaultPath)) {
-          const rel = relative(this.obsidian.vaultPath, full);
-          if ((this.obsidian.excludePaths ?? []).some((ex) => rel === ex || rel.startsWith(ex + '/'))) {
-            continue;
-          }
-        }
         yield* this.walkMarkdown(full);
       } else if (e.isFile() && e.name.endsWith('.md')) {
         yield full;
