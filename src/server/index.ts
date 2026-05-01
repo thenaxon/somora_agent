@@ -592,16 +592,28 @@ app.post('/chat/send', async (c) => {
           cfg: config.memory.autoInject,
         });
         ephemeralContext = inject.ephemeralContext;
+        const refs = inject.hits.map((h) => `${h.source}/${h.slug}`);
+        const topScore = inject.hits[0]?.score;
         if (inject.injectedCount > 0) {
           logger.info({
             msg: 'memory.injected',
             agent,
             session,
             count: inject.injectedCount,
-            slugs: inject.hits.map((h) => `${h.source}/${h.slug}`),
-            topScore: inject.hits[0]?.score,
+            slugs: refs,
+            topScore,
           });
         }
+        // Always emit the SSE memory event — even on zero hits — so the
+        // CLI can show "[memory · 0 hits]" and the user knows recall ran.
+        await publish(session, {
+          event: 'memory',
+          data: {
+            count: inject.injectedCount,
+            ...(topScore !== undefined ? { topScore } : {}),
+            refs,
+          },
+        });
       } catch (err) {
         logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
       }

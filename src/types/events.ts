@@ -23,5 +23,17 @@ export type SseEvent =
         model?: string;
       };
     }
+  | {
+      // Per-turn auto-inject summary — what the runtime pulled from memory
+      // before the engine ran. Lets the CLI / orbit show users which notes
+      // were surfaced without them having to grep server logs.
+      event: 'memory';
+      data: {
+        count: number;
+        topScore?: number;
+        // `<source>/<slug>` references in score order, top first.
+        refs: string[];
+      };
+    }
   | { event: 'tool'; data: { phase: 'call' | 'result'; tool?: string; input?: unknown; output?: unknown; error?: string } }
   | { event: 'status'; data: { msg: string } };

@@ -74,6 +74,44 @@ function finalizeMessage(text: string): void {
   messageFinalized = true;
 }
 
+const ANSI_DIM = '\x1b[2m';
+const ANSI_RESET = '\x1b[0m';
+const isAnsiTty = Boolean(stdout.isTTY);
+
+function dim(text: string): string {
+  return isAnsiTty ? `${ANSI_DIM}${text}${ANSI_RESET}` : text;
+}
+
+function summarize(value: unknown, maxLen = 160): string {
+  if (value === undefined || value === null) return '';
+  let s: string;
+  try {
+    s = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch {
+    return '';
+  }
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > maxLen) s = s.slice(0, maxLen).trimEnd() + '…';
+  return s;
+}
+
+function formatToolEvent(data: any): string {
+  // Strip the mcp__<server>__ prefix so the line stays readable.
+  const tool = (data.tool ?? '').replace(/^mcp__[^_]+__/, '');
+  if (data.phase === 'call') {
+    const argSummary = summarize(data.input, 140);
+    return `\n[tool call · ${tool}${argSummary ? ' · ' + argSummary : ''}]\n`;
+  }
+  if (data.phase === 'result') {
+    if (data.error) {
+      return `\n[tool error · ${summarize(data.error, 200)}]\n`;
+    }
+    const out = summarize(data.output, 140);
+    return `\n[tool result${out ? ' · ' + out : ''}]\n`;
+  }
+  return `\n[tool ${data.phase ?? '?'}: ${tool}]\n`;
+}
+
 // Auto-reconnect with backoff. Resets on every successful `connected` event,
 // so a long healthy run isn't penalized by an early hiccup.
 let reconnectDelayMs = 500;
@@ -151,8 +189,16 @@ async function consumeStream(): Promise<void> {
             waiting = false;
             rl.prompt();
           }
+        } else if (evName === 'memory') {
+          // Auto-inject summary — what the runtime pulled from memory before
+          // the engine ran. Dimmed so it doesn't compete with Hans's prose.
+          const refs = (data.refs as string[] | undefined) ?? [];
+          const topScore =
+            typeof data.topScore === 'number' ? ` · top=${data.topScore.toFixed(2)}` : '';
+          const refList = refs.length ? ` · ${refs.join(', ')}` : '';
+          stdout.write(dim(`\n[memory · ${data.count ?? 0} hits${topScore}${refList}]\n`));
         } else if (evName === 'tool') {
-          stdout.write(`\n[tool ${data.phase}: ${data.tool ?? ''}]\n`);
+          stdout.write(dim(formatToolEvent(data)));
         } else if (evName === 'status' && data.msg === 'connected') {
           // Healthy connect — reset backoff
           reconnectDelayMs = 500;
