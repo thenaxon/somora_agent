@@ -127,7 +127,9 @@ export const dreamApply: ToolDefinition<z.infer<typeof ApplyInput>> = {
   description:
     'Accept a single finding from a dream — executes its proposed memory action and marks the finding ' +
     'as applied. After the last finding of a dream is resolved, the dream auto-archives to processed/. ' +
-    'Returns whether the dream is now fully done so the agent knows when to stop walking.',
+    'Returns whether the dream is now fully done so the agent knows when to stop walking. ' +
+    'IMPORTANT: pass `dream_id` and `finding_id` EXACTLY as returned by `dream_list` / `dream_get` ' +
+    '— do not invent or guess values. Finding ids start at 1.',
   inputSchema: ApplyInput,
   jsonSchema: {
     type: 'object',
@@ -144,11 +146,30 @@ export const dreamApply: ToolDefinition<z.infer<typeof ApplyInput>> = {
   },
   async handler(input, ctx) {
     const file = await readDreamById(ctx.agent, input.dream_id);
-    if (!file) throw new Error(`dream '${input.dream_id}' not found`);
+    if (!file) {
+      // Tell the model exactly which ids ARE valid so it can self-correct
+      // — small models tend to invent ids on follow-up calls otherwise.
+      const all = await listDreams(ctx.agent);
+      const known = all.map((d) => d.meta.id);
+      throw new Error(
+        `dream '${input.dream_id}' not found. Valid pending dream ids: ${
+          known.length ? known.map((k) => `'${k}'`).join(', ') : '(none — call dream_list first)'
+        }`,
+      );
+    }
     const finding = file.meta.findings.find((f) => f.id === input.finding_id);
-    if (!finding) throw new Error(`finding ${input.finding_id} not in dream '${input.dream_id}'`);
+    if (!finding) {
+      const validIds = file.meta.findings.map((f) => f.id);
+      throw new Error(
+        `finding ${input.finding_id} not in dream '${input.dream_id}'. Valid finding ids: ${
+          validIds.length ? validIds.join(', ') : '(none)'
+        }. Note: finding ids start at 1, not 0.`,
+      );
+    }
     if (finding.status !== 'pending') {
-      throw new Error(`finding ${input.finding_id} is already ${finding.status}`);
+      throw new Error(
+        `finding ${input.finding_id} is already ${finding.status} (resolved at ${finding.resolved_at ?? 'unknown'})`,
+      );
     }
 
     // Execute the finding's action. We delegate to the MemoryManager
@@ -220,7 +241,9 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
   description:
     'Reject a finding (no memory action, just mark as dismissed). Pass finding_id to dismiss one; ' +
     'omit it to dismiss the whole dream (all still-pending findings → dismissed, dream auto-archives). ' +
-    'Use the no-finding-id form for "this whole dream was off-base".',
+    'Use the no-finding-id form for "this whole dream was off-base". ' +
+    'IMPORTANT: pass `dream_id` and (if used) `finding_id` EXACTLY as returned by `dream_list` / ' +
+    '`dream_get`. Finding ids start at 1.',
   inputSchema: DismissInput,
   jsonSchema: {
     type: 'object',
@@ -236,7 +259,27 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
     additionalProperties: false,
   },
   async handler(input, ctx) {
+    // Mirror dream_apply's id-validation error path so small models can
+    // self-correct on hallucinated ids.
+    const file = await readDreamById(ctx.agent, input.dream_id);
+    if (!file) {
+      const all = await listDreams(ctx.agent);
+      const known = all.map((d) => d.meta.id);
+      throw new Error(
+        `dream '${input.dream_id}' not found. Valid pending dream ids: ${
+          known.length ? known.map((k) => `'${k}'`).join(', ') : '(none — call dream_list first)'
+        }`,
+      );
+    }
     if (input.finding_id !== undefined) {
+      if (!file.meta.findings.some((f) => f.id === input.finding_id)) {
+        const validIds = file.meta.findings.map((f) => f.id);
+        throw new Error(
+          `finding ${input.finding_id} not in dream '${input.dream_id}'. Valid finding ids: ${
+            validIds.length ? validIds.join(', ') : '(none)'
+          }. Note: finding ids start at 1, not 0.`,
+        );
+      }
       const result = await updateFindingStatus(ctx.agent, input.dream_id, input.finding_id, 'dismissed');
       const remaining = result.dream.meta.findings.filter((f) => f.status === 'pending').length;
       return {
