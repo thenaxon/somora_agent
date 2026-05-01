@@ -50,3 +50,39 @@ function filterEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   }
   return out;
 }
+
+/**
+ * codex-cli takes runtime config via `-c key=value` flags, where value
+ * is parsed as TOML. Build the trio of flags that registers the
+ * somora-memory MCP server for one `codex exec` invocation.
+ *
+ * codex inherits its own env into MCP children, so we only override
+ * SOMORA_AGENT (and SOMORA_HOME if explicitly set) to keep the value
+ * payload tractable.
+ */
+export function somoraMemoryCodexFlags(agent: string): string[] {
+  const useLocalTsx = existsSync(TSX_BIN_REPO);
+  const command = useLocalTsx ? TSX_BIN_REPO : 'npx';
+  const args = useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS];
+  const argsToml = `[${args.map(tomlString).join(', ')}]`;
+
+  const envEntries: string[] = [`SOMORA_AGENT = ${tomlString(agent)}`];
+  if (process.env.SOMORA_HOME) {
+    envEntries.push(`SOMORA_HOME = ${tomlString(process.env.SOMORA_HOME)}`);
+  }
+  const envToml = `{ ${envEntries.join(', ')} }`;
+
+  return [
+    '-c',
+    `mcp_servers.${MCP_SERVER_NAME}.command=${tomlString(command)}`,
+    '-c',
+    `mcp_servers.${MCP_SERVER_NAME}.args=${argsToml}`,
+    '-c',
+    `mcp_servers.${MCP_SERVER_NAME}.env=${envToml}`,
+  ];
+}
+
+function tomlString(s: string): string {
+  // TOML basic strings escape backslashes and double-quotes.
+  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}

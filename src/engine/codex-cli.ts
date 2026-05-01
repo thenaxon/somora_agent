@@ -16,6 +16,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { somoraMemoryCodexFlags } from '../mcp/config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import {
@@ -95,6 +96,11 @@ export const codexCliEngine: AgentEngine = {
     // fresh exec, then the resume positional + stdin marker.
     const args: string[] = ['exec'];
     if (resumeId) args.push('resume');
+    // Register the somora-memory MCP server for this exec via `-c` overrides.
+    // Must come BEFORE `--json` so codex's argument parser applies them
+    // before evaluating the rest of the command (codex's CLI lib expects
+    // global flags up front).
+    args.push(...somoraMemoryCodexFlags(agent));
     args.push('--json', '--skip-git-repo-check');
     if (!resumeId) args.push('--sandbox', 'read-only');
     args.push('-m', resolvedModel.modelId);
