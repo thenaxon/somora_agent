@@ -74,10 +74,11 @@ export class MemoryManager {
   }
 
   get memoryRoot(): string {
+    // Flat layout: user-facing notes live directly under memory/<slug>.md.
+    // Automation-generated stuff (future Dream-findings, internal caches)
+    // lives in dot-prefixed subdirs (`memory/.dreams/`, `memory/.cache/`)
+    // which the watcher and walker skip by convention.
     return join(SOMORA_HOME, 'agents', this.agent, 'memory');
-  }
-  get notesRoot(): string {
-    return join(this.memoryRoot, 'notes');
   }
   get dbPath(): string {
     return join(SOMORA_HOME, 'agents', this.agent, 'memory.db');
@@ -85,7 +86,7 @@ export class MemoryManager {
 
   async init(): Promise<void> {
     if (this.memDb) return;
-    await mkdir(this.notesRoot, { recursive: true });
+    await mkdir(this.memoryRoot, { recursive: true });
     this.memDb = openMemoryDb(this.dbPath);
 
     // Lazy-init embedder. If it fails (model download blocked, ONNX
@@ -105,7 +106,7 @@ export class MemoryManager {
 
     await this.reindexAll();
 
-    const roots = [this.notesRoot];
+    const roots = [this.memoryRoot];
     if (this.obsidian?.vaultPath) roots.push(this.obsidian.vaultPath);
     const ignored = this.buildIgnored();
     this.watcher = new MarkdownWatcher({
@@ -144,7 +145,7 @@ export class MemoryManager {
   }
 
   private classifySource(path: string): 'memory' | 'vault' | null {
-    if (path.startsWith(this.notesRoot)) return 'memory';
+    if (path.startsWith(this.memoryRoot)) return 'memory';
     if (this.obsidian && path.startsWith(this.obsidian.vaultPath)) {
       // Filter out excluded subpaths defensively (chokidar should already
       // skip them, but Obsidian users sometimes add paths after init).
@@ -211,7 +212,7 @@ export class MemoryManager {
 
     const seen = new Set<string>();
     const sources: Array<{ root: string; source: 'memory' | 'vault' }> = [
-      { root: this.notesRoot, source: 'memory' },
+      { root: this.memoryRoot, source: 'memory' },
     ];
     if (this.obsidian?.vaultPath) {
       sources.push({ root: this.obsidian.vaultPath, source: 'vault' });
@@ -265,7 +266,9 @@ export class MemoryManager {
       replaceFileChunks(memDb, path, [], null);
       return 'indexed';
     }
-    const slug = source === 'memory' ? slugFromPath(path, this.notesRoot) : slugFromPath(path, this.obsidian!.vaultPath);
+    const slug = source === 'memory'
+      ? slugFromPath(path, this.memoryRoot)
+      : slugFromPath(path, this.obsidian!.vaultPath);
 
     let embeddings: Float32Array[] | null = null;
     if (this.embedder && memDb.hasVec) {
@@ -334,7 +337,7 @@ export class MemoryManager {
         const tags = Array.isArray(parsed.data.tags) ? (parsed.data.tags as string[]) : undefined;
         if (filter?.tag && (!tags || !tags.includes(filter.tag))) continue;
         out.push({
-          slug: slugFromPath(f.path, this.notesRoot),
+          slug: slugFromPath(f.path, this.memoryRoot),
           source: 'memory',
           path: f.path,
           description: typeof parsed.data.description === 'string' ? parsed.data.description : undefined,
@@ -350,7 +353,7 @@ export class MemoryManager {
 
   async getNote(slug: string): Promise<{ path: string; markdown: string } | null> {
     if (!SLUG_RE.test(slug)) return null;
-    const path = join(this.notesRoot, `${slug}.md`);
+    const path = join(this.memoryRoot, `${slug}.md`);
     try {
       const raw = await readFile(path, 'utf8');
       return { path, markdown: raw };
@@ -364,7 +367,7 @@ export class MemoryManager {
     if (!SLUG_RE.test(slug)) {
       throw new Error(`invalid slug '${slug}' — must match ${SLUG_RE.source}`);
     }
-    const path = join(this.notesRoot, `${slug}.md`);
+    const path = join(this.memoryRoot, `${slug}.md`);
     const now = new Date().toISOString();
     const fm = { created: now, ...frontmatter, updated: now } as Record<string, unknown>;
     const fmYaml = matter.stringify(body.trimEnd() + '\n', fm);
@@ -377,7 +380,7 @@ export class MemoryManager {
 
   async deleteNote(slug: string): Promise<boolean> {
     if (!SLUG_RE.test(slug)) return false;
-    const path = join(this.notesRoot, `${slug}.md`);
+    const path = join(this.memoryRoot, `${slug}.md`);
     try {
       await unlink(path);
       return true;

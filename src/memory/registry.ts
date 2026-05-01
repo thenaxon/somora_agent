@@ -7,8 +7,10 @@
 //     server startup is bad UX
 //   - some agents may never use memory (e.g. ad-hoc test agents)
 // Trade-off: the first turn for a given agent eats the warmup cost.
+// We DO pre-create the directory layout (ensureMemoryDirs) at startup so
+// users can drop markdown files into memory/notes/ before chatting.
 
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { load as parseYaml } from 'js-yaml';
@@ -61,6 +63,17 @@ export function getMemoryManager(
   })();
   initPromises.set(agent, p);
   return p;
+}
+
+/**
+ * Pre-create the memory directory layout for an agent. Cheap (idempotent
+ * mkdir), no DB or embedder side effects. Call at server startup so the
+ * user sees the structure and can drop files in before the first chat.
+ */
+export async function ensureMemoryDirs(agent: string): Promise<string> {
+  const memoryRoot = join(SOMORA_HOME, 'agents', agent, 'memory');
+  await mkdir(memoryRoot, { recursive: true });
+  return memoryRoot;
 }
 
 export async function shutdownMemoryRegistry(): Promise<void> {

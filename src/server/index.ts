@@ -5,7 +5,11 @@ import { resolveCompactionConfig } from '../compaction/index.ts';
 import { configPath, loadConfig } from '../config/loader.ts';
 import { type Config, listAllModels, resolveAnyRef } from '../config/types.ts';
 import { injectMemoryContext } from '../memory/inject.ts';
-import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
+import {
+  ensureMemoryDirs,
+  getMemoryManager,
+  shutdownMemoryRegistry,
+} from '../memory/registry.ts';
 import { getEffectiveEnv } from './env.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import {
@@ -556,6 +560,16 @@ const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 await ensureDefaultAgent();
 const agentList = await listAgents();
 logger.info({ msg: 'agents.loaded', count: agentList.length, names: agentList.map((a) => a.name).join(',') });
+
+// Pre-create memory/notes/ for every known agent. Cheap and lets users
+// drop files in before the first chat triggers lazy MemoryManager init.
+for (const a of agentList) {
+  try {
+    await ensureMemoryDirs(a.name);
+  } catch (err) {
+    logger.warn({ msg: 'memory.ensure_dirs_failed', agent: a.name, err: String(err) });
+  }
+}
 
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });
