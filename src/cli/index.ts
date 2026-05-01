@@ -309,13 +309,21 @@ async function createNewSession(forAgent: string, slug: string): Promise<string>
   return data.id;
 }
 
-async function resetCurrentSession(): Promise<{ archivedId: string | null; reason?: string }> {
+async function resetCurrentSession(): Promise<{
+  archivedId: string | null;
+  reason?: string;
+  dreamSpawned?: boolean;
+}> {
   const res = await fetch(
     `${base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/reset`,
     { method: 'POST' },
   );
   if (!res.ok) throw new Error(await res.text());
-  return (await res.json()) as { archivedId: string | null; reason?: string };
+  return (await res.json()) as {
+    archivedId: string | null;
+    reason?: string;
+    dreamSpawned?: boolean;
+  };
 }
 
 interface ModelInfo {
@@ -489,9 +497,12 @@ async function handleCommand(line: string): Promise<void> {
       try {
         const result = await resetCurrentSession();
         if (result.archivedId) {
+          const dreamLine = result.dreamSpawned
+            ? `\n             dream-extraction running in background — ask later via dream_list.`
+            : '';
           stdout.write(
             `\n[reset done] archived as: ${result.archivedId}` +
-              `\n             current session is now empty + clean.\n`,
+              `\n             current session is now empty + clean.${dreamLine}\n`,
           );
         } else {
           stdout.write(`\n[reset noop] ${result.reason ?? 'nothing to archive'}\n`);

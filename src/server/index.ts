@@ -27,7 +27,9 @@ import {
   resolveSessionId,
   sessionMetaStore,
 } from '../storage/sessions.ts';
-import { memoryTools, ToolRegistry } from '../tools/index.ts';
+import { dreamTools, memoryTools, ToolRegistry } from '../tools/index.ts';
+import { recoverOrphanRunningDreams } from '../dream/storage.ts';
+import { runDream } from '../dream/runner.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 
@@ -241,6 +243,7 @@ logger.info({
 // shared by HTTP debug endpoints today and by MCP/agent-loop later.
 const tools = new ToolRegistry();
 tools.registerMany(memoryTools());
+tools.registerMany(dreamTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
@@ -450,10 +453,16 @@ app.put('/agents/:agent/sessions/:session/model', async (c) => {
 // session id. The archived copy is resume-able under a timestamped
 // name. Used primarily for the magic `main` session, which can't be
 // re-created with a new id.
+//
+// If the agent has Dream-Mode enabled in agent.yaml, /reset also fires
+// off an async manual-dream over the just-archived range. Reset returns
+// immediately — the dream runs in background and surfaces later via
+// dream_list. Failures in the dream do NOT affect the reset itself.
 app.post('/agents/:agent/sessions/:session/reset', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) {
+  const persona = await loadPersona(agent);
+  if (!persona) {
     return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   }
   const session = await resolveSessionId(agent, sessionRef);
@@ -464,7 +473,44 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
     return c.json({ agent, session, archivedId: null, reason: 'session has no content yet — nothing to archive' });
   }
   logger.info({ msg: 'session.reset', agent, session, archivedId: result.archivedId });
-  return c.json({ agent, session, archivedId: result.archivedId });
+
+  // Spawn dream over the archived range — async, no await, no
+  // ramifications for the reset response. If it fails, only the dream
+  // file gets a `failed` status; user is otherwise unaffected.
+  let dreamSpawned = false;
+  if (persona.dream?.enabled) {
+    const archivedId = result.archivedId;
+    const dreamConfig = persona.dream;
+    void (async () => {
+      try {
+        const mgr = await getMemoryManager(agent, { config: config.memory });
+        await runDream({
+          agent,
+          sourceSession: archivedId,
+          trigger: 'manual',
+          rangeFromTs: 0,
+          rangeThroughTs: Date.now(),
+          dream: dreamConfig,
+          config,
+          mgr,
+        });
+      } catch (err) {
+        logger.error({
+          msg: 'dream.manual_run_failed',
+          agent,
+          archivedId,
+          err: (err as Error).message,
+        });
+      }
+    })();
+    dreamSpawned = true;
+  }
+  return c.json({
+    agent,
+    session,
+    archivedId: result.archivedId,
+    dreamSpawned,
+  });
 });
 
 app.delete('/agents/:agent/sessions/:session/model', async (c) => {
@@ -710,6 +756,15 @@ for (const a of agentList) {
   } catch (err) {
     logger.warn({ msg: 'memory.ensure_dirs_failed', agent: a.name, err: String(err) });
   }
+}
+
+// Recover any dreams that were `running` when the server last died.
+// Auto-dreams get marked `paused` (will resume next idle); manual dreams
+// get marked `failed` (user-initiated, don't auto-retry).
+try {
+  await recoverOrphanRunningDreams(agentList.map((a) => a.name));
+} catch (err) {
+  logger.warn({ msg: 'dream.recovery_failed', err: String(err) });
 }
 
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {

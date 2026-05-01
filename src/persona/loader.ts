@@ -32,12 +32,43 @@ const FrontmatterSchema = z
   })
   .passthrough();
 
+const DreamConfigSchema = z.object({
+  /** Master toggle. When false, Dream-Mode never runs for this agent. */
+  enabled: z.boolean(),
+  /**
+   * Worker model for extraction (alias or `provider/modelId`). Required
+   * when enabled — there's intentionally no fallback to the agent's
+   * primary, so a dream never silently runs on an expensive model.
+   */
+  model: z.string().min(1),
+  /**
+   * Idle minutes before the auto-dream-trigger fires. Reset on every
+   * chat.send to this agent. Default 30.
+   */
+  idleMinutes: z.number().positive().default(30),
+  /**
+   * Approximate tokens per LLM extraction chunk. Smaller = more frequent
+   * pause-points, more LLM round-trip overhead. Larger = better LLM
+   * efficiency, larger abort cost when paused. Default 50000.
+   */
+  chunkTokens: z.number().int().positive().default(50_000),
+  /**
+   * Per-chunk LLM-call timeout. A single chunk that exceeds this is
+   * marked as failed, the dream continues with the next chunk. Default
+   * 120000ms (2 minutes) — fits slow local models.
+   */
+  chunkTimeoutMs: z.number().int().positive().default(120_000),
+});
+
 const AgentYamlSchema = z
   .object({
     model: z.string().optional(),
     fallback: z.string().optional(),
+    dream: DreamConfigSchema.optional(),
   })
   .passthrough();
+
+export type DreamConfig = z.infer<typeof DreamConfigSchema>;
 
 type Frontmatter = z.infer<typeof FrontmatterSchema>;
 type AgentYaml = z.infer<typeof AgentYamlSchema>;
@@ -54,6 +85,7 @@ export interface Persona {
   icon: string | undefined;
   model: string | undefined;
   fallback: string | undefined;
+  dream: DreamConfig | undefined;
   systemPrompt: string;
 }
 
@@ -162,6 +194,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     icon: agentMd.data.icon,
     model: agentYaml.model,
     fallback: agentYaml.fallback,
+    dream: agentYaml.dream,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
 }
