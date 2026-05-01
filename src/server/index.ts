@@ -281,6 +281,53 @@ app.get('/models', (c) => {
   return c.json(list);
 });
 
+// Memory inspection endpoints. Strictly read-only, useful for debugging
+// what's actually in a given agent's memory index without having to chat.
+//   GET  /agents/:agent/memory/notes               — list indexed memory notes
+//   GET  /agents/:agent/memory/search?q=…&limit=&minScore=
+//                                                  — run hybrid retrieval, see hits
+app.get('/agents/:agent/memory/notes', async (c) => {
+  const agent = c.req.param('agent');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const mgr = await getMemoryManager(agent, { config: config.memory });
+  const notes = await mgr.listNotes();
+  return c.json({ agent, count: notes.length, notes });
+});
+
+app.get('/agents/:agent/memory/search', async (c) => {
+  const agent = c.req.param('agent');
+  const q = c.req.query('q') ?? '';
+  if (!q.trim()) return c.json({ error: 'query parameter "q" required' }, 400);
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const limit = Math.max(1, Math.min(50, Number(c.req.query('limit') ?? '5')));
+  const minScoreRaw = Number(c.req.query('minScore') ?? '0');
+  const minScore = Number.isFinite(minScoreRaw) ? Math.max(0, Math.min(1, minScoreRaw)) : 0;
+  const mgr = await getMemoryManager(agent, { config: config.memory });
+  const hits = await mgr.search(q, { limit, minScore });
+  return c.json({
+    agent,
+    query: q,
+    limit,
+    minScore,
+    count: hits.length,
+    hits: hits.map((h) => ({
+      slug: h.slug,
+      source: h.source,
+      score: Number(h.score.toFixed(4)),
+      vecScore: Number(h.vecScore.toFixed(4)),
+      bm25Score: Number(h.bm25Score.toFixed(4)),
+      startLine: h.startLine,
+      endLine: h.endLine,
+      filePath: h.filePath,
+      text: h.text,
+    })),
+  });
+});
+
 app.get('/agents/:agent/sessions', async (c) => {
   const agent = c.req.param('agent');
   if (!(await loadPersona(agent))) {

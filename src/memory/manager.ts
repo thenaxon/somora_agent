@@ -66,6 +66,7 @@ export class MemoryManager {
   private agent: string;
   private cfg: MemoryConfig;
   private obsidian?: ObsidianSource;
+  private lastEmbedderRetry = 0;
 
   constructor(opts: ManagerOptions) {
     this.agent = opts.agent;
@@ -90,19 +91,10 @@ export class MemoryManager {
     this.memDb = openMemoryDb(this.dbPath);
 
     // Lazy-init embedder. If it fails (model download blocked, ONNX
-    // missing), we still operate in FTS-only mode.
-    try {
-      this.embedder = await resolveEmbeddingProvider(this.cfg.embedding);
-      ensureVecTable(this.memDb, this.embedder.dim, this.embedder.name);
-    } catch (err) {
-      logger.warn({
-        msg: 'memory.embedder_unavailable',
-        agent: this.agent,
-        err: (err as Error).message,
-        hint: 'falling back to FTS-only retrieval',
-      });
-      this.embedder = null;
-    }
+    // missing, transient network), we degrade to FTS-only — but
+    // ensureEmbedder() will retry on subsequent searches so we recover
+    // automatically once the underlying issue is resolved.
+    await this.ensureEmbedder();
 
     await this.reindexAll();
 
@@ -142,6 +134,41 @@ export class MemoryManager {
   private requireDb(): MemoryDb {
     if (!this.memDb) throw new Error('MemoryManager not initialized — call init() first');
     return this.memDb;
+  }
+
+  /**
+   * Make sure the embedder is loaded. Throttled so a permanent failure
+   * (e.g. broken model alias) doesn't hammer retries on every search;
+   * but a transient failure (network blip during first-ever download,
+   * config change between turns) recovers within ~60s.
+   */
+  private async ensureEmbedder(): Promise<boolean> {
+    if (this.embedder) return true;
+    if (!this.memDb) return false;
+    const now = Date.now();
+    if (now - this.lastEmbedderRetry < 60_000) return false;
+    this.lastEmbedderRetry = now;
+    try {
+      const provider = await resolveEmbeddingProvider(this.cfg.embedding);
+      ensureVecTable(this.memDb, provider.dim, provider.name);
+      this.embedder = provider;
+      logger.info({
+        msg: 'memory.embedder_ready',
+        agent: this.agent,
+        model: provider.name,
+        dim: provider.dim,
+      });
+      return true;
+    } catch (err) {
+      logger.warn({
+        msg: 'memory.embedder_unavailable',
+        agent: this.agent,
+        err: (err as Error).message,
+        hint: 'falling back to FTS-only retrieval; will retry in 60s on next search',
+      });
+      this.embedder = null;
+      return false;
+    }
   }
 
   private classifySource(path: string): 'memory' | 'vault' | null {
@@ -307,6 +334,9 @@ export class MemoryManager {
 
   async search(query: string, opts?: { limit?: number; minScore?: number }): Promise<Hit[]> {
     const memDb = this.requireDb();
+    // Best-effort retry — recovers from a degraded init the next time the
+    // user actually searches.
+    await this.ensureEmbedder();
     const limit = opts?.limit ?? this.cfg.autoInject.maxResults;
     const minScore = opts?.minScore ?? this.cfg.autoInject.minScore;
     let queryEmbedding: Float32Array | null = null;
