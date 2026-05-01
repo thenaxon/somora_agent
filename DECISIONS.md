@@ -462,3 +462,115 @@ Bestätigt mehrfach von Rene während Phase-2-B-Diskussion.
 Defaults im Code. Env als override layer obendrauf. Konkrete
 Migration zuerst: `SOMORA_COMPACTION_*` → `compaction:`-Sektion.
 Pure-Bootstrap-Werte (`SOMORA_HOME`, `SOMORA_PORT`) bleiben Env.
+
+---
+
+## 2026-05-01 — Memory-Tool-Architektur
+
+### 31. Granulare Memory-Tools, Read source-agnostic, Write source-spezifisch
+Konsumiert von claude-cli + codex-cli via MCP-Server (Phase 2-Stufe-B
+Abschluss), später auch von openai-compatible über den Agent-Loop
+(Phase 2-Stufe-C). Tool-Surface:
+
+```
+# Lesen — durchsucht / liest aus ALLEN konfigurierten Quellen
+# (Hans' eigenes Memory + ggf. Obsidian-Vault).
+memory_search(query, limit?, minScore?)
+  → Hits mit `reference: "memory/<slug>" | "vault/<slug>"`,
+    score, snippet, file_path
+
+memory_get(reference)
+  → reference ist EXAKT der String aus `memory_search`-Hit oder
+    aus dem `<memory-context>`-Auto-Inject-Block.
+    Liefert vollen Markdown-Inhalt + Frontmatter.
+
+memory_list(filter?)
+  → ÜBERSICHT eigener Memory-Notes (Slug, description, tags).
+    Vault wird hier NICHT gelistet — der User kennt seinen Vault
+    selbst, und er kann groß sein (nicht ungefragt
+    in den Prompt schmeissen).
+
+# Schreiben — operiert AUSSCHLIESSLICH auf Hans' eigenem Memory.
+# Vault-Schreiben ist später über `obsidian_write` separat.
+memory_write(slug, content, frontmatter?)
+memory_edit(slug, content)
+memory_delete(slug)
+```
+
+**Why granular statt combined-mit-Action-Enum (Hermes-Stil):**
+
+- MCP-/JSON-Schema-Idiom: discriminated unions mit
+  Action-abhängigen Required-Feldern sind Awkward. Granular = pro
+  Tool ein klares, statisches Schema.
+- Action-Shapes divergieren stark — `search` braucht Query +
+  Score-Filter, `get` braucht reference, `write` braucht
+  Slug+Content+Frontmatter. Keine sinnvolle Vereinheitlichung.
+- Spätere Erweiterungen (z.B. `memory_link` für Wikilink-Awareness,
+  siehe FUTURE.md) sind additiv ohne bestehende Schemas zu brechen.
+
+**Why Read source-agnostic:**
+
+- Auto-Inject zieht eh aus beiden Sources gleichzeitig. Wenn der
+  Agent gezielt nachlädt, will er das _bestmögliche_ Wissen — egal
+  ob aus eigenem Memory oder Vault. Source-Routing wäre Reibung
+  ohne Mehrwert.
+- Source-Tag im Recall-Treffer (`memory/...` vs `vault/...`) ist
+  die Information die der Agent braucht. Mehr nicht.
+
+**Why Write source-spezifisch:**
+
+- `memory_write` zielt auf `~/.somora/agents/<name>/memory/` —
+  Hans' eigenen, gefahrlosen Bereich.
+- Vault ist User-Domäne (DECISION #28). Schreiben dort braucht
+  klar abgegrenzten Tool-Namen mit anderer Intention/Risiko und
+  respektiert `readOnlyPaths` aus `agent.yaml`.
+- Trennung verhindert versehentliches Vault-Schreiben weil Hans
+  „memory" gesagt hat.
+
+**Reference-Format (Auto-Inject ↔ memory_get):**
+
+Im `<memory-context>`-Block stehen Hits als `[memory/auto · score=0.71]`.
+Der String `memory/auto` (vor dem `·`) ist die `reference` die der
+Agent ans `memory_get`-Tool durchreichen kann. Vault-Hits analog:
+`[vault/Infrastruktur--Blackcorner--Devices · score=0.82]`. Der Slug
+für Vault-Files ist der Pfad relativ zum Vault-Root mit `/` zu
+`--` ersetzt (siehe `slugFromPath` in `src/memory/manager.ts`).
+
+**Was Hans NICHT kann (by design):**
+
+- `memory_write` mit Vault-Pfad → Tool weigert sich, klare Fehler-Meldung
+- `memory_delete` einer Vault-File → ebenso, nur über `obsidian_write` (zukünftig)
+- Auto-Inject deaktivieren — das ist Runtime-Verhalten, nicht Agent-Belang
+
+**Datenfluss (Big Picture):**
+
+```
+~/.somora/agents/hans/memory/*.md  ─┐
+                                    │
+/mnt/naxon/obsidian/**/*.md         ├──► chokidar Watcher ──► Re-Index
+(wenn agent.yaml.obsidian.vault     │      ↓
+ gesetzt; readOnlyPaths-Markierung) │   memory.db (SQLite + sqlite-vec + FTS5)
+                                    │      ↑
+                                    │      │
+              ┌─────────────────────┴──────┘
+              │
+              ▼
+    MemoryManager.search(query)  ──►  Hybrid Vector + BM25
+              │
+              ├──► Auto-Inject pro Turn (Runtime-driven, kein Tool-Call)
+              │     └─ <memory-context>...</memory-context> in systemPrompt
+              │
+              └──► memory_search-Tool (Agent-driven, gezielt)
+                   └─ Top-N Treffer mit reference, score, snippet
+
+    MemoryManager.getNote(slug)   ──►  Memory-only (eigener Bereich)
+    MemoryManager.writeNote(slug) ──►  Memory-only
+    MemoryManager.deleteNote(...) ──►  Memory-only
+    isVaultPathReadOnly(path)     ──►  für späteres obsidian_write-Tool
+```
+
+**How to apply:** Tool-Definitionen in `src/tools/memory/`, Handler
+delegieren an `MemoryManager`-Methoden. MCP-Server in `src/tools/mcp/`
+exposed sie via stdio für die CLI-Engines. JSON-Schema Tool-
+Descriptions explizit machen dass `memory_write` _nicht_ in Vaults
+schreibt — kleine Modelle (gemma) brauchen das.
