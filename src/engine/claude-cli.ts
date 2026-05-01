@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { query, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, somoraMemoryServerSpawn } from '../mcp/config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import {
@@ -39,10 +40,18 @@ const KNOWN_ACCOUNT_TOOLS = [
   'mcp__claude_ai_Google_Drive__complete_authentication',
 ];
 
-const denyAllTools: CanUseTool = async (toolName) => ({
-  behavior: 'deny',
-  message: `Tool '${toolName}' ist in dieser somora-Session nicht freigegeben.`,
-});
+// Allow somora-memory's own MCP tools through; deny everything else.
+// Account-MCPs and built-ins (Bash/Edit/etc.) should never be invoked
+// by a somora session — that's DECISION #23.
+const somoraToolGate: CanUseTool = async (toolName, input) => {
+  if (toolName.startsWith(MCP_TOOL_PREFIX)) {
+    return { behavior: 'allow', updatedInput: input };
+  }
+  return {
+    behavior: 'deny',
+    message: `Tool '${toolName}' ist in dieser somora-Session nicht freigegeben.`,
+  };
+};
 
 let toolsLeakWarned = false;
 let mcpLeakWarned = false;
@@ -115,8 +124,10 @@ export const claudeCliEngine: AgentEngine = {
           settingSources: [],
           tools: [],
           disallowedTools: KNOWN_ACCOUNT_TOOLS,
-          mcpServers: {},
-          canUseTool: denyAllTools,
+          mcpServers: {
+            [MCP_SERVER_NAME]: somoraMemoryServerSpawn(agent),
+          },
+          canUseTool: somoraToolGate,
           includePartialMessages: true,
           ...(CLAUDE_BIN ? { pathToClaudeCodeExecutable: CLAUDE_BIN } : {}),
           ...(resume ? { resume } : {}),
@@ -147,22 +158,30 @@ export const claudeCliEngine: AgentEngine = {
             tools: msg.tools,
             mcpServers: msg.mcp_servers,
           });
-          if (msg.tools.length > 0 && !toolsLeakWarned) {
+          // Strip our own somora-memory tools/server before checking for
+          // leaks — they're expected and add intentional surface.
+          const unexpectedTools = msg.tools.filter(
+            (t: string) => !t.startsWith(MCP_TOOL_PREFIX),
+          );
+          if (unexpectedTools.length > 0 && !toolsLeakWarned) {
             logger.warn({
               msg: 'engine.tools_leaked',
               engine: ENGINE,
-              tools: msg.tools,
+              tools: unexpectedTools,
               hint: 'Tools reached Claude despite disallowedTools/mcpServers/canUseTool. Update KNOWN_ACCOUNT_TOOLS in claude-cli.ts. (Logged once per server lifetime.)',
             });
             toolsLeakWarned = true;
           }
-          if (msg.mcp_servers.length > 0 && !mcpLeakWarned) {
-            const summary = msg.mcp_servers.map((s) => `${s.name}(${s.status})`).join(', ');
+          const unexpectedServers = msg.mcp_servers.filter(
+            (s) => s.name !== MCP_SERVER_NAME,
+          );
+          if (unexpectedServers.length > 0 && !mcpLeakWarned) {
+            const summary = unexpectedServers.map((s) => `${s.name}(${s.status})`).join(', ');
             logger.warn({
               msg: 'engine.mcp_servers_leaked',
               engine: ENGINE,
               servers: summary,
-              count: msg.mcp_servers.length,
+              count: unexpectedServers.length,
               hint: 'Account-MCPs sichtbar im Init-Header, aber inert (tools=[]). Einmal pro Server-Lifetime.',
             });
             mcpLeakWarned = true;
