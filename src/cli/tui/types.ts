@@ -63,8 +63,10 @@ export type Turn =
       id: string;
       tool: string;
       phase: 'call' | 'result' | 'error';
-      input?: string;
-      output?: string;
+      // Raw values from the SSE event so per-tool formatters can read
+      // structured fields. ToolEvent renders a one-line summary.
+      input?: unknown;
+      output?: unknown;
       error?: string;
     }
   | {

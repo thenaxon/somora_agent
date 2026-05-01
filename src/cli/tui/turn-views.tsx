@@ -15,7 +15,8 @@
 
 import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
-import { shortToolName, summarize } from './format.ts';
+import { shortToolName } from './format.ts';
+import { formatArgs, formatResult } from './tool-format.ts';
 import { renderInline } from './markdown.tsx';
 
 export function TurnView({
@@ -95,13 +96,13 @@ function ToolEvent({
 }: {
   tool: string;
   phase: 'call' | 'result' | 'error';
-  input?: string;
-  output?: string;
+  input?: unknown;
+  output?: unknown;
   error?: string;
 }) {
   const name = shortToolName(tool);
   if (phase === 'call') {
-    const args = summarize(input, 100);
+    const args = formatArgs(tool, input);
     return (
       <Box marginTop={1}>
         <Text color="blue" bold>
@@ -120,16 +121,18 @@ function ToolEvent({
         <Text color="red" bold>
           {'  ↳ error · '}
         </Text>
-        <Text color="red">{summarize(error, 200)}</Text>
+        <Text color="red">{error ?? '(unknown error)'}</Text>
       </Box>
     );
   }
-  // result
-  const out = summarize(output, 100);
+  // result — suppress entirely if the per-tool formatter says it's trivial
+  // (e.g. {ok:true} after a memory_write).
+  const summary = formatResult(tool, output);
+  if (!summary) return null;
   return (
     <Box>
       <Text color="gray">{'  ↳ '}</Text>
-      <Text color="gray">{out || '(ok)'}</Text>
+      <Text color="gray">{summary}</Text>
     </Box>
   );
 }
@@ -144,7 +147,14 @@ function MemoryEvent({
   refs: string[];
 }) {
   const score = topScore !== null ? ` · top=${topScore.toFixed(2)}` : '';
-  const refList = refs.length ? ` · ${refs.join(', ')}` : '';
+  // Cap the visible ref list at 3 so a recall with 8 hits doesn't smear
+  // the whole line with slugs. Surface that there's more behind via "+N".
+  const MAX_VISIBLE = 3;
+  const visible = refs.slice(0, MAX_VISIBLE);
+  const overflow = refs.length - visible.length;
+  const refList = visible.length
+    ? ` · ${visible.join(', ')}${overflow > 0 ? ` +${overflow} more` : ''}`
+    : '';
   return (
     <Box marginTop={1}>
       <Text color="magenta" bold>

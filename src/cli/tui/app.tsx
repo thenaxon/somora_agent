@@ -143,8 +143,8 @@ export function App({ base, initialAgent, initialSession }: Props) {
           id: nextId(),
           tool: ev.tool,
           phase,
-          input: phase === 'call' ? summarize(ev.input, 200) : undefined,
-          output: phase === 'result' ? summarize(ev.output, 200) : undefined,
+          input: phase === 'call' ? ev.input : undefined,
+          output: phase === 'result' ? ev.output : undefined,
           error: phase === 'error' ? summarize(ev.error, 200) : undefined,
         });
         return;
