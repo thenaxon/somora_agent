@@ -17,12 +17,20 @@ import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
 import { shortToolName, summarize } from './format.ts';
 
-export function TurnView({ turn, agentName }: { turn: Turn; agentName: string }) {
+export function TurnView({
+  turn,
+  agentName,
+  agentIcon,
+}: {
+  turn: Turn;
+  agentName: string;
+  agentIcon: string;
+}) {
   switch (turn.kind) {
     case 'user':
       return <UserTurn text={turn.text} />;
     case 'agent':
-      return <AgentTurn text={turn.text} agentName={agentName} />;
+      return <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
     case 'tool':
       return <ToolEvent {...turn} />;
     case 'memory':
@@ -43,11 +51,21 @@ function UserTurn({ text }: { text: string }) {
   );
 }
 
-function AgentTurn({ text, agentName }: { text: string; agentName: string }) {
+function AgentTurn({
+  text,
+  agentName,
+  agentIcon,
+}: {
+  text: string;
+  agentName: string;
+  agentIcon: string;
+}) {
+  const tag = agentIcon ? `${agentIcon} ${agentName}` : agentName;
   return (
     <Box marginTop={1} flexDirection="row">
       <Text color="cyan" bold>
-        {agentName.padEnd(6)}
+        {tag}
+        {'  '}
       </Text>
       <Box flexDirection="column" flexGrow={1}>
         <Text>{text}</Text>

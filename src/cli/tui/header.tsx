@@ -6,6 +6,7 @@ import { formatTokens } from './format.ts';
 
 interface Props {
   agent: string;
+  agentIcon: string;
   session: string;
   stats: TurnStats | null;
   streaming: boolean;
@@ -19,8 +20,9 @@ interface Props {
 // Color choice: explicit `gray` instead of dimColor wherever the text needs
 // to be readable. dimColor halves intensity, which on dark terminals turns
 // near-black; gray is a real color that survives both backgrounds.
-export function Header({ agent, session, stats, streaming, connected }: Props) {
+export function Header({ agent, agentIcon, session, stats, streaming, connected }: Props) {
   const tokenSegment = renderTokenSegment(stats);
+  const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
   return (
     <Box>
       <Text color="yellow" bold>
@@ -28,7 +30,7 @@ export function Header({ agent, session, stats, streaming, connected }: Props) {
       </Text>
       <Text color="gray">· </Text>
       <Text color="cyan" bold>
-        {agent}:{session}
+        {agentTag}:{session}
       </Text>
       {stats?.model ? (
         <>

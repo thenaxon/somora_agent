@@ -10,7 +10,7 @@ import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
 import { TurnView } from './turn-views.tsx';
 import { nextId, summarize } from './format.ts';
-import type { StreamEvent, Turn, TurnStats } from './types.ts';
+import type { AgentInfo, StreamEvent, Turn, TurnStats } from './types.ts';
 
 interface Props {
   base: string;
@@ -31,6 +31,29 @@ export function App({ base, initialAgent, initialSession }: Props) {
   const [stats, setStats] = useState<TurnStats | null>(null);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [agentIcons, setAgentIcons] = useState<Record<string, string>>({});
+
+  const agentIcon = agentIcons[agent] ?? '';
+
+  // Fetch agents on mount and whenever we switch — populates icon-by-name
+  // map. Cheap call, the listing is tiny.
+  useEffect(() => {
+    let cancelled = false;
+    apiRef.current
+      .fetchAgents()
+      .then((list: AgentInfo[]) => {
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const a of list) if (a.icon) next[a.name] = a.icon;
+        setAgentIcons(next);
+      })
+      .catch(() => {
+        /* leave icons empty if endpoint is unreachable */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent]);
 
   // SSE lifecycle: open on (agent, session) change, close on unmount.
   useEffect(() => {
@@ -182,17 +205,22 @@ export function App({ base, initialAgent, initialSession }: Props) {
     }
   }
 
+  const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
+
   return (
     <Box flexDirection="column">
       {/* Scrollback: every finalized turn flushes to terminal scrollback once
           via Static, then is owned by the terminal — older messages scroll
           up and out as new ones arrive. The dynamic frame below stays put. */}
-      <Static items={turns}>{(turn) => <TurnView key={turn.id} turn={turn} agentName={agent} />}</Static>
+      <Static items={turns}>
+        {(turn) => <TurnView key={turn.id} turn={turn} agentName={agent} agentIcon={agentIcon} />}
+      </Static>
 
       {streamingText.length > 0 ? (
         <Box marginTop={1} flexDirection="row">
           <Text color="cyan" bold>
-            {agent.padEnd(6)}
+            {agentTag}
+            {'  '}
           </Text>
           <Box flexDirection="column" flexGrow={1}>
             <Text>{streamingText}</Text>
@@ -208,6 +236,7 @@ export function App({ base, initialAgent, initialSession }: Props) {
       </Box>
       <Header
         agent={agent}
+        agentIcon={agentIcon}
         session={session}
         stats={stats}
         streaming={streaming}
