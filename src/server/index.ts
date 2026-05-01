@@ -4,6 +4,8 @@ import { streamSSE } from 'hono/streaming';
 import { resolveCompactionConfig } from '../compaction/index.ts';
 import { configPath, loadConfig } from '../config/loader.ts';
 import { type Config, listAllModels, resolveAnyRef } from '../config/types.ts';
+import { injectMemoryContext } from '../memory/inject.ts';
+import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { getEffectiveEnv } from './env.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import {
@@ -480,13 +482,41 @@ app.post('/chat/send', async (c) => {
     let lastUsage: { tokens_in: number; tokens_out: number } | undefined;
     try {
       const history = await getHistory(agent, session);
+
+      // Auto-inject memory recall (DECISION #26). Best-effort: if init or
+      // search fails, we proceed with the unaugmented systemPrompt.
+      let systemPrompt = persona.systemPrompt;
+      try {
+        const mgr = await getMemoryManager(agent, { config: config.memory });
+        const inject = await injectMemoryContext({
+          mgr,
+          systemPrompt,
+          history,
+          userMessage: text,
+          cfg: config.memory.autoInject,
+        });
+        systemPrompt = inject.systemPrompt;
+        if (inject.injectedCount > 0) {
+          logger.info({
+            msg: 'memory.injected',
+            agent,
+            session,
+            count: inject.injectedCount,
+            slugs: inject.hits.map((h) => `${h.source}/${h.slug}`),
+            topScore: inject.hits[0]?.score,
+          });
+        }
+      } catch (err) {
+        logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
+      }
+
       const stream = runTurnWithFallback({
         primary: resolvedModel,
         fallbackRef: persona.fallback,
         baseInput: {
           agent,
           session,
-          systemPrompt: persona.systemPrompt,
+          systemPrompt,
           userMessage: text,
           history,
           metaStore: sessionMetaStore,
@@ -530,3 +560,13 @@ logger.info({ msg: 'agents.loaded', count: agentList.length, names: agentList.ma
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });
 });
+
+// Best-effort cleanup on signal — keeps embedding processes from lingering
+// and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.
+async function shutdown(signal: string): Promise<void> {
+  logger.info({ msg: 'server.shutdown', signal });
+  await shutdownMemoryRegistry();
+  process.exit(0);
+}
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));

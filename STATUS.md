@@ -12,8 +12,8 @@ Konversations- und Compaction-Ebene. System ist funktional benutzbar —
 reden, Sessions persistieren, `/model`-Switching ist live, Compaction
 greift automatisch + cross-engine.
 
-**Phase 2-Stufe-B startet** mit Memory-Konzept-Diskussion (siehe
-DECISIONS #25–#30, FUTURE.md). Konzept-Doku + Foundation steht:
+**Phase 2-Stufe-B im Bau.** Konzept-Doku + Foundation + Memory-Core
+sind durch (siehe DECISIONS #25–#30, FUTURE.md):
 
 - DECISIONS #25–#30 dokumentieren Memory-Layer + Config-Migration
 - FUTURE.md hält Dream-Mode + Agent-Loop für openai-compatible fest
@@ -26,10 +26,36 @@ DECISIONS #25–#30, FUTURE.md). Konzept-Doku + Foundation steht:
   Frontmatter nur noch Identity (name/description/icon)
 - CLI-SSE-Stream-Bug behoben (Server-Heartbeat alle 20s, Cleanup toter
   Subscriber on writeSSE-Fail, Client-Auto-Reconnect mit Backoff)
+- **Memory-Core gebaut** in `src/memory/`:
+  - `storage.ts`: SQLite + sqlite-vec (FTS5-Fallback wenn vec nicht lädt),
+    Schema-Migration, Chunk-Replace-Transactions
+  - `chunking.ts`: Markdown → Paragraph-Chunks mit Overlap, Frontmatter-Strip
+  - `embeddings.ts`: Provider-Abstraktion. Default `local` via
+    `@huggingface/transformers` (`Xenova/all-MiniLM-L6-v2`, 384-dim,
+    ~30MB First-Run-Download). Aliases für gemma + mpnet vorbereitet
+  - `retrieval.ts`: Hybrid Vector+BM25 mit Min-Max-Norm-Fusion, FTS5-
+    Sanitization
+  - `watcher.ts`: chokidar mit per-Pfad-Debounce (1500ms default)
+  - `manager.ts`: per-Agent Public-API (search/list/get/write/delete +
+    reindex on file change)
+  - `registry.ts`: process-wide Manager-Cache mit lazy init, agent.yaml
+    obsidian-Konfig wird hier eingelesen
+  - `inject.ts`: Auto-Inject-Block-Builder, Token-Cap, `<memory-context>`-
+    Wrapper mit Hinweis-Header
+- **Auto-Inject in `chat/send` aktiv:** Server augmentiert pro Turn den
+  systemPrompt mit Recall-Block. Nicht-persistierend (JSONL bleibt
+  unangetastet)
+- **Smoke-Test grün:** „italienisches Auto" findet Fiat-Note (Synonym),
+  „Versicherung" findet sie via BM25-Boost. End-to-end Embed→Index→
+  Hybrid-Search funktioniert
 
-**Memory-Layer-Implementation (Storage/Embeddings/Tools/MCP/Obsidian)
-steht als nächstes an.** Konzept ist fix, Bauentscheidungen siehe
-Decisions #25–#28.
+**Steht als nächstes an (Phase 2-Stufe-B Abschluss):**
+1. Memory-Tools für Hans (`memory_search`, `memory_get`, `memory_write`,
+   `memory_edit`, `memory_delete`, `memory_list`)
+2. Lokaler MCP-Server, Hookup in claude-cli + codex-cli
+3. Obsidian-Integration end-to-end testen (Konfig wird schon gelesen,
+   aber kein Vault gegen-getestet)
+4. Eventuelles `obsidian_write`-Tool für selektives Schreiben
 
 ### Was funktioniert
 

@@ -1,0 +1,152 @@
+// Markdown chunking. Splits content into ~targetTokens chunks with
+// overlapTokens of overlap between adjacent chunks. Token estimate is the
+// project-wide 4-chars/token heuristic.
+//
+// We chunk by markdown structure first (split on blank lines, then on
+// heading boundaries), then pack chunks up to the target size. Overlap is
+// done as a sliding window over the *paragraph list*, not character-level —
+// keeps chunks readable.
+//
+// Frontmatter (--- ... ---) at the top is stripped before chunking; metadata
+// from the frontmatter is the caller's job.
+
+export interface MarkdownChunk {
+  /** Concatenated paragraph text. */
+  text: string;
+  /** 1-based line numbers (inclusive). */
+  startLine: number;
+  endLine: number;
+}
+
+interface Paragraph {
+  text: string;
+  startLine: number;
+  endLine: number;
+}
+
+/** Strip leading frontmatter block if present. Returns body + offset (line count consumed). */
+export function stripFrontmatter(input: string): { body: string; bodyStartLine: number } {
+  if (!input.startsWith('---')) return { body: input, bodyStartLine: 1 };
+  const lines = input.split('\n');
+  if (lines.length < 2) return { body: input, bodyStartLine: 1 };
+  let endIdx = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === '---') {
+      endIdx = i;
+      break;
+    }
+  }
+  if (endIdx < 0) return { body: input, bodyStartLine: 1 };
+  return {
+    body: lines.slice(endIdx + 1).join('\n'),
+    bodyStartLine: endIdx + 2, // 1-based, line after closing ---
+  };
+}
+
+function estimateTokens(text: string): number {
+  // 4 chars/token is the project-wide heuristic. Code is denser, prose
+  // looser, but it's close enough for chunk-size budgeting.
+  return Math.ceil(text.length / 4);
+}
+
+function splitParagraphs(body: string, lineOffset: number): Paragraph[] {
+  const lines = body.split('\n');
+  const paragraphs: Paragraph[] = [];
+  let buf: string[] = [];
+  let start = -1;
+  const flush = (endIdx: number) => {
+    if (buf.length === 0) return;
+    const text = buf.join('\n').trim();
+    if (text.length > 0) {
+      paragraphs.push({
+        text,
+        startLine: start + lineOffset,
+        endLine: endIdx + lineOffset,
+      });
+    }
+    buf = [];
+    start = -1;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.trim() === '') {
+      flush(i - 1);
+    } else {
+      if (start < 0) start = i;
+      buf.push(line);
+    }
+  }
+  flush(lines.length - 1);
+  return paragraphs;
+}
+
+export interface ChunkOptions {
+  targetTokens: number;
+  overlapTokens: number;
+}
+
+/**
+ * Pack paragraphs into chunks of ~targetTokens. Overlap is implemented at
+ * paragraph granularity: each chunk starts with the trailing paragraphs of
+ * the previous chunk that together cover overlapTokens.
+ */
+export function chunkMarkdown(
+  input: string,
+  opts: ChunkOptions = { targetTokens: 400, overlapTokens: 80 },
+): MarkdownChunk[] {
+  const { body, bodyStartLine } = stripFrontmatter(input);
+  const paragraphs = splitParagraphs(body, bodyStartLine);
+  if (paragraphs.length === 0) return [];
+
+  const chunks: MarkdownChunk[] = [];
+  let current: Paragraph[] = [];
+  let currentTokens = 0;
+
+  const pushChunk = () => {
+    if (current.length === 0) return;
+    const text = current.map((p) => p.text).join('\n\n');
+    chunks.push({
+      text,
+      startLine: current[0]!.startLine,
+      endLine: current[current.length - 1]!.endLine,
+    });
+  };
+
+  for (const para of paragraphs) {
+    const paraTokens = estimateTokens(para.text);
+
+    // If a single paragraph exceeds the target, it becomes its own chunk —
+    // we don't split mid-paragraph (would corrupt code blocks, lists, etc.)
+    if (paraTokens >= opts.targetTokens && current.length === 0) {
+      current.push(para);
+      pushChunk();
+      // Build next chunk's overlap from the tail of this one
+      current = buildOverlap(current, opts.overlapTokens);
+      currentTokens = current.reduce((s, p) => s + estimateTokens(p.text), 0);
+      continue;
+    }
+
+    if (currentTokens + paraTokens > opts.targetTokens && current.length > 0) {
+      pushChunk();
+      current = buildOverlap(current, opts.overlapTokens);
+      currentTokens = current.reduce((s, p) => s + estimateTokens(p.text), 0);
+    }
+    current.push(para);
+    currentTokens += paraTokens;
+  }
+  pushChunk();
+  return chunks;
+}
+
+function buildOverlap(prev: Paragraph[], overlapTokens: number): Paragraph[] {
+  if (overlapTokens <= 0) return [];
+  const out: Paragraph[] = [];
+  let acc = 0;
+  for (let i = prev.length - 1; i >= 0; i--) {
+    const p = prev[i]!;
+    out.unshift(p);
+    acc += estimateTokens(p.text);
+    if (acc >= overlapTokens) break;
+  }
+  return out;
+}
