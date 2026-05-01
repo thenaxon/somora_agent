@@ -237,6 +237,30 @@ export const codexCliEngine: AgentEngine = {
             if (typeof id === 'string') lastThreadId = id;
           } else if (ev.type === 'turn.started') {
             // we already emitted turn_start at the top
+          } else if (ev.type === 'item.started') {
+            // Surface MCP tool calls as soon as they start, not only at
+            // completion — so the CLI can show "[tool call · …]" while
+            // the model waits for the result. codex emits mcp_tool_call
+            // items with both .started (in_progress) and .completed.
+            const item = ev.item as { id?: unknown; type?: unknown; [k: string]: unknown } | undefined;
+            if (!item || typeof item !== 'object') continue;
+            const itemType = typeof item.type === 'string' ? item.type : '';
+            if (itemType === 'mcp_tool_call') {
+              const itemId = typeof item.id === 'string' ? item.id : `item-${Date.now()}`;
+              const server = typeof item.server === 'string' ? item.server : 'unknown';
+              const tool = typeof item.tool === 'string' ? item.tool : 'unknown';
+              yield {
+                kind: 'tool_call',
+                ts: ts(),
+                engine: ENGINE,
+                callId: itemId,
+                // Match claude-cli's mcp__<server>__<tool> tool-name shape so
+                // the CLI's dim formatter (which strips that prefix) renders
+                // both engines identically.
+                tool: `mcp__${server}__${tool}`,
+                input: item.arguments ?? {},
+              };
+            }
           } else if (ev.type === 'item.completed') {
             const item = ev.item as { id?: unknown; type?: unknown; [k: string]: unknown } | undefined;
             if (!item || typeof item !== 'object') continue;
@@ -249,7 +273,30 @@ export const codexCliEngine: AgentEngine = {
                 finalText = text;
                 yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
               }
+            } else if (itemType === 'mcp_tool_call') {
+              // codex emits a single completion event for both success and
+              // failure; status === "completed" → result, anything else
+              // (failed, cancelled by safety monitor, …) → error path.
+              const status = typeof item.status === 'string' ? item.status : 'completed';
+              const errObj = item.error as { message?: unknown } | null | undefined;
+              const errMsg =
+                errObj && typeof errObj === 'object' && typeof errObj.message === 'string'
+                  ? errObj.message
+                  : status !== 'completed'
+                    ? `tool ${status}`
+                    : undefined;
+              yield {
+                kind: 'tool_result',
+                ts: ts(),
+                engine: ENGINE,
+                callId: itemId,
+                output: item.result ?? null,
+                ...(errMsg ? { error: errMsg } : {}),
+              };
             } else if (itemType === 'tool_use') {
+              // codex's built-in tools (shell, exec, …) — disabled per
+              // DECISION #23, but preserve the parser branch so any future
+              // re-enable doesn't silently drop events.
               const name = typeof item.name === 'string' ? item.name : 'unknown';
               yield {
                 kind: 'tool_call',
