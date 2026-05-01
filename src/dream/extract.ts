@@ -348,6 +348,20 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         existingMemory: ctx.existingMemory,
         referencedVault: ctx.referencedVault,
       });
+      const reqTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(userMsg);
+      const reqStart = Date.now();
+      logger.info({
+        msg: 'dream.llm_request',
+        agent: ctx.agent,
+        chunkIndex: i + 1,
+        totalChunks,
+        workerModel: `${ctx.workerModel.providerName}/${ctx.workerModel.modelId}`,
+        baseUrl: ctx.workerModel.provider.engine === 'openai-compatible'
+          ? (ctx.workerModel.provider as { baseUrl?: string }).baseUrl
+          : undefined,
+        eventsInChunk: chunk.events.length,
+        estimatedTokensIn: reqTokens,
+      });
       const completion = await Promise.race([
         client.chat.completions.create({
           model: ctx.workerModel.modelId,
@@ -373,6 +387,10 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         chunkIndex: i + 1,
         totalChunks,
         rawFindings: chunkFindings.length,
+        responseChars: text.length,
+        responsePreview: text.slice(0, 300).replace(/\s+/g, ' ').trim(),
+        durationMs: Date.now() - reqStart,
+        usage: completion.usage,
       });
       if (ctx.onChunkComplete) {
         await ctx.onChunkComplete({
