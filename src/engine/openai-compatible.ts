@@ -459,7 +459,20 @@ export const openAiCompatibleEngine: AgentEngine = {
         toolRounds: round,
       });
 
-      yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...(totalUsage ? { usage: totalUsage } : {}) };
+      yield {
+        kind: 'turn_end',
+        ts: ts(),
+        engine: ENGINE,
+        turnId,
+        ...(totalUsage
+          ? {
+              usage: {
+                ...totalUsage,
+                ...(tokensInCached !== undefined ? { tokens_in_cached: tokensInCached } : {}),
+              },
+            }
+          : {}),
+      };
 
       // Tag the session with the engine that owns it now (for future routing logic).
       // Re-read in case compaction wrote in-between to avoid clobbering.

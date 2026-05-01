@@ -112,6 +112,7 @@ export const claudeCliEngine: AgentEngine = {
     let finalText = '';
     let lastSdkSessionId: string | undefined;
     let usage: { tokens_in: number; tokens_out: number } | undefined;
+    let tokensInCachedClaude: number | undefined;
 
     try {
       logger.info({
@@ -267,10 +268,16 @@ export const claudeCliEngine: AgentEngine = {
             const newIn = u?.input_tokens ?? 0;
             const cacheRead = u?.cache_read_input_tokens ?? 0;
             const cacheCreate = u?.cache_creation_input_tokens ?? 0;
+            // For the cached-token display: cache_read is "served from
+            // cache this turn" — that's what we want to surface as
+            // tokens_in_cached. cache_creation is uncached (new content
+            // added to cache); we lump it into the "uncached / new"
+            // portion implicit in tokens_in - tokens_in_cached.
             usage = {
               tokens_in: newIn + cacheRead + cacheCreate,
               tokens_out: u?.output_tokens ?? 0,
             };
+            tokensInCachedClaude = cacheRead;
             logger.info({
               msg: 'engine.turn',
               engine: ENGINE,
@@ -305,7 +312,16 @@ export const claudeCliEngine: AgentEngine = {
         ts: ts(),
         engine: ENGINE,
         turnId,
-        ...(usage ? { usage } : {}),
+        ...(usage
+          ? {
+              usage: {
+                ...usage,
+                ...(typeof tokensInCachedClaude === 'number' && tokensInCachedClaude > 0
+                  ? { tokens_in_cached: tokensInCachedClaude }
+                  : {}),
+              },
+            }
+          : {}),
       };
 
       if (lastSdkSessionId) {

@@ -416,7 +416,16 @@ export const codexCliEngine: AgentEngine = {
         ts: ts(),
         engine: ENGINE,
         turnId,
-        ...(usage ? { usage } : {}),
+        ...(usage
+          ? {
+              usage: {
+                ...usage,
+                ...(usageRaw?.cached_input_tokens !== undefined
+                  ? { tokens_in_cached: usageRaw.cached_input_tokens }
+                  : {}),
+              },
+            }
+          : {}),
       };
 
       if (lastThreadId) {

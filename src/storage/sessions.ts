@@ -160,6 +160,64 @@ export async function createSession(agent: string, slug: string): Promise<string
   return id;
 }
 
+/**
+ * Reset a session: archive its current jsonl + meta to a timestamped name,
+ * and start the original session id fresh (empty jsonl, minimal meta).
+ *
+ * Use case: the magic `main` session can't be replaced — it always exists
+ * for an agent. Over months of chatting, the JSONL grows past anything
+ * useful and provider-side caches roll over expensively. /reset gives the
+ * user a clean main while preserving the old content as a resume-able
+ * archived session.
+ *
+ * Behavior:
+ *   - If the source jsonl doesn't exist → nothing to do, returns null.
+ *   - Archive name: `<UTC-timestamp>_<sourceId>-archive.jsonl|.meta.json`
+ *   - The archived session can be resumed with `/session <archive-id>`
+ *     just like any other session (its meta keeps the prior engine
+ *     session-ids so claude/codex resume still works).
+ *   - The freshly-empty original gets a meta with only `slug` (preserved
+ *     from the source meta) so future turns start clean.
+ */
+export async function resetSession(
+  agent: string,
+  session: string,
+): Promise<{ archivedId: string } | null> {
+  await ensureDir(agent);
+  const srcJsonl = jsonlPath(agent, session);
+  if (!(await fileExists(srcJsonl))) return null;
+
+  const ts = timestampForFilename();
+  const archivedId = `${ts}_${sanitize(session, 'session')}-archive`;
+  const dstJsonl = jsonlPath(agent, archivedId);
+  const dstMeta = metaPath(agent, archivedId);
+
+  await rename(srcJsonl, dstJsonl);
+  const srcMetaPath = metaPath(agent, session);
+  let preservedSlug: string | undefined;
+  if (await fileExists(srcMetaPath)) {
+    try {
+      const raw = await readFile(srcMetaPath, 'utf8');
+      const parsed = JSON.parse(raw) as SessionMeta;
+      preservedSlug = typeof parsed.slug === 'string' ? parsed.slug : undefined;
+    } catch {
+      // best-effort; don't block reset on a malformed meta
+    }
+    await rename(srcMetaPath, dstMeta);
+  }
+
+  // Fresh meta for the resurrected session id. Slug preserved so
+  // listSessions still surfaces it sensibly.
+  const freshMeta: SessionMeta = {
+    ...(preservedSlug ? { slug: preservedSlug } : {}),
+    createdAt: new Date().toISOString(),
+    resetFrom: archivedId,
+  };
+  await writeFile(metaPath(agent, session), JSON.stringify(freshMeta, null, 2), 'utf8');
+
+  return { archivedId };
+}
+
 export interface SessionSummary {
   id: string;
   slug: string;

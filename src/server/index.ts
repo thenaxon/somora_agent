@@ -23,6 +23,7 @@ import {
   createSession,
   getHistory,
   listSessions,
+  resetSession,
   resolveSessionId,
   sessionMetaStore,
 } from '../storage/sessions.ts';
@@ -445,6 +446,27 @@ app.put('/agents/:agent/sessions/:session/model', async (c) => {
   return c.json({ agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
 });
 
+// Reset a session: archive current jsonl + meta, fresh-start the
+// session id. The archived copy is resume-able under a timestamped
+// name. Used primarily for the magic `main` session, which can't be
+// re-created with a new id.
+app.post('/agents/:agent/sessions/:session/reset', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const result = await resetSession(agent, session);
+  if (!result) {
+    logger.info({ msg: 'session.reset_noop', agent, session, reason: 'no jsonl to archive' });
+    return c.json({ agent, session, archivedId: null, reason: 'session has no content yet — nothing to archive' });
+  }
+  logger.info({ msg: 'session.reset', agent, session, archivedId: result.archivedId });
+  return c.json({ agent, session, archivedId: result.archivedId });
+});
+
 app.delete('/agents/:agent/sessions/:session/model', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
@@ -573,7 +595,7 @@ app.post('/chat/send', async (c) => {
         model: resolvedModel.modelId,
       },
     });
-    let lastUsage: { tokens_in: number; tokens_out: number } | undefined;
+    let lastUsage: { tokens_in: number; tokens_out: number; tokens_in_cached?: number } | undefined;
     try {
       const history = await getHistory(agent, session);
 

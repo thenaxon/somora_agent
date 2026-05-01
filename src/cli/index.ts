@@ -12,6 +12,7 @@ let streamAbort: AbortController | null = null;
 
 interface TurnStats {
   tokensIn: number;
+  tokensInCached: number | null;
   tokensOut: number;
   contextWindow: number | null;
   provider: string | null;
@@ -26,13 +27,33 @@ function formatTokens(n: number): string {
   return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
+// Honest token-display:
+//   `[hans:main · 78k+540k¢ / 400k · ↓800]>`
+//                ^new ^cached ^window  ^out
+// "+Xk¢" appears only when cached tokens are surfaced (codex-cli,
+// openai-compatible, claude-cli with cache-read>0).
+//
+// Without cache info we fall back to the simpler single-number view
+// to keep the prompt readable.
 const promptStr = () => {
   const parts = [`${agent}:${session}`];
   if (lastTurn) {
-    if (lastTurn.contextWindow) {
-      parts.push(`${formatTokens(lastTurn.tokensIn)}/${formatTokens(lastTurn.contextWindow)}`);
+    const cached = lastTurn.tokensInCached;
+    const total = lastTurn.tokensIn;
+    if (cached !== null && cached > 0 && total >= cached) {
+      const uncached = total - cached;
+      const inSegment = `${formatTokens(uncached)}+${formatTokens(cached)}¢`;
+      if (lastTurn.contextWindow) {
+        parts.push(`${inSegment} / ${formatTokens(lastTurn.contextWindow)}`);
+      } else {
+        parts.push(`↑${inSegment}`);
+      }
     } else {
-      parts.push(`${formatTokens(lastTurn.tokensIn)}↑`);
+      if (lastTurn.contextWindow) {
+        parts.push(`${formatTokens(total)}/${formatTokens(lastTurn.contextWindow)}`);
+      } else {
+        parts.push(`${formatTokens(total)}↑`);
+      }
     }
     parts.push(`↓${formatTokens(lastTurn.tokensOut)}`);
   }
@@ -179,6 +200,7 @@ async function consumeStream(): Promise<void> {
             if (data.usage) {
               lastTurn = {
                 tokensIn: data.usage.tokens_in ?? 0,
+                tokensInCached: data.usage.tokens_in_cached ?? null,
                 tokensOut: data.usage.tokens_out ?? 0,
                 contextWindow: data.contextWindow ?? null,
                 provider: data.provider ?? null,
@@ -287,6 +309,15 @@ async function createNewSession(forAgent: string, slug: string): Promise<string>
   return data.id;
 }
 
+async function resetCurrentSession(): Promise<{ archivedId: string | null; reason?: string }> {
+  const res = await fetch(
+    `${base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/reset`,
+    { method: 'POST' },
+  );
+  if (!res.ok) throw new Error(await res.text());
+  return (await res.json()) as { archivedId: string | null; reason?: string };
+}
+
 interface ModelInfo {
   provider: string;
   id: string;
@@ -353,6 +384,8 @@ Available commands:
   /session <slug-or-id>       — switch to another session of current agent
   /new <slug>                 — create new session and switch to it
   /main                       — back to main session of current agent
+  /reset                      — preview reset of current session
+  /reset YES                  — archive current session, start fresh
   /models                     — list all configured models with aliases
   /model                      — show current effective model for this session
   /model <alias-or-ref>       — override model for this session
@@ -433,6 +466,39 @@ async function handleCommand(line: string): Promise<void> {
     case '/main':
       await switchTo(agent, 'main');
       return;
+    case '/reset': {
+      // Two-step confirmation. `/reset` prints what will happen + the
+      // archive path; user has to follow up with `/reset YES` to commit.
+      // This is destructive enough that a single keystroke shouldn't do it.
+      if (args[0] !== 'YES') {
+        stdout.write(
+          `\n[/reset] would archive the CURRENT session (${agent}:${session}) and start fresh.` +
+            `\n        Existing JSONL + meta are preserved as a timestamped archive` +
+            `\n        you can resume any time with /session <id>.` +
+            `\n        To commit: /reset YES\n`,
+        );
+        rl.prompt();
+        return;
+      }
+      try {
+        const result = await resetCurrentSession();
+        if (result.archivedId) {
+          stdout.write(
+            `\n[reset done] archived as: ${result.archivedId}` +
+              `\n             current session is now empty + clean.\n`,
+          );
+        } else {
+          stdout.write(`\n[reset noop] ${result.reason ?? 'nothing to archive'}\n`);
+        }
+        // Refresh session-scoped stats since we just wiped them.
+        lastTurn = null;
+        rl.setPrompt(promptStr());
+      } catch (err) {
+        stdout.write(`\n[!] ${(err as Error).message}\n`);
+      }
+      rl.prompt();
+      return;
+    }
     case '/models': {
       const models = await fetchModels();
       stdout.write('\nModels:\n');

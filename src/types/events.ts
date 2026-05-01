@@ -7,7 +7,18 @@ export type NormalizedEvent =
   | { kind: 'tool_call'; ts: number; engine: string; callId: string; tool: string; input: unknown }
   | { kind: 'tool_result'; ts: number; engine: string; callId: string; output: unknown; error?: string }
   | { kind: 'turn_start'; ts: number; engine: string; turnId: string }
-  | { kind: 'turn_end'; ts: number; engine: string; turnId: string; usage?: { tokens_in: number; tokens_out: number } }
+  | {
+      kind: 'turn_end';
+      ts: number;
+      engine: string;
+      turnId: string;
+      usage?: {
+        tokens_in: number;
+        tokens_out: number;
+        /** Tokens served from the provider's prefix-cache (subset of tokens_in). Optional — not all engines surface it. */
+        tokens_in_cached?: number;
+      };
+    }
   | { kind: 'error'; ts: number; engine: string; message: string };
 
 // Wire format over SSE — orbit-compatible. Deltas are cumulative.
@@ -17,7 +28,7 @@ export type SseEvent =
       event: 'agent';
       data: {
         phase: 'start' | 'end';
-        usage?: { tokens_in: number; tokens_out: number };
+        usage?: { tokens_in: number; tokens_out: number; tokens_in_cached?: number };
         contextWindow?: number;
         provider?: string;
         model?: string;
