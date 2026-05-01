@@ -19,7 +19,7 @@ import type { ZodObject, ZodRawShape } from 'zod';
 import { loadConfig } from '../config/loader.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
-import { memoryTools, ToolRegistry } from '../tools/index.ts';
+import { dreamTools, memoryTools, ToolRegistry } from '../tools/index.ts';
 import type { ToolContext } from '../tools/types.ts';
 
 async function main(): Promise<void> {
@@ -34,6 +34,7 @@ async function main(): Promise<void> {
   const config = await loadConfig();
   const registry = new ToolRegistry();
   registry.registerMany(memoryTools());
+  registry.registerMany(dreamTools());
 
   const ctx: ToolContext = {
     agent,
