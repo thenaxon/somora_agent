@@ -420,19 +420,91 @@ export class MemoryManager {
     }
   }
 
-  async writeNote(slug: string, body: string, frontmatter?: Record<string, unknown>): Promise<{ path: string }> {
+  /**
+   * Create or replace a memory note. `created` is preserved across rewrites;
+   * `updated` is always refreshed. Caller-provided frontmatter merges over
+   * existing values. Throws if `opts.mustExist` is set and the file isn't there.
+   */
+  async writeNote(
+    slug: string,
+    body: string,
+    frontmatter?: Record<string, unknown>,
+    opts?: { mustExist?: boolean },
+  ): Promise<{ path: string; created: boolean }> {
     if (!SLUG_RE.test(slug)) {
       throw new Error(`invalid slug '${slug}' — must match ${SLUG_RE.source}`);
     }
     const path = join(this.memoryRoot, `${slug}.md`);
+
+    let existing: Record<string, unknown> = {};
+    let exists = false;
+    try {
+      const raw = await readFile(path, 'utf8');
+      existing = matter(raw).data ?? {};
+      exists = true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    }
+    if (opts?.mustExist && !exists) {
+      throw new Error(`note '${slug}' does not exist — use memory_write to create`);
+    }
+
     const now = new Date().toISOString();
-    const fm = { created: now, ...frontmatter, updated: now } as Record<string, unknown>;
+    const fm: Record<string, unknown> = {
+      created: existing.created ?? now,
+      ...existing,
+      ...frontmatter,
+      updated: now,
+    };
     const fmYaml = matter.stringify(body.trimEnd() + '\n', fm);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, fmYaml, 'utf8');
     // Watcher will pick up the change and reindex via debounced handler;
     // we don't reindex synchronously here.
-    return { path };
+    return { path, created: !exists };
+  }
+
+  /**
+   * Resolve a recall reference like "memory/auto" or "vault/Foo--Bar" back
+   * to the full file content. Uses the chunks table for path lookup so we
+   * don't have to reverse-slugify (collision-safe).
+   */
+  async getByReference(reference: string): Promise<{
+    reference: string;
+    source: 'memory' | 'vault';
+    slug: string;
+    path: string;
+    markdown: string;
+    frontmatter: Record<string, unknown> | null;
+  } | null> {
+    const slashIdx = reference.indexOf('/');
+    if (slashIdx < 0) return null;
+    const source = reference.slice(0, slashIdx);
+    const slug = reference.slice(slashIdx + 1);
+    if (source !== 'memory' && source !== 'vault') return null;
+
+    const memDb = this.requireDb();
+    const row = memDb.db
+      .prepare(`SELECT file_path FROM chunks WHERE source = ? AND slug = ? LIMIT 1`)
+      .get(source, slug) as { file_path: string } | undefined;
+    if (!row) return null;
+
+    let raw: string;
+    try {
+      raw = await readFile(row.file_path, 'utf8');
+    } catch {
+      return null;
+    }
+    const parsed = matter(raw);
+    const fm = parsed.data ?? {};
+    return {
+      reference,
+      source,
+      slug,
+      path: row.file_path,
+      markdown: raw,
+      frontmatter: Object.keys(fm).length > 0 ? (fm as Record<string, unknown>) : null,
+    };
   }
 
   async deleteNote(slug: string): Promise<boolean> {

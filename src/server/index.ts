@@ -26,6 +26,7 @@ import {
   resolveSessionId,
   sessionMetaStore,
 } from '../storage/sessions.ts';
+import { memoryTools, ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 
@@ -235,6 +236,16 @@ logger.info({
   env: getEffectiveEnv(),
 });
 
+// Construct the process-wide tool registry. Built once at startup,
+// shared by HTTP debug endpoints today and by MCP/agent-loop later.
+const tools = new ToolRegistry();
+tools.registerMany(memoryTools());
+logger.info({
+  msg: 'tools.registered',
+  count: tools.list().length,
+  names: tools.list().map((t) => t.name).join(','),
+});
+
 const app = new Hono();
 
 app.use('*', async (c, next) => {
@@ -279,6 +290,38 @@ app.get('/models', (c) => {
     }
   }
   return c.json(list);
+});
+
+// Tool catalog + invocation endpoints (DECISION #31). 127.0.0.1-only,
+// useful for poking tools without an LLM in the loop.
+//   GET  /tools                                    — list registered tools
+//   POST /agents/:agent/tools/:name                — invoke a tool
+app.get('/tools', (c) =>
+  c.json({
+    count: tools.list().length,
+    tools: tools.list().map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.jsonSchema,
+    })),
+  }),
+);
+
+app.post('/agents/:agent/tools/:name', async (c) => {
+  const agent = c.req.param('agent');
+  const name = c.req.param('name');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const input = await c.req.json().catch(() => ({}));
+  const result = await tools.invoke(name, input, {
+    agent,
+    getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+  });
+  if (!result.ok) {
+    return c.json(result, 400);
+  }
+  return c.json(result);
 });
 
 // Memory inspection endpoints. Strictly read-only, useful for debugging
