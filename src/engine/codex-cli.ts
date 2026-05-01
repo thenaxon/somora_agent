@@ -47,10 +47,12 @@ const ENGINE = 'codex-cli';
 // newly-introduced tools — re-audit with `codex features list` when
 // upgrading codex.
 const CODEX_DISABLED_FEATURES = [
+  // Direct system / filesystem access — the actual surface we want gone.
   'shell_tool', // direct shell command execution
   'unified_exec', // newer exec mechanism
   'apply_patch_freeform', // free-form file editing
   'apply_patch_streaming_events', // streaming patch events
+  // External integrations — out of somora scope.
   'browser_use', // browser automation
   'in_app_browser', // in-app browser
   'computer_use', // desktop / screen control
@@ -58,9 +60,17 @@ const CODEX_DISABLED_FEATURES = [
   'js_repl', // arbitrary JS execution
   'apps', // codex "apps" tool
   'web_search_cached', // web search
-  'tool_search', // meta-tool that lets the model search for tools
-  'tool_suggest', // meta-tool that suggests tools
+  // Sub-agent spawning — we run only single-agent codex sessions.
   'multi_agent', // sub-agent spawning
+  //
+  // NOT in this list (intentionally on, even though they look meta-toolish):
+  //   tool_search, tool_suggest — codex routes MCP tool calls through
+  //     these meta-tools for discovery / dispatch. Disabling them was a
+  //     2j.3 mistake: gpt-5.5 then "saw" our somora-memory tools but
+  //     never actually called them, hallucinating fake tool-call results
+  //     and "MCP cancelled" errors instead. See logs from session
+  //     2026-05-01 ~13:18: 6 turns, zero tool.invoked events, despite
+  //     mcp.server_started on every turn.
 ] as const;
 
 import type { Compaction } from '../compaction/index.ts';
