@@ -62,6 +62,10 @@ const CODEX_DISABLED_FEATURES = [
   'web_search_cached', // web search
   // Sub-agent spawning — we run only single-agent codex sessions.
   'multi_agent', // sub-agent spawning
+  // Context-leak vectors — would inject content from the user's host
+  // codex setup into the somora agent's prompt.
+  'personality', // pulls <personality_spec> from ~/.codex migration files
+  'memories', // pulls auto-memory from ~/.codex/memories/ (off by default but defensive)
   //
   // NOT in this list (intentionally on, even though they look meta-toolish):
   //   tool_search, tool_suggest — codex routes MCP tool calls through
@@ -163,6 +167,23 @@ export const codexCliEngine: AgentEngine = {
     // continues to work because MCP tool dispatch is infrastructure, not
     // gated by these feature flags.
     for (const feat of CODEX_DISABLED_FEATURES) args.push('--disable', feat);
+    // Context-isolation flags — keep host-codex setup from leaking into
+    // somora agents (analogous to claude-cli's settingSources:[] +
+    // managedSettings.autoMemoryEnabled=false defenses):
+    //   --ignore-user-config   skip ~/.codex/config.toml (other MCPs,
+    //                          model overrides, trust lists). Auth still
+    //                          uses CODEX_HOME — login state survives.
+    //   --ignore-rules         skip user/project execpolicy .rules files
+    //   project_root_markers=[] disable AGENTS.md walk-up. By default codex
+    //                          walks from cwd upward to a .git marker and
+    //                          concatenates every AGENTS.md it finds into
+    //                          the user instructions — would import the
+    //                          somora-repo's AGENTS.md (if any) into every
+    //                          turn. Empty markers list keeps codex within
+    //                          cwd only. AGENTS.md at cwd-root would still
+    //                          load, but that's an explicit, known location.
+    args.push('--ignore-user-config', '--ignore-rules');
+    args.push('-c', 'project_root_markers=[]');
     args.push('--json', '--skip-git-repo-check');
     if (!resumeId) args.push('--sandbox', 'read-only');
     args.push('-m', resolvedModel.modelId);
