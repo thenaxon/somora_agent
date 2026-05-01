@@ -50,17 +50,16 @@ export async function resolveEmbeddingProvider(
 
 /**
  * Map a configured model name to a HF Hub repo id. We accept friendly
- * shorthands and hub-paths interchangeably.
+ * shorthands and hub-paths interchangeably. Aliases are limited to
+ * verified-working repos; unknown shorthands fall through to `Xenova/<name>`
+ * (which may or may not resolve — user gets a clear download error).
  */
 function resolveModelRepoId(modelName: string): string {
   if (modelName.includes('/')) return modelName;
-  // Friendly shorthand → canonical HF repo
   const aliases: Record<string, string> = {
     'all-MiniLM-L6-v2': 'Xenova/all-MiniLM-L6-v2',
     'all-mpnet-base-v2': 'Xenova/all-mpnet-base-v2',
-    // embeddinggemma maps via tjake's ONNX port. If unavailable at runtime,
-    // we surface a clear error and the user can pin a different repo.
-    'embeddinggemma-300m': 'onnx-community/embeddinggemma-300m-ONNX',
+    'paraphrase-multilingual-MiniLM-L12-v2': 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
   };
   return aliases[modelName] ?? `Xenova/${modelName}`;
 }

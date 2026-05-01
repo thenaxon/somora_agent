@@ -584,3 +584,20 @@ async function shutdown(signal: string): Promise<void> {
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+
+// Safety net: third-party libraries (e.g. @huggingface/transformers' model
+// loader) sometimes reject promises in microtasks that aren't tied to our
+// await chains. Without a handler, those crash the whole server. We log
+// loudly so they're visible in operations but keep the server alive — the
+// affected feature (embeddings, etc.) degrades to its fallback (FTS-only
+// retrieval) per its own try/catch.
+process.on('unhandledRejection', (reason) => {
+  logger.error({
+    msg: 'process.unhandled_rejection',
+    err: reason instanceof Error ? reason.message : String(reason),
+    stack: reason instanceof Error ? reason.stack : undefined,
+  });
+});
+process.on('uncaughtException', (err) => {
+  logger.error({ msg: 'process.uncaught_exception', err: err.message, stack: err.stack });
+});

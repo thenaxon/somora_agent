@@ -69,11 +69,11 @@ export type CompactionConfigSchema = z.infer<typeof CompactionConfigSchema>;
 // Memory-Layer config (DECISIONS #25–#27). All optional with sensible defaults.
 // Per-agent overrides may live in agent.yaml later. (Phase 2-Stufe-B)
 export const MemoryEmbeddingConfigSchema = z.object({
-  /** Embedding provider. 'local' uses node-llama-cpp with a GGUF; remote providers TBD. */
+  /** Embedding provider. 'local' uses @huggingface/transformers (ONNX); remote providers TBD. */
   provider: z.enum(['local', 'openai', 'gemini', 'mistral', 'ollama']).default('local'),
-  /** Model identifier — semantics depend on provider. For 'local': GGUF model name. */
-  model: z.string().min(1).default('embeddinggemma-300m'),
-}).default({ provider: 'local', model: 'embeddinggemma-300m' });
+  /** Model identifier — semantics depend on provider. For 'local': HF Hub repo or alias. */
+  model: z.string().min(1).default('all-MiniLM-L6-v2'),
+}).default({ provider: 'local', model: 'all-MiniLM-L6-v2' });
 
 export const MemoryChunkingConfigSchema = z.object({
   targetTokens: z.number().int().positive().default(400),
@@ -102,7 +102,7 @@ export const MemoryConfigSchema = z.object({
   autoInject: MemoryAutoInjectConfigSchema,
   hybrid: MemoryHybridConfigSchema,
 }).default({
-  embedding: { provider: 'local', model: 'embeddinggemma-300m' },
+  embedding: { provider: 'local', model: 'all-MiniLM-L6-v2' },
   chunking: { targetTokens: 400, overlapTokens: 80 },
   autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.5, maxTokens: 1500 },
   hybrid: { vectorWeight: 0.7, bm25Weight: 0.3 },

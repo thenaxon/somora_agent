@@ -91,8 +91,12 @@ providers:
 # wired into the runtime.)
 # memory:
 #   embedding:
-#     provider: local                     # 'local' (node-llama-cpp) | 'openai' | ...
-#     model: embeddinggemma-300m          # only for provider=local
+#     provider: local                     # 'local' (@huggingface/transformers) | future: openai/gemini/...
+#     model: all-MiniLM-L6-v2             # alias OR full HF repo path (e.g. 'Xenova/foo')
+#                                         # known-good aliases: all-MiniLM-L6-v2 (default,
+#                                         # 384 dim, ~30MB), all-mpnet-base-v2 (768 dim,
+#                                         # ~110MB), paraphrase-multilingual-MiniLM-L12-v2
+#                                         # (multilingual, 384 dim, ~120MB)
 #   chunking:
 #     targetTokens: 400
 #     overlapTokens: 80
