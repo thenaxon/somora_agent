@@ -79,6 +79,14 @@ export function somoraMemoryCodexFlags(agent: string): string[] {
     `mcp_servers.${MCP_SERVER_NAME}.args=${argsToml}`,
     '-c',
     `mcp_servers.${MCP_SERVER_NAME}.env=${envToml}`,
+    // Auto-approve our tools — codex's default ("auto") still routes through
+    // the approval flow, which in `codex exec` (non-interactive) hits no UI
+    // and auto-cancels with "user cancelled MCP tool call". The somora-memory
+    // server is OUR server with OUR allowlisted tool surface, no need for
+    // user approval per-call. Equivalent to claude-cli's canUseTool gate
+    // returning {behavior:'allow'} for `mcp__somora-memory__*`.
+    '-c',
+    `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
   ];
 }
 
