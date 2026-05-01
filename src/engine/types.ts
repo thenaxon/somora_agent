@@ -1,5 +1,6 @@
 import type { CompactionConfig } from '../compaction/types.ts';
 import type { ResolvedModel } from '../config/types.ts';
+import type { ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
 // Per-session metadata, free-form. Engines stash their own internas here
@@ -49,6 +50,17 @@ export interface TurnInput {
    * time so engines don't need to know about config-vs-env precedence.
    */
   compactionConfig: CompactionConfig;
+  /**
+   * Tool surface for engines that run their own agent-loop (Phase
+   * 2-Stufe-C). Currently only the openai-compatible engine uses this —
+   * claude-cli and codex-cli configure the somora-memory MCP server as
+   * a child process and the CLI handles tool list+invoke internally.
+   *
+   * Server binds the agent context (memory manager, etc.) into the
+   * invoker closure so engines don't have to assemble it themselves.
+   * Optional — when absent, the engine runs in plain chat mode.
+   */
+  tools?: ToolInvoker;
 }
 
 export interface AgentEngine {

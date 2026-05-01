@@ -44,3 +44,18 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   readonly jsonSchema: Record<string, unknown>;
   handler: (input: TInput, ctx: ToolContext) => Promise<TOutput>;
 }
+
+/**
+ * Engine-facing slice of the tool registry — list of available tools plus
+ * a context-bound invoke. Server constructs this per turn (binds the
+ * agent + memory manager into a closure) and hands it to engines that
+ * run their own agent-loop (currently only openai-compatible).
+ *
+ * Engines that delegate tool dispatch to a CLI subprocess (claude-cli,
+ * codex-cli) ignore this — they configure the somora-memory MCP server
+ * separately, and the CLI handles list+invoke internally.
+ */
+export interface ToolInvoker {
+  list(): ToolDefinition[];
+  invoke(name: string, input: unknown): Promise<ToolResult>;
+}

@@ -7,6 +7,14 @@
 // pass via the same provider. The result is persisted to
 // `meta.compactions[]` (non-destructive — JSONL stays untouched) and
 // the next message-build uses the summary in place of compacted events.
+//
+// Agent-loop (Phase 2-Stufe-C): when TurnInput.tools is present, we run
+// chat.completions in a loop. The model can request tool calls; we
+// execute them via the registry and feed results back. Loop exits when
+// the model returns a final response without tool_calls, or when we hit
+// MAX_TOOL_ROUNDS (defensive cap, prevents runaway models). claude-cli
+// and codex-cli ignore TurnInput.tools — they configure the somora-memory
+// MCP server out-of-process and let their CLI handle dispatch.
 
 import OpenAI from 'openai';
 import {
@@ -16,12 +24,24 @@ import {
   type Compaction,
 } from '../compaction/index.ts';
 import { logger } from '../server/logger.ts';
+import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 
 const ENGINE = 'openai-compatible';
 
+/** Defensive cap on tool-call rounds per turn — prevents a confused or
+ *  adversarial model from looping forever. Real conversations bottom out
+ *  in 1-3 rounds; 8 is comfortable headroom. */
+const MAX_TOOL_ROUNDS = 8;
+
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+type ChatTool = OpenAI.Chat.Completions.ChatCompletionTool;
+type StreamingToolCall = {
+  id: string;
+  name: string;
+  argsJson: string; // accumulated as fragments arrive
+};
 
 interface OpenAiCompatibleMeta {
   engine?: string;
@@ -91,6 +111,22 @@ function estimateTokens(messages: ChatMessage[]): number {
   }
   // Rough heuristic: ~4 chars per token. Good enough for soft warnings.
   return Math.ceil(chars / 4);
+}
+
+/**
+ * Convert our ToolDefinition[] to OpenAI's `tools` parameter shape.
+ * Each tool's `jsonSchema` is already a complete JSON Schema object
+ * matching what `parameters:` expects.
+ */
+function toOpenAiTools(defs: ToolDefinition[]): ChatTool[] {
+  return defs.map((d) => ({
+    type: 'function',
+    function: {
+      name: d.name,
+      description: d.description,
+      parameters: d.jsonSchema as Record<string, unknown>,
+    },
+  }));
 }
 
 export const openAiCompatibleEngine: AgentEngine = {
@@ -216,9 +252,19 @@ export const openAiCompatibleEngine: AgentEngine = {
       apiKey: resolvedModel.provider.apiKey,
     });
 
+    // Cumulative content across ALL tool-rounds. The model may speak in
+    // round 1 ("Let me check..."), call tools, then continue in round 2
+    // ("Based on what I found, …"). We concat with a blank line between
+    // round-segments so the streamed view to the user keeps growing
+    // monotonically — matches how claude-cli's SDK presents
+    // tool-using turns to us (one final assistant_message at the end).
     let cumulative = '';
-    let usage: { tokens_in: number; tokens_out: number } | undefined;
+    let totalUsage: { tokens_in: number; tokens_out: number } | undefined;
     let tokensInCached: number | undefined;
+
+    const tools = input.tools;
+    const openAiTools: ChatTool[] | undefined = tools ? toOpenAiTools(tools.list()) : undefined;
+    const loopMessages = [...messages]; // mutable copy; tool rounds append
 
     try {
       logger.info({
@@ -229,33 +275,151 @@ export const openAiCompatibleEngine: AgentEngine = {
         baseUrl: resolvedModel.provider.baseUrl,
         estimatedTokens: estTokens,
         compactionsApplied: compactions?.length ?? 0,
+        toolsAdvertised: openAiTools?.length ?? 0,
       });
 
-      const stream = await client.chat.completions.create({
-        model: resolvedModel.modelId,
-        messages,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
-      });
+      let round = 0;
+      while (round < MAX_TOOL_ROUNDS) {
+        round++;
+        const stream = await client.chat.completions.create({
+          model: resolvedModel.modelId,
+          messages: loopMessages,
+          stream: true,
+          stream_options: { include_usage: true },
+          ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' } : {}),
+          ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
+        });
 
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content;
-        if (typeof delta === 'string' && delta.length > 0) {
-          cumulative += delta;
-          yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
+        // Per-round accumulators
+        let roundContent = '';
+        const roundToolCalls = new Map<number, StreamingToolCall>();
+        let finishReason: string | null = null;
+
+        for await (const chunk of stream) {
+          const choice = chunk.choices[0];
+          const delta = choice?.delta;
+          if (delta?.content && typeof delta.content === 'string') {
+            roundContent += delta.content;
+            // Stream the running cumulative (existing rounds + this round so far).
+            const runningCumulative = cumulative
+              ? `${cumulative}\n\n${roundContent}`
+              : roundContent;
+            yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: runningCumulative };
+          }
+          if (delta?.tool_calls) {
+            // tool_calls stream as fragments indexed by `index`. Accumulate
+            // name and arguments-JSON across chunks.
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              const slot =
+                roundToolCalls.get(idx) ?? { id: '', name: '', argsJson: '' };
+              if (tc.id && !slot.id) slot.id = tc.id;
+              if (tc.function?.name && !slot.name) slot.name = tc.function.name;
+              if (tc.function?.arguments) slot.argsJson += tc.function.arguments;
+              roundToolCalls.set(idx, slot);
+            }
+          }
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
+          if (chunk.usage) {
+            tokensInCached = (
+              chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } }
+            ).prompt_tokens_details?.cached_tokens;
+            const u = {
+              tokens_in: chunk.usage.prompt_tokens ?? 0,
+              tokens_out: chunk.usage.completion_tokens ?? 0,
+            };
+            // Accumulate across rounds for the final turn_end usage.
+            totalUsage = totalUsage
+              ? {
+                  tokens_in: totalUsage.tokens_in + u.tokens_in,
+                  tokens_out: totalUsage.tokens_out + u.tokens_out,
+                }
+              : u;
+          }
         }
-        if (chunk.usage) {
-          // OpenAI-compatible providers return `prompt_tokens` as TOTAL
-          // input size (cached + uncached). Some expose a cached subset
-          // via `prompt_tokens_details.cached_tokens` — diagnostics only.
-          tokensInCached = (
-            chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } }
-          ).prompt_tokens_details?.cached_tokens;
-          usage = {
-            tokens_in: chunk.usage.prompt_tokens ?? 0,
-            tokens_out: chunk.usage.completion_tokens ?? 0,
+
+        // Merge the round's content into the cumulative (separator only when
+        // there's previous content AND new content).
+        if (roundContent) {
+          cumulative = cumulative ? `${cumulative}\n\n${roundContent}` : roundContent;
+        }
+
+        if (roundToolCalls.size === 0) {
+          // No tools requested — model gave its final answer this round.
+          break;
+        }
+
+        // Persist the assistant turn (with tool_calls) to the chat history.
+        // The OpenAI API requires the tool_call message before the tool
+        // results, so we add both before the next round.
+        const toolCallsForApi = [...roundToolCalls.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([, c]) => ({
+            id: c.id || `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            type: 'function' as const,
+            function: { name: c.name, arguments: c.argsJson || '{}' },
+          }));
+
+        loopMessages.push({
+          role: 'assistant',
+          // OpenAI accepts content=null when only tool_calls are present.
+          content: roundContent || null,
+          tool_calls: toolCallsForApi,
+        } as ChatMessage);
+
+        // Run each tool call, emit normalized events, append a `tool` message
+        // per result for the next round.
+        if (!tools) {
+          // Should never happen — if there are no tools advertised the model
+          // shouldn't request them. Bail with a clear error.
+          throw new Error('model requested tool_calls but no tool registry was passed to the engine');
+        }
+        for (const call of toolCallsForApi) {
+          let parsedArgs: unknown = {};
+          try {
+            parsedArgs = JSON.parse(call.function.arguments);
+          } catch {
+            // leave as raw string fallback so tool sees something
+            parsedArgs = { _raw: call.function.arguments };
+          }
+          yield {
+            kind: 'tool_call',
+            ts: ts(),
+            engine: ENGINE,
+            callId: call.id,
+            tool: call.function.name,
+            input: parsedArgs,
           };
+          const result = await tools.invoke(call.function.name, parsedArgs);
+          const outputText = result.ok
+            ? JSON.stringify(result.data)
+            : (result.error ?? 'tool failed');
+          yield {
+            kind: 'tool_result',
+            ts: ts(),
+            engine: ENGINE,
+            callId: call.id,
+            output: result.ok ? result.data : null,
+            ...(result.ok ? {} : { error: result.error ?? 'tool failed' }),
+          };
+          loopMessages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: outputText,
+          } as ChatMessage);
+        }
+
+        // Defensive: if we hit the round cap with tools still pending, log
+        // and stop. The loop guard at the top will exit on the next check.
+        if (round >= MAX_TOOL_ROUNDS) {
+          logger.warn({
+            msg: 'engine.tool_loop_cap',
+            engine: ENGINE,
+            agent,
+            session,
+            rounds: round,
+            hint: 'model still wanted to call tools at MAX_TOOL_ROUNDS; stopping to prevent runaway',
+          });
         }
       }
 
@@ -270,12 +434,13 @@ export const openAiCompatibleEngine: AgentEngine = {
         model: resolvedModel.modelId,
         agent,
         session,
-        tokens_in: usage?.tokens_in,
+        tokens_in: totalUsage?.tokens_in,
         tokens_in_cached: tokensInCached,
-        tokens_out: usage?.tokens_out,
+        tokens_out: totalUsage?.tokens_out,
+        toolRounds: round,
       });
 
-      yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...(usage ? { usage } : {}) };
+      yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...(totalUsage ? { usage: totalUsage } : {}) };
 
       // Tag the session with the engine that owns it now (for future routing logic).
       // Re-read in case compaction wrote in-between to avoid clobbering.

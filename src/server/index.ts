@@ -618,6 +618,18 @@ app.post('/chat/send', async (c) => {
         logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
       }
 
+      // Bind the agent context into the tool invoker for engines that run
+      // their own agent-loop (currently only openai-compatible). claude-cli
+      // and codex-cli consume tools via MCP and ignore this field.
+      const toolInvoker = {
+        list: () => tools.list(),
+        invoke: (name: string, input: unknown) =>
+          tools.invoke(name, input, {
+            agent,
+            getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+          }),
+      };
+
       const stream = runTurnWithFallback({
         primary: resolvedModel,
         fallbackRef: persona.fallback,
@@ -631,6 +643,7 @@ app.post('/chat/send', async (c) => {
           metaStore: sessionMetaStore,
           availableModels: listAllModels(config),
           compactionConfig: resolveCompactionConfig(config),
+          tools: toolInvoker,
         },
       });
       for await (const ev of stream) {

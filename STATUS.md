@@ -57,6 +57,55 @@ sind durch (siehe DECISIONS #25–#30, FUTURE.md):
    aber kein Vault gegen-getestet)
 4. Eventuelles `obsidian_write`-Tool für selektives Schreiben
 
+---
+
+## Phase 2-Stufe-B + C Abschluss (2026-05-01 mittags)
+
+Stufe B + C vollständig durch:
+
+- **Memory-Tools** gebaut + via MCP-Server in claude-cli und codex-cli
+  hookt — sechs granulare Tools (DECISION #31), source-agnostic Read,
+  source-spezifischer Write
+- **MCP-Server** als spawned Child-Prozess pro CLI-Turn, Pino-Logger
+  schreibt nur in File (Phase 2j.5 fix), `default_tools_approval_mode
+  = "approve"` für non-interactive auto-approve auf codex-Seite
+  (Phase 2j.6 fix)
+- **codex-cli Built-In-Tools deaktiviert** (DECISION #23) — shell, exec,
+  browser, JS, image-gen, web-search etc. abgeschaltet, nur somora-memory
+  als Tool-Surface
+- **Obsidian-Vault end-to-end** getestet gegen `/mnt/naxon/obsidian`
+  (48 Files), `readOnlyPaths` für `Infrastruktur` markiert (Phase 2g)
+- **Ephemeral Context Refactor** (Phase 2j.1) — TurnInput hat jetzt
+  `systemPrompt` (stable, cacheable) + `ephemeralContext` (per-turn).
+  Behebt den codex-resume-Bug wo Memory-Block nach Turn 1 droppte
+- **Phase 2-Stufe-C: Agent-Loop für openai-compatible** (Phase 2k):
+  TurnInput.tools, openai-compatible-Engine erkennt `tool_calls` aus
+  dem Stream, dispatched via in-process ToolRegistry, max 8 Rounds.
+  Damit Hans-auf-gemma vollständig — kann jetzt aktiv `memory_*`
+  callen genau wie Hans-auf-opus / Hans-auf-gpt55.
+
+**Drei-Engine-Parität auf Tool-Level:**
+
+| Engine | Tool-Surface |
+|---|---|
+| claude-cli | MCP-Server via SDK, `canUseTool` Allowlist `mcp__somora-memory__*` |
+| codex-cli | MCP-Server via `-c` TOML, `default_tools_approval_mode="approve"`, alle Built-ins disabled |
+| openai-compatible | In-process Agent-Loop, OpenAI-Tools-API, max 8 Rounds, Tool-Calls direkt durch ToolRegistry |
+
+CLI rendert `[memory · …]` (Auto-Inject), `[tool call · …]` und
+`[tool result · …]` einheitlich für alle drei.
+
+**Was als nächstes ansteht:**
+- **Phase 2-Stufe-D — Dream-Mode**. Konzept in FUTURE.md fest. Liest
+  JSONL-Delta seit letztem Marker, extrahiert Memory-würdiges Material,
+  hinterlegt Findings. User-Approval-Loop danach. Adressiert die
+  „Memory-Verlust bei interner Compaction der CLIs"-Sorge ohne dass wir
+  Compaction zurücknehmen müssen.
+- **Obsidian-Wikilink-Awareness** (FUTURE.md) — Wikilinks beim Chunking
+  extrahieren, Recall-Expansion über verlinkte Notes.
+- **`obsidian_write`-Tool** — explizites User-getriggertes Schreiben in
+  den Vault, respektiert `readOnlyPaths`.
+
 ### Was funktioniert
 
 - **Server** (Hono auf 18737, SSE) — `src/server/index.ts`
