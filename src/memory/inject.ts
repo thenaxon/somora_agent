@@ -1,9 +1,13 @@
-// Auto-inject memory recall into a turn's systemPrompt (DECISION #26).
+// Auto-inject memory recall as ephemeral per-turn context (DECISION #26).
 //
 // The runtime, not the agent, drives recall. Query = current user message
 // concatenated with the last (queryTurns - 1) text turns from history.
-// Top-N hits are formatted as a `<memory-context>` block appended to
-// the systemPrompt for THIS turn only — never persisted to JSONL.
+// Top-N hits are formatted as a `<memory-context>` block.
+//
+// We return the block as a SEPARATE field from systemPrompt so engines can
+// treat it as ephemeral (re-send every turn even when resuming an underlying
+// provider session, where the persona systemPrompt is already remembered).
+// See TurnInput.ephemeralContext.
 //
 // Token cap is enforced by truncating chunks (best-effort) when the
 // joined block exceeds maxTokens. We approximate tokens via the project's
@@ -23,9 +27,12 @@ type AutoInjectCfg = {
 };
 
 export interface InjectResult {
-  /** systemPrompt with `<memory-context>` block appended. */
-  systemPrompt: string;
-  /** Number of memory hits actually injected. */
+  /**
+   * `<memory-context>` block ready to be inlined as ephemeral per-turn
+   * context. `undefined` when nothing was injected (no hits or zero-budget).
+   */
+  ephemeralContext: string | undefined;
+  /** Number of memory hits actually included in the block. */
   injectedCount: number;
   /** The original recall hits (for telemetry / debug logging). */
   hits: Hit[];
@@ -33,28 +40,27 @@ export interface InjectResult {
 
 export async function injectMemoryContext(args: {
   mgr: MemoryManager;
-  systemPrompt: string;
   history: NormalizedEvent[];
   userMessage: string;
   cfg: AutoInjectCfg;
 }): Promise<InjectResult> {
   const query = buildRecallQuery(args.userMessage, args.history, args.cfg.queryTurns);
   if (!query.trim()) {
-    return { systemPrompt: args.systemPrompt, injectedCount: 0, hits: [] };
+    return { ephemeralContext: undefined, injectedCount: 0, hits: [] };
   }
   const hits = await args.mgr.search(query, {
     limit: args.cfg.maxResults,
     minScore: args.cfg.minScore,
   });
   if (hits.length === 0) {
-    return { systemPrompt: args.systemPrompt, injectedCount: 0, hits: [] };
+    return { ephemeralContext: undefined, injectedCount: 0, hits: [] };
   }
   const block = formatMemoryBlock(hits, args.cfg.maxTokens);
   if (!block) {
-    return { systemPrompt: args.systemPrompt, injectedCount: 0, hits };
+    return { ephemeralContext: undefined, injectedCount: 0, hits };
   }
   return {
-    systemPrompt: `${args.systemPrompt}\n\n---\n\n${block}`,
+    ephemeralContext: block,
     injectedCount: hits.length,
     hits,
   };

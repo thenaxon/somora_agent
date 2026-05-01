@@ -78,8 +78,16 @@ export const claudeCliEngine: AgentEngine = {
   name: ENGINE,
 
   async *runTurn(input: TurnInput): AsyncIterable<NormalizedEvent> {
-    const { agent, session, systemPrompt, userMessage, history, metaStore, resolvedModel } =
-      input;
+    const {
+      agent,
+      session,
+      systemPrompt,
+      ephemeralContext,
+      userMessage,
+      history,
+      metaStore,
+      resolvedModel,
+    } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`claude-cli engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
     }
@@ -116,11 +124,19 @@ export const claudeCliEngine: AgentEngine = {
         replaySummary: Boolean(replayDelta.summary),
         resumeSdkSessionId: Boolean(resume),
       });
+      // claude-agent-sdk takes one systemPrompt string per query() — we
+      // concat the persona + ephemeral block. The SDK re-sends this on
+      // every query() call, so per-turn memory-context updates land
+      // even though the underlying provider session is resumed.
+      const systemPromptForTurn = ephemeralContext
+        ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
+        : systemPrompt;
+
       const stream = query({
         prompt: userInputStream(effectiveUserMessage),
         options: {
           model: resolvedModel.modelId,
-          systemPrompt,
+          systemPrompt: systemPromptForTurn,
           settingSources: [],
           tools: [],
           disallowedTools: KNOWN_ACCOUNT_TOOLS,

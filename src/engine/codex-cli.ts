@@ -59,8 +59,16 @@ export const codexCliEngine: AgentEngine = {
   name: ENGINE,
 
   async *runTurn(input: TurnInput): AsyncIterable<NormalizedEvent> {
-    const { agent, session, systemPrompt, userMessage, history, metaStore, resolvedModel } =
-      input;
+    const {
+      agent,
+      session,
+      systemPrompt,
+      ephemeralContext,
+      userMessage,
+      history,
+      metaStore,
+      resolvedModel,
+    } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(
         `codex-cli engine called with non-matching provider engine: ${resolvedModel.provider.engine}`,
@@ -82,13 +90,16 @@ export const codexCliEngine: AgentEngine = {
     yield { kind: 'turn_start', ts: ts(), engine: ENGINE, turnId };
 
     // codex exec has no separate system-prompt option. On the first turn
-    // of a session we inline the persona system prompt into the user
-    // message; on resume codex remembers it internally. The replay-prefix
-    // (delta of turns made by other engines since codex was last active)
-    // is always prepended when non-empty.
+    // of a session we inline the persona systemPrompt; on resume codex
+    // remembers it internally so we skip it. The ephemeralContext (memory
+    // recall, future dream findings) MUST go through on every turn —
+    // including resume — because the content changes per turn and codex's
+    // remembered systemPrompt is frozen at session-start. Same goes for
+    // the cross-engine replay prefix.
+    const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
     const promptPayload = resumeId
-      ? `${replayPrefix}${userMessage}`
-      : `${systemPrompt}\n\n---\n\n${replayPrefix}${userMessage}`;
+      ? `${ephemeralBlock}${replayPrefix}${userMessage}`
+      : `${systemPrompt}\n\n---\n\n${ephemeralBlock}${replayPrefix}${userMessage}`;
 
     // Argument order matters: `exec` accepts --sandbox, but `exec resume`
     // inherits the sandbox policy from the original thread and rejects

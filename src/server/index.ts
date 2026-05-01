@@ -578,18 +578,20 @@ app.post('/chat/send', async (c) => {
       const history = await getHistory(agent, session);
 
       // Auto-inject memory recall (DECISION #26). Best-effort: if init or
-      // search fails, we proceed with the unaugmented systemPrompt.
-      let systemPrompt = persona.systemPrompt;
+      // search fails, we proceed without an ephemeral block — persona is
+      // unaffected. The block is passed as TurnInput.ephemeralContext so
+      // each engine can transport it appropriately (claude-cli appends to
+      // systemPrompt, codex-cli prepends to user message on resume, etc.).
+      let ephemeralContext: string | undefined;
       try {
         const mgr = await getMemoryManager(agent, { config: config.memory });
         const inject = await injectMemoryContext({
           mgr,
-          systemPrompt,
           history,
           userMessage: text,
           cfg: config.memory.autoInject,
         });
-        systemPrompt = inject.systemPrompt;
+        ephemeralContext = inject.ephemeralContext;
         if (inject.injectedCount > 0) {
           logger.info({
             msg: 'memory.injected',
@@ -610,7 +612,8 @@ app.post('/chat/send', async (c) => {
         baseInput: {
           agent,
           session,
-          systemPrompt,
+          systemPrompt: persona.systemPrompt,
+          ephemeralContext,
           userMessage: text,
           history,
           metaStore: sessionMetaStore,

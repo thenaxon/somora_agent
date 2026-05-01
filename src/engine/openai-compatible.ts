@@ -97,8 +97,16 @@ export const openAiCompatibleEngine: AgentEngine = {
   name: ENGINE,
 
   async *runTurn(input: TurnInput): AsyncIterable<NormalizedEvent> {
-    const { agent, session, systemPrompt, history, metaStore, resolvedModel, availableModels } =
-      input;
+    const {
+      agent,
+      session,
+      systemPrompt,
+      ephemeralContext,
+      history,
+      metaStore,
+      resolvedModel,
+      availableModels,
+    } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`openai-compatible engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
     }
@@ -178,7 +186,14 @@ export const openAiCompatibleEngine: AgentEngine = {
       }
     }
 
-    const messages = buildMessages(systemPrompt, history, compactions);
+    // Concat ephemeral block into the system message so OpenAI-compatible
+    // backends without multi-system-message support still see it. Backends
+    // that DO accept multiple system messages would also work — we just
+    // pick the simpler form.
+    const effectiveSystemPrompt = ephemeralContext
+      ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
+      : systemPrompt;
+    const messages = buildMessages(effectiveSystemPrompt, history, compactions);
     const estTokens = estimateTokens(messages);
     const ctxRatio = estTokens / resolvedModel.model.contextWindow;
     if (ctxRatio > 0.7) {

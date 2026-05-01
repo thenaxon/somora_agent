@@ -15,7 +15,23 @@ export interface SessionMetaStore {
 export interface TurnInput {
   agent: string;
   session: string;
+  /**
+   * Stable per-session content: persona (AGENTS.md/SOUL.md/USER.md) plus
+   * any other static instructions. Engines should treat this as cacheable.
+   * Does NOT change between turns of the same session — engines that resume
+   * an underlying provider session can rely on the provider remembering it.
+   */
   systemPrompt: string;
+  /**
+   * Per-turn ephemeral context — currently the auto-injected memory recall
+   * block (DECISION #26), later also dream-mode findings. Engines MUST send
+   * this to the model on every turn even when they're resuming an underlying
+   * provider session, because the content changes per turn.
+   *
+   * Empty/undefined means "no ephemeral context for this turn" — engines
+   * should not emit any wrapper / delimiter / placeholder in that case.
+   */
+  ephemeralContext?: string;
   userMessage: string;
   history: NormalizedEvent[];
   metaStore: SessionMetaStore;
