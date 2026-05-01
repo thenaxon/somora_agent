@@ -58,6 +58,37 @@ providers:
   #       alias: gemma4small
   #       contextWindow: 131072
   #       capabilities: [text, image]
+
+# Compaction-Tunables (DECISION #21). Greifen automatisch — wenn der
+# Block fehlt, gelten die unten kommentierten Default-Werte.
+# SOMORA_COMPACTION_* env vars überschreiben diese hier zur Laufzeit.
+# compaction:
+#   triggerRatio: 0.8          # Compaction ab 80% des aktuellen Modell-Windows
+#   safetyCushionPairs: 4      # die N jüngsten user/assistant-Pairs bleiben unkomprimiert
+#   modelOverride: opus        # festes Worker-Modell für Summarisation (alias oder provider/id)
+
+# Memory-Layer-Tunables (DECISIONS #25-#27). Greifen automatisch mit
+# Default-Werten — Block hier nur wenn du tunen willst. Pro-Agent-
+# Overrides können später in agent.yaml leben.
+# memory:
+#   embedding:
+#     provider: local                      # 'local' (@huggingface/transformers) — andere later
+#     model: all-MiniLM-L6-v2              # alias oder voller HF-Repo-Pfad
+#                                          # known-good aliases:
+#                                          #   all-MiniLM-L6-v2 (default, 384 dim, ~30MB)
+#                                          #   all-mpnet-base-v2 (768 dim, ~110MB, höhere Qualität)
+#                                          #   paraphrase-multilingual-MiniLM-L12-v2 (384 dim, multiling.)
+#   chunking:
+#     targetTokens: 400                    # Soll-Größe pro Chunk (Heuristik 4 chars/token)
+#     overlapTokens: 80                    # Überlappung zwischen Chunks
+#   autoInject:
+#     queryTurns: 3                        # wieviele letzte Turns als Embedding-Query
+#     maxResults: 5                        # Top-N Treffer pro Turn injecten
+#     minScore: 0.5                        # Treffer unter diesem Score verwerfen (0..1)
+#     maxTokens: 1500                      # Hard-Cap auf den injecten Memory-Block
+#   hybrid:
+#     vectorWeight: 0.7                    # Gewichtung Vector-Score in Hybrid-Fusion
+#     bm25Weight: 0.3                      # Gewichtung BM25/FTS5-Score
 `;
 
 export async function loadConfig(): Promise<Config> {
