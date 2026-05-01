@@ -56,7 +56,7 @@ providers:
   # Multiple providers of the same engine are fine — just give each a unique key.
   omlx:
     engine: openai-compatible
-    baseUrl: http://192.168.60.47:11434/v1
+    baseUrl: http://localhost:11434/v1
     apiKey: lm-studio
     models:
       - id: gemma-4-31b-it-8bit
@@ -71,7 +71,7 @@ providers:
   # Same engine, different host — totally fine.
   # ollama:
   #   engine: openai-compatible
-  #   baseUrl: http://192.168.60.99:11434/v1
+  #   baseUrl: http://other-host.local:11434/v1
   #   apiKey: dummy
   #   models:
   #     - id: llama3.3:70b

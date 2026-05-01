@@ -82,10 +82,10 @@ Output format example:
 [
   {
     "action": "memory_edit",
-    "slug": "auto",
-    "current_excerpt": "Rene fährt einen Fiat 500.",
-    "proposed_content": "Rene fährt einen Mercedes GT63 AMG.",
-    "reason": "User said on 2026-04-30: 'ich habe mir einen Mercedes gekauft und den Fiat verkauft'."
+    "slug": "address",
+    "current_excerpt": "User lives in Berlin.",
+    "proposed_content": "User lives in Hamburg as of 2026-04-15.",
+    "reason": "User said on 2026-04-30: 'we moved to Hamburg two weeks ago'."
   }
 ]
 

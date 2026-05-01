@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Persönlicher Agent-Harness mit pluggable Engines",
+  "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
   "engines": {
     "node": ">=20"
   },

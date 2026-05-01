@@ -11,9 +11,11 @@
 // at a temp directory.
 
 import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 
+const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '..', '..');
 const SOMORA_HOME = join(tmpdir(), '.somora-ephemeral-smoke');
 process.env.SOMORA_HOME = SOMORA_HOME;
 
@@ -23,7 +25,7 @@ async function setup() {
   await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, 'auto.md'),
-    `---\ndescription: Renes Auto\n---\n\nRene fährt einen Fiat 500.\n`,
+    `---\ndescription: User's car\n---\n\nUser drives a small hatchback.\n`,
     'utf8',
   );
 }
@@ -46,10 +48,10 @@ function expect(label: string, ok: boolean, detail?: string): void {
 
 async function run() {
   const { injectMemoryContext } = await import(
-    '/home/suspect/Projects/naxon/somora/src/memory/inject.ts'
+    join(REPO_ROOT, 'src', 'memory', 'inject.ts')
   );
   const { MemoryManager } = await import(
-    '/home/suspect/Projects/naxon/somora/src/memory/manager.ts'
+    join(REPO_ROOT, 'src', 'memory', 'manager.ts')
   );
   await setup();
   const mgr = new MemoryManager({ agent: 'hans', config: CFG });
@@ -59,7 +61,7 @@ async function run() {
   const inject = await injectMemoryContext({
     mgr,
     history: [],
-    userMessage: 'was ist mein auto?',
+    userMessage: 'what car do I drive?',
     cfg: CFG.autoInject,
   });
   expect(
@@ -85,7 +87,7 @@ async function run() {
   );
 
   const ephemeral = inject.ephemeralContext!;
-  const persona = '# Persona\n\nIch bin Hans.';
+  const persona = '# Persona\n\nI am Hans.';
 
   // ── claude-cli: replicates the systemPromptForTurn construction ───
   const claudeSystemPrompt = ephemeral
@@ -93,7 +95,7 @@ async function run() {
     : persona;
   expect(
     'claude-cli systemPrompt contains persona',
-    claudeSystemPrompt.includes('Ich bin Hans'),
+    claudeSystemPrompt.includes('I am Hans'),
   );
   expect(
     'claude-cli systemPrompt contains ephemeral block',
@@ -106,7 +108,7 @@ async function run() {
     : persona;
   expect(
     'openai-compatible system message contains persona',
-    openaiSystemPrompt.includes('Ich bin Hans'),
+    openaiSystemPrompt.includes('I am Hans'),
   );
   expect(
     'openai-compatible system message contains ephemeral block',
@@ -119,13 +121,13 @@ async function run() {
 
   // ── codex-cli: replicates the promptPayload construction (first turn AND resume) ──
   const replayPrefix = '';
-  const userMessage = 'was ist mein auto?';
+  const userMessage = 'what car do I drive?';
   const ephemeralBlock = ephemeral ? `${ephemeral}\n\n---\n\n` : '';
 
   const firstTurn = `${persona}\n\n---\n\n${ephemeralBlock}${replayPrefix}${userMessage}`;
   expect(
     'codex-cli first-turn payload contains persona',
-    firstTurn.includes('Ich bin Hans'),
+    firstTurn.includes('I am Hans'),
   );
   expect(
     'codex-cli first-turn payload contains ephemeral block',
@@ -139,7 +141,7 @@ async function run() {
   const resumeTurn = `${ephemeralBlock}${replayPrefix}${userMessage}`;
   expect(
     'codex-cli resume payload does NOT contain persona (codex remembers it)',
-    !resumeTurn.includes('Ich bin Hans'),
+    !resumeTurn.includes('I am Hans'),
   );
   expect(
     'codex-cli resume payload DOES contain ephemeral block (the bug we just fixed)',

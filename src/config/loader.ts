@@ -47,7 +47,7 @@ providers:
   #
   # omlx:
   #   engine: openai-compatible
-  #   baseUrl: http://192.168.60.47:11434/v1
+  #   baseUrl: http://localhost:11434/v1
   #   apiKey: lm-studio
   #   models:
   #     - id: gemma-4-31b-it-8bit

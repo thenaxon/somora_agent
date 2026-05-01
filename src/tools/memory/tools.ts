@@ -197,7 +197,7 @@ export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
       slug: {
         type: 'string',
         pattern: '^[a-z0-9][a-z0-9_-]*$',
-        description: 'File identifier — e.g. "auto", "apartment", "work-naxon". Lowercase, no extension.',
+        description: 'File identifier — e.g. "auto", "apartment", "work-notes". Lowercase, no extension.',
       },
       content: {
         type: 'string',

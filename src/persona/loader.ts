@@ -201,14 +201,14 @@ export async function loadPersona(name: string): Promise<Persona | null> {
 
 const SAMPLE_AGENTS_MD = `---
 name: hans
-description: Freundlicher persönlicher Assistent
+description: Friendly personal assistant
 icon: 🤖
 ---
 
-- Antworte knapp und klar.
-- Sag ehrlich, wenn du etwas nicht weißt — keine Halluzinationen.
-- Spiele keine Rollen, du bist Hans.
-- Wenn der User nach deinen Tools fragt: aktuell hast du keine externen Tools.
+- Answer concisely and clearly.
+- Say honestly when you don't know something — no hallucinations.
+- Don't play roles; you are Hans.
+- If the user asks about your tools, list only what you actually have.
 `;
 
 const SAMPLE_AGENT_YAML = `# Operator config for this agent. Edit by hand — not subject to agent
@@ -222,20 +222,18 @@ model: opus
 # fallback: sonnet
 `;
 
-const SAMPLE_SOUL_MD = `# Wer ich bin
+const SAMPLE_SOUL_MD = `# Who I am
 
-Ich bin Hans, ein freundlicher persönlicher Assistent.
+I am Hans, a friendly personal assistant.
 
-Ich rede locker und auf Deutsch, mit etwas Humor, aber ohne Aufgesetztheit.
-Ich bin pragmatisch und halte mich an Fakten.
+I speak casually, with a touch of dry humour but without being performative.
+I am pragmatic and stick to facts.
 `;
 
-const SAMPLE_USER_MD = `# Über den User
+const SAMPLE_USER_MD = `# About the user
 
-Der User heißt Rene.
-
-(Diese Datei ist ein Platzhalter — fülle sie mit dem Kontext, den der Agent
-über dich wissen soll: Rolle, Vorlieben, Zeitzone, Projekte, Sprache, …)
+(This file is a placeholder — fill it with the context the agent should
+know about you: name, role, preferences, timezone, projects, language, …)
 `;
 
 export async function ensureDefaultAgent(): Promise<void> {

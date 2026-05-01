@@ -8,8 +8,9 @@
 //   - smaller download (~30MB for all-MiniLM-L6-v2 vs hundreds of MB for GGUF)
 //   - no native build step (uses prebuilt onnxruntime-node binaries)
 //   - sufficient for synonym-style recall (DECISION #26)
-//   - swappable: if Rene later wants embeddinggemma-300m, we add a
-//     local-llama-cpp provider without touching consumers
+//   - swappable: if a stronger embedding model is desired later
+//     (e.g., embeddinggemma-300m), a local-llama-cpp provider drops in
+//     without touching consumers
 //
 // Models are cached under HF_HOME (default ~/.cache/huggingface). First
 // call downloads, subsequent calls are local-only.

@@ -5,3 +5,10 @@ dist
 .env.*
 !.env.example
 .DS_Store
+
+# Internal / development notes — kept local, not for public repo.
+private/
+STATUS.md
+CONTEXT.md
+DECISIONS.md
+FUTURE.md

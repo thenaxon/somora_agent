@@ -3,13 +3,14 @@
 // + a few tool calls. Mirrors what claude-cli will do at runtime.
 
 import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const SOMORA_HOME = join(tmpdir(), '.somora-mcp-smoke');
-const REPO_ROOT = '/home/suspect/Projects/naxon/somora';
+const REPO_ROOT = resolve(fileURLToPath(import.meta.url), '..', '..');
 
 async function setup() {
   await rm(SOMORA_HOME, { recursive: true, force: true });
@@ -19,7 +20,7 @@ async function setup() {
   await writeFile(join(dir, 'agent.yaml'), 'model: opus\n', 'utf8');
   await writeFile(
     join(dir, 'memory', 'auto.md'),
-    `---\ndescription: Renes Auto\n---\n\nRene fährt einen Fiat 500.\n`,
+    `---\ndescription: User's car\n---\n\nUser drives a small hatchback.\n`,
     'utf8',
   );
   await writeFile(
@@ -62,7 +63,7 @@ async function run() {
   // memory_search
   const searchRes = await client.callTool({
     name: 'memory_search',
-    arguments: { query: 'italienisches Auto', minScore: 0 },
+    arguments: { query: 'small car', minScore: 0 },
   }) as any;
   const searchData = JSON.parse(searchRes.content[0].text);
   console.log('\nmemory_search →', searchData.count, 'hits, top reference:', searchData.hits[0]?.reference);
@@ -71,14 +72,14 @@ async function run() {
   const writeRes = await client.callTool({
     name: 'memory_write',
     arguments: {
-      slug: 'flugschule',
-      content: 'Rene macht den Privatpilotenschein in Linz.',
-      frontmatter: { description: 'Flugschule', tags: ['pilot'] },
+      slug: 'flight-school',
+      content: 'User is taking private-pilot lessons.',
+      frontmatter: { description: 'Flight school', tags: ['pilot'] },
     },
   }) as any;
   console.log('\nmemory_write →', JSON.parse(writeRes.content[0].text));
 
-  // Watcher debounce (1500ms) + write-stability (250ms) before flugschule
+  // Watcher debounce (1500ms) + write-stability (250ms) before flight-school
   // is in the index. Wait long enough that subsequent reads see the new note.
   await new Promise((r) => setTimeout(r, 2500));
 
@@ -90,7 +91,7 @@ async function run() {
   // memory_get via reference
   const getRes = await client.callTool({
     name: 'memory_get',
-    arguments: { reference: 'memory/flugschule' },
+    arguments: { reference: 'memory/flight-school' },
   }) as any;
   if (getRes.isError) {
     console.log('\nmemory_get FAILED:', getRes.content[0].text);
