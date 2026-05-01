@@ -28,7 +28,7 @@ import {
   sessionMetaStore,
 } from '../storage/sessions.ts';
 import { dreamTools, memoryTools, ToolRegistry } from '../tools/index.ts';
-import { recoverOrphanRunningDreams } from '../dream/storage.ts';
+import { archiveEmptyCompletedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
@@ -765,6 +765,14 @@ try {
   await recoverOrphanRunningDreams(agentList.map((a) => a.name));
 } catch (err) {
   logger.warn({ msg: 'dream.recovery_failed', err: String(err) });
+}
+
+// Archive any leftover empty-findings completed dreams (for the case where
+// extraction returned [] before phase 2l.3 added the auto-process path).
+try {
+  await archiveEmptyCompletedDreams(agentList.map((a) => a.name));
+} catch (err) {
+  logger.warn({ msg: 'dream.empty_housekeep_failed', err: String(err) });
 }
 
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {

@@ -236,6 +236,59 @@ export async function dismissEntireDream(
 }
 
 /**
+ * One-shot housekeeping: any `completed`-status dreams whose findings
+ * array is empty get moved to processed/. They have nothing for the user
+ * to review or dismiss — without this, they would sit in the active
+ * .dreams/ dir forever. Run at server start, idempotent.
+ */
+export async function archiveEmptyCompletedDreams(agents: string[]): Promise<number> {
+  let moved = 0;
+  for (const agent of agents) {
+    const dir = dreamsDir(agent);
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw err;
+    }
+    for (const name of entries) {
+      // We only auto-archive completed dreams (.dream.md, no other suffix
+      // marker). running/paused/failed/processed dreams must stay where
+      // they are.
+      if (!name.endsWith('.dream.md')) continue;
+      const path = join(dir, name);
+      try {
+        const raw = await readFile(path, 'utf8');
+        const parsed = matter(raw);
+        const meta = parsed.data as unknown as DreamMeta;
+        if (meta.status !== 'completed') continue;
+        if (Array.isArray(meta.findings) && meta.findings.length > 0) continue;
+        // Empty completed → process.
+        await transitionDreamStatus(
+          agent,
+          { meta, body: parsed.content },
+          'processed',
+          { processed_at: new Date().toISOString() },
+        );
+        moved++;
+      } catch (err) {
+        logger.warn({
+          msg: 'dream.empty_archive_failed',
+          agent,
+          path,
+          err: (err as Error).message,
+        });
+      }
+    }
+  }
+  if (moved > 0) {
+    logger.info({ msg: 'dream.empty_archived', count: moved, agents });
+  }
+  return moved;
+}
+
+/**
  * Crash-recovery: scan all agents on server start, rename any
  * `*.dream.running.md` to `.paused.md`. Findings already extracted are
  * preserved; the next idle-trigger continues from chunks_done + 1.

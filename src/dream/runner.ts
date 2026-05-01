@@ -257,7 +257,27 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
 
     if (result.completed) {
       meta.completed_at = new Date().toISOString();
-      const final = await transitionDreamStatus(
+      // Zero-findings dreams have nothing to review — short-circuit straight
+      // to processed/ so they don't loiter forever in .dreams/ active state
+      // (dream_apply/dismiss can't fire on an empty findings array). Audit
+      // trail is preserved in processed/.
+      if (meta.findings.length === 0) {
+        meta.processed_at = meta.completed_at;
+        await transitionDreamStatus(
+          args.agent,
+          { meta, body: renderBody(meta, args.sourceSession) },
+          'processed',
+          { completed_at: meta.completed_at, processed_at: meta.processed_at },
+        );
+        logger.info({
+          msg: 'dream.completed_empty',
+          agent: args.agent,
+          id,
+          note: 'no findings — auto-archived to processed/',
+        });
+        return { id, finalStatus: 'processed' };
+      }
+      await transitionDreamStatus(
         args.agent,
         { meta, body: renderBody(meta, args.sourceSession) },
         'completed',
