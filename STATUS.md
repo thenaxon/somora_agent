@@ -4,13 +4,84 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-01 abend, Phase 2-Stufe-B startet)
+## Wo wir stehen (Stand: 2026-05-01 spätabend — Phase 2-Stufe-B/C/D MVP komplett)
 
-**Phase 1 + Phase 2-Stufe-A komplett.** Drei Engines im Gleichstand auf
-Konversations- und Compaction-Ebene. System ist funktional benutzbar —
-`npm run dev:server` + `npm run dev:cli` läuft, alle drei Engines
-reden, Sessions persistieren, `/model`-Switching ist live, Compaction
-greift automatisch + cross-engine.
+**Phasen 1, 2-Stufe-A, B, C, D-MVP durch.** System ist End-to-End
+benutzbar mit Memory + Tools + Dream-Mode (manueller Trigger). Drei
+Engines im Gleichstand bei Konversation, Compaction, Tool-Surface und
+Memory-Anbindung. Auto-Dream (Idle-Trigger) noch offen, agreement to
+build steht.
+
+**Phase 2-Stufe-A** (Three-Engine-Parität): `npm run dev:server` +
+`npm run dev:cli` läuft, alle drei Engines reden, Sessions
+persistieren, `/model`-Switching live, Compaction greift cross-engine.
+
+**Phase 2-Stufe-B (Memory-Layer) komplett.** Markdown-as-Source +
+SQLite/sqlite-vec-Index, lokale Embeddings (all-MiniLM-L6-v2 default,
+~30MB), Hybrid-Retrieval (Vector 0.7 + BM25 0.3), Auto-Inject pro Turn.
+Memory-Tools (search/get/list/write/edit/delete) als MCP-Server
+exponiert für claude-cli + codex-cli, plus in-process für openai-
+compatible. Obsidian-Vault als optionale Read-Source mit `readOnlyPaths`.
+DECISIONS #25–#31 dokumentieren das Konzept.
+
+**Phase 2-Stufe-C (Agent-Loop für openai-compatible) komplett.**
+TurnInput.tools + ToolInvoker, openai-compatible erkennt tool_calls
+aus dem Stream, dispatcht via in-process ToolRegistry, max 8 Rounds
+(konfigurierbar via `agentLoop.maxRounds`), per-Tool-Timeout
+(`agentLoop.toolCallTimeoutMs`). Drei-Engine-Tool-Parität erreicht.
+
+**Phase 2-Stufe-D MVP (manueller Dream-Trigger via /reset)
+komplett.** Async LLM-Extraktion über JSONL-Delta, Findings als
+konkrete Aktionen (memory_write/edit/delete/vault_hint), strukturierte
+Markdown-Files unter `~/.somora/agents/<name>/memory/.dreams/` mit
+Status-Lifecycle (running/paused/failed/completed/processed). Tool-
+Surface (dream_list/get/apply/dismiss) sowohl in-process als auch via
+MCP. Crash-Recovery für orphan running-Dreams beim Server-Start.
+
+**Sicherheits-Audit komplett.** Beide CLI-Engines haben jetzt
+Defense-Layer gegen Host-Context-Leaks:
+- claude-cli: 5-Layer (settingSources/tools/disallowedTools/canUseTool/
+  managedSettings.autoMemoryEnabled=false)
+- codex-cli: --ignore-user-config, --ignore-rules,
+  project_root_markers=[], plus 14 disabled built-in features
+  (shell/exec/browser/JS/web-search/personality/memories/...)
+Auto-Memory-Leak (Claude Code's project-memory in agent prompts) und
+codex' AGENTS.md walk-up identifiziert + geschlossen.
+
+---
+
+### Auf einen Blick — was Hans heute kann
+
+| | claude-cli (opus) | codex-cli (gpt55) | openai-compatible (gemma) |
+|---|---|---|---|
+| Chat | ✓ | ✓ | ✓ |
+| Memory READ (Auto-Inject) | ✓ | ✓ | ✓ |
+| Memory WRITE (Tools) | ✓ via MCP | ✓ via MCP | ✓ via Agent-Loop |
+| Dream-Tools | ✓ via MCP | ✓ via MCP | ✓ via Agent-Loop |
+| somora-managed Compaction | — (Anthropic-intern) | — (codex-intern) | ✓ |
+| Vault als Recall-Source | ✓ | ✓ | ✓ |
+
+---
+
+### Was bewusst noch offen ist
+
+- **AutoDreamWorker (Idle-Trigger)** — Phase 2-Stufe-D Phase B. Manuell
+  geht, Idle-Trigger fehlt. Design steht (idleMinutes per agent, Pause
+  via AbortSignal bei chat.send, Resume on next idle, dreamReadThroughTs-
+  Marker pro Session).
+- **Anthropic Prompt-Caching aktiv markieren** — opus subscription-User
+  profitiert eh implizit, aber für eventuelle API-Key-User später
+  relevant. DECISIONS #20 Polish.
+- **`obsidian_write` Tool** — User-getriggertes Vault-Schreiben mit
+  `readOnlyPaths`-Beachtung.
+- **Obsidian Wikilink-Awareness** — FUTURE.md, Lebensqualität.
+- **Phase 3+** — Voice/Realtime, Telegram, andere Frontends.
+
+---
+
+### Veraltete Sektionen — historisch erhaltene Phase-2-Stufe-B-Entstehungsnotizen
+
+(Bleiben für Audit-Trail; Inhalt ist „eingerollt" in den Stand oben.)
 
 **Phase 2-Stufe-B im Bau.** Konzept-Doku + Foundation + Memory-Core
 sind durch (siehe DECISIONS #25–#30, FUTURE.md):
@@ -157,7 +228,7 @@ CLI rendert `[memory · …]` (Auto-Inject), `[tool call · …]` und
   Compaction-Events: `engine.compaction_trigger`, `compaction.worker_chosen`,
   `engine.compaction_done`, `engine.replay`
 
-### Slash-Commands im CLI
+### Slash-Commands im CLI (aktuell)
 
 ```
 /help, /quit, /exit
@@ -167,21 +238,30 @@ CLI rendert `[memory · …]` (Auto-Inject), `[tool call · …]` und
 /session <slug-or-id>            switch session (slug → newest match)
 /new <slug>                      create new session, switch into it
 /main                            back to current agent's main
+/reset                           preview reset of current session
+/reset YES                       archive current session, start fresh
+                                 (auto-spawns dream if dream.enabled)
 /models                          all configured models with aliases
 /model                           current effective model + source
 /model <alias-or-ref>            override for this session
 /model default                   clear override
 ```
 
-### HTTP-API
+### HTTP-API (aktuell)
 
 ```
 GET  /healthz
+GET  /env                                          effective env vars
 GET  /agents
+GET  /tools                                        tool catalog incl. dream_*
+POST /agents/:agent/tools/:name                    invoke tool directly (debug)
 GET  /agents/:agent/sessions
 POST /agents/:agent/sessions                       { slug }
+POST /agents/:agent/sessions/:session/reset        archive + reset, spawn dream
+GET  /agents/:agent/memory/notes                   indexed memory list
+GET  /agents/:agent/memory/search?q=…              hybrid recall debug
 GET  /chat/history?agent=&session=
-GET  /chat/stream?agent=&session=                  (SSE)
+GET  /chat/stream?agent=&session=                  (SSE incl. memory + tool events)
 POST /chat/send                                    { agent, session, text }
 GET  /models
 GET  /agents/:agent/sessions/:session/model
@@ -393,12 +473,21 @@ resume → ohne. Siehe `src/engine/codex-cli.ts`.
 ## Pickup für nächste Session
 
 Erster Satz beim Wiedereinstieg sollte sein:
-> „Wir stehen bei Phase 2-Stufe-B. Memory-Konzept ist abgesegnet
-> (DECISIONS #25–#30, FUTURE.md). Foundation steht: config.yaml
-> hat memory:- und compaction:-Sektionen, AGENTS.md-Frontmatter
-> ist aufgeräumt, CLI-SSE-Bug behoben. Memory-Implementation
-> (Storage/Embeddings/Tools/MCP/Obsidian) ist als nächstes an
-> der Reihe."
+> „Phase 2-Stufe-B/C/D-MVP durch. Hans hat Memory (Read+Write via Tools),
+> Vault-Anbindung, und Dream-Mode mit manuellem /reset-Trigger.
+> Drei-Engine-Parität auf Tool- und Memory-Ebene. Sicherheits-Audit
+> beider CLI-Engines komplett (Auto-Memory + AGENTS.md-Walk-Up
+> geschlossen). Offen: AutoDreamWorker (Idle-Trigger), Phase 2-Stufe-D
+> Phase B. Plus Obsidian-Wikilinks, obsidian_write, prompt-caching
+> activation, Phase 3-Themen (Voice/Telegram)."
+
+Falls die nächste Session direkt am AutoDreamWorker einsteigt: Design
+steht in DECISIONS-Eintrag „Dream-Mode" + den Konversations-Notizen.
+extract.ts unterstützt schon AbortSignal; nötig sind:
+- per-Agent Idle-Tracker (resetten auf chat.send, fire nach idleMinutes)
+- chat.send hooked → bestehenden Dream-AbortController abbrechen
+- dreamReadThroughTs-Marker im SessionMeta
+- Resume-Loop: paused-Dreams werden beim nächsten Idle re-ranned
 
 Memory-Layer-Konzept (Kurzform, Details in DECISIONS #25–#28):
 

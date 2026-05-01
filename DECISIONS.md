@@ -574,3 +574,146 @@ delegieren an `MemoryManager`-Methoden. MCP-Server in `src/tools/mcp/`
 exposed sie via stdio für die CLI-Engines. JSON-Schema Tool-
 Descriptions explizit machen dass `memory_write` _nicht_ in Vaults
 schreibt — kleine Modelle (gemma) brauchen das.
+
+---
+
+## 2026-05-01 — Dream-Mode (Phase 2-Stufe-D)
+
+### 32. Dream-Mode = Read-Only Findings + User-Approval-Loop
+LLM-getriebene Memory-Konsolidierung. Worker liest JSONL-Delta einer
+Session, vergleicht gegen aktuelles Memory + Vault, extrahiert
+strukturierte **Findings**. Findings sind **konkrete Aktions-Vorschläge**
+(memory_write/edit/delete/vault_hint mit slug + proposed_content +
+reason), nicht freitext-Beobachtungen. Findings landen in
+`~/.somora/agents/<name>/memory/.dreams/` — der Worker schreibt nichts
+direkt ins Memory.
+
+User-Approval-Loop: Hans listet Findings via Tools (`dream_list`,
+`dream_get`), präsentiert sie dem User einzeln, bekommt ja/nein-
+Entscheidungen, ruft `dream_apply` (führt die memory_*-Aktion aus)
+oder `dream_dismiss` (markiert als abgelehnt). Nach Resolution aller
+Findings wandert das Dream-File nach `.dreams/processed/`.
+
+**Why:** Bei CLI-internen Compaction-Pfaden (claude-cli, codex-cli)
+können Memory-würdige User-Aussagen verloren gehen. Wir brauchen
+einen Mechanismus der orthogonal zur Compaction läuft, das JSONL als
+Source-of-Truth nutzt (DECISION #22), und niemals automatisch
+mutiert. Auto-Promotion à la OpenClaw ist riskant — Bad-Extracts
+würden permanent ins Memory einsickern.
+
+**How to apply:** `src/dream/` enthält Storage + Runner + Extract.
+Findings-File-Format ist YAML-Frontmatter (DreamMeta inkl. Findings-
+Array mit Per-Finding-Status) + Markdown-Body (human-readable
+Audit). Atomic-Rename auf Status-Übergängen. Crash-Recovery beim
+Server-Start (orphan running → paused/failed je nach Trigger-Typ).
+
+### 33. Manual-Dream vs Auto-Dream — zwei Trigger, ein Worker
+Manual-Dream wird via `/reset YES` ausgelöst, läuft synchron-im-Hintergrund
+während User chattet, **kein Pause-Verhalten** (User-initiierte
+Aktion mit beschränktem Scope = der Range einer einzelnen archivierten
+Session). Auto-Dream wird nach Idle-Period (default 30 min, per Agent
+konfigurierbar) automatisch ausgelöst, **pausiert hart bei jedem
+chat.send** an den Agent, resumiert beim nächsten Idle-Window.
+
+Beide nutzen denselben `runDream()`-Driver. Unterschied: AbortSignal
+nur für Auto. Status-Lifecycle gleich.
+
+**Why:** Manual ist User-Aktion mit klarem Erwartungs-Horizont — soll
+durchlaufen. Auto ist opportunistisch — User darf nicht warten müssen
+weil Hans träumt. Pause/Resume macht den Auto-Worker ressourcen-
+schonend ohne ihn ineffektiv zu machen.
+
+**How to apply:** Manual-Trigger via `/reset`-Endpoint nach Archive-
+Rename. Auto-Trigger via per-Agent Idle-Tracker im Server-Prozess.
+chat.send-Handler resettet den Timer + abortet ggf. einen laufenden
+Dream-AbortController. dreamReadThroughTs-Marker im SessionMeta
+trackt den letzten erfolgreich getraümten Bereich pro Session
+(per-Session, nicht per-Agent — verschiedene Sessions haben
+unabhängige Histories).
+
+### 34. Findings = konkrete Aktionen, dream_apply ohne Kreativlogik
+Jeder Finding hat:
+- `action: "memory_write" | "memory_edit" | "memory_delete" | "vault_hint"`
+- `slug` (Memory-Slug oder Vault-Slug)
+- `proposed_content` für write/edit
+- `current_excerpt` für edit/delete (Kontext-Anker)
+- `reason` (Begründung mit User-Quote)
+- `id` (1-basiert, sequenziell)
+- `status: "pending" | "applied" | "dismissed"`
+
+`dream_apply(dream_id, finding_id)` macht nichts „kreativ" — es ruft
+einfach `memory_write/edit/delete` mit den vom Extractor vorgeschlagenen
+Werten auf. So bleibt Apply deterministisch, debuggbar, und
+verifizierbar.
+
+vault_hint wird heute als No-Op verarbeitet (nur acknowledgement) —
+das `obsidian_write`-Tool kommt später (FUTURE.md). Hint bleibt im
+Findings-Array sichtbar als „User sollte selbst diese Vault-Note
+aktualisieren".
+
+**Why:** Wenn Apply selbst kreativ entscheiden müsste, wäre Memory-
+Mutation indeterministisch und schwer zu auditieren. Trennung:
+Extractor entscheidet WAS, Apply macht's nur. Plus: kleine Modelle
+(gemma) machen weniger Fehler beim Apply weil sie nichts erfinden
+müssen, sie geben nur ja/nein-Entscheidungen weiter.
+
+**How to apply:** Schema-Validierung in `src/dream/extract.ts`
+(`parseFindings`). Bad-Findings im Output werden gedroppt mit Warning,
+gute Findings desselben Chunks überleben. Dedupe nach
+`(action, slug)` — bei Duplikaten gewinnt das Finding mit dem
+längsten `reason` (Proxy für „mehr Kontext").
+
+### 35. Per-Agent Dream-Config in agent.yaml; Modell explizit, kein Fallback
+```yaml
+# ~/.somora/agents/<name>/agent.yaml
+dream:
+  enabled: true
+  model: gemma4big          # required — keine implicite Fallback auf primary
+  idleMinutes: 30
+  chunkTokens: 50000
+  chunkTimeoutMs: 120000
+```
+
+Wenn `enabled: true` aber `model:` fehlt, failt der Dream-Worker
+explizit mit aussagekräftiger Fehlermeldung. Kein Fallback auf
+Persona-Primary.
+
+**Why:** Träumen kann lange Sessions in viele Tokens umsetzen — wenn
+sich das aus Versehen auf opus oder gpt-5.5 stützen würde, würden
+unbemerkt teure Worker-Calls anfallen. Bei subscription-Auth ist's
+Rate-Limit-Druck, bei API-Key-Auth direktes Geld. Fail-loud zwingt
+zur expliziten Wahl. Default lokal (gemma) ist die richtige
+Konvention für Dream-Worker.
+
+**How to apply:** Schema-Validation in
+`src/persona/loader.ts:DreamConfigSchema`. Worker resolved Model via
+`resolveDreamModel(config, dream.model)`, throw bei Resolve-Failure.
+v1 verlangt `engine: openai-compatible` für den Worker — claude-cli/
+codex-cli als Worker wäre möglich aber braucht andere Routing-Logik
+(später).
+
+### 36. Dream-Tool-Surface: granular, mit Self-Correction-Hooks
+Vier Tools (DECISION #31 Style — granular, source-spezifisch):
+- `dream_list({ include_processed? })` — Übersicht aller Dreams
+- `dream_get(dream_id)` — vollständiger Inhalt + Findings
+- `dream_apply(dream_id, finding_id)` — execute via memory_*
+- `dream_dismiss(dream_id, finding_id?)` — reject finding (ohne id =
+  ganzer Dream)
+
+Auf Errors liefern apply/dismiss die VALID-IDs zurück im Error-Text,
+plus den expliziten Hinweis „finding ids start at 1, not 0". Das
+hilft kleinen Modellen (gemma) sich aus Argument-Halluzinationen zu
+befreien — Phase 2l.5 nach Beobachtung dass gemma4big dream_apply
+mit erfundenen IDs aufrief.
+
+**Why:** Granulare Tools über discriminated-action-Unions ist gleich
+gute MCP-Praxis wie bei Memory (DECISION #31). Self-Correction-Hooks
+sind Defense-in-Depth gegen Tool-Argument-Confabulation. Tool-
+Descriptions enden mit „IMPORTANT: pass dream_id and finding_id
+EXACTLY as returned by dream_list / dream_get" — Bias gegen freie
+Erfindung.
+
+**How to apply:** Tools in `src/tools/dream/`, registriert in der
+ToolRegistry alongside memoryTools(). MCP-Server in `src/mcp/server.ts`
+exposed beide Bundles. openai-compatible konsumiert direct über
+Agent-Loop (Phase 2-Stufe-C).
