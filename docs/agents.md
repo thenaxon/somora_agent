@@ -99,7 +99,7 @@ in the .md files, operator-config evolves in .yaml. Agents can self-edit
 both today; future Skills-layer guidance will steer them toward the right
 file for each kind of change.
 
-### Self-edit and self-knowledge
+### Self-edit and cross-agent edit
 
 Each agent gets a small self-pointer block prepended to its system prompt
 at every turn. It tells the agent its name, where its persona files
@@ -113,6 +113,14 @@ file_patch({ path: "~/.somora/config.yaml", old_string: "...", new_string: "..."
 ```
 
 …to update its own state without you having to dictate paths.
+
+**Cross-agent editing is intentionally allowed.** Hans can rewrite
+Lisa's `AGENTS.md`, adjust Jarvis' `agent.yaml`, or add notes to
+another agent's memory. Agents shape each other in this design, not
+just themselves. The only files in `~/.somora/agents/<*>/` that stay
+off-limits are the `sessions/` dirs (append-only conversation logs
+managed by somora's storage layer). See `files.md` for the full
+write blacklist.
 
 To learn more about somora's own architecture, agents can call
 `somora_docs_list` and `somora_docs_read` — those tools serve the

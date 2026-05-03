@@ -35,21 +35,36 @@ host-key handling — those are all server-side.
 `file_write` and `file_patch` refuse to touch anything under:
 
 ```
-/etc, /usr, /boot, /sys, /proc, /dev, /etc/shadow, /etc/sudoers,
-/etc/ssh
+System/credentials:
+  /etc, /usr, /boot, /sys, /proc, /dev,
+  /etc/shadow, /etc/sudoers, /etc/ssh
+  ~/.ssh, ~/.gnupg, ~/.aws/credentials, ~/.kube/config
 
-~/.ssh, ~/.gnupg, ~/.aws/credentials, ~/.kube/config
-
-~/.somora/sessions/, ~/.somora/known_hosts.json,
-~/.somora/agents/<other-agent>/   (cross-agent privacy)
+somora-internal:
+  ~/.somora/known_hosts.json                  (SSH trust file)
+  ~/.somora/agents/*/sessions/                (any agent's session JSONL +
+                                               meta — append-only, managed
+                                               by the storage layer)
 ```
 
 Symlink escapes are caught: each write resolves the closest existing
 ancestor with `realpath` and re-checks the policy on the resolved path.
 
-**What's INTENTIONALLY allowed**: the agent's own persona dir
-(`~/.somora/agents/<self>/{AGENTS,SOUL,USER}.md` and `agent.yaml`) and
-the global config (`~/.somora/config.yaml`). Self-edit is a feature.
+**What's INTENTIONALLY allowed**:
+
+- `~/.somora/agents/<any-agent>/{AGENTS,SOUL,USER}.md` — including
+  OTHER agents' persona files. Cross-agent editing is by design;
+  agents collaboratively shape each other's behaviour, not just their
+  own.
+- `~/.somora/agents/<any-agent>/agent.yaml` — operator config. Same
+  cross-agent rule.
+- `~/.somora/agents/<any-agent>/memory/notes/*.md` — memory notes.
+- `~/.somora/config.yaml` — global server config.
+
+The blacklist exists to prevent footguns (system corruption, leaked
+credentials) and to protect the data formats somora's own storage
+layer manages (session JSONL, the SSH known-hosts file). Within those
+limits, agents are trusted.
 
 The read side has a smaller blacklist — only credential files and
 `/etc/shadow`-class secrets. Other paths read freely.

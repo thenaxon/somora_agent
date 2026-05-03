@@ -54,8 +54,12 @@ const WRITE_ONLY_BLOCK = [
 ];
 
 // somora's own internal state — agents must never touch these directly.
+// Cross-agent persona/memory/agent.yaml IS writable (intentional —
+// agents collaboratively edit each other in this design). What stays
+// blocked is conversation history under any agent's sessions/, since
+// that's append-only JSONL managed by the storage layer; tampering
+// would corrupt cross-engine session-id meta and replay state.
 const SOMORA_INTERNAL_BLOCK = [
-  `${SOMORA_HOME}/sessions`, // session JSONL store
   `${SOMORA_HOME}/known_hosts.json`, // SSH trust file
 ];
 
@@ -116,25 +120,33 @@ export function checkReadAllowed(absolute: string): PolicyResult {
 
 /**
  * Apply the write-blacklist. Always called for file_write/patch/delete.
- * `agent` is needed to allow the agent's own persona dir while blocking
- * everyone else's.
+ *
+ * Cross-agent persona/memory/agent.yaml is intentionally writable —
+ * agents are allowed to edit each other in this design. Only sessions/
+ * dirs (any agent's) are blocked: those are append-only JSONL plus
+ * meta files managed by the storage layer, and tampering corrupts
+ * cross-engine session-id state.
+ *
+ * The `agent` param is unused for blacklist decisions today but kept
+ * in the signature so future per-agent rules (e.g. "agent X can't
+ * touch agent Y") have a place to land without churning callers.
  */
-export function checkWriteAllowed(absolute: string, agent: string): PolicyResult {
+export function checkWriteAllowed(absolute: string, _agent: string): PolicyResult {
   for (const blocked of [...ABSOLUTE_BLOCK, ...WRITE_ONLY_BLOCK, ...SOMORA_INTERNAL_BLOCK]) {
     if (isUnder(absolute, blocked)) {
       return { ok: false, reason: `write blocked: '${absolute}' is under '${blocked}'` };
     }
   }
-  // Cross-agent privacy: <somora>/agents/<other>/** is off-limits.
-  // The agent's own dir is explicitly allowed (so it can self-edit).
+  // Block any agent's sessions/ dir — append-only JSONL conversation
+  // history is managed by the storage layer; manual edits would
+  // corrupt session-id meta and replay state.
   const agentsRoot = `${SOMORA_HOME}/agents`;
   if (isUnder(absolute, agentsRoot)) {
     const rel = absolute.slice(agentsRoot.length + 1).split(sep);
-    const otherAgent = rel[0];
-    if (otherAgent && otherAgent !== agent) {
+    if (rel.length >= 2 && rel[1] === 'sessions') {
       return {
         ok: false,
-        reason: `write blocked: '${absolute}' belongs to a different agent ('${otherAgent}'); each agent only edits its own dir`,
+        reason: `write blocked: '${absolute}' is inside an agent's sessions/ dir (append-only conversation history, managed by the storage layer)`,
       };
     }
   }
