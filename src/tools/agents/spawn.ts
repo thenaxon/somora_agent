@@ -204,9 +204,9 @@ interface OneSpawnResult {
 }
 
 async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
-  if (!injectedDeps) {
-    throw new Error('spawn_subagent: server not initialized — configureSpawnTools() not called');
-  }
+  // injectedDeps absent is the normal MCP-child case (configureSpawnTools
+  // only runs in the main server). The handler dispatches to the HTTP
+  // fallback further down — this guard would have killed that path.
   const { ctx, task } = args;
   const parentDepth = ctx.subagentDepth ?? 0;
   if (parentDepth >= MAX_SUBAGENT_DEPTH) {
