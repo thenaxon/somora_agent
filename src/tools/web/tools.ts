@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
 import type { ToolDefinition } from '../types.ts';
+import { webFetch } from './fetch.ts';
 
 const BRAVE_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
 
@@ -166,5 +167,5 @@ export const webSearch: ToolDefinition<z.infer<typeof SearchInput>, SearchOutput
 };
 
 export function webTools(): ToolDefinition[] {
-  return [webSearch] as ToolDefinition[];
+  return [webSearch, webFetch] as ToolDefinition[];
 }
