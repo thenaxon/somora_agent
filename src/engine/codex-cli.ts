@@ -46,35 +46,85 @@ const ENGINE = 'codex-cli';
 // so this list is forward-compatible (no hard break) but might miss
 // newly-introduced tools — re-audit with `codex features list` when
 // upgrading codex.
+// Source: `codex features list`. Disabled = features.<name>=false.
+// Strategy: somora is "all-own-tools", so we disable EVERY codex
+// built-in feature that can expose a tool surface or pull host context.
+// We keep only the meta-features that route MCP tools to/from the
+// model — without those, our somora-memory tools wouldn't reach the
+// model at all.
+//
+// Re-audit whenever codex is upgraded. `codex features list` shows the
+// authoritative current set; `--disable <name>` is silently ignored if
+// the feature was renamed/removed, so the list is forward-tolerant but
+// may miss newly-introduced tools. CI would be ideal here later.
 const CODEX_DISABLED_FEATURES = [
-  // Direct system / filesystem access — the actual surface we want gone.
+  // ── Direct system access ──
   'shell_tool', // direct shell command execution
   'unified_exec', // newer exec mechanism
+  'shell_zsh_fork', // shell variant
+  'shell_snapshot', // captures host shell env into prompt — context leak
+  // ── File editing ──
   'apply_patch_freeform', // free-form file editing
   'apply_patch_streaming_events', // streaming patch events
-  // External integrations — out of somora scope.
+  // ── External integrations ──
   'browser_use', // browser automation
   'in_app_browser', // in-app browser
   'computer_use', // desktop / screen control
   'image_generation', // image generation
   'js_repl', // arbitrary JS execution
+  'js_repl_tools_only', // partial js_repl variant
   'apps', // codex "apps" tool
-  'web_search_cached', // web search
-  // Sub-agent spawning — we run only single-agent codex sessions.
+  // ── Web search variants (somora will provide its own via Brave API) ──
+  'web_search_cached',
+  'web_search_request',
+  'search_tool',
+  // ── Sub-agent / multi-agent ──
   'multi_agent', // sub-agent spawning
-  // Context-leak vectors — would inject content from the user's host
-  // codex setup into the somora agent's prompt.
-  'personality', // pulls <personality_spec> from ~/.codex migration files
-  'memories', // pulls auto-memory from ~/.codex/memories/ (off by default but defensive)
+  'multi_agent_v2',
+  'enable_fanout', // parallel sub-runs
+  'collaboration_modes',
+  // ── Context-leak vectors (pull host config into prompt) ──
+  'personality', // <personality_spec> from ~/.codex migration files
+  'memories', // auto-memory from ~/.codex/memories/
+  'child_agents_md', // walk-up of nested AGENTS.md files
+  // ── Codex-side hooks / plugins / skills ──
+  'codex_hooks', // user-defined hooks; could exec arbitrary scripts
+  'plugins', // codex plugin system
+  'remote_plugin',
+  'skill_env_var_dependency_prompt',
+  // ── Code-mode / artifact / chronicle (codex internal workflows) ──
+  'code_mode',
+  'code_mode_only',
+  'artifact',
+  'chronicle',
+  'codex_git_commit',
+  // ── Realtime / remote ──
+  'realtime_conversation',
+  'remote_control',
+  'remote_models',
+  // ── Misc behavior toggles we don't want flipping under us ──
+  'undo',
+  'fast_mode', // codex's "fast mode" picks a different model — somora picks models
+  'general_analytics', // privacy: don't ship usage events from somora-spawned codex
+  'request_permissions_tool',
+  'request_rule',
+  'default_mode_request_user_input',
+  'image_detail_original',
+  'tool_search_always_defer_mcp_tools', // would re-route our mcp tools through codex meta-search
+  'unavailable_dummy_tools',
   //
-  // NOT in this list (intentionally on, even though they look meta-toolish):
-  //   tool_search, tool_suggest — codex routes MCP tool calls through
-  //     these meta-tools for discovery / dispatch. Disabling them was a
-  //     2j.3 mistake: gpt-5.5 then "saw" our somora-memory tools but
-  //     never actually called them, hallucinating fake tool-call results
-  //     and "MCP cancelled" errors instead. See logs from session
-  //     2026-05-01 ~13:18: 6 turns, zero tool.invoked events, despite
-  //     mcp.server_started on every turn.
+  // KEPT enabled (intentionally NOT in this list) because somora's
+  // memory/dream MCP needs them:
+  //   tool_search, tool_suggest                — codex routes MCP tool
+  //     calls through these meta-tools for discovery/dispatch. Disabling
+  //     them was a 2j.3 mistake: gpt-5.5 then "saw" our somora-memory
+  //     tools but never actually called them, hallucinating fake tool-
+  //     call results instead.
+  //   tool_call_mcp_elicitation                — MCP-tool invocation flow
+  //   skill_mcp_dependency_install             — MCP server startup path
+  //   guardian_approval                        — security gate for our tools
+  //   enable_request_compression               — pure network optimization
+  //   workspace_dependencies                   — package detection metadata
 ] as const;
 
 import type { Compaction } from '../compaction/index.ts';
