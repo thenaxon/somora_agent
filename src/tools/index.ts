@@ -5,3 +5,4 @@ export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
 export { memoryTools } from './memory/index.ts';
 export { dreamTools } from './dream/index.ts';
+export { timeTools } from './time/index.ts';

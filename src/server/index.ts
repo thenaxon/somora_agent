@@ -27,7 +27,7 @@ import {
   resolveSessionId,
   sessionMetaStore,
 } from '../storage/sessions.ts';
-import { dreamTools, memoryTools, ToolRegistry } from '../tools/index.ts';
+import { dreamTools, memoryTools, timeTools, ToolRegistry } from '../tools/index.ts';
 import { archiveEmptyCompletedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
@@ -300,6 +300,7 @@ logger.info({
 const tools = new ToolRegistry();
 tools.registerMany(memoryTools());
 tools.registerMany(dreamTools());
+tools.registerMany(timeTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
