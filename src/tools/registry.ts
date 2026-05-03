@@ -11,7 +11,12 @@
 // per name (re-register replaces — useful for dev:server hot reload).
 
 import { logger } from '../server/logger.ts';
-import type { ToolContext, ToolDefinition, ToolResult } from './types.ts';
+import {
+  DEFAULT_MAX_RESULT_SIZE_CHARS,
+  type ToolContext,
+  type ToolDefinition,
+  type ToolResult,
+} from './types.ts';
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
@@ -31,19 +36,71 @@ export class ToolRegistry {
     return this.tools.get(name);
   }
 
+  /** Full catalog — debug / HTTP /tools endpoint. Includes tools that
+   *  may not be available in any given context. */
   list(): ToolDefinition[] {
     return [...this.tools.values()];
+  }
+
+  /**
+   * Tools whose `available(ctx)` returns truthy (or that don't define
+   * one). Used by per-turn ToolInvoker construction so the model only
+   * sees tools it can actually invoke right now (no API key → no
+   * web_search exposed, no vault → no obsidian_* exposed, etc.).
+   */
+  async listAvailable(ctx: ToolContext): Promise<ToolDefinition[]> {
+    const out: ToolDefinition[] = [];
+    for (const tool of this.tools.values()) {
+      if (!tool.available) {
+        out.push(tool);
+        continue;
+      }
+      try {
+        const ok = await tool.available(ctx);
+        if (ok) out.push(tool);
+        else logger.debug({ msg: 'tool.unavailable', name: tool.name, agent: ctx.agent });
+      } catch (err) {
+        logger.warn({
+          msg: 'tool.available_threw',
+          name: tool.name,
+          agent: ctx.agent,
+          err: (err as Error).message,
+        });
+        // Fail-closed: if the availability probe itself errored, hide
+        // the tool. Better the model doesn't see it than that it tries
+        // and gets an obscure error.
+      }
+    }
+    return out;
   }
 
   /**
    * Validate input against the tool's Zod schema, run the handler, and
    * wrap the result in a ToolResult. Catches handler errors so callers
    * (MCP, agent-loop, HTTP) get a uniform shape.
+   *
+   * Also enforces `maxResultSizeChars` — if the JSON-stringified
+   * payload exceeds the cap, the data is replaced with a truncation
+   * marker. Keeps a runaway tool result from blowing the model's
+   * context window.
    */
   async invoke(name: string, rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
       return { ok: false, error: `unknown tool '${name}'` };
+    }
+    if (tool.available) {
+      try {
+        const ok = await tool.available(ctx);
+        if (!ok) {
+          return { ok: false, error: `tool '${name}' is not available in this context` };
+        }
+      } catch (err) {
+        return {
+          ok: false,
+          error: `availability check for '${name}' failed: ${(err as Error).message}`,
+        };
+      }
     }
     const parsed = tool.inputSchema.safeParse(rawInput);
     if (!parsed.success) {
@@ -61,13 +118,18 @@ export class ToolRegistry {
     const start = Date.now();
     try {
       const data = await tool.handler(parsed.data, ctx);
+      const cap = tool.maxResultSizeChars ?? DEFAULT_MAX_RESULT_SIZE_CHARS;
+      const capped = enforceResultCap(data, cap);
       logger.info({
         msg: 'tool.invoked',
         name,
         agent: ctx.agent,
         ms: Date.now() - start,
+        ...(capped.truncated
+          ? { result_truncated: true, result_chars: capped.originalChars, cap_chars: cap }
+          : {}),
       });
-      return { ok: true, data };
+      return { ok: true, data: capped.value };
     } catch (err) {
       const message = (err as Error).message;
       logger.warn({
@@ -80,4 +142,43 @@ export class ToolRegistry {
       return { ok: false, error: message };
     }
   }
+}
+
+interface CapResult {
+  value: unknown;
+  truncated: boolean;
+  originalChars: number;
+}
+
+/**
+ * Measure the JSON-stringified size of a tool's data payload. When it
+ * exceeds the per-tool cap, replace the payload with a marker object
+ * the model will read as "this would have been too big". The preview is
+ * the first cap-200 chars of the original JSON so the model still gets
+ * a taste of what was returned.
+ */
+function enforceResultCap(value: unknown, cap: number): CapResult {
+  let json: string;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    // Non-serializable result (e.g. circular ref). Pass through —
+    // downstream serialization will surface its own error.
+    return { value, truncated: false, originalChars: 0 };
+  }
+  if (json.length <= cap) {
+    return { value, truncated: false, originalChars: json.length };
+  }
+  const previewBudget = Math.max(0, cap - 200);
+  return {
+    value: {
+      truncated: true,
+      original_size_chars: json.length,
+      cap_chars: cap,
+      preview: json.slice(0, previewBudget) + '... [truncated]',
+      hint: 'Result exceeded the tool\'s size cap. Re-run with a tighter query, lower limit, or paginated read.',
+    },
+    truncated: true,
+    originalChars: json.length,
+  };
 }

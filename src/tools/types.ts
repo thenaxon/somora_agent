@@ -37,11 +37,55 @@ export interface ToolResult<T = unknown> {
   error?: string;
 }
 
+/**
+ * Default cap for stringified tool results — `maxResultSizeChars` falls
+ * back to this when a tool doesn't set its own. ~100k chars ≈ 25-35k
+ * tokens (4 chars/token heuristic); fits comfortably in any current
+ * model context without dominating it. Tools that legitimately produce
+ * larger outputs (file_read paged, web_fetch with explicit maxChars)
+ * should override on their definition.
+ */
+export const DEFAULT_MAX_RESULT_SIZE_CHARS = 100_000;
+
+/**
+ * Toolset tag — groups tools for log filtering and future allow/deny
+ * lists (e.g. `tools.profile: minimal` would expose only memory + dream).
+ * Add new tags here when introducing a new tool family; document the
+ * rationale in docs/research/tool-architecture.md.
+ */
+export type Toolset =
+  | 'memory'
+  | 'dream'
+  | 'web'
+  | 'obsidian'
+  | 'file'
+  | 'exec'
+  | 'time';
+
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: z.ZodType<TInput>;
   readonly jsonSchema: Record<string, unknown>;
+  /**
+   * Grouping tag for logging / future allow-deny lists. Required so new
+   * tools always declare their family.
+   */
+  readonly toolset: Toolset;
+  /**
+   * Cap on the JSON-stringified result. Registry truncates and replaces
+   * the payload with a `{ truncated: true, ... }` marker if the handler
+   * returns more. Default: DEFAULT_MAX_RESULT_SIZE_CHARS.
+   */
+  readonly maxResultSizeChars?: number;
+  /**
+   * Runtime availability probe. When false, the tool is hidden from
+   * `list()` (so the model never sees a tool it can't actually run —
+   * missing API key, unconfigured vault, etc.) and `invoke()` returns
+   * an error if called anyway. Cheap to call (typically a config read);
+   * registry queries it per turn, no caching.
+   */
+  available?: (ctx: ToolContext) => boolean | Promise<boolean>;
   handler: (input: TInput, ctx: ToolContext) => Promise<TOutput>;
 }
 

@@ -39,6 +39,7 @@ const ListInput = z.object({
 
 export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'dream_list',
+  toolset: 'dream',
   description:
     'List pending dreams (extracted findings awaiting user review). Pass include_processed=true ' +
     'to also see already-resolved dreams. Use this first when the user asks "did you have any dreams?" — ' +
@@ -83,6 +84,7 @@ const GetInput = z.object({
 
 export const dreamGet: ToolDefinition<z.infer<typeof GetInput>> = {
   name: 'dream_get',
+  toolset: 'dream',
   description:
     'Fetch the full content of a dream — all findings with their proposed actions, current memory ' +
     'excerpts, reasons, and per-finding status. Use after `dream_list` to start walking through a dream ' +
@@ -124,6 +126,7 @@ const ApplyInput = z.object({
 
 export const dreamApply: ToolDefinition<z.infer<typeof ApplyInput>> = {
   name: 'dream_apply',
+  toolset: 'dream',
   description:
     'Accept a single finding from a dream — executes its proposed memory action and marks the finding ' +
     'as applied. After the last finding of a dream is resolved, the dream auto-archives to processed/. ' +
@@ -238,6 +241,7 @@ const DismissInput = z.object({
 
 export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
   name: 'dream_dismiss',
+  toolset: 'dream',
   description:
     'Reject a finding (no memory action, just mark as dismissed). Pass finding_id to dismiss one; ' +
     'omit it to dismiss the whole dream (all still-pending findings → dismissed, dream auto-archives). ' +

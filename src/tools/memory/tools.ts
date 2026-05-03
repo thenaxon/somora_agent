@@ -45,6 +45,7 @@ const SearchInput = z.object({
 
 export const memorySearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   name: 'memory_search',
+  toolset: 'memory',
   description:
     'Search across all your knowledge sources: your own memory notes plus any attached vault. ' +
     'Returns top-N hits with `reference`, `score`, and a snippet. Hits are tagged by source: ' +
@@ -108,6 +109,7 @@ const GetInput = z.object({
 
 export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
   name: 'memory_get',
+  toolset: 'memory',
   description:
     'Fetch the full content of a note or vault file by its `reference` from a recall hit ' +
     '(or from the <memory-context> block). ' +
@@ -144,6 +146,7 @@ const ListInput = z.object({
 
 export const memoryList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'memory_list',
+  toolset: 'memory',
   description:
     'List your own memory notes with slug, description, and tags. Optionally filter by tag. ' +
     'Does NOT list vault files — the user knows their own vault, and it may be large. ' +
@@ -184,6 +187,7 @@ const WriteInput = z.object({
 
 export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
   name: 'memory_write',
+  toolset: 'memory',
   description:
     'Create or overwrite a note in YOUR OWN memory. ' +
     'Slug must be lowercase and contain only [a-z0-9_-] — no paths, no slashes. ' +
@@ -242,6 +246,7 @@ const EditInput = z.object({
 
 export const memoryEdit: ToolDefinition<z.infer<typeof EditInput>> = {
   name: 'memory_edit',
+  toolset: 'memory',
   description:
     'Replace the content of an EXISTING memory note. Same shape as `memory_write`, ' +
     'but fails if the note does not exist (prevents accidental creation from a typo in the slug). ' +
@@ -292,6 +297,7 @@ const DeleteInput = z.object({
 
 export const memoryDelete: ToolDefinition<z.infer<typeof DeleteInput>> = {
   name: 'memory_delete',
+  toolset: 'memory',
   description:
     'Delete one of your own memory notes. Cannot delete vault files via this tool. ' +
     'Idempotent: returns deleted=false if the note does not (or no longer) exist.',

@@ -377,8 +377,11 @@ app.get('/tools', (c) =>
     count: tools.list().length,
     tools: tools.list().map((t) => ({
       name: t.name,
+      toolset: t.toolset,
       description: t.description,
       inputSchema: t.jsonSchema,
+      maxResultSizeChars: t.maxResultSizeChars ?? null,
+      hasAvailabilityCheck: Boolean(t.available),
     })),
   }),
 );
@@ -843,13 +846,17 @@ app.post('/chat/send', async (c) => {
       // Bind the agent context into the tool invoker for engines that run
       // their own agent-loop (currently only openai-compatible). claude-cli
       // and codex-cli consume tools via MCP and ignore this field.
+      // listAvailable filters tools whose `available(ctx)` returns false —
+      // model never sees a tool it can't actually run (no API key →
+      // no web_search exposed, no vault → no obsidian_* exposed, etc.).
+      const toolCtx = {
+        agent,
+        getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+      };
+      const availableTools = await tools.listAvailable(toolCtx);
       const toolInvoker = {
-        list: () => tools.list(),
-        invoke: (name: string, input: unknown) =>
-          tools.invoke(name, input, {
-            agent,
-            getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
-          }),
+        list: () => availableTools,
+        invoke: (name: string, input: unknown) => tools.invoke(name, input, toolCtx),
       };
 
       const stream = runTurnWithFallback({
