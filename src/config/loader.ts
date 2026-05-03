@@ -99,6 +99,14 @@ providers:
 #     vectorWeight: 0.7                    # Gewichtung Vector-Score in Hybrid-Fusion
 #     bm25Weight: 0.3                      # Gewichtung BM25/FTS5-Score
 
+# Web-Tools-Credentials. Pro-Provider-Schlüssel — Tools deren Provider
+# nicht konfiguriert ist sind für den Agent unsichtbar (available()
+# Probe filtert sie raus). Brave: 2k Anfragen/Monat im Free-Tier,
+# https://api-dashboard.search.brave.com/.
+# web:
+#   brave:
+#     apiKey: "BSAxxx..."
+
 # TUI-Anzeige-Defaults für die Ink-CLI. Beeinflusst nur das Rendering,
 # nicht die tatsächliche Memory-Injection oder Tool-Ausführung — die
 # laufen unverändert auf dem Server. Zur Laufzeit umstellbar via

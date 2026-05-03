@@ -129,6 +129,14 @@ providers:
 #     vectorWeight: 0.7                   # weight of vector similarity in fused score
 #     bm25Weight: 0.3                     # weight of BM25/FTS5 in fused score
 
+# Web-tools credentials. Per-provider keys — tools whose provider isn't
+# configured are hidden from the agent (the `available()` probe on the
+# tool returns false). Brave is the only provider today; free tier gives
+# 2k requests/month — sign up at https://api-dashboard.search.brave.com/.
+# web:
+#   brave:
+#     apiKey: "BSAxxx..."
+
 # TUI display defaults for the Ink CLI. Render-only — the server still
 # injects memory and runs tools regardless. Live-toggle via /show and
 # /verbose slash commands.

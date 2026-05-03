@@ -27,7 +27,7 @@ import {
   resolveSessionId,
   sessionMetaStore,
 } from '../storage/sessions.ts';
-import { dreamTools, memoryTools, timeTools, ToolRegistry } from '../tools/index.ts';
+import { dreamTools, memoryTools, timeTools, ToolRegistry, webTools } from '../tools/index.ts';
 import { archiveEmptyCompletedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
@@ -301,6 +301,7 @@ const tools = new ToolRegistry();
 tools.registerMany(memoryTools());
 tools.registerMany(dreamTools());
 tools.registerMany(timeTools());
+tools.registerMany(webTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
@@ -397,6 +398,7 @@ app.post('/agents/:agent/tools/:name', async (c) => {
   const result = await tools.invoke(name, input, {
     agent,
     getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+    config,
   });
   if (!result.ok) {
     return c.json(result, 400);
@@ -853,6 +855,7 @@ app.post('/chat/send', async (c) => {
       const toolCtx = {
         agent,
         getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+        config,
       };
       const availableTools = await tools.listAvailable(toolCtx);
       const toolInvoker = {

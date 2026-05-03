@@ -6,3 +6,4 @@ export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './typ
 export { memoryTools } from './memory/index.ts';
 export { dreamTools } from './dream/index.ts';
 export { timeTools } from './time/index.ts';
+export { webTools } from './web/index.ts';

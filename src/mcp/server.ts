@@ -19,7 +19,7 @@ import type { ZodObject, ZodRawShape } from 'zod';
 import { loadConfig } from '../config/loader.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
-import { dreamTools, memoryTools, ToolRegistry } from '../tools/index.ts';
+import { dreamTools, memoryTools, timeTools, ToolRegistry, webTools } from '../tools/index.ts';
 import type { ToolContext } from '../tools/types.ts';
 
 async function main(): Promise<void> {
@@ -35,10 +35,13 @@ async function main(): Promise<void> {
   const registry = new ToolRegistry();
   registry.registerMany(memoryTools());
   registry.registerMany(dreamTools());
+  registry.registerMany(timeTools());
+  registry.registerMany(webTools());
 
   const ctx: ToolContext = {
     agent,
     getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+    config,
   };
 
   const server = new McpServer(

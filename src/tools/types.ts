@@ -15,6 +15,7 @@
 //                      registry catches and converts to ToolResult.
 
 import type { z } from 'zod';
+import type { Config } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 
 export interface ToolContext {
@@ -26,6 +27,12 @@ export interface ToolContext {
    * the embedder warmup cost.
    */
   getMemoryManager: () => Promise<MemoryManager>;
+  /**
+   * Read-only access to the server config. Tools pluck only the slice
+   * they need (web tools read `config.web.brave.apiKey`, etc.). Never
+   * mutate from a tool handler.
+   */
+  config: Config;
 }
 
 export interface ToolResult<T = unknown> {

@@ -141,6 +141,20 @@ export const AgentLoopConfigSchema = z.object({
 }).default({ maxRounds: 8, toolCallTimeoutMs: 30_000 });
 export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 
+// Web tools — provider credentials. Each tool reads its own slice; if a
+// provider block isn't configured the corresponding tool's `available()`
+// probe returns false and the model never sees it.
+export const WebConfigSchema = z
+  .object({
+    brave: z
+      .object({
+        apiKey: z.string().min(1),
+      })
+      .optional(),
+  })
+  .default({});
+export type WebConfig = z.infer<typeof WebConfigSchema>;
+
 // TUI display preferences. Only affect what the Ink CLI renders into the
 // scrollback — never affect actual memory injection or tool execution
 // (those still happen on the server).
@@ -179,6 +193,7 @@ export const ConfigSchema = z.object({
   memory: MemoryConfigSchema,
   agentLoop: AgentLoopConfigSchema,
   tui: TuiConfigSchema,
+  web: WebConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
