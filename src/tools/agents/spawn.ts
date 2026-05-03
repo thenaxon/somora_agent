@@ -267,12 +267,17 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     );
   }
 
-  // Slug carries ms-precision suffix to disambiguate parallel spawns
-  // within the same second. createSession then prefixes the standard
-  // YYYYMMDD-HHMMSS_ stem so the resulting id matches the existing
-  // EXACT_ID_PATTERN and is resolvable via /sessions, /chat/send, etc.
+  // Slug carries ms + random suffix so parallel spawns in the same
+  // millisecond don't collide (Math.random() collision in 4 lowercase
+  // alphanums is ~1/1.7M, paired with ms it's ~1/1.7B per same-ms
+  // pair). createSession also has its own collision-retry as a safety
+  // net. The slug stem `sub-self`/`sub-<parent>` stays grep-friendly
+  // for /sessions listings.
   const ms = String(Date.now() % 1000).padStart(3, '0');
-  const slug = isSelfClone ? `sub-self-${ms}` : `sub-${ctx.agent}-${ms}`;
+  const rand = Math.random().toString(36).slice(2, 6).padEnd(4, '0');
+  const slug = isSelfClone
+    ? `sub-self-${ms}-${rand}`
+    : `sub-${ctx.agent}-${ms}-${rand}`;
   const sessionId = await createSession(targetPersona, slug);
   // Attach the spawn meta block so /sessions can label this entry
   // "sub from <parent>" without re-deriving from the slug.

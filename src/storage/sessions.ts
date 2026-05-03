@@ -93,7 +93,11 @@ export const sessionMetaStore: SessionMetaStore = {
   async set(agent, session, meta) {
     await ensureDir(agent);
     const path = metaPath(agent, session);
-    const tmp = `${path}.tmp`;
+    // Per-call unique tmp suffix so concurrent writers don't race the
+    // same `<path>.tmp` filename. process.pid alone isn't enough when
+    // multiple async paths run in the same process; add a counter +
+    // randomness as well.
+    const tmp = `${path}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
     await writeFile(tmp, `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
     await rename(tmp, path);
   },
@@ -149,15 +153,28 @@ export async function createSession(agent: string, slug: string): Promise<string
   if (slug === 'main') {
     throw new Error('cannot create session with reserved slug "main"');
   }
-  const id = `${timestampForFilename()}_${slug}`;
   await ensureDir(agent);
-  // Touch the JSONL so it shows up in listings even before any events land
-  await appendFile(jsonlPath(agent, id), '');
-  await sessionMetaStore.set(agent, id, {
-    slug,
-    createdAt: new Date().toISOString(),
-  });
-  return id;
+  const baseId = `${timestampForFilename()}_${slug}`;
+  // Collision retry: when two callers create sessions with the same
+  // slug in the same second (parallel subagent spawns are the common
+  // case), the base id collides. Append `-N` until we find a free
+  // slot. Use the exclusive-create flag (wx) to atomically claim the
+  // jsonl filename — racing creators will get EEXIST and retry.
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const id = attempt === 0 ? baseId : `${baseId}-${attempt}`;
+    try {
+      await writeFile(jsonlPath(agent, id), '', { flag: 'wx' });
+      await sessionMetaStore.set(agent, id, {
+        slug: attempt === 0 ? slug : `${slug}-${attempt}`,
+        createdAt: new Date().toISOString(),
+      });
+      return id;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw err;
+    }
+  }
+  throw new Error(`createSession: could not find a free id starting from '${baseId}'`);
 }
 
 /**
