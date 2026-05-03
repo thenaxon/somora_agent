@@ -176,6 +176,70 @@ Stehen offen, kommen wenn passt. Reihenfolge frei nach Bedarf:
 
 ---
 
+## Thinking-Block-Sichtbarkeit (`/verbose thinking`)
+
+**Status:** Konzept abgesegnet 2026-05-03. Folgt nach `/verbose tools|
+memory|system` (phase tui-G, commit e55a2e9). Wird gebaut wenn echter
+Bedarf da ist — Token-Count + „🧠 thinking…"-Indicator decken heute die
+90%-Fälle ab.
+
+**Ziel:** Inhalt des Modell-Reasonings inline im Chat sichtbar machen,
+nicht nur Token-Count. Bei `/verbose thinking on` rendert die TUI
+Thinking-Blöcke gedimmt + eingerückt unter dem agent-Tag, ähnlich wie
+`DetailsBlock` für Tool-Payloads.
+
+**Was zu tun ist:**
+
+1. **NormalizedEvent erweitern** (`src/types/events.ts`): neue Kinds
+   `thinking_delta` und `thinking_message`, parallel zu `assistant_*`.
+
+2. **claude-cli Adapter** (`src/engine/claude-cli.ts` ~Zeile 163):
+   Block-Trennung. Heute verschmelzen wir `content_block_delta`-Events
+   aller Block-Typen zu plain text. Stattdessen: Block-Type prüfen,
+   `thinking_delta`-Blöcke separat als somora-`thinking_delta`
+   emittieren, text-Blöcke unverändert. Gleicher Pattern für die
+   trailing assistant-message: Thinking-Blöcke separat als
+   `thinking_message`.
+
+3. **codex-cli Adapter:** bleibt dunkel — Codex' JSON-Stream hat keine
+   Reasoning-Inhalte, nur `reasoning_output_tokens` im Usage. Könnten
+   wir später ergänzen wenn Codex sein Event-Format erweitert.
+
+4. **openai-compatible Adapter:** zwei Varianten parallel:
+   - Endpoints die `delta.reasoning_content` liefern (gpt-5/o1 via
+     official SDK): direkt durchreichen als `thinking_delta`
+   - Inline-`<think>...</think>`-Modelle (DeepSeek-R1, QwQ): Stream-side
+     Detection, Tag-Stripping, separate Emission. Braucht eine eigene
+     `reasoning-inline`-Capability im Model-Schema (heute nur binäres
+     `reasoning`). Per-Modell opt-in in `config.yaml`.
+
+5. **SSE Wire** (`src/types/events.ts`): neuer `event: 'thinking'` mit
+   `{ phase: 'delta' | 'final', text }`. Wird gepublished wie
+   `chat`-Events durch den Per-Turn-Serializer.
+
+6. **TUI:**
+   - neuer Turn-Kind `thinking` in `src/cli/tui/types.ts`
+   - eigener TurnView in `turn-views.tsx`: gedimmt (gray), eingerückt,
+     evtl. collapsible — Designdetail beim Bauen
+   - `/verbose thinking on|off` als vierter Topic in `commands.ts`,
+     reiht sich nahtlos in das bestehende `/verbose`-Framework ein
+   - `tui.verbose.thinking: boolean` im Config-Schema
+
+7. **Doku:** `docs/thinking.md` Sektion „What's not built" auf
+   gebaut umstellen, Mapping-Tabelle pro Engine erweitern. `docs/
+   display.md` letzten Absatz („What's not covered yet") entsprechend
+   anpassen.
+
+**Aufwand:** realistisch zwei Tage. Hauptlast: claude-cli
+Block-Trennung + TUI-Component-Design + ggf. `<think>`-Tag-Detection
+für lokale Reasoning-Modelle.
+
+**Trigger fürs Bauen:** wenn Reasoning-Inhalt selbst gewünscht ist —
+Debug, Vertrauensaufbau („was hat das Modell überlegt?"), Memory-
+Curation-Workflows. Bis dahin reicht das was heute steht.
+
+---
+
 ## Phase 3+ — Voice / Realtime, Telegram-Channel, andere Frontends
 
 Steht im STATUS noch als „Phase 3". Kein neues Konzept hier, nur Notiz
