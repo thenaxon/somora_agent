@@ -20,12 +20,6 @@ export function summarize(value: unknown, maxLen = 160): string {
   return s;
 }
 
-// Strip the `mcp__<server>__` prefix that codex/claude wrap MCP tool names in
-// — keeps the scrollback readable.
-export function shortToolName(tool: string): string {
-  return tool.replace(/^mcp__[^_]+__/, '');
-}
-
 export function nextId(): string {
   // Cheap monotonic id for React keys. We never need stability across runs.
   nextId.counter = (nextId.counter ?? 0) + 1;

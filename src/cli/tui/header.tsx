@@ -11,6 +11,8 @@ interface Props {
   stats: TurnStats | null;
   streaming: boolean;
   connected: boolean;
+  showMemory: boolean;
+  showTools: boolean;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -20,7 +22,16 @@ interface Props {
 // Color choice: explicit `gray` instead of dimColor wherever the text needs
 // to be readable. dimColor halves intensity, which on dark terminals turns
 // near-black; gray is a real color that survives both backgrounds.
-export function Header({ agent, agentIcon, session, stats, streaming, connected }: Props) {
+export function Header({
+  agent,
+  agentIcon,
+  session,
+  stats,
+  streaming,
+  connected,
+  showMemory,
+  showTools,
+}: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
   return (
@@ -44,6 +55,10 @@ export function Header({ agent, agentIcon, session, stats, streaming, connected 
           {tokenSegment}
         </>
       ) : null}
+      <Text color="gray">{'   '}</Text>
+      <ShowFlag label="mem" on={showMemory} />
+      <Text color="gray">{' '}</Text>
+      <ShowFlag label="tools" on={showTools} />
       <Box flexGrow={1} justifyContent="flex-end">
         {streaming ? (
           <Text color="yellow" bold>
@@ -58,6 +73,18 @@ export function Header({ agent, agentIcon, session, stats, streaming, connected 
         )}
       </Box>
     </Box>
+  );
+}
+
+// Compact on/off badge for display toggles. Off-state is rendered red
+// so a glance at the header makes it obvious why memory/tool lines
+// aren't appearing in the scrollback.
+function ShowFlag({ label, on }: { label: string; on: boolean }) {
+  return (
+    <Text color={on ? 'gray' : 'red'} bold={!on}>
+      {label}
+      {on ? ' ✓' : ' ✗'}
+    </Text>
   );
 }
 

@@ -53,6 +53,16 @@ export interface ResetResult {
   dreamSpawned?: boolean;
 }
 
+// Mirrors the server's TuiConfig schema. Keep in sync with
+// src/config/types.ts → TuiConfigSchema. We don't import the server type
+// directly so the TUI stays decoupled from server modules.
+export interface TuiConfig {
+  show: {
+    memory: boolean;
+    tools: boolean;
+  };
+}
+
 // All Turn-kinds that the scrollback can render. Kept flat (discriminated
 // union) so React reducers don't need a class hierarchy.
 export type Turn =
@@ -63,10 +73,9 @@ export type Turn =
       id: string;
       tool: string;
       phase: 'call' | 'result' | 'error';
-      // Raw values from the SSE event so per-tool formatters can read
-      // structured fields. ToolEvent renders a one-line summary.
-      input?: unknown;
-      output?: unknown;
+      // Server pre-formats both lines into renderable strings. The TUI
+      // never sees raw input/output — see src/server/tool-format.ts.
+      summary?: string;
       error?: string;
     }
   | {
@@ -90,7 +99,6 @@ export type StreamEvent =
       kind: 'tool';
       tool: string;
       phase: 'call' | 'result' | 'error' | string;
-      input?: unknown;
-      output?: unknown;
+      summary?: string;
       error?: string;
     };

@@ -7,6 +7,7 @@ import type {
   ResetResult,
   SessionModelInfo,
   SessionSummary,
+  TuiConfig,
 } from './types.ts';
 
 export class Api {
@@ -15,6 +16,12 @@ export class Api {
   async fetchAgents(): Promise<AgentInfo[]> {
     const res = await fetch(`${this.base}/agents`);
     return (await res.json()) as AgentInfo[];
+  }
+
+  async fetchTuiConfig(): Promise<TuiConfig> {
+    const res = await fetch(`${this.base}/tui-config`);
+    if (!res.ok) throw new Error(`tui-config ${res.status}`);
+    return (await res.json()) as TuiConfig;
   }
 
   async fetchSessions(agent: string): Promise<SessionSummary[]> {

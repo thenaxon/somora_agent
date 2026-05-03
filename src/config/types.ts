@@ -131,6 +131,18 @@ export const AgentLoopConfigSchema = z.object({
 }).default({ maxRounds: 8, toolCallTimeoutMs: 30_000 });
 export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 
+// TUI display preferences. Only affect what the Ink CLI renders into the
+// scrollback — never affect actual memory injection or tool execution
+// (those still happen on the server). `/show <target> on|off` toggles the
+// same booleans at runtime for the current TUI process.
+export const TuiConfigSchema = z.object({
+  show: z.object({
+    memory: z.boolean().default(true),
+    tools: z.boolean().default(true),
+  }).default({ memory: true, tools: true }),
+}).default({ show: { memory: true, tools: true } });
+export type TuiConfig = z.infer<typeof TuiConfigSchema>;
+
 export const ConfigSchema = z.object({
   server: z
     .object({
@@ -141,6 +153,7 @@ export const ConfigSchema = z.object({
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,
   agentLoop: AgentLoopConfigSchema,
+  tui: TuiConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

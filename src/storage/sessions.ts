@@ -215,6 +215,13 @@ export async function resetSession(
   };
   await writeFile(metaPath(agent, session), JSON.stringify(freshMeta, null, 2), 'utf8');
 
+  // Touch an empty jsonl so the source session id stays resolvable.
+  // Without this, resolveSessionId() returns null for non-main ids
+  // (their fileExists() check fails), and any subsequent /chat/send
+  // 404s. `main` would still work via its magic path, but non-main
+  // sessions are equally allowed to /reset per the TUI hint.
+  await appendFile(jsonlPath(agent, session), '');
+
   return { archivedId };
 }
 

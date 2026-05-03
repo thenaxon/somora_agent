@@ -46,5 +46,17 @@ export type SseEvent =
         refs: string[];
       };
     }
-  | { event: 'tool'; data: { phase: 'call' | 'result'; tool?: string; input?: unknown; output?: unknown; error?: string } }
+  | {
+      // Tool lifecycle event. Server pre-formats the renderable bits:
+      //   call   → tool name (stripped of mcp__ prefix) + args summary
+      //   result → tool name + result summary (omitted entirely if trivial,
+      //            so clients never see "boring" rows like {ok:true})
+      //   error  → tool name + error string
+      // Clients render summary/error directly without inspecting raw payloads.
+      event: 'tool';
+      data:
+        | { phase: 'call'; tool: string; summary: string }
+        | { phase: 'result'; tool: string; summary: string }
+        | { phase: 'error'; tool: string; error: string };
+    }
   | { event: 'status'; data: { msg: string } };

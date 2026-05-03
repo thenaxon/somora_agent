@@ -17,11 +17,19 @@ interface Props {
   base: string;
   initialAgent: string;
   initialSession: string;
+  initialShowMemory: boolean;
+  initialShowTools: boolean;
 }
 
 const HISTORY_MAX = 100;
 
-export function App({ base, initialAgent, initialSession }: Props) {
+export function App({
+  base,
+  initialAgent,
+  initialSession,
+  initialShowMemory,
+  initialShowTools,
+}: Props) {
   const { exit } = useApp();
   const apiRef = useRef(new Api(base));
 
@@ -35,6 +43,18 @@ export function App({ base, initialAgent, initialSession }: Props) {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [agentIcons, setAgentIcons] = useState<Record<string, string>>({});
+  const [showMemory, setShowMemory] = useState(initialShowMemory);
+  const [showTools, setShowTools] = useState(initialShowTools);
+  // Refs so the SSE handler always sees the current toggle without
+  // re-subscribing the stream on every flip.
+  const showMemoryRef = useRef(showMemory);
+  const showToolsRef = useRef(showTools);
+  useEffect(() => {
+    showMemoryRef.current = showMemory;
+  }, [showMemory]);
+  useEffect(() => {
+    showToolsRef.current = showTools;
+  }, [showTools]);
 
   // Submit-history (newest at the end). Up/Down step through it.
   const [history, setHistory] = useState<string[]>([]);
@@ -153,6 +173,9 @@ export function App({ base, initialAgent, initialSession }: Props) {
         return;
       }
       case 'memory':
+        // Display-only suppression. The injection itself already happened
+        // server-side; we just don't render the [memory · …] line.
+        if (!showMemoryRef.current) return;
         appendTurn({
           kind: 'memory',
           id: nextId(),
@@ -162,6 +185,9 @@ export function App({ base, initialAgent, initialSession }: Props) {
         });
         return;
       case 'tool': {
+        // Display-only suppression. Same caveat as memory: the tool ran,
+        // we just hide the call/result line.
+        if (!showToolsRef.current) return;
         const phase: 'call' | 'result' | 'error' =
           ev.phase === 'call' || ev.phase === 'result' || ev.phase === 'error'
             ? ev.phase
@@ -171,8 +197,7 @@ export function App({ base, initialAgent, initialSession }: Props) {
           id: nextId(),
           tool: ev.tool,
           phase,
-          input: phase === 'call' ? ev.input : undefined,
-          output: phase === 'result' ? ev.output : undefined,
+          summary: ev.summary,
           error: phase === 'error' ? summarize(ev.error, 200) : undefined,
         });
         return;
@@ -272,6 +297,8 @@ export function App({ base, initialAgent, initialSession }: Props) {
           api: apiRef.current,
           agent,
           session,
+          showMemory,
+          showTools,
         });
         for (const a of actions) {
           if (a.kind === 'notice') {
@@ -286,6 +313,9 @@ export function App({ base, initialAgent, initialSession }: Props) {
             setSession(a.session);
           } else if (a.kind === 'clearStats') {
             setStats(null);
+          } else if (a.kind === 'setShow') {
+            if (a.target === 'memory') setShowMemory(a.value);
+            else setShowTools(a.value);
           }
         }
       } catch (err) {
@@ -347,6 +377,8 @@ export function App({ base, initialAgent, initialSession }: Props) {
         stats={stats}
         streaming={streaming}
         connected={connected}
+        showMemory={showMemory}
+        showTools={showTools}
       />
       <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>

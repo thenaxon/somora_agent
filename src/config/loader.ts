@@ -95,6 +95,15 @@ providers:
 #   hybrid:
 #     vectorWeight: 0.7                    # Gewichtung Vector-Score in Hybrid-Fusion
 #     bm25Weight: 0.3                      # Gewichtung BM25/FTS5-Score
+
+# TUI-Anzeige-Defaults für die Ink-CLI. Beeinflusst nur das Rendering,
+# nicht die tatsächliche Memory-Injection oder Tool-Ausführung — die
+# laufen unverändert auf dem Server. Zur Laufzeit umstellbar via
+# /show memory on|off bzw. /show tools on|off.
+# tui:
+#   show:
+#     memory: true                         # Memory-Inject-Block im Chat anzeigen
+#     tools: true                          # Tool-Call/Result/Error-Zeilen anzeigen
 `;
 
 export async function loadConfig(): Promise<Config> {

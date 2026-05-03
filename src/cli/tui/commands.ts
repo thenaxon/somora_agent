@@ -3,16 +3,20 @@
 //   - switchTo:    change agent/session, restart stream
 //   - exit:        leave the program
 //   - clearStats:  drop session-scoped stats (e.g. after /reset)
+//   - setShow:     flip a TUI display toggle (memory / tools)
 // The dispatcher is intentionally pure-ish: it makes HTTP calls but doesn't
 // touch React state. The App turns the actions into setState calls.
 
 import type { Api } from './api.ts';
 
+export type ShowTarget = 'memory' | 'tools';
+
 export type CommandAction =
   | { kind: 'notice'; text: string; tone: 'info' | 'warn' | 'error' }
   | { kind: 'switchTo'; agent: string; session: string }
   | { kind: 'exit' }
-  | { kind: 'clearStats' };
+  | { kind: 'clearStats' }
+  | { kind: 'setShow'; target: ShowTarget; value: boolean };
 
 export interface CommandMeta {
   name: string;   // the bare slash command (used for prefix-match)
@@ -31,6 +35,7 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/reset', usage: '/reset [YES]' },
   { name: '/models', usage: '/models' },
   { name: '/model', usage: '/model [<alias>|default]' },
+  { name: '/show', usage: '/show [memory|tools] [on|off]' },
   { name: '/quit', usage: '/quit' },
   { name: '/exit', usage: '/exit' },
 ];
@@ -57,11 +62,22 @@ const HELP_TEXT = `Available commands:
   /model                      — show current effective model for this session
   /model <alias-or-ref>       — override model for this session
   /model default              — clear override, fall back to persona model
+  /show                       — show current display toggles
+  /show memory on|off         — show/hide [memory · …] inject lines (display only)
+  /show tools on|off          — show/hide [tool call · …] / [tool result · …] lines
   /quit, /exit                — leave somora`;
+
+export interface CommandContext {
+  api: Api;
+  agent: string;
+  session: string;
+  showMemory: boolean;
+  showTools: boolean;
+}
 
 export async function runCommand(
   line: string,
-  ctx: { api: Api; agent: string; session: string },
+  ctx: CommandContext,
 ): Promise<CommandAction[]> {
   const [cmd, ...args] = line.split(/\s+/);
   const out: CommandAction[] = [];
@@ -95,7 +111,28 @@ export async function runCommand(
         out.push({ kind: 'notice', text: 'usage: /agent <name> [session]', tone: 'warn' });
         return out;
       }
-      out.push({ kind: 'switchTo', agent: name, session: args[1] ?? 'main' });
+      const agents = await ctx.api.fetchAgents();
+      if (!agents.find((a) => a.name === name)) {
+        out.push({
+          kind: 'notice',
+          text: `agent '${name}' not found. /agents to list.`,
+          tone: 'warn',
+        });
+        return out;
+      }
+      const sessionRef = args[1] ?? 'main';
+      if (sessionRef !== 'main') {
+        const sessions = await ctx.api.fetchSessions(name);
+        if (!sessions.find((s) => s.id === sessionRef || s.slug === sessionRef)) {
+          out.push({
+            kind: 'notice',
+            text: `session '${sessionRef}' not found for agent '${name}'. /sessions to list, or /new <slug>.`,
+            tone: 'warn',
+          });
+          return out;
+        }
+      }
+      out.push({ kind: 'switchTo', agent: name, session: sessionRef });
       return out;
     }
 
@@ -116,6 +153,17 @@ export async function runCommand(
       if (!ref) {
         out.push({ kind: 'notice', text: 'usage: /session <slug-or-id>', tone: 'warn' });
         return out;
+      }
+      if (ref !== 'main') {
+        const sessions = await ctx.api.fetchSessions(ctx.agent);
+        if (!sessions.find((s) => s.id === ref || s.slug === ref)) {
+          out.push({
+            kind: 'notice',
+            text: `session '${ref}' not found. /sessions to list, or /new <slug>.`,
+            tone: 'warn',
+          });
+          return out;
+        }
       }
       out.push({ kind: 'switchTo', agent: ctx.agent, session: ref });
       return out;
@@ -242,6 +290,47 @@ export async function runCommand(
       } catch (err) {
         out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
       }
+      return out;
+    }
+
+    case '/show': {
+      const target = args[0];
+      const value = args[1];
+      if (!target) {
+        out.push({
+          kind: 'notice',
+          text:
+            `Display toggles (TUI render only — server still injects/runs everything):\n` +
+            `  memory: ${ctx.showMemory ? 'on' : 'off'}\n` +
+            `  tools:  ${ctx.showTools ? 'on' : 'off'}\n` +
+            `Toggle: /show memory on|off  /show tools on|off`,
+          tone: 'info',
+        });
+        return out;
+      }
+      if (target !== 'memory' && target !== 'tools') {
+        out.push({
+          kind: 'notice',
+          text: `usage: /show [memory|tools] [on|off]`,
+          tone: 'warn',
+        });
+        return out;
+      }
+      if (value !== 'on' && value !== 'off') {
+        out.push({
+          kind: 'notice',
+          text: `usage: /show ${target} on|off`,
+          tone: 'warn',
+        });
+        return out;
+      }
+      const flag = value === 'on';
+      out.push({ kind: 'setShow', target, value: flag });
+      out.push({
+        kind: 'notice',
+        text: `${target} display ${flag ? 'on' : 'off'}`,
+        tone: 'info',
+      });
       return out;
     }
 

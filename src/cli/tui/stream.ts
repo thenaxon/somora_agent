@@ -70,7 +70,17 @@ export function openStream(
       return;
     }
     if (!res.ok || !res.body) {
-      onNotice(`stream-connect ${res.status}: ${await res.text().catch(() => '')}`, 'error');
+      const body = await res.text().catch(() => '');
+      // 4xx means "won't be fixed by retrying" (unknown agent/session,
+      // bad query, etc). Surface it once and stop reconnecting; the user
+      // can switch to a valid target. 5xx + transport errors keep the
+      // backoff loop because those are typically transient.
+      if (res.status >= 400 && res.status < 500) {
+        onNotice(`stream-connect ${res.status}: ${body} — giving up; switch with /agent or /session`, 'error');
+        resolveDone();
+        return;
+      }
+      onNotice(`stream-connect ${res.status}: ${body}`, 'error');
       schedule();
       return;
     }
@@ -155,9 +165,8 @@ export function openStream(
           kind: 'tool',
           tool: data.tool ?? '',
           phase: data.phase ?? '?',
-          input: data.input,
-          output: data.output,
-          error: data.error,
+          summary: typeof data.summary === 'string' ? data.summary : undefined,
+          error: typeof data.error === 'string' ? data.error : undefined,
         };
       case 'status':
         if (data.msg === 'connected') {

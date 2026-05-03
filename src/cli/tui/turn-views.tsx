@@ -15,8 +15,6 @@
 
 import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
-import { shortToolName } from './format.ts';
-import { formatArgs, formatResult } from './tool-format.ts';
 import { renderInline } from './markdown.tsx';
 
 export function TurnView({
@@ -90,28 +88,24 @@ export function AgentBody({ text }: { text: string }) {
 function ToolEvent({
   tool,
   phase,
-  input,
-  output,
+  summary,
   error,
 }: {
   tool: string;
   phase: 'call' | 'result' | 'error';
-  input?: unknown;
-  output?: unknown;
+  summary?: string;
   error?: string;
 }) {
-  const name = shortToolName(tool);
   if (phase === 'call') {
-    const args = formatArgs(tool, input);
     return (
       <Box marginTop={1}>
         <Text color="blue" bold>
           ▸{' '}
         </Text>
         <Text color="blue" bold>
-          {name}
+          {tool}
         </Text>
-        {args ? <Text color="gray"> · {args}</Text> : null}
+        {summary ? <Text color="gray"> · {summary}</Text> : null}
       </Box>
     );
   }
@@ -125,9 +119,8 @@ function ToolEvent({
       </Box>
     );
   }
-  // result — suppress entirely if the per-tool formatter says it's trivial
-  // (e.g. {ok:true} after a memory_write).
-  const summary = formatResult(tool, output);
+  // result — server only emits this when there's something worth showing
+  // (it suppresses trivial successes like {ok:true} server-side).
   if (!summary) return null;
   return (
     <Box>

@@ -4,11 +4,26 @@
 //                                Phase C ships)
 
 import { render } from 'ink';
+import { Api } from './api.ts';
 import { App } from './app.tsx';
 
 const port = Number(process.env.SOMORA_PORT ?? 18737);
 const host = process.env.SOMORA_HOST ?? '127.0.0.1';
 const base = `http://${host}:${port}`;
+
+// TUI display defaults — fetched from the server (single config reader).
+// If the server is unreachable at boot (e.g. user runs dev:cli before
+// dev:server), fall back to "show everything"; the user can flip toggles
+// at runtime via /show.
+let initialShowMemory = true;
+let initialShowTools = true;
+try {
+  const tuiConfig = await new Api(base).fetchTuiConfig();
+  initialShowMemory = tuiConfig.show.memory;
+  initialShowTools = tuiConfig.show.tools;
+} catch {
+  // server not up yet — defaults stand
+}
 
 // Clear + bottom-pin the dynamic frame before Ink renders.
 //   \x1B[2J — erase entire visible screen
@@ -38,6 +53,15 @@ if (process.stdout.isTTY) {
 // exitOnCtrlC: false lets us implement a soft-cancel pattern: first Ctrl+C
 // clears the current input or closes the autocomplete popup; only when
 // there's nothing to clear does it exit.
-render(<App base={base} initialAgent="hans" initialSession="main" />, {
-  exitOnCtrlC: false,
-});
+render(
+  <App
+    base={base}
+    initialAgent="hans"
+    initialSession="main"
+    initialShowMemory={initialShowMemory}
+    initialShowTools={initialShowTools}
+  />,
+  {
+    exitOnCtrlC: false,
+  },
+);

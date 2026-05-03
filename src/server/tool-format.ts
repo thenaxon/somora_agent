@@ -1,16 +1,21 @@
-// Per-tool pretty-printing for the scrollback. Replaces raw JSON dumps
-// like `{"hits":[{"reference":"memory/luca",...]}` with one-line summaries.
+// Pre-formats tool-call args and tool-result outputs into the one-line
+// summaries that go on the SSE wire. Lives server-side so every client
+// (TUI, future Orbit/web) renders the same text without needing to know
+// individual tool schemas.
 //
 // Conventions:
-//   - formatArgs returns '' when there's nothing useful to show on the
-//     call line beyond the tool name itself.
-//   - formatResult returns null when the result is boring (e.g. {ok: true}
-//     after a write); the caller suppresses the result row entirely so
-//     trivial calls don't waste a line.
+//   - shortToolName strips the `mcp__<server>__` prefix that claude-cli /
+//     codex-cli wrap MCP tool names in. Clients receive clean names.
+//   - formatArgs returns '' when there's nothing useful beyond the tool
+//     name itself (the call line will just show the tool).
+//   - formatResult returns null for trivial successes (e.g. {ok:true}
+//     after a write); callers should suppress the result row entirely.
 //   - Unknown tools fall back to a generic shape-based formatter — show
 //     the first one or two scalar fields, truncate the rest.
 
-import { shortToolName, summarize } from './format.ts';
+export function shortToolName(tool: string): string {
+  return tool.replace(/^mcp__[^_]+__/, '');
+}
 
 export function formatArgs(toolFq: string, input: unknown): string {
   const name = shortToolName(toolFq);
@@ -67,7 +72,10 @@ export function formatResult(toolFq: string, output: unknown): string | null {
   ) {
     return null;
   }
-  const obj = typeof output === 'object' && output !== null ? (output as Record<string, unknown>) : null;
+  const obj =
+    typeof output === 'object' && output !== null
+      ? (output as Record<string, unknown>)
+      : null;
 
   switch (name) {
     case 'memory_search': {
@@ -130,4 +138,17 @@ export function formatResult(toolFq: string, output: unknown): string | null {
     default:
       return summarize(output, 100);
   }
+}
+
+function summarize(value: unknown, maxLen: number): string {
+  if (value === undefined || value === null) return '';
+  let s: string;
+  try {
+    s = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch {
+    return '';
+  }
+  s = s.replace(/\s+/g, ' ').trim();
+  if (s.length > maxLen) s = s.slice(0, maxLen).trimEnd() + '…';
+  return s;
 }

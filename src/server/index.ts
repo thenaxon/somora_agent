@@ -33,22 +33,46 @@ import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
+import { formatArgs, formatResult, shortToolName } from './tool-format.ts';
 
-function eventToSse(ev: NormalizedEvent): SseEvent | null {
-  switch (ev.kind) {
-    case 'assistant_delta':
-      return { event: 'chat', data: { state: 'delta', text: ev.text } };
-    case 'assistant_message':
-      return { event: 'chat', data: { state: 'final', text: ev.text } };
-    case 'tool_call':
-      return { event: 'tool', data: { phase: 'call', tool: ev.tool, input: ev.input } };
-    case 'tool_result':
-      return { event: 'tool', data: { phase: 'result', output: ev.output, ...(ev.error ? { error: ev.error } : {}) } };
-    case 'error':
-      return { event: 'status', data: { msg: `error: ${ev.message}` } };
-    default:
-      return null;
-  }
+// Per-turn SSE serializer. Holds a callId→tool map so tool_result events
+// (which only carry callId in the wire format) can be correlated back to
+// the originating tool name and pre-formatted accordingly. Clients
+// receive renderable strings, not raw payloads — keeps TUI / Orbit / web
+// consumers thin.
+function createTurnSerializer() {
+  const callIdToTool = new Map<string, string>();
+  return function serialize(ev: NormalizedEvent): SseEvent | null {
+    switch (ev.kind) {
+      case 'assistant_delta':
+        return { event: 'chat', data: { state: 'delta', text: ev.text } };
+      case 'assistant_message':
+        return { event: 'chat', data: { state: 'final', text: ev.text } };
+      case 'tool_call': {
+        const tool = shortToolName(ev.tool);
+        callIdToTool.set(ev.callId, tool);
+        return {
+          event: 'tool',
+          data: { phase: 'call', tool, summary: formatArgs(ev.tool, ev.input) },
+        };
+      }
+      case 'tool_result': {
+        const tool = callIdToTool.get(ev.callId) ?? '?';
+        if (ev.error) {
+          return { event: 'tool', data: { phase: 'error', tool, error: ev.error } };
+        }
+        const summary = formatResult(tool, ev.output);
+        // Trivial successes (e.g. {ok:true} after memory_write) are
+        // suppressed — the call line already conveys the action.
+        if (summary === null) return null;
+        return { event: 'tool', data: { phase: 'result', tool, summary } };
+      }
+      case 'error':
+        return { event: 'status', data: { msg: `error: ${ev.message}` } };
+      default:
+        return null;
+    }
+  };
 }
 
 type Subscriber = (e: SseEvent) => Promise<void>;
@@ -268,6 +292,11 @@ app.use('*', async (c, next) => {
 app.get('/healthz', (c) => c.text('ok'));
 
 app.get('/env', (c) => c.json(getEffectiveEnv()));
+
+// Display preferences for thin clients (TUI, future web). Server is the
+// single config reader — clients fetch this rather than parsing config.yaml
+// themselves.
+app.get('/tui-config', (c) => c.json(config.tui));
 
 app.get('/agents', async (c) => c.json(await listAgents()));
 
@@ -721,12 +750,13 @@ app.post('/chat/send', async (c) => {
           agentLoopConfig: config.agentLoop,
         },
       });
+      const serialize = createTurnSerializer();
       for await (const ev of stream) {
         if (ev.kind !== 'assistant_delta') {
           await appendEvent(agent, session, ev);
         }
         if (ev.kind === 'turn_end' && ev.usage) lastUsage = ev.usage;
-        const sse = eventToSse(ev);
+        const sse = serialize(ev);
         if (sse) await publish(session, sse);
       }
     } catch (err) {
