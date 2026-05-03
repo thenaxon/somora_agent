@@ -143,14 +143,29 @@ export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 
 // TUI display preferences. Only affect what the Ink CLI renders into the
 // scrollback — never affect actual memory injection or tool execution
-// (those still happen on the server). `/show <target> on|off` toggles the
-// same booleans at runtime for the current TUI process.
+// (those still happen on the server).
+//
+// `show.*`     — line visibility (off = the row doesn't appear at all)
+// `verbose.*`  — detail level when the row IS shown (off = compact summary,
+//                on = full payload / inject text / system prompt)
+//
+// Both are TUI-side display state; the server emits enough data for the
+// "verbose" form on every event so toggling is instant. Live-changeable
+// via `/show <topic> on|off` and `/verbose <topic> on|off`.
 export const TuiConfigSchema = z.object({
   show: z.object({
     memory: z.boolean().default(true),
     tools: z.boolean().default(true),
   }).default({ memory: true, tools: true }),
-}).default({ show: { memory: true, tools: true } });
+  verbose: z.object({
+    tools: z.boolean().default(false),
+    memory: z.boolean().default(false),
+    system: z.boolean().default(false),
+  }).default({ tools: false, memory: false, system: false }),
+}).default({
+  show: { memory: true, tools: true },
+  verbose: { tools: false, memory: false, system: false },
+});
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 
 export const ConfigSchema = z.object({

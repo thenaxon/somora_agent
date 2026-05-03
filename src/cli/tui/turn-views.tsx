@@ -17,14 +17,21 @@ import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
 import { renderInline } from './markdown.tsx';
 
+export interface VerboseFlags {
+  tools: boolean;
+  memory: boolean;
+}
+
 export function TurnView({
   turn,
   agentName,
   agentIcon,
+  verbose,
 }: {
   turn: Turn;
   agentName: string;
   agentIcon: string;
+  verbose: VerboseFlags;
 }) {
   switch (turn.kind) {
     case 'user':
@@ -32,9 +39,17 @@ export function TurnView({
     case 'agent':
       return <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
     case 'tool':
-      return <ToolEvent {...turn} />;
+      return <ToolEvent {...turn} verbose={verbose.tools} />;
     case 'memory':
-      return <MemoryEvent count={turn.count} topScore={turn.topScore} refs={turn.refs} />;
+      return (
+        <MemoryEvent
+          count={turn.count}
+          topScore={turn.topScore}
+          refs={turn.refs}
+          fullText={turn.fullText}
+          verbose={verbose.memory}
+        />
+      );
     case 'system':
       return <SystemNotice text={turn.text} tone={turn.tone} />;
   }
@@ -90,22 +105,29 @@ function ToolEvent({
   phase,
   summary,
   error,
+  details,
+  verbose,
 }: {
   tool: string;
   phase: 'call' | 'result' | 'error';
   summary?: string;
   error?: string;
+  details?: string;
+  verbose: boolean;
 }) {
   if (phase === 'call') {
     return (
-      <Box marginTop={1}>
-        <Text color="blue" bold>
-          ▸{' '}
-        </Text>
-        <Text color="blue" bold>
-          {tool}
-        </Text>
-        {summary ? <Text color="gray"> · {summary}</Text> : null}
+      <Box flexDirection="column" marginTop={1}>
+        <Box>
+          <Text color="blue" bold>
+            ▸{' '}
+          </Text>
+          <Text color="blue" bold>
+            {tool}
+          </Text>
+          {summary ? <Text color="gray"> · {summary}</Text> : null}
+        </Box>
+        {verbose && details ? <DetailsBlock text={details} /> : null}
       </Box>
     );
   }
@@ -121,11 +143,31 @@ function ToolEvent({
   }
   // result — server only emits this when there's something worth showing
   // (it suppresses trivial successes like {ok:true} server-side).
-  if (!summary) return null;
+  if (!summary && !(verbose && details)) return null;
   return (
-    <Box>
-      <Text color="gray">{'  ↳ '}</Text>
-      <Text color="gray">{summary}</Text>
+    <Box flexDirection="column">
+      {summary ? (
+        <Box>
+          <Text color="gray">{'  ↳ '}</Text>
+          <Text color="gray">{summary}</Text>
+        </Box>
+      ) : null}
+      {verbose && details ? <DetailsBlock text={details} /> : null}
+    </Box>
+  );
+}
+
+// Indented multi-line block for /verbose payloads. Kept dim so the
+// short summary above remains the primary visual anchor.
+function DetailsBlock({ text }: { text: string }) {
+  const lines = text.split('\n');
+  return (
+    <Box flexDirection="column" paddingLeft={4}>
+      {lines.map((line, i) => (
+        <Text key={i} color="gray">
+          {line.length > 0 ? line : ' '}
+        </Text>
+      ))}
     </Box>
   );
 }
@@ -134,10 +176,14 @@ function MemoryEvent({
   count,
   topScore,
   refs,
+  fullText,
+  verbose,
 }: {
   count: number;
   topScore: number | null;
   refs: string[];
+  fullText?: string;
+  verbose: boolean;
 }) {
   const score = topScore !== null ? ` · top=${topScore.toFixed(2)}` : '';
   // Cap the visible ref list at 3 so a recall with 8 hits doesn't smear
@@ -149,12 +195,13 @@ function MemoryEvent({
     ? ` · ${visible.join(', ')}${overflow > 0 ? ` +${overflow} more` : ''}`
     : '';
   return (
-    <Box marginTop={1}>
+    <Box flexDirection="column" marginTop={1}>
       <Text color="magenta" bold>
         ◇ memory · {count} hits
         {score}
         {refList}
       </Text>
+      {verbose && fullText ? <DetailsBlock text={fullText} /> : null}
     </Box>
   );
 }

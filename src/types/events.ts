@@ -57,6 +57,10 @@ export type SseEvent =
         topScore?: number;
         // `<source>/<slug>` references in score order, top first.
         refs: string[];
+        // Full inject block text — exactly what was concatenated into
+        // the engine's systemPrompt/ephemeralContext for this turn.
+        // Always present; clients render only when /verbose memory is on.
+        fullText: string;
       };
     }
   | {
@@ -68,8 +72,8 @@ export type SseEvent =
       // Clients render summary/error directly without inspecting raw payloads.
       event: 'tool';
       data:
-        | { phase: 'call'; tool: string; summary: string }
-        | { phase: 'result'; tool: string; summary: string }
-        | { phase: 'error'; tool: string; error: string };
+        | { phase: 'call'; tool: string; summary: string; details: string }
+        | { phase: 'result'; tool: string; summary: string; details: string }
+        | { phase: 'error'; tool: string; error: string; details?: string };
     }
   | { event: 'status'; data: { msg: string } };

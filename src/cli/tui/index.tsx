@@ -13,14 +13,20 @@ const base = `http://${host}:${port}`;
 
 // TUI display defaults — fetched from the server (single config reader).
 // If the server is unreachable at boot (e.g. user runs dev:cli before
-// dev:server), fall back to "show everything"; the user can flip toggles
-// at runtime via /show.
+// dev:server), fall back to safe defaults — the user can flip toggles
+// at runtime via /show and /verbose.
 let initialShowMemory = true;
 let initialShowTools = true;
+let initialVerboseTools = false;
+let initialVerboseMemory = false;
+let initialVerboseSystem = false;
 try {
   const tuiConfig = await new Api(base).fetchTuiConfig();
   initialShowMemory = tuiConfig.show.memory;
   initialShowTools = tuiConfig.show.tools;
+  initialVerboseTools = tuiConfig.verbose.tools;
+  initialVerboseMemory = tuiConfig.verbose.memory;
+  initialVerboseSystem = tuiConfig.verbose.system;
 } catch {
   // server not up yet — defaults stand
 }
@@ -60,6 +66,9 @@ render(
     initialSession="main"
     initialShowMemory={initialShowMemory}
     initialShowTools={initialShowTools}
+    initialVerboseTools={initialVerboseTools}
+    initialVerboseMemory={initialVerboseMemory}
+    initialVerboseSystem={initialVerboseSystem}
   />,
   {
     exitOnCtrlC: false,

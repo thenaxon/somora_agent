@@ -26,6 +26,13 @@ export class Api {
     return (await res.json()) as TuiConfig;
   }
 
+  async fetchSystemPrompt(agent: string): Promise<string | null> {
+    const res = await fetch(`${this.base}/agents/${encodeURIComponent(agent)}/system-prompt`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { systemPrompt?: string };
+    return typeof data.systemPrompt === 'string' ? data.systemPrompt : null;
+  }
+
   async fetchSessions(agent: string): Promise<SessionSummary[]> {
     const res = await fetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions`);
     if (!res.ok) return [];

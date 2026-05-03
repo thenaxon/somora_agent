@@ -152,3 +152,16 @@ function summarize(value: unknown, maxLen: number): string {
   if (s.length > maxLen) s = s.slice(0, maxLen).trimEnd() + '…';
   return s;
 }
+
+// Pretty-printed full payload for /verbose tools. Strings stay as-is;
+// objects/arrays get JSON.stringify with indent. Always emitted on the
+// wire; clients render only when /verbose tools is on.
+export function formatDetails(value: unknown): string {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}

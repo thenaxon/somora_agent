@@ -33,7 +33,7 @@ import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
-import { formatArgs, formatResult, shortToolName } from './tool-format.ts';
+import { formatArgs, formatDetails, formatResult, shortToolName } from './tool-format.ts';
 
 // Per-turn SSE serializer. Holds a callId→tool map so tool_result events
 // (which only carry callId in the wire format) can be correlated back to
@@ -53,19 +53,35 @@ function createTurnSerializer() {
         callIdToTool.set(ev.callId, tool);
         return {
           event: 'tool',
-          data: { phase: 'call', tool, summary: formatArgs(ev.tool, ev.input) },
+          data: {
+            phase: 'call',
+            tool,
+            summary: formatArgs(ev.tool, ev.input),
+            details: formatDetails(ev.input),
+          },
         };
       }
       case 'tool_result': {
         const tool = callIdToTool.get(ev.callId) ?? '?';
         if (ev.error) {
-          return { event: 'tool', data: { phase: 'error', tool, error: ev.error } };
+          return {
+            event: 'tool',
+            data: { phase: 'error', tool, error: ev.error },
+          };
         }
         const summary = formatResult(tool, ev.output);
         // Trivial successes (e.g. {ok:true} after memory_write) are
         // suppressed — the call line already conveys the action.
         if (summary === null) return null;
-        return { event: 'tool', data: { phase: 'result', tool, summary } };
+        return {
+          event: 'tool',
+          data: {
+            phase: 'result',
+            tool,
+            summary,
+            details: formatDetails(ev.output),
+          },
+        };
       }
       case 'error':
         return { event: 'status', data: { msg: `error: ${ev.message}` } };
@@ -312,6 +328,17 @@ app.get('/env', (c) => c.json(getEffectiveEnv()));
 // single config reader — clients fetch this rather than parsing config.yaml
 // themselves.
 app.get('/tui-config', (c) => c.json(config.tui));
+
+// Verbose-mode helper: returns the persona's compiled system prompt.
+// Used by /verbose system in the TUI to surface what the model is
+// actually seeing as instructions. Static per agent (does not change
+// per turn — ephemeralContext is per-turn and rides on the memory SSE).
+app.get('/agents/:agent/system-prompt', async (c) => {
+  const agent = c.req.param('agent');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  return c.json({ agent, systemPrompt: persona.systemPrompt });
+});
 
 app.get('/agents', async (c) => c.json(await listAgents()));
 
@@ -798,12 +825,15 @@ app.post('/chat/send', async (c) => {
         }
         // Always emit the SSE memory event — even on zero hits — so the
         // CLI can show "[memory · 0 hits]" and the user knows recall ran.
+        // fullText carries the actual inject block so /verbose memory can
+        // show what landed in the model's context.
         await publish(session, {
           event: 'memory',
           data: {
             count: inject.injectedCount,
             ...(topScore !== undefined ? { topScore } : {}),
             refs,
+            fullText: inject.ephemeralContext ?? '',
           },
         });
       } catch (err) {

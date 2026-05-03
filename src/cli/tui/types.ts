@@ -80,6 +80,11 @@ export interface TuiConfig {
     memory: boolean;
     tools: boolean;
   };
+  verbose: {
+    tools: boolean;
+    memory: boolean;
+    system: boolean;
+  };
 }
 
 // All Turn-kinds that the scrollback can render. Kept flat (discriminated
@@ -96,6 +101,8 @@ export type Turn =
       // never sees raw input/output — see src/server/tool-format.ts.
       summary?: string;
       error?: string;
+      // Pretty-printed full payload (for /verbose tools).
+      details?: string;
     }
   | {
       kind: 'memory';
@@ -103,6 +110,8 @@ export type Turn =
       count: number;
       topScore: number | null;
       refs: string[];
+      // Full inject text (for /verbose memory).
+      fullText?: string;
     }
   | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' };
 
@@ -125,11 +134,12 @@ export type StreamEvent =
     }
   | { kind: 'chat-delta'; text: string }
   | { kind: 'chat-final'; text: string }
-  | { kind: 'memory'; count: number; topScore: number | null; refs: string[] }
+  | { kind: 'memory'; count: number; topScore: number | null; refs: string[]; fullText?: string }
   | {
       kind: 'tool';
       tool: string;
       phase: 'call' | 'result' | 'error' | string;
       summary?: string;
       error?: string;
+      details?: string;
     };

@@ -177,6 +177,7 @@ export function openStream(
           count: data.count ?? 0,
           topScore: typeof data.topScore === 'number' ? data.topScore : null,
           refs: Array.isArray(data.refs) ? data.refs : [],
+          fullText: typeof data.fullText === 'string' ? data.fullText : undefined,
         };
       case 'tool':
         return {
@@ -185,6 +186,7 @@ export function openStream(
           phase: data.phase ?? '?',
           summary: typeof data.summary === 'string' ? data.summary : undefined,
           error: typeof data.error === 'string' ? data.error : undefined,
+          details: typeof data.details === 'string' ? data.details : undefined,
         };
       case 'status':
         if (data.msg === 'connected') {

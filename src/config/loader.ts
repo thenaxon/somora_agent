@@ -102,11 +102,21 @@ providers:
 # TUI-Anzeige-Defaults für die Ink-CLI. Beeinflusst nur das Rendering,
 # nicht die tatsächliche Memory-Injection oder Tool-Ausführung — die
 # laufen unverändert auf dem Server. Zur Laufzeit umstellbar via
-# /show memory on|off bzw. /show tools on|off.
+# /show <topic> on|off bzw. /verbose <topic> on|off.
+#
+# show.*    — line visibility (off = die Zeile erscheint gar nicht)
+# verbose.* — Detailtiefe wenn die Zeile DOCH erscheint:
+#               tools  → volles Input/Output unter jedem Tool-Call
+#               memory → voller Inject-Text unter jedem [memory · …]
+#               system → /verbose system on druckt System-Prompt einmalig
 # tui:
 #   show:
-#     memory: true                         # Memory-Inject-Block im Chat anzeigen
-#     tools: true                          # Tool-Call/Result/Error-Zeilen anzeigen
+#     memory: true
+#     tools: true
+#   verbose:
+#     tools: false
+#     memory: false
+#     system: false
 `;
 
 export async function loadConfig(): Promise<Config> {

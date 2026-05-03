@@ -10,13 +10,15 @@
 import type { Api } from './api.ts';
 
 export type ShowTarget = 'memory' | 'tools';
+export type VerboseTarget = 'tools' | 'memory' | 'system';
 
 export type CommandAction =
   | { kind: 'notice'; text: string; tone: 'info' | 'warn' | 'error' }
   | { kind: 'switchTo'; agent: string; session: string }
   | { kind: 'exit' }
   | { kind: 'clearStats' }
-  | { kind: 'setShow'; target: ShowTarget; value: boolean };
+  | { kind: 'setShow'; target: ShowTarget; value: boolean }
+  | { kind: 'setVerbose'; target: VerboseTarget; value: boolean };
 
 export interface CommandMeta {
   name: string;   // the bare slash command (used for prefix-match)
@@ -36,6 +38,7 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/models', usage: '/models' },
   { name: '/model', usage: '/model [<alias>|default]' },
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
+  { name: '/verbose', usage: '/verbose [tools|memory|system] [on|off]' },
   { name: '/thinking', usage: '/thinking [off|low|medium|high|default]' },
   { name: '/quit', usage: '/quit' },
   { name: '/exit', usage: '/exit' },
@@ -66,6 +69,11 @@ const HELP_TEXT = `Available commands:
   /show                       — show current display toggles
   /show memory on|off         — show/hide [memory · …] inject lines (display only)
   /show tools on|off          — show/hide [tool call · …] / [tool result · …] lines
+  /verbose                    — show current verbose toggles
+  /verbose tools on|off       — full tool input/output payloads under each call/result
+  /verbose memory on|off      — full memory inject text under each [memory · …] line
+  /verbose system on          — print persona system prompt as a one-shot block
+  /verbose system off         — clear the verbose-system flag (no effect on past blocks)
   /thinking                   — show effective thinking depth + source
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
@@ -77,6 +85,9 @@ export interface CommandContext {
   session: string;
   showMemory: boolean;
   showTools: boolean;
+  verboseTools: boolean;
+  verboseMemory: boolean;
+  verboseSystem: boolean;
 }
 
 export async function runCommand(
@@ -358,6 +369,72 @@ export async function runCommand(
         });
       } catch (err) {
         out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+      }
+      return out;
+    }
+
+    case '/verbose': {
+      const target = args[0];
+      const value = args[1];
+      if (!target) {
+        out.push({
+          kind: 'notice',
+          text:
+            `Verbose toggles (TUI render only — server already streams full payloads):\n` +
+            `  tools:  ${ctx.verboseTools ? 'on' : 'off'}  — full input/output under each call\n` +
+            `  memory: ${ctx.verboseMemory ? 'on' : 'off'}  — full inject text under [memory · …]\n` +
+            `  system: ${ctx.verboseSystem ? 'on' : 'off'}  — last /verbose system on flag\n` +
+            `Toggle: /verbose <tools|memory|system> on|off`,
+          tone: 'info',
+        });
+        return out;
+      }
+      if (target !== 'tools' && target !== 'memory' && target !== 'system') {
+        out.push({
+          kind: 'notice',
+          text: 'usage: /verbose [tools|memory|system] [on|off]',
+          tone: 'warn',
+        });
+        return out;
+      }
+      if (value !== 'on' && value !== 'off') {
+        out.push({
+          kind: 'notice',
+          text: `usage: /verbose ${target} on|off`,
+          tone: 'warn',
+        });
+        return out;
+      }
+      const flag = value === 'on';
+      out.push({ kind: 'setVerbose', target, value: flag });
+      // For `system`, switching on triggers a one-shot fetch + display
+      // of the persona system prompt. Future system blocks are not
+      // streamed automatically (system prompt is static per agent).
+      if (target === 'system' && flag) {
+        try {
+          const sp = await ctx.api.fetchSystemPrompt(ctx.agent);
+          if (sp) {
+            out.push({
+              kind: 'notice',
+              text: `[system prompt for ${ctx.agent}]\n${sp}`,
+              tone: 'info',
+            });
+          } else {
+            out.push({
+              kind: 'notice',
+              text: `could not fetch system prompt for ${ctx.agent}`,
+              tone: 'warn',
+            });
+          }
+        } catch (err) {
+          out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+        }
+      } else {
+        out.push({
+          kind: 'notice',
+          text: `verbose ${target} ${flag ? 'on' : 'off'}`,
+          tone: 'info',
+        });
       }
       return out;
     }

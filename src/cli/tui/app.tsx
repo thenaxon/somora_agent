@@ -19,6 +19,9 @@ interface Props {
   initialSession: string;
   initialShowMemory: boolean;
   initialShowTools: boolean;
+  initialVerboseTools: boolean;
+  initialVerboseMemory: boolean;
+  initialVerboseSystem: boolean;
 }
 
 const HISTORY_MAX = 100;
@@ -29,6 +32,9 @@ export function App({
   initialSession,
   initialShowMemory,
   initialShowTools,
+  initialVerboseTools,
+  initialVerboseMemory,
+  initialVerboseSystem,
 }: Props) {
   const { exit } = useApp();
   const apiRef = useRef(new Api(base));
@@ -45,6 +51,9 @@ export function App({
   const [agentIcons, setAgentIcons] = useState<Record<string, string>>({});
   const [showMemory, setShowMemory] = useState(initialShowMemory);
   const [showTools, setShowTools] = useState(initialShowTools);
+  const [verboseTools, setVerboseTools] = useState(initialVerboseTools);
+  const [verboseMemory, setVerboseMemory] = useState(initialVerboseMemory);
+  const [verboseSystem, setVerboseSystem] = useState(initialVerboseSystem);
   // Refs so the SSE handler always sees the current toggle without
   // re-subscribing the stream on every flip.
   const showMemoryRef = useRef(showMemory);
@@ -199,6 +208,7 @@ export function App({
           count: ev.count,
           topScore: ev.topScore,
           refs: ev.refs,
+          fullText: ev.fullText,
         });
         return;
       case 'tool': {
@@ -215,6 +225,10 @@ export function App({
           tool: ev.tool,
           phase,
           summary: ev.summary,
+          // For errors we don't summarize details (already short-string);
+          // for call/result we keep the full pretty-printed payload so
+          // /verbose tools can show it.
+          details: phase === 'error' ? undefined : ev.details,
           error: phase === 'error' ? summarize(ev.error, 200) : undefined,
         });
         return;
@@ -316,6 +330,9 @@ export function App({
           session,
           showMemory,
           showTools,
+          verboseTools,
+          verboseMemory,
+          verboseSystem,
         });
         for (const a of actions) {
           if (a.kind === 'notice') {
@@ -333,6 +350,10 @@ export function App({
           } else if (a.kind === 'setShow') {
             if (a.target === 'memory') setShowMemory(a.value);
             else setShowTools(a.value);
+          } else if (a.kind === 'setVerbose') {
+            if (a.target === 'tools') setVerboseTools(a.value);
+            else if (a.target === 'memory') setVerboseMemory(a.value);
+            else setVerboseSystem(a.value);
           }
         }
       } catch (err) {
@@ -368,7 +389,15 @@ export function App({
           via Static, then is owned by the terminal — older messages scroll
           up and out as new ones arrive. The dynamic frame below stays put. */}
       <Static items={turns}>
-        {(turn) => <TurnView key={turn.id} turn={turn} agentName={agent} agentIcon={agentIcon} />}
+        {(turn) => (
+          <TurnView
+            key={turn.id}
+            turn={turn}
+            agentName={agent}
+            agentIcon={agentIcon}
+            verbose={{ tools: verboseTools, memory: verboseMemory }}
+          />
+        )}
       </Static>
 
       {streamingText.length > 0 ? (
