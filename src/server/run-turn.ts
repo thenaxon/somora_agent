@@ -78,6 +78,13 @@ export interface RunChatTurnArgs {
   /** Optional override of the per-session model — caller passes the alias
    *  or "provider/id". Bypasses persona/session-meta resolution. */
   modelOverride?: string;
+  /** Optional per-call override of the agent-loop tunables. Used by
+   *  spawn_subagent to give orchestrator subs a higher maxRounds budget
+   *  than the global default. Falls back to deps.config.agentLoop. */
+  agentLoopOverride?: {
+    maxRounds?: number;
+    toolCallTimeoutMs?: number;
+  };
   /** Optional SSE publisher. When provided, the turn streams agent-start,
    *  memory, tool, chat-delta/final, and agent-end events as they happen
    *  (live chat/send case). When omitted, no events are published — the
@@ -96,6 +103,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     fromAgent,
     subagentDepth = 0,
     modelOverride,
+    agentLoopOverride,
     publishSse,
     deps,
   } = args;
@@ -236,7 +244,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         availableModels: listAllModels(deps.config),
         compactionConfig: resolveCompactionConfig(deps.config),
         tools: toolInvoker,
-        agentLoopConfig: deps.config.agentLoop,
+        agentLoopConfig: agentLoopOverride
+          ? { ...deps.config.agentLoop, ...agentLoopOverride }
+          : deps.config.agentLoop,
         ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
       },
     });

@@ -3,7 +3,7 @@
 // orchestrator agent to poll progress and pull final results out.
 
 import { z } from 'zod';
-import { getTask, type AsyncTaskEntry } from '../../server/async-tasks.ts';
+import { getTask, waitForTaskCompletion, type AsyncTaskEntry } from '../../server/async-tasks.ts';
 import type { ChatTurnResult } from '../../server/run-turn-types.ts';
 import type { ToolDefinition } from '../types.ts';
 
@@ -26,12 +26,14 @@ async function fetchStatusViaHttp(task_id: string): Promise<AsyncTaskEntry | nul
 
 async function fetchResultViaHttp(
   task_id: string,
+  opts: { wait_until_done?: boolean; timeout_ms?: number } = {},
 ): Promise<{ task_id: string; state: string; result?: ChatTurnResult; error?: string } | null> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
-  const res = await fetch(
-    `http://${host}:${port}/spawn-result?task_id=${encodeURIComponent(task_id)}`,
-  );
+  const params = new URLSearchParams({ task_id });
+  if (opts.wait_until_done) params.set('wait_until_done', '1');
+  if (opts.timeout_ms !== undefined) params.set('timeout_ms', String(opts.timeout_ms));
+  const res = await fetch(`http://${host}:${port}/spawn-result?${params.toString()}`);
   if (res.status === 404) return null;
   if (res.status === 409) {
     return (await res.json()) as { task_id: string; state: string; error?: string };
@@ -82,28 +84,59 @@ export const subagentStatus: ToolDefinition<z.infer<typeof StatusInput>> = {
   },
 };
 
-const ResultInput = z.object({ task_id: z.string().min(1) }).strict();
+const ResultInput = z
+  .object({
+    task_id: z.string().min(1),
+    wait_until_done: z
+      .boolean()
+      .default(false)
+      .describe(
+        'When true, the tool blocks server-side until the task finishes (or timeout_ms elapses) ' +
+          'instead of erroring on "still running". Use this to avoid burning your own ' +
+          'agent-loop tool-call rounds on a polling loop.',
+      ),
+    timeout_ms: z
+      .number()
+      .int()
+      .min(1_000)
+      .max(600_000)
+      .default(60_000)
+      .describe('Max ms to wait when wait_until_done. Default 60s, max 10min.'),
+  })
+  .strict();
 
 export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   name: 'subagent_result',
   toolset: 'agents',
   description:
     'Fetch the final result of a completed sub-agent task. Returns the assistant text the sub ' +
-    'produced, plus token usage. Errors if the task is still running (use subagent_status to ' +
-    'check first) or has failed (the failure error string is returned in that case).',
+    'produced plus token usage. ' +
+    'Pass `wait_until_done: true` to block server-side until the task finishes — much more ' +
+    'efficient than polling subagent_status in a loop, since each poll burns one of your own ' +
+    'agent-loop tool-call rounds. Default `timeout_ms` is 60s (max 10min). ' +
+    'Errors if the task is still running and wait_until_done is false (or timeout expired) — ' +
+    'use subagent_status if you just want a quick non-blocking peek.',
   inputSchema: ResultInput,
   jsonSchema: {
     type: 'object',
-    properties: { task_id: { type: 'string' } },
+    properties: {
+      task_id: { type: 'string' },
+      wait_until_done: { type: 'boolean', description: 'Block until task finishes. Default false.' },
+      timeout_ms: { type: 'integer', minimum: 1000, maximum: 600000, description: 'Max wait in ms. Default 60000.' },
+    },
     required: ['task_id'],
     additionalProperties: false,
   },
   async handler(input) {
-    const local = getTask(input.task_id);
+    let local = getTask(input.task_id);
     if (local) {
+      if (local.state === 'running' && input.wait_until_done) {
+        local = (await waitForTaskCompletion(input.task_id, input.timeout_ms)) ?? local;
+      }
       if (local.state === 'running') {
         throw new Error(
-          `subagent_result: task '${input.task_id}' still running — use subagent_status to check`,
+          `subagent_result: task '${input.task_id}' still running — use subagent_status, ` +
+            'or call again with wait_until_done:true to block server-side',
         );
       }
       if (local.state === 'failed') {
@@ -125,12 +158,15 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
         ms: local.result?.ms,
       };
     }
-    // HTTP fallback
-    const remote = await fetchResultViaHttp(input.task_id);
+    // HTTP fallback — pass the wait params through.
+    const remote = await fetchResultViaHttp(input.task_id, {
+      wait_until_done: input.wait_until_done,
+      timeout_ms: input.timeout_ms,
+    });
     if (!remote) throw new Error(`subagent_result: task '${input.task_id}' not found`);
     if (remote.state === 'running') {
       throw new Error(
-        `subagent_result: task '${input.task_id}' still running — use subagent_status`,
+        `subagent_result: task '${input.task_id}' still running — call again with wait_until_done:true to block`,
       );
     }
     if (remote.state === 'failed') {

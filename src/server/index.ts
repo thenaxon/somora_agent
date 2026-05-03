@@ -52,6 +52,7 @@ import {
   listTasksForAgent,
   newTaskId,
   registerTask,
+  waitForTaskCompletion,
 } from './async-tasks.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
@@ -665,6 +666,7 @@ app.post('/chat/send-sync', async (c) => {
     from_agent?: string;
     subagent_depth?: number;
     model?: string;
+    max_rounds?: number;
   };
   const agent = body.agent ?? 'hans';
   const sessionRef = body.session ?? 'main';
@@ -675,6 +677,8 @@ app.post('/chat/send-sync', async (c) => {
     typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
   const modelOverride =
     typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined;
+  const maxRoundsOverride =
+    typeof body.max_rounds === 'number' && body.max_rounds > 0 ? body.max_rounds : undefined;
 
   if (!(await loadPersona(agent))) {
     return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
@@ -692,6 +696,9 @@ app.post('/chat/send-sync', async (c) => {
       ...(fromAgent ? { fromAgent } : {}),
       ...(subagentDepth > 0 ? { subagentDepth } : {}),
       ...(modelOverride ? { modelOverride } : {}),
+      ...(maxRoundsOverride
+        ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
+        : {}),
       deps: chatTurnDeps,
     });
     return c.json(result);
@@ -714,6 +721,7 @@ app.post('/spawn-async', async (c) => {
     parent_session?: string;
     subagent_depth?: number;
     model?: string;
+    max_rounds?: number;
   };
   const agent = body.agent;
   const session = body.session;
@@ -730,6 +738,8 @@ app.post('/spawn-async', async (c) => {
     typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
   const modelOverride =
     typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined;
+  const maxRoundsOverride =
+    typeof body.max_rounds === 'number' && body.max_rounds > 0 ? body.max_rounds : undefined;
   const parent_agent = body.parent_agent ?? fromAgent ?? agent;
   const parent_session = body.parent_session ?? '?';
 
@@ -754,6 +764,9 @@ app.post('/spawn-async', async (c) => {
         ...(fromAgent ? { fromAgent } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
         ...(modelOverride ? { modelOverride } : {}),
+        ...(maxRoundsOverride
+          ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
+          : {}),
         deps: chatTurnDeps,
       });
       completeTask(task_id, result);
@@ -783,11 +796,26 @@ app.get('/spawn-status', (c) => {
   });
 });
 
-app.get('/spawn-result', (c) => {
+app.get('/spawn-result', async (c) => {
   const task_id = c.req.query('task_id');
   if (!task_id) return c.json({ error: 'task_id query required' }, 400);
-  const entry = getTask(task_id);
+  // Optional wait_until_done=1 + timeout_ms — server-side blocking
+  // poll. Lets the caller request "give me the answer or wait up to
+  // N ms for it" without burning agent-loop tool-call rounds on the
+  // caller side.
+  const waitFlag = c.req.query('wait_until_done');
+  const wantWait = waitFlag === '1' || waitFlag === 'true';
+  const timeoutMs = (() => {
+    const raw = c.req.query('timeout_ms');
+    if (!raw) return 60_000;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? Math.min(n, 600_000) : 60_000;
+  })();
+  let entry = getTask(task_id);
   if (!entry) return c.json({ error: `task '${task_id}' not found` }, 404);
+  if (wantWait && entry.state === 'running') {
+    entry = (await waitForTaskCompletion(task_id, timeoutMs)) ?? entry;
+  }
   if (entry.state === 'running') {
     return c.json({ error: `task '${task_id}' still running`, state: 'running' }, 409);
   }

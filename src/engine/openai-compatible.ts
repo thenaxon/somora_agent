@@ -461,7 +461,85 @@ export const openAiCompatibleEngine: AgentEngine = {
         }
       }
 
+      // Force-summary fallback: if the loop exited at maxRounds with
+      // no accumulated assistant content (model spent all rounds on
+      // tool calls), make one final no-tools call to extract a summary.
+      // Without this, the caller gets `result: ""` silently and can't
+      // tell the sub bailed out — Hans's bug report from 2026-05-03.
+      if (!cumulative && round >= maxRounds) {
+        logger.warn({
+          msg: 'engine.force_summary_after_cap',
+          engine: ENGINE,
+          agent,
+          session,
+          rounds: round,
+        });
+        loopMessages.push({
+          role: 'system',
+          content:
+            'You have reached the maximum number of tool-call rounds for this turn ' +
+            `(${maxRounds}). Respond NOW without further tool calls — summarize what you ` +
+            'have learned from the tool results so far, even partially. Do not call any tools.',
+        } as ChatMessage);
+        try {
+          const summaryStream = await client.chat.completions.create({
+            model: resolvedModel.modelId,
+            messages: loopMessages,
+            stream: true,
+            stream_options: { include_usage: true },
+            ...(resolvedModel.model.maxTokens
+              ? { max_tokens: resolvedModel.model.maxTokens }
+              : {}),
+            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+            // No tools, no tool_choice — pure text response.
+          });
+          for await (const chunk of summaryStream) {
+            const choice = chunk.choices[0];
+            const delta = choice?.delta;
+            if (delta?.content && typeof delta.content === 'string') {
+              cumulative += delta.content;
+              yield {
+                kind: 'assistant_delta',
+                ts: ts(),
+                engine: ENGINE,
+                text: cumulative,
+              };
+            }
+            const usage = chunk.usage;
+            if (usage) {
+              const prevIn = totalUsage?.tokens_in ?? 0;
+              const prevOut = totalUsage?.tokens_out ?? 0;
+              totalUsage = {
+                tokens_in: prevIn + (usage.prompt_tokens ?? 0),
+                tokens_out: prevOut + (usage.completion_tokens ?? 0),
+              };
+            }
+          }
+        } catch (err) {
+          logger.error({
+            msg: 'engine.force_summary_failed',
+            engine: ENGINE,
+            err: (err as Error).message,
+          });
+          // Fallback synthetic message so the caller at least knows
+          // what happened, even if the summary call itself failed.
+          cumulative =
+            `[somora] Sub-agent reached the agent-loop cap of ${maxRounds} tool-call rounds ` +
+            'without producing a final answer, and the force-summary fallback also failed: ' +
+            `${(err as Error).message}. Inspect the sub-session JSONL for the partial tool results.`;
+        }
+      }
+
       if (cumulative) {
+        yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: cumulative };
+      } else if (round >= maxRounds) {
+        // Loop ended at the cap and the force-summary path didn't
+        // populate cumulative either — synthesize a marker so the
+        // caller doesn't get `result: ""` silently.
+        cumulative =
+          `[somora] Sub-agent reached the agent-loop cap of ${maxRounds} tool-call rounds ` +
+          'and produced no final message. Increase agentLoop.maxRounds in config.yaml or ' +
+          'pass agentLoop.maxRounds in spawn_subagent input if more rounds are needed.';
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: cumulative };
       }
 

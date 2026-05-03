@@ -64,3 +64,25 @@ export function getTask(task_id: string): AsyncTaskEntry | undefined {
 export function listTasksForAgent(parent_agent: string): AsyncTaskEntry[] {
   return [...tasks.values()].filter((t) => t.parent_agent === parent_agent);
 }
+
+/**
+ * Resolve when the task leaves the 'running' state — completes (done
+ * or failed). Caps at `timeoutMs`; on timeout returns the entry as-is
+ * (state still 'running'). Cheap polling (200 ms interval) inside the
+ * server, no extra LLM round-trips for the caller — the calling tool
+ * just awaits and the orchestrator agent's turn doesn't burn rounds
+ * polling.
+ */
+export async function waitForTaskCompletion(
+  task_id: string,
+  timeoutMs: number,
+): Promise<AsyncTaskEntry | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const e = tasks.get(task_id);
+    if (!e) return null;
+    if (e.state !== 'running') return e;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return tasks.get(task_id) ?? null;
+}

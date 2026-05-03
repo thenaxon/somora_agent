@@ -71,6 +71,22 @@ const TaskSchema = z.object({
     .optional()
     .describe('Model alias or "provider/modelId" override. Omit to use the persona\'s default.'),
   task: z.string().min(1),
+  /**
+   * Optional per-spawn agent-loop override. Default global maxRounds=8
+   * is fine for sealed research subs; orchestrator subs that
+   * themselves spawn + poll can hit the cap fast — pass e.g.
+   * { maxRounds: 32 } for those.
+   */
+  maxRounds: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) for ' +
+        'orchestrator subs that spawn further sub-subs and poll their results.',
+    ),
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -211,7 +227,7 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
 interface OneSpawnArgs {
   ctx: import('../types.ts').ToolContext;
   wait: boolean;
-  task: { persona?: string; model?: string; task: string };
+  task: { persona?: string; model?: string; task: string; maxRounds?: number };
 }
 
 interface OneSpawnSyncResult {
@@ -306,6 +322,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           parentSession: ctx.session ?? '?',
           parentDepth,
           modelOverride: task.model,
+          maxRoundsOverride: task.maxRounds,
         })
       : await spawnAsyncViaHttp({
           targetAgent: targetPersona,
@@ -315,6 +332,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           parentSession: ctx.session ?? '?',
           parentDepth,
           modelOverride: task.model,
+          maxRoundsOverride: task.maxRounds,
         });
     logger.info({
       msg: 'spawn_subagent.async_started',
@@ -359,6 +377,9 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           text: task.task,
           subagentDepth: parentDepth + 1,
           ...(task.model ? { modelOverride: task.model } : {}),
+          ...(task.maxRounds
+            ? { agentLoopOverride: { maxRounds: task.maxRounds } }
+            : {}),
           deps: injectedDeps.chatTurnDeps,
         })
       : await runChatTurnViaHttp({
@@ -367,6 +388,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           text: task.task,
           subagentDepth: parentDepth + 1,
           ...(task.model ? { modelOverride: task.model } : {}),
+          ...(task.maxRounds ? { maxRounds: task.maxRounds } : {}),
         });
 
     logger.info({
@@ -407,6 +429,7 @@ async function spawnAsyncInProcess(args: {
   parentSession: string;
   parentDepth: number;
   modelOverride?: string;
+  maxRoundsOverride?: number;
 }): Promise<string> {
   if (!injectedDeps) throw new Error('spawnAsyncInProcess called without injectedDeps');
   const task_id = newTaskId();
@@ -426,6 +449,9 @@ async function spawnAsyncInProcess(args: {
         text: args.taskText,
         subagentDepth: args.parentDepth + 1,
         ...(args.modelOverride ? { modelOverride: args.modelOverride } : {}),
+        ...(args.maxRoundsOverride
+          ? { agentLoopOverride: { maxRounds: args.maxRoundsOverride } }
+          : {}),
         deps: injectedDeps!.chatTurnDeps,
       });
       completeTask(task_id, result);
@@ -449,6 +475,7 @@ async function spawnAsyncViaHttp(args: {
   parentSession: string;
   parentDepth: number;
   modelOverride?: string;
+  maxRoundsOverride?: number;
 }): Promise<string> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
@@ -464,6 +491,7 @@ async function spawnAsyncViaHttp(args: {
       parent_session: args.parentSession,
       subagent_depth: args.parentDepth + 1,
       ...(args.modelOverride ? { model: args.modelOverride } : {}),
+      ...(args.maxRoundsOverride ? { max_rounds: args.maxRoundsOverride } : {}),
     }),
   });
   if (!res.ok) {
@@ -490,6 +518,7 @@ async function runChatTurnViaHttp(args: {
   text: string;
   subagentDepth: number;
   modelOverride?: string;
+  maxRounds?: number;
 }): Promise<ChatTurnResult> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
@@ -503,6 +532,7 @@ async function runChatTurnViaHttp(args: {
       text: args.text,
       subagent_depth: args.subagentDepth,
       ...(args.modelOverride ? { model: args.modelOverride } : {}),
+      ...(args.maxRounds ? { max_rounds: args.maxRounds } : {}),
     }),
   });
   if (!res.ok) {
