@@ -31,6 +31,7 @@ import {
 } from '../storage/sessions.ts';
 import {
   dreamTools,
+  fileTools,
   memoryTools,
   obsidianTools,
   resourceTools,
@@ -317,6 +318,7 @@ tools.registerMany(webTools());
 tools.registerMany(obsidianTools());
 tools.registerMany(somoraDocsTools());
 tools.registerMany(resourceTools());
+tools.registerMany(fileTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,

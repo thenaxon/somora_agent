@@ -1,0 +1,61 @@
+# Tools
+
+somora exposes tools to the agent through a single registry. Every
+tool is **engine-agnostic**: claude-cli + codex-cli see them via an
+MCP server somora spawns per turn, openai-compatible sees them
+in-process. The model never knows which path it's on.
+
+## Tool families
+
+| Toolset | Tools | Purpose |
+|---|---|---|
+| `memory` | `memory_search`, `memory_get`, `memory_list`, `memory_write`, `memory_edit`, `memory_delete` | Read/write the agent's persistent memory (Markdown notes + indexed vault). |
+| `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss` | Inspect and act on findings produced by Dream-Mode (see `dream-mode.md`). |
+| `time` | `time_now` | Current date/time/timezone — model never hallucinates "today". |
+| `web` | `web_search`, `web_fetch` | Search via Brave + fetch web pages as Markdown (Mozilla Readability + SSRF guards). |
+| `obsidian` | `obsidian_write`, `obsidian_move`, `obsidian_delete` | Vault-aware writes; `obsidian_move` rewrites `[[wikilinks]]` across the whole vault. |
+| `file` | `file_read`, `file_write`, `file_patch`, `file_search` | Generic filesystem I/O — local or against any configured SSH resource via `target=...`. |
+| `memory` (docs) | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation (this directory). |
+| `memory` (resources) | `resource_list`, `resource_test` | Discover and probe configured remote SSH targets. |
+
+## Definition shape
+
+A tool is a `ToolDefinition` (see `src/tools/types.ts`) with:
+
+- `name` — globally unique (also the MCP method / OpenAI function name)
+- `toolset` — grouping tag
+- `description` — what the LLM sees in the tool list. Long-form
+  preferred: descriptions are policy, not just API docs ("use this
+  INSTEAD of running `cat` via exec").
+- `inputSchema` — Zod schema for runtime validation
+- `jsonSchema` — JSON Schema for MCP / OpenAI tool definitions
+- `handler(input, ctx)` — receives validated input + a `ToolContext`
+  (`{ agent, getMemoryManager, config }`)
+- `available?(ctx)` — optional runtime probe; tools that fail are
+  hidden from the model entirely (no API key → no `web_search`
+  exposed, no vault → no `obsidian_*`, etc.)
+- `maxResultSizeChars?` — cap on the JSON-stringified result;
+  default 100 000 (≈25–35k tokens)
+
+The registry truncates oversized results to a `{ truncated, preview,
+hint, … }` marker so a runaway tool can't blow context.
+
+## Where tools are wired
+
+- Server-side in-process registry: `src/server/index.ts` — used by the
+  openai-compatible engine's agent-loop.
+- Standalone MCP server: `src/mcp/server.ts` — spawned per turn by
+  claude-cli and codex-cli.
+
+Both register the same set of tools (`memoryTools()`, `dreamTools()`,
+`timeTools()`, `webTools()`, `obsidianTools()`, `somoraDocsTools()`,
+`resourceTools()`, `fileTools()`).
+
+## Background reading
+
+- `display.md` — `/show` and `/verbose` toggles for the TUI
+- `thinking.md` — cross-engine thinking depth control
+- `memory.md` — how the memory layer works
+- `resources.md` — SSH targets that file_* and (later) exec dispatch to
+- `research/tool-architecture.md` — comparative study of OpenClaw and
+  hermes-agent that informed our design

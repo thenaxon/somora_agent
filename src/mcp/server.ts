@@ -21,6 +21,7 @@ import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts'
 import { logger } from '../server/logger.ts';
 import {
   dreamTools,
+  fileTools,
   memoryTools,
   obsidianTools,
   resourceTools,
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
   registry.registerMany(obsidianTools());
   registry.registerMany(somoraDocsTools());
   registry.registerMany(resourceTools());
+  registry.registerMany(fileTools());
 
   const ctx: ToolContext = {
     agent,

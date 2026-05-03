@@ -60,6 +60,21 @@ icon: 🌼              # optional emoji shown in CLI prompts and listings
 model: opus           # alias OR provider/modelId
 fallback: gpt55       # used when primary fails before producing any output
 
+# Optional: cross-engine thinking depth (off|low|medium|high)
+# Per-session override via /thinking <level>. Only applies to models with
+# the `reasoning` capability — see thinking.md.
+thinking: medium
+
+# Optional: per-agent workspace override. Default cwd for the file_* tools.
+# Falls back to config.workspace.default (~/somoraworkspace) when unset.
+workspace:
+  path: ~/lisa-workspace
+
+# Optional: hide remote resources from this agent. By default every
+# resource defined in config.yaml is visible. See resources.md.
+resources:
+  deny: ['production-db']
+
 # Optional: Obsidian vault as a recall source
 obsidian:
   vault: ~/Documents/Vault/
@@ -77,9 +92,31 @@ dream:
 ```
 
 The split between `AGENTS.md` (identity + behavioural rules, agent-editable)
-and `agent.yaml` (operator config, you-edit-only) is intentional. When the
-agent later gains the ability to update its own persona, it'll be limited to
-`AGENTS.md`/`SOUL.md`/`USER.md` — `agent.yaml` stays under your control.
+and `agent.yaml` (operator config) is intentional but not enforced as a
+hard limit — the agent **can** edit `agent.yaml` via the `file_*` tools,
+the path-blacklist allows it. The convention is: persona-content evolves
+in the .md files, operator-config evolves in .yaml. Agents can self-edit
+both today; future Skills-layer guidance will steer them toward the right
+file for each kind of change.
+
+### Self-edit and self-knowledge
+
+Each agent gets a small self-pointer block prepended to its system prompt
+at every turn. It tells the agent its name, where its persona files
+live, the workspace path, the global config location, and which remote
+resources are configured. This means the agent can run e.g.:
+
+```
+file_write({ path: "~/.somora/agents/hans/USER.md", content: "...", mode: "overwrite" })
+file_read({ path: "~/.somora/agents/hans/agent.yaml" })
+file_patch({ path: "~/.somora/config.yaml", old_string: "...", new_string: "..." })
+```
+
+…to update its own state without you having to dictate paths.
+
+To learn more about somora's own architecture, agents can call
+`somora_docs_list` and `somora_docs_read` — those tools serve the
+contents of this `docs/` directory.
 
 ### Persona in three files
 
