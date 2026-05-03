@@ -36,6 +36,7 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/models', usage: '/models' },
   { name: '/model', usage: '/model [<alias>|default]' },
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
+  { name: '/thinking', usage: '/thinking [off|low|medium|high|default]' },
   { name: '/quit', usage: '/quit' },
   { name: '/exit', usage: '/exit' },
 ];
@@ -65,6 +66,9 @@ const HELP_TEXT = `Available commands:
   /show                       — show current display toggles
   /show memory on|off         — show/hide [memory · …] inject lines (display only)
   /show tools on|off          — show/hide [tool call · …] / [tool result · …] lines
+  /thinking                   — show effective thinking depth + source
+  /thinking <level>           — set thinking depth for this session: off|low|medium|high
+  /thinking default           — clear session override, fall back to persona/engine default
   /quit, /exit                — leave somora`;
 
 export interface CommandContext {
@@ -286,6 +290,71 @@ export async function runCommand(
           kind: 'notice',
           text: `model set to: ${ref} (for session ${ctx.session})`,
           tone: 'info',
+        });
+      } catch (err) {
+        out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+      }
+      return out;
+    }
+
+    case '/thinking': {
+      const arg = args[0];
+      if (!arg) {
+        const info = await ctx.api.fetchSessionThinking(ctx.agent, ctx.session);
+        if (!info) {
+          out.push({ kind: 'notice', text: 'could not fetch thinking state', tone: 'error' });
+          return out;
+        }
+        const eff = info.effective ?? '(engine default)';
+        const sourcePart =
+          info.source === 'session-override'
+            ? ` — session-override (persona default: ${info.personaDefault ?? '(none)'})`
+            : info.source === 'persona-default'
+              ? ' — persona default'
+              : ' — no setting, engine default';
+        const dormantPart = info.effective && !info.modelSupportsReasoning
+          ? `\n  warning: active model has no 'reasoning' capability — setting is dormant`
+          : '';
+        out.push({
+          kind: 'notice',
+          text: `Thinking: ${eff}${sourcePart}${dormantPart}`,
+          tone: info.effective && !info.modelSupportsReasoning ? 'warn' : 'info',
+        });
+        return out;
+      }
+      if (arg === 'default' || arg === '-') {
+        try {
+          await ctx.api.clearSessionThinking(ctx.agent, ctx.session);
+          out.push({
+            kind: 'notice',
+            text: 'thinking override cleared, back to persona/engine default',
+            tone: 'info',
+          });
+        } catch (err) {
+          out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+        }
+        return out;
+      }
+      if (arg !== 'off' && arg !== 'low' && arg !== 'medium' && arg !== 'high') {
+        out.push({
+          kind: 'notice',
+          text: `usage: /thinking off|low|medium|high|default`,
+          tone: 'warn',
+        });
+        return out;
+      }
+      try {
+        await ctx.api.setSessionThinking(ctx.agent, ctx.session, arg);
+        // Probe support so we can be honest in the response notice.
+        const info = await ctx.api.fetchSessionThinking(ctx.agent, ctx.session);
+        const dormantPart =
+          info && !info.modelSupportsReasoning
+            ? ` (active model has no 'reasoning' capability — dormant until you switch model)`
+            : '';
+        out.push({
+          kind: 'notice',
+          text: `thinking set to: ${arg}${dormantPart}`,
+          tone: info && !info.modelSupportsReasoning ? 'warn' : 'info',
         });
       } catch (err) {
         out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });

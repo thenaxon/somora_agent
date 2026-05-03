@@ -5,8 +5,18 @@
 
 import { z } from 'zod';
 
-export const ModelCapabilitySchema = z.enum(['text', 'image']);
+export const ModelCapabilitySchema = z.enum(['text', 'image', 'reasoning']);
 export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
+
+// Cross-engine "thinking" knob. Values map per-engine in each adapter:
+//   claude-cli         → SDK `effort: 'low'|'medium'|'high'` (or thinking: disabled)
+//   codex-cli          → -c model_reasoning_effort=<level>
+//   openai-compatible  → reasoning_effort: <level>
+// 'off' disables thinking entirely; the level otherwise guides depth.
+// Only applied when the model has the 'reasoning' capability — otherwise
+// the setting is dormant (header surfaces this honestly).
+export const ThinkingLevelSchema = z.enum(['off', 'low', 'medium', 'high']);
+export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
 
 export const ModelSchema = z.object({
   id: z.string().min(1),

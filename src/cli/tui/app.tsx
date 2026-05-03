@@ -144,6 +144,21 @@ export function App({
       case 'agent-start':
         setStreaming(true);
         setStreamingText('');
+        // If the server tells us the upcoming turn has a thinking level,
+        // pre-set it on stats so the header can show the "🧠 thinking…"
+        // pre-content badge before any tokens arrive.
+        if (ev.thinking) {
+          setStats((prev) => ({
+            tokensIn: prev?.tokensIn ?? 0,
+            tokensInCached: prev?.tokensInCached ?? null,
+            tokensOut: prev?.tokensOut ?? 0,
+            tokensOutReasoning: prev?.tokensOutReasoning ?? null,
+            contextWindow: prev?.contextWindow ?? null,
+            provider: prev?.provider ?? null,
+            model: prev?.model ?? null,
+            thinking: ev.thinking ?? null,
+          }));
+        }
         return;
       case 'chat-delta':
         setStreamingText(ev.text);
@@ -160,14 +175,16 @@ export function App({
         });
         setStreaming(false);
         setBusy(false);
-        if (ev.usage || ev.contextWindow || ev.provider || ev.model) {
+        if (ev.usage || ev.contextWindow || ev.provider || ev.model || ev.thinking) {
           setStats({
             tokensIn: ev.usage?.tokens_in ?? 0,
             tokensInCached: ev.usage?.tokens_in_cached ?? null,
             tokensOut: ev.usage?.tokens_out ?? 0,
+            tokensOutReasoning: ev.usage?.tokens_out_reasoning ?? null,
             contextWindow: ev.contextWindow ?? null,
             provider: ev.provider ?? null,
             model: ev.model ?? null,
+            thinking: ev.thinking ?? null,
           });
         }
         return;
@@ -376,6 +393,7 @@ export function App({
         session={session}
         stats={stats}
         streaming={streaming}
+        streamingPhase={streaming && streamingText.length === 0 ? 'pre' : 'content'}
         connected={connected}
         showMemory={showMemory}
         showTools={showTools}

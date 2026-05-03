@@ -26,17 +26,20 @@ server:
 providers:
   # Anthropic via Claude Code subscription. Uses the local Claude Code
   # binary (~/.local/bin/claude), so no baseUrl / apiKey needed.
+  # capabilities: 'text' (always), 'image' (vision input), 'reasoning'
+  # (model exposes a thinking/reasoning effort knob — controllable via
+  # /thinking and persona thinking: …).
   anthropic:
     engine: claude-cli
     models:
       - id: claude-opus-4-7
         alias: opus
         contextWindow: 1000000
-        capabilities: [text, image]
+        capabilities: [text, image, reasoning]
       # - id: claude-sonnet-4-6
       #   alias: sonnet
       #   contextWindow: 200000
-      #   capabilities: [text, image]
+      #   capabilities: [text, image, reasoning]
       # - id: claude-haiku-4-5
       #   alias: haiku
       #   contextWindow: 200000

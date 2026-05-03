@@ -2,13 +2,32 @@
 // Kept in plain .ts so non-React code (api.ts, stream.ts) can import them
 // without dragging React into modules that don't need it.
 
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
+
+export interface ThinkingState {
+  level: ThinkingLevel;
+  // True if the active model has the 'reasoning' capability — i.e.
+  // the setting is actually being applied. False = dormant.
+  active: boolean;
+}
+
 export interface TurnStats {
   tokensIn: number;
   tokensInCached: number | null;
   tokensOut: number;
+  tokensOutReasoning: number | null;
   contextWindow: number | null;
   provider: string | null;
   model: string | null;
+  thinking: ThinkingState | null;
+}
+
+export interface SessionThinkingInfo {
+  effective: ThinkingLevel | null;
+  override: ThinkingLevel | null;
+  personaDefault: ThinkingLevel | null;
+  source: 'session-override' | 'persona-default' | 'engine-default';
+  modelSupportsReasoning: boolean;
 }
 
 export interface AgentInfo {
@@ -90,8 +109,20 @@ export type Turn =
 // Server-Sent Events from /chat/stream, normalized.
 export type StreamEvent =
   | { kind: 'connected' }
-  | { kind: 'agent-start' }
-  | { kind: 'agent-end'; usage?: { tokens_in?: number; tokens_in_cached?: number; tokens_out?: number }; contextWindow?: number; provider?: string; model?: string }
+  | { kind: 'agent-start'; thinking?: ThinkingState }
+  | {
+      kind: 'agent-end';
+      usage?: {
+        tokens_in?: number;
+        tokens_in_cached?: number;
+        tokens_out?: number;
+        tokens_out_reasoning?: number;
+      };
+      contextWindow?: number;
+      provider?: string;
+      model?: string;
+      thinking?: ThinkingState;
+    }
   | { kind: 'chat-delta'; text: string }
   | { kind: 'chat-final'; text: string }
   | { kind: 'memory'; count: number; topScore: number | null; refs: string[] }

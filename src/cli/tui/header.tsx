@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type { ReactElement } from 'react';
-import type { TurnStats } from './types.ts';
+import type { ThinkingState, TurnStats } from './types.ts';
 import { formatTokens } from './format.ts';
 
 interface Props {
@@ -10,6 +10,10 @@ interface Props {
   session: string;
   stats: TurnStats | null;
   streaming: boolean;
+  // 'pre' = streaming started but no content tokens have landed yet (the
+  // model is likely thinking when reasoning is active). 'content' =
+  // tokens are flowing. Drives the "🧠 thinking…" badge.
+  streamingPhase: 'pre' | 'content';
   connected: boolean;
   showMemory: boolean;
   showTools: boolean;
@@ -28,6 +32,7 @@ export function Header({
   session,
   stats,
   streaming,
+  streamingPhase,
   connected,
   showMemory,
   showTools,
@@ -55,15 +60,30 @@ export function Header({
           {tokenSegment}
         </>
       ) : null}
+      {stats?.thinking ? (
+        <>
+          <Text color="gray">{'   '}</Text>
+          <ThinkingBadge state={stats.thinking} />
+        </>
+      ) : null}
       <Text color="gray">{'   '}</Text>
       <ShowFlag label="mem" on={showMemory} />
       <Text color="gray">{' '}</Text>
       <ShowFlag label="tools" on={showTools} />
       <Box flexGrow={1} justifyContent="flex-end">
         {streaming ? (
-          <Text color="yellow" bold>
-            <Spinner type="dots" /> streaming
-          </Text>
+          streamingPhase === 'pre' && stats?.thinking?.active ? (
+            // Pre-content phase + reasoning model: signal the user is
+            // *thinking*, not stuck. As soon as content tokens land the
+            // spinner switches to "streaming".
+            <Text color="cyan" bold>
+              <Spinner type="dots" /> 🧠 thinking…
+            </Text>
+          ) : (
+            <Text color="yellow" bold>
+              <Spinner type="dots" /> streaming
+            </Text>
+          )
         ) : connected ? (
           <Text color="green">● connected</Text>
         ) : (
@@ -88,6 +108,25 @@ function ShowFlag({ label, on }: { label: string; on: boolean }) {
   );
 }
 
+// Thinking-level indicator. `active=false` means the user picked a level
+// but the active model has no 'reasoning' capability — surface the
+// dormant state honestly instead of pretending the setting works.
+function ThinkingBadge({ state }: { state: ThinkingState }) {
+  if (!state.active) {
+    return (
+      <Text color="gray">
+        thinking={state.level}{' '}
+        <Text color="yellow">(dormant)</Text>
+      </Text>
+    );
+  }
+  return (
+    <Text color="cyan">
+      🧠 {state.level}
+    </Text>
+  );
+}
+
 function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
   if (!stats) return null;
   const cached = stats.tokensInCached;
@@ -106,11 +145,17 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
   } else {
     inSegment = <Text color="white">↑ {formatTokens(total)}</Text>;
   }
+  const reasoning = stats.tokensOutReasoning;
+  const reasoningSegment =
+    reasoning !== null && reasoning > 0 ? (
+      <Text color="cyan"> ({formatTokens(reasoning)} 🧠)</Text>
+    ) : null;
   return (
     <Text>
       {inSegment}
       {window ? <Text color="gray"> / {formatTokens(window)}</Text> : null}
       <Text color="white">   ↓ {formatTokens(stats.tokensOut)}</Text>
+      {reasoningSegment}
     </Text>
   );
 }

@@ -87,6 +87,7 @@ export const claudeCliEngine: AgentEngine = {
       history,
       metaStore,
       resolvedModel,
+      thinking,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`claude-cli engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
@@ -133,6 +134,19 @@ export const claudeCliEngine: AgentEngine = {
         ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
         : systemPrompt;
 
+      // Map somora's cross-engine thinking knob to the Claude Agent SDK's
+      // thinking/effort surface. Only applied when the model declares the
+      // 'reasoning' capability — otherwise the user's setting is dormant
+      // and the header should reflect that.
+      const modelSupportsReasoning =
+        resolvedModel.model.capabilities.includes('reasoning');
+      const thinkingOptions =
+        modelSupportsReasoning && thinking
+          ? thinking === 'off'
+            ? { thinking: { type: 'disabled' as const } }
+            : { effort: thinking }
+          : {};
+
       const stream = query({
         prompt: userInputStream(effectiveUserMessage),
         options: {
@@ -155,6 +169,7 @@ export const claudeCliEngine: AgentEngine = {
           // is loaded independently of settings.json files.
           managedSettings: { autoMemoryEnabled: false },
           includePartialMessages: true,
+          ...thinkingOptions,
           ...(CLAUDE_BIN ? { pathToClaudeCodeExecutable: CLAUDE_BIN } : {}),
           ...(resume ? { resume } : {}),
         },

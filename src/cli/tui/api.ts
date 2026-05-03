@@ -7,6 +7,8 @@ import type {
   ResetResult,
   SessionModelInfo,
   SessionSummary,
+  SessionThinkingInfo,
+  ThinkingLevel,
   TuiConfig,
 } from './types.ts';
 
@@ -79,6 +81,34 @@ export class Api {
   async clearSessionModel(agent: string, session: string): Promise<void> {
     const res = await fetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/model`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) throw new Error(await res.text());
+  }
+
+  async fetchSessionThinking(agent: string, session: string): Promise<SessionThinkingInfo | null> {
+    const res = await fetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as SessionThinkingInfo;
+  }
+
+  async setSessionThinking(agent: string, session: string, level: ThinkingLevel): Promise<void> {
+    const res = await fetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level }),
+      },
+    );
+    if (!res.ok) throw new Error(await res.text());
+  }
+
+  async clearSessionThinking(agent: string, session: string): Promise<void> {
+    const res = await fetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
       { method: 'DELETE' },
     );
     if (!res.ok) throw new Error(await res.text());

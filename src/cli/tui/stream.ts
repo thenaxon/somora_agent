@@ -142,7 +142,18 @@ export function openStream(
         if (data.state === 'final') return { kind: 'chat-final', text: data.text };
         return null;
       case 'agent':
-        if (data.phase === 'start') return { kind: 'agent-start' };
+        if (data.phase === 'start') {
+          return {
+            kind: 'agent-start',
+            thinking:
+              data.thinking && typeof data.thinking === 'object'
+                ? {
+                    level: data.thinking.level,
+                    active: Boolean(data.thinking.active),
+                  }
+                : undefined,
+          };
+        }
         if (data.phase === 'end') {
           return {
             kind: 'agent-end',
@@ -150,6 +161,13 @@ export function openStream(
             contextWindow: data.contextWindow,
             provider: data.provider,
             model: data.model,
+            thinking:
+              data.thinking && typeof data.thinking === 'object'
+                ? {
+                    level: data.thinking.level,
+                    active: Boolean(data.thinking.active),
+                  }
+                : undefined,
           };
         }
         return null;

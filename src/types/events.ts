@@ -17,6 +17,8 @@ export type NormalizedEvent =
         tokens_out: number;
         /** Tokens served from the provider's prefix-cache (subset of tokens_in). Optional — not all engines surface it. */
         tokens_in_cached?: number;
+        /** Reasoning/thinking tokens (subset of tokens_out). Optional — only reasoning-capable models surface it. */
+        tokens_out_reasoning?: number;
       };
     }
   | { kind: 'error'; ts: number; engine: string; message: string };
@@ -28,10 +30,21 @@ export type SseEvent =
       event: 'agent';
       data: {
         phase: 'start' | 'end';
-        usage?: { tokens_in: number; tokens_out: number; tokens_in_cached?: number };
+        usage?: {
+          tokens_in: number;
+          tokens_out: number;
+          tokens_in_cached?: number;
+          tokens_out_reasoning?: number;
+        };
         contextWindow?: number;
         provider?: string;
         model?: string;
+        /**
+         * Effective thinking depth for this turn. Surfaces what the
+         * engine actually applied so clients can show it in the header.
+         * 'dormant' = setting present but model lacks 'reasoning' capability.
+         */
+        thinking?: { level: 'off' | 'low' | 'medium' | 'high'; active: boolean };
       };
     }
   | {

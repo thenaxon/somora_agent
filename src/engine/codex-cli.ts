@@ -115,6 +115,7 @@ export const codexCliEngine: AgentEngine = {
       history,
       metaStore,
       resolvedModel,
+      thinking,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(
@@ -184,6 +185,17 @@ export const codexCliEngine: AgentEngine = {
     //                          load, but that's an explicit, known location.
     args.push('--ignore-user-config', '--ignore-rules');
     args.push('-c', 'project_root_markers=[]');
+    // Cross-engine thinking knob → codex's TOML override. Only applied if
+    // the model declares 'reasoning' capability; otherwise dormant. 'off'
+    // maps to 'minimal' since codex doesn't expose a true off-switch for
+    // reasoning models.
+    if (
+      thinking &&
+      resolvedModel.model.capabilities.includes('reasoning')
+    ) {
+      const codexEffort = thinking === 'off' ? 'minimal' : thinking;
+      args.push('-c', `model_reasoning_effort=${codexEffort}`);
+    }
     args.push('--json', '--skip-git-repo-check');
     if (!resumeId) args.push('--sandbox', 'read-only');
     args.push('-m', resolvedModel.modelId);
@@ -422,6 +434,9 @@ export const codexCliEngine: AgentEngine = {
                 ...usage,
                 ...(usageRaw?.cached_input_tokens !== undefined
                   ? { tokens_in_cached: usageRaw.cached_input_tokens }
+                  : {}),
+                ...(usageRaw?.reasoning_output_tokens !== undefined
+                  ? { tokens_out_reasoning: usageRaw.reasoning_output_tokens }
                   : {}),
               },
             }

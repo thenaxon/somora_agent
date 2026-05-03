@@ -143,6 +143,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       metaStore,
       resolvedModel,
       availableModels,
+      thinking,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`openai-compatible engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
@@ -282,6 +283,18 @@ export const openAiCompatibleEngine: AgentEngine = {
         toolsAdvertised: openAiTools?.length ?? 0,
       });
 
+      // Cross-engine thinking knob → OpenAI's `reasoning_effort` body param
+       // (gpt-5/o1-style). Only applied when the model declares 'reasoning'
+      // capability; for opaque local endpoints (Gemma etc.) we omit it
+      // entirely so the request stays clean and the user sees the dormant
+      // state in the header.
+      const reasoningEffort =
+        thinking &&
+        thinking !== 'off' &&
+        resolvedModel.model.capabilities.includes('reasoning')
+          ? thinking
+          : null;
+
       let round = 0;
       while (round < maxRounds) {
         round++;
@@ -292,6 +305,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           stream_options: { include_usage: true },
           ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' } : {}),
           ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
+          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         });
 
         // Per-round accumulators

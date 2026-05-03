@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { resolveCompactionConfig } from '../compaction/index.ts';
 import { configPath, loadConfig } from '../config/loader.ts';
-import { type Config, listAllModels, resolveAnyRef } from '../config/types.ts';
+import { type Config, listAllModels, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
 import { injectMemoryContext } from '../memory/inject.ts';
 import {
   ensureMemoryDirs,
@@ -126,6 +126,21 @@ function resolveEffectiveModel(
   const ref = (typeof override === 'string' && override.length > 0 ? override : persona.model);
   if (!ref) return null;
   return resolveAnyRef(config, ref);
+}
+
+// Resolve effective thinking depth: per-session override beats persona
+// default. Returns undefined if neither set — engines treat that as
+// "use whatever the model defaults to".
+const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
+function resolveEffectiveThinking(
+  persona: Persona,
+  sessionMeta: Record<string, unknown>,
+): ThinkingLevel | undefined {
+  const override = sessionMeta.thinkingOverride;
+  if (typeof override === 'string' && VALID_THINKING_LEVELS.has(override as ThinkingLevel)) {
+    return override as ThinkingLevel;
+  }
+  return persona.thinking;
 }
 
 // Runs the primary engine. If the primary fails before yielding any
@@ -556,6 +571,66 @@ app.delete('/agents/:agent/sessions/:session/model', async (c) => {
   return c.json({ agent, session, cleared: true });
 });
 
+// Thinking endpoints — mirror /model. Effective level = session override
+// > persona default > unset (engine-default). modelSupportsReasoning
+// flag lets clients show "active vs dormant" honestly.
+app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const meta = await sessionMetaStore.get(agent, session);
+  const resolved = resolveEffectiveModel(config, persona, meta);
+  const modelSupportsReasoning =
+    resolved?.model.capabilities.includes('reasoning') ?? false;
+  const override =
+    typeof meta.thinkingOverride === 'string' &&
+    VALID_THINKING_LEVELS.has(meta.thinkingOverride as ThinkingLevel)
+      ? (meta.thinkingOverride as ThinkingLevel)
+      : null;
+  const effective = resolveEffectiveThinking(persona, meta) ?? null;
+  return c.json({
+    agent,
+    session,
+    effective,
+    override,
+    personaDefault: persona.thinking ?? null,
+    source: override ? 'session-override' : effective ? 'persona-default' : 'engine-default',
+    modelSupportsReasoning,
+  });
+});
+
+app.put('/agents/:agent/sessions/:session/thinking', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { level?: string };
+  if (!body.level || !VALID_THINKING_LEVELS.has(body.level as ThinkingLevel)) {
+    return c.json({ error: `body field "level" must be one of: off, low, medium, high` }, 400);
+  }
+  const meta = await sessionMetaStore.get(agent, session);
+  await sessionMetaStore.set(agent, session, { ...meta, thinkingOverride: body.level });
+  logger.info({ msg: 'session.thinking_set', agent, session, level: body.level });
+  return c.json({ agent, session, level: body.level });
+});
+
+app.delete('/agents/:agent/sessions/:session/thinking', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const meta = await sessionMetaStore.get(agent, session);
+  const { thinkingOverride: _drop, ...rest } = meta;
+  await sessionMetaStore.set(agent, session, rest);
+  logger.info({ msg: 'session.thinking_clear', agent, session });
+  return c.json({ agent, session, cleared: true });
+});
+
 app.get('/chat/history', async (c) => {
   const agent = c.req.query('agent');
   const sessionRef = c.req.query('session');
@@ -668,15 +743,29 @@ app.post('/chat/send', async (c) => {
   autoDreamWorker.resetActivity(agent);
 
   void (async () => {
+    const startModelSupportsReasoning =
+      resolvedModel.model.capabilities.includes('reasoning');
+    const effectiveThinking = resolveEffectiveThinking(persona, sessionMeta);
+    const startThinkingPayload = effectiveThinking
+      ? { level: effectiveThinking, active: startModelSupportsReasoning }
+      : undefined;
     await publish(session, {
       event: 'agent',
       data: {
         phase: 'start',
         provider: resolvedModel.providerName,
         model: resolvedModel.modelId,
+        ...(startThinkingPayload ? { thinking: startThinkingPayload } : {}),
       },
     });
-    let lastUsage: { tokens_in: number; tokens_out: number; tokens_in_cached?: number } | undefined;
+    let lastUsage:
+      | {
+          tokens_in: number;
+          tokens_out: number;
+          tokens_in_cached?: number;
+          tokens_out_reasoning?: number;
+        }
+      | undefined;
     try {
       const history = await getHistory(agent, session);
 
@@ -748,6 +837,7 @@ app.post('/chat/send', async (c) => {
           compactionConfig: resolveCompactionConfig(config),
           tools: toolInvoker,
           agentLoopConfig: config.agentLoop,
+          ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
         },
       });
       const serialize = createTurnSerializer();
@@ -763,6 +853,11 @@ app.post('/chat/send', async (c) => {
       logger.error({ msg: 'turn.fail', agent, session, err: String(err) });
       await publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     }
+    const modelSupportsReasoning =
+      resolvedModel.model.capabilities.includes('reasoning');
+    const thinkingPayload = effectiveThinking
+      ? { level: effectiveThinking, active: modelSupportsReasoning }
+      : undefined;
     await publish(session, {
       event: 'agent',
       data: {
@@ -771,6 +866,7 @@ app.post('/chat/send', async (c) => {
         contextWindow: resolvedModel.model.contextWindow,
         provider: resolvedModel.providerName,
         model: resolvedModel.modelId,
+        ...(thinkingPayload ? { thinking: thinkingPayload } : {}),
       },
     });
   })();

@@ -12,6 +12,13 @@
 server:
   port: 18737
 
+# capabilities (per model):
+#   text      — always present, plain text I/O
+#   image     — accepts image input (vision)
+#   reasoning — model exposes a thinking/reasoning-effort knob; per-engine
+#               adapter applies the cross-engine /thinking setting only for
+#               models with this capability. For models without it, the
+#               setting is dormant and the TUI marks it accordingly.
 providers:
   # Anthropic via Claude Code subscription. Uses the local Claude Code
   # binary (~/.local/bin/claude) — no baseUrl / apiKey needed.
@@ -21,11 +28,11 @@ providers:
       - id: claude-opus-4-7
         alias: opus
         contextWindow: 1000000
-        capabilities: [text, image]
+        capabilities: [text, image, reasoning]
       - id: claude-sonnet-4-6
         alias: sonnet
         contextWindow: 200000
-        capabilities: [text, image]
+        capabilities: [text, image, reasoning]
       - id: claude-haiku-4-5
         alias: haiku
         contextWindow: 200000
@@ -42,15 +49,15 @@ providers:
       - id: gpt-5
         alias: gpt5
         contextWindow: 400000
-        capabilities: [text, image]
+        capabilities: [text, image, reasoning]
       - id: gpt-5-codex
         alias: codex5
         contextWindow: 400000
-        capabilities: [text]
+        capabilities: [text, reasoning]
       - id: o3
         alias: o3
         contextWindow: 200000
-        capabilities: [text]
+        capabilities: [text, reasoning]
 
   # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).
   # Multiple providers of the same engine are fine — just give each a unique key.

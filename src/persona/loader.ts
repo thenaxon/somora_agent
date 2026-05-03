@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import matter from 'gray-matter';
 import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
+import { ThinkingLevelSchema, type ThinkingLevel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -64,6 +65,12 @@ const AgentYamlSchema = z
   .object({
     model: z.string().optional(),
     fallback: z.string().optional(),
+    /**
+     * Persona-level thinking depth default. Overridable per-session via
+     * `/thinking <level>`. Engine adapters apply it only if the active
+     * model has the 'reasoning' capability — otherwise dormant.
+     */
+    thinking: ThinkingLevelSchema.optional(),
     dream: DreamConfigSchema.optional(),
   })
   .passthrough();
@@ -85,6 +92,7 @@ export interface Persona {
   icon: string | undefined;
   model: string | undefined;
   fallback: string | undefined;
+  thinking: ThinkingLevel | undefined;
   dream: DreamConfig | undefined;
   systemPrompt: string;
 }
@@ -194,6 +202,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     icon: agentMd.data.icon,
     model: agentYaml.model,
     fallback: agentYaml.fallback,
+    thinking: agentYaml.thinking,
     dream: agentYaml.dream,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
@@ -217,9 +226,13 @@ const SAMPLE_AGENT_YAML = `# Operator config for this agent. Edit by hand — no
 # model:    primary model. Alias or 'provider/modelId'. If unset, falls back
 #           to the first configured model in config.yaml.
 # fallback: secondary model used when the primary fails before first output.
+# thinking: cross-engine reasoning depth — off|low|medium|high. Engine
+#           adapters apply it only if the active model has the 'reasoning'
+#           capability. Per-session override via /thinking <level>.
 
 model: opus
 # fallback: sonnet
+# thinking: medium
 `;
 
 const SAMPLE_SOUL_MD = `# Who I am

@@ -1,5 +1,5 @@
 import type { CompactionConfig } from '../compaction/types.ts';
-import type { AgentLoopConfig, ResolvedModel } from '../config/types.ts';
+import type { AgentLoopConfig, ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import type { ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
@@ -67,6 +67,14 @@ export interface TurnInput {
    * server-side from config.yaml `agentLoop:` section.
    */
   agentLoopConfig?: AgentLoopConfig;
+  /**
+   * Effective thinking depth for this turn — server resolves persona
+   * default + session override. Engine adapters apply only when the
+   * active model has the 'reasoning' capability; otherwise this is
+   * dormant and the header surfaces that to the user.
+   * 'off' disables thinking; missing means "engine default".
+   */
+  thinking?: ThinkingLevel;
 }
 
 export interface AgentEngine {
