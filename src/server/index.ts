@@ -33,11 +33,13 @@ import {
   dreamTools,
   memoryTools,
   obsidianTools,
+  resourceTools,
   somoraDocsTools,
   timeTools,
   ToolRegistry,
   webTools,
 } from '../tools/index.ts';
+import { shutdownSshPool } from '../ssh/index.ts';
 import { archiveEmptyCompletedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
@@ -314,6 +316,7 @@ tools.registerMany(timeTools());
 tools.registerMany(webTools());
 tools.registerMany(obsidianTools());
 tools.registerMany(somoraDocsTools());
+tools.registerMany(resourceTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
@@ -1007,6 +1010,7 @@ async function shutdown(signal: string): Promise<void> {
   logger.info({ msg: 'server.shutdown', signal });
   autoDreamWorker.shutdown();
   await shutdownMemoryRegistry();
+  await shutdownSshPool();
   process.exit(0);
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'));

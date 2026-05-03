@@ -23,6 +23,7 @@ import {
   dreamTools,
   memoryTools,
   obsidianTools,
+  resourceTools,
   somoraDocsTools,
   timeTools,
   ToolRegistry,
@@ -47,6 +48,7 @@ async function main(): Promise<void> {
   registry.registerMany(webTools());
   registry.registerMany(obsidianTools());
   registry.registerMany(somoraDocsTools());
+  registry.registerMany(resourceTools());
 
   const ctx: ToolContext = {
     agent,
