@@ -71,6 +71,27 @@ const AgentYamlSchema = z
      * model has the 'reasoning' capability — otherwise dormant.
      */
     thinking: ThinkingLevelSchema.optional(),
+    /**
+     * Per-agent workspace override. When set, file_* tools default to
+     * this dir instead of the server-global `workspace.default`. Path
+     * is auto-created (mkdir -p) at server start. ~ expands.
+     */
+    workspace: z
+      .object({
+        path: z.string().min(1),
+      })
+      .optional(),
+    /**
+     * Optional resource-visibility filter. By default the agent sees
+     * every resource defined in config.yaml; `deny` hides individual
+     * names. Allow-list semantics (only-these-are-visible) intentionally
+     * not supported — keeps the config surface small.
+     */
+    resources: z
+      .object({
+        deny: z.array(z.string()).optional(),
+      })
+      .optional(),
     dream: DreamConfigSchema.optional(),
   })
   .passthrough();
@@ -93,6 +114,14 @@ export interface Persona {
   model: string | undefined;
   fallback: string | undefined;
   thinking: ThinkingLevel | undefined;
+  /**
+   * Optional per-agent workspace override (resolved absolute path with
+   * ~ expanded). When undefined, file_* tools fall back to the server-
+   * global `config.workspace.default`.
+   */
+  workspace: string | undefined;
+  /** Resource names this agent should NOT see in resource_list. */
+  resourceDeny: string[];
   dream: DreamConfig | undefined;
   systemPrompt: string;
 }
@@ -203,9 +232,17 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     model: agentYaml.model,
     fallback: agentYaml.fallback,
     thinking: agentYaml.thinking,
+    workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
+    resourceDeny: agentYaml.resources?.deny ?? [],
     dream: agentYaml.dream,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
+}
+
+function expandHome(p: string): string {
+  if (p === '~') return homedir();
+  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
+  return p;
 }
 
 const SAMPLE_AGENTS_MD = `---

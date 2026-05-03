@@ -8,3 +8,4 @@ export { dreamTools } from './dream/index.ts';
 export { timeTools } from './time/index.ts';
 export { webTools } from './web/index.ts';
 export { obsidianTools } from './obsidian/index.ts';
+export { somoraDocsTools } from './docs/index.ts';

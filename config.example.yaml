@@ -129,6 +129,29 @@ providers:
 #     vectorWeight: 0.7                   # weight of vector similarity in fused score
 #     bm25Weight: 0.3                     # weight of BM25/FTS5 in fused score
 
+# Workspace — default cwd for file_* tools. NOT a sandbox: agents can
+# also write outside (their own persona files, the global config).
+# Protection comes from a path-blacklist in the file tools, not from
+# confinement here. Per-agent override in agent.yaml under
+# `workspace.path`. ~ expands. Auto-created at server start.
+# workspace:
+#   default: ~/somoraworkspace
+
+# Resources — named SSH targets. file_* and exec tools take an optional
+# `target` parameter (default `local`, otherwise one of these names).
+# `keyPath` is the private key on the somora server itself. `hostKey`
+# (sha256:...) enforces strict mode instead of TOFU.
+# resources:
+#   linuxserver-1:
+#     type: ssh
+#     host: 192.168.60.10
+#     user: rene
+#     keyPath: ~/.ssh/id_ed25519
+#     description: |
+#       Bastion in the workshop. Ubuntu 24.04, Docker installed.
+#     workspace: /home/rene/work
+#     # hostKey: 'sha256:abc...'      # optional; TOFU when omitted
+
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the
 # tool returns false). Brave is the only provider today; free tier gives

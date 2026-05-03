@@ -11,6 +11,8 @@ import {
   shutdownMemoryRegistry,
 } from '../memory/registry.ts';
 import { getEffectiveEnv } from './env.ts';
+import { SOMORA_HOME_DIR } from './logger.ts';
+import { buildSelfPointer, ensureWorkspaceDirs } from './workspace.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import {
   ensureDefaultAgent,
@@ -31,6 +33,7 @@ import {
   dreamTools,
   memoryTools,
   obsidianTools,
+  somoraDocsTools,
   timeTools,
   ToolRegistry,
   webTools,
@@ -310,6 +313,7 @@ tools.registerMany(dreamTools());
 tools.registerMany(timeTools());
 tools.registerMany(webTools());
 tools.registerMany(obsidianTools());
+tools.registerMany(somoraDocsTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
@@ -871,13 +875,20 @@ app.post('/chat/send', async (c) => {
         invoke: (name: string, input: unknown) => tools.invoke(name, input, toolCtx),
       };
 
+      // Self-pointer: tell the agent who it is and where its files
+      // live. Stable per-session (no per-turn data) so engines that
+      // cache systemPrompt keep their cache. Prepended so it's the
+      // first thing the model sees.
+      const selfPointer = buildSelfPointer(persona, config, SOMORA_HOME_DIR);
+      const systemPromptForTurn = `${selfPointer}\n\n---\n\n${persona.systemPrompt}`;
+
       const stream = runTurnWithFallback({
         primary: resolvedModel,
         fallbackRef: persona.fallback,
         baseInput: {
           agent,
           session,
-          systemPrompt: persona.systemPrompt,
+          systemPrompt: systemPromptForTurn,
           ephemeralContext,
           userMessage: text,
           history,
@@ -937,6 +948,17 @@ for (const a of agentList) {
   } catch (err) {
     logger.warn({ msg: 'memory.ensure_dirs_failed', agent: a.name, err: String(err) });
   }
+}
+
+// Workspace dirs — server-global default plus every per-agent override.
+// Created idempotently so file_* tools never race a first-write mkdir.
+{
+  const personasForWs: Persona[] = [];
+  for (const a of agentList) {
+    const p = await loadPersona(a.name);
+    if (p) personasForWs.push(p);
+  }
+  await ensureWorkspaceDirs(personasForWs, config);
 }
 
 // Recover any dreams that were `running` when the server last died.

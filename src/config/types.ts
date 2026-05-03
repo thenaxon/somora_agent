@@ -141,6 +141,66 @@ export const AgentLoopConfigSchema = z.object({
 }).default({ maxRounds: 8, toolCallTimeoutMs: 30_000 });
 export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 
+// Workspace — default cwd for the file_* tools. NOT a sandbox: agents
+// can also write outside the workspace (their own persona files, the
+// global config) — protection comes from a path-blacklist in the file
+// tools themselves, not from confinement here. Per-agent override lives
+// in agent.yaml under `workspace.path`. The path is auto-created
+// (mkdir -p) at server start; ~ expands to $HOME.
+export const WorkspaceConfigSchema = z
+  .object({
+    default: z.string().min(1).default('~/somoraworkspace'),
+  })
+  .default({ default: '~/somoraworkspace' });
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfigSchema>;
+
+// Resources — named SSH targets that file_* and exec tools can act on
+// via a `target` parameter. SSH-only for v1; the discriminated union
+// is set up so we can add other transport types later (Docker host,
+// k8s pod, ...) without breaking existing entries.
+export const SshResourceSchema = z.object({
+  type: z.literal('ssh'),
+  host: z.string().min(1),
+  port: z.number().int().min(1).max(65535).default(22),
+  user: z.string().min(1),
+  /**
+   * Path to the private key file ON THE SOMORA SERVER. ~ expands. The
+   * key is loaded once at first connection and held in memory for the
+   * pool's lifetime — tools never see it.
+   */
+  keyPath: z.string().min(1),
+  /**
+   * Free-form description shown to the agent via resource_list so it
+   * knows what each target is for. Multi-line OK.
+   */
+  description: z.string().optional(),
+  /**
+   * Default working directory on the remote. Used when file_* tools
+   * are called with a relative path against this resource. Falls back
+   * to the user's home dir on the remote if unset.
+   */
+  workspace: z.string().optional(),
+  /**
+   * Optional SHA256 host-key fingerprint for strict verification.
+   * Format: 'sha256:<base64>'. When set, mismatches refuse connection.
+   * When unset → TOFU: first connection accepts any key and pins it
+   * to ~/.somora/known_hosts; subsequent connections enforce the pin.
+   */
+  hostKey: z.string().optional(),
+});
+export type SshResource = z.infer<typeof SshResourceSchema>;
+
+export const ResourceSchema = z.discriminatedUnion('type', [SshResourceSchema]);
+export type Resource = z.infer<typeof ResourceSchema>;
+
+export const ResourcesConfigSchema = z
+  .record(
+    z.string().regex(/^[A-Za-z0-9_-]+$/, 'resource name must match [A-Za-z0-9_-]+'),
+    ResourceSchema,
+  )
+  .default({});
+export type ResourcesConfig = z.infer<typeof ResourcesConfigSchema>;
+
 // Web tools — provider credentials. Each tool reads its own slice; if a
 // provider block isn't configured the corresponding tool's `available()`
 // probe returns false and the model never sees it.
@@ -194,6 +254,8 @@ export const ConfigSchema = z.object({
   agentLoop: AgentLoopConfigSchema,
   tui: TuiConfigSchema,
   web: WebConfigSchema,
+  workspace: WorkspaceConfigSchema,
+  resources: ResourcesConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
