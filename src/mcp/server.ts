@@ -20,6 +20,7 @@ import { loadConfig } from '../config/loader.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
 import {
+  agentTools,
   dreamTools,
   fileTools,
   memoryTools,
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
   registry.registerMany(somoraDocsTools());
   registry.registerMany(resourceTools());
   registry.registerMany(fileTools());
+  registry.registerMany(agentTools());
 
   // Optional sub-context env hooks set by the engine launcher per turn.
   // SOMORA_SESSION lets spawn_subagent record `parent_session`; the

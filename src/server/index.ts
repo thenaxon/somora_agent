@@ -640,7 +640,65 @@ app.post('/chat/send', async (c) => {
   return c.json({ ok: true }, 202);
 });
 
+// /chat/send-sync — same input as /chat/send, but blocks until the turn
+// completes and returns the result as JSON instead of streaming events
+// to SSE subscribers. Used by spawn_subagent's MCP-passthrough path so
+// that claude-cli/codex-cli MCP-served tools can delegate by HTTPing
+// back to the localhost server (the in-process runChatTurn isn't
+// reachable from the MCP child process).
+//
+// 127.0.0.1-only by virtue of how the server is bound; same trust
+// posture as the existing debug endpoints.
+app.post('/chat/send-sync', async (c) => {
+  const body = (await c.req.json()) as {
+    agent?: string;
+    session?: string;
+    text?: string;
+    from_agent?: string;
+    subagent_depth?: number;
+    model?: string;
+  };
+  const agent = body.agent ?? 'hans';
+  const sessionRef = body.session ?? 'main';
+  const text = body.text ?? '';
+  const fromAgent =
+    typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
+  const subagentDepth =
+    typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
+  const modelOverride =
+    typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined;
+
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) {
+    return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
+  }
+
+  try {
+    const result = await runChatTurn({
+      agent,
+      session,
+      text,
+      ...(fromAgent ? { fromAgent } : {}),
+      ...(subagentDepth > 0 ? { subagentDepth } : {}),
+      ...(modelOverride ? { modelOverride } : {}),
+      deps: chatTurnDeps,
+    });
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 const port = Number(process.env.SOMORA_PORT ?? config.server.port);
+// Pin the resolved port back into the env so child processes (MCP
+// servers spawned by claude-cli/codex-cli) inherit it for their HTTP
+// fallback path back to /chat/send-sync. Same for the bind host so
+// localhost vs 127.0.0.1 stays consistent.
+process.env.SOMORA_PORT = String(port);
+process.env.SOMORA_HOST ??= '127.0.0.1';
 
 await ensureDefaultAgent();
 const agentList = await listAgents();

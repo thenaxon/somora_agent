@@ -19,21 +19,17 @@
 // persona's session-dir. Auto-inject runs per turn; the auto-dream
 // worker picks them up like any other session.
 
-import { mkdir, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { z } from 'zod';
 import { loadPersona } from '../../persona/loader.ts';
 import { logger } from '../../server/logger.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
 import { runChatTurn } from '../../server/run-turn.ts';
+import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
 import type { ToolDefinition } from '../types.ts';
 
 const MAX_SUBAGENT_DEPTH = parseInt(process.env.SOMORA_MAX_SUBAGENT_DEPTH ?? '3', 10) || 3;
 const MAX_CONCURRENT_PER_AGENT = 4;
 const MAX_CONCURRENT_GLOBAL = 16;
-
-const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 
 // Process-wide concurrency tracker. Survives only as long as the
 // somora process — sub-spawns across server restarts are fresh starts.
@@ -235,14 +231,18 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     );
   }
 
-  // Slug + session-meta
-  const ts = formatTimestampWithMs(new Date());
-  const slug = isSelfClone
-    ? `sub-self-${ts}`
-    : `sub-${ctx.agent}-${ts}`;
-  const sessionId = slug; // session id for non-main is its filename stem
-  await ensureSessionFile(targetPersona, sessionId, {
-    slug,
+  // Slug carries ms-precision suffix to disambiguate parallel spawns
+  // within the same second. createSession then prefixes the standard
+  // YYYYMMDD-HHMMSS_ stem so the resulting id matches the existing
+  // EXACT_ID_PATTERN and is resolvable via /sessions, /chat/send, etc.
+  const ms = String(Date.now() % 1000).padStart(3, '0');
+  const slug = isSelfClone ? `sub-self-${ms}` : `sub-${ctx.agent}-${ms}`;
+  const sessionId = await createSession(targetPersona, slug);
+  // Attach the spawn meta block so /sessions can label this entry
+  // "sub from <parent>" without re-deriving from the slug.
+  const existingMeta = await sessionMetaStore.get(targetPersona, sessionId);
+  await sessionMetaStore.set(targetPersona, sessionId, {
+    ...existingMeta,
     spawn: {
       kind: isSelfClone ? 'self-sub' : 'sub',
       parent_agent: ctx.agent,
@@ -262,18 +262,31 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
       target: targetPersona,
       session: sessionId,
       depth: parentDepth + 1,
+      via: injectedDeps ? 'in-process' : 'http',
     });
-    const result: ChatTurnResult = await runChatTurn({
-      agent: targetPersona,
-      session: sessionId,
-      text: task.task,
-      subagentDepth: parentDepth + 1,
-      ...(task.model ? { modelOverride: task.model } : {}),
-      deps: injectedDeps.chatTurnDeps,
-      // No publishSse — sub-flow is silent. Parent's spawn_subagent
-      // tool-call is what shows up in the parent's stream; the sub's
-      // events flow into the sub's session JSONL only.
-    });
+
+    // Two paths:
+    //   - in-process (server): call runChatTurn directly via injectedDeps
+    //   - MCP child (claude-cli/codex-cli): HTTP-call back to the
+    //     localhost server's /chat/send-sync endpoint, which itself
+    //     wraps runChatTurn. Same end-result, same persistence.
+    const result: ChatTurnResult = injectedDeps
+      ? await runChatTurn({
+          agent: targetPersona,
+          session: sessionId,
+          text: task.task,
+          subagentDepth: parentDepth + 1,
+          ...(task.model ? { modelOverride: task.model } : {}),
+          deps: injectedDeps.chatTurnDeps,
+        })
+      : await runChatTurnViaHttp({
+          agent: targetPersona,
+          session: sessionId,
+          text: task.task,
+          subagentDepth: parentDepth + 1,
+          ...(task.model ? { modelOverride: task.model } : {}),
+        });
+
     logger.info({
       msg: 'spawn_subagent.done',
       target: targetPersona,
@@ -298,38 +311,42 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   }
 }
 
-function formatTimestampWithMs(d: Date): string {
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  return (
-    `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}-` +
-    `${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}-` +
-    `${pad(d.getUTCMilliseconds(), 3)}`
-  );
+/**
+ * MCP-child fallback: when spawn_subagent is invoked from inside a
+ * claude-cli or codex-cli MCP server (configureSpawnTools never ran
+ * here), reach back to the somora HTTP server on localhost. Same
+ * inputs, same eventual JSONL state — just routed through HTTP rather
+ * than a direct in-process call.
+ *
+ * Server host/port from SOMORA_HOST + SOMORA_PORT env (set by the
+ * parent server on launch). Falls back to 127.0.0.1:18737.
+ */
+async function runChatTurnViaHttp(args: {
+  agent: string;
+  session: string;
+  text: string;
+  subagentDepth: number;
+  modelOverride?: string;
+}): Promise<ChatTurnResult> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const url = `http://${host}:${port}/chat/send-sync`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent: args.agent,
+      session: args.session,
+      text: args.text,
+      subagent_depth: args.subagentDepth,
+      ...(args.modelOverride ? { model: args.modelOverride } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`spawn_subagent HTTP fallback ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as ChatTurnResult;
+  return data;
 }
 
-async function ensureSessionFile(
-  agent: string,
-  sessionId: string,
-  meta: Record<string, unknown>,
-): Promise<void> {
-  // Sessions live at <SOMORA_HOME>/agents/<agent>/sessions/<id>.{jsonl,meta.json}.
-  // We touch the JSONL so listSessions picks it up before any events
-  // land, and write the meta with the spawn marker so /sessions
-  // listings can show "sub from ...".
-  const dir = join(SOMORA_HOME, 'agents', agent, 'sessions');
-  await mkdir(dir, { recursive: true });
-  const jsonl = join(dir, `${sessionId}.jsonl`);
-  const metaPath = join(dir, `${sessionId}.meta.json`);
-  await writeFile(jsonl, '', { flag: 'wx' }).catch(() => {
-    /* already exists — fine, runChatTurn will append */
-  });
-  await writeFile(
-    metaPath,
-    JSON.stringify(
-      { ...meta, createdAt: new Date().toISOString() },
-      null,
-      2,
-    ),
-    'utf8',
-  );
-}

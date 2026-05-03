@@ -48,6 +48,11 @@ export function somoraMemoryServerSpawn(args: {
       ...(args.subagentDepth !== undefined && args.subagentDepth > 0
         ? { SOMORA_SUBAGENT_DEPTH: String(args.subagentDepth) }
         : {}),
+      // SOMORA_HOST/PORT are inherited via filterEnv (the parent server
+      // process has them), so spawn_subagent's HTTP-fallback can find
+      // the localhost endpoint. Belt-and-suspenders explicit:
+      ...(process.env.SOMORA_HOST ? { SOMORA_HOST: process.env.SOMORA_HOST } : {}),
+      ...(process.env.SOMORA_PORT ? { SOMORA_PORT: process.env.SOMORA_PORT } : {}),
     },
   };
 }
@@ -84,6 +89,12 @@ export function somoraMemoryCodexFlags(args: {
   const envEntries: string[] = [`SOMORA_AGENT = ${tomlString(args.agent)}`];
   if (process.env.SOMORA_HOME) {
     envEntries.push(`SOMORA_HOME = ${tomlString(process.env.SOMORA_HOME)}`);
+  }
+  if (process.env.SOMORA_HOST) {
+    envEntries.push(`SOMORA_HOST = ${tomlString(process.env.SOMORA_HOST)}`);
+  }
+  if (process.env.SOMORA_PORT) {
+    envEntries.push(`SOMORA_PORT = ${tomlString(process.env.SOMORA_PORT)}`);
   }
   if (args.session) {
     envEntries.push(`SOMORA_SESSION = ${tomlString(args.session)}`);
