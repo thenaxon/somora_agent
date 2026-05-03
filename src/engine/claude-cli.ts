@@ -158,7 +158,11 @@ export const claudeCliEngine: AgentEngine = {
           tools: [],
           disallowedTools: KNOWN_ACCOUNT_TOOLS,
           mcpServers: {
-            [MCP_SERVER_NAME]: somoraMemoryServerSpawn(agent),
+            [MCP_SERVER_NAME]: somoraMemoryServerSpawn({
+              agent,
+              session,
+              subagentDepth: input.subagentDepth,
+            }),
           },
           canUseTool: somoraToolGate,
           // Policy-layer settings: turn off Claude Code's auto-memory so the

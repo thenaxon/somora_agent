@@ -1,10 +1,8 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { resolveCompactionConfig } from '../compaction/index.ts';
 import { configPath, loadConfig } from '../config/loader.ts';
-import { type Config, listAllModels, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
-import { injectMemoryContext } from '../memory/inject.ts';
+import { type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
 import {
   ensureMemoryDirs,
   getMemoryManager,
@@ -12,8 +10,7 @@ import {
 } from '../memory/registry.ts';
 import { getEffectiveEnv } from './env.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
-import { buildSelfPointer, ensureWorkspaceDirs } from './workspace.ts';
-import { engineRegistry } from '../engine/registry.ts';
+import { ensureWorkspaceDirs } from './workspace.ts';
 import {
   ensureDefaultAgent,
   listAgents,
@@ -21,7 +18,6 @@ import {
   type Persona,
 } from '../persona/loader.ts';
 import {
-  appendEvent,
   createSession,
   getHistory,
   listSessions,
@@ -30,6 +26,8 @@ import {
   sessionMetaStore,
 } from '../storage/sessions.ts';
 import {
+  agentTools,
+  configureSpawnTools,
   dreamTools,
   fileTools,
   memoryTools,
@@ -44,65 +42,9 @@ import { shutdownSshPool } from '../ssh/index.ts';
 import { archiveEmptyCompletedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
-import type { NormalizedEvent, SseEvent } from '../types/events.ts';
+import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
-import { formatArgs, formatDetails, formatResult, shortToolName } from './tool-format.ts';
-
-// Per-turn SSE serializer. Holds a callId→tool map so tool_result events
-// (which only carry callId in the wire format) can be correlated back to
-// the originating tool name and pre-formatted accordingly. Clients
-// receive renderable strings, not raw payloads — keeps TUI / Orbit / web
-// consumers thin.
-function createTurnSerializer() {
-  const callIdToTool = new Map<string, string>();
-  return function serialize(ev: NormalizedEvent): SseEvent | null {
-    switch (ev.kind) {
-      case 'assistant_delta':
-        return { event: 'chat', data: { state: 'delta', text: ev.text } };
-      case 'assistant_message':
-        return { event: 'chat', data: { state: 'final', text: ev.text } };
-      case 'tool_call': {
-        const tool = shortToolName(ev.tool);
-        callIdToTool.set(ev.callId, tool);
-        return {
-          event: 'tool',
-          data: {
-            phase: 'call',
-            tool,
-            summary: formatArgs(ev.tool, ev.input),
-            details: formatDetails(ev.input),
-          },
-        };
-      }
-      case 'tool_result': {
-        const tool = callIdToTool.get(ev.callId) ?? '?';
-        if (ev.error) {
-          return {
-            event: 'tool',
-            data: { phase: 'error', tool, error: ev.error },
-          };
-        }
-        const summary = formatResult(tool, ev.output);
-        // Trivial successes (e.g. {ok:true} after memory_write) are
-        // suppressed — the call line already conveys the action.
-        if (summary === null) return null;
-        return {
-          event: 'tool',
-          data: {
-            phase: 'result',
-            tool,
-            summary,
-            details: formatDetails(ev.output),
-          },
-        };
-      }
-      case 'error':
-        return { event: 'status', data: { msg: `error: ${ev.message}` } };
-      default:
-        return null;
-    }
-  };
-}
+import { runChatTurn } from './run-turn.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 const streams = new Map<string, Set<Subscriber>>();
@@ -181,109 +123,9 @@ function resolveEffectiveThinking(
 // The fallback path emits its own turn_start/turn_end, so the JSONL ends
 // up with two turn_starts and one set of assistant content. That's
 // intentional — the audit log shows we tried twice.
-async function* runTurnWithFallback(args: {
-  primary: ReturnType<typeof resolveEffectiveModel>;
-  fallbackRef: string | undefined;
-  baseInput: Omit<Parameters<typeof engineRegistry[keyof typeof engineRegistry]['runTurn']>[0], 'resolvedModel'>;
-}): AsyncGenerator<NormalizedEvent> {
-  const { primary, fallbackRef, baseInput } = args;
-  if (!primary) return;
-  const primaryEngine = engineRegistry[primary.provider.engine];
-  if (!primaryEngine) {
-    yield {
-      kind: 'error',
-      ts: Date.now(),
-      engine: primary.provider.engine,
-      message: `engine '${primary.provider.engine}' not registered`,
-    };
-    return;
-  }
-
-  let hasContent = false;
-  let primaryError: string | null = null;
-
-  try {
-    for await (const ev of primaryEngine.runTurn({ ...baseInput, resolvedModel: primary })) {
-      if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message') hasContent = true;
-      if (ev.kind === 'error' && !hasContent) {
-        // Hold back the error event — fallback will replace this whole turn
-        primaryError = ev.message;
-        continue;
-      }
-      if (ev.kind === 'turn_end' && primaryError) {
-        // Hold back the trailing turn_end too while we plan a fallback
-        continue;
-      }
-      yield ev;
-    }
-  } catch (err) {
-    if (hasContent) throw err;
-    primaryError = (err as Error).message;
-  }
-
-  if (!primaryError) return;
-
-  // Primary failed before any content — try fallback
-  if (!fallbackRef) {
-    yield {
-      kind: 'error',
-      ts: Date.now(),
-      engine: primary.provider.engine,
-      message: primaryError,
-    };
-    yield {
-      kind: 'turn_end',
-      ts: Date.now(),
-      engine: primary.provider.engine,
-      turnId: `t-${Date.now()}`,
-    };
-    return;
-  }
-
-  const fallbackResolved = resolveAnyRef(config, fallbackRef);
-  if (!fallbackResolved) {
-    yield {
-      kind: 'error',
-      ts: Date.now(),
-      engine: primary.provider.engine,
-      message: `primary failed (${primaryError}); fallback '${fallbackRef}' not found in config`,
-    };
-    yield {
-      kind: 'turn_end',
-      ts: Date.now(),
-      engine: primary.provider.engine,
-      turnId: `t-${Date.now()}`,
-    };
-    return;
-  }
-  const fallbackEngine = engineRegistry[fallbackResolved.provider.engine];
-  if (!fallbackEngine) {
-    yield {
-      kind: 'error',
-      ts: Date.now(),
-      engine: fallbackResolved.provider.engine,
-      message: `fallback engine '${fallbackResolved.provider.engine}' not registered`,
-    };
-    yield {
-      kind: 'turn_end',
-      ts: Date.now(),
-      engine: fallbackResolved.provider.engine,
-      turnId: `t-${Date.now()}`,
-    };
-    return;
-  }
-
-  logger.warn({
-    msg: 'engine.fallback',
-    primary: `${primary.providerName}/${primary.modelId}`,
-    fallback: `${fallbackResolved.providerName}/${fallbackResolved.modelId}`,
-    reason: primaryError,
-  });
-
-  for await (const ev of fallbackEngine.runTurn({ ...baseInput, resolvedModel: fallbackResolved })) {
-    yield ev;
-  }
-}
+// runTurnWithFallback + createTurnSerializer extracted to separate
+// modules so spawn_subagent can reuse them via runChatTurn without
+// pulling all of server/index.ts.
 
 let config: Config;
 try {
@@ -319,6 +161,7 @@ tools.registerMany(obsidianTools());
 tools.registerMany(somoraDocsTools());
 tools.registerMany(resourceTools());
 tools.registerMany(fileTools());
+tools.registerMany(agentTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
@@ -755,8 +598,7 @@ app.post('/chat/send', async (c) => {
   const subagentDepth =
     typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
 
-  const persona = await loadPersona(agent);
-  if (!persona) {
+  if (!(await loadPersona(agent))) {
     logger.warn({ msg: 'chat.send.unknown_agent', agent });
     return c.json({ error: `agent '${agent}' nicht gefunden — lege ~/.somora/agents/${agent}/AGENTS.md an` }, 404);
   }
@@ -771,190 +613,29 @@ app.post('/chat/send', async (c) => {
     );
   }
 
-  const sessionMeta = await sessionMetaStore.get(agent, session);
-  const resolvedModel = resolveEffectiveModel(config, persona, sessionMeta);
-  if (!resolvedModel) {
-    logger.error({ msg: 'chat.send.model_unresolved', agent, ref: persona.model });
-    return c.json(
-      {
-        error: `model '${persona.model ?? '(none)'}' für agent '${agent}' lässt sich nicht aus config.yaml auflösen — Format: provider/modelId oder alias`,
-      },
-      500,
-    );
-  }
-  const engine = engineRegistry[resolvedModel.provider.engine];
-  if (!engine) {
-    return c.json({ error: `keine engine '${resolvedModel.provider.engine}' registriert` }, 500);
-  }
+  logger.info({ msg: 'chat.send', agent, session, ref: sessionRef, len: text.length });
 
-  logger.info({
-    msg: 'chat.send',
+  // Fire-and-forget the actual turn — the HTTP handler returns 202 and
+  // events stream over SSE via the publishSse callback. Errors inside
+  // runChatTurn are surfaced to the SSE channel and the JSONL.
+  void runChatTurn({
     agent,
     session,
-    ref: sessionRef,
-    provider: resolvedModel.providerName,
-    model: resolvedModel.modelId,
-    len: text.length,
-  });
-
-  await appendEvent(agent, session, {
-    kind: 'user_message',
-    ts: Date.now(),
-    engine: engine.name,
     text,
-    ...(fromAgent ? { from_agent: fromAgent } : {}),
+    ...(fromAgent ? { fromAgent } : {}),
+    ...(subagentDepth > 0 ? { subagentDepth } : {}),
+    publishSse: (event) => publish(session, event),
+    deps: chatTurnDeps,
+  }).catch((err) => {
+    logger.error({ msg: 'chat.send.run_failed', agent, session, err: (err as Error).message });
+    void publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
   });
 
   // User just spoke → cancel any in-flight auto-dream for this agent
-  // and reset the idle countdown. resetActivity is a no-op if the agent
-  // isn't dream-enabled.
+  // and reset the idle countdown. (resetActivity is also called inside
+  // runChatTurn, but doing it here ensures the cancel happens BEFORE
+  // the turn even starts processing.)
   autoDreamWorker.resetActivity(agent);
-
-  void (async () => {
-    const startModelSupportsReasoning =
-      resolvedModel.model.capabilities.includes('reasoning');
-    const effectiveThinking = resolveEffectiveThinking(persona, sessionMeta);
-    const startThinkingPayload = effectiveThinking
-      ? { level: effectiveThinking, active: startModelSupportsReasoning }
-      : undefined;
-    await publish(session, {
-      event: 'agent',
-      data: {
-        phase: 'start',
-        provider: resolvedModel.providerName,
-        model: resolvedModel.modelId,
-        ...(startThinkingPayload ? { thinking: startThinkingPayload } : {}),
-      },
-    });
-    let lastUsage:
-      | {
-          tokens_in: number;
-          tokens_out: number;
-          tokens_in_cached?: number;
-          tokens_out_reasoning?: number;
-        }
-      | undefined;
-    try {
-      const history = await getHistory(agent, session);
-
-      // Auto-inject memory recall (DECISION #26). Best-effort: if init or
-      // search fails, we proceed without an ephemeral block — persona is
-      // unaffected. The block is passed as TurnInput.ephemeralContext so
-      // each engine can transport it appropriately (claude-cli appends to
-      // systemPrompt, codex-cli prepends to user message on resume, etc.).
-      let ephemeralContext: string | undefined;
-      try {
-        const mgr = await getMemoryManager(agent, { config: config.memory });
-        const inject = await injectMemoryContext({
-          mgr,
-          history,
-          userMessage: text,
-          cfg: config.memory.autoInject,
-        });
-        ephemeralContext = inject.ephemeralContext;
-        const refs = inject.hits.map((h) => `${h.source}/${h.slug}`);
-        const topScore = inject.hits[0]?.score;
-        if (inject.injectedCount > 0) {
-          logger.info({
-            msg: 'memory.injected',
-            agent,
-            session,
-            count: inject.injectedCount,
-            slugs: refs,
-            topScore,
-          });
-        }
-        // Always emit the SSE memory event — even on zero hits — so the
-        // CLI can show "[memory · 0 hits]" and the user knows recall ran.
-        // fullText carries the actual inject block so /verbose memory can
-        // show what landed in the model's context.
-        await publish(session, {
-          event: 'memory',
-          data: {
-            count: inject.injectedCount,
-            ...(topScore !== undefined ? { topScore } : {}),
-            refs,
-            fullText: inject.ephemeralContext ?? '',
-          },
-        });
-      } catch (err) {
-        logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
-      }
-
-      // Bind the agent context into the tool invoker for engines that run
-      // their own agent-loop (currently only openai-compatible). claude-cli
-      // and codex-cli consume tools via MCP and ignore this field.
-      // listAvailable filters tools whose `available(ctx)` returns false —
-      // model never sees a tool it can't actually run (no API key →
-      // no web_search exposed, no vault → no obsidian_* exposed, etc.).
-      const toolCtx = {
-        agent,
-        getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
-        config,
-      };
-      const availableTools = await tools.listAvailable(toolCtx);
-      const toolInvoker = {
-        list: () => availableTools,
-        invoke: (name: string, input: unknown) => tools.invoke(name, input, toolCtx),
-      };
-
-      // Self-pointer: tell the agent who it is and where its files
-      // live. Stable per-session (no per-turn data) so engines that
-      // cache systemPrompt keep their cache. Prepended so it's the
-      // first thing the model sees.
-      const selfPointer = buildSelfPointer(persona, config, SOMORA_HOME_DIR);
-      const systemPromptForTurn = `${selfPointer}\n\n---\n\n${persona.systemPrompt}`;
-
-      const stream = runTurnWithFallback({
-        primary: resolvedModel,
-        fallbackRef: persona.fallback,
-        baseInput: {
-          agent,
-          session,
-          systemPrompt: systemPromptForTurn,
-          ephemeralContext,
-          userMessage: text,
-          ...(fromAgent ? { fromAgent } : {}),
-          ...(subagentDepth > 0 ? { subagentDepth } : {}),
-          history,
-          metaStore: sessionMetaStore,
-          availableModels: listAllModels(config),
-          compactionConfig: resolveCompactionConfig(config),
-          tools: toolInvoker,
-          agentLoopConfig: config.agentLoop,
-          ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
-        },
-      });
-      const serialize = createTurnSerializer();
-      for await (const ev of stream) {
-        if (ev.kind !== 'assistant_delta') {
-          await appendEvent(agent, session, ev);
-        }
-        if (ev.kind === 'turn_end' && ev.usage) lastUsage = ev.usage;
-        const sse = serialize(ev);
-        if (sse) await publish(session, sse);
-      }
-    } catch (err) {
-      logger.error({ msg: 'turn.fail', agent, session, err: String(err) });
-      await publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
-    }
-    const modelSupportsReasoning =
-      resolvedModel.model.capabilities.includes('reasoning');
-    const thinkingPayload = effectiveThinking
-      ? { level: effectiveThinking, active: modelSupportsReasoning }
-      : undefined;
-    await publish(session, {
-      event: 'agent',
-      data: {
-        phase: 'end',
-        ...(lastUsage ? { usage: lastUsage } : {}),
-        contextWindow: resolvedModel.model.contextWindow,
-        provider: resolvedModel.providerName,
-        model: resolvedModel.modelId,
-        ...(thinkingPayload ? { thinking: thinkingPayload } : {}),
-      },
-    });
-  })();
 
   return c.json({ ok: true }, 202);
 });
@@ -1011,6 +692,16 @@ const autoDreamWorker = new AutoDreamWorker({
   config,
   getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory }),
 });
+
+// Shared deps object for runChatTurn — server boot wires everything up
+// once and chat/send + spawn_subagent both reuse it.
+const chatTurnDeps = {
+  config,
+  sessionMetaStore,
+  tools,
+  onActivity: (agent: string) => autoDreamWorker.resetActivity(agent),
+};
+configureSpawnTools({ chatTurnDeps });
 for (const a of agentList) {
   try {
     const persona = await loadPersona(a.name);

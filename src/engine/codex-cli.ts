@@ -212,7 +212,13 @@ export const codexCliEngine: AgentEngine = {
     // Must come BEFORE `--json` so codex's argument parser applies them
     // before evaluating the rest of the command (codex's CLI lib expects
     // global flags up front).
-    args.push(...somoraMemoryCodexFlags(agent));
+    args.push(
+      ...somoraMemoryCodexFlags({
+        agent,
+        session,
+        subagentDepth: input.subagentDepth,
+      }),
+    );
     // Disable all of codex's built-in tools (DECISION #23 — engine-agnostic
     // tool surface; only somora-defined tools should be available). codex's
     // default-on tools include shell, file-editing, browser, image-gen,

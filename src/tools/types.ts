@@ -22,6 +22,23 @@ export interface ToolContext {
   /** Agent name owning this invocation. Memory tools scope by this. */
   agent: string;
   /**
+   * Session id this tool is being invoked from. Used by spawn_subagent
+   * and similar A2A tools to record `parent_session` in the sub's
+   * spawn-meta for traceability.
+   *
+   * In-process calls (openai-compatible agent-loop) always have this.
+   * MCP-served calls (claude-cli/codex-cli) read it from
+   * SOMORA_SESSION env set by the engine launcher per turn.
+   */
+  session?: string;
+  /**
+   * Nesting depth of the current turn. 0 = top-level user turn.
+   * Increments when spawn_subagent kicks off a sub. Used for the
+   * recursion cap (default 3) and to skip self-pointer rewrites
+   * inside subs.
+   */
+  subagentDepth?: number;
+  /**
    * Lazy accessor — only initialized if the tool actually needs the manager,
    * so tools that don't touch memory (later workspace_*, etc.) don't pay
    * the embedder warmup cost.
@@ -67,7 +84,8 @@ export type Toolset =
   | 'obsidian'
   | 'file'
   | 'exec'
-  | 'time';
+  | 'time'
+  | 'agents';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   readonly name: string;

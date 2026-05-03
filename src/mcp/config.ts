@@ -21,10 +21,16 @@ export const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
 
 /**
  * Build the stdio-spawn config for the somora-memory MCP server, scoped
- * to the given agent. The agent name flows as SOMORA_AGENT env so the
- * child knows which agent's MemoryManager to construct.
+ * to the given agent + session + sub-depth. SOMORA_AGENT scopes memory
+ * tools, SOMORA_SESSION lets spawn_subagent record parent_session for
+ * traceability, and SOMORA_SUBAGENT_DEPTH enforces the recursion cap
+ * when a sub itself tries to spawn further subs.
  */
-export function somoraMemoryServerSpawn(agent: string): {
+export function somoraMemoryServerSpawn(args: {
+  agent: string;
+  session?: string;
+  subagentDepth?: number;
+}): {
   command: string;
   args: string[];
   env: Record<string, string>;
@@ -37,7 +43,11 @@ export function somoraMemoryServerSpawn(agent: string): {
     args: useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS],
     env: {
       ...filterEnv(process.env),
-      SOMORA_AGENT: agent,
+      SOMORA_AGENT: args.agent,
+      ...(args.session ? { SOMORA_SESSION: args.session } : {}),
+      ...(args.subagentDepth !== undefined && args.subagentDepth > 0
+        ? { SOMORA_SUBAGENT_DEPTH: String(args.subagentDepth) }
+        : {}),
     },
   };
 }
@@ -56,19 +66,30 @@ function filterEnv(env: NodeJS.ProcessEnv): Record<string, string> {
  * is parsed as TOML. Build the trio of flags that registers the
  * somora-memory MCP server for one `codex exec` invocation.
  *
- * codex inherits its own env into MCP children, so we only override
- * SOMORA_AGENT (and SOMORA_HOME if explicitly set) to keep the value
- * payload tractable.
+ * codex inherits its own env into MCP children, so we override only
+ * the somora-specific bits: SOMORA_AGENT (memory scoping),
+ * SOMORA_SESSION (parent_session for spawn meta), SOMORA_SUBAGENT_DEPTH
+ * (recursion cap).
  */
-export function somoraMemoryCodexFlags(agent: string): string[] {
+export function somoraMemoryCodexFlags(args: {
+  agent: string;
+  session?: string;
+  subagentDepth?: number;
+}): string[] {
   const useLocalTsx = existsSync(TSX_BIN_REPO);
   const command = useLocalTsx ? TSX_BIN_REPO : 'npx';
-  const args = useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS];
-  const argsToml = `[${args.map(tomlString).join(', ')}]`;
+  const cmdArgs = useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS];
+  const argsToml = `[${cmdArgs.map(tomlString).join(', ')}]`;
 
-  const envEntries: string[] = [`SOMORA_AGENT = ${tomlString(agent)}`];
+  const envEntries: string[] = [`SOMORA_AGENT = ${tomlString(args.agent)}`];
   if (process.env.SOMORA_HOME) {
     envEntries.push(`SOMORA_HOME = ${tomlString(process.env.SOMORA_HOME)}`);
+  }
+  if (args.session) {
+    envEntries.push(`SOMORA_SESSION = ${tomlString(args.session)}`);
+  }
+  if (args.subagentDepth !== undefined && args.subagentDepth > 0) {
+    envEntries.push(`SOMORA_SUBAGENT_DEPTH = ${tomlString(String(args.subagentDepth))}`);
   }
   const envToml = `{ ${envEntries.join(', ')} }`;
 

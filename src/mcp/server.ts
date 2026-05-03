@@ -52,8 +52,16 @@ async function main(): Promise<void> {
   registry.registerMany(resourceTools());
   registry.registerMany(fileTools());
 
+  // Optional sub-context env hooks set by the engine launcher per turn.
+  // SOMORA_SESSION lets spawn_subagent record `parent_session`; the
+  // depth feeds the recursion cap.
+  const session = process.env.SOMORA_SESSION || undefined;
+  const subagentDepth = parseInt(process.env.SOMORA_SUBAGENT_DEPTH ?? '', 10);
+
   const ctx: ToolContext = {
     agent,
+    ...(session ? { session } : {}),
+    ...(Number.isFinite(subagentDepth) && subagentDepth > 0 ? { subagentDepth } : {}),
     getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
     config,
   };

@@ -11,3 +11,4 @@ export { obsidianTools } from './obsidian/index.ts';
 export { somoraDocsTools } from './docs/index.ts';
 export { resourceTools } from './resources/index.ts';
 export { fileTools } from './file/index.ts';
+export { agentTools, configureSpawnTools } from './agents/index.ts';
