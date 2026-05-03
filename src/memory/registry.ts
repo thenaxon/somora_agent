@@ -92,8 +92,11 @@ export async function shutdownMemoryRegistry(): Promise<void> {
 /**
  * Read agent.yaml's `obsidian:` section. Missing file or section → no
  * vault wired up. Path expansion handles ~.
+ *
+ * Exported so the obsidian_* tools can reuse the same parsing path —
+ * single source of truth for vault discovery + readOnlyPaths semantics.
  */
-async function readObsidianConfigForAgent(agent: string): Promise<ObsidianSource | undefined> {
+export async function readObsidianConfigForAgent(agent: string): Promise<ObsidianSource | undefined> {
   const path = join(SOMORA_HOME, 'agents', agent, 'agent.yaml');
   let raw: string;
   try {

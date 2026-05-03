@@ -7,3 +7,4 @@ export { memoryTools } from './memory/index.ts';
 export { dreamTools } from './dream/index.ts';
 export { timeTools } from './time/index.ts';
 export { webTools } from './web/index.ts';
+export { obsidianTools } from './obsidian/index.ts';
