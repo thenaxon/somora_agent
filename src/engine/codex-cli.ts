@@ -26,6 +26,7 @@ import {
   withLastSeenTs,
   type EngineLastSeen,
 } from './replay.ts';
+import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 
 const ENGINE = 'codex-cli';
@@ -166,6 +167,7 @@ export const codexCliEngine: AgentEngine = {
       metaStore,
       resolvedModel,
       thinking,
+      fromAgent,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(
@@ -195,9 +197,10 @@ export const codexCliEngine: AgentEngine = {
     // remembered systemPrompt is frozen at session-start. Same goes for
     // the cross-engine replay prefix.
     const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
+    const taggedUserMessage = withFromAgentHeader(userMessage, fromAgent);
     const promptPayload = resumeId
-      ? `${ephemeralBlock}${replayPrefix}${userMessage}`
-      : `${systemPrompt}\n\n---\n\n${ephemeralBlock}${replayPrefix}${userMessage}`;
+      ? `${ephemeralBlock}${replayPrefix}${taggedUserMessage}`
+      : `${systemPrompt}\n\n---\n\n${ephemeralBlock}${replayPrefix}${taggedUserMessage}`;
 
     // Argument order matters: `exec` accepts --sandbox, but `exec resume`
     // inherits the sandbox policy from the original thread and rejects

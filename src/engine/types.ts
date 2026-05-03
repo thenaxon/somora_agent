@@ -75,6 +75,22 @@ export interface TurnInput {
    * 'off' disables thinking; missing means "engine default".
    */
   thinking?: ThinkingLevel;
+  /**
+   * Agent-to-agent (A2A) sender attribution. When set, the
+   * `userMessage` for this turn was written by another agent, not by
+   * the human user. Engines prepend a `[Message from agent <name>]`
+   * header to the user-message body so the model knows the
+   * provenance. Persists in JSONL via NormalizedEvent.user_message.from_agent.
+   */
+  fromAgent?: string;
+  /**
+   * When this turn runs inside a spawned sub-agent context, depth is
+   * the nesting level (0 = top-level user turn, 1 = first sub, …).
+   * Engine adapters use it for the self-pointer block ("you are a sub
+   * spawned by …") and for recursion-cap enforcement when a sub itself
+   * tries to spawn further subs.
+   */
+  subagentDepth?: number;
 }
 
 export interface AgentEngine {

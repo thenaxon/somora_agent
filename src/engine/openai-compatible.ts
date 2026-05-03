@@ -26,6 +26,7 @@ import {
 import { logger } from '../server/logger.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 
 const ENGINE = 'openai-compatible';
@@ -93,7 +94,11 @@ function buildMessages(
     if (ev.kind === 'user_message') {
       if (pendingRole !== 'user') flush();
       pendingRole = 'user';
-      pendingText = pendingText ? `${pendingText}\n\n${ev.text}` : ev.text;
+      // A2A attribution: prepend a header when this user-message was
+      // written by another agent so the model sees the provenance
+      // even after replay across engines.
+      const text = withFromAgentHeader(ev.text, ev.from_agent);
+      pendingText = pendingText ? `${pendingText}\n\n${text}` : text;
     } else if (ev.kind === 'assistant_message') {
       if (pendingRole !== 'assistant') flush();
       pendingRole = 'assistant';

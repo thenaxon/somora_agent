@@ -25,6 +25,9 @@ import type { NormalizedEvent } from '../types/events.ts';
 export interface ReplayPair {
   user: string;
   assistant: string;
+  /** A2A attribution of the user-side. Set when the user-message in
+   *  this pair was written by another agent, not the human user. */
+  fromAgent?: string;
 }
 
 export interface ReplayDelta {
@@ -53,13 +56,17 @@ export function computeReplayDelta(
   const applicable = pickLatestApplicable(compactions, sinceTs);
   const effectiveSinceTs = applicable ? applicable.throughTs : sinceTs;
   const pairs: ReplayPair[] = [];
-  let pendingUser: string | undefined;
+  let pendingUser: { text: string; fromAgent?: string } | undefined;
   for (const ev of history) {
     if (ev.ts <= effectiveSinceTs) continue;
     if (ev.kind === 'user_message') {
-      pendingUser = ev.text;
+      pendingUser = { text: ev.text, ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}) };
     } else if (ev.kind === 'assistant_message' && pendingUser !== undefined) {
-      pairs.push({ user: pendingUser, assistant: ev.text });
+      pairs.push({
+        user: pendingUser.text,
+        assistant: ev.text,
+        ...(pendingUser.fromAgent ? { fromAgent: pendingUser.fromAgent } : {}),
+      });
       pendingUser = undefined;
     }
   }
@@ -91,7 +98,11 @@ export function renderReplayPrefix(delta: ReplayDelta): string {
   if (delta.pairs.length > 0) {
     lines.push('<recent-pairs>');
     for (const p of delta.pairs) {
-      lines.push(`User: ${p.user}`);
+      // A2A: when the user-side was written by another agent, mark
+      // it explicitly in the replay so engines catching up don't
+      // confuse it with a human-user turn.
+      const userLabel = p.fromAgent ? `User (from agent ${p.fromAgent})` : 'User';
+      lines.push(`${userLabel}: ${p.user}`);
       lines.push(`Assistant: ${p.assistant}`);
       lines.push('');
     }

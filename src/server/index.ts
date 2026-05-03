@@ -733,10 +733,27 @@ app.get('/chat/stream', async (c) => {
 });
 
 app.post('/chat/send', async (c) => {
-  const body = (await c.req.json()) as { agent?: string; session?: string; text?: string };
+  const body = (await c.req.json()) as {
+    agent?: string;
+    session?: string;
+    text?: string;
+    /**
+     * A2A attribution. When set, this turn's user_message is treated
+     * as written by the named somora agent (not by the human user).
+     * Used by the `agent_ask` tool to post a question into another
+     * agent's session. Persists in JSONL as user_message.from_agent.
+     */
+    from_agent?: string;
+    /** Sub-agent nesting depth (0 = top-level). Reserved for future spawn flow. */
+    subagent_depth?: number;
+  };
   const agent = body.agent ?? 'hans';
   const sessionRef = body.session ?? 'main';
   const text = body.text ?? '';
+  const fromAgent =
+    typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
+  const subagentDepth =
+    typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
 
   const persona = await loadPersona(agent);
   if (!persona) {
@@ -785,6 +802,7 @@ app.post('/chat/send', async (c) => {
     ts: Date.now(),
     engine: engine.name,
     text,
+    ...(fromAgent ? { from_agent: fromAgent } : {}),
   });
 
   // User just spoke → cancel any in-flight auto-dream for this agent
@@ -896,6 +914,8 @@ app.post('/chat/send', async (c) => {
           systemPrompt: systemPromptForTurn,
           ephemeralContext,
           userMessage: text,
+          ...(fromAgent ? { fromAgent } : {}),
+          ...(subagentDepth > 0 ? { subagentDepth } : {}),
           history,
           metaStore: sessionMetaStore,
           availableModels: listAllModels(config),

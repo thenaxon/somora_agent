@@ -16,6 +16,7 @@ import {
   withLastSeenTs,
   type EngineLastSeen,
 } from './replay.ts';
+import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 
 async function* userInputStream(text: string): AsyncIterable<SDKUserMessage> {
@@ -88,6 +89,7 @@ export const claudeCliEngine: AgentEngine = {
       metaStore,
       resolvedModel,
       thinking,
+      fromAgent,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`claude-cli engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
@@ -102,7 +104,7 @@ export const claudeCliEngine: AgentEngine = {
     const lastSeenTs = getLastSeenTs(meta, ENGINE);
     const replayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
     const replayPrefix = renderReplayPrefix(replayDelta);
-    const effectiveUserMessage = replayPrefix + userMessage;
+    const effectiveUserMessage = replayPrefix + withFromAgentHeader(userMessage, fromAgent);
 
     const turnId = `t-${Date.now()}`;
     const ts = () => Date.now();

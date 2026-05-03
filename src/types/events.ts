@@ -1,7 +1,29 @@
 // Internal canonical event format. Persisted as JSONL (later in step 1b+).
 // Engine-agnostic — every adapter (anthropic, openai, ...) maps SDK events to this shape.
 export type NormalizedEvent =
-  | { kind: 'user_message'; ts: number; engine: string; text: string }
+  | {
+      kind: 'user_message';
+      ts: number;
+      engine: string;
+      text: string;
+      /**
+       * Agent-to-agent (A2A) attribution. When set, this user_message
+       * was written into THIS session by another somora agent (via
+       * `agent_ask` or as a sub-task seed) — NOT by the human user.
+       *
+       * Semantics:
+       *   - undefined → human user (default, unchanged behavior)
+       *   - 'hans'    → Hans wrote this turn into the current agent's
+       *                 session as part of an A2A flow.
+       *
+       * Storage: persists in JSONL alongside `text`; replays into
+       * cross-engine context with a "[Message from agent <name>]"
+       * header so other engines learn provenance during catch-up.
+       *
+       * TUI: rendered with the sender's icon instead of the user icon.
+       */
+      from_agent?: string;
+    }
   | { kind: 'assistant_delta'; ts: number; engine: string; text: string }
   | { kind: 'assistant_message'; ts: number; engine: string; text: string }
   | { kind: 'tool_call'; ts: number; engine: string; callId: string; tool: string; input: unknown }
