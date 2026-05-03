@@ -45,6 +45,14 @@ import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
+import {
+  completeTask,
+  failTask,
+  getTask,
+  listTasksForAgent,
+  newTaskId,
+  registerTask,
+} from './async-tasks.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 const streams = new Map<string, Set<Subscriber>>();
@@ -690,6 +698,113 @@ app.post('/chat/send-sync', async (c) => {
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }
+});
+
+// /spawn-async — fire-and-forget version of /chat/send-sync, used by
+// spawn_subagent with wait:false. Returns a task_id immediately; the
+// turn runs in the background. Status/result via /spawn-status and
+// /spawn-result.
+app.post('/spawn-async', async (c) => {
+  const body = (await c.req.json()) as {
+    agent?: string;
+    session?: string;
+    text?: string;
+    from_agent?: string;
+    parent_agent?: string;
+    parent_session?: string;
+    subagent_depth?: number;
+    model?: string;
+  };
+  const agent = body.agent;
+  const session = body.session;
+  const text = body.text ?? '';
+  if (!agent || !session) {
+    return c.json({ error: 'agent + session required' }, 400);
+  }
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const fromAgent =
+    typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
+  const subagentDepth =
+    typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
+  const modelOverride =
+    typeof body.model === 'string' && body.model.length > 0 ? body.model : undefined;
+  const parent_agent = body.parent_agent ?? fromAgent ?? agent;
+  const parent_session = body.parent_session ?? '?';
+
+  const task_id = newTaskId();
+  registerTask({
+    task_id,
+    parent_agent,
+    parent_session,
+    target_agent: agent,
+    target_session: session,
+    started_at: Date.now(),
+  });
+
+  // Fire-and-forget. Errors land in the task entry, not the HTTP
+  // response — the caller already got their task_id back.
+  void (async () => {
+    try {
+      const result = await runChatTurn({
+        agent,
+        session,
+        text,
+        ...(fromAgent ? { fromAgent } : {}),
+        ...(subagentDepth > 0 ? { subagentDepth } : {}),
+        ...(modelOverride ? { modelOverride } : {}),
+        deps: chatTurnDeps,
+      });
+      completeTask(task_id, result);
+    } catch (err) {
+      failTask(task_id, (err as Error).message);
+    }
+  })();
+
+  return c.json({ task_id }, 202);
+});
+
+app.get('/spawn-status', (c) => {
+  const task_id = c.req.query('task_id');
+  if (!task_id) return c.json({ error: 'task_id query required' }, 400);
+  const entry = getTask(task_id);
+  if (!entry) return c.json({ error: `task '${task_id}' not found` }, 404);
+  return c.json({
+    task_id: entry.task_id,
+    state: entry.state,
+    parent_agent: entry.parent_agent,
+    parent_session: entry.parent_session,
+    target_agent: entry.target_agent,
+    target_session: entry.target_session,
+    started_at: entry.started_at,
+    ...(entry.finished_at !== undefined ? { finished_at: entry.finished_at } : {}),
+    ...(entry.error ? { error: entry.error } : {}),
+  });
+});
+
+app.get('/spawn-result', (c) => {
+  const task_id = c.req.query('task_id');
+  if (!task_id) return c.json({ error: 'task_id query required' }, 400);
+  const entry = getTask(task_id);
+  if (!entry) return c.json({ error: `task '${task_id}' not found` }, 404);
+  if (entry.state === 'running') {
+    return c.json({ error: `task '${task_id}' still running`, state: 'running' }, 409);
+  }
+  return c.json({
+    task_id: entry.task_id,
+    state: entry.state,
+    target_agent: entry.target_agent,
+    target_session: entry.target_session,
+    ...(entry.result ? { result: entry.result } : {}),
+    ...(entry.error ? { error: entry.error } : {}),
+  });
+});
+
+app.get('/spawn-list', (c) => {
+  const parent = c.req.query('parent_agent');
+  if (!parent) return c.json({ error: 'parent_agent query required' }, 400);
+  return c.json({ tasks: listTasksForAgent(parent) });
 });
 
 const port = Number(process.env.SOMORA_PORT ?? config.server.port);

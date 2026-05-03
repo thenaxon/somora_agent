@@ -21,6 +21,14 @@
 
 import { z } from 'zod';
 import { loadPersona } from '../../persona/loader.ts';
+import {
+  completeTask,
+  failTask,
+  getTask,
+  newTaskId,
+  registerTask,
+  type AsyncTaskEntry,
+} from '../../server/async-tasks.ts';
 import { logger } from '../../server/logger.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
 import { runChatTurn } from '../../server/run-turn.ts';
@@ -72,8 +80,13 @@ const TaskSchema = z.object({
 const SingleInput = TaskSchema.extend({
   wait: z
     .boolean()
-    .default(true)
-    .describe('When true (default), block until the sub returns its final answer.'),
+    .default(false)
+    .describe(
+      'When true: block this turn until the sub returns its final answer (good for "I need ' +
+        'the result NOW to compose my reply"). When false (default): fire-and-forget — returns ' +
+        'a task_id immediately, sub runs in the background. Check progress with subagent_status, ' +
+        'fetch the answer with subagent_result.',
+    ),
 }).strict();
 
 export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
@@ -82,8 +95,11 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
   description:
     'Spawn a sub-agent to handle a sealed task. The sub runs in a fresh session of the ' +
     'target persona (defaults to a clone of you), goes through normal memory+tool+thinking ' +
-    'flow, and returns its final answer. Use this for delegations like "ask Lisa to find X" ' +
-    'or for self-spawns when you want a clean slate to research something. ' +
+    'flow, and produces a final answer. ' +
+    'Default is fire-and-forget (wait:false): you get a task_id back immediately and your ' +
+    'turn ends — the user can keep chatting with you while the sub runs. Use ' +
+    'subagent_status / subagent_result to check on it later. ' +
+    'Set wait:true for synchronous "I need the result NOW to write my reply" delegations. ' +
     'Depth cap: 3 (a sub itself can spawn further subs up to that limit). ' +
     'Per-agent concurrent cap: 4. Cross-engine OK — Hans-on-opus can spawn Lisa-on-gpt55. ' +
     'Sub sessions stay visible in /sessions of the target persona with a "sub from X/Y" marker.',
@@ -108,6 +124,7 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
   async handler(input, ctx) {
     const result = await runOneSpawn({
       ctx,
+      wait: input.wait,
       task: { task: input.task, ...(input.persona ? { persona: input.persona } : {}), ...(input.model ? { model: input.model } : {}) },
     });
     return result;
@@ -125,6 +142,14 @@ const BatchInput = z
       .min(1)
       .max(8)
       .describe('Up to 8 tasks. Run in parallel; results returned together.'),
+    wait: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Default false (fire-and-forget): each task gets its own task_id, all run in ' +
+          'parallel in the background, your turn ends immediately. true blocks until all ' +
+          'complete and returns results inline.',
+      ),
   })
   .strict();
 
@@ -161,7 +186,7 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
   },
   async handler(input, ctx) {
     const settled = await Promise.allSettled(
-      input.tasks.map((t) => runOneSpawn({ ctx, task: t })),
+      input.tasks.map((t) => runOneSpawn({ ctx, wait: input.wait, task: t })),
     );
     const results = settled.map((s, i) => {
       if (s.status === 'fulfilled') return s.value;
@@ -178,9 +203,6 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
   },
 };
 
-export function agentTools(): ToolDefinition[] {
-  return [spawnSubagent, spawnSubagents] as ToolDefinition[];
-}
 
 // ─────────────────────────────────────────────────────────────────────
 // shared spawn machinery
@@ -188,11 +210,13 @@ export function agentTools(): ToolDefinition[] {
 
 interface OneSpawnArgs {
   ctx: import('../types.ts').ToolContext;
+  wait: boolean;
   task: { persona?: string; model?: string; task: string };
 }
 
-interface OneSpawnResult {
+interface OneSpawnSyncResult {
   ok: boolean;
+  wait: 'sync';
   persona: string;
   agent_kind: 'self-clone' | 'named';
   session_slug: string;
@@ -202,6 +226,18 @@ interface OneSpawnResult {
   ms: number;
   thinkingActive: boolean;
 }
+
+interface OneSpawnAsyncResult {
+  ok: true;
+  wait: 'async';
+  task_id: string;
+  persona: string;
+  agent_kind: 'self-clone' | 'named';
+  session_slug: string;
+  hint: string;
+}
+
+type OneSpawnResult = OneSpawnSyncResult | OneSpawnAsyncResult;
 
 async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   // injectedDeps absent is the normal MCP-child case (configureSpawnTools
@@ -251,12 +287,58 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     },
   });
 
-  // Concurrency bookkeeping
+  // ─── async path (wait: false) ─────────────────────────────────────
+  // Fire-and-forget: register the task, kick off the background work,
+  // return the task_id immediately so the parent's turn can finish.
+  // Concurrency is still tracked but doesn't gate the immediate return.
+  if (!args.wait) {
+    const task_id = injectedDeps
+      ? await spawnAsyncInProcess({
+          targetPersona,
+          sessionId,
+          taskText: task.task,
+          parentAgent: ctx.agent,
+          parentSession: ctx.session ?? '?',
+          parentDepth,
+          modelOverride: task.model,
+        })
+      : await spawnAsyncViaHttp({
+          targetAgent: targetPersona,
+          targetSession: sessionId,
+          taskText: task.task,
+          parentAgent: ctx.agent,
+          parentSession: ctx.session ?? '?',
+          parentDepth,
+          modelOverride: task.model,
+        });
+    logger.info({
+      msg: 'spawn_subagent.async_started',
+      task_id,
+      parent_agent: ctx.agent,
+      target: targetPersona,
+      session: sessionId,
+      depth: parentDepth + 1,
+      via: injectedDeps ? 'in-process' : 'http',
+    });
+    return {
+      ok: true,
+      wait: 'async',
+      task_id,
+      persona: targetPersona,
+      agent_kind: isSelfClone ? 'self-clone' : 'named',
+      session_slug: slug,
+      hint:
+        `Sub is running in the background. Check progress with subagent_status({ task_id: "${task_id}" }) ` +
+        `or fetch the answer with subagent_result({ task_id: "${task_id}" }).`,
+    };
+  }
+
+  // ─── sync path (wait: true) ───────────────────────────────────────
   activeByAgent.set(targetPersona, perAgent + 1);
   activeGlobal++;
   try {
     logger.info({
-      msg: 'spawn_subagent.start',
+      msg: 'spawn_subagent.start_sync',
       parent_agent: ctx.agent,
       parent_session: ctx.session,
       target: targetPersona,
@@ -265,11 +347,6 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
       via: injectedDeps ? 'in-process' : 'http',
     });
 
-    // Two paths:
-    //   - in-process (server): call runChatTurn directly via injectedDeps
-    //   - MCP child (claude-cli/codex-cli): HTTP-call back to the
-    //     localhost server's /chat/send-sync endpoint, which itself
-    //     wraps runChatTurn. Same end-result, same persistence.
     const result: ChatTurnResult = injectedDeps
       ? await runChatTurn({
           agent: targetPersona,
@@ -296,6 +373,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     });
     return {
       ok: !result.error,
+      wait: 'sync',
       persona: targetPersona,
       agent_kind: isSelfClone ? 'self-clone' : 'named',
       session_slug: slug,
@@ -309,6 +387,86 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     activeGlobal--;
     activeByAgent.set(targetPersona, perAgent); // restore prior count
   }
+}
+
+/**
+ * In-process async dispatch: register the task, kick off runChatTurn
+ * as a background promise, return the task_id. completeTask /
+ * failTask write the result back into the shared task store.
+ */
+async function spawnAsyncInProcess(args: {
+  targetPersona: string;
+  sessionId: string;
+  taskText: string;
+  parentAgent: string;
+  parentSession: string;
+  parentDepth: number;
+  modelOverride?: string;
+}): Promise<string> {
+  if (!injectedDeps) throw new Error('spawnAsyncInProcess called without injectedDeps');
+  const task_id = newTaskId();
+  registerTask({
+    task_id,
+    parent_agent: args.parentAgent,
+    parent_session: args.parentSession,
+    target_agent: args.targetPersona,
+    target_session: args.sessionId,
+    started_at: Date.now(),
+  });
+  void (async () => {
+    try {
+      const result = await runChatTurn({
+        agent: args.targetPersona,
+        session: args.sessionId,
+        text: args.taskText,
+        subagentDepth: args.parentDepth + 1,
+        ...(args.modelOverride ? { modelOverride: args.modelOverride } : {}),
+        deps: injectedDeps!.chatTurnDeps,
+      });
+      completeTask(task_id, result);
+    } catch (err) {
+      failTask(task_id, (err as Error).message);
+    }
+  })();
+  return task_id;
+}
+
+/**
+ * HTTP async dispatch: call /spawn-async on the localhost server. The
+ * server registers the task and runs it in its own process; we just
+ * return the task_id. status / result also go through HTTP later.
+ */
+async function spawnAsyncViaHttp(args: {
+  targetAgent: string;
+  targetSession: string;
+  taskText: string;
+  parentAgent: string;
+  parentSession: string;
+  parentDepth: number;
+  modelOverride?: string;
+}): Promise<string> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const res = await fetch(`http://${host}:${port}/spawn-async`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent: args.targetAgent,
+      session: args.targetSession,
+      text: args.taskText,
+      from_agent: args.parentAgent,
+      parent_agent: args.parentAgent,
+      parent_session: args.parentSession,
+      subagent_depth: args.parentDepth + 1,
+      ...(args.modelOverride ? { model: args.modelOverride } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`spawn-async HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as { task_id: string };
+  return data.task_id;
 }
 
 /**
