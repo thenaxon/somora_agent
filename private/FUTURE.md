@@ -311,6 +311,122 @@ der Hotfix (`idleMinutes: 60`).
 
 ---
 
+## Cross-Reference: 3-Repo-Research-Pointers (DECISION #38)
+
+Vor jeder neuen Phase erst hier reinschauen — siehe DECISION #38
+(Pre-Build Research Convention). Pro kommende Phase die fertigen
+Vorlagen aus claude-code-source / OpenClaw / unsere Hermes-Notizen,
+die direkt anwendbar sind. Aus dem Skim 2026-05-04 abend:
+
+### Phase X — Skill-Handling
+
+**claude-code-source — direkter Bauplan:**
+- `src/skills/bundledSkills.ts` → `BundledSkillDefinition`-Schema:
+  `name, description, aliases, whenToUse, argumentHint, allowedTools,
+  model, disableModelInvocation, userInvocable, hooks,
+  context: 'inline'|'fork', agent, files, getPromptForCommand`
+- `src/skills/bundled/loop.ts`, `simplify.ts`, `verify.ts`, `debug.ts`,
+  `remember.ts`, `stuck.ts`, `batch.ts`, `keybindings.ts`,
+  `updateConfig.ts`, **`skillify.ts`** (Skill-Creator-Skill, self-
+  improvement-Pattern!), `claudeApi.ts`, `loremIpsum.ts`, `dream.ts`,
+  `hunter.ts` — 14 konkrete Beispiel-Skills als Referenz.
+- `src/skills/bundled/index.ts` → `initBundledSkills()`-Pattern,
+  feature-flag-Gating per Skill.
+- `src/skills/loadSkillsDir.ts` → File-System-Skill-Loading.
+- `src/skills/mcpSkillBuilders.ts` → Skills aus MCP-Servers ableiten.
+
+**OpenClaw — Disk-Skills + 60+ Beispiele:**
+- `~/.openclaw/skills/<name>/SKILL.md` mit Frontmatter (AgentSkills.io-
+  Spec). Production-real, editierbar mit normalem Editor.
+- `~/.openclaw/skills/obsidian/SKILL.md` — Obsidian-konkretes Beispiel.
+- `~/.openclaw/skills/tmux-agent-teams/SKILL.md` — Pattern für
+  Multi-Agent-Workflows (relevant für Phase 5b).
+
+**Pattern bestätigt:** Skills sind **Prompts die Tools aufrufen**, nicht
+Tools selbst. Sowohl claude-code-source als auch OpenClaw bestätigen.
+
+### Phase 5 — exec + tmux
+
+**claude-code-source — fertige Module:**
+- `src/tasks/LocalShellTask/` → `spawnShellTask`, `registerForeground`,
+  `unregisterForeground`, `backgroundExistingForegroundTask`,
+  `markTaskNotified`, `killShellTasks`. Foreground/Background-Pattern
+  schon ausgereift.
+- `src/tools/BashTool/`:
+  - `bashSecurity.ts` → produktions-reifer Hard-Blacklist
+  - `bashPermissions.ts` → `permissionRuleExtractPrefix`,
+    `commandHasAnyCd`, `matchWildcardPattern`
+  - `pathValidation.ts`, `readOnlyValidation.ts`
+  - `shouldUseSandbox.ts` + `SandboxManager`
+  - `commandSemantics.ts` → `interpretCommandResult` (was bedeutet
+    welcher Exit-Code?)
+  - `parseSedEditCommand.ts` → sed-Sicherheit (sed kann beliebig
+    schreiben!)
+- `src/tasks/types.ts` → `TaskState` Discriminated-Union als Vorbild.
+
+**OpenClaw — Backend-Wahl:**
+- `exec`-Tool mit `host: 'auto'|'sandbox'|'gateway'|'node'`
+- Backend Session-Level-Config, nicht Tool-Argument
+- `process` als Dispatcher mit `action`-Enum (8 Aktionen)
+
+**Aus unserem Research-Doc:**
+- `docs/research/tool-architecture.md` §2.2 "Exec/Terminal"
+  (OpenClaw vs Hermes-Vergleich)
+- Hermes' `notify_on_complete` + `watch_patterns` als
+  Push-Pattern-Vorbild
+
+### Phase 6c — agent_ask Modus 2
+
+**claude-code-source:**
+- `src/tools/AgentTool/agentMemory.ts` + `agentMemorySnapshot.ts` →
+  Memory-Snapshots beim Sub-Spawn (Polish-Vorteil über unser aktuelles
+  Setup, das nichts kopiert).
+- `src/tools/AgentTool/forkSubagent.ts` → Fork-Pattern (Modus-3-Ansatz
+  für später, wenn Lisa Hans's Context erbt).
+- `src/tools/AgentTool/runAgent.ts` mit `createSubagentContext`,
+  `executeSubagentStartHooks`, `recordSidechainTranscript` →
+  Transcript-Trennung pro Sub.
+- `src/utils/forkedAgent.ts` → `CacheSafeParams`,
+  `createSubagentContext` Helpers.
+- `src/services/mcp/client.ts` → `connectToServer`, `fetchToolsForClient`
+  → Sub-Agents mit eigenem MCP-Client.
+
+**OpenClaw:**
+- `subagent-spawn-*.js` und `subagent-announce-*.js` → live-messaging-
+  Patterns (subagent_followup runtime).
+- `waitForDescendantSubagentSummary` → Pattern für „wenn Sub-Sub
+  fertig wird, fasse zusammen und reiche hoch".
+
+### Phase 4-Polish (verstreut)
+
+**claude-code-source:**
+- `src/query/stopHooks.ts` → **Vereinheitlichung von Lifecycle-Hooks**
+  (autoDream, extractMemories, promptSuggestion alle als stopHooks).
+  Direkt für unser Polish: Dream-Mode + Memory-Extraction
+  konsistent als Hook-System.
+- `src/services/policyLimits/` + `claudeAiLimits.ts` → **Per-Provider-
+  Concurrency-Lock** + Rate-Limit-Awareness. Direkt anwendbar gegen
+  unseren mlx-omx-Stau.
+- `src/Tool.ts` `buildTool()` mit Defaults (`isReadOnly`,
+  `isDestructive`, `checkPermissions`, `isConcurrencySafe`,
+  `toAutoClassifierInput`) → erweiterbares ToolDefinition-Schema.
+- `src/services/notifier.ts` → Hermes-Style notify-on-complete-
+  Mechanik wenn wir's mal bauen wollen.
+- `src/utils/forkedAgent.ts:CacheSafeParams` → Prompt-Caching-Aware
+  Sub-Spawns (relevant fürs Caching-Polish).
+
+### Allgemein
+
+**claude-code-source — `feature('FOO')` build-time-flags via `bun:bundle`:**
+Code wird beim Build eliminiert wenn Feature aus. Bei uns relevant
+falls wir z.B. exec hinter Feature-Flag releasen wollen, Default off.
+
+**claude-code-source — `src/memdir/`:**
+Memory-Directory-Pattern (analog zu unserem Memory-Layer mit
+Markdown-as-Source). Konvergente Evolution — gut zur Validierung.
+
+---
+
 ## Phase X — Skill-Handling (geplant für eine der nächsten großen Phasen, vorher diskutieren)
 
 **Status: nicht designt, nur als Konzept reserviert.** Wir wollen das

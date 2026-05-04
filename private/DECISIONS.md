@@ -747,3 +747,40 @@ in `docs/research/tool-architecture.md` Sektion 6.1. Tools heute mit
 Timeout-Override: `subagent_result`, `spawn_subagent`, `spawn_subagents`.
 Phase 6c (`agent_ask`) und Phase 5 (`exec`, `tmux_capture`) werden's
 brauchen.
+
+### 38. Pre-Build Research Convention — claude-code-source + OpenClaw + Hermes
+Vor jeder neuen Build-Phase (oder jeder größeren Design-Diskussion)
+**immer** zuerst die drei Referenz-Codebases prüfen, bevor wir
+selbst Pseudocode oder Schemas schreiben:
+
+1. `~/Projects/naxon/claude-code-source/` — Anthropic Claude Code-
+   Source-Extract. Architektonisch am nächsten an somora (Tool-Loop,
+   Skill-Layer, Permission-System, MCP-Integration).
+2. `~/.npm-global/lib/node_modules/openclaw/dist/` — OpenClaw's
+   bundled JS. Stark bei: Spawn/Sub-Agent-Patterns, Skill-vs-Tool-
+   Trennung, withTimeout-Helper, Exec/Process-Management.
+3. `docs/research/tool-architecture.md` — eigene 577-Zeilen-Synthese
+   aus Hermes + OpenClaw. Immer zuerst lesen; wenn die Frage nicht
+   beantwortet ist, dann die Live-Repos.
+
+**Why:** Diese Konvention wurde 2026-05-05 zur Policy nach dem
+Test-Tag 2026-05-04. DECISION #37 ist genau deshalb entstanden weil
+wir nachträglich in OpenClaw nachgesehen haben und
+`waitForAgentRun({timeoutMs})` mit Status-Tupel `ok|pending|timeout|
+error` als bessere Alternative zu unserem `Promise.race(invoke, 30s)`
+gefunden haben. Hätten wir das vor Phase 2k (als der 30s-Race
+pragmatisch eingebaut wurde) geprüft, wäre uns die Bug-Welle
+erspart geblieben. Plus: ein 1-stündiger Skim in `claude-code-source`
+am 2026-05-04 abend hat fertige Vorlagen für Phase X (Skills),
+Phase 5 (exec) und Phase 6c (agent_ask) zu Tage gebracht — die
+unsere offenen Design-Fragen teilweise schon beantworten.
+
+**How to apply:** Cross-Reference-Pointer pro kommende Phase liegen
+in `private/FUTURE.md` „Cross-Reference: 3-repo-research-pointers"-
+Block. Findings (was die machen, was wir adoptieren, was wir
+weglassen) als knapper Block ins Phase-Design-Doc (eigene `private/
+<phase>-design.md` oder direkt ins FUTURE-Phase-Kapitel).
+**Counter-Regel:** Code nicht kopieren — nur Patterns adoptieren.
+Lizenz-respektierend, plus die drei Repos haben andere Stacks
+(Anthropic-SDK, OpenClaw-eigene-Runtime, Hermes-Python). Ideen
+werden zu somoras TypeScript+Hono+SDK-Setup übersetzt.
