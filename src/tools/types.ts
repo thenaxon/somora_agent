@@ -111,6 +111,31 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
    * registry queries it per turn, no caching.
    */
   available?: (ctx: ToolContext) => boolean | Promise<boolean>;
+  /**
+   * Static per-tool timeout override for the engine-level race. When unset,
+   * the engine falls back to `agentLoop.toolCallTimeoutMs` (default 30s).
+   * Use for tools whose worst-case is reliably longer than 30s independent
+   * of input (rare — most variability is input-driven, see timeoutFromInput).
+   */
+  readonly defaultTimeoutMs?: number;
+  /**
+   * Dynamic per-call timeout. Receives the validated input, returns the
+   * timeout to apply for *this* invocation, or undefined to fall through
+   * to defaultTimeoutMs / global. Use for tools where the caller
+   * communicates how long they're willing to wait — subagent_result with
+   * wait_until_done, agent_ask, exec, tmux_capture-with-pattern.
+   *
+   * The OpenClaw pattern: caller declares timeoutMs, the gateway/engine
+   * waits exactly that long, plus a small (~2s) buffer to round-trip the
+   * "still running" reply.
+   */
+  readonly timeoutFromInput?: (input: TInput) => number | undefined;
+  /**
+   * Hard ceiling for both static and dynamic timeouts. Prevents the model
+   * from sending a malformed timeout_ms value that pins a slot for hours.
+   * Defaults to no cap when unset.
+   */
+  readonly maxTimeoutMs?: number;
   handler: (input: TInput, ctx: ToolContext) => Promise<TOutput>;
 }
 

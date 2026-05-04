@@ -270,10 +270,12 @@ export const openAiCompatibleEngine: AgentEngine = {
     let tokensInCached: number | undefined;
 
     const tools = input.tools;
-    const openAiTools: ChatTool[] | undefined = tools ? toOpenAiTools(tools.list()) : undefined;
+    const toolList = tools ? tools.list() : [];
+    const openAiTools: ChatTool[] | undefined = tools ? toOpenAiTools(toolList) : undefined;
+    const toolByName = new Map(toolList.map((t) => [t.name, t]));
     const loopMessages = [...messages]; // mutable copy; tool rounds append
     const maxRounds = input.agentLoopConfig?.maxRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
-    const toolTimeoutMs =
+    const globalToolTimeoutMs =
       input.agentLoopConfig?.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
 
     try {
@@ -413,8 +415,24 @@ export const openAiCompatibleEngine: AgentEngine = {
             tool: call.function.name,
             input: parsedArgs,
           };
-          // Race the tool invocation against a timeout. On timeout we feed
-          // an error back to the model — same shape as a regular tool error.
+          // Resolve the per-call timeout. Tools that declare themselves
+          // long-running (subagent_result with wait_until_done, agent_ask,
+          // exec, etc.) override the global cap via timeoutFromInput
+          // (dynamic, per-call) or defaultTimeoutMs (static). maxTimeoutMs
+          // hard-caps both so a malformed model-supplied timeout_ms can't
+          // pin a slot indefinitely. Pattern adapted from OpenClaw's
+          // waitForAgentRun — engine itself has no fixed cap, the caller
+          // declares the budget.
+          const toolDef = toolByName.get(call.function.name);
+          const dynamicTimeout = toolDef?.timeoutFromInput?.(parsedArgs as never);
+          const staticTimeout = toolDef?.defaultTimeoutMs;
+          const hardCap = toolDef?.maxTimeoutMs;
+          let toolTimeoutMs = dynamicTimeout ?? staticTimeout ?? globalToolTimeoutMs;
+          if (hardCap !== undefined) toolTimeoutMs = Math.min(toolTimeoutMs, hardCap);
+          // Race the tool invocation against the resolved timeout. On
+          // timeout we feed an error back to the model — same shape as a
+          // regular tool error, but with a hint so the model knows it can
+          // retry with a higher timeout_ms instead of blind retry-storming.
           const result = await Promise.race([
             tools.invoke(call.function.name, parsedArgs),
             new Promise<{ ok: false; error: string }>((resolve) =>
@@ -422,7 +440,11 @@ export const openAiCompatibleEngine: AgentEngine = {
                 () =>
                   resolve({
                     ok: false,
-                    error: `tool '${call.function.name}' timed out after ${toolTimeoutMs}ms`,
+                    error:
+                      `tool '${call.function.name}' timed out after ${toolTimeoutMs}ms` +
+                      (dynamicTimeout !== undefined
+                        ? ` — call again with a higher timeout_ms if more time is needed`
+                        : ''),
                   }),
                 toolTimeoutMs,
               ),

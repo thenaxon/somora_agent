@@ -88,5 +88,17 @@ export function getEffectiveEnv(): EffectiveEnv {
     SOMORA_COMPACTION_MODEL: process.env.SOMORA_COMPACTION_MODEL
       ? { value: process.env.SOMORA_COMPACTION_MODEL, isDefault: false }
       : { value: null, isDefault: true, note: 'unset → uses config.yaml compaction.modelOverride (default auto-pick)' },
+    // claude-agent-sdk env. applyClaudeCliSdkEnv() pushes config defaults
+    // here at boot if they were unset; explicit values pre-set in the env
+    // win over config (override layer per project policy).
+    MCP_TOOL_TIMEOUT: process.env.MCP_TOOL_TIMEOUT
+      ? envInt('MCP_TOOL_TIMEOUT', 600_000)
+      : { value: null, isDefault: true, note: 'unset → claude-agent-sdk hidden default (~5 min). Set via config.yaml claudeCli.mcpToolTimeoutMs' },
+    MCP_TIMEOUT: process.env.MCP_TIMEOUT
+      ? envInt('MCP_TIMEOUT', 60_000)
+      : { value: null, isDefault: true, note: 'unset → SDK default. Set via config.yaml claudeCli.mcpConnectTimeoutMs' },
+    SOMORA_CODEX_TOOL_TIMEOUT_SEC: process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC
+      ? envInt('SOMORA_CODEX_TOOL_TIMEOUT_SEC', 600)
+      : { value: null, isDefault: true, note: 'unset → codex hidden default (60s). Set via config.yaml codexCli.toolTimeoutSec' },
   };
 }

@@ -105,17 +105,26 @@ const ResultInput = z
   })
   .strict();
 
+// OpenClaw-style buffer: when the tool is waiting up to N ms internally,
+// give the engine race N + this much before it pulls the rug. Keeps the
+// inner+outer timing aligned without races at the boundary.
+const TIMEOUT_BUFFER_MS = 2_000;
+const TOOL_INTERNAL_MAX_MS = 600_000; // matches schema .max() above
+const ENGINE_HARD_CAP_MS = TOOL_INTERNAL_MAX_MS + TIMEOUT_BUFFER_MS;
+
 export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   name: 'subagent_result',
   toolset: 'agents',
   description:
-    'Fetch the final result of a completed sub-agent task. Returns the assistant text the sub ' +
-    'produced plus token usage. ' +
+    'Fetch the result of a sub-agent task. Returns one of three states: ' +
+    '"done" (with result text + usage), "failed" (with error), or "pending" ' +
+    '(task still running). ' +
     'Pass `wait_until_done: true` to block server-side until the task finishes — much more ' +
     'efficient than polling subagent_status in a loop, since each poll burns one of your own ' +
     'agent-loop tool-call rounds. Default `timeout_ms` is 60s (max 10min). ' +
-    'Errors if the task is still running and wait_until_done is false (or timeout expired) — ' +
-    'use subagent_status if you just want a quick non-blocking peek.',
+    'IMPORTANT: state "pending" is NOT an error — the sub is still working. Do NOT immediately ' +
+    'retry; either wait and call subagent_status later, or call this again with a higher ' +
+    'timeout_ms. Repeated pending returns mean the sub legitimately needs more time.',
   inputSchema: ResultInput,
   jsonSchema: {
     type: 'object',
@@ -127,6 +136,14 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
     required: ['task_id'],
     additionalProperties: false,
   },
+  // Engine-level race must accommodate the tool's internal wait. Without
+  // wait_until_done the tool returns immediately, so 30s is plenty. With
+  // wait_until_done the inner wait is the caller's `timeout_ms` — give
+  // the engine that + 2s buffer to round-trip the reply.
+  defaultTimeoutMs: 30_000,
+  timeoutFromInput: (input) =>
+    input.wait_until_done ? (input.timeout_ms ?? 60_000) + TIMEOUT_BUFFER_MS : undefined,
+  maxTimeoutMs: ENGINE_HARD_CAP_MS,
   async handler(input) {
     let local = getTask(input.task_id);
     if (local) {
@@ -134,15 +151,20 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
         local = (await waitForTaskCompletion(input.task_id, input.timeout_ms)) ?? local;
       }
       if (local.state === 'running') {
-        throw new Error(
-          `subagent_result: task '${input.task_id}' still running — use subagent_status, ` +
-            'or call again with wait_until_done:true to block server-side',
-        );
+        return {
+          task_id: local.task_id,
+          state: 'pending' as const,
+          target_agent: local.target_agent,
+          target_session: local.target_session,
+          hint: input.wait_until_done
+            ? 'sub still running after timeout_ms; call again with a higher timeout_ms or check subagent_status later'
+            : 'sub still running; pass wait_until_done:true to block, or call subagent_status to peek',
+        };
       }
       if (local.state === 'failed') {
         return {
           task_id: local.task_id,
-          state: 'failed',
+          state: 'failed' as const,
           target_agent: local.target_agent,
           target_session: local.target_session,
           error: local.error ?? 'unknown error',
@@ -150,7 +172,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
       }
       return {
         task_id: local.task_id,
-        state: 'done',
+        state: 'done' as const,
         target_agent: local.target_agent,
         target_session: local.target_session,
         result: local.result?.finalText ?? '',
@@ -165,20 +187,24 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
     });
     if (!remote) throw new Error(`subagent_result: task '${input.task_id}' not found`);
     if (remote.state === 'running') {
-      throw new Error(
-        `subagent_result: task '${input.task_id}' still running — call again with wait_until_done:true to block`,
-      );
+      return {
+        task_id: remote.task_id,
+        state: 'pending' as const,
+        hint: input.wait_until_done
+          ? 'sub still running after timeout_ms; call again with a higher timeout_ms or check subagent_status later'
+          : 'sub still running; pass wait_until_done:true to block, or call subagent_status to peek',
+      };
     }
     if (remote.state === 'failed') {
       return {
         task_id: remote.task_id,
-        state: 'failed',
+        state: 'failed' as const,
         error: remote.error ?? 'unknown error',
       };
     }
     return {
       task_id: remote.task_id,
-      state: 'done',
+      state: 'done' as const,
       result: remote.result?.finalText ?? '',
       usage: remote.result?.usage,
       ms: remote.result?.ms,

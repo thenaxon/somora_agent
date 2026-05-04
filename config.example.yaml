@@ -103,11 +103,36 @@ providers:
 #   maxRounds: 8              # max tool-call rounds per turn (1..100). Most
 #                             # conversations finish in 1-3; 8 is defensive
 #                             # headroom against runaway models.
-#   toolCallTimeoutMs: 30000  # per-tool-call timeout. On timeout, an error
-#                             # is fed back to the model — same shape as a
-#                             # regular tool error. 30s covers slow embed
-#                             # calls etc.; lower (5000) for snappier UX
-#                             # when tools are all known-fast.
+#   toolCallTimeoutMs: 30000  # per-tool-call timeout default. Tools can override
+#                             # via defaultTimeoutMs / timeoutFromInput in their
+#                             # ToolDefinition (DECISION #37) — e.g.
+#                             # subagent_result(wait_until_done) extends this
+#                             # automatically. 30s is the fallback for tools
+#                             # that don't declare their own.
+
+# claude-cli engine tunables. Surfaced from claude-agent-sdk env vars so
+# they're configurable here instead of hidden as undocumented env overrides.
+# Applied at server boot; an explicit env var (MCP_TOOL_TIMEOUT etc.) wins
+# over config (override layer).
+# claudeCli:
+#   mcpToolTimeoutMs: 600000  # per-MCP-tool-call timeout (ms) — sets MCP_TOOL_TIMEOUT.
+#                             # SDK hidden default is ~5min, too short for sub-spawns
+#                             # and long-blocking tools (subagent_result with
+#                             # wait_until_done, agent_ask, exec). 10min default;
+#                             # raise for orchestrator workloads, lower for fail-fast.
+#   mcpConnectTimeoutMs: 60000  # initial MCP server connect handshake timeout (ms) —
+#                               # sets MCP_TIMEOUT. Only affects startup, not running calls.
+
+# codex-cli engine tunables. Same posture as claudeCli — surface codex-
+# internal limits so they're configurable here. Applied via -c TOML
+# overrides on each `codex exec` invocation.
+# codexCli:
+#   toolTimeoutSec: 600       # per-MCP-tool-call timeout in seconds —
+#                             # sets mcp_servers.somora-memory.tool_timeout_sec
+#                             # in codex's TOML. Codex's hidden default is 60s
+#                             # (too short for sub-spawns and long-blocking
+#                             # tools). 600s = 10min keeps parity with
+#                             # claudeCli.mcpToolTimeoutMs.
 
 # memory:
 #   embedding:

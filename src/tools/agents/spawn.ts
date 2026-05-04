@@ -137,6 +137,13 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
     required: ['task'],
     additionalProperties: false,
   },
+  // wait:false returns immediately (just registers + kicks off async),
+  // 30s is plenty. wait:true blocks for the full sub turn — give it
+  // 10min like subagent_result's hard cap; the sub itself will hit
+  // maxRounds long before that, so this is just a runaway guard.
+  defaultTimeoutMs: 30_000,
+  timeoutFromInput: (input) => (input.wait ? 600_000 : undefined),
+  maxTimeoutMs: 600_000,
   async handler(input, ctx) {
     const result = await runOneSpawn({
       ctx,
@@ -200,6 +207,11 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
     required: ['tasks'],
     additionalProperties: false,
   },
+  // Same logic as spawn_subagent: wait:false is instant, wait:true
+  // blocks for all subs to finish — give it the same 10min ceiling.
+  defaultTimeoutMs: 30_000,
+  timeoutFromInput: (input) => (input.wait ? 600_000 : undefined),
+  maxTimeoutMs: 600_000,
   async handler(input, ctx) {
     const settled = await Promise.allSettled(
       input.tasks.map((t) => runOneSpawn({ ctx, wait: input.wait, task: t })),

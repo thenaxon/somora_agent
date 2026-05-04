@@ -80,6 +80,14 @@ export function somoraMemoryCodexFlags(args: {
   agent: string;
   session?: string;
   subagentDepth?: number;
+  /**
+   * Per-MCP-tool-call timeout in seconds. Maps to codex's
+   * `mcp_servers.<name>.tool_timeout_sec` config key. Codex's hidden
+   * default is 60s — too short for sub-spawns and long-blocking tools
+   * (subagent_result with wait_until_done). Pass through from
+   * config.codexCli.toolTimeoutSec.
+   */
+  toolTimeoutSec?: number;
 }): string[] {
   const useLocalTsx = existsSync(TSX_BIN_REPO);
   const command = useLocalTsx ? TSX_BIN_REPO : 'npx';
@@ -119,7 +127,30 @@ export function somoraMemoryCodexFlags(args: {
     // returning {behavior:'allow'} for `mcp__somora-memory__*`.
     '-c',
     `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
+    ...resolveToolTimeoutFlag(args.toolTimeoutSec),
   ];
+}
+
+/**
+ * Resolve the codex tool_timeout_sec flag. Precedence:
+ * 1. Explicit `args.toolTimeoutSec` from the caller (rare — mostly
+ *    reserved for tests / programmatic overrides).
+ * 2. `SOMORA_CODEX_TOOL_TIMEOUT_SEC` env, set by applyCodexCliEnv() at
+ *    server boot from `config.codexCli.toolTimeoutSec`.
+ * 3. Skip the flag entirely → codex uses its built-in default (60s).
+ */
+function resolveToolTimeoutFlag(explicit: number | undefined): string[] {
+  if (explicit !== undefined) {
+    return ['-c', `mcp_servers.${MCP_SERVER_NAME}.tool_timeout_sec=${explicit}`];
+  }
+  const fromEnv = process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC;
+  if (fromEnv) {
+    const n = parseInt(fromEnv, 10);
+    if (Number.isFinite(n) && n > 0) {
+      return ['-c', `mcp_servers.${MCP_SERVER_NAME}.tool_timeout_sec=${n}`];
+    }
+  }
+  return [];
 }
 
 function tomlString(s: string): string {

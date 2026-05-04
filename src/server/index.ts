@@ -1,7 +1,7 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { configPath, loadConfig } from '../config/loader.ts';
+import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
 import { type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
 import {
   ensureMemoryDirs,
@@ -153,6 +153,13 @@ logger.info({
   providers: Object.keys(config.providers).join(','),
   port: config.server.port,
 });
+
+// Push claude-cli SDK tunables into process.env so the subprocess
+// inherits them. Must run before the first engine call.
+applyClaudeCliSdkEnv(config);
+// Same for codex-cli — bridges config.codexCli into a process.env var
+// that somoraMemoryCodexFlags() reads when building -c TOML overrides.
+applyCodexCliEnv(config);
 
 logger.info({
   msg: 'somora.env',

@@ -176,3 +176,37 @@ export async function loadConfig(): Promise<Config> {
 export function configPath(): string {
   return CONFIG_PATH;
 }
+
+/**
+ * Push claude-cli-relevant tunables from config into process.env so the
+ * claude-agent-sdk subprocess inherits them. Explicit env wins (override
+ * layer per the project's config-vs-env policy) — only set when unset.
+ *
+ * Call once at server boot, before the first claude-cli engine call.
+ */
+export function applyClaudeCliSdkEnv(config: Config): void {
+  const c = config.claudeCli;
+  if (process.env.MCP_TOOL_TIMEOUT === undefined || process.env.MCP_TOOL_TIMEOUT === '') {
+    process.env.MCP_TOOL_TIMEOUT = String(c.mcpToolTimeoutMs);
+  }
+  if (process.env.MCP_TIMEOUT === undefined || process.env.MCP_TIMEOUT === '') {
+    process.env.MCP_TIMEOUT = String(c.mcpConnectTimeoutMs);
+  }
+}
+
+/**
+ * Push codex-cli-relevant tunables from config into process.env. Used as
+ * an internal bridge — somoraMemoryCodexFlags() reads
+ * SOMORA_CODEX_TOOL_TIMEOUT_SEC and emits the matching `-c
+ * mcp_servers.somora-memory.tool_timeout_sec=N` flag for each codex exec
+ * invocation. Mirrors applyClaudeCliSdkEnv()'s policy: explicit env wins.
+ */
+export function applyCodexCliEnv(config: Config): void {
+  const c = config.codexCli;
+  if (
+    process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC === undefined ||
+    process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC === ''
+  ) {
+    process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC = String(c.toolTimeoutSec);
+  }
+}

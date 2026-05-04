@@ -141,6 +141,48 @@ export const AgentLoopConfigSchema = z.object({
 }).default({ maxRounds: 8, toolCallTimeoutMs: 30_000 });
 export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 
+// claude-cli engine tunables. Mostly thin wrappers over claude-agent-sdk
+// env vars — surfaced here so they're visible/editable in config.yaml
+// instead of hidden as undocumented env overrides. Applied at server boot
+// via applyClaudeCliSdkEnv() (config wins unless the env var was already
+// set explicitly — explicit env always wins as the override layer).
+export const ClaudeCliConfigSchema = z
+  .object({
+    /**
+     * Per-MCP-tool-call timeout (ms). Maps to MCP_TOOL_TIMEOUT in the
+     * claude-agent-sdk subprocess. The SDK's hidden default is 5 min
+     * (300_000) — too short for sub-spawns and long-blocking tools like
+     * subagent_result(wait_until_done). 10 min is a saner default; lower
+     * if you want fail-fast behavior, raise for orchestrator workloads.
+     */
+    mcpToolTimeoutMs: z.number().int().positive().default(600_000),
+    /**
+     * Initial MCP server connect timeout (ms). Maps to MCP_TIMEOUT.
+     * Affects only server startup handshake, not running calls.
+     */
+    mcpConnectTimeoutMs: z.number().int().positive().default(60_000),
+  })
+  .default({ mcpToolTimeoutMs: 600_000, mcpConnectTimeoutMs: 60_000 });
+export type ClaudeCliConfig = z.infer<typeof ClaudeCliConfigSchema>;
+
+// codex-cli engine tunables. Same posture as claudeCli — surface
+// codex-internal limits in config.yaml so they're visible/editable.
+// Applied via -c TOML overrides on each `codex exec` invocation by
+// somoraMemoryCodexFlags() in src/mcp/config.ts.
+export const CodexCliConfigSchema = z
+  .object({
+    /**
+     * Per-MCP-tool-call timeout in seconds. Codex's hidden default is
+     * 60s (binary string `tool_timeout_sec`); too short for sub-spawns
+     * with wait_until_done. Maps to
+     * `mcp_servers.somora-memory.tool_timeout_sec` in codex's config TOML.
+     * 600s = 10min default keeps parity with claudeCli.mcpToolTimeoutMs.
+     */
+    toolTimeoutSec: z.number().int().positive().default(600),
+  })
+  .default({ toolTimeoutSec: 600 });
+export type CodexCliConfig = z.infer<typeof CodexCliConfigSchema>;
+
 // Workspace — default cwd for the file_* tools. NOT a sandbox: agents
 // can also write outside the workspace (their own persona files, the
 // global config) — protection comes from a path-blacklist in the file
@@ -252,6 +294,8 @@ export const ConfigSchema = z.object({
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,
   agentLoop: AgentLoopConfigSchema,
+  claudeCli: ClaudeCliConfigSchema,
+  codexCli: CodexCliConfigSchema,
   tui: TuiConfigSchema,
   web: WebConfigSchema,
   workspace: WorkspaceConfigSchema,

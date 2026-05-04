@@ -240,6 +240,77 @@ Curation-Workflows. Bis dahin reicht das was heute steht.
 
 ---
 
+## Dream-Worker-Priorisierung (entdeckt 2026-05-04)
+
+**Problem-Beobachtung beim Test-Run:** während mehrerer paralleler
+Sub-Spawn-Tests auf gemma4big haben `dream.start` und
+`dream.llm_request` Events für Auto-Dream-Worker den mlx-omx-Server
+beschäftigt — der queue't sequenziell pro Modell. Folge: Hans-on-gemma's
+initialer Turn (Test 1) hat in 20 Min keinen einzigen Token generiert,
+weil Auto-Dream-Calls + Test-3-Sub-Subs den Slot blockierten.
+
+**Heutiger Workaround (Hotfix 2026-05-04):** `idleMinutes` von 3 (Test-
+Wert) auf 60 hochgedreht in allen agent.yaml. Auto-Dreams werden damit
+viel seltener triggern, kollidieren weniger mit Tests/Live-Use.
+
+**Eigentliche Lösung — User-Active-Marker mit AbortSignal:**
+
+Auto-Dream-Worker pausiert sobald ein interaktiver Chat-Turn (oder
+synchroner Sub-Spawn) startet, und resumed beim nächsten Idle-Trigger.
+Manueller Dream via `/reset` bleibt prio-frei (User triggert ja
+explizit).
+
+Konkret:
+
+1. **Globaler Active-Counter:** server-process-weiter Counter in
+   `src/server/active-turns.ts`. `runChatTurn()` macht
+   `incrementActive()` am Anfang, `decrementActive()` im finally.
+   `runOneSpawn()` mit `wait:true` ebenfalls — sync-Spawns sind
+   semantisch User-Turns die Hintergrund-Arbeit blockieren sollen.
+   Async-Spawns (default `wait:false`) zählen nicht — sie selbst
+   nutzen den mlx-omx-Server und würden sich sonst gegenseitig
+   blockieren.
+
+2. **Worker-Hook:** AutoDreamWorker subscribed auf den Counter via
+   einfachem EventEmitter. Wenn er gerade ein LLM-Chunk verarbeitet
+   und der Counter > 0 wird: `controller.abort()` mit Reason
+   `"user-active"`. Wenn er gerade schläft / pollt: nicht starten,
+   warte bis Counter == 0.
+
+3. **Resume-Pattern:** abgebrochene Dream-Chunks bleiben mit Status
+   `paused` markiert (das gibt's schon — siehe DECISIONS #32-#36 und
+   `src/dream/extract.ts` AbortSignal-Hookup). Beim nächsten Idle-
+   Trigger pickt der Worker sie wieder auf.
+
+4. **Manual-Trigger:** `/reset` triggered Dream synchron (DECISIONS
+   #33). Diese Calls sind explicit user-getriggert und sollen NICHT
+   pausieren — bypass über Constructor-Flag `respectUserActive: false`.
+
+5. **Engine-Rate-Awareness (Phase 2):** weiter-Konzept — Dream-Worker
+   weiß welche Engine sein Worker-Modell nutzt (`omlx/gemma...` →
+   openai-compatible). Pausiert nur wenn der gleiche Engine gerade
+   von User-Turns belegt wird, ignoriert User-Turns auf anderen
+   Engines (opus parallel zu gemma-Dream wäre OK). Aufwendiger, aber
+   genauer.
+
+**Aufwand:** Stufe 1-4 etwa ein halber Tag. Stufe 5 weitere halbe
+Tag. Tests: User-Turn auslösen während Dream läuft → sehen dass
+Dream pausiert und beim nächsten Idle weitermacht.
+
+**Trigger fürs Bauen:** sobald wir wieder regelmäßig `idleMinutes` <
+30 brauchen (z.B. wenn AutoDream sehr aktiv lernen soll), oder sobald
+Live-Use mit gleichzeitig laufenden Dreams kollidiert. Bis dahin reicht
+der Hotfix (`idleMinutes: 60`).
+
+**Code-Pointer:**
+- `src/dream/auto-worker.ts` — AutoDreamWorker class
+- `src/dream/extract.ts` — AbortSignal-Hookup im LLM-Call schon da
+- `src/server/run-turn.ts` — runChatTurn (für Counter-Hooks)
+- `src/tools/agents/spawn.ts:runOneSpawn` — sync-Spawn (für Counter-
+  Hooks im wait:true-Pfad)
+
+---
+
 ## Phase 3+ — Voice / Realtime, Telegram-Channel, andere Frontends
 
 Steht im STATUS noch als „Phase 3". Kein neues Konzept hier, nur Notiz

@@ -717,3 +717,33 @@ Erfindung.
 ToolRegistry alongside memoryTools(). MCP-Server in `src/mcp/server.ts`
 exposed beide Bundles. openai-compatible konsumiert direct über
 Agent-Loop (Phase 2-Stufe-C).
+
+### 37. Tool-Call-Timeout: tool-aware statt globaler 30s-Race
+Ein pauschaler `Promise.race([invoke, 30s])` um jeden Tool-Call (Phase
+2k pragmatisch eingebaut) bricht jedes lang-blockierende Tool. Wir
+adoptieren OpenClaws Pattern:
+
+- Default 30s greift nur für Tools die nichts über sich aussagen.
+- `ToolDefinition` hat `defaultTimeoutMs` (statisch), `timeoutFromInput
+  (input)` (dynamisch, caller-driven), `maxTimeoutMs` (Hard-Cap).
+- Engine resolved per Call: `timeoutFromInput?.(input) ?? defaultTimeoutMs
+  ?? globalToolCallTimeoutMs`, dann clamp auf `maxTimeoutMs`.
+- Lang-blockierende Tools (`subagent_result(wait_until_done)`) returnen
+  bei Tool-internem Timeout `state: "pending"` + `hint`-Feld, statt
+  `{ok:false}` oder Error. Pending ≠ Fehler.
+- Outer-Buffer = inner + 2s (OpenClaws `agent.wait`-Konvention).
+
+**Why:** Hans's Bug-Report 2026-05-04: `subagent_result(wait_until_done)`
+wurde nach 30s gekillt obwohl Caller 60s+ wollte. Sub-Subs liefen
+weiter, aber Sub-Hans verbrannte sein maxRounds-Budget mit Retry-Storm
+auf Timeout-Errors. Strukturelles Problem: Engine-Race kennt Tool-
+Semantik nicht. OpenClaws Lösung ist kein globaler Race + Tool-deklariert-
+selbst — strukturell richtig.
+
+**How to apply:** `src/tools/types.ts` Felder, `src/engine/openai-
+compatible.ts` Resolver an der Tool-Race-Stelle. Per-Tool: setzen wenn
+Worst-Case > 30s denkbar. Bei jedem neuen Tool die Frage stellen — Doku
+in `docs/research/tool-architecture.md` Sektion 6.1. Tools heute mit
+Timeout-Override: `subagent_result`, `spawn_subagent`, `spawn_subagents`.
+Phase 6c (`agent_ask`) und Phase 5 (`exec`, `tmux_capture`) werden's
+brauchen.

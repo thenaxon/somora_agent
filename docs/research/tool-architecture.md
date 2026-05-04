@@ -380,6 +380,59 @@ Handler sollten optional `signal: AbortSignal` als zweites Argument
 nehmen. Notify-on-complete für `exec` ist ein Polish-Feature wenn wir's
 überhaupt bauen.
 
+### 6.1 Engine-Tool-Call-Timeout (gelernt 2026-05-04)
+
+**Lehre aus dem `subagent_result(wait_until_done)`-Bug:** ein pauschaler
+30s-Race um jeden Tool-Call (wie wir's in Phase 2k pragmatisch eingebaut
+haben) bricht jedes lang-blockierende Tool. OpenClaws Pattern ist besser
+und das adoptieren wir:
+
+- **Kein globaler Engine-Tool-Race als hartes Cap.** Die 30s aus
+  `agentLoop.toolCallTimeoutMs` sind Default für Tools die nichts über
+  sich aussagen — sie greifen nur dort.
+- **Tools deklarieren ihre Wartezeit selbst** über `ToolDefinition`-
+  Felder: `defaultTimeoutMs` (statisch, wenn Worst-Case input-unabhängig)
+  oder `timeoutFromInput(input)` (dynamisch, wenn der Caller per Input-
+  Parameter wie `timeout_ms` mitsteuert) plus `maxTimeoutMs` als
+  Sicherheits-Cap gegen halluzinierte Timeout-Werte.
+- **Lang-blockierende Tools returnen `state: "pending"` statt Error**
+  bei Tool-internem Timeout. Das Modell soll sehen "läuft noch", nicht
+  "Fehler" — dann retryt es nicht blind und verbrennt Rounds. Plus
+  `hint`-Feld mit was zu tun (`call again with higher timeout_ms` /
+  `check status later`).
+- **Outer-Buffer = inner + 2 s** (OpenClaws Konvention für `agent.wait`).
+  Genug Headroom um die "läuft noch"-Antwort durch den Stack zu
+  schicken, aber ohne sinnlose Magic-Numbers wie +5 s.
+
+**Checkliste bei jedem neuen Tool:**
+1. Kann das Tool länger als 30 s dauern? Wenn ja:
+   - Bei statischer Worst-Case: `defaultTimeoutMs` setzen.
+   - Bei caller-driven Wartezeit: `timeoutFromInput` setzen.
+   - In jedem Fall: `maxTimeoutMs` als Hard-Cap.
+2. Kann das Tool bei Ablauf "noch nicht fertig" sein (vs. "definitiv
+   gescheitert")? Dann: `state: "pending"` returnen, kein Throw, kein
+   `{ok: false}`.
+3. Description schreibt explizit hin "pending is NOT an error" mit
+   konkreter Anleitung was als nächstes zu tun ist.
+
+**Tools die das heute nutzen (Stand 2026-05-04):**
+- `subagent_result` — `timeoutFromInput` aus `wait_until_done` +
+  `timeout_ms`, returnt `pending` bei Tool-Timeout
+- `spawn_subagent` / `spawn_subagents` — `timeoutFromInput` für `wait:true`
+
+**Tools die das brauchen werden (vermerkt):**
+- `agent_ask` (Phase 6c) — Hans schreibt Lisa, blockt bis Lisa antwortet,
+  Wartezeit hängt von Lisas Task ab → `timeoutFromInput`
+- `exec` (Phase 5) — Build/Skript-Laufzeit per Input → `timeoutFromInput`,
+  `maxTimeoutMs` 30 min
+- `tmux_capture` mit `wait_for_pattern` (Phase 5b) — analog
+
+**Hermes' `notify_on_complete`-Pattern** ist orthogonal: Tool returnt
+sofort, Modell macht weiter, kriegt **eine** Push-Notification wenn
+fertig. Strukturell sauberer als blocking-wait, aber braucht Server-Push-
+Mechanik im Wire-Protocol. Phase 6d-Erweiterung wenn Hans Lisa-Reply
+asynchron zurückbekommen können soll. FUTURE.md-Eintrag.
+
 ---
 
 ## 7. Tool-Description-Stil
