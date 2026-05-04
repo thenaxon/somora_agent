@@ -311,6 +311,104 @@ der Hotfix (`idleMinutes: 60`).
 
 ---
 
+## Phase X — Skill-Handling (geplant für eine der nächsten großen Phasen, vorher diskutieren)
+
+**Status: nicht designt, nur als Konzept reserviert.** Wir wollen das
+unbedingt bauen, aber nicht bevor wir uns über die offenen Fragen
+unterhalten haben. Der Eintrag dient als „nicht vergessen + hier sind
+die Diskussionspunkte".
+
+**Was Skills sind** (aus `docs/research/tool-architecture.md` §3):
+Markdown-Files mit YAML-Frontmatter (AgentSkills.io-Spec), die dem
+Modell „benutze Tool X dafür, hier ist das Pattern" sagen — separate
+Schicht über den getypten Tools. OpenClaw hat 60+ Skills + ~30 Tools,
+Hermes hat skills via eigene `skills_list`/`skill_view` Tools mit
+Self-Improvement-Loop.
+
+**Warum jetzt aufs Radar:** wir haben aktuell ~25 Tools nach Phase 6b.5.
+Die Schwelle „lohnt sich" liegt laut der OpenClaw-Erfahrung bei 10+ —
+sind wir längst drüber. Plus Skills wären die natürliche Antwort auf
+Use-Cases die als Tool zu spezifisch wären (z.B. „obsidian daily-note
+erstellen mit unseren Konventionen", „payment-orchestration-vergleich
+formatieren wie wir's mögen" — Patterns, keine Funktionen).
+
+**Was vorher zu klären ist (Diskussions-Liste):**
+
+1. **Skills ≠ Tools — wie streng?** OpenClaw zieht harte Trennung
+   (Skill kennt Tool nur über Description, Skill macht keine Calls).
+   Hermes integriert via `skills_list`/`skill_view` Tools und erlaubt
+   Skills die Tools direkt aufrufen. Entscheidung beeinflusst alles
+   weitere: Routing, Self-Improvement, Discovery.
+
+2. **Storage-Location:**
+   - Per-Agent in `~/.somora/agents/<name>/skills/<slug>/SKILL.md`?
+   - Global in `~/.somora/skills/<slug>/SKILL.md` (alle Agents teilen)?
+   - In Obsidian-Vault als markierte Notes (wie OpenClaws Skills,
+     editierbar mit normalem Editor)?
+   - Mischung — global default + per-Agent override?
+
+3. **Frontmatter-Schema:** AgentSkills.io-Spec direkt übernehmen?
+   Eigene minimale Variante? OpenClaws `requires.bins` /
+   `requires.config` finde ich elegant (Skill sagt selbst was es zum
+   Funktionieren braucht).
+
+4. **Discovery:** Wie findet das Modell relevante Skills?
+   - All-skills im System-Prompt — funktioniert nur bei <20 Skills
+   - Memory-Recall-Style: Hybrid-Search auf Skill-Descriptions, Top-N
+     im ephemeralContext (wäre konsistent mit unserer Memory-Layer)
+   - Tool-getrieben (Hermes-Style): `skills_list({ topic })` + `skill_view`
+
+5. **Self-Improvement-Loop (Hermes-Pattern):** Soll der Agent eigene
+   Skills erstellen können? Wenn ja: wer reviewed? User? Dream-Worker?
+   Auto-Promotion nach N erfolgreichen Anwendungen?
+
+6. **Verhältnis zu Memory:**
+   Memory = „erinnere dich an Renés Vorlieben"
+   Skills = „so machst du Aufgabe X"
+   — sauber zu trennen oder soll Memory Skills referenzieren? Was wenn
+   Memory-Note und Skill widersprechen?
+
+7. **Verhältnis zu Persona** (AGENTS.md/SOUL.md/USER.md):
+   AGENTS.md sagt heute schon „so denkt Hans". Würde Skill-Layer
+   teilweise dasselbe? Konkret: ist „Hans benutzt für Daily-Notes
+   immer Wikilink-Format" Persona oder Skill?
+
+8. **Verhältnis zu Tool-Descriptions:** unsere Tool-Descriptions sind
+   bereits sehr policy-lastig („IMPORTANT: state pending is NOT an
+   error" etc.). Wo zieht man die Grenze zwischen „ausführliche Tool-
+   Description" und „eigener Skill"?
+
+9. **Verhältnis zu OpenClaws AgentSkills.io spec:** Wir wollen vermutlich
+   kompatibel bleiben — aber müssen wir 1:1 spec sein oder reicht
+   „lesbar, übertragbar"?
+
+**Wann:** als eigene große Phase, wahrscheinlich nach Phase 5 (exec)
+und 6c (agent_ask) — also gleiche Reihenfolge wie der Maintenance-Sweep
+unten. Phase 5 + 6c sind fundamental für die Tool-Surface, Skills
+setzen darauf auf.
+
+**Aufwand-Schätzung (Bauchgefühl, vor Diskussion):** 3-5 Tage. Storage
++ Frontmatter-Parser + Discovery + Tool-Anbindung + 5-10 erste Skills
+zum Testen.
+
+**Vorgehen wenn wir ankommen:**
+1. Diskussion zur 9-Punkte-Liste oben (1-2 Sessions)
+2. Konzept lockschreiben in eigenem `private/skills-design.md`
+   (analog zu A2A-design.md)
+3. Iterativ implementieren mit ständigem User-Feedback
+
+**Bis dahin:** **nicht** unilateral anfangen, **nicht** halbgar in
+Phase 4-Polish reinrutschen lassen. Skills brauchen ihre eigene
+Konzept-Phase mit User-Buy-In, weil's strukturell viele Fragen aufwirft
+die später teuer zu ändern sind.
+
+**Code-Pointer für späteren Start:**
+- `docs/research/tool-architecture.md` §3 — Skills-vs-Tools-Recherche
+- `~/.openclaw/skills/` — 60+ Real-World-Skills als Vorlage
+- `~/.openclaw/skills/obsidian/SKILL.md` — Obsidian-konkretes Beispiel
+
+---
+
 ## Dependencies + SDK-Audit-Sweep (geplant nach Phase 5 exec + Phase 6c agent_ask)
 
 Periodisches Update aller Build-Inputs, weil somora drei externe
