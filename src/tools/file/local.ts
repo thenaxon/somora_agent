@@ -2,8 +2,8 @@
 // 'target=local' (default) paths.
 
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
-import { dirname, relative } from 'node:path';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, relative } from 'node:path';
 import { logger } from '../../server/logger.ts';
 import {
   checkReadAllowed,
@@ -302,4 +302,152 @@ async function fileExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// file_list (local)
+// ─────────────────────────────────────────────────────────────────────
+
+export interface ListEntry {
+  path: string;
+  workspace_relative: string | null;
+  type: 'file' | 'dir' | 'other';
+  size: number;
+  mtime: number;
+  ctime: number;
+}
+
+export interface ListResult {
+  root: string;
+  count: number;
+  truncated: boolean;
+  entries: ListEntry[];
+}
+
+const LIST_HARD_CAP = 5_000;
+
+export async function localList(args: {
+  path: string;
+  agent: string;
+  config: Config;
+  recursive?: boolean;
+  sortBy?: 'mtime' | 'name' | 'size';
+  limit?: number;
+  glob?: string;
+}): Promise<ListResult> {
+  const { absolute, workspace } = await resolveLocalPath(args.path, args.agent, args.config);
+  const policy = checkReadAllowed(absolute);
+  if (!policy.ok) throw new Error(policy.reason);
+  const real = await realpathSafeAncestor(absolute);
+  const policyReal = checkReadAllowed(real);
+  if (!policyReal.ok) throw new Error(policyReal.reason);
+
+  const rootStat = await stat(absolute);
+  if (!rootStat.isDirectory()) {
+    throw new Error(`file_list: '${absolute}' is not a directory (use file_read for single files)`);
+  }
+
+  const matchGlob = args.glob ? compileGlob(args.glob) : null;
+  const sortBy = args.sortBy ?? 'name';
+  const limit = Math.min(args.limit ?? 200, LIST_HARD_CAP);
+  const recursive = Boolean(args.recursive);
+
+  const collected: ListEntry[] = [];
+  await walkDir(absolute, absolute, recursive, collected, matchGlob);
+
+  collected.sort((a, b) => {
+    if (sortBy === 'mtime') return b.mtime - a.mtime; // newest first
+    if (sortBy === 'size') return b.size - a.size; // largest first
+    return a.path.localeCompare(b.path);
+  });
+
+  const truncated = collected.length > limit;
+  const entries = collected.slice(0, limit).map((e) => ({
+    ...e,
+    workspace_relative: relative(workspace, e.path) || '.',
+  }));
+
+  return {
+    root: absolute,
+    count: entries.length,
+    truncated,
+    entries,
+  };
+}
+
+async function walkDir(
+  root: string,
+  current: string,
+  recursive: boolean,
+  out: ListEntry[],
+  globRe: RegExp | null,
+): Promise<void> {
+  let dirents;
+  try {
+    dirents = await readdir(current, { withFileTypes: true });
+  } catch (err) {
+    // Subdirs we can't read get silently skipped — listing should not
+    // fail wholesale because of one inaccessible subtree.
+    return;
+  }
+  for (const d of dirents) {
+    // Skip dotfiles by default (they pollute listings; vault-like dirs
+    // typically have meaningful files at the top level). The user can
+    // pass an explicit glob like ".*" if they want them.
+    if (d.name.startsWith('.')) {
+      if (!globRe || !globRe.test(d.name)) continue;
+    }
+    const full = join(current, d.name);
+    let st;
+    try {
+      st = await stat(full);
+    } catch {
+      continue;
+    }
+    const type: ListEntry['type'] = d.isDirectory()
+      ? 'dir'
+      : d.isFile()
+        ? 'file'
+        : 'other';
+    if (globRe) {
+      const rel = relative(root, full);
+      const target = globRe.source.includes('/') ? rel : d.name;
+      if (!globRe.test(target)) {
+        // Glob doesn't match this entry — skip it but still recurse
+        // into matching dirs (a glob like "**/*.md" should descend
+        // through dir levels even if those dir names don't match).
+        if (type === 'dir' && recursive) {
+          await walkDir(root, full, recursive, out, globRe);
+        }
+        continue;
+      }
+    }
+    out.push({
+      path: full,
+      workspace_relative: null, // filled in by localList()
+      type,
+      size: st.size,
+      mtime: st.mtimeMs,
+      ctime: st.ctimeMs,
+    });
+    if (out.length >= LIST_HARD_CAP) return;
+    if (type === 'dir' && recursive) {
+      await walkDir(root, full, recursive, out, globRe);
+    }
+  }
+}
+
+/**
+ * Tiny glob → RegExp. Supports `*` (any chars except `/`), `**` (any
+ * chars including `/`), and `?` (single char except `/`). All other
+ * regex meta-characters are escaped. Match is anchored on both ends.
+ */
+function compileGlob(glob: string): RegExp {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const pattern = escaped
+    .replace(/\*\*/g, ' ')
+    .replace(/\*/g, '[^/]*')
+    .replace(/ /g, '.*')
+    .replace(/\?/g, '[^/]');
+  return new RegExp(`^${pattern}$`);
 }

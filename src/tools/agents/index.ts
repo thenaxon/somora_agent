@@ -2,11 +2,11 @@
 // Modus 2 (live agent_ask messaging) follows in 6c.
 
 import { spawnSubagent, spawnSubagents } from './spawn.ts';
-import { subagentResult, subagentStatus } from './status.ts';
+import { subagentList, subagentResult, subagentStatus } from './status.ts';
 import type { ToolDefinition } from '../types.ts';
 
 export { configureSpawnTools, spawnSubagent, spawnSubagents } from './spawn.ts';
-export { subagentResult, subagentStatus } from './status.ts';
+export { subagentList, subagentResult, subagentStatus } from './status.ts';
 
 export function agentTools(): ToolDefinition[] {
   return [
@@ -14,5 +14,6 @@ export function agentTools(): ToolDefinition[] {
     spawnSubagents,
     subagentStatus,
     subagentResult,
+    subagentList,
   ] as ToolDefinition[];
 }

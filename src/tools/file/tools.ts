@@ -15,8 +15,8 @@
 import { z } from 'zod';
 import { resolveVisibleResource } from '../resources/visibility.ts';
 import type { ToolDefinition } from '../types.ts';
-import { localPatch, localRead, localSearch, localWrite } from './local.ts';
-import { remotePatch, remoteRead, remoteSearch, remoteWrite } from './remote.ts';
+import { localList, localPatch, localRead, localSearch, localWrite } from './local.ts';
+import { remoteList, remotePatch, remoteRead, remoteSearch, remoteWrite } from './remote.ts';
 
 // ─────────────────────────────────────────────────────────────────────
 // Shared
@@ -295,6 +295,93 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────
+// file_list
+// ─────────────────────────────────────────────────────────────────────
+
+const ListInput = z
+  .object({
+    path: z
+      .string()
+      .min(1)
+      .describe('Directory to list. Relative paths resolve against the workspace; absolute paths pass through.'),
+    target: TargetField,
+    recursive: z
+      .boolean()
+      .default(false)
+      .describe('Walk subdirectories. Default false (top-level only).'),
+    sortBy: z
+      .enum(['mtime', 'name', 'size'])
+      .default('name')
+      .describe('Sort order. mtime = newest first, size = largest first, name = lexicographic.'),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .default(200)
+      .describe('Max entries to return after sort. Default 200, hard cap 5000.'),
+    glob: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Filter pattern. Supports *, **, ?. Without `/` matches against basename; with `/` matches against path relative to listing root. e.g. "*.md" or "**/notes/*.md".'),
+  })
+  .strict();
+
+export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
+  name: 'file_list',
+  toolset: 'file',
+  description:
+    'List directory contents with type/size/mtime/ctime per entry. Use this to answer questions ' +
+    'like "what is the newest file in X?" (sortBy: mtime), "find recently changed configs", ' +
+    '"are there empty files in this dir?", "which days between N and M have a daily-note?" — anything ' +
+    'that needs a directory enumeration rather than content search. ' +
+    'Output is structured (NOT shell-formatted ls -l): each entry has path, type (file/dir/other), ' +
+    'size in bytes, mtime+ctime as ms-since-epoch. ' +
+    'Use this INSTEAD of running `ls`, `find`, or `stat` via exec — file_list is path-blacklist-aware ' +
+    'and works against remote resources via the same `target` parameter as the rest of file_*. ' +
+    'Dotfiles are skipped by default; pass an explicit glob like ".*" to include them.',
+  inputSchema: ListInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Directory path (relative to workspace, or absolute).' },
+      target: { type: 'string', description: 'local (default) or a resource name.', default: 'local' },
+      recursive: { type: 'boolean', default: false, description: 'Walk subdirectories.' },
+      sortBy: { type: 'string', enum: ['mtime', 'name', 'size'], default: 'name' },
+      limit: { type: 'integer', minimum: 1, maximum: 5000, default: 200 },
+      glob: { type: 'string', description: 'Filter pattern. *, **, ? supported.' },
+    },
+    required: ['path'],
+    additionalProperties: false,
+  },
+  maxResultSizeChars: 250_000,
+  async handler(input, ctx) {
+    if (input.target === 'local') {
+      return localList({
+        path: input.path,
+        agent: ctx.agent,
+        config: ctx.config,
+        recursive: input.recursive,
+        sortBy: input.sortBy,
+        limit: input.limit,
+        ...(input.glob ? { glob: input.glob } : {}),
+      });
+    }
+    const resource = await resolveSshTarget({ ctx, target: input.target });
+    return remoteList({
+      resourceName: input.target,
+      resource,
+      path: input.path,
+      recursive: input.recursive,
+      sortBy: input.sortBy,
+      limit: input.limit,
+      ...(input.glob ? { glob: input.glob } : {}),
+    });
+  },
+};
+
 export function fileTools(): ToolDefinition[] {
-  return [fileRead, fileWrite, filePatch, fileSearch] as ToolDefinition[];
+  return [fileRead, fileWrite, filePatch, fileSearch, fileList] as ToolDefinition[];
 }

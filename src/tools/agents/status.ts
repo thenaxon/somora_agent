@@ -3,7 +3,7 @@
 // orchestrator agent to poll progress and pull final results out.
 
 import { z } from 'zod';
-import { getTask, waitForTaskCompletion, type AsyncTaskEntry } from '../../server/async-tasks.ts';
+import { getTask, listTasksForAgent, waitForTaskCompletion, type AsyncTaskEntry } from '../../server/async-tasks.ts';
 import type { ChatTurnResult } from '../../server/run-turn-types.ts';
 import type { ToolDefinition } from '../types.ts';
 
@@ -208,6 +208,110 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
       result: remote.result?.finalText ?? '',
       usage: remote.result?.usage,
       ms: remote.result?.ms,
+    };
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// subagent_list — enumerate spawn tasks initiated by the calling agent
+// ─────────────────────────────────────────────────────────────────────
+
+async function fetchListViaHttp(parent_agent: string): Promise<AsyncTaskEntry[]> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const res = await fetch(
+    `http://${host}:${port}/spawn-list?parent_agent=${encodeURIComponent(parent_agent)}`,
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`spawn-list HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { tasks: AsyncTaskEntry[] };
+  return json.tasks;
+}
+
+const ListInput = z
+  .object({
+    state: z
+      .enum(['running', 'done', 'failed', 'all'])
+      .default('all')
+      .describe(
+        'Filter by task state. "running" shows only active subs, "done"/"failed" only finished, ' +
+          '"all" (default) returns everything still in the registry. Tasks are kept in memory for ' +
+          'the server\'s lifetime and lost on restart.',
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(500)
+      .default(50)
+      .describe('Max entries to return after sort. Newest tasks come first.'),
+  })
+  .strict();
+
+export const subagentList: ToolDefinition<z.infer<typeof ListInput>> = {
+  name: 'subagent_list',
+  toolset: 'agents',
+  description:
+    'List sub-agent tasks YOU spawned (this agent\'s own subs only — no peer-agent visibility). ' +
+    'Use this when you need to know what\'s still running in the background, e.g. "are the ' +
+    'research subs done yet before I summarize?", "did anything from earlier finish?", or just ' +
+    'a sanity-check before composing a reply that depends on prior spawns. ' +
+    'Returns one entry per task with task_id, state, target_agent/session, started_at, ' +
+    'finished_at (if done). Sorted newest-first. ' +
+    'Tasks live in the server\'s in-memory registry only — server restarts wipe them ' +
+    '(JSONL session files persist independently). To inspect a specific task in detail, ' +
+    'use subagent_status (state + timestamps) or subagent_result (final answer).',
+  inputSchema: ListInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      state: {
+        type: 'string',
+        enum: ['running', 'done', 'failed', 'all'],
+        default: 'all',
+        description: 'Filter by task state.',
+      },
+      limit: { type: 'integer', minimum: 1, maximum: 500, default: 50 },
+    },
+    additionalProperties: false,
+  },
+  async handler(input, ctx) {
+    // In-process first; HTTP fallback for MCP-child path (subprocess
+    // doesn't share the async-tasks Map with the main server).
+    let entries = listTasksForAgent(ctx.agent);
+    if (entries.length === 0) {
+      // Either no tasks for this agent OR we're an MCP child without
+      // direct access. The HTTP endpoint distinguishes — empty list
+      // back means "really none".
+      try {
+        entries = await fetchListViaHttp(ctx.agent);
+      } catch {
+        // HTTP fallback failed (server unreachable); treat as no tasks
+        // rather than throwing — list is best-effort discovery.
+        entries = [];
+      }
+    }
+    const filtered = input.state === 'all'
+      ? entries
+      : entries.filter((e) => e.state === input.state);
+    // Newest first by started_at.
+    filtered.sort((a, b) => b.started_at - a.started_at);
+    const truncated = filtered.length > input.limit;
+    const tasks = filtered.slice(0, input.limit).map((t) => ({
+      task_id: t.task_id,
+      state: t.state,
+      target_agent: t.target_agent,
+      target_session: t.target_session,
+      started_at: t.started_at,
+      ...(t.finished_at !== undefined ? { finished_at: t.finished_at } : {}),
+      ...(t.error ? { error: t.error } : {}),
+    }));
+    return {
+      count: tasks.length,
+      truncated,
+      tasks,
     };
   },
 };

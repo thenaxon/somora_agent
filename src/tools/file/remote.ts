@@ -7,7 +7,7 @@ import type { Client, SFTPWrapper, Stats } from 'ssh2';
 import type { SshResource } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { getConnection, remoteExec } from '../../ssh/index.ts';
-import type { ReadResult, SearchResult, SearchHit, WriteResult, PatchResult } from './local.ts';
+import type { ListEntry, ListResult, ReadResult, SearchResult, SearchHit, WriteResult, PatchResult } from './local.ts';
 
 const READ_HARD_CAP = 200_000;
 
@@ -265,4 +265,109 @@ export async function remoteSearch(args: {
 /** Single-quote a value for sh — escape any embedded single quotes. */
 function shQ(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// remoteList — file_list over SFTP
+// ─────────────────────────────────────────────────────────────────────
+
+const REMOTE_LIST_HARD_CAP = 5_000;
+
+export async function remoteList(args: {
+  resourceName: string;
+  resource: SshResource;
+  path: string;
+  recursive?: boolean;
+  sortBy?: 'mtime' | 'name' | 'size';
+  limit?: number;
+  glob?: string;
+}): Promise<ListResult> {
+  const fullPath = resolveRemotePath(args.path, args.resource);
+  const conn = await getConnection(args.resourceName, args.resource);
+  const recursive = Boolean(args.recursive);
+  const matchGlob = args.glob ? compileGlob(args.glob) : null;
+  const sortBy = args.sortBy ?? 'name';
+  const limit = Math.min(args.limit ?? 200, REMOTE_LIST_HARD_CAP);
+
+  const collected: ListEntry[] = [];
+  await withSftp(conn, async (sftp) => {
+    // Resolve `~` once on the server so we have an absolute root for
+    // workspace-relative output. SFTP's realpath does this server-side.
+    const realRoot = await new Promise<string>((res, rej) => {
+      sftp.realpath(fullPath, (err, p) => (err ? rej(err) : res(p)));
+    });
+    await walkSftp(sftp, realRoot, realRoot, recursive, collected, matchGlob);
+  });
+
+  collected.sort((a, b) => {
+    if (sortBy === 'mtime') return b.mtime - a.mtime;
+    if (sortBy === 'size') return b.size - a.size;
+    return a.path.localeCompare(b.path);
+  });
+
+  const truncated = collected.length > limit;
+  const entries = collected.slice(0, limit);
+
+  return {
+    root: fullPath,
+    count: entries.length,
+    truncated,
+    entries,
+  };
+}
+
+async function walkSftp(
+  sftp: SFTPWrapper,
+  root: string,
+  current: string,
+  recursive: boolean,
+  out: ListEntry[],
+  globRe: RegExp | null,
+): Promise<void> {
+  const dirents = await new Promise<{ filename: string; attrs: { size: number; mtime: number; atime: number; mode: number } }[]>((resolve) => {
+    sftp.readdir(current, (err, list) => (err ? resolve([]) : resolve(list as never)));
+  });
+  for (const d of dirents) {
+    if (d.filename.startsWith('.')) {
+      if (!globRe || !globRe.test(d.filename)) continue;
+    }
+    const full = posix.join(current, d.filename);
+    // SFTP returns mode bits; check directory via S_IFDIR (0o040000).
+    const isDir = (d.attrs.mode & 0o170000) === 0o040000;
+    const isFile = (d.attrs.mode & 0o170000) === 0o100000;
+    const type: ListEntry['type'] = isDir ? 'dir' : isFile ? 'file' : 'other';
+    if (globRe) {
+      const rel = posix.relative(root, full);
+      const target = globRe.source.includes('/') ? rel : d.filename;
+      if (!globRe.test(target)) {
+        if (type === 'dir' && recursive) {
+          await walkSftp(sftp, root, full, recursive, out, globRe);
+        }
+        continue;
+      }
+    }
+    out.push({
+      path: full,
+      workspace_relative: null,
+      type,
+      size: d.attrs.size,
+      // SFTP gives seconds; ms for parity with local.
+      mtime: d.attrs.mtime * 1000,
+      ctime: d.attrs.mtime * 1000, // SFTP doesn't expose ctime portably
+    });
+    if (out.length >= REMOTE_LIST_HARD_CAP) return;
+    if (type === 'dir' && recursive) {
+      await walkSftp(sftp, root, full, recursive, out, globRe);
+    }
+  }
+}
+
+function compileGlob(glob: string): RegExp {
+  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const pattern = escaped
+    .replace(/\*\*/g, ' ')
+    .replace(/\*/g, '[^/]*')
+    .replace(/ /g, '.*')
+    .replace(/\?/g, '[^/]');
+  return new RegExp(`^${pattern}$`);
 }
