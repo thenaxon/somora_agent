@@ -6,6 +6,12 @@ dist
 !.env.example
 .DS_Store
 
+# Local Claude Code state — settings.local.json holds personal permission
+# overrides; scheduled_tasks.lock is runtime state. Future team-shared
+# .claude/settings.json (if introduced) is intentionally NOT ignored.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
 # Internal / development notes — kept local, not for public repo.
 private/
 STATUS.md
