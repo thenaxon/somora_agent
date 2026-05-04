@@ -311,6 +311,70 @@ der Hotfix (`idleMinutes: 60`).
 
 ---
 
+## Dependencies + SDK-Audit-Sweep (geplant nach Phase 5 exec + Phase 6c agent_ask)
+
+Periodisches Update aller Build-Inputs, weil somora drei externe
+Komponenten gepinnt einbindet und keine davon automatisch erneuert
+wird. Stand-Snapshot 2026-05-04 abend:
+
+| Komponente | Wir | npm-latest | Wie aktualisiert |
+|---|---|---|---|
+| `@anthropic-ai/claude-agent-sdk` (npm dep) | 0.2.123 | 0.2.126 | `npm update @anthropic-ai/claude-agent-sdk` (oder gezielt `@latest`) |
+| `claude-cli` binary (~/.local/bin/claude) | 2.1.126 | 2.1.126 (sync) | `npm install -g @anthropic-ai/claude-code@latest` |
+| `@openai/codex` binary (npm-global) | 0.125.0 | 0.128.0 | `npm install -g @openai/codex@latest` |
+
+Plus: alle anderen npm-Deps mit `npm outdated` durchgehen und
+gezielt bumpen (sqlite-vec, chokidar, ssh2, pino, hono, etc.).
+
+**Was zu tun ist beim Sweep:**
+1. **Bestandsaufnahme:** `npm outdated`, plus `npm view <pkg> version`
+   für die zwei Binaries. Alles in einer Übersichts-Tabelle.
+2. **Read changelogs / release notes** für die wichtigen drei
+   Komponenten. Vor allem für claude-agent-sdk und codex-cli — beide
+   haben uns heute (2026-05-04) mit unbekannten Tool-Timeout-Limits
+   überrascht (claude 5min hardcoded, codex 60s default). Vielleicht
+   gibt es in neueren Versionen weitere Tunables die uns interessieren.
+3. **Bumpen in Wellen:**
+   - Welle A: claude-agent-sdk patch-bumps (low risk)
+   - Welle B: codex-cli minor-bumps (event-format könnte sich ändern,
+     siehe codex-cli.ts NDJSON-mapping)
+   - Welle C: claude-cli (binary) selbst — sehr selten breaking, aber
+     Settings-Schema könnte erweitert sein
+   - Welle D: andere npm-Deps (sqlite-vec etc., minor + patch)
+4. **Smoke-Tests pro Welle:** dieselbe 5-Pattern-Test-Matrix wie am
+   2026-05-04 (payment, pending, maxRounds, cross-engine, recursion-cap).
+   Auf allen drei Engines. Wenn was breaks → entweder rollback oder
+   Adapter-Fix (typischer Kandidat: NDJSON-Event-Format-Änderungen
+   in codex-cli).
+5. **`MCP_TOOL_TIMEOUT` und `tool_timeout_sec` re-checken** — wenn
+   neue SDK-Versionen die Defaults oder Mechanik geändert haben,
+   müssen wir unsere config-Defaults anpassen. Plus: vielleicht gibt
+   es jetzt offizielle Settings die wir bisher nicht kennen.
+6. **Test-Tag dokumentieren** — Findings als Anhang an heutigen
+   STATUS-Eintrag, damit der nächste Sweep die Trajectory sieht.
+
+**Wann:** **nach Phase 5 (exec + tmux)** und **Phase 6c (agent_ask
+Modus 2)** — das sind die zwei großen offenen Build-Phasen, die
+Vorrang haben. Der Sweep wäre eine eigene Phase „**Maintenance-Sweep
+1**" zwischen den Build-Wellen, etwa halben bis ganzen Tag.
+
+**Trigger für ungeplanten Vorzieh-Sweep:**
+- Wenn ein neuer claude-agent-sdk Release explizit Tool-Timeout-
+  Mechanik-Bugfixes erwähnt (das hilft uns mit DECISION #37)
+- Wenn ein codex-Release neue MCP-Settings oder Event-Format-Fixes
+  bringt
+- Wenn ein User Bug reproducible nur in unserer alten SDK-Version
+  auftritt
+
+**Why das nicht als Phase 4-Polish:**
+Phase 4-Polish ist intern (Caching aktivieren, Multimodal, Token-
+Counting). Dependency-Sweep ist external — andere Repos, andere
+Velocity. Eigene Phase macht klar dass wir bewusst auf Versions-
+Pinning setzen (reproducible builds) und der Sweep eine bewusste
+Wartungsentscheidung ist, kein „mal eben".
+
+---
+
 ## Phase 3+ — Voice / Realtime, Telegram-Channel, andere Frontends
 
 Steht im STATUS noch als „Phase 3". Kein neues Konzept hier, nur Notiz
