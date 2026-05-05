@@ -2,6 +2,7 @@
 // with the calling agent's resource_deny list. Single source of truth
 // for "what does THIS agent see right now?".
 
+import { getFreshConfig } from '../../config/loader.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import type { Config, Resource } from '../../config/types.ts';
 
@@ -31,4 +32,29 @@ export async function resolveVisibleResource(
 ): Promise<Resource | null> {
   const visible = await visibleResourcesForAgent(agentName, config);
   return visible.find((v) => v.name === name)?.resource ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Fresh-config variants — re-read config.yaml on each call (lazy
+// mtime-check, see config/loader.ts:getFreshConfig). Use these from
+// resource_list / resource_test / file_*-with-target so that an agent
+// (or user) can edit `resources:` in config.yaml and have the new
+// entry visible IMMEDIATELY without a server restart. The plain
+// (config-param) variants stay around for callers that want to pin
+// a specific config snapshot.
+// ─────────────────────────────────────────────────────────────────────
+
+export async function visibleResourcesForAgentFresh(
+  agentName: string,
+): Promise<VisibleResource[]> {
+  const config = await getFreshConfig();
+  return visibleResourcesForAgent(agentName, config);
+}
+
+export async function resolveVisibleResourceFresh(
+  agentName: string,
+  name: string,
+): Promise<Resource | null> {
+  const config = await getFreshConfig();
+  return resolveVisibleResource(agentName, config, name);
 }

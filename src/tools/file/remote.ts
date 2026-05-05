@@ -316,32 +316,46 @@ export async function remoteList(args: {
   };
 }
 
+/**
+ * Compiled glob — keeps the original-string `hasSlash` flag alongside
+ * the RegExp because the regex source itself is unreliable for that
+ * check (the compiled `[^/]*` always contains `/`). hasSlash decides
+ * whether walkSftp matches against the relative path or just basename.
+ */
+interface CompiledGlob {
+  re: RegExp;
+  hasSlash: boolean;
+}
+
 async function walkSftp(
   sftp: SFTPWrapper,
   root: string,
   current: string,
   recursive: boolean,
   out: ListEntry[],
-  globRe: RegExp | null,
+  glob: CompiledGlob | null,
 ): Promise<void> {
   const dirents = await new Promise<{ filename: string; attrs: { size: number; mtime: number; atime: number; mode: number } }[]>((resolve) => {
     sftp.readdir(current, (err, list) => (err ? resolve([]) : resolve(list as never)));
   });
   for (const d of dirents) {
     if (d.filename.startsWith('.')) {
-      if (!globRe || !globRe.test(d.filename)) continue;
+      if (!glob || !glob.re.test(d.filename)) continue;
     }
     const full = posix.join(current, d.filename);
     // SFTP returns mode bits; check directory via S_IFDIR (0o040000).
     const isDir = (d.attrs.mode & 0o170000) === 0o040000;
     const isFile = (d.attrs.mode & 0o170000) === 0o100000;
     const type: ListEntry['type'] = isDir ? 'dir' : isFile ? 'file' : 'other';
-    if (globRe) {
+    if (glob) {
+      // Without `/` in the user's pattern → basename match (so `*.md`
+      // recursively finds files in subdirs). With `/` → match against
+      // path relative to listing root (so `notes/*.md` is positional).
       const rel = posix.relative(root, full);
-      const target = globRe.source.includes('/') ? rel : d.filename;
-      if (!globRe.test(target)) {
+      const target = glob.hasSlash ? rel : d.filename;
+      if (!glob.re.test(target)) {
         if (type === 'dir' && recursive) {
-          await walkSftp(sftp, root, full, recursive, out, globRe);
+          await walkSftp(sftp, root, full, recursive, out, glob);
         }
         continue;
       }
@@ -357,17 +371,21 @@ async function walkSftp(
     });
     if (out.length >= REMOTE_LIST_HARD_CAP) return;
     if (type === 'dir' && recursive) {
-      await walkSftp(sftp, root, full, recursive, out, globRe);
+      await walkSftp(sftp, root, full, recursive, out, glob);
     }
   }
 }
 
-function compileGlob(glob: string): RegExp {
+function compileGlob(glob: string): CompiledGlob {
+  // hasSlash captures the user's intent BEFORE we expand the pattern —
+  // walkSftp uses it to decide basename vs relative-path matching.
+  // The compiled regex source has `/` from `[^/]*` so it can't tell us.
+  const hasSlash = glob.includes('/');
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   const pattern = escaped
     .replace(/\*\*/g, ' ')
     .replace(/\*/g, '[^/]*')
     .replace(/ /g, '.*')
     .replace(/\?/g, '[^/]');
-  return new RegExp(`^${pattern}$`);
+  return { re: new RegExp(`^${pattern}$`), hasSlash };
 }

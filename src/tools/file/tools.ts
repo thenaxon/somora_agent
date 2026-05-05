@@ -13,7 +13,7 @@
 // writable so the agent can self-edit.
 
 import { z } from 'zod';
-import { resolveVisibleResource } from '../resources/visibility.ts';
+import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
 import type { ToolDefinition } from '../types.ts';
 import { localList, localPatch, localRead, localSearch, localWrite } from './local.ts';
 import { remoteList, remotePatch, remoteRead, remoteSearch, remoteWrite } from './remote.ts';
@@ -33,10 +33,14 @@ const TargetField = z
   );
 
 async function resolveSshTarget(args: {
-  ctx: { agent: string; config: import('../../config/types.ts').Config };
+  ctx: { agent: string };
   target: string;
 }) {
-  const resource = await resolveVisibleResource(args.ctx.agent, args.ctx.config, args.target);
+  // Fresh config so file_*-with-target picks up newly-added resource
+  // entries without a server restart (parity with resource_list /
+  // resource_test). ctx.config is no longer needed here — the lazy
+  // hot-reload cache in config/loader.ts handles it.
+  const resource = await resolveVisibleResourceFresh(args.ctx.agent, args.target);
   if (!resource) {
     throw new Error(`file_*: target '${args.target}' is not a configured resource (or denied for this agent). Use resource_list to see available targets.`);
   }

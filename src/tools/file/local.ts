@@ -375,12 +375,23 @@ export async function localList(args: {
   };
 }
 
+/**
+ * Compiled glob — keeps the original-string `hasSlash` flag alongside
+ * the RegExp because the regex source itself is unreliable for that
+ * check (the compiled `[^/]*` always contains `/`). hasSlash decides
+ * whether walkDir matches against the relative path or just basename.
+ */
+interface CompiledGlob {
+  re: RegExp;
+  hasSlash: boolean;
+}
+
 async function walkDir(
   root: string,
   current: string,
   recursive: boolean,
   out: ListEntry[],
-  globRe: RegExp | null,
+  glob: CompiledGlob | null,
 ): Promise<void> {
   let dirents;
   try {
@@ -395,7 +406,7 @@ async function walkDir(
     // typically have meaningful files at the top level). The user can
     // pass an explicit glob like ".*" if they want them.
     if (d.name.startsWith('.')) {
-      if (!globRe || !globRe.test(d.name)) continue;
+      if (!glob || !glob.re.test(d.name)) continue;
     }
     const full = join(current, d.name);
     let st;
@@ -409,15 +420,19 @@ async function walkDir(
       : d.isFile()
         ? 'file'
         : 'other';
-    if (globRe) {
+    if (glob) {
+      // Without `/` in the user's pattern → basename match (so `*.md`
+      // recursively finds Naxxen.md inside Projekte/novixon/, matching
+      // the docstring promise). With `/` → match against the path
+      // relative to the listing root (so `notes/*.md` is positional).
       const rel = relative(root, full);
-      const target = globRe.source.includes('/') ? rel : d.name;
-      if (!globRe.test(target)) {
+      const target = glob.hasSlash ? rel : d.name;
+      if (!glob.re.test(target)) {
         // Glob doesn't match this entry — skip it but still recurse
         // into matching dirs (a glob like "**/*.md" should descend
         // through dir levels even if those dir names don't match).
         if (type === 'dir' && recursive) {
-          await walkDir(root, full, recursive, out, globRe);
+          await walkDir(root, full, recursive, out, glob);
         }
         continue;
       }
@@ -432,22 +447,30 @@ async function walkDir(
     });
     if (out.length >= LIST_HARD_CAP) return;
     if (type === 'dir' && recursive) {
-      await walkDir(root, full, recursive, out, globRe);
+      await walkDir(root, full, recursive, out, glob);
     }
   }
 }
 
 /**
- * Tiny glob → RegExp. Supports `*` (any chars except `/`), `**` (any
- * chars including `/`), and `?` (single char except `/`). All other
- * regex meta-characters are escaped. Match is anchored on both ends.
+ * Tiny glob → CompiledGlob. Supports `*` (any chars except `/`),
+ * `**` (any chars including `/`), and `?` (single char except `/`). All
+ * other regex meta-characters are escaped. Match is anchored on both
+ * ends. hasSlash records whether the user's pattern had a literal `/`
+ * so walkDir can decide between basename matching (no slash) and
+ * relative-path matching (with slash) — see CompiledGlob doc for why.
  */
-function compileGlob(glob: string): RegExp {
+function compileGlob(glob: string): CompiledGlob {
+  // hasSlash captures the user's intent BEFORE we expand the pattern
+  // — walkDir uses it to decide basename vs relative-path matching.
+  // Inspecting the compiled regex source for `/` is unreliable because
+  // `*` becomes `[^/]*` which always has `/` in it.
+  const hasSlash = glob.includes('/');
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   const pattern = escaped
     .replace(/\*\*/g, ' ')
     .replace(/\*/g, '[^/]*')
     .replace(/ /g, '.*')
     .replace(/\?/g, '[^/]');
-  return new RegExp(`^${pattern}$`);
+  return { re: new RegExp(`^${pattern}$`), hasSlash };
 }

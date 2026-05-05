@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { load as parseYaml } from 'js-yaml';
@@ -171,6 +171,47 @@ export async function loadConfig(): Promise<Config> {
   }
   assertUniqueAliases(result.data);
   return result.data;
+}
+
+// Lazy hot-reload cache for config.yaml. Tools that legitimately need
+// edit-then-immediately-use semantics (resource_list / resource_test —
+// the agent edits config.yaml to add a new SSH target and tests it on
+// the next turn) call getFreshConfig() which stats the file, compares
+// against the cached mtime, and re-loads only when it actually changed.
+//
+// Why not a chokidar watcher: lazy is simpler — no watcher lifecycle,
+// no race against running connections. Stat is cheap (one syscall),
+// re-parse only fires when the file genuinely changed since last call.
+//
+// Why not just always re-load: parsing YAML + zod-validating on every
+// tool call is more wasteful than a stat. Plus per-Provider cache
+// invalidation gets messy if we end up holding ResolvedModel pointers
+// elsewhere (currently we don't, but the cache makes that safe).
+//
+// Note: this does NOT re-apply applyClaudeCliSdkEnv / applyCodexCliEnv
+// — env vars are set once at boot. If you change claudeCli/codexCli
+// settings in config.yaml at runtime, restart the server. Resources
+// are the only block today that's safe to hot-reload because they're
+// pure data (no env-var side effects).
+let cachedFreshConfig: Config | null = null;
+let cachedFreshMtimeMs = 0;
+
+export async function getFreshConfig(): Promise<Config> {
+  let mtimeMs = 0;
+  try {
+    const st = await stat(CONFIG_PATH);
+    mtimeMs = st.mtimeMs;
+  } catch {
+    // File missing — fall through to loadConfig which writes the
+    // default and returns it (preserves the existing behavior).
+  }
+  if (cachedFreshConfig && mtimeMs === cachedFreshMtimeMs) {
+    return cachedFreshConfig;
+  }
+  const fresh = await loadConfig();
+  cachedFreshConfig = fresh;
+  cachedFreshMtimeMs = mtimeMs;
+  return fresh;
 }
 
 export function configPath(): string {

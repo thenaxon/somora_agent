@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
 import { getConnection, remoteExec } from '../../ssh/index.ts';
 import type { ToolDefinition } from '../types.ts';
-import { resolveVisibleResource, visibleResourcesForAgent } from './visibility.ts';
+import { resolveVisibleResourceFresh, visibleResourcesForAgentFresh } from './visibility.ts';
 
 // ─────────────────────────────────────────────────────────────────────
 // resource_list
@@ -40,7 +40,9 @@ export const resourceList: ToolDefinition<z.infer<typeof ListInput>> = {
     additionalProperties: false,
   },
   async handler(_input, ctx): Promise<{ count: number; resources: ListedResource[] }> {
-    const visible = await visibleResourcesForAgent(ctx.agent, ctx.config);
+    // Fresh config — picks up new entries the user (or agent) added to
+    // ~/.somora/config.yaml since server boot, without a restart.
+    const visible = await visibleResourcesForAgentFresh(ctx.agent);
     const resources: ListedResource[] = visible.map(({ name, resource }) => ({
       name,
       type: resource.type,
@@ -94,7 +96,9 @@ export const resourceTest: ToolDefinition<z.infer<typeof TestInput>> = {
   },
   async handler(input, ctx): Promise<TestOutput> {
     const start = Date.now();
-    const resource = await resolveVisibleResource(ctx.agent, ctx.config, input.name);
+    // Fresh config — pairs with resource_list so the agent can edit
+    // config.yaml, list to confirm, and immediately test in one flow.
+    const resource = await resolveVisibleResourceFresh(ctx.agent, input.name);
     if (!resource) {
       return {
         ok: false,
