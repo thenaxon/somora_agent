@@ -419,6 +419,47 @@ für vergleichende Test-Sessions auf gemma4big UND opus.
   unverändert — bei claude-cli ist Variante B fest verdrahtet (Backend
   immer Anthropic, deterministisch), bei codex-cli ist's eh richtig.
 
+### Audit der anderen Per-Turn-Injections (2026-05-05)
+
+Renes Frage „gibt's noch andere Injections die wir zu früh reintun?"
+durchgegangen. **Memory ist der einzige Übeltäter.** Audit-Tabelle
+mit Status:
+
+- `persona.systemPrompt` — stabil (AGENTS.md/SOUL.md, nur User-Edit) 🟢
+- `selfPointer` — stabil (boot-time config) 🟢 (siehe Caveat unten)
+- `subContextNote` — stabil per Sub-Session 🟢
+- `ephemeralContext` (memory) — 🔴 known issue, dieses Doc
+- `replayPrefix` (cross-engine catch-up) — 🟢 schon late position
+  (in user-message inlined in claude-cli + codex-cli adapters)
+- `from_agent` Header — 🟢 schon in user-message
+- Tool-Definitionen — 🟢 stabil per Session
+- `history` — 🟢 append-only, neue Inhalte hinten
+
+**Caveat selfPointer + Bug 4:** der selfPointer wird mit der
+boot-time-Config gebaut (`buildSelfPointer(persona, deps.config, …)`
+in `src/server/run-turn.ts:244`). Nach dem Bug-4-Fix sehen Tools
+neue Resources via `getFreshConfig()`, der selfPointer-Block aber
+zeigt noch die Boot-Liste bis zum nächsten Restart. Cache-mäßig
+korrekt (selfPointer bleibt stabil = Cache hält), UX-mäßig kleine
+Inkonsistenz. **Polish-Item, kein Bug** — wenn man's fixt: in
+run-turn.ts auf `getFreshConfig()` switchen.
+
+### Skill-System Pre-Warning (Renes Punkt 2026-05-05)
+
+Wenn wir das Skill-System bauen (Phase X — siehe eigene Sektion),
+landet das strukturell **genauso wie Memory:** dynamisch pro Turn die
+relevanten Skill-Prompts injizieren. Wenn wir das oben in den
+system-prompt knallen → killt den Cache genauso → ganzer
+memoryInjectMode-Tanz nochmal.
+
+**Konsequenz:** Skill-Inject MUSS von Tag 1 in der late-position
+landen. Vermutlich sollte das `memoryInjectMode`-Field beim Bau dann
+zu `injectMode` umgetauft werden, weil's für Memory + Skills
+gemeinsam greift (oder pro-Source-Variante: `injectModes: { memory:
+late, skills: late }`). Vor Skill-Bau die Phase-X-9-Diskussionsfragen
+(siehe Phase-X-Sektion) um diesen Punkt erweitern: „Wo im Prompt
+landet ein aktivierter Skill?".
+
 ---
 
 ## Dream-Worker-Priorisierung (entdeckt 2026-05-04)
