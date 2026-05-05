@@ -149,6 +149,13 @@ export class AutoDreamWorker {
       // 1. Resume any paused dream first — don't waste prior progress.
       const paused = await this.findPausedDream(agent);
       if (paused) {
+        logger.info({
+          msg: 'dream.auto.resume_picked',
+          agent,
+          id: paused.id,
+          source_session: paused.sourceSession,
+          remaining_paused: paused.remaining,
+        });
         await this.runForAgent(state, {
           kind: 'resume',
           dreamId: paused.id,
@@ -252,11 +259,22 @@ export class AutoDreamWorker {
 
   private async findPausedDream(
     agent: string,
-  ): Promise<{ id: string; sourceSession: string } | null> {
+  ): Promise<{ id: string; sourceSession: string; remaining: number } | null> {
     const all = await listDreams(agent);
-    const paused = all.find((d) => d.meta.status === 'paused' && d.meta.trigger === 'auto');
-    if (!paused) return null;
-    return { id: paused.meta.id, sourceSession: paused.meta.source_session };
+    const allPaused = all.filter(
+      (d) => d.meta.status === 'paused' && d.meta.trigger === 'auto',
+    );
+    if (allPaused.length === 0) return null;
+    // listDreams sorts oldest-first by created_at; that's the order we
+    // process — older paused entries get a chance before newer fresh ones.
+    // remaining tells diagnostic logs how many other paused are still
+    // queued for subsequent idle cycles (visibility into backlog drain).
+    const picked = allPaused[0]!;
+    return {
+      id: picked.meta.id,
+      sourceSession: picked.meta.source_session,
+      remaining: allPaused.length - 1,
+    };
   }
 
   private async findSessionWithDelta(agent: string): Promise<

@@ -40,7 +40,11 @@ import {
   webTools,
 } from '../tools/index.ts';
 import { shutdownSshPool } from '../ssh/index.ts';
-import { archiveEmptyCompletedDreams, recoverOrphanRunningDreams } from '../dream/storage.ts';
+import {
+  archiveEmptyCompletedDreams,
+  consolidateStalePausedDreams,
+  recoverOrphanRunningDreams,
+} from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import type { SseEvent } from '../types/events.ts';
@@ -941,6 +945,16 @@ try {
   await archiveEmptyCompletedDreams(agentList.map((a) => a.name));
 } catch (err) {
   logger.warn({ msg: 'dream.empty_housekeep_failed', err: String(err) });
+}
+
+// Consolidate stale paused dreams: when multiple paused exist for the same
+// source-session (the bug-pattern from hans's 2026-05-05 report — fixed in
+// resumeDream() going forward), keep the newest and drop the rest.
+// Idempotent; no-op once steady state is reached.
+try {
+  await consolidateStalePausedDreams(agentList.map((a) => a.name));
+} catch (err) {
+  logger.warn({ msg: 'dream.consolidate_failed', err: String(err) });
 }
 
 // Auto-Dream-Worker: per-agent idle-trigger that picks up dream-enabled

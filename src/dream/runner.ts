@@ -5,13 +5,14 @@
 // passed (auto = signal cancels on user activity; manual = no signal,
 // runs to completion regardless).
 
-import { readFile } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import type { Config, ResolvedModel } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import type { DreamConfig } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { getHistory } from '../storage/sessions.ts';
 import {
+  dreamFilePath,
   dreamIdFor,
   readDreamById,
   transitionDreamStatus,
@@ -377,6 +378,38 @@ export async function resumeDream(args: {
   if (file.meta.status !== 'paused') {
     throw new Error(`dream '${args.id}' is ${file.meta.status}, not paused — can't resume`);
   }
+
+  // Delete the old paused file BEFORE kicking off the rerun. Without this,
+  // the stale paused file accumulated indefinitely: runDream generates a
+  // fresh timestamp-based id (dreamIdFor()), so a resume creates a new
+  // `<new-id>.dream.running.md` and the original `<old-id>.dream.paused.md`
+  // was never cleaned up. If the new run got aborted again (typical on
+  // active accounts), the result was N+1 paused files instead of N. Across
+  // a couple of days of idle cycles + user activity, paused dreams piled up
+  // (hans bug report 2026-05-05: 5 paused, 0 findings, all from the same
+  // source-session). Re-run-from-scratch was a deliberate v1 simplification
+  // (see comment below) — we just have to take responsibility for the old
+  // file's cleanup as part of resume's contract.
+  const oldPath = dreamFilePath(args.agent, args.id, 'paused');
+  try {
+    await unlink(oldPath);
+    logger.info({
+      msg: 'dream.resume.unlink_old',
+      agent: args.agent,
+      id: args.id,
+      sourceSession: file.meta.source_session,
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.warn({
+        msg: 'dream.resume.unlink_old_failed',
+        agent: args.agent,
+        id: args.id,
+        err: (err as Error).message,
+      });
+    }
+  }
+
   // For v1 we re-run from scratch on resume (don't preserve partial findings).
   // Reason: partial findings without dedup across the full range can produce
   // duplicates we'd then have to reconcile. Cheap for the chunk-cost; not a

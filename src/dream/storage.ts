@@ -289,6 +289,72 @@ export async function archiveEmptyCompletedDreams(agents: string[]): Promise<num
 }
 
 /**
+ * Server-start housekeeping: when multiple paused dreams exist for the
+ * SAME source-session (a sign that resume cycles failed to clean up
+ * after themselves — see hans bug 2026-05-05), keep only the newest
+ * paused per source-session and unlink the rest. The newest captures
+ * the most recent state; older ones are stale by-products of the bug
+ * that's fixed in resumeDream().
+ *
+ * Single-paused-per-source-session is the steady state going forward:
+ * resumeDream() now unlinks the old paused before kicking off the new
+ * run, so accumulation can't recur.
+ *
+ * Idempotent. No-op when each source-session has at most one paused.
+ * Runs alongside archiveEmptyCompletedDreams + recoverOrphanRunningDreams
+ * at server boot in src/server/index.ts.
+ */
+export async function consolidateStalePausedDreams(agents: string[]): Promise<number> {
+  let removed = 0;
+  for (const agent of agents) {
+    const all = await listDreams(agent);
+    const pausedBySession = new Map<string, DreamFile[]>();
+    for (const d of all) {
+      if (d.meta.status !== 'paused') continue;
+      const list = pausedBySession.get(d.meta.source_session) ?? [];
+      list.push(d);
+      pausedBySession.set(d.meta.source_session, list);
+    }
+    for (const [source, group] of pausedBySession) {
+      if (group.length <= 1) continue;
+      // Sort newest-first by id (ids are timestamp-prefixed → lexicographic
+      // = chronological). Keep [0], unlink the rest.
+      group.sort((a, b) => b.meta.id.localeCompare(a.meta.id));
+      const keep = group[0]!;
+      const drop = group.slice(1);
+      for (const d of drop) {
+        const path = dreamFilePath(agent, d.meta.id, 'paused');
+        try {
+          await unlink(path);
+          removed++;
+          logger.info({
+            msg: 'dream.consolidate_stale_paused',
+            agent,
+            id: d.meta.id,
+            source_session: source,
+            kept: keep.meta.id,
+            findings_in_dropped: d.meta.findings.length,
+          });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+            logger.warn({
+              msg: 'dream.consolidate_unlink_failed',
+              agent,
+              path,
+              err: (err as Error).message,
+            });
+          }
+        }
+      }
+    }
+  }
+  if (removed > 0) {
+    logger.info({ msg: 'dream.consolidate_done', removed_count: removed, agents });
+  }
+  return removed;
+}
+
+/**
  * Crash-recovery: scan all agents on server start, rename any
  * `*.dream.running.md` to `.paused.md`. Findings already extracted are
  * preserved; the next idle-trigger continues from chunks_done + 1.
