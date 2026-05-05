@@ -240,7 +240,42 @@ Curation-Workflows. Bis dahin reicht das was heute steht.
 
 ---
 
-## Memory-Inject Position für Prefix-Cache (entdeckt 2026-05-05)
+## Memory-Inject Position für Prefix-Cache — DONE 2026-05-05 (commit `49c682a`)
+
+**Status: gebaut + verifiziert.** Diese Sektion bleibt als Audit-Trail
+stehen, wird nicht weiterbearbeitet.
+
+**Live-Resultat:** claude-cli cache hit auf jarvis ist von 73% auf
+**95%** gestiegen zwischen Turn 1 und Turn 2 — vorher wäre genau hier
+alles invalidiert worden weil System-Block inkl. Memory änderte sich.
+~5000 fresh tokens weniger pro Turn nach dem ersten.
+
+**Gebaut:**
+- `src/engine/claude-cli.ts` — Variante B hardcoded: ephemeralContext
+  landed jetzt vor dem user-text in der user-message, systemPrompt
+  bleibt stabil
+- `src/engine/openai-compatible.ts` — Variante A default + Config-
+  Switch: neue Funktion `injectEphemeralLate()` placed memory als
+  zweite system-message direkt vor dem letzten user-message; modes
+  `late` (default), `inline-user`, `system` (legacy)
+- `src/config/types.ts` — neues `memoryInjectMode`-Field auf
+  `OpenAiCompatibleProviderSchema` (claude-cli + codex-cli unverändert
+  weil Backend bekannt bzw. schon korrekt)
+- `src/server/run-turn.ts` — selfPointer baut aus `getFreshConfig()`
+  damit neu eingetragene Resources sofort im selfPointer-Block
+  sichtbar sind (Pair mit Bug-4 Hot-Reload)
+
+**Smoke-Matrix nach Fix:**
+- claude-cli (jarvis/opus): cache 73% → 95% auf Turn 2
+- codex-cli (lisa/gpt55): PEAR, no fallback
+- openai-compatible (gemma sub-spawn): GRAPE, no fallback
+- agent_ask cross-engine: MELON via codex 71% cached
+- Memory-Recall lebt weiter: jarvis antwortete „Österreich" korrekt
+  aus Vault-Inhalt
+
+---
+
+### Original-Diagnose (für Trajectory)
 
 **Problem-Beobachtung (Renes Frage):** Turns auf gemma4big via mlx-omx
 fühlen sich auch in laufenden Sessions zäh an — initiale Token-

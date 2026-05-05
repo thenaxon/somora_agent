@@ -156,6 +156,35 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
+### Memory-Inject Position Fix (commit `49c682a`)
+
+Dynamic per-turn memory recall war in claude-cli und openai-compatible
+auf den persistenten System-Prompt aufkonkateniert → Anthropic's
+prompt-cache cache_control auf system block + OpenAI-prefix-cache
+wurden bei jedem Turn invalidiert. Bei opus = real Geld + Rate-
+Limit-Beschleunigung; bei lokalen Modellen viele Sekunden pre-encode
+Latenz pro Turn.
+
+Fix:
+- claude-cli: Variante B hardcoded — memory landed jetzt vor dem
+  user-text in der user-message; systemPrompt bleibt stabil
+- openai-compatible: Variante A default — neue
+  `injectEphemeralLate()` setzt memory als zweite system-message
+  vor dem letzten user-message; per-provider `memoryInjectMode`
+  (`late`/`inline-user`/`system`) als opt-out für exotische backends
+- codex-cli: unverändert (war schon korrekt durch stdin-Payload-
+  Struktur)
+- selfPointer baut jetzt aus `getFreshConfig()` (pair mit Bug 4
+  hot-reload — neu eingetragene Resources sofort sichtbar)
+
+Live-Verifikation:
+- claude-cli cache hit 73% → **95%** zwischen Turn 1 und Turn 2
+- alle drei Engines liefern ohne Fallback (engine.turn-Logs bestätigt)
+- Memory-Recall funktioniert weiter (jarvis antwortet „Österreich"
+  aus Vault-Inhalt)
+
+Detail in `private/FUTURE.md` Sektion „Memory-Inject Position".
+
 ### Maintenance-Sweep 1 done (commits `42fee3f` + `5bd7fc1`)
 
 - npm: claude-agent-sdk 0.2.123→0.2.128, hono 4.12.16→4.12.17,
@@ -195,19 +224,16 @@ A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 
 ### Pickup-Satz für nächste Session
 
-> "Phase 6 ist komplett — Modus 1 (sealed) und Modus 2 (live agent_ask)
-> beide live und validiert. DECISION #39 (long-task timeout politik:
-> 30s/5min/30min Drei-Schicht) ist drin und mit dem Pending-Pattern
-> aus DECISION #37 verzahnt. Session-Queue mit User-Priority hält
-> User-Turns reaktiv auch wenn A2A-Traffic läuft. Hans's vier
-> Bug-Reports 2026-05-05 alle abgearbeitet: Bug 2 (file_list glob),
-> Bug 4 (resources hot-reload), Bug 1 (paused-dream Akkumulation +
-> Backlog-Drain), Bug 3 (DREAMRULES.MD per-Agent — Hans hat starter
-> Rules, Lisa opt-in). Maintenance-Sweep 1 durch — claude-agent-sdk
-> 0.2.128, codex-cli 0.128.0, plus hono/ink/openai/zod patches; keine
-> Adapter-Änderungen nötig, alle Smoke-Tests grün. HEAD 42fee3f.
-> Nächste Themen offen: Phase 5 (exec+tmux), Phase X (Skills, vorher
-> diskutieren), Dream-Worker-Priorisierung, TUI-History-Replay."
+> "Phase 6 (A2A) komplett, Hans's vier Bugs alle gefixt, Maintenance-
+> Sweep 1 durch (claude-agent-sdk 0.2.128, codex-cli 0.128.0, plus
+> npm patches). Plus Memory-Inject-Cache-Fix: prefix-cache hält jetzt
+> in claude-cli (95% Turn-2-Hit-Rate) und openai-compatible (Variante A
+> als Default mit `memoryInjectMode`-Switch); codex-cli war schon
+> korrekt. selfPointer hot-reload via getFreshConfig dazu. HEAD
+> 49c682a. Sauberer Boden für Phase 5 (exec+tmux). Andere offene
+> Themen: Phase X (Skills, vorher diskutieren — neue Pre-Warning
+> dass Skill-Inject von Tag 1 auch late landen muss),
+> Dream-Worker-Priorisierung, TUI-History-Replay."
 
 ---
 
