@@ -15,6 +15,7 @@ import type { Config, ResolvedModel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import { composeDreamSystemPrompt, loadDreamRules } from './dream-rules.ts';
 import type { Finding, FindingAction } from './types.ts';
 
 export interface ExtractContext {
@@ -321,6 +322,20 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
     return { findings: [], chunksProcessed: 0, totalChunks: 0, completed: true };
   }
 
+  // Per-agent rules from DREAMRULES.MD. Loaded once per extraction run
+  // (not per chunk) so the worker is consistent within a single dream;
+  // edits to the file take effect on the next dream cycle. Missing file
+  // = no rules block, base prompt unchanged.
+  const rules = await loadDreamRules(ctx.agent);
+  const systemPrompt = composeDreamSystemPrompt(SYSTEM_PROMPT, rules);
+  if (rules) {
+    logger.info({
+      msg: 'dream.rules_loaded',
+      agent: ctx.agent,
+      rules_chars: rules.length,
+    });
+  }
+
   const client = buildClient(ctx.workerModel);
   const accumulated: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
   const startAt = ctx.startChunk ?? 0;
@@ -348,7 +363,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         existingMemory: ctx.existingMemory,
         referencedVault: ctx.referencedVault,
       });
-      const reqTokens = estimateTokens(SYSTEM_PROMPT) + estimateTokens(userMsg);
+      const reqTokens = estimateTokens(systemPrompt) + estimateTokens(userMsg);
       const reqStart = Date.now();
       logger.info({
         msg: 'dream.llm_request',
@@ -366,7 +381,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         client.chat.completions.create({
           model: ctx.workerModel.modelId,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: userMsg },
           ],
           stream: false,

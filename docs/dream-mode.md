@@ -72,6 +72,48 @@ tokens, and that's exactly the wrong thing to do silently on a premium
 model. The dream worker model is your explicit choice — typically a
 small local model (e.g., a Gemma variant via Ollama or oMLX).
 
+### Per-agent rules: `DREAMRULES.MD`
+
+Optional file at `~/.somora/agents/<name>/DREAMRULES.MD` alongside
+`AGENTS.md` / `SOUL.md` / `USER.md`. Free-form Markdown — its content
+is injected verbatim into the dream-worker's system prompt as a
+`## Per-agent rules` block. No schema; the dream-worker is an LLM, it
+reads prose.
+
+Use this to encode persona-specific guardrails on what the worker
+should and shouldn't propose. Common rule: when the agent has an
+Obsidian vault, declare the vault as the single source of truth so the
+worker doesn't suggest copying vault content into memory.
+
+```markdown
+# Dream Rules — Hans
+
+## Don't propose memory writes for these
+- Content already present in the Obsidian vault. Vault is the canonical
+  store; memory_write that consolidates vault notes is duplication and
+  causes double-maintenance later.
+- Consolidated overviews ("Alles über X"). Those belong in the vault as
+  notes, not in memory as fact-summaries.
+
+## What memory IS for
+- Atomic statements the user made about themselves, their preferences,
+  their projects, their state.
+- Corrections to existing memory entries.
+- Observations that don't fit anywhere in the vault (too specific,
+  too transient, too personal).
+```
+
+The file is **optional**. Missing → no rules block, current behavior.
+Loaded with mtime cache, re-read whenever it changes. The agent itself
+can edit it with `file_write` when it spots dismissal patterns the
+worker should learn — same edit-permission posture as the other
+persona files.
+
+Per-agent because dream behavior is already per-agent: an agent without
+vault access has no "vault is the boss" rule to add; an agent with
+strict privacy settings might want stricter memory-write rules. Each
+persona shapes its own dreamer.
+
 ## File lifecycle
 
 ```
