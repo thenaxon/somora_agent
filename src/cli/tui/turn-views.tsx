@@ -35,7 +35,7 @@ export function TurnView({
 }) {
   switch (turn.kind) {
     case 'user':
-      return <UserTurn text={turn.text} />;
+      return <UserTurn text={turn.text} fromAgent={turn.fromAgent} />;
     case 'agent':
       return <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
     case 'tool':
@@ -55,7 +55,23 @@ export function TurnView({
   }
 }
 
-function UserTurn({ text }: { text: string }) {
+function UserTurn({ text, fromAgent }: { text: string; fromAgent?: string }) {
+  // A2A inbound (fromAgent set) renders with the sender's name as a
+  // cyan tag and a "↬" arrow so it's visually distinct from a turn the
+  // local human just typed. Same line height, similar weight — keeps
+  // scrollback rhythm intact.
+  if (fromAgent) {
+    const tag = `↬ ${fromAgent}`.padEnd(6, ' ');
+    return (
+      <Box marginTop={1}>
+        <Text color="cyan" bold>
+          {tag}
+        </Text>
+        <Text>{' '}</Text>
+        <Text>{text}</Text>
+      </Box>
+    );
+  }
   return (
     <Box marginTop={1}>
       <Text color="green" bold>

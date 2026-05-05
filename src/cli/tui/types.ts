@@ -90,7 +90,7 @@ export interface TuiConfig {
 // All Turn-kinds that the scrollback can render. Kept flat (discriminated
 // union) so React reducers don't need a class hierarchy.
 export type Turn =
-  | { kind: 'user'; id: string; text: string }
+  | { kind: 'user'; id: string; text: string; fromAgent?: string }
   | { kind: 'agent'; id: string; text: string }
   | {
       kind: 'tool';
@@ -142,4 +142,13 @@ export type StreamEvent =
       summary?: string;
       error?: string;
       details?: string;
+    }
+  | {
+      // Live A2A user_message: another agent wrote into the session
+      // we're watching. Rendered with the sender's name as a marker
+      // instead of the local user icon.
+      kind: 'user-message';
+      text: string;
+      fromAgent: string;
+      callId?: string;
     };

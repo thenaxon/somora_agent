@@ -73,6 +73,10 @@ export interface RunChatTurnArgs {
   /** A2A: when set, this turn was authored by another agent, not by the
    *  human user. Persists in user_message.from_agent. */
   fromAgent?: string;
+  /** A2A correlation UUID. Persisted on user_message.agent_ask_call_id;
+   *  surfaced in the SSE user_message event so a human watching the
+   *  session sees the inbound message appear in real time. */
+  agentAskCallId?: string;
   /** Sub-agent nesting depth (0 = top-level user turn). */
   subagentDepth?: number;
   /** Optional override of the per-session model — caller passes the alias
@@ -101,6 +105,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     session,
     text,
     fromAgent,
+    agentAskCallId,
     subagentDepth = 0,
     modelOverride,
     agentLoopOverride,
@@ -134,7 +139,23 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     engine: engine.name,
     text,
     ...(fromAgent ? { from_agent: fromAgent } : {}),
+    ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
   });
+
+  // Live broadcast for A2A inbound messages: a human watching the
+  // target's session sees the inbound turn appear in real time. Fires
+  // only when fromAgent is set; self-typed turns are echoed by the TUI
+  // locally and don't need the wire round-trip.
+  if (publishSse && fromAgent) {
+    await publishSse({
+      event: 'user_message',
+      data: {
+        text,
+        from_agent: fromAgent,
+        ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
+      },
+    });
+  }
 
   // Reset the agent's auto-dream timer — sub-flows count as activity.
   deps.onActivity(agent);

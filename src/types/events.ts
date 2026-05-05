@@ -23,6 +23,19 @@ export type NormalizedEvent =
        * TUI: rendered with the sender's icon instead of the user icon.
        */
       from_agent?: string;
+      /**
+       * Correlation UUID for an `agent_ask` round-trip. Persisted on
+       * BOTH sides: on the caller's side as a tool_call → tool_result
+       * pair (the call_id is in the tool_call payload), and on the
+       * target's side as user_message.agent_ask_call_id alongside
+       * from_agent.
+       *
+       * MVP today: plumbed through but only used for log correlation.
+       * FUTURE: powers a planned `agent_ask_result(call_id)` retrieval
+       * tool so a caller can pick up the response asynchronously when
+       * the synchronous wait timed out (see A2A-design.md).
+       */
+      agent_ask_call_id?: string;
     }
   | { kind: 'assistant_delta'; ts: number; engine: string; text: string }
   | { kind: 'assistant_message'; ts: number; engine: string; text: string }
@@ -98,4 +111,20 @@ export type SseEvent =
         | { phase: 'result'; tool: string; summary: string; details: string }
         | { phase: 'error'; tool: string; error: string; details?: string };
     }
-  | { event: 'status'; data: { msg: string } };
+  | { event: 'status'; data: { msg: string } }
+  | {
+      // A2A user-message broadcast. Fired ONLY when an `agent_ask` (or
+      // similar A2A tool) writes a user_message with `from_agent` set
+      // into a session. Used by the TUI of a human watching that
+      // session live so they see the inbound A2A turn appear in real
+      // time, rendered with the sender's icon instead of their own.
+      //
+      // Self-typed user turns never come over this event — the TUI
+      // already echoes those locally on submit.
+      event: 'user_message';
+      data: {
+        text: string;
+        from_agent: string;
+        agent_ask_call_id?: string;
+      };
+    };

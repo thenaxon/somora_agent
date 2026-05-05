@@ -194,6 +194,14 @@ export function openStream(
           return { kind: 'connected' };
         }
         return null;
+      case 'user_message':
+        if (typeof data.text !== 'string' || typeof data.from_agent !== 'string') return null;
+        return {
+          kind: 'user-message',
+          text: data.text,
+          fromAgent: data.from_agent,
+          callId: typeof data.agent_ask_call_id === 'string' ? data.agent_ask_call_id : undefined,
+        };
       default:
         return null;
     }

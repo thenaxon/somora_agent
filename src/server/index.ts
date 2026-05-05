@@ -46,6 +46,7 @@ import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
+import { acquireSessionLock } from './session-queue.ts';
 import {
   completeTask,
   failTask,
@@ -604,6 +605,8 @@ app.post('/chat/send', async (c) => {
      * agent's session. Persists in JSONL as user_message.from_agent.
      */
     from_agent?: string;
+    /** A2A correlation UUID. Persisted on user_message.agent_ask_call_id. */
+    agent_ask_call_id?: string;
     /** Sub-agent nesting depth (0 = top-level). Reserved for future spawn flow. */
     subagent_depth?: number;
   };
@@ -612,6 +615,10 @@ app.post('/chat/send', async (c) => {
   const text = body.text ?? '';
   const fromAgent =
     typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
+  const agentAskCallId =
+    typeof body.agent_ask_call_id === 'string' && body.agent_ask_call_id.length > 0
+      ? body.agent_ask_call_id
+      : undefined;
   const subagentDepth =
     typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
 
@@ -632,21 +639,34 @@ app.post('/chat/send', async (c) => {
 
   logger.info({ msg: 'chat.send', agent, session, ref: sessionRef, len: text.length });
 
-  // Fire-and-forget the actual turn — the HTTP handler returns 202 and
-  // events stream over SSE via the publishSse callback. Errors inside
-  // runChatTurn are surfaced to the SSE channel and the JSONL.
-  void runChatTurn({
-    agent,
-    session,
-    text,
-    ...(fromAgent ? { fromAgent } : {}),
-    ...(subagentDepth > 0 ? { subagentDepth } : {}),
-    publishSse: (event) => publish(session, event),
-    deps: chatTurnDeps,
-  }).catch((err) => {
-    logger.error({ msg: 'chat.send.run_failed', agent, session, err: (err as Error).message });
-    void publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
-  });
+  // Fire-and-forget. Acquire the per-session lock with priority='user'
+  // (default for /chat/send unless from_agent is set, in which case the
+  // call is acting as A2A and yields to actual user turns). Release in
+  // the finally block — forgetting deadlocks future turns on the session.
+  const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
+  void (async () => {
+    const release = await acquireSessionLock(agent, session, {
+      priority,
+      ...(agentAskCallId ? { callId: agentAskCallId } : {}),
+    });
+    try {
+      await runChatTurn({
+        agent,
+        session,
+        text,
+        ...(fromAgent ? { fromAgent } : {}),
+        ...(agentAskCallId ? { agentAskCallId } : {}),
+        ...(subagentDepth > 0 ? { subagentDepth } : {}),
+        publishSse: (event) => publish(session, event),
+        deps: chatTurnDeps,
+      });
+    } catch (err) {
+      logger.error({ msg: 'chat.send.run_failed', agent, session, err: (err as Error).message });
+      void publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
+    } finally {
+      release();
+    }
+  })();
 
   // User just spoke → cancel any in-flight auto-dream for this agent
   // and reset the idle countdown. (resetActivity is also called inside
@@ -672,6 +692,7 @@ app.post('/chat/send-sync', async (c) => {
     session?: string;
     text?: string;
     from_agent?: string;
+    agent_ask_call_id?: string;
     subagent_depth?: number;
     model?: string;
     max_rounds?: number;
@@ -681,6 +702,10 @@ app.post('/chat/send-sync', async (c) => {
   const text = body.text ?? '';
   const fromAgent =
     typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
+  const agentAskCallId =
+    typeof body.agent_ask_call_id === 'string' && body.agent_ask_call_id.length > 0
+      ? body.agent_ask_call_id
+      : undefined;
   const subagentDepth =
     typeof body.subagent_depth === 'number' && body.subagent_depth > 0 ? body.subagent_depth : 0;
   const modelOverride =
@@ -696,22 +721,41 @@ app.post('/chat/send-sync', async (c) => {
     return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
   }
 
+  // Acquire the session lock. A from_agent caller (agent_ask, sub-spawn)
+  // queues with priority='agent' and yields to any human user turn that
+  // arrives in parallel. A direct user-side caller of /chat/send-sync
+  // (rare — TUI uses /chat/send) gets priority='user'.
+  //
+  // Sub-spawn destinations are fresh sessions (sub-xxx-yyy), so the lock
+  // is uncontended in that path; cost is one Map lookup + a Promise.
+  const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
+  const release = await acquireSessionLock(agent, session, {
+    priority,
+    ...(agentAskCallId ? { callId: agentAskCallId } : {}),
+  });
   try {
     const result = await runChatTurn({
       agent,
       session,
       text,
       ...(fromAgent ? { fromAgent } : {}),
+      ...(agentAskCallId ? { agentAskCallId } : {}),
       ...(subagentDepth > 0 ? { subagentDepth } : {}),
       ...(modelOverride ? { modelOverride } : {}),
       ...(maxRoundsOverride
         ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
         : {}),
+      // Publish to SSE subscribers too — a human watching this session
+      // sees A2A inbound user_messages and the assistant's reply appear
+      // live, not just on session refresh.
+      publishSse: (event) => publish(session, event),
       deps: chatTurnDeps,
     });
     return c.json(result);
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
+  } finally {
+    release();
   }
 });
 

@@ -233,6 +233,17 @@ export function App({
         });
         return;
       }
+      case 'user-message':
+        // A2A inbound: another agent wrote into the session we're
+        // watching. Render as a user-turn but tagged with the sender so
+        // it's visually distinct from our own typed turns.
+        appendTurn({
+          kind: 'user',
+          id: nextId(),
+          text: ev.text,
+          fromAgent: ev.fromAgent,
+        });
+        return;
     }
   }
 
