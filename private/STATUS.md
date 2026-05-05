@@ -156,9 +156,18 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
+### Maintenance-Sweep 1 done (commit `42fee3f`)
+
+- npm: claude-agent-sdk 0.2.123→0.2.128, hono 4.12.16→4.12.17,
+  ink 7.0.1→7.0.2, openai 6.35.0→6.36.0, zod 4.4.1→4.4.3
+- binary: codex-cli 0.125.0→0.128.0; claude-cli sync at 2.1.128
+- Welle A + Welle B Smoke + Pattern 2 + Pattern 4 alle grün
+- Keine Adapter-Anpassung nötig — SDK-Surfaces backward-compatible
+- Detail in `private/FUTURE.md` Sektion "Dependencies + SDK-Audit-Sweep"
+
 ### TODO für nächste Session
 
-A2A + Dream-Worker-Pflege durch. Offene Themen:
+A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 
 1. **Phase 5 — exec mit Hard-Blacklist + tmux** (große separate
    Diskussion). Cross-Reference-Pointer in `private/FUTURE.md`
@@ -168,13 +177,10 @@ A2A + Dream-Worker-Pflege durch. Offene Themen:
 2. **Phase X — Skill-Handling** (vorher 9 Diskussionsfragen klären,
    siehe `private/FUTURE.md` Abschnitt „Phase X — Skill-Handling"; **NICHT**
    unilateral starten).
-3. **Maintenance-Sweep 1** — Dependencies + SDK-Audit (FUTURE.md
-   beschreibt Plan, Welle A-D, Smoke-Tests via 5-Pattern-Matrix).
-   Empfohlen nach Phase 5 + Phase X.
-4. **Dream-Worker-Priorisierung** (User-Active-Marker mit
+3. **Dream-Worker-Priorisierung** (User-Active-Marker mit
    AbortSignal) — wenn `idleMinutes < 30` wieder gewünscht.
    FUTURE.md hat den halben-Tag-Bauplan.
-5. **TUI-History-Replay bei Session-Open** — pre-existierende Lücke,
+4. **TUI-History-Replay bei Session-Open** — pre-existierende Lücke,
    für 6c relevant: User der Lisas Session erst nach einem agent_ask
    öffnet sieht den `↬ hans`-Tag erst beim Refresh, nicht aus dem
    JSONL repleyed.
@@ -189,9 +195,11 @@ A2A + Dream-Worker-Pflege durch. Offene Themen:
 > Bug-Reports 2026-05-05 alle abgearbeitet: Bug 2 (file_list glob),
 > Bug 4 (resources hot-reload), Bug 1 (paused-dream Akkumulation +
 > Backlog-Drain), Bug 3 (DREAMRULES.MD per-Agent — Hans hat starter
-> Rules, Lisa opt-in). HEAD 66c5d37. Nächste Themen offen: Phase 5
-> (exec+tmux), Maintenance-Sweep, Phase X (Skills, vorher
-> diskutieren), Dream-Worker-Priorisierung."
+> Rules, Lisa opt-in). Maintenance-Sweep 1 durch — claude-agent-sdk
+> 0.2.128, codex-cli 0.128.0, plus hono/ink/openai/zod patches; keine
+> Adapter-Änderungen nötig, alle Smoke-Tests grün. HEAD 42fee3f.
+> Nächste Themen offen: Phase 5 (exec+tmux), Phase X (Skills, vorher
+> diskutieren), Dream-Worker-Priorisierung, TUI-History-Replay."
 
 ---
 

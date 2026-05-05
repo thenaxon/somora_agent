@@ -525,7 +525,44 @@ die später teuer zu ändern sind.
 
 ---
 
-## Dependencies + SDK-Audit-Sweep (geplant nach Phase 5 exec + Phase 6c agent_ask)
+## Dependencies + SDK-Audit-Sweep — Maintenance-Sweep 1 done 2026-05-05
+
+**Status: durchgeführt 2026-05-05 spätabend (commit `42fee3f`).**
+
+Sweep-1-Resultat — alles über zwei Wellen + Final-Integration grün:
+
+| Komponente | Vorher | Nachher | Welle |
+|---|---|---|---|
+| `@anthropic-ai/claude-agent-sdk` | 0.2.123 | 0.2.128 | A |
+| `hono` | 4.12.16 | 4.12.17 | A |
+| `ink` | 7.0.1 | 7.0.2 | A |
+| `openai` | 6.35.0 | 6.36.0 | A |
+| `zod` | 4.4.1 | 4.4.3 | A |
+| `@openai/codex` (binary) | 0.125.0 | 0.128.0 | B |
+| `claude-cli` (binary) | 2.1.128 (sync) | unverändert | — |
+
+**Smoke-Befunde:**
+- claude-cli engine + codex-cli engine + openai-compatible alle
+  grundsätzlich funktional nach dem Bump
+- agent_ask cross-engine: jarvis(opus) → lisa(gpt55) PONG in 4.3s
+- spawn_subagent self-clone: HTTP-Fallback OK
+- Codex MCP-Pfad: lisa ruft memory_search via codex's MCP child,
+  korrekt geparst, 4 hits returned
+- Codex NDJSON-Format unverändert für unsere Pfade (thread.started,
+  turn.started, item.completed, turn.completed)
+- Codex `--sandbox read-only` weiter akzeptiert
+- Pattern 2 (async lifecycle) + Pattern 4 (cross-engine spawn)
+  beide nach Bumps grün
+
+**Keine Adapter-Anpassungen nötig** — die SDK-Surfaces in dem
+Versionsband waren backward-compatible.
+
+**Nächster Sweep:** wenn npm outdated wieder >3 Patches anzeigt
+oder ein Trigger aus dem Block weiter unten greift.
+
+---
+
+### Original-Plan (für Trajectory bei kommenden Sweeps)
 
 Periodisches Update aller Build-Inputs, weil somora drei externe
 Komponenten gepinnt einbindet und keine davon automatisch erneuert
