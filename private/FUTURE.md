@@ -247,7 +247,10 @@ fühlen sich auch in laufenden Sessions zäh an — initiale Token-
 Generation nimmt mehrere Sekunden, obwohl der vorhergehende Turn
 gerade lief. Hypothese: Prefix-Cache wird zerstört.
 
-**Bestätigt im Code** (`src/engine/openai-compatible.ts:236-238`):
+### Status pro Engine
+
+**openai-compatible (mlx-omx, gemma) — 🔴 KAPUTT**
+(`src/engine/openai-compatible.ts:236-238`):
 
 ```ts
 const effectiveSystemPrompt = ephemeralContext
@@ -257,43 +260,86 @@ const effectiveSystemPrompt = ephemeralContext
 
 Memory-Inject (`ephemeralContext`) wird an den System-Prompt angehängt
 und der landet als ALLERERSTE Message im Array. Memory ändert sich
-jeden Turn (Recall basiert auf den letzten User-Turns als Query →
-neue Hits, andere Reihenfolge). Sobald sich ein Token am Anfang
-ändert, ist der gesamte Prefix-Cache für alles dahinter Müll. Bei
-einer 20-Turn-Session = 20-30k Tokens jedesmal komplett re-encodieren
-bevor das erste Antwort-Token rauskommt.
+jeden Turn → Cache-Invalidation für alles dahinter.
 
-**Begründung im aktuellen Code** (Kommentar Zeile 232-235): Defensive
-Wahl für Backends die nur eine system-message akzeptieren. Cache-
-Verlust war damals vermutlich kein Schmerz weil's primär gegen mlx-omx
-nicht regelmäßig benutzt wurde.
+**claude-cli (Anthropic SDK) — 🔴 KAPUTT, gleicher Bug, anderes File**
+(`src/engine/claude-cli.ts:135-137`):
+
+```ts
+const systemPromptForTurn = ephemeralContext
+  ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
+  : systemPrompt;
+SDK.query({systemPrompt: systemPromptForTurn})
+```
+
+Anthropic's Prompt-Caching setzt `cache_control` auf den system-block
+als einzelnen Cache-Breakpoint. Wenn der String sich pro Turn ändert
+(weil Memory hinten dranklebt), wird der gesamte system-block-Cache
+invalidiert. Der SDK kann nichts dagegen tun — wir geben ihm einen
+veränderten String, er cached entsprechend.
+
+**codex-cli — 🟢 FINE (akzidentell richtig)**
+(`src/engine/codex-cli.ts:206-210`):
+
+```ts
+const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
+const promptPayload = resumeId
+  ? `${ephemeralBlock}${replayPrefix}${taggedUserMessage}`
+  : `${systemPrompt}\n\n---\n\n${ephemeralBlock}${replayPrefix}${taggedUserMessage}`;
+codex exec [resume] ... < stdin promptPayload
+```
+
+Codex hat keine separate `--system`-CLI-Option — das ganze Payload
+geht via stdin als „User-Message" rein. Codex' interner API-Call:
+stable persona-system (gefrozen bei Session-Start nach Turn 1) +
+history (intern verwaltet) + dieser Turn's Inhalt (= unser
+`ephemeralBlock + user`). Memory landet damit **automatisch** am Ende
+des Prompts, hinter dem stable Teil. Cache bleibt für die History
+intakt. Codex' awkwarde CLI-Schnittstelle hat uns einen Gefallen
+getan ohne dass wir's wussten.
+
+**Begründung im openai-compatible-Kommentar** (Zeile 232-235): defensive
+Wahl für Backends die nur eine system-message akzeptieren. Bei
+claude-cli ist's strukturell limitiert: claude-agent-sdk's `query()`
+nimmt nur EINE `systemPrompt: string` Field. Beide Begründungen
+machten Sinn solange Cache nicht im Fokus war.
 
 ### Bauplan
 
-**Default-Verhalten umstellen** auf cache-freundliche Position. Drei
-Varianten:
+**Pro Engine eigenes Vorgehen** weil die Schnittstellen sich
+unterscheiden:
 
-- **A) Memory als zweite system-message LATE** — direkt vor der
-  aktuellen user-message:
+- **openai-compatible → Variante A (zweite system-message LATE)**
+  direkt vor der aktuellen user-message:
   ```
   [system: persona]                ← stabil über Session
   [user 1] [assistant 1] ...
   [system: memory recall]          ← ephemeral, ändert sich pro Turn
   [user: current question]
   ```
-  Cache stabil bis zur letzten Position. mlx-omx + ollama + OpenAI
-  unterstützen multi-system-message. **Empfohlene Default-Variante.**
-- **B) Memory in user-message inlinen** mit `<memory-context>`-Wrapper.
-  Funktioniert mit jedem Backend. Nachteil: das Modell könnte den
-  Recall-Block als „User hat das gesagt" interpretieren statt
-  „Hintergrund".
-- **C) Top-of-system** = aktueller Stand, kompatibel zu allem aber
-  cache-zerstörend.
+  Cache stabil bis zur letzten Position. OpenAI Chat Completions API
+  erlaubt mehrere system-messages, mlx-omx + ollama tun das auch.
+- **claude-cli → Variante B (memory in user-message inlinen)**
+  weil claude-agent-sdk's `query()` nur EIN `systemPrompt: string`-
+  Feld hat. Memory geht in die user-message als
+  `<memory-context>...</memory-context>\n\n<actual question>`-Wrapper.
+  System-Prompt bleibt stabil → Anthropic's prompt-caching cache_control-
+  Breakpoint auf system-block hält über Turns hinweg.
+- **codex-cli → keine Änderung nötig**, ist schon strukturell richtig
+  (siehe Status oben).
+
+Der `<memory-context>`-Wrapper bei Variante B sollte explizit als
+„Hintergrund-Recall, nicht User-Aussage" markiert sein damit das
+Modell's nicht als „User hat das gerade gesagt" missversteht.
+Hermes-Repo macht's so — Wrapper-Tag plus instruction-Hint im system-
+Prompt.
 
 ### Config-Switch (Renes Wunsch 2026-05-05)
 
 Per-provider in `config.yaml` damit Backends mit Sonderverhalten
-opt-out können ohne globale Default zu kippen. Vorschlag:
+opt-out können ohne globale Default zu kippen. Greift sowohl für
+openai-compatible als auch claude-cli — überall wo wir Memory aktiv
+platzieren. Vorschlag:
 
 ```yaml
 providers:
@@ -301,7 +347,12 @@ providers:
     engine: openai-compatible
     baseUrl: http://10.x.x.x:11434/v1
     apiKey: ...
-    memoryInjectMode: late      # default: 'late' (cache-friendly Variante A)
+    memoryInjectMode: late      # default: cache-friendly
+    models: [...]
+  
+  anthropic:
+    engine: claude-cli
+    memoryInjectMode: inline-user   # default für claude-cli
     models: [...]
   
   some-quirky-backend:
@@ -313,14 +364,17 @@ providers:
 ```
 
 Werte:
-- `late` (default) — Variante A, cache-friendly
-- `inline-user` — Variante B, max-kompatibel mit primitiven backends
-- `system` — Variante C, current behavior, fallback wenn ein Backend
-  multi-system nicht handhabt
+- `late` (default für openai-compatible) — Variante A, zweite
+  system-message vor user-message
+- `inline-user` (default für claude-cli, fallback für openai-compatible
+  bei primitiven backends) — Variante B, in user-message wrapped
+- `system` — Variante C, current behavior, voller Fallback wenn auch
+  inline-user nicht erwünscht ist
 
-Default-Wahl `late` weil mlx-omx, ollama, OpenAI alle multi-system
-können. Wenn jemand später einen exotischen openai-compatible-Endpoint
-einbindet der das nicht kann, kann er per-provider auf `system` zurück.
+Per-Engine-Default ist sinnvoll weil's strukturell unterschiedlich ist
+(claude-agent-sdk hat keine multi-system-Option, also kein `late`
+verfügbar). codex-cli ignoriert die Config-Setting weil's eh schon
+richtig macht — dokumentieren als no-op-bei-codex.
 
 ### Validierung wenn gebaut
 
@@ -337,8 +391,9 @@ historische „warum oben" nicht jemanden in die Irre führt.
 
 ### Aufwand
 
-Halber Tag. Plus Smoke-Run mit Token-Budget für 2-3 vergleichende
-Test-Sessions auf gemma4big.
+Realistisch **ein Tag** statt halber, weil zwei Engines + Config-Schema
++ pro-Engine-Default-Logik + Smoke pro Variante. Plus Token-Budget
+für vergleichende Test-Sessions auf gemma4big UND opus.
 
 ### Trigger fürs Bauen
 
@@ -350,12 +405,17 @@ Test-Sessions auf gemma4big.
 ### Code-Pointer
 
 - `src/engine/openai-compatible.ts:236-238` — die Concat-Stelle
+  (openai-compatible)
 - `src/engine/openai-compatible.ts:232-235` — historischer Kommentar
-- `src/engine/types.ts` (vermutlich `TurnInput`-Definition mit
-  `systemPrompt` + `ephemeralContext`)
+- `src/engine/claude-cli.ts:131-137` — die Concat-Stelle (claude-cli)
+- `src/engine/codex-cli.ts:199-210` — Referenz wie's korrekt sein
+  sollte (= „inline ins User-Message-Payload"-Pattern)
+- `src/engine/types.ts` — `TurnInput` mit `systemPrompt` +
+  `ephemeralContext`
 - `src/server/run-turn.ts` — Aufrufer der `ephemeralContext` baut
-- `src/config/types.ts` — neue `memoryInjectMode`-Field auf den
-  Provider-Schemas (`OpenAiCompatibleProviderSchema` mindestens)
+- `src/config/types.ts` — neue `memoryInjectMode`-Field auf
+  ProviderSchema (in beiden relevanten Provider-Schemas:
+  `OpenAiCompatibleProviderSchema` + `ClaudeCliProviderSchema`)
 
 ---
 
