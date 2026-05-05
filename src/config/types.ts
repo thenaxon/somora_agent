@@ -54,6 +54,42 @@ export const OpenAiCompatibleProviderSchema = z.object({
   baseUrl: z.string().url(),
   apiKey: z.string().min(1),
   models: z.array(ModelSchema).min(1),
+  /**
+   * Where the per-turn memory recall block lands in the prompt sent to
+   * the backend. The choice matters because openai-compatible can sit
+   * in front of any backend (mlx-omx, ollama, vLLM, OpenAI itself,
+   * llama.cpp gateways, ...) and prefix-cache support varies.
+   *
+   * - `late` (default): inject the memory block as a SECOND
+   *   `role:'system'` message, placed right before the latest
+   *   `role:'user'` message. The persistent system prompt stays
+   *   stable across turns, so prefix-cache (and Anthropic-style
+   *   cache_control breakpoints) keep their hit-rate. Requires the
+   *   backend to accept multi-system-message conversations — true
+   *   for OpenAI's Chat Completions API and the major local
+   *   inference servers.
+   *
+   * - `inline-user`: prepend the memory block (already wrapped in
+   *   `<memory-context>...</memory-context>` by the runtime) to the
+   *   user message content. Works with backends that only accept a
+   *   single system message; the model sees the memory inside the
+   *   user turn rather than as system instructions.
+   *
+   * - `system`: legacy — concat the memory block onto the persistent
+   *   system prompt. Cache-destructive (the system block changes
+   *   every turn) but maximally compatible. Only set this if a
+   *   backend mishandles the other two modes.
+   *
+   * claude-cli + codex-cli intentionally don't carry this field —
+   * claude-cli's backend is always Anthropic so we hardcode
+   * inline-user there (claude-agent-sdk has no multi-system escape),
+   * and codex-cli's stdin payload structure puts memory in the right
+   * place by construction.
+   */
+  memoryInjectMode: z
+    .enum(['late', 'inline-user', 'system'])
+    .default('late')
+    .optional(),
 });
 
 export const ProviderSchema = z.discriminatedUnion('engine', [

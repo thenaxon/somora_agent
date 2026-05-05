@@ -23,6 +23,7 @@
 import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { resolveCompactionConfig } from '../compaction/index.ts';
+import { getFreshConfig } from '../config/loader.ts';
 import {
   type Config,
   listAllModels,
@@ -241,7 +242,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       invoke: (name: string, input: unknown) => deps.tools.invoke(name, input, toolCtx),
     };
 
-    const selfPointer = buildSelfPointer(persona, deps.config, SOMORA_HOME_DIR);
+    // Build the self-pointer from FRESH config so newly-added resources
+    // appear in the agent's "Configured remote resources: …" line on the
+    // next turn instead of waiting for a server restart. Pairs with the
+    // bug-4 hot-reload pattern (resource_list / resource_test already
+    // use getFreshConfig). selfPointer otherwise stays stable across
+    // turns within the same session — its content is derived from
+    // config.resources + persona.resourceDeny + paths, none of which
+    // change mid-turn — so the prefix-cache impact is nil.
+    const freshConfig = await getFreshConfig();
+    const selfPointer = buildSelfPointer(persona, freshConfig, SOMORA_HOME_DIR);
     const subContextNote =
       subagentDepth > 0
         ? `\n\nNote: this is a SUBAGENT turn (depth=${subagentDepth}). You were spawned by another agent to do a focused task; finish, return your result, and stop.`

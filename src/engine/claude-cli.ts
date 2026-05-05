@@ -104,7 +104,24 @@ export const claudeCliEngine: AgentEngine = {
     const lastSeenTs = getLastSeenTs(meta, ENGINE);
     const replayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
     const replayPrefix = renderReplayPrefix(replayDelta);
-    const effectiveUserMessage = replayPrefix + withFromAgentHeader(userMessage, fromAgent);
+    // Memory recall (ephemeralContext, already wrapped in
+    // <memory-context>...</memory-context>) goes BEFORE the actual user
+    // text so the persistent system prompt can stay stable across
+    // turns — Anthropic's prompt-cache cache_control breakpoint on the
+    // system block then holds, instead of being invalidated every turn
+    // by a per-turn-changing system string. The replayPrefix sits
+    // ahead of memory because it's an even more "outer" frame
+    // (cross-engine catch-up summary).
+    //
+    // Order in the user-message string:
+    //   [replay-prefix? ][memory-recall? ][from_agent header? ][actual user text]
+    //
+    // claude-agent-sdk has no multi-system-message escape so we can't
+    // do "second system message late" like openai-compatible — inline
+    // is the structurally correct choice for this engine.
+    const memoryBlock = ephemeralContext ? `${ephemeralContext}\n\n` : '';
+    const effectiveUserMessage =
+      replayPrefix + memoryBlock + withFromAgentHeader(userMessage, fromAgent);
 
     const turnId = `t-${Date.now()}`;
     const ts = () => Date.now();
@@ -128,13 +145,13 @@ export const claudeCliEngine: AgentEngine = {
         replaySummary: Boolean(replayDelta.summary),
         resumeSdkSessionId: Boolean(resume),
       });
-      // claude-agent-sdk takes one systemPrompt string per query() — we
-      // concat the persona + ephemeral block. The SDK re-sends this on
-      // every query() call, so per-turn memory-context updates land
-      // even though the underlying provider session is resumed.
-      const systemPromptForTurn = ephemeralContext
-        ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
-        : systemPrompt;
+      // systemPrompt stays STABLE across turns now — memory landed in
+      // the user-message above. Anthropic's prompt-cache marks the
+      // system block with cache_control by default; keeping the string
+      // identical across turns means we hit the cache for system+tools
+      // every turn after the first, saving real tokens (cache reads
+      // are ~10% of fresh-input cost).
+      const systemPromptForTurn = systemPrompt;
 
       // Map somora's cross-engine thinking knob to the Claude Agent SDK's
       // thinking/effort surface. Only applied when the model declares the
