@@ -240,6 +240,125 @@ Curation-Workflows. Bis dahin reicht das was heute steht.
 
 ---
 
+## Memory-Inject Position für Prefix-Cache (entdeckt 2026-05-05)
+
+**Problem-Beobachtung (Renes Frage):** Turns auf gemma4big via mlx-omx
+fühlen sich auch in laufenden Sessions zäh an — initiale Token-
+Generation nimmt mehrere Sekunden, obwohl der vorhergehende Turn
+gerade lief. Hypothese: Prefix-Cache wird zerstört.
+
+**Bestätigt im Code** (`src/engine/openai-compatible.ts:236-238`):
+
+```ts
+const effectiveSystemPrompt = ephemeralContext
+  ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
+  : systemPrompt;
+```
+
+Memory-Inject (`ephemeralContext`) wird an den System-Prompt angehängt
+und der landet als ALLERERSTE Message im Array. Memory ändert sich
+jeden Turn (Recall basiert auf den letzten User-Turns als Query →
+neue Hits, andere Reihenfolge). Sobald sich ein Token am Anfang
+ändert, ist der gesamte Prefix-Cache für alles dahinter Müll. Bei
+einer 20-Turn-Session = 20-30k Tokens jedesmal komplett re-encodieren
+bevor das erste Antwort-Token rauskommt.
+
+**Begründung im aktuellen Code** (Kommentar Zeile 232-235): Defensive
+Wahl für Backends die nur eine system-message akzeptieren. Cache-
+Verlust war damals vermutlich kein Schmerz weil's primär gegen mlx-omx
+nicht regelmäßig benutzt wurde.
+
+### Bauplan
+
+**Default-Verhalten umstellen** auf cache-freundliche Position. Drei
+Varianten:
+
+- **A) Memory als zweite system-message LATE** — direkt vor der
+  aktuellen user-message:
+  ```
+  [system: persona]                ← stabil über Session
+  [user 1] [assistant 1] ...
+  [system: memory recall]          ← ephemeral, ändert sich pro Turn
+  [user: current question]
+  ```
+  Cache stabil bis zur letzten Position. mlx-omx + ollama + OpenAI
+  unterstützen multi-system-message. **Empfohlene Default-Variante.**
+- **B) Memory in user-message inlinen** mit `<memory-context>`-Wrapper.
+  Funktioniert mit jedem Backend. Nachteil: das Modell könnte den
+  Recall-Block als „User hat das gesagt" interpretieren statt
+  „Hintergrund".
+- **C) Top-of-system** = aktueller Stand, kompatibel zu allem aber
+  cache-zerstörend.
+
+### Config-Switch (Renes Wunsch 2026-05-05)
+
+Per-provider in `config.yaml` damit Backends mit Sonderverhalten
+opt-out können ohne globale Default zu kippen. Vorschlag:
+
+```yaml
+providers:
+  omlx:
+    engine: openai-compatible
+    baseUrl: http://10.x.x.x:11434/v1
+    apiKey: ...
+    memoryInjectMode: late      # default: 'late' (cache-friendly Variante A)
+    models: [...]
+  
+  some-quirky-backend:
+    engine: openai-compatible
+    baseUrl: ...
+    apiKey: ...
+    memoryInjectMode: system    # legacy: top-of-system, current behavior
+    models: [...]
+```
+
+Werte:
+- `late` (default) — Variante A, cache-friendly
+- `inline-user` — Variante B, max-kompatibel mit primitiven backends
+- `system` — Variante C, current behavior, fallback wenn ein Backend
+  multi-system nicht handhabt
+
+Default-Wahl `late` weil mlx-omx, ollama, OpenAI alle multi-system
+können. Wenn jemand später einen exotischen openai-compatible-Endpoint
+einbindet der das nicht kann, kann er per-provider auf `system` zurück.
+
+### Validierung wenn gebaut
+
+Vergleichs-Smoke pro Variante mit demselben Persona-Setup:
+- Session warm-laufen lassen (3-4 Turns)
+- 5 weitere Turns durchspielen, `engine.turn.duration_ms` aus Server-
+  Logs sammeln pro Turn
+- `late` sollte messbar schneller sein als `system` ab Turn 2 — wenn
+  nicht, hat das Backend keinen relevanten Prefix-Cache und wir
+  gewinnen nix (außer bessere Architektur)
+
+Plus den Kommentar in `openai-compatible.ts` umschreiben damit das
+historische „warum oben" nicht jemanden in die Irre führt.
+
+### Aufwand
+
+Halber Tag. Plus Smoke-Run mit Token-Budget für 2-3 vergleichende
+Test-Sessions auf gemma4big.
+
+### Trigger fürs Bauen
+
+- Wenn Latenz auf gemma4big real wieder nervt
+- Wenn wir andere lokale Modelle einbinden (qwen, llama, etc.) und
+  noch mehr von Cache profitieren würden
+- Vor jeder Frontend-Demo wo Latenz user-visible ist
+
+### Code-Pointer
+
+- `src/engine/openai-compatible.ts:236-238` — die Concat-Stelle
+- `src/engine/openai-compatible.ts:232-235` — historischer Kommentar
+- `src/engine/types.ts` (vermutlich `TurnInput`-Definition mit
+  `systemPrompt` + `ephemeralContext`)
+- `src/server/run-turn.ts` — Aufrufer der `ephemeralContext` baut
+- `src/config/types.ts` — neue `memoryInjectMode`-Field auf den
+  Provider-Schemas (`OpenAiCompatibleProviderSchema` mindestens)
+
+---
+
 ## Dream-Worker-Priorisierung (entdeckt 2026-05-04)
 
 **Problem-Beobachtung beim Test-Run:** während mehrerer paralleler
