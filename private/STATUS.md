@@ -110,38 +110,55 @@ Spawning). Die testen Engine-Behavior das in Phase 6c nicht angefasst
 wurde — DECISION #37 (Engine-Tool-Race) ist von 2026-05-04. Wenn wir
 später Engine-Adapter ändern, dann diese Patterns wieder mitziehen.
 
-### Bug-Fixes nach A2A-Abschluss (commit 64ca680)
+### Bug-Fixes nach A2A-Abschluss — alle 4 Bugs durch
 
 Hans hat 2026-05-05 vier Bug-Reports geliefert (`~/somoraworkspace/2026-05-05-bugs.md`).
-Die zwei Quick-Wins sind drin:
+Alle vier sind drin und committed:
 
-- **Bug 2** — `file_list` glob ohne `/` matcht jetzt korrekt gegen
-  Basename auch im rekursiven Walk. Root-Cause war
+- **Bug 2** (commit `64ca680`) — `file_list` glob ohne `/` matcht jetzt
+  korrekt gegen Basename auch im rekursiven Walk. Root-Cause war
   `globRe.source.includes('/')` der den kompilierten Regex inspizierte
   (immer `/` wegen `[^/]*`) statt das Original-Glob-String. Fix:
   CompiledGlob-Wrapper mit `hasSlash`-Flag, in local.ts + remote.ts.
   Verifiziert live: `*.md` recursive findet jetzt 10 Files in
   Unterordnern statt 3 Top-Level.
-- **Bug 4** — Resources hot-reload via lazy mtime-check. Neuer
-  `getFreshConfig()`-Helper in `src/config/loader.ts` cached + stat'd
-  config.yaml, re-load nur bei mtime-Änderung. resource_list /
-  resource_test / file_*-mit-target switchen auf
-  `visibleResourcesForAgentFresh()` / `resolveVisibleResourceFresh()`.
-  Agent kann jetzt config.yaml editieren und beim nächsten Tool-Call
-  die neue Resource sehen ohne Restart. Verifiziert live: nach Hans'
-  spiderman-Addition jetzt sichtbar.
-
-**Bug 1 + 3 noch offen** — gehören zur „Dream-Worker-Pflege"-Mini-Phase
-(beide betreffen den Dream-Worker, brauchen Diskussion vor Bau):
-- Bug 1: Paused dreams akkumulieren (5 paused, kein resume) — Severity
-  Medium. Erst Diagnose-Tool, dann gezielter Fix.
-- Bug 3: Worker schlägt repetitiv Vault-Duplikate vor — Severity
-  Low-Medium. Architektur-Frage: `dream.rules` in agent.yaml als
-  Per-Agent-Config? Diskussion nötig.
+- **Bug 4** (commit `64ca680`) — Resources hot-reload via lazy
+  mtime-check. Neuer `getFreshConfig()`-Helper in
+  `src/config/loader.ts` cached + stat'd config.yaml, re-load nur bei
+  mtime-Änderung. resource_list / resource_test / file_*-mit-target
+  switchen auf `visibleResourcesForAgentFresh()` /
+  `resolveVisibleResourceFresh()`. Agent kann jetzt config.yaml
+  editieren und beim nächsten Tool-Call die neue Resource sehen ohne
+  Restart. Verifiziert live: nach Hans' spiderman-Addition jetzt
+  sichtbar.
+- **Bug 1** (commit `c707065`) — Paused dreams akkumulierten weil
+  `resumeDream` das alte `.paused.md`-File nicht löschte: `runDream`
+  generiert einen neuen timestamp-basierten ID und schreibt fresh.
+  Wenn der neue Run wieder abgebrochen wurde → noch ein paused-File.
+  Fix: `resumeDream` unlinked das alte paused vor dem Rerun. Plus
+  `consolidateStalePausedDreams` als Server-Start-Housekeeping
+  drainiert den bestehenden Backlog (pro source-session nur das
+  neueste paused behalten). Verifiziert live: tsx-watch reload
+  hat 4 von 5 hans-paused-Dreams automatisch entfernt, nur das
+  neueste (20260504-202507) bleibt zur Wiederaufnahme.
+- **Bug 3** (commit `66c5d37`) — Optionales `DREAMRULES.MD` pro Agent
+  unter `~/.somora/agents/<name>/` (zu AGENTS.md / SOUL.md / USER.md
+  passend). Freitext-Markdown, wird verbatim als
+  `## Per-agent rules`-Block in den Dream-Worker-System-Prompt
+  injiziert. Loader mit mtime-Cache, optional (fehlende Datei →
+  altes Verhalten). Per-Agent statt global weil Dream-Behavior und
+  Vault-Zugriff schon per-Agent sind. Hans's Starter-DREAMRULES legt
+  „Vault ist Single Source of Truth"-Regel + Anti-Duplikations-Regel
+  fest; Lisa hat keine (opt-in). Doku in `docs/dream-mode.md`.
 
 ### TODO für nächste Session
 
-Dream-Worker-Pflege (Bugs 1 + 3) als Mini-Phase, dann offene Themen:
+Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
+sind durch. Nächste mögliche Themen:
+
+### TODO für nächste Session
+
+A2A + Dream-Worker-Pflege durch. Offene Themen:
 
 1. **Phase 5 — exec mit Hard-Blacklist + tmux** (große separate
    Diskussion). Cross-Reference-Pointer in `private/FUTURE.md`
@@ -168,12 +185,13 @@ Dream-Worker-Pflege (Bugs 1 + 3) als Mini-Phase, dann offene Themen:
 > beide live und validiert. DECISION #39 (long-task timeout politik:
 > 30s/5min/30min Drei-Schicht) ist drin und mit dem Pending-Pattern
 > aus DECISION #37 verzahnt. Session-Queue mit User-Priority hält
-> User-Turns reaktiv auch wenn A2A-Traffic läuft. Hans's Bug-Reports
-> 2026-05-05 abgearbeitet: Bug 2 (file_list glob) + Bug 4 (resources
-> hot-reload) gefixt; Bugs 1 + 3 (Dream-Worker-Pflege) als nächste
-> Mini-Phase reserviert mit Diskussion vorab. Andere Themen danach:
-> Phase 5 (exec+tmux), Maintenance-Sweep, Phase X (Skills, vorher
-> diskutieren)."
+> User-Turns reaktiv auch wenn A2A-Traffic läuft. Hans's vier
+> Bug-Reports 2026-05-05 alle abgearbeitet: Bug 2 (file_list glob),
+> Bug 4 (resources hot-reload), Bug 1 (paused-dream Akkumulation +
+> Backlog-Drain), Bug 3 (DREAMRULES.MD per-Agent — Hans hat starter
+> Rules, Lisa opt-in). HEAD 66c5d37. Nächste Themen offen: Phase 5
+> (exec+tmux), Maintenance-Sweep, Phase X (Skills, vorher
+> diskutieren), Dream-Worker-Priorisierung."
 
 ---
 
