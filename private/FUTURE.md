@@ -334,12 +334,20 @@ Modell's nicht als „User hat das gerade gesagt" missversteht.
 Hermes-Repo macht's so — Wrapper-Tag plus instruction-Hint im system-
 Prompt.
 
-### Config-Switch (Renes Wunsch 2026-05-05)
+### Config-Switch (Renes Wunsch 2026-05-05) — nur openai-compatible
 
-Per-provider in `config.yaml` damit Backends mit Sonderverhalten
-opt-out können ohne globale Default zu kippen. Greift sowohl für
-openai-compatible als auch claude-cli — überall wo wir Memory aktiv
-platzieren. Vorschlag:
+Switch nur auf `openai-compatible`-Providern weil dahinter beliebige
+Backends stehen können (mlx-omx, ollama, vLLM, OpenAI selbst,
+llama.cpp-Gateways, exotische Setups). Welches multi-system-message
+sauber unterstützt und welches nicht, wissen wir nicht im Voraus.
+
+claude-cli braucht keinen Switch — das Backend ist immer Anthropic
+via SDK, deterministisch, Variante B (inline-user) ist hardcodiert
+die richtige Wahl.
+
+codex-cli braucht keinen Switch — ist eh schon strukturell richtig.
+
+Vorschlag:
 
 ```yaml
 providers:
@@ -347,34 +355,27 @@ providers:
     engine: openai-compatible
     baseUrl: http://10.x.x.x:11434/v1
     apiKey: ...
-    memoryInjectMode: late      # default: cache-friendly
+    memoryInjectMode: late      # default: cache-friendly Variante A
     models: [...]
-  
-  anthropic:
-    engine: claude-cli
-    memoryInjectMode: inline-user   # default für claude-cli
-    models: [...]
-  
+
   some-quirky-backend:
     engine: openai-compatible
     baseUrl: ...
     apiKey: ...
-    memoryInjectMode: system    # legacy: top-of-system, current behavior
+    memoryInjectMode: system    # opt-out: top-of-system, current behavior
     models: [...]
 ```
 
-Werte:
-- `late` (default für openai-compatible) — Variante A, zweite
-  system-message vor user-message
-- `inline-user` (default für claude-cli, fallback für openai-compatible
-  bei primitiven backends) — Variante B, in user-message wrapped
-- `system` — Variante C, current behavior, voller Fallback wenn auch
-  inline-user nicht erwünscht ist
+Werte (nur auf openai-compatible-Providern):
+- `late` (default) — Variante A, zweite system-message vor
+  user-message. Funktioniert mit allem das multi-system kann.
+- `inline-user` — Variante B, in user-message wrapped. Fallback wenn
+  ein backend multi-system schluckt aber komisch interpretiert.
+- `system` — Variante C, current behavior. Letzter Fallback wenn
+  weder late noch inline funktionieren.
 
-Per-Engine-Default ist sinnvoll weil's strukturell unterschiedlich ist
-(claude-agent-sdk hat keine multi-system-Option, also kein `late`
-verfügbar). codex-cli ignoriert die Config-Setting weil's eh schon
-richtig macht — dokumentieren als no-op-bei-codex.
+Field gehört nur auf `OpenAiCompatibleProviderSchema` — `ClaudeCliProviderSchema`
+und `CodexCliProviderSchema` lassen wir clean.
 
 ### Validierung wenn gebaut
 
@@ -413,9 +414,10 @@ für vergleichende Test-Sessions auf gemma4big UND opus.
 - `src/engine/types.ts` — `TurnInput` mit `systemPrompt` +
   `ephemeralContext`
 - `src/server/run-turn.ts` — Aufrufer der `ephemeralContext` baut
-- `src/config/types.ts` — neue `memoryInjectMode`-Field auf
-  ProviderSchema (in beiden relevanten Provider-Schemas:
-  `OpenAiCompatibleProviderSchema` + `ClaudeCliProviderSchema`)
+- `src/config/types.ts` — neues `memoryInjectMode`-Field NUR auf
+  `OpenAiCompatibleProviderSchema`. claude-cli + codex-cli bleiben
+  unverändert — bei claude-cli ist Variante B fest verdrahtet (Backend
+  immer Anthropic, deterministisch), bei codex-cli ist's eh richtig.
 
 ---
 
