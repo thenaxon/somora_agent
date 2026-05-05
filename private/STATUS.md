@@ -110,9 +110,38 @@ Spawning). Die testen Engine-Behavior das in Phase 6c nicht angefasst
 wurde — DECISION #37 (Engine-Tool-Race) ist von 2026-05-04. Wenn wir
 später Engine-Adapter ändern, dann diese Patterns wieder mitziehen.
 
+### Bug-Fixes nach A2A-Abschluss (commit 64ca680)
+
+Hans hat 2026-05-05 vier Bug-Reports geliefert (`~/somoraworkspace/2026-05-05-bugs.md`).
+Die zwei Quick-Wins sind drin:
+
+- **Bug 2** — `file_list` glob ohne `/` matcht jetzt korrekt gegen
+  Basename auch im rekursiven Walk. Root-Cause war
+  `globRe.source.includes('/')` der den kompilierten Regex inspizierte
+  (immer `/` wegen `[^/]*`) statt das Original-Glob-String. Fix:
+  CompiledGlob-Wrapper mit `hasSlash`-Flag, in local.ts + remote.ts.
+  Verifiziert live: `*.md` recursive findet jetzt 10 Files in
+  Unterordnern statt 3 Top-Level.
+- **Bug 4** — Resources hot-reload via lazy mtime-check. Neuer
+  `getFreshConfig()`-Helper in `src/config/loader.ts` cached + stat'd
+  config.yaml, re-load nur bei mtime-Änderung. resource_list /
+  resource_test / file_*-mit-target switchen auf
+  `visibleResourcesForAgentFresh()` / `resolveVisibleResourceFresh()`.
+  Agent kann jetzt config.yaml editieren und beim nächsten Tool-Call
+  die neue Resource sehen ohne Restart. Verifiziert live: nach Hans'
+  spiderman-Addition jetzt sichtbar.
+
+**Bug 1 + 3 noch offen** — gehören zur „Dream-Worker-Pflege"-Mini-Phase
+(beide betreffen den Dream-Worker, brauchen Diskussion vor Bau):
+- Bug 1: Paused dreams akkumulieren (5 paused, kein resume) — Severity
+  Medium. Erst Diagnose-Tool, dann gezielter Fix.
+- Bug 3: Worker schlägt repetitiv Vault-Duplikate vor — Severity
+  Low-Medium. Architektur-Frage: `dream.rules` in agent.yaml als
+  Per-Agent-Config? Diskussion nötig.
+
 ### TODO für nächste Session
 
-A2A ist abgeschlossen. Nächste mögliche Themen:
+Dream-Worker-Pflege (Bugs 1 + 3) als Mini-Phase, dann offene Themen:
 
 1. **Phase 5 — exec mit Hard-Blacklist + tmux** (große separate
    Diskussion). Cross-Reference-Pointer in `private/FUTURE.md`
@@ -139,11 +168,12 @@ A2A ist abgeschlossen. Nächste mögliche Themen:
 > beide live und validiert. DECISION #39 (long-task timeout politik:
 > 30s/5min/30min Drei-Schicht) ist drin und mit dem Pending-Pattern
 > aus DECISION #37 verzahnt. Session-Queue mit User-Priority hält
-> User-Turns reaktiv auch wenn A2A-Traffic läuft. Nächste mögliche
-> Themen: Phase 5 (exec+tmux), Phase X (Skills, vorher diskutieren),
-> Maintenance-Sweep, Dream-Worker-Priorisierung. Empfehlung Bauchgefühl:
-> Phase 5 oder Maintenance-Sweep — Skills haben zu viele offene
-> Konzept-Fragen für autonomen Start."
+> User-Turns reaktiv auch wenn A2A-Traffic läuft. Hans's Bug-Reports
+> 2026-05-05 abgearbeitet: Bug 2 (file_list glob) + Bug 4 (resources
+> hot-reload) gefixt; Bugs 1 + 3 (Dream-Worker-Pflege) als nächste
+> Mini-Phase reserviert mit Diskussion vorab. Andere Themen danach:
+> Phase 5 (exec+tmux), Maintenance-Sweep, Phase X (Skills, vorher
+> diskutieren)."
 
 ---
 
