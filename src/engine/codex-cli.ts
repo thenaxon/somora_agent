@@ -106,7 +106,14 @@ const CODEX_DISABLED_FEATURES = [
   // ── Misc behavior toggles we don't want flipping under us ──
   'undo',
   'fast_mode', // codex's "fast mode" picks a different model — somora picks models
-  'general_analytics', // privacy: don't ship usage events from somora-spawned codex
+  // 'general_analytics' — REMOVED 2026-05-05 after codex 0.128 dropped the
+  // flag from its catalog entirely. Older codex versions accepted it as a
+  // "removed but still in catalog" no-op; 0.128 errors with `Unknown feature
+  // flag` which fail-stopped every codex turn (silently masked by our
+  // fallback to claude-cli during the maintenance-sweep smoke test).
+  // Codex's analytics behavior in 0.128+ is no longer controlled by this
+  // flag — re-evaluate via `codex features list` if a privacy-relevant
+  // alternative surfaces.
   'request_permissions_tool',
   'request_rule',
   'default_mode_request_user_input',
