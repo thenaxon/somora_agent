@@ -544,18 +544,37 @@ Sweep-1-Resultat — alles über zwei Wellen + Final-Integration grün:
 **Smoke-Befunde:**
 - claude-cli engine + codex-cli engine + openai-compatible alle
   grundsätzlich funktional nach dem Bump
-- agent_ask cross-engine: jarvis(opus) → lisa(gpt55) PONG in 4.3s
+- agent_ask cross-engine: jarvis(opus) → lisa(gpt55) grün
 - spawn_subagent self-clone: HTTP-Fallback OK
 - Codex MCP-Pfad: lisa ruft memory_search via codex's MCP child,
-  korrekt geparst, 4 hits returned
+  korrekt geparst
 - Codex NDJSON-Format unverändert für unsere Pfade (thread.started,
   turn.started, item.completed, turn.completed)
 - Codex `--sandbox read-only` weiter akzeptiert
 - Pattern 2 (async lifecycle) + Pattern 4 (cross-engine spawn)
   beide nach Bumps grün
 
-**Keine Adapter-Anpassungen nötig** — die SDK-Surfaces in dem
-Versionsband waren backward-compatible.
+**Eine Adapter-Anpassung nötig** (commit `5bd7fc1`):
+Codex 0.128 hat das Feature `general_analytics` aus seinem Catalog
+**komplett entfernt** (anders als andere "removed but kept in catalog"
+Features). Unser `CODEX_DISABLED_FEATURES`-Array enthielt es noch,
+codex 0.128 errorte mit `Unknown feature flag: general_analytics`
+und brach jeden codex-Turn.
+
+**Wichtig:** Der Initial-Smoke hatte das verfehlt weil unser
+Fallback-Chain (lisa hat `fallback: opus`) jede codex-fail-Anfrage
+silently auf opus weitergeleitet hat — User-visible Output sah
+plausibel aus, aber kam von der falschen Engine. Erst beim Nach-Check
+durch User, der `engine.fail` im Log gesehen hat, ist der Bug
+aufgefallen.
+
+**Smoke-Lessons-Learned** für künftige Sweeps:
+- Per-Welle-Smoke MUSS prüfen welche Engine geantwortet hat — nicht
+  nur dass eine Antwort kam. Check `ChatTurnResult.{provider,model}`
+  oder den server-side `engine.turn`-Log-Event.
+- Server-Logs auf `engine.fail` / `engine.fallback_to` greppen
+  während Smoke. Fallbacks machen CLI-Engine-Breakage am HTTP-Layer
+  unsichtbar.
 
 **Nächster Sweep:** wenn npm outdated wieder >3 Patches anzeigt
 oder ein Trigger aus dem Block weiter unten greift.

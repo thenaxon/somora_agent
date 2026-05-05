@@ -156,13 +156,21 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
-### Maintenance-Sweep 1 done (commit `42fee3f`)
+### Maintenance-Sweep 1 done (commits `42fee3f` + `5bd7fc1`)
 
 - npm: claude-agent-sdk 0.2.123→0.2.128, hono 4.12.16→4.12.17,
   ink 7.0.1→7.0.2, openai 6.35.0→6.36.0, zod 4.4.1→4.4.3
 - binary: codex-cli 0.125.0→0.128.0; claude-cli sync at 2.1.128
-- Welle A + Welle B Smoke + Pattern 2 + Pattern 4 alle grün
-- Keine Adapter-Anpassung nötig — SDK-Surfaces backward-compatible
+- Adapter-Fix in `5bd7fc1`: `general_analytics`-Feature-Flag aus
+  `CODEX_DISABLED_FEATURES` entfernt (codex 0.128 hat ihn aus dem
+  Catalog entfernt → `--disable general_analytics` errored mit
+  `Unknown feature flag` und brach jeden codex-cli-Turn).
+- Initial-Smoke vom 42fee3f hatte das **versteckt** — nur
+  user-visible Output geprüft, Fallback (lisa→opus) hat das
+  silently abgefangen. Fix `5bd7fc1` re-verified mit explizitem
+  Engine-Check: provider=openai, model=gpt-5.5, no fallback in
+  logs, beide Pattern (Pattern 4 + agent_ask cross-engine) grün.
+- Lessons-Learned in `feedback_smoke_must_check_engine.md`.
 - Detail in `private/FUTURE.md` Sektion "Dependencies + SDK-Audit-Sweep"
 
 ### TODO für nächste Session
