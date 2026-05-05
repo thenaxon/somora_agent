@@ -121,7 +121,9 @@ export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
 // Agent-loop tunables for engines that run their own tool-call loop
 // (currently only openai-compatible — Phase 2-Stufe-C). claude-cli and
-// codex-cli have their own internal loops and ignore these values.
+// codex-cli have their own internal loops and ignore these values for
+// the per-tool-call race; the long-task fields ALSO inform CLI-engine
+// tools (subagent_result, agent_ask) which run inside MCP children.
 export const AgentLoopConfigSchema = z.object({
   /**
    * Max tool-call rounds per turn. The vast majority of conversations
@@ -132,13 +134,47 @@ export const AgentLoopConfigSchema = z.object({
    */
   maxRounds: z.number().int().positive().max(100).default(8),
   /**
-   * Per-tool-call timeout in milliseconds. If a single tool invocation
-   * exceeds this, we cancel it and feed an error back to the model.
-   * memory_* tools are fast (~1s); the cap is mostly insurance against
-   * future slow tools (web fetch, large file reads, etc.) that hang.
+   * Per-tool-call timeout in milliseconds for FAST tools that don't
+   * declare their own (memory_search, web_fetch, time_now, file_read,
+   * obsidian_*). 30s is plenty for everything that hits a local DB,
+   * reads a file, or does a single HTTP round-trip. Tools that legitimately
+   * take longer (subagent_result with wait_until_done, agent_ask, exec)
+   * declare their own timeouts via ToolDefinition.timeoutFromInput +
+   * maxTimeoutMs (DECISION #37) and use longTask*TimeoutMs below.
    */
   toolCallTimeoutMs: z.number().int().positive().default(30_000),
-}).default({ maxRounds: 8, toolCallTimeoutMs: 30_000 });
+  /**
+   * DEFAULT timeout for SLOW Agent-to-Agent tools when the caller doesn't
+   * specify timeout_ms (subagent_result wait_until_done, agent_ask).
+   * Local models (gemma4big via mlx-omx, ollama) routinely need several
+   * minutes for a single turn — this default needs to be generous so
+   * agents don't have to adapt with retries on every call. 5 min is the
+   * "first checkpoint": when this elapses the tool returns
+   * state: "pending" (NOT an error), the sub keeps running, and the
+   * caller can retry with a higher timeout_ms or check status later
+   * (DECISION #37 pending-pattern). Honest "I'm still working" beats
+   * a fake error every time.
+   */
+  longTaskDefaultTimeoutMs: z.number().int().positive().default(300_000),
+  /**
+   * MAX timeout the caller can pass for slow Agent-to-Agent tools, even
+   * with an explicit timeout_ms. Hard ceiling for a single tool-call
+   * blocking — the underlying sub-task itself runs unbounded in the
+   * background (capped only by its own agentLoop.maxRounds), so this
+   * really just bounds how long a single subagent_result or agent_ask
+   * call sits open. 30 min covers any realistic local-model workload;
+   * raise if you have an exceptionally slow setup (CPU-only inference,
+   * huge models). claudeCli.mcpToolTimeoutMs and codexCli.toolTimeoutSec
+   * MUST be ≥ this value, otherwise the CLI's MCP layer will cut us off
+   * before our own ceiling kicks in.
+   */
+  longTaskMaxTimeoutMs: z.number().int().positive().default(1_800_000),
+}).default({
+  maxRounds: 8,
+  toolCallTimeoutMs: 30_000,
+  longTaskDefaultTimeoutMs: 300_000,
+  longTaskMaxTimeoutMs: 1_800_000,
+});
 export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 
 // claude-cli engine tunables. Mostly thin wrappers over claude-agent-sdk
@@ -151,18 +187,20 @@ export const ClaudeCliConfigSchema = z
     /**
      * Per-MCP-tool-call timeout (ms). Maps to MCP_TOOL_TIMEOUT in the
      * claude-agent-sdk subprocess. The SDK's hidden default is 5 min
-     * (300_000) — too short for sub-spawns and long-blocking tools like
-     * subagent_result(wait_until_done). 10 min is a saner default; lower
-     * if you want fail-fast behavior, raise for orchestrator workloads.
+     * (300_000) — way too short for slow local models. We default to
+     * 30 min to match agentLoop.longTaskMaxTimeoutMs so the CLI's MCP
+     * layer never cuts off a long-blocking tool call before our own
+     * ceiling does. Raise both together if you need more, lower
+     * mcpToolTimeoutMs for fail-fast behavior on a fast setup.
      */
-    mcpToolTimeoutMs: z.number().int().positive().default(600_000),
+    mcpToolTimeoutMs: z.number().int().positive().default(1_800_000),
     /**
      * Initial MCP server connect timeout (ms). Maps to MCP_TIMEOUT.
      * Affects only server startup handshake, not running calls.
      */
     mcpConnectTimeoutMs: z.number().int().positive().default(60_000),
   })
-  .default({ mcpToolTimeoutMs: 600_000, mcpConnectTimeoutMs: 60_000 });
+  .default({ mcpToolTimeoutMs: 1_800_000, mcpConnectTimeoutMs: 60_000 });
 export type ClaudeCliConfig = z.infer<typeof ClaudeCliConfigSchema>;
 
 // codex-cli engine tunables. Same posture as claudeCli — surface
@@ -173,14 +211,15 @@ export const CodexCliConfigSchema = z
   .object({
     /**
      * Per-MCP-tool-call timeout in seconds. Codex's hidden default is
-     * 60s (binary string `tool_timeout_sec`); too short for sub-spawns
-     * with wait_until_done. Maps to
-     * `mcp_servers.somora-memory.tool_timeout_sec` in codex's config TOML.
-     * 600s = 10min default keeps parity with claudeCli.mcpToolTimeoutMs.
+     * 60s (`tool_timeout_sec`) — way too short for slow local models.
+     * Maps to `mcp_servers.somora-memory.tool_timeout_sec` in codex's
+     * TOML. Default 1800s (30 min) matches claudeCli.mcpToolTimeoutMs
+     * and agentLoop.longTaskMaxTimeoutMs so the CLI's MCP layer never
+     * cuts off a long-blocking tool call before our own ceiling does.
      */
-    toolTimeoutSec: z.number().int().positive().default(600),
+    toolTimeoutSec: z.number().int().positive().default(1800),
   })
-  .default({ toolTimeoutSec: 600 });
+  .default({ toolTimeoutSec: 1800 });
 export type CodexCliConfig = z.infer<typeof CodexCliConfigSchema>;
 
 // Workspace — default cwd for the file_* tools. NOT a sandbox: agents

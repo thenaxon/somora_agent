@@ -19,6 +19,7 @@ import type { ZodObject, ZodRawShape } from 'zod';
 import { loadConfig } from '../config/loader.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
+import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import {
   agentTools,
   dreamTools,
@@ -43,6 +44,10 @@ async function main(): Promise<void> {
   }
 
   const config = await loadConfig();
+  // Match the main server: tools that read longTaskDefault/Max via the
+  // module-level cache (subagent_result, spawn_subagent wait:true) need
+  // this populated here too — each MCP child has its own process state.
+  configureLongTaskTimeouts(config);
   const registry = new ToolRegistry();
   registry.registerMany(memoryTools());
   registry.registerMany(dreamTools());

@@ -784,3 +784,56 @@ weglassen) als knapper Block ins Phase-Design-Doc (eigene `private/
 Lizenz-respektierend, plus die drei Repos haben andere Stacks
 (Anthropic-SDK, OpenClaw-eigene-Runtime, Hermes-Python). Ideen
 werden zu somoras TypeScript+Hono+SDK-Setup übersetzt.
+
+## 2026-05-05 — Timeout-Politik für lokale Modelle (Phase 6c-Vorbereitung)
+
+### 39. Long-task timeouts: großzügige Defaults + pending-Pattern, statt Wall-Clock-Tod
+Slow A2A tools (`subagent_result(wait_until_done)`, `spawn_subagent(wait:true)`,
+demnächst `agent_ask`) brauchten bisher hardcoded Timeouts von 60s/10min,
+gepaart mit CLI-internen Caps (claude MCP_TOOL_TIMEOUT 5min default,
+codex tool_timeout_sec 60s default — via DECISION #37 schon hochgezogen).
+Für lokale Modelle (gemma4big via mlx-omx) zu kurz — ein einzelner
+gemma-Turn kann legitim 5-15 Min dauern, und `idleMinutes:60`-Hotfix
+am 2026-05-04 hat das nur entschärft, nicht gelöst.
+
+**Drei-Schichten-Konfig in `agentLoop`:**
+
+- `toolCallTimeoutMs: 30s` — fast tools (memory_*, web_*, file_*, time_*,
+  obsidian_*, somora_docs_*). Unverändert.
+- `longTaskDefaultTimeoutMs: 300_000` (5 min) — DEFAULT für slow A2A
+  tools, wenn Caller kein `timeout_ms` setzt.
+- `longTaskMaxTimeoutMs: 1_800_000` (30 min) — HARTE OBERGRENZE auch bei
+  explizitem Caller-`timeout_ms`.
+
+**Plus CLI-Layer hochgezogen** auf gleiches Niveau:
+
+- `claudeCli.mcpToolTimeoutMs: 1_800_000` (von 600_000)
+- `codexCli.toolTimeoutSec: 1800` (von 600)
+
+**Beide CLI-Werte MÜSSEN ≥ longTaskMaxTimeoutMs sein**, sonst kappt
+die CLI's MCP-Layer durch bevor unsere eigene Ceiling greift. Im
+Default jetzt by-design alle drei bei 30 min.
+
+**Why das nicht „einfach kein Timeout":** der pending-Pattern aus
+DECISION #37 macht den Default zu einem Checkpoint statt einem
+Death-Sentence. Hans ruft `subagent_result(wait_until_done)`, wartet
+5 Min, kriegt `state:"pending"` + `hint:"call again with higher
+timeout_ms"`, Sub läuft im Hintergrund weiter. Agents adaptieren
+selbständig (haben sie am 2026-05-04 in der Test-Matrix bewiesen).
+Heartbeat-basiert (Pattern B aus der Diskussion 2026-05-05) wäre
+ehrlicher, aber teurer — Streaming-Awareness durch alle Engines
++ neue Wire-Format-Felder. Wall-Clock + pending = 80% des Werts
+zu 20% des Aufwands.
+
+**Why das hartes Maximum trotzdem:** ein hängender Sub würde sonst
+Slot ewig pinnen (auch wenn das Background-Run nicht abbricht — der
+Tool-Call selbst sitzt offen). 30 Min ist für realistisches Local-
+Model-Workload großzügig; im Notfall via config hochziehen.
+
+**How to apply:** Jedes neue lang-blockierende Tool nutzt
+`longTaskDefaultMs()` / `longTaskMaxMs()` aus
+`src/tools/agents/long-task-timeouts.ts` statt hartcodierter Zahlen.
+Read-at-call-time-Pattern bedeutet config-Änderungen wirken ohne
+Server-Restart auf den nächsten Tool-Call. Pending-Pattern ist
+Pflicht — wenn Tool-internes Timeout erreicht, return
+`state:"pending"` + sprechender hint, kein Error.

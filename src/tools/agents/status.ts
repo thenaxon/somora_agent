@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { getTask, listTasksForAgent, waitForTaskCompletion, type AsyncTaskEntry } from '../../server/async-tasks.ts';
 import type { ChatTurnResult } from '../../server/run-turn-types.ts';
 import type { ToolDefinition } from '../types.ts';
+import { longTaskDefaultMs, longTaskMaxMs } from './long-task-timeouts.ts';
 
 // In-process MCP child path runs without server-side task store
 // access; we route status/result HTTP calls back to the main server
@@ -99,9 +100,18 @@ const ResultInput = z
       .number()
       .int()
       .min(1_000)
-      .max(600_000)
-      .default(60_000)
-      .describe('Max ms to wait when wait_until_done. Default 60s, max 10min.'),
+      // Schema cap is the absolute hard ceiling we'll ever permit; the
+      // *effective* per-call cap is agentLoop.longTaskMaxTimeoutMs (read
+      // at handler time via longTaskMaxMs()). Set the schema cap higher
+      // than any reasonable config value so config drives it, not zod.
+      .max(7_200_000) // 2 h schema ceiling — config caps further
+      .optional()
+      .describe(
+        'Max ms to wait when wait_until_done. Defaults to ' +
+          'agentLoop.longTaskDefaultTimeoutMs (5 min) and is hard-capped at ' +
+          'agentLoop.longTaskMaxTimeoutMs (30 min). Pass higher than the ' +
+          'cap and the cap wins; the sub keeps running in the background.',
+      ),
   })
   .strict();
 
@@ -109,8 +119,6 @@ const ResultInput = z
 // give the engine race N + this much before it pulls the rug. Keeps the
 // inner+outer timing aligned without races at the boundary.
 const TIMEOUT_BUFFER_MS = 2_000;
-const TOOL_INTERNAL_MAX_MS = 600_000; // matches schema .max() above
-const ENGINE_HARD_CAP_MS = TOOL_INTERNAL_MAX_MS + TIMEOUT_BUFFER_MS;
 
 export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   name: 'subagent_result',
@@ -121,7 +129,8 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
     '(task still running). ' +
     'Pass `wait_until_done: true` to block server-side until the task finishes — much more ' +
     'efficient than polling subagent_status in a loop, since each poll burns one of your own ' +
-    'agent-loop tool-call rounds. Default `timeout_ms` is 60s (max 10min). ' +
+    'agent-loop tool-call rounds. Default `timeout_ms` is 5min (configurable via ' +
+    'agentLoop.longTaskDefaultTimeoutMs); hard cap 30min (longTaskMaxTimeoutMs). ' +
     'IMPORTANT: state "pending" is NOT an error — the sub is still working. Do NOT immediately ' +
     'retry; either wait and call subagent_status later, or call this again with a higher ' +
     'timeout_ms. Repeated pending returns mean the sub legitimately needs more time.',
@@ -131,24 +140,50 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
     properties: {
       task_id: { type: 'string' },
       wait_until_done: { type: 'boolean', description: 'Block until task finishes. Default false.' },
-      timeout_ms: { type: 'integer', minimum: 1000, maximum: 600000, description: 'Max wait in ms. Default 60000.' },
+      timeout_ms: {
+        type: 'integer',
+        minimum: 1000,
+        description:
+          'Max wait in ms. Defaults to agentLoop.longTaskDefaultTimeoutMs ' +
+          '(5 min); capped at longTaskMaxTimeoutMs (30 min).',
+      },
     },
     required: ['task_id'],
     additionalProperties: false,
   },
   // Engine-level race must accommodate the tool's internal wait. Without
   // wait_until_done the tool returns immediately, so 30s is plenty. With
-  // wait_until_done the inner wait is the caller's `timeout_ms` — give
-  // the engine that + 2s buffer to round-trip the reply.
+  // wait_until_done the inner wait is the caller's clamped timeout — give
+  // the engine that + 2s buffer to round-trip the reply. Read config
+  // values at call time so a runtime config change takes effect on the
+  // next invocation.
   defaultTimeoutMs: 30_000,
-  timeoutFromInput: (input) =>
-    input.wait_until_done ? (input.timeout_ms ?? 60_000) + TIMEOUT_BUFFER_MS : undefined,
-  maxTimeoutMs: ENGINE_HARD_CAP_MS,
+  timeoutFromInput: (input) => {
+    if (!input.wait_until_done) return undefined;
+    // longTaskDefaultMs/longTaskMaxMs are read at call time (not module
+    // load), so a config change takes effect on the next invocation
+    // without a server restart. The actual clamping happens here; the
+    // tool's static maxTimeoutMs below is just an upper safety fence.
+    const requested = input.timeout_ms ?? longTaskDefaultMs();
+    const clamped = Math.min(requested, longTaskMaxMs());
+    return clamped + TIMEOUT_BUFFER_MS;
+  },
+  // Static safety fence in case timeoutFromInput is bypassed somehow;
+  // 2h + buffer comfortably accommodates any reasonable longTaskMaxMs
+  // setting without re-evaluating per-call.
+  maxTimeoutMs: 7_200_000 + TIMEOUT_BUFFER_MS,
   async handler(input) {
+    // Resolve effective timeout once per call; reused for the actual
+    // wait below and surfaced in the pending hint so the caller knows
+    // what value got applied (especially when their requested value was
+    // clamped down by longTaskMaxMs).
+    const effectiveTimeoutMs = input.wait_until_done
+      ? Math.min(input.timeout_ms ?? longTaskDefaultMs(), longTaskMaxMs())
+      : 0;
     let local = getTask(input.task_id);
     if (local) {
       if (local.state === 'running' && input.wait_until_done) {
-        local = (await waitForTaskCompletion(input.task_id, input.timeout_ms)) ?? local;
+        local = (await waitForTaskCompletion(input.task_id, effectiveTimeoutMs)) ?? local;
       }
       if (local.state === 'running') {
         return {

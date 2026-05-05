@@ -96,43 +96,90 @@ providers:
 # Memory-Layer tunables (DECISIONS #25–#27). All optional. Per-agent
 # overrides can live in agent.yaml later. (Phase 2-Stufe-B — not yet
 # wired into the runtime.)
-# Agent-loop tunables (DECISION #31, Phase 2-Stufe-C). Apply only to
-# engines that run their own tool-call loop — currently openai-compatible.
-# claude-cli and codex-cli have their own internal loops and ignore these.
+# Agent-loop tunables (DECISION #31 + #37). Apply to engines that run
+# their own tool-call loop — currently openai-compatible — for the per-
+# tool-call race. The longTask* values ALSO inform CLI-engine tools
+# (subagent_result, agent_ask) which run inside MCP children, so all
+# three engines honor the same caller-friendly politik for slow models.
+#
+# Three timeout knobs, each for a different tool class:
+#   1. toolCallTimeoutMs       — fast tools (memory, web, file, time)
+#   2. longTaskDefaultTimeoutMs — slow A2A tools, used when the caller
+#                                 doesn't pass an explicit timeout_ms
+#   3. longTaskMaxTimeoutMs    — hard ceiling for slow A2A tools, even
+#                                 when the caller passes a higher value
+#
+# When a long-task hits its timeout, the tool returns state:"pending"
+# (NOT an error) — the sub keeps running, the caller can retry with a
+# higher timeout_ms or check status later. See DECISION #37.
 # agentLoop:
-#   maxRounds: 8              # max tool-call rounds per turn (1..100). Most
-#                             # conversations finish in 1-3; 8 is defensive
-#                             # headroom against runaway models.
-#   toolCallTimeoutMs: 30000  # per-tool-call timeout default. Tools can override
-#                             # via defaultTimeoutMs / timeoutFromInput in their
-#                             # ToolDefinition (DECISION #37) — e.g.
-#                             # subagent_result(wait_until_done) extends this
-#                             # automatically. 30s is the fallback for tools
-#                             # that don't declare their own.
+#   maxRounds: 8                      # max tool-call rounds per turn (1..100).
+#                                     # Most conversations finish in 1-3;
+#                                     # 8 is defensive headroom against
+#                                     # runaway models.
+#
+#   toolCallTimeoutMs: 30000          # 30 sec — fast tools (memory_search,
+#                                     # web_fetch, time_now, file_read,
+#                                     # obsidian_*). Plenty for anything
+#                                     # that hits a local DB, reads a file,
+#                                     # or does a single HTTP round-trip.
+#                                     # Slow tools declare their own.
+#
+#   longTaskDefaultTimeoutMs: 300000  # 5 min — DEFAULT for slow A2A tools
+#                                     # (subagent_result wait_until_done,
+#                                     # agent_ask). Local models like
+#                                     # gemma4big regularly need minutes
+#                                     # for a turn — this default is
+#                                     # generous so agents don't have to
+#                                     # adapt with retries on every call.
+#                                     # Used when caller omits timeout_ms.
+#
+#   longTaskMaxTimeoutMs: 1800000     # 30 min — HARD CEILING for slow A2A
+#                                     # tools, even with explicit timeout_ms.
+#                                     # Bounds how long a single tool call
+#                                     # can sit blocking; the underlying
+#                                     # sub-task itself runs unbounded in
+#                                     # the background (capped by its own
+#                                     # agentLoop.maxRounds), so this is
+#                                     # really just a per-call ceiling.
+#                                     # Raise for exceptionally slow setups
+#                                     # (CPU-only inference, huge models).
+#                                     # claudeCli.mcpToolTimeoutMs and
+#                                     # codexCli.toolTimeoutSec MUST be ≥
+#                                     # this — the CLI's MCP layer sits
+#                                     # above us and will cut us off
+#                                     # otherwise.
 
 # claude-cli engine tunables. Surfaced from claude-agent-sdk env vars so
 # they're configurable here instead of hidden as undocumented env overrides.
 # Applied at server boot; an explicit env var (MCP_TOOL_TIMEOUT etc.) wins
 # over config (override layer).
 # claudeCli:
-#   mcpToolTimeoutMs: 600000  # per-MCP-tool-call timeout (ms) — sets MCP_TOOL_TIMEOUT.
-#                             # SDK hidden default is ~5min, too short for sub-spawns
-#                             # and long-blocking tools (subagent_result with
-#                             # wait_until_done, agent_ask, exec). 10min default;
-#                             # raise for orchestrator workloads, lower for fail-fast.
-#   mcpConnectTimeoutMs: 60000  # initial MCP server connect handshake timeout (ms) —
-#                               # sets MCP_TIMEOUT. Only affects startup, not running calls.
+#   mcpToolTimeoutMs: 1800000   # 30 min — per-MCP-tool-call timeout (ms);
+#                               # sets MCP_TOOL_TIMEOUT in the claude-agent-sdk
+#                               # subprocess. SDK hidden default is 5min — way
+#                               # too short for slow local models. Default 30min
+#                               # matches agentLoop.longTaskMaxTimeoutMs so the
+#                               # CLI's MCP layer never cuts off a long-blocking
+#                               # tool call before our own ceiling does. Raise
+#                               # both together if you need more; lower this for
+#                               # fail-fast on a fast setup.
+#   mcpConnectTimeoutMs: 60000  # 60 sec — initial MCP server connect handshake
+#                               # timeout (ms); sets MCP_TIMEOUT. Only affects
+#                               # startup, not running calls.
 
 # codex-cli engine tunables. Same posture as claudeCli — surface codex-
 # internal limits so they're configurable here. Applied via -c TOML
 # overrides on each `codex exec` invocation.
 # codexCli:
-#   toolTimeoutSec: 600       # per-MCP-tool-call timeout in seconds —
-#                             # sets mcp_servers.somora-memory.tool_timeout_sec
-#                             # in codex's TOML. Codex's hidden default is 60s
-#                             # (too short for sub-spawns and long-blocking
-#                             # tools). 600s = 10min keeps parity with
-#                             # claudeCli.mcpToolTimeoutMs.
+#   toolTimeoutSec: 1800      # 30 min — per-MCP-tool-call timeout in
+#                             # seconds; sets mcp_servers.somora-memory.tool_timeout_sec
+#                             # in codex's TOML. Codex's hidden default is
+#                             # 60s — way too short for slow local models.
+#                             # Default 1800s matches claudeCli.mcpToolTimeoutMs
+#                             # and agentLoop.longTaskMaxTimeoutMs so the CLI's
+#                             # MCP layer never cuts off a long-blocking tool
+#                             # call before our own ceiling does.
 
 # memory:
 #   embedding:

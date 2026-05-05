@@ -34,6 +34,7 @@ import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-
 import { runChatTurn } from '../../server/run-turn.ts';
 import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
 import type { ToolDefinition } from '../types.ts';
+import { longTaskMaxMs } from './long-task-timeouts.ts';
 
 const MAX_SUBAGENT_DEPTH = parseInt(process.env.SOMORA_MAX_SUBAGENT_DEPTH ?? '3', 10) || 3;
 const MAX_CONCURRENT_PER_AGENT = 4;
@@ -138,12 +139,16 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
     additionalProperties: false,
   },
   // wait:false returns immediately (just registers + kicks off async),
-  // 30s is plenty. wait:true blocks for the full sub turn — give it
-  // 10min like subagent_result's hard cap; the sub itself will hit
-  // maxRounds long before that, so this is just a runaway guard.
+  // 30s is plenty. wait:true blocks for the full sub turn — sized off
+  // agentLoop.longTaskMaxTimeoutMs (default 30 min) so a sync spawn can
+  // legitimately wait for slow local models without artificial cutoff.
+  // The sub itself caps via its own agentLoop.maxRounds; this is just
+  // a runaway guard. Read at call time so config changes take effect
+  // without restart.
   defaultTimeoutMs: 30_000,
-  timeoutFromInput: (input) => (input.wait ? 600_000 : undefined),
-  maxTimeoutMs: 600_000,
+  timeoutFromInput: (input) => (input.wait ? longTaskMaxMs() : undefined),
+  // Static safety fence; actual cap is dynamic via timeoutFromInput.
+  maxTimeoutMs: 7_200_000,
   async handler(input, ctx) {
     const result = await runOneSpawn({
       ctx,
@@ -207,11 +212,11 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
     required: ['tasks'],
     additionalProperties: false,
   },
-  // Same logic as spawn_subagent: wait:false is instant, wait:true
-  // blocks for all subs to finish — give it the same 10min ceiling.
+  // Same posture as spawn_subagent: wait:false is instant, wait:true
+  // blocks for all subs — sized off agentLoop.longTaskMaxTimeoutMs.
   defaultTimeoutMs: 30_000,
-  timeoutFromInput: (input) => (input.wait ? 600_000 : undefined),
-  maxTimeoutMs: 600_000,
+  timeoutFromInput: (input) => (input.wait ? longTaskMaxMs() : undefined),
+  maxTimeoutMs: 7_200_000,
   async handler(input, ctx) {
     const settled = await Promise.allSettled(
       input.tasks.map((t) => runOneSpawn({ ctx, wait: input.wait, task: t })),

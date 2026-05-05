@@ -25,6 +25,7 @@ import {
   resolveSessionId,
   sessionMetaStore,
 } from '../storage/sessions.ts';
+import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import {
   agentTools,
   configureSpawnTools,
@@ -812,11 +813,17 @@ app.get('/spawn-result', async (c) => {
   // caller side.
   const waitFlag = c.req.query('wait_until_done');
   const wantWait = waitFlag === '1' || waitFlag === 'true';
+  // Defaults sourced from agentLoop.{longTaskDefaultTimeoutMs,
+  // longTaskMaxTimeoutMs} so the HTTP path matches the in-process tool
+  // (status.ts) — both honor the same caller-friendly politik for slow
+  // local models.
   const timeoutMs = (() => {
+    const def = config.agentLoop.longTaskDefaultTimeoutMs;
+    const max = config.agentLoop.longTaskMaxTimeoutMs;
     const raw = c.req.query('timeout_ms');
-    if (!raw) return 60_000;
+    if (!raw) return def;
     const n = parseInt(raw, 10);
-    return Number.isFinite(n) && n > 0 ? Math.min(n, 600_000) : 60_000;
+    return Number.isFinite(n) && n > 0 ? Math.min(n, max) : def;
   })();
   let entry = getTask(task_id);
   if (!entry) return c.json({ error: `task '${task_id}' not found` }, 404);
@@ -910,6 +917,7 @@ const chatTurnDeps = {
   onActivity: (agent: string) => autoDreamWorker.resetActivity(agent),
 };
 configureSpawnTools({ chatTurnDeps });
+configureLongTaskTimeouts(config);
 for (const a of agentList) {
   try {
     const persona = await loadPersona(a.name);
