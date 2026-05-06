@@ -6,20 +6,32 @@ import { posix } from 'node:path';
 import type { Client, SFTPWrapper, Stats } from 'ssh2';
 import type { SshResource } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
-import { getConnection, remoteExec } from '../../ssh/index.ts';
+import { expandRemotePath, getConnection, remoteExec } from '../../ssh/index.ts';
 import type { ListEntry, ListResult, ReadResult, SearchResult, SearchHit, WriteResult, PatchResult } from './local.ts';
 
 const READ_HARD_CAP = 200_000;
 
 /**
- * Resolve a remote path: relative inputs use `resource.workspace` (or
- * the default home `~`) as the cwd. Posix-only — remote is assumed
- * unix-y. Windows-via-SSH would need separate handling.
+ * Resolve a remote path to an absolute server path. SFTP does NOT
+ * expand `~` (unlike a login shell), so we resolve the SSH user's
+ * home via `realpath('.')` once per connection (cached) and join
+ * relative inputs onto it. Same goes for `resource.workspace` if it's
+ * tilde-prefixed. Posix-only — remote is assumed unix-y.
+ *
+ * Hans's bug 2026-05-06: previously this returned the literal string
+ * `~/_selftest/foo`, which SFTP interpreted as a directory called `~`.
  */
-function resolveRemotePath(rawPath: string, resource: SshResource): string {
+async function resolveRemotePath(
+  rawPath: string,
+  resourceName: string,
+  resource: SshResource,
+): Promise<string> {
   if (posix.isAbsolute(rawPath)) return posix.normalize(rawPath);
-  const root = resource.workspace ?? '~';
-  return posix.normalize(posix.join(root, rawPath));
+  if (resource.workspace) {
+    const workspaceAbs = await expandRemotePath(resourceName, resource, resource.workspace);
+    return posix.normalize(posix.join(workspaceAbs, rawPath));
+  }
+  return expandRemotePath(resourceName, resource, rawPath);
 }
 
 async function withSftp<T>(client: Client, fn: (sftp: SFTPWrapper) => Promise<T>): Promise<T> {
@@ -87,7 +99,7 @@ export async function remoteRead(args: {
   limit?: number;
 }): Promise<ReadResult> {
   const client = await getConnection(args.resourceName, args.resource);
-  const remotePath = resolveRemotePath(args.path, args.resource);
+  const remotePath = await resolveRemotePath(args.path, args.resourceName, args.resource);
   const buf = await withSftp(client, (sftp) => sftpReadFile(sftp, remotePath));
   const all = buf.toString('utf8');
   const lines = all.split('\n');
@@ -121,7 +133,7 @@ export async function remoteWrite(args: {
   mode: 'create' | 'overwrite' | 'append';
 }): Promise<WriteResult> {
   const client = await getConnection(args.resourceName, args.resource);
-  const remotePath = resolveRemotePath(args.path, args.resource);
+  const remotePath = await resolveRemotePath(args.path, args.resourceName, args.resource);
   const parent = posix.dirname(remotePath);
 
   await withSftp(client, async (sftp) => {
@@ -171,7 +183,7 @@ export async function remotePatch(args: {
   replaceAll: boolean;
 }): Promise<PatchResult> {
   const client = await getConnection(args.resourceName, args.resource);
-  const remotePath = resolveRemotePath(args.path, args.resource);
+  const remotePath = await resolveRemotePath(args.path, args.resourceName, args.resource);
 
   return withSftp(client, async (sftp) => {
     const stats = await sftpStat(sftp, remotePath);
@@ -218,7 +230,14 @@ export async function remoteSearch(args: {
 }): Promise<SearchResult> {
   const client = await getConnection(args.resourceName, args.resource);
   const limit = args.limit ?? 50;
-  const remotePath = args.path ? resolveRemotePath(args.path, args.resource) : (args.resource.workspace ?? '.');
+  // file_search routes through ssh-exec'd ripgrep, which runs in a
+  // login shell — that one DOES expand `~`. So passing
+  // `resource.workspace ?? '.'` literal is fine here even with a
+  // tilde, no SFTP-resolution needed. Only relative path-args go
+  // through resolveRemotePath for absolute disambiguation.
+  const remotePath = args.path
+    ? await resolveRemotePath(args.path, args.resourceName, args.resource)
+    : (args.resource.workspace ?? '.');
   const cmd = `rg --json --max-count ${limit} --no-messages ${shQ(args.pattern)} ${shQ(remotePath)}`;
   const result = await remoteExec(client, cmd, { timeoutMs: 30_000 });
   if (result.code !== 0 && result.stdout === '') {
@@ -282,7 +301,7 @@ export async function remoteList(args: {
   limit?: number;
   glob?: string;
 }): Promise<ListResult> {
-  const fullPath = resolveRemotePath(args.path, args.resource);
+  const fullPath = await resolveRemotePath(args.path, args.resourceName, args.resource);
   const conn = await getConnection(args.resourceName, args.resource);
   const recursive = Boolean(args.recursive);
   const matchGlob = args.glob ? compileGlob(args.glob) : null;

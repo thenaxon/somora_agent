@@ -13,8 +13,8 @@
 
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { Client, type ConnectConfig } from 'ssh2';
+import { join, posix } from 'node:path';
+import { Client, type ConnectConfig, type SFTPWrapper } from 'ssh2';
 import type { SshResource } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { verifyHostKey } from './known-hosts.ts';
@@ -33,6 +33,16 @@ interface PooledConnection {
   readyP: Promise<Client>;
   /** Set when the connection has emitted 'error' or 'close'. */
   closed: boolean;
+  /**
+   * Cached absolute home path for the SSH user, resolved once via
+   * SFTP `realpath('.')`. Used to expand relative paths and `~`-paths
+   * for SFTP operations — SFTP itself does NOT expand tilde, so
+   * passing `~/foo` literal creates a directory named `~` (Hans's
+   * Bug 2026-05-06). Filled lazily by getResourceHome().
+   */
+  home?: string;
+  /** In-flight home-resolution promise, dedupe concurrent callers. */
+  homeP?: Promise<string>;
 }
 
 const pool = new Map<string, PooledConnection>();
@@ -184,6 +194,59 @@ export async function shutdownSshPool(): Promise<void> {
       /* best-effort */
     }
   }
+}
+
+/**
+ * Resolve the SSH user's absolute home directory on the remote and
+ * cache it on the pooled connection. SFTP starts in `$HOME` after
+ * login, so `realpath('.')` returns the home. Called by remote-path
+ * resolvers before passing paths to SFTP — SFTP does NOT expand
+ * tilde, and a literal `~/foo` would land in a directory named `~`.
+ */
+export async function getResourceHome(
+  resourceName: string,
+  resource: SshResource,
+): Promise<string> {
+  const client = await getConnection(resourceName, resource);
+  const entry = pool.get(resourceName);
+  if (!entry) throw new Error(`ssh: connection vanished for '${resourceName}'`);
+  if (entry.home) return entry.home;
+  if (entry.homeP) return entry.homeP;
+  entry.homeP = new Promise<string>((resolve, reject) => {
+    client.sftp((err, sftp: SFTPWrapper) => {
+      if (err) return reject(err);
+      sftp.realpath('.', (rpErr, abs) => {
+        sftp.end();
+        if (rpErr) return reject(rpErr);
+        const home = posix.normalize(String(abs));
+        entry.home = home;
+        logger.info({ msg: 'ssh.home_resolved', resource: resourceName, home });
+        resolve(home);
+      });
+    });
+  }).finally(() => {
+    entry.homeP = undefined;
+  });
+  return entry.homeP;
+}
+
+/**
+ * Expand a path that may start with `~` (or be exactly `~`) using the
+ * pooled connection's cached remote home. Absolute paths pass through
+ * unchanged; bare relative paths are joined onto the home (SFTP's
+ * implicit cwd is the home, but we materialize it explicitly so logs
+ * and errors show absolute paths).
+ */
+export async function expandRemotePath(
+  resourceName: string,
+  resource: SshResource,
+  rawPath: string,
+): Promise<string> {
+  if (posix.isAbsolute(rawPath)) return posix.normalize(rawPath);
+  const home = await getResourceHome(resourceName, resource);
+  if (rawPath === '~') return home;
+  if (rawPath.startsWith('~/')) return posix.normalize(posix.join(home, rawPath.slice(2)));
+  return posix.normalize(posix.join(home, rawPath));
 }
 
 /**
