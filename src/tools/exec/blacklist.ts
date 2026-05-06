@@ -26,10 +26,39 @@ interface BlacklistEntry {
   reason: string;
 }
 
+// `rm -rf <path>` matcher. We block ONLY when <path> is a system
+// directory; user-owned dirs (/Users/<u>, /home/<u>, /tmp,
+// /var/folders) pass through. Hans's bug 2026-05-06: the previous
+// pattern /\/[a-zA-Z]/ blocked every absolute path under /, forcing
+// workarounds like `cd ~ && rm -rf foo`. somora's threat model is
+// "don't accidentally `rm -rf /` or wipe /etc", not "no destructive
+// ops anywhere".
+//
+// Two patterns rather than one, because path-segment alternation
+// inside an `\s+` boundary is hard to read. Both must be tried; the
+// flag order rule (-rf vs -fr) is captured by the [a-zA-Z]* fillers
+// in each. Trailing alternation: `(\/|\s|$|;|&|\|)` — the system dir
+// must be terminated by another path separator or shell separator,
+// so we don't false-match `rm -rf /etcetera` (legit user dir named
+// "etcetera" under /).
+const RM_RF_FLAGS = '(?:-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*|-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*)';
+const SYSTEM_DIRS =
+  '(?:bin|sbin|usr|etc|lib|lib32|lib64|sys|proc|boot|dev|root|opt|var\\/log|var\\/lib|var\\/spool|var\\/run|Library|System|Applications|private|Network|Volumes)';
+const RM_RF_SYSTEM_PATTERN = new RegExp(
+  // rm -rf on `/` exactly (delete root) or rm -rf on a system dir
+  String.raw`\brm\s+` +
+    RM_RF_FLAGS +
+    String.raw`\s+(?:` +
+    // case A: bare /
+    String.raw`\/(?:\s|$|;|&|\|)|` +
+    // case B: /<system>/...
+    String.raw`\/${SYSTEM_DIRS}(?:\/|\s|$|;|&|\|)` +
+    String.raw`)`,
+);
+
 const HARD_BLACKLIST: ReadonlyArray<BlacklistEntry> = [
   // ── Destructive disk operations ──
-  { pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/(?!\S)/, reason: 'rm -rf / (delete root)' },
-  { pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/[a-zA-Z]/, reason: 'rm -rf with absolute path under /' },
+  { pattern: RM_RF_SYSTEM_PATTERN, reason: 'rm -rf on system path' },
   { pattern: /\bdd\s+[^|;&]*\bif=/, reason: 'dd if= (raw disk-image write)' },
   { pattern: /\bmkfs(\.[a-z0-9]+)?\b/, reason: 'mkfs (format filesystem)' },
   { pattern: /\bshred\s+-/, reason: 'shred (overwrite + delete)' },
