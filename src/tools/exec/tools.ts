@@ -14,9 +14,12 @@ import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
 import type { ToolDefinition } from '../types.ts';
 import { checkBlacklist } from './blacklist.ts';
+import { releaseRemoteSlot, tryAcquireExecSlot } from './concurrency.ts';
 import {
   clearLivePid,
   clearLiveStdin,
+  completeJob,
+  failJob,
   getLivePid,
   getLiveStdin,
   listJobsForAgent,
@@ -26,7 +29,13 @@ import {
   type JobMeta,
 } from './job-store.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
-import { remoteExecBackgroundUnsupported, remoteExecSync } from './remote.ts';
+import {
+  killRemoteJob,
+  pollRemoteJob,
+  remoteExecBackground,
+  remoteExecSync,
+  tailRemoteJobLog,
+} from './remote.ts';
 
 // ─────────────────────────────────────────────────────────────────────
 // exec
@@ -74,7 +83,11 @@ const ExecInput = z
       .boolean()
       .default(false)
       .describe(
-        'Reserved. v1 sets shell:true regardless; true real-pty allocation comes later for TUI tools.',
+        'Allocate a pseudo-terminal so TUI tools and tools that check ' +
+          'isatty() (vim, htop, claude, codex, color/cursor handling) work correctly. ' +
+          'Supported on REMOTE targets via ssh2 native pty allocation. On target=local ' +
+          'it\'s a no-op for now (would need node-pty install — FUTURE). When pty is on, ' +
+          'stdout and stderr merge into one stream (= same as a real terminal).',
       ),
     description: z
       .string()
@@ -114,7 +127,20 @@ interface ExecBlockedResult {
   pattern: string;
 }
 
-type ExecResult = ExecSyncResult | ExecBackgroundResult | ExecBlockedResult;
+interface ExecCapDeniedResult {
+  ok: false;
+  background: true;
+  cap_denied: true;
+  reason: string;
+  per_agent_cap: number;
+  global_cap: number;
+}
+
+type ExecResult =
+  | ExecSyncResult
+  | ExecBackgroundResult
+  | ExecBlockedResult
+  | ExecCapDeniedResult;
 
 export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
   name: 'exec',
@@ -184,28 +210,86 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     }
 
     if (input.background) {
-      if (input.target !== 'local') {
-        // v1: no remote background. Fail loud with a clear hint.
-        remoteExecBackgroundUnsupported();
+      // Concurrency cap — protects the host from runaway-loop spawn.
+      // Counted across both local AND remote BG jobs since the load
+      // matters regardless of where it lands. Slot is released in
+      // job-store completion paths (job-store handles the lifecycle).
+      const slot = tryAcquireExecSlot(ctx.agent);
+      if (!slot.ok) {
+        logger.warn({
+          msg: 'exec.background.cap_denied',
+          agent: ctx.agent,
+          target: input.target,
+          per_agent_now: slot.perAgentNow,
+          global_now: slot.globalNow,
+          reason: slot.reason,
+        });
+        return {
+          ok: false,
+          background: true,
+          cap_denied: true,
+          reason: slot.reason,
+          per_agent_cap: slot.perAgentCap,
+          global_cap: slot.globalCap,
+        };
       }
-      const result = await localExecBackground({
-        agent: ctx.agent,
-        command: input.command,
-        ...(input.cwd ? { cwd: input.cwd } : {}),
-        ...(input.env ? { env: input.env } : {}),
-        ...(input.description ? { description: input.description } : {}),
-      });
-      return {
-        ok: true,
-        background: true,
-        job_id: result.job_id,
-        pid: result.pid,
-        target: 'local',
-        hint:
-          `Job started in the background. Use process({action:"poll", job_id:"${result.job_id}"}) ` +
-          `to check status, process({action:"log", job_id:"${result.job_id}"}) for output, ` +
-          `process({action:"kill", job_id:"${result.job_id}"}) to terminate.`,
-      };
+      try {
+        if (input.target === 'local') {
+          const result = await localExecBackground({
+            agent: ctx.agent,
+            command: input.command,
+            ...(input.cwd ? { cwd: input.cwd } : {}),
+            ...(input.env ? { env: input.env } : {}),
+            ...(input.description ? { description: input.description } : {}),
+            releaseSlot: slot.release,
+          });
+          return {
+            ok: true,
+            background: true,
+            job_id: result.job_id,
+            pid: result.pid,
+            target: 'local',
+            hint:
+              `Job started in the background. Use process({action:"poll", job_id:"${result.job_id}"}) ` +
+              `to check status, process({action:"log", job_id:"${result.job_id}"}) for output, ` +
+              `process({action:"kill", job_id:"${result.job_id}"}) to terminate.`,
+          };
+        }
+        // Remote target — nohup-pattern, slot is released when the
+        // job is detected complete via process({action:"poll"}) or
+        // explicitly killed. process tool calls completeJob/failJob/
+        // markJobKilled which can in turn signal release; for v1 we
+        // accept that the slot remains held until either a poll
+        // resolves the job or it's killed. The cap protects against
+        // floods, not against long-running jobs.
+        const remote = await remoteExecBackground({
+          agent: ctx.agent,
+          target: input.target,
+          command: input.command,
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+          ...(input.description ? { description: input.description } : {}),
+          releaseSlot: slot.release,
+        });
+        return {
+          ok: true,
+          background: true,
+          job_id: remote.job_id,
+          pid: remote.remote_pid,
+          target: input.target,
+          hint:
+            `Remote job started on ${input.target} (pid=${remote.remote_pid}). Output streams to ` +
+            `${remote.remote_out_file} / ${remote.remote_err_file} on the remote host. Use ` +
+            `process({action:"poll", job_id:"${remote.job_id}"}) to check status, ` +
+            `process({action:"log", job_id:"${remote.job_id}"}) for tail, ` +
+            `process({action:"kill", job_id:"${remote.job_id}"}) to terminate. ` +
+            `Note: ${remote.remote_out_file} stays on the remote host even after the job ends — ` +
+            `clean up via exec({command:"rm /tmp/somora-exec-${remote.job_id}.*", target:"${input.target}"}) when done.`,
+        };
+      } catch (err) {
+        // Spawn failed — release the slot so the cap doesn't leak.
+        slot.release();
+        throw err;
+      }
     }
 
     // ── sync path ──
@@ -253,6 +337,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       command: input.command,
       ...(input.cwd ? { cwd: input.cwd } : {}),
       timeoutMs: input.timeout_ms ?? 60_000,
+      ...(input.pty ? { pty: true } : {}),
     });
     return {
       ok: rr.exit_code === 0,
@@ -434,6 +519,46 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
     }
 
     if (input.action === 'poll') {
+      // For remote running jobs, do an active probe — kill -0 +
+      // exit-file check on the remote host. Updates meta.state to
+      // done/failed when the remote process has finished. Local
+      // jobs already have accurate live state via the child-process
+      // close handler, so we trust meta as-is.
+      if (meta.target !== 'local' && meta.state === 'running' && meta.pid != null) {
+        try {
+          const probe = await pollRemoteJob(ctx.agent, meta.target, meta.pid, input.job_id);
+          if (!probe.alive) {
+            if (probe.exit_code === null) {
+              await failJob(ctx.agent, input.job_id, 'remote process gone without exit-file');
+            } else {
+              await completeJob(ctx.agent, input.job_id, probe.exit_code);
+            }
+            // Free the concurrency slot — remote jobs have no
+            // local close-handler equivalent.
+            releaseRemoteSlot(input.job_id);
+            // Re-read meta to surface updated state in this same call.
+            const fresh = await readMeta(ctx.agent, input.job_id);
+            if (fresh) {
+              return {
+                action: 'poll',
+                job_id: input.job_id,
+                state: fresh.state,
+                exit_code: fresh.exit_code,
+                pid: fresh.pid,
+                ms: (fresh.ended_at ?? Date.now()) - fresh.started_at,
+                ...(fresh.error ? { error: fresh.error } : {}),
+              };
+            }
+          }
+        } catch (err) {
+          logger.warn({
+            msg: 'exec.process.remote_poll_failed',
+            job_id: input.job_id,
+            target: meta.target,
+            err: (err as Error).message,
+          });
+        }
+      }
       return {
         action: 'poll',
         job_id: input.job_id,
@@ -446,11 +571,33 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
     }
 
     if (input.action === 'log') {
+      const lines = input.tail_lines ?? 50;
+      // Remote: tail the files on the remote host via short ssh exec.
+      if (meta.target !== 'local') {
+        const remote = await tailRemoteJobLog(ctx.agent, meta.target, input.job_id);
+        return {
+          action: 'log',
+          job_id: input.job_id,
+          stdout_tail: tailLines(remote.stdout, lines),
+          stderr_tail: tailLines(remote.stderr, lines),
+          total_stdout_bytes: remote.stdout.length,
+          total_stderr_bytes: remote.stderr.length,
+          truncated: remote.truncated,
+          ...(remote.truncated
+            ? {
+                hint:
+                  `Tail capped at 256 KB per stream. Full logs live on the remote host at ` +
+                  `/tmp/somora-exec-${input.job_id}.{out,err} on ${meta.target} — ` +
+                  `use file_read with target:"${meta.target}" + offset/limit to page through.`,
+              }
+            : {}),
+        };
+      }
+      // Local
       const log = await readJobLog(ctx.agent, input.job_id);
       if (!log) {
         throw new Error(`process: log not available for job '${input.job_id}'`);
       }
-      const lines = input.tail_lines ?? 50;
       const stdoutTail = tailLines(log.stdout_tail, lines);
       const stderrTail = tailLines(log.stderr_tail, lines);
       return {
@@ -517,19 +664,39 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
         was_running: false,
       };
     }
-    if (meta.target !== 'local') {
-      throw new Error('process: kill not supported for remote jobs in v1');
-    }
-    const pid = getLivePid(input.job_id) ?? meta.pid;
-    if (!pid) {
-      throw new Error('process: no pid recorded for job — cannot kill');
-    }
     const sig = (input.signal ?? 'SIGTERM') as NodeJS.Signals;
-    const r = killLocalJob(pid, sig);
+
+    if (meta.target === 'local') {
+      const pid = getLivePid(input.job_id) ?? meta.pid;
+      if (!pid) {
+        throw new Error('process: no pid recorded for job — cannot kill');
+      }
+      const r = killLocalJob(pid, sig);
+      if (r.delivered) {
+        await markJobKilled(ctx.agent, input.job_id, sig);
+        clearLivePid(input.job_id);
+        clearLiveStdin(input.job_id);
+      }
+      return {
+        action: 'kill',
+        job_id: input.job_id,
+        ok: r.delivered,
+        signal_sent: sig,
+        was_running: r.delivered,
+      };
+    }
+
+    // Remote kill via short ssh exec. We strip the SIG- prefix that
+    // Node uses (`SIGTERM`) since `kill -SIGTERM` is non-portable on
+    // some shells; the bare name (`TERM`) works everywhere.
+    if (meta.pid == null) {
+      throw new Error('process: no pid recorded for remote job — cannot kill');
+    }
+    const remoteSig = sig.replace(/^SIG/, '');
+    const r = await killRemoteJob(ctx.agent, meta.target, meta.pid, remoteSig);
     if (r.delivered) {
       await markJobKilled(ctx.agent, input.job_id, sig);
-      clearLivePid(input.job_id);
-      clearLiveStdin(input.job_id);
+      releaseRemoteSlot(input.job_id);
     }
     return {
       action: 'kill',

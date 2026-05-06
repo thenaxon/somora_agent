@@ -258,8 +258,19 @@ export async function readJobLog(
  * recoverOrphanRunningDreams. Any job with state='running' was
  * orphaned by the previous server crash/shutdown; mark them failed
  * so the model sees them as terminal instead of "still running"
- * forever. Doesn't try to actually re-attach to a possibly-still-
- * alive PID — too fragile across restarts.
+ * forever.
+ *
+ * Note about remote-background jobs: they use nohup/setsid so the
+ * remote process MIGHT still be alive on the resource even after
+ * somora restarted. We conservatively mark them as 'failed' here
+ * anyway — somora has lost track of the in-process slot, the
+ * stdin handle is gone, and re-attaching cleanly is fragile. The
+ * remote process keeps running until completion and its log
+ * files persist at /tmp/somora-exec-<job_id>.{out,err,exit} on
+ * the resource for manual inspection. The model can probe state
+ * via exec({command:"cat /tmp/somora-exec-<id>.exit", target:...})
+ * if it cares. Local jobs are definitely dead since the parent
+ * (somora) was killed.
  */
 export async function recoverOrphanedJobs(agents: string[]): Promise<number> {
   let recovered = 0;

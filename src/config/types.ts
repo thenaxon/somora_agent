@@ -199,11 +199,32 @@ export const AgentLoopConfigSchema = z.object({
    * before our own ceiling kicks in.
    */
   longTaskMaxTimeoutMs: z.number().int().positive().default(1_800_000),
+  /**
+   * Max concurrent background exec jobs PER agent. Prevents runaway
+   * loops where a confused model fires off dozens of `exec` calls
+   * with background:true and floods the host. 8 is the rough sweet
+   * spot — tight enough to catch obvious mistakes, loose enough that
+   * legitimate parallel-build / parallel-test patterns aren't blocked.
+   * Counts both local AND remote background jobs against the same
+   * cap (the host's resources are what we're protecting; whether the
+   * load lands on the somora server or on spiderman doesn't change
+   * the basic "don't go nuts" intent).
+   */
+  execMaxConcurrentPerAgent: z.number().int().positive().default(8),
+  /**
+   * Server-wide cap across ALL agents. Multiple agents collectively
+   * still shouldn't be allowed to spawn 100 background processes.
+   * 32 is generous (4 agents × 8 each), enough headroom for normal
+   * multi-agent operation while still preventing a runaway scenario.
+   */
+  execMaxConcurrentGlobal: z.number().int().positive().default(32),
 }).default({
   maxRounds: 8,
   toolCallTimeoutMs: 30_000,
   longTaskDefaultTimeoutMs: 300_000,
   longTaskMaxTimeoutMs: 1_800_000,
+  execMaxConcurrentPerAgent: 8,
+  execMaxConcurrentGlobal: 32,
 });
 export type AgentLoopConfig = z.infer<typeof AgentLoopConfigSchema>;
 

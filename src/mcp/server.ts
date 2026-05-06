@@ -20,6 +20,7 @@ import { loadConfig } from '../config/loader.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
+import { configureExecConcurrencyCaps } from '../tools/exec/index.ts';
 import {
   agentTools,
   execTools,
@@ -49,6 +50,10 @@ async function main(): Promise<void> {
   // module-level cache (subagent_result, spawn_subagent wait:true) need
   // this populated here too — each MCP child has its own process state.
   configureLongTaskTimeouts(config);
+  configureExecConcurrencyCaps(
+    config.agentLoop.execMaxConcurrentPerAgent,
+    config.agentLoop.execMaxConcurrentGlobal,
+  );
   const registry = new ToolRegistry();
   registry.registerMany(memoryTools());
   registry.registerMany(dreamTools());

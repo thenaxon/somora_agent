@@ -28,10 +28,12 @@ import {
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import {
   agentTools,
+  configureExecConcurrencyCaps,
   configureSpawnTools,
   dreamTools,
   execTools,
   fileTools,
+  logExecCaps,
   memoryTools,
   obsidianTools,
   recoverOrphanedJobs,
@@ -989,6 +991,11 @@ const chatTurnDeps = {
 };
 configureSpawnTools({ chatTurnDeps });
 configureLongTaskTimeouts(config);
+configureExecConcurrencyCaps(
+  config.agentLoop.execMaxConcurrentPerAgent,
+  config.agentLoop.execMaxConcurrentGlobal,
+);
+logExecCaps();
 for (const a of agentList) {
   try {
     const persona = await loadPersona(a.name);

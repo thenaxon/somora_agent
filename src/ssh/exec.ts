@@ -27,6 +27,13 @@ export interface RemoteExecOptions {
   /** Optional cwd via `cd <dir> && <cmd>`. ssh2 has no exec.cwd, so we
    *  prefix; assumes a sh-compatible remote shell (bash/zsh/dash). */
   cwd?: string;
+  /** Allocate a pseudo-terminal on the remote so TUI tools and tools
+   *  that check isatty() (vim, htop, claude, codex, anything with
+   *  color/cursor handling) work correctly. ssh2 supports this
+   *  natively as the second arg to client.exec. Default false —
+   *  unnecessary overhead for non-TUI commands plus combines stdout
+   *  and stderr into one stream when on. */
+  pty?: boolean;
 }
 
 export async function remoteExec(
@@ -41,8 +48,17 @@ export async function remoteExec(
     ? `cd ${shellQuote(opts.cwd)} && ${command}`
     : command;
 
+  // ssh2's exec accepts a second arg for stream config, including
+  // pty allocation. When pty is true, a default pty is allocated;
+  // we could pass detailed term/rows/cols if we cared but the
+  // default xterm 80x24 is fine for most TUI tools.
+  const execOpts = opts.pty ? { pty: true as const } : undefined;
+
   return new Promise<RemoteExecResult>((resolve, reject) => {
-    client.exec(wrapped, (err, stream) => {
+    const onChannel = (
+      err: Error | undefined,
+      stream: import('ssh2').ClientChannel,
+    ): void => {
       if (err) {
         reject(err);
         return;
@@ -76,7 +92,13 @@ export async function remoteExec(
       };
 
       stream.on('data', (d: Buffer) => onData(d, stdoutChunks));
-      stream.stderr.on('data', (d: Buffer) => onData(d, stderrChunks));
+      // With pty:true, ssh2 doesn't expose a separate stderr stream
+      // (the pty merges stdout+stderr into one TTY stream — same
+      // behaviour you'd see at a real terminal). When pty is off we
+      // get the usual two-stream split.
+      if (stream.stderr) {
+        stream.stderr.on('data', (d: Buffer) => onData(d, stderrChunks));
+      }
       stream.on('close', (code: number | null, signal: string | null) => {
         clearTimeout(timer);
         const result: RemoteExecResult = {
@@ -92,7 +114,12 @@ export async function remoteExec(
         }
         resolve(result);
       });
-    });
+    };
+    if (execOpts) {
+      client.exec(wrapped, execOpts, onChannel);
+    } else {
+      client.exec(wrapped, onChannel);
+    }
   });
 }
 

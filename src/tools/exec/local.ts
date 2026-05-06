@@ -153,6 +153,10 @@ export interface LocalBackgroundOptions {
   env?: Record<string, string>;
   description?: string;
   pty?: boolean;
+  /** Concurrency-slot release callback. Called exactly once when the
+   *  job ends (any path: clean exit, error, or kill) so the cap
+   *  counter doesn't leak. */
+  releaseSlot?: () => void;
 }
 
 export interface LocalBackgroundResult {
@@ -219,6 +223,7 @@ export async function localExecBackground(
     void completeJob(opts.agent, job_id, code).finally(() => {
       clearLivePid(job_id);
       clearLiveStdin(job_id);
+      opts.releaseSlot?.();
     });
   });
 
@@ -226,6 +231,7 @@ export async function localExecBackground(
     void failJob(opts.agent, job_id, `spawn error: ${err.message}`).finally(() => {
       clearLivePid(job_id);
       clearLiveStdin(job_id);
+      opts.releaseSlot?.();
     });
   });
 
