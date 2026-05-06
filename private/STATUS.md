@@ -4,11 +4,61 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-06 nacht — TUI auf Ist-Stand: history-replay + ESC-to-abort)
+## Wo wir stehen (Stand: 2026-05-06 nacht — Hans's Bug-Report 2 abgearbeitet)
 
-**HEAD: caa49bf** auf main. Heutiger Tag-Abschluss:
-- `caa49bf` — feat(tui): history-replay on session open + ESC-to-abort
-  across all 3 engines
+**HEAD: 0a86f8e** auf main. Heutige Spätnacht-Commits über den TUI-
+Catchup hinaus:
+- `caa49bf` — feat(tui): history-replay + ESC-to-abort across 3 engines
+- `b407d33` — docs(status): TUI auf Ist-Stand
+- `6cf9663` — docs(tools): list missing tool families (Hans's Bug 3)
+- `666aec4` — fix(ssh): expand ~ for SFTP paths instead of literal (Hans's Bug 1)
+- `0a86f8e` — fix(tmux): match wait_pattern when buffer idle (Hans's Bug 2)
+
+### Hans's Bug-Report 2 (2026-05-06-bugs.md) abgearbeitet
+
+Hans hat ~30 Tools selbst durchgetestet und drei reproduzierbare Issues
+gefunden:
+
+**Bug 1 (hoch) — `file_write` SFTP-Tilde-Expansion.** SFTP expandiert
+`~` NICHT (anders als Login-Shell). `resolveRemotePath` baute den
+Pfad als literalen String `~/foo` und SFTP legte einen Ordner namens
+`~` direkt unter `$HOME` an. file_read/list/patch waren konsistent
+auf demselben falschen Pfad, nur `exec` (echte Shell) sah die
+Divergenz. **Fix:** Pool cached jetzt das remote-`$HOME` per
+`sftp.realpath('.')` (SFTP-Session startet in $HOME nach Login),
+neuer `expandRemotePath(name, resource, path)`-Helper, alle
+SFTP-basierten file_*-Ops verwenden ihn. file_search bleibt unverändert
+(routet via ssh-exec'd ripgrep, läuft in echter Shell). Live verifiziert
+gegen mac-studio mit Hans's exaktem Repro.
+
+**Bug 2 (mittel) — `tmux capture wait_pattern` mit fast-Command.**
+`echo MARKER\n` dann capture lief in Timeout, weil die count-based
+Logik das Pattern bereits bei Baseline-Zeit sah und auf eine NEUE
+Occurrence wartete, die nie kam. **Fix:** zweite Match-Condition
+neben Count-Growth — wenn das Pattern im Content ist UND der Buffer
+mit einem Shell-Prompt-Sigil endet (`$`/`#`/`>` am Ende der letzten
+nicht-leeren Zeile), gilt der Command als fertig. Funktioniert
+sowohl bei Shells die getippten Input einmal rendern als auch bei
+solchen mit Doppelt-Render (z.B. ble.sh). Count-based-Logik bleibt
+für „long-running command produziert Pattern als Output"-Shape
+(Hans's Test 2). Vier-Fälle-Smoke-Matrix grün:
+fast=109ms, delayed-echo=2198ms, never-appears=3s timeout,
+delayed-printf-mit-fremdem-Marker=1571ms.
+
+**Bug 3 (niedrig, docs) — `docs/tools.md` Tabelle outdated.** Es
+fehlten exec, process, tmux und die ganze agents-Familie
+(spawn_subagent, spawn_subagents, subagent_status, subagent_result,
+subagent_list, agent_ask). Tabelle ergänzt, registerMany-Liste auf
+Stand gebracht.
+
+**Anhang aus Hans's Report:** ~28 Tools voll grün inkl. Edge-Pfade
+(file_patch Mehrfach-Match-Reject, obsidian readonly-block,
+idempotentes memory_delete, spawn_subagent wait:true exact roundtrip,
+exec sync local + remote, background mit process poll/log/list,
+resource_test reachability, web_search/fetch). Substantielle Issues
+also nur die drei oben.
+
+### TUI auf Ist-Stand gebracht (2026-05-06 nacht, commit `caa49bf`)
 
 ### TUI auf Ist-Stand gebracht (2026-05-06 nacht, commit `caa49bf`)
 
@@ -408,10 +458,11 @@ inkl. local PTY) + TUI Ist-Stand alle durch. Offene Themen:
 
 ### Pickup-Satz für nächste Session
 
-> "Phase 6 (A2A), Hans's vier Bugs, Maintenance-Sweep 1, Cache-
-> Strategie, Phase 5 (exec + tmux inkl. lokalem PTY) und TUI auf
-> Ist-Stand (history-replay + ESC-to-abort über alle 3 Engines) alle
-> durch. HEAD caa49bf. Tool-count 34. Offene Themen: Phase X (Skills,
+> "Phase 6 (A2A), Hans's vier Bugs aus Report 1, Maintenance-Sweep 1,
+> Cache-Strategie, Phase 5 (exec + tmux inkl. lokalem PTY), TUI auf
+> Ist-Stand (history-replay + ESC-to-abort), und Hans's Bug-Report 2
+> (SFTP-Tilde, tmux wait_pattern fast-Command, docs/tools.md gap) alle
+> durch. HEAD 0a86f8e. Tool-count 34. Offene Themen: Phase X (Skills,
 > vorher diskutieren — 10 Konzept-Fragen offen) und Dream-Worker-
 > Priorisierung."
 
