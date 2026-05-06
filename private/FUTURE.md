@@ -7,6 +7,78 @@ hier bleibt nur ein „done in commit X"-Marker.
 
 ---
 
+## tmux-Effizienz — `wait_idle` / `since_last` / `tmux watch` (entdeckt 2026-05-06 via Hans's Bug-Report 2)
+
+**Status:** Feature-Requests, nicht gebaut. Aufgekommen während einer
+realen Tetris-Bau-Session in einem Claude-Code-tmux-Pane: über 30
+Capture-Calls, viel doppelt gelesener Content, nur die `exec sleep
+N`+`capture`-Kombi als Workaround.
+
+Drei orthogonale Ideen, in steigender Komplexität:
+
+### 1. `tmux({action: "wait_idle"})`
+
+Pollt den Pane bis sich der Content für N ms nicht mehr ändert (= TUI
+hat aufgehört zu tippen / Command ist fertig). Returnt dann den
+finalen Content. Ersetzt das „Pattern raten" für lange Beobachtungen
+— funktioniert für jedes TUI/Command, völlig agnostisch.
+
+API-Skizze:
+```ts
+tmux({
+  action: 'wait_idle',
+  name: 'session-x',
+  idle_stable_ms: 1000,    // default 500
+  max_wait_ms: 600_000,    // 10min ceiling
+  lines: 200,
+})
+→ { content, ms_waited, became_idle: true|false /* timeout */ }
+```
+
+Implementierung: poll mit POLL_INTERVAL_MS, bei jeder unveränderten
+Capture wachsen `stable_ms`, bei Veränderung Reset auf 0. Sobald
+`stable_ms >= idle_stable_ms` → match. Diff zum bestehenden
+`wait_mode: 'idle'` (das auf einem Pattern wartet): `wait_idle` braucht
+KEIN Pattern, returnt einfach sobald Stille einkehrt.
+
+Größter Hebel von den dreien — eine eigene Action, ~30 Min Build.
+
+### 2. `capture({mode: "since_last"})`
+
+Returnt nur die Bytes/Lines die seit dem letzten `capture` in derselben
+Session NEU angefügt wurden. Spart Token-Kosten beim Re-Lesen alter
+Outputs (Hans's reale Session: 70% des Capture-Outputs war
+schon-gesehen).
+
+Implementierung: per `<agent, name>` einen Cursor halten (Hash der
+letzten N Bytes oder einfach Byte-Offset im internen Buffer), bei
+nächstem since_last-Capture nur den neuen Bereich liefern. Edge-Cases:
+tmux-Scrollback rolliert (alte Bytes weg), Pane wurde gecleart.
+
+~1h Build inkl. Cursor-Storage + Cleanup beim Session-Kill.
+
+### 3. `tmux({action: "watch"})` Background-Job
+
+Ein Background-Capture-Loop schreibt jeden Snapshot in eine Datei,
+der Agent pollt die Datei mit `file_read` (günstiger als jeder
+synchrone MCP-Roundtrip). Schwerer zu bauen, aber wäre die
+effizienteste Variante für sehr lange Beobachtungen (>5min mit
+vielen Status-Checks).
+
+Cleanup-Bürde: watch-Jobs müssen mit der tmux-Session sterben, sonst
+kreieren sie endlose Files. Eigentlich ein eigenes kleines Subsystem
+analog zu `process` für `exec --background`.
+
+~halben Tag Build.
+
+### Priorität untereinander
+
+1 (`wait_idle`) ist der größte Quick-Win und vermutlich für 80% der
+Use-Cases ausreichend. 2 + 3 lohnen sich erst bei sehr langen
+Sessions; bauen wir bei nächstem Bedarf.
+
+---
+
 ## Phase 2-Stufe-C — Agent-Loop für `openai-compatible`
 
 **Status:** entschieden, kommt direkt nach Memory-Layer (Phase 2-Stufe-B).
