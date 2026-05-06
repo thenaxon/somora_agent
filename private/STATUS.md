@@ -513,12 +513,24 @@ inkl. local PTY) + TUI Ist-Stand alle durch. Offene Themen:
 > Ist-Stand (history-replay + ESC-to-abort), Hans's Bug-Report 2 + 3
 > (SFTP-Tilde, tmux wait_pattern fast-Command, docs/tools.md gap, plus
 > rm -rf-Blacklist tightening, tmux opt-in TUI-Params wait_mode/
-> multiline_safe/include_ansi mit Safety-Doku) alle durch. HEAD
-> 318f0bf. Tool-count 34. Offene Themen: Phase X (Skills, vorher
-> diskutieren — 10 Konzept-Fragen offen), Phase Y (Vision /
-> Multimodale Inputs, kommt NACH Skills — image_read-Tool zuerst,
-> /chat/send-Attachments später), Dream-Worker-Priorisierung, tmux
-> wait_idle-Action (FUTURE.md, ~30min Quick-Win)."
+> multiline_safe/include_ansi mit Safety-Doku, plus Bug 9 leading-
+> dash send-keys mit `--`-Fix) alle durch. HEAD a9c0148. Tool-count 34.
+>
+> **OFFEN-MORGEN (User explizit erinnern):** Marathon-Turn-TUI-Gap.
+> Hans's Verifikations-Run hatte 16+ Tool-Calls in 4.5min, KEINER
+> davon im TUI angezeigt — einzelner time_now-Call DANACH funktioniert
+> aber. Server-Seite ist bestätigt sauber (JSONL hat alle 172 events,
+> SSE-Publish empirisch verifiziert). Vermutung: Race in der TUI-
+> for-await-Async-Iterator-Consumption unter Last ODER applyEvent-
+> Throw der den Stream silent killed. Brauche Pino-Logs im
+> stream.ts-Consumer + Repro-Script mit ~50 schnellen Tool-Calls
+> hintereinander. Geschätzt 1-2h.
+>
+> Offene Themen sonst: Phase X (Skills, vorher diskutieren — 10
+> Konzept-Fragen offen), Phase Y (Vision / Multimodale Inputs, kommt
+> NACH Skills), Dream-Worker-Priorisierung, tmux wait_idle-Action
+> (FUTURE.md, ~30min Quick-Win), formatResult MCP-Wrapper-Bug für
+> memory_search-Summary (kosmetisch, '0 hits' obwohl 5 hits)."
 
 ---
 
