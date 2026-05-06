@@ -175,6 +175,30 @@ function countOccurrences(haystack: string, needle: string): number {
   return count;
 }
 
+/**
+ * Heuristic: does the captured pane content end with a shell that's
+ * idle and waiting for input? True when the last non-blank line ends
+ * in a typical prompt sigil (`$`, `#`, or `>`) followed only by
+ * whitespace. False when the last non-blank line contains the tail
+ * of running output. Used together with `pattern-in-content` to
+ * detect "command finished and produced its output already".
+ *
+ * Survives common prompts: `bash$ `, `user@host:~$`, `root#`,
+ * `>` (psql/sqlite), `❯` won't match (intentionally — fish/starship
+ * prompt with unicode chevron is ambiguous; users on those shells
+ * can fall back to count-based by sending a marker that's NOT in
+ * the typed command).
+ */
+function hasReadyPromptAtEnd(content: string): boolean {
+  const lines = content.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const ln = lines[i];
+    if (!ln || !ln.trim()) continue;
+    return /[\$#>]\s*$/.test(ln);
+  }
+  return false;
+}
+
 function requireName(input: z.infer<typeof TmuxInput>, action: string): string {
   if (!input.name) {
     throw new Error(`tmux: action='${action}' requires the name field`);
@@ -356,7 +380,24 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       let lastContent = baseline;
       let lastError = baselineCap.ok ? undefined : baselineCap.error;
       let matched = false;
-      while (!lastError && Date.now() < deadline) {
+      // Two match conditions, evaluated against every poll:
+      //   1. Count grew → the pattern showed up in NEW output (the
+      //      original count-based logic; survives the typed-command
+      //      false-positive).
+      //   2. Pattern is in content AND the buffer ends with a shell
+      //      prompt waiting for input → the command already finished
+      //      and its output is in the pane. Catches Hans's bug
+      //      2026-05-06 Test 1: `echo MARKER\n` then capture — the
+      //      whole roundtrip lands in <50ms so by baseline-time the
+      //      output is already there and count never grows.
+      //   Different shells render typed input differently (some show
+      //   it once on the prompt line, some show a draft line above);
+      //   prompt-detection works across both because we look for the
+      //   tail-of-buffer state, not the exact occurrence count.
+      if (baselineCount > 0 && hasReadyPromptAtEnd(baseline)) {
+        matched = true;
+      }
+      while (!matched && !lastError && Date.now() < deadline) {
         // Sleep BEFORE re-capturing — gives the typed command time
         // to produce output. If we polled immediately we'd often
         // just see the baseline again.
@@ -371,6 +412,14 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         lastContent = cap.content;
         const currentCount = countOccurrences(lastContent, pattern);
         if (currentCount > baselineCount) {
+          matched = true;
+          break;
+        }
+        // Also catch the "shell went idle with the pattern in view"
+        // case mid-poll — covers patterns whose count happens to
+        // match baseline because of shell-specific double-rendering
+        // of the typed line, not because output is missing.
+        if (currentCount > 0 && hasReadyPromptAtEnd(lastContent)) {
           matched = true;
           break;
         }
