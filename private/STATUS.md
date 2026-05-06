@@ -156,32 +156,42 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
-### Memory-Inject Position Fix (commit `49c682a`)
+### Memory-Inject Position Fix (zwei Iterationen)
 
-Dynamic per-turn memory recall war in claude-cli und openai-compatible
-auf den persistenten System-Prompt aufkonkateniert → Anthropic's
-prompt-cache cache_control auf system block + OpenAI-prefix-cache
-wurden bei jedem Turn invalidiert. Bei opus = real Geld + Rate-
-Limit-Beschleunigung; bei lokalen Modellen viele Sekunden pre-encode
-Latenz pro Turn.
+**Iteration 1 (`49c682a`, 2026-05-05):** „late-system"-Variante in
+openai-compatible eingebaut + Variante B in claude-cli. Hat für
+claude-cli funktioniert (cache 73%→95%), für openai-compatible
+verifiziert NICHT (Memory-Position wanderte durch die wachsende
+History → byte-mismatch).
 
-Fix:
-- claude-cli: Variante B hardcoded — memory landed jetzt vor dem
-  user-text in der user-message; systemPrompt bleibt stabil
-- openai-compatible: Variante A default — neue
-  `injectEphemeralLate()` setzt memory als zweite system-message
-  vor dem letzten user-message; per-provider `memoryInjectMode`
-  (`late`/`inline-user`/`system`) als opt-out für exotische backends
-- codex-cli: unverändert (war schon korrekt durch stdin-Payload-
-  Struktur)
-- selfPointer baut jetzt aus `getFreshConfig()` (pair mit Bug 4
-  hot-reload — neu eingetragene Resources sofort sichtbar)
+**Iteration 2 (`cb9f429`, 2026-05-06):** Strukturell korrekter Fix —
+ephemeralContext wird pro Turn in JSONL persistiert (`ephemeral?:
+string` Field auf user_message), buildMessages reconstructs jeden
+user_message mit seinem eingefrorenen Memory-Block. Turn N+1
+reproduziert Turn N's Prompt byte-perfekt → Prefix-Cache hält
+strukturell.
 
-Live-Verifikation:
-- claude-cli cache hit 73% → **95%** zwischen Turn 1 und Turn 2
-- alle drei Engines liefern ohne Fallback (engine.turn-Logs bestätigt)
-- Memory-Recall funktioniert weiter (jarvis antwortet „Österreich"
-  aus Vault-Inhalt)
+Pre-Build-Research (DECISION #38) gemacht: OpenClaw + Hermes machen's
+nicht state-of-the-art für stateless openai-compatible. Wir hier
+besser als die Referenz-Repos.
+
+**omlx-Limitation gemeldet aber nicht aus somora fixbar:** omlx
+returnt `cached_tokens: null` selbst bei byte-identischen Direct-
+Curl-Requests. Entweder Reporting-Bug oder Cache nicht aktiv für
+gemma-4-31b-it-8bit Setup. Aus unserer Sicht ist die Struktur jetzt
+korrekt, runtime-Cache-Effekt auf omlx hängt von deren
+Implementation ab.
+
+**Smoke-Matrix Iteration 2:**
+- claude-cli (jarvis/opus): 98% cache hit auf Follow-up
+- codex-cli (lisa/gpt55): 68% cache hit
+- openai-compatible: byte-perfekte history-Reconstruction verifiziert
+  via instrumentiertem messages_dump
+- Memory-Recall funktioniert weiter
+
+Schema-Vereinfachung: `memoryInjectMode` enum dropped `late` (war die
+kaputte Variante). Nur noch `inline-user` (default mit JSONL-Persistenz)
+und `system` (legacy fallback).
 
 Detail in `private/FUTURE.md` Sektion „Memory-Inject Position".
 
@@ -224,16 +234,17 @@ A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 
 ### Pickup-Satz für nächste Session
 
-> "Phase 6 (A2A) komplett, Hans's vier Bugs alle gefixt, Maintenance-
-> Sweep 1 durch (claude-agent-sdk 0.2.128, codex-cli 0.128.0, plus
-> npm patches). Plus Memory-Inject-Cache-Fix: prefix-cache hält jetzt
-> in claude-cli (95% Turn-2-Hit-Rate) und openai-compatible (Variante A
-> als Default mit `memoryInjectMode`-Switch); codex-cli war schon
-> korrekt. selfPointer hot-reload via getFreshConfig dazu. HEAD
-> 49c682a. Sauberer Boden für Phase 5 (exec+tmux). Andere offene
+> "Phase 6 (A2A) komplett, Hans's vier Bugs gefixt, Maintenance-Sweep 1
+> durch. Memory-Inject-Cache-Fix in zwei Iterationen: gestern partiell
+> (claude-cli funktionierte mit 95→98%, openai-compatible nicht), heute
+> strukturell korrekt — ephemeral pro Turn in JSONL persistiert,
+> history-Reconstruction byte-perfekt. omlx-Side returnt cached_tokens
+> still null (deren Implementation), aber unsere Struktur ist jetzt
+> richtig. claude-cli + codex-cli ohne Regression (98%/68% cached).
+> HEAD cb9f429. Sauberer Boden für Phase 5 (exec+tmux). Andere offene
 > Themen: Phase X (Skills, vorher diskutieren — neue Pre-Warning
-> dass Skill-Inject von Tag 1 auch late landen muss),
-> Dream-Worker-Priorisierung, TUI-History-Replay."
+> dass Skill-Inject von Tag 1 auch late landen muss + JSONL-Persistenz
+> brauchen), Dream-Worker-Priorisierung, TUI-History-Replay."
 
 ---
 

@@ -240,38 +240,60 @@ Curation-Workflows. Bis dahin reicht das was heute steht.
 
 ---
 
-## Memory-Inject Position für Prefix-Cache — DONE 2026-05-05 (commit `49c682a`)
+## Memory-Inject Position für Prefix-Cache — DONE 2026-05-06 (commits `49c682a` + `cb9f429`)
 
-**Status: gebaut + verifiziert.** Diese Sektion bleibt als Audit-Trail
-stehen, wird nicht weiterbearbeitet.
+**Status: zwei Iterationen, jetzt strukturell korrekt.**
 
-**Live-Resultat:** claude-cli cache hit auf jarvis ist von 73% auf
-**95%** gestiegen zwischen Turn 1 und Turn 2 — vorher wäre genau hier
-alles invalidiert worden weil System-Block inkl. Memory änderte sich.
-~5000 fresh tokens weniger pro Turn nach dem ersten.
+### Erste Iteration (49c682a, 2026-05-05) — partiell
 
-**Gebaut:**
-- `src/engine/claude-cli.ts` — Variante B hardcoded: ephemeralContext
-  landed jetzt vor dem user-text in der user-message, systemPrompt
-  bleibt stabil
-- `src/engine/openai-compatible.ts` — Variante A default + Config-
-  Switch: neue Funktion `injectEphemeralLate()` placed memory als
-  zweite system-message direkt vor dem letzten user-message; modes
-  `late` (default), `inline-user`, `system` (legacy)
-- `src/config/types.ts` — neues `memoryInjectMode`-Field auf
-  `OpenAiCompatibleProviderSchema` (claude-cli + codex-cli unverändert
-  weil Backend bekannt bzw. schon korrekt)
-- `src/server/run-turn.ts` — selfPointer baut aus `getFreshConfig()`
-  damit neu eingetragene Resources sofort im selfPointer-Block
-  sichtbar sind (Pair mit Bug-4 Hot-Reload)
+- `src/engine/claude-cli.ts`: Variante B hardcoded — ephemeralContext
+  landed vor dem user-text in der user-message, systemPrompt bleibt
+  stabil. Backend immer Anthropic, deterministisch.
+  **Wirkt — claude-cli cache hit von 73% → 95% (später 98%).**
+- `src/engine/openai-compatible.ts`: „late-system"-Variante eingebaut —
+  Memory als zweite system-message direkt vor letzter user-message.
+  **Wirkte NICHT** — verifiziert mit instrumentiertem two-turn-Dump
+  gegen omlx: Memory-Position „wandert" durch die Sequenz weil History
+  wächst, byte-mismatch bei der ersten dynamischen Position.
+- `src/server/run-turn.ts`: selfPointer aus `getFreshConfig()` (kleiner
+  Bonus-Fix für Bug-4-Hot-Reload-Konsistenz).
 
-**Smoke-Matrix nach Fix:**
-- claude-cli (jarvis/opus): cache 73% → 95% auf Turn 2
-- codex-cli (lisa/gpt55): PEAR, no fallback
-- openai-compatible (gemma sub-spawn): GRAPE, no fallback
-- agent_ask cross-engine: MELON via codex 71% cached
-- Memory-Recall lebt weiter: jarvis antwortete „Österreich" korrekt
-  aus Vault-Inhalt
+### Zweite Iteration (cb9f429, 2026-05-06) — strukturell korrekt
+
+Pre-Build-Research (DECISION #38) gelaufen: OpenClaw-Bundles sind
+minified (keine Patterns extrahierbar), Hermes optimiert für stateless
+openai-compatible **gar nicht** (sie verlassen sich auf Anthropic's
+cache_control, für lokale Backends akzeptieren sie den Verlust). Wir
+machen's hier besser als die Referenz-Repos:
+
+- `src/types/events.ts`: `user_message` kriegt `ephemeral?: string`-
+  Feld → memory-Block wird pro Turn in JSONL persistiert
+- `src/server/run-turn.ts`: Reihenfolge umgestellt — Memory-Inject
+  läuft VOR appendEvent, das `ephemeral` landed mit auf der JSONL-Zeile
+- `src/engine/openai-compatible.ts` `buildMessages`: liest `ephemeral`
+  aus jedem user_message-Event bei history-Reconstruction, rendert
+  content als `${ephemeral}\n\n${text}`. `injectEphemeralLate()`-Helper
+  weg — wird nicht mehr gebraucht.
+- `memoryInjectMode`-Schema simplifiziert: `late` weg (war das
+  kaputte Middle-Option). Nur noch `inline-user` (default mit JSONL-
+  Persistenz) und `system` (legacy/fallback).
+
+**Verifikation:** instrumentierter Dump zeigt Turn 1 und Turn 2
+Position 0..9 byte-identisch. claude-cli + codex-cli ohne Regression
+(98% / 68% cache hit).
+
+**omlx-side limitation:** omlx returnt `cached_tokens: null` selbst
+für byte-identische direct-curl-Requests. Reporting-Bug oder Cache
+nicht aktiv für gemma-4-31b-it-8bit — nicht aus somora fixbar. Aus
+unserer Sicht: strukturell richtig, runtime-Effekt auf omlx hängt
+von deren Implementation ab.
+
+**Smoke-Matrix nach Fix (cb9f429):**
+- claude-cli (jarvis/opus): 98% cache hit auf Follow-up-Turn
+- codex-cli (lisa/gpt55): 68% cache hit
+- openai-compatible: byte-perfekte history-reconstruction verifiziert
+- Memory-Recall funktioniert weiter (model konnte „Österreich"
+  korrekt aus Vault-Inhalt benennen)
 
 ---
 
