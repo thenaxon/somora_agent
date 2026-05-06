@@ -2,15 +2,24 @@
 //
 // 1. localExecSync — spawn process, wait for exit, return aggregated
 //    stdout/stderr (capped at 256 KB per stream), exit code, ms.
-//    Mirrors the shape of remoteExec from src/ssh/exec.ts.
+//    Mirrors the shape of remoteExec from src/ssh/exec.ts. When
+//    pty:true, routes through node-pty for real pseudo-terminal
+//    allocation so isatty()-checking tools (vim, htop, claude --
+//    skip-permissions, codex, color/cursor handling, progress bars)
+//    work correctly. With pty on, stdout and stderr merge into one
+//    stream — same behavior as a real terminal and as our
+//    remote-pty path via ssh2.
 //
 // 2. localExecBackground — spawn detached, register the job in the
 //    disk-tracked job-store, stream stdout/stderr to log files,
 //    return job_id immediately. Process keeps running after our
 //    function returns. process_* tool actions interact with it via
-//    the job-store + livePid registry.
+//    the job-store + livePid registry. Background ignores pty:true
+//    — TUI tools in the background make no sense (no one's watching);
+//    use tmux for "long-running interactive on local" instead.
 
 import { spawn } from 'node:child_process';
+import * as pty from 'node-pty';
 import { createWriteStream } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../../server/logger.ts';
@@ -44,10 +53,11 @@ export interface LocalSyncOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeoutMs?: number;
-  /** Allocate a pseudo-tty. v1 supports the option but treats it as a
-   *  hint — node's child_process doesn't expose pty natively, so when
-   *  pty:true we still use spawn with shell, callers get the same
-   *  behavior. Real pty allocation is a FUTURE polish via node-pty. */
+  /** Allocate a pseudo-terminal via node-pty. Tools that check
+   *  isatty() (vim, htop, claude --skip-permissions, codex, color
+   *  output, progress bars) work correctly with pty:true. With pty
+   *  on, stdout and stderr merge into a single stream (= same
+   *  behavior as a real terminal). */
   pty?: boolean;
 }
 
@@ -57,8 +67,15 @@ export interface LocalSyncOptions {
  * in tools.ts before this gets called). Output above the per-stream
  * cap is truncated; truncated:true tells the model to escalate to
  * file_write+file_read for the full content.
+ *
+ * When pty:true, dispatches to the node-pty path. Otherwise uses
+ * child_process.spawn for plain pipe-based capture (faster startup,
+ * separate stdout/stderr streams).
  */
 export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncResult> {
+  if (opts.pty) {
+    return localExecSyncPty(opts);
+  }
   const start = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
   const env = opts.env ? { ...process.env, ...opts.env } : process.env;
@@ -141,6 +158,105 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
         stderr: `[somora] spawn error: ${err.message}`,
         truncated,
         ms: Date.now() - start,
+      });
+    });
+  });
+}
+
+/**
+ * PTY variant of localExecSync via node-pty. Allocates a pseudo-tty
+ * so the spawned process sees `isatty(stdin/stdout) === true` plus
+ * a TERM env var — required for vim, htop, color output, progress
+ * bars, claude --skip-permissions, codex etc.
+ *
+ * node-pty merges stdout and stderr into a single stream (the same
+ * limitation as on a real terminal) so we collect everything into
+ * `stdout` and leave `stderr` empty. Matches the remote-pty path's
+ * shape exactly.
+ *
+ * To run a shell command (with operators, redirects, etc.) we wrap
+ * it in `sh -c '...'` — node-pty otherwise just exec's the
+ * argv[0] directly.
+ */
+async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult> {
+  const start = Date.now();
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
+  const env = opts.env ? { ...process.env, ...opts.env } : process.env;
+
+  return new Promise<LocalSyncResult>((resolve) => {
+    let term;
+    try {
+      term = pty.spawn('sh', ['-c', opts.command], {
+        name: 'xterm-256color',
+        cols: 80,
+        rows: 24,
+        cwd: opts.cwd,
+        env: env as { [key: string]: string },
+      });
+    } catch (err) {
+      resolve({
+        exit_code: null,
+        stdout: '',
+        stderr: `[somora] pty spawn error: ${(err as Error).message}`,
+        truncated: false,
+        ms: Date.now() - start,
+      });
+      return;
+    }
+
+    let outBytes = 0;
+    let truncated = false;
+    const outChunks: Buffer[] = [];
+
+    term.onData((data: string) => {
+      const buf = Buffer.from(data, 'utf8');
+      const remaining = DEFAULT_OUTPUT_CAP_BYTES - outBytes;
+      if (remaining <= 0) {
+        truncated = true;
+        return;
+      }
+      const slice = buf.length > remaining ? buf.subarray(0, remaining) : buf;
+      outChunks.push(slice);
+      outBytes += slice.length;
+      if (buf.length > remaining) truncated = true;
+    });
+
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        term.kill('SIGTERM');
+        // 2s grace then SIGKILL.
+        setTimeout(() => {
+          try {
+            term.kill('SIGKILL');
+          } catch {
+            /* already dead */
+          }
+        }, 2000);
+      } catch {
+        /* already dead */
+      }
+    }, timeoutMs);
+
+    term.onExit(({ exitCode, signal }) => {
+      clearTimeout(timer);
+      const out = Buffer.concat(outChunks).toString('utf8');
+      const stderrTail = timedOut ? `[somora] killed: timeout after ${timeoutMs}ms` : '';
+      resolve({
+        exit_code: exitCode,
+        stdout: out,
+        stderr: stderrTail,
+        truncated,
+        ms: Date.now() - start,
+      });
+      logger.info({
+        msg: 'exec.local.sync_pty_done',
+        ms: Date.now() - start,
+        exit_code: exitCode,
+        signal,
+        timed_out: timedOut,
+        truncated,
       });
     });
   });

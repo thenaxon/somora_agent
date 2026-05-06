@@ -83,11 +83,12 @@ const ExecInput = z
       .boolean()
       .default(false)
       .describe(
-        'Allocate a pseudo-terminal so TUI tools and tools that check ' +
-          'isatty() (vim, htop, claude, codex, color/cursor handling) work correctly. ' +
-          'Supported on REMOTE targets via ssh2 native pty allocation. On target=local ' +
-          'it\'s a no-op for now (would need node-pty install — FUTURE). When pty is on, ' +
-          'stdout and stderr merge into one stream (= same as a real terminal).',
+        'Allocate a pseudo-terminal so TUI tools and tools that check isatty() ' +
+          '(vim, htop, claude, codex, color/cursor handling, progress bars) work correctly. ' +
+          'Works on both target=local (via node-pty) and target=<resource> (via ssh2 native ' +
+          'pty allocation). When pty is on, stdout and stderr merge into one stream ' +
+          '(= same behavior as a real terminal). Background mode ignores this flag — ' +
+          'TUI tools running in the background nobody can see; use tmux for that.',
       ),
     description: z
       .string()
