@@ -4,9 +4,79 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-05 abend — Phase 6c agent_ask live, A2A komplett validiert)
+## Wo wir stehen (Stand: 2026-05-06 nacht — TUI auf Ist-Stand: history-replay + ESC-to-abort)
 
-**HEAD: 3335f0b** auf main. Zwei Commits heute:
+**HEAD: caa49bf** auf main. Heutiger Tag-Abschluss:
+- `caa49bf` — feat(tui): history-replay on session open + ESC-to-abort
+  across all 3 engines
+
+### TUI auf Ist-Stand gebracht (2026-05-06 nacht, commit `caa49bf`)
+
+Zwei lange offene TUI-Lücken in einem Aufwasch geschlossen:
+
+**History-Replay bei Session-Open.** TUI lud bisher nur SSE ab dem
+Moment des Öffnens — JSONL-Events wurden ignoriert, Scrollback war
+leer beim Wechsel. Jetzt: scrollback clearen → `/chat/history` fetchen
+→ NormalizedEvents → Turn[] mappen (deltas/turn-boundaries/errors
+skippen, tool_call/tool_result respektieren `showTools`) → SSE öffnen.
+Neue Sessions fallen sauber durch mit 0 Events. Damit sieht User auch
+A2A-Inbounds (`↬ hans`-Tag aus 6c) beim Lisa-Session-Open ohne Reload.
+
+**ESC-to-Abort über alle drei Engines.** Vorher: ESC clearte nur den
+Input-Buffer. Jetzt: while streaming abortet ESC den laufenden Turn
+server-side; sonst clear-as-before. Header zeigt
+„streaming · ESC to abort" als Hint.
+
+Server-Wiring:
+- `src/server/chat-aborts.ts` (neu) — per-session AbortController
+  Registry, `registerChatAbort` + `triggerChatAbort`, Idempotent,
+  In-Memory-Only (Server-Restart killt alle laufenden Subprocesses
+  ohnehin)
+- `/chat/send` registriert Controller, threaded `signal` durch
+  `runChatTurn` → engine baseInput, released im finally
+- `POST /chat/abort?agent=…&session=…` — neue Endpoint, returnt
+  `{aborted, ms_running}`
+- `TurnInput.signal?: AbortSignal` (engine/types.ts) als
+  Cross-Engine-Vertrag
+
+Engine-Adapter alle drei eigenständig handle:
+- **claude-cli**: bridged in `claude-agent-sdk`'s `abortController`
+  option (SDK akzeptiert nur Controller, nicht Signal — daher
+  Mirror-Pattern), removeEventListener im finally
+- **codex-cli**: SIGTERM auf das spawned subprocess, `abortFired`
+  flag damit der exit-handler nicht als „spawn failed" interpretiert
+- **openai-compatible**: `{signal}` als zweites Arg an
+  `chat.completions.create()`. WICHTIG: omlx schließt den stream auf
+  Abort *ohne zu throwen* — daher zusätzlicher
+  `if (signal?.aborted) throw` Check innerhalb der for-await UND nach
+  dem Loop. Sonst silent-truncate ohne Marker.
+
+Alle drei emittieren auf Abort: kumulierte Tokens bisher +
+`\n\n[somora] aborted by user` als final-`assistant_message`, dann
+sauberes `turn_end`. Keine Error-Events. Persistiert ins JSONL, daher
+Replay zeigt's beim nächsten Open auch.
+
+Live-Smoketests via curl alle grün:
+- claude-cli (sonnet): aborted nach 10.2s mid-Zählung „1…4", Marker im
+  final
+- codex-cli (gpt54mini): aborted nach 11.3s vor erstem Token, „aborted
+  by user" als ganzer final
+- openai-compatible (gemma4small): aborted nach 7.0s mid-Kapitel-2,
+  Kapitel-1 + Anfang-Kapitel-2 + Marker im final
+
+History-Endpoint zeigt user_message + turn_start + assistant_message
+(mit Abort-Marker) + turn_end für die Test-Session — Replay
+funktioniert.
+
+Files: `src/cli/tui/{api,app,header}.tsx` +
+`src/engine/{claude-cli,codex-cli,openai-compatible,types}.ts` +
+`src/server/{chat-aborts,index,run-turn}.ts`. +332/-47 LOC.
+
+---
+
+## Vorheriger Stand (2026-05-05 abend — Phase 6c agent_ask live, A2A komplett validiert)
+
+Zwei Commits 2026-05-05:
 - `8ada555` — phase 6c-prep: long-task timeout politik (DECISION #39)
 - `3335f0b` — phase 6c: agent_ask — live A2A messaging
 
@@ -326,35 +396,24 @@ Detail in `private/FUTURE.md` Sektion „Memory-Inject Position".
 
 ### TODO für nächste Session
 
-A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
+A2A + Hans's Bugs + Maintenance-Sweep 1 + Cache + Phase 5 (exec/tmux
+inkl. local PTY) + TUI Ist-Stand alle durch. Offene Themen:
 
-1. **Phase 5 — exec mit Hard-Blacklist + tmux** (große separate
-   Diskussion). Cross-Reference-Pointer in `private/FUTURE.md`
-   liegen schon — claude-code-source `BashTool/`, OpenClaw exec
-   mit host-Backends, unser eigenes `docs/research/tool-architecture.md`
-   §2.2.
-2. **Phase X — Skill-Handling** (vorher 9 Diskussionsfragen klären,
+1. **Phase X — Skill-Handling** (vorher 9 Diskussionsfragen klären,
    siehe `private/FUTURE.md` Abschnitt „Phase X — Skill-Handling"; **NICHT**
    unilateral starten).
-3. **Dream-Worker-Priorisierung** (User-Active-Marker mit
+2. **Dream-Worker-Priorisierung** (User-Active-Marker mit
    AbortSignal) — wenn `idleMinutes < 30` wieder gewünscht.
    FUTURE.md hat den halben-Tag-Bauplan.
-4. **TUI-History-Replay bei Session-Open** — pre-existierende Lücke,
-   für 6c relevant: User der Lisas Session erst nach einem agent_ask
-   öffnet sieht den `↬ hans`-Tag erst beim Refresh, nicht aus dem
-   JSONL repleyed.
 
 ### Pickup-Satz für nächste Session
 
 > "Phase 6 (A2A), Hans's vier Bugs, Maintenance-Sweep 1, Cache-
-> Strategie alle durch. Phase 5 (exec + tmux) komplett INKL.
-> lokalem PTY: exec + process Tools mit hard-blacklist, disk-tracked
-> background jobs, sync + background local + remote, PTY local +
-> remote (node-pty bzw. ssh2), concurrency-caps konfigurierbar; tmux
-> mit action-enum + count-based wait_pattern, local + remote. HEAD
-> 69cb1a7. Tool-count 34. Andere offene Themen: Phase X (Skills,
-> vorher diskutieren — 10 Konzept-Fragen offen), Dream-Worker-
-> Priorisierung, TUI-History-Replay."
+> Strategie, Phase 5 (exec + tmux inkl. lokalem PTY) und TUI auf
+> Ist-Stand (history-replay + ESC-to-abort über alle 3 Engines) alle
+> durch. HEAD caa49bf. Tool-count 34. Offene Themen: Phase X (Skills,
+> vorher diskutieren — 10 Konzept-Fragen offen) und Dream-Worker-
+> Priorisierung."
 
 ---
 
