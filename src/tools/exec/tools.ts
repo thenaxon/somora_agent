@@ -78,7 +78,12 @@ const ExecInput = z
       .min(100)
       .max(3_600_000)
       .default(60_000)
-      .describe('Sync only. Kill after this. Default 60s, max 1h. Ignored when background:true.'),
+      .describe(
+        'Sync only. Kill after this. Default 60s, max 1h. Ignored when background:true. ' +
+          'When you intentionally run a long-blocking command, set this above the expected ' +
+          'duration — e.g. for `sleep N` use `timeout_ms: (N+5)*1000`. The 60s default exists ' +
+          'so a runaway command can\'t lock a tool slot for an hour.',
+      ),
     pty: z
       .boolean()
       .default(false)
