@@ -55,10 +55,21 @@ const DreamConfigSchema = z.object({
   chunkTokens: z.number().int().positive().default(50_000),
   /**
    * Per-chunk LLM-call timeout. A single chunk that exceeds this is
-   * marked as failed, the dream continues with the next chunk. Default
-   * 120000ms (2 minutes) — fits slow local models.
+   * marked as failed, the dream continues with the next chunk.
+   *
+   * Default 600000ms (10 min). The earlier 2 min default was too tight
+   * for realistic local-model loads — verified empirically 2026-05-06
+   * with hans's main archive: 33k-token chunks against gemma-4-31b-it-8bit
+   * via mlx-omx need 3-5 min just for prefill+JSON-output, the 2 min
+   * cap killed every chunk before it could complete (and before omlx's
+   * KV cache could warm for the next chunk). 10 min is generous enough
+   * to fit any reasonable local-model setup; faster cloud workers
+   * complete in seconds and ignore the headroom.
+   *
+   * Lower this only if you're using a fast cloud worker AND want to
+   * fail-fast on stalls. Most setups want the headroom.
    */
-  chunkTimeoutMs: z.number().int().positive().default(120_000),
+  chunkTimeoutMs: z.number().int().positive().default(600_000),
 });
 
 const AgentYamlSchema = z

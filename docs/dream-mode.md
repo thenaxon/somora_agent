@@ -63,7 +63,7 @@ dream:
   model: gemma               # REQUIRED when enabled. No fallback.
   idleMinutes: 30
   chunkTokens: 50000         # rough size per LLM extraction call
-  chunkTimeoutMs: 120000     # per-chunk timeout (lenient — local models can be slow)
+  chunkTimeoutMs: 600000     # per-chunk timeout — 10 min default, lenient enough for local
 ```
 
 `model` is mandatory when `enabled: true`. There is intentionally no
@@ -71,6 +71,17 @@ fallback to the agent's primary model: dreaming long sessions burns
 tokens, and that's exactly the wrong thing to do silently on a premium
 model. The dream worker model is your explicit choice — typically a
 small local model (e.g., a Gemma variant via Ollama or oMLX).
+
+`chunkTimeoutMs` defaults to 10 minutes. The earlier 2 min default was
+too tight for realistic local-model loads: 33k-token chunks against
+gemma-4-31b-it-8bit via mlx-omx need 3-5 min just for prefill +
+JSON-output. With the lower cap, every chunk hit the timeout before it
+could complete — and before the backend's KV cache could warm for the
+next chunk, so even cache-friendly prompt structure (memory + vault
+prefix stable across chunks per `docs/cache-strategy.md`) couldn't
+help. 10 min fits any reasonable local-model setup; fast cloud workers
+finish in seconds and ignore the headroom. Lower this only if you're
+using a fast cloud worker AND want fail-fast on stalls.
 
 ### Per-agent rules: `DREAMRULES.MD`
 
