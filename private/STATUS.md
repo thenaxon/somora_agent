@@ -514,9 +514,11 @@ inkl. local PTY) + TUI Ist-Stand alle durch. Offene Themen:
 > (SFTP-Tilde, tmux wait_pattern fast-Command, docs/tools.md gap, plus
 > rm -rf-Blacklist tightening, tmux opt-in TUI-Params wait_mode/
 > multiline_safe/include_ansi mit Safety-Doku) alle durch. HEAD
-> 53d0307. Tool-count 34. Offene Themen: Phase X (Skills, vorher
-> diskutieren — 10 Konzept-Fragen offen), Dream-Worker-Priorisierung,
-> tmux wait_idle-Action (FUTURE.md, ~30min Quick-Win)."
+> 318f0bf. Tool-count 34. Offene Themen: Phase X (Skills, vorher
+> diskutieren — 10 Konzept-Fragen offen), Phase Y (Vision /
+> Multimodale Inputs, kommt NACH Skills — image_read-Tool zuerst,
+> /chat/send-Attachments später), Dream-Worker-Priorisierung, tmux
+> wait_idle-Action (FUTURE.md, ~30min Quick-Win)."
 
 ---
 
