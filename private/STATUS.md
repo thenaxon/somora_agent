@@ -156,6 +156,27 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
+### Phase 5a polish — Loose-Ends durch (2026-05-06 spätnachmittag, commit `625bb53`)
+
+Drei Loose-Ends aus der ersten 5a-Iteration sauber geschlossen:
+
+- **Remote PTY** für sync exec — ssh2 pty option durchgereicht,
+  TUI-Tools funktionieren auf remote ohne tmux-Wrapper für „kurzer
+  interaktiver Bedarf"
+- **Remote-Background** via nohup-Pattern — POSIX-portable
+  (macOS-kompatibel, kein setsid), spawn-and-poll, output streamt
+  auf remote-host, kurzlebige ssh-Connections für poll/log/kill.
+  Live-Verifikation gegen mac-studio: voller Lifecycle grün
+- **Concurrency-Caps** in `agentLoop.execMaxConcurrent{PerAgent,Global}`
+  konfigurierbar, Default 8/32. Slot-Release wired für local + remote,
+  9. Spawn correct rejected mit klarem Hint.
+
+Damit ist exec **wirklich komplett** — tmux (Phase 5b) behält sauberen
+Scope „persistent multi-turn sessions" statt als Workaround-Overflow.
+
+Local PTY bewusst FUTURE gelassen (würde node-pty install + native
+compile brauchen). Remote PTY deckt 90% der Real-World-Cases.
+
 ### Phase 5a — exec + process gebaut (2026-05-06 nachmittag, commit `fa10122`)
 
 Erstes Code-Stück der exec-Phase ist live + smoke-getestet:
@@ -282,15 +303,16 @@ A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 
 ### Pickup-Satz für nächste Session
 
-> "Phase 6 (A2A) komplett, Hans's vier Bugs gefixt, Maintenance-Sweep 1
-> durch, Cache-Strategie konsolidiert + dokumentiert. Phase 5a (exec +
-> process) gebaut + smoke-tested — sync local, sync remote (SSH),
-> background local mit disk-tracked jobs + lifecycle, hard-blacklist
-> (13 starter-patterns). HEAD fa10122. Phase 5b (tmux mit
-> local+remote target-support) ist der natürliche nächste Bau —
-> design-doc liegt schon mit Schema-Sketch + Use-Case (claude-cli /
-> codex in tmux orchestrieren). Andere offene Themen: Phase X (Skills,
-> vorher diskutieren), Dream-Worker-Priorisierung, TUI-History-Replay."
+> "Phase 6 (A2A) komplett, Hans's vier Bugs gefixt, Maintenance-Sweep
+> 1 durch, Cache-Strategie konsolidiert. Phase 5a komplett inklusive
+> Loose-Ends: exec + process Tools mit hard-blacklist, disk-tracked
+> background jobs, sync local + remote, background local + remote
+> (nohup-pattern), remote PTY für TUI-Tools, concurrency-caps konfig-
+> urierbar. tmux (Phase 5b) jetzt sauber abgegrenzt auf seinen
+> Kern-Use-Case: persistent multi-turn sessions. HEAD 625bb53. Andere
+> offene Themen: Phase X (Skills, vorher diskutieren),
+> Dream-Worker-Priorisierung, TUI-History-Replay, lokale-PTY (FUTURE,
+> braucht node-pty install)."
 
 ---
 
