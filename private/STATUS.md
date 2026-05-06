@@ -156,6 +156,33 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
+### Phase 5a — exec + process gebaut (2026-05-06 nachmittag, commit `fa10122`)
+
+Erstes Code-Stück der exec-Phase ist live + smoke-getestet:
+
+- `exec`-Tool mit allen design-doc-Feldern (command, target, cwd, env,
+  background, timeout_ms, pty, description). Sync local und sync
+  remote über SSH-Resources funktionieren. Background-local
+  spawnt detached mit Disk-Output (stdout.log + stderr.log + meta.json).
+  Background-on-remote v1 mit klarem Fehler-Hinweis abgelehnt.
+- `process`-Tool mit action-Enum: `list`, `poll`, `log`, `write`,
+  `kill`. Alle 5 Actions getestet end-to-end mit einem 5-Sekunden-
+  Counter-Job.
+- Hard-Blacklist (13 Patterns) blockt rm -rf /, dd if=, mkfs, sudo,
+  fork bomb, system halt, chmod 777 auf system, private SSH key
+  reads, curl|sh / wget|sh.
+- Server-start orphan-recovery analog zu Dream: jobs mit `running`
+  zur Server-Crash-Zeit werden auf `failed` gesetzt mit Reason
+  „orphaned by server restart".
+
+Tools gehen 31 → 33 (`exec` + `process` neu).
+
+12-Test Smoke-Matrix alle grün: sync local + sync remote (mac-studio
+uname) + 2× blacklist-trigger + background-lifecycle (spawn/list/
+poll/log/kill) + remote-background-rejection + bad-target-rejection.
+
+Phase 5b (tmux mit local + remote target-support) folgt.
+
 ### Cache-Strategie konsolidiert (2026-05-06 mittag)
 
 DECISION #40 + `docs/cache-strategy.md` dokumentieren jetzt die ganze
@@ -256,16 +283,14 @@ A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 ### Pickup-Satz für nächste Session
 
 > "Phase 6 (A2A) komplett, Hans's vier Bugs gefixt, Maintenance-Sweep 1
-> durch. Cache-Strategie über alle vier Pfade konsolidiert (DECISION
-> #40 + `docs/cache-strategy.md`): chat-claude-cli 98%, chat-codex-cli
-> 68%, chat-openai-compatible struktur-korrekt mit JSONL-Persistenz,
-> dream-extractor stable-content-first für multi-chunk-cache-wins.
-> omlx-Side returnt cached_tokens null aber Struktur ist auf unserer
-> Seite richtig. Lessons-Learned in zwei feedback-memories. Sauberer
-> Boden für Phase 5 (exec+tmux). Andere offene Themen: Phase X
-> (Skills, vorher diskutieren — Skill-Inject muss von Tag 1 cache-
-> friendly platziert werden + ggf. JSONL-Persistenz analog Memory),
-> Dream-Worker-Priorisierung, TUI-History-Replay."
+> durch, Cache-Strategie konsolidiert + dokumentiert. Phase 5a (exec +
+> process) gebaut + smoke-tested — sync local, sync remote (SSH),
+> background local mit disk-tracked jobs + lifecycle, hard-blacklist
+> (13 starter-patterns). HEAD fa10122. Phase 5b (tmux mit
+> local+remote target-support) ist der natürliche nächste Bau —
+> design-doc liegt schon mit Schema-Sketch + Use-Case (claude-cli /
+> codex in tmux orchestrieren). Andere offene Themen: Phase X (Skills,
+> vorher diskutieren), Dream-Worker-Priorisierung, TUI-History-Replay."
 
 ---
 
