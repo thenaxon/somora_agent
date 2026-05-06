@@ -4,15 +4,20 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-06 nacht — Hans's Bug-Report 2 abgearbeitet)
+## Wo wir stehen (Stand: 2026-05-06 spätnacht — Hans's Bug-Report 2 + 3 (TUI-Session-Lessons))
 
-**HEAD: 0a86f8e** auf main. Heutige Spätnacht-Commits über den TUI-
+**HEAD: 53d0307** auf main. Heutige Spätnacht-Commits über den TUI-
 Catchup hinaus:
 - `caa49bf` — feat(tui): history-replay + ESC-to-abort across 3 engines
 - `b407d33` — docs(status): TUI auf Ist-Stand
 - `6cf9663` — docs(tools): list missing tool families (Hans's Bug 3)
 - `666aec4` — fix(ssh): expand ~ for SFTP paths instead of literal (Hans's Bug 1)
 - `0a86f8e` — fix(tmux): match wait_pattern when buffer idle (Hans's Bug 2)
+- `73de484` — docs(status): record Bug-Report 2 sweep
+- `e04187f` — fix(exec): blacklist only system dirs (Hans's rm -rf observation)
+- `6a33d0a` — feat(tmux): wait_mode + multiline_safe + include_ansi (Bugs 4/5/8)
+- `7309310` — docs(exec): nudge timeout_ms for long sleeps (Bug 7)
+- `53d0307` — docs(future): wait_idle / since_last / watch proposals (Bug 6)
 
 ### Hans's Bug-Report 2 (2026-05-06-bugs.md) abgearbeitet
 
@@ -57,6 +62,51 @@ idempotentes memory_delete, spawn_subagent wait:true exact roundtrip,
 exec sync local + remote, background mit process poll/log/list,
 resource_test reachability, web_search/fetch). Substantielle Issues
 also nur die drei oben.
+
+### Hans's Bug-Report 3 (Tetris-Session) abgearbeitet (2026-05-06 spätnacht)
+
+Hans hat parallel ein Tetris-Spiel via Claude-Code-in-tmux bauen
+lassen und über mehrere Stunden andere Klassen Stolpersteine
+gefunden, die der Selftest nicht zutage gebracht hat. UX/Effizienz-
+Probleme primär, keine „Tool kaputt"-Bugs — aber für TUI-Sessions
+spürbar. Aufschlag agnostisch gehalten, kein claude-cli-spezifischer
+Code:
+
+**rm -rf-Blacklist zu grob (`e04187f`):** Pattern `/[a-zA-Z]` blockte
+jeden absoluten Pfad, also auch `/Users/<u>/...` und `/tmp/...`.
+Explizite System-Dir-Liste eingeführt — userspace passiert sauber
+durch, System-Pfade (/, /bin, /etc, /Library, /System, …) gesperrt.
+20/20 Smoke-Cases.
+
+**Bug 4/5/8 — tmux-Opt-In-Params (`6a33d0a`):** Drei neue Felder, alle
+agnostisch, agent deklariert pro Call:
+- `wait_mode: 'auto' | 'present' | 'idle'` — auto bleibt smart-für-
+  Shell, present matcht auf reine Anwesenheit (für TUIs mit
+  statischem Panel-Content), idle wartet auf Stabilität
+- `multiline_safe: bool` — \\n als M-Enter (Soft-Newline-Convention)
+  statt nacktem CR. Behebt das „Multi-Line-Prompt zerteilt" bei
+  Claude Code / Codex / IPython / fish.
+- `include_ansi: bool` — capture mit `-e` Flag, ANSI-Escapes
+  preserved. Erlaubt dem Agent dim-Auto-Suggestions vom echten
+  User-Input zu unterscheiden — sicherheitskritisch (Hans's Vorfall
+  #3 hätte ein Projekt-Delete ausgelöst).
+Plus Safety-Paragraph in der Tool-Description: niemals Enter auf
+einen Buffer den du nicht selbst getippt hast.
+
+**Bug 6 (Polling-Cost) → FUTURE.md (`53d0307`):** Drei orthogonale
+Ideen festgehalten — `wait_idle`-Action, `since_last`-Capture-Mode,
+`tmux watch` Background-Job — mit Priorisierung. `wait_idle` wäre
+der größte Quick-Win (~30 Min), Build folgt bei Bedarf.
+
+**Bug 7 (sleep-Timeout) → Doku-Tweak (`7309310`):** `exec`
+description suggeriert jetzt `timeout_ms: (N+5)*1000` für
+`sleep N`-Cases. Default bleibt 60s, aber Agent stolpert nicht mehr
+ahnungslos.
+
+**Neue Doku `docs/tmux.md`:** kompletter Guide für Shell-vs-TUI-
+Sessions, alle drei Opt-In-Params mit Beispielen, Auto-Suggestion-
+Safety-Rule prominent. Cross-link aus `tools.md`. Auto-discovery via
+`somora_docs_list` greift, Hans sieht das ab nächstem Turn.
 
 ### TUI auf Ist-Stand gebracht (2026-05-06 nacht, commit `caa49bf`)
 
@@ -460,11 +510,13 @@ inkl. local PTY) + TUI Ist-Stand alle durch. Offene Themen:
 
 > "Phase 6 (A2A), Hans's vier Bugs aus Report 1, Maintenance-Sweep 1,
 > Cache-Strategie, Phase 5 (exec + tmux inkl. lokalem PTY), TUI auf
-> Ist-Stand (history-replay + ESC-to-abort), und Hans's Bug-Report 2
-> (SFTP-Tilde, tmux wait_pattern fast-Command, docs/tools.md gap) alle
-> durch. HEAD 0a86f8e. Tool-count 34. Offene Themen: Phase X (Skills,
-> vorher diskutieren — 10 Konzept-Fragen offen) und Dream-Worker-
-> Priorisierung."
+> Ist-Stand (history-replay + ESC-to-abort), Hans's Bug-Report 2 + 3
+> (SFTP-Tilde, tmux wait_pattern fast-Command, docs/tools.md gap, plus
+> rm -rf-Blacklist tightening, tmux opt-in TUI-Params wait_mode/
+> multiline_safe/include_ansi mit Safety-Doku) alle durch. HEAD
+> 53d0307. Tool-count 34. Offene Themen: Phase X (Skills, vorher
+> diskutieren — 10 Konzept-Fragen offen), Dream-Worker-Priorisierung,
+> tmux wait_idle-Action (FUTURE.md, ~30min Quick-Win)."
 
 ---
 
