@@ -221,12 +221,22 @@ function buildUserMessage(args: {
   existingMemory: Array<{ slug: string; markdown: string }>;
   referencedVault: Array<{ slug: string; markdown: string }>;
 }): string {
+  // Order matters for prefix-cache hit-rate across chunks of the same
+  // dream extraction:
+  //   - existingMemory + referencedVault are computed ONCE per dream
+  //     run (in runDream → extractFromSession ctx) and are byte-
+  //     identical across every chunk
+  //   - chunk.events is the only piece that varies per chunk
+  // → stable blocks BEFORE the variable transcript so the prefix tokens
+  //   up to the transcript-content match across chunks. Backends with
+  //   prefix-cache (mlx-omx, OpenAI, Anthropic-via-openai-shim) cache
+  //   the memory + vault prefix on chunk 1 and reuse it on chunks 2..N.
+  //
+  // Memory + vault for hans's typical session are ~2-15k tokens; on a
+  // 5-chunk dream that's 4× re-encoding saved on local models —
+  // multiple seconds of latency per chunk on gemma4big.
   return [
     `Agent name: ${args.agentName}`,
-    '',
-    '<transcript>',
-    formatTranscript(args.chunk.events),
-    '</transcript>',
     '',
     '<existing_memory>',
     formatMemory(args.existingMemory),
@@ -235,6 +245,10 @@ function buildUserMessage(args: {
     '<vault_referenced>',
     formatVault(args.referencedVault),
     '</vault_referenced>',
+    '',
+    '<transcript>',
+    formatTranscript(args.chunk.events),
+    '</transcript>',
   ].join('\n');
 }
 
