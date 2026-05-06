@@ -19,7 +19,9 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-function buildSendKeysScript(name: string, keys: string): string {
+// Mirrors local.ts:buildSendKeysScript — see there for the
+// multilineSafe / M-Enter rationale.
+function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean): string {
   const parts = keys.split('\n');
   const cmds: string[] = [];
   parts.forEach((part, idx) => {
@@ -27,9 +29,13 @@ function buildSendKeysScript(name: string, keys: string): string {
       cmds.push(`tmux send-keys -t ${shQuote(name)} -l ${shQuote(part)}`);
     }
     if (idx < parts.length - 1) {
-      cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
+      const keyName = multilineSafe ? 'M-Enter' : 'Enter';
+      cmds.push(`tmux send-keys -t ${shQuote(name)} ${keyName}`);
     }
   });
+  if (keys.endsWith('\n')) {
+    cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
+  }
   return cmds.join(' && ');
 }
 
@@ -83,12 +89,13 @@ export async function tmuxRemoteSend(
   target: string,
   name: string,
   keys: string,
+  multilineSafe = false,
 ): Promise<TmuxRemoteResult> {
-  const cmd = buildSendKeysScript(name, keys);
+  const cmd = buildSendKeysScript(name, keys, multilineSafe);
   if (!cmd) {
     return { ok: true, exit_code: 0, stdout: '', stderr: '' };
   }
-  logger.info({ msg: 'tmux.remote.send', target, name, keys_len: keys.length });
+  logger.info({ msg: 'tmux.remote.send', target, name, keys_len: keys.length, multilineSafe });
   return runRemoteTmux(agent, target, cmd);
 }
 
@@ -97,8 +104,10 @@ export async function tmuxRemoteCapture(
   target: string,
   name: string,
   lines: number = DEFAULT_CAPTURE_LINES,
+  includeAnsi = false,
 ): Promise<TmuxRemoteResult> {
-  const cmd = `tmux capture-pane -t ${shQuote(name)} -p -S -${lines}`;
+  const ansiFlag = includeAnsi ? ' -e' : '';
+  const cmd = `tmux capture-pane -t ${shQuote(name)} -p${ansiFlag} -S -${lines}`;
   return runRemoteTmux(agent, target, cmd);
 }
 

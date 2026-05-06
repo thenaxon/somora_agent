@@ -23,13 +23,25 @@ function shQuote(s: string): string {
 /**
  * Build the multi-step send-keys command sequence for a possibly
  * multi-line keys string. tmux's `send-keys -l` flag treats its
- * argument as literal characters; a separate `Enter` arg sends an
- * actual newline-keypress. We split the input on \n and chain a
- * literal + Enter for each segment so special characters (quotes,
- * dollar signs, etc) don't get mis-interpreted by tmux's key
- * lexer.
+ * argument as literal characters; a separate keypress arg
+ * (`Enter`, `M-Enter`, …) sends a real key event. We split the
+ * input on \n and chain a literal + key for each segment so
+ * special characters (quotes, dollar signs, etc) don't get mis-
+ * interpreted by tmux's key lexer.
+ *
+ * `multilineSafe` controls how embedded \n are sent:
+ *   - false (default): every \n becomes a plain Enter — what shells
+ *     expect to actually run a command.
+ *   - true: every \n EXCEPT the trailing one becomes M-Enter
+ *     (Esc+CR, the soft-newline convention in modern coding TUIs:
+ *     Claude Code, codex, IPython, fish, jupyter, Slack-style input
+ *     boxes). The TUI treats it as a real linebreak inside its
+ *     input field instead of submitting. A trailing \n still becomes
+ *     a plain Enter, so a multi-line message still submits at the
+ *     end. Hans's bug 2026-05-06: without this, a multi-line message
+ *     into Claude Code got chunked into N separate submissions.
  */
-function buildSendKeysScript(name: string, keys: string): string {
+function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean): string {
   const parts = keys.split('\n');
   const cmds: string[] = [];
   parts.forEach((part, idx) => {
@@ -37,9 +49,18 @@ function buildSendKeysScript(name: string, keys: string): string {
       cmds.push(`tmux send-keys -t ${shQuote(name)} -l ${shQuote(part)}`);
     }
     if (idx < parts.length - 1) {
-      cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
+      // Non-final newline. multiline_safe → soft-newline (M-Enter).
+      const keyName = multilineSafe ? 'M-Enter' : 'Enter';
+      cmds.push(`tmux send-keys -t ${shQuote(name)} ${keyName}`);
     }
   });
+  // If the original input ended with \n we already split it so the
+  // last part is an empty string and the loop above skipped the
+  // final Enter. Re-add it as a plain Enter — even in multiline_safe
+  // mode the trailing \n still submits.
+  if (keys.endsWith('\n')) {
+    cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
+  }
   return cmds.join(' && ');
 }
 
@@ -76,12 +97,16 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
   return runTmux(cmd);
 }
 
-export async function tmuxLocalSend(name: string, keys: string): Promise<TmuxResult> {
-  const cmd = buildSendKeysScript(name, keys);
+export async function tmuxLocalSend(
+  name: string,
+  keys: string,
+  multilineSafe = false,
+): Promise<TmuxResult> {
+  const cmd = buildSendKeysScript(name, keys, multilineSafe);
   if (!cmd) {
     return { ok: true, exit_code: 0, stdout: '', stderr: '' };
   }
-  logger.info({ msg: 'tmux.local.send', name, keys_len: keys.length });
+  logger.info({ msg: 'tmux.local.send', name, keys_len: keys.length, multilineSafe });
   return runTmux(cmd);
 }
 
@@ -92,13 +117,20 @@ export interface TmuxLocalCaptureOptions {
    *  Default 200 — enough to grab the typical scrollback after a
    *  multi-step interaction without being huge. */
   lines?: number;
+  /** When true, pass `-e` to capture-pane so ANSI escape sequences
+   *  (colors, dim/bold attributes, cursor moves) are preserved in
+   *  the output. Used for distinguishing dim auto-suggestion text
+   *  from real input in coding TUIs. Default false (escapes
+   *  stripped, easier to match against). */
+  includeAnsi?: boolean;
 }
 
 export async function tmuxLocalCapture(opts: TmuxLocalCaptureOptions): Promise<TmuxResult> {
   const lines = opts.lines ?? DEFAULT_CAPTURE_LINES;
   // -p = print to stdout. -S -<N> = start N lines back. -E = stop at
-  // current visible bottom (default).
-  const cmd = `tmux capture-pane -t ${shQuote(opts.name)} -p -S -${lines}`;
+  // current visible bottom (default). -e adds ANSI escape sequences.
+  const ansiFlag = opts.includeAnsi ? ' -e' : '';
+  const cmd = `tmux capture-pane -t ${shQuote(opts.name)} -p${ansiFlag} -S -${lines}`;
   return runTmux(cmd);
 }
 

@@ -16,7 +16,7 @@ in-process. The model never knows which path it's on.
 | `obsidian` | `obsidian_write`, `obsidian_move`, `obsidian_delete` | Vault-aware writes; `obsidian_move` rewrites `[[wikilinks]]` across the whole vault. |
 | `file` | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list` | Generic filesystem I/O — local or against any configured SSH resource via `target=...`. |
 | `exec` | `exec`, `process` | One-shot shell commands (sync + background) on local or any SSH resource. Hard-blacklisted destructive patterns; background jobs disk-tracked with poll/log/kill via `process`. See `tools.md` body + `exec-design.md`. |
-| `tmux` | `tmux` | Persistent multi-turn terminal sessions (claude/codex/vim/REPLs). One typed tool with `action: create | send | capture | list | kill` against `target: local | <ssh-resource>`. |
+| `tmux` | `tmux` | Persistent multi-turn terminal sessions (claude/codex/vim/REPLs). One typed tool with `action: create | send | capture | list | kill` against `target: local | <ssh-resource>`. See `tmux.md` for shell-vs-TUI patterns, `wait_mode` choices, `multiline_safe`, `include_ansi`, and the auto-suggestion safety rule. |
 | `agents` | `spawn_subagent`, `spawn_subagents`, `subagent_status`, `subagent_result`, `subagent_list`, `agent_ask` | Agent-to-agent orchestration. `spawn_*` create sealed sub-sessions for delegated work; `subagent_*` poll/collect results; `agent_ask` posts a live question into another agent's existing session. See `agents.md`. |
 | `docs` | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation (this directory). |
 | `resources` | `resource_list`, `resource_test` | Discover and probe configured remote SSH targets. |
@@ -60,6 +60,7 @@ Both register the same set of tools (`memoryTools()`, `dreamTools()`,
 - `display.md` — `/show` and `/verbose` toggles for the TUI
 - `thinking.md` — cross-engine thinking depth control
 - `memory.md` — how the memory layer works
-- `resources.md` — SSH targets that file_* and (later) exec dispatch to
+- `resources.md` — SSH targets that file_* / exec / tmux dispatch to
+- `tmux.md` — shell-vs-TUI session patterns + capture/send modes
 - `research/tool-architecture.md` — comparative study of OpenClaw and
   hermes-agent that informed our design

@@ -32,6 +32,7 @@ import {
 const POLL_INTERVAL_MS = 200;
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const MAX_WAIT_TIMEOUT_MS = 600_000; // 10 min — same ceiling as longTaskMax
+const DEFAULT_IDLE_STABLE_MS = 500;
 
 const TmuxInput = z
   .object({
@@ -72,19 +73,59 @@ const TmuxInput = z
       .string()
       .optional()
       .describe(
-        'send only — text to type into the session. Newlines (\\n) are sent as Enter keypresses; ' +
-          'every other character goes through literally (no shell escaping needed). Append \\n ' +
-          'yourself if you want the command to actually run.',
+        'send only — text to type into the session. By default, newlines (\\n) are sent as ' +
+          'Enter keypresses (CR), which is what shells expect — append \\n to actually run a ' +
+          'shell command. For interactive TUIs (claude --dangerously-skip-permissions, codex, ' +
+          'IPython, jupyter input boxes, etc.) where Enter SUBMITS the message, set ' +
+          '`multiline_safe: true` so embedded \\n becomes a soft-newline instead of a submit.',
+      ),
+    multiline_safe: z
+      .boolean()
+      .default(false)
+      .describe(
+        'send only — when true, embedded \\n in `keys` is sent as M-Enter (Esc+CR / Alt+Enter) ' +
+          'instead of a literal Enter. M-Enter is the soft-newline convention in modern input ' +
+          'TUIs (Claude Code, codex, IPython, fish, Slack-style input boxes etc.) — the message ' +
+          'gets a real linebreak without being submitted. The LAST character of `keys` is still ' +
+          'sent as Enter when it\'s a \\n, so a trailing newline still submits. Default false ' +
+          '(plain Enter for shell use). Use this when a single send carries a multi-line ' +
+          'message into a TUI that auto-submits on Enter.',
       ),
     wait_pattern: z
       .string()
       .min(1)
       .optional()
       .describe(
-        'capture only — string to wait for in the pane content. Useful for "wait until prompt ' +
-          'comes back" scenarios. The capture polls every 200ms until the pattern is found OR ' +
-          'wait_timeout_ms elapses, then returns whatever\'s captured. Without wait_pattern: ' +
-          'capture returns the current pane content immediately.',
+        'capture only — string to wait for in the pane content. Capture polls every 200ms ' +
+          'until matched OR wait_timeout_ms elapses. Without wait_pattern, capture returns the ' +
+          'current pane content immediately. The match semantic is controlled by `wait_mode` — ' +
+          'see that field; the right choice depends on whether you\'re driving a Shell or a ' +
+          'TUI session.',
+      ),
+    wait_mode: z
+      .enum(['auto', 'present', 'idle'])
+      .default('auto')
+      .describe(
+        'capture only — how `wait_pattern` matches. `auto` (default): smart for SHELL sessions ' +
+          '— matches when pattern occurrences GROW past baseline (the typed command itself often ' +
+          'echoes the pattern, growth = real new output) OR when the buffer ends with a shell ' +
+          'prompt sigil ($/#/>) and the pattern is present (= command finished, output rendered). ' +
+          '`present`: matches as soon as pattern appears anywhere in pane content — for TUI ' +
+          'sessions (Claude Code, codex, vim, htop, fzf) where the pattern is part of a static ' +
+          'rendered panel and the buffer never gets a shell prompt. `idle`: matches when ' +
+          'pattern is in pane AND content has been stable (no changes) for `idle_stable_ms` — ' +
+          'good for "wait until the TUI stops typing/redrawing".',
+      ),
+    idle_stable_ms: z
+      .number()
+      .int()
+      .min(100)
+      .max(10_000)
+      .default(DEFAULT_IDLE_STABLE_MS)
+      .describe(
+        `capture only, wait_mode=idle — how many ms of unchanged content count as "stable". ` +
+          `Default ${DEFAULT_IDLE_STABLE_MS}ms. Lower = match faster but might catch a brief ` +
+          `pause mid-render; higher = waits longer for true idle.`,
       ),
     wait_timeout_ms: z
       .number()
@@ -97,6 +138,19 @@ const TmuxInput = z
           `(${DEFAULT_WAIT_TIMEOUT_MS / 1000}s); max ${MAX_WAIT_TIMEOUT_MS}ms ` +
           `(${MAX_WAIT_TIMEOUT_MS / 60_000} min) for slow tools. If the pattern doesn't appear ` +
           `in time, capture returns matched_pattern=false and the content as-is.`,
+      ),
+    include_ansi: z
+      .boolean()
+      .default(false)
+      .describe(
+        'capture only — when true, `content` returns the raw pane bytes including ANSI escape ' +
+          'sequences (colors, cursor moves, dim/bold styling). Default false (escapes stripped — ' +
+          'plain text easier to match against). Use `include_ansi:true` when you need to ' +
+          'distinguish DIM/grayed-out text (e.g. auto-suggestions in Claude Code/codex prompt ' +
+          'lines) from real user-typed input. SAFETY: never auto-Enter on a buffer containing ' +
+          'pending input you didn\'t type yourself — it could be an auto-suggestion the TUI ' +
+          'rendered, and submitting it could trigger destructive actions ("delete project", ' +
+          '"clear all"). When in doubt, ask the user before submitting.',
       ),
     lines: z
       .number()
@@ -211,14 +265,15 @@ async function runCapture(
   agent: string,
   name: string,
   lines: number,
+  includeAnsi: boolean,
 ): Promise<{ ok: boolean; content: string; error?: string }> {
   if (target === 'local') {
-    const r = await tmuxLocalCapture({ name, lines });
+    const r = await tmuxLocalCapture({ name, lines, includeAnsi });
     return r.ok
       ? { ok: true, content: r.stdout }
       : { ok: false, content: r.stdout, error: r.stderr.trim() || `exit ${r.exit_code}` };
   }
-  const r = await tmuxRemoteCapture(agent, target, name, lines);
+  const r = await tmuxRemoteCapture(agent, target, name, lines, includeAnsi);
   return r.ok
     ? { ok: true, content: r.stdout }
     : { ok: false, content: r.stdout, error: r.stderr.trim() || `exit ${r.exit_code}` };
@@ -240,9 +295,21 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     'job (background:true) that runs to completion without further interaction. tmux is ' +
     'overkill for those — and forgotten tmux sessions accumulate. ' +
     '\n\n' +
-    'capture supports wait_pattern: useful for "wait for prompt to come back" — the call polls ' +
-    'every 200ms until the pattern appears in the pane content or wait_timeout_ms elapses. ' +
-    'Without wait_pattern, capture returns the current pane content immediately.',
+    'capture supports wait_pattern with three modes (wait_mode field): "auto" (default, smart ' +
+    'for shell sessions), "present" (matches as soon as pattern appears anywhere — for TUIs), ' +
+    '"idle" (matches when pattern present AND content stable for idle_stable_ms). Without ' +
+    'wait_pattern, capture returns the current pane content immediately. ' +
+    '\n\n' +
+    'Two opt-in flags help with TUIs that auto-submit on Enter or that draw auto-suggestions: ' +
+    'send `multiline_safe:true` keeps embedded \\n as soft-newlines (M-Enter) instead of ' +
+    'submits; capture `include_ansi:true` returns raw bytes with ANSI escapes so dim/grayed-out ' +
+    'text (= auto-suggestions) is distinguishable from real input. ' +
+    '\n\n' +
+    'SAFETY for TUI sessions: never blindly press Enter on a buffer that already shows pending ' +
+    'input you didn\'t type — modern coding TUIs (Claude Code, codex) display auto-suggestions ' +
+    'in the input field that look identical to real user-typed text in stripped output. ' +
+    'Submitting a suggestion you didn\'t type can trigger destructive actions ("delete project", ' +
+    '"clear all"). When in doubt, capture with include_ansi:true to see styling, or ask the user.',
   inputSchema: TmuxInput,
   jsonSchema: {
     type: 'object',
@@ -255,13 +322,22 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       name: { type: 'string', description: 'Session name. Required for create/send/capture/kill.' },
       cwd: { type: 'string' },
       keys: { type: 'string' },
+      multiline_safe: { type: 'boolean', default: false },
       wait_pattern: { type: 'string' },
+      wait_mode: { type: 'string', enum: ['auto', 'present', 'idle'], default: 'auto' },
+      idle_stable_ms: {
+        type: 'integer',
+        minimum: 100,
+        maximum: 10_000,
+        default: DEFAULT_IDLE_STABLE_MS,
+      },
       wait_timeout_ms: {
         type: 'integer',
         minimum: 100,
         maximum: MAX_WAIT_TIMEOUT_MS,
         default: DEFAULT_WAIT_TIMEOUT_MS,
       },
+      include_ansi: { type: 'boolean', default: false },
       lines: { type: 'integer', minimum: 1, maximum: 10_000, default: 200 },
     },
     required: ['action'],
@@ -311,11 +387,12 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     if (input.action === 'send') {
       const name = requireName(input, 'send');
       const keys = input.keys ?? '';
+      const multilineSafe = input.multiline_safe ?? false;
       const start = Date.now();
       const r =
         target === 'local'
-          ? await tmuxLocalSend(name, keys)
-          : await tmuxRemoteSend(ctx.agent, target, name, keys);
+          ? await tmuxLocalSend(name, keys, multilineSafe)
+          : await tmuxRemoteSend(ctx.agent, target, name, keys, multilineSafe);
       return {
         action: 'send',
         ok: r.ok,
@@ -329,12 +406,13 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     if (input.action === 'capture') {
       const name = requireName(input, 'capture');
       const lines = input.lines ?? 200;
+      const includeAnsi = input.include_ansi ?? false;
       const start = Date.now();
 
       // No wait_pattern: one-shot capture, return whatever's in the
       // pane right now.
       if (!input.wait_pattern) {
-        const cap = await runCapture(target, ctx.agent, name, lines);
+        const cap = await runCapture(target, ctx.agent, name, lines, includeAnsi);
         return {
           action: 'capture',
           ok: cap.ok,
@@ -347,79 +425,92 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         };
       }
 
-      // wait_pattern set: poll every 200ms until a NEW occurrence of
-      // the pattern appears, or timeout.
-      //
-      // The trick: count pattern occurrences in the baseline first,
-      // then on each poll count again — match only when the count
-      // GROWS. This handles the common gotcha that the typed command
-      // itself often contains the pattern (e.g. `echo done-marker`
-      // shows 'done-marker' in the pane the moment it's typed,
-      // before the command has even run). Counting catches the
-      // ADDITIONAL occurrence that comes from the actual output.
-      //
-      // Subtle case: if the model's wait_pattern is something like
-      // 'error' and the typed command happens to also contain it,
-      // we still wait for an additional appearance — usually that's
-      // what the model wants. If the pattern is unique enough to
-      // appear once-and-only-once in the output, this works.
       const pattern = input.wait_pattern;
+      const mode = input.wait_mode ?? 'auto';
       const timeout = input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS;
+      const idleStableMs = input.idle_stable_ms ?? DEFAULT_IDLE_STABLE_MS;
       const deadline = start + timeout;
+
       // Tiny pre-baseline sleep to dodge a race: if the model called
       // `tmux send keys="<cmd>\n"` immediately before this capture,
       // tmux's display buffer might not have rendered the typed
-      // command yet (network round-trip + tmux's own update tick).
-      // Without this delay our baseline could miss the typed text
-      // → first poll sees the command appear → false-positive match.
-      // 100ms is invisible to the model and reliable for this case.
+      // command yet. Without this delay our baseline could miss the
+      // typed text → first poll sees the command appear → false-
+      // positive match. 100ms is invisible to the model and reliable.
       await new Promise((res) => setTimeout(res, 100));
-      const baselineCap = await runCapture(target, ctx.agent, name, lines);
+      const baselineCap = await runCapture(target, ctx.agent, name, lines, includeAnsi);
       const baseline = baselineCap.ok ? baselineCap.content : '';
       const baselineCount = countOccurrences(baseline, pattern);
       let lastContent = baseline;
       let lastError = baselineCap.ok ? undefined : baselineCap.error;
       let matched = false;
-      // Two match conditions, evaluated against every poll:
-      //   1. Count grew → the pattern showed up in NEW output (the
-      //      original count-based logic; survives the typed-command
-      //      false-positive).
-      //   2. Pattern is in content AND the buffer ends with a shell
-      //      prompt waiting for input → the command already finished
-      //      and its output is in the pane. Catches Hans's bug
-      //      2026-05-06 Test 1: `echo MARKER\n` then capture — the
-      //      whole roundtrip lands in <50ms so by baseline-time the
-      //      output is already there and count never grows.
-      //   Different shells render typed input differently (some show
-      //   it once on the prompt line, some show a draft line above);
-      //   prompt-detection works across both because we look for the
-      //   tail-of-buffer state, not the exact occurrence count.
-      if (baselineCount > 0 && hasReadyPromptAtEnd(baseline)) {
+
+      // Mode-specific match check. Evaluated at baseline AND on each
+      // poll iteration so the same code-path catches early-match.
+      function matchCheck(content: string, count: number): boolean {
+        if (mode === 'present') {
+          // Pattern visible anywhere → match. For TUI sessions where
+          // the pattern is part of a static rendered panel.
+          return count > 0;
+        }
+        if (mode === 'idle') {
+          // Idle-match handled separately below (needs stability
+          // tracking), not a single-snapshot decision.
+          return false;
+        }
+        // mode === 'auto' — the smart shell-friendly default:
+        //   * count grew past baseline (new output appeared), OR
+        //   * pattern present AND buffer ends with shell prompt sigil
+        //     ($/#/>) — command finished, output rendered. Different
+        //     shells render typed input differently (some echo it
+        //     once, some draw a draft line above); prompt-detect
+        //     works across both because we look at tail-of-buffer.
+        if (count > baselineCount) return true;
+        if (count > 0 && hasReadyPromptAtEnd(content)) return true;
+        return false;
+      }
+
+      // Idle-mode tracking: when did the content last change, when
+      // did we last see the pattern present? Match fires when both
+      // have been true for >= idleStableMs continuously.
+      let lastChangeTs = Date.now();
+      let lastSeenContent = baseline;
+
+      if (matchCheck(baseline, baselineCount)) {
         matched = true;
       }
+
       while (!matched && !lastError && Date.now() < deadline) {
-        // Sleep BEFORE re-capturing — gives the typed command time
-        // to produce output. If we polled immediately we'd often
-        // just see the baseline again.
         const remaining = deadline - Date.now();
         if (remaining <= 0) break;
-        await new Promise((res) => setTimeout(res, Math.min(POLL_INTERVAL_MS, remaining)));
-        const cap = await runCapture(target, ctx.agent, name, lines);
+        // For idle-mode polling we sleep at most until the next
+        // stability check tick, which can be shorter than POLL_INTERVAL_MS.
+        const sleepFor =
+          mode === 'idle'
+            ? Math.min(POLL_INTERVAL_MS, remaining, idleStableMs)
+            : Math.min(POLL_INTERVAL_MS, remaining);
+        await new Promise((res) => setTimeout(res, sleepFor));
+        const cap = await runCapture(target, ctx.agent, name, lines, includeAnsi);
         if (!cap.ok) {
           lastError = cap.error;
           break;
         }
         lastContent = cap.content;
         const currentCount = countOccurrences(lastContent, pattern);
-        if (currentCount > baselineCount) {
-          matched = true;
-          break;
-        }
-        // Also catch the "shell went idle with the pattern in view"
-        // case mid-poll — covers patterns whose count happens to
-        // match baseline because of shell-specific double-rendering
-        // of the typed line, not because output is missing.
-        if (currentCount > 0 && hasReadyPromptAtEnd(lastContent)) {
+
+        if (mode === 'idle') {
+          // Idle-mode: match once pattern is present AND content has
+          // been unchanged for >= idleStableMs. Reset the change
+          // timer whenever content actually moves.
+          if (lastContent !== lastSeenContent) {
+            lastChangeTs = Date.now();
+            lastSeenContent = lastContent;
+          }
+          if (currentCount > 0 && Date.now() - lastChangeTs >= idleStableMs) {
+            matched = true;
+            break;
+          }
+        } else if (matchCheck(lastContent, currentCount)) {
           matched = true;
           break;
         }
@@ -430,6 +521,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           msg: 'tmux.capture.pattern_timeout',
           target,
           name,
+          mode,
           pattern: pattern.slice(0, 80),
           waited_ms: Date.now() - start,
         });
