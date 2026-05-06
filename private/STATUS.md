@@ -156,6 +156,32 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
+### Phase 5b — tmux Tool gebaut (2026-05-06 abend, commit `1e47eac`)
+
+Single `tmux`-Tool mit action-enum (`create`, `send`, `capture`, `list`,
+`kill`) plus `target: 'local'|<resource-name>`-Pattern wie alle anderen
+exec-Familie-Tools. Drei Files:
+
+- `src/tools/tmux/local.ts` — wrapper um localExecSync, baut richtige
+  tmux-CLI-Befehle für jede action
+- `src/tools/tmux/remote.ts` — selbe wrapper aber via ssh remoteExec
+- `src/tools/tmux/tools.ts` — Tool-Definition, Schema, action-Routing,
+  smarte send-keys-Behandlung für multi-line, count-based wait_pattern
+
+**Use-Case:** Agent startet claude --dangerously-skip-permissions /
+codex / vim / REPL als persistente Session, treibt sie über viele
+Turns an, killt sie wenn fertig. exec für one-shot Commands, tmux für
+„persistent multi-turn session" — saubere Trennung.
+
+**Spezial-Detail wait_pattern:** count-based (nicht substring-match)
+weil der getippte Befehl oft selbst das Pattern enthält. Match nur
+wenn occurrence-count nach Polls > baseline-count. Plus 100ms pre-
+baseline delay um tmux's Render-Tick zu fangen. Verifiziert: 2196ms
+für `sleep 2; echo XXX` korrekt match'd, 1509ms timeout für nicht-
+vorhandenes Pattern.
+
+Tools 33 → 34. **Phase 5 (exec + tmux) ist damit komplett.**
+
 ### Phase 5a polish — Loose-Ends durch (2026-05-06 spätnachmittag, commit `625bb53`)
 
 Drei Loose-Ends aus der ersten 5a-Iteration sauber geschlossen:
@@ -303,16 +329,16 @@ A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 
 ### Pickup-Satz für nächste Session
 
-> "Phase 6 (A2A) komplett, Hans's vier Bugs gefixt, Maintenance-Sweep
-> 1 durch, Cache-Strategie konsolidiert. Phase 5a komplett inklusive
-> Loose-Ends: exec + process Tools mit hard-blacklist, disk-tracked
-> background jobs, sync local + remote, background local + remote
-> (nohup-pattern), remote PTY für TUI-Tools, concurrency-caps konfig-
-> urierbar. tmux (Phase 5b) jetzt sauber abgegrenzt auf seinen
-> Kern-Use-Case: persistent multi-turn sessions. HEAD 625bb53. Andere
-> offene Themen: Phase X (Skills, vorher diskutieren),
-> Dream-Worker-Priorisierung, TUI-History-Replay, lokale-PTY (FUTURE,
-> braucht node-pty install)."
+> "Phase 6 (A2A), Hans's vier Bugs, Maintenance-Sweep 1, Cache-
+> Strategie alle durch. Phase 5 (exec + tmux) komplett: exec + process
+> Tools mit hard-blacklist, disk-tracked background jobs, sync local
+> + remote, background local + remote via nohup-pattern, remote PTY,
+> concurrency-caps konfigurierbar; tmux mit action-enum für create/
+> send/capture/list/kill, local + remote, count-based wait_pattern.
+> HEAD 1e47eac. Tool-count 34. Andere offene Themen: Phase X (Skills,
+> vorher diskutieren — 10 Konzept-Fragen offen), Dream-Worker-
+> Priorisierung, TUI-History-Replay, lokale-PTY (FUTURE, node-pty
+> install nötig)."
 
 ---
 
