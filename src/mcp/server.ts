@@ -22,6 +22,7 @@ import { logger } from '../server/logger.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import {
   agentTools,
+  execTools,
   dreamTools,
   fileTools,
   memoryTools,
@@ -58,6 +59,7 @@ async function main(): Promise<void> {
   registry.registerMany(resourceTools());
   registry.registerMany(fileTools());
   registry.registerMany(agentTools());
+  registry.registerMany(execTools());
 
   // Optional sub-context env hooks set by the engine launcher per turn.
   // SOMORA_SESSION lets spawn_subagent record `parent_session`; the

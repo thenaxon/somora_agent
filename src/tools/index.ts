@@ -12,3 +12,4 @@ export { somoraDocsTools } from './docs/index.ts';
 export { resourceTools } from './resources/index.ts';
 export { fileTools } from './file/index.ts';
 export { agentTools, configureSpawnTools } from './agents/index.ts';
+export { execTools, recoverOrphanedJobs } from './exec/index.ts';

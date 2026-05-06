@@ -30,9 +30,11 @@ import {
   agentTools,
   configureSpawnTools,
   dreamTools,
+  execTools,
   fileTools,
   memoryTools,
   obsidianTools,
+  recoverOrphanedJobs,
   resourceTools,
   somoraDocsTools,
   timeTools,
@@ -184,6 +186,7 @@ tools.registerMany(somoraDocsTools());
 tools.registerMany(resourceTools());
 tools.registerMany(fileTools());
 tools.registerMany(agentTools());
+tools.registerMany(execTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
@@ -955,6 +958,16 @@ try {
   await consolidateStalePausedDreams(agentList.map((a) => a.name));
 } catch (err) {
   logger.warn({ msg: 'dream.consolidate_failed', err: String(err) });
+}
+
+// Mark any background exec jobs that were `running` when the previous
+// server instance died as `failed` — we can't safely re-attach to a
+// possibly-still-alive PID across restarts. Stdout/stderr log files
+// persist and remain readable via process({action:"log"}).
+try {
+  await recoverOrphanedJobs(agentList.map((a) => a.name));
+} catch (err) {
+  logger.warn({ msg: 'exec.jobs_recovery_failed', err: String(err) });
 }
 
 // Auto-Dream-Worker: per-agent idle-trigger that picks up dream-enabled
