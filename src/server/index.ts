@@ -40,6 +40,7 @@ import {
   resourceTools,
   somoraDocsTools,
   timeTools,
+  tmuxTools,
   ToolRegistry,
   webTools,
 } from '../tools/index.ts';
@@ -189,6 +190,7 @@ tools.registerMany(resourceTools());
 tools.registerMany(fileTools());
 tools.registerMany(agentTools());
 tools.registerMany(execTools());
+tools.registerMany(tmuxTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,

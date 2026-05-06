@@ -18,3 +18,4 @@ export {
   logExecCaps,
   recoverOrphanedJobs,
 } from './exec/index.ts';
+export { tmuxTools } from './tmux/index.ts';

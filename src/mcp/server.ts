@@ -24,6 +24,7 @@ import { configureExecConcurrencyCaps } from '../tools/exec/index.ts';
 import {
   agentTools,
   execTools,
+  tmuxTools,
   dreamTools,
   fileTools,
   memoryTools,
@@ -65,6 +66,7 @@ async function main(): Promise<void> {
   registry.registerMany(fileTools());
   registry.registerMany(agentTools());
   registry.registerMany(execTools());
+  registry.registerMany(tmuxTools());
 
   // Optional sub-context env hooks set by the engine launcher per turn.
   // SOMORA_SESSION lets spawn_subagent record `parent_session`; the
