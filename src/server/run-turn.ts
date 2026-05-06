@@ -134,6 +134,47 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     throw new Error(`keine engine '${resolvedModel.provider.engine}' registriert`);
   }
 
+  // Compute the per-turn memory recall block FIRST so we can persist
+  // it on the user_message event. Storing the recall block alongside
+  // the user-typed text is what lets stateless openai-compatible
+  // backends benefit from prefix-cache: history reconstruction at
+  // turn N+1 produces the SAME byte sequence we sent at turn N (incl.
+  // memory block), so the cache match holds across the entire prior
+  // conversation. Without persistence, every turn would reconstruct
+  // past user_messages without their memory blocks → byte-mismatch
+  // → cache invalidates at the latest user-message position every
+  // turn. Engines with stateful resumed sessions (claude-cli,
+  // codex-cli) ignore this field — they inline the block once into
+  // the outgoing message and the provider remembers everything.
+  const historyBeforeTurn = await getHistory(agent, session);
+  let ephemeralContext: string | undefined;
+  let memoryHits: Array<{ source: string; slug: string; score: number }> = [];
+  let memoryInjectedCount = 0;
+  try {
+    const mgr = await getMemoryManager(agent, { config: deps.config.memory });
+    const inject = await injectMemoryContext({
+      mgr,
+      history: historyBeforeTurn,
+      userMessage: text,
+      cfg: deps.config.memory.autoInject,
+    });
+    ephemeralContext = inject.ephemeralContext;
+    memoryInjectedCount = inject.injectedCount;
+    memoryHits = inject.hits;
+    if (inject.injectedCount > 0) {
+      logger.info({
+        msg: 'memory.injected',
+        agent,
+        session,
+        count: inject.injectedCount,
+        slugs: inject.hits.map((h) => `${h.source}/${h.slug}`),
+        topScore: inject.hits[0]?.score,
+      });
+    }
+  } catch (err) {
+    logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
+  }
+
   await appendEvent(agent, session, {
     kind: 'user_message',
     ts: Date.now(),
@@ -141,6 +182,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     text,
     ...(fromAgent ? { from_agent: fromAgent } : {}),
     ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
+    ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
   });
 
   // Live broadcast for A2A inbound messages: a human watching the
@@ -178,6 +220,23 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     });
   }
 
+  // Surface the memory inject to SSE subscribers AFTER the agent_start
+  // event so the chat-stream order stays sensible (agent starting →
+  // what memory it pulled → tool calls → final answer).
+  if (publishSse && memoryInjectedCount >= 0) {
+    const refs = memoryHits.map((h) => `${h.source}/${h.slug}`);
+    const topScore = memoryHits[0]?.score;
+    await publishSse({
+      event: 'memory',
+      data: {
+        count: memoryInjectedCount,
+        ...(topScore !== undefined ? { topScore } : {}),
+        refs,
+        fullText: ephemeralContext ?? '',
+      },
+    });
+  }
+
   let lastUsage:
     | {
         tokens_in: number;
@@ -190,44 +249,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   let errorMessage: string | undefined;
 
   try {
+    // Re-read history NOW (after we just appended the user_message
+    // with its ephemeral block) so the engine sees the current turn
+    // as the last entry — engines that reconstruct from history
+    // (openai-compatible) get correct turn-order, and the persistent
+    // ephemeral on the just-appended event flows naturally through
+    // buildMessages without a separate inject step.
     const history = await getHistory(agent, session);
-
-    let ephemeralContext: string | undefined;
-    try {
-      const mgr = await getMemoryManager(agent, { config: deps.config.memory });
-      const inject = await injectMemoryContext({
-        mgr,
-        history,
-        userMessage: text,
-        cfg: deps.config.memory.autoInject,
-      });
-      ephemeralContext = inject.ephemeralContext;
-      const refs = inject.hits.map((h) => `${h.source}/${h.slug}`);
-      const topScore = inject.hits[0]?.score;
-      if (inject.injectedCount > 0) {
-        logger.info({
-          msg: 'memory.injected',
-          agent,
-          session,
-          count: inject.injectedCount,
-          slugs: refs,
-          topScore,
-        });
-      }
-      if (publishSse) {
-        await publishSse({
-          event: 'memory',
-          data: {
-            count: inject.injectedCount,
-            ...(topScore !== undefined ? { topScore } : {}),
-            refs,
-            fullText: inject.ephemeralContext ?? '',
-          },
-        });
-      }
-    } catch (err) {
-      logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
-    }
 
     const toolCtx = {
       agent,

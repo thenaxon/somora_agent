@@ -97,8 +97,16 @@ function buildMessages(
       // A2A attribution: prepend a header when this user-message was
       // written by another agent so the model sees the provenance
       // even after replay across engines.
-      const text = withFromAgentHeader(ev.text, ev.from_agent);
-      pendingText = pendingText ? `${pendingText}\n\n${text}` : text;
+      const headed = withFromAgentHeader(ev.text, ev.from_agent);
+      // Memory-recall block (if any) was persisted on the event when
+      // this turn was originally sent; reconstruct it here so the
+      // byte sequence matches what the backend already cached. This
+      // is what makes prefix-cache hold across turns for stateless
+      // openai-compatible backends. Engines with stateful resumed
+      // sessions (claude-cli/codex-cli) don't reconstruct full
+      // history so they ignore this code path.
+      const composed = ev.ephemeral ? `${ev.ephemeral}\n\n${headed}` : headed;
+      pendingText = pendingText ? `${pendingText}\n\n${composed}` : composed;
     } else if (ev.kind === 'assistant_message') {
       if (pendingRole !== 'assistant') flush();
       pendingRole = 'assistant';
@@ -108,58 +116,6 @@ function buildMessages(
   }
   flush();
   return messages;
-}
-
-/**
- * Place the per-turn ephemeralContext (memory recall block, already
- * wrapped in `<memory-context>...</memory-context>`) at the end of the
- * messages array so the persistent system prompt above stays stable
- * across turns. Two placement strategies:
- *
- *   late         → insert as a second `role:'system'` message right
- *                  before the latest `role:'user'` message. Models
- *                  treat memory as system-level guidance.
- *   inline-user  → prepend to the latest user message's content,
- *                  separated by a blank line. Use for backends that
- *                  mishandle multi-system-message conversations.
- *
- * If no `role:'user'` is found in messages (shouldn't happen — the
- * runtime always appends the new user_message before the engine
- * runs), we fall back to appending as a system message at the very
- * end so the recall isn't silently dropped.
- */
-function injectEphemeralLate(args: {
-  messages: ChatMessage[];
-  ephemeralContext: string;
-  mode: 'late' | 'inline-user';
-}): void {
-  const { messages, ephemeralContext, mode } = args;
-  let lastUserIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i]!.role === 'user') {
-      lastUserIdx = i;
-      break;
-    }
-  }
-  if (lastUserIdx === -1) {
-    messages.push({ role: 'system', content: ephemeralContext });
-    return;
-  }
-  if (mode === 'inline-user') {
-    const u = messages[lastUserIdx]!;
-    if (typeof u.content === 'string') {
-      u.content = `${ephemeralContext}\n\n${u.content}`;
-    }
-    // Non-string user content (multi-modal arrays) is rare in our
-    // current pipeline; fall back to a system message just before
-    // user when we can't safely splice into the content.
-    else {
-      messages.splice(lastUserIdx, 0, { role: 'system', content: ephemeralContext });
-    }
-    return;
-  }
-  // mode === 'late': insert as system message right before the user
-  messages.splice(lastUserIdx, 0, { role: 'system', content: ephemeralContext });
 }
 
 function estimateTokens(messages: ChatMessage[]): number {
@@ -281,32 +237,28 @@ export const openAiCompatibleEngine: AgentEngine = {
       }
     }
 
-    // Memory inject placement controls prefix-cache hit-rate. Old default
-    // ('system' mode) concat'd ephemeralContext onto the system prompt,
-    // which made the entire system block change every turn → cache for
-    // anything downstream invalidates per turn. The new default ('late')
-    // injects memory as a SECOND system message right before the latest
-    // user message, leaving the persistent system block stable and
-    // cacheable across turns.
+    // Memory inject placement controls prefix-cache hit-rate. Default
+    // ('inline-user') relies on persistence: ephemeralContext is stored
+    // alongside each user_message in JSONL (see run-turn.ts), and
+    // buildMessages reconstructs each prior user message with its own
+    // memory block included. Result: the byte sequence sent for turn
+    // N+1 matches what the backend cached for turn N up to (but not
+    // including) the new user message — full prefix cache hit on
+    // system + tools + entire prior conversation.
     //
-    // 'inline-user' is the fallback for backends that mishandle multi-
-    // system-message conversations: same cache benefit, memory just
-    // shows up inside the user turn instead of as system instructions.
-    //
-    // 'system' is the legacy mode, opt-in via config when a particular
-    // backend is hostile to the late-system placement.
+    // 'system' is the legacy concat-onto-system mode. Opt-in via config
+    // for backends that mishandle multi-pair user/assistant histories
+    // with embedded memory blocks. Cache-destructive (memory landing
+    // in the system prefix changes per turn) — only use as a fallback.
     const memoryInjectMode =
-      (resolvedModel.provider as { memoryInjectMode?: 'late' | 'inline-user' | 'system' })
-        .memoryInjectMode ?? 'late';
+      (resolvedModel.provider as { memoryInjectMode?: 'inline-user' | 'system' })
+        .memoryInjectMode ?? 'inline-user';
     const useLegacySystemConcat = memoryInjectMode === 'system';
     const effectiveSystemPrompt =
       useLegacySystemConcat && ephemeralContext
         ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
         : systemPrompt;
     const messages = buildMessages(effectiveSystemPrompt, history, compactions);
-    if (!useLegacySystemConcat && ephemeralContext) {
-      injectEphemeralLate({ messages, ephemeralContext, mode: memoryInjectMode });
-    }
     const estTokens = estimateTokens(messages);
     const ctxRatio = estTokens / resolvedModel.model.contextWindow;
     if (ctxRatio > 0.7) {

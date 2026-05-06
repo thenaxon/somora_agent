@@ -36,6 +36,29 @@ export type NormalizedEvent =
        * the synchronous wait timed out (see A2A-design.md).
        */
       agent_ask_call_id?: string;
+      /**
+       * Memory-recall block (`<memory-context>...</memory-context>`)
+       * that was injected at the time THIS turn was sent. Persisted
+       * here so history reconstruction at later turns recreates the
+       * exact byte sequence we originally sent — required for
+       * prefix-cache to match across turns on stateless backends.
+       *
+       * Without this field, openai-compatible engines have no way to
+       * rebuild past user_messages identically (every turn re-queries
+       * memory and gets potentially different hits), so any cache
+       * breakpoint sitting between the system block and the latest
+       * user message gets invalidated turn-after-turn.
+       *
+       * Engines that don't reconstruct full history (claude-cli /
+       * codex-cli with resumed sessions) ignore this field — they
+       * inline the memory block into the outgoing user_message text
+       * directly, and the underlying provider remembers the prior
+       * turns it already saw.
+       *
+       * TUI rendering should display only `text`, not `ephemeral` —
+       * the recall block is internal scaffolding, not user-typed.
+       */
+      ephemeral?: string;
     }
   | { kind: 'assistant_delta'; ts: number; engine: string; text: string }
   | { kind: 'assistant_message'; ts: number; engine: string; text: string }

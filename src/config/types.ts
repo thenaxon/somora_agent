@@ -60,25 +60,19 @@ export const OpenAiCompatibleProviderSchema = z.object({
    * in front of any backend (mlx-omx, ollama, vLLM, OpenAI itself,
    * llama.cpp gateways, ...) and prefix-cache support varies.
    *
-   * - `late` (default): inject the memory block as a SECOND
-   *   `role:'system'` message, placed right before the latest
-   *   `role:'user'` message. The persistent system prompt stays
-   *   stable across turns, so prefix-cache (and Anthropic-style
-   *   cache_control breakpoints) keep their hit-rate. Requires the
-   *   backend to accept multi-system-message conversations — true
-   *   for OpenAI's Chat Completions API and the major local
-   *   inference servers.
-   *
-   * - `inline-user`: prepend the memory block (already wrapped in
-   *   `<memory-context>...</memory-context>` by the runtime) to the
-   *   user message content. Works with backends that only accept a
-   *   single system message; the model sees the memory inside the
-   *   user turn rather than as system instructions.
+   * - `inline-user` (default): the memory block is persisted on each
+   *   `user_message` JSONL event (`ephemeral` field), and rebuilt
+   *   into the user-message content on every history reconstruction.
+   *   The byte sequence at turn N+1 matches what was sent at turn N
+   *   for the entire prior conversation, so prefix-cache holds across
+   *   the whole history. Memory still updates per turn — only the
+   *   LATEST user message has a freshly-computed block; older turns
+   *   keep the block they had at their original send time.
    *
    * - `system`: legacy — concat the memory block onto the persistent
-   *   system prompt. Cache-destructive (the system block changes
-   *   every turn) but maximally compatible. Only set this if a
-   *   backend mishandles the other two modes.
+   *   system prompt. Cache-destructive (system block changes every
+   *   turn) but maximally compatible with backends that mishandle
+   *   embedded memory inside user-message content. Opt-in fallback.
    *
    * claude-cli + codex-cli intentionally don't carry this field —
    * claude-cli's backend is always Anthropic so we hardcode
@@ -87,8 +81,8 @@ export const OpenAiCompatibleProviderSchema = z.object({
    * place by construction.
    */
   memoryInjectMode: z
-    .enum(['late', 'inline-user', 'system'])
-    .default('late')
+    .enum(['inline-user', 'system'])
+    .default('inline-user')
     .optional(),
 });
 
