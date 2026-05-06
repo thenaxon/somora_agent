@@ -837,3 +837,61 @@ Read-at-call-time-Pattern bedeutet config-Änderungen wirken ohne
 Server-Restart auf den nächsten Tool-Call. Pending-Pattern ist
 Pflicht — wenn Tool-internes Timeout erreicht, return
 `state:"pending"` + sprechender hint, kein Error.
+
+## 2026-05-06 — Prompt-Cache-Strategie über alle Engines
+
+### 40. Per-turn variable Inhalte ans Prompt-Ende, stable Inhalte vorne
+Per-Turn dynamische Blöcke (Memory-Recall, Dream-Transcript, künftig
+Skill-Inject) müssen **strukturell** am Ende des Prompts sitzen.
+Stable Inhalte (System-Prompt, Tools, History-Pairs, Memory-Snapshot
+einer Dream-Run, Vault-Hits einer Dream-Run) **davor**. Sonst greift
+prefix-cache nicht.
+
+**Why:** Verifiziert über zwei Iterationen 2026-05-05/06. Der erste
+Fix-Versuch („late-system inject" — Memory als zweite system-message
+direkt vor user-message) wirkte plausibel aber ist strukturell
+falsch für stateless backends: das dynamische Block-Element wandert
+durch die Sequenz weil History wächst. Was in Turn N an Position N-1
+ein system-message ist, ist in Turn N+1 an Position N-1 ein
+user-message — byte-mismatch. Cache stoppt an genau der Stelle.
+Verifiziert mit instrumentiertem two-turn-message-dump gegen omlx.
+
+**Verbindliche Regeln:**
+1. **Stateful Backends** (claude-cli, codex-cli): Memory inline in
+   die outgoing user-message-Text. SDK/Binary erinnert sich
+   intern, prefix-cache funktioniert weil API-Call nur den neuen
+   Turn enthält. claude-cli erzielt 95-98% cache hit, codex-cli
+   ~70%.
+2. **Stateless Backends** (openai-compatible): Memory pro
+   user_message in JSONL persistieren (`ephemeral?: string`-Field).
+   `buildMessages` rekonstruiert pro Reconstruction byte-identisch
+   was beim Original-Send geschickt wurde. Trade-off: JSONL-Zeile
+   wird ~500-2000 chars größer pro Turn — vertretbar für Cache-Win.
+3. **Dream-Extractor**: stable Inhalte (existing_memory,
+   referenced_vault — beide once-per-dream-run) vor variable
+   transcript (per-chunk).
+
+**How to apply:** beim Bau jedes neuen prompt-bauenden Codes
+(Skills wenn die kommen, exec-Output-Embedding, etc.) zuerst
+fragen: „was ist hier per-turn variabel?" — das ans Ende. Beim
+Verifizieren NICHT nur cached_tokens-Zahlen aus der Response
+vertrauen (manche Backends melden inkonsistent oder gar nicht);
+zwei aufeinanderfolgende Turns instrumentiert dumpen, Position-
+für-Position vergleichen, alles vor der neuen Content-Position
+muss byte-identisch matchen. Methodik dokumentiert in
+`docs/cache-strategy.md` plus auto-memory
+`feedback_cache_test_position_dump.md`.
+
+**Code-Anchor:** `docs/cache-strategy.md` ist die kanonische Doku.
+Pro-Engine-Code-Pointer dort gelistet.
+
+**Trade-off bewusst akzeptiert:**
+- JSONL-Zeilen werden durch persistierte memory blocks größer
+  (~500-2000 chars/Turn). Disk-Bytes sind billig, Cache-Wins sind
+  Geld + Latenz.
+- Memory-Reconstruction zeigt dem Modell „alle alten Memory-Recalls
+  mit ihrem Stand zur Sendezeit" als Teil der History. Konzeptuell
+  weird (das Modell sieht Snapshots eines Recalls von Turn-1 auch
+  in Turn-50), praktisch unproblematisch — recall-blocks sind
+  klein und haben den `<memory-context>`-Wrapper der ihren
+  read-only-Charakter signalisiert.

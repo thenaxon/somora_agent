@@ -501,21 +501,46 @@ korrekt (selfPointer bleibt stabil = Cache hält), UX-mäßig kleine
 Inkonsistenz. **Polish-Item, kein Bug** — wenn man's fixt: in
 run-turn.ts auf `getFreshConfig()` switchen.
 
-### Skill-System Pre-Warning (Renes Punkt 2026-05-05)
+### Skill-System Pre-Warning (Renes Punkt 2026-05-05, präzisiert 2026-05-06)
 
 Wenn wir das Skill-System bauen (Phase X — siehe eigene Sektion),
 landet das strukturell **genauso wie Memory:** dynamisch pro Turn die
-relevanten Skill-Prompts injizieren. Wenn wir das oben in den
-system-prompt knallen → killt den Cache genauso → ganzer
-memoryInjectMode-Tanz nochmal.
+relevanten Skill-Prompts injizieren. Wenn wir das nicht von Anfang an
+cache-freundlich platzieren → killt den Cache genauso → ganzer Memory-
+Iterations-Tanz nochmal.
 
-**Konsequenz:** Skill-Inject MUSS von Tag 1 in der late-position
-landen. Vermutlich sollte das `memoryInjectMode`-Field beim Bau dann
-zu `injectMode` umgetauft werden, weil's für Memory + Skills
-gemeinsam greift (oder pro-Source-Variante: `injectModes: { memory:
-late, skills: late }`). Vor Skill-Bau die Phase-X-9-Diskussionsfragen
-(siehe Phase-X-Sektion) um diesen Punkt erweitern: „Wo im Prompt
-landet ein aktivierter Skill?".
+**Verbindliche Regel** (DECISION #40, 2026-05-06): per-Turn variable
+Inhalte ans Prompt-Ende, stable nach vorne. Das gilt für Skills.
+
+**Konkrete Konsequenzen für Phase X:**
+
+1. **Skill-Inject Position:** wie aktivierte Skills im Prompt landen,
+   muss MIT Cache-Strategie aus `docs/cache-strategy.md` mitgedacht
+   werden. Stable Skill-Inhalte (Always-On-Skills die für jeden Turn
+   gleich sind) gehören in einen dedizierten stable-Block;
+   per-Turn-aktivierte Skills (die je nach User-Frage rein/raus-
+   schalten) sind variabel und gehören ans Ende.
+
+2. **JSONL-Persistenz für Skill-Activations:** für stateless openai-
+   compatible muss überlegt werden ob ein `skills?: string`-Feld auf
+   user_message persistiert wird (analog zu unserem `ephemeral?:
+   string`-Feld für Memory). Dann reconstruction bei history-rebuild
+   byte-identisch — Cache hält. Das wäre die Skills-Variante des
+   gleichen Patterns.
+
+3. **`memoryInjectMode` umtaufen?** Vermutlich `injectMode` mit
+   per-Source-Untervariante: `injectModes: { memory: 'inline-user',
+   skills: 'inline-user' }`. Oder ein gemeinsamer Mode, der für
+   beide gilt — beim Phase-X-Bau zu entscheiden.
+
+4. **Zur 9-Punkte-Diskussionsliste hinzufügen:** „Wo im Prompt landet
+   ein aktivierter Skill, und wird Skill-State (welcher Skill war zum
+   Turn-Zeitpunkt aktiv) auf user_message persistiert?". Das wird die
+   10. Diskussionsfrage.
+
+**Anker:** `docs/cache-strategy.md` ist die kanonische Doku zur
+Cache-Politik. Vor Phase X reinlesen, am besten Position-Dump-
+Methodik vom Tag 1 anwenden um Drift sofort zu erkennen.
 
 ---
 

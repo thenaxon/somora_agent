@@ -156,6 +156,27 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
+### Cache-Strategie konsolidiert (2026-05-06 mittag)
+
+DECISION #40 + `docs/cache-strategy.md` dokumentieren jetzt die ganze
+Cache-Story als kanonische Referenz. Vier Pfade alle strukturell
+korrekt:
+
+1. **chat / claude-cli** — Memory inline in user-message-Text;
+   resumed session; 95-98% cache hit
+2. **chat / codex-cli** — Memory in stdin-payload; resumed thread;
+   ~70% cache hit
+3. **chat / openai-compatible** — `ephemeral?:string` pro
+   user_message in JSONL persistiert; buildMessages reconstructs
+   byte-identisch; cached_tokens omlx-side null aber Struktur korrekt
+4. **dream-extractor** — stable content (memory + vault) vor variable
+   transcript; multi-chunk-cache-win bei langen Sessions
+
+**Lessons-Learned** in zwei feedback-memories und in DECISION #40 als
+verbindliche Regel: per-Turn variable Inhalte ans Ende, stable nach
+vorne; nicht nur cached_tokens-Zahlen vertrauen, sondern Position-
+für-Position via instrumentiertem 2-Turn-Dump verifizieren.
+
 ### Memory-Inject Position Fix (zwei Iterationen)
 
 **Iteration 1 (`49c682a`, 2026-05-05):** „late-system"-Variante in
@@ -235,16 +256,16 @@ A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 ### Pickup-Satz für nächste Session
 
 > "Phase 6 (A2A) komplett, Hans's vier Bugs gefixt, Maintenance-Sweep 1
-> durch. Memory-Inject-Cache-Fix in zwei Iterationen: gestern partiell
-> (claude-cli funktionierte mit 95→98%, openai-compatible nicht), heute
-> strukturell korrekt — ephemeral pro Turn in JSONL persistiert,
-> history-Reconstruction byte-perfekt. omlx-Side returnt cached_tokens
-> still null (deren Implementation), aber unsere Struktur ist jetzt
-> richtig. claude-cli + codex-cli ohne Regression (98%/68% cached).
-> HEAD cb9f429. Sauberer Boden für Phase 5 (exec+tmux). Andere offene
-> Themen: Phase X (Skills, vorher diskutieren — neue Pre-Warning
-> dass Skill-Inject von Tag 1 auch late landen muss + JSONL-Persistenz
-> brauchen), Dream-Worker-Priorisierung, TUI-History-Replay."
+> durch. Cache-Strategie über alle vier Pfade konsolidiert (DECISION
+> #40 + `docs/cache-strategy.md`): chat-claude-cli 98%, chat-codex-cli
+> 68%, chat-openai-compatible struktur-korrekt mit JSONL-Persistenz,
+> dream-extractor stable-content-first für multi-chunk-cache-wins.
+> omlx-Side returnt cached_tokens null aber Struktur ist auf unserer
+> Seite richtig. Lessons-Learned in zwei feedback-memories. Sauberer
+> Boden für Phase 5 (exec+tmux). Andere offene Themen: Phase X
+> (Skills, vorher diskutieren — Skill-Inject muss von Tag 1 cache-
+> friendly platziert werden + ggf. JSONL-Persistenz analog Memory),
+> Dream-Worker-Priorisierung, TUI-History-Replay."
 
 ---
 
