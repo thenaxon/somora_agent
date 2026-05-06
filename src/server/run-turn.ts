@@ -95,6 +95,13 @@ export interface RunChatTurnArgs {
    *  (live chat/send case). When omitted, no events are published — the
    *  spawn_subagent / silent-runner case. */
   publishSse?: (event: SseEvent) => Promise<void>;
+  /** Optional abort signal. When the user presses ESC mid-turn the
+   *  TUI hits /chat/abort which triggers this signal; the engine
+   *  adapter (claude-cli/codex-cli/openai-compatible) honors it and
+   *  cuts the in-flight LLM call cleanly. spawn_subagent flows
+   *  don't pass this — they propagate parent-cancellation through
+   *  the depth chain via their own mechanism. */
+  signal?: AbortSignal;
   /** Wiring deps. Server boot constructs these once and reuses. */
   deps: ChatTurnResolveDeps;
 }
@@ -111,6 +118,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     modelOverride,
     agentLoopOverride,
     publishSse,
+    signal,
     deps,
   } = args;
 
@@ -307,6 +315,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           ? { ...deps.config.agentLoop, ...agentLoopOverride }
           : deps.config.agentLoop,
         ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
+        ...(signal ? { signal } : {}),
       },
     });
 

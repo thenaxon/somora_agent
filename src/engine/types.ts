@@ -91,6 +91,18 @@ export interface TurnInput {
    * tries to spawn further subs.
    */
   subagentDepth?: number;
+  /**
+   * User-cancellation signal. When the TUI presses ESC mid-turn the
+   * server registers an AbortController and threads its signal here.
+   * Engine adapters should:
+   *   - claude-cli: pass to claude-agent-sdk's query() abortController option
+   *   - codex-cli: kill the subprocess on abort
+   *   - openai-compatible: pass to fetch + chat.completions
+   * On abort, emit a final assistant_message with whatever's
+   * accumulated so far (or a `[somora] aborted by user` marker if
+   * empty) plus a turn_end so the SSE stream closes cleanly.
+   */
+  signal?: AbortSignal;
 }
 
 export interface AgentEngine {

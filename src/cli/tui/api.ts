@@ -133,4 +133,54 @@ export class Api {
   streamUrl(agent: string, session: string): string {
     return `${this.base}/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`;
   }
+
+  /**
+   * Pull historical events for a session — used to repopulate the
+   * scrollback when the TUI opens or switches to a session that
+   * already has history. Returns the raw NormalizedEvent shape from
+   * the JSONL; the TUI side filters + maps to its own Turn type.
+   */
+  async fetchHistory(
+    agent: string,
+    session: string,
+  ): Promise<{ events: HistoryEvent[] }> {
+    const res = await fetch(
+      `${this.base}/chat/history?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
+    );
+    if (!res.ok) return { events: [] };
+    return (await res.json()) as { agent: string; session: string; events: HistoryEvent[] };
+  }
+
+  /**
+   * Tell the server to abort the in-flight chat turn for this
+   * (agent, session). No-op if no turn is running.
+   */
+  async abortTurn(agent: string, session: string): Promise<void> {
+    await fetch(
+      `${this.base}/chat/abort?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
+      { method: 'POST' },
+    ).catch(() => {
+      /* best-effort — UI shouldn't error on abort */
+    });
+  }
+}
+
+/**
+ * Subset of the NormalizedEvent shape the history endpoint serves.
+ * We don't import the server's full type — that pulls in too much
+ * server-side dep tree into the CLI bundle. Just declare what the
+ * TUI actually reads from history.
+ */
+export interface HistoryEvent {
+  kind: string;
+  ts: number;
+  text?: string;
+  from_agent?: string;
+  agent_ask_call_id?: string;
+  // tool_call / tool_result
+  callId?: string;
+  tool?: string;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
 }

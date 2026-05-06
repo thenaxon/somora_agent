@@ -81,7 +81,7 @@ export function Header({
             </Text>
           ) : (
             <Text color="yellow" bold>
-              <Spinner type="dots" /> streaming
+              <Spinner type="dots" /> streaming · ESC to abort
             </Text>
           )
         ) : connected ? (

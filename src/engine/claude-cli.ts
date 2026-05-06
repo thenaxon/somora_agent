@@ -90,6 +90,7 @@ export const claudeCliEngine: AgentEngine = {
       resolvedModel,
       thinking,
       fromAgent,
+      signal,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`claude-cli engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
@@ -133,6 +134,18 @@ export const claudeCliEngine: AgentEngine = {
     let lastSdkSessionId: string | undefined;
     let usage: { tokens_in: number; tokens_out: number } | undefined;
     let tokensInCachedClaude: number | undefined;
+
+    // Bridge somora's AbortSignal into the SDK's abortController option.
+    // The SDK exposes only AbortController (not AbortSignal), so mirror
+    // the upstream signal into a fresh controller. Hoisted out of the
+    // try-block so the finally can remove the listener regardless of
+    // where the throw came from.
+    const sdkAbortController = new AbortController();
+    const onUpstreamAbort = () => sdkAbortController.abort();
+    if (signal) {
+      if (signal.aborted) sdkAbortController.abort();
+      else signal.addEventListener('abort', onUpstreamAbort, { once: true });
+    }
 
     try {
       logger.info({
@@ -182,6 +195,7 @@ export const claudeCliEngine: AgentEngine = {
             }),
           },
           canUseTool: somoraToolGate,
+          abortController: sdkAbortController,
           // Policy-layer settings: turn off Claude Code's auto-memory so the
           // CLI doesn't inject ~/.claude/projects/<cwd>/memory/* into the
           // system prompt. Without this, somora agents inherit Claude Code's
@@ -371,9 +385,22 @@ export const claudeCliEngine: AgentEngine = {
         });
       }
     } catch (err) {
-      logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
-      yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
-      yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      // User pressed ESC mid-turn — emit whatever we streamed so far +
+      // a marker, no error event. Anything else is a real failure.
+      if (signal?.aborted) {
+        logger.info({ msg: 'engine.aborted', engine: ENGINE, agent, session });
+        const partial = cumulative
+          ? `${cumulative}\n\n[somora] aborted by user`
+          : '[somora] aborted by user';
+        yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      } else {
+        logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      }
+    } finally {
+      if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
   },
 };

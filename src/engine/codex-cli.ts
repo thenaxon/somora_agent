@@ -175,6 +175,7 @@ export const codexCliEngine: AgentEngine = {
       resolvedModel,
       thinking,
       fromAgent,
+      signal,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(
@@ -287,6 +288,24 @@ export const codexCliEngine: AgentEngine = {
     child.on('error', (err) => {
       spawnError = err;
     });
+
+    // User pressed ESC mid-turn → kill the codex subprocess. SIGTERM
+    // first; codex normally exits cleanly on it. The exit handler then
+    // resolves exitPromise and we fall through to the abort-aware
+    // path in the catch/finally below.
+    let abortFired = false;
+    const onUpstreamAbort = () => {
+      abortFired = true;
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        /* already exited */
+      }
+    };
+    if (signal) {
+      if (signal.aborted) onUpstreamAbort();
+      else signal.addEventListener('abort', onUpstreamAbort, { once: true });
+    }
 
     let stderrBuf = '';
     child.stderr.setEncoding('utf8');
@@ -447,6 +466,17 @@ export const codexCliEngine: AgentEngine = {
 
       const code = await exitPromise;
 
+      if (abortFired) {
+        // ESC mid-turn — emit whatever streamed so far + marker, no error.
+        logger.info({ msg: 'engine.aborted', engine: ENGINE, agent, session });
+        const partial = cumulative
+          ? `${cumulative}\n\n[somora] aborted by user`
+          : '[somora] aborted by user';
+        yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+        return;
+      }
+
       if (spawnError) {
         const message = `codex spawn failed: ${spawnError.message}`;
         logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: spawnError.message });
@@ -518,9 +548,20 @@ export const codexCliEngine: AgentEngine = {
         });
       }
     } catch (err) {
-      logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
-      yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
-      yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      if (abortFired) {
+        logger.info({ msg: 'engine.aborted', engine: ENGINE, agent, session });
+        const partial = cumulative
+          ? `${cumulative}\n\n[somora] aborted by user`
+          : '[somora] aborted by user';
+        yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      } else {
+        logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      }
+    } finally {
+      if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
   },
 };

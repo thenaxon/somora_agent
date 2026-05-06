@@ -157,6 +157,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       resolvedModel,
       availableModels,
       thinking,
+      signal,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
       throw new Error(`openai-compatible engine called with non-matching provider engine: ${resolvedModel.provider.engine}`);
@@ -327,15 +328,19 @@ export const openAiCompatibleEngine: AgentEngine = {
       let round = 0;
       while (round < maxRounds) {
         round++;
-        const stream = await client.chat.completions.create({
-          model: resolvedModel.modelId,
-          messages: loopMessages,
-          stream: true,
-          stream_options: { include_usage: true },
-          ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' } : {}),
-          ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
-          ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-        });
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const stream = await client.chat.completions.create(
+          {
+            model: resolvedModel.modelId,
+            messages: loopMessages,
+            stream: true,
+            stream_options: { include_usage: true },
+            ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' } : {}),
+            ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
+            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+          },
+          ...(signal ? [{ signal }] as const : ([] as const)),
+        );
 
         // Per-round accumulators
         let roundContent = '';
@@ -343,6 +348,12 @@ export const openAiCompatibleEngine: AgentEngine = {
         let finishReason: string | null = null;
 
         for await (const chunk of stream) {
+          // Some openai-compatible backends (omlx in particular) close
+          // the stream on signal-abort *without* throwing — the
+          // for-await just terminates. Detect that here so we don't
+          // silently emit a truncated assistant_message as if it were
+          // a clean completion.
+          if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
           const choice = chunk.choices[0];
           const delta = choice?.delta;
           if (delta?.content && typeof delta.content === 'string') {
@@ -390,6 +401,10 @@ export const openAiCompatibleEngine: AgentEngine = {
         if (roundContent) {
           cumulative = cumulative ? `${cumulative}\n\n${roundContent}` : roundContent;
         }
+
+        // Also catch silent abort-close: if the stream ended without a
+        // throw but the upstream signal fired, treat as user-cancel.
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
         if (roundToolCalls.size === 0) {
           // No tools requested — model gave its final answer this round.
@@ -526,17 +541,20 @@ export const openAiCompatibleEngine: AgentEngine = {
             'have learned from the tool results so far, even partially. Do not call any tools.',
         } as ChatMessage);
         try {
-          const summaryStream = await client.chat.completions.create({
-            model: resolvedModel.modelId,
-            messages: loopMessages,
-            stream: true,
-            stream_options: { include_usage: true },
-            ...(resolvedModel.model.maxTokens
-              ? { max_tokens: resolvedModel.model.maxTokens }
-              : {}),
-            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
-            // No tools, no tool_choice — pure text response.
-          });
+          const summaryStream = await client.chat.completions.create(
+            {
+              model: resolvedModel.modelId,
+              messages: loopMessages,
+              stream: true,
+              stream_options: { include_usage: true },
+              ...(resolvedModel.model.maxTokens
+                ? { max_tokens: resolvedModel.model.maxTokens }
+                : {}),
+              ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+              // No tools, no tool_choice — pure text response.
+            },
+            ...(signal ? [{ signal }] as const : ([] as const)),
+          );
           for await (const chunk of summaryStream) {
             const choice = chunk.choices[0];
             const delta = choice?.delta;
@@ -622,9 +640,18 @@ export const openAiCompatibleEngine: AgentEngine = {
         await metaStore.set(agent, session, { ...fresh, engine: ENGINE });
       }
     } catch (err) {
-      logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
-      yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
-      yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      if (signal?.aborted) {
+        logger.info({ msg: 'engine.aborted', engine: ENGINE, agent, session });
+        const partial = cumulative
+          ? `${cumulative}\n\n[somora] aborted by user`
+          : '[somora] aborted by user';
+        yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      } else {
+        logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      }
     }
   },
 };

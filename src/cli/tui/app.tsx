@@ -113,33 +113,127 @@ export function App({
     };
   }, [agent]);
 
-  // SSE lifecycle: open on (agent, session) change, close on unmount.
+  // SSE lifecycle + history replay: on (agent, session) change clear
+  // the scrollback, fetch past events from /chat/history and replay
+  // them as scrollback Turns, THEN open the SSE stream for live
+  // events. History fetch is best-effort — empty/failing returns
+  // just give an empty starting state. SSE picks up events from
+  // connect-time forward so there's no overlap with replay.
   useEffect(() => {
     let cancelled = false;
-    const handle: StreamHandle = openStream(
-      apiRef.current.streamUrl(agent, session),
-      (text, tone) => {
-        if (cancelled) return;
-        appendTurn({ kind: 'system', id: nextId(), text, tone });
-      },
-    );
+    setTurns([]);
+    setStats(null);
+
+    let handle: StreamHandle | null = null;
 
     (async () => {
-      for await (const ev of handle.events) {
-        if (cancelled) break;
-        applyEvent(ev);
+      try {
+        const { events } = await apiRef.current.fetchHistory(agent, session);
+        if (cancelled) return;
+        const replayed = mapHistoryToTurns(events);
+        if (replayed.length > 0) {
+          setTurns(replayed);
+        }
+      } catch {
+        /* history endpoint failures are non-fatal — leave scrollback empty */
       }
-    })().catch(() => {
-      /* iterator close — nothing to do */
-    });
+
+      if (cancelled) return;
+      handle = openStream(
+        apiRef.current.streamUrl(agent, session),
+        (text, tone) => {
+          if (cancelled) return;
+          appendTurn({ kind: 'system', id: nextId(), text, tone });
+        },
+      );
+      const stream = handle;
+      (async () => {
+        for await (const ev of stream.events) {
+          if (cancelled) break;
+          applyEvent(ev);
+        }
+      })().catch(() => {
+        /* iterator close — nothing to do */
+      });
+    })();
 
     return () => {
       cancelled = true;
-      handle.close();
+      handle?.close();
       setConnected(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, session]);
+
+  /**
+   * Convert raw JSONL history events into TUI Turn entries. Skips
+   * deltas, turn-boundaries, errors — those are noise for replay.
+   * Tool events render as collapsed `tool` rows respecting the same
+   * showTools/showMemory toggles as live events do (we don't read
+   * the toggles here; we always emit the rows and let the renderer
+   * filter via the existing showToolsRef path... actually for replay
+   * we just emit them and trust the user can toggle). For simplicity
+   * we ALWAYS emit tool rows on replay — the user can /show tools off
+   * to hide globally.
+   */
+  function mapHistoryToTurns(events: import('./api.ts').HistoryEvent[]): Turn[] {
+    const out: Turn[] = [];
+    let id = 0;
+    const nid = () => {
+      id += 1;
+      return `replay-${id}`;
+    };
+    for (const ev of events) {
+      if (ev.kind === 'user_message' && typeof ev.text === 'string') {
+        out.push({
+          kind: 'user',
+          id: nid(),
+          text: ev.text,
+          ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
+        });
+      } else if (ev.kind === 'assistant_message' && typeof ev.text === 'string') {
+        out.push({ kind: 'agent', id: nid(), text: ev.text });
+      } else if (ev.kind === 'tool_call' && typeof ev.tool === 'string') {
+        out.push({
+          kind: 'tool',
+          id: nid(),
+          tool: ev.tool,
+          phase: 'call',
+          summary: typeof ev.input === 'object' && ev.input ? safeStringify(ev.input, 60) : '',
+        });
+      } else if (ev.kind === 'tool_result' && typeof ev.tool === 'string') {
+        if (ev.error) {
+          out.push({
+            kind: 'tool',
+            id: nid(),
+            tool: ev.tool,
+            phase: 'error',
+            error: summarize(ev.error, 200),
+          });
+        } else {
+          out.push({
+            kind: 'tool',
+            id: nid(),
+            tool: ev.tool,
+            phase: 'result',
+            summary: typeof ev.output === 'object' && ev.output ? safeStringify(ev.output, 60) : '',
+          });
+        }
+      }
+      // turn_start, turn_end, assistant_delta, error: skipped
+      // memory injects don't live in JSONL — they're SSE-only
+    }
+    return out;
+  }
+
+  function safeStringify(value: unknown, maxLen: number): string {
+    try {
+      const s = JSON.stringify(value);
+      return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
+    } catch {
+      return '';
+    }
+  }
 
   function appendTurn(t: Turn): void {
     setTurns((prev) => [...prev, t]);
@@ -281,9 +375,17 @@ export function App({
       if (picked) setInput(picked.name + ' ');
       return;
     }
-    // Esc: clear the input. This naturally hides the autocomplete popup
-    // too (no `/` prefix → matchCommands returns []).
+    // Esc:
+    //   - while streaming: abort the in-flight turn server-side. Keep
+    //     the input buffer untouched — the user might be typing the
+    //     next message while the model is still talking.
+    //   - otherwise: clear the input (also hides the autocomplete popup,
+    //     since `/` prefix → matchCommands returns [] when empty).
     if (key.escape) {
+      if (streaming) {
+        void apiRef.current.abortTurn(agent, session);
+        return;
+      }
       if (input.length > 0) {
         setInput('');
         setHistoryIndex(null);

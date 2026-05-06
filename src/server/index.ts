@@ -55,6 +55,7 @@ import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
+import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
 import { acquireSessionLock } from './session-queue.ts';
 import {
   completeTask,
@@ -660,11 +661,15 @@ app.post('/chat/send', async (c) => {
       priority,
       ...(agentAskCallId ? { callId: agentAskCallId } : {}),
     });
+    // Register the per-session AbortController. /chat/abort looks this
+    // up to cancel the in-flight turn — typically from TUI ESC.
+    const abort = registerChatAbort(agent, session);
     try {
       await runChatTurn({
         agent,
         session,
         text,
+        signal: abort.signal,
         ...(fromAgent ? { fromAgent } : {}),
         ...(agentAskCallId ? { agentAskCallId } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
@@ -675,6 +680,7 @@ app.post('/chat/send', async (c) => {
       logger.error({ msg: 'chat.send.run_failed', agent, session, err: (err as Error).message });
       void publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     } finally {
+      abort.release();
       release();
     }
   })();
@@ -686,6 +692,17 @@ app.post('/chat/send', async (c) => {
   autoDreamWorker.resetActivity(agent);
 
   return c.json({ ok: true }, 202);
+});
+
+// /chat/abort — cancel an in-flight turn for (agent, session). Triggered
+// by TUI ESC while streaming. Idempotent: returns aborted=false when no
+// turn is running. Doesn't block — the engine adapter sees the signal
+// and bails out, then runChatTurn's finally releases the controller.
+app.post('/chat/abort', async (c) => {
+  const agent = c.req.query('agent') ?? 'hans';
+  const session = c.req.query('session') ?? 'main';
+  const result = triggerChatAbort(agent, session);
+  return c.json({ agent, session, ...result });
 });
 
 // /chat/send-sync — same input as /chat/send, but blocks until the turn
