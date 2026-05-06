@@ -901,6 +901,118 @@ die später teuer zu ändern sind.
 
 ---
 
+## Phase Y — Vision / Multimodale Inputs (eine Phase nach Skills, entdeckt 2026-05-06)
+
+**Status:** entschieden zu bauen, _nach_ Phase X (Skills). Nicht
+heute angehen, aber Konzept festhalten so lange's frisch ist.
+
+**Auslöser:** Test mit Hans 2026-05-06: User legt
+`rene_falcon_desert.png` in `~/somoraworkspace`, fragt „was ist auf
+dem Bild". Hans kann nur Metadaten abfragen (`file`, `identify`) —
+ohne Bildinhalt. Architekturell kein Bug, sondern fehlende Phase: es
+existiert aktuell weder ein Image-fähiges Tool noch eine Attachment-
+Surface in `/chat/send`.
+
+### Drei Lücken die zugemacht werden müssen
+
+1. **Kein image-fähiges Tool.** `file_read` returnt UTF-8-Text.
+   Bei einer PNG kommt Garbage raus.
+2. **`/chat/send` kennt keine Attachments.** Body ist
+   `{ text: string }`. Selbst wenn der User ein Bild im Workdir hat,
+   gibt es keinen Pfad es als Vision-Input mitzugeben.
+3. **Engine-Adapter routen nur Text.** `TurnInput.userMessage:
+   string`. Anthropic + OpenAI SDK können beide Vision-Content-Blocks,
+   aber unsere Adapter mappen User-Nachrichten nur auf Text-Blocks.
+
+### Was bereits ready ist
+
+Model-Layer ist vorbereitet — alle drei vision-fähigen Modelle
+deklarieren `capabilities: [text, image, ...]` in der `config.yaml`:
+- claude-opus-4-7, claude-sonnet-4-6, claude-haiku-4-5 (claude-cli)
+- gpt-5.5, gpt-5.4-mini (codex-cli)
+- gemma4big, gemma4small (omlx via openai-compatible)
+
+Sobald die Adapter-Surface da ist, können diese Modelle Bilder
+konsumieren ohne weitere Engine-Arbeit.
+
+### Zwei Bauwege (in Reihenfolge der Empfehlung)
+
+**(A) Tool-Pfad — Agent fragt selbst nach dem Bild.** Kleinere
+Surface, agentenseitig, natürlicher erster Schritt:
+
+- Neues Tool `image_read({ path, target? })` returnt MCP-Image-
+  Content-Block: `{ type: 'image', data: <base64>, mimeType:
+  'image/png' | 'image/jpeg' | ... }`.
+- claude-cli + codex-cli: ihre MCP-Pipeline reicht Image-Content
+  natively durch zur Model-Conversation. Adapter-Code Null.
+- openai-compatible: braucht Erweiterung — tool_result aktuell
+  nur Text. OpenAI's Spec erlaubt `content: [{type:'image_url',
+  image_url:{url:'data:image/...;base64,...'}}]` als tool_result.
+  Adapter muss das in `loopMessages.push({role:'tool', content:[...]})`
+  einbauen.
+- Hard-Cap auf File-Size (max 5MB Image bei Anthropic, 20MB bei
+  OpenAI), Format-Whitelist (png/jpeg/webp/gif), MIME-Detection per
+  magic bytes (nicht via Extension — Trust-Boundary).
+
+Dauer: ~halber Tag wenn Vision-Adapter-Erweiterung sauber bleibt.
+Größtes Risiko: openai-compatible MCP-tool-result-Schema bei lokalen
+Servern (omlx, ollama) ist nicht standardisiert — ggf. Engine-Switch
+oder Per-Engine-Override.
+
+**(B) Attachment-Pfad — User schickt Bild mit dem Turn.** Größere
+Surface, userseitig, zweiter Schritt nach (A):
+
+- TUI nimmt Image-Paste / Drag-Drop. Ink hat keinen nativen Image-
+  Support; vermutlich Pfad-Eingabe oder Clipboard-Read via Bash-Hook.
+- `POST /chat/send` Body erweitert: `{ text, attachments?: [{ kind:
+  'image', source: 'path'|'base64', value, mimeType? }] }`.
+- Server: load → base64 → MIME-detect → in user-Message-Content-Array
+  mappen pro Engine.
+- JSONL-Persistenz: `user_message.attachments[]` mit (path-ref, hash,
+  mimeType, bytes). Bytes selbst NICHT in JSONL (zu groß für
+  Cache-Reconstruction); stattdessen Content-addressed Storage in
+  `~/.somora/attachments/<sha256>.<ext>`.
+- Cache-Implikation: Vision-Tokens sind teuer (Anthropic ~1300
+  tokens pro 1024×1024 Bild). Stable-front-Pflicht (DECISION #40):
+  Image-Block muss VOR dem variablen Memory-Block stehen sonst
+  invalidiert jeder Turn den ganzen Cache.
+
+Dauer: ~Tag, davon das meiste TUI-Paste/Drop-Handling und JSONL-
+Schema-Erweiterung.
+
+### Reihenfolge + Wann
+
+- **Nach Phase X (Skills)** — Skills sind erstmal die größere
+  Architektur-Frage; Vision baut darauf nichts auf.
+- **(A) zuerst, (B) später bei Bedarf.** (A) deckt 80% (Agent will
+  selbständig ein Bild prüfen, das im Workspace liegt). (B) erst wenn
+  klar wird dass User regelmäßig Bilder direkt in den Turn paste'n
+  will — bisheriger Use-Case ist „User kopiert Datei ins Workdir,
+  fragt Agent".
+
+### Diskussions-Punkte für die spätere Konzept-Phase
+
+1. Streaming-Bilder (Webcam-Feed)? Aus heutiger Sicht: nein.
+2. Image-Generation-Tools (DALL-E / Stable Diffusion via lokales
+   ComfyUI)? Anderes Thema, eigene Phase.
+3. Audio-Inputs (Whisper, Vision-Audio-Modelle)? Weiter weg, separate
+   Phase wenn überhaupt.
+4. Cache-Strategie pro Image: einmal hash'n, in JSONL referenzieren,
+   bei Recall im selben Turn nicht doppelt schicken — Detail-Frage
+   für Konzept-Phase.
+
+### Code-Pointer für späteren Start
+
+- `src/tools/file/local.ts:fileRead` — als Vorlage für `image_read`
+- `src/engine/openai-compatible.ts` — tool_result-Loop ist die Stelle
+  für multimodalen Content
+- Anthropic SDK: Image-Block-Spec in `claude-agent-sdk` — schon im
+  Type-System verfügbar, müssen wir nur passieren lassen
+- omlx + gemma4: User hat Vision-Tests gemacht, wir sollten den
+  empirisch verifizieren bevor wir auf API-Spec vertrauen
+
+---
+
 ## Dependencies + SDK-Audit-Sweep — Maintenance-Sweep 1 done 2026-05-05
 
 **Status: durchgeführt 2026-05-05 spätabend (commit `42fee3f`).**
