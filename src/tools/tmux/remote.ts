@@ -20,13 +20,13 @@ function shQuote(s: string): string {
 }
 
 // Mirrors local.ts:buildSendKeysScript — see there for the
-// multilineSafe / M-Enter rationale.
+// multilineSafe / M-Enter rationale and the `--` end-of-flags guard.
 function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean): string {
   const parts = keys.split('\n');
   const cmds: string[] = [];
   parts.forEach((part, idx) => {
     if (part.length > 0) {
-      cmds.push(`tmux send-keys -t ${shQuote(name)} -l ${shQuote(part)}`);
+      cmds.push(`tmux send-keys -t ${shQuote(name)} -l -- ${shQuote(part)}`);
     }
     if (idx < parts.length - 1) {
       const keyName = multilineSafe ? 'M-Enter' : 'Enter';

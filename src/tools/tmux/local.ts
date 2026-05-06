@@ -46,7 +46,11 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
   const cmds: string[] = [];
   parts.forEach((part, idx) => {
     if (part.length > 0) {
-      cmds.push(`tmux send-keys -t ${shQuote(name)} -l ${shQuote(part)}`);
+      // `--` ends tmux's flag-scan so a leading `-` in the literal text
+      // (Markdown bullets `- Item`, command flags being typed) isn't
+      // mistaken for a flag — Hans's bug 2026-05-06: `multiline_safe:true`
+      // with `\n- Bullet A` failed with `command send-keys: invalid flag -`.
+      cmds.push(`tmux send-keys -t ${shQuote(name)} -l -- ${shQuote(part)}`);
     }
     if (idx < parts.length - 1) {
       // Non-final newline. multiline_safe → soft-newline (M-Enter).
