@@ -156,6 +156,23 @@ Alle vier sind drin und committed:
 Hans's Bug-Reports vollständig abgearbeitet — A2A + Dream-Worker-Pflege
 sind durch. Nächste mögliche Themen:
 
+### Phase 5 abgerundet — lokales PTY (2026-05-06 spätabend, commit `69cb1a7`)
+
+Letztes Loose-End geschlossen: `exec({pty:true, target:'local'})` war
+seit der ersten 5a-Iteration als no-op markiert. Jetzt via `node-pty`
+gebaut. Tool-Description ehrlich (kein „FUTURE" mehr).
+
+- `node-pty 1.1.0` als runtime dep (~5MB, native compile at install)
+- `localExecSyncPty()` in src/tools/exec/local.ts — pty.spawn mit
+  xterm-256color + cols/rows + cwd/env
+- Output merged in einen Stream wie bei real-terminal + remote-pty
+- Background-Mode ignoriert pty:true (= TUI im Hintergrund nutzlos)
+
+Smoke verifiziert: ohne pty `tty` sagt „not a tty", git log = plain
+text. Mit pty `tty` returnt `/dev/pts/5`, line-endings switchen auf
+\\r\\n, git log emittiert ANSI-color-Escapes. Klares Verhalten-
+Differential.
+
 ### Phase 5b — tmux Tool gebaut (2026-05-06 abend, commit `1e47eac`)
 
 Single `tmux`-Tool mit action-enum (`create`, `send`, `capture`, `list`,
@@ -330,15 +347,14 @@ A2A + Dream-Worker-Pflege + Maintenance-Sweep 1 durch. Offene Themen:
 ### Pickup-Satz für nächste Session
 
 > "Phase 6 (A2A), Hans's vier Bugs, Maintenance-Sweep 1, Cache-
-> Strategie alle durch. Phase 5 (exec + tmux) komplett: exec + process
-> Tools mit hard-blacklist, disk-tracked background jobs, sync local
-> + remote, background local + remote via nohup-pattern, remote PTY,
-> concurrency-caps konfigurierbar; tmux mit action-enum für create/
-> send/capture/list/kill, local + remote, count-based wait_pattern.
-> HEAD 1e47eac. Tool-count 34. Andere offene Themen: Phase X (Skills,
+> Strategie alle durch. Phase 5 (exec + tmux) komplett INKL.
+> lokalem PTY: exec + process Tools mit hard-blacklist, disk-tracked
+> background jobs, sync + background local + remote, PTY local +
+> remote (node-pty bzw. ssh2), concurrency-caps konfigurierbar; tmux
+> mit action-enum + count-based wait_pattern, local + remote. HEAD
+> 69cb1a7. Tool-count 34. Andere offene Themen: Phase X (Skills,
 > vorher diskutieren — 10 Konzept-Fragen offen), Dream-Worker-
-> Priorisierung, TUI-History-Replay, lokale-PTY (FUTURE, node-pty
-> install nötig)."
+> Priorisierung, TUI-History-Replay."
 
 ---
 
