@@ -20,9 +20,12 @@ function shQuote(s: string): string {
 }
 
 // Mirrors local.ts:buildSendKeysScript — see there for the
-// multilineSafe / M-Enter rationale and the `--` end-of-flags guard.
+// multilineSafe / M-Enter rationale, the `--` end-of-flags guard, and
+// the trailing-\n strip-before-split (Hans's bug 2026-05-07).
 function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean): string {
-  const parts = keys.split('\n');
+  const endsWithNewline = keys.endsWith('\n');
+  const body = endsWithNewline ? keys.slice(0, -1) : keys;
+  const parts = body.split('\n');
   const cmds: string[] = [];
   parts.forEach((part, idx) => {
     if (part.length > 0) {
@@ -33,7 +36,7 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
       cmds.push(`tmux send-keys -t ${shQuote(name)} ${keyName}`);
     }
   });
-  if (keys.endsWith('\n')) {
+  if (endsWithNewline) {
     cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
   }
   return cmds.join(' && ');

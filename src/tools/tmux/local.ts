@@ -42,7 +42,15 @@ function shQuote(s: string): string {
  *     into Claude Code got chunked into N separate submissions.
  */
 function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean): string {
-  const parts = keys.split('\n');
+  // Strip a trailing \n before splitting so the last embedded newline
+  // doesn't get emitted as M-Enter and then immediately followed by a
+  // plain Enter — that double-keystroke leaves the input cursor in a
+  // soft-newlined empty line and Codex (and likely other strict TUIs)
+  // refuse to submit. Hans's bug 2026-05-07: `multiline_safe:true` with
+  // trailing `\n` rendered the prompt but never submitted in codex.
+  const endsWithNewline = keys.endsWith('\n');
+  const body = endsWithNewline ? keys.slice(0, -1) : keys;
+  const parts = body.split('\n');
   const cmds: string[] = [];
   parts.forEach((part, idx) => {
     if (part.length > 0) {
@@ -53,16 +61,15 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
       cmds.push(`tmux send-keys -t ${shQuote(name)} -l -- ${shQuote(part)}`);
     }
     if (idx < parts.length - 1) {
-      // Non-final newline. multiline_safe → soft-newline (M-Enter).
+      // Embedded newline (not the trailing one — that was stripped above).
+      // multiline_safe → soft-newline (M-Enter).
       const keyName = multilineSafe ? 'M-Enter' : 'Enter';
       cmds.push(`tmux send-keys -t ${shQuote(name)} ${keyName}`);
     }
   });
-  // If the original input ended with \n we already split it so the
-  // last part is an empty string and the loop above skipped the
-  // final Enter. Re-add it as a plain Enter — even in multiline_safe
-  // mode the trailing \n still submits.
-  if (keys.endsWith('\n')) {
+  // Re-add the stripped trailing \n as a plain Enter so the message
+  // submits — even in multiline_safe mode the trailing \n submits.
+  if (endsWithNewline) {
     cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
   }
   return cmds.join(' && ');
