@@ -21,21 +21,7 @@ import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts'
 import { logger } from '../server/logger.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import { configureExecConcurrencyCaps } from '../tools/exec/index.ts';
-import {
-  agentTools,
-  execTools,
-  tmuxTools,
-  dreamTools,
-  fileTools,
-  memoryTools,
-  obsidianTools,
-  resourceTools,
-  skillTools,
-  somoraDocsTools,
-  timeTools,
-  ToolRegistry,
-  webTools,
-} from '../tools/index.ts';
+import { registerAllTools, ToolRegistry } from '../tools/index.ts';
 import type { ToolContext } from '../tools/types.ts';
 
 async function main(): Promise<void> {
@@ -57,18 +43,10 @@ async function main(): Promise<void> {
     config.agentLoop.execMaxConcurrentGlobal,
   );
   const registry = new ToolRegistry();
-  registry.registerMany(memoryTools());
-  registry.registerMany(dreamTools());
-  registry.registerMany(timeTools());
-  registry.registerMany(webTools());
-  registry.registerMany(obsidianTools());
-  registry.registerMany(somoraDocsTools());
-  registry.registerMany(resourceTools());
-  registry.registerMany(fileTools());
-  registry.registerMany(agentTools());
-  registry.registerMany(execTools());
-  registry.registerMany(tmuxTools());
-  registry.registerMany(skillTools());
+  // Single source of truth in src/tools/index.ts so this can't drift
+  // from the in-process registry in src/server/index.ts. Adding a new
+  // tool: edit registerAllTools(), both surfaces pick it up.
+  registerAllTools(registry);
 
   // Optional sub-context env hooks set by the engine launcher per turn.
   // SOMORA_SESSION lets spawn_subagent record `parent_session`; the

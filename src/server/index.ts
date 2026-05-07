@@ -27,23 +27,12 @@ import {
 } from '../storage/sessions.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import {
-  agentTools,
   configureExecConcurrencyCaps,
   configureSpawnTools,
-  dreamTools,
-  execTools,
-  fileTools,
   logExecCaps,
-  memoryTools,
-  obsidianTools,
   recoverOrphanedJobs,
-  resourceTools,
-  skillTools,
-  somoraDocsTools,
-  timeTools,
-  tmuxTools,
+  registerAllTools,
   ToolRegistry,
-  webTools,
 } from '../tools/index.ts';
 import { shutdownSshPool } from '../ssh/index.ts';
 import {
@@ -180,20 +169,13 @@ logger.info({
 });
 
 // Construct the process-wide tool registry. Built once at startup,
-// shared by HTTP debug endpoints today and by MCP/agent-loop later.
+// shared by HTTP debug endpoints + the in-process openai-compatible
+// agent-loop. The MCP-child-process registry (src/mcp/server.ts) is
+// built from the same `registerAllTools()` so the two engine paths
+// can't drift — that drift is exactly what bit Phase X scaffold
+// (commit 23be832 / `feedback_dual_tool_registries.md`).
 const tools = new ToolRegistry();
-tools.registerMany(memoryTools());
-tools.registerMany(dreamTools());
-tools.registerMany(timeTools());
-tools.registerMany(webTools());
-tools.registerMany(obsidianTools());
-tools.registerMany(somoraDocsTools());
-tools.registerMany(resourceTools());
-tools.registerMany(fileTools());
-tools.registerMany(agentTools());
-tools.registerMany(execTools());
-tools.registerMany(tmuxTools());
-tools.registerMany(skillTools());
+registerAllTools(tools);
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,
