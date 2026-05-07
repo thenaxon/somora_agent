@@ -1,8 +1,9 @@
 # File tools
 
-`file_read`, `file_write`, `file_patch`, and `file_search` work on the
-local filesystem by default and on any configured remote resource via
-the `target` parameter.
+`file_read`, `file_write`, `file_patch`, `file_search`, and
+`analyze_file` work on the local filesystem by default and on any
+configured remote resource via the `target` parameter (where
+applicable — `analyze_file` is local-only in v1).
 
 ## The `target` parameter
 
@@ -81,14 +82,67 @@ When the future `exec` tool lands, its description will mirror this in
 reverse: "use file_* for read/write/patch/search; exec is for things
 the file tools can't do (run a build, start a server, etc.)".
 
+## Multimodal: `analyze_file` + `file_read` MIME guard
+
+`file_read` is text-only. When pointed at a binary file (PNG, JPEG,
+WebP, GIF, PDF), it detects the magic bytes up-front and errors with
+a clear pointer to `analyze_file`:
+
+```
+file_read: '/path/to/screenshot.png' is image/png — file_read returns
+text only. Use analyze_file({path:"/path/to/screenshot.png"}) to
+dispatch this to the configured vision worker and get a description
+back.
+```
+
+`analyze_file` dispatches the file to a configured **vision worker
+model** (separate from the agent's main model, configured globally in
+`config.vision.worker` and optional `config.vision.pdfWorker`) and
+returns the worker's text analysis. The agent never sees raw image
+bytes — only the description. Use it for:
+
+- **Capability gap**: main model is text-only (e.g., a local omlx
+  text-only LLM), but you still need to reason about an image/PDF.
+- **Token thrift**: a 1024×1024 image is ~1300 tokens in main
+  context. A haiku-worker description is usually < 200 tokens.
+- **Targeted questions**: `analyze_file({path, prompt: "Which row of
+  the table has the highest value?"})` — the worker focuses, the agent
+  gets a sharp answer.
+
+```yaml
+# config.yaml — global vision worker config
+vision:
+  worker: openrouter/claude-haiku-4-5      # default for image + PDF
+  pdfWorker: openrouter/claude-sonnet-4-6  # optional override for PDFs
+```
+
+Worker model **must be on `openai-compatible` engine** in v1 (use
+openrouter or another openai-compatible proxy if you want a Claude or
+GPT model). Same constraint as Dream-Mode. At server startup, somora
+warn-checks worker capabilities and surfaces missing `image`/`pdf`
+declarations clearly in the log — but does NOT hard-fail, so an
+image-only worker is still usable for image analysis (PDF requests
+will error per call instead).
+
+**Caps:** 5 MB per image, 32 MB / 100 pages per PDF (matches the
+upstream provider ceilings).
+
+**Future work — Phase Y.A.2:** `file_read` polymorph. Today an image-
+capable main model (Claude, GPT-5) sees images via `analyze_file`'s
+worker description, not directly. Direct content-block delivery into
+main context requires the tool-result type contract to support image
+content blocks across MCP (claude-cli/codex-cli) and the openai-
+compatible adapter — that's a careful refactor saved for next session.
+
 ## Limits
 
 | Tool | Cap | Notes |
 |---|---|---|
-| `file_read` | 200 000 chars per call | Use `offset`+`limit` for larger files. |
+| `file_read` | 200 000 chars per call | Use `offset`+`limit` for larger files. Errors on binary, pointing at `analyze_file`. |
 | `file_write` | none on input; 100 000 char result envelope | Atomic via tmp+rename. |
 | `file_patch` | requires `old_string` to be unique unless `replace_all=true` | Match is byte-exact (no fuzzy). |
 | `file_search` | 50 hits default, 500 max; 200 000 char result envelope | Needs `rg` (ripgrep) on the target machine. |
+| `analyze_file` | 5 MB image / 32 MB PDF | Local files only in v1; worker on openai-compatible engine. |
 
 `rg` not installed → clear error: "Install via brew/apt/dnf/pacman or
 set `$RG_BIN`." We deliberately don't ship a JS fallback walker —

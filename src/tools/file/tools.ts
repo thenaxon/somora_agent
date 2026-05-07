@@ -84,7 +84,11 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
     'against the agent\'s workspace dir; absolute paths pass through. Returns content plus ' +
     'line/byte counts. Use offset+limit to page through large files (single read caps at 200k chars). ' +
     'Use this INSTEAD of running `cat`, `head`, or `tail` via exec — file_read paginates safely, ' +
-    'enforces the read-blacklist, and never gets caught by shell quoting.',
+    'enforces the read-blacklist, and never gets caught by shell quoting. ' +
+    '\n\n' +
+    'Text only — for local images (PNG/JPEG/WebP/GIF) or PDFs, file_read detects the binary ' +
+    'signature and errors with a pointer to `analyze_file`, the multimodal companion that ' +
+    'dispatches to a configured vision worker and returns a text description.',
   inputSchema: ReadInput,
   jsonSchema: {
     type: 'object',
@@ -100,6 +104,38 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
   maxResultSizeChars: 250_000,
   async handler(input, ctx) {
     if (input.target === 'local') {
+      // MIME-pre-check for local reads. file_read is text-only — when
+      // an agent points it at a PNG/JPEG/PDF it would historically
+      // return binary garbage decoded as UTF-8. Now: detect via magic
+      // bytes and reject early with a clear pointer to analyze_file
+      // (the multimodal companion). Remote reads skip this for now —
+      // would require an extra SFTP round-trip; v2 work.
+      try {
+        const { detectMimeFromPath } = await import('../../multimodal/mime.ts');
+        const { resolveLocalPath } = await import('./policy.ts');
+        const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config);
+        const mime = await detectMimeFromPath(absolute);
+        if (mime.kind === 'image' || mime.kind === 'pdf') {
+          throw new Error(
+            `file_read: '${input.path}' is ${mime.mimeType} — file_read returns text only. ` +
+              `Use analyze_file({path:"${input.path}"}) to dispatch this to the configured ` +
+              `vision worker and get a description back.`,
+          );
+        }
+        if (mime.kind === 'unknown') {
+          throw new Error(
+            `file_read: '${input.path}' has no recognized text or known-binary signature ` +
+              `(detected ${mime.mimeType}). If it's actually text, the file may have an ` +
+              `unusual encoding; if it's binary, use exec to inspect the type via 'file' first.`,
+          );
+        }
+      } catch (err) {
+        // Re-throw our own clear errors; let stat-failures (file
+        // missing, no permission) fall through to localRead which has
+        // its own error path that already produces good messages.
+        const msg = (err as Error).message;
+        if (msg.startsWith('file_read:')) throw err;
+      }
       return localRead({
         path: input.path,
         agent: ctx.agent,

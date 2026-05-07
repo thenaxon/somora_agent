@@ -10,6 +10,7 @@ import { obsidianTools } from './obsidian/index.ts';
 import { somoraDocsTools } from './docs/index.ts';
 import { resourceTools } from './resources/index.ts';
 import { fileTools } from './file/index.ts';
+import { analyzeFileTools } from './file/index.ts';
 import { agentTools } from './agents/index.ts';
 import { execTools } from './exec/index.ts';
 import { tmuxTools } from './tmux/index.ts';
@@ -24,7 +25,7 @@ export { webTools } from './web/index.ts';
 export { obsidianTools } from './obsidian/index.ts';
 export { somoraDocsTools } from './docs/index.ts';
 export { resourceTools } from './resources/index.ts';
-export { fileTools } from './file/index.ts';
+export { fileTools, analyzeFileTools } from './file/index.ts';
 export { agentTools, configureSpawnTools } from './agents/index.ts';
 export {
   configureExecConcurrencyCaps,
@@ -60,6 +61,7 @@ export function registerAllTools(registry: ToolRegistry): void {
   registry.registerMany(somoraDocsTools());
   registry.registerMany(resourceTools());
   registry.registerMany(fileTools());
+  registry.registerMany(analyzeFileTools());
   registry.registerMany(agentTools());
   registry.registerMany(execTools());
   registry.registerMany(tmuxTools());

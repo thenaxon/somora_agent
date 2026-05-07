@@ -156,6 +156,57 @@ logger.info({
   port: config.server.port,
 });
 
+// Validate vision worker config — warn-and-degrade rather than hard-
+// fail so an image-only worker (e.g., a local omlx model) is still
+// usable, but PDF tools will surface a clear error per call. Missing
+// `vision.worker` entirely is fine — analyze_file just errors at
+// call time. Reference resolution failures ARE hard-fails (a config
+// pointing at a nonexistent model is broken either way).
+{
+  const { resolveAnyRef } = await import('../config/types.ts');
+  const checkWorker = (label: string, ref: string | undefined, requirePdf: boolean) => {
+    if (!ref) return;
+    const m = resolveAnyRef(config, ref);
+    if (!m) {
+      throw new Error(
+        `config.vision.${label} '${ref}' is not a known model — fix config.yaml`,
+      );
+    }
+    if (m.provider.engine !== 'openai-compatible') {
+      logger.warn({
+        msg: 'vision.worker.engine_mismatch',
+        label,
+        worker: ref,
+        engine: m.provider.engine,
+        hint: 'analyze_file will fail at call time — only openai-compatible workers supported in v1',
+      });
+    }
+    if (!m.model.capabilities.includes('image')) {
+      logger.warn({
+        msg: 'vision.worker.no_image_capability',
+        label,
+        worker: ref,
+      });
+    }
+    if (requirePdf && !m.model.capabilities.includes('pdf')) {
+      logger.warn({
+        msg: 'vision.worker.no_pdf_capability',
+        label,
+        worker: ref,
+        hint: 'set config.vision.pdfWorker to a pdf-capable model, or analyze_file on PDFs will error',
+      });
+    }
+  };
+  try {
+    checkWorker('worker', config.vision.worker, !config.vision.pdfWorker);
+    checkWorker('pdfWorker', config.vision.pdfWorker, true);
+  } catch (err) {
+    console.error('\n\x1b[31m[!] somora vision config invalid:\x1b[0m\n');
+    console.error((err as Error).message);
+    process.exit(1);
+  }
+}
+
 // Push claude-cli SDK tunables into process.env so the subprocess
 // inherits them. Must run before the first engine call.
 applyClaudeCliSdkEnv(config);

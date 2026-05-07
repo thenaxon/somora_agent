@@ -5,7 +5,13 @@
 
 import { z } from 'zod';
 
-export const ModelCapabilitySchema = z.enum(['text', 'image', 'reasoning']);
+// Model capabilities. `text` is universal. `image` enables Vision (image
+// content blocks). `pdf` enables PDF document content blocks (Anthropic
+// natively, OpenAI via file-API; most local OMX models lack it). The
+// runtime gates `file_read` on these — agent gets a clear error when
+// it tries to read media a model can't process. `reasoning` enables
+// per-engine "thinking" effort levels.
+export const ModelCapabilitySchema = z.enum(['text', 'image', 'pdf', 'reasoning']);
 export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
 
 // Cross-engine "thinking" knob. Values map per-engine in each adapter:
@@ -374,6 +380,37 @@ export const TuiConfigSchema = z.object({
 });
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 
+// Vision/multimodal worker config. Two tools route through this:
+//   - file_read polymorph (for the active main model, when it has the
+//     right capability — content blocks land directly in main context)
+//   - analyze_file (always dispatches to a separate worker model via
+//     openai-compatible API, returns the worker's text description)
+//
+// `worker` is the default for both image and PDF dispatch. `pdfWorker`
+// is an optional override for PDF specifically (use case: cheap haiku
+// for image triage but a stronger model for PDF reasoning, à la
+// OpenClaw's `pdfModel ≠ imageModel` distinction). When unset, PDF
+// falls back to `worker`. When `worker` itself is unset, analyze_file
+// returns a clear error at call time — no silent degradation.
+//
+// v1 constraint: workers must be openai-compatible (proxied via
+// openrouter etc. for Claude). Direct Anthropic SDK as worker is
+// future work — same constraint as Dream-Mode. See
+// `private/skills-design.md` and the dream-mode docs for the rationale.
+export const VisionConfigSchema = z
+  .object({
+    /** Default worker for image + PDF analysis. Format `<provider>/<modelId>`.
+     *  Worker model MUST have `image` capability; PDF use also requires
+     *  `pdf` capability (or set `pdfWorker` to a separate model that has it). */
+    worker: z.string().min(1).optional(),
+    /** Optional override for PDF dispatch only. Format `<provider>/<modelId>`.
+     *  When unset, PDF falls back to `worker`. Use case: cheap image-only
+     *  worker + a separate PDF-capable worker for cost control. */
+    pdfWorker: z.string().min(1).optional(),
+  })
+  .default({});
+export type VisionConfig = z.infer<typeof VisionConfigSchema>;
+
 // Skills budget. Mirrors OpenClaw's defaults — they've shipped 53 real
 // skills against these limits for months, so we treat them as known-
 // good rather than re-deriving. Configurable via config.yaml per
@@ -414,6 +451,7 @@ export const ConfigSchema = z.object({
   workspace: WorkspaceConfigSchema,
   resources: ResourcesConfigSchema,
   skills: SkillsConfigSchema,
+  vision: VisionConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
