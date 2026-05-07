@@ -20,6 +20,7 @@ in-process. The model never knows which path it's on.
 | `agents` | `spawn_subagent`, `spawn_subagents`, `subagent_status`, `subagent_result`, `subagent_list`, `agent_ask` | Agent-to-agent orchestration. `spawn_*` create sealed sub-sessions for delegated work; `subagent_*` poll/collect results; `agent_ask` posts a live question into another agent's existing session. See `agents.md`. |
 | `docs` | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation (this directory). |
 | `resources` | `resource_list`, `resource_test` | Discover and probe configured remote SSH targets. |
+| `skills` | `skill` | Activate a Markdown skill ("how to do task X with our tools"). Skills live at `~/.somora/skills/<slug>/SKILL.md` (agentskills.io format). The system prompt carries a name+description registry; the tool loads the full body on demand. See `skills.md`. |
 
 ## Definition shape
 
@@ -45,15 +46,21 @@ hint, … }` marker so a runaway tool can't blow context.
 
 ## Where tools are wired
 
-- Server-side in-process registry: `src/server/index.ts` — used by the
-  openai-compatible engine's agent-loop.
-- Standalone MCP server: `src/mcp/server.ts` — spawned per turn by
-  claude-cli and codex-cli.
+Two `ToolRegistry` instances exist by necessity:
 
-Both register the same set of tools (`memoryTools()`, `dreamTools()`,
-`timeTools()`, `webTools()`, `obsidianTools()`, `somoraDocsTools()`,
-`resourceTools()`, `fileTools()`, `agentTools()`, `execTools()`,
-`tmuxTools()`).
+- **In-process registry** in `src/server/index.ts` — used by the
+  openai-compatible engine's agent-loop and by HTTP debug endpoints
+  (`GET /tools`).
+- **MCP child-process registry** in `src/mcp/server.ts` — spawned per
+  turn by claude-cli and codex-cli (different process, separate
+  memory).
+
+Both populate from a single `registerAllTools(registry)` function in
+`src/tools/index.ts`. Adding a new tool bundle = ONE new
+`registerMany()` line there; both engine surfaces pick it up. The
+two registries are physically separate (process boundary) but the
+code that fills them is shared, so the effective tool set is
+identical across all three engines.
 
 ## Background reading
 
@@ -61,6 +68,7 @@ Both register the same set of tools (`memoryTools()`, `dreamTools()`,
 - `thinking.md` — cross-engine thinking depth control
 - `memory.md` — how the memory layer works
 - `resources.md` — SSH targets that file_* / exec / tmux dispatch to
+- `skills.md` — Markdown skill system + per-agent allow-list
 - `tmux.md` — shell-vs-TUI session patterns + capture/send modes
 - `research/tool-architecture.md` — comparative study of OpenClaw and
   hermes-agent that informed our design
