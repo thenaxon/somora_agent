@@ -4,7 +4,48 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-07 sehr-spät — Phase Y komplett funktional)
+## Wo wir stehen (Stand: 2026-05-08 ~00:15 — Phase Y verifiziert + Hans-Verifikations-Run)
+
+**HEAD: nach diesem Commit auf main, gepusht.** Phase Y.A.1 (`2ccde5d`) + Phase Y.A.2 (`da1c6b1`) live + cross-engine Hans-getestet, plus `pdf`-Capability config + openrouter-Provider-Setup + Test-PDF/Image im Workspace + Hans-Verifikations-Files für künftige Replays.
+
+### Hans-Verifikations-Run 2026-05-07 spätnacht
+
+User-driven 8-Modell × 7-Tests-Battery via TUI. Ergebnis: **claude-cli und codex-cli vollständig PASS, openai-compatible Engine-Pfad confirmed via Logs, kleinere Modelle nicht kompetent für Markdown-Test-Plan-Ausführung.**
+
+| Modell | Engine | Status |
+|---|---|---|
+| Opus, Sonnet, Haiku | claude-cli | ✅ alle 7 Tests PASS |
+| GPT-5.5 (fresh run) | codex-cli | ✅ 7/7 — das ist die wichtigste Bestätigung. Disproved meine Hypothese „codex-cli MCP image-Forwarding evtl. kaputt" |
+| Gemma4big | openai-compatible (omlx) | ⚠️ T1+T2+T5-T7 PASS, T3+T4 (file_read polymorph) FAIL mit ollama `TypeError: terminated` nach 8 min unter Multimodal-Content-Load. Mein vorher-curl-Smoke gegen gemma war erfolgreich (Falke-Beschreibung returned) → Server-Capacity-Issue, kein somora-Adapter-Bug. |
+| Haiku via openrouter (orhaiku) | openai-compatible (openrouter) | Pipeline confirmed via engine.init+turn logs, ABER Hans hat keine tool_use gefeuert (Small-Model-Pattern-Matching, siehe neue Memory) |
+| MiniMax27, Kimi25 | openai-compatible (openrouter) | nicht systematisch durchgeführt — Modelle pattern-matchen Konversation ohne Tool-Calls auszuführen |
+
+**Resultat-Files im Workspace:**
+- `~/somoraworkspace/2026-05-07-phase-y-tests.md` (Test-Plan, dokumentarisch)
+- `~/somoraworkspace/2026-05-07-phase-y-results.md` (alle Sektionen + Master-Tabelle am Ende)
+- `~/somoraworkspace/2026-05-07-phase-y-findings.md` (Hans's Bug-Notes — gemma file_read polymorph Failure)
+- `~/somoraworkspace/test-rechnung.pdf` + `rene_falcon_desert.png` als Test-Ressourcen (bleiben drin für künftige Replays)
+
+### Memory-Lessons heute hinzugefügt (kumulativ)
+
+- `feedback_tui_paste_burst.md` (Bug 10 Wurzel)
+- `feedback_tmux_control_keys.md` (Bug 11 Wurzel)
+- `feedback_dual_tool_registries.md` → `registerAllTools()` als Single Source
+- `feedback_test_plans_for_small_models.md` (heute spätnacht): Markdown-Test-Plans funktionieren nur mit Top-Tier-Modellen. Für Cross-Engine-Verifikation lieber curl-Smokes vom Coding-Agent — was ich heute selbst erfolgreich gemacht habe gegen alle 3 Engines in 5 min.
+
+### Lessons specifically für Phase Y
+
+**Codex-cli MCP image-Forwarding funktioniert** — das war meine größte offene Sorge bei Y.A.2 (siehe Vorab-Recherche zu MCP content union: `text/image/audio/resource`, kein `document`). GPT55-fresh-run 7/7 PASS hat das definitiv geklärt. PDF-Polymorph-Pfad geht trotz fehlendem MCP-document-Type weil wir PDFs server-side zu PNG-pages rendern und als image-content forwarden. Beide CLI-Engines passen das nativ durch.
+
+**Openai-compatible adapter image_url im tool_result** funktioniert für Cloud-Provider (Anthropic/OpenAI via openrouter). Bei lokalen Servern (ollama-style) je nach Server-Capacity unter Last fragil — aber das ist Server-Side, kein Adapter-Bug.
+
+### Pickup-Satz für nächste Session
+
+> "2026-05-08 ~00:15 — Phase Y verifiziert (claude-cli + codex-cli FULL PASS, openai-compatible Pipeline OK), HEAD auf main mit pdf-cap+openrouter-config+test-PDF+verifikations-Files. Tool-count 36. **Nächstes:** zwei Diskussions-Runden (Versionierung à la OpenClaw datum-basiert + Service-Mode-Workflow somora server start mit shared `~/.somora/`), dann Phase 4 (Memory/Dream/Obsidian Review). Phase Y.B (User-Attachments via TUI/web) bleibt für eigenen Tag offen, ist aber via Multimodal-Helper-Module schon vorbereitet."
+
+---
+
+## Vorheriger Stand (2026-05-07 sehr-spät — Phase Y.A.2 commit)
 
 **HEAD: `da1c6b1`** auf main (Push folgt). Phase Y.A.1 (analyze_file + file_read MIME guard, commit `2ccde5d`) UND Phase Y.A.2 (file_read polymorph cross-engine + PDF→PNG render, commit `da1c6b1`) sind live und end-to-end gegen real-Claude verifiziert.
 
