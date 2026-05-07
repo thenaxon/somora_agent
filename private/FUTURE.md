@@ -9,14 +9,14 @@ hier bleibt nur ein „done in commit X"-Marker.
 
 ## tmux-Effizienz — `wait_idle` / `since_last` / `tmux watch` (entdeckt 2026-05-06 via Hans's Bug-Report 2)
 
-**Status:** Feature-Requests, nicht gebaut. Aufgekommen während einer
-realen Tetris-Bau-Session in einem Claude-Code-tmux-Pane: über 30
-Capture-Calls, viel doppelt gelesener Content, nur die `exec sleep
-N`+`capture`-Kombi als Workaround.
+**Status:** `wait_idle` **DONE 2026-05-07** (commit `b2eb670`, Phase 1).
+Hans-verifiziert mit 4-Test-Battery (happy-path, TUI welcome, TUI
+Antwort, Timeout, already-idle). `since_last` und `watch` weiterhin
+offen — bei nächstem realen Bedarf nachreichen.
 
 Drei orthogonale Ideen, in steigender Komplexität:
 
-### 1. `tmux({action: "wait_idle"})`
+### 1. `tmux({action: "wait_idle"})` ✓ DONE
 
 Pollt den Pane bis sich der Content für N ms nicht mehr ändert (= TUI
 hat aufgehört zu tippen / Command ist fertig). Returnt dann den
@@ -803,12 +803,42 @@ Markdown-as-Source). Konvergente Evolution — gut zur Validierung.
 
 ---
 
-## Phase X — Skill-Handling (geplant für eine der nächsten großen Phasen, vorher diskutieren)
+## Phase X — Skill-Handling — SCAFFOLD + DOCS DONE 2026-05-07
 
-**Status: nicht designt, nur als Konzept reserviert.** Wir wollen das
-unbedingt bauen, aber nicht bevor wir uns über die offenen Fragen
-unterhalten haben. Der Eintrag dient als „nicht vergessen + hier sind
-die Diskussionspunkte".
+**Status: end-to-end implementiert + Hans-verifiziert + dokumentiert.**
+Diskussions-Runde + Recherche-Runde durchgegangen, alle 9 Fragen unten
+adressiert (im Design-Doc, nicht hier — die Liste bleibt als historische
+Referenz stehen). Implementierungs-Commits: `9d385aa`, `2b131c7`,
+`23be832`, `148938d`, `0e1d7f0`. Tool-count 35 (`skill` neu).
+
+**Was drin ist:**
+- `~/.somora/skills/<slug>/SKILL.md` — agentskills.io-Format mit
+  somora-Extras unter `metadata.somora.{when_to_use, requires.{bins,
+  config}, tags}`
+- `<available_skills>`-Registry im cached prefix (XML Standard, Compact-
+  Format-Fallback bei Overflow, OpenClaw-Defaults 150/18000/256k)
+- `skill({name})`-Tool für on-demand Body-Load mit Mutex zu `keys`,
+  klaren Errors, Body-Refresh per Aktivierung
+- Per-Agent Allow-List in `agent.yaml.skills`, leer/fehlend = alle
+- `registerAllTools()` Single-Source für Tool-Registrierung über alle
+  drei Engines hinweg
+- Doku: `private/skills-design.md` (Architektur-Rationale) +
+  `docs/skills.md` (User-Reference) + `docs/tools.md`-Update
+
+**Hans's Self-Bootstrap-Test 2026-05-07 abend:** Hans hat sich selbst
+einen `test-greeting`-Skill via `file_write` angelegt (aus der
+`skill`-Tool-Description abgeleitet), der erschien im nächsten Turn
+im Index, Hans hat ihn via `skill({name})` aktiviert und korrekt mit
+"Hallo Welt!" geantwortet. Self-Bootstrap-Capability bestätigt.
+
+**Phase X.1 — noch offen (organisch, nicht prefabriziert):**
+- Echte Real-World-Skills unter `~/.somora/skills/` — kommen wenn
+  Rene reale Workflows hat die er häufig macht und automatisieren will.
+  Bewusst NICHT von mir ad-hoc gebaut.
+
+---
+
+**Historischer Kontext** (vor dem Bauen geschrieben, bleibt als Referenz):
 
 **Was Skills sind** (aus `docs/research/tool-architecture.md` §3):
 Markdown-Files mit YAML-Frontmatter (AgentSkills.io-Spec), die dem
@@ -817,14 +847,12 @@ Schicht über den getypten Tools. OpenClaw hat 60+ Skills + ~30 Tools,
 Hermes hat skills via eigene `skills_list`/`skill_view` Tools mit
 Self-Improvement-Loop.
 
-**Warum jetzt aufs Radar:** wir haben aktuell ~25 Tools nach Phase 6b.5.
-Die Schwelle „lohnt sich" liegt laut der OpenClaw-Erfahrung bei 10+ —
-sind wir längst drüber. Plus Skills wären die natürliche Antwort auf
-Use-Cases die als Tool zu spezifisch wären (z.B. „obsidian daily-note
-erstellen mit unseren Konventionen", „payment-orchestration-vergleich
-formatieren wie wir's mögen" — Patterns, keine Funktionen).
+**Warum aufs Radar geholt:** wir hatten ~25 Tools nach Phase 6b.5
+(jetzt 35 nach Phase X). Die Schwelle „lohnt sich" liegt laut der
+OpenClaw-Erfahrung bei 10+. Skills sind die natürliche Antwort auf
+Use-Cases die als Tool zu spezifisch wären (Patterns, keine Funktionen).
 
-**Was vorher zu klären ist (Diskussions-Liste):**
+**Original-Diskussions-Liste (alle adressiert in `private/skills-design.md`):**
 
 1. **Skills ≠ Tools — wie streng?** OpenClaw zieht harte Trennung
    (Skill kennt Tool nur über Description, Skill macht keine Calls).

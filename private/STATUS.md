@@ -4,7 +4,79 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-06 spätnacht — Hans's Bug-Report 2 + 3 (TUI-Session-Lessons))
+## Wo wir stehen (Stand: 2026-05-07 abend — Phase 1 + Phase X komplett, Tool-Registry konsolidiert)
+
+**HEAD: `0e1d7f0`** auf main, gepusht. Heutige Commits in Reihenfolge:
+
+- `f293aec` — fix(tmux): suppress trailing M-Enter so multiline_safe with trailing \n actually submits (Hans's Bug 10 round 1)
+- `990c9f6` — fix(tmux): insert 100ms gap before final Enter so codex doesn't paste-detect the submit (Hans's Bug 10 round 2 — die echte Wurzel)
+- `88e0f7a` — feat(tmux): add `key` field for sending control/function keys symbolically (Hans's Bug 11 — Esc/C-c/C-u via JSON kaputt)
+- `b2eb670` — feat(tmux): add `wait_idle` action — pattern-free poll until pane stops changing (Phase 1 Quick-Win)
+- `9d385aa` — feat(skills): Phase X scaffold — parser + loader + filter + registry + skill tool
+- `2b131c7` — feat(skills): teach agents how to create skills via skill tool description
+- `23be832` — fix(mcp): register skillTools() on the MCP server too (Hans war blind aufs Skill-Tool)
+- `148938d` — refactor(tools): consolidate tool registration into single `registerAllTools()` (Drift strukturell unmöglich gemacht)
+- `0e1d7f0` — docs(skills): add `docs/skills.md`, update `docs/tools.md` for new toolset + registry consolidation
+
+### Bug-Block 2026-05-07 (Hans's Codex-Session-Test-Battery + Phase-X-Findings)
+
+Hans hat in echten codex+tmux-Sessions weitere Bugs gefunden, plus die Phase-X-Implementierung hat zwei Architektur-Lücken aufgedeckt. Alle gefixt.
+
+**Bug 10 — `multiline_safe:true` mit trailing \n submittet nicht in codex.** Zwei-stufige Diagnose:
+1. *Erste Vermutung:* stray M-Enter zwischen letztem Literal und Submit-Enter (Code-Bug). Fix `f293aec` hat das entfernt — aber das eigentliche Problem überlebt.
+2. *Echte Wurzel:* codex hat **Paste-Burst-Detection**. Zwei `tmux send-keys` via `&&` kommen innerhalb ms an, codex interpretiert das als bracketed paste, unterdrückt submit. Live verifiziert in codex 0.128.0. Fix `990c9f6`: `sleep 0.1` zwischen letztem Keystroke und finalem Enter (nur wenn was vorhergeht). Claude Code ist lenienter — gleiche Sequenz submittet dort auch ohne Gap. Verifiziert dass der Gap Claude Code nicht bricht.
+
+**Bug 11 — Control-Keys (Esc/C-c/C-u) erreichen TUI nicht via `keys`.** Diagnose: Bug nicht in tmux/codex-Interaktion (raw `\x1b` via `tmux send-keys -l` interruptet codex direkt), sondern in der **JSON-Pipeline**: LLMs können Control-Bytes in JSON nicht zuverlässig encodieren (`\x1b` ist kein gültiges JSON-Escape, `` schon, aber LLMs raten oft falsch oder schreiben Shell-Substitution-Tricks als Literaltext). Fix `88e0f7a`: neues `key`-Feld am tmux-Tool, mutually exclusive mit `keys`, akzeptiert symbolische tmux-Key-Namen (`Escape`, `C-c`, `C-u`, `F1`, `C-x C-c`). Validation `^[A-Za-z0-9_-]+(\s+...)*$` schließt Shell-Metacharacters aus. Geht ohne `-l` an `tmux send-keys` → echte Key-Events statt Literaltext. Hans-Verifikation alle 4 Tests grün (Esc-Interrupt, C-u-Buffer-Clear, Mutex-Check, Multi-Key-Sequence).
+
+**Phase 1 — `wait_idle` als neue tmux-Action.** Pattern-free Polling bis Pane für `idle_stable_ms` stabil bleibt. Wiederverwendet existierende Tunables. Result `{content, became_idle, ms}`. Selbsttest: 5×0.5s Output + 0.5s Stabilität → 3002ms (erwartet ~3000), continuous-tick mit 3s Timeout → 3204ms became_idle:false. Hans-Verifikation 4/4 grün. `since_last` und `watch` aus dem FUTURE-Eintrag bewusst NICHT mitgebaut, kommen bei realem Bedarf.
+
+**Phase X — Skills komplett scaffolded und end-to-end verifiziert.** Vorab Recherche-Runde (drei parallele Agents über claude-code-source, OpenClaw, agentskills.io+Hermes) ergab erstaunlich konvergente Industry-Patterns. User-Diskussion zu allen 9 FUTURE-Fragen gelaufen. Design-Doc unter `private/skills-design.md` lockschrieben. Implementierung:
+- `src/skills/load.ts` — Parser + Loader + `requires.bins`/`requires.config`-Check via `which` und Config-Lookup
+- `src/skills/registry.ts` — Per-Agent-Filter + XML-Renderer mit Compact-Format-Fallback bei Overflow (Limits OpenClaw-Defaults: 150 Skills / 18 000 chars / 256 KB)
+- `src/tools/skill/` — `skill({name})`-Tool, Body-Refresh per Aktivierung, klare Error-Wortlaute
+- `src/persona/loader.ts` — `agent.yaml.skills`-Allow-List durchgereicht als `Persona.skillsAllowList`
+- `src/server/run-turn.ts` — Registry-Inject in cached prefix zwischen `persona.systemPrompt` und ephemeral Memory
+- `src/config/types.ts` — `SkillsConfigSchema` mit Tunables
+
+End-to-end-Test live durch Hans: Skill via `file_write` selbst angelegt (Self-Bootstrap aus Tool-Description), im nächsten Turn im `<available_skills>`-Block sichtbar, via `skill({name})` aktiviert, korrekt mit "Hallo Welt!" geantwortet. Phase X.1 Schritt 6 (echte Skills) bleibt bewusst offen — kommt organisch wenn echte Workflows als Skill aufploppen.
+
+**Bonus-Refactor — Dual-Registry-Drift strukturell unmöglich gemacht.** Phase-X-Scaffold hat aufgedeckt dass somora ZWEI ToolRegistry-Sites hat (`server/index.ts` für openai-compatible+HTTP, `mcp/server.ts` für claude-cli/codex-cli) und dass ich die `skillTools()`-Registrierung in nur einer eingetragen hatte → claude-cli sah's nicht. Fix in zwei Stufen:
+1. `23be832`: skillTools auch im MCP-Registry (akute Lücke schließen)
+2. `148938d`: Single `registerAllTools(registry)` in `src/tools/index.ts`, beide Sites rufen das. Process-Trennung bleibt (MCP läuft als Child pro Turn), aber der Code der die Registries füllt ist jetzt einer. Memory `feedback_dual_tool_registries.md` umgeschrieben — beschreibt jetzt die saubere Architektur statt der Stolperfalle.
+
+**Docs-Update (`0e1d7f0`):**
+- `docs/skills.md` neu (224 Zeilen, user-facing Reference: Mental Model, Schema, Layer-Trennung, agent.yaml-Allow-List, Config)
+- `docs/tools.md` — neuer Skills-Toolset-Eintrag, "Where tools are wired"-Sektion auf neue Architektur umgeschrieben
+
+### Tool-Count: 35
+
+Vorher 34, jetzt 35 (`skill` neu). Die `tmux`-Action-Liste hat eine Action mehr (`wait_idle`) plus ein neues Input-Feld (`key`), aber bleibt ein Tool — unverändert in der Count-Statistik.
+
+### Memory-Lessons heute hinzugefügt
+
+Drei neue feedback-Memorys die nicht-offensichtliche Gotchas zementieren:
+- `feedback_tui_paste_burst.md` — coding-TUIs (codex strict, claude-code lenient) detektieren rapid input bursts als pastes; `sleep 0.1` nur vor finalem Enter, niemals vor embedded M-Enter
+- `feedback_tmux_control_keys.md` — Agents können raw control bytes nicht zuverlässig in JSON encoden; symbolische tmux-Key-Namen als separates Feld neben Text-Input ist die robuste Antwort
+- `feedback_dual_tool_registries.md` — somora's zwei ToolRegistry-Instanzen werden beide aus `registerAllTools()` befüllt; einzelne Registrierung ist ein bug-Pattern das jetzt strukturell unmöglich ist
+
+### Roadmap-Memory aktualisiert
+
+`project_roadmap_2026-05-07.md` — User-bestätigte Reihenfolge:
+1. ~~tmux quick-wins~~ DONE
+2. ~~Phase X Skills~~ SCAFFOLD + DOCS DONE; Schritt 6 (echte Skills) bewusst offen
+3. Phase Y Vision (nach Skills, schon als FUTURE-Eintrag)
+4. Memory/Dream/Obsidian Review (Konzept-Review-Phase, hier hängen Backlinks + Dream-Worker-Priorisierung als Sub-Themen)
+5. Restlicher Backlog
+
+**Deferred:** Marathon-Turn TUI-Display-Gap — User-Hypothese vom 2026-05-07: war wahrscheinlich nur Optik/Scroll, nicht echter Bug. Wartet bis Wiederauftreten.
+
+### Pickup-Satz für nächste Session
+
+> "2026-05-07 war ein voller Tag: zwei Bug-Fixes (Bug 10 multiline_safe paste-burst, Bug 11 control-keys via JSON), Phase 1 (`tmux wait_idle`) und Phase X (Skills) komplett scaffolded + Hans-verifiziert + dokumentiert (`docs/skills.md`). Plus Tool-Registry-Konsolidierung in single `registerAllTools()` damit Engine-Pfade nicht mehr drift'en können. HEAD `0e1d7f0` auf main gepusht. Tool-count 35. **Nächstes:** Phase Y (Vision/Multimodal) wenn User soweit ist, oder Phase X.1 Schritt 6 wenn ein realer Workflow als Skill auftaucht. Marathon-Gap als deferred markiert (User-Hypothese: war wohl Scroll-Optik, kein echter Bug)."
+
+---
+
+## Vorheriger Stand (2026-05-06 spätnacht — Hans's Bug-Report 2 + 3 (TUI-Session-Lessons))
 
 **HEAD: 53d0307** auf main. Heutige Spätnacht-Commits über den TUI-
 Catchup hinaus:
