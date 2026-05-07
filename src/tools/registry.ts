@@ -13,6 +13,7 @@
 import { logger } from '../server/logger.ts';
 import {
   DEFAULT_MAX_RESULT_SIZE_CHARS,
+  isMultimodalToolResult,
   type ToolContext,
   type ToolDefinition,
   type ToolResult,
@@ -118,6 +119,21 @@ export class ToolRegistry {
     const start = Date.now();
     try {
       const data = await tool.handler(parsed.data, ctx);
+      // Multimodal results (image / document / mixed content blocks)
+      // skip the JSON-stringify size cap — image bytes would explode it
+      // unhelpfully. Per-modality byte caps are enforced upstream by
+      // the loader (`src/multimodal/load.ts`).
+      if (isMultimodalToolResult(data)) {
+        logger.info({
+          msg: 'tool.invoked',
+          name,
+          agent: ctx.agent,
+          ms: Date.now() - start,
+          multimodal: true,
+          blocks: data.contentBlocks.length,
+        });
+        return { ok: true, contentBlocks: data.contentBlocks };
+      }
       const cap = tool.maxResultSizeChars ?? DEFAULT_MAX_RESULT_SIZE_CHARS;
       const capped = enforceResultCap(data, cap);
       logger.info({

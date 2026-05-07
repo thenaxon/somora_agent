@@ -30,6 +30,11 @@ export function somoraMemoryServerSpawn(args: {
   agent: string;
   session?: string;
   subagentDepth?: number;
+  /** Active model for this turn as `<provider>/<modelId>`. The MCP
+   *  child surfaces this via ToolContext.activeModel so capability-
+   *  gated tools (file_read polymorph) can decide whether to return
+   *  multimodal content blocks. */
+  activeModelRef?: string;
 }): {
   command: string;
   args: string[];
@@ -48,6 +53,7 @@ export function somoraMemoryServerSpawn(args: {
       ...(args.subagentDepth !== undefined && args.subagentDepth > 0
         ? { SOMORA_SUBAGENT_DEPTH: String(args.subagentDepth) }
         : {}),
+      ...(args.activeModelRef ? { SOMORA_ACTIVE_MODEL: args.activeModelRef } : {}),
       // SOMORA_HOST/PORT are inherited via filterEnv (the parent server
       // process has them), so spawn_subagent's HTTP-fallback can find
       // the localhost endpoint. Belt-and-suspenders explicit:
@@ -80,6 +86,8 @@ export function somoraMemoryCodexFlags(args: {
   agent: string;
   session?: string;
   subagentDepth?: number;
+  /** Active model for this turn — see somoraMemoryServerSpawn. */
+  activeModelRef?: string;
   /**
    * Per-MCP-tool-call timeout in seconds. Maps to codex's
    * `mcp_servers.<name>.tool_timeout_sec` config key. Codex's hidden
@@ -109,6 +117,9 @@ export function somoraMemoryCodexFlags(args: {
   }
   if (args.subagentDepth !== undefined && args.subagentDepth > 0) {
     envEntries.push(`SOMORA_SUBAGENT_DEPTH = ${tomlString(String(args.subagentDepth))}`);
+  }
+  if (args.activeModelRef) {
+    envEntries.push(`SOMORA_ACTIVE_MODEL = ${tomlString(args.activeModelRef)}`);
   }
   const envToml = `{ ${envEntries.join(', ')} }`;
 

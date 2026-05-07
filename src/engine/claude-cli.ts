@@ -192,6 +192,7 @@ export const claudeCliEngine: AgentEngine = {
               agent,
               session,
               subagentDepth: input.subagentDepth,
+              activeModelRef: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
             }),
           },
           canUseTool: somoraToolGate,

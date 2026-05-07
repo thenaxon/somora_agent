@@ -82,32 +82,50 @@ When the future `exec` tool lands, its description will mirror this in
 reverse: "use file_* for read/write/patch/search; exec is for things
 the file tools can't do (run a build, start a server, etc.)".
 
-## Multimodal: `analyze_file` + `file_read` MIME guard
+## Multimodal: `file_read` polymorph + `analyze_file`
 
-`file_read` is text-only. When pointed at a binary file (PNG, JPEG,
-WebP, GIF, PDF), it detects the magic bytes up-front and errors with
-a clear pointer to `analyze_file`:
+### `file_read` is polymorphic — text, image, or PDF
 
-```
-file_read: '/path/to/screenshot.png' is image/png — file_read returns
-text only. Use analyze_file({path:"/path/to/screenshot.png"}) to
-dispatch this to the configured vision worker and get a description
-back.
-```
+When pointed at a local file, `file_read` detects the format via magic
+bytes and returns one of three things based on the file kind AND the
+active model's capabilities:
 
-`analyze_file` dispatches the file to a configured **vision worker
-model** (separate from the agent's main model, configured globally in
-`config.vision.worker` and optional `config.vision.pdfWorker`) and
-returns the worker's text analysis. The agent never sees raw image
-bytes — only the description. Use it for:
+| Detected | Active model has `image` cap? | Returned |
+|---|---|---|
+| Text | n/a | text content (paginated, 200k char cap) |
+| Image (PNG/JPEG/WebP/GIF) | yes | image content block — model sees it directly |
+| Image | no | error pointing at `analyze_file` |
+| PDF | yes | each page rendered to PNG, returned as image-array (max 20 pages) |
+| PDF | no | error pointing at `analyze_file` |
+| Unknown binary | n/a | error with hint to inspect via `exec` first |
 
-- **Capability gap**: main model is text-only (e.g., a local omlx
-  text-only LLM), but you still need to reason about an image/PDF.
-- **Token thrift**: a 1024×1024 image is ~1300 tokens in main
-  context. A haiku-worker description is usually < 200 tokens.
-- **Targeted questions**: `analyze_file({path, prompt: "Which row of
-  the table has the highest value?"})` — the worker focuses, the agent
-  gets a sharp answer.
+**PDF → PNG-page render.** MCP's tool-result content union has no
+`document` type, so the polymorph rasterizes each page server-side
+and ships them as `image` blocks. The model OCRs the page images
+visually — same approach Anthropic uses internally for native PDF.
+Token cost is real: ~1300 tokens per page on Anthropic, so a
+30-page PDF costs ~40k tokens. For long PDFs prefer `analyze_file`.
+
+**Capability gating** uses the active turn's resolved model. somora
+passes the model through `ToolContext.activeModel` — set in-process
+by the server's run-turn, set via `SOMORA_ACTIVE_MODEL` env var for
+the MCP child process when claude-cli/codex-cli spawn it. Models
+declare capabilities in their provider config (`capabilities:
+[text, image, pdf, reasoning]`). file_read polymorph requires the
+`image` capability for both image AND pdf paths because both deliver
+as images post-rasterization. The `pdf` capability is meaningful for
+`analyze_file` (which can talk to providers with native PDF support).
+
+### `analyze_file` — the worker dispatcher
+
+For when file_read polymorph isn't right:
+- Active main model lacks `image` capability (text-only LLM), but you
+  still need to reason about a file
+- Token thrift — a 1024×1024 image is ~1300 tokens in main context;
+  a haiku-worker description is usually < 200 tokens
+- Targeted questions — `analyze_file({path, prompt: "Which row of the
+  table has the highest value?"})` lets the worker focus, the agent
+  gets a sharp answer
 
 ```yaml
 # config.yaml — global vision worker config
@@ -124,15 +142,27 @@ declarations clearly in the log — but does NOT hard-fail, so an
 image-only worker is still usable for image analysis (PDF requests
 will error per call instead).
 
-**Caps:** 5 MB per image, 32 MB / 100 pages per PDF (matches the
-upstream provider ceilings).
+**Caps:** 5 MB per image, 32 MB / 100 pages per PDF (matches upstream
+provider ceilings). PDF render: max 20 pages by default, scale 1.5×
+(configurable in code).
 
-**Future work — Phase Y.A.2:** `file_read` polymorph. Today an image-
-capable main model (Claude, GPT-5) sees images via `analyze_file`'s
-worker description, not directly. Direct content-block delivery into
-main context requires the tool-result type contract to support image
-content blocks across MCP (claude-cli/codex-cli) and the openai-
-compatible adapter — that's a careful refactor saved for next session.
+**Engine support:**
+- claude-cli (Anthropic) — full polymorph support; verified live with
+  Opus describing real images and reading rendered PDFs accurately
+- codex-cli (OpenAI) — same MCP-image-content path; structurally
+  identical, expected to work
+- openai-compatible (omlx, openrouter, ollama) — works for vision-
+  capable models (gemma-vision, gpt-5 via openrouter, etc.); local
+  servers vary in tool-result image-content support — failures
+  surface as explicit API errors
+
+**Future work — Phase Y.B:** user-uploaded attachments via TUI/web
+client. The multimodal helper modules in `src/multimodal/` are
+designed to feed both the agent-driven path (file_read / analyze_file)
+and the user-driven path (chat-message attachments). When Y.B lands,
+PDFs sent via the user-message route will use Anthropic's native
+`document` block and OpenAI's `input_file` content for full-quality
+delivery without rasterization.
 
 ## Limits
 

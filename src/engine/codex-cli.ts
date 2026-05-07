@@ -225,6 +225,7 @@ export const codexCliEngine: AgentEngine = {
         agent,
         session,
         subagentDepth: input.subagentDepth,
+        activeModelRef: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
       }),
     );
     // Disable all of codex's built-in tools (DECISION #23 — engine-agnostic

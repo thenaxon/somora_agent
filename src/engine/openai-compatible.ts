@@ -487,22 +487,69 @@ export const openAiCompatibleEngine: AgentEngine = {
               ),
             ),
           ]);
-          const outputText = result.ok
-            ? JSON.stringify(result.data)
-            : (result.error ?? 'tool failed');
-          yield {
-            kind: 'tool_result',
-            ts: ts(),
-            engine: ENGINE,
-            callId: call.id,
-            output: result.ok ? result.data : null,
-            ...(result.ok ? {} : { error: result.error ?? 'tool failed' }),
-          };
-          loopMessages.push({
-            role: 'tool',
-            tool_call_id: call.id,
-            content: outputText,
-          } as ChatMessage);
+          // Multimodal results (file_read polymorph on image/PDF) carry
+          // contentBlocks instead of a JSON-able payload. OpenAI's API
+          // accepts a content-array in tool messages with text and
+          // image_url entries — local openai-compatible servers (omlx,
+          // ollama) may reject this; the failure surfaces as an API
+          // error visible to the operator. The model side: gpt-5+,
+          // openrouter-claude, gemma-vision all accept it.
+          const isMultimodalOk = result.ok && result.contentBlocks !== undefined;
+          if (isMultimodalOk) {
+            const blocks = result.contentBlocks!;
+            const contentArray = blocks.map((b) => {
+              if (b.type === 'image') {
+                return {
+                  type: 'image_url' as const,
+                  image_url: {
+                    url: `data:${b.source.mediaType};base64,${b.source.data}`,
+                  },
+                };
+              }
+              if (b.type === 'text') {
+                return { type: 'text' as const, text: b.text };
+              }
+              return {
+                type: 'text' as const,
+                text: `[document content block (${b.source.mediaType}) — not delivered as inline content; use analyze_file]`,
+              };
+            });
+            yield {
+              kind: 'tool_result',
+              ts: ts(),
+              engine: ENGINE,
+              callId: call.id,
+              output: {
+                multimodal: true,
+                blocks: blocks.length,
+                kinds: blocks.map((b) => b.type),
+              },
+            };
+            loopMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              // The OpenAI SDK type accepts string | ContentArray for tool
+              // messages; ts narrows tightly here so we cast.
+              content: contentArray,
+            } as ChatMessage);
+          } else {
+            const outputText = result.ok
+              ? JSON.stringify(result.data)
+              : (result.error ?? 'tool failed');
+            yield {
+              kind: 'tool_result',
+              ts: ts(),
+              engine: ENGINE,
+              callId: call.id,
+              output: result.ok ? result.data : null,
+              ...(result.ok ? {} : { error: result.error ?? 'tool failed' }),
+            };
+            loopMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: outputText,
+            } as ChatMessage);
+          }
         }
 
         // Defensive: if we hit the round cap with tools still pending, log

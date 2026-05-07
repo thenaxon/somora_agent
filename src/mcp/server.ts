@@ -17,6 +17,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ZodObject, ZodRawShape } from 'zod';
 import { loadConfig } from '../config/loader.ts';
+import { resolveAnyRef } from '../config/types.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
@@ -50,14 +51,27 @@ async function main(): Promise<void> {
 
   // Optional sub-context env hooks set by the engine launcher per turn.
   // SOMORA_SESSION lets spawn_subagent record `parent_session`; the
-  // depth feeds the recursion cap.
+  // depth feeds the recursion cap. SOMORA_ACTIVE_MODEL surfaces the
+  // turn's resolved model so capability-gated tools (file_read
+  // polymorph) can check `image`/`pdf` capability before deciding
+  // whether to return multimodal content blocks.
   const session = process.env.SOMORA_SESSION || undefined;
   const subagentDepth = parseInt(process.env.SOMORA_SUBAGENT_DEPTH ?? '', 10);
+  const activeModelRef = process.env.SOMORA_ACTIVE_MODEL || undefined;
+  const activeModel = activeModelRef ? resolveAnyRef(config, activeModelRef) ?? undefined : undefined;
+  if (activeModelRef && !activeModel) {
+    logger.warn({
+      msg: 'mcp.active_model_unresolved',
+      ref: activeModelRef,
+      hint: 'capability-gated tools will treat the model as text-only',
+    });
+  }
 
   const ctx: ToolContext = {
     agent,
     ...(session ? { session } : {}),
     ...(Number.isFinite(subagentDepth) && subagentDepth > 0 ? { subagentDepth } : {}),
+    ...(activeModel ? { activeModel } : {}),
     getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
     config,
   };
@@ -85,6 +99,34 @@ async function main(): Promise<void> {
           return {
             content: [{ type: 'text', text: result.error ?? 'tool failed' }],
             isError: true,
+          };
+        }
+        // Multimodal results forward as MCP-spec content array. MCP
+        // supports `text` and `image` content types in tool results;
+        // claude-agent-sdk and codex-cli pass these through to the
+        // model natively. PDFs come in as image-blocks (rasterized
+        // pages) because MCP has no `document` content type — the
+        // file_read polymorph handles the rasterization upstream.
+        if (result.contentBlocks) {
+          return {
+            content: result.contentBlocks.map((b) => {
+              if (b.type === 'image') {
+                return {
+                  type: 'image' as const,
+                  data: b.source.data,
+                  mimeType: b.source.mediaType,
+                };
+              }
+              if (b.type === 'document') {
+                // Should not happen post-rasterization; defensive
+                // fallback to text describing the gap.
+                return {
+                  type: 'text' as const,
+                  text: `[document ${b.source.mediaType} — MCP cannot forward natively, this is a bug; tool should rasterize]`,
+                };
+              }
+              return { type: 'text' as const, text: b.text };
+            }),
           };
         }
         return {

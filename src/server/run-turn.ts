@@ -273,6 +273,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       subagentDepth,
       getMemoryManager: () => getMemoryManager(agent, { config: deps.config.memory }),
       config: deps.config,
+      // Surface the resolved model so capability-gated tools (file_read
+      // polymorph) can check `image`/`pdf` capability before deciding
+      // whether to return content blocks. Stays consistent across the
+      // whole turn — even tool calls happening late in the loop see
+      // the same active model.
+      activeModel: resolvedModel,
     };
     const availableTools = await deps.tools.listAvailable(toolCtx);
     const toolInvoker = {

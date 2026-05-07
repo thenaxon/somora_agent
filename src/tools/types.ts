@@ -15,8 +15,9 @@
 //                      registry catches and converts to ToolResult.
 
 import type { z } from 'zod';
-import type { Config } from '../config/types.ts';
+import type { Config, ResolvedModel } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
+import type { ContentBlock } from '../multimodal/blocks.ts';
 
 export interface ToolContext {
   /** Agent name owning this invocation. Memory tools scope by this. */
@@ -50,12 +51,52 @@ export interface ToolContext {
    * mutate from a tool handler.
    */
   config: Config;
+  /**
+   * The model the active turn is running against. Used by capability-
+   * gated tools (e.g., file_read polymorph checks for `image`/`pdf`
+   * before returning a multimodal result). Populated by run-turn.ts
+   * for in-process engines and by the MCP child via the
+   * SOMORA_ACTIVE_MODEL env var. Optional because some legacy contexts
+   * (tests, debug HTTP `/tools` invokes) don't have a turn.
+   */
+  activeModel?: ResolvedModel;
+}
+
+/**
+ * Special handler return shape for tools that produce native content
+ * blocks (image, document, mixed) instead of a plain JSON-able object.
+ * Detected by the registry's `invoke()` and forwarded as content
+ * blocks through MCP / openai-compatible adapter without going through
+ * `JSON.stringify` — image bytes would be unusable otherwise.
+ *
+ * The `_somoraMultimodal` brand is the discriminator; tools opt-in by
+ * returning this shape. Existing tools continue returning regular
+ * objects (passing through the legacy `data` path).
+ */
+export interface MultimodalToolResult {
+  _somoraMultimodal: true;
+  contentBlocks: ContentBlock[];
+}
+
+export function isMultimodalToolResult(v: unknown): v is MultimodalToolResult {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    '_somoraMultimodal' in v &&
+    (v as { _somoraMultimodal?: unknown })._somoraMultimodal === true
+  );
 }
 
 export interface ToolResult<T = unknown> {
   ok: boolean;
-  /** Present when ok=true. */
+  /** Present when ok=true and the tool returned a regular JSON-able
+   *  payload. Mutually exclusive with `contentBlocks`. */
   data?: T;
+  /** Present when ok=true and the tool returned multimodal content
+   *  (image/document/mixed). Forwarded as MCP image content blocks for
+   *  claude-cli/codex-cli, and as OpenAI-style image content for the
+   *  in-process openai-compatible engine. */
+  contentBlocks?: ContentBlock[];
   /** Present when ok=false. Human-readable, also goes to the LLM as
    *  tool_result error text. */
   error?: string;

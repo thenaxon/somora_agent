@@ -13,10 +13,86 @@
 // writable so the agent can self-edit.
 
 import { z } from 'zod';
+import type { ContentBlock } from '../../multimodal/blocks.ts';
 import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
-import type { ToolDefinition } from '../types.ts';
+import type { MultimodalToolResult, ToolContext, ToolDefinition } from '../types.ts';
 import { localList, localPatch, localRead, localSearch, localWrite } from './local.ts';
 import { remoteList, remotePatch, remoteRead, remoteSearch, remoteWrite } from './remote.ts';
+
+// ─────────────────────────────────────────────────────────────────────
+// Multimodal helpers for file_read polymorph (image, PDF)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Load an image file and wrap as a MultimodalToolResult. Capability-
+ *  gates on the active model — if the model can't see images, error
+ *  with a pointer to analyze_file. */
+async function readImageAsContentBlock(
+  absolutePath: string,
+  mimeType: string,
+  ctx: ToolContext,
+): Promise<MultimodalToolResult> {
+  if (!ctx.activeModel || !ctx.activeModel.model.capabilities.includes('image')) {
+    throw new Error(
+      `file_read: '${absolutePath}' is ${mimeType} but the active model ` +
+        `${ctx.activeModel ? `'${ctx.activeModel.providerName}/${ctx.activeModel.modelId}'` : '(unknown)'} ` +
+        `lacks 'image' capability. Use analyze_file({path:"${absolutePath}"}) ` +
+        `to dispatch to the configured vision worker, or switch to a ` +
+        `vision-capable model.`,
+    );
+  }
+  const { loadAttachment } = await import('../../multimodal/load.ts');
+  const att = await loadAttachment(absolutePath);
+  return {
+    _somoraMultimodal: true,
+    contentBlocks: [
+      {
+        type: 'image',
+        source: {
+          kind: 'base64',
+          mediaType: att.mime.mimeType,
+          data: att.bytes.toString('base64'),
+        },
+      },
+    ],
+  };
+}
+
+/** Render a PDF to per-page PNG images, return as MultimodalToolResult.
+ *  MCP's tool-result content union has no `document` type, so PDFs
+ *  reach the model only as image-arrays. Caps at 20 pages by default. */
+async function readPdfAsContentBlocks(
+  absolutePath: string,
+  ctx: ToolContext,
+): Promise<MultimodalToolResult> {
+  if (!ctx.activeModel || !ctx.activeModel.model.capabilities.includes('image')) {
+    throw new Error(
+      `file_read: '${absolutePath}' is a PDF but the active model ` +
+        `${ctx.activeModel ? `'${ctx.activeModel.providerName}/${ctx.activeModel.modelId}'` : '(unknown)'} ` +
+        `lacks 'image' capability (PDFs are rendered to PNG-pages and ` +
+        `delivered as images). Use analyze_file({path:"${absolutePath}"}) ` +
+        `to dispatch to the configured vision worker, or switch to a ` +
+        `vision-capable model.`,
+    );
+  }
+  const { renderPdfToPngs } = await import('../../multimodal/pdf-render.ts');
+  const result = await renderPdfToPngs(absolutePath, { maxPages: 20, scale: 1.5 });
+  if (result.pages.length === 0) {
+    throw new Error(`file_read: PDF '${absolutePath}' produced no renderable pages.`);
+  }
+  const blocks: ContentBlock[] = result.pages.map((data) => ({
+    type: 'image',
+    source: { kind: 'base64', mediaType: 'image/png', data },
+  }));
+  if (result.truncated) {
+    blocks.unshift({
+      type: 'text',
+      text:
+        `[file_read: PDF has ${result.totalPages} pages; rendered first ${result.pages.length} as images. ` +
+        `Use analyze_file for full-document text analysis, or read further pages with a tighter range.]`,
+    });
+  }
+  return { _somoraMultimodal: true, contentBlocks: blocks };
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Shared
@@ -80,15 +156,24 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
   name: 'file_read',
   toolset: 'file',
   description:
-    'Read a text file from the local filesystem or a remote resource. Relative paths resolve ' +
-    'against the agent\'s workspace dir; absolute paths pass through. Returns content plus ' +
-    'line/byte counts. Use offset+limit to page through large files (single read caps at 200k chars). ' +
+    'Read a file from the local filesystem or a remote resource. Polymorphic — text files ' +
+    'return content paginated; images and PDFs return as native content blocks the model ' +
+    'can see directly (when the active model has `image` capability). Relative paths resolve ' +
+    'against the agent\'s workspace dir; absolute paths pass through. Use offset+limit to ' +
+    'page through large text files (single read caps at 200k chars). ' +
     'Use this INSTEAD of running `cat`, `head`, or `tail` via exec — file_read paginates safely, ' +
     'enforces the read-blacklist, and never gets caught by shell quoting. ' +
     '\n\n' +
-    'Text only — for local images (PNG/JPEG/WebP/GIF) or PDFs, file_read detects the binary ' +
-    'signature and errors with a pointer to `analyze_file`, the multimodal companion that ' +
-    'dispatches to a configured vision worker and returns a text description.',
+    'Multimodal behavior (local files only):\n' +
+    '  - PNG / JPEG / WebP / GIF → returned as image content block. Active model must ' +
+    'have `image` capability; if not, you get an error pointing at `analyze_file`.\n' +
+    '  - PDF → each page rendered to PNG (max 20 pages by default), returned as ' +
+    'image-array. Same `image`-capability gate. Token cost: ~1300 tokens per page on ' +
+    'Anthropic models — for large PDFs prefer `analyze_file` (dispatches to a vision ' +
+    'worker model and returns a text description).\n' +
+    '  - Unknown binary → error with a hint to inspect with `exec` first.\n\n' +
+    'When the active model lacks `image` capability OR you prefer a token-cheap text ' +
+    'description over raw bytes in context, use `analyze_file` instead.',
   inputSchema: ReadInput,
   jsonSchema: {
     type: 'object',
@@ -104,23 +189,27 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
   maxResultSizeChars: 250_000,
   async handler(input, ctx) {
     if (input.target === 'local') {
-      // MIME-pre-check for local reads. file_read is text-only — when
-      // an agent points it at a PNG/JPEG/PDF it would historically
-      // return binary garbage decoded as UTF-8. Now: detect via magic
-      // bytes and reject early with a clear pointer to analyze_file
-      // (the multimodal companion). Remote reads skip this for now —
-      // would require an extra SFTP round-trip; v2 work.
+      // MIME-pre-check for local reads. Three branches based on
+      // detected file kind:
+      //   - text → existing pagination logic
+      //   - image → return MultimodalToolResult with image content
+      //     block (active model needs `image` capability — error with
+      //     pointer to analyze_file otherwise)
+      //   - pdf → render pages to PNG, return image-array
+      //     (MultimodalToolResult). Same capability gate.
+      //   - unknown → clear error explaining the situation
+      // Remote reads skip this for now — would require an extra SFTP
+      // round-trip + remote PDF rendering; v2 work.
       try {
         const { detectMimeFromPath } = await import('../../multimodal/mime.ts');
         const { resolveLocalPath } = await import('./policy.ts');
         const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config);
         const mime = await detectMimeFromPath(absolute);
-        if (mime.kind === 'image' || mime.kind === 'pdf') {
-          throw new Error(
-            `file_read: '${input.path}' is ${mime.mimeType} — file_read returns text only. ` +
-              `Use analyze_file({path:"${input.path}"}) to dispatch this to the configured ` +
-              `vision worker and get a description back.`,
-          );
+        if (mime.kind === 'image') {
+          return await readImageAsContentBlock(absolute, mime.mimeType, ctx);
+        }
+        if (mime.kind === 'pdf') {
+          return await readPdfAsContentBlocks(absolute, ctx);
         }
         if (mime.kind === 'unknown') {
           throw new Error(
