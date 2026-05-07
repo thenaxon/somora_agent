@@ -46,10 +46,12 @@ const DEFAULT_IDLE_STABLE_MS = 500;
 const TmuxInput = z
   .object({
     action: z
-      .enum(['create', 'send', 'capture', 'list', 'kill'])
+      .enum(['create', 'send', 'capture', 'wait_idle', 'list', 'kill'])
       .describe(
         'create (new session) | send (keys to existing session) | capture (read pane content) | ' +
-          'list (sessions on target) | kill (remove session).',
+          'wait_idle (poll until pane content stops changing — pattern-free; for "wait until ' +
+          'TUI/command is done" without guessing a marker) | list (sessions on target) | ' +
+          'kill (remove session).',
       ),
     target: z
       .string()
@@ -152,9 +154,9 @@ const TmuxInput = z
       .max(10_000)
       .default(DEFAULT_IDLE_STABLE_MS)
       .describe(
-        `capture only, wait_mode=idle — how many ms of unchanged content count as "stable". ` +
-          `Default ${DEFAULT_IDLE_STABLE_MS}ms. Lower = match faster but might catch a brief ` +
-          `pause mid-render; higher = waits longer for true idle.`,
+        `capture wait_mode=idle / wait_idle — how many ms of unchanged content count as ` +
+          `"stable". Default ${DEFAULT_IDLE_STABLE_MS}ms. Lower = match faster but might catch ` +
+          `a brief pause mid-render; higher = waits longer for true idle.`,
       ),
     wait_timeout_ms: z
       .number()
@@ -163,10 +165,11 @@ const TmuxInput = z
       .max(MAX_WAIT_TIMEOUT_MS)
       .default(DEFAULT_WAIT_TIMEOUT_MS)
       .describe(
-        `capture only — max wait when wait_pattern is set. Default ${DEFAULT_WAIT_TIMEOUT_MS}ms ` +
-          `(${DEFAULT_WAIT_TIMEOUT_MS / 1000}s); max ${MAX_WAIT_TIMEOUT_MS}ms ` +
-          `(${MAX_WAIT_TIMEOUT_MS / 60_000} min) for slow tools. If the pattern doesn't appear ` +
-          `in time, capture returns matched_pattern=false and the content as-is.`,
+        `capture (with wait_pattern) / wait_idle — max wall time to wait. Default ` +
+          `${DEFAULT_WAIT_TIMEOUT_MS}ms (${DEFAULT_WAIT_TIMEOUT_MS / 1000}s); max ` +
+          `${MAX_WAIT_TIMEOUT_MS}ms (${MAX_WAIT_TIMEOUT_MS / 60_000} min) for slow tools. ` +
+          `On timeout, capture returns matched_pattern=false / wait_idle returns ` +
+          `became_idle=false, both with the latest content as-is.`,
       ),
     include_ansi: z
       .boolean()
@@ -223,6 +226,19 @@ interface CaptureResult {
   ms: number;
   error?: string;
 }
+interface WaitIdleResult {
+  action: 'wait_idle';
+  ok: boolean;
+  target: string;
+  name: string;
+  /** Final pane content snapshot (after stability was reached or timeout fired). */
+  content: string;
+  /** True if the pane went stable for `idle_stable_ms` before max_wait_ms expired. */
+  became_idle: boolean;
+  /** Total wall time the action waited, including the final stability window. */
+  ms: number;
+  error?: string;
+}
 interface ListResult {
   action: 'list';
   ok: boolean;
@@ -238,7 +254,13 @@ interface KillResult {
   was_running: boolean;
 }
 
-type TmuxResult = CreateResult | SendResult | CaptureResult | ListResult | KillResult;
+type TmuxResult =
+  | CreateResult
+  | SendResult
+  | CaptureResult
+  | WaitIdleResult
+  | ListResult
+  | KillResult;
 
 /**
  * Count how many times `needle` appears in `haystack`. Used by the
@@ -329,6 +351,11 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     '"idle" (matches when pattern present AND content stable for idle_stable_ms). Without ' +
     'wait_pattern, capture returns the current pane content immediately. ' +
     '\n\n' +
+    'wait_idle: pattern-free polling — returns once the pane content stops changing for ' +
+    'idle_stable_ms. Use when you want to wait until "the TUI/command is done" without ' +
+    'guessing a marker string. Cheaper than capture+wait_pattern when you don\'t know what ' +
+    'the final output will look like (long agent runs, code-formatter passes, etc.). ' +
+    '\n\n' +
     'Two opt-in flags help with TUIs that auto-submit on Enter or that draw auto-suggestions: ' +
     'send `multiline_safe:true` keeps embedded \\n as soft-newlines (M-Enter) instead of ' +
     'submits; capture `include_ansi:true` returns raw bytes with ANSI escapes so dim/grayed-out ' +
@@ -351,7 +378,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     properties: {
       action: {
         type: 'string',
-        enum: ['create', 'send', 'capture', 'list', 'kill'],
+        enum: ['create', 'send', 'capture', 'wait_idle', 'list', 'kill'],
       },
       target: { type: 'string', description: '"local" or resource name.', default: 'local' },
       name: { type: 'string', description: 'Session name. Required for create/send/capture/kill.' },
@@ -390,6 +417,9 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
   // are quick (single ssh exec or local spawn).
   timeoutFromInput: (input) => {
     if (input.action === 'capture' && input.wait_pattern && input.wait_timeout_ms) {
+      return input.wait_timeout_ms + 2_000;
+    }
+    if (input.action === 'wait_idle' && input.wait_timeout_ms) {
       return input.wait_timeout_ms + 2_000;
     }
     return undefined;
@@ -594,6 +624,85 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         content: lastContent,
         matched_pattern: matched,
         wait_pattern: pattern,
+        ms: Date.now() - start,
+        ...(lastError ? { error: lastError } : {}),
+      };
+    }
+
+    if (input.action === 'wait_idle') {
+      const name = requireName(input, 'wait_idle');
+      const lines = input.lines ?? 200;
+      const includeAnsi = input.include_ansi ?? false;
+      const idleStableMs = input.idle_stable_ms ?? DEFAULT_IDLE_STABLE_MS;
+      const timeout = input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS;
+      const start = Date.now();
+      const deadline = start + timeout;
+
+      // Same pre-baseline race-dodge as capture's wait_pattern path:
+      // if the model called `send` immediately before this wait, give
+      // tmux a tick to render the typed text so the baseline already
+      // contains it.
+      await new Promise((res) => setTimeout(res, 100));
+      const baselineCap = await runCapture(target, ctx.agent, name, lines, includeAnsi);
+      if (!baselineCap.ok) {
+        return {
+          action: 'wait_idle',
+          ok: false,
+          target,
+          name,
+          content: baselineCap.content,
+          became_idle: false,
+          ms: Date.now() - start,
+          error: baselineCap.error,
+        };
+      }
+
+      let lastContent = baselineCap.content;
+      let lastChangeTs = Date.now();
+      let becameIdle = false;
+      let lastError: string | undefined;
+
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        // Sleep at most until the next stability check tick. Capping at
+        // idleStableMs means a freshly-stable pane can be detected on
+        // the very next poll instead of waiting a full POLL_INTERVAL.
+        const sleepFor = Math.min(POLL_INTERVAL_MS, remaining, idleStableMs);
+        await new Promise((res) => setTimeout(res, sleepFor));
+        const cap = await runCapture(target, ctx.agent, name, lines, includeAnsi);
+        if (!cap.ok) {
+          lastError = cap.error;
+          break;
+        }
+        if (cap.content !== lastContent) {
+          lastContent = cap.content;
+          lastChangeTs = Date.now();
+          continue;
+        }
+        if (Date.now() - lastChangeTs >= idleStableMs) {
+          becameIdle = true;
+          break;
+        }
+      }
+
+      if (!becameIdle && !lastError) {
+        logger.info({
+          msg: 'tmux.wait_idle.timeout',
+          target,
+          name,
+          waited_ms: Date.now() - start,
+          idle_stable_ms: idleStableMs,
+        });
+      }
+
+      return {
+        action: 'wait_idle',
+        ok: !lastError,
+        target,
+        name,
+        content: lastContent,
+        became_idle: becameIdle,
         ms: Date.now() - start,
         ...(lastError ? { error: lastError } : {}),
       };
