@@ -28,15 +28,15 @@ providers:
       - id: claude-opus-4-7
         alias: opus
         contextWindow: 1000000
-        capabilities: [text, image, reasoning]
+        capabilities: [text, image, pdf, reasoning]
       - id: claude-sonnet-4-6
         alias: sonnet
         contextWindow: 200000
-        capabilities: [text, image, reasoning]
+        capabilities: [text, image, pdf, reasoning]
       - id: claude-haiku-4-5
         alias: haiku
         contextWindow: 200000
-        capabilities: [text, image]
+        capabilities: [text, image, pdf]
 
   # OpenAI via Codex CLI subscription. Uses the local `codex` binary;
   # auth is handled by the binary itself via `codex login` (ChatGPT
@@ -49,7 +49,7 @@ providers:
       - id: gpt-5
         alias: gpt5
         contextWindow: 400000
-        capabilities: [text, image, reasoning]
+        capabilities: [text, image, pdf, reasoning]
       - id: gpt-5-codex
         alias: codex5
         contextWindow: 400000
@@ -85,6 +85,21 @@ providers:
   #       alias: llama
   #       contextWindow: 131072
   #       capabilities: [text]
+
+# Vision / multimodal worker (Phase Y). Optional. When set, the
+# `analyze_file` tool dispatches images and PDFs to the worker model
+# and returns its text analysis — useful when the active main model
+# lacks `image` capability or when you want a token-cheap description
+# instead of dropping image-bytes into main context. Worker must be on
+# `openai-compatible` engine in v1 (use openrouter to proxy Claude/
+# GPT, same constraint as Dream-Mode).
+#
+# file_read polymorph (the workspace-drop UX) does NOT depend on this
+# — it uses the active main model's `image` capability directly. The
+# vision worker is only for the `analyze_file` route.
+# vision:
+#   worker: openrouter/anthropic/claude-haiku-4-5    # default for image + PDF
+#   pdfWorker: openrouter/anthropic/claude-sonnet-4-6  # optional override for PDFs
 
 # Compaction tunables (DECISION #21). All optional — built-in defaults apply
 # when omitted. SOMORA_COMPACTION_* env vars override these for ops/CI.
