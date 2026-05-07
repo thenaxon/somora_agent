@@ -86,6 +86,29 @@ providers:
   #       contextWindow: 131072
   #       capabilities: [text]
 
+  # OpenRouter — proxies Claude / GPT / many other models through an
+  # openai-compatible API. Useful as a vision worker (Anthropic via
+  # openrouter accepts native PDF document blocks) and for testing
+  # alternative text models without their bespoke SDKs. Get a key at
+  # openrouter.ai/keys.
+  # openrouter:
+  #   engine: openai-compatible
+  #   baseUrl: https://openrouter.ai/api/v1
+  #   apiKey: <YOUR_OPENROUTER_KEY>
+  #   models:
+  #     - id: anthropic/claude-haiku-4.5
+  #       alias: orhaiku
+  #       contextWindow: 200000
+  #       capabilities: [text, image, pdf]      # vision worker candidate
+  #     - id: minimax/minimax-m2.7
+  #       alias: minimax27
+  #       contextWindow: 197000
+  #       capabilities: [text]
+  #     - id: moonshotai/kimi-k2.5
+  #       alias: kimi25
+  #       contextWindow: 262144
+  #       capabilities: [text]
+
 # Vision / multimodal worker (Phase Y). Optional. When set, the
 # `analyze_file` tool dispatches images and PDFs to the worker model
 # and returns its text analysis — useful when the active main model
