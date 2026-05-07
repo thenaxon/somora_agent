@@ -20,6 +20,7 @@ import {
   tmuxLocalKill,
   tmuxLocalList,
   tmuxLocalSend,
+  tmuxLocalSendKey,
 } from './local.ts';
 import {
   tmuxRemoteCapture,
@@ -27,7 +28,15 @@ import {
   tmuxRemoteKill,
   tmuxRemoteList,
   tmuxRemoteSend,
+  tmuxRemoteSendKey,
 } from './remote.ts';
+
+// One or more tmux key tokens separated by whitespace. Each token is
+// `[A-Za-z0-9_-]+` — covers tmux's full key-name vocabulary (Escape,
+// Enter, BSpace, Tab, F1..F12, Up/Down/…, modifier-prefixed like C-c,
+// M-Enter, S-Tab, C-M-Enter) and excludes shell metacharacters so the
+// validated value is safe to interpolate into the shell command.
+const KEY_TOKEN_RE = /^[A-Za-z0-9_-]+(\s+[A-Za-z0-9_-]+)*$/;
 
 const POLL_INTERVAL_MS = 200;
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -77,7 +86,27 @@ const TmuxInput = z
           'Enter keypresses (CR), which is what shells expect — append \\n to actually run a ' +
           'shell command. For interactive TUIs (claude --dangerously-skip-permissions, codex, ' +
           'IPython, jupyter input boxes, etc.) where Enter SUBMITS the message, set ' +
-          '`multiline_safe: true` so embedded \\n becomes a soft-newline instead of a submit.',
+          '`multiline_safe: true` so embedded \\n becomes a soft-newline instead of a submit. ' +
+          'For control / function / modifier keys (Escape, Ctrl-C, Ctrl-U, F1, arrow keys, …) ' +
+          'use the `key` field instead — JSON-encoding raw control bytes is brittle.',
+      ),
+    key: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(
+        KEY_TOKEN_RE,
+        'key: only [A-Za-z0-9_-] tokens, optionally space-separated (e.g. "Escape", "C-c", "F1", "C-x C-c")',
+      )
+      .optional()
+      .describe(
+        'send only — one or more tmux key names, space-separated. Use this for keys that are ' +
+          'hard to type as text: Escape, C-c, C-u, C-d, BSpace, Tab, F1..F12, Up/Down/Left/Right, ' +
+          'Home/End/PgUp/PgDn, modifier-prefixed (C- = Ctrl, M- = Meta/Alt, S- = Shift; ' +
+          'combinable: C-M-Enter). tmux delivers them as real key events, not text bytes — ' +
+          'reliable across TUIs (codex/claude-code/etc) for "interrupt running task" (Escape), ' +
+          '"abort" (C-c), "clear input line" (C-u). Mutually exclusive with `keys` — pass one ' +
+          'or the other per call. Multi-key example: `key: "C-x C-c"` sends Ctrl-X then Ctrl-C.',
       ),
     multiline_safe: z
       .boolean()
@@ -305,6 +334,12 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     'submits; capture `include_ansi:true` returns raw bytes with ANSI escapes so dim/grayed-out ' +
     'text (= auto-suggestions) is distinguishable from real input. ' +
     '\n\n' +
+    'send has two input forms (mutually exclusive): `keys` for text/printable input (with ' +
+    '`multiline_safe` for TUI-aware newline handling), or `key` for control/function/modifier ' +
+    'keys by symbolic name (Escape, C-c, C-u, F1, Up, …). Use `key` to interrupt a running TUI ' +
+    'task ("Escape" / "C-c") or to clear the input line ("C-u") — JSON-encoding raw control ' +
+    'bytes in `keys` is unreliable. ' +
+    '\n\n' +
     'SAFETY for TUI sessions: never blindly press Enter on a buffer that already shows pending ' +
     'input you didn\'t type — modern coding TUIs (Claude Code, codex) display auto-suggestions ' +
     'in the input field that look identical to real user-typed text in stripped output. ' +
@@ -322,6 +357,12 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       name: { type: 'string', description: 'Session name. Required for create/send/capture/kill.' },
       cwd: { type: 'string' },
       keys: { type: 'string' },
+      key: {
+        type: 'string',
+        description:
+          'send only — symbolic tmux key name(s) for control/function keys. Mutually ' +
+          'exclusive with `keys`. Examples: "Escape", "C-c", "C-u", "F1", "Up", "C-x C-c".',
+      },
       multiline_safe: { type: 'boolean', default: false },
       wait_pattern: { type: 'string' },
       wait_mode: { type: 'string', enum: ['auto', 'present', 'idle'], default: 'auto' },
@@ -379,20 +420,38 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         name,
         hint:
           `Session ready. Use tmux({action:"send", target:"${target}", name:"${name}", ` +
-          `keys:"<text>\\n"}) to type into it, then tmux({action:"capture", ...}) to read. ` +
+          `keys:"<text>\\n"}) to type into it, or tmux({..., key:"Escape"}) for control ` +
+          `keys (Escape, C-c, C-u, F1, …). tmux({action:"capture", ...}) to read, ` +
           `tmux({action:"kill", ...}) when done.`,
       };
     }
 
     if (input.action === 'send') {
       const name = requireName(input, 'send');
-      const keys = input.keys ?? '';
-      const multilineSafe = input.multiline_safe ?? false;
+      const hasKeys = input.keys !== undefined;
+      const hasKey = input.key !== undefined;
+      if (hasKeys && hasKey) {
+        throw new Error(
+          'tmux send: pass either `keys` (text) or `key` (control/function key name), not both',
+        );
+      }
+      if (!hasKeys && !hasKey) {
+        throw new Error('tmux send: requires `keys` (text) or `key` (control/function key name)');
+      }
       const start = Date.now();
-      const r =
-        target === 'local'
-          ? await tmuxLocalSend(name, keys, multilineSafe)
-          : await tmuxRemoteSend(ctx.agent, target, name, keys, multilineSafe);
+      const r = hasKey
+        ? target === 'local'
+          ? await tmuxLocalSendKey(name, input.key as string)
+          : await tmuxRemoteSendKey(ctx.agent, target, name, input.key as string)
+        : target === 'local'
+          ? await tmuxLocalSend(name, input.keys as string, input.multiline_safe ?? false)
+          : await tmuxRemoteSend(
+              ctx.agent,
+              target,
+              name,
+              input.keys as string,
+              input.multiline_safe ?? false,
+            );
       return {
         action: 'send',
         ok: r.ok,

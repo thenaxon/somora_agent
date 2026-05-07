@@ -105,6 +105,19 @@ export async function tmuxRemoteSend(
   return runRemoteTmux(agent, target, cmd);
 }
 
+// Mirrors local.ts:tmuxLocalSendKey — see there for rationale.
+export async function tmuxRemoteSendKey(
+  agent: string,
+  target: string,
+  name: string,
+  key: string,
+): Promise<TmuxRemoteResult> {
+  const tokens = key.trim().split(/\s+/);
+  const cmd = `tmux send-keys -t ${shQuote(name)} ${tokens.join(' ')}`;
+  logger.info({ msg: 'tmux.remote.send_key', target, name, key });
+  return runRemoteTmux(agent, target, cmd);
+}
+
 export async function tmuxRemoteCapture(
   agent: string,
   target: string,

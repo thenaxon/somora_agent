@@ -141,6 +141,22 @@ export async function tmuxLocalSend(
   return runTmux(cmd);
 }
 
+/** Send one or more tmux key events by symbolic name (Escape, C-c, F1, …).
+ *  Caller is expected to have validated `key` against KEY_TOKEN_RE — see
+ *  validateTmuxKey() in tools.ts. We pass the tokens through to tmux's
+ *  native key parser without `-l`, so it recognizes them as key events
+ *  (not literal text). This is the reliable way to deliver control bytes
+ *  to a TUI: encoding raw \x1b in JSON is brittle (LLMs often emit it as
+ *  literal `\x1b` chars instead of the proper `` escape, ending up
+ *  typed as text in the input field). Hans's tmux-control-keys bug
+ *  2026-05-07. */
+export async function tmuxLocalSendKey(name: string, key: string): Promise<TmuxResult> {
+  const tokens = key.trim().split(/\s+/);
+  const cmd = `tmux send-keys -t ${shQuote(name)} ${tokens.join(' ')}`;
+  logger.info({ msg: 'tmux.local.send_key', name, key });
+  return runTmux(cmd);
+}
+
 export interface TmuxLocalCaptureOptions {
   name: string;
   /** How many lines from the end of the pane history to grab. tmux's
