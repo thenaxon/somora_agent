@@ -929,10 +929,17 @@ die später teuer zu ändern sind.
 
 ---
 
-## Phase Y — Vision / Multimodale Inputs (eine Phase nach Skills, entdeckt 2026-05-06)
+## Phase Y — Vision / Multimodale Inputs — Y.A.1 DONE 2026-05-07 nacht (commit `2ccde5d`)
 
-**Status:** entschieden zu bauen, _nach_ Phase X (Skills). Nicht
-heute angehen, aber Konzept festhalten so lange's frisch ist.
+**Status:** **Y.A.1 drin** — `analyze_file` Tool + `file_read` MIME-Guard + `config.vision.{worker, pdfWorker}` + `pdf`-Capability + multimodal-Helper-Module. Hybrid-Konzept gemäß User-Diskussion: ein globaler Vision-Worker auf openai-compatible engine (proxied via openrouter etc.), optional pdfWorker-Override für Cost-Splitting. Tool-count 36.
+
+**Y.A.2 deferred** auf eigene Session: `file_read` polymorph mit Cross-Engine-Content-Block-Plumbing — ToolDefinition-Vertrag um `{contentBlocks:[...]}`-Variante erweitern, MCP-Forwarding (image-content nativ unterstützt), openai-compatible adapter chat.completions-Loop um image-content. ~2-3h Refactor.
+
+**Y.B deferred** unbestimmt: Client-Attachment-Pfad (TUI/web paste/drop, /chat/send body, Content-addressed Storage `~/.somora/attachments/<sha256>.<ext>`, JSONL persistence). Multimodal-Module sind bereits passend designt.
+
+---
+
+**Historischer Kontext** (vor dem Bauen geschrieben, bleibt als Referenz):
 
 **Auslöser:** Test mit Hans 2026-05-06: User legt
 `rene_falcon_desert.png` in `~/somoraworkspace`, fragt „was ist auf

@@ -4,7 +4,36 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-07 abend — Phase 1 + Phase X komplett, Tool-Registry konsolidiert)
+## Wo wir stehen (Stand: 2026-05-07 spätnacht — Phase Y.A.1 Multimodal drin)
+
+**HEAD: `2ccde5d`** auf main, gepusht. Nach dem Tagesabschluss-Commit (`c392543`) ein zusätzlicher Build-Block: **Phase Y.A.1 Multimodal**.
+
+### Phase Y.A.1 — Vision/PDF analyze_file + file_read MIME-Guard
+
+User-Diskussion vorab: drei Optionen abgewogen (claude-code-style unified `Read`, Hermes-style split mit sub-LLM, Hybrid). Recherche bestätigt dass Hermes und OpenClaw NICHT claude-code's polymorph-Pattern folgen — split + capability-routing ist branchenüblich. User-Entscheidung: **Hybrid** mit Hauptmodell-Capability als Routing-Signal, ein globaler Vision-Worker (statt OpenClaw's 3-stufiger pdfModel→imageModel→default-Chain), optionaler `pdfWorker` für Cost-Splitting.
+
+**Gebaut (`2ccde5d`):**
+- `analyze_file({path, prompt?})` — neues Tool (Toolset `file`), dispatcht via openai-compatible SDK an `config.vision.worker` (oder `pdfWorker` für PDFs). Returns text analysis. v1-Constraint: Worker muss openai-compatible engine sein (gleicher Pattern wie Dream).
+- `file_read` MIME-Guard — Magic-Bytes-Detection, refused binary files mit klarem Pointer auf `analyze_file`.
+- `config.vision.{worker, pdfWorker}` — globale Config plus Validation am Server-Start (warn-and-degrade bei missing capabilities, hard-fail nur bei nicht-resolvable model-ref).
+- `pdf` neu in ModelCapabilitySchema-Enum (`text/image/pdf/reasoning`).
+- `src/multimodal/` — drei Module (mime/load/blocks), engine-agnostic, designed um auch Phase Y.B (Client-Attachments) zu bedienen.
+
+Tool-count: 35 → 36.
+
+Live verifiziert via curl gegen den laufenden Server: file_read auf PNG → clean error mit redirect, file_read auf TXT → normal, analyze_file ohne Worker-Config → klarer Hinweis auf config.yaml. Plus Smoke durch die multimodal-Pipeline direkt (PNG/TXT/PDF → richtige Content-Block-Shapes).
+
+**Phase Y.A.2 explizit deferred:** `file_read` polymorph mit Cross-Engine-Content-Block-Plumbing. Heißt ToolDefinition-Vertrag um `{contentBlocks:[...]}`-Variante erweitern, MCP-Server-Forwarding (Protokoll unterstützt image nativ), openai-compatible adapter im chat.completions-Loop. ~2-3h Refactor — nächste Session frisch angehen statt spätabends reinquetschen.
+
+**Phase Y.B explizit deferred:** Client-Attachments (TUI/web paste/drop, /chat/send body extension, Content-addressed Storage in `~/.somora/attachments/<sha256>.<ext>`, JSONL persistence path-ref+hash+mime). Multimodal-Module sind bereits passend designt.
+
+### Pickup-Satz für nächste Session (überschreibt früheren)
+
+> "2026-05-07 spätnacht — Phase Y.A.1 ist drin (`2ccde5d`): analyze_file Tool dispatcht Image+PDF via openai-compatible SDK an config.vision.worker, returnt text description. file_read hat MIME-Guard. pdf als neue Capability. Hybrid-Konzept gemäß User-Wunsch. Tool-count 36. **Nächstes:** Phase Y.A.2 — file_read polymorph (Cross-Engine-Content-Block-Plumbing), ~2-3h Refactor an ToolDefinition-Vertrag + MCP-Forwarding + openai-compatible adapter. Danach Phase Y.B (Client-Attachments) oder direkt Phase 4 (Memory/Dream/Obsidian Review). User wollte nach Phase Y zwei Diskussionen: Versionierung (datum-basiert wie OpenClaw) + Service-Mode-Workflow (somora server start als systemd, parallel dev-Mode, gleiches `~/.somora`)."
+
+---
+
+## Vorheriger Stand (2026-05-07 abend — Phase 1 + Phase X komplett, Tool-Registry konsolidiert)
 
 **HEAD: `0e1d7f0`** auf main, gepusht. Heutige Commits in Reihenfolge:
 
