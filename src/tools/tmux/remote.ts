@@ -37,6 +37,9 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
     }
   });
   if (endsWithNewline) {
+    if (cmds.length > 0) {
+      cmds.push('sleep 0.1');
+    }
     cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
   }
   return cmds.join(' && ');

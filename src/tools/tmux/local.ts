@@ -40,6 +40,14 @@ function shQuote(s: string): string {
  *     a plain Enter, so a multi-line message still submits at the
  *     end. Hans's bug 2026-05-06: without this, a multi-line message
  *     into Claude Code got chunked into N separate submissions.
+ *
+ * Submit-gap (Hans's bug 10, 2026-05-07): coding TUIs do paste-burst
+ * detection. When the trailing CR arrives in the same input event tick
+ * as preceding text, codex (and likely others) treat it as part of the
+ * paste and suppress the submit. We insert a `sleep 0.1` between the
+ * preceding keystrokes and the final Enter so it's seen as a real
+ * submit. Skipped when there's no preceding content (bare "\n"
+ * submits on its own).
  */
 function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean): string {
   // Strip a trailing \n before splitting so the last embedded newline
@@ -69,7 +77,19 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
   });
   // Re-add the stripped trailing \n as a plain Enter so the message
   // submits — even in multiline_safe mode the trailing \n submits.
+  // Coding TUIs (codex, claude-code, …) do paste-burst detection: if
+  // literal text and the trailing CR arrive in the same input event
+  // tick, the CR is treated as part of the paste and submit is
+  // suppressed. A short gap between the preceding keystrokes and the
+  // final Enter forces it to be seen as a real submit. ~50ms is enough
+  // empirically; we use 100ms for headroom. Skip the gap when there's
+  // no preceding content (bare "\n" submits fine on its own).
+  // Hans's bug 10 (2026-05-07): trailing-\n submits never fired in
+  // codex without this gap; verified live in codex 0.128.0.
   if (endsWithNewline) {
+    if (cmds.length > 0) {
+      cmds.push('sleep 0.1');
+    }
     cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
   }
   return cmds.join(' && ');
