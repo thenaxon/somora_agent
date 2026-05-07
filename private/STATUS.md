@@ -4,7 +4,36 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-07 spätnacht — Phase Y.A.1 Multimodal drin)
+## Wo wir stehen (Stand: 2026-05-07 sehr-spät — Phase Y komplett funktional)
+
+**HEAD: `da1c6b1`** auf main (Push folgt). Phase Y.A.1 (analyze_file + file_read MIME guard, commit `2ccde5d`) UND Phase Y.A.2 (file_read polymorph cross-engine + PDF→PNG render, commit `da1c6b1`) sind live und end-to-end gegen real-Claude verifiziert.
+
+### Phase Y.A.2 — file_read polymorph cross-engine
+
+ToolDefinition-Vertrag erweitert um `MultimodalToolResult` ({_somoraMultimodal:true, contentBlocks:[...]}). Registry detect+forward, MCP-Server emit `{type:'image',data,mimeType}` content-array (Protocol unterstützt image nativ, NICHT document — daher PDF→PNG-Render im Tool). openai-compatible adapter pusht image_url-Content im tool-message. ToolContext.activeModel durch alle 3 Engine-Pfade: in-process via run-turn.ts, MCP-Child via `SOMORA_ACTIVE_MODEL` env (claude-cli + codex-cli launcher setzen das jetzt). Capability-Gate: `image` capability für Image UND PDF (PDF wird ja gerendert).
+
+PDF-Rendering via `pdf-to-img` (pure JS via pdfjs-dist, kein System-Dep wie poppler). Default 20 Seiten max, 1.5× scale. Truncation-Marker als text-Block bei Overflow.
+
+**Live-Smoke-Battery:**
+| Engine | Image | PDF |
+|---|---|---|
+| claude-cli/Opus | ✅ Falke + Wüste detailgetreu | ✅ "12345 / 1500 EUR" exakt |
+| openai-compat/gemma4big | ✅ "Falke in Wüstenlandschaft" | ⚠️ Pipeline OK, gemma-OCR halluziniert (kein Code-Bug) |
+| codex-cli/gpt-5.5 | nicht in Session getestet | nicht getestet (gleiche MCP-Pipeline wie claude-cli, high confidence) |
+
+**Konsequenz für UX:** workspace-drop + reden funktioniert jetzt für Bilder UND PDFs gegen alle drei Engines. Genau das was der User explizit erfragt hatte.
+
+### Phase Y.B — explizit offen für Folgetag
+
+User-Attachment-Pfad (TUI paste/drop, /chat/send body extension um attachments[], Content-addressed Storage in `~/.somora/attachments/<sha256>.<ext>`, JSONL persistence path-ref+hash+mime, native PDF-document-blocks bei Anthropic, native input_file bei OpenAI). Multimodal-Helper-Module sind bereits passend designt für diesen zweiten Pfad.
+
+### Pickup-Satz für nächste Session (überschreibt früheren)
+
+> "2026-05-07 sehr-spät: Phase Y.A.2 ist drin (`da1c6b1`). file_read polymorph für Image + PDF, PDF→PNG render via pdf-to-img, Cross-Engine-Plumbing (ToolDefinition-Vertrag, MCP-Forwarding, openai-compatible adapter, ToolContext.activeModel). Live-verifiziert claude-cli + openai-compatible. Phase Y damit funktional komplett. Tool-count 36. **Nächstes:** Phase Y.B (TUI-Attachment + /chat/send body extension), oder direkt Phase 4 (Memory/Dream/Obsidian Review). User wollte nach Phase Y zwei Diskussionen: Versionierung (datum-basiert wie OpenClaw) + Service-Mode-Workflow (somora server start als systemd, parallel dev-Mode, gleiches `~/.somora`). Beide nur-Diskussion, kein unilateraler Build."
+
+---
+
+## Vorheriger Stand (2026-05-07 spätnacht — Phase Y.A.1 Multimodal drin)
 
 **HEAD: `2ccde5d`** auf main, gepusht. Nach dem Tagesabschluss-Commit (`c392543`) ein zusätzlicher Build-Block: **Phase Y.A.1 Multimodal**.
 

@@ -929,11 +929,11 @@ die später teuer zu ändern sind.
 
 ---
 
-## Phase Y — Vision / Multimodale Inputs — Y.A.1 DONE 2026-05-07 nacht (commit `2ccde5d`)
+## Phase Y — Vision / Multimodale Inputs — Y.A.1 + Y.A.2 DONE 2026-05-07 (commits `2ccde5d`, `da1c6b1`)
 
-**Status:** **Y.A.1 drin** — `analyze_file` Tool + `file_read` MIME-Guard + `config.vision.{worker, pdfWorker}` + `pdf`-Capability + multimodal-Helper-Module. Hybrid-Konzept gemäß User-Diskussion: ein globaler Vision-Worker auf openai-compatible engine (proxied via openrouter etc.), optional pdfWorker-Override für Cost-Splitting. Tool-count 36.
+**Status: Phase Y funktional komplett für agent-driven workspace-drop UX.** Y.A.1 brachte `analyze_file` (Worker-Dispatcher) + `file_read` MIME-Guard. Y.A.2 brachte file_read polymorph für Image + PDF mit Cross-Engine-Plumbing (ToolDefinition-Vertrag, MCP-Forwarding, openai-compatible adapter, ToolContext.activeModel). PDFs werden zu PNG-Pages gerendert via `pdf-to-img` (kein System-Dep). Live-verifiziert: claude-cli/Opus beschreibt Falken + extrahiert Rechnungs-Werte exakt; openai-compatible/gemma4big sieht Bilder korrekt.
 
-**Y.A.2 deferred** auf eigene Session: `file_read` polymorph mit Cross-Engine-Content-Block-Plumbing — ToolDefinition-Vertrag um `{contentBlocks:[...]}`-Variante erweitern, MCP-Forwarding (image-content nativ unterstützt), openai-compatible adapter chat.completions-Loop um image-content. ~2-3h Refactor.
+**Y.B deferred** auf Folgetag mit TUI: User-Attachment-Pfad (TUI paste/drop, /chat/send body extension um attachments[], Content-addressed Storage `~/.somora/attachments/<sha256>.<ext>`, JSONL persistence). Native PDF-document-blocks (Anthropic) und input_file (OpenAI) ohne Rasterization wären dann verfügbar. Multimodal-Module sind passend designt.
 
 **Y.B deferred** unbestimmt: Client-Attachment-Pfad (TUI/web paste/drop, /chat/send body, Content-addressed Storage `~/.somora/attachments/<sha256>.<ext>`, JSONL persistence). Multimodal-Module sind bereits passend designt.
 
