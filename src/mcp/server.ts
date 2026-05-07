@@ -30,6 +30,7 @@ import {
   memoryTools,
   obsidianTools,
   resourceTools,
+  skillTools,
   somoraDocsTools,
   timeTools,
   ToolRegistry,
@@ -67,6 +68,7 @@ async function main(): Promise<void> {
   registry.registerMany(agentTools());
   registry.registerMany(execTools());
   registry.registerMany(tmuxTools());
+  registry.registerMany(skillTools());
 
   // Optional sub-context env hooks set by the engine launcher per turn.
   // SOMORA_SESSION lets spawn_subagent record `parent_session`; the
