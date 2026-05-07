@@ -77,7 +77,15 @@ export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
     '\n\n' +
     'Per-agent filtering: each agent sees only the skills allowed by its agent.yaml ' +
     'configuration (empty/unset = all skills). Calling this tool with a name that is ' +
-    'not in your <available_skills> registry returns an error.',
+    'not in your <available_skills> registry returns an error. ' +
+    '\n\n' +
+    'Creating new skills: skills live on disk at `~/.somora/skills/<slug>/SKILL.md` ' +
+    '(slug is lowercase, [a-z0-9-], must equal the parent dir name and the `name` field). ' +
+    'Use file_write to create one — `slug` and the dir are auto-derived from the path. ' +
+    'Frontmatter follows the agentskills.io spec: required `name` + `description` (≤1024 ' +
+    'chars, what + when in one sentence), plus optional somora extras under `metadata. ' +
+    'somora.{when_to_use, requires.{bins,config}, tags}`. After writing the file, the ' +
+    'skill appears in <available_skills> on the very next turn — no server restart.',
   inputSchema: SkillInput,
   jsonSchema: {
     type: 'object',
