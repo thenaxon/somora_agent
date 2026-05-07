@@ -103,6 +103,14 @@ const AgentYamlSchema = z
         deny: z.array(z.string()).optional(),
       })
       .optional(),
+    /**
+     * Optional skills allow-list. When set (even to []), the agent only
+     * sees the listed skills in its <available_skills> registry. When
+     * unset, the agent sees ALL skills under ~/.somora/skills/. See
+     * `private/skills-design.md` for the rationale (empty-list-means-
+     * deny-all, missing-key-means-allow-all).
+     */
+    skills: z.array(z.string().min(1)).optional(),
     dream: DreamConfigSchema.optional(),
   })
   .passthrough();
@@ -133,6 +141,13 @@ export interface Persona {
   workspace: string | undefined;
   /** Resource names this agent should NOT see in resource_list. */
   resourceDeny: string[];
+  /**
+   * Skill allow-list from agent.yaml. `undefined` or `[]` = no
+   * restriction (agent sees all skills under ~/.somora/skills/);
+   * `[name1, name2, ...]` = only those skills. Lenient interpretation
+   * of "empty"; see `private/skills-design.md`.
+   */
+  skillsAllowList: string[] | undefined;
   dream: DreamConfig | undefined;
   systemPrompt: string;
 }
@@ -245,6 +260,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     thinking: agentYaml.thinking,
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
+    skillsAllowList: agentYaml.skills,
     dream: agentYaml.dream,
     systemPrompt: sections.join('\n\n---\n\n'),
   };

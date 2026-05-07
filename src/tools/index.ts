@@ -19,3 +19,4 @@ export {
   recoverOrphanedJobs,
 } from './exec/index.ts';
 export { tmuxTools } from './tmux/index.ts';
+export { skillTools } from './skill/index.ts';

@@ -374,6 +374,29 @@ export const TuiConfigSchema = z.object({
 });
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 
+// Skills budget. Mirrors OpenClaw's defaults — they've shipped 53 real
+// skills against these limits for months, so we treat them as known-
+// good rather than re-deriving. Configurable via config.yaml per
+// `feedback_config_over_env.md`. See `private/skills-design.md`.
+export const SkillsConfigSchema = z
+  .object({
+    /** Hard cap on number of skills surfaced in the system-prompt
+     *  registry. Beyond this, the registry-renderer falls back to
+     *  compact format (name+description only). */
+    maxSkillsInPrompt: z.number().int().positive().default(150),
+    /** Char budget for the rendered registry block. Compact-format
+     *  fallback kicks in if XML rendering would exceed this. */
+    maxPromptChars: z.number().int().positive().default(18_000),
+    /** Per-file size limit for SKILL.md when activated via the Skill
+     *  tool. Skills with larger bodies fail to load with an error. */
+    maxSkillFileBytes: z.number().int().positive().default(256_000),
+  })
+  .default({
+    maxSkillsInPrompt: 150,
+    maxPromptChars: 18_000,
+    maxSkillFileBytes: 256_000,
+  });
+
 export const ConfigSchema = z.object({
   server: z
     .object({
@@ -390,6 +413,7 @@ export const ConfigSchema = z.object({
   web: WebConfigSchema,
   workspace: WorkspaceConfigSchema,
   resources: ResourcesConfigSchema,
+  skills: SkillsConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

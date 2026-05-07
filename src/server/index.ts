@@ -38,6 +38,7 @@ import {
   obsidianTools,
   recoverOrphanedJobs,
   resourceTools,
+  skillTools,
   somoraDocsTools,
   timeTools,
   tmuxTools,
@@ -192,6 +193,7 @@ tools.registerMany(fileTools());
 tools.registerMany(agentTools());
 tools.registerMany(execTools());
 tools.registerMany(tmuxTools());
+tools.registerMany(skillTools());
 logger.info({
   msg: 'tools.registered',
   count: tools.list().length,

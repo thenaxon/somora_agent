@@ -36,6 +36,8 @@ import { injectMemoryContext } from '../memory/inject.ts';
 import { getMemoryManager } from '../memory/registry.ts';
 import { logger } from './logger.ts';
 import { loadPersona, type Persona } from '../persona/loader.ts';
+import { loadAvailableSkills } from '../skills/load.ts';
+import { buildSkillsRegistry } from '../skills/registry.ts';
 import { createTurnSerializer } from './sse-serializer.ts';
 import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
@@ -292,7 +294,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       subagentDepth > 0
         ? `\n\nNote: this is a SUBAGENT turn (depth=${subagentDepth}). You were spawned by another agent to do a focused task; finish, return your result, and stop.`
         : '';
-    const systemPromptForTurn = `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}`;
+    // Skills registry — loaded fresh each turn so a SKILL.md edit takes
+    // effect on the next turn without a server restart, same convention
+    // as the persona reload above. Sits in the cached prefix portion of
+    // the prompt: skills change rarely (rarer than memory which is
+    // ephemeral and goes elsewhere), so they're ideal for prefix-cache.
+    // Empty registry = empty section, no separator added.
+    const allSkills = await loadAvailableSkills(freshConfig);
+    const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillsAllowList, freshConfig);
+    const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
+    const systemPromptForTurn = `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${skillsBlock}`;
 
     const stream = runTurnWithFallback({
       primary: resolvedModel,
