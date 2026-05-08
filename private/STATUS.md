@@ -4,11 +4,65 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-08 ~00:15 — Phase Y verifiziert + Hans-Verifikations-Run)
+## Wo wir stehen (Stand: 2026-05-08 abend — Erstes Release `2026.05.08.1` + Service-Mode-Workflow)
 
-**HEAD: nach diesem Commit auf main, gepusht.** Phase Y.A.1 (`2ccde5d`) + Phase Y.A.2 (`da1c6b1`) live + cross-engine Hans-getestet, plus `pdf`-Capability config + openrouter-Provider-Setup + Test-PDF/Image im Workspace + Hans-Verifikations-Files für künftige Replays.
+**HEAD: nach diesem Commit auf main, plus git tag `2026.05.08.1`.**
 
-### Hans-Verifikations-Run 2026-05-07 spätnacht
+Heute (2026-05-08) wurden zwei Diskussions-Runden durchgezogen und die Service-Mode-Implementierung gebaut:
+
+### DECISIONS
+
+- **#41 Versionierung** (CalVer `YYYY.MM.DD.N` zero-padded, Schema-Version separat als integer pro Store, auto-migrate)
+- **#42 Service-Mode** (single-active mit Lockfile-Disziplin, npm-globaler Distribution, CLI-Wrapper)
+
+### Service-Mode-Implementierung (alle in diesem Commit)
+
+- `bin/somora.mjs` — bin-entry, exposed via `package.json:bin` als `somora`
+- `src/cli/somora.ts` — Top-level CLI mit subcommands: `init`, `server start|stop|restart|status`, `tui`, `update`, `--version`, `--help`
+- `src/server/lockfile.ts` — single-active enforcement, PID-Liveness-Check, stale-lock-Reclaim
+- `src/server/index.ts` — Lockfile beim Start (refuse on busy), released bei SIGTERM/SIGINT
+- `src/version.ts` — single source of truth, liest `package.json:version`
+- `package.json` — version `0.0.1` → `2026.05.08.1`, `bin`-Eintrag, `files`-Whitelist (bin/src/tsconfig/package.json/README/LICENSE), tsx von devDeps zu deps verschoben (Runtime-Dep für npm-globalen Install)
+- `.gitignore` — `somora-*.tgz` ignoriert (npm-pack-Artefakte)
+
+### Lokal installiert + smoke-getestet
+
+```
+~/.npm-global/bin/somora                          ← binary
+~/.npm-global/lib/node_modules/somora/            ← prod copy (echte Copy, kein Symlink)
+~/.config/systemd/user/somora.service             ← systemd User-Unit (von somora init)
+~/.somora/locks/server.lock                       ← runtime lockfile
+```
+
+Smoke-Battery durchlaufen:
+- `somora --version` → `2026.05.08.1`
+- `somora --help` → Usage-Block sauber
+- `somora init` → idempotent (created+kept-Listen, beim zweiten Run alles "kept")
+- `somora server start` → läuft als systemd-User-Service, PID 997543 (lebte beim Test)
+- `somora server status` → Lockfile + systemd-status korrekt
+- HTTP `/agents` → liefert hans/jarvis/lisa
+- `somora server stop` → Lockfile gelöscht, systemd inactive
+- `somora tui` → Ink rendert (TTY-emuliert getestet, weil unsere Sandbox nicht TTY ist)
+
+### Wichtige Lessons aus dem Bau
+
+1. **`npm install -g .` macht einen SYMLINK**, kein Copy → defeats den Sinn von prod-vs-dev-Code-Trennung. **Lösung:** `npm pack` + `npm install -g <tarball>` macht echte Copy.
+2. **tsx braucht `--tsconfig <path>`-Flag** wenn von außerhalb des Package-Verzeichnisses aufgerufen — sonst fällt JSX auf classic statt automatic mode zurück und alle .tsx files crashen mit `ReferenceError: React is not defined`.
+3. **`process.argv[1]` ist die TS-Source unter tsx**, nicht die bin-entry. Für systemd-ExecStart muss die echte bin-entry-Pfad explizit durchgereicht werden — bin/somora.mjs setzt `SOMORA_BIN_PATH` env, src/cli/somora.ts liest's.
+
+### Pickup-Satz für nächste Session
+
+> "2026-05-08 abend — Release `2026.05.08.1` ist gecuttet (git tag, lokal via npm-pack-Tarball installiert). DECISIONS #41 (Versionierung) + #42 (Service-Mode) durchgesprochen und implementiert. `somora server start` läuft jetzt als systemd-User-Service mit Lockfile-Disziplin, `somora tui` startet die TUI gegen den Server, `somora init` ist idempotent, `somora update` macht npm-install + restart. Code-Locations: prod in `~/.npm-global/lib/node_modules/somora/` (echte Copy via npm-pack), dev unverändert in `~/Projects/naxon/somora/`, shared data dir `~/.somora/`. **Nächstes:** Phase 4 (Memory/Dream/Obsidian Review). Phase Y (Multimodal) bleibt explizit „halb getestet" — finaler Retest gemeinsam mit Phase Y.B (User-Attachments via TUI). Public-Repo (Stufe 2/3 aus #42) als eigene spätere Diskussion: LICENSE, README, `private/`-Ordner-Strategie, secrets-Audit, npm-publish-shape."
+
+---
+
+## Vorheriger Stand (Stand: 2026-05-08 ~00:15 — Phase Y halb getestet, finaler Retest gemeinsam mit Y.B)
+
+**HEAD: nach diesem Commit auf main, gepusht.** Phase Y.A.1 (`2ccde5d`) + Phase Y.A.2 (`da1c6b1`) live + cross-engine smoke-getestet, plus `pdf`-Capability config + openrouter-Provider-Setup + Test-PDF/Image im Workspace + Hans-Verifikations-Files für künftige Replays.
+
+> **Wichtig — User-Verdict 2026-05-08 morgen:** Phase Y NICHT als „verifiziert komplett" abhaken. Der vollständige End-to-End-Retest erfolgt **zusammen mit Phase Y.B** (User-Attachments via TUI paste/drop), weil dann der UX-Pfad echt durchlaufen wird. Bis dahin gilt: live + smoke-getestet, aber Vollverifikation steht aus.
+
+### Hans-Verifikations-Run 2026-05-07 spätnacht (Zwischenstand, nicht final)
 
 User-driven 8-Modell × 7-Tests-Battery via TUI. Ergebnis: **claude-cli und codex-cli vollständig PASS, openai-compatible Engine-Pfad confirmed via Logs, kleinere Modelle nicht kompetent für Markdown-Test-Plan-Ausführung.**
 
@@ -41,7 +95,7 @@ User-driven 8-Modell × 7-Tests-Battery via TUI. Ergebnis: **claude-cli und code
 
 ### Pickup-Satz für nächste Session
 
-> "2026-05-08 ~00:15 — Phase Y verifiziert (claude-cli + codex-cli FULL PASS, openai-compatible Pipeline OK), HEAD auf main mit pdf-cap+openrouter-config+test-PDF+verifikations-Files. Tool-count 36. **Nächstes:** zwei Diskussions-Runden (Versionierung à la OpenClaw datum-basiert + Service-Mode-Workflow somora server start mit shared `~/.somora/`), dann Phase 4 (Memory/Dream/Obsidian Review). Phase Y.B (User-Attachments via TUI/web) bleibt für eigenen Tag offen, ist aber via Multimodal-Helper-Module schon vorbereitet."
+> "2026-05-08 ~00:15 — Phase Y ist live + smoke-getestet (claude-cli + codex-cli PASS, openai-compatible Pipeline OK), aber **explizit NICHT als verifiziert komplett abhaken** (User-Verdict 2026-05-08 morgen). Vollverifikation erfolgt gemeinsam mit Phase Y.B wenn der UX-Pfad (paste/drop) echt durchlaufen wird. HEAD auf main mit pdf-cap+openrouter-config+test-PDF+Verifikations-Files. Tool-count 36. **Nächstes:** zwei Diskussions-Runden (Versionierung à la OpenClaw datum-basiert + Service-Mode-Workflow somora server start mit shared `~/.somora/`), dann Phase 4 (Memory/Dream/Obsidian Review). Phase Y.B (User-Attachments via TUI/web) bleibt für eigenen Tag offen — wenn sie drin ist, wird Phase Y gesamt nochmal getestet."
 
 ---
 

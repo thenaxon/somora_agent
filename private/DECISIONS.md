@@ -895,3 +895,191 @@ Pro-Engine-Code-Pointer dort gelistet.
   in Turn-50), praktisch unproblematisch — recall-blocks sind
   klein und haben den `<memory-context>`-Wrapper der ihren
   read-only-Charakter signalisiert.
+
+---
+
+## 2026-05-08 — Versionierung
+
+### 41. CalVer mit Tages-Counter, Schema-Version separat
+
+**Format:** Software-Versionen folgen dem Schema `YYYY.MM.DD.N` —
+zero-padded, lexikalisch sortierbar, mit Counter-Suffix für mehrere
+Bumps am selben Tag. Beispiele: `2026.05.08.1`, `2026.05.08.2`,
+`2026.06.01.1`. Erster Bump des Tages bekommt `.1` (kein `.0`).
+
+**Trigger:** Bumps passieren manuell auf User-Zuruf. Kein Auto-Bump
+via CI, pre-commit-Hook oder Tagesabschluss-Trigger. Wenn Rene sagt
+„Version hochziehen", dann wird gebumpt — sonst nicht.
+
+**Was die Software-Version trägt:**
+- `package.json:version` (für späteren npm-Publish + Tools die das lesen)
+- git tag pro Bump (`git tag 2026.05.08.1`, push mit `--tags`) — damit
+  „rollback auf den Stand von vor 3 Tagen" via `git checkout <tag>` geht
+- KEIN separates `lastTouchedVersion`-Feld in Config — git-tag ersetzt
+  das (anders als bei OpenClaw, wo es so ein Feld gibt)
+
+**Schema-Version: separat, integer, pro Store.** Software-Version
+und Schema-Version sind unterschiedliche Konzepte: erstere sagt
+„welcher Build", zweitere „welche Daten-Shape". Koppeln wäre
+verwirrend (jeder Software-Bump würde eine leere Migration
+erzwingen). Stattdessen pro Daten-Store das passende Tool:
+
+| Store | Schema-Versionierung |
+|---|---|
+| `~/.somora/memory/*.db` (sqlite) | `PRAGMA user_version` (eingebaut) |
+| `~/.somora/sessions/<agent>/<session>.jsonl` | Event-Feld `schema:N` pro Event |
+| `~/.somora/config.yaml` | Top-Level-Feld `schema_version: N` |
+
+Schema-Versionen sind Integers (`1`, `2`, `3`, …), bumpt nur bei
+echten Format-Änderungen, NICHT bei Software-Bumps.
+
+**Migrations-Verhalten: auto-migrate, mit Backup vor Run.** Ablauf
+beim Server-Start, falls Schema-Version < Code-Erwartung:
+
+1. Backup des betroffenen Stores nach `<store>.bak.<timestamp>/`
+2. Nummerierte Migration-Funktionen ausführen (`migrate_5_to_6`,
+   `migrate_6_to_7`, …)
+3. Schema-Version-Feld erst NACH erfolgreicher Migration bumpen
+4. Bei Migration-Failure: Backup zurückrollen, klare Fehlermeldung
+   im Log, hard-fail beim Server-Start
+
+**Why:** Public-Repo-Plan (siehe Hinweis unten) heißt: somora wird
+auf fremden Maschinen mit fremden Daten laufen. Auto-migrate ist
+für externe Tester die richtige UX (Update funktioniert einfach),
+hard-fail-on-Migration-Failure verhindert silent corruption,
+Backups erlauben Recovery wenn was schiefgeht.
+
+**How to apply:**
+- Bei einer Format-Änderung an einem Store: Schema-Version dieses
+  Stores um 1 erhöhen + neue Migration-Funktion in
+  `src/migrations/<store>/migrate_N_to_M.ts` anlegen
+- Bei einem Software-Bump: nur `package.json:version` + git tag,
+  Schema-Versionen bleiben unangetastet
+- Bei Public-Repo-Vorbereitung: separate Diskussion (LICENSE,
+  README für externe User, `private/`-Strategie, secrets-Audit,
+  npm-publish-shape)
+
+**Status quo der Implementierung:** Konzept geschlossen, **Bau
+deferred bis erster realer Bump-Bedarf** (kein vorausschauendes
+Scaffolding). Wenn Rene das erste Mal „Version hochziehen" sagt,
+dann passiert: package.json bumpen, git tag, push. Schema-
+Versionierung kommt mit der ersten echten Format-Änderung dran.
+
+**Code-Anchor:** noch keiner — diese Entscheidung wird beim ersten
+Bump implementiert.
+
+---
+
+## 2026-05-08 — Service-Mode-Workflow
+
+### 42. Single-Active Server mit npm-globaler Distribution + CLI-Wrapper
+
+**Modell:** somora läuft normalerweise als langlaufender systemd-User-
+Service (`systemctl --user start somora`). Während aktiver Code-
+Entwicklung im dev-Tree wird der Service explizit gestoppt und durch
+einen Dev-Server (`npm run dev:server` aus dem dev-Tree) ersetzt.
+Beide redet auf das gleiche `~/.somora/`-Datenverzeichnis. Es läuft
+zu jeder Zeit nur **EIN** somora-Prozess — durchgesetzt durch
+Lockfile-Disziplin.
+
+**Verworfen wurden:**
+- *Ansatz 2 (zwei getrennte SOMORA_HOMEs)*: dev-Tests würden nicht
+  gegen echte Daten/Memory/Sessions laufen. Defeats den Zweck.
+- *Ansatz 3 (shared HOME mit Rollen-Split)*: erlaubt parallel-Betrieb
+  prod+dev, aber Komplexität (pro Subsystem klären „primary or both?")
+  rechtfertigt den schmalen Use-Case nicht. Bei wachsendem Bedarf
+  reaktivieren.
+
+**Why:** Bei somora's aktuellem Use-Case (ein User auf einem Rechner,
+fokussierte Dev-Sessions) ist die ~5 Sekunden-Friction von „Service
+stop → dev start → Service start" vernachlässigbar. Was beim Stop
+verloren geht ist gering: AutoDreamWorker kann bei mehrstündigen
+Dev-Sessions Trigger verpassen (weich), eingehende HTTP-Calls sehen
+connection refused (normal). A2A ist in-process, läuft nur bei
+aktiven Turns — kein Verlust beim Stop.
+
+**Lockfile-Mechanik:**
+- Pfad: `~/.somora/locks/server.lock`
+- Inhalt: PID + Bind-Port + Start-Timestamp (JSON)
+- Bei Server-Start:
+  1. Lockfile lesen (falls da)
+  2. PID-Liveness check via `process.kill(pid, 0)` — wenn lebt:
+     refuse mit klarer Message; wenn tot: stale lock überschreiben
+  3. eigenes Lockfile schreiben
+- Bei Server-Stop (SIGTERM/SIGINT): Lockfile löschen, dann
+  graceful shutdown
+- Atexit-Handler als Belt-and-Suspenders
+
+**Distribution: npm-Global (B+C kombiniert).**
+
+OpenClaw-Pattern als Orientierung — `~/.npm-global/lib/node_modules/openclaw/`.
+somora installiert sich gleich:
+
+| Stufe | Weg | Wann |
+|---|---|---|
+| 1. Lokal-only | `npm install -g .` aus dev-Tree | jetzt — kein Public-Repo nötig |
+| 2. Public-Github | `npm install -g github:naxon/somora` | wenn externe Tester |
+| 3. npm-Registry | `npm install -g somora` | UX-Politur, wenn Tester-Volumen es rechtfertigt |
+
+Für jede Stufe gilt das gleiche Verzeichnislayout:
+```
+~/.npm-global/lib/node_modules/somora/    ← prod copy (npm-installed)
+/home/suspect/Projects/naxon/somora/      ← dev tree (unverändert)
+~/.somora/                                ← shared data dir
+```
+
+Update über alle Stufen via `somora update` (intern `npm install -g
+<source>` + Service-Restart).
+
+**CLI-Wrapper (`bin/somora`):**
+- `somora init` — idempotente Erstinstallation: legt fehlende Teile
+  in `~/.somora/` an (locks/, agents/default/ wenn keiner da, etc.),
+  schreibt systemd-User-Unit nach `~/.config/systemd/user/somora.service`,
+  bei Existenz alles in Ruhe lassen
+- `somora server start|stop|status|restart` — Wrapper für `systemctl
+  --user`, plus Lockfile-Status-Anzeige
+- `somora server start --foreground` — direkt-Modus ohne systemd
+  (Debug)
+- `somora tui` — startet die TUI gegen den laufenden Server
+- `somora update [<version>]` — `npm install -g somora@<version>`
+  (oder ohne Argument: latest), dann `systemctl --user restart somora`
+- `somora --version` — gibt aktuelle Software-Version aus
+
+**Schema-Skew-Disziplin (Folge aus Decision #41):**
+
+`~/.somora/` wird zwischen prod-Code-Version und dev-Code-Version
+geteilt. Wenn dev eine Schema-Migration auslöst (auto-migrate
+nach #41), schreibt es Daten im NEUEN Schema. Prod-Code mit ALTEM
+Schema kann nicht runter-migrieren. Heißt: **Schema-Änderungen sind
+einbahnstraße — wenn dev das Schema bumpt, muss prod beim nächsten
+Restart auf den neuen Stand mit-updaten.** Konkrete Regel:
+
+- Reine Code-Änderungen ohne Schema-Bump: dev/prod skew unproblematisch
+- Schema-Bump im dev: prod muss auf die neue Version updaten BEVOR
+  prod wieder gestartet wird
+- Notfall-Workaround wenn man's mal getrennt halten will:
+  `SOMORA_HOME=~/.somora-dev/ npm run dev:server` — entkoppelt die
+  Datenverzeichnisse für eine dev-Session
+
+**Public-Repo-Vorbereitung (eigene spätere Diskussion):**
+- LICENSE-Datei
+- README für externe User
+- `private/` Ordner-Strategie (separater Branch, .gitignore, oder
+  Eigenes-Repo)
+- Secrets-Audit (config-Beispiele, hardcoded-tokens)
+- npm-Publish-Pipeline (manuell pro Release reicht)
+- Package-Name `somora` auf npmjs prüfen
+
+**How to apply:**
+- Wenn ein Service-Mode-Bug auftritt: zuerst `~/.somora/locks/server.lock`
+  prüfen ob stale lock im Spiel ist
+- Wenn ein Tester somora installieren will: aktuell Stufe 1 (lokaler
+  npm-pack-Tarball übertragen oder dev-Tree clonen + `npm install -g .`).
+  Stufe 2/3 wenn der Public-Repo-Schritt gemacht wurde.
+- Beim ersten Bump nach Schema-Änderung: in der Release-Note erwähnen
+  „Schema bumpt, prod-Restart erforderlich" damit klar ist warum
+  rollback nicht trivial ist
+
+**Code-Anchor:** `bin/somora.js`, `src/cli/somora.ts`,
+`src/server/lockfile.ts` (alle in Release `2026.05.08.1` zusammen
+mit dieser Decision implementiert).

@@ -47,6 +47,8 @@ import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
 import { acquireSessionLock } from './session-queue.ts';
+import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
+import { SOMORA_VERSION } from '../version.ts';
 import {
   completeTask,
   failTask,
@@ -964,6 +966,30 @@ const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 process.env.SOMORA_PORT = String(port);
 process.env.SOMORA_HOST ??= '127.0.0.1';
 
+// Acquire single-active-server lockfile. Refuses to start if another
+// somora process is alive (live PID match). Stale locks (process gone)
+// are silently reclaimed. See DECISIONS #42.
+try {
+  const lock = acquireLockfile({
+    port,
+    host: process.env.SOMORA_HOST ?? '127.0.0.1',
+    version: SOMORA_VERSION,
+  });
+  logger.info({ msg: 'server.lockfile.acquired', pid: lock.pid, port: lock.port });
+} catch (err) {
+  if (err instanceof LockfileBusy) {
+    logger.error({
+      msg: 'server.lockfile.busy',
+      existing_pid: err.existing.pid,
+      existing_port: err.existing.port,
+      existing_started: err.existing.startedAt,
+    });
+    process.stderr.write(`\n${err.message}\n\n`);
+    process.exit(1);
+  }
+  throw err;
+}
+
 await ensureDefaultAgent();
 const agentList = await listAgents();
 logger.info({ msg: 'agents.loaded', count: agentList.length, names: agentList.map((a) => a.name).join(',') });
@@ -1070,6 +1096,7 @@ serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
 async function shutdown(signal: string): Promise<void> {
   logger.info({ msg: 'server.shutdown', signal });
   autoDreamWorker.shutdown();
+  releaseLockfile();
   await shutdownMemoryRegistry();
   await shutdownSshPool();
   process.exit(0);
