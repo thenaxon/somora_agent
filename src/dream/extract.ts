@@ -15,7 +15,6 @@ import type { Config, ResolvedModel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
-import { composeDreamSystemPrompt, loadDreamRules } from './dream-rules.ts';
 import type { Finding, FindingAction } from './types.ts';
 
 export interface ExtractContext {
@@ -89,7 +88,17 @@ Rules — follow strictly:
   preferences, their state. Statements made by the agent are NOT authoritative.
 - DO NOT surface transient state ("working on X today", "feeling tired").
 - DO NOT surface jokes, speculation, hypotheticals.
-- DO NOT surface things already accurately captured in existing memory OR wiki.
+- DO NOT surface things already accurately captured in existing memory, the
+  wiki, OR the referenced vault notes. The user maintains the vault directly;
+  duplicating vault content into memory creates two sources of truth that
+  silently diverge.
+- DO NOT surface "consolidated overviews" ("Alles über X", thematic summaries).
+  Memory is for atomic statements; consolidation lives in the wiki and is
+  Dream-B's job, not Dream-A's.
+- DO NOT surface facts that came from a tool-result the agent quoted (memory_search,
+  somora_docs_read, etc.). The agent only relayed those — the user did not assert
+  them; promoting them would re-import vault/memory content as if it were a new
+  user fact.
 - DO surface contradictions: if memory or wiki says X and the user said not-X.
 - DO surface concrete new facts: a new project, a new device, a new contact.
 - For vault_hint: only when an existing vault note appears clearly outdated
@@ -387,19 +396,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
     return { findings: [], chunksProcessed: 0, totalChunks: 0, completed: true };
   }
 
-  // Per-agent rules from DREAMRULES.MD. Loaded once per extraction run
-  // (not per chunk) so the worker is consistent within a single dream;
-  // edits to the file take effect on the next dream cycle. Missing file
-  // = no rules block, base prompt unchanged.
-  const rules = await loadDreamRules(ctx.agent);
-  const systemPrompt = composeDreamSystemPrompt(SYSTEM_PROMPT, rules);
-  if (rules) {
-    logger.info({
-      msg: 'dream.rules_loaded',
-      agent: ctx.agent,
-      rules_chars: rules.length,
-    });
-  }
+  const systemPrompt = SYSTEM_PROMPT;
 
   const client = buildClient(ctx.workerModel);
   const accumulated: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
