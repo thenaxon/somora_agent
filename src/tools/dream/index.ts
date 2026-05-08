@@ -5,5 +5,7 @@ export {
   dreamGet,
   dreamApply,
   dreamDismiss,
+  dreamRun,
   dreamTools,
+  configureDreamRunTool,
 } from './tools.ts';

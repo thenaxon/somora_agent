@@ -20,6 +20,7 @@ import {
 } from '../../dream/storage.ts';
 import type { Finding } from '../../dream/types.ts';
 import type { ToolDefinition } from '../types.ts';
+import type { WikiPromotionWorker } from '../../wiki/auto-worker.ts';
 
 // ── Shared helpers ────────────────────────────────────────────────────
 
@@ -303,8 +304,108 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
   },
 };
 
+// ── dream_run ─────────────────────────────────────────────────────────
+//
+// Manual trigger for Dream-B (memory→wiki promotion) and (later) Dream-C
+// (lint). Single tool with `mode` arg covers both modes — keeps the
+// dream_*-Toolset tight. See `private/wiki-design.md` § Tool-Surface.
+
+interface DreamRunDeps {
+  wikiPromotionWorker: WikiPromotionWorker;
+}
+
+let injectedDreamRunDeps: DreamRunDeps | null = null;
+
+/** Server boot wires the WikiPromotionWorker reference here so the
+ *  in-process tool handler can call runNow() directly. The MCP child
+ *  doesn't get this — it falls back to the HTTP endpoint. */
+export function configureDreamRunTool(deps: DreamRunDeps): void {
+  injectedDreamRunDeps = deps;
+}
+
+const RunInput = z.object({
+  mode: z.enum(['b', 'c']).optional(),
+});
+
+export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
+  name: 'dream_run',
+  toolset: 'dream',
+  description:
+    'Manually trigger a Dream-Worker run RIGHT NOW. ' +
+    "mode='b' (default): Dream-B promotion — reads each agent's short-term memory, " +
+    'decides which entries are wiki-worthy, writes them as consolidated wiki pages with ' +
+    'cross-references, replaces source memory files with stubs. Stubs that have new ' +
+    '"Recent observations" since their last promotion get merged into the existing wiki page. ' +
+    "mode='c' (Phase 4 Stufe 5, not implemented yet): Dream-C lint — periodic wiki health-check " +
+    'for contradictions, stale claims, broken links, orphans. ' +
+    'Returns a summary with counts of promoted/merged/skipped/failed candidates. ' +
+    "Use sparingly — Dream-B's scheduler runs every 12h by default. Useful right after the " +
+    'user has added several substantial memory notes and wants them in the shared wiki immediately.',
+  inputSchema: RunInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      mode: {
+        type: 'string',
+        enum: ['b', 'c'],
+        description:
+          "Which Dream worker to fire. Default 'b' (memory→wiki promotion). 'c' (lint) " +
+          'is reserved for Phase-4 Stufe 5; calling it today errors out cleanly.',
+      },
+    },
+    additionalProperties: false,
+  },
+  async handler(input, ctx) {
+    const mode = input.mode ?? 'b';
+    if (!ctx.config.wiki.enabled) {
+      throw new Error('config.wiki.enabled is false — wiki layer not active');
+    }
+    if (mode === 'c') {
+      throw new Error("dream_run mode='c' (lint) not implemented yet (Phase-4 Stufe 5)");
+    }
+    // mode === 'b' — Dream-B promotion run.
+    if (injectedDreamRunDeps) {
+      const result = await injectedDreamRunDeps.wikiPromotionWorker.runNow();
+      const counts = result.outcomes.reduce(
+        (acc, o) => {
+          acc[o.kind] = (acc[o.kind] ?? 0) + 1;
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
+      return {
+        mode: 'b',
+        candidatesSeen: result.candidatesSeen,
+        durationMs: result.durationMs,
+        counts,
+        outcomes: result.outcomes,
+        via: 'in-process',
+      };
+    }
+    // MCP child fallback: hit the main server's HTTP endpoint.
+    return runDreamBViaHttp();
+  },
+};
+
+async function runDreamBViaHttp(): Promise<unknown> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const url = `http://${host}:${port}/wiki/run-promotion`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`dream_run HTTP fallback ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as Record<string, unknown>;
+  return { mode: 'b', ...data, via: 'http' };
+}
+
 // ── Bundle ────────────────────────────────────────────────────────────
 
 export function dreamTools(): ToolDefinition[] {
-  return [dreamList, dreamGet, dreamApply, dreamDismiss] as ToolDefinition[];
+  return [dreamList, dreamGet, dreamApply, dreamDismiss, dreamRun] as ToolDefinition[];
 }

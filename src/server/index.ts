@@ -27,9 +27,9 @@ import {
 } from '../storage/sessions.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import {
+  configureDreamRunTool,
   configureExecConcurrencyCaps,
   configureSpawnTools,
-  configureWikiTools,
   logExecCaps,
   recoverOrphanedJobs,
   registerAllTools,
@@ -961,6 +961,30 @@ app.get('/spawn-list', (c) => {
   return c.json({ tasks: listTasksForAgent(parent) });
 });
 
+// Wiki-Promotion manueller Trigger. Same handler the wiki_run_promotion
+// tool calls in-process; exposed over HTTP so the MCP child (claude-cli
+// / codex-cli) can fall back to it when its own ToolRegistry lacks the
+// injected wikiPromotionWorker. See `private/wiki-design.md` § Tool-Surface.
+app.post('/wiki/run-promotion', async (c) => {
+  if (!config.wiki.enabled) {
+    return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  }
+  const result = await wikiPromotionWorker.runNow();
+  const counts = result.outcomes.reduce(
+    (acc, o) => {
+      acc[o.kind] = (acc[o.kind] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<string, number>,
+  );
+  return c.json({
+    candidatesSeen: result.candidatesSeen,
+    durationMs: result.durationMs,
+    counts,
+    outcomes: result.outcomes,
+  });
+});
+
 const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 // Pin the resolved port back into the env so child processes (MCP
 // servers spawned by claude-cli/codex-cli) inherit it for their HTTP
@@ -1113,7 +1137,7 @@ const wikiPromotionWorker = new WikiPromotionWorker({
   },
 });
 wikiPromotionWorker.start();
-configureWikiTools({ wikiPromotionWorker });
+configureDreamRunTool({ wikiPromotionWorker });
 
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });

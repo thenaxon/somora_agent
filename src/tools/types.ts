@@ -126,8 +126,7 @@ export type Toolset =
   | 'exec'
   | 'time'
   | 'agents'
-  | 'skills'
-  | 'wiki';
+  | 'skills';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   readonly name: string;

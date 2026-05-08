@@ -183,6 +183,12 @@ export function App({
       id += 1;
       return `replay-${id}`;
     };
+    // History events come from JSONL with raw `mcp__<server>__<tool>`
+    // tool names; the SSE serializer strips this prefix on the live
+    // path. Replay needs the same shortening so the TUI doesn't show
+    // mcp__somora-memory__exec for old turns. Same regex as the
+    // server's shortToolName helper.
+    const stripMcpPrefix = (t: string): string => t.replace(/^mcp__[^_]+__/, '');
     for (const ev of events) {
       if (ev.kind === 'user_message' && typeof ev.text === 'string') {
         out.push({
@@ -197,7 +203,7 @@ export function App({
         out.push({
           kind: 'tool',
           id: nid(),
-          tool: ev.tool,
+          tool: stripMcpPrefix(ev.tool),
           phase: 'call',
           summary: typeof ev.input === 'object' && ev.input ? safeStringify(ev.input, 60) : '',
         });
@@ -206,7 +212,7 @@ export function App({
           out.push({
             kind: 'tool',
             id: nid(),
-            tool: ev.tool,
+            tool: stripMcpPrefix(ev.tool),
             phase: 'error',
             error: summarize(ev.error, 200),
           });
@@ -214,7 +220,7 @@ export function App({
           out.push({
             kind: 'tool',
             id: nid(),
-            tool: ev.tool,
+            tool: stripMcpPrefix(ev.tool),
             phase: 'result',
             summary: typeof ev.output === 'object' && ev.output ? safeStringify(ev.output, 60) : '',
           });

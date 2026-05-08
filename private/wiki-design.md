@@ -602,12 +602,23 @@ des neuen Modells. Komplett aus `registerAllTools()` raus, Code unter
 `src/tools/obsidian/` gelöscht. Tool-Count: 36 → 33. `readObsidianConfigForAgent`
 bleibt für die Read-Source erhalten.
 
-**User-Tools (kommen in späteren Stufen):**
+**User-Tools (Erweiterung der dream-Toolset-Familie):**
 
-- `wiki_bootstrap` — Migration-Run trigger (Stufe 6)
-- `dream_b_run_now` — manueller Dream-B-Trigger (Stufe 3)
-- `dream_c_run_now` — manueller Dream-C-Trigger (Stufe 5)
-- `wiki_status` — zeigt last-runs, queue, errors (Stufe 3+)
+- `dream_run({mode: 'b' | 'c'?})` — manueller Trigger für Dream-B
+  (memory→wiki promotion) oder Dream-C (lint). Default mode='b'
+  solange C noch nicht da ist. **Eingeführt Stufe 3.5 (2026-05-08
+  sehr-spät):** ersetzt das ursprünglich vorgesehene
+  `dream_b_run_now` / `dream_c_run_now`-Paar. Generischer Name
+  passt zur dream_*-Familie (dream_list/get/apply/dismiss) und
+  vermeidet Tool-Inflation.
+- `wiki_bootstrap` — Migration-Run trigger (Stufe 6, wird wahrscheinlich
+  als `dream_bootstrap` umgesetzt analog zur dream-Familie)
+
+**Keine separaten `wiki_*`-Tools** — Wiki-Layer-Inhalt geht durch
+`memory_*`-Tools (siehe oben). `wiki_status` aus früherem Design
+gestrichen (2026-05-08): Wiki-Config kann direkt in
+`~/.somora/config.yaml` eingesehen werden, eigenes Tool wäre
+Tool-Inflation.
 
 ---
 
