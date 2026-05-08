@@ -4,7 +4,68 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-08 abend — Erstes Release `2026.05.08.1` + Service-Mode-Workflow)
+## Wo wir stehen (Stand: 2026-05-08 sehr-spät — Release `2026.05.08.2` mit Phase-4-Wiki-Layer)
+
+**HEAD: tag `2026.05.08.2` auf main, gepusht. Lokal via npm-pack-Tarball installiert.**
+
+Bump enthält gegenüber `2026.05.08.1`:
+
+### claude-cli stale-session Fix (`71aa424`)
+
+Wenn claude-cli's lokaler Conversation-Store eine alte SDK-Session-ID nicht mehr kennt, dropt der Engine-Catch-Block die stale `sdkSessionId` aus dem Session-Meta. Fallback startet damit eine frische Conversation statt nochmal die kaputte ID zu verwenden — kein manuelles `/reset` mehr nötig.
+
+### Phase 4 — Wiki-Layer Stufen 1-4 komplett
+
+Konzept aus `private/wiki-design.md` jetzt implementiert (4 von 6 Stufen):
+
+| Stufe | Commit | Was |
+|---|---|---|
+| 1 — Foundation | `8eb53c9` | WikiConfig-Schema, ChunkSource erweitert um 'wiki', Source-Klassifikation, Search-Boost-Multiplier (wiki/memory/vault), src/wiki/conflict.ts (mtime), src/wiki/templates.ts (Wiki-Page + Stub-Templates) |
+| 2 — Read-Side | `60a7bfc` | memory_*-Tools source-aware (memory_search source-Filter, memory_get wiki/-Pfad, memory_list source+pathPrefix, memory_write Stub-Detection); Auto-Inject erweitert um Wiki-Overview-Block; obsidian_*-Tools entfernt (33 statt 36 Tools) |
+| 3 — Dream-B | `8dc1f09` | Server-globaler Promotion-Worker: fresh memory → wiki page mit Stub-Replacement, Stub-Observations → wiki-merge; mtime-Konflikt-Schutz; index.md regen + monatliche logs/YYYY-MM.md; real-clock 12h Scheduler + Pre-Sweep über autoDreamWorker.runPreSweep(); Manual-Trigger via wiki_run_promotion + wiki_status (35 Tools) |
+| 4 — Dream-A wiki-aware | `551a504` | extract.ts: ExtractContext.referencedWiki + formatWiki + System-Prompt-Erweiterung mit Konflikt-via-Stub-Pattern; src/dream/wiki-context.ts neu — loadReferencedWiki kombiniert Stub-derived + Recall-derived; runner.ts wiret durch wenn config.wiki.enabled |
+
+### Was Stufe 1-4 zusammen kann
+
+Mit `wiki: enabled: true` in der config:
+
+1. **Lesen:** Agents searchen + browsen das geteilte Wiki via `memory_*`-Tools mit `source: "wiki"`-Filter; Auto-Inject zeigt index.md-Overview als Header
+2. **Schreiben (geteilt):** Dream-B konsolidiert agent-Memory ins Wiki alle 12h (oder via `wiki_run_promotion`-Tool sofort), respektiert mtime-Konflikte mit User-Edits
+3. **Konflikt-Erkennung:** Dream-A liest auch Wiki-Pages (für Stubs + via Recall), erkennt Widersprüche zwischen Session und Wiki, schlägt memory_write auf Stub-Slug vor → Dream-B integriert beim nächsten Run
+
+### Was NICHT in `2026.05.08.2` ist (kommt mit Stufe 5+6)
+
+- **Dream-C / Lint** (Stufe 5): wöchentliche Wiki-Health-Checks für Widersprüche, stale claims, broken links, orphans
+- **Bootstrap-Migration** (Stufe 6): einmaliger Run um existing 16 hans-Memories ins Wiki zu promoten
+
+Beide nicht zwingend für ersten Real-Test — Lint wird erst bei Wiki-Drift relevant, Bootstrap kann durch normale Dream-B-Runs organisch ersetzt werden.
+
+### Real-Welt-Test offen
+
+Stufe 1-4 ist mit Smoke-Tests und Mock-LLM-Dispatcher verifiziert (74 Tests gesamt grün: Stufe 1=30, Stufe 2=37, Stufe 3=28, Stufe 4=8). **Was offen ist:** echtes Dream-B-Verhalten gegen einen realen Worker-LLM (gemma4big oder opus). Beim ersten echten Run wird Prompt-Tuning vermutlich nötig sein — aktuelle Prompts sind erste Iteration.
+
+### Aktivierung
+
+`config.wiki.enabled: false` ist Default. Zum Aktivieren minimal:
+
+```yaml
+wiki:
+  enabled: true
+  promotion:
+    model: openrouter/anthropic/claude-opus-4-5   # smart Modell, kein Approval
+  lint:
+    model: openrouter/anthropic/claude-opus-4-5   # noch nicht implementiert
+```
+
+Vault muss in agent.yaml konfiguriert sein. Wiki landet in `<vault>/somora/`.
+
+### Pickup-Satz für nächste Session
+
+> "2026-05-08 sehr-spät — Release `2026.05.08.2` ist live (commit + tag, lokal installiert). Phase-4-Wiki-Layer Stufen 1-4 drin: Foundation, Read-Side, Dream-B Worker, Dream-A wiki-aware. claude-cli stale-session Fix mitgenommen. Verifiziert: 74 Smoke-Tests, alle grün. **Nicht real-LLM-getestet** — wenn Rene's nächste Session ein echter Wiki-Run sein soll, dann `config.wiki.enabled: true` setzen + `wiki.promotion.model` konfigurieren, dann `wiki_run_promotion` aufrufen oder warten auf 12h-Scheduler. **Nächstes:** Stufe 5 (Dream-C / Lint) und Stufe 6 (Bootstrap-Migration) sind die letzten 2 von 6 — beide nicht zwingend für ersten Run aber im Design-Doc als Phase-4-Komplett-Set vorgesehen. Alternativ: Real-Test, dann gezielt Bug-Fixes basierend auf was sich zeigt."
+
+---
+
+## Vorheriger Stand (Stand: 2026-05-08 abend — Erstes Release `2026.05.08.1` + Service-Mode-Workflow)
 
 **HEAD: nach diesem Commit auf main, plus git tag `2026.05.08.1`.**
 
