@@ -1,12 +1,12 @@
-// Default LLM dispatcher for Dream-B. Calls the configured worker model
-// via the openai-compatible SDK (same v1 constraint as Dream-A).
+// Default LLM dispatcher for Dream-B. Multi-engine since Stufe 4.5 —
+// supports openai-compatible, claude-cli (subscription via SDK), and
+// codex-cli (subprocess) as worker. The actual LLM call lives in
+// `dream-b-llm.ts`; this module owns prompt-shaping and response-parsing.
 //
 // Robust JSON parsing: strips markdown fences if the model emits them
 // despite the prompt, and validates required fields. On parse failure
 // or invalid shape, returns a `skip`/`no_change` outcome with the
 // failure reason — never throws on a single bad LLM response.
-
-import OpenAI from 'openai';
 
 import { logger } from '../server/logger.ts';
 import type {
@@ -16,6 +16,7 @@ import type {
   PromotionDispatcher,
 } from './types.ts';
 import { MERGE_SYSTEM_PROMPT, PROMOTE_SYSTEM_PROMPT } from './dream-b-prompts.ts';
+import { callOneShotLLM } from './dream-b-llm.ts';
 
 export class DefaultPromotionDispatcher implements PromotionDispatcher {
   async decidePromotion(args: {
@@ -25,23 +26,27 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
     timeoutMs: number;
     signal?: AbortSignal;
   }): Promise<PromotionDecision> {
-    const provider = args.workerModel.provider;
-    if (provider.engine !== 'openai-compatible') {
-      return {
-        kind: 'skip',
-        reason: `worker model engine ${provider.engine} not supported by Dream-B in v1`,
-      };
-    }
     const userMsg = buildPromoteUserMessage(args.candidate, args.existingWikiSummary);
-    const text = await callWorker({
-      provider,
-      modelId: args.workerModel.modelId,
-      systemPrompt: PROMOTE_SYSTEM_PROMPT,
-      userMessage: userMsg,
-      timeoutMs: args.timeoutMs,
-      signal: args.signal,
-      logCtx: { agent: args.candidate.agent, op: 'promote', slug: args.candidate.slug },
-    });
+    let text: string;
+    try {
+      text = await callOneShotLLM({
+        workerModel: args.workerModel,
+        systemPrompt: PROMOTE_SYSTEM_PROMPT,
+        userMessage: userMsg,
+        timeoutMs: args.timeoutMs,
+        ...(args.signal ? { signal: args.signal } : {}),
+        logCtx: { agent: args.candidate.agent, op: 'promote', slug: args.candidate.slug },
+      });
+    } catch (err) {
+      logger.warn({
+        msg: 'wiki.dream_b.llm_call_failed',
+        op: 'promote',
+        agent: args.candidate.agent,
+        slug: args.candidate.slug,
+        err: (err as Error).message,
+      });
+      return { kind: 'skip', reason: `LLM call failed: ${(err as Error).message}` };
+    }
     return parsePromotionDecision(text, args.candidate.slug);
   }
 
@@ -52,23 +57,27 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
     timeoutMs: number;
     signal?: AbortSignal;
   }): Promise<MergeDecision> {
-    const provider = args.workerModel.provider;
-    if (provider.engine !== 'openai-compatible') {
-      return {
-        kind: 'no_change',
-        reason: `worker model engine ${provider.engine} not supported by Dream-B in v1`,
-      };
-    }
     const userMsg = buildMergeUserMessage(args.candidate, args.existingWikiPage);
-    const text = await callWorker({
-      provider,
-      modelId: args.workerModel.modelId,
-      systemPrompt: MERGE_SYSTEM_PROMPT,
-      userMessage: userMsg,
-      timeoutMs: args.timeoutMs,
-      signal: args.signal,
-      logCtx: { agent: args.candidate.agent, op: 'merge', slug: args.candidate.slug },
-    });
+    let text: string;
+    try {
+      text = await callOneShotLLM({
+        workerModel: args.workerModel,
+        systemPrompt: MERGE_SYSTEM_PROMPT,
+        userMessage: userMsg,
+        timeoutMs: args.timeoutMs,
+        ...(args.signal ? { signal: args.signal } : {}),
+        logCtx: { agent: args.candidate.agent, op: 'merge', slug: args.candidate.slug },
+      });
+    } catch (err) {
+      logger.warn({
+        msg: 'wiki.dream_b.llm_call_failed',
+        op: 'merge',
+        agent: args.candidate.agent,
+        slug: args.candidate.slug,
+        err: (err as Error).message,
+      });
+      return { kind: 'no_change', reason: `LLM call failed: ${(err as Error).message}` };
+    }
     return parseMergeDecision(text, args.candidate.slug);
   }
 }
@@ -115,53 +124,7 @@ function buildMergeUserMessage(
   ].join('\n');
 }
 
-// ─── LLM call + timeout race ────────────────────────────────────────
-
-async function callWorker(args: {
-  provider: { baseUrl?: string; apiKey?: string };
-  modelId: string;
-  systemPrompt: string;
-  userMessage: string;
-  timeoutMs: number;
-  signal?: AbortSignal;
-  logCtx: Record<string, unknown>;
-}): Promise<string> {
-  const client = new OpenAI({
-    baseURL: args.provider.baseUrl,
-    apiKey: args.provider.apiKey ?? 'dummy',
-  });
-  const reqStart = Date.now();
-  logger.info({ msg: 'wiki.dream_b.llm_request', ...args.logCtx, model: args.modelId });
-  const completion = await Promise.race([
-    client.chat.completions.create(
-      {
-        model: args.modelId,
-        messages: [
-          { role: 'system', content: args.systemPrompt },
-          { role: 'user', content: args.userMessage },
-        ],
-        stream: false,
-      },
-      args.signal ? { signal: args.signal } : undefined,
-    ),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Dream-B ${args.logCtx.op} timed out after ${args.timeoutMs}ms`)),
-        args.timeoutMs,
-      ),
-    ),
-  ]);
-  const text = completion.choices[0]?.message?.content ?? '';
-  logger.info({
-    msg: 'wiki.dream_b.llm_response',
-    ...args.logCtx,
-    durationMs: Date.now() - reqStart,
-    chars: text.length,
-    preview: text.slice(0, 200).replace(/\s+/g, ' ').trim(),
-    usage: completion.usage,
-  });
-  return text;
-}
+// ─── (LLM dispatch moved to src/wiki/dream-b-llm.ts in Stufe 4.5) ────
 
 // ─── Parsers ────────────────────────────────────────────────────────
 

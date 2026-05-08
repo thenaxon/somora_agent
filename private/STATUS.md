@@ -4,7 +4,40 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-08 sehr-spät — Release `2026.05.08.2` mit Phase-4-Wiki-Layer)
+## Wo wir stehen (Stand: 2026-05-08 sehr-spät — Release `2026.05.08.3` Multi-Engine Dispatcher)
+
+**HEAD: tag `2026.05.08.3` auf main, gepusht. Lokal installiert.**
+
+Bump enthält gegenüber `2026.05.08.2`:
+
+### Stufe 4.5 — Multi-Engine Dream-B Dispatcher
+
+Dream-B war bisher v1-beschränkt auf openai-compatible Worker. Mit diesem Bump unterstützt der Dispatcher alle drei somora-Engines:
+
+- **openai-compatible** (existing): direkt via OpenAI SDK
+- **claude-cli** (neu): one-shot via `@anthropic-ai/claude-agent-sdk` `query()`, ohne Tools/MCP/Session — nutzt User-Subscription
+- **codex-cli** (neu): subprocess-spawn via `codex exec --json`, JSONL-Output-Parsing — nutzt User-Subscription
+
+Code:
+- `src/wiki/dream-b-llm.ts` (neu) — `callOneShotLLM()` mit drei Engine-Branches, Auth/Bin-Resolution analog zu den Chat-Engines
+- `src/wiki/dream-b-dispatcher.ts` — Engine-Check raus, ruft callOneShotLLM, Parser bleiben
+
+Real-getestet 2026-05-08: opus via claude-cli + gpt-5.5 via codex-cli haben beide auf einen "PING"-Smoke mit "PONG" geantwortet (smoke check-stage45-routing.ts, 7/7 grün). Plus Mock-Dispatcher-Smoke aus Stufe 3 (28/28 grün) zeigt dass der Refactor die existing Dispatcher-Contract nicht gebrochen hat.
+
+### Aktivierung mit Subscription
+
+Heute eingetragen in `~/.somora/config.yaml`:
+
+```yaml
+wiki:
+  enabled: true
+  promotion:
+    model: opus
+  lint:
+    model: opus
+```
+
+Damit nutzt Dream-B (und später Dream-C) deine Claude-Subscription via claude-cli statt openrouter zu kosten.
 
 **HEAD: tag `2026.05.08.2` auf main, gepusht. Lokal via npm-pack-Tarball installiert.**
 
@@ -61,7 +94,7 @@ Vault muss in agent.yaml konfiguriert sein. Wiki landet in `<vault>/somora/`.
 
 ### Pickup-Satz für nächste Session
 
-> "2026-05-08 sehr-spät — Release `2026.05.08.2` ist live (commit + tag, lokal installiert). Phase-4-Wiki-Layer Stufen 1-4 drin: Foundation, Read-Side, Dream-B Worker, Dream-A wiki-aware. claude-cli stale-session Fix mitgenommen. Verifiziert: 74 Smoke-Tests, alle grün. **Nicht real-LLM-getestet** — wenn Rene's nächste Session ein echter Wiki-Run sein soll, dann `config.wiki.enabled: true` setzen + `wiki.promotion.model` konfigurieren, dann `wiki_run_promotion` aufrufen oder warten auf 12h-Scheduler. **Nächstes:** Stufe 5 (Dream-C / Lint) und Stufe 6 (Bootstrap-Migration) sind die letzten 2 von 6 — beide nicht zwingend für ersten Run aber im Design-Doc als Phase-4-Komplett-Set vorgesehen. Alternativ: Real-Test, dann gezielt Bug-Fixes basierend auf was sich zeigt."
+> "2026-05-08 sehr-spät — Release `2026.05.08.3` ist live: Multi-Engine Dream-B Dispatcher. Wiki-Layer ist in `~/.somora/config.yaml` aktiviert mit `promotion.model: opus` (via claude-cli, Subscription). 7/7 routing-smoke grün gegen real-LLMs (opus + gpt-5.5). **Nächster Schritt von Renes Seite:** Server restarten, dann via TUI auf Hans `wiki_run_promotion` aufrufen — das wird Dream-B mit echtem Opus über alle hans-Memories laufen lassen, wahrscheinlich Prompt-Tuning nötig. **Code-seitig nächstes:** Stufe 5 (Dream-C / Lint) + Stufe 6 (Bootstrap-Migration) sind die letzten 2 von 6 Stufen, beide nicht zwingend für ersten Run."
 
 ---
 
