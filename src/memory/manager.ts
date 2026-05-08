@@ -32,6 +32,7 @@ import {
   type MemoryDb,
 } from './storage.ts';
 import { MarkdownWatcher, type FileEvent } from './watcher.ts';
+import { appendObservation, isStub } from '../wiki/templates.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 
@@ -40,10 +41,12 @@ const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
 export interface ObsidianSource {
   vaultPath: string;
   /**
-   * Paths relative to vaultPath where the (future) `obsidian_write` tool
-   * is forbidden from writing. These ARE still indexed and surfaced via
-   * recall — `read-only` literally: readable but not writable. For full
-   * privacy/no-index, use a different mechanism (TBD).
+   * Paths relative to vaultPath that Dream-B/C must not write into.
+   * These ARE still indexed and surfaced via recall — `read-only`
+   * literally: readable but not writable. Phase 4 (DECISIONS #41/#42)
+   * removed agent-direct vault writes; this field now constrains the
+   * server-side workers (Dream-B promotions, Dream-C lint corrections)
+   * and stays on as belt-and-suspenders for the wiki subfolder.
    */
   readOnlyPaths?: string[];
 }
@@ -145,8 +148,8 @@ export class MemoryManager {
     // based and only exclude components RELATIVE to a watched root.
     //
     // readOnlyPaths are NOT excluded here — they're meant to be indexed
-    // and surfaced via recall, just write-protected for the future
-    // obsidian_write tool. See isVaultPathReadOnly().
+    // and surfaced via recall, just write-protected for the server-
+    // side workers (Dream-B/C). See isVaultPathReadOnly().
     const memRoot = this.memoryRoot;
     const vault = this.obsidian?.vaultPath;
     const roots = [memRoot, ...(vault ? [vault] : [])];
@@ -172,8 +175,8 @@ export class MemoryManager {
 
   /**
    * True if the given absolute path lives in a vault subpath marked
-   * read-only via agent.yaml. Used by the (future) obsidian_write tool
-   * to refuse writes — has no effect on indexing/recall.
+   * read-only via agent.yaml. Used by Dream-B/C to refuse writes —
+   * has no effect on indexing/recall.
    */
   isVaultPathReadOnly(absolutePath: string): boolean {
     if (!this.obsidian) return false;
@@ -353,10 +356,14 @@ export class MemoryManager {
     // wiki: wiki absPath so subfolder name is stripped; vault: vaultPath).
     // Hit-format uses `[source/slug]` so the slug should be stable across
     // sources without redundant prefixes.
+    //
+    // Wiki preserves `/` separators (e.g. `personen/luca`) to match the
+    // Wikilinks Dream-B writes; vault and memory keep the historic `--`
+    // convention so existing references don't break.
     const slug = source === 'memory'
       ? slugFromPath(path, this.memoryRoot)
       : source === 'wiki'
-      ? slugFromPath(path, this.wiki!.absPath)
+      ? slugFromPath(path, this.wiki!.absPath, { keepSeparators: true })
       : slugFromPath(path, this.obsidian!.vaultPath);
 
     let embeddings: Float32Array[] | null = null;
@@ -394,13 +401,25 @@ export class MemoryManager {
 
   // ── Public query surface ──────────────────────────────────────────────
 
-  async search(query: string, opts?: { limit?: number; minScore?: number }): Promise<Hit[]> {
+  async search(
+    query: string,
+    opts?: {
+      limit?: number;
+      minScore?: number;
+      /** Restrict to specific sources. Undefined or 'all' = no filter. */
+      sources?: ChunkSource[] | 'all';
+    },
+  ): Promise<Hit[]> {
     const memDb = this.requireDb();
     // Best-effort retry — recovers from a degraded init the next time the
     // user actually searches.
     await this.ensureEmbedder();
     const limit = opts?.limit ?? this.cfg.autoInject.maxResults;
     const minScore = opts?.minScore ?? this.cfg.autoInject.minScore;
+    const sourceFilter =
+      opts?.sources && opts.sources !== 'all' && opts.sources.length > 0
+        ? opts.sources
+        : undefined;
     let queryEmbedding: Float32Array | null = null;
     if (this.embedder) {
       try {
@@ -416,32 +435,110 @@ export class MemoryManager {
       maxResults: limit,
       minScore,
       ...(this.searchBoosts ? { sourceBoosts: this.searchBoosts } : {}),
+      ...(sourceFilter ? { sourceFilter } : {}),
     });
   }
 
-  async listNotes(filter?: { tag?: string }): Promise<NoteSummary[]> {
+  async listNotes(filter?: {
+    tag?: string;
+    /** Restrict to one or more sources. Default: 'memory' (preserves
+     *  pre-Phase-4 behavior). Pass 'all' for the full union. */
+    sources?: ChunkSource[] | 'all';
+    /** Filter by slug-prefix. Useful for browsing a wiki subfolder
+     *  ("personen/") or a vault directory. */
+    pathPrefix?: string;
+  }): Promise<NoteSummary[]> {
     const memDb = this.requireDb();
-    const files = listAllFiles(memDb, 'memory');
+    const sources: ChunkSource[] =
+      !filter?.sources
+        ? ['memory']
+        : filter.sources === 'all'
+        ? ['memory', 'wiki', 'vault']
+        : filter.sources;
+
     const out: NoteSummary[] = [];
-    for (const f of files) {
-      try {
-        const raw = await readFile(f.path, 'utf8');
-        const parsed = matter(raw);
-        const tags = Array.isArray(parsed.data.tags) ? (parsed.data.tags as string[]) : undefined;
-        if (filter?.tag && (!tags || !tags.includes(filter.tag))) continue;
-        out.push({
-          slug: slugFromPath(f.path, this.memoryRoot),
-          source: 'memory',
-          path: f.path,
-          description: typeof parsed.data.description === 'string' ? parsed.data.description : undefined,
-          tags,
-          updatedAt: f.mtime,
-        });
-      } catch {
-        // Skip unreadable files; don't error the whole list.
+    for (const source of sources) {
+      const files = listAllFiles(memDb, source);
+      for (const f of files) {
+        try {
+          const slug =
+            source === 'memory'
+              ? slugFromPath(f.path, this.memoryRoot)
+              : source === 'wiki'
+              ? slugFromPath(f.path, this.wiki!.absPath, { keepSeparators: true })
+              : slugFromPath(f.path, this.obsidian!.vaultPath);
+          if (filter?.pathPrefix && !slug.startsWith(filter.pathPrefix)) continue;
+          const raw = await readFile(f.path, 'utf8');
+          const parsed = matter(raw);
+          const tags = Array.isArray(parsed.data.tags) ? (parsed.data.tags as string[]) : undefined;
+          if (filter?.tag && (!tags || !tags.includes(filter.tag))) continue;
+          out.push({
+            slug,
+            source,
+            path: f.path,
+            description: typeof parsed.data.description === 'string' ? parsed.data.description : undefined,
+            tags,
+            updatedAt: f.mtime,
+          });
+        } catch {
+          // Skip unreadable files; don't error the whole list.
+        }
       }
     }
     return out.sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /**
+   * Read and shorten the wiki's index.md for the auto-inject overview
+   * block. Returns null if wiki is not enabled, has no index.md yet,
+   * or would not fit within the budget.
+   *
+   * Shortening strategy: if raw index is ≤ maxChars, return verbatim.
+   * Otherwise drop snippet/description text after each `[[link]]`,
+   * keeping just the bare wikilink list per section. If still too
+   * long, truncate to topNSlugs across sections.
+   */
+  async getWikiOverview(opts: {
+    maxChars: number;
+    topNSlugs: number;
+  }): Promise<string | null> {
+    if (!this.wiki) return null;
+    const indexPath = join(this.wiki.absPath, 'index.md');
+    let raw: string;
+    try {
+      raw = await readFile(indexPath, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+    if (raw.length <= opts.maxChars) return raw.trimEnd();
+
+    // Strip everything except section headers (## ...) and bare
+    // [[wikilink]] tokens. This is a best-effort shortener — Dream-B's
+    // index.md format is conventionalised but we don't hard-couple here.
+    const lines = raw.split('\n');
+    const out: string[] = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith('# ') || trimmed.startsWith('## ')) {
+        out.push(trimmed);
+        continue;
+      }
+      // Match all [[…]] tokens; keep the line if it has any
+      const links = trimmed.match(/\[\[[^\]]+\]\]/g);
+      if (links?.length) {
+        out.push(`- ${links.join(' ')}`);
+      }
+    }
+    let shortened = out.join('\n');
+    if (shortened.length > opts.maxChars) {
+      // Last resort: keep first N [[…]] tokens overall
+      const links = shortened.match(/\[\[[^\]]+\]\]/g) ?? [];
+      const kept = links.slice(0, opts.topNSlugs);
+      shortened = `# Wiki overview (truncated to top ${kept.length})\n\n${kept.join(' ')}`;
+    }
+    return shortened.trimEnd();
   }
 
   async getNote(slug: string): Promise<{ path: string; markdown: string } | null> {
@@ -466,23 +563,37 @@ export class MemoryManager {
     body: string,
     frontmatter?: Record<string, unknown>,
     opts?: { mustExist?: boolean },
-  ): Promise<{ path: string; created: boolean }> {
+  ): Promise<{ path: string; created: boolean; mode: 'overwrite' | 'stub_observation' }> {
     if (!SLUG_RE.test(slug)) {
       throw new Error(`invalid slug '${slug}' — must match ${SLUG_RE.source}`);
     }
     const path = join(this.memoryRoot, `${slug}.md`);
 
+    let existingRaw: string | null = null;
     let existing: Record<string, unknown> = {};
     let exists = false;
     try {
-      const raw = await readFile(path, 'utf8');
-      existing = matter(raw).data ?? {};
+      existingRaw = await readFile(path, 'utf8');
+      existing = matter(existingRaw).data ?? {};
       exists = true;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
     if (opts?.mustExist && !exists) {
       throw new Error(`note '${slug}' does not exist — use memory_write to create`);
+    }
+
+    // Stub detection (Phase 4): a memory file with `promoted_to` +
+    // `promoted_at` frontmatter is a pointer to a wiki page. New
+    // observations append to its `## Recent observations` section
+    // instead of clobbering the stub. Dream-B picks them up on the
+    // next promotion run and integrates into the wiki page.
+    if (exists && existingRaw && isStub(existingRaw)) {
+      const parsed = matter(existingRaw);
+      const updatedBody = appendObservation(parsed.content, body);
+      const out = matter.stringify(updatedBody, parsed.data);
+      await writeFile(path, out, 'utf8');
+      return { path, created: false, mode: 'stub_observation' };
     }
 
     const now = new Date().toISOString();
@@ -497,17 +608,18 @@ export class MemoryManager {
     await writeFile(path, fmYaml, 'utf8');
     // Watcher will pick up the change and reindex via debounced handler;
     // we don't reindex synchronously here.
-    return { path, created: !exists };
+    return { path, created: !exists, mode: 'overwrite' };
   }
 
   /**
-   * Resolve a recall reference like "memory/auto" or "vault/Foo--Bar" back
-   * to the full file content. Uses the chunks table for path lookup so we
-   * don't have to reverse-slugify (collision-safe).
+   * Resolve a recall reference like "memory/auto", "wiki/personen/luca",
+   * or "vault/Notizen/Foo--Bar" back to the full file content. Uses the
+   * chunks table for path lookup so we don't have to reverse-slugify
+   * (collision-safe). All three sources route through the same query.
    */
   async getByReference(reference: string): Promise<{
     reference: string;
-    source: 'memory' | 'vault';
+    source: ChunkSource;
     slug: string;
     path: string;
     markdown: string;
@@ -517,7 +629,7 @@ export class MemoryManager {
     if (slashIdx < 0) return null;
     const source = reference.slice(0, slashIdx);
     const slug = reference.slice(slashIdx + 1);
-    if (source !== 'memory' && source !== 'vault') return null;
+    if (source !== 'memory' && source !== 'vault' && source !== 'wiki') return null;
 
     const memDb = this.requireDb();
     const row = memDb.db
@@ -535,7 +647,7 @@ export class MemoryManager {
     const fm = parsed.data ?? {};
     return {
       reference,
-      source,
+      source: source as ChunkSource,
       slug,
       path: row.file_path,
       markdown: raw,
@@ -556,13 +668,16 @@ export class MemoryManager {
   }
 }
 
-function slugFromPath(path: string, root: string): string {
+function slugFromPath(path: string, root: string, opts?: { keepSeparators?: boolean }): string {
   const rel = relative(root, path);
   // Strip .md extension; replace path separators with `--` so a vault note
   // at `projects/somora/idea.md` becomes slug `projects--somora--idea`.
-  return rel
-    .replace(/\.md$/i, '')
-    .split(/[/\\]/)
-    .filter((s) => s.length > 0)
-    .join('--');
+  //
+  // Wiki source overrides via `keepSeparators: true` to preserve `/` —
+  // matches the design-doc reference format `[wiki/personen/luca]` and
+  // aligns with Obsidian Wikilinks `[[personen/luca]]` that Dream-B will
+  // emit. Without this, references and Wikilinks would diverge and
+  // confuse the agent.
+  const parts = rel.replace(/\.md$/i, '').split(/[/\\]/).filter((s) => s.length > 0);
+  return opts?.keepSeparators ? parts.join('/') : parts.join('--');
 }

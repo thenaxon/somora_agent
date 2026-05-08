@@ -13,7 +13,6 @@ in-process. The model never knows which path it's on.
 | `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss` | Inspect and act on findings produced by Dream-Mode (see `dream-mode.md`). |
 | `time` | `time_now` | Current date/time/timezone — model never hallucinates "today". |
 | `web` | `web_search`, `web_fetch` | Search via Brave + fetch web pages as Markdown (Mozilla Readability + SSRF guards). |
-| `obsidian` | `obsidian_write`, `obsidian_move`, `obsidian_delete` | Vault-aware writes; `obsidian_move` rewrites `[[wikilinks]]` across the whole vault. |
 | `file` | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or against any configured SSH resource via `target=...`. `analyze_file` is the multimodal companion: dispatches images/PDFs to a configured `vision.worker` and returns a text description (see `files.md`). |
 | `exec` | `exec`, `process` | One-shot shell commands (sync + background) on local or any SSH resource. Hard-blacklisted destructive patterns; background jobs disk-tracked with poll/log/kill via `process`. See `tools.md` body + `exec-design.md`. |
 | `tmux` | `tmux` | Persistent multi-turn terminal sessions (claude/codex/vim/REPLs). One typed tool with `action: create | send | capture | list | kill` against `target: local | <ssh-resource>`. See `tmux.md` for shell-vs-TUI patterns, `wait_mode` choices, `multiline_safe`, `include_ansi`, and the auto-suggestion safety rule. |
@@ -37,7 +36,7 @@ A tool is a `ToolDefinition` (see `src/tools/types.ts`) with:
   (`{ agent, getMemoryManager, config }`)
 - `available?(ctx)` — optional runtime probe; tools that fail are
   hidden from the model entirely (no API key → no `web_search`
-  exposed, no vault → no `obsidian_*`, etc.)
+  exposed, etc.)
 - `maxResultSizeChars?` — cap on the JSON-stringified result;
   default 100 000 (≈25–35k tokens)
 

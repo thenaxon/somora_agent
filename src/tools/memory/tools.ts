@@ -21,11 +21,18 @@ const SlugSchema = z
   .min(1)
   .regex(/^[a-z0-9][a-z0-9_-]*$/, 'slug must be lowercase, start with letter/digit, only [a-z0-9_-] allowed');
 
-/** Reference for memory_get — must be `memory/<slug>` or `vault/<slug>`. */
+/** Reference for memory_get — `memory/<slug>`, `wiki/<path>`, or
+ *  `vault/<path>`. The wiki source was added in Phase 4 (DECISIONS
+ *  #41/#42 + private/wiki-design.md): a designated subfolder of the
+ *  Obsidian vault that Dream-B writes to and all agents share. */
 const ReferenceSchema = z
   .string()
   .min(3)
-  .regex(/^(memory|vault)\/.+$/, 'reference must start with "memory/" or "vault/"');
+  .regex(/^(memory|wiki|vault)\/.+$/, 'reference must start with "memory/", "wiki/", or "vault/"');
+
+const SourceFilterSchema = z
+  .enum(['memory', 'wiki', 'vault', 'all'])
+  .optional();
 
 const FrontmatterSchema = z
   .object({
@@ -41,18 +48,22 @@ const SearchInput = z.object({
   query: z.string().min(1),
   limit: z.number().int().positive().max(50).optional(),
   minScore: z.number().min(0).max(1).optional(),
+  source: SourceFilterSchema,
 });
 
 export const memorySearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   name: 'memory_search',
   toolset: 'memory',
   description:
-    'Search across all your knowledge sources: your own memory notes plus any attached vault. ' +
-    'Returns top-N hits with `reference`, `score`, and a snippet. Hits are tagged by source: ' +
-    '`memory/<slug>` for your own notes, `vault/<slug>` for vault files. ' +
+    'Search across all your knowledge sources: your own short-term memory, the shared long-term ' +
+    'wiki, and read-only vault content. Returns top-N hits with `reference`, `score`, and a snippet. ' +
+    'Hits are tagged by source: `memory/<slug>` for your own notes, `wiki/<path>` for the shared ' +
+    'consolidated wiki, `vault/<path>` for read-only vault files. ' +
     'Pass the `reference` value directly to `memory_get` to read the full content. ' +
-    'Use this when the pre-injected <memory-context> block is insufficient or you need to ' +
-    'look up something specific that was not surfaced automatically.',
+    'Use the optional `source` parameter to constrain the search to one layer when you know exactly ' +
+    'where to look (e.g. `source: "wiki"` for authoritative consolidated facts). ' +
+    'Default: searches all sources. Use this when the pre-injected <memory-context> block is ' +
+    'insufficient or you need to look up something specific.',
   inputSchema: SearchInput,
   jsonSchema: {
     type: 'object',
@@ -74,15 +85,28 @@ export const memorySearch: ToolDefinition<z.infer<typeof SearchInput>> = {
         maximum: 1,
         description: 'Discard hits below this score (0..1, default 0.5).',
       },
+      source: {
+        type: 'string',
+        enum: ['memory', 'wiki', 'vault', 'all'],
+        description:
+          'Restrict search to a single layer. ' +
+          '"memory" = your own short-term notes; ' +
+          '"wiki" = shared consolidated long-term knowledge; ' +
+          '"vault" = read-only Obsidian content outside the wiki. ' +
+          'Default "all" = mix all three (ranked by source-boost).',
+      },
     },
     required: ['query'],
     additionalProperties: false,
   },
   async handler(input, ctx) {
     const mgr = await ctx.getMemoryManager();
+    const sources =
+      !input.source || input.source === 'all' ? 'all' : [input.source];
     const hits = await mgr.search(input.query, {
       limit: input.limit,
       minScore: input.minScore,
+      sources,
     });
     return {
       query: input.query,
@@ -111,9 +135,10 @@ export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
   name: 'memory_get',
   toolset: 'memory',
   description:
-    'Fetch the full content of a note or vault file by its `reference` from a recall hit ' +
-    '(or from the <memory-context> block). ' +
-    'Format: `memory/<slug>` for your own memory, `vault/<slug>` for vault files. ' +
+    'Fetch the full content of a note, wiki page, or vault file by its `reference` from a recall ' +
+    'hit (or from the <memory-context> block). ' +
+    'Format: `memory/<slug>` for your own short-term memory, `wiki/<path>` for the shared ' +
+    'long-term wiki, `vault/<path>` for read-only vault files. ' +
     'Returns the full markdown content, parsed frontmatter, and file path.',
   inputSchema: GetInput,
   jsonSchema: {
@@ -121,7 +146,7 @@ export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
     properties: {
       reference: {
         type: 'string',
-        pattern: '^(memory|vault)/.+$',
+        pattern: '^(memory|wiki|vault)/.+$',
         description: 'Recall reference, exactly as it appeared in a memory_search hit or in the memory-context block.',
       },
     },
@@ -142,15 +167,18 @@ export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
 
 const ListInput = z.object({
   tag: z.string().optional(),
+  source: SourceFilterSchema,
+  pathPrefix: z.string().min(1).optional(),
 });
 
 export const memoryList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'memory_list',
   toolset: 'memory',
   description:
-    'List your own memory notes with slug, description, and tags. Optionally filter by tag. ' +
-    'Does NOT list vault files — the user knows their own vault, and it may be large. ' +
-    'For vault content, use `memory_search` with a specific query.',
+    'List notes with slug, description, and tags. Default scope: your own short-term memory only. ' +
+    'Pass `source: "wiki"` to browse the shared long-term wiki (e.g. with `pathPrefix: "personen/"` ' +
+    'to list just the people). Pass `source: "all"` to list everything across memory + wiki + vault — ' +
+    'rarely needed; vault can be very large.',
   inputSchema: ListInput,
   jsonSchema: {
     type: 'object',
@@ -159,16 +187,40 @@ export const memoryList: ToolDefinition<z.infer<typeof ListInput>> = {
         type: 'string',
         description: 'Optional: only return notes whose frontmatter contains this tag.',
       },
+      source: {
+        type: 'string',
+        enum: ['memory', 'wiki', 'vault', 'all'],
+        description:
+          'Which source to list. "memory" = your own (default), "wiki" = shared consolidated, ' +
+          '"vault" = read-only vault, "all" = union of all three.',
+      },
+      pathPrefix: {
+        type: 'string',
+        description:
+          'Optional slug prefix filter. Useful for wiki subfolders, e.g. "personen/" or "projekte/".',
+      },
     },
     additionalProperties: false,
   },
   async handler(input, ctx) {
     const mgr = await ctx.getMemoryManager();
-    const notes = await mgr.listNotes(input.tag ? { tag: input.tag } : undefined);
+    const sources =
+      !input.source || input.source === 'memory'
+        ? undefined
+        : input.source === 'all'
+        ? ('all' as const)
+        : [input.source];
+    const notes = await mgr.listNotes({
+      ...(input.tag ? { tag: input.tag } : {}),
+      ...(sources ? { sources } : {}),
+      ...(input.pathPrefix ? { pathPrefix: input.pathPrefix } : {}),
+    });
     return {
       count: notes.length,
       notes: notes.map((n) => ({
         slug: n.slug,
+        source: n.source,
+        reference: `${n.source}/${n.slug}`,
         description: n.description,
         tags: n.tags ?? [],
         updatedAt: new Date(n.updatedAt).toISOString(),
@@ -189,11 +241,15 @@ export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
   name: 'memory_write',
   toolset: 'memory',
   description:
-    'Create or overwrite a note in YOUR OWN memory. ' +
+    'Create or overwrite a note in YOUR OWN short-term memory. ' +
     'Slug must be lowercase and contain only [a-z0-9_-] — no paths, no slashes. ' +
     'Writes to `~/.somora/agents/<your-name>/memory/<slug>.md`. ' +
-    'Cannot modify vault files — vaults are read-only via this tool. ' +
-    'On overwrite, `created` is preserved; `updated` is always set to now.',
+    'Cannot modify wiki or vault — those are written by Dream-B/C respectively (or by the user). ' +
+    'On overwrite of a normal note, `created` is preserved; `updated` is always set to now. ' +
+    'Stub-aware (Phase 4): if the slug is a stub (already promoted to the wiki, with frontmatter ' +
+    '`promoted_to`), this call appends the new content as a dated bullet under `## Recent ' +
+    'observations` instead of clobbering the stub. Dream-B will integrate those observations ' +
+    'into the wiki page on its next run.',
   inputSchema: WriteInput,
   jsonSchema: {
     type: 'object',
@@ -205,7 +261,9 @@ export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
       },
       content: {
         type: 'string',
-        description: 'Markdown body (no YAML frontmatter — the tool manages that).',
+        description:
+          'Markdown body (no YAML frontmatter — the tool manages that). ' +
+          'For stubs: a one-line observation appended to `## Recent observations`.',
       },
       frontmatter: {
         type: 'object',
@@ -218,7 +276,7 @@ export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
           },
         },
         additionalProperties: true,
-        description: 'Optional. Any additional fields are persisted as-is.',
+        description: 'Optional. Any additional fields are persisted as-is. Ignored for stubs.',
       },
     },
     required: ['slug', 'content'],
@@ -232,6 +290,7 @@ export const memoryWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
       reference: `memory/${input.slug}`,
       path: result.path,
       created: result.created,
+      mode: result.mode,
     };
   },
 };

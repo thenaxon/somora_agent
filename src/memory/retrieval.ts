@@ -25,6 +25,9 @@ export interface RetrievalConfig {
    *  top-k cut. When undefined, no boost is applied. Wired up by the
    *  caller from `config.wiki.search.*` when `config.wiki.enabled`. */
   sourceBoosts?: SourceBoosts;
+  /** Optional hard filter — only return hits from these sources.
+   *  Empty/undefined means "all sources" (default behavior). */
+  sourceFilter?: ReadonlyArray<string>;
 }
 
 export interface Hit {
@@ -104,15 +107,21 @@ export function hybridSearch(
 
   const totalWeight = cfg.vectorWeight + cfg.bm25Weight || 1;
 
-  // If source-boosts are configured, materialize source per fused
-  // chunkId BEFORE sort so the boost applies to ranking. Cheap query —
-  // just the source column for already-merged ids.
-  const sourceById = cfg.sourceBoosts
+  // If source-boosts OR source-filter is configured, materialize source
+  // per fused chunkId BEFORE sort. One query covers both features.
+  const needSources = Boolean(cfg.sourceBoosts) || Boolean(cfg.sourceFilter?.length);
+  const sourceById = needSources
     ? loadSourcesForIds(memDb, [...merged.keys()])
     : null;
 
+  const filterSet = cfg.sourceFilter?.length ? new Set(cfg.sourceFilter) : null;
+
   const fused: Array<{ id: number; score: number; vec: number; bm25: number }> = [];
   for (const [id, raw] of merged) {
+    if (filterSet && sourceById) {
+      const src = sourceById.get(id);
+      if (!src || !filterSet.has(src)) continue;
+    }
     const vScore = vecNorm.get(id) ?? 0;
     const bScore = bm25Norm.get(id) ?? 0;
     let score = (cfg.vectorWeight * vScore + cfg.bm25Weight * bScore) / totalWeight;

@@ -572,29 +572,42 @@ schreiben rein.
 
 ---
 
-## Tool-Surface (offen für Bau-Detail)
+## Tool-Surface — Erweiterungen statt neuer Tools
 
-Neue Tools für Agents:
+**Entscheidung 2026-05-08 abend:** keine separaten `wiki_*`-Tools.
+Wiki ist eine weitere Source im selben Datenmodell — die existierenden
+`memory_*`-Tools können das alles abdecken sobald sie source-aware
+werden. Tool-Count bleibt schlank, Mental-Model bleibt einfach.
 
-- `wiki_search(query)` — wie memory_search aber nur in Wiki, nützlich
-  wenn der Agent gezielt im konsolidierten Layer suchen will (vs.
-  Mix-Suche)
-- `wiki_get(slug)` — wie memory_get, fetched volle wiki-Page
-- `wiki_list(subfolder?)` — listet pages in einem subfolder oder
-  komplettes index
-- `wiki_index_get()` — fetched index.md komplett
+**Erweiterungen (Stufe 2 implementiert):**
+
+- `memory_search` → optionaler `source: "memory"|"wiki"|"vault"|"all"`
+  Filter (default `"all"`)
+- `memory_get` → akzeptiert `wiki/<pfad>`, `vault/<pfad>`, `memory/<slug>`
+  als Reference-Form
+- `memory_list` → optionaler `source`-Filter und `pathPrefix`-Filter
+  (z.B. `personen/`)
+- `memory_write` → Stub-Detection: bei `promoted_to`-Frontmatter
+  appendet zu `## Recent observations` statt overwrite
+- Auto-Inject erweitert um Wiki-Overview-Block (verkürzte index.md)
 
 **Schreib-Tools für Agents bewusst NICHT**: Dream-B + Dream-C sind
-die einzigen die ins Wiki schreiben (plus User manuell). Ein Agent
-will was im Wiki ändern → es passiert via memory_write in eigenen
-Memory + nächster Dream-B promoted's.
+die einzigen Writer ins Wiki (plus User manuell). Ein Agent will was
+im Wiki ändern → memory_write ins eigene Memory → nächster Dream-B
+promoted's.
 
-Neue Tools für User:
+**`obsidian_write/move/delete` Tools ENTFERNT (Stufe 2):** das waren
+direkte Vault-Writes vom Agent — bricht die L3/L4-Layer-Invarianten
+des neuen Modells. Komplett aus `registerAllTools()` raus, Code unter
+`src/tools/obsidian/` gelöscht. Tool-Count: 36 → 33. `readObsidianConfigForAgent`
+bleibt für die Read-Source erhalten.
 
-- `wiki_bootstrap` — Migration-Run trigger
-- `dream_b_run_now` — manueller Dream-B-Trigger
-- `dream_c_run_now` — manueller Dream-C-Trigger
-- `wiki_status` — zeigt last-runs, queue, errors
+**User-Tools (kommen in späteren Stufen):**
+
+- `wiki_bootstrap` — Migration-Run trigger (Stufe 6)
+- `dream_b_run_now` — manueller Dream-B-Trigger (Stufe 3)
+- `dream_c_run_now` — manueller Dream-C-Trigger (Stufe 5)
+- `wiki_status` — zeigt last-runs, queue, errors (Stufe 3+)
 
 ---
 
@@ -692,13 +705,16 @@ verifizierbar ist:
 - mtime-Konflikt-Helper
 - Search-Boost-Multiplier + Source-Tag im Hit
 
-**Stufe 2 — Read-Side für Agents:**
-- `wiki_*`-Tools (search/get/list/index_get)
-- Auto-Inject Wiki-Overview-Block
-- Stub-Detection in memory_write
+**Stufe 2 — Read-Side für Agents (DONE 2026-05-08 abend):**
+- `memory_search` mit optionalem `source`-Filter
+- `memory_get` akzeptiert `wiki/<pfad>` und `vault/<pfad>` als Reference
+- `memory_list` mit `source` + `pathPrefix` Filter
+- `memory_write` mit Stub-Detection (append zu `## Recent observations`)
+- Auto-Inject erweitert um Wiki-Overview-Block (verkürzte index.md)
+- `obsidian_write/move/delete` Tools entfernt (siehe Tool-Surface-Sektion)
 
 Stufe 1+2 erlauben Agents schon manuell ein Wiki zu lesen — bevor
-Dream-B existiert. Du könntest Wiki-Pages selber im Vault anlegen
+Dream-B existiert. Du kannst Wiki-Pages selber im Vault anlegen
 und testen ob die Search-Pipeline + Auto-Inject sich richtig anfühlt.
 
 **Stufe 3 — Dream-B:**

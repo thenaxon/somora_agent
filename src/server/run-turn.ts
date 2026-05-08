@@ -161,12 +161,23 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   let memoryHits: Array<{ source: string; slug: string; score: number }> = [];
   let memoryInjectedCount = 0;
   try {
-    const mgr = await getMemoryManager(agent, { config: deps.config.memory });
+    const mgr = await getMemoryManager(agent, {
+      config: deps.config.memory,
+      wiki: deps.config.wiki,
+    });
     const inject = await injectMemoryContext({
       mgr,
       history: historyBeforeTurn,
       userMessage: text,
       cfg: deps.config.memory.autoInject,
+      ...(deps.config.wiki.enabled
+        ? {
+            wikiOverview: {
+              maxChars: deps.config.wiki.search.overviewMaxChars,
+              topNSlugs: deps.config.wiki.search.overviewTopNSlugs,
+            },
+          }
+        : {}),
     });
     ephemeralContext = inject.ephemeralContext;
     memoryInjectedCount = inject.injectedCount;

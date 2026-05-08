@@ -26,6 +26,13 @@ type AutoInjectCfg = {
   maxTokens: number;
 };
 
+/** Wiki-overview budget passed in from config.wiki.search when wiki is
+ *  enabled. When undefined, no overview block is built. */
+type WikiOverviewCfg = {
+  maxChars: number;
+  topNSlugs: number;
+};
+
 export interface InjectResult {
   /**
    * `<memory-context>` block ready to be inlined as ephemeral per-turn
@@ -43,6 +50,8 @@ export async function injectMemoryContext(args: {
   history: NormalizedEvent[];
   userMessage: string;
   cfg: AutoInjectCfg;
+  /** Optional Phase-4 wiki-overview header. Set when config.wiki.enabled. */
+  wikiOverview?: WikiOverviewCfg;
 }): Promise<InjectResult> {
   const query = buildRecallQuery(args.userMessage, args.history, args.cfg.queryTurns);
   if (!query.trim()) {
@@ -52,10 +61,18 @@ export async function injectMemoryContext(args: {
     limit: args.cfg.maxResults,
     minScore: args.cfg.minScore,
   });
-  if (hits.length === 0) {
+
+  // Wiki-overview is independent of hits — even when no hits matched,
+  // showing the agent the topology of available wiki pages helps it
+  // decide whether to call memory_get / memory_search explicitly.
+  const overview = args.wikiOverview
+    ? await args.mgr.getWikiOverview(args.wikiOverview)
+    : null;
+
+  if (hits.length === 0 && !overview) {
     return { ephemeralContext: undefined, injectedCount: 0, hits: [] };
   }
-  const block = formatMemoryBlock(hits, args.cfg.maxTokens);
+  const block = formatMemoryBlock(hits, args.cfg.maxTokens, overview);
   if (!block) {
     return { ephemeralContext: undefined, injectedCount: 0, hits };
   }
@@ -90,7 +107,7 @@ function buildRecallQuery(
   return parts.reverse().join('\n');
 }
 
-function formatMemoryBlock(hits: Hit[], maxTokens: number): string {
+function formatMemoryBlock(hits: Hit[], maxTokens: number, wikiOverview: string | null): string {
   // Heuristic: 4 chars per token (project-wide).
   const maxChars = maxTokens * 4;
   // English meta-instruction — the actual note content (German for this user)
@@ -112,20 +129,40 @@ function formatMemoryBlock(hits: Hit[], maxTokens: number): string {
 
   // Conservative budget: header + closing tag eats some chars
   let used = lines.join('\n').length + '\n</memory-context>'.length;
-  let kept = 0;
 
-  for (const h of hits) {
-    const ref = `[${h.source}/${h.slug} · score=${h.score.toFixed(2)}]`;
-    const snippet = h.text.length > 600 ? h.text.slice(0, 600).trimEnd() + '…' : h.text;
-    const block = `## ${ref}\n${snippet}`;
-    const cost = block.length + 2; // +"\n\n"
-    if (used + cost > maxChars && kept > 0) break;
-    lines.push(block);
-    lines.push('');
-    used += cost;
-    kept++;
+  // Wiki-overview block sits ABOVE the hits. Topology first (what
+  // exists?), specific hits second (what matched this turn?). This
+  // matches Karpathy's wiki pattern — agent sees what's available
+  // before diving into specifics.
+  if (wikiOverview && wikiOverview.length > 0) {
+    const overviewBlock = `## Wiki overview (shared long-term knowledge)\n${wikiOverview}`;
+    const overviewCost = overviewBlock.length + 2;
+    if (used + overviewCost <= maxChars) {
+      lines.push(overviewBlock);
+      lines.push('');
+      used += overviewCost;
+    }
   }
-  if (kept === 0) return '';
+
+  let kept = 0;
+  if (hits.length > 0) {
+    lines.push('## Relevant hits for this turn');
+    lines.push('');
+    used += '## Relevant hits for this turn\n\n'.length;
+    for (const h of hits) {
+      const ref = `[${h.source}/${h.slug} · score=${h.score.toFixed(2)}]`;
+      const snippet = h.text.length > 600 ? h.text.slice(0, 600).trimEnd() + '…' : h.text;
+      const block = `### ${ref}\n${snippet}`;
+      const cost = block.length + 2;
+      if (used + cost > maxChars && kept > 0) break;
+      lines.push(block);
+      lines.push('');
+      used += cost;
+      kept++;
+    }
+  }
+  // If neither overview nor hits ended up in the block, emit nothing.
+  if (kept === 0 && !wikiOverview) return '';
   lines.push('</memory-context>');
   return lines.join('\n');
 }
