@@ -72,7 +72,12 @@ async function main(): Promise<void> {
     ...(session ? { session } : {}),
     ...(Number.isFinite(subagentDepth) && subagentDepth > 0 ? { subagentDepth } : {}),
     ...(activeModel ? { activeModel } : {}),
-    getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+    getMemoryManager: () =>
+      getMemoryManager(agent, {
+        config: config.memory,
+        obsidian: config.obsidian,
+        wiki: config.wiki,
+      }),
     config,
   };
 
