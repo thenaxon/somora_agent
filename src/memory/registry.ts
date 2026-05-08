@@ -24,7 +24,6 @@ const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const ObsidianYamlSchema = z
   .object({
     vault: z.string().min(1),
-    readOnlyPaths: z.array(z.string()).optional(),
   })
   .passthrough();
 
@@ -113,11 +112,12 @@ export async function shutdownMemoryRegistry(): Promise<void> {
 }
 
 /**
+/**
  * Read agent.yaml's `obsidian:` section. Missing file or section → no
  * vault wired up. Path expansion handles ~.
  *
- * Exported so the obsidian_* tools can reuse the same parsing path —
- * single source of truth for vault discovery + readOnlyPaths semantics.
+ * Single source of truth for vault discovery; consumed by MemoryManager
+ * (read source for recall) and by Dream-B (wiki-subfolder location).
  */
 export async function readObsidianConfigForAgent(agent: string): Promise<ObsidianSource | undefined> {
   const path = join(SOMORA_HOME, 'agents', agent, 'agent.yaml');
@@ -145,7 +145,6 @@ export async function readObsidianConfigForAgent(agent: string): Promise<Obsidia
   }
   return {
     vaultPath: expandHome(parsed.data.vault),
-    readOnlyPaths: parsed.data.readOnlyPaths,
   };
 }
 

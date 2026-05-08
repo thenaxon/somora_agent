@@ -40,15 +40,6 @@ const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
 export interface ObsidianSource {
   vaultPath: string;
-  /**
-   * Paths relative to vaultPath that Dream-B/C must not write into.
-   * These ARE still indexed and surfaced via recall — `read-only`
-   * literally: readable but not writable. Phase 4 (DECISIONS #41/#42)
-   * removed agent-direct vault writes; this field now constrains the
-   * server-side workers (Dream-B promotions, Dream-C lint corrections)
-   * and stays on as belt-and-suspenders for the wiki subfolder.
-   */
-  readOnlyPaths?: string[];
 }
 
 /**
@@ -146,10 +137,6 @@ export class MemoryManager {
     // dotfile-regex like `/(^|[\\/])\../` blocks the entire ~/.somora tree
     // because `.somora` itself contains a dot. We therefore go function-
     // based and only exclude components RELATIVE to a watched root.
-    //
-    // readOnlyPaths are NOT excluded here — they're meant to be indexed
-    // and surfaced via recall, just write-protected for the server-
-    // side workers (Dream-B/C). See isVaultPathReadOnly().
     const memRoot = this.memoryRoot;
     const vault = this.obsidian?.vaultPath;
     const roots = [memRoot, ...(vault ? [vault] : [])];
@@ -171,20 +158,6 @@ export class MemoryManager {
         return false;
       },
     ];
-  }
-
-  /**
-   * True if the given absolute path lives in a vault subpath marked
-   * read-only via agent.yaml. Used by Dream-B/C to refuse writes —
-   * has no effect on indexing/recall.
-   */
-  isVaultPathReadOnly(absolutePath: string): boolean {
-    if (!this.obsidian) return false;
-    const { vaultPath, readOnlyPaths } = this.obsidian;
-    if (!readOnlyPaths || readOnlyPaths.length === 0) return false;
-    if (!absolutePath.startsWith(vaultPath + '/')) return false;
-    const rel = absolutePath.slice(vaultPath.length + 1);
-    return readOnlyPaths.some((p) => rel === p || rel.startsWith(p + '/'));
   }
 
   async close(): Promise<void> {

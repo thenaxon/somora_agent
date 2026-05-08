@@ -80,9 +80,6 @@ resources:
 # Optional: Obsidian vault as a recall source
 obsidian:
   vault: ~/Documents/Vault/
-  readOnlyPaths:      # paths the agent should not write to
-    - private/
-    - work/clients/
 
 # Optional: dream-mode (background memory consolidation)
 dream:

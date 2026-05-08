@@ -87,16 +87,13 @@ Configure in `agent.yaml`:
 ```yaml
 obsidian:
   vault: ~/Documents/Vault/
-  readOnlyPaths:           # relative to vault — never written to
-    - private/
-    - finance/
 ```
 
 Vault notes are indexed alongside the agent's own memory. Recall hits
 return them too, marked `vault/<slug>` instead of `memory/<slug>`. The
-agent currently can NOT auto-write to the vault — `memory_write` is
-hard-scoped to its own memory directory. A future `obsidian_write` tool
-will allow explicit user-authorised vault writes.
+agent CANNOT write to the vault — `memory_write` is hard-scoped to its
+own memory directory; vault writes happen only through Dream-B/C
+(server-side workers, no agent-direct path).
 
 A few notes on the vault integration:
 
@@ -104,9 +101,7 @@ A few notes on the vault integration:
   automatically.
 - Slugs are derived as path-with-`--` separators:
   `Projects/Personal/Travel.md` → `Projects--Personal--Travel`.
-- The same hybrid retrieval applies; vault notes can be tagged
-  read-only via `readOnlyPaths` so the (future) write tool refuses
-  them.
+- The same hybrid retrieval applies across both memory and vault.
 
 ## Tool surface
 

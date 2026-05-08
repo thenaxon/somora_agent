@@ -112,9 +112,10 @@ All `memory_*` write tools are hard-scoped to
 
 - Slug regex: `^[a-z0-9][a-z0-9_-]*$`. No path separators, no
   uppercase, no hidden directories.
-- Vault writes go through a separate `obsidian_write` tool (not yet
-  built). When it lands, it'll honour the `readOnlyPaths` list from
-  `agent.yaml`.
+- Vault writes are NOT exposed to agents. The wiki layer is written
+  exclusively by Dream-B (auto promotion) and Dream-C (lint) — both
+  server-side workers, scoped to the configured wiki subfolder.
+  Everything else in the vault stays read-only.
 
 Even a buggy or adversarial model output cannot escape an agent's own
 memory directory through `memory_write`/`memory_edit`/`memory_delete`.
