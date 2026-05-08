@@ -65,7 +65,7 @@ const TaskSchema = z.object({
     .string()
     .min(1)
     .optional()
-    .describe('Target agent name. Omit to spawn a clone of the caller (Hans → Hans-clone).'),
+    .describe('Target agent name. Omit to spawn a clone of the caller (<your-agent> → <your-agent>-clone).'),
   model: z
     .string()
     .min(1)
@@ -118,7 +118,7 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
     'subagent_status / subagent_result to check on it later. ' +
     'Set wait:true for synchronous "I need the result NOW to write my reply" delegations. ' +
     'Depth cap: 3 (a sub itself can spawn further subs up to that limit). ' +
-    'Per-agent concurrent cap: 4. Cross-engine OK — Hans-on-opus can spawn Lisa-on-gpt55. ' +
+    'Per-agent concurrent cap: 4. Cross-engine OK — <agent-a>-on-opus can spawn <agent-b>-on-gpt55. ' +
     'Sub sessions stay visible in /sessions of the target persona with a "sub from X/Y" marker.',
   inputSchema: SingleInput,
   jsonSchema: {
@@ -126,7 +126,7 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
     properties: {
       persona: {
         type: 'string',
-        description: 'Target agent name (e.g. "lisa", "jarvis"). Omit for a clone of yourself.',
+        description: 'Target agent name (e.g. "<agent-name>", "<other-agent>"). Omit for a clone of yourself.',
       },
       model: {
         type: 'string',

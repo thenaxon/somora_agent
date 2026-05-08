@@ -107,11 +107,11 @@ intact.
 ```yaml
 # Variant 1 — no list = agent sees all skills
 agent:
-  name: hans
+  name: <your-agent>
 
 # Variant 2 — explicit allow-list = only these
 agent:
-  name: lisa
+  name: <your-agent>
   skills:
     - obsidian-daily-note
     - payment-comparison
@@ -167,8 +167,8 @@ Errors with a clear message when:
 |---|---|---|
 | **Tool description** | Mechanics of one tool, per-call safety | `tmux send` parameters, "never blindly press Enter on auto-suggestions" |
 | **Skill** | Multi-step workflow / pattern | "How to spawn codex via tmux: create → send with multiline_safe → wait_idle → capture" |
-| **Persona** (`AGENTS.md`) | Always-on voice / character | "Hans answers tersely, backend perspective, German" |
-| **Memory** | User preferences / facts | "Rene prefers minimal commits, no emoji" |
+| **Persona** (`AGENTS.md`) | Always-on voice / character | "Answers tersely, backend perspective, German" |
+| **Memory** | User preferences / facts | "User prefers minimal commits, no emoji" |
 
 Conflict resolution at the style level: **Memory > Skill** (user-
 specific stylistic preferences override skill defaults). Skills should

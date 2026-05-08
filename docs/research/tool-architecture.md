@@ -421,7 +421,7 @@ und das adoptieren wir:
 - `spawn_subagent` / `spawn_subagents` — `timeoutFromInput` für `wait:true`
 
 **Tools die das brauchen werden (vermerkt):**
-- `agent_ask` (Phase 6c) — Hans schreibt Lisa, blockt bis Lisa antwortet,
+- `agent_ask` (Phase 6c) — agent A schreibt agent B, blockt bis agent B antwortet,
   Wartezeit hängt von Lisas Task ab → `timeoutFromInput`
 - `exec` (Phase 5) — Build/Skript-Laufzeit per Input → `timeoutFromInput`,
   `maxTimeoutMs` 30 min
@@ -430,7 +430,7 @@ und das adoptieren wir:
 **Hermes' `notify_on_complete`-Pattern** ist orthogonal: Tool returnt
 sofort, Modell macht weiter, kriegt **eine** Push-Notification wenn
 fertig. Strukturell sauberer als blocking-wait, aber braucht Server-Push-
-Mechanik im Wire-Protocol. Phase 6d-Erweiterung wenn Hans Lisa-Reply
+Mechanik im Wire-Protocol. Phase 6d-Erweiterung wenn agent A das antworten von agent B
 asynchron zurückbekommen können soll. FUTURE.md-Eintrag.
 
 ---

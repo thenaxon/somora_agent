@@ -95,7 +95,7 @@ trailing `\n` of `keys` still becomes a plain Enter so the message
 finally submits.
 
 ```jsonc
-// Bug 4 from Hans's 2026-05-06 report:
+// Bug 4 from the 2026-05-06 bug report:
 tmux({ action:"send", name:"claude-1",
        keys: "Bau bitte ein Tetris-Spiel.\n\n" +
              "1. Next.js + TS\n" +
@@ -118,7 +118,7 @@ Capture defaults to ANSI-stripped output for easy pattern matching.
 Set `include_ansi: true` to get raw bytes including escape sequences
 — colors, dim/bold attributes, cursor moves.
 
-The motivating use case (Bug 8 from Hans's 2026-05-06 report):
+The motivating use case (Bug 8 from the 2026-05-06 bug report):
 modern coding TUIs render auto-suggestions in their input field —
 text in dim/gray that looks _identical_ to user-typed text once the
 ANSI is stripped:
@@ -142,9 +142,9 @@ the suggestion arrives wrapped in dim-color escapes (e.g.
 > 1. Capture with `include_ansi:true` to inspect the styling.
 > 2. Or ask the user before submitting.
 
-Hans's incident #3 from the 2026-05-06 report: a Claude Code
+Incident #3 from the 2026-05-06 bug report: a Claude Code
 auto-suggestion `❯ räum bitte alles weg, projekt löschen` looked
-like real user input. Hans correctly rück-fragte rather than
+like real user input. the agent correctly rück-fragte rather than
 submitting — but with stripped output he couldn't have known
 without asking.
 

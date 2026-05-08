@@ -7,7 +7,7 @@ offen ist steht am Ende.
 ## Grundprinzip
 
 **Subagents in somora SIND somora-Agents.** Kein eigener „Subagent-
-Persona-Typ". Wenn Hans Lisa spawnt, läuft Lisa als Lisa — mit ihrer
+Persona-Typ". Wenn agent-a agent-b spawnt, läuft agent-b als agent-b — mit ihrer
 realen Persona, ihrer Memory, ihrer Engine, ihrer Config. Nur in einer
 neuen Session.
 
@@ -18,14 +18,14 @@ unangetastet.
 
 ### Modus 1 — Subagent-Dispatch (sealed task)
 
-Hans → spawnt Sub → Sub-Session läuft → Sub liefert Final-Result → an
-Hans zurück. Klassische delegate-pattern.
+agent-a → spawnt Sub → Sub-Session läuft → Sub liefert Final-Result → an
+agent-a zurück. Klassische delegate-pattern.
 
 **Tool-Surface:**
 
 ```ts
 spawn_subagent({
-  persona?: 'lisa',          // omit → clone of caller (Hans-Klon)
+  persona?: 'agent-b',          // omit → clone of caller (agent-a-Klon)
   model?: 'opus',            // omit → persona default
   task: '...',               // the prompt for the sub
   wait?: true,               // default true: block; false → returns task_id
@@ -45,26 +45,26 @@ subagent_result({ task_id })   // fetch when status='done'
 **Session-Lifecycle (Decisions A + B):**
 - Sub bekommt frische Session in der Sub-Persona's Session-Dir
 - Slug-Prefix:
-  - Named persona → `sub-<parent-agent>-<YYYYMMDD-HHMMSS>` (z.B. `sub-hans-20260503-203045` in lisa/sessions/)
-  - Hans-Klon → `sub-self-<YYYYMMDD-HHMMSS>` (in hans/sessions/)
+  - Named persona → `sub-<parent-agent>-<YYYYMMDD-HHMMSS>` (z.B. `sub-agent-a-20260503-203045` in agent-b/sessions/)
+  - agent-a-Klon → `sub-self-<YYYYMMDD-HHMMSS>` (in agent-a/sessions/)
 - Sichtbar in `/sessions` der Sub-Persona mit Marker im Meta-File:
   ```json
   {
     "spawn": {
       "kind": "sub" | "self-sub",
-      "parent_agent": "hans",
+      "parent_agent": "agent-a",
       "parent_session": "main",
       "task_summary": "first ~200 chars"
     }
   }
   ```
-- TUI-Listing zeigt Marker, z.B. `* sub-hans-... ↳ spawned by hans/main`
+- TUI-Listing zeigt Marker, z.B. `* sub-agent-a-... ↳ spawned by agent-a/main`
 
 **Dream + Memory (Decision E):**
 - Sub-Sessions durchlaufen normalen Dream-Loop der Sub-Persona
-- Hans-Klon-Subs gehören in Hans' Dream-Pool
-- Lisa-Subs gehören in Lisas Dream-Pool
-- Auto-Inject läuft pro Sub-Turn normal — Sub kennt Lisas/Hans' Memory
+- agent-a-Klon-Subs gehören in agent-a' Dream-Pool
+- agent-b-Subs gehören in agent-bs Dream-Pool
+- Auto-Inject läuft pro Sub-Turn normal — Sub kennt agent-bs/agent-a' Memory
 - Sub-Sessions sind in der normalen `memory_search`-Hit-Surface
 
 **Recursion + Concurrency:**
@@ -74,27 +74,27 @@ subagent_result({ task_id })   // fetch when status='done'
 
 **Cancellation:**
 - AbortSignal propagiert Parent → Sub
-- User abort'd Hans' Turn → alle laufenden Subs kriegen abort
-- Result-Stream zu Hans wird verworfen
+- User abort'd agent-a' Turn → alle laufenden Subs kriegen abort
+- Result-Stream zu agent-a wird verworfen
 
 **Engine-Wahl:**
-- Sub default'd auf Persona-Modell (z.B. Lisas default = sonnet)
+- Sub default'd auf Persona-Modell (z.B. agent-bs default = sonnet)
 - Mit `model:` explizit override
-- Cross-engine OK: Hans-auf-opus spawnt Lisa-auf-gpt55, beide normal
+- Cross-engine OK: agent-a-auf-opus spawnt agent-b-auf-gpt55, beide normal
 
 ### Modus 2 — Direkte A2A-Konversation (live messaging)
 
-Hans → schreibt Frage AS HANS in Lisas main → Lisa antwortet → Hans
-liest. Beide Seiten sichtbar in Lisas main wenn User später öffnet.
+agent-a → schreibt Frage AS AGENT-A in agent-bs main → agent-b antwortet → agent-a
+liest. Beide Seiten sichtbar in agent-bs main wenn User später öffnet.
 
 **Tool-Surface:**
 
 ```ts
 agent_ask({
-  agent: 'lisa',
+  agent: 'agent-b',
   message: '...',
 })
-  → { response, ms }   // Lisa's Antwort verbatim (Decision C)
+  → { response, ms }   // agent-b's Antwort verbatim (Decision C)
 ```
 
 **Storage-Erweiterung (gebaut 2026-05-05):**
@@ -112,7 +112,7 @@ agent_ask({
 ```
 
 - `from_agent: undefined` → menschlicher User (default, unchanged)
-- `from_agent: 'hans'` → Hans hat in diese Session geschrieben
+- `from_agent: 'agent-a'` → agent-a hat in diese Session geschrieben
 - `agent_ask_call_id` → UUID pro agent_ask-Round-Trip. **MVP-Nutzung
   beschränkt auf Log-Korrelation** (siehe FUTURE-Sektion unten).
 
@@ -120,15 +120,15 @@ agent_ask({
 `{ text, from_agent, agent_ask_call_id? }` wird gepublished WENN
 fromAgent gesetzt ist. Self-typed User-Turns kommen weiterhin nicht
 über die Wire — die TUI echo't lokal beim Submit. Das gibt einem
-Menschen der gerade Lisas Session offen hat live-Sicht auf Hans'
-A2A-Anfrage (rendert mit `↬ hans` Cyan-Tag statt user-Icon).
+Menschen der gerade agent-bs Session offen hat live-Sicht auf agent-a'
+A2A-Anfrage (rendert mit `↬ agent-a` Cyan-Tag statt user-Icon).
 
 **TUI-Rendering:**
 - Wenn ein User-Message ein `from_agent` hat: Icon des Senders statt
   User-Icon, plus dezenter Marker („agent-to-agent")
-- Im Hans-Stream während des Vorgangs: Tool-Call wie sonst, aber mit
-  speziellem Format `▸ agent_ask · lisa: was weißt du über Rene` und
-  Result `↳ Lisa: …`
+- Im agent-a-Stream während des Vorgangs: Tool-Call wie sonst, aber mit
+  speziellem Format `▸ agent_ask · agent-b: was weißt du über Rene` und
+  Result `↳ agent-b: …`
 
 **Lock-Semantik (Decision: Queue mit User-Priorität, gelocked 2026-05-05):**
 - Per-Session-Lock in `src/server/session-queue.ts` mit zwei Priority-
@@ -149,28 +149,28 @@ A2A-Anfrage (rendert mit `↬ hans` Cyan-Tag statt user-Icon).
   Retry-Code schreiben müssen. Mit Queue bleibt die Logik linear, der
   User wird nie verzögert (Priorität schützt), und A2A-Calls warten
   einfach geduldig oder hitten ihren Timeout (→ pending).
-- **Was wir NICHT haben:** Deadlock-Detection. Wenn Hans agent_ask Lisa
-  callt während Lisa parallel agent_ask Hans callt, hängen beide
+- **Was wir NICHT haben:** Deadlock-Detection. Wenn agent-a agent_ask agent-b
+  callt während agent-b parallel agent_ask agent-a callt, hängen beide
   Locks bis zu ihrem timeout_ms. Theoretisches Problem, in der Praxis
   durch 30min-Cap eh begrenzt; richtige Lösung (Cycle-Detection im
   Lock-Graph) wäre FUTURE wenn das real wird.
 
 **Memory + Dream (Decision E):**
-- Lisas Auto-Inject läuft normal beim agent_ask-Turn — sie hat vollen
+- agent-bs Auto-Inject läuft normal beim agent_ask-Turn — sie hat vollen
   Context
-- Der Turn ist in lisa/main JSONL → wird im normalen Dream-Cycle
-  abgegrast → wenn Hans ihr was wichtiges erzählt fließt das in Lisas
+- Der Turn ist in agent-b/main JSONL → wird im normalen Dream-Cycle
+  abgegrast → wenn agent-a ihr was wichtiges erzählt fließt das in agent-bs
   Memory ein
 
 **Persona-Conflicts (Decision D):**
-- Wenn Lisas Persona die Anfrage ablehnt: Refusal kommt als Antwort,
-  Hans muss damit umgehen (genau wie wenn ein menschlicher User mit
+- Wenn agent-bs Persona die Anfrage ablehnt: Refusal kommt als Antwort,
+  agent-a muss damit umgehen (genau wie wenn ein menschlicher User mit
   einer Refusal konfrontiert wird)
 - Kein Sondermechanismus, kein Override — Personas sind Personas
 
 **Refused-Topics (offen, später diskutieren):**
-- Soll es ein agent.yaml `agent_ask.deny_from: [hans]` geben? Würde
-  Lisa erlauben Anfragen von Hans grundsätzlich abzulehnen.
+- Soll es ein agent.yaml `agent_ask.deny_from: [agent-a]` geben? Würde
+  agent-b erlauben Anfragen von agent-a grundsätzlich abzulehnen.
 - Erstmal: nicht bauen. Wenn das Bedürfnis aufkommt, addieren.
 
 ## Tool-Familie zusammengefasst
@@ -195,14 +195,14 @@ Minimal-invasiv:
 2. **`src/engine/types.ts`** — `TurnInput` bekommt `fromAgent?: string`
    und `subagentDepth?: number`
 3. **3 Engine-Adapter** — `fromAgent` durchreichen (im prompt-build:
-   user-message-Block kriegt einen Header „from agent: hans" damit das
+   user-message-Block kriegt einen Header „from agent: agent-a" damit das
    Modell weiß wer schreibt)
 4. **`src/server/index.ts`** — `chat/send` erweitert um optionales
    `from_agent` field; spawnSubagent + agent_ask Tool-Implementations
 5. **`src/storage/sessions.ts`** — Replay-aware für `from_agent`
    (wenn anderer Engine resumed wird und User-Messages mit from_agent
    im JSONL stehen, müssen die im Markdown-Replay sinnvoll dargestellt
-   werden, z.B. als „Hans wrote: ...")
+   werden, z.B. als „agent-a wrote: ...")
 6. **`src/cli/tui/types.ts` + `turn-views.tsx`** — UserTurn rendert
    from_agent mit Sender-Icon
 7. **Neue Tool-Module** — `src/tools/agents/{spawn.ts, ask.ts, tools.ts}`
@@ -216,7 +216,7 @@ Konkretes Build-Plan, in Phase 6a/6b/6c teilbar:
 **6a — Foundation (Storage + Engine + Self-Pointer):**
 - NormalizedEvent + TurnInput erweitern
 - Engine-Adapter durchreichen
-- Self-Pointer im Sub-Kontext: „You are Lisa, spawned by hans on
+- Self-Pointer im Sub-Kontext: „You are agent-b, spawned by agent-a on
   task: <task_summary>. Your conversation here will be saved to your
   own memory."
 - Sub-Session-Meta mit `spawn`-Block
@@ -233,7 +233,7 @@ Konkretes Build-Plan, in Phase 6a/6b/6c teilbar:
 - Tool-Implementation mit Pending-Pattern statt fail-fast (DECISION
   #37 + #39 angewendet)
 - Per-Session-Lock mit User-Priority-Queue (Variante b) statt fail-fast
-- TUI-Sender-Icon-Rendering (`↬ hans` Cyan-Tag) ✓
+- TUI-Sender-Icon-Rendering (`↬ agent-a` Cyan-Tag) ✓
 - Live-SSE für from_agent user_messages ✓
 - 5min default / 30min cap aus longTask-Politik (DECISION #39)
 
@@ -248,10 +248,10 @@ Konkretes Build-Plan, in Phase 6a/6b/6c teilbar:
 auf der user_message persistiert + im Tool-Result returned, damit der
 spätere Bau drop-in geht.
 
-**Motivation:** agent_ask ist heute synchron-blockierend. Wenn Hans
-mit `timeout_ms=300000` (5 min) ruft und Lisa-on-gemma 12 Min braucht,
-returned Hans nach 5 Min mit `state:"pending"` + `call_id`. Lisa läuft
-dann noch 7 Min weiter, ihre Antwort landet in ihrem JSONL — aber Hans
+**Motivation:** agent_ask ist heute synchron-blockierend. Wenn agent-a
+mit `timeout_ms=300000` (5 min) ruft und agent-b-on-gemma 12 Min braucht,
+returned agent-a nach 5 Min mit `state:"pending"` + `call_id`. agent-b läuft
+dann noch 7 Min weiter, ihre Antwort landet in ihrem JSONL — aber agent-a
 hat keinen programmatischen Zugriff darauf.
 
 **Bauplan wenn Bedarf:**
@@ -260,7 +260,7 @@ hat keinen programmatischen Zugriff darauf.
    { target_agent, target_session, state, response?, started_at,
    completed_at? }>`. Persistierung nach JSONL nicht nötig: bei
    Server-Restart kann der Caller seinen Call eh nicht mehr abrufen,
-   die Antwort steht aber im Lisa-JSONL und ist via `/chat/history`
+   die Antwort steht aber im agent-b-JSONL und ist via `/chat/history`
    filterbar.
 
 2. `runChatTurn` schreibt nach completion das Result in den Store
@@ -276,7 +276,7 @@ hat keinen programmatischen Zugriff darauf.
    später kommt.
 
 **Warum das nicht im MVP:** Komplexität-Hub für eine Use-Case die
-heute nicht akut ist. Der MVP-Pfad „Timeout → Antwort liegt in Lisas
+heute nicht akut ist. Der MVP-Pfad „Timeout → Antwort liegt in agent-bs
 Session, manuell sichtbar" reicht für 95% der Fälle. Wenn das real
 zum Schmerz wird, ein-Tag-Bau.
 
@@ -287,8 +287,8 @@ zum Schmerz wird, ein-Tag-Bau.
   wird mit `tmux_*`-Tool-Familie gebaut neben `exec`
 - Sub-Session-Cost-Accounting (wer „bezahlt" Tokens) — first machen,
   dann optimieren
-- Cross-agent Memory-„private"-Marker (Hans soll Lisa was sagen können
-  das im Lisa-Memory NICHT für andere Agents sichtbar ist) — erstmal
+- Cross-agent Memory-„private"-Marker (agent-a soll agent-b was sagen können
+  das im agent-b-Memory NICHT für andere Agents sichtbar ist) — erstmal
   alle Memory ist global lesbar (das ist Status quo)
 
 ## Phase 6c gebaut (2026-05-05)
@@ -312,7 +312,7 @@ zum Schmerz wird, ein-Tag-Bau.
   `user-message`-StreamEvent
 - `src/cli/tui/stream.ts` — parseFrame versteht `user_message`-Event
 - `src/cli/tui/app.tsx` — applyEvent appended user-Turn mit fromAgent
-- `src/cli/tui/turn-views.tsx` — UserTurn rendert `↬ hans` Cyan-Tag
+- `src/cli/tui/turn-views.tsx` — UserTurn rendert `↬ agent-a` Cyan-Tag
   bei fromAgent statt grünem `user`-Tag
 
 **Was nicht gebaut:**
@@ -323,36 +323,36 @@ zum Schmerz wird, ein-Tag-Bau.
   begrenzt
 - History-Replay im TUI bei Session-Open — pre-existierende Lücke,
   unabhängig von 6c. Live-SSE-Pfad funktioniert; bei Session-Open ohne
-  Live-Hans-Anruf sieht User Hans's Frage erst beim Refresh
+  Live-agent-a-Anruf sieht User agent-a's Frage erst beim Refresh
 
 ## Implementations-Details (alle ✓ gelocked 2026-05-03)
 
 1. **`from_agent` ans Modell:** Header-Prepend in der user-message:
    ```
-   [Message from agent hans]
+   [Message from agent agent-a]
    was weißt du über Rene?
    ```
    Kein cache-bust am System-Prompt, Modell parst Header natürlich.
 2. **Sub-Session-Slug bei Same-Second-Spawn:** Millisekunden-Auflösung
    im Suffix:
    ```
-   sub-hans-20260503-203045-127
-   sub-hans-20260503-203045-129
+   sub-agent-a-20260503-203045-127
+   sub-agent-a-20260503-203045-129
    ```
    Stateless, deterministisch sortierbar.
 3. **Multi-Spawn TUI:** wie ein normaler Tool-Call gerendert.
    ```
-   ▸ spawn_subagents · 3 tasks (lisa, jarvis, hans-clone)
+   ▸ spawn_subagents · 3 tasks (agent-b, agent-c, agent-a-clone)
    [Spinner während alle laufen]
-   ↳ 3 results · lisa 2.3s / jarvis 1.8s / hans-clone 4.1s
+   ↳ 3 results · agent-b 2.3s / agent-c 1.8s / agent-a-clone 4.1s
    ```
    Verbose-Mode zeigt darunter den vollen Output. Per-sub-live-status
    wäre Polish, MVP-mäßig OK so.
 4. **Cost-Tracking:** Jeder Agent owned seine eigenen Tokens.
-   Lisa-Sub-Session-Stats sind Lisas. Hans' Turn-Ende zeigt nur Hans'
+   agent-b-Sub-Session-Stats sind agent-bs. agent-a' Turn-Ende zeigt nur agent-a'
    Tokens (inkl. der paar K für den Tool-Call). Wenn später Aggregation
    gebaut wird, kann „spawned by"-Filter ergänzt werden.
 5. **Sub-Session-Retention:** Keep forever, manuell archivieren via
-   /reset. Marker `↳ sub from hans/main` im /sessions-Listing macht
+   /reset. Marker `↳ sub from agent-a/main` im /sessions-Listing macht
    sie unterscheidbar. Wenn sich Sammelsucht zeigt, Polish-Phase mit
    `/sessions filter:own` o.ä.

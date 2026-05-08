@@ -104,6 +104,16 @@ async function publish(session: string, event: SseEvent): Promise<void> {
 // Resolve the effective model for a turn: a per-session override (set via
 // /model) wins over the persona's default. Either way: resolveAnyRef handles
 // the alias → provider/id → bare id lookup chain.
+// First-known-agent fallback for endpoints that legacy clients may
+// hit without specifying ?agent=. Returns alphabetically-first
+// registered agent name; null if no agents exist. Resolves via
+// listAgents() each call to stay current with hot-loaded personas.
+async function defaultAgentFallback(): Promise<string | null> {
+  const list = await listAgents();
+  const sorted = list.map((a) => a.name).sort();
+  return sorted[0] ?? null;
+}
+
 function resolveEffectiveModel(
   config: Config,
   persona: Persona,
@@ -613,7 +623,10 @@ app.get('/chat/history', async (c) => {
 
 app.get('/chat/stream', async (c) => {
   const sessionRef = c.req.query('session') ?? 'main';
-  const agent = c.req.query('agent') ?? 'hans';
+  const agent = c.req.query('agent') ?? (await defaultAgentFallback());
+  if (!agent) {
+    return c.json({ error: 'no agents configured — create one in ~/.somora/agents/' }, 400);
+  }
   if (!(await loadPersona(agent))) {
     return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   }
@@ -662,7 +675,10 @@ app.post('/chat/send', async (c) => {
     /** Sub-agent nesting depth (0 = top-level). Reserved for future spawn flow. */
     subagent_depth?: number;
   };
-  const agent = body.agent ?? 'hans';
+  const agent = body.agent ?? (await defaultAgentFallback());
+  if (!agent) {
+    return c.json({ error: 'no agents configured — create one in ~/.somora/agents/' }, 400);
+  }
   const sessionRef = body.session ?? 'main';
   const text = body.text ?? '';
   const fromAgent =
@@ -739,7 +755,10 @@ app.post('/chat/send', async (c) => {
 // turn is running. Doesn't block — the engine adapter sees the signal
 // and bails out, then runChatTurn's finally releases the controller.
 app.post('/chat/abort', async (c) => {
-  const agent = c.req.query('agent') ?? 'hans';
+  const agent = c.req.query('agent') ?? (await defaultAgentFallback());
+  if (!agent) {
+    return c.json({ error: 'no agents configured' }, 400);
+  }
   const session = c.req.query('session') ?? 'main';
   const result = triggerChatAbort(agent, session);
   return c.json({ agent, session, ...result });
@@ -765,7 +784,10 @@ app.post('/chat/send-sync', async (c) => {
     model?: string;
     max_rounds?: number;
   };
-  const agent = body.agent ?? 'hans';
+  const agent = body.agent ?? (await defaultAgentFallback());
+  if (!agent) {
+    return c.json({ error: 'no agents configured' }, 400);
+  }
   const sessionRef = body.session ?? 'main';
   const text = body.text ?? '';
   const fromAgent =
@@ -1083,7 +1105,7 @@ try {
 }
 
 // Consolidate stale paused dreams: when multiple paused exist for the same
-// source-session (the bug-pattern from hans's 2026-05-05 report — fixed in
+// source-session (the bug-pattern reported 2026-05-05 — fixed in
 // resumeDream() going forward), keep the newest and drop the rest.
 // Idempotent; no-op once steady state is reached.
 try {

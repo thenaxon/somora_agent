@@ -38,10 +38,10 @@ function shQuote(s: string): string {
  *     boxes). The TUI treats it as a real linebreak inside its
  *     input field instead of submitting. A trailing \n still becomes
  *     a plain Enter, so a multi-line message still submits at the
- *     end. Hans's bug 2026-05-06: without this, a multi-line message
+ *     end. the bug report 2026-05-06: without this, a multi-line message
  *     into Claude Code got chunked into N separate submissions.
  *
- * Submit-gap (Hans's bug 10, 2026-05-07): coding TUIs do paste-burst
+ * Submit-gap (bug 10 from 2026-05-07): coding TUIs do paste-burst
  * detection. When the trailing CR arrives in the same input event tick
  * as preceding text, codex (and likely others) treat it as part of the
  * paste and suppress the submit. We insert a `sleep 0.1` between the
@@ -54,7 +54,7 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
   // doesn't get emitted as M-Enter and then immediately followed by a
   // plain Enter — that double-keystroke leaves the input cursor in a
   // soft-newlined empty line and Codex (and likely other strict TUIs)
-  // refuse to submit. Hans's bug 2026-05-07: `multiline_safe:true` with
+  // refuse to submit. the bug report 2026-05-07: `multiline_safe:true` with
   // trailing `\n` rendered the prompt but never submitted in codex.
   const endsWithNewline = keys.endsWith('\n');
   const body = endsWithNewline ? keys.slice(0, -1) : keys;
@@ -64,7 +64,7 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
     if (part.length > 0) {
       // `--` ends tmux's flag-scan so a leading `-` in the literal text
       // (Markdown bullets `- Item`, command flags being typed) isn't
-      // mistaken for a flag — Hans's bug 2026-05-06: `multiline_safe:true`
+      // mistaken for a flag — the bug report 2026-05-06: `multiline_safe:true`
       // with `\n- Bullet A` failed with `command send-keys: invalid flag -`.
       cmds.push(`tmux send-keys -t ${shQuote(name)} -l -- ${shQuote(part)}`);
     }
@@ -84,7 +84,7 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
   // final Enter forces it to be seen as a real submit. ~50ms is enough
   // empirically; we use 100ms for headroom. Skip the gap when there's
   // no preceding content (bare "\n" submits fine on its own).
-  // Hans's bug 10 (2026-05-07): trailing-\n submits never fired in
+  // bug 10 (2026-05-07): trailing-\n submits never fired in
   // codex without this gap; verified live in codex 0.128.0.
   if (endsWithNewline) {
     if (cmds.length > 0) {
@@ -148,7 +148,7 @@ export async function tmuxLocalSend(
  *  (not literal text). This is the reliable way to deliver control bytes
  *  to a TUI: encoding raw \x1b in JSON is brittle (LLMs often emit it as
  *  literal `\x1b` chars instead of the proper `` escape, ending up
- *  typed as text in the input field). Hans's tmux-control-keys bug
+ *  typed as text in the input field). the tmux-control-keys bug
  *  2026-05-07. */
 export async function tmuxLocalSendKey(name: string, key: string): Promise<TmuxResult> {
   const tokens = key.trim().split(/\s+/);

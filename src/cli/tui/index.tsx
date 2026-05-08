@@ -6,6 +6,7 @@
 import { render } from 'ink';
 import { Api } from './api.ts';
 import { App } from './app.tsx';
+import { readTuiState } from './state.ts';
 
 const port = Number(process.env.SOMORA_PORT ?? 18737);
 const host = process.env.SOMORA_HOST ?? '127.0.0.1';
@@ -29,6 +30,25 @@ try {
   initialVerboseSystem = tuiConfig.verbose.system;
 } catch {
   // server not up yet — defaults stand
+}
+
+// Pick the agent the TUI starts on. Priority:
+//   1. last-used agent from ~/.somora/tui-state.json (if it still exists)
+//   2. alphabetically-first agent from /agents
+//   3. literal placeholder ('default') — TUI shows a "no agents found" state
+const persisted = readTuiState();
+let initialAgent = persisted.lastAgent ?? '';
+try {
+  const agents = await new Api(base).fetchAgents();
+  const names = agents.map((a) => a.name);
+  if (initialAgent && !names.includes(initialAgent)) initialAgent = '';
+  if (!initialAgent) {
+    const sorted = [...names].sort();
+    initialAgent = sorted[0] ?? 'default';
+  }
+} catch {
+  // server not up — use whatever was persisted, else placeholder
+  if (!initialAgent) initialAgent = 'default';
 }
 
 // Clear + bottom-pin the dynamic frame before Ink renders.
@@ -62,7 +82,7 @@ if (process.stdout.isTTY) {
 render(
   <App
     base={base}
-    initialAgent="hans"
+    initialAgent={initialAgent}
     initialSession="main"
     initialShowMemory={initialShowMemory}
     initialShowTools={initialShowTools}

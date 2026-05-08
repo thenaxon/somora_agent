@@ -79,7 +79,7 @@ Read und überspringen ggf. mit Log-Eintrag.
 | **Default-Cadence** | reaktiv (idle-trigger) | alle 12h | wöchentlich |
 | **Read-Scope** | session-range + agent's eigenes memory (inkl. Stubs) **+ wiki** + referenced rest-of-vault | alle agents' memory (Stubs mit `## Recent observations`) + wiki | wiki only |
 | **Write-Scope** | nur agent's eigenes memory (inkl. Stub-Observations) | nur wiki + wiki/index.md + wiki/logs/YYYY-MM.md + Stub-Cleanup in agent-memory | proposed wiki-fixes (User-approval) + nach Approval: wiki-Updates |
-| **Approval** | ja (per-Agent-Chat, wie heute) | **nein** | ja (per-Agent-Chat, irgendein Agent — vermutlich der Mensch-nahe wie Hans) |
+| **Approval** | ja (per-Agent-Chat, wie heute) | **nein** | ja (per-Agent-Chat, irgendein Agent — vermutlich der Mensch-nahe wie <your-agent>) |
 | **Modell-Profil** | billig & lokal (Default: gemma4big) | smart & teuer (Default: opus oder Sonnet) | smart & teuer (Default: opus) |
 | **Approval-UX** | per-Agent dream_list/get/apply/dismiss wie heute | nicht zutreffend | per-Agent dream_list/get/apply/dismiss, Findings sind Wiki-Korrektur-Vorschläge |
 
@@ -91,10 +91,10 @@ Heute: Worker liest session + existing_memory (slugs+content) + referenced_vault
 
 Output bleibt: nur Proposals zu agent-memory. Wiki bleibt für Dream-A read-only.
 
-**Konflikt-Pattern (Beispiel: Hans-Session erwähnt „Luca ist 9", Wiki sagt „Luca, 8"):**
+**Konflikt-Pattern (Beispiel: <your-agent>-Session erwähnt „Luca ist 9", Wiki sagt „Luca, 8"):**
 
 1. Worker erkennt Widerspruch zwischen Session und Wiki
-2. Proposal: append zu `agents/hans/memory/luca.md` `## Recent observations`:
+2. Proposal: append zu `agents/<your-agent>/memory/luca.md` `## Recent observations`:
    ```
    - 2026-05-08: Luca ist 9 (Session-Erwähnung; Wiki sagt noch 8)
    ```
@@ -189,7 +189,7 @@ type: person                       # person | projekt | konzept | ...
 created: 2026-04-01
 updated: 2026-05-08
 sources:                            # welche agent-memory-slugs / sessions
-  - hans/familie-luca-podcast       # haben zur page beigetragen
+  - <your-agent>/familie-luca-podcast       # haben zur page beigetragen
   - lisa/familie-rene
 related:                            # explizite Cross-Refs
   - personen/rene
@@ -207,8 +207,8 @@ related:                            # explizite Cross-Refs
 - Macht Podcast (siehe [[projekte/familie-luca-podcast]])
 
 ## Zeitleiste
-- 2026-04-01: Wiki-Page angelegt aus hans/luca
-- 2026-05-08: Alters-Update 8→9 (via hans's session)
+- 2026-04-01: Wiki-Page angelegt aus <your-agent>/luca
+- 2026-05-08: Alters-Update 8→9 (via <your-agent>'s session)
 
 ## Notizen
 (freitext, kann auch deine manuellen Edits enthalten)
@@ -268,11 +268,11 @@ hat.
 ## 2026-05-08
 
 ### Promoted
-- [[personen/luca]] aus hans/luca (initial)
-- [[projekte/somora]] aus hans/somora (initial)
+- [[personen/luca]] aus <your-agent>/luca (initial)
+- [[projekte/somora]] aus <your-agent>/somora (initial)
 
 ### Updated
-- [[personen/luca]] (8 → 9, source: hans-session 2026-05-08T12:34)
+- [[personen/luca]] (8 → 9, source: <your-agent>-session 2026-05-08T12:34)
 
 ## 2026-05-07
 ...
@@ -353,7 +353,7 @@ Wiki, dann Memory, dann Rest-of-Vault.
 [wiki/personen/luca] (similarity: 0.81)
 Luca ist 9 Jahre alt, Tochter von Rene und Conny...
 
-[memory/hans/familie-luca-podcast] (similarity: 0.74)
+[memory/<your-agent>/familie-luca-podcast] (similarity: 0.74)
 "Luca arbeitet an Episode 5 ihres Podcasts..."
 
 [vault/Notizen/Familie-2026.md] (similarity: 0.51)
@@ -383,7 +383,7 @@ Letzte Updates: luca (heute), somora (gestern), ...
 == Hits zur aktuellen Frage ==
 [wiki/personen/luca] (sim 0.81)
 ...
-[memory/hans/familie-luca-podcast] (sim 0.74)
+[memory/<your-agent>/familie-luca-podcast] (sim 0.74)
 ...
 [/memory-context]
 
@@ -428,11 +428,11 @@ Bau.
 
 ### Zwei Agents widersprechen sich
 
-- Hans's Stub-Observations-Section sagt „Luca ist 9"
+- <your-agent>'s Stub-Observations-Section sagt „Luca ist 9"
 - Lisa's Stub-Observations-Section sagt „Luca ist 8" (älterer Stand)
 - Dream-B beim Merge: nimmt **recency-Sieger** (jüngeres Datum
-  gewinnt) und vermerkt in `logs/`: „resolved conflict between hans
-  (2026-05-08) and lisa (2026-04-02), kept hans"
+  gewinnt) und vermerkt in `logs/`: „resolved conflict between <your-agent>
+  (2026-05-08) and lisa (2026-04-02), kept <your-agent>"
 - Bei gleichzeitigem Datum (sehr selten): Dream-B hält's offen, append
   beide Versionen mit Attribution, User soll manuell auflösen — als
   Lint-Finding markiert
@@ -467,10 +467,10 @@ Dream-C-Trigger 1 (real-clock):  wöchentlich (default)
 Dream-C-Trigger 2 (manual):      Tool-Trigger
 ```
 
-**Approval-Flow bleibt per-Agent.** Du gehst zu Hans, fragst „was hast
-du geträumt", siehst hans's Findings, approvest. Dann zu Lisa, etc.
+**Approval-Flow bleibt per-Agent.** Du gehst zu <your-agent>, fragst „was hast
+du geträumt", siehst <your-agent>'s Findings, approvest. Dann zu Lisa, etc.
 Dream-B/C Findings gehen an EINEN designierten Approval-Agent
-(Default: hans, konfigurierbar) damit's nicht in jedem Agent-Chat
+(Default: <your-agent>, konfigurierbar) damit's nicht in jedem Agent-Chat
 auftaucht.
 
 **Ressourcen-Annahmen:**
@@ -538,7 +538,7 @@ wiki:
     intervalDays: 7
     model: openrouter/anthropic/claude-opus-4-5
     require_approval: true
-    approval_agent: hans                # wer kriegt die Lint-Findings
+    approval_agent: <your-agent>                # wer kriegt die Lint-Findings
 
   search:
     boost_wiki: 1.0
@@ -694,7 +694,7 @@ Tool-Inflation.
   indiziert sie + Dream-A picks sie als referenced_vault auf
 - **Wiki-as-Site** (statische HTML-Generation aus dem Wiki) — kein
   Bedarf erkennbar, würde nur Komplexität bringen
-- **Per-Agent-Sub-Wikis** (Hans hat sein eigenes Mini-Wiki innerhalb
+- **Per-Agent-Sub-Wikis** (<your-agent> hat sein eigenes Mini-Wiki innerhalb
   des großen Wikis) — wurde verworfen weil's den geteilten-Wissens-
   Vorteil aufweicht
 - **Wiki-Page-Versioning** (git-history-style) — git auf dem Vault

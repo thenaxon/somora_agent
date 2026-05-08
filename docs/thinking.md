@@ -165,7 +165,7 @@ GET response example:
 
 ```json
 {
-  "agent": "hans",
+  "agent": "<your-agent>",
   "session": "main",
   "effective": "high",
   "override": "high",

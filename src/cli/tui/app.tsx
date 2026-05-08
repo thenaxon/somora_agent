@@ -11,6 +11,7 @@ import { Separator } from './separator.tsx';
 import { SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
 import { nextId, summarize } from './format.ts';
+import { rememberAgent } from './state.ts';
 import type { AgentInfo, StreamEvent, Turn, TurnStats } from './types.ts';
 
 interface Props {
@@ -464,6 +465,7 @@ export function App({
             setStreaming(false);
             setAgent(a.agent);
             setSession(a.session);
+            rememberAgent(a.agent);
           } else if (a.kind === 'clearStats') {
             setStats(null);
           } else if (a.kind === 'setShow') {

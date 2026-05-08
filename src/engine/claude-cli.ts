@@ -201,7 +201,7 @@ export const claudeCliEngine: AgentEngine = {
           // CLI doesn't inject ~/.claude/projects/<cwd>/memory/* into the
           // system prompt. Without this, somora agents inherit Claude Code's
           // own auto-memory for the cwd of the somora-server process — a
-          // privacy leak (e.g. another somora agent like `lisa` could read
+          // privacy leak (e.g. another somora agent like another agent could read
           // notes that belong to a Claude Code session in the same project
           // dir). settingSources:[] alone does NOT cover this — auto-memory
           // is loaded independently of settings.json files.

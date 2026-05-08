@@ -277,7 +277,7 @@ function buildUserMessage(args: {
   //   prefix-cache (mlx-omx, OpenAI, Anthropic-via-openai-shim) cache
   //   the memory + vault prefix on chunk 1 and reuse it on chunks 2..N.
   //
-  // Memory + vault for hans's typical session are ~2-15k tokens; on a
+  // Memory + vault for a typical user session are ~2-15k tokens; on a
   // 5-chunk dream that's 4× re-encoding saved on local models —
   // multiple seconds of latency per chunk on gemma4big.
   // Order: stable blocks first (memory + wiki + vault) so prefix-cache

@@ -135,8 +135,8 @@ The tools are exposed three ways:
 Useful when something looks off:
 
 ```bash
-curl 'http://127.0.0.1:18737/agents/hans/memory/notes' | jq '.count'
-curl 'http://127.0.0.1:18737/agents/hans/memory/search?q=apartment&minScore=0' | jq '.hits'
+curl 'http://127.0.0.1:18737/agents/<your-agent>/memory/notes' | jq '.count'
+curl 'http://127.0.0.1:18737/agents/<your-agent>/memory/search?q=apartment&minScore=0' | jq '.hits'
 ```
 
 These return the raw indexed state — you can see exactly what would be

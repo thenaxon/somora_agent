@@ -469,14 +469,16 @@ export const WikiLintConfigSchema = z
     model: z.string().min(1).optional(),
     /** Lint findings need user approval before wiki-edits apply. */
     requireApproval: z.boolean().default(true),
-    /** Which agent's chat surfaces the lint findings. */
-    approvalAgent: z.string().min(1).default('hans'),
+    /** Which agent's chat surfaces the lint findings. When unset,
+     *  the runtime falls back to the alphabetically-first registered
+     *  agent (with a warning log). Operators set this explicitly to
+     *  pin to a specific agent. */
+    approvalAgent: z.string().min(1).optional(),
   })
   .default({
     enabled: true,
     intervalDays: 7,
     requireApproval: true,
-    approvalAgent: 'hans',
   });
 
 export const WikiSearchConfigSchema = z
@@ -530,7 +532,6 @@ export const WikiConfigSchema = z
       enabled: true,
       intervalDays: 7,
       requireApproval: true,
-      approvalAgent: 'hans',
     },
     search: {
       boostWiki: 1.0,

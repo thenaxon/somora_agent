@@ -158,7 +158,7 @@ and reused across all chunks. Transcript varies per chunk.
 The original ordering was:
 
 ```
-Agent name: hans
+Agent name: <your-agent>
 <transcript>... per-chunk ...</transcript>     ← variable
 <existing_memory>... stable ...</existing_memory>
 <vault_referenced>... stable ...</vault_referenced>
@@ -171,7 +171,7 @@ tokens combined) re-encoded every chunk instead of cached.
 Fix (commit `19528a7`): reorder to stable-first.
 
 ```
-Agent name: hans
+Agent name: <your-agent>
 <existing_memory>... stable ...</existing_memory>     ← cached chunks 2..N
 <vault_referenced>... stable ...</vault_referenced>   ← cached chunks 2..N
 <transcript>... per-chunk ...</transcript>            ← variable, end of prompt

@@ -571,7 +571,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       // no accumulated assistant content (model spent all rounds on
       // tool calls), make one final no-tools call to extract a summary.
       // Without this, the caller gets `result: ""` silently and can't
-      // tell the sub bailed out — Hans's bug report from 2026-05-03.
+      // tell the sub bailed out — the user's bug report from 2026-05-03.
       if (!cumulative && round >= maxRounds) {
         logger.warn({
           msg: 'engine.force_summary_after_cap',

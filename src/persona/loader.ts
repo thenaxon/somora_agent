@@ -59,8 +59,9 @@ const DreamConfigSchema = z.object({
    *
    * Default 600000ms (10 min). The earlier 2 min default was too tight
    * for realistic local-model loads — verified empirically 2026-05-06
-   * with hans's main archive: 33k-token chunks against gemma-4-31b-it-8bit
-   * via mlx-omx need 3-5 min just for prefill+JSON-output, the 2 min
+   * with a real agent's main archive: 33k-token chunks against
+   * gemma-4-31b-it-8bit via mlx-omx need 3-5 min just for prefill+
+   * JSON-output, the 2 min
    * cap killed every chunk before it could complete (and before omlx's
    * KV cache could warm for the next chunk). 10 min is generous enough
    * to fit any reasonable local-model setup; faster cloud workers
@@ -279,15 +280,22 @@ function expandHome(p: string): string {
   return p;
 }
 
+// First-install seed agent. Operators are expected to rename / replace
+// this with their own personas. The seed exists only so somora has
+// SOMETHING to chat with right after install. Name kept neutral
+// ('default') and content kept generic so it doesn't bias the
+// operator's voice/character choices.
+const DEFAULT_AGENT_NAME = 'default';
+
 const SAMPLE_AGENTS_MD = `---
-name: hans
-description: Friendly personal assistant
+name: default
+description: A neutral starter agent — rename and customize to your preference
 icon: 🤖
 ---
 
 - Answer concisely and clearly.
 - Say honestly when you don't know something — no hallucinations.
-- Don't play roles; you are Hans.
+- Don't play roles; you are who the operator says you are.
 - If the user asks about your tools, list only what you actually have.
 `;
 
@@ -308,10 +316,11 @@ model: opus
 
 const SAMPLE_SOUL_MD = `# Who I am
 
-I am Hans, a friendly personal assistant.
+I am a neutral starter agent. The operator who installed me hasn't
+yet told me who they want me to be — when they do, this file gets
+rewritten with the actual character.
 
-I speak casually, with a touch of dry humour but without being performative.
-I am pragmatic and stick to facts.
+For now: I speak plainly and stick to facts.
 `;
 
 const SAMPLE_USER_MD = `# About the user
@@ -323,7 +332,7 @@ know about you: name, role, preferences, timezone, projects, language, …)
 export async function ensureDefaultAgent(): Promise<void> {
   const existing = await listAgents();
   if (existing.length > 0) return;
-  const dir = join(AGENTS_DIR, 'hans');
+  const dir = join(AGENTS_DIR, DEFAULT_AGENT_NAME);
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'AGENTS.md'), SAMPLE_AGENTS_MD, 'utf8');
   await writeFile(join(dir, 'agent.yaml'), SAMPLE_AGENT_YAML, 'utf8');

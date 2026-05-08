@@ -27,27 +27,29 @@ The minimum is an agent directory with an `AGENTS.md`. Everything else is
 optional.
 
 ```bash
-mkdir -p ~/.somora/agents/lisa
-cat > ~/.somora/agents/lisa/AGENTS.md <<'EOF'
+mkdir -p ~/.somora/agents/<your-agent>
+cat > ~/.somora/agents/<your-agent>/AGENTS.md <<'EOF'
 ---
-name: lisa
+name: <your-agent>
 description: Engineering-minded research assistant
 icon: 🌼
 ---
 
 - Be precise. Quote sources when you have them.
 - Don't speculate beyond what's in your memory or the conversation.
-- You are Lisa, not Hans.
+- You are who the operator configured you as — stick to the
+  description above and the SOUL.md voice.
 EOF
 ```
 
-The next `/agents` call from the CLI lists her — no server restart needed.
+The next `/agents` call from the CLI lists the new agent — no server
+restart needed.
 
 ### Identity goes in AGENTS.md frontmatter
 
 ```yaml
 ---
-name: lisa            # must match the directory name
+name: <your-agent>    # must match the directory name
 description: ...      # one-line — shown by `/agents`
 icon: 🌼              # optional emoji shown in CLI prompts and listings
 ---
@@ -56,7 +58,7 @@ icon: 🌼              # optional emoji shown in CLI prompts and listings
 ### Operator config goes in agent.yaml
 
 ```yaml
-# ~/.somora/agents/lisa/agent.yaml
+# ~/.somora/agents/<your-agent>/agent.yaml
 model: opus           # alias OR provider/modelId
 fallback: gpt55       # used when primary fails before producing any output
 
@@ -68,7 +70,7 @@ thinking: medium
 # Optional: per-agent workspace override. Default cwd for the file_* tools.
 # Falls back to config.workspace.default (~/somoraworkspace) when unset.
 workspace:
-  path: ~/lisa-workspace
+  path: ~/<your-agent>-workspace
 
 # Optional: hide remote resources from this agent. By default every
 # resource defined in config.yaml is visible. See resources.md.
@@ -107,17 +109,17 @@ live, the workspace path, the global config location, and which remote
 resources are configured. This means the agent can run e.g.:
 
 ```
-file_write({ path: "~/.somora/agents/hans/USER.md", content: "...", mode: "overwrite" })
-file_read({ path: "~/.somora/agents/hans/agent.yaml" })
+file_write({ path: "~/.somora/agents/<your-agent>/USER.md", content: "...", mode: "overwrite" })
+file_read({ path: "~/.somora/agents/<your-agent>/agent.yaml" })
 file_patch({ path: "~/.somora/config.yaml", old_string: "...", new_string: "..." })
 ```
 
 …to update its own state without you having to dictate paths.
 
-**Cross-agent editing is intentionally allowed.** Hans can rewrite
-Lisa's `AGENTS.md`, adjust Jarvis' `agent.yaml`, or add notes to
-another agent's memory. Agents shape each other in this design, not
-just themselves. The only files in `~/.somora/agents/<*>/` that stay
+**Cross-agent editing is intentionally allowed.** One agent can rewrite
+another's `AGENTS.md`, adjust their `agent.yaml`, or add notes to
+their memory. Agents shape each other in this design, not just
+themselves. The only files in `~/.somora/agents/<*>/` that stay
 off-limits are the `sessions/` dirs (append-only conversation logs
 managed by somora's storage layer). See `files.md` for the full
 write blacklist.
@@ -131,7 +133,7 @@ contents of this `docs/` directory.
 | File       | Role                                                                  |
 | ---------- | --------------------------------------------------------------------- |
 | `AGENTS.md` | Behavioural rules. "Reply concisely." "Use tools when asked, don't preface." |
-| `SOUL.md`   | Voice / character. "I'm Lisa. I speak in short sentences. I have dry humour." |
+| `SOUL.md`   | Voice / character. "I speak in short sentences. I have dry humour." |
 | `USER.md`   | Static context about you. "User is Maria. Lives in Berlin. Two cats." |
 
 All three are concatenated into the system prompt. Edit them in place; the
@@ -145,14 +147,14 @@ spaces, no slashes. Lowercase is the convention.
 ## Switching agents and sessions
 
 ```
-/agents                       — list all configured agents
-/agent lisa                   — switch to lisa, drop into her main session
-/agent lisa some-topic        — switch to lisa, session named "some-topic"
+/agents                          — list all configured agents
+/agent <name>                    — switch to <name>, drop into its main session
+/agent <name> some-topic         — switch to <name>, session named "some-topic"
 
-/sessions                     — list sessions of the current agent
-/session some-topic           — switch to that session (newest match)
-/new daily-2026-05-02         — create + switch to a new session
-/main                         — back to the agent's main session
+/sessions                        — list sessions of the current agent
+/session some-topic              — switch to that session (newest match)
+/new daily-2026-05-02            — create + switch to a new session
+/main                            — back to the agent's main session
 ```
 
 `main` is a magic name — every agent always has one, you can't delete it.

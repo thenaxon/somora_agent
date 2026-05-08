@@ -28,7 +28,7 @@ interface BlacklistEntry {
 
 // `rm -rf <path>` matcher. We block ONLY when <path> is a system
 // directory; user-owned dirs (/Users/<u>, /home/<u>, /tmp,
-// /var/folders) pass through. Hans's bug 2026-05-06: the previous
+// /var/folders) pass through. the user's bug 2026-05-06: the previous
 // pattern /\/[a-zA-Z]/ blocked every absolute path under /, forcing
 // workarounds like `cd ~ && rm -rf foo`. somora's threat model is
 // "don't accidentally `rm -rf /` or wipe /etc", not "no destructive

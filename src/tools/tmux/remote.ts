@@ -21,7 +21,7 @@ function shQuote(s: string): string {
 
 // Mirrors local.ts:buildSendKeysScript — see there for the
 // multilineSafe / M-Enter rationale, the `--` end-of-flags guard, and
-// the trailing-\n strip-before-split (Hans's bug 2026-05-07).
+// the trailing-\n strip-before-split (the bug report 2026-05-07).
 function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean): string {
   const endsWithNewline = keys.endsWith('\n');
   const body = endsWithNewline ? keys.slice(0, -1) : keys;

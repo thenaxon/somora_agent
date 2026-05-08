@@ -1,11 +1,12 @@
-// agent_ask — A2A live messaging (Phase 6c, Modus 2). Hans calls
-// agent_ask({agent: 'lisa', message: '...'}); Lisa receives the message
-// in HER session as a user_message with from_agent='hans', runs a
-// normal turn (memory auto-inject, tools, persona — all of it), and
-// her reply text comes back inline.
+// agent_ask — A2A live messaging (Phase 6c, Modus 2). One agent calls
+// agent_ask({agent: '<other-agent>', message: '...'}); the target agent
+// receives the message in ITS session as a user_message with from_agent
+// set to the caller's name, runs a normal turn (memory auto-inject,
+// tools, persona — all of it), and the reply text comes back inline.
 //
-// Session targeting: defaults to 'main'. Lisa's main is the canonical
-// "talk to Lisa" entry point, same surface a human user types into.
+// Session targeting: defaults to 'main'. The target agent's main session
+// is the canonical "talk to it" entry point, same surface a human user
+// types into.
 //
 // Lock + queue (src/server/session-queue.ts): an agent_ask call is
 // priority='agent' and yields to any concurrent human user turn on the
@@ -41,7 +42,7 @@ const AskInput = z
       .string()
       .min(1)
       .describe(
-        'Target agent name (e.g. "lisa", "jarvis"). Must NOT be yourself — ' +
+        'Target agent name (e.g. "<agent-name>", "<other-agent>"). Must NOT be yourself — ' +
           'use spawn_subagent for self-clone tasks. Talks to the target\'s main session by default.',
       ),
     message: z
@@ -111,7 +112,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     '(which runs a sealed task in a fresh session), agent_ask writes into the target\'s actual ' +
     'session — so the target uses their full memory, persona, and conversation history to answer, ' +
     'and the exchange is visible in their session afterwards. Use this when you need the TARGET\'s ' +
-    'expertise/state ("Lisa, what did Rene say last week about X?"), NOT when you have a ' +
+    'expertise/state ("<agent>, what did the user say last week about X?"), NOT when you have a ' +
     'self-contained task you could delegate (use spawn_subagent for that). ' +
     'Defaults to the target\'s main session. Default timeout 5 min, cap 30 min — slow local ' +
     'models routinely need minutes. On timeout: returns state:"pending" (NOT an error); the call ' +

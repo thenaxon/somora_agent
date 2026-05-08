@@ -291,7 +291,7 @@ export async function archiveEmptyCompletedDreams(agents: string[]): Promise<num
 /**
  * Server-start housekeeping: when multiple paused dreams exist for the
  * SAME source-session (a sign that resume cycles failed to clean up
- * after themselves — see hans bug 2026-05-05), keep only the newest
+ * after themselves — see bug report 2026-05-05), keep only the newest
  * paused per source-session and unlink the rest. The newest captures
  * the most recent state; older ones are stale by-products of the bug
  * that's fixed in resumeDream().

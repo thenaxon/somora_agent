@@ -30,7 +30,7 @@ On first start somora creates `~/.somora/`:
 ~/.somora/
 ├── config.yaml                ← server config (created with sane defaults)
 ├── agents/
-│   └── hans/                  ← a sample agent, generated on first run
+│   └── default/               ← seed agent created on first run; rename / customize
 │       ├── AGENTS.md
 │       ├── SOUL.md
 │       ├── USER.md

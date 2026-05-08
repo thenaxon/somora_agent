@@ -427,7 +427,7 @@ export async function resumeDream(args: {
   // was never cleaned up. If the new run got aborted again (typical on
   // active accounts), the result was N+1 paused files instead of N. Across
   // a couple of days of idle cycles + user activity, paused dreams piled up
-  // (hans bug report 2026-05-05: 5 paused, 0 findings, all from the same
+  // (bug report 2026-05-05: 5 paused, 0 findings, all from the same
   // source-session). Re-run-from-scratch was a deliberate v1 simplification
   // (see comment below) — we just have to take responsibility for the old
   // file's cleanup as part of resume's contract.

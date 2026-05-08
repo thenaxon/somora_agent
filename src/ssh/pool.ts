@@ -37,7 +37,7 @@ interface PooledConnection {
    * Cached absolute home path for the SSH user, resolved once via
    * SFTP `realpath('.')`. Used to expand relative paths and `~`-paths
    * for SFTP operations — SFTP itself does NOT expand tilde, so
-   * passing `~/foo` literal creates a directory named `~` (Hans's
+   * passing `~/foo` literal creates a directory named `~` (the user's
    * Bug 2026-05-06). Filled lazily by getResourceHome().
    */
   home?: string;

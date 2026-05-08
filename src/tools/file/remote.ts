@@ -18,7 +18,7 @@ const READ_HARD_CAP = 200_000;
  * relative inputs onto it. Same goes for `resource.workspace` if it's
  * tilde-prefixed. Posix-only — remote is assumed unix-y.
  *
- * Hans's bug 2026-05-06: previously this returned the literal string
+ * the user's bug 2026-05-06: previously this returned the literal string
  * `~/_selftest/foo`, which SFTP interpreted as a directory called `~`.
  */
 async function resolveRemotePath(

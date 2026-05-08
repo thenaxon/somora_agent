@@ -6,10 +6,10 @@
 //   ## 2026-05-08
 //
 //   ### Promoted
-//   - [[personen/luca]] aus hans/luca (initial)
+//   - [[personen/luca]] aus <agent>/luca (initial)
 //
 //   ### Updated
-//   - [[personen/luca]] (Alter 8 → 9, source: hans-session)
+//   - [[personen/luca]] (Alter 8 → 9, source: <agent>-session)
 //
 // One file per calendar month (UTC). Append-only inside the file —
 // callers pass an array of entries from a single Dream-B run; the

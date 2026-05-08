@@ -97,7 +97,7 @@ Obsidian vault, declare the vault as the single source of truth so the
 worker doesn't suggest copying vault content into memory.
 
 ```markdown
-# Dream Rules — Hans
+# Dream Rules — <your-agent>
 
 ## Don't propose memory writes for these
 - Content already present in the Obsidian vault. Vault is the canonical
@@ -149,13 +149,13 @@ Ask the agent. It uses `dream_list` to see what's pending, `dream_get`
 to read a specific dream, and walks you through findings one at a time:
 
 ```
-[hans:main]> hast du was geträumt?
+[<your-agent>:main]> hast du was geträumt?
 
 [tool call · dream_list · {}]
 [tool result · {"count":1,"dreams":[...]}]
 [tool call · dream_get · {"dream_id":"…"}]
 
-hans: Yep — three findings from the archived main session.
+agent: Yep — three findings from the archived main session.
 
   1. Memory edit: auto.md says you drive a Fiat. You mentioned a
      Mercedes purchase last week. Should I update?
@@ -165,7 +165,7 @@ hans: Yep — three findings from the archived main session.
 [tool call · dream_apply · {"dream_id":"…", "finding_id":1}]
 [tool result · {"applied":true,"remaining":2,"dream_done":false}]
 
-hans: Done. Next:
+agent: Done. Next:
 
   2. New note "yoga": You mentioned starting yoga with Markus on
      Tuesdays at 6 PM. Save?
@@ -174,7 +174,7 @@ hans: Done. Next:
 
 [tool call · dream_dismiss · {"dream_id":"…", "finding_id":2}]
 
-hans: Skipped. Last one:
+agent: Skipped. Last one:
 
   3. ...
 ```

@@ -13,8 +13,8 @@ export type NormalizedEvent =
        *
        * Semantics:
        *   - undefined → human user (default, unchanged behavior)
-       *   - 'hans'    → Hans wrote this turn into the current agent's
-       *                 session as part of an A2A flow.
+       *   - '<agent>' → another agent wrote this turn into the current
+       *                 agent's session as part of an A2A flow.
        *
        * Storage: persists in JSONL alongside `text`; replays into
        * cross-engine context with a "[Message from agent <name>]"
