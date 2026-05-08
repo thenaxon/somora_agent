@@ -332,20 +332,32 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
   name: 'dream_run',
   toolset: 'dream',
   description:
-    'Manually trigger a Dream-Worker run. ' +
+    'Manually trigger a Dream-Worker run.\n' +
+    '\n' +
     "mode='b' (default): Dream-B promotion — reads each agent's short-term memory, " +
     'decides which entries are wiki-worthy, writes them as consolidated wiki pages with ' +
     'cross-references, replaces source memory files with stubs. Stubs that have new ' +
-    '"Recent observations" since their last promotion get merged into the existing wiki page. ' +
+    '"Recent observations" since their last promotion get merged into the existing wiki page.\n' +
     "mode='c' (Phase 4 Stufe 5, not implemented yet): Dream-C lint — periodic wiki health-check " +
-    'for contradictions, stale claims, broken links, orphans. ' +
-    'wait (default false): when false, the run starts in the background and the tool returns ' +
-    'immediately — same pattern as /reset triggering Dream-A. The user can inspect outcomes ' +
-    'later via the wiki/index.md, the monthly logs/, or by tailing server logs for ' +
-    "`wiki.dream_b.done`. When wait=true, the call blocks until the run finishes and returns " +
-    'the full outcome counts (useful for debugging or when the user explicitly wants to see ' +
-    'the result before continuing). ' +
-    "Use sparingly — Dream-B's scheduler runs every 12h by default.",
+    'for contradictions, stale claims, broken links, orphans.\n' +
+    '\n' +
+    'CALLING CONVENTION — read carefully:\n' +
+    '\n' +
+    '* Default is fire-and-forget. Just call dream_run({}) (or dream_run({mode:"b"})). ' +
+    'The run starts in the background and the tool returns IMMEDIATELY with ' +
+    '`{started: true}` — same pattern as /reset triggering Dream-A. Hand the response ' +
+    'back to the user, the conversation continues, the run finishes in 1-3 minutes ' +
+    'in the background. The user will see results via their Obsidian Vault (wiki/index.md ' +
+    'gets regenerated, monthly logs/ get appended).\n' +
+    '\n' +
+    '* DO NOT pass wait:true unless the user EXPLICITLY says "warte bis fertig" / ' +
+    '"block until done" / "lauf synchron" / equivalent. ' +
+    'Asking the user "did this run?" or wanting to give a comprehensive summary in your ' +
+    'reply is NOT a reason to use wait:true — the agent-blocking duration (1-3 minutes ' +
+    'against opus) is bad UX. The async response is the correct response in 99% of cases.\n' +
+    '\n' +
+    "* Use sparingly — Dream-B's scheduler runs every 12h by default. Manual triggers " +
+    'are for "I just added several substantial memory notes and want them in the wiki now".',
   inputSchema: RunInput,
   jsonSchema: {
     type: 'object',
@@ -360,8 +372,11 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
       wait: {
         type: 'boolean',
         description:
-          'When true, block until the run finishes and return outcome counts. ' +
-          'Default false: kick off in background, return immediately. Match /reset semantics.',
+          'OMIT in normal use. Default behavior is async (fire-and-forget) — the tool returns ' +
+          'immediately and the run continues in the background. Set wait:true ONLY when the ' +
+          'user has explicitly asked for synchronous/blocking behavior (e.g. "warte bis der ' +
+          'Run fertig ist", "lauf synchron", "block this turn until done"). Wanting to ' +
+          'summarize results in your reply is NOT a valid reason to use wait:true.',
       },
     },
     additionalProperties: false,
