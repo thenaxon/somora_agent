@@ -1,6 +1,10 @@
 # Setup
 
-## Install
+> **Production-Install (systemd-Service, `somora server start`, `somora tui`)?**
+> Siehe [`install-and-release.md`](install-and-release.md) — diese Datei
+> beschreibt nur das **dev-Setup** zum Coden am Code.
+
+## Install (dev)
 
 ```bash
 git clone https://github.com/<your-account>/somora_agent.git somora
