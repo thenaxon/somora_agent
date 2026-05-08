@@ -103,9 +103,13 @@ export const memorySearch: ToolDefinition<z.infer<typeof SearchInput>> = {
     const mgr = await ctx.getMemoryManager();
     const sources =
       !input.source || input.source === 'all' ? 'all' : [input.source];
+    // Agent-driven search defaults to a 0 floor so the agent sees the
+    // best top-N matches and can filter itself. Auto-injection still
+    // uses the higher autoInject.minScore — that's a different use case
+    // (ambient context where quality > recall).
     const hits = await mgr.search(input.query, {
       limit: input.limit,
-      minScore: input.minScore,
+      minScore: input.minScore ?? 0,
       sources,
     });
     return {

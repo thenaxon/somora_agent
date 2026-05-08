@@ -131,11 +131,14 @@ export const MemoryAutoInjectConfigSchema = z.object({
   queryTurns: z.number().int().positive().default(3),
   /** Top-N matches injected per turn. */
   maxResults: z.number().int().positive().default(5),
-  /** Discard matches below this hybrid score (0..1). */
-  minScore: z.number().min(0).max(1).default(0.5),
+  /** Discard matches below this hybrid score (0..1). 0.35 lets short
+   *  single-keyword queries surface wiki/vault hits where vector recall
+   *  alone wouldn't put them in top-k (BM25-only floor ≈ bm25Weight * 1.0
+   *  * sourceBoost). Raise to 0.5+ if auto-injection becomes too noisy. */
+  minScore: z.number().min(0).max(1).default(0.35),
   /** Hard cap on tokens of the injected memory block (Heuristik 4 chars/token). */
   maxTokens: z.number().int().positive().default(1500),
-}).default({ queryTurns: 3, maxResults: 5, minScore: 0.5, maxTokens: 1500 });
+}).default({ queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500 });
 
 export const MemoryHybridConfigSchema = z.object({
   vectorWeight: z.number().min(0).max(1).default(0.7),
@@ -150,7 +153,7 @@ export const MemoryConfigSchema = z.object({
 }).default({
   embedding: { provider: 'local', model: 'all-MiniLM-L6-v2' },
   chunking: { targetTokens: 400, overlapTokens: 80 },
-  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.5, maxTokens: 1500 },
+  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500 },
   hybrid: { vectorWeight: 0.7, bm25Weight: 0.3 },
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
@@ -496,9 +499,12 @@ export const WikiLintConfigSchema = z
 
 export const WikiSearchConfigSchema = z
   .object({
-    /** Score multipliers applied to vector-similarity before top-k cut.
-     *  Higher = ranked first. */
-    boostWiki: z.number().positive().default(1.0),
+    /** Score multipliers applied to the fused hybrid score per source.
+     *  Higher = ranked first. Wiki at 1.4 is intentional: BM25-only matches
+     *  on short keyword queries (e.g. "garten") only reach ~0.3 hybrid
+     *  before boost, so wiki-curated pages need a lift to surface above
+     *  noisier memory chunks that vector-recall happens to pick up. */
+    boostWiki: z.number().positive().default(1.4),
     boostMemory: z.number().positive().default(0.85),
     boostVault: z.number().positive().default(0.65),
     /** Max chars of the auto-injected wiki-overview block (verkürzte
@@ -510,7 +516,7 @@ export const WikiSearchConfigSchema = z
     overviewTopNSlugs: z.number().int().positive().default(30),
   })
   .default({
-    boostWiki: 1.0,
+    boostWiki: 1.4,
     boostMemory: 0.85,
     boostVault: 0.65,
     overviewMaxChars: 1500,
