@@ -164,6 +164,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     const mgr = await getMemoryManager(agent, {
       config: deps.config.memory,
       wiki: deps.config.wiki,
+      obsidian: deps.config.obsidian,
     });
     const inject = await injectMemoryContext({
       mgr,
@@ -282,7 +283,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       agent,
       session,
       subagentDepth,
-      getMemoryManager: () => getMemoryManager(agent, { config: deps.config.memory }),
+      getMemoryManager: () =>
+        getMemoryManager(agent, {
+          config: deps.config.memory,
+          wiki: deps.config.wiki,
+          obsidian: deps.config.obsidian,
+        }),
       config: deps.config,
       // Surface the resolved model so capability-gated tools (file_read
       // polymorph) can check `image`/`pdf` capability before deciding

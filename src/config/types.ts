@@ -434,6 +434,19 @@ export const SkillsConfigSchema = z
     maxSkillFileBytes: 256_000,
   });
 
+// Obsidian Vault — server-global since 2026.05.08.8 (was per-agent
+// before). Single shared vault for all agents. Markdown content gets
+// indexed as a recall source; the wiki layer (Phase 4) lives in a
+// designated subfolder.
+export const ObsidianConfigSchema = z
+  .object({
+    /** Absolute path (or `~`-prefixed) to the Obsidian vault. When
+     *  unset, no vault is wired up — agents work with own memory only. */
+    vault: z.string().min(1).optional(),
+  })
+  .default({});
+export type ObsidianConfig = z.infer<typeof ObsidianConfigSchema>;
+
 // Wiki-System (Phase 4) — long-term shared knowledge in an Obsidian
 // vault subfolder, written by Dream-B, audited by Dream-C/Lint, read
 // by all agents. See `private/wiki-design.md` for the full design.
@@ -561,6 +574,7 @@ export const ConfigSchema = z.object({
   resources: ResourcesConfigSchema,
   skills: SkillsConfigSchema,
   vision: VisionConfigSchema,
+  obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;

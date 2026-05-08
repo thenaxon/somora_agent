@@ -10,31 +10,36 @@
 // We DO pre-create the directory layout (ensureMemoryDirs) at startup so
 // users can drop markdown files into memory/notes/ before chatting.
 
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { load as parseYaml } from 'js-yaml';
-import { z } from 'zod';
-import type { MemoryConfig, WikiConfig } from '../config/types.ts';
+import type { MemoryConfig, ObsidianConfig, WikiConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { MemoryManager, type ObsidianSource, type WikiSource } from './manager.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
-
-const ObsidianYamlSchema = z
-  .object({
-    vault: z.string().min(1),
-  })
-  .passthrough();
 
 const cache = new Map<string, MemoryManager>();
 const initPromises = new Map<string, Promise<MemoryManager>>();
 
 export interface MemoryRegistryOptions {
   config: MemoryConfig;
+  /** Server-global obsidian config. When undefined or no vault set, no
+   *  vault is wired up — agents work with own memory only. */
+  obsidian?: ObsidianConfig;
   /** Server-global wiki config. When undefined or .enabled false, no
-   *  wiki source is wired up — even if the agent has an obsidian vault. */
+   *  wiki source is wired up — even if a vault is configured. */
   wiki?: WikiConfig;
+}
+
+/** Resolve the server-global Obsidian source. Returns undefined when
+ *  no vault is configured. Path expansion handles `~`. */
+export function resolveObsidianSource(
+  obsidianConfig: ObsidianConfig | undefined,
+): ObsidianSource | undefined {
+  const vault = obsidianConfig?.vault;
+  if (!vault) return undefined;
+  return { vaultPath: expandHome(vault) };
 }
 
 export function getMemoryManager(
@@ -47,9 +52,9 @@ export function getMemoryManager(
   if (pending) return pending;
 
   const p = (async () => {
-    const obsidian = await readObsidianConfigForAgent(agent);
+    const obsidian = resolveObsidianSource(opts.obsidian);
     // Wiki layer only makes sense when both the wiki feature is on AND
-    // the agent has a vault. The absolute path is just <vault>/<subfolder>.
+    // a vault is configured. The absolute path is just <vault>/<subfolder>.
     const wiki: WikiSource | undefined = (() => {
       if (!opts.wiki?.enabled) return undefined;
       if (!obsidian?.vaultPath) return undefined;
@@ -65,8 +70,8 @@ export function getMemoryManager(
     const mgr = new MemoryManager({
       agent,
       config: opts.config,
-      obsidian,
-      wiki,
+      ...(obsidian ? { obsidian } : {}),
+      ...(wiki ? { wiki } : {}),
       ...(searchBoosts ? { searchBoosts } : {}),
     });
     try {
@@ -109,43 +114,6 @@ export async function shutdownMemoryRegistry(): Promise<void> {
       logger.warn({ msg: 'memory.close_failed', err: String(err) });
     }
   }
-}
-
-/**
-/**
- * Read agent.yaml's `obsidian:` section. Missing file or section → no
- * vault wired up. Path expansion handles ~.
- *
- * Single source of truth for vault discovery; consumed by MemoryManager
- * (read source for recall) and by Dream-B (wiki-subfolder location).
- */
-export async function readObsidianConfigForAgent(agent: string): Promise<ObsidianSource | undefined> {
-  const path = join(SOMORA_HOME, 'agents', agent, 'agent.yaml');
-  let raw: string;
-  try {
-    raw = await readFile(path, 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw err;
-  }
-  let doc: unknown;
-  try {
-    doc = parseYaml(raw) ?? {};
-  } catch (err) {
-    logger.warn({ msg: 'memory.agent_yaml_parse_failed', agent, err: (err as Error).message });
-    return undefined;
-  }
-  if (typeof doc !== 'object' || doc === null) return undefined;
-  const obsidianRaw = (doc as Record<string, unknown>).obsidian;
-  if (!obsidianRaw) return undefined;
-  const parsed = ObsidianYamlSchema.safeParse(obsidianRaw);
-  if (!parsed.success) {
-    logger.warn({ msg: 'memory.obsidian_config_invalid', agent, issues: parsed.error.issues });
-    return undefined;
-  }
-  return {
-    vaultPath: expandHome(parsed.data.vault),
-  };
 }
 
 function expandHome(p: string): string {

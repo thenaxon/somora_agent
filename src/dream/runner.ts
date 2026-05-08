@@ -21,7 +21,7 @@ import {
 import { extractFromSession, resolveDreamModel } from './extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
 import { loadReferencedWiki } from './wiki-context.ts';
-import { readObsidianConfigForAgent } from '../memory/registry.ts';
+import { resolveObsidianSource } from '../memory/registry.ts';
 import { join } from 'node:path';
 
 export interface RunDreamArgs {
@@ -245,7 +245,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   const referencedWiki: Array<{ slug: string; markdown: string }> = [];
   if (args.config.wiki.enabled) {
     try {
-      const obs = await readObsidianConfigForAgent(args.agent);
+      const obs = resolveObsidianSource(args.config.obsidian);
       const wikiAbs = obs?.vaultPath
         ? join(obs.vaultPath, args.config.wiki.vaultSubfolder)
         : null;

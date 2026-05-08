@@ -563,12 +563,12 @@ dream:
                                          # opt-out (z.B. test-agents)
 ```
 
-**Vault-Pfad bleibt per-Agent** in `agent.yaml.obsidian.vault` — heißt
-verschiedene Agents können verschiedene Vaults haben. Dann ist das Wiki
-automatisch im jeweiligen Vault unter dem konfigurierten Subfolder.
-
-In der Praxis ist's meist ein Vault für alle Agents → ein Wiki, alle
-schreiben rein.
+**Vault-Pfad ist server-global** in `config.yaml.obsidian.vault` (seit
+2026.05.08.8 — vorher per-Agent). Alle Agents teilen denselben Vault;
+das Wiki liegt im Subfolder darunter. Wenn ein Agent ohne Vault-Read
+laufen soll, kann das später via `agent.yaml.obsidian.enabled: false`
+ergänzt werden — heute existiert der Per-Agent-Override nicht (YAGNI
+bis ein realer Use-Case auftaucht).
 
 ---
 

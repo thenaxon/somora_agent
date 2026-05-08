@@ -82,18 +82,19 @@ write tools manage `created`/`updated` automatically.
 
 ## Obsidian vault as a read source
 
-Configure in `agent.yaml`:
+Configure server-globally in `~/.somora/config.yaml`:
 
 ```yaml
 obsidian:
   vault: ~/Documents/Vault/
 ```
 
-Vault notes are indexed alongside the agent's own memory. Recall hits
-return them too, marked `vault/<slug>` instead of `memory/<slug>`. The
-agent CANNOT write to the vault — `memory_write` is hard-scoped to its
-own memory directory; vault writes happen only through Dream-B/C
-(server-side workers, no agent-direct path).
+All agents share this single vault. Vault notes are indexed alongside
+each agent's own memory. Recall hits return them too, marked
+`vault/<slug>` instead of `memory/<slug>`. Agents CANNOT write to the
+vault — `memory_write` is hard-scoped to per-agent memory directories;
+vault writes happen only through Dream-B/C (server-side workers, no
+agent-direct path).
 
 A few notes on the vault integration:
 

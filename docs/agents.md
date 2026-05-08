@@ -77,10 +77,6 @@ workspace:
 resources:
   deny: ['production-db']
 
-# Optional: Obsidian vault as a recall source
-obsidian:
-  vault: ~/Documents/Vault/
-
 # Optional: dream-mode (background memory consolidation)
 dream:
   enabled: true

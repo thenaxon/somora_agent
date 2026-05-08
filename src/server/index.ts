@@ -44,7 +44,7 @@ import {
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import { WikiPromotionWorker } from '../wiki/auto-worker.ts';
-import { readObsidianConfigForAgent } from '../memory/registry.ts';
+import { resolveObsidianSource } from '../memory/registry.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
@@ -337,7 +337,7 @@ app.post('/agents/:agent/tools/:name', async (c) => {
   const input = await c.req.json().catch(() => ({}));
   const result = await tools.invoke(name, input, {
     agent,
-    getMemoryManager: () => getMemoryManager(agent, { config: config.memory, wiki: config.wiki }),
+    getMemoryManager: () => getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian }),
     config,
   });
   if (!result.ok) {
@@ -356,7 +356,7 @@ app.get('/agents/:agent/memory/notes', async (c) => {
   if (!(await loadPersona(agent))) {
     return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   }
-  const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki });
+  const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
   const notes = await mgr.listNotes();
   return c.json({ agent, count: notes.length, notes });
 });
@@ -371,7 +371,7 @@ app.get('/agents/:agent/memory/search', async (c) => {
   const limit = Math.max(1, Math.min(50, Number(c.req.query('limit') ?? '5')));
   const minScoreRaw = Number(c.req.query('minScore') ?? '0');
   const minScore = Number.isFinite(minScoreRaw) ? Math.max(0, Math.min(1, minScoreRaw)) : 0;
-  const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki });
+  const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
   const hits = await mgr.search(q, { limit, minScore });
   return c.json({
     agent,
@@ -501,7 +501,7 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
     const dreamConfig = persona.dream;
     void (async () => {
       try {
-        const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki });
+        const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
         await runDream({
           agent,
           sourceSession: archivedId,
@@ -1130,7 +1130,7 @@ try {
 // which gives any paused-from-crash dreams a quiet window to be picked up.
 const autoDreamWorker = new AutoDreamWorker({
   config,
-  getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory, wiki: config.wiki }),
+  getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian }),
 });
 
 // Shared deps object for runChatTurn — server boot wires everything up
@@ -1164,16 +1164,16 @@ for (const a of agentList) {
 // promotion.enabled. The pre-sweep callback forces Dream-A across all
 // agents before Dream-B reads memory, so agents' un-processed sessions
 // are settled into memory first. See `private/wiki-design.md`.
+const globalVault = resolveObsidianSource(config.obsidian);
 const wikiPromotionWorker = new WikiPromotionWorker({
   config,
   getParticipatingAgents: async () => {
+    if (!globalVault) return [];
     const out: Array<{ name: string; vaultPath: string }> = [];
     for (const a of agentList) {
       const persona = await loadPersona(a.name);
       if (persona?.dream?.participate_in_wiki === false) continue;
-      const obs = await readObsidianConfigForAgent(a.name);
-      if (!obs?.vaultPath) continue;
-      out.push({ name: a.name, vaultPath: obs.vaultPath });
+      out.push({ name: a.name, vaultPath: globalVault.vaultPath });
     }
     return out;
   },
