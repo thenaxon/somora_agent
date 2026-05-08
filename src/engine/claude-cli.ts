@@ -396,8 +396,39 @@ export const claudeCliEngine: AgentEngine = {
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else {
-        logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
-        yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
+        const errMsg = (err as Error).message;
+
+        // claude-cli reports "No conversation found with session ID: <uuid>"
+        // when its local conversation store no longer has the session we
+        // tried to resume (cleaned up, expired, fresh install, account
+        // switch, etc.). Without clearing, the fallback path on the same
+        // engine — and every subsequent user turn — keeps retrying the
+        // dead ID and forces the user to do a manual `/reset`. Drop
+        // the stale id from meta so the next attempt starts fresh.
+        if (resume && /No conversation found/i.test(errMsg)) {
+          try {
+            const { sdkSessionId: _drop, ...metaWithoutSession } = meta;
+            await metaStore.set(agent, session, metaWithoutSession);
+            logger.info({
+              msg: 'engine.session_resume_cleared',
+              engine: ENGINE,
+              agent,
+              session,
+              stale_id: resume,
+            });
+          } catch (clearErr) {
+            logger.warn({
+              msg: 'engine.session_resume_clear_failed',
+              engine: ENGINE,
+              agent,
+              session,
+              err: String(clearErr),
+            });
+          }
+        }
+
+        logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: errMsg });
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: errMsg };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       }
     } finally {
