@@ -1204,8 +1204,12 @@ const wikiPromotionWorker = new WikiPromotionWorker({
   config,
   getParticipatingAgents: async () => {
     if (!globalVault) return [];
+    // Live-listing (not the boot-time `agentList` snapshot) so agents
+    // added at runtime are picked up by the next Dream-B run without
+    // a server restart.
+    const liveAgents = await listAgents();
     const out: Array<{ name: string; vaultPath: string }> = [];
-    for (const a of agentList) {
+    for (const a of liveAgents) {
       const persona = await loadPersona(a.name);
       if (persona?.dream?.participate_in_wiki === false) continue;
       out.push({ name: a.name, vaultPath: globalVault.vaultPath });
