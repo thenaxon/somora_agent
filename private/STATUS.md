@@ -93,6 +93,26 @@ für 1-2 Wochen falls noch Files nachkommen.
 ### Cleanup
 - `~/.somora/agents/hans-debug/` removed — Diagnose-Test-Agent von der Memory-Search-Bug-Hatz, hatte 6 MB Sqlite-Wrack hinterlassen, kein Persona-File. Server hat ihn nie als Agent geführt (lädt nur Verzeichnisse mit `AGENTS.md`).
 
+### Bug-Findings durch naxon nach Migration
+
+Naxon hat zwei echte Bugs nach seiner Migration in der ersten Session aufgespürt:
+
+**Bug 1: Dream-B sah naxons Memories nicht** (`2026.05.09.2`, commit `69761cd`)
+- Dream-B's `getParticipatingAgents` las aus dem Boot-Time `agentList`-Snapshot in `src/server/index.ts:1101`. Agents die NACH Server-Start angelegt wurden (wie naxon) waren für Dream-B unsichtbar — obwohl `/agents` sie auflistete (das ruft `listAgents()` live).
+- Symptom: `wiki.dream_b.start agents:3` und `candidatesSeen:2` selbst nachdem naxon mit 115 fresh files migriert war. Naxon's Self-Diagnose ergab das.
+- Fix: `getParticipatingAgents` ruft `listAgents()` live pro Dream-B-Trigger. One-line-Diff, ein zusätzlicher fs-walk pro Run, vernachlässigbar gegen die Multi-Min-Opus-Workload.
+- Verifiziert: post-restart Dream-B-Run picked naxons Files. Live während Tagesabschluss-Ende läuft Opus durch — schon 45/115 Kandidaten verarbeitet, 32 Wiki-Pages im Vault. Run komplettiert async.
+
+**Bug 2: `somora_docs_list` Tool-Error** (`2026.05.09.3`, commit `04deac1`)
+- `package.json` `files`-Array enthielt `docs/` nicht — npm-pack-Tarball ohne docs/-Ordner. Tool resolved `DOCS_ROOT = REPO_ROOT/docs` zur Laufzeit, aber `~/.npm-global/lib/node_modules/somora/docs/` existierte nicht → readdir wirft → Tool-Error.
+- Symptom: naxon's `somora_docs_list({})` returnte tool error.
+- Permanent-Fix: `"docs"` ins files-Array von package.json. Wirkt beim nächsten regulären Bump-Pack-Install.
+- Sofort-Brücke: Symlink `~/.npm-global/lib/node_modules/somora/docs` → `~/Projects/naxon/somora/docs`. Tool funktioniert ab sofort, Server-Restart konsequent vermieden weil Dream-B im Hintergrund am laufen ist.
+
+### naxon's Self-Critique zu Recall-Pattern (kein Bug, AGENTS.md geschärft)
+
+Naxon hat bei Frage „was haben wir letztes Monat gesprochen" auf `file_list`+`file_read`-Glob-Reflex zurückgegriffen statt `memory_search`. Hat sich danach selbst korrekt diagnostiziert. AGENTS.md (naxon-only, nicht im Repo) gehärtet: explicit „IMMER `memory_search` ZUERST", `file_list+file_read` als Anti-Pattern markiert. Wirkt ab seiner nächsten Session.
+
 ---
 
 ## Vorheriger Stand (Stand: 2026-05-08 sehr-spät — Release `2026.05.08.3` Multi-Engine Dispatcher)
