@@ -91,6 +91,22 @@ export type CandidateOutcome =
       observationsConsumed: number;
     }
   | {
+      /**
+       * Page-collision auto-fix (Phase 4 / Weg 2): another memory in the
+       * same Dream-B run already wrote to this wiki path. We converted
+       * THIS memory to a stub with its body parked as a single
+       * "Recent observations" entry, so the next Dream-B run picks it
+       * up via the merge path and integrates the content into the
+       * existing wiki page. Net: in 2 runs both memories' content is
+       * consolidated into one wiki page.
+       */
+      kind: 'queued_merge';
+      agent: string;
+      memorySlug: string;
+      wikiPath: string;
+      logSummary: string;
+    }
+  | {
       kind: 'skipped';
       agent: string;
       memorySlug: string;

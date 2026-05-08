@@ -961,13 +961,35 @@ app.get('/spawn-list', (c) => {
   return c.json({ tasks: listTasksForAgent(parent) });
 });
 
-// Wiki-Promotion manueller Trigger. Same handler the wiki_run_promotion
-// tool calls in-process; exposed over HTTP so the MCP child (claude-cli
-// / codex-cli) can fall back to it when its own ToolRegistry lacks the
-// injected wikiPromotionWorker. See `private/wiki-design.md` § Tool-Surface.
+// Wiki-Promotion manueller Trigger. Same handler the dream_run tool
+// calls in-process; exposed over HTTP so the MCP child (claude-cli /
+// codex-cli) can fall back to it when its own ToolRegistry lacks the
+// injected wikiPromotionWorker. See `private/wiki-design.md`.
+//
+// Body: `{wait?: boolean}` — wait=false (default) returns immediately
+// after firing the worker; wait=true awaits the run and returns
+// outcome counts.
 app.post('/wiki/run-promotion', async (c) => {
   if (!config.wiki.enabled) {
     return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  }
+  let wait = false;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    wait = Boolean((body as { wait?: unknown }).wait);
+  } catch {
+    /* empty body is fine */
+  }
+  if (!wait) {
+    void wikiPromotionWorker.runNow().catch(() => {
+      /* errors logged in worker */
+    });
+    return c.json({
+      started: true,
+      wait: false,
+      message:
+        'Dream-B started in background. Tail ~/.somora/logs/ for wiki.dream_b.done.',
+    });
   }
   const result = await wikiPromotionWorker.runNow();
   const counts = result.outcomes.reduce(
@@ -978,6 +1000,7 @@ app.post('/wiki/run-promotion', async (c) => {
     {} as Record<string, number>,
   );
   return c.json({
+    wait: true,
     candidatesSeen: result.candidatesSeen,
     durationMs: result.durationMs,
     counts,

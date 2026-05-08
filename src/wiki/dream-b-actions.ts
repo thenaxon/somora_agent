@@ -66,17 +66,69 @@ export async function applyPromote(args: {
   await mkdir(dirname(wikiFileAbs), { recursive: true });
   const writeWiki = await writeIfNotExists(wikiFileAbs, wikiPageContent);
   if (writeWiki.kind !== 'written') {
-    logger.warn({
-      msg: 'wiki.dream_b.promote_skip_wiki_exists',
+    // Wiki page already exists — collision with another memory that
+    // promoted to the same path (or with a User-edited page). We
+    // convert THIS memory to a stub with its body parked as a single
+    // "Recent observations" entry. Next Dream-B run picks the stub up
+    // via the merge path, Opus integrates the content into the
+    // existing wiki page, both memories' content ends up consolidated.
+    //
+    // Phase 4 / Weg 2 (2026-05-08). See `private/wiki-design.md`.
+    logger.info({
+      msg: 'wiki.dream_b.promote_collision_to_stub',
       agent: candidate.agent,
       memorySlug: candidate.slug,
       wikiPath,
     });
+    const stubText = buildStub({ slug: candidate.slug, wikiPath });
+    const parsedStub = parseStub(stubText);
+    if (!parsedStub) {
+      // Should never happen — buildStub output is parseStub-able by construction
+      return {
+        kind: 'failed',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        error: 'collision-stub: buildStub output not parseable',
+      };
+    }
+    const observation =
+      `Memory body content (collided with prior promotion to ${wikiPath}, ` +
+      `content queued for next-run merge):\n\n${candidate.body.trim()}`;
+    const stubBodyWithObs = _appendObservation(parsedStub.body, observation);
+    // Reconstruct the full stub file: frontmatter from buildStub plus
+    // body with observation. We can't reuse parsedStub directly because
+    // we need the frontmatter YAML serialized; just splice the body.
+    const fmEndIdx = stubText.indexOf('---', 4);
+    const afterFm = stubText.indexOf('\n', fmEndIdx + 3) + 1;
+    const finalStub = stubText.slice(0, afterFm) + stubBodyWithObs;
+
+    const writeStub = await writeIfMtimeUnchanged(
+      candidate.path,
+      finalStub,
+      candidate.mtimeMs,
+    );
+    if (writeStub.kind !== 'written') {
+      logger.warn({
+        msg: 'wiki.dream_b.collision_stub_write_failed',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        outcome: writeStub.kind,
+      });
+      return {
+        kind: 'failed',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        error: `collision-stub write failed: ${writeStub.kind}`,
+      };
+    }
     return {
-      kind: 'skipped',
+      kind: 'queued_merge',
       agent: candidate.agent,
       memorySlug: candidate.slug,
-      reason: `wiki page ${wikiPath} already exists; merge path expected`,
+      wikiPath,
+      logSummary:
+        `${candidate.slug} stubbed (collision with ${wikiPath}); ` +
+        `content queued — next Dream-B run will merge into existing page`,
     };
   }
 

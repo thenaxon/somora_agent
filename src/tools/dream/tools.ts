@@ -325,22 +325,27 @@ export function configureDreamRunTool(deps: DreamRunDeps): void {
 
 const RunInput = z.object({
   mode: z.enum(['b', 'c']).optional(),
+  wait: z.boolean().optional(),
 });
 
 export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
   name: 'dream_run',
   toolset: 'dream',
   description:
-    'Manually trigger a Dream-Worker run RIGHT NOW. ' +
+    'Manually trigger a Dream-Worker run. ' +
     "mode='b' (default): Dream-B promotion — reads each agent's short-term memory, " +
     'decides which entries are wiki-worthy, writes them as consolidated wiki pages with ' +
     'cross-references, replaces source memory files with stubs. Stubs that have new ' +
     '"Recent observations" since their last promotion get merged into the existing wiki page. ' +
     "mode='c' (Phase 4 Stufe 5, not implemented yet): Dream-C lint — periodic wiki health-check " +
     'for contradictions, stale claims, broken links, orphans. ' +
-    'Returns a summary with counts of promoted/merged/skipped/failed candidates. ' +
-    "Use sparingly — Dream-B's scheduler runs every 12h by default. Useful right after the " +
-    'user has added several substantial memory notes and wants them in the shared wiki immediately.',
+    'wait (default false): when false, the run starts in the background and the tool returns ' +
+    'immediately — same pattern as /reset triggering Dream-A. The user can inspect outcomes ' +
+    'later via the wiki/index.md, the monthly logs/, or by tailing server logs for ' +
+    "`wiki.dream_b.done`. When wait=true, the call blocks until the run finishes and returns " +
+    'the full outcome counts (useful for debugging or when the user explicitly wants to see ' +
+    'the result before continuing). ' +
+    "Use sparingly — Dream-B's scheduler runs every 12h by default.",
   inputSchema: RunInput,
   jsonSchema: {
     type: 'object',
@@ -352,11 +357,18 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
           "Which Dream worker to fire. Default 'b' (memory→wiki promotion). 'c' (lint) " +
           'is reserved for Phase-4 Stufe 5; calling it today errors out cleanly.',
       },
+      wait: {
+        type: 'boolean',
+        description:
+          'When true, block until the run finishes and return outcome counts. ' +
+          'Default false: kick off in background, return immediately. Match /reset semantics.',
+      },
     },
     additionalProperties: false,
   },
   async handler(input, ctx) {
     const mode = input.mode ?? 'b';
+    const wait = input.wait ?? false;
     if (!ctx.config.wiki.enabled) {
       throw new Error('config.wiki.enabled is false — wiki layer not active');
     }
@@ -365,6 +377,22 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     }
     // mode === 'b' — Dream-B promotion run.
     if (injectedDreamRunDeps) {
+      if (!wait) {
+        // Fire-and-forget. Errors during the run land in logs only.
+        void injectedDreamRunDeps.wikiPromotionWorker.runNow().catch(() => {
+          /* error already logged in worker */
+        });
+        return {
+          mode: 'b',
+          started: true,
+          wait: false,
+          message:
+            'Dream-B started in background. Check ~/.somora/logs/server-*.log for ' +
+            "'wiki.dream_b.done', or inspect <vault>/<wiki-subfolder>/index.md after ~1-3min.",
+          via: 'in-process',
+        };
+      }
+      // wait=true — sync, return outcomes
       const result = await injectedDreamRunDeps.wikiPromotionWorker.runNow();
       const counts = result.outcomes.reduce(
         (acc, o) => {
@@ -375,6 +403,7 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
       );
       return {
         mode: 'b',
+        wait: true,
         candidatesSeen: result.candidatesSeen,
         durationMs: result.durationMs,
         counts,
@@ -383,18 +412,18 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
       };
     }
     // MCP child fallback: hit the main server's HTTP endpoint.
-    return runDreamBViaHttp();
+    return runDreamBViaHttp(wait);
   },
 };
 
-async function runDreamBViaHttp(): Promise<unknown> {
+async function runDreamBViaHttp(wait: boolean): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
   const url = `http://${host}:${port}/wiki/run-promotion`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify({ wait }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
