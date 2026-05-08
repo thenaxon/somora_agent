@@ -4,7 +4,98 @@ Lebende Notiz für nahtlosen Wiedereinstieg in zukünftige Sessions.
 
 ---
 
-## Wo wir stehen (Stand: 2026-05-08 sehr-spät — Release `2026.05.08.3` Multi-Engine Dispatcher)
+## Wo wir stehen (Stand: 2026-05-09 nachts — Release `2026.05.09.1` Memory-Findability + MCP-Child-Fix)
+
+**HEAD: `15f1267` auf main, gepusht. Lokal installiert (`somora-2026.05.09.1.tgz`), Server systemd-restart durch.**
+
+### Was diese Tagesabschluss-Phase brachte
+
+Über zwei Bumps ein kritischer Bug + drei Folge-Tunings für Memory-
+Retrieval. Trigger war Renes Beobachtung dass Hans bei „welche autos
+hab ich?" / „wer ist Luca?" konsistent 0 Memory-Hits hatte, obwohl die
+Inhalte sichtbar im Vault lagen.
+
+**Bump `2026.05.08.11` — MCP-Child Memory-Init-Bug (commit `479a840`):**
+- `src/mcp/server.ts:75` rief `getMemoryManager(agent, { config: config.memory })` ohne `obsidian` + `wiki` auf.
+- Folge: MCP-Child indexierte beim Init nur memoryRoot, walkte den Vault NICHT, und droppte beim `reindexAll` als `unindex_stale` JEDE Vault- und Wiki-Row aus der gemeinsamen sqlite-DB. Parent-Server hatte korrekte Refs, aber die Chunks-Tabelle war für 'vault' und 'wiki' permanent leer.
+- Fix: MCP-Child reicht nun `{ config: config.memory, obsidian: config.obsidian, wiki: config.wiki }` durch — matcht run-turn.ts und server/index.ts.
+- Live-verifiziert: hans's `memory.db` 21 memory + 125 vault + 4 wiki chunks (vorher 21 / 0 / 0). Search nach „renes-autos ferrari" liefert wiki/wissen/renes-autos als Top-Hit.
+- Memory: `feedback_mcp_child_full_config.md` als Reviewer-Test-Hinweis.
+
+**Bump `2026.05.09.1` — Memory-Findability-Tuning (commit `15f1267`):**
+1. `autoInject.minScore: 0.5 → 0.35` — Single-Keyword-Queries erreichen wegen Vec-Recall-Limits oft nur ~0.30 hybrid (BM25-only Floor); bei 0.5 wurden Wiki-Hits weggefiltert.
+2. `wiki.search.boostWiki: 1.0 → 1.4` — Curated Wiki-Pages ranken jetzt über generische Memory-Chunks die Vec-Recall fuzzy aufpickt. BM25-only Wiki-Match erreicht so ~0.42 hybrid.
+3. `memory_search` Tool default `minScore: 0` (statt fallback auf autoInject) — agent-driven Search nicht mehr durch ambient Threshold gegated.
+4. `wiki/index.md` regeneriert (war von meinem Stufe-5-Smoke gelöscht), Wiki-Overview-Block zeigt jetzt korrekt Topology in Auto-Inject.
+
+### Phase-4-Stufe-5 Wiki-Lint (deterministisch) — DONE
+
+Dream-C deterministische Checks live: `broken_wikilink`, `orphan_page`, `index_missing`, `index_stale`, `one_way_link`. Tools `dream_run({mode:'c'})` plus `/wiki/run-lint` Endpoint. Approval-Loop wie Dream-A. **Stufe 5.B (LLM-Lint: contradictions, stale time-claims) bewusst deferred** — Rene hat „solange will ich jetzt nicht warten" gesagt, kommt im nächsten Run.
+
+### Recovery nach Smoke-Test-Schaden (rein narrativ)
+
+Mein Stufe-5-Smoke hatte am 2026-05-08 in der Cleanup-Phase `rmSync(personenDir, { recursive: true })` gemacht und damit die promoteten `personen/*` Wiki-Pages gelöscht (rene, conny, familie-rene, projekte/familie-luca-podcast). Hans's Memory-Files waren danach Stubs auf gelöschte Pages → Dream-B's Merge-Route lief in „missing target" Skip. User entschied „lass es, daten kann ich neu erzählen" — nur familie-rene wurde rekonstruiert: Stub zu fresh memory zurück (frontmatter `promoted_to`/`promoted_at` raus, Body zu strukturierter Memory umgeschrieben), Dream-B-Lauf promoted als neue `personen/familie-rene` Page mit allen Familieninfos (Conny, Nathalie, Walter, Luca, Lilly, Lara) sauber strukturiert.
+
+### Was Dream-B heute live geleistet hat
+
+Drei Dream-B-Läufe: erster heute morgen mit 13 Promotions (initial Wiki-Aufbau), mittags Dream-B promoted `projekte/somora`, nachts Dream-B promoted `orte/blackcorner` + `personen/familie-rene`. Aktueller Wiki-Stand: 5 Pages in `orte/`, `personen/`, `projekte/`, `wissen/`. Index.md auto-regeneriert, log file `logs/2026-05.md` chronologisch.
+
+### Klarstellungen mit Rene (heute besprochen, NICHT Code-Änderungen)
+
+- **Wiki-Struktur ist LLM-driven**: Dream-B's PROMOTE_SYSTEM_PROMPT gibt Subfolder-Defaults (`personen/`, `projekte/`, `wissen/`, „may invent" wie `orte/`) und Page-Template (`## Aktueller Stand` / `## Eigenschaften` / `## Zeitleiste` / `## Notizen`). Skelett vorgegeben, Slugs + Subfolder-Wahl + Cross-Refs sind LLM-Entscheidung.
+- **Dream-B splittet keine Multi-Subject-Pages**: wenn `personen/familie-rene` mit der Zeit zu viel über Conny enthält, würde Opus per default mergen statt eine eigene `personen/conny` zu spawnen — der „not already covered" Gate blockt. Workarounds: manueller Split in Obsidian; Prompt-Tweak in Dream-B; oder Future Dream-D Refactor-Worker.
+- **Dream-C re-strukturiert NICHT**: aktueller Scope ist Hygiene (broken links, orphans, index-sync), keine Topologie-Änderungen.
+- **Cross-Refs nur Wiki-intern**: Dream-B verlinkt nicht in den Vault außerhalb des Wiki-Subfolders — bewusst (ownership-boundary, dangling-refs Risiko, Karpathy-Pattern). Verbindung läuft über Search.
+- **Wikilinks werden als Text indiziert, NICHT als Graph traversiert**: `[[orte/garten]]` ist BM25/Vec searchable, aber `memory_search` macht keine Link-Expansion. Agent muss expliziten zweiten `memory_get` machen.
+- **Search liefert Chunks (snippets), nicht Full-Files**: `memory_search` returnt chunks.text mit reference; `memory_get reference` lädt das volle .md-File vom FS. Spart Tokens bei der Suche, Agent kann gezielt nachladen.
+
+Backlog in FUTURE.md ergänzt:
+- transitive Wikilink-Expansion in `memory_search` (`expandLinks: true`)
+- Optional Cross-Refs Wiki → Vault-außenrum
+- Optional `IDENTITY.md`-Slot im Persona-Loader (Kompat-Brücke zu openclaw)
+- Bootstrap-Compaction für Daily-Logs vor Migration (Opus destilliert
+  92 Daily-Logs zu monatlichen Summaries)
+
+### naxon-Migration aus openclaw
+
+Renes openclaw-Hauptagent („naxon", openclaw-intern als `main`) auf
+somora übersiedelt. openclaw-Tree bleibt unangetastet, parallel-Betrieb
+für 1-2 Wochen falls noch Files nachkommen.
+
+**Persona** (`~/.somora/agents/naxon/`):
+- `agent.yaml` — `model: opus`, `fallback: gemma4big`, dream-config 1:1 von hans
+- `AGENTS.md` — neu zusammengestellt: Frontmatter mit `name=naxon, icon=⚡, description="Proaktiver digitaler Partner..."`, Body übernommen aus openclaw mit raus-gefilterten openclaw-specifics (Heartbeat-CLI, KiVault, Discord/WhatsApp-Formatting, Orbit-Tasks, Cron-Mechanik). Memory-Section auf somora-Pattern umgeschrieben (memory_search/get + Dream-A statt openclaw-Mechanik). Universal-Regeln + DB-Backup-Lesson erhalten.
+- `SOUL.md` — 1:1 von openclaw (proaktiv-Vibe, Wow-Momente, Eigenständigkeit, „Mit Rene: Partnerschaft, nicht Dienstleistung")
+- `USER.md` — 1:1 von openclaw (detailliertes Rene-Profil)
+
+**Memory** (`~/.somora/agents/naxon/memory/`):
+- 21 thematische Files (people, history, projects, properties, naxxen-deploy, naxxen-production, tools-* etc.)
+- 91 daily logs aus root + 3 aus `daily/`-Subfolder = **115 Files total**
+- Alle Slug-konform (SLUG_RE check passed: 0 invalid)
+- openclaw-Begriffe in Daily-Logs bewusst gelassen (historischer Kontext)
+- Nur Topical-File mit openclaw-Refs: `ollama-mac-studio.md` (3 legitime Modell-Namen-Refs wie `gemma4-openclaw:latest`, kein Rewrite nötig)
+
+**Bewusst NICHT migriert:**
+- `~/.openclaw/memory/main.sqlite` (53 MB) — eigenes DB-Schema, somora generiert sich Vector-Index aus den `.md`-Files neu.
+- `~/.openclaw/agents/main/sessions/*.jsonl` — codex-app-server-Format inkompatibel mit somora's Event-Format. Sessions starten frisch.
+- `IDENTITY.md`, `TOOLS.md`, `HEARTBEAT.md` — openclaw-spezifische Persona-Slots ohne somora-Equivalent. Identitäts-Inhalte sind in AGENTS.md frontmatter (Name/Icon/Description) und SOUL.md prose untergekommen.
+
+**Server-Side:**
+- Server kennt naxon automatisch (auto-discover via `listAgents()`).
+- Erste Manager-Init lief 54s (Memory + Vault re-indexing + Embedder-Load).
+- Cross-Agent-Wiki funktioniert: query nach „cornelia" liefert sowohl naxons own `memory/people` (score 0.67) als auch das geteilte `wiki/personen/familie-rene` (score 1.35) — beide Agents profitieren von hans's Promotion.
+
+**Clarifications mit Rene aufgekommen während Migration (NICHT Code-Änderungen, nur Verständnis):**
+- Dream-A geht Session→Memory, Dream-B geht Memory→Wiki. Wir wollten naxons Memory direkt copieren — Dream-Mechanik kommt erst im laufenden Betrieb dran.
+- Dream-B's PROMOTE-Prompt blockt explizit daily-logs („Is NOT a transient task list, scratchpad, or daily log") — Daily-Memories bleiben als durchsuchbares Memory, kommen NIE ins Wiki. Das ist by design (kein Wiki-Müll), aber heißt: wenn der User die Essenz aus Daily-Logs ins Wiki ziehen will, braucht es einen Bootstrap-Compaction-Schritt VOR der Migration (siehe FUTURE).
+- somora hat keinen IDENTITY.md-Slot — bewusste Vereinfachung von openclaw's 5-File auf 3-File-Persona. Inhalte fließen in AGENTS.md frontmatter + SOUL.md.
+
+### Cleanup
+- `~/.somora/agents/hans-debug/` removed — Diagnose-Test-Agent von der Memory-Search-Bug-Hatz, hatte 6 MB Sqlite-Wrack hinterlassen, kein Persona-File. Server hat ihn nie als Agent geführt (lädt nur Verzeichnisse mit `AGENTS.md`).
+
+---
+
+## Vorheriger Stand (Stand: 2026-05-08 sehr-spät — Release `2026.05.08.3` Multi-Engine Dispatcher)
 
 **HEAD: tag `2026.05.08.3` auf main, gepusht. Lokal installiert.**
 

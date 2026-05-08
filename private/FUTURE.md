@@ -1172,3 +1172,139 @@ Wartungsentscheidung ist, kein „mal eben".
 
 Steht im STATUS noch als „Phase 3". Kein neues Konzept hier, nur Notiz
 dass diese Themen explizit hinter den oben genannten anstehen.
+
+---
+
+## memory_search transitive Wikilink-Expansion (entdeckt 2026-05-09)
+
+**Status:** Backlog. Aktuell macht `memory_search` keine Graph-
+Traversal über Wikilinks — `[[orte/garten]]` wird als Text indiziert
+(FTS tokenisiert die Brackets weg, Embedder sieht den Rohtext), aber
+ein Hit auf eine Page A die `[[B]]` erwähnt liefert NICHT automatisch
+auch B als Folgehit. Karpathy-Pattern: Agent sieht den Wikilink im
+Inject-Block und entscheidet selbst per `memory_get` ob er den
+nächsten Hop will.
+
+**Mögliche Form:**
+```ts
+memory_search({
+  query: 'familie luca',
+  expandLinks: true,           // default false
+  expandDepth: 1,              // hops via [[wikilink]] tokens
+})
+```
+- Top-N Hits wie bisher.
+- Pro Hit: parse `[[...]]` Tokens raus, mappe auf wiki-slugs, lade
+  per memory_get, hänge als zusätzliche Hits an mit reduziertem Score
+  (z.B. `score * 0.7^hop_distance`).
+- Capping notwendig: max N expanded hits, max depth 1-2, Cycle-Detect.
+
+**Wann lohnt es sich:**
+Wenn der User bemerkt dass Agents bei zusammengesetzten Fragen
+(„wer ist Luca und in welchem Auto fährt sein Onkel?") zu viele
+manuelle `memory_get`-Hops brauchen. Dann ist die explizite Expansion
+ein UX-Hebel — sonst Backlog.
+
+**Why nicht jetzt:**
+- Aktuelle Mechanik ist intentional (Karpathy-Pattern) und
+  funktioniert.
+- Risk: Expanded Hits können den 1500-token-Block sprengen ohne
+  Mehrwert wenn die verlinkte Page off-topic ist.
+- Vor Implementierung: 5 echte User-Beispiele sammeln wo single-hop
+  Search nicht reichte → datenbasiert tunen statt theoretisch.
+
+---
+
+## Cross-Refs Wiki → Vault-außerhalb-Wiki (entdeckt 2026-05-09)
+
+**Status:** Backlog. Aktuell linkt Dream-B Wiki-Pages nur innerhalb des
+Wiki-Subfolders ([[orte/garten]], [[personen/rene]] etc.). Cross-Refs
+auf Vault-Dokumente außerhalb des Wiki-Subfolders (z.B.
+[[Projekte/Privat/somora]]) macht Opus NICHT, weil `summarizeWiki()`
+nur den Wiki-Subfolder walkt.
+
+**Das ist bewusst so:**
+- Vault außerhalb Wiki ist user-owned, ändert sich asynchron zu somora.
+- Dream-B-generierte Refs würden dangling werden bei Renames im Vault.
+- Karpathy-Pattern: Wiki = agent-kurierte Topologie, Vault außenrum = rohe
+  User-Notizen. Verbindung läuft über Search (vault-Source mit boost
+  0.65), nicht über explizite Edges.
+
+**Falls doch implementieren:**
+- Optional `vaultSummary` zum PROMOTE-Prompt addieren (Liste stable
+  Vault-Pfade, evtl. nur Top-Level-Folder oder Files mit explizitem
+  Marker im Frontmatter).
+- Dream-C-Lint müsste Vault-Refs als „weak link" markieren (silent fail
+  bei broken statt fix-Vorschlag).
+- Opt-in per config.yaml `wiki.crossRefVaultEnabled: true`.
+
+**Wann:**
+Wenn ein konkreter User-Use-Case auftaucht („ich pflege im Vault eine
+große Projekt-Doku, Wiki sollte explizit drauf verweisen"). Bis dahin
+deckt Search den Bedarf.
+
+---
+
+## Optional `IDENTITY.md`-Slot im Persona-Loader (entdeckt 2026-05-09)
+
+**Status:** Backlog. somora's persona-loader liest aktuell drei Files
+(`AGENTS.md` required, `SOUL.md` + `USER.md` optional) plus `agent.yaml`.
+Identitäts-Metadaten (Name, Description, Icon, Vibe-Statement) leben
+in der `AGENTS.md`-Frontmatter und im SOUL.md-Body.
+
+**Warum es als Backlog auftauchte:**
+Bei der naxon-Migration aus openclaw fiel auf: openclaw hat ein
+expliziter `IDENTITY.md`-Slot („Name", „Creature", „Vibe", „Emoji",
+„Avatar"). Beim Übersiedeln musste ich den Inhalt manuell aufteilen
+(Name/Description/Icon → AGENTS.md frontmatter; Vibe/Creature → SOUL.md
+prose). Hat geklappt, aber jeder weitere openclaw-Agent würde dieselbe
+manuelle Aufteilung brauchen.
+
+**Mögliche Implementierung:**
+- Persona-Loader erkennt optionales `IDENTITY.md`.
+- Inhalt fließt VOR `SOUL.md` in den System-Prompt (als „Wer du bist"
+  Block, vor „Wie du wirkst" / Verhaltensregeln / User-Context).
+- AGENTS.md-Frontmatter bleibt source of truth für `name`/`description`/
+  `icon` (für `/agents`-Listing). `IDENTITY.md` ist rein Prompt-Material.
+
+**Wann:**
+- Wenn ein zweiter openclaw-Agent migriert wird → Trigger.
+- Oder wenn genereller Bedarf da ist, Persona klarer in „Identität vs.
+  Vibe vs. Verhaltensregeln vs. User" zu strukturieren.
+
+**Why nicht jetzt:**
+Aktuell läuft naxon@somora gut. Die Aufteilung kostet einmalig 5 Min
+manuelle Arbeit pro Agent — kein wiederkehrender Aufwand.
+
+---
+
+## Bootstrap-Compaction für Daily-Logs vor Memory-Migration (entdeckt 2026-05-09)
+
+**Status:** Backlog. Bei der naxon-Migration aus openclaw kamen 92
+Daily-Log-Files mit (Konversations-Snapshots aus openclaw-Sessions).
+Diese landen im somora-Memory, sind durchsuchbar — aber Dream-B's
+PROMOTE-Prompt blockt sie explizit („Is NOT a transient task list,
+scratchpad, or daily log"). Heißt: die Essenz dort drin kommt nie
+ins Wiki, bleibt nur via memory_search auffindbar.
+
+**Idee:**
+Vor zukünftigen Migrationen (oder regelmäßig als Wartungs-Job) ein
+Bootstrap-Compaction-Worker:
+- Opus-One-Shot-Run über alle Daily-Logs eines Zeitraums.
+- Aufgabe: „destilliere wiederkehrende Themen, Personen, Decisions in
+  ein monatliches Summary."
+- Output: 1-3 thematische Memory-Files pro Monat (`2026-04-naxon-month-summary.md`)
+- Daily-Logs danach optional archivieren oder als Read-Only behalten.
+
+Die Monthly-Summaries würden dann beim nächsten Dream-B-Lauf als
+substantielle Promote-Kandidaten gesehen und ggf. ins Wiki gehoben.
+
+**Wann:**
+Wenn ein User merkt „naxon findet sein Wissen aus Februar nicht mehr
+weil es nur in Daily-Logs steht und Auto-Inject die nicht hochrankt".
+Oder wenn weitere openclaw-Agents migriert werden.
+
+**Why nicht jetzt:**
+naxon hat erstmal die thematischen Memory-Files (people, history,
+projects, etc.) — die decken die wichtigen long-term Konzepte ab.
+Daily-Logs sind Bonus. Erst beobachten ob's ein echtes Problem wird.
