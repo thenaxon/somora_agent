@@ -70,6 +70,13 @@ const DreamConfigSchema = z.object({
    * fail-fast on stalls. Most setups want the headroom.
    */
   chunkTimeoutMs: z.number().int().positive().default(600_000),
+  /**
+   * Phase 4: opt out of Wiki-Promotion (Dream-B) for this agent.
+   * When false, the agent's memory still gets Dream-A processing but
+   * is NOT considered as a candidate for promotion to the shared wiki.
+   * Useful for scratch/test agents. Default true.
+   */
+  participate_in_wiki: z.boolean().default(true),
 });
 
 const AgentYamlSchema = z

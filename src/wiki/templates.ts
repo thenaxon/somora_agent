@@ -142,27 +142,42 @@ export interface MemoryStub {
 }
 
 /** True iff the parsed file is a memory-stub (has both promoted_to and
- *  promoted_at fields). Returns false for normal memory files. */
+ *  promoted_at fields). Returns false for normal memory files.
+ *
+ *  YAML auto-parses ISO timestamps to Date objects, so we accept
+ *  either string or Date for `promoted_at`. */
 export function isStub(raw: string): boolean {
   const data = matter(raw).data as Record<string, unknown> | undefined;
   if (!data) return false;
-  return typeof data.promoted_to === 'string' && typeof data.promoted_at === 'string';
+  return typeof data.promoted_to === 'string' && hasPromotedAt(data.promoted_at);
 }
 
 export function parseStub(raw: string): MemoryStub | null {
   const parsed = matter(raw);
   const data = (parsed.data ?? {}) as Record<string, unknown>;
-  if (typeof data.promoted_to !== 'string' || typeof data.promoted_at !== 'string') {
+  if (typeof data.promoted_to !== 'string' || !hasPromotedAt(data.promoted_at)) {
     return null;
   }
   return {
     frontmatter: {
       slug: typeof data.slug === 'string' ? data.slug : '',
       promoted_to: data.promoted_to,
-      promoted_at: data.promoted_at,
+      promoted_at: coercePromotedAt(data.promoted_at),
     },
     body: parsed.content,
   };
+}
+
+function hasPromotedAt(v: unknown): boolean {
+  if (typeof v === 'string') return v.length > 0;
+  if (v instanceof Date) return !Number.isNaN(v.getTime());
+  return false;
+}
+
+function coercePromotedAt(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (v instanceof Date) return v.toISOString();
+  return '';
 }
 
 export function buildStub(args: {

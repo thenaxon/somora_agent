@@ -14,6 +14,7 @@ import { agentTools } from './agents/index.ts';
 import { execTools } from './exec/index.ts';
 import { tmuxTools } from './tmux/index.ts';
 import { skillTools } from './skill/index.ts';
+import { wikiTools } from './wiki/index.ts';
 
 export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
@@ -33,6 +34,7 @@ export {
 } from './exec/index.ts';
 export { tmuxTools } from './tmux/index.ts';
 export { skillTools } from './skill/index.ts';
+export { wikiTools, configureWikiTools } from './wiki/index.ts';
 
 /**
  * Single source of truth for "every tool somora exposes". Both registration
@@ -63,4 +65,5 @@ export function registerAllTools(registry: ToolRegistry): void {
   registry.registerMany(execTools());
   registry.registerMany(tmuxTools());
   registry.registerMany(skillTools());
+  registry.registerMany(wikiTools());
 }

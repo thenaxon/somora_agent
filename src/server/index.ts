@@ -29,6 +29,7 @@ import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts
 import {
   configureExecConcurrencyCaps,
   configureSpawnTools,
+  configureWikiTools,
   logExecCaps,
   recoverOrphanedJobs,
   registerAllTools,
@@ -42,6 +43,8 @@ import {
 } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
+import { WikiPromotionWorker } from '../wiki/auto-worker.ts';
+import { readObsidianConfigForAgent } from '../memory/registry.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
@@ -1087,6 +1090,31 @@ for (const a of agentList) {
   }
 }
 
+// Wiki-Promotion-Worker (Dream-B). Server-global, real-clock-scheduled
+// memory→wiki consolidation. Only starts if config.wiki.enabled AND
+// promotion.enabled. The pre-sweep callback forces Dream-A across all
+// agents before Dream-B reads memory, so agents' un-processed sessions
+// are settled into memory first. See `private/wiki-design.md`.
+const wikiPromotionWorker = new WikiPromotionWorker({
+  config,
+  getParticipatingAgents: async () => {
+    const out: Array<{ name: string; vaultPath: string }> = [];
+    for (const a of agentList) {
+      const persona = await loadPersona(a.name);
+      if (persona?.dream?.participate_in_wiki === false) continue;
+      const obs = await readObsidianConfigForAgent(a.name);
+      if (!obs?.vaultPath) continue;
+      out.push({ name: a.name, vaultPath: obs.vaultPath });
+    }
+    return out;
+  },
+  preSweep: async () => {
+    await autoDreamWorker.runPreSweep();
+  },
+});
+wikiPromotionWorker.start();
+configureWikiTools({ wikiPromotionWorker });
+
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });
 });
@@ -1096,6 +1124,7 @@ serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
 async function shutdown(signal: string): Promise<void> {
   logger.info({ msg: 'server.shutdown', signal });
   autoDreamWorker.shutdown();
+  wikiPromotionWorker.shutdown();
   releaseLockfile();
   await shutdownMemoryRegistry();
   await shutdownSshPool();

@@ -110,6 +110,42 @@ export class AutoDreamWorker {
   }
 
   /**
+   * Force a Dream-A sweep over all registered agents in sequence —
+   * called by the WikiPromotionWorker (Dream-B) before its run, so
+   * that any agent with un-processed sessions has its findings
+   * settled into memory before Dream-B reads them.
+   *
+   * Reentrancy: agents currently `isWorking` are skipped (their
+   * regular fireIdle is in flight); the rest are forced.
+   *
+   * Idle-timer state is preserved — fire-from-sweep does not
+   * reschedule the idle timer; the user's next chat does that.
+   *
+   * Phase 4 / Stufe 3.
+   */
+  async runPreSweep(): Promise<{ visited: number; skippedBusy: number }> {
+    let visited = 0;
+    let skippedBusy = 0;
+    for (const agent of [...this.agents.keys()]) {
+      const state = this.agents.get(agent);
+      if (!state) continue;
+      if (state.isWorking) {
+        skippedBusy++;
+        continue;
+      }
+      try {
+        // Mirror fireIdle's path without resetting timers.
+        await this.fireIdle(agent);
+        visited++;
+      } catch (err) {
+        logger.warn({ msg: 'dream.auto.pre_sweep_failed', agent, err: (err as Error).message });
+      }
+    }
+    logger.info({ msg: 'dream.auto.pre_sweep_done', visited, skippedBusy });
+    return { visited, skippedBusy };
+  }
+
+  /**
    * Stop all timers + abort in-flight work. Called at server shutdown.
    */
   shutdown(): void {

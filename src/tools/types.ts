@@ -122,12 +122,12 @@ export type Toolset =
   | 'memory'
   | 'dream'
   | 'web'
-  | 'obsidian'
   | 'file'
   | 'exec'
   | 'time'
   | 'agents'
-  | 'skills';
+  | 'skills'
+  | 'wiki';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   readonly name: string;
