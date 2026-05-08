@@ -15,9 +15,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
-import type { MemoryConfig } from '../config/types.ts';
+import type { MemoryConfig, WikiConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { MemoryManager, type ObsidianSource } from './manager.ts';
+import { MemoryManager, type ObsidianSource, type WikiSource } from './manager.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 
@@ -33,6 +33,9 @@ const initPromises = new Map<string, Promise<MemoryManager>>();
 
 export interface MemoryRegistryOptions {
   config: MemoryConfig;
+  /** Server-global wiki config. When undefined or .enabled false, no
+   *  wiki source is wired up — even if the agent has an obsidian vault. */
+  wiki?: WikiConfig;
 }
 
 export function getMemoryManager(
@@ -46,7 +49,27 @@ export function getMemoryManager(
 
   const p = (async () => {
     const obsidian = await readObsidianConfigForAgent(agent);
-    const mgr = new MemoryManager({ agent, config: opts.config, obsidian });
+    // Wiki layer only makes sense when both the wiki feature is on AND
+    // the agent has a vault. The absolute path is just <vault>/<subfolder>.
+    const wiki: WikiSource | undefined = (() => {
+      if (!opts.wiki?.enabled) return undefined;
+      if (!obsidian?.vaultPath) return undefined;
+      return { absPath: join(obsidian.vaultPath, opts.wiki.vaultSubfolder) };
+    })();
+    const searchBoosts = opts.wiki?.enabled
+      ? {
+          wiki: opts.wiki.search.boostWiki,
+          memory: opts.wiki.search.boostMemory,
+          vault: opts.wiki.search.boostVault,
+        }
+      : undefined;
+    const mgr = new MemoryManager({
+      agent,
+      config: opts.config,
+      obsidian,
+      wiki,
+      ...(searchBoosts ? { searchBoosts } : {}),
+    });
     try {
       await mgr.init();
     } catch (err) {

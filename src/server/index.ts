@@ -324,7 +324,7 @@ app.post('/agents/:agent/tools/:name', async (c) => {
   const input = await c.req.json().catch(() => ({}));
   const result = await tools.invoke(name, input, {
     agent,
-    getMemoryManager: () => getMemoryManager(agent, { config: config.memory }),
+    getMemoryManager: () => getMemoryManager(agent, { config: config.memory, wiki: config.wiki }),
     config,
   });
   if (!result.ok) {
@@ -343,7 +343,7 @@ app.get('/agents/:agent/memory/notes', async (c) => {
   if (!(await loadPersona(agent))) {
     return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   }
-  const mgr = await getMemoryManager(agent, { config: config.memory });
+  const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki });
   const notes = await mgr.listNotes();
   return c.json({ agent, count: notes.length, notes });
 });
@@ -358,7 +358,7 @@ app.get('/agents/:agent/memory/search', async (c) => {
   const limit = Math.max(1, Math.min(50, Number(c.req.query('limit') ?? '5')));
   const minScoreRaw = Number(c.req.query('minScore') ?? '0');
   const minScore = Number.isFinite(minScoreRaw) ? Math.max(0, Math.min(1, minScoreRaw)) : 0;
-  const mgr = await getMemoryManager(agent, { config: config.memory });
+  const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki });
   const hits = await mgr.search(q, { limit, minScore });
   return c.json({
     agent,
@@ -488,7 +488,7 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
     const dreamConfig = persona.dream;
     void (async () => {
       try {
-        const mgr = await getMemoryManager(agent, { config: config.memory });
+        const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki });
         await runDream({
           agent,
           sourceSession: archivedId,
@@ -1058,7 +1058,7 @@ try {
 // which gives any paused-from-crash dreams a quiet window to be picked up.
 const autoDreamWorker = new AutoDreamWorker({
   config,
-  getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory }),
+  getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory, wiki: config.wiki }),
 });
 
 // Shared deps object for runChatTurn — server boot wires everything up

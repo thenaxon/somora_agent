@@ -434,6 +434,114 @@ export const SkillsConfigSchema = z
     maxSkillFileBytes: 256_000,
   });
 
+// Wiki-System (Phase 4) — long-term shared knowledge in an Obsidian
+// vault subfolder, written by Dream-B, audited by Dream-C/Lint, read
+// by all agents. See `private/wiki-design.md` for the full design.
+//
+// `enabled: false` is the default so existing setups don't change
+// behavior until the operator opts in.
+export const WikiPromotionConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** Real-clock cadence for Dream-B (memory → wiki promotion). */
+    intervalHours: z.number().positive().default(12),
+    /** How long before each Dream-B run to forcibly run Dream-A on
+     *  any agent with un-processed sessions. Zero disables sweep. */
+    preSweepMinutes: z.number().nonnegative().default(60),
+    /** Worker model for Dream-B. Format `<provider>/<modelId>`. */
+    model: z.string().min(1).optional(),
+    /** Dream-B auto-applies (no approval). Reserved as bool in case
+     *  we ever need to flip back on. */
+    requireApproval: z.boolean().default(false),
+  })
+  .default({
+    enabled: true,
+    intervalHours: 12,
+    preSweepMinutes: 60,
+    requireApproval: false,
+  });
+
+export const WikiLintConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    intervalDays: z.number().positive().default(7),
+    /** Worker model for Dream-C / Lint. */
+    model: z.string().min(1).optional(),
+    /** Lint findings need user approval before wiki-edits apply. */
+    requireApproval: z.boolean().default(true),
+    /** Which agent's chat surfaces the lint findings. */
+    approvalAgent: z.string().min(1).default('hans'),
+  })
+  .default({
+    enabled: true,
+    intervalDays: 7,
+    requireApproval: true,
+    approvalAgent: 'hans',
+  });
+
+export const WikiSearchConfigSchema = z
+  .object({
+    /** Score multipliers applied to vector-similarity before top-k cut.
+     *  Higher = ranked first. */
+    boostWiki: z.number().positive().default(1.0),
+    boostMemory: z.number().positive().default(0.85),
+    boostVault: z.number().positive().default(0.65),
+    /** Max chars of the auto-injected wiki-overview block (verkürzte
+     *  index.md). Larger overviews would invalidate prompt-cache too
+     *  often. */
+    overviewMaxChars: z.number().int().positive().default(1500),
+    /** Top-N most-referenced slugs to list in the overview when wiki
+     *  grows past overviewMaxChars. */
+    overviewTopNSlugs: z.number().int().positive().default(30),
+  })
+  .default({
+    boostWiki: 1.0,
+    boostMemory: 0.85,
+    boostVault: 0.65,
+    overviewMaxChars: 1500,
+    overviewTopNSlugs: 30,
+  });
+
+export const WikiConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Path relative to each agent's vault root where the somora wiki
+     *  lives. Dream-B writes here; everything else in the vault is
+     *  read-only for somora. */
+    vaultSubfolder: z.string().min(1).default('somora'),
+    /** Subdirs Dream-B uses by default. New subdirs may be created
+     *  on demand when topics don't fit. */
+    defaultSubdirs: z.array(z.string().min(1)).default(['personen', 'projekte', 'wissen']),
+    promotion: WikiPromotionConfigSchema,
+    lint: WikiLintConfigSchema,
+    search: WikiSearchConfigSchema,
+  })
+  .default({
+    enabled: false,
+    vaultSubfolder: 'somora',
+    defaultSubdirs: ['personen', 'projekte', 'wissen'],
+    promotion: {
+      enabled: true,
+      intervalHours: 12,
+      preSweepMinutes: 60,
+      requireApproval: false,
+    },
+    lint: {
+      enabled: true,
+      intervalDays: 7,
+      requireApproval: true,
+      approvalAgent: 'hans',
+    },
+    search: {
+      boostWiki: 1.0,
+      boostMemory: 0.85,
+      boostVault: 0.65,
+      overviewMaxChars: 1500,
+      overviewTopNSlugs: 30,
+    },
+  });
+export type WikiConfig = z.infer<typeof WikiConfigSchema>;
+
 export const ConfigSchema = z.object({
   server: z
     .object({
@@ -452,6 +560,7 @@ export const ConfigSchema = z.object({
   resources: ResourcesConfigSchema,
   skills: SkillsConfigSchema,
   vision: VisionConfigSchema,
+  wiki: WikiConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

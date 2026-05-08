@@ -48,16 +48,36 @@ export interface ObsidianSource {
   readOnlyPaths?: string[];
 }
 
+/**
+ * Server-global wiki layer (Phase 4) — a designated subfolder inside the
+ * vault that Dream-B writes to and all agents share. Files here index
+ * with `source: 'wiki'` instead of `source: 'vault'` so retrieval can
+ * apply a higher boost. See `private/wiki-design.md`.
+ */
+export interface WikiSource {
+  /** Absolute path to <vault>/<wikiSubfolder>. */
+  absPath: string;
+}
+
+/** Source label written to the chunks table and surfaced in hits. */
+export type ChunkSource = 'memory' | 'vault' | 'wiki';
+
 export interface ManagerOptions {
   agent: string;
   config: MemoryConfig;
   /** Optional Obsidian read-source. */
   obsidian?: ObsidianSource;
+  /** Optional somora-wiki layer (a subfolder of the vault). Only set
+   *  when config.wiki.enabled is true and obsidian is configured. */
+  wiki?: WikiSource;
+  /** Optional per-source score multipliers for retrieval. Wired up
+   *  from config.wiki.search when wiki is enabled. */
+  searchBoosts?: { wiki: number; memory: number; vault: number };
 }
 
 export interface NoteSummary {
   slug: string;
-  source: 'memory' | 'vault';
+  source: ChunkSource;
   path: string;
   description?: string;
   tags?: string[];
@@ -71,12 +91,16 @@ export class MemoryManager {
   private agent: string;
   private cfg: MemoryConfig;
   private obsidian?: ObsidianSource;
+  private wiki?: WikiSource;
+  private searchBoosts?: { wiki: number; memory: number; vault: number };
   private lastEmbedderRetry = 0;
 
   constructor(opts: ManagerOptions) {
     this.agent = opts.agent;
     this.cfg = opts.config;
     this.obsidian = opts.obsidian;
+    this.wiki = opts.wiki;
+    this.searchBoosts = opts.searchBoosts;
   }
 
   get memoryRoot(): string {
@@ -211,8 +235,11 @@ export class MemoryManager {
     }
   }
 
-  private classifySource(path: string): 'memory' | 'vault' | null {
+  private classifySource(path: string): ChunkSource | null {
     if (path.startsWith(this.memoryRoot)) return 'memory';
+    // Wiki check goes BEFORE vault since the wiki subfolder lives
+    // inside the vault. Order matters: vaultPath would also match.
+    if (this.wiki && path.startsWith(this.wiki.absPath)) return 'wiki';
     if (this.obsidian && path.startsWith(this.obsidian.vaultPath)) {
       return 'vault';
     }
@@ -265,15 +292,17 @@ export class MemoryManager {
     let skipped = 0;
 
     const seen = new Set<string>();
-    const sources: Array<{ root: string; source: 'memory' | 'vault' }> = [
-      { root: this.memoryRoot, source: 'memory' },
-    ];
-    if (this.obsidian?.vaultPath) {
-      sources.push({ root: this.obsidian.vaultPath, source: 'vault' });
-    }
-    for (const { root, source } of sources) {
+    // Walk memory and vault. Files inside the wiki-subfolder are tagged
+    // 'wiki' via classifySource — not via a separate walk root, since
+    // the wiki lives inside the vault and would otherwise be visited
+    // twice. classifySource checks wiki BEFORE vault.
+    const roots: string[] = [this.memoryRoot];
+    if (this.obsidian?.vaultPath) roots.push(this.obsidian.vaultPath);
+    for (const root of roots) {
       for await (const path of this.walkMarkdown(root)) {
         seen.add(path);
+        const source = this.classifySource(path);
+        if (!source) continue;
         try {
           const r = await this.indexFile(path, source);
           if (r === 'indexed') indexed++;
@@ -300,7 +329,7 @@ export class MemoryManager {
     return { indexed, skipped };
   }
 
-  private async indexFile(path: string, source: 'memory' | 'vault'): Promise<'indexed' | 'skipped'> {
+  private async indexFile(path: string, source: ChunkSource): Promise<'indexed' | 'skipped'> {
     const memDb = this.requireDb();
     const buf = await readFile(path);
     const stats = await stat(path);
@@ -320,8 +349,14 @@ export class MemoryManager {
       replaceFileChunks(memDb, path, [], null);
       return 'indexed';
     }
+    // Slug is path relative to the source-root (memory: memoryRoot;
+    // wiki: wiki absPath so subfolder name is stripped; vault: vaultPath).
+    // Hit-format uses `[source/slug]` so the slug should be stable across
+    // sources without redundant prefixes.
     const slug = source === 'memory'
       ? slugFromPath(path, this.memoryRoot)
+      : source === 'wiki'
+      ? slugFromPath(path, this.wiki!.absPath)
       : slugFromPath(path, this.obsidian!.vaultPath);
 
     let embeddings: Float32Array[] | null = null;
@@ -380,6 +415,7 @@ export class MemoryManager {
       bm25Weight: this.cfg.hybrid.bm25Weight,
       maxResults: limit,
       minScore,
+      ...(this.searchBoosts ? { sourceBoosts: this.searchBoosts } : {}),
     });
   }
 

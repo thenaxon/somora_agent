@@ -96,9 +96,17 @@ function formatMemoryBlock(hits: Hit[], maxTokens: number): string {
   // English meta-instruction — the actual note content (German for this user)
   // sits inside. English routing instructions are more reliable across
   // model sizes than mixing locales for the meta layer.
+  //
+  // Source-tag legend (Phase 4 wiki-aware):
+  //   [memory/<slug>] — this agent's own short-term memory file
+  //   [wiki/<path>]   — server-global consolidated wiki page (shared across agents)
+  //   [vault/<path>]  — read-only Obsidian vault content outside the wiki
   const header =
     'The following notes from your memory may be relevant to this turn. ' +
     'They were retrieved automatically by the runtime (no tool call required). ' +
+    'Source tags: [memory/...] = your own short-term notes; ' +
+    '[wiki/...] = shared long-term wiki (consolidated, authoritative); ' +
+    '[vault/...] = read-only vault content. ' +
     'If you need to look deeper, call `memory_search` or `memory_get`.';
   const lines: string[] = ['<memory-context>', header, ''];
 

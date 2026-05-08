@@ -8,11 +8,23 @@
 
 import type { MemoryDb } from './storage.ts';
 
+export interface SourceBoosts {
+  /** Multiplier on the fused score per source. Higher = ranked first.
+   *  All multipliers are positive. Unknown source defaults to 1.0. */
+  wiki: number;
+  memory: number;
+  vault: number;
+}
+
 export interface RetrievalConfig {
   vectorWeight: number;
   bm25Weight: number;
   maxResults: number;
   minScore: number;
+  /** Optional per-source multiplier applied to the fused score before
+   *  top-k cut. When undefined, no boost is applied. Wired up by the
+   *  caller from `config.wiki.search.*` when `config.wiki.enabled`. */
+  sourceBoosts?: SourceBoosts;
 }
 
 export interface Hit {
@@ -91,11 +103,28 @@ export function hybridSearch(
   const bm25Norm = normalize('bm25');
 
   const totalWeight = cfg.vectorWeight + cfg.bm25Weight || 1;
+
+  // If source-boosts are configured, materialize source per fused
+  // chunkId BEFORE sort so the boost applies to ranking. Cheap query —
+  // just the source column for already-merged ids.
+  const sourceById = cfg.sourceBoosts
+    ? loadSourcesForIds(memDb, [...merged.keys()])
+    : null;
+
   const fused: Array<{ id: number; score: number; vec: number; bm25: number }> = [];
   for (const [id, raw] of merged) {
     const vScore = vecNorm.get(id) ?? 0;
     const bScore = bm25Norm.get(id) ?? 0;
-    const score = (cfg.vectorWeight * vScore + cfg.bm25Weight * bScore) / totalWeight;
+    let score = (cfg.vectorWeight * vScore + cfg.bm25Weight * bScore) / totalWeight;
+    if (sourceById && cfg.sourceBoosts) {
+      const src = sourceById.get(id);
+      const boost =
+        src === 'wiki' ? cfg.sourceBoosts.wiki :
+        src === 'memory' ? cfg.sourceBoosts.memory :
+        src === 'vault' ? cfg.sourceBoosts.vault :
+        1.0;
+      score *= boost;
+    }
     fused.push({ id, score, vec: raw.vec, bm25: raw.bm25 });
   }
   fused.sort((a, b) => b.score - a.score);
@@ -159,6 +188,17 @@ function runVectorSearch(
     )
     .all(embedding, k) as Array<{ rowid: number | bigint; distance: number }>;
   return rows.map((r) => ({ chunkId: Number(r.rowid), score: 1 / (1 + r.distance) }));
+}
+
+function loadSourcesForIds(memDb: MemoryDb, ids: number[]): Map<number, string> {
+  const out = new Map<number, string>();
+  if (ids.length === 0) return out;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = memDb.db
+    .prepare(`SELECT id, source FROM chunks WHERE id IN (${placeholders})`)
+    .all(...ids) as Array<{ id: number; source: string }>;
+  for (const r of rows) out.set(r.id, r.source);
+  return out;
 }
 
 function runBm25Search(
