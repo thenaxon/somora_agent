@@ -44,6 +44,7 @@ import {
 import { runDream } from '../dream/runner.ts';
 import { AutoDreamWorker } from '../dream/auto-worker.ts';
 import { WikiPromotionWorker } from '../wiki/auto-worker.ts';
+import { WikiLintWorker } from '../wiki/lint-worker.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
@@ -1030,6 +1031,40 @@ app.post('/wiki/run-promotion', async (c) => {
   });
 });
 
+// Wiki-Lint manueller Trigger (Dream-C). Mirrors /wiki/run-promotion
+// shape: body {wait?:bool}; default fire-and-forget.
+app.post('/wiki/run-lint', async (c) => {
+  if (!config.wiki.enabled) {
+    return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  }
+  let wait = false;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    wait = Boolean((body as { wait?: unknown }).wait);
+  } catch {
+    /* empty body */
+  }
+  if (!wait) {
+    void wikiLintWorker.runNow().catch(() => {
+      /* errors logged */
+    });
+    return c.json({
+      started: true,
+      wait: false,
+      message: 'Dream-C lint started in background.',
+    });
+  }
+  const result = await wikiLintWorker.runNow();
+  return c.json({
+    wait: true,
+    runId: result.runId,
+    findingsCount: result.findingsCount,
+    pagesScanned: result.pagesScanned,
+    durationMs: result.durationMs,
+    status: result.status,
+  });
+});
+
 const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 // Pin the resolved port back into the env so child processes (MCP
 // servers spawned by claude-cli/codex-cli) inherit it for their HTTP
@@ -1182,7 +1217,9 @@ const wikiPromotionWorker = new WikiPromotionWorker({
   },
 });
 wikiPromotionWorker.start();
-configureDreamRunTool({ wikiPromotionWorker });
+const wikiLintWorker = new WikiLintWorker({ config });
+wikiLintWorker.start();
+configureDreamRunTool({ wikiPromotionWorker, wikiLintWorker });
 
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });
@@ -1194,6 +1231,7 @@ async function shutdown(signal: string): Promise<void> {
   logger.info({ msg: 'server.shutdown', signal });
   autoDreamWorker.shutdown();
   wikiPromotionWorker.shutdown();
+  wikiLintWorker.shutdown();
   releaseLockfile();
   await shutdownMemoryRegistry();
   await shutdownSshPool();
