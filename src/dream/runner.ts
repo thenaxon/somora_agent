@@ -20,6 +20,9 @@ import {
 } from './storage.ts';
 import { extractFromSession, resolveDreamModel } from './extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
+import { loadReferencedWiki } from './wiki-context.ts';
+import { readObsidianConfigForAgent } from '../memory/registry.ts';
+import { join } from 'node:path';
 
 export interface RunDreamArgs {
   agent: string;
@@ -72,6 +75,7 @@ function renderBody(
   sources?: {
     memorySlugs: string[];
     vaultSlugsWithScore: string[]; // pre-formatted "slug@0.74"
+    wikiSlugs?: string[]; // Phase 4
   },
 ): string {
   const triggerWord = meta.trigger === 'manual' ? 'manual' : 'auto';
@@ -93,6 +97,11 @@ function renderBody(
     lines.push(
       `- Vault notes (recall hits): ${sources.vaultSlugsWithScore.length === 0 ? '_none_' : sources.vaultSlugsWithScore.map((s) => `\`${s}\``).join(', ')}`,
     );
+    if (sources.wikiSlugs && sources.wikiSlugs.length > 0) {
+      lines.push(
+        `- Wiki pages (stub-derived + recall): ${sources.wikiSlugs.map((s) => `\`wiki/${s}\``).join(', ')}`,
+      );
+    }
     lines.push('');
   }
   if (meta.findings.length === 0) {
@@ -226,12 +235,41 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     }
   }
 
+  // Wiki references (Phase 4 / Stufe 4). Two contributions:
+  //  - Stub-derived: wiki pages targeted by promoted_to in agent's
+  //    memory stubs. Always included so Dream-A can compare facts
+  //    against the latest wiki state for already-promoted topics.
+  //  - Recall-derived: wiki hits from the user-text query (topical
+  //    overlap; may not have a stub yet).
+  // Only populated when config.wiki.enabled.
+  const referencedWiki: Array<{ slug: string; markdown: string }> = [];
+  if (args.config.wiki.enabled) {
+    try {
+      const obs = await readObsidianConfigForAgent(args.agent);
+      const wikiAbs = obs?.vaultPath
+        ? join(obs.vaultPath, args.config.wiki.vaultSubfolder)
+        : null;
+      const pages = await loadReferencedWiki({
+        agent: args.agent,
+        mgr: args.mgr,
+        recallQuery,
+        wikiAbs,
+      });
+      for (const p of pages) {
+        referencedWiki.push({ slug: p.slug, markdown: p.markdown });
+      }
+    } catch (err) {
+      logger.warn({ msg: 'dream.wiki_ctx.load_failed', agent: args.agent, err: (err as Error).message });
+    }
+  }
+
   // Sources block — used by renderBody for the audit section in the
   // dream file's Markdown body. Same shape across all subsequent
   // renderBody calls so the file always shows what was considered.
   const sources = {
     memorySlugs: existingMemory.map((m) => m.slug),
     vaultSlugsWithScore: referencedVault.map((v) => `${v.slug}@${v.score.toFixed(2)}`),
+    wikiSlugs: referencedWiki.map((w) => w.slug),
   };
 
   // Initial running file. chunks_total is set after the first chunk-plan
@@ -267,6 +305,8 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     existingMemorySlugs: existingMemory.map((m) => m.slug),
     referencedVaultCount: referencedVault.length,
     referencedVaultSlugs: referencedVault.map((v) => `${v.slug}@${v.score.toFixed(2)}`),
+    referencedWikiCount: referencedWiki.length,
+    referencedWikiSlugs: referencedWiki.map((w) => w.slug),
     workerModel: meta.worker_model_ref,
   });
 
@@ -276,6 +316,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       events: eventsInRange,
       existingMemory,
       referencedVault,
+      referencedWiki,
       workerModel,
       chunkTimeoutMs: args.dream.chunkTimeoutMs,
       chunkTokens: args.dream.chunkTokens,

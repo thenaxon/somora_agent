@@ -22,10 +22,21 @@ export interface ExtractContext {
   agent: string;
   /** Slice of session JSONL to analyze. */
   events: NormalizedEvent[];
-  /** Existing memory notes (slug + body) — what the agent currently believes. */
+  /** Existing memory notes (slug + body) — what the agent currently believes.
+   *  After Phase 4, some of these are STUBS pointing at wiki pages (their
+   *  body is just a pointer + recent-observations section). For substance,
+   *  the corresponding wiki pages are passed as `referencedWiki`. */
   existingMemory: Array<{ slug: string; markdown: string }>;
   /** Vault notes referenced during the session (filtered subset). */
   referencedVault: Array<{ slug: string; markdown: string }>;
+  /** Wiki pages relevant to this agent. Populated only when
+   *  `config.wiki.enabled` is true. Phase 4. Sources:
+   *   1. Wiki pages targeted by stubs in this agent's memory (always
+   *      include — those are the topics the agent has already promoted).
+   *   2. Wiki pages found via recall over the session's user-text
+   *      (topical overlap — may not have a stub yet).
+   *  The runner deduplicates and passes the union here. */
+  referencedWiki?: Array<{ slug: string; markdown: string }>;
   /** The resolved dream worker model. */
   workerModel: ResolvedModel;
   /** Per-chunk LLM-call timeout. */
@@ -48,16 +59,21 @@ export interface ExtractResult {
   completed: boolean;
 }
 
-const SYSTEM_PROMPT = `You are a memory consolidation worker for an AI agent.
+const SYSTEM_PROMPT = `You are a memory consolidation worker for an AI agent in the somora system.
 
 You are given:
 1. A transcript chunk of recent conversation between the user and the agent.
 2. The agent's current memory notes (markdown files keyed by slug).
 3. Vault notes that the user has and that were referenced during the session.
+4. (Phase 4) Wiki pages — long-term consolidated knowledge shared across all
+   agents. When a memory note has been promoted to the wiki, the memory file
+   is left as a STUB (frontmatter \`promoted_to: <wiki-path>\`, body has a
+   pointer line and a "## Recent observations" section). The substance lives
+   in the corresponding wiki page, which is passed in the wiki block.
 
 Your job: identify FACTS in the user's messages that the agent should remember
-or that contradict existing memory. Return ONLY a JSON array of finding
-objects. No commentary, no markdown fences, just the JSON.
+or that contradict existing memory OR the wiki. Return ONLY a JSON array of
+finding objects. No commentary, no markdown fences, just the JSON.
 
 Each finding has these fields:
 - action: one of "memory_write" | "memory_edit" | "memory_delete" | "vault_hint"
@@ -73,11 +89,21 @@ Rules — follow strictly:
   preferences, their state. Statements made by the agent are NOT authoritative.
 - DO NOT surface transient state ("working on X today", "feeling tired").
 - DO NOT surface jokes, speculation, hypotheticals.
-- DO NOT surface things already accurately captured in existing memory.
-- DO surface contradictions: if memory says X and the user said not-X.
+- DO NOT surface things already accurately captured in existing memory OR wiki.
+- DO surface contradictions: if memory or wiki says X and the user said not-X.
 - DO surface concrete new facts: a new project, a new device, a new contact.
 - For vault_hint: only when an existing vault note appears clearly outdated
   given user statements; do not propose creating new vault notes.
+
+Conflicts with wiki content (Phase 4 — important):
+- The wiki is consolidated long-term knowledge. You cannot edit it directly.
+- When a user statement contradicts a wiki page, target the corresponding
+  STUB SLUG with action "memory_write". The slug is the agent's memory slug
+  (the file with frontmatter \`promoted_to: <wiki-path>\`). Your proposed_content
+  becomes a one-line dated bullet under "## Recent observations" — Dream-B will
+  later integrate it into the wiki page.
+- When the wiki has no stub for a topic but you find a substantive new fact,
+  emit memory_write with a fresh slug — Dream-B will promote it later.
 
 Output format example:
 [
@@ -87,6 +113,12 @@ Output format example:
     "current_excerpt": "User lives in Berlin.",
     "proposed_content": "User lives in Hamburg as of 2026-04-15.",
     "reason": "User said on 2026-04-30: 'we moved to Hamburg two weeks ago'."
+  },
+  {
+    "action": "memory_write",
+    "slug": "luca",
+    "proposed_content": "Luca is now 9 (Wiki page personen/luca says 8).",
+    "reason": "User said on 2026-05-08 that Luca turned 9. Stub for personen/luca exists; this observation will append to ## Recent observations and Dream-B integrates."
   }
 ]
 
@@ -215,11 +247,24 @@ function formatVault(notes: Array<{ slug: string; markdown: string }>): string {
     .join('\n\n');
 }
 
+function formatWiki(notes: Array<{ slug: string; markdown: string }>): string {
+  if (notes.length === 0) {
+    return '(no wiki pages relevant to this agent — wiki layer disabled or no stubs/recall hits)';
+  }
+  return notes
+    .map((n) => {
+      const parsed = matter(n.markdown);
+      return `### wiki/${n.slug}\n${parsed.content.trim().slice(0, 2000)}`;
+    })
+    .join('\n\n');
+}
+
 function buildUserMessage(args: {
   agentName: string;
   chunk: EventChunk;
   existingMemory: Array<{ slug: string; markdown: string }>;
   referencedVault: Array<{ slug: string; markdown: string }>;
+  referencedWiki: Array<{ slug: string; markdown: string }>;
 }): string {
   // Order matters for prefix-cache hit-rate across chunks of the same
   // dream extraction:
@@ -235,12 +280,18 @@ function buildUserMessage(args: {
   // Memory + vault for hans's typical session are ~2-15k tokens; on a
   // 5-chunk dream that's 4× re-encoding saved on local models —
   // multiple seconds of latency per chunk on gemma4big.
+  // Order: stable blocks first (memory + wiki + vault) so prefix-cache
+  // reuses across chunks; transcript varies per chunk.
   return [
     `Agent name: ${args.agentName}`,
     '',
     '<existing_memory>',
     formatMemory(args.existingMemory),
     '</existing_memory>',
+    '',
+    '<wiki_referenced>',
+    formatWiki(args.referencedWiki),
+    '</wiki_referenced>',
     '',
     '<vault_referenced>',
     formatVault(args.referencedVault),
@@ -376,6 +427,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         chunk,
         existingMemory: ctx.existingMemory,
         referencedVault: ctx.referencedVault,
+        referencedWiki: ctx.referencedWiki ?? [],
       });
       const reqTokens = estimateTokens(systemPrompt) + estimateTokens(userMsg);
       const reqStart = Date.now();
