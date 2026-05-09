@@ -21,3 +21,4 @@ FUTURE.md
 
 # npm pack tarballs (built per release, never tracked)
 somora-*.tgz
+scripts/
