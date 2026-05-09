@@ -126,12 +126,49 @@ memory:
   autoInject:
     queryTurns: 3             # last-N turns used as the recall query
     maxResults: 5             # top-N hits injected per turn
-    minScore: 0.5             # discard hits below this score (0..1)
+    minScore: 0.35            # discard hits below this score (0..1)
     maxTokens: 1500           # hard cap on the injected memory block
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3
 ```
+
+### Wiki + dream-system (optional but recommended)
+
+The wiki layer enables long-term shared knowledge across all agents.
+Requires an Obsidian vault. See [wiki.md](wiki.md) for the full
+mental model.
+
+```yaml
+obsidian:
+  vault: ~/Documents/Vault     # required for the wiki to work
+
+wiki:
+  enabled: true
+  vaultSubfolder: somora       # → <vault>/somora/ becomes the wiki
+
+  deep:                        # Memory→Wiki consolidation
+    enabled: true
+    intervalHours: 12
+    preSweepMinutes: 60        # REM force-run before each Deep run
+    model: opus                # via claude-cli, subscription
+
+  lucid:                       # Wiki cleanup
+    enabled: true
+    intervalDays: 7
+    model: opus
+    requireApproval: true
+
+  search:
+    boostWiki: 1.4             # wiki hits rank above memory in retrieval
+    boostMemory: 0.85
+    boostVault: 0.65
+    overviewMaxChars: 1500     # auto-inject wiki-overview block size cap
+    overviewTopNSlugs: 30
+```
+
+Per-agent REM (session→memory extraction) is configured in each
+`agent.yaml`, not here — see [agents.md](agents.md).
 
 ## Environment overrides
 

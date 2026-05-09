@@ -8,18 +8,24 @@ optional Obsidian vault binding.
 
 ```
 ~/.somora/agents/<name>/
-├── AGENTS.md           ← required. behavioural rules + identity (frontmatter)
-├── SOUL.md             ← optional. voice / personality
-├── USER.md             ← optional. what the agent knows about you
-├── agent.yaml          ← optional. operator-config (model, dream, vault)
-├── memory/             ← agent-managed knowledge (markdown notes + sqlite index)
-│   ├── *.md
-│   ├── memory.db (+ -wal, -shm)
-│   └── .dreams/        ← idle-trigger findings, awaiting your review
-└── sessions/           ← chat history (jsonl + meta json per session)
+├── AGENTS.md                       ← required. behavioural rules + identity (frontmatter)
+├── SOUL.md                         ← optional. voice / personality
+├── USER.md                         ← optional. what the agent knows about you
+├── agent.yaml                      ← optional. operator-config (model, REM, vault)
+├── memory/                         ← per-agent memory inbox
+│   ├── *.md                        ← un-consolidated notes
+│   ├── memory.db (+ -wal, -shm)    ← derived index
+│   ├── .deep-skip-cache.json       ← Deep's hash-cache for skipped files
+│   └── .dreams/                    ← REM extraction findings awaiting review
+│       └── processed/              ← resolved findings (audit trail)
+└── sessions/                       ← chat history (jsonl + meta json per session)
     ├── main.jsonl
     └── 20260501-143022_some-slug.jsonl
 ```
+
+The memory directory is the agent's **inbox** — short-term, volatile.
+Deep periodically promotes content to the shared wiki and deletes the
+source. See [memory.md](memory.md) and [wiki.md](wiki.md).
 
 ## Creating a new agent
 
@@ -77,14 +83,26 @@ workspace:
 resources:
   deny: ['production-db']
 
-# Optional: dream-mode (background memory consolidation)
-dream:
+# Optional: REM phase (per-agent session→memory extraction)
+rem:
   enabled: true
-  model: gemma        # required when enabled — no fallback (intentional)
-  idleMinutes: 30
-  chunkTokens: 50000
-  chunkTimeoutMs: 120000
+  model: gemma4big          # required when enabled — no fallback (intentional)
+  idleMinutes: 30           # auto-trigger after N min idle
+  chunkTokens: 50000        # range-split for very long sessions
+  chunkTimeoutMs: 600000    # 10 min/chunk; gemma-friendly
+  participate_in_wiki: true # default true; false = REM only, never Deep
 ```
+
+REM is the per-agent dream phase that watches sessions and proposes
+memory updates with your approval. The platform-wide phases (Deep,
+Lucid) are configured in `~/.somora/config.yaml.wiki.deep / .lucid` —
+not per-agent. See [dream-phases.md](dream-phases.md).
+
+`participate_in_wiki: false` opts a single agent's memory inbox out
+of the Deep promote-to-wiki pipeline. REM still runs (the agent still
+gets memory findings), Deep just won't see this agent's inbox. Useful
+for sandbox/scratch agents you don't want contributing to the shared
+wiki.
 
 The split between `AGENTS.md` (identity + behavioural rules, agent-editable)
 and `agent.yaml` (operator config) is intentional but not enforced as a
@@ -181,11 +199,16 @@ The HTTP API:
 GET    /agents                                   list agents
 GET    /agents/:agent/sessions                   list sessions
 POST   /agents/:agent/sessions    {slug}         create session
-POST   /agents/:agent/sessions/:session/reset    archive + reset (spawns dream if configured)
-GET    /agents/:agent/memory/notes               list memory notes
-GET    /agents/:agent/memory/search?q=…          hybrid recall (debug)
+POST   /agents/:agent/sessions/:session/reset    archive + reset (spawns REM if configured)
+GET    /agents/:agent/memory/notes               list memory inbox notes
+GET    /agents/:agent/memory/search?q=…          hybrid recall across memory+wiki+vault (debug)
 POST   /agents/:agent/tools/:name                invoke a tool directly (debug)
+POST   /dream/run-deep    {wait?, force?}        trigger Deep manually (platform-wide)
+POST   /dream/run-lucid   {wait?}                trigger Lucid manually (platform-wide)
 ```
 
-See [memory.md](memory.md) for memory-layer specifics and
-[dream-mode.md](dream-mode.md) for the dream system.
+See:
+- [memory.md](memory.md) — the per-agent memory inbox + retrieval
+- [wiki.md](wiki.md) — the shared long-term wiki layer
+- [dream-phases.md](dream-phases.md) — REM/Deep/Lucid mechanics
+- [tools.md](tools.md) — full tool reference

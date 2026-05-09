@@ -9,8 +9,8 @@ in-process. The model never knows which path it's on.
 
 | Toolset | Tools | Purpose |
 |---|---|---|
-| `memory` | `memory_search`, `memory_get`, `memory_list`, `memory_write`, `memory_edit`, `memory_delete` | Read/write the agent's persistent memory (Markdown notes + indexed vault). |
-| `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss` | Inspect and act on findings produced by Dream-Mode (see `dream-mode.md`). |
+| `memory` | `memory_search`, `memory_get`, `memory_list`, `memory_write`, `memory_edit`, `memory_delete` | Read/write across the three layers — agent memory inbox, shared wiki, read-only vault. Hybrid retrieval (vector + BM25) with per-source boost. |
+| `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run` | Inspect findings from REM (per-agent) and Lucid (platform-wide); trigger Deep or Lucid manually via `dream_run({phase: 'deep'\|'lucid'})`. See `dream-phases.md`. |
 | `time` | `time_now` | Current date/time/timezone — model never hallucinates "today". |
 | `web` | `web_search`, `web_fetch` | Search via Brave + fetch web pages as Markdown (Mozilla Readability + SSRF guards). |
 | `file` | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or against any configured SSH resource via `target=...`. `analyze_file` is the multimodal companion: dispatches images/PDFs to a configured `vision.worker` and returns a text description (see `files.md`). |
@@ -65,9 +65,12 @@ identical across all three engines.
 
 - `display.md` — `/show` and `/verbose` toggles for the TUI
 - `thinking.md` — cross-engine thinking depth control
-- `memory.md` — how the memory layer works
+- `memory.md` — per-agent memory inbox + retrieval mechanics
+- `wiki.md` — shared long-term wiki layer
+- `dream-phases.md` — REM/Deep/Lucid background consolidation
 - `resources.md` — SSH targets that file_* / exec / tmux dispatch to
 - `skills.md` — Markdown skill system + per-agent allow-list
+- `files.md` — file_* tools + multimodal `analyze_file`
 - `tmux.md` — shell-vs-TUI session patterns + capture/send modes
 - `research/tool-architecture.md` — comparative study of OpenClaw and
   hermes-agent that informed our design

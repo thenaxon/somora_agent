@@ -113,9 +113,10 @@ All `memory_*` write tools are hard-scoped to
 - Slug regex: `^[a-z0-9][a-z0-9_-]*$`. No path separators, no
   uppercase, no hidden directories.
 - Vault writes are NOT exposed to agents. The wiki layer is written
-  exclusively by Dream-B (auto promotion) and Dream-C (lint) — both
-  server-side workers, scoped to the configured wiki subfolder.
-  Everything else in the vault stays read-only.
+  exclusively by the Deep phase (memory→wiki consolidation) and the
+  Lucid phase (cleanup) — both server-side workers, scoped to the
+  configured wiki subfolder. Everything else in the vault stays
+  read-only from somora's perspective.
 
 Even a buggy or adversarial model output cannot escape an agent's own
 memory directory through `memory_write`/`memory_edit`/`memory_delete`.

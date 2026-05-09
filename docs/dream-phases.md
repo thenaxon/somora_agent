@@ -1,228 +1,422 @@
-# Dream-Mode
+# Dream Phases
 
-> Background memory consolidation. The agent reads its own session
-> transcripts when you're not looking, identifies facts worth remembering,
-> and surfaces them for your explicit approval. Nothing is written to
-> memory without you saying yes.
+> Background memory consolidation in three phases — REM, Deep, Lucid.
+> Together they turn raw conversation into curated long-term knowledge
+> without any single LLM call doing too much.
 
-## The problem it solves
+## The mental model
 
-Conversation history is rich; agent memory is sparse on purpose. Over a
-typical session you might mention dozens of things the agent should know
-long-term — a new project, a renamed device, an updated address. Without
-a consolidation step those facts live only in the JSONL transcript. The
-underlying provider's session compaction can quietly drop them in a
-month, and they're hard to recover.
+```
+   ┌─ REM ─────────────────┐    ┌─ Deep ─────────────────┐    ┌─ Lucid ──────────────┐
+   │  Session → Memory     │    │  Memory → Wiki         │    │  Wiki cleanup        │
+   │  per-agent            │    │  platform-wide         │    │  platform-wide       │
+   │  ~30 min idle         │    │  ~12 h scheduled       │    │  ~7 d scheduled      │
+   │  small/local model    │    │  strong model (opus)   │    │  strong model (opus) │
+   │  approval required    │    │  auto-applies          │    │  approval required   │
+   └───────────────────────┘    └────────────────────────┘    └──────────────────────┘
+                │                            │                            │
+                ▼                            ▼                            ▼
+   memory inbox grows           wiki gets new pages /         wiki gets fixed:
+   with new facts the           merges of new content;        contradictions resolved,
+   agent should keep            consumed memory files         stale claims updated,
+                                are deleted                   missing pages created
+```
 
-Dream-mode reads the transcripts, runs a small LLM over them, and produces
-**findings** — concrete, structured suggestions like "add note `mercedes`
-with content X" or "edit note `address` to replace Y with Z". You and the
-agent walk through them; you approve or reject each individually. Memory
-only changes by your say-so.
+Each phase has one job. Each runs at its own cadence. Each uses an LLM
+worker model you configure separately. The phases compose into a clean
+flow: facts come in via REM, get consolidated by Deep, get audited by
+Lucid.
 
-## When dreams run
+## Phase REM — Session → Memory
 
-Two triggers:
+REM ("Rapid Eye Movement") extracts new factual information from a
+session's transcript and proposes additions to the agent's **private
+memory inbox**.
 
-### Manual: `/reset YES`
+### Job
 
-When you reset a session — typically your `main` to keep it from
-ballooning indefinitely — somora archives the current jsonl + meta to a
-timestamped name and starts a new manual dream over that archived range.
-The reset returns immediately; the dream runs async. Result lands in
+Read the session JSONL since the last REM run, identify FACTS the user
+asserted (not jokes, not transient state, not things already in memory or
+the wiki), and surface them as `pending` findings for your approval.
+
+### Triggers
+
+Two triggers, both per-agent:
+
+**Manual: `/reset YES`** — when you reset a session, somora archives the
+current `main.jsonl` to a timestamped name and starts a fresh `main`.
+If REM is enabled for the agent, it spawns a manual run over the
+archived range. Result lands in
 `~/.somora/agents/<name>/memory/.dreams/<id>.dream.md` and shows up in
-`dream_list` once extraction is done.
+`dream_list`.
 
-Manual dreams **do not pause** when you start chatting again. They were
-user-initiated and have a bounded scope (one archived session); they
-just run to completion.
-
-### Automatic: idle-triggered
-
-If `dream.enabled: true` is set in `agent.yaml`, an in-process worker
+**Automatic: idle-timer** — when REM is enabled, an in-process worker
 watches each agent's chat activity. After `idleMinutes` of no chat
 (default 30), the worker:
 
 1. Resumes any previously-paused dream first (don't waste prior work).
-2. Otherwise picks the most-recently-active session whose `lastActivity`
+2. Otherwise picks the most-recently-active session whose last activity
    is past its `dreamReadThroughTs` marker.
 3. Runs an extraction over the delta range.
-4. On success, bumps `dreamReadThroughTs` so the next idle cycle sees a
-   smaller delta.
+4. On success, bumps the marker so the next idle cycle sees a fresh delta.
 
-If you start chatting while an auto-dream is running, the worker aborts
-it (becomes `paused`) and resets the idle countdown. Next idle window,
-the worker resumes from where it stopped.
+Manual REM runs do **not** pause when you start chatting again — they're
+user-initiated, bounded, just run to completion.
+Automatic REM runs **abort** on user activity (the in-flight extraction
+gets paused; resumed on next idle).
 
-## Configuration (per agent)
+### Worker model
+
+Configured per-agent in `agent.yaml`:
 
 ```yaml
-# ~/.somora/agents/<name>/agent.yaml
-dream:
-  enabled: true              # master toggle
-  model: gemma               # REQUIRED when enabled. No fallback.
+rem:
+  enabled: true
+  model: gemma4big           # alias from config.yaml or 'provider/modelId'
   idleMinutes: 30
-  chunkTokens: 50000         # rough size per LLM extraction call
-  chunkTimeoutMs: 600000     # per-chunk timeout — 10 min default, lenient enough for local
+  chunkTokens: 50000         # range-split for very long sessions
+  chunkTimeoutMs: 600000     # 10 min per chunk (gemma-friendly)
+  participate_in_wiki: true  # default true; false = REM only, never Deep
 ```
 
-`model` is mandatory when `enabled: true`. There is intentionally no
-fallback to the agent's primary model: dreaming long sessions burns
-tokens, and that's exactly the wrong thing to do silently on a premium
-model. The dream worker model is your explicit choice — typically a
-small local model (e.g., a Gemma variant via Ollama or oMLX).
+Default worker is small/local (`gemma4big` via mlx-omx, ~31B params).
+You can switch to opus/sonnet/gpt-5.5 — but REM runs often, so cost
+matters. Gemma is good enough for atomic-fact extraction with the right
+prompt.
 
-`chunkTimeoutMs` defaults to 10 minutes. The earlier 2 min default was
-too tight for realistic local-model loads: 33k-token chunks against
-gemma-4-31b-it-8bit via mlx-omx need 3-5 min just for prefill +
-JSON-output. With the lower cap, every chunk hit the timeout before it
-could complete — and before the backend's KV cache could warm for the
-next chunk, so even cache-friendly prompt structure (memory + vault
-prefix stable across chunks per `docs/cache-strategy.md`) couldn't
-help. 10 min fits any reasonable local-model setup; fast cloud workers
-finish in seconds and ignore the headroom. Lower this only if you're
-using a fast cloud worker AND want fail-fast on stalls.
+### What REM sees
 
-### Dream-worker rules
+Each REM run feeds the worker:
 
-The dream-worker's behavior is governed entirely by a single base
-system prompt in `src/dream/extract.ts`. It enforces:
+- Transcript chunk (1+ chunks if session is long)
+- Existing memory inbox contents for this agent
+- Wiki context (index.md + top-N relevant wiki pages, embedding-matched
+  against session content)
+- Vault-recall snippets (if vault is configured)
+- The REM system prompt (in `src/dream/rem-extract.ts`)
 
-- Surface only **atomic statements the user made** (not agent-relayed
-  facts, not transient state, not jokes/speculation).
-- Do not duplicate content that already exists in memory, the wiki,
-  or the referenced vault notes.
-- Do not surface "consolidated overviews" — that's Dream-B's job
-  (memory → wiki promotion), not Dream-A's.
-- Do not promote tool-result content (memory_search hits etc.) the
-  agent merely quoted.
+The wiki context is critical: REM dedupes against the **wiki**, not just
+memory. New facts that contradict the wiki get surfaced as
+`memory_write` so Deep can later merge them in.
 
-There is no per-agent rules file. An earlier `DREAMRULES.MD`
-mechanism existed pre-Phase-4 but became obsolete once Dream-B took
-over consolidation and the base prompt absorbed the vault-dedup
-rules. If a future use-case genuinely needs per-agent dream-extraction
-overrides, we'll add it back as a config field rather than a separate
-file.
+### Output: findings
 
-## File lifecycle
+A REM run produces `pending` findings, each with:
 
-```
-~/.somora/agents/<name>/memory/.dreams/
-├── <id>.dream.running.md     ← extraction in flight
-├── <id>.dream.paused.md      ← interrupted (chat activity or server crash)
-├── <id>.dream.failed.md      ← unrecoverable; .error in frontmatter
-├── <id>.dream.md             ← extraction done; awaiting your review
-└── processed/
-    └── <id>.dream.md         ← all findings resolved (applied or dismissed)
-```
+- `action` — `memory_write | memory_edit | memory_delete | vault_hint`
+- `slug` — kebab-case identifier
+- `proposed_content` — what should land in memory if approved
+- `reason` — why this finding (quotes user's statement)
 
-Filename suffix tracks status. Atomic rename on transitions. After
-server crash, any orphan `.running.md` files are auto-renamed to
-`.paused.md` (auto-trigger) or `.failed.md` (manual-trigger) at next
-startup — manual dreams aren't auto-resumed because their scope was
-tied to a specific user action.
+Approve with `dream_apply`, reject with `dream_dismiss`. Memory file is
+written/edited/deleted only on approval.
 
-## Reviewing findings
+## Phase Deep — Memory → Wiki
 
-Ask the agent. It uses `dream_list` to see what's pending, `dream_get`
-to read a specific dream, and walks you through findings one at a time:
+Deep consolidates **all agents' memory inboxes** into the shared wiki.
 
-```
-[<your-agent>:main]> hast du was geträumt?
+### Job
 
-[tool call · dream_list · {}]
-[tool result · {"count":1,"dreams":[...]}]
-[tool call · dream_get · {"dream_id":"…"}]
+For each memory file across all participating agents, decide one of three
+outcomes:
 
-agent: Yep — three findings from the archived main session.
+- **Skip** — transient (daily log, scratchpad), already covered, too thin.
+- **Promote** — new wiki topic, create dedicated page with frontmatter,
+  sections, cross-references.
+- **Merge** — topic exists in the wiki, integrate new content into the
+  existing page (preserves structure, updates `## Aktueller Stand` and
+  `## Zeitleiste` typically).
 
-  1. Memory edit: auto.md says you drive a Fiat. You mentioned a
-     Mercedes purchase last week. Should I update?
+After successful Promote or Merge, the source memory file is **deleted**.
+Wiki = canonical, inbox stays a clean queue.
 
-[user]> ja
+### Triggers
 
-[tool call · dream_apply · {"dream_id":"…", "finding_id":1}]
-[tool result · {"applied":true,"remaining":2,"dream_done":false}]
+**Schedule** — every 12h (configurable). On each scheduled run, Deep
+fires a pre-sweep that triggers REM for any agent with un-processed
+sessions, so memory inboxes are settled before Deep reads them.
 
-agent: Done. Next:
+**Manual** — `dream_run({phase: 'deep'})` from any agent's chat, or
+`POST /dream/run-deep` over HTTP. Optional `force: true` bypasses the
+hash-cache (re-evaluates every memory file).
 
-  2. New note "yoga": You mentioned starting yoga with Markus on
-     Tuesdays at 6 PM. Save?
+### Worker model
 
-[user]> nee, das war Smalltalk
+Configured platform-wide in `config.yaml`:
 
-[tool call · dream_dismiss · {"dream_id":"…", "finding_id":2}]
-
-agent: Skipped. Last one:
-
-  3. ...
+```yaml
+wiki:
+  deep:
+    enabled: true
+    intervalHours: 12
+    preSweepMinutes: 60
+    model: opus              # opus by default; via Claude subscription
 ```
 
-When all findings are resolved (applied or dismissed), the dream
-auto-archives to `processed/`. If a dream extraction returns zero
-findings (the conversation was trivial), it auto-archives directly —
-no review needed.
+### Single-prompt logic (skip / promote / merge in one call)
 
-## Tools
+Per memory file, Deep does ONE LLM call that decides skip/promote/merge.
+The worker sees:
 
-```
-dream_list({ include_processed? })           overview of pending dreams
-dream_get(dream_id)                          full content with structured findings
-dream_apply(dream_id, finding_id)            execute the finding's memory action
-dream_dismiss(dream_id, finding_id?)         reject one finding; or whole dream if no id
-```
+- The memory file (frontmatter + body)
+- Wiki index.md (topology header)
+- Top-8 relevant wiki pages (full bodies, embedding-matched against
+  the memory body)
 
-`dream_apply` doesn't think — it executes the proposed action via the
-matching `memory_*` tool. The extractor decides what to suggest; you
-decide whether to apply; the apply step has no creative leeway. That
-separation makes apply deterministic and auditable.
+Returns a structured `MemoryFateDecision`:
 
-## Why findings, not auto-promotion
+```json
+{ "kind": "skip", "reason": "..." }
 
-The OpenClaw approach (auto-promote high-signal recalls into long-term
-memory based on a scoring function) was rejected during design. Two
-reasons:
+{ "kind": "promote", "subfolder": "personen", "slug": "personen/luca",
+  "type": "person", "title": "Luca",
+  "body": "## Aktueller Stand\n…", "related": [...] }
 
-1. **Auditability.** A bad extraction silently corrupts memory. With
-   findings + explicit approval, every memory mutation has a paper
-   trail in `.dreams/processed/`.
-
-2. **Trust.** You should always know why a memory note got the way it
-   is. Findings record the reason ("user said X on Y") and you say yes
-   or no. Bad extractions just get dismissed, no harm done.
-
-The cost is a per-dream review step. The dream archiving keeps the
-review friction proportional to the actual change rate of your life,
-not to the chat volume.
-
-## Diagnostics
-
-Server-log events to watch:
-
-```
-dream.start                  starting extraction (manual or auto)
-dream.llm_request            chunk request going out (with baseUrl + model)
-dream.chunk_done             chunk completed (with response preview + duration)
-dream.completed              extraction done (with finding count)
-dream.completed_empty        zero findings — auto-archived to processed/
-dream.paused                 cancelled mid-flight (auto-trigger only)
-dream.failed                 extraction errored unrecoverably
-dream.auto.aborted_by_activity  user chatted while auto-dream was running
-dream.auto.fired_idle        idle timer fired, kicking off work
+{ "kind": "merge", "wikiPath": "personen/familie-rene",
+  "body": "...full updated body...",
+  "logSummary": "familie-rene aktualisiert: ..." }
 ```
 
-Each `dream_*` tool invocation also logs at info level (`tool.invoked`).
+Deep applies the decision verbatim. No second LLM call at apply-time.
 
-## Limitations & non-goals (today)
+### Hash-cache
 
-- **Vault writes are not in scope.** Findings can be `vault_hint` ("user
-  may want to update vault note X") but are surfaced as no-op
-  acknowledgements — there is currently no `obsidian_write` tool.
-- **Resume re-runs from scratch.** When a paused dream resumes on the
-  next idle, the previously-extracted findings are discarded and the
-  whole range is re-extracted. The cost of re-running is small for the
-  typical delta; the alternative (dedup across partial-extraction
-  runs) added enough complexity to defer.
-- **Worker model must be openai-compatible.** Routing the extraction
-  through `claude-cli` or `codex-cli` engines as worker is possible but
-  unbuilt; the current implementation calls `chat.completions` directly.
+Skipped memory files get cached by body-hash in
+`~/.somora/agents/<name>/memory/.deep-skip-cache.json`. On the next Deep
+run, files whose hash matches the cached entry are skipped without an
+LLM call. Saves opus tokens dramatically when most memories are
+unchanged between runs (verified: 1500× speedup on a 56-file all-cached
+run).
+
+The cache invalidates automatically when:
+- Memory body changes (hash mismatch → re-evaluate)
+- Promote/merge consumed the file (entry pruned)
+- File is deleted (opportunistic cleanup on next loadCache)
+
+`dream_run({phase: 'deep', force: true})` ignores the cache for one run.
+
+### No approval
+
+Deep runs auto-apply. No per-finding review — the trade-off is that
+Memory→Wiki is mechanical consolidation, not subjective. If a Deep run
+makes a bad decision you don't like, you fix it in Obsidian (the wiki
+is just markdown) or wait for Lucid to flag it.
+
+The audit trail lives in `<vault>/<wiki-subfolder>/logs/YYYY-MM.md` —
+monthly append-only logs of all Promotes and Merges with one-line
+summaries.
+
+## Phase Lucid — Wiki cleanup
+
+Lucid audits the existing wiki and surfaces quality issues for your
+review. **All findings require approval** — Lucid never auto-edits the
+wiki.
+
+### Job
+
+Walk the wiki (subfolder by subfolder), identify quality issues, propose
+structured fixes:
+
+| Finding kind | What it means | Fix kind |
+|---|---|---|
+| `contradiction` | Two pages assert mutually exclusive facts about the same subject. | `update_page` on whichever is wrong. |
+| `stale_claim` | Time-relative claim ("nächsten Monat", "läuft seit März") that can't still be true today. | `update_page` rewording the claim. |
+| `dead_ref` | `[[wiki-path]]` references a page that doesn't exist. | `update_page` (fix or remove the link). |
+| `outdated` | Whole page is obsolete (past project, superseded by successor page). | `delete_page` (with your review). |
+| `wanted_page` | Topic referenced by ≥3 wiki pages but missing its own page. | `create_page` with drafted body. |
+| `inconsistent_xref` | Asymmetric cross-reference (A → B but B doesn't mention A). | `no_op` (informational only, dismiss after review). |
+
+### Triggers
+
+**Schedule** — every 7 days (configurable).
+
+**Manual** — `dream_run({phase: 'lucid'})` or `POST /dream/run-lucid`.
+
+### Cluster strategy
+
+Lucid walks the wiki by subfolder, one LLM call per subfolder. Then a
+final cross-subfolder pass with page-headers only catches issues that
+span subfolders (a contradiction between `personen/luca` and
+`projekte/familie-luca-podcast`, for example).
+
+This isn't just for scale — claude-cli's stdin-stream parser fails on
+single user-messages > ~50 KB. Per-subfolder batches stay safely under
+that limit. As a side-effect Opus reads each subfolder with full focus,
+which produces higher-quality findings than scanning everything at once.
+
+For very large wikis (>1500 pages), a future stage adds hierarchical
+clustering inside subfolders. Until then, subfolder-pass is the
+universal default.
+
+### Worker model
+
+Configured platform-wide:
+
+```yaml
+wiki:
+  lucid:
+    enabled: true
+    intervalDays: 7
+    model: opus
+    requireApproval: true
+```
+
+### Output
+
+A `LucidRun` JSON file in `~/.somora/wiki-lucid/<run-id>.json` with all
+findings. Each finding carries a structured `fix` (one of `update_page`,
+`create_page`, `delete_page`, `no_op`) the apply function uses verbatim
+— no second LLM call at apply-time.
+
+When all findings of a run are resolved (applied or dismissed), the run
+moves to `~/.somora/wiki-lucid/processed/`.
+
+## Reviewing findings — the unified `dream_*` tool surface
+
+REM (per-agent) and Lucid (platform-wide) both produce findings that
+need your approval. The same tools handle both:
+
+```
+dream_list                              List pending dreams (REM + Lucid)
+dream_get(dream_id)                     Show full content of a dream
+dream_apply(dream_id, finding_id)       Accept finding → applied
+dream_dismiss(dream_id, [finding_id])   Reject (one finding or whole run)
+dream_run({phase, [wait], [force]})     Trigger Deep or Lucid manually
+```
+
+`dream_list` returns a `kind` discriminator per entry:
+
+- `kind: 'memory'` — REM finding, scoped to the agent in whose chat
+  you're calling. Other agents don't see it.
+- `kind: 'wiki_lucid'` — Lucid finding, platform-wide. Any agent with
+  the `dream` toolset sees the same set.
+
+Typical flow when you ask "hast du was geträumt?":
+
+```
+hans> dream_list
+   → memory dream (REM): 5 pending findings
+   → wiki_lucid run: 23 pending findings
+
+hans> dream_get dream_id=<id>
+   → full finding list with action, slug, reason, proposed_content
+
+> walk through with me, finding by finding
+hans> dream_apply  (or dream_dismiss)
+   → repeats until all resolved → dream_done: true
+```
+
+When a finding's `fix.kind` is `no_op` (informational only — usually
+`inconsistent_xref` from Lucid), `dream_apply` succeeds but does
+nothing on disk; the finding is marked applied so the run can complete.
+Treat these as "noted, dismissable".
+
+## Triggering manually
+
+REM runs are user-initiated only via `/reset YES` (TUI) or organic via
+idle-timer. There's no `dream_run({phase:'rem'})` because REM is
+per-agent and per-session.
+
+Deep and Lucid are platform-wide and triggerable:
+
+```
+# In any agent's chat:
+> ruf bitte dream_run({phase: 'deep'}) auf
+> dream_run({phase: 'lucid'})
+> dream_run({phase: 'deep', force: true})  # bypass hash-cache
+
+# Or HTTP directly:
+curl -X POST http://127.0.0.1:18737/dream/run-deep   -d '{"wait":true}'
+curl -X POST http://127.0.0.1:18737/dream/run-lucid  -d '{"wait":true}'
+```
+
+`wait: true` blocks the request until the run finishes (returns full
+outcome). Default `wait: false` is fire-and-forget — agent gets a
+"started in background" reply, run completes on its own.
+
+## Configuration cheat-sheet
+
+```yaml
+# config.yaml — platform-wide
+wiki:
+  enabled: true
+  vaultSubfolder: somora                 # → <vault>/somora/
+  deep:
+    enabled: true
+    intervalHours: 12
+    preSweepMinutes: 60
+    model: opus
+  lucid:
+    enabled: true
+    intervalDays: 7
+    model: opus
+    requireApproval: true
+  search:
+    boostWiki: 1.4                       # wiki hits rank above memory
+    boostMemory: 0.85
+    boostVault: 0.65
+```
+
+```yaml
+# agent.yaml — per-agent
+rem:
+  enabled: true
+  model: gemma4big
+  idleMinutes: 30
+  chunkTokens: 50000
+  chunkTimeoutMs: 600000
+  participate_in_wiki: true
+```
+
+## Where things live
+
+```
+~/.somora/agents/<agent>/memory/             ← memory inbox (REM writes here)
+~/.somora/agents/<agent>/memory/.dreams/     ← REM run files awaiting approval
+~/.somora/agents/<agent>/memory/.dreams/processed/   ← resolved REM runs
+~/.somora/agents/<agent>/memory/.deep-skip-cache.json ← Deep hash-cache
+~/.somora/wiki-lucid/<run-id>.json           ← Lucid run files
+~/.somora/wiki-lucid/processed/              ← resolved Lucid runs
+<vault>/<wiki-subfolder>/                    ← the wiki itself
+<vault>/<wiki-subfolder>/index.md            ← auto-regenerated topology
+<vault>/<wiki-subfolder>/logs/YYYY-MM.md     ← monthly Deep audit log
+```
+
+## What dreams won't do
+
+- **Auto-write to memory or wiki without approval** — except Deep, which
+  runs auto-apply (no approval) but is bounded to the structured
+  `MemoryFateDecision` and writes only the markdown the LLM produced.
+- **Edit content outside the agent's memory or the wiki subfolder** — the
+  rest of your Obsidian vault stays read-only from somora's perspective.
+- **Sync across machines automatically** — somora is single-host. Use git
+  or syncthing on the wiki subfolder if you want cross-device sync (memory
+  inboxes are ephemeral inboxes, not worth syncing).
+
+## Design rationale
+
+Each phase has its own worker model so you can tune cost vs quality
+independently:
+
+- REM runs often → cheap local model is fine for atomic-fact extraction.
+- Deep runs occasionally → strong model is worth it for quality consolidation.
+- Lucid runs rarely → strong model definitely worth it for finding
+  contradictions / stale claims.
+
+Each phase has its own approval policy so you control surface area:
+
+- REM proposes; you decide what enters memory.
+- Deep auto-applies; mistakes are recoverable in Obsidian.
+- Lucid proposes; you decide what gets fixed in the wiki.
+
+The wiki is the only place where stable knowledge lives. The memory
+inbox is volatile by design — files come in, get consolidated, get
+deleted. The vault is read-only context (your Obsidian notes outside
+the wiki subfolder are yours, not somora's).
+
+## See also
+
+- [memory.md](memory.md) — how the memory inbox indexes and retrieves
+- [wiki.md](wiki.md) — the shared long-term wiki layer
+- [agents.md](agents.md) — per-agent configuration including REM
+- [tools.md](tools.md) — full tool reference (`dream_*` is one of 12 toolsets)
