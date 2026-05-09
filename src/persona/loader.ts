@@ -30,6 +30,15 @@ const FrontmatterSchema = z
     name: z.string().optional(),
     description: z.string().optional(),
     icon: z.string().optional(),
+    /** Optional display color (hex string e.g. "#5cf2d6"). Surfaced
+     *  via /agents so the web client can color-tint per agent.
+     *  When unset, the client falls back to a deterministic palette. */
+    color: z.string().optional(),
+    /** Optional short role-tag shown under the agent name in the
+     *  web dock (e.g. "Orchestrator", "Coder"). Identity-level
+     *  metadata, eligible for agent self-edit later — same channel
+     *  as description/icon. */
+    role: z.string().optional(),
   })
   .passthrough();
 
@@ -132,6 +141,10 @@ export interface AgentInfo {
   name: string;
   description: string;
   icon: string | undefined;
+  /** Optional hex display-color from AGENTS.md frontmatter. */
+  color: string | undefined;
+  /** Optional short role label from AGENTS.md frontmatter. */
+  role: string | undefined;
 }
 
 export interface Persona {
@@ -240,6 +253,8 @@ export async function listAgents(): Promise<AgentInfo[]> {
       name: entry,
       description: agentMd.data.description ?? '',
       icon: agentMd.data.icon,
+      color: agentMd.data.color,
+      role: agentMd.data.role,
     });
   }
   return out;

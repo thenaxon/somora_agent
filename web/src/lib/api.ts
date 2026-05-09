@@ -10,8 +10,13 @@ export interface AgentInfo {
   description: string;
   icon?: string;
   /** Per-agent display color, hex string. May be unset on older
-   *  servers — UI falls back to a deterministic palette by name. */
+   *  servers or older AGENTS.md frontmatter — UI falls back to a
+   *  deterministic palette by name. */
   color?: string;
+  /** Optional short role-tag shown under the agent name in the dock
+   *  ("Orchestrator", "Coder", "Researcher" etc.). Falls back to
+   *  the literal "agent" when unset. */
+  role?: string;
 }
 
 export interface SessionSummary {

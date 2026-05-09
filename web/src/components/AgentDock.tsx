@@ -116,7 +116,9 @@ export function AgentDock({
                 <span className={`status-dot ${status}`} />
               </div>
               <div className="agent-icon-label">{agent.name}</div>
-              <div className="agent-icon-sub">agent</div>
+              <div className="agent-icon-sub">
+                {(agent.role ?? 'agent').toLowerCase()}
+              </div>
             </div>
           );
         })}
