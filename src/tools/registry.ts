@@ -24,13 +24,29 @@ import {
 /**
  * Toolsets that get hidden from the agent that holds the active
  * dream_review wiki-loop. We want the holder focused on the wiki
- * conversation, not file-mucking, exec, parallel agents, or skill
- * detours. The loop's positive surface (`wiki_*`) is exposed via the
- * tools' own `available` hooks. memory_*, dream_*, time_*, web_*,
- * and somora_docs_* stay enabled (the agent still needs to think,
- * note things, fact-check, and end the loop).
+ * conversation, not exec / parallel-agent / skill detours. The loop's
+ * positive surface (`wiki_*`) is exposed via the tools' own `available`
+ * hooks. memory_*, dream_*, time_*, web_*, and somora_docs_* stay
+ * enabled (the agent still needs to think, note things, fact-check,
+ * and end the loop).
+ *
+ * `file` toolset is intentionally NOT blocked at the toolset level —
+ * read-only file tools (file_read, file_search, file_list,
+ * analyze_file) are useful during a wiki review (look up source
+ * material, check what's on disk before proposing an edit). Only
+ * file_write and file_patch are blocked via LOOP_HIDDEN_TOOL_NAMES
+ * below so the agent can't escape the wiki-only write boundary.
  */
-const LOOP_HIDDEN_TOOLSETS = new Set<Toolset>(['file', 'exec', 'agents', 'skills']);
+const LOOP_HIDDEN_TOOLSETS = new Set<Toolset>(['exec', 'agents', 'skills']);
+
+/**
+ * Tool names hidden during loop even though their toolset is allowed.
+ * Use this to allow read-side tools while blocking write-side ones in
+ * the same toolset. Currently: keep file_read/_search/_list available
+ * but block file_write and file_patch — wiki edits go through wiki_*,
+ * any other filesystem mutation should wait until the loop ends.
+ */
+const LOOP_HIDDEN_TOOL_NAMES = new Set<string>(['file_write', 'file_patch']);
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
@@ -72,14 +88,24 @@ export class ToolRegistry {
     const holdsLoop = isLoopHolder(ctx.agent);
     const out: ToolDefinition[] = [];
     for (const tool of this.tools.values()) {
-      if (holdsLoop && tool.toolset && LOOP_HIDDEN_TOOLSETS.has(tool.toolset)) {
-        logger.debug({
-          msg: 'tool.hidden_during_loop',
-          name: tool.name,
-          toolset: tool.toolset,
-          agent: ctx.agent,
-        });
-        continue;
+      if (holdsLoop) {
+        if (LOOP_HIDDEN_TOOL_NAMES.has(tool.name)) {
+          logger.debug({
+            msg: 'tool.hidden_during_loop_byname',
+            name: tool.name,
+            agent: ctx.agent,
+          });
+          continue;
+        }
+        if (tool.toolset && LOOP_HIDDEN_TOOLSETS.has(tool.toolset)) {
+          logger.debug({
+            msg: 'tool.hidden_during_loop',
+            name: tool.name,
+            toolset: tool.toolset,
+            agent: ctx.agent,
+          });
+          continue;
+        }
       }
       if (!tool.available) {
         out.push(tool);

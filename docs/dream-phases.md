@@ -311,8 +311,12 @@ hans:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
 While the loop is active for an agent:
 
 - The agent gets `wiki_edit` / `wiki_create` / `wiki_delete` (loop-scoped)
-- The agent's `file_*` / `exec_*` / `agents_*` / `skill_*` / `tmux_*`
-  tools are temporarily hidden so the conversation stays focused
+- Read-only file tools (`file_read`, `file_search`, `file_list`,
+  `analyze_file`) stay available so the agent can look up source
+  material before proposing an edit. `file_write` / `file_patch` are
+  hidden — only wiki_* may mutate.
+- The agent's `exec_*` / `agents_*` / `skill_*` / `tmux_*` tools are
+  temporarily hidden so the conversation stays focused
 - Other agents continue normal operation but cannot start their own
   loop until this one ends — somora-instance-global lock
 - The TUI status line shows `📝 wiki-review:<agent>`

@@ -230,9 +230,18 @@ export async function buildReviewLoopBlock(agent: string): Promise<string | null
   );
   lines.push('');
   lines.push(
-    'Loop-scoped tools available: wiki_edit (update body and/or related/sources frontmatter), ' +
-      'wiki_create (new page), wiki_delete (remove page). Wiki edits go through mtime-aware writes; if a ' +
-      'page changed on disk between read and write, the call fails and you should refetch + retry.',
+    'Loop-scoped wiki tools: wiki_edit (update body and/or related/sources frontmatter), ' +
+      'wiki_create (new page), wiki_delete (remove page). Wiki edits go through mtime-aware writes; if ' +
+      'a page changed on disk between read and write, the call fails and you should refetch + retry.',
+  );
+  lines.push('');
+  lines.push(
+    'Other tools you can still use during the loop: memory_search/get/list/write/edit/delete (own ' +
+      'memory inbox), file_read/file_search/file_list/analyze_file (READ-ONLY filesystem — useful for ' +
+      "looking up source material before proposing an edit), web_search/web_fetch (fact-check), " +
+      'somora_docs_* (own documentation), time_now, dream_* (especially dream_review for the end ' +
+      'call). Hidden during the loop: file_write/file_patch, exec_*, tmux_*, agents_* (spawn/ask), ' +
+      'skill_*. They come back when you call dream_review action: "end".',
   );
   lines.push('');
   lines.push(`Findings (${open.length} pending of ${totalCount} total):`);
