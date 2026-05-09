@@ -77,6 +77,11 @@ metadata:
     requires:
       bins: [obsidian-cli]         # binaries that must be on PATH
       config: [obsidian.vault_dir] # config keys that must be set
+      env_vars:                    # env vars the skill needs at runtime —
+        - OBSIDIAN_API_TOKEN       # somora does NOT auto-inject these,
+                                   # the skill tool surfaces the list so
+                                   # the agent + you know what to set
+                                   # before invoking the skill's commands
     tags: [obsidian, daily-routine]
 ---
 
@@ -91,10 +96,26 @@ Validation at scan time:
 
 - `name` matches `^[a-z0-9]+(-[a-z0-9]+)*$` and equals the parent dir
 - `description` ≤ 1024 chars
-- `requires.bins` checked via `which`; missing → skill marked
-  `unavailable` (still listed, with a reason)
+- `requires.bins` checked at scan time. Hybrid lookup: a fast
+  `which` first, then a stat-based scan of well-known user-install
+  dirs (linuxbrew, homebrew, `~/.local/bin`, `~/go/bin`,
+  `~/.cargo/bin`, `~/bin`) so brew/cargo/go binaries that aren't on
+  the systemd-service PATH are still found. Missing → skill marked
+  `unavailable` (still listed, with a reason).
 - `requires.config` checked against the loaded config; missing →
-  same `unavailable` treatment
+  same `unavailable` treatment.
+- `requires.env_vars` is documentation only — somora does NOT
+  auto-inject these. The `skill` tool surfaces the list as
+  `requires_env_vars` so the agent knows what to ask the user for
+  (or look up in a personal secrets store) before running the
+  skill's commands. Equivalent of OpenClaw's MCP-server `env`
+  block, kept opt-in until somora has a first-class secrets store.
+
+When a skill is `available: false`, the `skill` tool prepends a
+warning header to the body so the agent doesn't blindly run
+commands that the environment can't execute. The body still ships
+in full — useful as reading material to reason about whether to
+install the missing dep or run via `exec({target: <other-host>})`.
 
 Skills that fail to parse (broken YAML, name/dirname mismatch) are
 warn-logged and silently skipped — the rest of the registry stays
@@ -136,6 +157,26 @@ agent the path and schema, so a one-shot prompt like:
 is enough for the agent to `file_write` the right file in the right
 place. After the file lands, the skill appears in `<available_skills>`
 on the **next turn** — no server restart needed.
+
+### Importing an existing ClawHub / OpenClaw skill
+
+somora has no auto-installer for ClawHub today; bring a skill in
+manually:
+
+1. The raw `SKILL.md` for OpenClaw-published skills lives at
+   `https://raw.githubusercontent.com/openclaw/openclaw/main/skills/<name>/SKILL.md`.
+   Fetch it with `web_fetch` or curl.
+2. Adapt the frontmatter to somora's namespace: somora reads only
+   `metadata.somora.*`, so move OpenClaw's `requires` / `when_to_use`
+   into a `metadata.somora` block. Leaving the original
+   `metadata.openclaw.*` next to it is fine — it's ignored.
+3. `file_write` the result to `~/.somora/skills/<slug>/SKILL.md`.
+   The slug must equal the dirname AND the frontmatter `name`.
+4. If the skill has scripts/ or assets/, fetch those into the same
+   folder.
+5. Hit the `skill` tool with the slug — body comes back live. If
+   `available: false`, install the missing bin (or set the env vars
+   from `requires_env_vars`) and call again.
 
 ## The `skill` tool
 

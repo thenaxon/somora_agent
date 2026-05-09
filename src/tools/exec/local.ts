@@ -23,6 +23,7 @@ import * as pty from 'node-pty';
 import { createWriteStream } from 'node:fs';
 import { join } from 'node:path';
 import { logger } from '../../server/logger.ts';
+import { extendedPath } from '../../skills/path-helpers.ts';
 import {
   clearLivePid,
   clearLiveStdin,
@@ -36,6 +37,20 @@ import {
   newJobId,
   type JobMeta,
 } from './job-store.ts';
+
+/**
+ * Build the env for a spawned subprocess. Always extends PATH with
+ * known user-install dirs (linuxbrew, homebrew, ~/.local/bin, …) so
+ * that brew/cargo/go binaries are reachable even when somora runs as
+ * a systemd user-service with the minimal default PATH. Caller-
+ * supplied env entries override on conflict (incl. PATH if explicitly
+ * provided).
+ */
+function buildSpawnEnv(callerEnv?: Record<string, string>): NodeJS.ProcessEnv {
+  const base: NodeJS.ProcessEnv = { ...process.env, PATH: extendedPath() };
+  if (callerEnv) Object.assign(base, callerEnv);
+  return base;
+}
 
 const DEFAULT_OUTPUT_CAP_BYTES = 256 * 1024;
 const DEFAULT_SYNC_TIMEOUT_MS = 60_000;
@@ -78,7 +93,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
   }
   const start = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
-  const env = opts.env ? { ...process.env, ...opts.env } : process.env;
+  const env = buildSpawnEnv(opts.env);
 
   return new Promise<LocalSyncResult>((resolve) => {
     const child = spawn(opts.command, {
@@ -181,7 +196,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
 async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult> {
   const start = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
-  const env = opts.env ? { ...process.env, ...opts.env } : process.env;
+  const env = buildSpawnEnv(opts.env);
 
   return new Promise<LocalSyncResult>((resolve) => {
     let term;
@@ -307,7 +322,7 @@ export async function localExecBackground(
   const stdoutPath = join(jobDir(opts.agent, job_id), 'stdout.log');
   const stderrPath = join(jobDir(opts.agent, job_id), 'stderr.log');
 
-  const env = opts.env ? { ...process.env, ...opts.env } : process.env;
+  const env = buildSpawnEnv(opts.env);
   const child = spawn(opts.command, {
     shell: true,
     cwd: opts.cwd,

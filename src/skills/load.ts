@@ -14,6 +14,7 @@
 // persona/loader.ts. If perf becomes an issue later we can cache.
 
 import { execFile } from 'node:child_process';
+import { findBin } from './path-helpers.ts';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -39,6 +40,11 @@ const SomoraExtrasSchema = z
       .object({
         bins: z.array(z.string().min(1)).optional(),
         config: z.array(z.string().min(1)).optional(),
+        /** Documentation list of env vars the skill needs at runtime.
+         *  somora does NOT auto-inject these (no secrets-store yet);
+         *  the skill tool surfaces the list so the agent + user know
+         *  what to export before invoking the skill's commands. */
+        env_vars: z.array(z.string().min(1)).optional(),
       })
       .optional(),
     tags: z.array(z.string().min(1)).optional(),
@@ -72,6 +78,10 @@ export interface LoadedSkill {
   requiresBins: string[];
   /** Frontmatter `requires.config` — already checked. */
   requiresConfig: string[];
+  /** Frontmatter `requires.env_vars` — documentation only, not
+   *  auto-injected. The skill tool surfaces this so the agent/user
+   *  know what to set before invoking commands from the body. */
+  requiresEnvVars: string[];
   /** Optional tags from `metadata.somora.tags`. */
   tags: string[];
   /** Absolute path to the skill folder (parent of SKILL.md). */
@@ -94,14 +104,11 @@ async function fileExists(p: string): Promise<boolean> {
 }
 
 async function isOnPath(bin: string): Promise<boolean> {
-  // `which` exits 0 if found, non-zero otherwise. We don't use the path
-  // itself — we just need a yes/no.
-  try {
-    await execFileP('which', [bin]);
-    return true;
-  } catch {
-    return false;
-  }
+  // Delegated to findBin so the hybrid which-then-stat strategy is
+  // shared with the exec tool's PATH enrichment. See path-helpers.ts
+  // for the full why (Hans bug 2026-05-09: brew/cargo/go binaries
+  // invisible to the systemd-service-default PATH).
+  return findBin(bin);
 }
 
 /** Resolve a dotted config key (e.g. `obsidian.vault_dir`) to a value
@@ -225,6 +232,7 @@ async function loadOneSkill(slug: string, config: Config): Promise<LoadedSkill |
     whenToUse: somora?.when_to_use,
     requiresBins: somora?.requires?.bins ?? [],
     requiresConfig: somora?.requires?.config ?? [],
+    requiresEnvVars: somora?.requires?.env_vars ?? [],
     tags: somora?.tags ?? [],
     dir,
     body: parsed.content.trim(),

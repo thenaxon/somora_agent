@@ -186,13 +186,26 @@ export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
       body_len: body.length,
     });
 
+    // When the skill is unavailable on this host (missing bin /
+    // missing config), prepend a clearly-marked warning to the body so
+    // the model doesn't blindly run commands the environment can't
+    // execute. Hans 2026-05-09: body alone was ambiguous when
+    // available:false.
+    const finalBody = skill.available
+      ? body
+      : `> ⚠️ **This skill is currently unavailable on this host: ${skill.unavailableReason ?? 'unknown reason'}.**\n` +
+        `> Either install the missing dependency, set the missing config, or run the skill's commands ` +
+        `via \`exec({target: <other-resource>})\` against a host that has them.\n\n` +
+        body;
+
     return {
       name: skill.name,
       description: skill.description,
       ...(skill.whenToUse ? { when_to_use: skill.whenToUse } : {}),
-      body,
+      body: finalBody,
       available: skill.available,
       ...(skill.unavailableReason ? { unavailable_reason: skill.unavailableReason } : {}),
+      ...(skill.requiresEnvVars.length > 0 ? { requires_env_vars: skill.requiresEnvVars } : {}),
       ...(skill.tags.length > 0 ? { tags: skill.tags } : {}),
     };
   },
