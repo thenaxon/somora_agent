@@ -191,33 +191,75 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (!d) return;
         if (d.state === 'delta') {
           patchStream(key, { thinking: false });
-          const existingId = streamingIdRef.current.get(key);
-          if (existingId) {
-            updateAssistantText(key, existingId, { text: d.text });
-          } else {
+          // Continue the in-flight assistant bubble ONLY if it's
+          // still the last message in the list. If a tool_call /
+          // tool_result was appended after the bubble started
+          // streaming, we want the next text to render BELOW the
+          // tool block (TUI-style ordering: tools above, agent
+          // answer below) — start a fresh bubble in that case.
+          setMessages((prev) => {
+            const list = prev[key] ?? [];
+            const last = list[list.length - 1];
+            const trackedId = streamingIdRef.current.get(key);
+            if (last && last.role === 'assistant' && last.id === trackedId) {
+              const next = list.slice();
+              next[next.length - 1] = { ...last, text: d.text };
+              return { ...prev, [key]: next };
+            }
+            // Tool block intervened (or first delta of the turn) —
+            // finalize any leftover-streaming bubble and start a
+            // fresh one. Cumulative-text: bubble carries d.text as
+            // its full content, no append needed.
+            const finalized = list.map((m) =>
+              m.role === 'assistant' && m.streaming ? { ...m, streaming: false } : m,
+            );
             const fresh = newId('msg');
             streamingIdRef.current.set(key, fresh);
-            appendMessage(key, {
-              id: fresh,
-              role: 'assistant',
-              ts: Date.now(),
-              text: d.text,
-              streaming: true,
-            });
-          }
+            return {
+              ...prev,
+              [key]: [
+                ...finalized,
+                {
+                  id: fresh,
+                  role: 'assistant',
+                  ts: Date.now(),
+                  text: d.text,
+                  streaming: true,
+                },
+              ],
+            };
+          });
         } else if (d.state === 'final') {
-          const existingId = streamingIdRef.current.get(key);
-          if (existingId) {
-            updateAssistantText(key, existingId, { text: d.text, streaming: false });
+          setMessages((prev) => {
+            const list = prev[key] ?? [];
+            const last = list[list.length - 1];
+            const trackedId = streamingIdRef.current.get(key);
+            if (last && last.role === 'assistant' && last.id === trackedId) {
+              const next = list.slice();
+              next[next.length - 1] = { ...last, text: d.text, streaming: false };
+              streamingIdRef.current.delete(key);
+              return { ...prev, [key]: next };
+            }
+            // Tool intervened between last delta and final: finalize
+            // the prior streaming bubble and append a fresh final
+            // assistant message below the tool block.
+            const finalized = list.map((m) =>
+              m.role === 'assistant' && m.streaming ? { ...m, streaming: false } : m,
+            );
             streamingIdRef.current.delete(key);
-          } else {
-            appendMessage(key, {
-              id: newId('msg'),
-              role: 'assistant',
-              ts: Date.now(),
-              text: d.text,
-            });
-          }
+            return {
+              ...prev,
+              [key]: [
+                ...finalized,
+                {
+                  id: newId('msg'),
+                  role: 'assistant',
+                  ts: Date.now(),
+                  text: d.text,
+                },
+              ],
+            };
+          });
         }
       });
 
@@ -232,11 +274,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             thinking: false,
             ...(d.usage ? { usage: d.usage } : {}),
           });
-          const existingId = streamingIdRef.current.get(key);
-          if (existingId) {
-            updateAssistantText(key, existingId, { streaming: false });
-            streamingIdRef.current.delete(key);
-          }
+          // Sweep any leftover streaming=true assistant bubbles —
+          // multi-segment turns (tool intervened mid-stream) can
+          // leave the pre-tool bubble unfinalized otherwise.
+          setMessages((prev) => {
+            const list = prev[key];
+            if (!list) return prev;
+            let changed = false;
+            const next = list.map((m) => {
+              if (m.role === 'assistant' && m.streaming) {
+                changed = true;
+                return { ...m, streaming: false };
+              }
+              return m;
+            });
+            if (!changed) return prev;
+            return { ...prev, [key]: next };
+          });
+          streamingIdRef.current.delete(key);
         }
       });
 
