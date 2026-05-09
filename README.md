@@ -4,7 +4,7 @@
 > persistent memory, a shared long-term wiki, and the ability to switch
 > between Claude, ChatGPT, and any OpenAI-compatible LLM mid-conversation.
 
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
 [![Node ≥20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](#requirements)
 
@@ -249,7 +249,7 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 
 ## License
 
-[Apache License 2.0](LICENSE). See also [NOTICE](NOTICE).
+[MIT](LICENSE).
 
 ---
 
