@@ -35,10 +35,25 @@ body {
   51%, 100% { opacity: 0; }
 }
 
+/* The chat container must strictly clip horizontally — the window
+ * body already hides overflow but flex children can blow past their
+ * parent's width if they have intrinsic min-content. */
+.chat {
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+.chat-body {
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 /* Click-dummy bubbles cap at 75% width but don't break long words —
  * a single unbroken token (URL, identifier, koalakoalakoala…) would
  * overflow and clip text mid-glyph. Force aggressive wrap. */
 .chat-msg-bubble {
+  min-width: 0;
   word-break: break-word;
   overflow-wrap: anywhere;
 }
@@ -48,6 +63,13 @@ body {
  * which breaks horizontal scroll on narrow windows. */
 .chat-body > * {
   max-width: 100%;
+  min-width: 0;
+}
+.chat-msg {
+  min-width: 0;
+  max-width: 100%;
+}
+.chat-msg > * {
   min-width: 0;
 }
 
@@ -63,6 +85,11 @@ body {
 }
 .chat-msg-bubble pre code {
   white-space: pre;
+}
+.chat-msg-bubble table {
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
 }
 
 /* Additional status-dot variants on top of click-dummy's online/busy.

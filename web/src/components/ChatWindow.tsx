@@ -16,7 +16,7 @@ import {
 import type { AgentInfo } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
 import { useSessionInfo } from '../hooks/useSessionInfo';
-import { useChatSession } from '../hooks/useChatSession';
+import { useChatSessionFromContext } from './ChatProvider';
 import { MessageItem } from './MessageItem';
 
 interface Props {
@@ -34,7 +34,7 @@ function formatTokens(n: number | undefined | null): string {
 export function ChatWindow({ agent, sessionId }: Props) {
   const color = resolveAgentColor(agent);
   const { model, thinking } = useSessionInfo(agent.name, sessionId);
-  const chat = useChatSession(agent.name, sessionId);
+  const chat = useChatSessionFromContext(agent.name, sessionId);
   const [showTools, setShowTools] = useState(false);
   const [draft, setDraft] = useState('');
 
