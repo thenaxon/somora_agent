@@ -13,8 +13,8 @@ const DEFAULT_CONFIG = `# somora server config — lives at ~/.somora/config.yam
 # documentation reference.
 #
 # Provider names ('anthropic', 'omlx' below) are free-form keys —
-# pick what's memorable for you. 'ollama', 'lmstudio', 'naxxen-cloud',
-# 'pi-im-keller' all work.
+# pick what's memorable for you. 'ollama', 'lmstudio', 'home-gpu',
+# 'pi-edge' all work.
 #
 # Per-model 'alias' lets you reference a model by short nickname anywhere
 # (in persona frontmatter, later via /model in the CLI). Aliases must be

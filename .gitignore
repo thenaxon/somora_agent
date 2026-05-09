@@ -22,3 +22,7 @@ FUTURE.md
 # npm pack tarballs (built per release, never tracked)
 somora-*.tgz
 scripts/
+
+# Internal docs — kept local, not for public repo.
+docs/research/
+docs/install-and-release.md

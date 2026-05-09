@@ -18,11 +18,11 @@ and contribute to via the Deep dream phase.
     ├── index.md                       ← auto-regenerated topology
     ├── personen/
     │   ├── familie-klein.md
-    │   ├── luca-horinek.md
+    │   ├── max-meier.md
     │   └── …
     ├── projekte/
     │   ├── somora.md
-    │   ├── naxxen.md
+    │   ├── internal-cms.md
     │   └── …
     ├── wissen/
     │   ├── runpod.md
@@ -174,7 +174,7 @@ Letztes Update: 2026-05-09 07:45 UTC von Deep
 
 ## Personen
 - [[personen/familie-klein]] — Family around Sarah Klein …
-- [[personen/anna]] — Niece, daughter of Nathalie …
+- [[personen/anna]] — Niece, daughter of Eva …
 
 ## Projekte
 - [[projekte/internal-cms]] — Internal CMS used by …

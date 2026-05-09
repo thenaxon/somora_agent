@@ -3,7 +3,7 @@
 # text in the real file — that file stays local, never committed.
 #
 # Provider names are free-form keys. Pick whatever's memorable for you:
-# 'anthropic', 'ollama', 'lmstudio', 'naxxen-cloud', 'pi-im-keller', etc.
+# 'anthropic', 'ollama', 'lmstudio', 'home-gpu', 'pi-edge', etc.
 #
 # Per-model 'alias' lets you reference a model by short nickname anywhere
 # (persona frontmatter, later /model in the CLI). Aliases must be globally

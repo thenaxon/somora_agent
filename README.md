@@ -158,8 +158,7 @@ somora server start    # registers as a systemd user service
 somora tui             # chat with the default agent
 ```
 
-See [docs/install-and-release.md](docs/install-and-release.md) for the full
-production install (systemd user-service, lockfile, update workflow).
+See [docs/setup.md](docs/setup.md) for first-run config and provider setup.
 
 ### Develop
 
@@ -234,7 +233,6 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 ## Documentation
 
 - [docs/setup.md](docs/setup.md) — install, providers, first run
-- [docs/install-and-release.md](docs/install-and-release.md) — production install (systemd, npm-pack workflow)
 - [docs/agents.md](docs/agents.md) — creating agents, persona files, model overrides
 - [docs/memory.md](docs/memory.md) — how the memory inbox works, vault integration, retrieval
 - [docs/wiki.md](docs/wiki.md) — the shared long-term wiki layer

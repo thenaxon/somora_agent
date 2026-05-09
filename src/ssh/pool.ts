@@ -2,10 +2,9 @@
 // open on first use, idle-closed after IDLE_TIMEOUT_MS, keepalive
 // pings every 30s to detect broken connections quickly.
 //
-// Auth: private key file only (no passwords, no agent forwarding —
-// see docs/research/tool-architecture.md and the user's stated
-// security posture). The keyfile is loaded once at first connect and
-// kept in process memory for the pool's lifetime.
+// Auth: private key file only (no passwords, no agent forwarding).
+// The keyfile is loaded once at first connect and kept in process
+// memory for the pool's lifetime.
 //
 // All file_* and exec tools that target a remote resource go through
 // here. Single chokepoint = single place for logging, lifecycle,

@@ -1,8 +1,9 @@
 # Setup
 
-> **Production-Install (systemd-Service, `somora server start`, `somora tui`)?**
-> Siehe [`install-and-release.md`](install-and-release.md) — diese Datei
-> beschreibt nur das **dev-Setup** zum Coden am Code.
+> Covers dev-setup (running from a checkout) and first-run config. For
+> a production install: `npm install -g .` followed by `somora server
+> start` registers a systemd user service — see the README for the
+> minimal end-to-end flow.
 
 ## Install (dev)
 

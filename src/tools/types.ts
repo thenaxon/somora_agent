@@ -115,8 +115,7 @@ export const DEFAULT_MAX_RESULT_SIZE_CHARS = 100_000;
 /**
  * Toolset tag — groups tools for log filtering and future allow/deny
  * lists (e.g. `tools.profile: minimal` would expose only memory + dream).
- * Add new tags here when introducing a new tool family; document the
- * rationale in docs/research/tool-architecture.md.
+ * Add new tags here when introducing a new tool family.
  */
 export type Toolset =
   | 'memory'
