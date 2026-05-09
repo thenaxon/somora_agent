@@ -120,27 +120,29 @@ export async function updateLucidFindingStatus(
   return { run, finding };
 }
 
-/** Mark all pending findings of a run as dismissed (bulk). */
+/** Mark all pending findings of a run as dismissed (bulk).
+ *
+ *  Always archives the run to processed/ when called — even when there
+ *  are zero pending findings (e.g. a failed run with `findings: []` or
+ *  one whose findings were all already resolved). Without this, failed
+ *  runs become zombies that `dream_list` keeps surfacing forever
+ *  (verified bug 2026-05-09: id 20260509-072036_manual_lucid). */
 export async function dismissEntireLucidRun(runId: string): Promise<LucidRun | null> {
   const run = await readLucidRunById(runId);
   if (!run) return null;
-  let touched = 0;
   for (const f of run.findings) {
     if (f.status === 'pending') {
       f.status = 'dismissed';
       f.resolved_at = new Date().toISOString();
-      touched++;
     }
   }
-  if (touched > 0) {
-    run.status = 'processed';
-    run.processed_at = new Date().toISOString();
-    await writeFile(runFilePath(run.id), JSON.stringify(run, null, 2), 'utf8');
-    try {
-      await rename(runFilePath(run.id, false), runFilePath(run.id, true));
-    } catch (err) {
-      logger.warn({ msg: 'lucid.run_move_to_processed_failed', runId, err: (err as Error).message });
-    }
+  run.status = 'processed';
+  run.processed_at = new Date().toISOString();
+  await writeFile(runFilePath(run.id), JSON.stringify(run, null, 2), 'utf8');
+  try {
+    await rename(runFilePath(run.id, false), runFilePath(run.id, true));
+  } catch (err) {
+    logger.warn({ msg: 'lucid.run_move_to_processed_failed', runId, err: (err as Error).message });
   }
   return run;
 }

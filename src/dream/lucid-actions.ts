@@ -8,6 +8,8 @@
 import { mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import matter from 'gray-matter';
+
 import { logger } from '../server/logger.ts';
 import {
   readWithMtime,
@@ -16,6 +18,21 @@ import {
 } from '../wiki/conflict.ts';
 import { buildInitialWikiPage, buildWikiPage, parseWikiPage } from '../wiki/templates.ts';
 import type { LucidFinding } from './lucid-types.ts';
+
+/**
+ * Strip a leading YAML frontmatter block from LLM-generated body, if
+ * the worker accidentally emitted one. The Lucid prompt asks for body-only,
+ * but Opus occasionally serializes the full page (frontmatter + body) into
+ * `newBody`. Without this guard the apply path produces double-frontmatter
+ * pages (verified bug 2026-05-09: 12 pages corrupted).
+ */
+function stripLeadingFrontmatter(body: string): string {
+  const trimmed = body.replace(/^[\s﻿]+/, '');
+  if (!trimmed.startsWith('---')) return body;
+  const parsed = matter(trimmed);
+  if (Object.keys(parsed.data).length === 0) return body;
+  return parsed.content.startsWith('\n') ? parsed.content : `\n${parsed.content}`;
+}
 
 export interface LucidActionContext {
   /** Absolute path to <vault>/<wiki-subfolder>. */
@@ -74,6 +91,7 @@ async function applyUpdatePage(
   }
   const parsed = parseWikiPage(existing.text);
   const today = isoDate();
+  const cleanBody = stripLeadingFrontmatter(newBody);
   const updatedPage = buildWikiPage({
     frontmatter: {
       ...parsed.frontmatter,
@@ -84,7 +102,7 @@ async function applyUpdatePage(
       ...(parsed.frontmatter.sources ? { sources: parsed.frontmatter.sources } : {}),
       ...(parsed.frontmatter.related ? { related: parsed.frontmatter.related } : {}),
     },
-    body: newBody.startsWith('\n') ? newBody : `\n${newBody}`,
+    body: cleanBody.startsWith('\n') ? cleanBody : `\n${cleanBody}`,
   });
   const writeRes = await writeIfMtimeUnchanged(fileAbs, updatedPage, existing.mtimeMs);
   if (writeRes.kind !== 'written') {
@@ -105,11 +123,12 @@ async function applyCreatePage(
 ): Promise<LucidApplyOutcome> {
   const fileAbs = join(ctx.wikiAbs, `${fix.wikiPath}.md`);
   await mkdir(dirname(fileAbs), { recursive: true });
+  const cleanBody = stripLeadingFrontmatter(fix.body);
   const pageContent = buildInitialWikiPage({
     slug: fix.wikiPath,
     type: fix.type,
     title: fix.title,
-    body: fix.body,
+    body: cleanBody,
     ...(fix.related && fix.related.length > 0 ? { related: fix.related } : {}),
   });
   const writeRes = await writeIfNotExists(fileAbs, pageContent);

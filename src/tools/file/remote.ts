@@ -18,8 +18,21 @@ const READ_HARD_CAP = 200_000;
  * relative inputs onto it. Same goes for `resource.workspace` if it's
  * tilde-prefixed. Posix-only — remote is assumed unix-y.
  *
- * the user's bug 2026-05-06: previously this returned the literal string
- * `~/_selftest/foo`, which SFTP interpreted as a directory called `~`.
+ * Path resolution order:
+ *  1. Absolute (`/foo/bar`) — normalize and return.
+ *  2. Tilde-prefixed (`~`, `~/foo`) — expand against SSH user's home.
+ *     Tilde overrides workspace; the user explicitly asked for $HOME.
+ *  3. Bare relative + workspace set — join onto resolved workspace.
+ *  4. Bare relative, no workspace — join onto SSH user's home.
+ *
+ * Bug history:
+ *  - 2026-05-06: returned literal `~/_selftest/foo` for relative paths
+ *    when no workspace was set; SFTP treated `~` as a real directory.
+ *    Fixed by routing through expandRemotePath.
+ *  - 2026-05-09 (Hans Bug 5): when BOTH workspace was set AND user
+ *    passed a `~/foo` path, the join produced `<workspace>/~/foo`
+ *    (literal `~` dir under workspace) for file_write/file_patch.
+ *    Fixed by branching on tilde BEFORE the workspace branch.
  */
 async function resolveRemotePath(
   rawPath: string,
@@ -27,6 +40,9 @@ async function resolveRemotePath(
   resource: SshResource,
 ): Promise<string> {
   if (posix.isAbsolute(rawPath)) return posix.normalize(rawPath);
+  if (rawPath === '~' || rawPath.startsWith('~/')) {
+    return expandRemotePath(resourceName, resource, rawPath);
+  }
   if (resource.workspace) {
     const workspaceAbs = await expandRemotePath(resourceName, resource, resource.workspace);
     return posix.normalize(posix.join(workspaceAbs, rawPath));
@@ -249,7 +265,11 @@ export async function remoteSearch(args: {
     if (result.code === 127 || result.stderr.includes('command not found') || result.stderr.includes('No such file')) {
       throw new Error(
         `file_search on '${args.resourceName}': ripgrep (rg) not installed. ` +
-          `Install via the remote's package manager.`,
+          `Install via the remote's package manager — e.g. ` +
+          `'brew install ripgrep' (macOS), ` +
+          `'apt install ripgrep' (Debian/Ubuntu), ` +
+          `'dnf install ripgrep' (Fedora/RHEL), or ` +
+          `'pacman -S ripgrep' (Arch).`,
       );
     }
     throw new Error(`file_search on '${args.resourceName}': rg exited ${result.code}: ${result.stderr.slice(0, 300)}`);

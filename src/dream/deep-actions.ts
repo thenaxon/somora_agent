@@ -17,6 +17,8 @@
 import { mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
+import matter from 'gray-matter';
+
 import { logger } from '../server/logger.ts';
 import { readWithMtime, writeIfMtimeUnchanged, writeIfNotExists } from '../wiki/conflict.ts';
 import {
@@ -24,6 +26,18 @@ import {
   buildWikiPage,
   parseWikiPage,
 } from '../wiki/templates.ts';
+
+/** Defensive guard: strip a leading YAML frontmatter block if the LLM
+ *  worker accidentally serialized one into the body field. The Deep
+ *  prompt asks for body-only; this is a safety net so any future model
+ *  drift can't reproduce the 2026-05-09 Lucid double-frontmatter bug. */
+function stripLeadingFrontmatter(body: string): string {
+  const trimmed = body.replace(/^[\s﻿]+/, '');
+  if (!trimmed.startsWith('---')) return body;
+  const parsed = matter(trimmed);
+  if (Object.keys(parsed.data).length === 0) return body;
+  return parsed.content.startsWith('\n') ? parsed.content : `\n${parsed.content}`;
+}
 import type {
   CandidateOutcome,
   MemoryFateDecision,
@@ -62,7 +76,7 @@ export async function applyPromote(args: {
     slug: wikiPath,
     type: decision.type,
     title: decision.title,
-    body: decision.body,
+    body: stripLeadingFrontmatter(decision.body),
     sources: [`${candidate.agent}/${candidate.slug}`],
     related: decision.related,
   });
@@ -153,6 +167,7 @@ export async function applyMerge(args: {
   if (decision.related) {
     for (const r of decision.related) relatedSet.add(r);
   }
+  const cleanBody = stripLeadingFrontmatter(decision.body);
   const newPage = buildWikiPage({
     frontmatter: {
       ...parsed.frontmatter,
@@ -163,7 +178,7 @@ export async function applyMerge(args: {
       sources: [...sourcesSet],
       ...(relatedSet.size > 0 ? { related: [...relatedSet] } : {}),
     },
-    body: decision.body.startsWith('\n') ? decision.body : `\n${decision.body}`,
+    body: cleanBody.startsWith('\n') ? cleanBody : `\n${cleanBody}`,
   });
 
   // Step 1: write wiki page (mtime check)

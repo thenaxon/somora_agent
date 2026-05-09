@@ -32,6 +32,16 @@ DO NOT:
 - Propose updates that you can't justify with concrete evidence from the wiki content.
 - Surface 100 findings — be selective. <20 is healthy for a 50-100-page wiki.
 
+CRITICAL — body field format for update_page and create_page:
+The "newBody" / "body" field MUST be the page body ONLY. It must NOT
+include YAML frontmatter, MUST NOT contain "---" delimiters, and MUST
+NOT repeat fields like slug/type/created/updated/sources/related. The
+apply pipeline writes frontmatter from existing page metadata; if you
+include a frontmatter block in body, the resulting page will have
+duplicated frontmatter and break the wiki index. Start the body with a
+section heading (e.g. "## Aktueller Stand") or a "# Title" line — never
+with "---".
+
 Output: ONE JSON object — no commentary, no markdown fences:
 
 {
