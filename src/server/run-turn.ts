@@ -32,7 +32,11 @@ import {
 } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
-import { buildReviewLoopBlock, refreshLoopActivity } from '../dream/loop-state.ts';
+import {
+  buildReviewLoopBlock,
+  refreshLoopActivity,
+  resetWikiCallCounter,
+} from '../dream/loop-state.ts';
 import { injectMemoryContext } from '../memory/inject.ts';
 import { getMemoryManager } from '../memory/registry.ts';
 import { logger } from './logger.ts';
@@ -201,6 +205,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // Loop-holder gets the active Lucid review block prepended to the
   // ephemeral context. Refreshed on every turn so the user can see
   // that the agent stays on topic until dream_review({action:'end'}).
+  // Each new user turn also resets the per-turn wiki_* call counter
+  // so the cap (MAX_WIKI_CALLS_PER_TURN) applies to *this* turn only.
   try {
     const reviewBlock = await buildReviewLoopBlock(agent);
     if (reviewBlock) {
@@ -208,6 +214,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ? `${reviewBlock}\n\n${ephemeralContext}`
         : reviewBlock;
       refreshLoopActivity(agent);
+      resetWikiCallCounter();
       logger.debug({ msg: 'dream.loop.injected', agent, session });
     }
   } catch (err) {

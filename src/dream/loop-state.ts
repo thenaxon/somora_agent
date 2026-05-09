@@ -29,6 +29,36 @@ const LOOP_STATE_PATH = join(SOMORA_HOME, 'wiki-lucid', 'loop-state.json');
  *  the loop is considered stale and gets cleared. 24h. */
 const IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
+/** Per-turn cap on `wiki_*` tool invocations from the loop holder.
+ *  Prevents the model from batch-editing multiple pages without
+ *  user-by-user confirmation. Three is enough for a coherent
+ *  multi-step plan ("create page + link from two existing pages")
+ *  that the user explicitly OK'd, but small enough to force a check-
+ *  in for anything bigger. The counter resets on every user turn. */
+export const MAX_WIKI_CALLS_PER_TURN = 3;
+
+/** In-memory wiki-call counter for the active turn. Module-level by
+ *  design — the lifetime is one user→agent turn, no need to persist. */
+let wikiCallsThisTurn = 0;
+
+export function resetWikiCallCounter(): void {
+  wikiCallsThisTurn = 0;
+}
+
+/** Increment the counter and return whether the call is permitted.
+ *  When `ok: false`, the wiki tool handler rejects the call with a
+ *  "one-step-at-a-time" error so the model has to come back to the
+ *  user before doing more. */
+export function noteWikiToolCall(): { ok: boolean; remaining: number; cap: number } {
+  wikiCallsThisTurn++;
+  const remaining = Math.max(0, MAX_WIKI_CALLS_PER_TURN - wikiCallsThisTurn);
+  return {
+    ok: wikiCallsThisTurn <= MAX_WIKI_CALLS_PER_TURN,
+    remaining,
+    cap: MAX_WIKI_CALLS_PER_TURN,
+  };
+}
+
 export interface LoopState {
   /** Agent holding the review loop (somora-instance-global, not per-agent). */
   agent: string;
@@ -160,21 +190,49 @@ export async function buildReviewLoopBlock(agent: string): Promise<string | null
     `You are in an active wiki review loop for Lucid run ${state.dreamId} (started ${state.startedAt}).`,
   );
   lines.push('');
-  lines.push('Your job during this loop:');
+  lines.push('CONVERSATION-FIRST DISCIPLINE — read this carefully, the user has been bitten before:');
+  lines.push('');
   lines.push(
-    '- Walk the user through each pending finding below. State what Lucid noticed, then DISCUSS — do not auto-apply.',
+    '1. ONE FINDING AT A TIME. Pick the next finding, summarize what Lucid noticed in your own words, ' +
+      'propose the SPECIFIC change you would make (which page, which fields, roughly what content), ' +
+      'then STOP and wait for the user to respond.',
   );
   lines.push(
-    '- Take the user\'s direction as authority: they may broaden the change, redirect to other pages, or skip a finding.',
+    `2. Before any wiki_* tool call you must have (a) described the exact change in your most recent ` +
+      `assistant message AND (b) received explicit user OK in their most recent user message for THAT ` +
+      `specific change. "Mach das" / "ja" / "passt" / "go" on a concrete proposal counts. A broad ` +
+      `instruction like "fix Mac Studio everywhere" does NOT — instead, list the affected pages first ` +
+      `and confirm scope before any edit.`,
   );
   lines.push(
-    '- Use the loop-scoped wiki tools to write changes: wiki_edit (overwrite body), wiki_create (new page), wiki_delete (remove page).',
+    `3. NEVER batch edits across pages without per-page confirmation. The server caps you at ${MAX_WIKI_CALLS_PER_TURN} ` +
+      `wiki_* calls per turn as a safety net; treat that as the ceiling, not the target. If the user ` +
+      `OKs a multi-step plan ("yes, edit those 3 pages now"), you may use up to ${MAX_WIKI_CALLS_PER_TURN} ` +
+      `calls in this turn and then summarize what you did in your reply.`,
   );
   lines.push(
-    '- Do NOT silently drop a finding. If the user says "skip this one", note that intent for the loop summary.',
+    `4. After every wiki_* call, summarize what landed and ASK the user before moving to the next ` +
+      `finding. Do not preemptively work on findings the user has not addressed.`,
   );
   lines.push(
-    '- When all findings are addressed AND the user signals they are done ("passt", "fertig", "alles gut so"), call dream_review with action: "end" and a summary covering what happened to each finding.',
+    `5. Out-of-scope pages: if the user gives a directive like "fix Mac Studio everywhere" and you spot ` +
+      `pages outside the Lucid findings that match, LIST them and ask "OK to also touch these?" before ` +
+      `editing — never silently extend scope.`,
+  );
+  lines.push(
+    `6. Do NOT silently drop a finding. If the user says "skip this one" / "machen wir später", note ` +
+      `that intent for the loop summary.`,
+  );
+  lines.push(
+    `7. When all findings are addressed AND the user signals they are done ("passt", "fertig", "alles ` +
+      `gut so", "schliess den loop"), call dream_review with action: "end" and a summary covering ` +
+      `what happened to each finding (applied / dismissed / deferred — be explicit).`,
+  );
+  lines.push('');
+  lines.push(
+    'Loop-scoped tools available: wiki_edit (update body and/or related/sources frontmatter), ' +
+      'wiki_create (new page), wiki_delete (remove page). Wiki edits go through mtime-aware writes; if a ' +
+      'page changed on disk between read and write, the call fails and you should refetch + retry.',
   );
   lines.push('');
   lines.push(`Findings (${open.length} pending of ${totalCount} total):`);

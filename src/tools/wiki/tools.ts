@@ -15,7 +15,11 @@ import { dirname, join } from 'node:path';
 
 import { z } from 'zod';
 
-import { isLoopHolder, refreshLoopActivity } from '../../dream/loop-state.ts';
+import {
+  isLoopHolder,
+  noteWikiToolCall,
+  refreshLoopActivity,
+} from '../../dream/loop-state.ts';
 import { resolveObsidianSource } from '../../memory/registry.ts';
 import { logger } from '../../server/logger.ts';
 import {
@@ -69,24 +73,87 @@ function validateWikiPath(p: string): string {
 
 const HOLDER_GATE = (ctx: ToolContext): boolean => isLoopHolder(ctx.agent);
 
+/** Enforce the per-turn cap before doing any work. Throws an error
+ *  the model can read and react to ("describe the next change and
+ *  wait for the user before continuing"). */
+function enforcePerTurnCap(toolName: string): void {
+  const probe = noteWikiToolCall();
+  if (probe.ok) return;
+  throw new Error(
+    `${toolName}: per-turn wiki cap reached (${probe.cap} edits per turn). ` +
+      `STOP — describe the next change in your reply and wait for the user to confirm before doing more. ` +
+      `The cap resets on the user's next message.`,
+  );
+}
+
+function applyFrontmatterOps(
+  current: Record<string, unknown>,
+  ops: {
+    relatedAdd?: string[];
+    relatedRemove?: string[];
+    sourcesAdd?: string[];
+    sourcesRemove?: string[];
+  },
+): Record<string, unknown> {
+  const next = { ...current };
+  const relatedSet = new Set<string>(
+    Array.isArray(current.related) ? (current.related as string[]) : [],
+  );
+  for (const r of ops.relatedAdd ?? []) relatedSet.add(r);
+  for (const r of ops.relatedRemove ?? []) relatedSet.delete(r);
+  if (relatedSet.size > 0) next.related = [...relatedSet];
+  else delete next.related;
+
+  const sourcesSet = new Set<string>(
+    Array.isArray(current.sources) ? (current.sources as string[]) : [],
+  );
+  for (const s of ops.sourcesAdd ?? []) sourcesSet.add(s);
+  for (const s of ops.sourcesRemove ?? []) sourcesSet.delete(s);
+  if (sourcesSet.size > 0) next.sources = [...sourcesSet];
+  else delete next.sources;
+
+  return next;
+}
+
 // ─── wiki_edit ──────────────────────────────────────────────────────
 
-const EditInput = z.object({
-  wikiPath: z.string().min(1),
-  newBody: z.string().min(1),
-  logSummary: z.string().optional(),
-});
+const EditInput = z
+  .object({
+    wikiPath: z.string().min(1),
+    newBody: z.string().optional(),
+    relatedAdd: z.array(z.string()).optional(),
+    relatedRemove: z.array(z.string()).optional(),
+    sourcesAdd: z.array(z.string()).optional(),
+    sourcesRemove: z.array(z.string()).optional(),
+    logSummary: z.string().optional(),
+  })
+  .refine(
+    (v) =>
+      typeof v.newBody === 'string' ||
+      (v.relatedAdd && v.relatedAdd.length > 0) ||
+      (v.relatedRemove && v.relatedRemove.length > 0) ||
+      (v.sourcesAdd && v.sourcesAdd.length > 0) ||
+      (v.sourcesRemove && v.sourcesRemove.length > 0),
+    { message: 'wiki_edit needs at least one of: newBody, relatedAdd, relatedRemove, sourcesAdd, sourcesRemove' },
+  );
 
 export const wikiEdit: ToolDefinition<z.infer<typeof EditInput>> = {
   name: 'wiki_edit',
   toolset: 'wiki',
   description:
-    'Overwrite the body of an existing wiki page. ONLY available while you hold the ' +
-    'active dream_review loop. Frontmatter is preserved and the `updated` field is ' +
-    "auto-refreshed; pass body content WITHOUT '---' frontmatter delimiters and " +
-    'WITHOUT a leading H1 (the existing title stays unless you replace the whole body). ' +
-    'mtime-aware: if the page changed on disk since the last read (e.g. the user edited ' +
-    'in Obsidian), the write fails and you should fetch fresh content.',
+    'Update an existing wiki page. ONLY available while you hold the active dream_review loop. ' +
+    'You can change the body, the frontmatter `related:` list, the frontmatter `sources:` list, or ' +
+    'any combination — pass only the fields you want to touch.\n' +
+    '\n' +
+    "Body edit: pass `newBody` WITHOUT '---' frontmatter delimiters and WITHOUT a leading H1. The " +
+    'existing title stays unless you replace the whole body explicitly.\n' +
+    '\n' +
+    'Frontmatter edits: use `relatedAdd` / `relatedRemove` / `sourcesAdd` / `sourcesRemove` (each an ' +
+    'array of strings). These mutate the existing list — pass the slugs to add/remove, not the full ' +
+    'replacement list. Useful for fixing dead refs in `related:` (call with relatedRemove: ["dead/page"]).\n' +
+    '\n' +
+    "The `updated` field is auto-refreshed on any edit. Mtime-aware: if the page changed on disk " +
+    "since the last read, the write fails and you should refetch + retry.",
   inputSchema: EditInput,
   jsonSchema: {
     type: 'object',
@@ -98,19 +165,41 @@ export const wikiEdit: ToolDefinition<z.infer<typeof EditInput>> = {
       newBody: {
         type: 'string',
         description:
-          'Full new body markdown (no frontmatter, no leading "---"). Use sections like ' +
-          '"## Aktueller Stand", "## Eigenschaften", "## Zeitleiste", "## Notizen" if appropriate.',
+          'Optional. Full new body markdown (no frontmatter, no leading "---"). Use sections like ' +
+          '"## Aktueller Stand", "## Eigenschaften", "## Zeitleiste", "## Notizen" if appropriate. ' +
+          'Omit when only the frontmatter (related/sources) needs to change.',
+      },
+      relatedAdd: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Slugs to add to the `related:` frontmatter list. Idempotent.',
+      },
+      relatedRemove: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Slugs to remove from `related:`. Use this to clear dead refs without touching body.',
+      },
+      sourcesAdd: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Strings to add to the `sources:` frontmatter list. Idempotent.',
+      },
+      sourcesRemove: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Strings to remove from `sources:`.',
       },
       logSummary: {
         type: 'string',
         description: 'One-line summary for the audit log. Optional — auto-generated if omitted.',
       },
     },
-    required: ['wikiPath', 'newBody'],
+    required: ['wikiPath'],
     additionalProperties: false,
   },
   available: HOLDER_GATE,
   async handler(input, ctx) {
+    enforcePerTurnCap('wiki_edit');
     refreshLoopActivity(ctx.agent);
     const wikiAbs = resolveWikiAbs(ctx);
     const wikiPath = validateWikiPath(input.wikiPath);
@@ -121,17 +210,27 @@ export const wikiEdit: ToolDefinition<z.infer<typeof EditInput>> = {
     }
     const parsed = parseWikiPage(existing.text);
     const today = isoDate();
+    const fmNext = applyFrontmatterOps(parsed.frontmatter, {
+      ...(input.relatedAdd ? { relatedAdd: input.relatedAdd } : {}),
+      ...(input.relatedRemove ? { relatedRemove: input.relatedRemove } : {}),
+      ...(input.sourcesAdd ? { sourcesAdd: input.sourcesAdd } : {}),
+      ...(input.sourcesRemove ? { sourcesRemove: input.sourcesRemove } : {}),
+    });
+    fmNext.slug = (parsed.frontmatter.slug as string) || wikiPath;
+    fmNext.type = parsed.frontmatter.type;
+    fmNext.created = (parsed.frontmatter.created as string) || today;
+    fmNext.updated = today;
+    const bodyOut =
+      typeof input.newBody === 'string'
+        ? input.newBody.startsWith('\n')
+          ? input.newBody
+          : `\n${input.newBody}`
+        : parsed.body;
     const updatedPage = buildWikiPage({
-      frontmatter: {
-        ...parsed.frontmatter,
-        slug: parsed.frontmatter.slug || wikiPath,
-        type: parsed.frontmatter.type,
-        created: parsed.frontmatter.created || today,
-        updated: today,
-        ...(parsed.frontmatter.sources ? { sources: parsed.frontmatter.sources } : {}),
-        ...(parsed.frontmatter.related ? { related: parsed.frontmatter.related } : {}),
-      },
-      body: input.newBody.startsWith('\n') ? input.newBody : `\n${input.newBody}`,
+      // applyFrontmatterOps preserves all unknown fields, builder
+      // re-orders the standard ones; cast back to the typed shape.
+      frontmatter: fmNext as typeof parsed.frontmatter,
+      body: bodyOut,
     });
     const writeRes = await writeIfMtimeUnchanged(fileAbs, updatedPage, existing.mtimeMs);
     if (writeRes.kind !== 'written') {
@@ -140,8 +239,29 @@ export const wikiEdit: ToolDefinition<z.infer<typeof EditInput>> = {
       );
     }
     const summary = input.logSummary ?? `${wikiPath} updated via dream_review`;
-    logger.info({ msg: 'wiki.edit_via_review', agent: ctx.agent, wikiPath, summary });
-    return { wikiPath, status: 'updated', summary };
+    logger.info({
+      msg: 'wiki.edit_via_review',
+      agent: ctx.agent,
+      wikiPath,
+      summary,
+      bodyChanged: typeof input.newBody === 'string',
+      relatedAdd: input.relatedAdd?.length ?? 0,
+      relatedRemove: input.relatedRemove?.length ?? 0,
+      sourcesAdd: input.sourcesAdd?.length ?? 0,
+      sourcesRemove: input.sourcesRemove?.length ?? 0,
+    });
+    return {
+      wikiPath,
+      status: 'updated',
+      summary,
+      bodyChanged: typeof input.newBody === 'string',
+      frontmatterChanged:
+        (input.relatedAdd?.length ?? 0) +
+          (input.relatedRemove?.length ?? 0) +
+          (input.sourcesAdd?.length ?? 0) +
+          (input.sourcesRemove?.length ?? 0) >
+        0,
+    };
   },
 };
 
@@ -195,6 +315,7 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
   },
   available: HOLDER_GATE,
   async handler(input, ctx) {
+    enforcePerTurnCap('wiki_create');
     refreshLoopActivity(ctx.agent);
     const wikiAbs = resolveWikiAbs(ctx);
     const wikiPath = validateWikiPath(input.wikiPath);
@@ -247,6 +368,7 @@ export const wikiDelete: ToolDefinition<z.infer<typeof DeleteInput>> = {
   },
   available: HOLDER_GATE,
   async handler(input, ctx) {
+    enforcePerTurnCap('wiki_delete');
     refreshLoopActivity(ctx.agent);
     const wikiAbs = resolveWikiAbs(ctx);
     const wikiPath = validateWikiPath(input.wikiPath);
