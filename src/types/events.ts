@@ -142,12 +142,18 @@ export type SseEvent =
       // session live so they see the inbound A2A turn appear in real
       // time, rendered with the sender's icon instead of their own.
       //
-      // Self-typed user turns never come over this event — the TUI
-      // already echoes those locally on submit.
+      // Now ALSO fired for self-typed turns so multi-client setups
+      // (TUI tail + web window open at once) see each other's
+      // inputs live. Senders dedupe their own optimistic copy by
+      // recent-text — TUI does this implicitly via the local echo,
+      // web's ChatProvider tracks pending texts in a ref.
       event: 'user_message';
       data: {
         text: string;
-        from_agent: string;
+        ts?: number;
+        /** Set only when the message came from another agent
+         *  (A2A). Self-typed user turns omit it. */
+        from_agent?: string;
         agent_ask_call_id?: string;
       };
     };

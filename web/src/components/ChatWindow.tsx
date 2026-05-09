@@ -22,6 +22,10 @@ import { MessageItem } from './MessageItem';
 interface Props {
   agent: AgentInfo;
   sessionId: string;
+  /** Window-manager focus state. When this flips to true (e.g. user
+   *  clicked the window), the chat auto-focuses the input textarea
+   *  so they can type immediately without an extra click. */
+  windowFocused?: boolean;
 }
 
 function formatTokens(n: number | undefined | null): string {
@@ -31,7 +35,7 @@ function formatTokens(n: number | undefined | null): string {
   return String(n);
 }
 
-export function ChatWindow({ agent, sessionId }: Props) {
+export function ChatWindow({ agent, sessionId, windowFocused }: Props) {
   const color = resolveAgentColor(agent);
   const { model, thinking } = useSessionInfo(agent.name, sessionId);
   const chat = useChatSessionFromContext(agent.name, sessionId);
@@ -57,6 +61,17 @@ export function ChatWindow({ agent, sessionId }: Props) {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [chat.messages, chat.streaming, chat.thinking]);
+
+  // Auto-focus the input whenever the window becomes focused (user
+  // clicks anywhere in it, taskbar selects it, etc.) — saves an
+  // extra click before typing. Skip if the user is currently
+  // selecting text in the body.
+  useEffect(() => {
+    if (!windowFocused) return;
+    const sel = window.getSelection?.();
+    if (sel && sel.toString().length > 0) return;
+    textareaRef.current?.focus();
+  }, [windowFocused]);
 
   // Filter messages by tools-toggle. When off, hide tool_call +
   // tool_result rows from the view (they remain in the underlying
@@ -282,9 +297,22 @@ export function ChatWindow({ agent, sessionId }: Props) {
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value);
-            // Auto-grow up to 120px.
-            e.target.style.height = 'auto';
-            e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+            // Auto-grow up to 120px. Reset to 0 so scrollHeight
+            // reflects the new content exactly; otherwise the
+            // browser keeps the prior height as the floor and we
+            // can't shrink. Setting overflowY explicitly avoids
+            // the always-on mini scrollbar that the default `auto`
+            // shows even when the content fits.
+            const el = e.target;
+            el.style.height = '0px';
+            const desired = el.scrollHeight;
+            if (desired <= 120) {
+              el.style.height = desired + 'px';
+              el.style.overflowY = 'hidden';
+            } else {
+              el.style.height = '120px';
+              el.style.overflowY = 'auto';
+            }
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -293,6 +321,7 @@ export function ChatWindow({ agent, sessionId }: Props) {
             }
           }}
           disabled={chat.streaming}
+          style={{ overflowY: 'hidden' }}
         />
         {chat.streaming ? (
           <button

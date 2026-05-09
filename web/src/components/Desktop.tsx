@@ -5,10 +5,12 @@
 // taskbar (bottom). Window manager state is owned here so dock
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
+import { useMemo } from 'react';
 import { AgentDock } from './AgentDock';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
 import { ChatWindow } from './ChatWindow';
+import { useChatContext } from './ChatProvider';
 import { useAgents } from '../hooks/useAgents';
 import { useLoopState } from '../hooks/useLoopState';
 import { useWindowManager } from '../hooks/useWindowManager';
@@ -19,6 +21,16 @@ export function Desktop() {
   const { agents, loading, error } = useAgents();
   const loopState = useLoopState();
   const wm = useWindowManager();
+  const chatCtx = useChatContext();
+
+  // Streaming agents — derive from the live session-key snapshot in
+  // ChatProvider. Each key is `agent::session`; we strip the session
+  // suffix so the dock's status-dot reflects "this agent has any
+  // session currently streaming".
+  const streamingAgents = useMemo(
+    () => new Set(chatCtx.streamingKeys.map((k) => k.split('::')[0]!)),
+    [chatCtx.streamingKeys],
+  );
 
   function handleAgentClick(agent: AgentInfo) {
     wm.openChat({
@@ -48,6 +60,7 @@ export function Desktop() {
           onAgentClick={handleAgentClick}
           loopHolder={loopState.active ? loopState.agent : null}
           activeAgentIds={activeAgentIds}
+          streamingAgents={streamingAgents}
         />
 
         {wm.windows.map((win) => {
@@ -67,7 +80,11 @@ export function Desktop() {
                 onResize={wm.resize}
                 agentColor={color}
               >
-                <ChatWindow agent={agent} sessionId={win.sessionId ?? 'main'} />
+                <ChatWindow
+                  agent={agent}
+                  sessionId={win.sessionId ?? 'main'}
+                  windowFocused={wm.focusedId === win.id}
+                />
               </Window>
             );
           }

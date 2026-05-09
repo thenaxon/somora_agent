@@ -231,16 +231,20 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
   });
 
-  // Live broadcast for A2A inbound messages: a human watching the
-  // target's session sees the inbound turn appear in real time. Fires
-  // only when fromAgent is set; self-typed turns are echoed by the TUI
-  // locally and don't need the wire round-trip.
-  if (publishSse && fromAgent) {
+  // Live broadcast user_message to ALL session subscribers — A2A
+  // inbounds AND self-typed turns. This matters when multiple
+  // clients watch the same session (a TUI tail + a web window
+  // open at once), or when one client wrote the message and the
+  // others should see it appear live. Senders dedupe their own
+  // optimistic-local copy by recent-text or local id; receivers
+  // just render it.
+  if (publishSse) {
     await publishSse({
       event: 'user_message',
       data: {
         text,
-        from_agent: fromAgent,
+        ts: Date.now(),
+        ...(fromAgent ? { from_agent: fromAgent } : {}),
         ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
       },
     });

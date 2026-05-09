@@ -56,6 +56,10 @@ interface ChatContextValue {
   subscribe: (agent: string, session: string) => () => void;
   getMessages: (agent: string, session: string) => ChatMessage[];
   getStream: (agent: string, session: string) => SessionStreamState;
+  /** All session-keys (agent::session) that are currently streaming.
+   *  Drives the dock's per-agent streaming dot — Desktop derives a
+   *  Set<agentName> from this snapshot. */
+  streamingKeys: string[];
   send: (agent: string, session: string, text: string) => Promise<void>;
   abort: (agent: string, session: string) => Promise<void>;
 }
@@ -64,6 +68,7 @@ const ChatContext = createContext<ChatContextValue>({
   subscribe: () => () => {},
   getMessages: () => [],
   getStream: () => initialStreamState,
+  streamingKeys: [],
   send: async () => {},
   abort: async () => {},
 });
@@ -84,6 +89,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // Track the in-flight assistant message id per session — a delta
   // appends to that bubble, an agent.end finalizes it.
   const streamingIdRef = useRef<Map<string, string>>(new Map());
+  // Pending texts we just sent — used to dedupe the server's
+  // user_message echo against our optimistic local-user message so
+  // we don't render the same text twice.
+  const pendingSelfSendsRef = useRef<Map<string, string[]>>(new Map());
 
   const patchStream = useCallback((key: string, patch: Partial<SessionStreamState>) => {
     setStreams((prev) => {
@@ -289,6 +298,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       es.addEventListener('user_message', (ev) => {
         const d = parse<{ text: string; ts: number; from_agent?: string }>(ev as MessageEvent);
         if (!d) return;
+        // Dedupe self-send echo: if this exact text sits in our
+        // pending-self-sends set for this session, the optimistic
+        // local-user message already represents it. Drop the echo
+        // and consume the pending entry so a real second send of
+        // the same text down the line still echoes properly.
+        if (!d.from_agent) {
+          const pending = pendingSelfSendsRef.current.get(key) ?? [];
+          const idx = pending.indexOf(d.text);
+          if (idx >= 0) {
+            pending.splice(idx, 1);
+            pendingSelfSendsRef.current.set(key, pending);
+            return;
+          }
+        }
         appendMessage(key, {
           id: newId('um'),
           role: 'user',
@@ -335,15 +358,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     async (agent, session, text) => {
       if (!text.trim()) return;
       const key = sessionKey(agent, session);
-      // Optimistic user-message append — server doesn't broadcast a
-      // user_message SSE event for self-sent posts (only for A2A).
+      // Track the text so we can dedupe the server's user_message
+      // echo against our optimistic local copy.
+      const pending = pendingSelfSendsRef.current.get(key) ?? [];
+      pending.push(text);
+      pendingSelfSendsRef.current.set(key, pending);
+      // Optimistic user-message append — better UX than waiting for
+      // the server round-trip.
       appendMessage(key, {
         id: newId('local-user'),
         role: 'user',
         ts: Date.now(),
         text,
       });
-      await api.send(agent, session, text);
+      try {
+        await api.send(agent, session, text);
+      } catch (err) {
+        // Send failed — remove the pending dedupe entry so a future
+        // identical text can still be echoed normally.
+        const cur = pendingSelfSendsRef.current.get(key) ?? [];
+        const i = cur.indexOf(text);
+        if (i >= 0) {
+          cur.splice(i, 1);
+          pendingSelfSendsRef.current.set(key, cur);
+        }
+        throw err;
+      }
     },
     [appendMessage],
   );
@@ -361,9 +401,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const streamingKeys = useMemo(
+    () =>
+      Object.entries(streams)
+        .filter(([, s]) => s.streaming)
+        .map(([k]) => k),
+    [streams],
+  );
+
   const value = useMemo<ChatContextValue>(
-    () => ({ subscribe, getMessages, getStream, send, abort }),
-    [subscribe, getMessages, getStream, send, abort],
+    () => ({ subscribe, getMessages, getStream, streamingKeys, send, abort }),
+    [subscribe, getMessages, getStream, streamingKeys, send, abort],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
