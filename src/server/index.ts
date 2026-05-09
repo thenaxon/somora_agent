@@ -1,4 +1,5 @@
 import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
@@ -1108,6 +1109,28 @@ const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 // localhost vs 127.0.0.1 stays consistent.
 process.env.SOMORA_PORT = String(port);
 process.env.SOMORA_HOST ??= '127.0.0.1';
+const bindHost = process.env.SOMORA_HOST ?? '127.0.0.1';
+// Child-process callers (MCP, openai-compat) need a routable host to
+// reach back to /chat/send-sync. When the server binds to 0.0.0.0
+// for LAN access, that's not a valid client target — substitute
+// 127.0.0.1 in the env so children loopback rather than guessing.
+if (bindHost === '0.0.0.0') {
+  process.env.SOMORA_HOST = '127.0.0.1';
+}
+
+// Static mount for the web client. Built artifacts live at
+// `web/dist/` (vite output, base `/web/`), so mounting them at
+// `/web/*` makes the same-origin path work in production. Dev still
+// uses vite at :5173 with a proxy to this server.
+const webDistDir = new URL('../../web/dist/', import.meta.url).pathname;
+app.use(
+  '/web/*',
+  serveStatic({
+    root: webDistDir,
+    rewriteRequestPath: (path) => path.replace(/^\/web\/?/, '/'),
+  }),
+);
+app.get('/web', (c) => c.redirect('/web/'));
 
 // Acquire single-active-server lockfile. Refuses to start if another
 // somora process is alive (live PID match). Stale locks (process gone)
@@ -1264,8 +1287,8 @@ const lucidWorker = new LucidWorker({ config });
 lucidWorker.start();
 configureDreamRunTool({ deepWorker, lucidWorker });
 
-serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
-  logger.info({ msg: 'server.start', port: info.port });
+serve({ fetch: app.fetch, port, hostname: bindHost }, (info) => {
+  logger.info({ msg: 'server.start', port: info.port, host: bindHost });
 });
 
 // Best-effort cleanup on signal — keeps embedding processes from lingering
