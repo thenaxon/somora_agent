@@ -28,7 +28,7 @@ import type { RemConfig } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { listSessions, sessionMetaStore } from '../storage/sessions.ts';
 import { listDreams } from './storage.ts';
-import { runDream } from './runner.ts';
+import { runDream } from './rem-runner.ts';
 
 interface AgentState {
   agent: string;
@@ -253,7 +253,7 @@ export class RemWorker {
         // Resume path — runner.ts:resumeDream re-runs from scratch in v1
         // (DECISION #32: cleaner dedup story). We pass the same source
         // session + the dream's id to clean up the paused file.
-        const { resumeDream } = await import('./runner.ts');
+        const { resumeDream } = await import('./rem-runner.ts');
         const result = await resumeDream({
           agent: state.agent,
           id: target.dreamId,

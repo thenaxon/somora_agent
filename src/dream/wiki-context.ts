@@ -1,14 +1,19 @@
-// Wiki-context loaders for REM (Session→Memory dedup) and Deep
+// Unified wiki-context loader for REM (Session→Memory dedup) and Deep
 // (Memory→Wiki decision).
 //
-// Both load wiki pages relevant to a query (session text for REM,
-// memory body for Deep). Recall-driven via embedding+BM25 search
-// over source='wiki' chunks. Deep additionally loads index.md as
-// always-on topology header so the LLM sees what subfolders exist
-// even when no specific page matches.
+// Both phases need to see what's already in the wiki to make sane
+// decisions:
+//   - REM: "did the user just say something I already have in the wiki?"
+//   - Deep: "is this memory file already covered by a wiki page?"
+//
+// The shape is identical: index.md as topology header + top-N
+// embedding-matched wiki pages with full bodies. The query just
+// differs (session user-text for REM, memory-body for Deep).
 //
 // As of v2.2 the stub-pattern is gone — no per-memory pointers to
 // wiki pages. All wiki-context comes from recall.
+//
+// See `private/dream-system-v2.md` § "Phase REM" / "Phase Deep".
 
 import type { MemoryManager } from '../memory/manager.ts';
 import { logger } from '../server/logger.ts';
@@ -17,50 +22,41 @@ import { join } from 'node:path';
 import matter from 'gray-matter';
 
 export interface ReferencedWikiPage {
-  slug: string; // wiki path without .md (e.g. 'personen/luca')
+  /** Wiki path without .md (e.g. 'personen/luca'). */
+  slug: string;
   markdown: string;
-  source: 'recall';
 }
 
-/** REM context: top-N wiki pages relevant to a session's user-text. */
-export async function loadReferencedWiki(args: {
-  agent: string;
+export interface WikiContext {
+  /** index.md content (capped at 4 KB). Always present. Empty/placeholder
+   *  string when no index.md exists yet. */
+  indexSummary: string;
+  /** Top-N wiki pages relevant to the query, full body (page-cap 8 KB). */
+  relevantPages: ReferencedWikiPage[];
+}
+
+export async function loadWikiContext(args: {
   mgr: MemoryManager;
-  /** Combined user-text from the session range, for the recall query. */
-  recallQuery: string;
-  /** Absolute path to <vault>/<wiki-subfolder>. */
+  /** Embedding query — session user-text for REM, memory body for Deep. */
+  query: string;
+  /** Absolute path to <vault>/<wiki-subfolder>. Null disables the loader. */
   wikiAbs: string | null;
-  /** Hard cap on number of wiki pages returned. */
-  limit?: number;
-}): Promise<ReferencedWikiPage[]> {
-  if (!args.wikiAbs) return [];
-  return await recallTopWikiPages({
-    mgr: args.mgr,
-    query: args.recallQuery,
-    limit: args.limit ?? 20,
-  });
-}
-
-/** Deep context: index.md (topology) + top-N wiki pages relevant
- *  to the memory body. Used by the unified Deep prompt to decide
- *  Skip/Promote/Merge in one LLM call. */
-export async function loadDeepWikiContext(args: {
-  mgr: MemoryManager;
-  /** Memory body text — used as the embedding query for relevant pages. */
-  memoryQuery: string;
-  /** Absolute path to <vault>/<wiki-subfolder>. */
-  wikiAbs: string;
-  /** Top-N wiki pages to include as full bodies. Default 8. */
+  /** Top-N pages to include as full bodies. Default 8. */
   topN?: number;
-}): Promise<{ indexSummary: string; relevantPages: ReferencedWikiPage[] }> {
+}): Promise<WikiContext> {
+  if (!args.wikiAbs) {
+    return {
+      indexSummary: '(wiki disabled — no vault configured)',
+      relevantPages: [],
+    };
+  }
+
   const topN = args.topN ?? 8;
 
   // 1. Load index.md as topology header.
   let indexSummary = '';
   try {
     const indexRaw = await readFile(join(args.wikiAbs, 'index.md'), 'utf8');
-    // Strip the verbose "Letzte Updates" tail when index gets large —
-    // we want stable topology, not changelog noise. Cap at 4 KB.
     indexSummary =
       indexRaw.length > 4000
         ? indexRaw.slice(0, 4000) + '\n\n…(index truncated)'
@@ -75,7 +71,7 @@ export async function loadDeepWikiContext(args: {
   // 2. Recall top-N relevant pages.
   const relevantPages = await recallTopWikiPages({
     mgr: args.mgr,
-    query: args.memoryQuery,
+    query: args.query,
     limit: topN,
   });
 
@@ -100,7 +96,7 @@ async function recallTopWikiPages(args: {
       if (seen.size >= args.limit) break;
       try {
         const wikiRaw = await readFile(h.filePath, 'utf8');
-        seen.set(h.slug, { slug: h.slug, markdown: wikiRaw, source: 'recall' });
+        seen.set(h.slug, { slug: h.slug, markdown: wikiRaw });
       } catch (err) {
         logger.debug({
           msg: 'dream.wiki_ctx.recall_hit_read_failed',

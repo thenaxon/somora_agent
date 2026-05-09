@@ -1,12 +1,17 @@
-// Dream-Mode extraction worker (Phase 2-Stufe-D). LLM-driven analysis of
-// session JSONL delta against existing memory + referenced vault content,
-// produces structured Findings ready for user review via the dream tools.
+// REM-phase extraction worker. LLM-driven analysis of session JSONL
+// delta against existing memory + relevant wiki pages + referenced
+// vault content, produces structured Findings ready for user review
+// via the dream tools.
 //
-// Worker model is configured per-agent in agent.yaml under `dream.model`.
+// Worker model is configured per-agent in agent.yaml under `rem.model`.
 // For v1 the worker MUST be an openai-compatible provider (uses the
 // chat.completions API directly). claude-cli / codex-cli as worker is
 // future work — would require routing through their respective adapters
 // with a synthetic JSON-output prompt.
+//
+// Wiki-awareness (v2.5): the LLM sees the wiki index plus top-N
+// embedding-matched wiki pages so it can dedupe against canonical
+// long-term knowledge. Wiki = source of truth. Memory = volatile inbox.
 
 import OpenAI from 'openai';
 import { readFile } from 'node:fs/promises';
@@ -21,21 +26,22 @@ export interface ExtractContext {
   agent: string;
   /** Slice of session JSONL to analyze. */
   events: NormalizedEvent[];
-  /** Existing memory notes (slug + body) — what the agent currently believes.
-   *  After Phase 4, some of these are STUBS pointing at wiki pages (their
-   *  body is just a pointer + recent-observations section). For substance,
-   *  the corresponding wiki pages are passed as `referencedWiki`. */
+  /** Memory inbox — un-consolidated notes. As of v2.2 there are no
+   *  stub pointers here; every entry is full content (or empty if the
+   *  agent has no current memory). Wiki is canonical for stable
+   *  knowledge — dedupe against `relevantWikiPages` not against
+   *  `existingMemory`. */
   existingMemory: Array<{ slug: string; markdown: string }>;
   /** Vault notes referenced during the session (filtered subset). */
   referencedVault: Array<{ slug: string; markdown: string }>;
-  /** Wiki pages relevant to this agent. Populated only when
-   *  `config.wiki.enabled` is true. Phase 4. Sources:
-   *   1. Wiki pages targeted by stubs in this agent's memory (always
-   *      include — those are the topics the agent has already promoted).
-   *   2. Wiki pages found via recall over the session's user-text
-   *      (topical overlap — may not have a stub yet).
-   *  The runner deduplicates and passes the union here. */
-  referencedWiki?: Array<{ slug: string; markdown: string }>;
+  /** Wiki index.md content (topology header). Always-on snapshot of
+   *  what subfolders + slugs exist in the shared wiki. Empty
+   *  placeholder string when wiki is disabled or empty. */
+  wikiIndex?: string;
+  /** Top-N wiki pages relevant to this session (embedding-matched
+   *  against user-text). Full bodies. The dedup target — if a fact is
+   *  already in one of these, don't surface it as a finding. */
+  relevantWikiPages?: Array<{ slug: string; markdown: string }>;
   /** The resolved dream worker model. */
   workerModel: ResolvedModel;
   /** Per-chunk LLM-call timeout. */
@@ -58,76 +64,80 @@ export interface ExtractResult {
   completed: boolean;
 }
 
-const SYSTEM_PROMPT = `You are a memory consolidation worker for an AI agent in the somora system.
+const SYSTEM_PROMPT = `You are REM, the session→memory extraction worker for an AI agent in the somora system.
+
+Layered knowledge model:
+- WIKI = long-term, consolidated, shared across all agents. Source of truth
+  for stable facts. You cannot edit it directly — Deep (a different worker)
+  promotes facts there from agent memory.
+- MEMORY = short-term, per-agent inbox. Holds atomic facts that are not yet
+  in the wiki. Deep moves them to the wiki on its next run, then deletes
+  them from memory.
+- VAULT = user-maintained Obsidian content outside the wiki subfolder.
+  Read-only for agents.
 
 You are given:
 1. A transcript chunk of recent conversation between the user and the agent.
-2. The agent's current memory notes (markdown files keyed by slug).
-3. Vault notes that the user has and that were referenced during the session.
-4. (Phase 4) Wiki pages — long-term consolidated knowledge shared across all
-   agents. When a memory note has been promoted to the wiki, the memory file
-   is left as a STUB (frontmatter \`promoted_to: <wiki-path>\`, body has a
-   pointer line and a "## Recent observations" section). The substance lives
-   in the corresponding wiki page, which is passed in the wiki block.
+2. The agent's current memory inbox (markdown bodies keyed by slug).
+3. The wiki index (topology of subfolders + slugs).
+4. Top-N wiki pages most relevant to the session content (full bodies).
+5. Vault notes referenced during the session.
 
-Your job: identify FACTS in the user's messages that the agent should remember
-or that contradict existing memory OR the wiki. Return ONLY a JSON array of
-finding objects. No commentary, no markdown fences, just the JSON.
+Your job: identify FACTS in the user's messages that should land in the
+agent's memory inbox. Return ONLY a JSON array of finding objects. No
+commentary, no markdown fences.
 
 Each finding has these fields:
 - action: one of "memory_write" | "memory_edit" | "memory_delete" | "vault_hint"
-- slug: short kebab-case identifier (lowercase, [a-z0-9_-]). For vault_hint
-  use the vault-relative path with hyphens.
+- slug: short kebab-case identifier (lowercase, [a-z0-9_-]).
 - proposed_content: full new markdown body (for memory_write / memory_edit)
 - current_excerpt: short quoted snippet of the existing memory content that
   is being changed/removed (for memory_edit / memory_delete)
 - reason: 1-2 sentences explaining the finding, quoting the user's statement
 
-Rules — follow strictly:
-- ONLY surface things the USER said about themselves, their projects, their
-  preferences, their state. Statements made by the agent are NOT authoritative.
-- DO NOT surface transient state ("working on X today", "feeling tired").
-- DO NOT surface jokes, speculation, hypotheticals.
-- DO NOT surface things already accurately captured in existing memory, the
-  wiki, OR the referenced vault notes. The user maintains the vault directly;
-  duplicating vault content into memory creates two sources of truth that
-  silently diverge.
-- DO NOT surface "consolidated overviews" ("Alles über X", thematic summaries).
-  Memory is for atomic statements; consolidation lives in the wiki and is
-  Dream-B's job, not Dream-A's.
-- DO NOT surface facts that came from a tool-result the agent quoted (memory_search,
-  somora_docs_read, etc.). The agent only relayed those — the user did not assert
-  them; promoting them would re-import vault/memory content as if it were a new
-  user fact.
-- DO surface contradictions: if memory or wiki says X and the user said not-X.
-- DO surface concrete new facts: a new project, a new device, a new contact.
-- For vault_hint: only when an existing vault note appears clearly outdated
-  given user statements; do not propose creating new vault notes.
+DEDUP RULES (critical — wiki is canonical):
+- If the WIKI already covers the fact accurately → DO NOT surface. Dedupe
+  against the wiki pages provided, not against memory. Memory is volatile
+  inbox; just because something is missing from memory does NOT mean it's
+  unknown to the system.
+- If a USER-STATEMENT CONTRADICTS the wiki → DO surface as memory_write
+  with a fresh slug. Deep will see it next run, decide MERGE into the
+  existing wiki page (updating the contradicted fact).
+- If a fact is in the wiki AND the user just confirms or repeats it → SKIP.
+- If a fact is in agent memory already (un-consolidated) → SKIP, unless
+  this is a contradiction or correction.
+- The vault is user-managed and may already cover the fact → SKIP if so.
 
-Conflicts with wiki content (Phase 4 — important):
-- The wiki is consolidated long-term knowledge. You cannot edit it directly.
-- When a user statement contradicts a wiki page, target the corresponding
-  STUB SLUG with action "memory_write". The slug is the agent's memory slug
-  (the file with frontmatter \`promoted_to: <wiki-path>\`). Your proposed_content
-  becomes a one-line dated bullet under "## Recent observations" — Dream-B will
-  later integrate it into the wiki page.
-- When the wiki has no stub for a topic but you find a substantive new fact,
-  emit memory_write with a fresh slug — Dream-B will promote it later.
+WHAT TO SURFACE:
+- New stable facts the wiki doesn't have yet (a project, a device, a contact,
+  a place, a person, a preference).
+- Contradictions: wiki/memory says X, user said not-X.
+- Concrete corrections to specific data (Luca turned 9, moved house, etc.).
+
+WHAT NOT TO SURFACE:
+- Transient state ("working on X today", "feeling tired", "right now I'm…").
+- Jokes, speculation, hypotheticals.
+- Statements made by the AGENT — only USER statements are authoritative.
+- Tool-result content the agent quoted back (memory_search, somora_docs_read,
+  file_read output) — those are not user assertions.
+- "Consolidated overviews" ("Alles über X", thematic summaries) — memory is
+  atomic, consolidation is Deep's job.
+- For vault_hint: only when an existing vault note is clearly outdated given
+  user statements; do not propose creating new vault notes.
 
 Output format example:
 [
   {
-    "action": "memory_edit",
-    "slug": "address",
-    "current_excerpt": "User lives in Berlin.",
-    "proposed_content": "User lives in Hamburg as of 2026-04-15.",
-    "reason": "User said on 2026-04-30: 'we moved to Hamburg two weeks ago'."
+    "action": "memory_write",
+    "slug": "neuer-wagen",
+    "proposed_content": "User got an AMG One in 2026-05.",
+    "reason": "User said on 2026-05-09: 'mein AMG One ist letzte Woche gekommen'. Wiki personen/familie-rene mentions Ferrari + Mercedes-AMG GT63/53, but no AMG One — this is a new fact."
   },
   {
     "action": "memory_write",
-    "slug": "luca",
-    "proposed_content": "Luca is now 9 (Wiki page personen/luca says 8).",
-    "reason": "User said on 2026-05-08 that Luca turned 9. Stub for personen/luca exists; this observation will append to ## Recent observations and Dream-B integrates."
+    "slug": "luca-alter",
+    "proposed_content": "Luca ist jetzt 9 (Wiki-Page personen/luca sagt 8).",
+    "reason": "User said on 2026-05-08 that Luca turned 9 last week. Wiki personen/luca says 8 — contradicts; Deep will merge this into the page next run."
   }
 ]
 
@@ -256,9 +266,9 @@ function formatVault(notes: Array<{ slug: string; markdown: string }>): string {
     .join('\n\n');
 }
 
-function formatWiki(notes: Array<{ slug: string; markdown: string }>): string {
+function formatWikiPages(notes: Array<{ slug: string; markdown: string }>): string {
   if (notes.length === 0) {
-    return '(no wiki pages relevant to this agent — wiki layer disabled or no stubs/recall hits)';
+    return '(no wiki pages matched this session by recall — wiki may be empty or topic outside its scope)';
   }
   return notes
     .map((n) => {
@@ -273,24 +283,19 @@ function buildUserMessage(args: {
   chunk: EventChunk;
   existingMemory: Array<{ slug: string; markdown: string }>;
   referencedVault: Array<{ slug: string; markdown: string }>;
-  referencedWiki: Array<{ slug: string; markdown: string }>;
+  wikiIndex: string;
+  relevantWikiPages: Array<{ slug: string; markdown: string }>;
 }): string {
   // Order matters for prefix-cache hit-rate across chunks of the same
-  // dream extraction:
-  //   - existingMemory + referencedVault are computed ONCE per dream
-  //     run (in runDream → extractFromSession ctx) and are byte-
-  //     identical across every chunk
+  // REM extraction:
+  //   - existingMemory + wiki + referencedVault are computed ONCE per
+  //     run (in runDream) and are byte-identical across every chunk
   //   - chunk.events is the only piece that varies per chunk
   // → stable blocks BEFORE the variable transcript so the prefix tokens
   //   up to the transcript-content match across chunks. Backends with
   //   prefix-cache (mlx-omx, OpenAI, Anthropic-via-openai-shim) cache
-  //   the memory + vault prefix on chunk 1 and reuse it on chunks 2..N.
-  //
-  // Memory + vault for a typical user session are ~2-15k tokens; on a
-  // 5-chunk dream that's 4× re-encoding saved on local models —
-  // multiple seconds of latency per chunk on gemma4big.
-  // Order: stable blocks first (memory + wiki + vault) so prefix-cache
-  // reuses across chunks; transcript varies per chunk.
+  //   the memory + wiki + vault prefix on chunk 1 and reuse it on
+  //   chunks 2..N.
   return [
     `Agent name: ${args.agentName}`,
     '',
@@ -298,9 +303,13 @@ function buildUserMessage(args: {
     formatMemory(args.existingMemory),
     '</existing_memory>',
     '',
-    '<wiki_referenced>',
-    formatWiki(args.referencedWiki),
-    '</wiki_referenced>',
+    '<wiki_index>',
+    args.wikiIndex.trim() || '(empty — no index.md or wiki disabled)',
+    '</wiki_index>',
+    '',
+    '<wiki_relevant_pages>',
+    formatWikiPages(args.relevantWikiPages),
+    '</wiki_relevant_pages>',
     '',
     '<vault_referenced>',
     formatVault(args.referencedVault),
@@ -424,7 +433,8 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         chunk,
         existingMemory: ctx.existingMemory,
         referencedVault: ctx.referencedVault,
-        referencedWiki: ctx.referencedWiki ?? [],
+        wikiIndex: ctx.wikiIndex ?? '',
+        relevantWikiPages: ctx.relevantWikiPages ?? [],
       });
       const reqTokens = estimateTokens(systemPrompt) + estimateTokens(userMsg);
       const reqStart = Date.now();

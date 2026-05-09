@@ -36,7 +36,7 @@ import { DefaultPromotionDispatcher } from './deep-dispatcher.ts';
 import { regenerateIndex } from '../wiki/index-builder.ts';
 import { appendLogEntries, outcomeToLogEntry, type LogEntry } from '../wiki/log-builder.ts';
 import { readWithMtime } from '../wiki/conflict.ts';
-import { loadDeepWikiContext } from './wiki-context.ts';
+import { loadWikiContext } from './wiki-context.ts';
 import {
   clearCache,
   clearSlug,
@@ -278,9 +278,9 @@ async function processCandidate(args: {
   const { candidate, ctx, mgr, workerModel, dispatcher, timeoutMs, signal } = args;
 
   // 1. Load wiki context: index + top-N relevant pages.
-  const wikiCtx = await loadDeepWikiContext({
+  const wikiCtx = await loadWikiContext({
     mgr,
-    memoryQuery: candidate.body,
+    query: candidate.body,
     wikiAbs: ctx.wikiAbs,
   });
 

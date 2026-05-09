@@ -41,7 +41,7 @@ import {
   consolidateStalePausedDreams,
   recoverOrphanRunningDreams,
 } from '../dream/storage.ts';
-import { runDream } from '../dream/runner.ts';
+import { runDream } from '../dream/rem-runner.ts';
 import { RemWorker } from '../dream/rem-worker.ts';
 import { DeepWorker } from '../dream/deep-worker.ts';
 import { LucidWorker } from '../dream/lucid-worker.ts';

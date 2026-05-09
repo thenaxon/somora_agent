@@ -18,9 +18,9 @@ import {
   transitionDreamStatus,
   writeDreamFile,
 } from './storage.ts';
-import { extractFromSession, resolveDreamModel } from './extract.ts';
+import { extractFromSession, resolveDreamModel } from './rem-extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
-import { loadReferencedWiki } from './wiki-context.ts';
+import { loadWikiContext } from './wiki-context.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import { join } from 'node:path';
 
@@ -235,13 +235,11 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     }
   }
 
-  // Wiki references (Phase 4 / Stufe 4). Two contributions:
-  //  - Stub-derived: wiki pages targeted by promoted_to in agent's
-  //    memory stubs. Always included so Dream-A can compare facts
-  //    against the latest wiki state for already-promoted topics.
-  //  - Recall-derived: wiki hits from the user-text query (topical
-  //    overlap; may not have a stub yet).
-  // Only populated when config.wiki.enabled.
+  // Wiki context for dedup (v2.5): index.md (topology) + top-N
+  // embedding-matched wiki pages with full bodies. REM uses this to
+  // decide "is this fact already in the long-term wiki?" — Wiki is
+  // canonical, Memory is volatile inbox.
+  let wikiIndex = '';
   const referencedWiki: Array<{ slug: string; markdown: string }> = [];
   if (args.config.wiki.enabled) {
     try {
@@ -249,13 +247,13 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       const wikiAbs = obs?.vaultPath
         ? join(obs.vaultPath, args.config.wiki.vaultSubfolder)
         : null;
-      const pages = await loadReferencedWiki({
-        agent: args.agent,
+      const ctx = await loadWikiContext({
         mgr: args.mgr,
-        recallQuery,
+        query: recallQuery,
         wikiAbs,
       });
-      for (const p of pages) {
+      wikiIndex = ctx.indexSummary;
+      for (const p of ctx.relevantPages) {
         referencedWiki.push({ slug: p.slug, markdown: p.markdown });
       }
     } catch (err) {
@@ -316,7 +314,8 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       events: eventsInRange,
       existingMemory,
       referencedVault,
-      referencedWiki,
+      wikiIndex,
+      relevantWikiPages: referencedWiki,
       workerModel,
       chunkTimeoutMs: args.rem.chunkTimeoutMs,
       chunkTokens: args.rem.chunkTokens,
