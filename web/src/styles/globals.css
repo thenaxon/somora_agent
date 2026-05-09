@@ -1,0 +1,30 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background: var(--bg-0);
+  color: var(--text-0);
+  font-family: 'Inter', system-ui, sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Subtle background grid as in the click-dummy desktop. Layered as
+ * pseudo-elements on the desktop component itself once we have it,
+ * but a base body gradient keeps the empty scaffold from looking
+ * like a flat block. */
+body {
+  background:
+    radial-gradient(1200px 800px at 70% 30%, var(--grid) 0%, transparent 60%),
+    var(--bg-0);
+}

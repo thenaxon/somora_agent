@@ -23,6 +23,14 @@ FUTURE.md
 somora-*.tgz
 scripts/
 
+# Web client (somora-web) build + cache artefacts. Sources under web/
+# itself ARE tracked.
+web/node_modules
+web/dist
+web/.vite
+web/.vite-cache
+web/tsconfig.tsbuildinfo
+
 # Internal docs that used to live here — moved to private/docs-archive/
 # in the public release. Kept ignored in case anything re-creates them
 # under docs/.

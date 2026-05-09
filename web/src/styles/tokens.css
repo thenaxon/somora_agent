@@ -1,0 +1,39 @@
+/* somora-web color + effect tokens. Ported 1:1 from the click-dummy
+ * (/mnt/naxon/somora_UX/somora_UX/styles.css) so the look matches
+ * exactly. Tailwind config in /tailwind.config.ts references these
+ * via var(--token) — never hardcode hex codes in components. */
+
+:root {
+  /* Backgrounds — darkest at the canvas edge, lighter for surfaces. */
+  --bg-0: #07090d;
+  --bg-1: #0b0f15;
+  --bg-2: #111722;
+  --bg-3: #18202c;
+
+  /* Lines / borders. */
+  --line: #1f2a3a;
+  --line-2: #2a394e;
+
+  /* Text — 0 is loudest, 3 is whisper-quiet. */
+  --text-0: #e6edf6;
+  --text-1: #aab6c6;
+  --text-2: #6f7d92;
+  --text-3: #4a5666;
+
+  /* Accent — cyan-teal. Used for primary actions, focus, links. */
+  --accent: #5cf2d6;
+  --accent-dim: #2c8d7b;
+  --accent-glow: rgba(92, 242, 214, 0.18);
+
+  /* Status. */
+  --warn: #f5b942;
+  --danger: #ff6b6b;
+  --ok: #5cf2d6;
+
+  /* Effects. */
+  --grid: rgba(92, 242, 214, 0.05);
+  --grid-strong: rgba(92, 242, 214, 0.1);
+  --shadow-window:
+    0 30px 80px -10px rgba(0, 0, 0, 0.7),
+    0 10px 30px -10px rgba(0, 0, 0, 0.5);
+}
