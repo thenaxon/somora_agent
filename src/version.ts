@@ -5,7 +5,7 @@
 // the dev tree and from the npm-installed location under
 // ~/.npm-global/lib/node_modules/somora/.
 //
-// Version format follows DECISIONS #41 (CalVer YYYY.MM.DD.N).
+// Version format follows CalVer: YYYY.MM.DD.N.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

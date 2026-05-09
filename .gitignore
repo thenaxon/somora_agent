@@ -23,6 +23,8 @@ FUTURE.md
 somora-*.tgz
 scripts/
 
-# Internal docs — kept local, not for public repo.
+# Internal docs that used to live here — moved to private/docs-archive/
+# in the public release. Kept ignored in case anything re-creates them
+# under docs/.
 docs/research/
 docs/install-and-release.md
