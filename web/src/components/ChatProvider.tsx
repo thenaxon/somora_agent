@@ -189,38 +189,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       es.addEventListener('chat', (ev) => {
         const d = parse<{ state: 'delta' | 'final'; text: string }>(ev as MessageEvent);
         if (!d) return;
+        // Single assistant bubble per turn, always at the bottom of
+        // the list. Server emits cumulative text in each delta, so
+        // we replace the bubble's text in place. When a tool event
+        // arrives mid-stream the tool gets appended, and the next
+        // delta MOVES the bubble back to the end — ensuring tools
+        // always render ABOVE the agent's running text (TUI-style)
+        // and the cumulative prefix never duplicates.
         if (d.state === 'delta') {
           patchStream(key, { thinking: false });
-          // Continue the in-flight assistant bubble ONLY if it's
-          // still the last message in the list. If a tool_call /
-          // tool_result was appended after the bubble started
-          // streaming, we want the next text to render BELOW the
-          // tool block (TUI-style ordering: tools above, agent
-          // answer below) — start a fresh bubble in that case.
           setMessages((prev) => {
             const list = prev[key] ?? [];
-            const last = list[list.length - 1];
             const trackedId = streamingIdRef.current.get(key);
-            if (last && last.role === 'assistant' && last.id === trackedId) {
-              const next = list.slice();
-              next[next.length - 1] = { ...last, text: d.text };
-              return { ...prev, [key]: next };
-            }
-            // Tool block intervened (or first delta of the turn) —
-            // finalize any leftover-streaming bubble and start a
-            // fresh one. Cumulative-text: bubble carries d.text as
-            // its full content, no append needed.
-            const finalized = list.map((m) =>
-              m.role === 'assistant' && m.streaming ? { ...m, streaming: false } : m,
-            );
-            const fresh = newId('msg');
-            streamingIdRef.current.set(key, fresh);
+            const filtered = trackedId ? list.filter((m) => m.id !== trackedId) : list;
+            const id = trackedId ?? newId('msg');
+            if (!trackedId) streamingIdRef.current.set(key, id);
             return {
               ...prev,
               [key]: [
-                ...finalized,
+                ...filtered,
                 {
-                  id: fresh,
+                  id,
                   role: 'assistant',
                   ts: Date.now(),
                   text: d.text,
@@ -232,27 +221,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         } else if (d.state === 'final') {
           setMessages((prev) => {
             const list = prev[key] ?? [];
-            const last = list[list.length - 1];
             const trackedId = streamingIdRef.current.get(key);
-            if (last && last.role === 'assistant' && last.id === trackedId) {
-              const next = list.slice();
-              next[next.length - 1] = { ...last, text: d.text, streaming: false };
-              streamingIdRef.current.delete(key);
-              return { ...prev, [key]: next };
-            }
-            // Tool intervened between last delta and final: finalize
-            // the prior streaming bubble and append a fresh final
-            // assistant message below the tool block.
-            const finalized = list.map((m) =>
-              m.role === 'assistant' && m.streaming ? { ...m, streaming: false } : m,
-            );
+            const filtered = trackedId ? list.filter((m) => m.id !== trackedId) : list;
+            const id = trackedId ?? newId('msg');
             streamingIdRef.current.delete(key);
             return {
               ...prev,
               [key]: [
-                ...finalized,
+                ...filtered,
                 {
-                  id: newId('msg'),
+                  id,
                   role: 'assistant',
                   ts: Date.now(),
                   text: d.text,
