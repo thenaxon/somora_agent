@@ -202,6 +202,58 @@ Errors with a clear message when:
 - The body file exceeds `config.skills.maxSkillFileBytes` (default 256
   KB) → size error
 
+## Providing credentials to skills
+
+Many skills wrap CLIs that expect credentials in env vars
+(`<TOOL>_TOKEN`, `<TOOL>_ACCOUNT`, etc.). somora deliberately has no
+internal secrets store — the right place for service-level
+credentials is the OS service manager:
+
+**Linux / systemd (recommended):**
+
+1. Put the variables in `~/.config/systemd/user/somora.env` and
+   tighten permissions:
+
+   ```bash
+   cat > ~/.config/systemd/user/somora.env <<'EOF'
+   MYSKILL_TOKEN=<your-token-here>
+   MYSKILL_ACCOUNT=<you@example.com>
+   EOF
+   chmod 600 ~/.config/systemd/user/somora.env
+   ```
+
+2. Reference the file from the unit (the leading `-` makes the
+   service start cleanly when the file is missing — useful for
+   fresh setups):
+
+   ```ini
+   # ~/.config/systemd/user/somora.service
+   [Service]
+   EnvironmentFile=-%h/.config/systemd/user/somora.env
+   ```
+
+3. `systemctl --user daemon-reload && systemctl --user restart somora`
+
+The somora process inherits these vars at startup and `exec`-spawned
+subprocesses inherit `process.env`, so every skill on every agent
+sees them automatically — no per-call boilerplate, no in-band
+secret-passing.
+
+**macOS / launchd** is the equivalent: drop the variables into your
+`~/Library/LaunchAgents/<somora>.plist`'s `EnvironmentVariables`
+dict, then `launchctl unload && load`.
+
+**Why we DON'T put credentials in `config.yaml`:** that file is
+designed to be readable / sharable / git-trackable for support
+purposes. Keeping it secret-free means you can paste it into a bug
+report without redacting. Service-level env-files separate the two
+concerns cleanly.
+
+`requires.env_vars` in the skill frontmatter documents WHAT the
+skill needs. The `EnvironmentFile` provides the actual values. The
+`skill` tool surfaces the env-var names back to the agent so it can
+ask the user for any that aren't set.
+
 ## Layer separation — what is and isn't a skill
 
 | Layer | Scope | Example |
