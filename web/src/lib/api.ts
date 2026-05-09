@@ -66,6 +66,30 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface HistoryEvent {
+  kind: string;
+  ts: number;
+  engine?: string;
+  text?: string;
+  callId?: string;
+  tool?: string;
+  input?: Record<string, unknown>;
+  output?: unknown;
+  turnId?: string;
+  usage?: {
+    tokens_in?: number;
+    tokens_in_cached?: number;
+    tokens_out?: number;
+    tokens_out_reasoning?: number;
+  };
+  ephemeral?: string;
+  from_agent?: string;
+}
+
+export interface HistoryResponse {
+  events: HistoryEvent[];
+}
+
 export const api = {
   agents: () => getJson<AgentInfo[]>('/agents'),
   sessions: (agent: string) =>
@@ -79,4 +103,29 @@ export const api = {
     getJson<SessionThinkingInfo>(
       `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
     ),
+  history: (agent: string, session: string) =>
+    getJson<HistoryResponse>(
+      `/chat/history?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
+    ),
+  send: async (agent: string, session: string, text: string): Promise<void> => {
+    const res = await fetch('/chat/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent, session, text }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`chat/send ${res.status}: ${body.slice(0, 200)}`);
+    }
+  },
+  abort: async (agent: string, session: string): Promise<void> => {
+    await fetch(
+      `/chat/abort?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
+      { method: 'POST' },
+    ).catch(() => {
+      // best-effort — the UI shouldn't break on abort failure.
+    });
+  },
+  streamUrl: (agent: string, session: string) =>
+    `/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
 } as const;

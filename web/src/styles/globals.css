@@ -28,6 +28,13 @@ body {
   margin-top: 3px;
 }
 
+/* Streaming-cursor blink for the tail of an in-flight assistant
+ * message. CSS keyframes — JS doesn't have to drive the toggle. */
+@keyframes somora-cursor-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
 /* Additional status-dot variants on top of click-dummy's online/busy.
  * Loop-holder = agent currently holds the dream_review wiki loop;
  * offline = server unreachable / agent absent from /agents. */

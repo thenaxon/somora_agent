@@ -1,28 +1,84 @@
-// Phase-1 ChatWindow skeleton: header (with rich live meta line) +
-// empty body placeholder + disabled input. Step 4 wires the chat
-// stream itself — until then the header still shows live data
-// (model, thinking, soon tokens + streaming-state).
-//
-// Layout matches the click-dummy chat.jsx: avatar + name + role
-// badge on top, meta line beneath with session · model · thinking
-// · (tokens, step 4) · tools-toggle. Three action icons (pin /
-// branch / more) on the right.
+// Live ChatWindow: SSE-streaming, history hydration, markdown,
+// tool-blocks, live token counts, pinned-to-bottom scroll, send +
+// abort. Slash-command popup, drag&drop attachments and the
+// memory-inject banner come in subsequent steps.
 
-import { useState } from 'react';
-import { Pin, GitBranch, MoreHorizontal, Paperclip, Send, Wrench } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import {
+  Pin,
+  GitBranch,
+  MoreHorizontal,
+  Paperclip,
+  Send,
+  Wrench,
+  X as XIcon,
+} from 'lucide-react';
 import type { AgentInfo } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
 import { useSessionInfo } from '../hooks/useSessionInfo';
+import { useChatSession } from '../hooks/useChatSession';
+import { MessageItem } from './MessageItem';
 
 interface Props {
   agent: AgentInfo;
   sessionId: string;
 }
 
+function formatTokens(n: number | undefined | null): string {
+  if (n === undefined || n === null) return '—';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
+
 export function ChatWindow({ agent, sessionId }: Props) {
   const color = resolveAgentColor(agent);
   const { model, thinking } = useSessionInfo(agent.name, sessionId);
+  const chat = useChatSession(agent.name, sessionId);
   const [showTools, setShowTools] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pinnedRef = useRef(true);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Pinned-to-bottom: only auto-scroll while user is at the bottom
+  // of the message list. Manual scroll-up unpins.
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    pinnedRef.current = dist < 80;
+  }, []);
+
+  useEffect(() => {
+    if (!pinnedRef.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chat.messages, chat.streaming, chat.thinking]);
+
+  // Filter messages by tools-toggle. When off, hide tool_call +
+  // tool_result rows from the view (they remain in the underlying
+  // state so toggling on doesn't lose them).
+  const visibleMessages = useMemo(() => {
+    if (showTools) return chat.messages;
+    return chat.messages.filter((m) => m.role !== 'tool_call' && m.role !== 'tool_result');
+  }, [chat.messages, showTools]);
+
+  const onSend = useCallback(
+    (e?: React.FormEvent) => {
+      e?.preventDefault();
+      const text = draft.trim();
+      if (!text || chat.streaming) return;
+      setDraft('');
+      chat.send(text).catch((err: Error) => {
+        // eslint-disable-next-line no-console
+        console.error('[somora-web] send failed', err.message);
+      });
+    },
+    [draft, chat],
+  );
 
   const modelLabel = model?.alias ?? model?.modelId ?? '—';
   const thinkingActive =
@@ -63,6 +119,19 @@ export function ChatWindow({ agent, sessionId }: Props) {
                 }}
               >
                 {agent.role}
+              </span>
+            )}
+            {chat.streaming && (
+              <span
+                style={{
+                  fontSize: 9,
+                  fontFamily: '"JetBrains Mono", monospace',
+                  color: 'var(--accent)',
+                  letterSpacing: '0.05em',
+                  textTransform: 'uppercase',
+                }}
+              >
+                streaming…
               </span>
             )}
           </div>
@@ -112,8 +181,32 @@ export function ChatWindow({ agent, sessionId }: Props) {
               <span>tools</span>
             </button>
             <Sep />
-            <span style={{ color: 'var(--text-3)' }} title="streaming token counts arrive in step 4">
-              ↑— ↓—
+            <span style={{ color: 'var(--text-2)' }} title="prompt tokens (cached part dimmed)">
+              ↑ {formatTokens(chat.usage?.tokens_in)}
+              {chat.usage?.tokens_in_cached ? (
+                <span style={{ color: 'var(--text-3)' }}>
+                  {' '}
+                  ({formatTokens(chat.usage.tokens_in_cached)}¢)
+                </span>
+              ) : null}
+            </span>
+            <span style={{ color: 'var(--text-2)' }} title="completion tokens">
+              ↓ {formatTokens(chat.usage?.tokens_out)}
+              {chat.usage?.tokens_out_reasoning ? (
+                <span style={{ color: 'var(--accent)' }}>
+                  {' '}
+                  ({formatTokens(chat.usage.tokens_out_reasoning)}🧠)
+                </span>
+              ) : null}
+            </span>
+            <Sep />
+            <span
+              style={{
+                color: chat.connected ? 'var(--ok)' : 'var(--text-3)',
+              }}
+              title={chat.connected ? 'SSE stream connected' : 'SSE stream disconnected'}
+            >
+              ● {chat.connected ? 'connected' : 'offline'}
             </span>
           </div>
         </div>
@@ -130,35 +223,98 @@ export function ChatWindow({ agent, sessionId }: Props) {
         </div>
       </div>
 
-      <div className="chat-body">
-        <div
-          style={{
-            color: 'var(--text-3)',
-            fontFamily: '"JetBrains Mono", monospace',
-            fontSize: 11,
-            textAlign: 'center',
-            padding: '24px 0',
-            letterSpacing: '0.04em',
-          }}
-        >
-          chat-stream wires up in step 4
-        </div>
+      <div className="chat-body" ref={scrollRef} onScroll={handleScroll}>
+        {chat.loading ? (
+          <div
+            style={{
+              color: 'var(--text-3)',
+              textAlign: 'center',
+              padding: '24px 0',
+              fontSize: 11,
+            }}
+          >
+            loading history…
+          </div>
+        ) : visibleMessages.length === 0 ? (
+          <div
+            style={{
+              color: 'var(--text-3)',
+              textAlign: 'center',
+              padding: '24px 0',
+              fontSize: 11,
+            }}
+          >
+            no messages yet — say hi
+          </div>
+        ) : (
+          visibleMessages.map((m) => (
+            <MessageItem key={m.id} msg={m} agentColor={color} agentIcon={agent.icon} />
+          ))
+        )}
+        {chat.thinking && !chat.streaming && (
+          <div className="chat-msg agent">
+            <div
+              className="chat-msg-avatar"
+              style={{ background: gradientFor(color), fontSize: 14 }}
+            >
+              {agent.icon ?? '🤖'}
+            </div>
+            <div>
+              <div className="chat-msg-bubble" style={{ color: 'var(--text-2)' }}>
+                <span style={{ animation: 'somora-cursor-blink 1.2s infinite' }}>
+                  {agent.name} denkt nach…
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="chat-input">
+      <form className="chat-input" onSubmit={onSend}>
         <button type="button" className="chat-icon-btn" title="Attach (TODO)" disabled>
           <Paperclip size={14} />
         </button>
         <textarea
+          ref={textareaRef}
           className="chat-textarea"
           rows={1}
           placeholder={`Message ${agent.name}…`}
-          disabled
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            // Auto-grow up to 120px.
+            e.target.style.height = 'auto';
+            e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              onSend();
+            }
+          }}
+          disabled={chat.streaming}
         />
-        <button type="button" className="chat-send" title="Send (TODO)" disabled>
-          <Send size={14} />
-        </button>
-      </div>
+        {chat.streaming ? (
+          <button
+            type="button"
+            className="chat-send"
+            title="Abort streaming"
+            onClick={() => chat.abort()}
+            style={{ background: 'var(--danger)' }}
+          >
+            <XIcon size={14} />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            className="chat-send"
+            title="Send"
+            disabled={!draft.trim()}
+          >
+            <Send size={14} />
+          </button>
+        )}
+      </form>
     </div>
   );
 }
