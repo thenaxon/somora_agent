@@ -33,6 +33,27 @@ export class Api {
     return typeof data.systemPrompt === 'string' ? data.systemPrompt : null;
   }
 
+  async fetchLoopState(): Promise<{ active: boolean; agent?: string; dreamId?: string } | null> {
+    try {
+      const res = await fetch(`${this.base}/dream/loop-state`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        active?: boolean;
+        agent?: string;
+        dreamId?: string;
+      };
+      return data && typeof data.active === 'boolean'
+        ? {
+            active: data.active,
+            ...(data.agent ? { agent: data.agent } : {}),
+            ...(data.dreamId ? { dreamId: data.dreamId } : {}),
+          }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
   async fetchSessions(agent: string): Promise<SessionSummary[]> {
     const res = await fetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions`);
     if (!res.ok) return [];

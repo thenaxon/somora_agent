@@ -379,14 +379,20 @@ function extractFirstSection(markdown: string): string {
 
 // ─── parsing ────────────────────────────────────────────────────────
 
+/** Active finding kinds — only these are produced by current Lucid prompt
+ *  and accepted by the parser. Legacy kinds (stale_claim, outdated,
+ *  inconsistent_xref) remain in LucidFindingKind for archive compat
+ *  but no longer round-trip through the LLM call. */
 const VALID_KINDS = new Set<LucidFindingKind>([
   'contradiction',
-  'stale_claim',
   'dead_ref',
-  'outdated',
   'wanted_page',
-  'inconsistent_xref',
+  'link_suggestion',
 ]);
+
+/** Hard cap matching the prompt instruction. If the LLM emits more we
+ *  truncate to keep the user-review surface manageable. */
+const MAX_FINDINGS_PER_RUN = 8;
 
 function stripFences(raw: string): string {
   let text = raw.trim();
@@ -427,8 +433,16 @@ function parseLucidFindings(raw: string, runId: string): LucidFinding[] {
     const affectedPages = Array.isArray(f.affected_pages)
       ? f.affected_pages.filter((p): p is string => typeof p === 'string')
       : [];
-    const fix = parseFix(f.fix);
-    if (!fix) continue;
+    // Current Lucid output is description-only — every finding becomes
+    // a `no_op` fix. The user walks through findings via dream_review
+    // and writes any actual changes through the loop-scoped wiki_*
+    // tools. Legacy fix shapes (update_page etc.) are still parsed if
+    // present so old archived runs continue to render correctly, but
+    // current runs default to no_op.
+    const fix: LucidFix = parseFix(f.fix) ?? {
+      kind: 'no_op',
+      note: reason,
+    };
     out.push({
       id: out.length + 1,
       kind: kind as LucidFindingKind,
@@ -437,6 +451,15 @@ function parseLucidFindings(raw: string, runId: string): LucidFinding[] {
       reason,
       fix,
     });
+    if (out.length >= MAX_FINDINGS_PER_RUN) {
+      logger.info({
+        msg: 'dream.lucid.findings_capped',
+        runId,
+        cap: MAX_FINDINGS_PER_RUN,
+        emittedByModel: list.length,
+      });
+      break;
+    }
   }
   return out;
 }

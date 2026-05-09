@@ -120,6 +120,7 @@ export const DEFAULT_MAX_RESULT_SIZE_CHARS = 100_000;
 export type Toolset =
   | 'memory'
   | 'dream'
+  | 'wiki'
   | 'web'
   | 'file'
   | 'exec'

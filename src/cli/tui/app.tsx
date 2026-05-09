@@ -70,6 +70,7 @@ export function App({
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [historyDraft, setHistoryDraft] = useState<string>('');
+  const [reviewLoop, setReviewLoop] = useState<{ agent: string; dreamId: string } | null>(null);
 
   // Slash-autocomplete: matched against the input prefix, only when the
   // input is a single token starting with `/`. Index is the highlighted
@@ -108,6 +109,19 @@ export function App({
       })
       .catch(() => {
         /* leave icons empty if endpoint is unreachable */
+      });
+    apiRef.current
+      .fetchLoopState()
+      .then((s) => {
+        if (cancelled) return;
+        if (s && s.active && s.agent && s.dreamId) {
+          setReviewLoop({ agent: s.agent, dreamId: s.dreamId });
+        } else {
+          setReviewLoop(null);
+        }
+      })
+      .catch(() => {
+        /* server unreachable — leave loop indicator off */
       });
     return () => {
       cancelled = true;
@@ -285,6 +299,15 @@ export function App({
         });
         setStreaming(false);
         setBusy(false);
+        // Refresh wiki-review loop indicator after each turn — the
+        // turn may have called dream_review({action:'start'|'end'}).
+        apiRef.current.fetchLoopState().then((s) => {
+          if (s && s.active && s.agent && s.dreamId) {
+            setReviewLoop({ agent: s.agent, dreamId: s.dreamId });
+          } else {
+            setReviewLoop(null);
+          }
+        });
         if (ev.usage || ev.contextWindow || ev.provider || ev.model || ev.thinking) {
           setStats({
             tokensIn: ev.usage?.tokens_in ?? 0,
@@ -547,6 +570,7 @@ export function App({
         connected={connected}
         showMemory={showMemory}
         showTools={showTools}
+        reviewLoop={reviewLoop}
       />
       <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>

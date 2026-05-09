@@ -26,11 +26,19 @@ import {
   dismissEntireLucidRun,
   listLucidRuns,
   readLucidRunById,
+  setRunStatus,
   updateLucidFindingStatus,
+  writeLucidRun,
 } from '../../dream/lucid-storage.ts';
 import type { LucidFinding, LucidRun } from '../../dream/lucid-types.ts';
 import { applyLucidFinding } from '../../dream/lucid-actions.ts';
+import {
+  clearLoopState,
+  getLoopState,
+  setLoopState,
+} from '../../dream/loop-state.ts';
 import { resolveObsidianSource } from '../../memory/registry.ts';
+import { rename } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // ── Shared helpers ────────────────────────────────────────────────────
@@ -668,8 +676,167 @@ async function runLucidViaHttp(wait: boolean): Promise<unknown> {
   return { phase: 'lucid', ...data, via: 'http' };
 }
 
+// ── dream_review ──────────────────────────────────────────────────────
+
+const ReviewInput = z.object({
+  dream_id: DreamIdSchema,
+  action: z.enum(['start', 'end']),
+  summary: z.string().optional(),
+});
+
+const SOMORA_HOME = process.env.SOMORA_HOME ?? `${process.env.HOME}/.somora`;
+const LUCID_ROOT = join(SOMORA_HOME, 'wiki-lucid');
+
+function runFilePath(id: string, processed: boolean): string {
+  const dir = processed ? join(LUCID_ROOT, 'processed') : LUCID_ROOT;
+  return join(dir, `${id}.json`);
+}
+
+export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
+  name: 'dream_review',
+  toolset: 'dream',
+  description:
+    'Open or close a wiki review loop for a Lucid run. While the loop is active, the calling ' +
+    'agent gets the loop-scoped wiki tools (wiki_edit, wiki_create, wiki_delete) AND has its ' +
+    'normal file_*/exec_*/agents_*/skill_*/tmux_* tools hidden — the goal is a focused ' +
+    'wiki-editing conversation with the user.\n' +
+    '\n' +
+    "action='start': begin the loop for the named Lucid run id. Each Lucid finding will be " +
+    "surfaced in the system context every turn until you call action='end'. Only ONE loop can " +
+    'be active per somora instance — concurrent start fails.\n' +
+    "action='end': close the loop, archive the Lucid run to processed/, and clear the active " +
+    'lock. REQUIRES `summary` arg covering what happened to each finding (applied as edit X, ' +
+    'dismissed as no-op, deferred for later — be explicit, no silent drops).\n' +
+    '\n' +
+    'Use this when the user asks "schau dir das Lucid-Ergebnis an" or similar — open the loop, ' +
+    "walk the findings as a conversation, write changes through wiki_*, close with action='end' " +
+    'when the user signals done. The loop auto-expires after 24h idle as a safety net.',
+  inputSchema: ReviewInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      dream_id: { type: 'string', description: 'Lucid run id from dream_list / dream_get.' },
+      action: {
+        type: 'string',
+        enum: ['start', 'end'],
+        description: "'start' opens the loop, 'end' closes it.",
+      },
+      summary: {
+        type: 'string',
+        description:
+          "REQUIRED for action='end'. Brief outcome per finding so the user knows nothing was " +
+          'silently dropped. Optional / ignored for action=start.',
+      },
+    },
+    required: ['dream_id', 'action'],
+    additionalProperties: false,
+  },
+  async handler(input, ctx) {
+    const run = await readLucidRunById(input.dream_id);
+    if (!run) {
+      throw new Error(
+        `dream_review: lucid run '${input.dream_id}' not found (only Lucid runs are loop-eligible; ` +
+          'REM dreams are reviewed via dream_apply / dream_dismiss).',
+      );
+    }
+    if (input.action === 'start') {
+      const existing = getLoopState();
+      if (existing && (existing.agent !== ctx.agent || existing.dreamId !== input.dream_id)) {
+        throw new Error(
+          `dream_review: another review loop is already active (agent='${existing.agent}', ` +
+            `dream_id='${existing.dreamId}', startedAt='${existing.startedAt}'). End it via ` +
+            'dream_review action=end before starting a new one.',
+        );
+      }
+      const now = new Date().toISOString();
+      setLoopState({
+        agent: ctx.agent,
+        dreamId: input.dream_id,
+        startedAt: existing?.startedAt ?? now,
+        lastActivityAt: now,
+      });
+      const open = run.findings.filter((f) => f.status === 'pending');
+      return {
+        action: 'start',
+        dream_id: input.dream_id,
+        agent: ctx.agent,
+        pending_findings: open.length,
+        total_findings: run.findings.length,
+        message:
+          'Wiki review loop is now active for you. The findings are now in your system context ' +
+          'every turn; wiki_edit/wiki_create/wiki_delete are exposed; file_*/exec_*/agents_*/' +
+          "skill_*/tmux_* are hidden until you call dream_review action='end'.",
+      };
+    }
+    // action === 'end'
+    const existing = getLoopState();
+    if (!existing) {
+      throw new Error('dream_review: no review loop is currently active');
+    }
+    if (existing.agent !== ctx.agent) {
+      throw new Error(
+        `dream_review: the active loop is held by a different agent ('${existing.agent}'); ` +
+          'cannot close it from this agent.',
+      );
+    }
+    if (existing.dreamId !== input.dream_id) {
+      throw new Error(
+        `dream_review: the active loop is for dream_id='${existing.dreamId}', not '${input.dream_id}'.`,
+      );
+    }
+    const summary = (input.summary ?? '').trim();
+    if (!summary) {
+      throw new Error(
+        "dream_review: action='end' requires a non-empty `summary` describing what happened to " +
+          'each finding. Do not silently drop findings.',
+      );
+    }
+    // Mark any still-pending findings as dismissed (the loop is over —
+    // they were either addressed in conversation or deferred, both
+    // captured in the summary). User can re-open by triggering Lucid
+    // anew.
+    const now = new Date().toISOString();
+    let stillPending = 0;
+    for (const f of run.findings) {
+      if (f.status === 'pending') {
+        f.status = 'dismissed';
+        f.resolved_at = now;
+        stillPending++;
+      }
+    }
+    setRunStatus(run, 'processed');
+    // Stash the loop summary into the run record itself so the audit
+    // trail in processed/ is self-contained.
+    (run as unknown as Record<string, unknown>).loop_summary = summary;
+    (run as unknown as Record<string, unknown>).loop_held_by = ctx.agent;
+    (run as unknown as Record<string, unknown>).loop_started_at = existing.startedAt;
+    (run as unknown as Record<string, unknown>).loop_ended_at = now;
+    await writeLucidRun(run);
+    try {
+      await rename(runFilePath(run.id, false), runFilePath(run.id, true));
+    } catch (err) {
+      // ENOENT is fine — could already be archived; otherwise surface.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        throw err;
+      }
+    }
+    clearLoopState();
+    return {
+      action: 'end',
+      dream_id: input.dream_id,
+      agent: ctx.agent,
+      auto_dismissed_pending: stillPending,
+      summary,
+      message:
+        'Loop closed, run archived to processed/, lock released. Wiki tools and the hidden ' +
+        'toolsets revert to normal on the next turn.',
+    };
+  },
+};
+
 // ── Bundle ────────────────────────────────────────────────────────────
 
 export function dreamTools(): ToolDefinition[] {
-  return [dreamList, dreamGet, dreamApply, dreamDismiss, dreamRun] as ToolDefinition[];
+  return [dreamList, dreamGet, dreamApply, dreamDismiss, dreamRun, dreamReview] as ToolDefinition[];
 }

@@ -10,14 +10,27 @@
 // Tools are registered once at server boot. Registration is idempotent
 // per name (re-register replaces — useful for dev:server hot reload).
 
+import { isLoopHolder } from '../dream/loop-state.ts';
 import { logger } from '../server/logger.ts';
 import {
   DEFAULT_MAX_RESULT_SIZE_CHARS,
   isMultimodalToolResult,
   type ToolContext,
   type ToolDefinition,
+  type Toolset,
   type ToolResult,
 } from './types.ts';
+
+/**
+ * Toolsets that get hidden from the agent that holds the active
+ * dream_review wiki-loop. We want the holder focused on the wiki
+ * conversation, not file-mucking, exec, parallel agents, or skill
+ * detours. The loop's positive surface (`wiki_*`) is exposed via the
+ * tools' own `available` hooks. memory_*, dream_*, time_*, web_*,
+ * and somora_docs_* stay enabled (the agent still needs to think,
+ * note things, fact-check, and end the loop).
+ */
+const LOOP_HIDDEN_TOOLSETS = new Set<Toolset>(['file', 'exec', 'agents', 'skills']);
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
@@ -50,8 +63,24 @@ export class ToolRegistry {
    * web_search exposed, no vault → no obsidian_* exposed, etc.).
    */
   async listAvailable(ctx: ToolContext): Promise<ToolDefinition[]> {
+    // Loop-holder narrows the surface: file/exec/agents/skills get
+    // hidden so the agent stays on the wiki conversation. tmux is
+    // hidden too via the LOOP_HIDDEN_TOOLSETS set below — added at
+    // import-time. Other agents (non-holders) see their normal
+    // surface; they just don't get wiki_* (gated by the wiki tools'
+    // own available()).
+    const holdsLoop = isLoopHolder(ctx.agent);
     const out: ToolDefinition[] = [];
     for (const tool of this.tools.values()) {
+      if (holdsLoop && tool.toolset && LOOP_HIDDEN_TOOLSETS.has(tool.toolset)) {
+        logger.debug({
+          msg: 'tool.hidden_during_loop',
+          name: tool.name,
+          toolset: tool.toolset,
+          agent: ctx.agent,
+        });
+        continue;
+      }
       if (!tool.available) {
         out.push(tool);
         continue;

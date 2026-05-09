@@ -11,12 +11,23 @@
 //
 // See `private/dream-system-v2.md` § "Phase Lucid".
 
+/**
+ * Active finding kinds (produced by current Lucid prompt). Lucid surfaces
+ * only objectively-verifiable issues. Subjective polish is handled in
+ * the user-driven dream_review loop, not as Lucid-emitted findings.
+ *
+ * Legacy kinds (`stale_claim`, `outdated`, `inconsistent_xref`) are
+ * kept in the union for backward compatibility with archived runs in
+ * `~/.somora/wiki-lucid/processed/` — current Lucid runs no longer
+ * produce them.
+ */
 export type LucidFindingKind =
   | 'contradiction'
-  | 'stale_claim'
   | 'dead_ref'
-  | 'outdated'
   | 'wanted_page'
+  | 'link_suggestion'
+  | 'stale_claim'
+  | 'outdated'
   | 'inconsistent_xref';
 
 export type LucidFindingStatus = 'pending' | 'applied' | 'dismissed';

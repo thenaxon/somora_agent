@@ -45,6 +45,7 @@ import { runDream } from '../dream/rem-runner.ts';
 import { RemWorker } from '../dream/rem-worker.ts';
 import { DeepWorker } from '../dream/deep-worker.ts';
 import { LucidWorker } from '../dream/lucid-worker.ts';
+import { getLoopState } from '../dream/loop-state.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
@@ -990,6 +991,22 @@ app.get('/spawn-list', (c) => {
 // injected deepWorker. See `private/wiki-design.md`.
 //
 // Body: `{wait?: boolean}` — wait=false (default) returns immediately
+// Read-only snapshot of the active dream_review loop, if any. TUI
+// polls this for the status-line indicator. Returns 200 with body
+// `{active: false}` when no loop is held; `{active: true, agent,
+// dreamId, startedAt}` otherwise.
+app.get('/dream/loop-state', (c) => {
+  const state = getLoopState();
+  if (!state) return c.json({ active: false });
+  return c.json({
+    active: true,
+    agent: state.agent,
+    dreamId: state.dreamId,
+    startedAt: state.startedAt,
+    lastActivityAt: state.lastActivityAt,
+  });
+});
+
 // after firing the worker; wait=true awaits the run and returns
 // outcome counts.
 app.post('/dream/run-deep', async (c) => {

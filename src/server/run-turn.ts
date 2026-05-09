@@ -32,6 +32,7 @@ import {
 } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
+import { buildReviewLoopBlock, refreshLoopActivity } from '../dream/loop-state.ts';
 import { injectMemoryContext } from '../memory/inject.ts';
 import { getMemoryManager } from '../memory/registry.ts';
 import { logger } from './logger.ts';
@@ -195,6 +196,22 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     }
   } catch (err) {
     logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
+  }
+
+  // Loop-holder gets the active Lucid review block prepended to the
+  // ephemeral context. Refreshed on every turn so the user can see
+  // that the agent stays on topic until dream_review({action:'end'}).
+  try {
+    const reviewBlock = await buildReviewLoopBlock(agent);
+    if (reviewBlock) {
+      ephemeralContext = ephemeralContext
+        ? `${reviewBlock}\n\n${ephemeralContext}`
+        : reviewBlock;
+      refreshLoopActivity(agent);
+      logger.debug({ msg: 'dream.loop.injected', agent, session });
+    }
+  } catch (err) {
+    logger.warn({ msg: 'dream.loop.inject_failed', agent, err: (err as Error).message });
   }
 
   await appendEvent(agent, session, {

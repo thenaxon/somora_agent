@@ -17,6 +17,7 @@ interface Props {
   connected: boolean;
   showMemory: boolean;
   showTools: boolean;
+  reviewLoop?: { agent: string; dreamId: string } | null;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -36,6 +37,7 @@ export function Header({
   connected,
   showMemory,
   showTools,
+  reviewLoop,
 }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
@@ -70,6 +72,14 @@ export function Header({
       <ShowFlag label="mem" on={showMemory} />
       <Text color="gray">{' '}</Text>
       <ShowFlag label="tools" on={showTools} />
+      {reviewLoop ? (
+        <>
+          <Text color="gray">{'   '}</Text>
+          <Text color="magenta" bold>
+            📝 wiki-review:{reviewLoop.agent}
+          </Text>
+        </>
+      ) : null}
       <Box flexGrow={1} justifyContent="flex-end">
         {streaming ? (
           streamingPhase === 'pre' && stats?.thinking?.active ? (
