@@ -483,13 +483,11 @@ export const WikiLucidConfigSchema = z
     intervalDays: z.number().positive().default(7),
     /** Worker model for Lucid (wiki cleanup / contradiction detection). */
     model: z.string().min(1).optional(),
-    /** Lucid findings need user approval before wiki-edits apply. */
+    /** Lucid findings need user approval before wiki-edits apply.
+     *  Approval happens via `dream_list` / `dream_get` / `dream_apply`
+     *  / `dream_dismiss` — any agent with the `dream` toolset can
+     *  review platform-wide Lucid runs. */
     requireApproval: z.boolean().default(true),
-    /** Which agent's chat surfaces the Lucid findings. When unset,
-     *  the runtime falls back to the alphabetically-first registered
-     *  agent (with a warning log). Operators set this explicitly to
-     *  pin to a specific agent. */
-    approvalAgent: z.string().min(1).optional(),
   })
   .default({
     enabled: true,
