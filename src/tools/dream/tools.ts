@@ -23,13 +23,13 @@ import type { ToolDefinition } from '../types.ts';
 import type { DeepWorker } from '../../dream/deep-worker.ts';
 import type { LucidWorker } from '../../dream/lucid-worker.ts';
 import {
-  dismissEntireLintRun,
-  listLintRuns,
-  readLintRunById,
-  updateLintFindingStatus,
-} from '../../wiki/lint-storage.ts';
-import type { LintFinding, LintRun } from '../../wiki/lint-types.ts';
-import { applyLintFinding } from '../../wiki/lint-actions.ts';
+  dismissEntireLucidRun,
+  listLucidRuns,
+  readLucidRunById,
+  updateLucidFindingStatus,
+} from '../../dream/lucid-storage.ts';
+import type { LucidFinding, LucidRun } from '../../dream/lucid-types.ts';
+import { applyLucidFinding } from '../../dream/lucid-actions.ts';
 import { resolveObsidianSource } from '../../memory/registry.ts';
 import { join } from 'node:path';
 
@@ -54,19 +54,19 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
   toolset: 'dream',
   description:
     'List pending dreams awaiting user review. Returns both per-agent memory dreams (REM phase: ' +
-    "atomic findings from your sessions, scoped to YOUR agent) and global wiki-cleanup runs (Lucid phase: " +
-    'cleanup suggestions for the shared wiki, same for every agent). Each entry has a `kind` field ' +
-    "= 'memory' or 'wiki_lint' so the agent can describe them differently to the user. " +
-    'Pass include_processed=true to also see already-resolved entries. Use this first when the user ' +
-    'asks "hast du was geträumt?" or "gibt\'s was zum aufräumen?" — pick the oldest and walk through ' +
-    'it with `dream_get`.',
+    'atomic findings from your sessions, scoped to YOUR agent) and global wiki-cleanup runs ' +
+    '(Lucid phase: contradictions / stale claims / wanted-pages / outdated content in the shared ' +
+    "wiki, same for every agent). Each entry has a `kind` field = 'memory' or 'wiki_lucid' so the " +
+    'agent can describe them differently to the user. Pass include_processed=true to also see ' +
+    'already-resolved entries. Use this first when the user asks "hast du was geträumt?" or ' +
+    '"gibt\'s was zum aufräumen?" — pick the oldest and walk through it with `dream_get`.',
   inputSchema: ListInput,
   jsonSchema: {
     type: 'object',
     properties: {
       include_processed: {
         type: 'boolean',
-        description: 'Include dreams/lint runs whose findings have all been resolved (default false).',
+        description: 'Include dreams whose findings have all been resolved (default false).',
       },
     },
     additionalProperties: false,
@@ -74,7 +74,7 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
   async handler(input, ctx) {
     const includeProcessed = input.include_processed === true;
     const memoryDreams = await listDreams(ctx.agent, { includeProcessed });
-    const lintRuns = await listLintRuns({ includeProcessed });
+    const lucidRuns = await listLucidRuns();
     const memEntries = memoryDreams.map((d) => ({
       id: d.meta.id,
       kind: 'memory' as const,
@@ -88,23 +88,25 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
       findings_applied: d.meta.findings.filter((f) => f.status === 'applied').length,
       findings_dismissed: d.meta.findings.filter((f) => f.status === 'dismissed').length,
     }));
-    const lintEntries = lintRuns.map((r) => ({
-      id: r.id,
-      kind: 'wiki_lint' as const,
-      trigger: r.trigger,
-      status: r.status,
-      created_at: r.created_at,
-      completed_at: r.completed_at,
-      pages_scanned: r.pages_scanned,
-      findings_total: r.findings.length,
-      findings_pending: r.findings.filter((f) => f.status === 'pending').length,
-      findings_applied: r.findings.filter((f) => f.status === 'applied').length,
-      findings_dismissed: r.findings.filter((f) => f.status === 'dismissed').length,
-    }));
+    const lucidEntries = lucidRuns
+      .filter((r) => includeProcessed || r.status !== 'processed')
+      .map((r) => ({
+        id: r.id,
+        kind: 'wiki_lucid' as const,
+        trigger: r.trigger,
+        status: r.status,
+        created_at: r.created_at,
+        completed_at: r.completed_at,
+        pages_scanned: r.pages_scanned,
+        findings_total: r.findings.length,
+        findings_pending: r.findings.filter((f) => f.status === 'pending').length,
+        findings_applied: r.findings.filter((f) => f.status === 'applied').length,
+        findings_dismissed: r.findings.filter((f) => f.status === 'dismissed').length,
+      }));
     return {
-      count: memEntries.length + lintEntries.length,
-      by_kind: { memory: memEntries.length, wiki_lint: lintEntries.length },
-      dreams: [...memEntries, ...lintEntries],
+      count: memEntries.length + lucidEntries.length,
+      by_kind: { memory: memEntries.length, wiki_lucid: lucidEntries.length },
+      dreams: [...memEntries, ...lucidEntries],
     };
   },
 };
@@ -120,20 +122,20 @@ export const dreamGet: ToolDefinition<z.infer<typeof GetInput>> = {
   toolset: 'dream',
   description:
     'Fetch the full content of a dream — all findings with their proposed actions, reasons, and ' +
-    'per-finding status. Works for both memory dreams (kind=memory, per-agent) and wiki-lint runs ' +
-    "(kind=wiki_lint, global). The output's `kind` field tells the agent which type so it can " +
-    'describe findings appropriately. Use after `dream_list`.',
+    'per-finding status. Works for both memory dreams (kind=memory, per-agent) and wiki-cleanup ' +
+    "runs (kind=wiki_lucid, global). The output's `kind` field tells the agent which type so it " +
+    'can describe findings appropriately. Use after `dream_list`.',
   inputSchema: GetInput,
   jsonSchema: {
     type: 'object',
     properties: {
-      dream_id: { type: 'string', description: 'The id of the dream/lint run to retrieve.' },
+      dream_id: { type: 'string', description: 'The id of the dream/lucid run to retrieve.' },
     },
     required: ['dream_id'],
     additionalProperties: false,
   },
   async handler(input, ctx) {
-    // Try memory-dream first; fall back to lint run.
+    // Try memory-dream first; fall back to lucid run.
     const memFile = await readDreamById(ctx.agent, input.dream_id);
     if (memFile) {
       return {
@@ -151,23 +153,24 @@ export const dreamGet: ToolDefinition<z.infer<typeof GetInput>> = {
         pending_count: memFile.meta.findings.filter((f) => f.status === 'pending').length,
       };
     }
-    const lintRun = await readLintRunById(input.dream_id);
-    if (lintRun) {
+    const lucidRun = await readLucidRunById(input.dream_id);
+    if (lucidRun) {
       return {
-        id: lintRun.id,
-        kind: 'wiki_lint' as const,
-        trigger: lintRun.trigger,
-        status: lintRun.status,
-        created_at: lintRun.created_at,
-        completed_at: lintRun.completed_at,
-        processed_at: lintRun.processed_at,
-        pages_scanned: lintRun.pages_scanned,
-        ...(lintRun.error ? { error: lintRun.error } : {}),
-        findings: lintRun.findings,
-        pending_count: lintRun.findings.filter((f) => f.status === 'pending').length,
+        id: lucidRun.id,
+        kind: 'wiki_lucid' as const,
+        trigger: lucidRun.trigger,
+        status: lucidRun.status,
+        created_at: lucidRun.created_at,
+        completed_at: lucidRun.completed_at,
+        processed_at: lucidRun.processed_at,
+        pages_scanned: lucidRun.pages_scanned,
+        worker_model_ref: lucidRun.worker_model_ref,
+        ...(lucidRun.error ? { error: lucidRun.error } : {}),
+        findings: lucidRun.findings,
+        pending_count: lucidRun.findings.filter((f) => f.status === 'pending').length,
       };
     }
-    throw new Error(`dream '${input.dream_id}' not found (checked memory + wiki-lint)`);
+    throw new Error(`dream '${input.dream_id}' not found (checked memory + wiki_lucid)`);
   },
 };
 
@@ -207,17 +210,17 @@ export const dreamApply: ToolDefinition<z.infer<typeof ApplyInput>> = {
     if (memFile) {
       return await applyMemoryFinding(memFile, input.dream_id, input.finding_id, ctx);
     }
-    // Fall through to lint run.
-    const lintRun = await readLintRunById(input.dream_id);
-    if (lintRun) {
-      return await applyLintFindingFromRun(lintRun, input.dream_id, input.finding_id, ctx);
+    // Fall through to lucid run.
+    const lucidRun = await readLucidRunById(input.dream_id);
+    if (lucidRun) {
+      return await applyLucidFindingFromRun(lucidRun, input.dream_id, input.finding_id, ctx);
     }
     // Neither store has it — provide both kinds of valid ids for self-correction.
     const memDreams = await listDreams(ctx.agent);
-    const lintRuns = await listLintRuns();
+    const lucidRuns = await listLucidRuns();
     const known = [
       ...memDreams.map((d) => `'${d.meta.id}' (memory)`),
-      ...lintRuns.map((r) => `'${r.id}' (wiki_lint)`),
+      ...lucidRuns.map((r) => `'${r.id}' (wiki_lucid)`),
     ];
     throw new Error(
       `dream '${input.dream_id}' not found. Valid ids: ${
@@ -297,17 +300,17 @@ async function applyMemoryFinding(
   };
 }
 
-async function applyLintFindingFromRun(
-  lintRun: LintRun,
+async function applyLucidFindingFromRun(
+  lucidRun: LucidRun,
   runId: string,
   findingId: number,
   ctx: import('../types.ts').ToolContext,
 ): Promise<unknown> {
-  const finding: LintFinding | undefined = lintRun.findings.find((f) => f.id === findingId);
+  const finding: LucidFinding | undefined = lucidRun.findings.find((f) => f.id === findingId);
   if (!finding) {
-    const validIds = lintRun.findings.map((f) => f.id);
+    const validIds = lucidRun.findings.map((f) => f.id);
     throw new Error(
-      `finding ${findingId} not in lint run '${runId}'. Valid finding ids: ${
+      `finding ${findingId} not in lucid run '${runId}'. Valid finding ids: ${
         validIds.length ? validIds.join(', ') : '(none)'
       }. Note: finding ids start at 1, not 0.`,
     );
@@ -317,26 +320,25 @@ async function applyLintFindingFromRun(
       `finding ${findingId} is already ${finding.status} (resolved at ${finding.resolved_at ?? 'unknown'})`,
     );
   }
-  // Resolve wiki abs path from server config.
   const obs = resolveObsidianSource(ctx.config.obsidian);
   if (!obs?.vaultPath) {
-    throw new Error('lint apply: no obsidian vault configured');
+    throw new Error('lucid apply: no obsidian vault configured');
   }
   const wikiAbs = join(obs.vaultPath, ctx.config.wiki.vaultSubfolder);
-  const outcome = await applyLintFinding(finding, { wikiAbs });
+  const outcome = await applyLucidFinding(finding, { wikiAbs });
   if (outcome.kind === 'failed') {
-    throw new Error(`lint apply failed: ${outcome.error}`);
+    throw new Error(`lucid apply failed: ${outcome.error}`);
   }
-  // Mark applied or dismissed-effectively (skipped → still mark applied
-  // so the dream advances; user dismisses if they want to keep open)
-  const newStatus = outcome.kind === 'applied' ? 'applied' : 'applied'; // skipped also closes the slot
-  const result = await updateLintFindingStatus(runId, 'completed', findingId, newStatus);
-  const remaining = result?.findings.filter((f) => f.status === 'pending').length ?? 0;
+  // Both 'applied' and 'skipped' close the slot — agent reviews the
+  // outcome string, user dismisses explicitly if they want to retry.
+  const result = await updateLucidFindingStatus(runId, findingId, 'applied');
+  const remaining = result?.run.findings.filter((f) => f.status === 'pending').length ?? 0;
   return {
-    kind: 'wiki_lint',
+    kind: 'wiki_lucid',
     applied: outcome.kind === 'applied',
     finding: `#${finding.id} ${finding.kind}`,
-    executed: outcome.kind === 'applied' ? outcome.description : `skipped: ${outcome.reason}`,
+    executed:
+      outcome.kind === 'applied' ? outcome.detail : `skipped: ${outcome.reason}`,
     remaining,
     dream_done: remaining === 0,
   };
@@ -404,37 +406,36 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
         dream_done: true,
       };
     }
-    // Fall through to lint run.
-    const lintRun = await readLintRunById(input.dream_id);
-    if (lintRun) {
+    // Fall through to lucid run.
+    const lucidRun = await readLucidRunById(input.dream_id);
+    if (lucidRun) {
       if (input.finding_id !== undefined) {
-        if (!lintRun.findings.some((f) => f.id === input.finding_id)) {
-          const validIds = lintRun.findings.map((f) => f.id);
+        if (!lucidRun.findings.some((f) => f.id === input.finding_id)) {
+          const validIds = lucidRun.findings.map((f) => f.id);
           throw new Error(
-            `finding ${input.finding_id} not in lint run '${input.dream_id}'. Valid finding ids: ${
+            `finding ${input.finding_id} not in lucid run '${input.dream_id}'. Valid finding ids: ${
               validIds.length ? validIds.join(', ') : '(none)'
             }. Note: finding ids start at 1, not 0.`,
           );
         }
-        const result = await updateLintFindingStatus(
+        const result = await updateLucidFindingStatus(
           input.dream_id,
-          'completed',
           input.finding_id,
           'dismissed',
         );
-        const remaining = result?.findings.filter((f) => f.status === 'pending').length ?? 0;
+        const remaining = result?.run.findings.filter((f) => f.status === 'pending').length ?? 0;
         return {
-          kind: 'wiki_lint',
+          kind: 'wiki_lucid',
           dismissed: true,
           finding_id: input.finding_id,
           remaining,
           dream_done: remaining === 0,
         };
       }
-      const result = await dismissEntireLintRun(input.dream_id);
+      const result = await dismissEntireLucidRun(input.dream_id);
       const dismissedCount = result?.findings.filter((f) => f.status === 'dismissed').length ?? 0;
       return {
-        kind: 'wiki_lint',
+        kind: 'wiki_lucid',
         dismissed: true,
         whole_dream: true,
         dismissed_count: dismissedCount,
@@ -443,10 +444,10 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
     }
     // Neither — list valid ids
     const memDreams = await listDreams(ctx.agent);
-    const lintRuns = await listLintRuns();
+    const lucidRuns = await listLucidRuns();
     const known = [
       ...memDreams.map((d) => `'${d.meta.id}' (memory)`),
-      ...lintRuns.map((r) => `'${r.id}' (wiki_lint)`),
+      ...lucidRuns.map((r) => `'${r.id}' (wiki_lucid)`),
     ];
     throw new Error(
       `dream '${input.dream_id}' not found. Valid ids: ${
@@ -567,8 +568,8 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
             started: true,
             wait: false,
             message:
-              'Lucid started in background. Check ~/.somora/wiki-lint/ for the run report ' +
-              "or call dream_list to see findings once it's complete (~5-30s for a small wiki).",
+              'Lucid started in background. Check ~/.somora/wiki-lucid/ for the run report ' +
+              "or call dream_list to see findings once it's complete (~1-3min for a small wiki).",
             via: 'in-process',
           };
         }

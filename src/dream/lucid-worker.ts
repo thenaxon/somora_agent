@@ -5,13 +5,12 @@
 // Real-clock scheduling, reentrancy-safe (skips if a run is in flight).
 // Mirrors DeepWorker's structure.
 //
-// Note: as of v2.1 still wraps the deterministic lint runner from
-// `src/wiki/lint-runner.ts`. v2.6 replaces that with an LLM-driven
-// `lucid-runner.ts` — this worker stays unchanged structurally.
+// As of v2.6 wraps `runLucid` (LLM-driven). The deterministic lint
+// runner is retired.
 
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { runLint, type RunLintResult } from '../wiki/lint-runner.ts';
+import { runLucid, type RunLucidResult } from './lucid-runner.ts';
 
 export interface LucidWorkerDeps {
   config: Config;
@@ -21,6 +20,7 @@ export class LucidWorker {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private shuttingDown = false;
+  private currentAbort: AbortController | null = null;
 
   constructor(private deps: LucidWorkerDeps) {}
 
@@ -47,7 +47,7 @@ export class LucidWorker {
     });
   }
 
-  async runNow(): Promise<RunLintResult> {
+  async runNow(): Promise<RunLucidResult> {
     return this.fire('manual');
   }
 
@@ -57,10 +57,14 @@ export class LucidWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.currentAbort) {
+      this.currentAbort.abort();
+      this.currentAbort = null;
+    }
     logger.info({ msg: 'dream.lucid.shutdown' });
   }
 
-  private async fire(trigger: 'auto' | 'manual'): Promise<RunLintResult> {
+  private async fire(trigger: 'auto' | 'manual'): Promise<RunLucidResult> {
     if (this.shuttingDown) {
       return {
         runId: '(shutdown)',
@@ -85,10 +89,16 @@ export class LucidWorker {
       };
     }
     this.running = true;
+    this.currentAbort = new AbortController();
     try {
-      return await runLint({ config: this.deps.config, trigger });
+      return await runLucid({
+        config: this.deps.config,
+        trigger,
+        signal: this.currentAbort.signal,
+      });
     } finally {
       this.running = false;
+      this.currentAbort = null;
     }
   }
 }

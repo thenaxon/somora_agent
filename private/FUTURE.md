@@ -1308,3 +1308,47 @@ Oder wenn weitere openclaw-Agents migriert werden.
 naxon hat erstmal die thematischen Memory-Files (people, history,
 projects, etc.) — die decken die wichtigen long-term Konzepte ab.
 Daily-Logs sind Bonus. Erst beobachten ob's ein echtes Problem wird.
+
+---
+
+## claude-cli SDK abort with large multi-context prompts (entdeckt 2026-05-09)
+
+**Status:** Bug, Workaround in place. Beim v2.6-Deployment der LLM-
+driven Lucid-Phase fest gestellt: `claude-agent-sdk`'s `query()`
+crasht mit "process exited with code 1" / "aborted by user" wenn
+das System-Prompt **plus** der User-Message zusammen
+- ein bestimmtes Pattern enthält (LUCID_SYSTEM_PROMPT mit JSON-
+  examples-as-code-blocks plus eingebetteten `<wiki_page>`-Tags
+  über mehrere ~2KB-Pages hinweg)
+- gleichzeitig in der Größenordnung von 20+ KB liegen.
+
+**Reproduzierbar:**
+- short-sys + 25 KB plain text → OK via claude-cli
+- LUCID_SYSTEM_PROMPT + 25 KB plain text → OK via claude-cli
+- LUCID_SYSTEM_PROMPT + 5 wiki pages (~7 KB) → OK via claude-cli
+- LUCID_SYSTEM_PROMPT + 10 wiki pages (~23 KB) → FAIL via claude-cli
+- Same prompt+content via openrouter (openai-compatible engine,
+  same Anthropic Claude family) → OK, returns valid findings
+
+**Workaround eingesetzt:** `~/.somora/config.yaml`
+`wiki.lucid.model` auf `orhaiku` (openrouter/claude-haiku-4.5,
+openai-compatible engine) umgestellt. Kostet pro-Call statt
+Subscription-included, aber Lucid läuft nur ~wöchentlich → vernachlässigbar.
+
+**Investigations für später:**
+- Liegt's an stream-json input format der SDK?
+- Hat claude-cli interne Größen-Heuristik die Prompt+Content-Kombi
+  als verdächtig markiert?
+- Tritt der Bug auch bei Single-Page-Lucid-Calls auf wenn der Wiki-
+  Content "verdächtige" Patterns enthält (Code-Fences, viele
+  Wikilinks, multi-line YAML-Frontmatter)?
+- claude-agent-sdk@0.2.128 hat den Fehler — neuere Releases prüfen.
+- Ggf. Bug-Report an anthropic claude-agent-sdk Repo wenn
+  reproducible.
+
+**Why deferred:**
+Workaround mit orhaiku liefert qualitativ saubere Lucid-Findings
+(verifiziert: 9 Findings auf 70-page Wiki, alles echte Issues —
+contradictions, wanted_pages, stale claims). Solange das funktioniert
+ist's kein P0. Wenn der User mal die Subscription-zero-cost-Variante
+wieder will, dann ist das Investigation Zeit wert.
