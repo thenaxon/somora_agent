@@ -67,21 +67,35 @@ import {
 type Subscriber = (e: SseEvent) => Promise<void>;
 const streams = new Map<string, Set<Subscriber>>();
 
-function subscribe(session: string, sub: Subscriber): () => void {
-  let set = streams.get(session);
+/**
+ * Compose the pubsub key from (agent, session). Every persona has a
+ * `main` session by default, so keying by session-id alone caused
+ * cross-agent leaks for any client that opened multiple SSE
+ * subscriptions in parallel — observed 2026-05-09 in the web client
+ * with multiple chat windows: events for hans/main arrived in
+ * naxon/main's stream because both subscribed to bare "main".
+ */
+function streamKey(agent: string, session: string): string {
+  return `${agent}::${session}`;
+}
+
+function subscribe(agent: string, session: string, sub: Subscriber): () => void {
+  const key = streamKey(agent, session);
+  let set = streams.get(key);
   if (!set) {
     set = new Set();
-    streams.set(session, set);
+    streams.set(key, set);
   }
   set.add(sub);
   return () => {
     set?.delete(sub);
-    if (set && set.size === 0) streams.delete(session);
+    if (set && set.size === 0) streams.delete(key);
   };
 }
 
-async function publish(session: string, event: SseEvent): Promise<void> {
-  const subs = streams.get(session);
+async function publish(agent: string, session: string, event: SseEvent): Promise<void> {
+  const key = streamKey(agent, session);
+  const subs = streams.get(key);
   if (!subs) return;
   // Snapshot — failed subscribers get evicted mid-iteration
   const dead: Subscriber[] = [];
@@ -638,7 +652,7 @@ app.get('/chat/stream', async (c) => {
   }
   return streamSSE(c, async (stream) => {
     logger.info({ msg: 'sse.connect', agent, session });
-    const unsub = subscribe(session, async (event) => {
+    const unsub = subscribe(agent, session, async (event) => {
       await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
     });
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected', session }) });
@@ -731,12 +745,12 @@ app.post('/chat/send', async (c) => {
         ...(fromAgent ? { fromAgent } : {}),
         ...(agentAskCallId ? { agentAskCallId } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
-        publishSse: (event) => publish(session, event),
+        publishSse: (event) => publish(agent, session, event),
         deps: chatTurnDeps,
       });
     } catch (err) {
       logger.error({ msg: 'chat.send.run_failed', agent, session, err: (err as Error).message });
-      void publish(session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
+      void publish(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     } finally {
       abort.release();
       release();
@@ -840,7 +854,7 @@ app.post('/chat/send-sync', async (c) => {
       // Publish to SSE subscribers too — a human watching this session
       // sees A2A inbound user_messages and the assistant's reply appear
       // live, not just on session refresh.
-      publishSse: (event) => publish(session, event),
+      publishSse: (event) => publish(agent, session, event),
       deps: chatTurnDeps,
     });
     return c.json(result);
