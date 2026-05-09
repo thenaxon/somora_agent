@@ -46,7 +46,11 @@ export const MessageItem = memo(function MessageItem({ msg, agentColor, agentIco
       </div>
     );
   }
-  // assistant
+  // assistant — bubble is the direct flex child (no wrapper div).
+  // Wrapping the bubble in another div let `min-width: 0` collapse
+  // it below content size, making the bubble's `max-width: 75%`
+  // resolve against a tiny container and break short text like
+  // "Danke" mid-word. Mirrors orbit's layout pattern.
   return (
     <div className="chat-msg agent">
       <div
@@ -63,27 +67,25 @@ export const MessageItem = memo(function MessageItem({ msg, agentColor, agentIco
       >
         {agentIcon ?? '🤖'}
       </div>
-      <div>
-        <div className="chat-msg-bubble">
-          {msg.text ? (
-            <AssistantMarkdown content={msg.text} />
-          ) : (
-            <span style={{ color: 'var(--text-3)' }}>…</span>
-          )}
-          {msg.streaming && (
-            <span
-              style={{
-                display: 'inline-block',
-                width: 6,
-                height: 12,
-                marginLeft: 2,
-                verticalAlign: 'middle',
-                background: 'var(--text-2)',
-                animation: 'somora-cursor-blink 1s steps(1) infinite',
-              }}
-            />
-          )}
-        </div>
+      <div className="chat-msg-bubble">
+        {msg.text ? (
+          <AssistantMarkdown content={msg.text} />
+        ) : (
+          <span style={{ color: 'var(--text-3)' }}>…</span>
+        )}
+        {msg.streaming && (
+          <span
+            style={{
+              display: 'inline-block',
+              width: 6,
+              height: 12,
+              marginLeft: 2,
+              verticalAlign: 'middle',
+              background: 'var(--text-2)',
+              animation: 'somora-cursor-blink 1s steps(1) infinite',
+            }}
+          />
+        )}
       </div>
     </div>
   );

@@ -82,12 +82,12 @@ body {
   min-width: 0;
 }
 .chat-msg {
-  min-width: 0;
   max-width: 100%;
 }
-.chat-msg > * {
-  min-width: 0;
-}
+/* DO NOT set min-width:0 on .chat-msg's children — that lets the
+ * bubble's max-width: 75% resolve against a collapsed wrapper and
+ * break short replies ("Danke" → "Dank\ne"). Avatar already has
+ * flex-shrink:0 from desktop.css so it stays its 26-px square. */
 
 /* Markdown-rendered code blocks inside assistant bubbles need to
  * scroll instead of pushing the bubble wider. */

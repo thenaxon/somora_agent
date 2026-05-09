@@ -32,7 +32,11 @@ function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${++messageIdSeq}`;
 }
 
-const sessionKey = (agent: string, session: string) => `${agent}:${session}`;
+// Double-colon to match the server's pubsub key + survive agent
+// names that ever contain a colon. Desktop strips the suffix to
+// derive a per-agent streaming Set for the dock — the separator
+// must match what's used here.
+const sessionKey = (agent: string, session: string) => `${agent}::${session}`;
 
 export interface SessionStreamState {
   streaming: boolean;
