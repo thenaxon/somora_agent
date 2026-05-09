@@ -461,9 +461,6 @@ export const WikiDeepConfigSchema = z
     enabled: z.boolean().default(true),
     /** Real-clock cadence for Deep (Memory → Wiki consolidation). */
     intervalHours: z.number().positive().default(12),
-    /** How long before each Deep run to forcibly run REM on any agent
-     *  with un-processed sessions. Zero disables sweep. */
-    preSweepMinutes: z.number().nonnegative().default(60),
     /** Worker model for Deep. Format `<provider>/<modelId>`. */
     model: z.string().min(1).optional(),
     /** Deep auto-applies (no approval). Reserved as bool in case we
@@ -473,7 +470,6 @@ export const WikiDeepConfigSchema = z
   .default({
     enabled: true,
     intervalHours: 12,
-    preSweepMinutes: 60,
     requireApproval: false,
   });
 
@@ -542,7 +538,6 @@ export const WikiConfigSchema = z
     deep: {
       enabled: true,
       intervalHours: 12,
-      preSweepMinutes: 60,
       requireApproval: false,
     },
     lucid: {

@@ -241,7 +241,6 @@ wiki:
   deep:
     enabled: true
     intervalHours: 12
-    preSweepMinutes: 60                  # REM force-run before Deep
     model: opus
 
   lucid:

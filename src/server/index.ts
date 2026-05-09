@@ -1201,9 +1201,9 @@ for (const a of agentList) {
 
 // DeepWorker — Memory→Wiki consolidation. Server-global, real-clock-
 // scheduled. Only starts if config.wiki.enabled AND wiki.deep.enabled.
-// The pre-sweep callback forces REM across all agents before Deep
-// reads memory, so agents' un-processed sessions are settled into
-// memory first. See `private/dream-system-v2.md`.
+// Deep operates on whatever memory files are currently on disk; it
+// never triggers REM. New observations land in memory only after the
+// user approves REM findings via dream_apply.
 const globalVault = resolveObsidianSource(config.obsidian);
 const deepWorker = new DeepWorker({
   config,
@@ -1227,9 +1227,6 @@ const deepWorker = new DeepWorker({
       wiki: config.wiki,
       obsidian: config.obsidian,
     }),
-  preSweep: async () => {
-    await remWorker.runPreSweep();
-  },
 });
 deepWorker.start();
 const lucidWorker = new LucidWorker({ config });

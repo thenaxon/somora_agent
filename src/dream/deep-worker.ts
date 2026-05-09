@@ -24,10 +24,6 @@ export interface DeepWorkerDeps {
   getMemoryManager: (agent: string) => Promise<MemoryManager>;
   /** Test injection point. Production passes undefined → Default. */
   dispatcher?: PromotionDispatcher;
-  /** Optional callback fired before Deep for the pre-sweep — REM
-   *  force-run on agents with un-processed sessions. Caller wires
-   *  this from the existing RemWorker. */
-  preSweep?: () => Promise<void>;
 }
 
 export class DeepWorker {
@@ -59,7 +55,6 @@ export class DeepWorker {
     logger.info({
       msg: 'dream.deep.scheduled',
       intervalHours: this.deps.config.wiki.deep.intervalHours,
-      preSweepMinutes: this.deps.config.wiki.deep.preSweepMinutes,
     });
   }
 
@@ -106,16 +101,6 @@ export class DeepWorker {
     this.currentAbort = new AbortController();
 
     try {
-      // Pre-sweep: force REM on agents with unprocessed sessions before
-      // we go to Deep. Caller wires this from the existing RemWorker.
-      if (this.deps.preSweep) {
-        try {
-          await this.deps.preSweep();
-        } catch (err) {
-          logger.warn({ msg: 'dream.deep.pre_sweep_failed', err: (err as Error).message });
-        }
-      }
-
       const agents = await this.deps.getParticipatingAgents();
       logger.info({
         msg: 'dream.deep.start',

@@ -151,7 +151,6 @@ wiki:
   deep:                        # Memory→Wiki consolidation
     enabled: true
     intervalHours: 12
-    preSweepMinutes: 60        # REM force-run before each Deep run
     model: opus                # via claude-cli, subscription
 
   lucid:                       # Wiki cleanup

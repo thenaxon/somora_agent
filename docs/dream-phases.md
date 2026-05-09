@@ -132,13 +132,16 @@ Wiki = canonical, inbox stays a clean queue.
 
 ### Triggers
 
-**Schedule** — every 12h (configurable). On each scheduled run, Deep
-fires a pre-sweep that triggers REM for any agent with un-processed
-sessions, so memory inboxes are settled before Deep reads them.
+**Schedule** — every 12h (configurable).
 
 **Manual** — `dream_run({phase: 'deep'})` from any agent's chat, or
 `POST /dream/run-deep` over HTTP. Optional `force: true` bypasses the
 hash-cache (re-evaluates every memory file).
+
+Deep operates on whatever memory files are currently on disk. It does
+**not** trigger REM. New observations only enter memory when you
+approve a REM finding via `dream_apply`; Deep picks them up on its
+next run.
 
 ### Worker model
 
@@ -149,7 +152,6 @@ wiki:
   deep:
     enabled: true
     intervalHours: 12
-    preSweepMinutes: 60
     model: opus              # opus by default; via Claude subscription
 ```
 
@@ -344,7 +346,6 @@ wiki:
   deep:
     enabled: true
     intervalHours: 12
-    preSweepMinutes: 60
     model: opus
   lucid:
     enabled: true
