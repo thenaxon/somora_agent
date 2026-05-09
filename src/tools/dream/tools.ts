@@ -480,6 +480,7 @@ export function configureDreamRunTool(deps: DreamRunDeps): void {
 const RunInput = z.object({
   phase: z.enum(['deep', 'lucid']).optional(),
   wait: z.boolean().optional(),
+  force: z.boolean().optional(),
 });
 
 export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
@@ -537,12 +538,21 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
           'Run fertig ist", "lauf synchron", "block this turn until done"). Wanting to ' +
           'summarize results in your reply is NOT a valid reason to use wait:true.',
       },
+      force: {
+        type: 'boolean',
+        description:
+          "ONLY for phase='deep'. Default false. When true, ignore the per-agent skip-cache " +
+          'and re-evaluate every memory file with the LLM. Use after Deep prompt changes or ' +
+          'when debugging why a specific memory was skipped. Costs extra tokens — most runs ' +
+          "shouldn't need this.",
+      },
     },
     additionalProperties: false,
   },
   async handler(input, ctx) {
     const phase = input.phase ?? 'deep';
     const wait = input.wait ?? false;
+    const force = input.force ?? false;
     if (!ctx.config.wiki.enabled) {
       throw new Error('config.wiki.enabled is false — wiki layer not active');
     }
@@ -579,20 +589,21 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     // phase === 'deep'
     if (injectedDreamRunDeps) {
       if (!wait) {
-        void injectedDreamRunDeps.deepWorker.runNow().catch(() => {
+        void injectedDreamRunDeps.deepWorker.runNow({ force }).catch(() => {
           /* error already logged in worker */
         });
         return {
           phase: 'deep',
           started: true,
           wait: false,
+          force,
           message:
             'Deep started in background. Check ~/.somora/logs/server-*.log for ' +
             "'dream.deep.done', or inspect <vault>/<wiki-subfolder>/index.md after ~1-3min.",
           via: 'in-process',
         };
       }
-      const result = await injectedDreamRunDeps.deepWorker.runNow();
+      const result = await injectedDreamRunDeps.deepWorker.runNow({ force });
       const counts = result.outcomes.reduce(
         (acc, o) => {
           acc[o.kind] = (acc[o.kind] ?? 0) + 1;
@@ -603,25 +614,27 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
       return {
         phase: 'deep',
         wait: true,
+        force,
         candidatesSeen: result.candidatesSeen,
+        cachedSkips: result.cachedSkips,
         durationMs: result.durationMs,
         counts,
         outcomes: result.outcomes,
         via: 'in-process',
       };
     }
-    return runDeepViaHttp(wait);
+    return runDeepViaHttp(wait, force);
   },
 };
 
-async function runDeepViaHttp(wait: boolean): Promise<unknown> {
+async function runDeepViaHttp(wait: boolean, force: boolean): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
   const url = `http://${host}:${port}/dream/run-deep`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ wait }),
+    body: JSON.stringify({ wait, force }),
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');

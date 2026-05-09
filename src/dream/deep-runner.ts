@@ -37,6 +37,15 @@ import { regenerateIndex } from '../wiki/index-builder.ts';
 import { appendLogEntries, outcomeToLogEntry, type LogEntry } from '../wiki/log-builder.ts';
 import { readWithMtime } from '../wiki/conflict.ts';
 import { loadDeepWikiContext } from './wiki-context.ts';
+import {
+  clearCache,
+  clearSlug,
+  isCachedSkip,
+  loadCache,
+  recordSkip,
+  saveCache,
+  type Cache,
+} from './deep-skip-cache.ts';
 import type {
   CandidateOutcome,
   PromotionCandidate,
@@ -55,12 +64,19 @@ export interface RunDreamBArgs {
   getMemoryManager: (agent: string) => Promise<MemoryManager>;
   dispatcher?: PromotionDispatcher;
   signal?: AbortSignal;
+  /** Ignore the per-agent skip-cache and re-evaluate every memory
+   *  file with the LLM. Default false. Use after prompt changes or
+   *  when debugging. */
+  force?: boolean;
 }
 
 export interface RunDreamBResult {
   outcomes: CandidateOutcome[];
   candidatesSeen: number;
   durationMs: number;
+  /** How many candidates were short-circuited via the skip-cache
+   *  (no LLM call). */
+  cachedSkips: number;
 }
 
 export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
@@ -71,12 +87,12 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   const ref = args.config.wiki.deep.model;
   if (!ref) {
     logger.warn({ msg: 'dream.deep.no_worker_model_configured' });
-    return { outcomes: [], candidatesSeen: 0, durationMs: Date.now() - start };
+    return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: Date.now() - start };
   }
   const workerModel = resolveAnyRef(args.config, ref);
   if (!workerModel) {
     logger.error({ msg: 'dream.deep.worker_model_unresolved', ref });
-    return { outcomes: [], candidatesSeen: 0, durationMs: Date.now() - start };
+    return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: Date.now() - start };
   }
 
   const wikiSubfolder = args.config.wiki.vaultSubfolder;
@@ -90,6 +106,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   const allOutcomes: CandidateOutcome[] = [];
   const allLogEntries: LogEntry[] = [];
   let candidatesSeen = 0;
+  let cachedSkips = 0;
 
   for (const [vaultPath, agentsInVault] of byVault) {
     if (args.signal?.aborted) break;
@@ -104,8 +121,27 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
 
       const mgr = await args.getMemoryManager(agent.name);
 
+      // Skip-cache: load once per agent. Empty/wiped if force=true.
+      if (args.force) await clearCache(agent.name);
+      const skipCache = args.force ? ({} as Cache) : await loadCache(agent.name);
+      let cacheDirty = false;
+
       for (const c of candidates) {
         if (args.signal?.aborted) break;
+
+        // Cache check before any LLM call. Hash matches → cached skip.
+        const cached = isCachedSkip(skipCache, c.slug, c.body);
+        if (cached) {
+          cachedSkips++;
+          allOutcomes.push({
+            kind: 'skipped',
+            agent: c.agent,
+            memorySlug: c.slug,
+            reason: `[cached ${cached.skipped_at.slice(0, 10)}] ${cached.reason}`,
+          });
+          continue;
+        }
+
         try {
           const outcome = await processCandidate({
             candidate: c,
@@ -119,6 +155,18 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
           allOutcomes.push(outcome);
           const logEntry = outcomeToLogEntry(outcome, Date.now());
           if (logEntry) allLogEntries.push(logEntry);
+
+          // Cache update based on outcome.
+          if (outcome.kind === 'skipped') {
+            recordSkip(skipCache, c.slug, c.body, outcome.reason);
+            cacheDirty = true;
+          } else if (outcome.kind === 'promoted' || outcome.kind === 'merged') {
+            // Memory file just got deleted — drop any cache entry too.
+            if (skipCache[c.slug]) {
+              clearSlug(skipCache, c.slug);
+              cacheDirty = true;
+            }
+          }
         } catch (err) {
           logger.error({
             msg: 'dream.deep.candidate_failed',
@@ -133,6 +181,10 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
             error: (err as Error).message,
           });
         }
+      }
+
+      if (cacheDirty) {
+        await saveCache(agent.name, skipCache);
       }
     }
 
@@ -159,6 +211,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   return {
     outcomes: allOutcomes,
     candidatesSeen,
+    cachedSkips,
     durationMs: Date.now() - start,
   };
 }

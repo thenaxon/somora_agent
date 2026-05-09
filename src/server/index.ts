@@ -997,24 +997,27 @@ app.post('/dream/run-deep', async (c) => {
     return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
   }
   let wait = false;
+  let force = false;
   try {
     const body = await c.req.json().catch(() => ({}));
     wait = Boolean((body as { wait?: unknown }).wait);
+    force = Boolean((body as { force?: unknown }).force);
   } catch {
     /* empty body is fine */
   }
   if (!wait) {
-    void deepWorker.runNow().catch(() => {
+    void deepWorker.runNow({ force }).catch(() => {
       /* errors logged in worker */
     });
     return c.json({
       started: true,
       wait: false,
+      force,
       message:
         'Deep started in background. Tail ~/.somora/logs/ for dream.deep.done.',
     });
   }
-  const result = await deepWorker.runNow();
+  const result = await deepWorker.runNow({ force });
   const counts = result.outcomes.reduce(
     (acc, o) => {
       acc[o.kind] = (acc[o.kind] ?? 0) + 1;
@@ -1024,7 +1027,9 @@ app.post('/dream/run-deep', async (c) => {
   );
   return c.json({
     wait: true,
+    force,
     candidatesSeen: result.candidatesSeen,
+    cachedSkips: result.cachedSkips,
     durationMs: result.durationMs,
     counts,
     outcomes: result.outcomes,

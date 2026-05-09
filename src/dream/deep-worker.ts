@@ -65,9 +65,13 @@ export class DeepWorker {
 
   /** Manual trigger. Returns the run result for logging by the caller
    *  (e.g. the dream_run({phase:'deep'}) tool surfaces it back to the
-   *  user). */
-  async runNow(): Promise<RunDreamBResult> {
-    return this.fire('manual');
+   *  user).
+   *
+   *  `force=true` bypasses the per-agent skip-cache so every memory
+   *  file gets re-evaluated by the LLM. Use after prompt changes or
+   *  when debugging a specific candidate's decision. */
+  async runNow(opts?: { force?: boolean }): Promise<RunDreamBResult> {
+    return this.fire('manual', opts?.force ?? false);
   }
 
   shutdown(): void {
@@ -83,9 +87,12 @@ export class DeepWorker {
     logger.info({ msg: 'dream.deep.shutdown' });
   }
 
-  private async fire(trigger: 'scheduled' | 'manual'): Promise<RunDreamBResult> {
+  private async fire(
+    trigger: 'scheduled' | 'manual',
+    force = false,
+  ): Promise<RunDreamBResult> {
     if (this.shuttingDown) {
-      return { outcomes: [], candidatesSeen: 0, durationMs: 0 };
+      return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: 0 };
     }
     if (this.running) {
       logger.warn({
@@ -93,7 +100,7 @@ export class DeepWorker {
         trigger,
         hint: 'previous run still in flight — manual trigger waits for next cycle',
       });
-      return { outcomes: [], candidatesSeen: 0, durationMs: 0 };
+      return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: 0 };
     }
     this.running = true;
     this.currentAbort = new AbortController();
@@ -120,6 +127,7 @@ export class DeepWorker {
         config: this.deps.config,
         agents,
         getMemoryManager: this.deps.getMemoryManager,
+        force,
         ...(this.deps.dispatcher ? { dispatcher: this.deps.dispatcher } : {}),
         signal: this.currentAbort.signal,
       });
@@ -134,7 +142,9 @@ export class DeepWorker {
       logger.info({
         msg: 'dream.deep.done',
         trigger,
+        force,
         candidatesSeen: result.candidatesSeen,
+        cachedSkips: result.cachedSkips,
         outcomes: counts,
         durationMs: result.durationMs,
       });
