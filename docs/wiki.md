@@ -85,40 +85,40 @@ Every wiki page is markdown with YAML frontmatter:
 
 ```markdown
 ---
-slug: personen/familie-rene
+slug: personen/familie-mueller
 type: family
 created: 2026-05-08
 updated: 2026-05-09
 sources:
-  - hans/familie-rene                  # which agent's memory contributed
-  - naxon/people
+  - alpha/familie-mueller              # which agent's memory contributed
+  - beta/people
 related:
-  - wissen/renes-autos
-  - orte/blackcorner
+  - wissen/family-cars
+  - orte/main-house
 ---
 
-# Familie Rene
+# Familie Müller
 
 ## Aktueller Stand
 
-Familie rund um Rene Siegl: Ehefrau, Schwester, Vater, Neffe sowie
-zwei Hunde. Diese Seite bündelt die wichtigsten Personen…
+Familie around Maria Müller: spouse, sister, father, niece and
+two dogs. This page bundles the key people …
 
 ## Eigenschaften
 
-- **Ehefrau:** Dr. Cornelia "Conny" Siegl (* 03.02.1984)
-- **Schwester:** Nathalie Siegl (* 08.12.1973)
+- **Spouse:** Dr. Cornelia Müller (* 03.02.1984)
+- **Sister:** Nathalie Müller (* 08.12.1973)
 - …
 
 ## Zeitleiste
 
-- 1941-04-30 — Geburt Walter Siegl
-- 1973-12-08 — Geburt Nathalie Siegl
+- 1941-04-30 — Walter Müller born
+- 1973-12-08 — Nathalie Müller born
 - …
 
 ## Notizen
 
-- Querverweise: [[wissen/renes-autos]], [[orte/blackcorner]]
+- Querverweise: [[wissen/family-cars]], [[orte/main-house]]
 ```
 
 ### Frontmatter fields
@@ -172,18 +172,18 @@ Auto-regenerated after every Deep run. Contains:
 Letztes Update: 2026-05-09 07:45 UTC von Deep
 
 ## Personen
-- [[personen/familie-rene]] — Familie rund um Rene Siegl …
-- [[personen/luca-horinek]] — Renes Neffe, Sohn von Nathalie …
+- [[personen/familie-mueller]] — Family around Maria Müller …
+- [[personen/anna]] — Niece, daughter of Nathalie …
 
 ## Projekte
-- [[projekte/somora]] — Somora ist ein selbst gebautes System …
-- [[projekte/naxxen]] — LLM-Proxy mit Prompt-Compression …
+- [[projekte/internal-cms]] — Internal CMS used by …
+- [[projekte/release-pipeline]] — CI/CD across multiple repos …
 
 ## Wissen
-- [[wissen/renes-autos]] — Rene besitzt mehrere Fahrzeuge …
+- [[wissen/family-cars]] — Notes on the household vehicle fleet …
 
 ## Letzte Updates
-- 2026-05-09: [[personen/familie-rene]] — familie-rene aktualisiert: Conny + Geburtstag
+- 2026-05-09: [[personen/familie-mueller]] — familie-mueller aktualisiert: spouse + birthday
 ```
 
 The index is the **topology header** Lucid and REM see — they know what

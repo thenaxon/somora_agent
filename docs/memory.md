@@ -69,17 +69,17 @@ long-term wiki (consolidated, authoritative); [vault/...] = read-only vault.
 ## Wiki overview (shared long-term knowledge)
 # somora-Wiki Index
 ## Personen
-- [[personen/familie-rene]] — Familie rund um Rene Siegl …
+- [[personen/familie-mueller]] — Family around Maria Müller …
 ## Projekte
-- [[projekte/somora]] — Somora ist ein selbst gebautes System …
+- [[projekte/internal-cms]] — Internal CMS used by the team …
 …
 
 ## Relevant hits for this turn
 
-### [wiki/orte/garten · score=0.42]
+### [wiki/orte/main-house · score=0.42]
 <chunk content>
 
-### [memory/notiz · score=0.31]
+### [memory/note-x · score=0.31]
 <chunk content>
 </memory-context>
 ```
