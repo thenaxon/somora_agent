@@ -519,7 +519,12 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     '\n' +
     "* Use sparingly — Deep's scheduler runs every 12h by default, Lucid weekly. " +
     'Manual triggers are for "I just added several substantial memory notes and want ' +
-    'them in the wiki now" or "let me cleanup the wiki right now".',
+    'them in the wiki now" or "let me cleanup the wiki right now".\n' +
+    '\n' +
+    "* force:true (phase='deep' only) bypasses the per-agent skip-cache so every " +
+    'memory file gets re-evaluated with a fresh LLM call. Use when a memory note ' +
+    "should have ended up in the wiki but didn't, or after a Deep prompt change. " +
+    'Costs extra tokens (no cached skips), so reach for it deliberately.',
   inputSchema: RunInput,
   jsonSchema: {
     type: 'object',
@@ -543,9 +548,10 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
         type: 'boolean',
         description:
           "ONLY for phase='deep'. Default false. When true, ignore the per-agent skip-cache " +
-          'and re-evaluate every memory file with the LLM. Use after Deep prompt changes or ' +
-          'when debugging why a specific memory was skipped. Costs extra tokens — most runs ' +
-          "shouldn't need this.",
+          'and re-evaluate every memory file with the LLM. Use after Deep prompt changes, ' +
+          'when debugging why a specific memory was skipped, or when a memory file should ' +
+          "have been consolidated but didn't show up in the wiki. Costs extra tokens — " +
+          "most runs shouldn't need this.",
       },
     },
     additionalProperties: false,

@@ -157,9 +157,23 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
           if (logEntry) allLogEntries.push(logEntry);
 
           // Cache update based on outcome.
-          if (outcome.kind === 'skipped') {
+          // CRITICAL: only stable skips (model-emitted skip-decisions)
+          // are cacheable. Transient skips — LLM call/parse failures,
+          // schema mismatches, mtime conflicts, write failures — must
+          // NOT poison the cache, otherwise a one-off failure locks
+          // the memory file out across all future Deep runs until the
+          // user runs `force: true` (verified bug 2026-05-09).
+          if (outcome.kind === 'skipped' && !outcome.transient) {
             recordSkip(skipCache, c.slug, c.body, outcome.reason);
             cacheDirty = true;
+          } else if (outcome.kind === 'skipped' && outcome.transient) {
+            logger.info({
+              msg: 'dream.deep.skip_transient_uncached',
+              agent: c.agent,
+              slug: c.slug,
+              reason: outcome.reason,
+              hint: 'this memory file will be re-evaluated on the next Deep run',
+            });
           } else if (outcome.kind === 'promoted' || outcome.kind === 'merged') {
             // Memory file just got deleted — drop any cache entry too.
             if (skipCache[c.slug]) {
@@ -303,6 +317,7 @@ async function processCandidate(args: {
       agent: candidate.agent,
       memorySlug: candidate.slug,
       reason: decision.reason,
+      ...(decision.transient ? { transient: true as const } : {}),
     };
   }
 
@@ -391,6 +406,7 @@ async function mergeCollidingPage(args: {
       agent: candidate.agent,
       memorySlug: candidate.slug,
       reason: decision.reason,
+      ...(decision.transient ? { transient: true as const } : {}),
     };
   }
   if (decision.kind !== 'merge') {

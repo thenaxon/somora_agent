@@ -151,6 +151,7 @@ export async function applyMerge(args: {
       agent: candidate.agent,
       memorySlug: candidate.slug,
       reason: `wiki page ${wikiPath} edited externally between read and write; will retry next run`,
+      transient: true,
     };
   }
   const parsed = parseWikiPage(existing.text);
@@ -189,6 +190,7 @@ export async function applyMerge(args: {
       agent: candidate.agent,
       memorySlug: candidate.slug,
       reason: `wiki page ${wikiPath} write failed: ${writeWiki.kind}`,
+      transient: true,
     };
   }
 

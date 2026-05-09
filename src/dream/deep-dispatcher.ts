@@ -51,7 +51,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
         slug: args.candidate.slug,
         err: (err as Error).message,
       });
-      return { kind: 'skip', reason: `LLM call failed: ${(err as Error).message}` };
+      return { kind: 'skip', reason: `LLM call failed: ${(err as Error).message}`, transient: true };
     }
     return parseDeepDecision(text, args.candidate.slug);
   }
@@ -112,10 +112,10 @@ function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
       err: (err as Error).message,
       sample: text.slice(0, 200),
     });
-    return { kind: 'skip', reason: 'LLM output unparseable as JSON' };
+    return { kind: 'skip', reason: 'LLM output unparseable as JSON', transient: true };
   }
   if (!parsed || typeof parsed !== 'object') {
-    return { kind: 'skip', reason: 'LLM output not an object' };
+    return { kind: 'skip', reason: 'LLM output not an object', transient: true };
   }
   const obj = parsed as Record<string, unknown>;
 
@@ -138,7 +138,7 @@ function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
         slug,
         have: { subfolder, slugOut, type, title, body: body.length },
       });
-      return { kind: 'skip', reason: 'LLM promote response missing required fields' };
+      return { kind: 'skip', reason: 'LLM promote response missing required fields', transient: true };
     }
     const finalSlug = slugOut.startsWith(subfolder + '/') ? slugOut : `${subfolder}/${slugOut}`;
     const related = Array.isArray(obj.related)
@@ -165,7 +165,7 @@ function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
         slug,
         have: { wikiPath, body: body.length, logSummary },
       });
-      return { kind: 'skip', reason: 'LLM merge response missing required fields' };
+      return { kind: 'skip', reason: 'LLM merge response missing required fields', transient: true };
     }
     const related = Array.isArray(obj.related)
       ? obj.related.filter((r): r is string => typeof r === 'string')
@@ -179,5 +179,5 @@ function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
     };
   }
 
-  return { kind: 'skip', reason: `unknown decision kind: ${String(obj.kind)}` };
+  return { kind: 'skip', reason: `unknown decision kind: ${String(obj.kind)}`, transient: true };
 }

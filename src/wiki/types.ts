@@ -31,6 +31,15 @@ export type MemoryFateDecision =
   | {
       kind: 'skip';
       reason: string;
+      /** Set when the skip is the result of a transient failure
+       *  (LLM call error, JSON parse failure, schema mismatch) — i.e.
+       *  NOT a deliberate skip-decision from the model. The runner
+       *  must not record transient skips into the per-agent skip-cache,
+       *  or the memory file gets stuck across runs (verified bug
+       *  2026-05-09: mac-studio-korrektur stuck on parser-failure).
+       *  Genuine model-emitted skips (transient unset) are stable and
+       *  cacheable. */
+      transient?: true;
     }
   | {
       kind: 'promote';
@@ -84,6 +93,12 @@ export type CandidateOutcome =
       agent: string;
       memorySlug: string;
       reason: string;
+      /** When true, the skip resulted from a transient failure (LLM
+       *  call/parse error, schema mismatch, mtime conflict, write
+       *  failure) — not a stable model-emitted skip-decision. The
+       *  runner uses this to gate the per-agent skip-cache so a
+       *  one-off failure can't lock a memory file out forever. */
+      transient?: true;
     }
   | {
       kind: 'failed';
