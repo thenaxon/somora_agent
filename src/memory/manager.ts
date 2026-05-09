@@ -329,7 +329,7 @@ export class MemoryManager {
     // Hit-format uses `[source/slug]` so the slug should be stable across
     // sources without redundant prefixes.
     //
-    // Wiki preserves `/` separators (e.g. `personen/luca`) to match the
+    // Wiki preserves `/` separators (e.g. `personen/anna`) to match the
     // Wikilinks Dream-B writes; vault and memory keep the historic `--`
     // convention so existing references don't break.
     const slug = source === 'memory'
@@ -577,7 +577,7 @@ export class MemoryManager {
   }
 
   /**
-   * Resolve a recall reference like "memory/auto", "wiki/personen/luca",
+   * Resolve a recall reference like "memory/auto", "wiki/personen/anna",
    * or "vault/Notizen/Foo--Bar" back to the full file content. Uses the
    * chunks table for path lookup so we don't have to reverse-slugify
    * (collision-safe). All three sources route through the same query.
@@ -639,8 +639,8 @@ function slugFromPath(path: string, root: string, opts?: { keepSeparators?: bool
   // at `projects/somora/idea.md` becomes slug `projects--somora--idea`.
   //
   // Wiki source overrides via `keepSeparators: true` to preserve `/` —
-  // matches the design-doc reference format `[wiki/personen/luca]` and
-  // aligns with Obsidian Wikilinks `[[personen/luca]]` that Dream-B will
+  // matches the design-doc reference format `[wiki/personen/anna]` and
+  // aligns with Obsidian Wikilinks `[[personen/anna]]` that Dream-B will
   // emit. Without this, references and Wikilinks would diverge and
   // confuse the agent.
   const parts = rel.replace(/\.md$/i, '').split(/[/\\]/).filter((s) => s.length > 0);

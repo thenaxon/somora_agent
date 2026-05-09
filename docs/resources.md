@@ -12,15 +12,15 @@ visible to every agent unless an agent's `agent.yaml` denies them.
 
 ```yaml
 resources:
-  mac-studio:
+  build-server:
     type: ssh
-    host: 192.168.60.47
+    host: 192.0.2.10                      # example IP from RFC 5737 doc range
     port: 22                              # optional, default 22
-    user: suspect
+    user: alice
     keyPath: ~/.ssh/id_ed25519            # path on the somora server
     description: |
-      Mac Studio von Rene (DMZ). macOS, hat alle Standard-CLI-Tools.
-    workspace: /Users/suspect/work        # optional default cwd for relative paths
+      macOS build host. Has Homebrew + standard CLI toolchain.
+    workspace: /Users/alice/work          # optional default cwd for relative paths
     # hostKey: 'sha256:abc...'            # optional strict-mode pin; TOFU when omitted
 ```
 

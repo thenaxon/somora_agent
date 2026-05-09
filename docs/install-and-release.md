@@ -16,7 +16,7 @@ deinem Rechner:
 | Verzeichnis | Was liegt da | Wer ändert das |
 |---|---|---|
 | `~/.npm-global/lib/node_modules/somora/` | **prod-Code** (was systemd ausführt) | nur `npm install`/`somora update` |
-| `/home/suspect/Projects/naxon/somora/` | **dev-Code** (was du editierst) | nur du beim Coden |
+| `~/Projects/somora/` | **dev-Code** (was du editierst) | nur du beim Coden |
 | `~/.somora/` | **Daten** (Sessions, Memory, Config, Logs) | beide Code-Trees, immer |
 
 Plus zwei Helfer:
@@ -36,7 +36,7 @@ dev:server`) — niemals beide. Das Lockfile setzt das durch.
 
 ```bash
 # im dev-Tree:
-cd /home/suspect/Projects/naxon/somora
+cd ~/Projects/somora
 
 # 1. Tarball bauen — packt nur was in package.json:files steht
 npm pack
@@ -98,7 +98,7 @@ somora server status         # zeigt Lockfile-Inhalt + systemd-Status
 und was läuft. Beispiel-Output:
 
 ```
-lockfile: /home/suspect/.somora/locks/server.lock
+lockfile: ~/.somora/locks/server.lock
   pid:        1003377 (alive)
   port:       18737
   host:       127.0.0.1
@@ -166,7 +166,7 @@ Solange der Public-Repo nicht da ist, geht der Update so:
 
 ```bash
 # im dev-Tree, nach deinen Änderungen:
-cd /home/suspect/Projects/naxon/somora
+cd ~/Projects/somora
 
 # 1. Version hochziehen in package.json (manuell oder beim Zuruf
 #    „Version hochziehen" — Format YYYY.MM.DD.N)
@@ -201,7 +201,7 @@ das Steuer:
 somora server stop
 
 # 2. dev-Server starten — lebt in deinem dev-Tree, hot-reload
-cd /home/suspect/Projects/naxon/somora
+cd ~/Projects/somora
 npm run dev:server
 
 # (in anderem Terminal) — TUI gegen den dev-Server
@@ -358,7 +358,7 @@ Wenn du einen schlechten Update gemacht hast und zurück willst:
 
 ```bash
 # Variante A: über git zu einem getaggten Stand
-cd /home/suspect/Projects/naxon/somora
+cd ~/Projects/somora
 git checkout 2026.05.07.1               # oder welche Version auch immer
 npm pack
 npm install -g ./somora-2026.05.07.1.tgz

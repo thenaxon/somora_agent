@@ -21,8 +21,9 @@ What makes it different:
 - **Local-first.** All data — config, memory, sessions, the wiki — lives in
   `~/.somora/` on your machine. Nothing leaves your laptop unless you point
   an engine at a cloud provider.
-- **Multi-agent.** Hans, Naxon, Jarvis — different personas, separate memory
-  inboxes, but they share a long-term wiki of consolidated knowledge.
+- **Multi-agent.** Configure as many personas as you want — each with a
+  distinct character, separate memory inbox, and own model preferences.
+  All agents share one long-term wiki of consolidated knowledge.
 - **Multi-engine.** One conversation can flip between Claude Opus (via your
   Claude subscription), GPT-5.5 (via your ChatGPT subscription), or any
   local model exposing an OpenAI-compatible endpoint (Ollama, LM Studio,

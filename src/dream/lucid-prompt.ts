@@ -38,18 +38,18 @@ Output: ONE JSON object — no commentary, no markdown fences:
   "findings": [
     {
       "kind": "contradiction",
-      "affected_pages": ["personen/luca", "personen/familie-rene"],
-      "reason": "personen/luca says 'born 2017'; personen/familie-rene says Luca was born 2018. The familie-rene page has more context (Nathalie's birth year corroborates 2018) — luca page likely has a typo.",
+      "affected_pages": ["personen/anna", "personen/familie-mueller"],
+      "reason": "personen/anna says 'born 2017'; personen/familie-mueller says Anna was born 2018. The familie-mueller page has more context (her sibling's birth year corroborates 2018) — anna page likely has a typo.",
       "fix": {
         "kind": "update_page",
-        "wikiPath": "personen/luca",
-        "newBody": "## Aktueller Stand\\nLuca, geboren 2018, Sohn von Nathalie Siegl …\\n\\n## …",
-        "logSummary": "luca aktualisiert: Geburtsjahr 2017→2018"
+        "wikiPath": "personen/anna",
+        "newBody": "## Aktueller Stand\\nAnna, geboren 2018, Tochter von Maria Müller …\\n\\n## …",
+        "logSummary": "anna aktualisiert: Geburtsjahr 2017→2018"
       }
     },
     {
       "kind": "wanted_page",
-      "affected_pages": ["projekte/somora", "projekte/naxxen-deploy", "infrastruktur/blackcorner-os"],
+      "affected_pages": ["projekte/internal-cms", "projekte/release-pipeline", "infrastruktur/build-server"],
       "reason": "Three pages reference [[projekte/orbit]] but no orbit page exists. Substantive topic — Orbit is the project-tracking system used across multiple projects.",
       "fix": {
         "kind": "create_page",
@@ -58,14 +58,14 @@ Output: ONE JSON object — no commentary, no markdown fences:
         "type": "projekt",
         "title": "Orbit",
         "body": "## Aktueller Stand\\nOrbit ist die zentrale Projekt-Tracking-Plattform …\\n\\n## …",
-        "related": ["projekte/somora", "projekte/naxxen-deploy"],
+        "related": ["projekte/internal-cms", "projekte/release-pipeline"],
         "logSummary": "orbit erstellt aus Wanted-Page-Detection (3 Refs)"
       }
     },
     {
       "kind": "outdated",
       "affected_pages": ["projekte/legacy-system-x"],
-      "reason": "Page describes a project that's been superseded (per projekte/somora's Zeitleiste, system-x was retired in 2024). No other page references it. Pure historical artifact.",
+      "reason": "Page describes a project that's been superseded (per projekte/internal-cms's Zeitleiste, system-x was retired in 2024). No other page references it. Pure historical artifact.",
       "fix": {
         "kind": "delete_page",
         "wikiPath": "projekte/legacy-system-x",
@@ -74,11 +74,11 @@ Output: ONE JSON object — no commentary, no markdown fences:
     },
     {
       "kind": "inconsistent_xref",
-      "affected_pages": ["personen/conny", "personen/familie-rene"],
-      "reason": "personen/familie-rene mentions Conny multiple times but personen/conny doesn't link back to familie-rene. Tight family relationship suggests bidirectional reference.",
+      "affected_pages": ["personen/maria", "personen/familie-mueller"],
+      "reason": "personen/familie-mueller mentions Maria multiple times but personen/maria doesn't link back to familie-mueller. Tight family relationship suggests bidirectional reference.",
       "fix": {
         "kind": "no_op",
-        "note": "Add [[personen/familie-rene]] to personen/conny's related-list when next user-edited."
+        "note": "Add [[personen/familie-mueller]] to personen/maria's related-list when next user-edited."
       }
     }
   ]

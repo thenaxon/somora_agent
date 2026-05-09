@@ -115,12 +115,12 @@ providers:
 # resources:
 #   linuxserver-1:
 #     type: ssh
-#     host: 192.168.60.10
-#     user: rene
+#     host: 192.0.2.10
+#     user: alice
 #     keyPath: ~/.ssh/id_ed25519
 #     description: |
 #       Bastion in der Werkstatt. Ubuntu 24.04, Docker installed.
-#     workspace: /home/rene/work
+#     workspace: /home/alice/work
 #     # hostKey: 'sha256:abc...'      # optional, sonst TOFU
 
 # Web-Tools-Credentials. Pro-Provider-Schlüssel — Tools deren Provider
