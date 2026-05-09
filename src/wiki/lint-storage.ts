@@ -99,7 +99,7 @@ export async function listLintRuns(opts?: {
         const parsed = matter(raw);
         out.push(parsed.data as unknown as LintRun);
       } catch (err) {
-        logger.warn({ msg: 'wiki.lint.run_read_failed', path, err: (err as Error).message });
+        logger.warn({ msg: 'dream.lucid.run_read_failed', path, err: (err as Error).message });
       }
     }
   }

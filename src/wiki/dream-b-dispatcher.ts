@@ -39,7 +39,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
       });
     } catch (err) {
       logger.warn({
-        msg: 'wiki.dream_b.llm_call_failed',
+        msg: 'dream.deep.llm_call_failed',
         op: 'promote',
         agent: args.candidate.agent,
         slug: args.candidate.slug,
@@ -70,7 +70,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
       });
     } catch (err) {
       logger.warn({
-        msg: 'wiki.dream_b.llm_call_failed',
+        msg: 'dream.deep.llm_call_failed',
         op: 'merge',
         agent: args.candidate.agent,
         slug: args.candidate.slug,
@@ -146,7 +146,7 @@ function parsePromotionDecision(raw: string, slug: string): PromotionDecision {
     parsed = JSON.parse(text);
   } catch (err) {
     logger.warn({
-      msg: 'wiki.dream_b.parse_failed',
+      msg: 'dream.deep.parse_failed',
       op: 'promote',
       slug,
       err: (err as Error).message,
@@ -175,7 +175,7 @@ function parsePromotionDecision(raw: string, slug: string): PromotionDecision {
   const body = typeof obj.body === 'string' ? obj.body : '';
   if (!subfolder || !slugOut || !type || !title || !body) {
     logger.warn({
-      msg: 'wiki.dream_b.promote_missing_fields',
+      msg: 'dream.deep.promote_missing_fields',
       slug,
       have: { subfolder, slugOut, type, title, body: body.length },
     });
@@ -204,7 +204,7 @@ function parseMergeDecision(raw: string, slug: string): MergeDecision {
     parsed = JSON.parse(text);
   } catch (err) {
     logger.warn({
-      msg: 'wiki.dream_b.parse_failed',
+      msg: 'dream.deep.parse_failed',
       op: 'merge',
       slug,
       err: (err as Error).message,
@@ -229,7 +229,7 @@ function parseMergeDecision(raw: string, slug: string): MergeDecision {
   const logSummary = typeof obj.logSummary === 'string' ? obj.logSummary : '';
   if (!body || !logSummary) {
     logger.warn({
-      msg: 'wiki.dream_b.merge_missing_fields',
+      msg: 'dream.deep.merge_missing_fields',
       slug,
       have: { body: body.length, logSummary },
     });

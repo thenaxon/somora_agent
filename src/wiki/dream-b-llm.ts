@@ -64,7 +64,7 @@ async function callOpenAICompat(args: OneShotArgs): Promise<string> {
   });
   const reqStart = Date.now();
   logger.info({
-    msg: 'wiki.dream_b.llm_request',
+    msg: 'dream.deep.llm_request',
     ...args.logCtx,
     engine: 'openai-compatible',
     model: args.workerModel.modelId,
@@ -92,7 +92,7 @@ async function callOpenAICompat(args: OneShotArgs): Promise<string> {
 
   const text = completion.choices[0]?.message?.content ?? '';
   logger.info({
-    msg: 'wiki.dream_b.llm_response',
+    msg: 'dream.deep.llm_response',
     ...args.logCtx,
     engine: 'openai-compatible',
     durationMs: Date.now() - reqStart,
@@ -121,7 +121,7 @@ async function callClaudeCli(args: OneShotArgs): Promise<string> {
 
   const reqStart = Date.now();
   logger.info({
-    msg: 'wiki.dream_b.llm_request',
+    msg: 'dream.deep.llm_request',
     ...args.logCtx,
     engine: 'claude-cli',
     model: args.workerModel.modelId,
@@ -172,7 +172,7 @@ async function callClaudeCli(args: OneShotArgs): Promise<string> {
     throw new Error('Dream-B claude-cli call aborted');
   }
   logger.info({
-    msg: 'wiki.dream_b.llm_response',
+    msg: 'dream.deep.llm_response',
     ...args.logCtx,
     engine: 'claude-cli',
     durationMs: Date.now() - reqStart,
@@ -226,7 +226,7 @@ async function callCodexCli(args: OneShotArgs): Promise<string> {
 
   const reqStart = Date.now();
   logger.info({
-    msg: 'wiki.dream_b.llm_request',
+    msg: 'dream.deep.llm_request',
     ...args.logCtx,
     engine: 'codex-cli',
     model: args.workerModel.modelId,
@@ -319,7 +319,7 @@ async function callCodexCli(args: OneShotArgs): Promise<string> {
     );
   }
   logger.info({
-    msg: 'wiki.dream_b.llm_response',
+    msg: 'dream.deep.llm_response',
     ...args.logCtx,
     engine: 'codex-cli',
     durationMs: Date.now() - reqStart,

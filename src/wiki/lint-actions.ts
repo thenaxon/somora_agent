@@ -89,7 +89,7 @@ async function applyBrokenWikilink(
     return { kind: 'skipped', reason: `mtime check failed: ${result.kind}` };
   }
   logger.info({
-    msg: 'wiki.lint.applied.broken_wikilink',
+    msg: 'dream.lucid.applied.broken_wikilink',
     page: finding.in_page,
     from: finding.broken_target,
     to: finding.suggested_target,
@@ -127,7 +127,7 @@ async function applyOrphanPage(
     };
   }
   await rm(pagePath);
-  logger.info({ msg: 'wiki.lint.applied.orphan_page', page: finding.page });
+  logger.info({ msg: 'dream.lucid.applied.orphan_page', page: finding.page });
   return {
     kind: 'applied',
     description: `Deleted orphan page ${finding.page}.md`,
@@ -159,7 +159,7 @@ async function applyIndexFix(ctx: ApplyContext): Promise<ApplyOutcome> {
   }
   await regenerateIndex({ wikiAbs: ctx.wikiAbs, recentUpdates: [] });
   indexRegenLast.set(ctx.wikiAbs, now);
-  logger.info({ msg: 'wiki.lint.applied.index_fix', wikiAbs: ctx.wikiAbs });
+  logger.info({ msg: 'dream.lucid.applied.index_fix', wikiAbs: ctx.wikiAbs });
   return { kind: 'applied', description: 'Regenerated index.md from current wiki tree' };
 }
 
@@ -203,7 +203,7 @@ async function applyOneWayLink(
     return { kind: 'skipped', reason: `mtime check failed: ${result.kind}` };
   }
   logger.info({
-    msg: 'wiki.lint.applied.one_way_link',
+    msg: 'dream.lucid.applied.one_way_link',
     from: finding.from_page,
     to: finding.to_page,
   });

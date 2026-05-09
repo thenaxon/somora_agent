@@ -50,7 +50,7 @@ export async function runLint(args: RunLintArgs): Promise<RunLintResult> {
     findings: [],
   };
   await writeLintRun(initial);
-  logger.info({ msg: 'wiki.lint.start', id, trigger: args.trigger, wikiAbs });
+  logger.info({ msg: 'dream.lucid.start', id, trigger: args.trigger, wikiAbs });
 
   let snapshot;
   try {
@@ -75,7 +75,7 @@ export async function runLint(args: RunLintArgs): Promise<RunLintResult> {
   await transitionLintRunStatus(id, 'running', next.status, next);
 
   logger.info({
-    msg: 'wiki.lint.done',
+    msg: 'dream.lucid.done',
     id,
     findings: result.findings.length,
     pages_scanned: result.pagesScanned,
@@ -98,7 +98,7 @@ async function failRun(
   error: string,
   start: number,
 ): Promise<RunLintResult> {
-  logger.error({ msg: 'wiki.lint.failed', id, error });
+  logger.error({ msg: 'dream.lucid.failed', id, error });
   const failed: LintRun = {
     id,
     status: 'failed',
@@ -111,7 +111,7 @@ async function failRun(
   try {
     await writeLintRun(failed);
   } catch (err) {
-    logger.warn({ msg: 'wiki.lint.failure_write_fail', err: (err as Error).message });
+    logger.warn({ msg: 'dream.lucid.failure_write_fail', err: (err as Error).message });
   }
   return {
     runId: id,

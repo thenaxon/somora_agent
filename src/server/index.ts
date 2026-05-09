@@ -42,9 +42,9 @@ import {
   recoverOrphanRunningDreams,
 } from '../dream/storage.ts';
 import { runDream } from '../dream/runner.ts';
-import { AutoDreamWorker } from '../dream/auto-worker.ts';
-import { WikiPromotionWorker } from '../wiki/auto-worker.ts';
-import { WikiLintWorker } from '../wiki/lint-worker.ts';
+import { RemWorker } from '../dream/rem-worker.ts';
+import { DeepWorker } from '../dream/deep-worker.ts';
+import { LucidWorker } from '../dream/lucid-worker.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
@@ -493,13 +493,13 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
   }
   logger.info({ msg: 'session.reset', agent, session, archivedId: result.archivedId });
 
-  // Spawn dream over the archived range — async, no await, no
+  // Spawn REM over the archived range — async, no await, no
   // ramifications for the reset response. If it fails, only the dream
   // file gets a `failed` status; user is otherwise unaffected.
   let dreamSpawned = false;
-  if (persona.dream?.enabled) {
+  if (persona.rem?.enabled) {
     const archivedId = result.archivedId;
-    const dreamConfig = persona.dream;
+    const remConfig = persona.rem;
     void (async () => {
       try {
         const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
@@ -509,7 +509,7 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
           trigger: 'manual',
           rangeFromTs: 0,
           rangeThroughTs: Date.now(),
-          dream: dreamConfig,
+          rem: remConfig,
           config,
           mgr,
         });
@@ -746,7 +746,7 @@ app.post('/chat/send', async (c) => {
   // and reset the idle countdown. (resetActivity is also called inside
   // runChatTurn, but doing it here ensures the cancel happens BEFORE
   // the turn even starts processing.)
-  autoDreamWorker.resetActivity(agent);
+  remWorker.resetActivity(agent);
 
   return c.json({ ok: true }, 202);
 });
@@ -987,12 +987,12 @@ app.get('/spawn-list', (c) => {
 // Wiki-Promotion manueller Trigger. Same handler the dream_run tool
 // calls in-process; exposed over HTTP so the MCP child (claude-cli /
 // codex-cli) can fall back to it when its own ToolRegistry lacks the
-// injected wikiPromotionWorker. See `private/wiki-design.md`.
+// injected deepWorker. See `private/wiki-design.md`.
 //
 // Body: `{wait?: boolean}` — wait=false (default) returns immediately
 // after firing the worker; wait=true awaits the run and returns
 // outcome counts.
-app.post('/wiki/run-promotion', async (c) => {
+app.post('/dream/run-deep', async (c) => {
   if (!config.wiki.enabled) {
     return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
   }
@@ -1004,17 +1004,17 @@ app.post('/wiki/run-promotion', async (c) => {
     /* empty body is fine */
   }
   if (!wait) {
-    void wikiPromotionWorker.runNow().catch(() => {
+    void deepWorker.runNow().catch(() => {
       /* errors logged in worker */
     });
     return c.json({
       started: true,
       wait: false,
       message:
-        'Dream-B started in background. Tail ~/.somora/logs/ for wiki.dream_b.done.',
+        'Deep started in background. Tail ~/.somora/logs/ for dream.deep.done.',
     });
   }
-  const result = await wikiPromotionWorker.runNow();
+  const result = await deepWorker.runNow();
   const counts = result.outcomes.reduce(
     (acc, o) => {
       acc[o.kind] = (acc[o.kind] ?? 0) + 1;
@@ -1031,9 +1031,9 @@ app.post('/wiki/run-promotion', async (c) => {
   });
 });
 
-// Wiki-Lint manueller Trigger (Dream-C). Mirrors /wiki/run-promotion
+// Lucid manueller Trigger. Mirrors /dream/run-deep
 // shape: body {wait?:bool}; default fire-and-forget.
-app.post('/wiki/run-lint', async (c) => {
+app.post('/dream/run-lucid', async (c) => {
   if (!config.wiki.enabled) {
     return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
   }
@@ -1045,16 +1045,16 @@ app.post('/wiki/run-lint', async (c) => {
     /* empty body */
   }
   if (!wait) {
-    void wikiLintWorker.runNow().catch(() => {
+    void lucidWorker.runNow().catch(() => {
       /* errors logged */
     });
     return c.json({
       started: true,
       wait: false,
-      message: 'Dream-C lint started in background.',
+      message: 'Lucid started in background.',
     });
   }
-  const result = await wikiLintWorker.runNow();
+  const result = await lucidWorker.runNow();
   return c.json({
     wait: true,
     runId: result.runId,
@@ -1163,7 +1163,7 @@ try {
 // agents and runs background extractions. Registers each enabled agent
 // once at startup; the first idle timer runs idleMinutes from now,
 // which gives any paused-from-crash dreams a quiet window to be picked up.
-const autoDreamWorker = new AutoDreamWorker({
+const remWorker = new RemWorker({
   config,
   getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian }),
 });
@@ -1174,7 +1174,7 @@ const chatTurnDeps = {
   config,
   sessionMetaStore,
   tools,
-  onActivity: (agent: string) => autoDreamWorker.resetActivity(agent),
+  onActivity: (agent: string) => remWorker.resetActivity(agent),
 };
 configureSpawnTools({ chatTurnDeps });
 configureLongTaskTimeouts(config);
@@ -1186,44 +1186,44 @@ logExecCaps();
 for (const a of agentList) {
   try {
     const persona = await loadPersona(a.name);
-    if (persona?.dream?.enabled) {
-      autoDreamWorker.register(a.name, persona.dream);
+    if (persona?.rem?.enabled) {
+      remWorker.register(a.name, persona.rem);
     }
   } catch (err) {
-    logger.warn({ msg: 'dream.auto.register_failed', agent: a.name, err: String(err) });
+    logger.warn({ msg: 'dream.rem.register_failed', agent: a.name, err: String(err) });
   }
 }
 
-// Wiki-Promotion-Worker (Dream-B). Server-global, real-clock-scheduled
-// memory→wiki consolidation. Only starts if config.wiki.enabled AND
-// promotion.enabled. The pre-sweep callback forces Dream-A across all
-// agents before Dream-B reads memory, so agents' un-processed sessions
-// are settled into memory first. See `private/wiki-design.md`.
+// DeepWorker — Memory→Wiki consolidation. Server-global, real-clock-
+// scheduled. Only starts if config.wiki.enabled AND wiki.deep.enabled.
+// The pre-sweep callback forces REM across all agents before Deep
+// reads memory, so agents' un-processed sessions are settled into
+// memory first. See `private/dream-system-v2.md`.
 const globalVault = resolveObsidianSource(config.obsidian);
-const wikiPromotionWorker = new WikiPromotionWorker({
+const deepWorker = new DeepWorker({
   config,
   getParticipatingAgents: async () => {
     if (!globalVault) return [];
     // Live-listing (not the boot-time `agentList` snapshot) so agents
-    // added at runtime are picked up by the next Dream-B run without
+    // added at runtime are picked up by the next Deep run without
     // a server restart.
     const liveAgents = await listAgents();
     const out: Array<{ name: string; vaultPath: string }> = [];
     for (const a of liveAgents) {
       const persona = await loadPersona(a.name);
-      if (persona?.dream?.participate_in_wiki === false) continue;
+      if (persona?.rem?.participate_in_wiki === false) continue;
       out.push({ name: a.name, vaultPath: globalVault.vaultPath });
     }
     return out;
   },
   preSweep: async () => {
-    await autoDreamWorker.runPreSweep();
+    await remWorker.runPreSweep();
   },
 });
-wikiPromotionWorker.start();
-const wikiLintWorker = new WikiLintWorker({ config });
-wikiLintWorker.start();
-configureDreamRunTool({ wikiPromotionWorker, wikiLintWorker });
+deepWorker.start();
+const lucidWorker = new LucidWorker({ config });
+lucidWorker.start();
+configureDreamRunTool({ deepWorker, lucidWorker });
 
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
   logger.info({ msg: 'server.start', port: info.port });
@@ -1233,9 +1233,9 @@ serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, (info) => {
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.
 async function shutdown(signal: string): Promise<void> {
   logger.info({ msg: 'server.shutdown', signal });
-  autoDreamWorker.shutdown();
-  wikiPromotionWorker.shutdown();
-  wikiLintWorker.shutdown();
+  remWorker.shutdown();
+  deepWorker.shutdown();
+  lucidWorker.shutdown();
   releaseLockfile();
   await shutdownMemoryRegistry();
   await shutdownSshPool();

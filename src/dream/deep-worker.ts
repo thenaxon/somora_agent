@@ -1,66 +1,67 @@
-// Wiki-Promotion Auto-Worker (Dream-B). Server-global background
-// scheduler that fires Dream-B every `intervalHours` (default 12h)
-// and on manual trigger from a tool.
+// DeepWorker — Memory→Wiki consolidation. Server-global background
+// scheduler that fires Deep every `intervalHours` (default 12h) and
+// on manual trigger from a tool.
 //
-// Real-clock scheduling, not idle-driven (Dream-A is per-agent idle;
-// Dream-B runs across all agents on a fixed cadence). Reentrancy-safe:
-// if a run is still in flight when the timer fires, we skip the new
+// Real-clock scheduling, not idle-driven (REM is per-agent idle; Deep
+// runs across all agents on a fixed cadence). Reentrancy-safe: if a
+// run is still in flight when the timer fires, we skip the new
 // trigger and log it.
 //
-// See `private/wiki-design.md` § "Drei Dream-Modes".
+// See `private/dream-system-v2.md` for the full design.
 
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { runDreamB, type RunDreamBResult } from './dream-b-runner.ts';
-import type { PromotionDispatcher } from './types.ts';
+import { runDreamB, type RunDreamBResult } from '../wiki/dream-b-runner.ts';
+import type { PromotionDispatcher } from '../wiki/types.ts';
 
-export interface WikiAutoWorkerDeps {
+export interface DeepWorkerDeps {
   config: Config;
   /** Resolves agents currently configured to participate in the wiki. */
   getParticipatingAgents: () => Promise<Array<{ name: string; vaultPath: string }>>;
   /** Test injection point. Production passes undefined → Default. */
   dispatcher?: PromotionDispatcher;
-  /** Optional callback fired before/after Dream-B for the pre-sweep
-   *  (Dream-A force-run on agents with un-processed sessions). Caller
-   *  wires this from the existing AutoDreamWorker. */
+  /** Optional callback fired before Deep for the pre-sweep — REM
+   *  force-run on agents with un-processed sessions. Caller wires
+   *  this from the existing RemWorker. */
   preSweep?: () => Promise<void>;
 }
 
-export class WikiPromotionWorker {
+export class DeepWorker {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private shuttingDown = false;
   private currentAbort: AbortController | null = null;
 
-  constructor(private deps: WikiAutoWorkerDeps) {}
+  constructor(private deps: DeepWorkerDeps) {}
 
   /** Start the real-clock scheduler. First fire happens after
-   *  `intervalHours`, not immediately on start — server-fresh
-   *  Dream-A runs need to populate memory first. */
+   *  `intervalHours`, not immediately on start — server-fresh REM
+   *  runs need to populate memory first. */
   start(): void {
     if (this.shuttingDown) return;
     if (this.timer) return;
     if (!this.deps.config.wiki.enabled) {
-      logger.info({ msg: 'wiki.dream_b.disabled', hint: 'config.wiki.enabled is false' });
+      logger.info({ msg: 'dream.deep.disabled', hint: 'config.wiki.enabled is false' });
       return;
     }
-    if (!this.deps.config.wiki.promotion.enabled) {
-      logger.info({ msg: 'wiki.dream_b.promotion_disabled' });
+    if (!this.deps.config.wiki.deep.enabled) {
+      logger.info({ msg: 'dream.deep.deep_disabled' });
       return;
     }
-    const intervalMs = this.deps.config.wiki.promotion.intervalHours * 60 * 60 * 1000;
+    const intervalMs = this.deps.config.wiki.deep.intervalHours * 60 * 60 * 1000;
     this.timer = setInterval(() => {
       void this.fire('scheduled');
     }, intervalMs);
     logger.info({
-      msg: 'wiki.dream_b.scheduled',
-      intervalHours: this.deps.config.wiki.promotion.intervalHours,
-      preSweepMinutes: this.deps.config.wiki.promotion.preSweepMinutes,
+      msg: 'dream.deep.scheduled',
+      intervalHours: this.deps.config.wiki.deep.intervalHours,
+      preSweepMinutes: this.deps.config.wiki.deep.preSweepMinutes,
     });
   }
 
   /** Manual trigger. Returns the run result for logging by the caller
-   *  (e.g. the dream_b_run_now tool surfaces it back to the user). */
+   *  (e.g. the dream_run({phase:'deep'}) tool surfaces it back to the
+   *  user). */
   async runNow(): Promise<RunDreamBResult> {
     return this.fire('manual');
   }
@@ -75,7 +76,7 @@ export class WikiPromotionWorker {
       this.currentAbort.abort();
       this.currentAbort = null;
     }
-    logger.info({ msg: 'wiki.dream_b.shutdown' });
+    logger.info({ msg: 'dream.deep.shutdown' });
   }
 
   private async fire(trigger: 'scheduled' | 'manual'): Promise<RunDreamBResult> {
@@ -84,7 +85,7 @@ export class WikiPromotionWorker {
     }
     if (this.running) {
       logger.warn({
-        msg: 'wiki.dream_b.skip_reentrant',
+        msg: 'dream.deep.skip_reentrant',
         trigger,
         hint: 'previous run still in flight — manual trigger waits for next cycle',
       });
@@ -94,20 +95,19 @@ export class WikiPromotionWorker {
     this.currentAbort = new AbortController();
 
     try {
-      // Pre-sweep: force Dream-A on agents with unprocessed sessions
-      // before we go to Dream-B. Caller wires this from the existing
-      // AutoDreamWorker.
+      // Pre-sweep: force REM on agents with unprocessed sessions before
+      // we go to Deep. Caller wires this from the existing RemWorker.
       if (this.deps.preSweep) {
         try {
           await this.deps.preSweep();
         } catch (err) {
-          logger.warn({ msg: 'wiki.dream_b.pre_sweep_failed', err: (err as Error).message });
+          logger.warn({ msg: 'dream.deep.pre_sweep_failed', err: (err as Error).message });
         }
       }
 
       const agents = await this.deps.getParticipatingAgents();
       logger.info({
-        msg: 'wiki.dream_b.start',
+        msg: 'dream.deep.start',
         trigger,
         agents: agents.length,
       });
@@ -127,7 +127,7 @@ export class WikiPromotionWorker {
         {} as Record<string, number>,
       );
       logger.info({
-        msg: 'wiki.dream_b.done',
+        msg: 'dream.deep.done',
         trigger,
         candidatesSeen: result.candidatesSeen,
         outcomes: counts,

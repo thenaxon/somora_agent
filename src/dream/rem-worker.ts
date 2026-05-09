@@ -1,30 +1,30 @@
-// AutoDreamWorker — per-agent idle-triggered dream extraction.
-// (Phase 2-Stufe-D Phase B; DECISION #33.)
+// RemWorker — per-agent idle-triggered dream extraction.
+// (Phase REM. DECISION #33 (originally Dream-A).)
 //
-// Lifecycle per agent with dream.enabled = true:
+// Lifecycle per agent with rem.enabled = true:
 //
 //   chat.send arrives  ──►  resetActivity(agent)
-//                              │  cancels in-flight dream (AbortSignal)
+//                              │  cancels in-flight REM run (AbortSignal)
 //                              │  resets idle timer
 //                              ▼
 //   idleMinutes pass    ──►  fireIdle(agent)
 //                              │  1. resume any paused dream first
 //                              │  2. else: find session with delta
 //                              │     (ts > meta.dreamReadThroughTs)
-//                              │  3. run dream async
+//                              │  3. run REM async
 //                              │  4. on success: bump dreamReadThroughTs
 //                              ▼
 //   user chats again    ──►  back to top (cancellation triggers pause)
 //
-// State is in-process — server crash → all timers + AbortControllers
+// State is in-process — server crash → all timers + AbortControllers (state in-process)
 // gone. Crash-recovery for in-flight dreams happens at server start
 // via recoverOrphanRunningDreams() in storage.ts (sets them paused);
-// the auto-worker picks them up on the next idle for whichever agent
+// the REM worker picks them up on the next idle for whichever agent
 // they belong to.
 
 import type { Config } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
-import type { DreamConfig } from '../persona/loader.ts';
+import type { RemConfig } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { listSessions, sessionMetaStore } from '../storage/sessions.ts';
 import { listDreams } from './storage.ts';
@@ -32,7 +32,7 @@ import { runDream } from './runner.ts';
 
 interface AgentState {
   agent: string;
-  dream: DreamConfig;
+  rem: RemConfig;
   /** Pending idle-fire timer. null when no timer scheduled. */
   idleTimer: NodeJS.Timeout | null;
   /** Abort controller for the dream currently running for this agent. */
@@ -41,7 +41,7 @@ interface AgentState {
   isWorking: boolean;
 }
 
-export interface AutoDreamWorkerDeps {
+export interface RemWorkerDeps {
   config: Config;
   getMemoryManager: (agent: string) => Promise<MemoryManager>;
 }
@@ -53,27 +53,27 @@ export interface AutoDreamWorkerDeps {
  */
 const META_KEY = 'dreamReadThroughTs';
 
-export class AutoDreamWorker {
+export class RemWorker {
   private agents = new Map<string, AgentState>();
   private shuttingDown = false;
 
-  constructor(private deps: AutoDreamWorkerDeps) {}
+  constructor(private deps: RemWorkerDeps) {}
 
   /**
    * Register an agent with the worker. Called once per agent at server
-   * startup (only for agents with dream.enabled). The first idle timer
+   * startup (only for agents with rem.enabled). The first idle timer
    * is started immediately so the worker can pick up paused dreams from
    * the previous server run without waiting for a chat.send first.
    */
-  register(agent: string, dream: DreamConfig): void {
+  register(agent: string, rem: RemConfig): void {
     if (this.shuttingDown) return;
     if (this.agents.has(agent)) {
-      logger.debug({ msg: 'dream.auto.re_register', agent });
+      logger.debug({ msg: 'dream.rem.re_register', agent });
       return;
     }
     const state: AgentState = {
       agent,
-      dream,
+      rem,
       idleTimer: null,
       activeAbort: null,
       isWorking: false,
@@ -81,10 +81,10 @@ export class AutoDreamWorker {
     this.agents.set(agent, state);
     this.scheduleIdle(state);
     logger.info({
-      msg: 'dream.auto.registered',
+      msg: 'dream.rem.registered',
       agent,
-      idleMinutes: dream.idleMinutes,
-      model: dream.model,
+      idleMinutes: rem.idleMinutes,
+      model: rem.model,
     });
   }
 
@@ -96,7 +96,7 @@ export class AutoDreamWorker {
     const state = this.agents.get(agent);
     if (!state) return;
     if (state.activeAbort) {
-      logger.info({ msg: 'dream.auto.aborted_by_activity', agent });
+      logger.info({ msg: 'dream.rem.aborted_by_activity', agent });
       state.activeAbort.abort();
       // We don't null this out yet — the running dream will set it null
       // when it returns. Leaving the reference is harmless: a second abort
@@ -110,10 +110,10 @@ export class AutoDreamWorker {
   }
 
   /**
-   * Force a Dream-A sweep over all registered agents in sequence —
-   * called by the WikiPromotionWorker (Dream-B) before its run, so
+   * Force a REM sweep over all registered agents in sequence —
+   * called by the DeepWorker before its run, so
    * that any agent with un-processed sessions has its findings
-   * settled into memory before Dream-B reads them.
+   * settled into memory before Deep reads them.
    *
    * Reentrancy: agents currently `isWorking` are skipped (their
    * regular fireIdle is in flight); the rest are forced.
@@ -138,10 +138,10 @@ export class AutoDreamWorker {
         await this.fireIdle(agent);
         visited++;
       } catch (err) {
-        logger.warn({ msg: 'dream.auto.pre_sweep_failed', agent, err: (err as Error).message });
+        logger.warn({ msg: 'dream.rem.pre_sweep_failed', agent, err: (err as Error).message });
       }
     }
-    logger.info({ msg: 'dream.auto.pre_sweep_done', visited, skippedBusy });
+    logger.info({ msg: 'dream.rem.pre_sweep_done', visited, skippedBusy });
     return { visited, skippedBusy };
   }
 
@@ -155,12 +155,12 @@ export class AutoDreamWorker {
       state.activeAbort?.abort();
     }
     this.agents.clear();
-    logger.info({ msg: 'dream.auto.shutdown' });
+    logger.info({ msg: 'dream.rem.shutdown' });
   }
 
   private scheduleIdle(state: AgentState): void {
     if (this.shuttingDown) return;
-    const ms = Math.max(1, state.dream.idleMinutes) * 60_000;
+    const ms = Math.max(1, state.rem.idleMinutes) * 60_000;
     state.idleTimer = setTimeout(() => {
       void this.fireIdle(state.agent);
     }, ms);
@@ -175,7 +175,7 @@ export class AutoDreamWorker {
     if (state.isWorking) {
       // Defensive — shouldn't happen given resetActivity always aborts
       // before scheduling. If it does, just re-arm without starting new work.
-      logger.warn({ msg: 'dream.auto.fire_while_working', agent });
+      logger.warn({ msg: 'dream.rem.fire_while_working', agent });
       this.scheduleIdle(state);
       return;
     }
@@ -186,7 +186,7 @@ export class AutoDreamWorker {
       const paused = await this.findPausedDream(agent);
       if (paused) {
         logger.info({
-          msg: 'dream.auto.resume_picked',
+          msg: 'dream.rem.resume_picked',
           agent,
           id: paused.id,
           source_session: paused.sourceSession,
@@ -202,7 +202,7 @@ export class AutoDreamWorker {
       // 2. Otherwise pick a session with new delta to dream over.
       const session = await this.findSessionWithDelta(agent);
       if (!session) {
-        logger.debug({ msg: 'dream.auto.no_work', agent });
+        logger.debug({ msg: 'dream.rem.no_work', agent });
         return;
       }
       await this.runForAgent(state, {
@@ -212,7 +212,7 @@ export class AutoDreamWorker {
       });
     } catch (err) {
       logger.error({
-        msg: 'dream.auto.fire_failed',
+        msg: 'dream.rem.fire_failed',
         agent,
         err: (err as Error).message,
       });
@@ -241,7 +241,7 @@ export class AutoDreamWorker {
           trigger: 'auto',
           rangeFromTs: target.rangeFromTs,
           rangeThroughTs: Date.now(),
-          dream: state.dream,
+          rem: state.rem,
           config: this.deps.config,
           mgr,
           signal,
@@ -257,7 +257,7 @@ export class AutoDreamWorker {
         const result = await resumeDream({
           agent: state.agent,
           id: target.dreamId,
-          dream: state.dream,
+          rem: state.rem,
           config: this.deps.config,
           mgr,
           signal,
@@ -268,7 +268,7 @@ export class AutoDreamWorker {
       }
     } catch (err) {
       logger.error({
-        msg: 'dream.auto.run_failed',
+        msg: 'dream.rem.run_failed',
         agent: state.agent,
         target,
         err: (err as Error).message,
@@ -285,7 +285,7 @@ export class AutoDreamWorker {
       await sessionMetaStore.set(agent, session, next);
     } catch (err) {
       logger.warn({
-        msg: 'dream.auto.marker_write_failed',
+        msg: 'dream.rem.marker_write_failed',
         agent,
         session,
         err: (err as Error).message,
@@ -337,7 +337,7 @@ export class AutoDreamWorker {
         }
       } catch (err) {
         logger.debug({
-          msg: 'dream.auto.session_meta_read_failed',
+          msg: 'dream.rem.session_meta_read_failed',
           agent,
           session: s.id,
           err: (err as Error).message,

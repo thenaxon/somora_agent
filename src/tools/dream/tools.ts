@@ -20,8 +20,8 @@ import {
 } from '../../dream/storage.ts';
 import type { Finding } from '../../dream/types.ts';
 import type { ToolDefinition } from '../types.ts';
-import type { WikiPromotionWorker } from '../../wiki/auto-worker.ts';
-import type { WikiLintWorker } from '../../wiki/lint-worker.ts';
+import type { DeepWorker } from '../../dream/deep-worker.ts';
+import type { LucidWorker } from '../../dream/lucid-worker.ts';
 import {
   dismissEntireLintRun,
   listLintRuns,
@@ -53,8 +53,8 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
   name: 'dream_list',
   toolset: 'dream',
   description:
-    'List pending dreams awaiting user review. Returns both per-agent memory dreams (Dream-A: ' +
-    "atomic findings from your sessions, scoped to YOUR agent) and global wiki-lint runs (Dream-C: " +
+    'List pending dreams awaiting user review. Returns both per-agent memory dreams (REM phase: ' +
+    "atomic findings from your sessions, scoped to YOUR agent) and global wiki-cleanup runs (Lucid phase: " +
     'cleanup suggestions for the shared wiki, same for every agent). Each entry has a `kind` field ' +
     "= 'memory' or 'wiki_lint' so the agent can describe them differently to the user. " +
     'Pass include_processed=true to also see already-resolved entries. Use this first when the user ' +
@@ -277,7 +277,7 @@ async function applyMemoryFinding(
     }
     case 'vault_hint': {
       executed = {
-        description: `vault hint acknowledged (no auto-write to vault from agents — Dream-B/C handle vault)`,
+        description: `vault hint acknowledged (no auto-write to vault from agents — Deep/Lucid handle vault)`,
       };
       break;
     }
@@ -458,26 +458,27 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
 
 // ── dream_run ─────────────────────────────────────────────────────────
 //
-// Manual trigger for Dream-B (memory→wiki promotion) and (later) Dream-C
-// (lint). Single tool with `mode` arg covers both modes — keeps the
-// dream_*-Toolset tight. See `private/wiki-design.md` § Tool-Surface.
+// Manual trigger for Deep (memory→wiki consolidation) and Lucid
+// (wiki cleanup). Single tool with `phase` arg covers both — keeps
+// the dream_*-Toolset tight. See `private/dream-system-v2.md` for
+// the full Phase model (REM/Deep/Lucid).
 
 interface DreamRunDeps {
-  wikiPromotionWorker: WikiPromotionWorker;
-  wikiLintWorker: WikiLintWorker;
+  deepWorker: DeepWorker;
+  lucidWorker: LucidWorker;
 }
 
 let injectedDreamRunDeps: DreamRunDeps | null = null;
 
-/** Server boot wires the WikiPromotionWorker reference here so the
- *  in-process tool handler can call runNow() directly. The MCP child
- *  doesn't get this — it falls back to the HTTP endpoint. */
+/** Server boot wires the DeepWorker reference here so the in-process
+ *  tool handler can call runNow() directly. The MCP child doesn't
+ *  get this — it falls back to the HTTP endpoint. */
 export function configureDreamRunTool(deps: DreamRunDeps): void {
   injectedDreamRunDeps = deps;
 }
 
 const RunInput = z.object({
-  mode: z.enum(['b', 'c']).optional(),
+  phase: z.enum(['deep', 'lucid']).optional(),
   wait: z.boolean().optional(),
 });
 
@@ -485,42 +486,47 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
   name: 'dream_run',
   toolset: 'dream',
   description:
-    'Manually trigger a Dream-Worker run.\n' +
+    'Manually trigger a platform-wide dream phase.\n' +
     '\n' +
-    "mode='b' (default): Dream-B promotion — reads each agent's short-term memory, " +
-    'decides which entries are wiki-worthy, writes them as consolidated wiki pages with ' +
-    'cross-references, replaces source memory files with stubs. Stubs that have new ' +
-    '"Recent observations" since their last promotion get merged into the existing wiki page.\n' +
-    "mode='c' (Phase 4 Stufe 5, not implemented yet): Dream-C lint — periodic wiki health-check " +
-    'for contradictions, stale claims, broken links, orphans.\n' +
+    "phase='deep' (default): Memory → Wiki consolidation. Reads each agent's " +
+    'short-term memory, decides via Opus which entries are wiki-worthy, writes them ' +
+    'as consolidated wiki pages with cross-references, deletes the source memory ' +
+    'files after successful consolidation. Memory entries already covered in the ' +
+    'wiki get merged into the existing page; transient/scratchpad entries get skipped.\n' +
+    "phase='lucid': Wiki cleanup — periodic health-check for contradictions, stale " +
+    'claims, broken links, orphans, refactor candidates. LLM-driven (Opus) with full ' +
+    'wiki context. Findings need user approval before any wiki edits apply.\n' +
+    '\n' +
+    'NOTE: REM (Session → Memory, per-agent) is NOT triggered via this tool. ' +
+    'Use /reset on a session to manually fire REM, or wait for the per-agent ' +
+    'idle-timeout auto-trigger.\n' +
     '\n' +
     'CALLING CONVENTION — read carefully:\n' +
     '\n' +
-    '* Default is fire-and-forget. Just call dream_run({}) (or dream_run({mode:"b"})). ' +
+    '* Default is fire-and-forget. Just call dream_run({}) (or dream_run({phase:"deep"})). ' +
     'The run starts in the background and the tool returns IMMEDIATELY with ' +
-    '`{started: true}` — same pattern as /reset triggering Dream-A. Hand the response ' +
-    'back to the user, the conversation continues, the run finishes in 1-3 minutes ' +
-    'in the background. The user will see results via their Obsidian Vault (wiki/index.md ' +
-    'gets regenerated, monthly logs/ get appended).\n' +
+    '`{started: true}`. Hand the response back to the user, the conversation continues, ' +
+    'the run finishes in 1-3 minutes (deep) or 5-30s (lucid) in the background. ' +
+    'Results land in the Obsidian Vault (Deep) or as pending findings via dream_list (Lucid).\n' +
     '\n' +
     '* DO NOT pass wait:true unless the user EXPLICITLY says "warte bis fertig" / ' +
     '"block until done" / "lauf synchron" / equivalent. ' +
     'Asking the user "did this run?" or wanting to give a comprehensive summary in your ' +
-    'reply is NOT a reason to use wait:true — the agent-blocking duration (1-3 minutes ' +
-    'against opus) is bad UX. The async response is the correct response in 99% of cases.\n' +
+    'reply is NOT a reason to use wait:true — the agent-blocking duration is bad UX. ' +
+    'The async response is the correct response in 99% of cases.\n' +
     '\n' +
-    "* Use sparingly — Dream-B's scheduler runs every 12h by default. Manual triggers " +
-    'are for "I just added several substantial memory notes and want them in the wiki now".',
+    "* Use sparingly — Deep's scheduler runs every 12h by default, Lucid weekly. " +
+    'Manual triggers are for "I just added several substantial memory notes and want ' +
+    'them in the wiki now" or "let me cleanup the wiki right now".',
   inputSchema: RunInput,
   jsonSchema: {
     type: 'object',
     properties: {
-      mode: {
+      phase: {
         type: 'string',
-        enum: ['b', 'c'],
+        enum: ['deep', 'lucid'],
         description:
-          "Which Dream worker to fire. Default 'b' (memory→wiki promotion). 'c' (lint) " +
-          'is reserved for Phase-4 Stufe 5; calling it today errors out cleanly.',
+          "Which dream phase to fire. Default 'deep' (Memory→Wiki). 'lucid' triggers wiki cleanup.",
       },
       wait: {
         type: 'boolean',
@@ -535,31 +541,30 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     additionalProperties: false,
   },
   async handler(input, ctx) {
-    const mode = input.mode ?? 'b';
+    const phase = input.phase ?? 'deep';
     const wait = input.wait ?? false;
     if (!ctx.config.wiki.enabled) {
       throw new Error('config.wiki.enabled is false — wiki layer not active');
     }
-    if (mode === 'c') {
-      // Dream-C / wiki lint.
+    if (phase === 'lucid') {
       if (injectedDreamRunDeps) {
         if (!wait) {
-          void injectedDreamRunDeps.wikiLintWorker.runNow().catch(() => {
+          void injectedDreamRunDeps.lucidWorker.runNow().catch(() => {
             /* errors logged in worker */
           });
           return {
-            mode: 'c',
+            phase: 'lucid',
             started: true,
             wait: false,
             message:
-              'Dream-C lint started in background. Check ~/.somora/wiki-lint/ for the run report ' +
+              'Lucid started in background. Check ~/.somora/wiki-lint/ for the run report ' +
               "or call dream_list to see findings once it's complete (~5-30s for a small wiki).",
             via: 'in-process',
           };
         }
-        const result = await injectedDreamRunDeps.wikiLintWorker.runNow();
+        const result = await injectedDreamRunDeps.lucidWorker.runNow();
         return {
-          mode: 'c',
+          phase: 'lucid',
           wait: true,
           runId: result.runId,
           findingsCount: result.findingsCount,
@@ -569,28 +574,25 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
           via: 'in-process',
         };
       }
-      // MCP child fallback: HTTP
-      return runDreamCViaHttp(wait);
+      return runLucidViaHttp(wait);
     }
-    // mode === 'b' — Dream-B promotion run.
+    // phase === 'deep'
     if (injectedDreamRunDeps) {
       if (!wait) {
-        // Fire-and-forget. Errors during the run land in logs only.
-        void injectedDreamRunDeps.wikiPromotionWorker.runNow().catch(() => {
+        void injectedDreamRunDeps.deepWorker.runNow().catch(() => {
           /* error already logged in worker */
         });
         return {
-          mode: 'b',
+          phase: 'deep',
           started: true,
           wait: false,
           message:
-            'Dream-B started in background. Check ~/.somora/logs/server-*.log for ' +
-            "'wiki.dream_b.done', or inspect <vault>/<wiki-subfolder>/index.md after ~1-3min.",
+            'Deep started in background. Check ~/.somora/logs/server-*.log for ' +
+            "'dream.deep.done', or inspect <vault>/<wiki-subfolder>/index.md after ~1-3min.",
           via: 'in-process',
         };
       }
-      // wait=true — sync, return outcomes
-      const result = await injectedDreamRunDeps.wikiPromotionWorker.runNow();
+      const result = await injectedDreamRunDeps.deepWorker.runNow();
       const counts = result.outcomes.reduce(
         (acc, o) => {
           acc[o.kind] = (acc[o.kind] ?? 0) + 1;
@@ -599,7 +601,7 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
         {} as Record<string, number>,
       );
       return {
-        mode: 'b',
+        phase: 'deep',
         wait: true,
         candidatesSeen: result.candidatesSeen,
         durationMs: result.durationMs,
@@ -608,15 +610,14 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
         via: 'in-process',
       };
     }
-    // MCP child fallback: hit the main server's HTTP endpoint.
-    return runDreamBViaHttp(wait);
+    return runDeepViaHttp(wait);
   },
 };
 
-async function runDreamBViaHttp(wait: boolean): Promise<unknown> {
+async function runDeepViaHttp(wait: boolean): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
-  const url = `http://${host}:${port}/wiki/run-promotion`;
+  const url = `http://${host}:${port}/dream/run-deep`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -627,13 +628,13 @@ async function runDreamBViaHttp(wait: boolean): Promise<unknown> {
     throw new Error(`dream_run HTTP fallback ${res.status}: ${body.slice(0, 300)}`);
   }
   const data = (await res.json()) as Record<string, unknown>;
-  return { mode: 'b', ...data, via: 'http' };
+  return { phase: 'deep', ...data, via: 'http' };
 }
 
-async function runDreamCViaHttp(wait: boolean): Promise<unknown> {
+async function runLucidViaHttp(wait: boolean): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
-  const url = `http://${host}:${port}/wiki/run-lint`;
+  const url = `http://${host}:${port}/dream/run-lucid`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -641,10 +642,10 @@ async function runDreamCViaHttp(wait: boolean): Promise<unknown> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`dream_run mode=c HTTP fallback ${res.status}: ${body.slice(0, 300)}`);
+    throw new Error(`dream_run phase=lucid HTTP fallback ${res.status}: ${body.slice(0, 300)}`);
   }
   const data = (await res.json()) as Record<string, unknown>;
-  return { mode: 'c', ...data, via: 'http' };
+  return { phase: 'lucid', ...data, via: 'http' };
 }
 
 // ── Bundle ────────────────────────────────────────────────────────────

@@ -33,17 +33,17 @@ const FrontmatterSchema = z
   })
   .passthrough();
 
-const DreamConfigSchema = z.object({
-  /** Master toggle. When false, Dream-Mode never runs for this agent. */
+const RemConfigSchema = z.object({
+  /** Master toggle. When false, REM-Phase never runs for this agent. */
   enabled: z.boolean(),
   /**
    * Worker model for extraction (alias or `provider/modelId`). Required
    * when enabled — there's intentionally no fallback to the agent's
-   * primary, so a dream never silently runs on an expensive model.
+   * primary, so a REM run never silently runs on an expensive model.
    */
   model: z.string().min(1),
   /**
-   * Idle minutes before the auto-dream-trigger fires. Reset on every
+   * Idle minutes before the auto-REM-trigger fires. Reset on every
    * chat.send to this agent. Default 30.
    */
   idleMinutes: z.number().positive().default(30),
@@ -55,7 +55,7 @@ const DreamConfigSchema = z.object({
   chunkTokens: z.number().int().positive().default(50_000),
   /**
    * Per-chunk LLM-call timeout. A single chunk that exceeds this is
-   * marked as failed, the dream continues with the next chunk.
+   * marked as failed, the REM run continues with the next chunk.
    *
    * Default 600000ms (10 min). The earlier 2 min default was too tight
    * for realistic local-model loads — verified empirically 2026-05-06
@@ -72,9 +72,9 @@ const DreamConfigSchema = z.object({
    */
   chunkTimeoutMs: z.number().int().positive().default(600_000),
   /**
-   * Phase 4: opt out of Wiki-Promotion (Dream-B) for this agent.
-   * When false, the agent's memory still gets Dream-A processing but
-   * is NOT considered as a candidate for promotion to the shared wiki.
+   * Phase 4: opt out of Deep-Phase (Memory→Wiki) for this agent.
+   * When false, the agent's memory still gets REM processing but is
+   * NOT considered as a candidate for promotion to the shared wiki.
    * Useful for scratch/test agents. Default true.
    */
   participate_in_wiki: z.boolean().default(true),
@@ -119,11 +119,11 @@ const AgentYamlSchema = z
      * deny-all, missing-key-means-allow-all).
      */
     skills: z.array(z.string().min(1)).optional(),
-    dream: DreamConfigSchema.optional(),
+    rem: RemConfigSchema.optional(),
   })
   .passthrough();
 
-export type DreamConfig = z.infer<typeof DreamConfigSchema>;
+export type RemConfig = z.infer<typeof RemConfigSchema>;
 
 type Frontmatter = z.infer<typeof FrontmatterSchema>;
 type AgentYaml = z.infer<typeof AgentYamlSchema>;
@@ -156,7 +156,7 @@ export interface Persona {
    * of "empty"; see `private/skills-design.md`.
    */
   skillsAllowList: string[] | undefined;
-  dream: DreamConfig | undefined;
+  rem: RemConfig | undefined;
   systemPrompt: string;
 }
 
@@ -269,7 +269,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
     skillsAllowList: agentYaml.skills,
-    dream: agentYaml.dream,
+    rem: agentYaml.rem,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
 }

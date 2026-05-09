@@ -75,7 +75,7 @@ export async function applyPromote(args: {
     //
     // Phase 4 / Weg 2 (2026-05-08). See `private/wiki-design.md`.
     logger.info({
-      msg: 'wiki.dream_b.promote_collision_to_stub',
+      msg: 'dream.deep.promote_collision_to_stub',
       agent: candidate.agent,
       memorySlug: candidate.slug,
       wikiPath,
@@ -109,7 +109,7 @@ export async function applyPromote(args: {
     );
     if (writeStub.kind !== 'written') {
       logger.warn({
-        msg: 'wiki.dream_b.collision_stub_write_failed',
+        msg: 'dream.deep.collision_stub_write_failed',
         agent: candidate.agent,
         memorySlug: candidate.slug,
         outcome: writeStub.kind,
@@ -148,7 +148,7 @@ export async function applyPromote(args: {
     // wiki page exists, route to merge, and pick up the new memory
     // content via observations). Log loudly.
     logger.warn({
-      msg: 'wiki.dream_b.promote_stub_conflict',
+      msg: 'dream.deep.promote_stub_conflict',
       agent: candidate.agent,
       memorySlug: candidate.slug,
       wikiPath,
@@ -261,7 +261,7 @@ export async function applyMerge(args: {
   const stubFileResult = await readWithMtime(candidate.path);
   if (!stubFileResult) {
     logger.warn({
-      msg: 'wiki.dream_b.merge_stub_vanished',
+      msg: 'dream.deep.merge_stub_vanished',
       agent: candidate.agent,
       memorySlug: candidate.slug,
     });
@@ -278,7 +278,7 @@ export async function applyMerge(args: {
     // Stub got new observations between our read and now — leave
     // them for next merge run. Log so it's visible.
     logger.info({
-      msg: 'wiki.dream_b.merge_stub_changed_post_wiki_write',
+      msg: 'dream.deep.merge_stub_changed_post_wiki_write',
       agent: candidate.agent,
       memorySlug: candidate.slug,
       hint: 'stub has new observations since promotion; will be picked up next run',

@@ -68,7 +68,7 @@ async function walkPages(
         const content = await readFile(full, 'utf8');
         out.set(rel, content);
       } catch (err) {
-        logger.warn({ msg: 'wiki.lint.page_unreadable', path: full, err: (err as Error).message });
+        logger.warn({ msg: 'dream.lucid.page_unreadable', path: full, err: (err as Error).message });
       }
     }
   }

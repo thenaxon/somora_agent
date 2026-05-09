@@ -1,24 +1,28 @@
-// Wiki-Lint Auto-Worker (Dream-C). Server-global background scheduler
-// that fires Dream-C every `intervalDays` (default 7d) and on manual
-// trigger from `dream_run({mode: 'c'})`.
+// LucidWorker — Wiki maintenance / cleanup. Server-global background
+// scheduler that fires Lucid every `intervalDays` (default 7d) and
+// on manual trigger from `dream_run({phase: 'lucid'})`.
 //
 // Real-clock scheduling, reentrancy-safe (skips if a run is in flight).
-// Mirrors WikiPromotionWorker's structure.
+// Mirrors DeepWorker's structure.
+//
+// Note: as of v2.1 still wraps the deterministic lint runner from
+// `src/wiki/lint-runner.ts`. v2.6 replaces that with an LLM-driven
+// `lucid-runner.ts` — this worker stays unchanged structurally.
 
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { runLint, type RunLintResult } from './lint-runner.ts';
+import { runLint, type RunLintResult } from '../wiki/lint-runner.ts';
 
-export interface WikiLintWorkerDeps {
+export interface LucidWorkerDeps {
   config: Config;
 }
 
-export class WikiLintWorker {
+export class LucidWorker {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private shuttingDown = false;
 
-  constructor(private deps: WikiLintWorkerDeps) {}
+  constructor(private deps: LucidWorkerDeps) {}
 
   /** Start the real-clock scheduler. First fire happens after
    *  `intervalDays`, not immediately. */
@@ -26,20 +30,20 @@ export class WikiLintWorker {
     if (this.shuttingDown) return;
     if (this.timer) return;
     if (!this.deps.config.wiki.enabled) {
-      logger.info({ msg: 'wiki.lint.disabled', hint: 'config.wiki.enabled is false' });
+      logger.info({ msg: 'dream.lucid.disabled', hint: 'config.wiki.enabled is false' });
       return;
     }
-    if (!this.deps.config.wiki.lint.enabled) {
-      logger.info({ msg: 'wiki.lint.lint_disabled' });
+    if (!this.deps.config.wiki.lucid.enabled) {
+      logger.info({ msg: 'dream.lucid.lucid_disabled' });
       return;
     }
-    const intervalMs = this.deps.config.wiki.lint.intervalDays * 24 * 60 * 60 * 1000;
+    const intervalMs = this.deps.config.wiki.lucid.intervalDays * 24 * 60 * 60 * 1000;
     this.timer = setInterval(() => {
       void this.fire('auto');
     }, intervalMs);
     logger.info({
-      msg: 'wiki.lint.scheduled',
-      intervalDays: this.deps.config.wiki.lint.intervalDays,
+      msg: 'dream.lucid.scheduled',
+      intervalDays: this.deps.config.wiki.lucid.intervalDays,
     });
   }
 
@@ -53,7 +57,7 @@ export class WikiLintWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
-    logger.info({ msg: 'wiki.lint.shutdown' });
+    logger.info({ msg: 'dream.lucid.shutdown' });
   }
 
   private async fire(trigger: 'auto' | 'manual'): Promise<RunLintResult> {
@@ -68,9 +72,9 @@ export class WikiLintWorker {
     }
     if (this.running) {
       logger.warn({
-        msg: 'wiki.lint.skip_reentrant',
+        msg: 'dream.lucid.skip_reentrant',
         trigger,
-        hint: 'previous lint run still in flight',
+        hint: 'previous lucid run still in flight',
       });
       return {
         runId: '(reentrant)',

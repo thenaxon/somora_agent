@@ -451,23 +451,23 @@ export const ObsidianConfigSchema = z
 export type ObsidianConfig = z.infer<typeof ObsidianConfigSchema>;
 
 // Wiki-System (Phase 4) — long-term shared knowledge in an Obsidian
-// vault subfolder, written by Dream-B, audited by Dream-C/Lint, read
-// by all agents. See `private/wiki-design.md` for the full design.
+// vault subfolder, written by Deep, audited by Lucid, read by all
+// agents. See `private/dream-system-v2.md` for the full design.
 //
 // `enabled: false` is the default so existing setups don't change
 // behavior until the operator opts in.
-export const WikiPromotionConfigSchema = z
+export const WikiDeepConfigSchema = z
   .object({
     enabled: z.boolean().default(true),
-    /** Real-clock cadence for Dream-B (memory → wiki promotion). */
+    /** Real-clock cadence for Deep (Memory → Wiki consolidation). */
     intervalHours: z.number().positive().default(12),
-    /** How long before each Dream-B run to forcibly run Dream-A on
-     *  any agent with un-processed sessions. Zero disables sweep. */
+    /** How long before each Deep run to forcibly run REM on any agent
+     *  with un-processed sessions. Zero disables sweep. */
     preSweepMinutes: z.number().nonnegative().default(60),
-    /** Worker model for Dream-B. Format `<provider>/<modelId>`. */
+    /** Worker model for Deep. Format `<provider>/<modelId>`. */
     model: z.string().min(1).optional(),
-    /** Dream-B auto-applies (no approval). Reserved as bool in case
-     *  we ever need to flip back on. */
+    /** Deep auto-applies (no approval). Reserved as bool in case we
+     *  ever need to flip back on. */
     requireApproval: z.boolean().default(false),
   })
   .default({
@@ -477,15 +477,15 @@ export const WikiPromotionConfigSchema = z
     requireApproval: false,
   });
 
-export const WikiLintConfigSchema = z
+export const WikiLucidConfigSchema = z
   .object({
     enabled: z.boolean().default(true),
     intervalDays: z.number().positive().default(7),
-    /** Worker model for Dream-C / Lint. */
+    /** Worker model for Lucid (wiki cleanup / contradiction detection). */
     model: z.string().min(1).optional(),
-    /** Lint findings need user approval before wiki-edits apply. */
+    /** Lucid findings need user approval before wiki-edits apply. */
     requireApproval: z.boolean().default(true),
-    /** Which agent's chat surfaces the lint findings. When unset,
+    /** Which agent's chat surfaces the Lucid findings. When unset,
      *  the runtime falls back to the alphabetically-first registered
      *  agent (with a warning log). Operators set this explicitly to
      *  pin to a specific agent. */
@@ -533,21 +533,21 @@ export const WikiConfigSchema = z
     /** Subdirs Dream-B uses by default. New subdirs may be created
      *  on demand when topics don't fit. */
     defaultSubdirs: z.array(z.string().min(1)).default(['personen', 'projekte', 'wissen']),
-    promotion: WikiPromotionConfigSchema,
-    lint: WikiLintConfigSchema,
+    deep: WikiDeepConfigSchema,
+    lucid: WikiLucidConfigSchema,
     search: WikiSearchConfigSchema,
   })
   .default({
     enabled: false,
     vaultSubfolder: 'somora',
     defaultSubdirs: ['personen', 'projekte', 'wissen'],
-    promotion: {
+    deep: {
       enabled: true,
       intervalHours: 12,
       preSweepMinutes: 60,
       requireApproval: false,
     },
-    lint: {
+    lucid: {
       enabled: true,
       intervalDays: 7,
       requireApproval: true,

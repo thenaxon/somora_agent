@@ -56,14 +56,14 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   const dispatcher = args.dispatcher ?? new DefaultPromotionDispatcher();
 
   // Resolve worker model. Without it Dream-B can't run.
-  const ref = args.config.wiki.promotion.model;
+  const ref = args.config.wiki.deep.model;
   if (!ref) {
-    logger.warn({ msg: 'wiki.dream_b.no_worker_model_configured' });
+    logger.warn({ msg: 'dream.deep.no_worker_model_configured' });
     return { outcomes: [], candidatesSeen: 0, durationMs: Date.now() - start };
   }
   const workerModel = resolveAnyRef(args.config, ref);
   if (!workerModel) {
-    logger.error({ msg: 'wiki.dream_b.worker_model_unresolved', ref });
+    logger.error({ msg: 'dream.deep.worker_model_unresolved', ref });
     return { outcomes: [], candidatesSeen: 0, durationMs: Date.now() - start };
   }
 
@@ -114,7 +114,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
           if (logEntry) allLogEntries.push(logEntry);
         } catch (err) {
           logger.error({
-            msg: 'wiki.dream_b.candidate_failed',
+            msg: 'dream.deep.candidate_failed',
             agent: c.agent,
             slug: c.slug,
             err: (err as Error).message,
@@ -134,7 +134,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
       try {
         await appendLogEntries({ wikiAbs, entries: allLogEntries });
       } catch (err) {
-        logger.error({ msg: 'wiki.dream_b.log_append_failed', err: (err as Error).message });
+        logger.error({ msg: 'dream.deep.log_append_failed', err: (err as Error).message });
       }
     }
     try {
@@ -145,7 +145,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
       }));
       await regenerateIndex({ wikiAbs, recentUpdates });
     } catch (err) {
-      logger.error({ msg: 'wiki.dream_b.index_regen_failed', err: (err as Error).message });
+      logger.error({ msg: 'dream.deep.index_regen_failed', err: (err as Error).message });
     }
   }
 
@@ -180,7 +180,7 @@ async function collectCandidates(agent: string): Promise<PromotionCandidate[]> {
       raw = buf;
       mtimeMs = st.mtimeMs;
     } catch (err) {
-      logger.warn({ msg: 'wiki.dream_b.candidate_unreadable', agent, path, err: (err as Error).message });
+      logger.warn({ msg: 'dream.deep.candidate_unreadable', agent, path, err: (err as Error).message });
       continue;
     }
     const parsed = matter(raw);

@@ -8,7 +8,7 @@
 import { readFile, unlink } from 'node:fs/promises';
 import type { Config, ResolvedModel } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
-import type { DreamConfig } from '../persona/loader.ts';
+import type { RemConfig } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { getHistory } from '../storage/sessions.ts';
 import {
@@ -38,7 +38,7 @@ export interface RunDreamArgs {
   /** Upper bound (inclusive). Date.now() for "all events up to now". */
   rangeThroughTs: number;
   /** Resolved per-agent dream config (model, chunk sizes, timeouts). */
-  dream: DreamConfig;
+  rem: RemConfig;
   /** Loaded server config — used to resolve dream.model to a ResolvedModel. */
   config: Config;
   /** Per-agent memory manager (already initialized). */
@@ -152,11 +152,11 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   const startedAt = new Date().toISOString();
   const id = dreamIdFor(args.agent, args.sourceSession, args.trigger);
 
-  // Resolve worker model first — fail-loud per design (DreamConfig requires
+  // Resolve worker model first — fail-loud per design (RemConfig requires
   // an explicit model when enabled, no fallback).
   let workerModel: ResolvedModel;
   try {
-    workerModel = resolveDreamModel(args.config, args.dream.model);
+    workerModel = resolveDreamModel(args.config, args.rem.model);
   } catch (err) {
     logger.error({
       msg: 'dream.worker_resolve_failed',
@@ -176,7 +176,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       error: (err as Error).message,
       chunks_done: 0,
       chunks_total: 0,
-      worker_model_ref: args.dream.model,
+      worker_model_ref: args.rem.model,
       findings: [],
     };
     // No `sources` block here — we never got past resolveDreamModel,
@@ -318,8 +318,8 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       referencedVault,
       referencedWiki,
       workerModel,
-      chunkTimeoutMs: args.dream.chunkTimeoutMs,
-      chunkTokens: args.dream.chunkTokens,
+      chunkTimeoutMs: args.rem.chunkTimeoutMs,
+      chunkTokens: args.rem.chunkTokens,
       signal: args.signal,
       onChunkComplete: async ({ chunkIndex, totalChunks }) => {
         // Persist progress so a crash mid-flight leaves a recoverable file.
@@ -409,7 +409,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
 export async function resumeDream(args: {
   agent: string;
   id: string;
-  dream: DreamConfig;
+  rem: RemConfig;
   config: Config;
   mgr: MemoryManager;
   signal?: AbortSignal;
@@ -461,7 +461,7 @@ export async function resumeDream(args: {
     trigger: file.meta.trigger,
     rangeFromTs: file.meta.range_from_ts,
     rangeThroughTs: file.meta.range_through_ts,
-    dream: args.dream,
+    rem: args.rem,
     config: args.config,
     mgr: args.mgr,
     signal: args.signal,
