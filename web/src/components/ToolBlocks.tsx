@@ -1,20 +1,20 @@
-// Collapsible tool-call + tool-result blocks. Adapted from orbit's
-// ToolCallBlock / ToolResultBlock. Single line shows tool-name +
-// short summary + chevron; click expands to pretty-printed JSON.
-//
-// Per-tool summary rules favour somora's actual tool surface
-// (memory_*, dream_*, wiki_*, file_*, exec, web_*, …) so the line
-// reads informatively at a glance without expanding.
+// Collapsible tool-call + tool-result blocks. Live SSE events
+// arrive pre-formatted from the server (`summary` + `details`
+// strings); JSONL history events arrive raw (`input` /  `output`
+// objects). Both render the same — render `summary || derived
+// from input` on the always-visible row, expand to show
+// `details || pretty-printed input/output`.
 
 import { useMemo, useState } from 'react';
-import { ChevronRight, ChevronDown, CornerDownRight } from 'lucide-react';
+import { ChevronRight, ChevronDown, CornerDownRight, AlertTriangle } from 'lucide-react';
 import type { ToolCallPayload, ToolResultPayload } from '../types/chat';
 
-function summariseToolCall(tc: ToolCallPayload): string {
-  const i = tc.input as Record<string, unknown>;
+function deriveCallSummary(tc: ToolCallPayload): string {
+  if (tc.summary) return tc.summary;
+  if (!tc.input) return '';
+  const i = tc.input;
   const get = (k: string): string | undefined =>
     typeof i[k] === 'string' ? (i[k] as string) : undefined;
-
   switch (tc.tool) {
     case 'memory_search':
     case 'memory_get':
@@ -58,40 +58,95 @@ function summariseToolCall(tc: ToolCallPayload): string {
   }
 }
 
-function truncate(s: string, n: number): string {
-  return s.length > n ? s.slice(0, n) + '…' : s;
+function deriveCallDetails(tc: ToolCallPayload): string {
+  if (tc.details) return tc.details;
+  if (tc.input) {
+    try {
+      return JSON.stringify(tc.input, null, 2);
+    } catch {
+      return String(tc.input);
+    }
+  }
+  return '(no input)';
 }
+
+function deriveResultSummary(tr: ToolResultPayload): string {
+  if (tr.error) return tr.error;
+  if (tr.summary) return tr.summary;
+  if (tr.output === undefined || tr.output === null) return '(no output)';
+  if (typeof tr.output === 'string') return tr.output;
+  try {
+    return JSON.stringify(tr.output);
+  } catch {
+    return String(tr.output);
+  }
+}
+
+function deriveResultDetails(tr: ToolResultPayload): string {
+  if (tr.details) return tr.details;
+  if (tr.error) return tr.error;
+  if (tr.output === undefined || tr.output === null) return '(no output)';
+  if (typeof tr.output === 'string') return tr.output;
+  try {
+    return JSON.stringify(tr.output, null, 2);
+  } catch {
+    return String(tr.output);
+  }
+}
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return s.slice(0, n) + '…';
+}
+
+const cardStyle: React.CSSProperties = {
+  background: 'var(--bg-3)',
+  border: '1px solid var(--line)',
+  borderRadius: 5,
+  margin: '3px 0',
+  fontFamily: '"JetBrains Mono", monospace',
+  fontSize: 11,
+  width: '100%',
+  maxWidth: '100%',
+  minWidth: 0,
+};
+
+const headerStyle: React.CSSProperties = {
+  all: 'unset',
+  cursor: 'pointer',
+  width: '100%',
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  padding: '4px 8px',
+  color: 'var(--text-1)',
+  boxSizing: 'border-box',
+};
+
+const detailsStyle: React.CSSProperties = {
+  margin: 0,
+  padding: '6px 8px',
+  borderTop: '1px solid var(--line)',
+  background: 'var(--bg-1)',
+  color: 'var(--text-1)',
+  fontSize: 10.5,
+  whiteSpace: 'pre-wrap',
+  overflowX: 'auto',
+  overflowY: 'auto',
+  maxHeight: 240,
+  wordBreak: 'break-word',
+  overflowWrap: 'anywhere',
+};
 
 export function ToolCallBlock({ toolCall }: { toolCall: ToolCallPayload }) {
   const [open, setOpen] = useState(false);
-  const summary = useMemo(() => truncate(summariseToolCall(toolCall), 80), [toolCall]);
+  const summary = useMemo(() => truncate(deriveCallSummary(toolCall), 100), [toolCall]);
+  const details = useMemo(() => deriveCallDetails(toolCall), [toolCall]);
 
   return (
-    <div
-      style={{
-        background: 'var(--bg-3)',
-        border: '1px solid var(--line)',
-        borderRadius: 6,
-        margin: '4px 0',
-        fontSize: 12,
-        fontFamily: '"JetBrains Mono", monospace',
-      }}
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          all: 'unset',
-          cursor: 'pointer',
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '6px 10px',
-          color: 'var(--text-1)',
-        }}
-      >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+    <div style={cardStyle}>
+      <button type="button" style={headerStyle} onClick={() => setOpen((v) => !v)}>
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{toolCall.tool}</span>
         {summary && (
           <span
@@ -101,102 +156,52 @@ export function ToolCallBlock({ toolCall }: { toolCall: ToolCallPayload }) {
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
               flex: 1,
+              minWidth: 0,
             }}
           >
             {summary}
           </span>
         )}
       </button>
-      {open && (
-        <pre
-          style={{
-            margin: 0,
-            padding: '8px 10px',
-            borderTop: '1px solid var(--line)',
-            background: 'var(--bg-1)',
-            color: 'var(--text-1)',
-            fontSize: 11,
-            whiteSpace: 'pre-wrap',
-            overflowX: 'auto',
-          }}
-        >
-          {JSON.stringify(toolCall.input, null, 2)}
-        </pre>
-      )}
+      {open && <pre style={detailsStyle}>{details}</pre>}
     </div>
   );
 }
 
 export function ToolResultBlock({ toolResult }: { toolResult: ToolResultPayload }) {
   const [open, setOpen] = useState(false);
-  const text = useMemo(() => stringifyOutput(toolResult.output), [toolResult]);
-  const summary = useMemo(() => truncate(text.replace(/\s+/g, ' '), 100), [text]);
+  const summary = useMemo(() => truncate(deriveResultSummary(toolResult), 120), [toolResult]);
+  const details = useMemo(() => deriveResultDetails(toolResult), [toolResult]);
+  const isError = !!toolResult.error;
 
   return (
     <div
       style={{
-        background: 'var(--bg-3)',
-        border: '1px solid var(--line)',
-        borderRadius: 6,
-        margin: '4px 0',
-        fontSize: 12,
-        fontFamily: '"JetBrains Mono", monospace',
+        ...cardStyle,
+        borderColor: isError ? 'var(--danger)' : 'var(--line)',
       }}
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        style={{
-          all: 'unset',
-          cursor: 'pointer',
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '6px 10px',
-          color: 'var(--text-1)',
-        }}
-      >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <CornerDownRight size={12} style={{ color: 'var(--ok)' }} />
+      <button type="button" style={headerStyle} onClick={() => setOpen((v) => !v)}>
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        {isError ? (
+          <AlertTriangle size={11} style={{ color: 'var(--danger)' }} />
+        ) : (
+          <CornerDownRight size={11} style={{ color: 'var(--ok)' }} />
+        )}
         <span
           style={{
-            color: 'var(--text-2)',
+            color: isError ? 'var(--danger)' : 'var(--text-2)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             flex: 1,
+            minWidth: 0,
           }}
         >
           {summary}
         </span>
       </button>
-      {open && (
-        <pre
-          style={{
-            margin: 0,
-            padding: '8px 10px',
-            borderTop: '1px solid var(--line)',
-            background: 'var(--bg-1)',
-            color: 'var(--text-1)',
-            fontSize: 11,
-            whiteSpace: 'pre-wrap',
-            overflowX: 'auto',
-          }}
-        >
-          {text}
-        </pre>
-      )}
+      {open && <pre style={detailsStyle}>{details}</pre>}
     </div>
   );
-}
-
-function stringifyOutput(output: unknown): string {
-  if (output === undefined || output === null) return '(no output)';
-  if (typeof output === 'string') return output;
-  try {
-    return JSON.stringify(output, null, 2);
-  } catch {
-    return String(output);
-  }
 }

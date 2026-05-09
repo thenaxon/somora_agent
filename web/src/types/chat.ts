@@ -1,20 +1,38 @@
-// Normalized chat-message + stream-event types. Mirrors the server
-// JSONL event shapes (src/types/events.ts) and the TUI's stream
-// adapter — same vocabulary across all clients.
+// Normalized chat-message + stream-event types. Mirrors the server's
+// SseEvent shape (src/types/events.ts) — same vocabulary across all
+// clients (TUI, web, future orbit).
+//
+// Wire format key gotcha: server emits `event: chat / agent / tool /
+// memory / status / user_message` with a discriminated `data` shape
+// (state for chat, phase for agent + tool, etc.). NOT separate
+// chat-delta / chat-final events. The web client decodes these into
+// ChatMessage rows below.
 
 export interface ToolCallPayload {
-  callId: string;
+  callId?: string;
   tool: string;
-  input: Record<string, unknown>;
+  /** Server-formatted args summary (one line, ready to render). */
+  summary?: string;
+  /** Server-formatted full details (multi-line, pretty). */
+  details?: string;
+  /** Raw input (only present from JSONL history events — live SSE
+   *  events arrive pre-formatted via summary/details). */
+  input?: Record<string, unknown>;
 }
 
 export interface ToolResultPayload {
-  callId: string;
-  output: unknown;
+  callId?: string;
+  tool: string;
+  summary?: string;
+  details?: string;
+  /** Set when the tool errored — `summary`/`details` are absent. */
+  error?: string;
+  /** Raw output from JSONL history. */
+  output?: unknown;
 }
 
 export type ChatMessage =
-  | { id: string; role: 'user'; ts: number; text: string }
+  | { id: string; role: 'user'; ts: number; text: string; fromAgent?: string }
   | { id: string; role: 'assistant'; ts: number; text: string; streaming?: boolean }
   | { id: string; role: 'tool_call'; ts: number; toolCall: ToolCallPayload }
   | { id: string; role: 'tool_result'; ts: number; toolResult: ToolResultPayload };
@@ -30,38 +48,41 @@ export interface MemoryHitsSnapshot {
   count: number;
   topScore: number | null;
   refs: string[];
+  fullText?: string;
 }
 
-/** SSE events emitted by /chat/stream. We listen for these by name
- *  via EventSource.addEventListener — server sends `event: <name>`
- *  + JSON `data:`. */
+/** Live SSE wire-format envelope. The `event:` line is the
+ *  discriminator, `data:` is the JSON-encoded payload below. */
 export type StreamEvent =
-  | { kind: 'status'; msg: string }
-  | { kind: 'agent-start' }
+  | { event: 'status'; data: { msg: string; session?: string } }
+  | { event: 'heartbeat'; data: number | string }
   | {
-      kind: 'agent-end';
-      usage?: ChatUsage;
-      contextWindow?: number;
-      provider?: string;
-      model?: string;
-    }
-  | { kind: 'chat-delta'; text: string }
-  | { kind: 'chat-final'; text: string }
-  | {
-      kind: 'memory';
-      count: number;
-      topScore: number | null;
-      refs: string[];
+      event: 'chat';
+      data: { state: 'delta' | 'final'; text: string };
     }
   | {
-      kind: 'tool';
-      callId?: string;
-      tool: string;
-      phase: 'call' | 'result' | 'error' | string;
-      input?: Record<string, unknown>;
-      output?: unknown;
-      summary?: string;
-      error?: string;
+      event: 'agent';
+      data: {
+        phase: 'start' | 'end';
+        usage?: ChatUsage;
+        contextWindow?: number;
+        provider?: string;
+        model?: string;
+        thinking?: { level: 'off' | 'low' | 'medium' | 'high'; active: boolean };
+      };
     }
-  | { kind: 'user-message'; text: string; ts: number; from_agent?: string }
-  | { kind: 'heartbeat' };
+  | {
+      event: 'memory';
+      data: { count: number; topScore?: number; refs: string[]; fullText?: string };
+    }
+  | {
+      event: 'tool';
+      data:
+        | { phase: 'call'; tool: string; summary: string; details: string }
+        | { phase: 'result'; tool: string; summary: string; details: string }
+        | { phase: 'error'; tool: string; error: string; details?: string };
+    }
+  | {
+      event: 'user_message';
+      data: { text: string; ts: number; from_agent?: string };
+    };

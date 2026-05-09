@@ -35,6 +35,36 @@ body {
   51%, 100% { opacity: 0; }
 }
 
+/* Click-dummy bubbles cap at 75% width but don't break long words —
+ * a single unbroken token (URL, identifier, koalakoalakoala…) would
+ * overflow and clip text mid-glyph. Force aggressive wrap. */
+.chat-msg-bubble {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Tool-call / tool-result rows sit in the chat-body flex column.
+ * Without min-width:0 their flex children can refuse to shrink,
+ * which breaks horizontal scroll on narrow windows. */
+.chat-body > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* Markdown-rendered code blocks inside assistant bubbles need to
+ * scroll instead of pushing the bubble wider. */
+.chat-msg-bubble pre,
+.chat-msg-bubble code {
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.chat-msg-bubble pre code {
+  white-space: pre;
+}
+
 /* Additional status-dot variants on top of click-dummy's online/busy.
  * Loop-holder = agent currently holds the dream_review wiki loop;
  * offline = server unreachable / agent absent from /agents. */
