@@ -1,7 +1,10 @@
-// Dream-B types: candidates, plans, dispatcher interface.
+// Deep-Phase types: candidates, plans, dispatcher interface.
 //
-// See `private/wiki-design.md` § "Drei Dream-Modes" for the design,
-// and § "Dream-B Verhaltens-Detail" for the orchestration shape.
+// See `private/dream-system-v2.md` for the design.
+//
+// As of v2.2 the stub-with-observations variant is gone. All candidates
+// are 'fresh' memory files; merge-vs-promote is decided by Deep at
+// processing time (collision-detection on slug-write).
 
 import type { ResolvedModel } from '../config/types.ts';
 
@@ -20,17 +23,9 @@ export interface PromotionCandidate {
   body: string;
   /** mtime at read time — used for optimistic-concurrency on later writes. */
   mtimeMs: number;
-  /** Stub-or-fresh classification. */
-  kind: 'fresh' | 'stub_with_observations';
-  /** Only set when kind === 'stub_with_observations'. */
-  stub?: {
-    promotedTo: string; // wiki path without .md
-    promotedAt: string;
-    observations: string[]; // bullet lines
-  };
 }
 
-/** Outcome of running the LLM dispatcher on a fresh-memory candidate. */
+/** Outcome of running the LLM dispatcher on a candidate. */
 export type PromotionDecision =
   | {
       kind: 'promote';
@@ -54,8 +49,8 @@ export type PromotionDecision =
       reason: string;
     };
 
-/** Outcome of running the LLM dispatcher on a stub-with-observations
- *  candidate (merge existing wiki page with new observations). */
+/** Outcome of running the LLM dispatcher when merging a candidate
+ *  into an existing wiki page (collision-fallback path). */
 export type MergeDecision =
   | {
       kind: 'update';
@@ -88,23 +83,6 @@ export type CandidateOutcome =
       memorySlug: string;
       wikiPath: string;
       logSummary: string;
-      observationsConsumed: number;
-    }
-  | {
-      /**
-       * Page-collision auto-fix (Phase 4 / Weg 2): another memory in the
-       * same Dream-B run already wrote to this wiki path. We converted
-       * THIS memory to a stub with its body parked as a single
-       * "Recent observations" entry, so the next Dream-B run picks it
-       * up via the merge path and integrates the content into the
-       * existing wiki page. Net: in 2 runs both memories' content is
-       * consolidated into one wiki page.
-       */
-      kind: 'queued_merge';
-      agent: string;
-      memorySlug: string;
-      wikiPath: string;
-      logSummary: string;
     }
   | {
       kind: 'skipped';
@@ -130,7 +108,8 @@ export interface PromotionDispatcher {
     signal?: AbortSignal;
   }): Promise<PromotionDecision>;
 
-  /** Merge new observations into an existing wiki page. */
+  /** Merge a candidate into an existing wiki page. Called when promote
+   *  hits a slug collision (writeIfNotExists fails). */
   decideMerge(args: {
     candidate: PromotionCandidate;
     existingWikiPage: string; // full markdown of the existing page

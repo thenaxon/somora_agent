@@ -1,14 +1,21 @@
-// Dream-B single-run orchestrator. Collects candidates across all
-// wiki-participating agents, dispatches each to the LLM, applies the
+// Deep single-run orchestrator. Collects candidates across all wiki-
+// participating agents, dispatches each to the LLM, applies the
 // resulting plan to disk, then regenerates index.md and appends the
 // monthly log.
 //
-// Idempotent: if a run is interrupted (server crash, signal abort),
-// the next run picks up where it left off — promote-then-stub is two
-// file writes but each step is independently safe (writeIfNotExists
-// for the wiki page, writeIfMtimeUnchanged for the stub).
+// As of v2.2 every memory file is a 'fresh' candidate (stub-pattern
+// gone). Merge-vs-promote is decided by collision-detection: try to
+// promote first; if the target wiki slug already exists, re-route to
+// merge in the same run. After successful action the source memory
+// file is DELETED (see deep-actions.ts), keeping the memory dir as a
+// clean inbox for un-consolidated knowledge.
 //
-// See `private/wiki-design.md` § "Dream-B Verhaltens-Detail".
+// Idempotent: if a run is interrupted, the next run picks up. Wiki-
+// page write goes through writeIfNotExists / writeIfMtimeUnchanged.
+// Memory delete is best-effort and Deep recovers via the next run if
+// it fails.
+//
+// See `private/dream-system-v2.md`.
 
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -17,29 +24,27 @@ import matter from 'gray-matter';
 import type { Config, ResolvedModel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { extractObservations, isStub, parseStub } from './templates.ts';
 import {
   applyMerge,
   applyPromote,
-  classifyCandidate,
-  readExistingWikiPage,
   type ActionContext,
-} from './dream-b-actions.ts';
-import { DefaultPromotionDispatcher } from './dream-b-dispatcher.ts';
-import { regenerateIndex } from './index-builder.ts';
-import { appendLogEntries, outcomeToLogEntry, type LogEntry } from './log-builder.ts';
+} from './deep-actions.ts';
+import { DefaultPromotionDispatcher } from './deep-dispatcher.ts';
+import { regenerateIndex } from '../wiki/index-builder.ts';
+import { appendLogEntries, outcomeToLogEntry, type LogEntry } from '../wiki/log-builder.ts';
+import { readWithMtime } from '../wiki/conflict.ts';
 import type {
   CandidateOutcome,
   PromotionCandidate,
   PromotionDispatcher,
-} from './types.ts';
+} from '../wiki/types.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? `${process.env.HOME}/.somora`;
 
 export interface RunDreamBArgs {
   config: Config;
   /** Agents participating in the wiki (server-side opt-out via
-   *  agent.yaml.dream.participate_in_wiki = false is filtered upstream). */
+   *  agent.yaml.rem.participate_in_wiki = false is filtered upstream). */
   agents: Array<{ name: string; vaultPath: string }>;
   dispatcher?: PromotionDispatcher;
   signal?: AbortSignal;
@@ -55,7 +60,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   const start = Date.now();
   const dispatcher = args.dispatcher ?? new DefaultPromotionDispatcher();
 
-  // Resolve worker model. Without it Dream-B can't run.
+  // Resolve worker model. Without it Deep can't run.
   const ref = args.config.wiki.deep.model;
   if (!ref) {
     logger.warn({ msg: 'dream.deep.no_worker_model_configured' });
@@ -88,7 +93,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
     const wikiAbs = join(vaultPath, wikiSubfolder);
     const ctx: ActionContext = { wikiAbs };
 
-    // Build the existing-wiki summary once per vault — Dream-B feeds it
+    // Build the existing-wiki summary once per vault — Deep feeds it
     // to the promotion prompt so the LLM avoids dupes.
     const wikiSummary = await summarizeWiki(wikiAbs);
 
@@ -187,32 +192,10 @@ async function collectCandidates(agent: string): Promise<PromotionCandidate[]> {
     const slug = e.name.replace(/\.md$/, '');
     const fm = (parsed.data ?? {}) as Record<string, unknown>;
 
-    if (isStub(raw)) {
-      const stub = parseStub(raw);
-      if (!stub) continue;
-      const observations = extractObservations(stub.body);
-      // Stubs without new observations are a no-op for Dream-B.
-      if (observations.length === 0) continue;
-      out.push({
-        agent,
-        slug,
-        path,
-        raw,
-        frontmatter: fm,
-        body: parsed.content,
-        mtimeMs,
-        kind: 'stub_with_observations',
-        stub: {
-          promotedTo: stub.frontmatter.promoted_to,
-          promotedAt: stub.frontmatter.promoted_at,
-          observations,
-        },
-      });
-      continue;
-    }
-
-    // Fresh memory — check for marker that excludes from promotion.
+    // Opt-out marker: memory file with `wiki_promote: false` stays in
+    // memory, never gets evaluated by Deep.
     if (fm.wiki_promote === false) continue;
+
     out.push({
       agent,
       slug,
@@ -221,7 +204,6 @@ async function collectCandidates(agent: string): Promise<PromotionCandidate[]> {
       frontmatter: fm,
       body: parsed.content,
       mtimeMs,
-      kind: 'fresh',
     });
   }
   return out;
@@ -245,10 +227,10 @@ async function summarizeWiki(wikiAbs: string): Promise<string> {
     }
     return sections.length > 0
       ? sections.join('\n')
-      : '(no wiki pages yet — first Dream-B run on this vault)';
+      : '(no wiki pages yet — first Deep run on this vault)';
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return '(wiki directory does not exist yet — first Dream-B run will create it)';
+      return '(wiki directory does not exist yet — first Deep run will create it)';
     }
     throw err;
   }
@@ -281,43 +263,8 @@ async function processCandidate(args: {
   signal?: AbortSignal;
 }): Promise<CandidateOutcome> {
   const { candidate, ctx, wikiSummary, workerModel, dispatcher, timeoutMs, signal } = args;
-  const route = classifyCandidate(candidate);
-  if (route === 'merge') {
-    const existing = await readExistingWikiPage({ candidate, ctx });
-    if (!existing) {
-      // Stub points at non-existent wiki page — could be that the
-      // user deleted the page intentionally. Re-promotion would
-      // just re-create it. Skip, log, leave the stub for the user.
-      return {
-        kind: 'skipped',
-        agent: candidate.agent,
-        memorySlug: candidate.slug,
-        reason: `stub points at missing wiki page ${candidate.stub?.promotedTo}; user-deleted? leaving stub untouched`,
-      };
-    }
-    const decision = await dispatcher.decideMerge({
-      candidate,
-      existingWikiPage: existing.text,
-      workerModel,
-      timeoutMs,
-      ...(signal ? { signal } : {}),
-    });
-    if (decision.kind === 'no_change') {
-      return {
-        kind: 'skipped',
-        agent: candidate.agent,
-        memorySlug: candidate.slug,
-        reason: decision.reason,
-      };
-    }
-    return applyMerge({
-      candidate,
-      decision,
-      ctx,
-      wikiPageMtimeMs: existing.mtimeMs,
-    });
-  }
-  // promote path
+
+  // Step 1: ask LLM if/how to promote.
   const decision = await dispatcher.decidePromotion({
     candidate,
     existingWikiSummary: wikiSummary,
@@ -326,6 +273,8 @@ async function processCandidate(args: {
     ...(signal ? { signal } : {}),
   });
   if (decision.kind === 'skip') {
+    // Memory file stays — could become substantial later. Hash-cache
+    // (v2.4) avoids re-evaluating identical content on the next Deep run.
     return {
       kind: 'skipped',
       agent: candidate.agent,
@@ -333,7 +282,58 @@ async function processCandidate(args: {
       reason: decision.reason,
     };
   }
-  return applyPromote({ candidate, decision, ctx });
+
+  // Step 2: try to promote (creates wiki page, deletes memory file).
+  const promoteResult = await applyPromote({ candidate, decision, ctx });
+  if (promoteResult.kind !== 'failed') {
+    return promoteResult;
+  }
+
+  // Step 3: collision — wiki page at decision.slug already exists.
+  // Re-route to merge in this run instead of waiting for the next.
+  const wikiPath = decision.slug;
+  const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
+  const existing = await readWithMtime(wikiFileAbs);
+  if (!existing) {
+    // Race: file disappeared between writeIfNotExists and this read.
+    // Bail — memory file stays for next run.
+    return {
+      kind: 'failed',
+      agent: candidate.agent,
+      memorySlug: candidate.slug,
+      error: `collision recovery failed: ${wikiPath} disappeared mid-run`,
+    };
+  }
+  logger.info({
+    msg: 'dream.deep.collision_reroute_to_merge',
+    agent: candidate.agent,
+    memorySlug: candidate.slug,
+    wikiPath,
+  });
+  const mergeDecision = await dispatcher.decideMerge({
+    candidate,
+    existingWikiPage: existing.text,
+    workerModel,
+    timeoutMs,
+    ...(signal ? { signal } : {}),
+  });
+  if (mergeDecision.kind === 'no_change') {
+    // Observation already covered by the existing wiki page. Memory
+    // file stays for next-run hash-cache check.
+    return {
+      kind: 'skipped',
+      agent: candidate.agent,
+      memorySlug: candidate.slug,
+      reason: mergeDecision.reason,
+    };
+  }
+  return applyMerge({
+    candidate,
+    decision: mergeDecision,
+    ctx,
+    wikiPath,
+    wikiPageMtimeMs: existing.mtimeMs,
+  });
 }
 
 function utcDate(ts: number): string {

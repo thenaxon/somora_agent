@@ -11,7 +11,7 @@
 
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { runDreamB, type RunDreamBResult } from '../wiki/dream-b-runner.ts';
+import { runDreamB, type RunDreamBResult } from './deep-runner.ts';
 import type { PromotionDispatcher } from '../wiki/types.ts';
 
 export interface DeepWorkerDeps {

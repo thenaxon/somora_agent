@@ -1,7 +1,7 @@
 // Default LLM dispatcher for Dream-B. Multi-engine since Stufe 4.5 —
 // supports openai-compatible, claude-cli (subscription via SDK), and
 // codex-cli (subprocess) as worker. The actual LLM call lives in
-// `dream-b-llm.ts`; this module owns prompt-shaping and response-parsing.
+// `deep-llm.ts`; this module owns prompt-shaping and response-parsing.
 //
 // Robust JSON parsing: strips markdown fences if the model emits them
 // despite the prompt, and validates required fields. On parse failure
@@ -14,9 +14,9 @@ import type {
   PromotionCandidate,
   PromotionDecision,
   PromotionDispatcher,
-} from './types.ts';
-import { MERGE_SYSTEM_PROMPT, PROMOTE_SYSTEM_PROMPT } from './dream-b-prompts.ts';
-import { callOneShotLLM } from './dream-b-llm.ts';
+} from '../wiki/types.ts';
+import { MERGE_SYSTEM_PROMPT, PROMOTE_SYSTEM_PROMPT } from './deep-prompts.ts';
+import { callOneShotLLM } from './deep-llm.ts';
 
 export class DefaultPromotionDispatcher implements PromotionDispatcher {
   async decidePromotion(args: {
@@ -106,25 +106,25 @@ function buildMergeUserMessage(
   c: PromotionCandidate,
   existingWikiPage: string,
 ): string {
-  const observations = c.stub?.observations ?? [];
+  // v2.2: candidates are full memory files (no stubs). Merge route
+  // means: existing wiki page collides with the slug Deep wanted to
+  // promote at. We feed Opus the full new memory content + the
+  // existing wiki page; Opus integrates new info into the page.
   return [
     `Agent: ${c.agent}`,
-    `Memory stub slug: ${c.slug}`,
-    `Wiki page being merged into: ${c.stub?.promotedTo ?? '(unknown)'}`,
+    `Memory slug: ${c.slug}`,
     '',
     '<existing_wiki_page>',
     existingWikiPage,
     '</existing_wiki_page>',
     '',
-    '<new_observations>',
-    observations.length === 0
-      ? '(none — caller should have skipped this candidate)'
-      : observations.join('\n'),
-    '</new_observations>',
+    '<new_memory_content>',
+    c.body.trim(),
+    '</new_memory_content>',
   ].join('\n');
 }
 
-// ─── (LLM dispatch moved to src/wiki/dream-b-llm.ts in Stufe 4.5) ────
+// ─── (LLM dispatch moved to src/dream/deep-llm.ts in Stufe 4.5) ────
 
 // ─── Parsers ────────────────────────────────────────────────────────
 

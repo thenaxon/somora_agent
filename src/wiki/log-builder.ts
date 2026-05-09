@@ -29,9 +29,8 @@ export interface LogEntry {
   /**
    * "promoted" → "Promoted" section.
    * "updated"  → "Updated" section.
-   * "queued"   → "Queued for merge" section (Phase 4 / Weg 2).
    */
-  kind: 'promoted' | 'updated' | 'queued';
+  kind: 'promoted' | 'updated';
   /** Short German one-liner. */
   summary: string;
   /** ISO timestamp of when the action ran. */
@@ -46,8 +45,6 @@ export function outcomeToLogEntry(o: CandidateOutcome, ts: number): LogEntry | n
       return { wikiPath: o.wikiPath, kind: 'promoted', summary: o.logSummary, ts };
     case 'merged':
       return { wikiPath: o.wikiPath, kind: 'updated', summary: o.logSummary, ts };
-    case 'queued_merge':
-      return { wikiPath: o.wikiPath, kind: 'queued', summary: o.logSummary, ts };
     default:
       return null;
   }
@@ -62,21 +59,21 @@ export async function appendLogEntries(args: {
   // Bucket entries by UTC date.
   const byDate = new Map<
     string,
-    { promoted: LogEntry[]; updated: LogEntry[]; queued: LogEntry[] }
+    { promoted: LogEntry[]; updated: LogEntry[] }
   >();
   for (const e of args.entries) {
     const date = utcDate(e.ts);
     if (!byDate.has(date)) {
-      byDate.set(date, { promoted: [], updated: [], queued: [] });
+      byDate.set(date, { promoted: [], updated: [] });
     }
     byDate.get(date)![e.kind].push(e);
   }
 
   // Group by month — usually all entries fall in the same month from
-  // a single Dream-B run, but we don't assume.
+  // a single Deep run, but we don't assume.
   const byMonth = new Map<
     string,
-    Map<string, { promoted: LogEntry[]; updated: LogEntry[]; queued: LogEntry[] }>
+    Map<string, { promoted: LogEntry[]; updated: LogEntry[] }>
   >();
   for (const [date, sections] of byDate) {
     const month = date.slice(0, 7); // YYYY-MM
@@ -118,13 +115,6 @@ export async function appendLogEntries(args: {
       if (sections.updated.length > 0) {
         appended += `### Updated\n`;
         for (const e of sections.updated) {
-          appended += `- [[${e.wikiPath}]] — ${e.summary}\n`;
-        }
-        appended += '\n';
-      }
-      if (sections.queued.length > 0) {
-        appended += `### Queued for merge (next-run will integrate)\n`;
-        for (const e of sections.queued) {
           appended += `- [[${e.wikiPath}]] — ${e.summary}\n`;
         }
         appended += '\n';

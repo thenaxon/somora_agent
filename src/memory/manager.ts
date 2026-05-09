@@ -32,7 +32,6 @@ import {
   type MemoryDb,
 } from './storage.ts';
 import { MarkdownWatcher, type FileEvent } from './watcher.ts';
-import { appendObservation, isStub } from '../wiki/templates.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 
@@ -536,7 +535,7 @@ export class MemoryManager {
     body: string,
     frontmatter?: Record<string, unknown>,
     opts?: { mustExist?: boolean },
-  ): Promise<{ path: string; created: boolean; mode: 'overwrite' | 'stub_observation' }> {
+  ): Promise<{ path: string; created: boolean; mode: 'overwrite' }> {
     if (!SLUG_RE.test(slug)) {
       throw new Error(`invalid slug '${slug}' — must match ${SLUG_RE.source}`);
     }
@@ -556,18 +555,11 @@ export class MemoryManager {
       throw new Error(`note '${slug}' does not exist — use memory_write to create`);
     }
 
-    // Stub detection (Phase 4): a memory file with `promoted_to` +
-    // `promoted_at` frontmatter is a pointer to a wiki page. New
-    // observations append to its `## Recent observations` section
-    // instead of clobbering the stub. Dream-B picks them up on the
-    // next promotion run and integrates into the wiki page.
-    if (exists && existingRaw && isStub(existingRaw)) {
-      const parsed = matter(existingRaw);
-      const updatedBody = appendObservation(parsed.content, body);
-      const out = matter.stringify(updatedBody, parsed.data);
-      await writeFile(path, out, 'utf8');
-      return { path, created: false, mode: 'stub_observation' };
-    }
+    // v2.2: stub-pattern is gone. memory_write on an existing memory
+    // slug just rewrites the file (caller-controlled). After Deep
+    // consolidates a topic into the wiki, the source memory file is
+    // DELETED — so a follow-up memory_write on the same slug is a
+    // legitimate fresh write that Deep will pick up next run.
 
     const now = new Date().toISOString();
     const fm: Record<string, unknown> = {
