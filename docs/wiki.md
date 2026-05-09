@@ -65,14 +65,19 @@ memory file is deleted.
 See [dream-phases.md](dream-phases.md#phase-deep--memory--wiki) for
 mechanics.
 
-### By Lucid (cleanup, with approval)
+### By Lucid + an agent in a `dream_review` loop
 
 Every 7 days or via `dream_run({phase: 'lucid'})`, Lucid scans the
-existing wiki for quality issues and proposes structured fixes:
-contradictions, stale claims, dead refs, missing pages. Each finding
-needs your approval; nothing auto-applies.
+existing wiki for objectively-verifiable issues (contradictions, dead
+refs, missing pages, link suggestions) — max 8 findings per run. Each
+finding is **informational only** — the actual editing happens in a
+conversational `dream_review` loop where you walk the findings with
+one of your agents and the agent writes changes via loop-scoped
+`wiki_edit` / `wiki_create` / `wiki_delete` tools after you OK each
+step. Outside the loop, no agent can write to the wiki.
 
-See [dream-phases.md](dream-phases.md#phase-lucid--wiki-cleanup).
+See [dream-phases.md](dream-phases.md#phase-lucid--wiki-cleanup) for
+the full flow + loop discipline rules.
 
 ### By you (manually in Obsidian)
 
@@ -301,9 +306,12 @@ wiki.
 by Deep ("transient task list, scratchpad, or daily log"). The wiki
 captures stable knowledge, not session transcripts.
 
-**Not auto-fixed beyond Deep + Lucid.** Lucid suggests fixes; you
-approve. If you want bigger restructuring (split a page in two, move
-between subfolders), do it manually in Obsidian.
+**Not auto-fixed beyond Deep + Lucid.** Lucid surfaces objective
+issues; you walk them with an agent in a `dream_review` loop and the
+agent writes the fixes after you OK each step. If you want bigger
+restructuring (split a page in two, move between subfolders), do it
+manually in Obsidian — Lucid intentionally stays out of structural
+changes.
 
 ## See also
 

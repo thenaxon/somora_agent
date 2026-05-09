@@ -210,23 +210,30 @@ summaries.
 
 ## Phase Lucid — Wiki cleanup
 
-Lucid audits the existing wiki and surfaces quality issues for your
-review. **All findings require approval** — Lucid never auto-edits the
-wiki.
+Lucid audits the existing wiki, surfaces objectively-verifiable
+quality issues, and hands them off to **a conversational review loop**
+where you walk the findings with one of your agents and that agent
+writes the changes via loop-scoped `wiki_*` tools. Lucid itself never
+auto-edits the wiki.
 
 ### Job
 
-Walk the wiki (subfolder by subfolder), identify quality issues, propose
-structured fixes:
+Walk the wiki (subfolder by subfolder), identify issues that are
+objectively provable from the wiki content, surface a SHORT list (max
+8 per run). Lucid is intentionally narrow:
 
-| Finding kind | What it means | Fix kind |
-|---|---|---|
-| `contradiction` | Two pages assert mutually exclusive facts about the same subject. | `update_page` on whichever is wrong. |
-| `stale_claim` | Time-relative claim ("nächsten Monat", "läuft seit März") that can't still be true today. | `update_page` rewording the claim. |
-| `dead_ref` | `[[wiki-path]]` references a page that doesn't exist. | `update_page` (fix or remove the link). |
-| `outdated` | Whole page is obsolete (past project, superseded by successor page). | `delete_page` (with your review). |
-| `wanted_page` | Topic referenced by ≥3 wiki pages but missing its own page. | `create_page` with drafted body. |
-| `inconsistent_xref` | Asymmetric cross-reference (A → B but B doesn't mention A). | `no_op` (informational only, dismiss after review). |
+| Finding kind | What it means |
+|---|---|
+| `contradiction` | Two pages assert mutually exclusive facts about the same subject. Cite specific text from each. |
+| `dead_ref` | `[[wiki-path]]` references a page that doesn't exist. |
+| `wanted_page` | Topic referenced by ≥3 wiki pages but missing its own page. |
+| `link_suggestion` | A page mentions a named entity in prose AND a wiki page exists with that name AND there is no `[[wikilink]]` from one to the other. Strict: only for clearly identifiable named entities, not generic words. |
+
+Subjective polish (stylistic rewrites, "this could read better",
+"feels old") is **deliberately NOT in scope**. Those decisions belong
+in the review conversation, not pre-baked as findings. Three legacy
+kinds (`stale_claim`, `outdated`, `inconsistent_xref`) are retired
+from current runs but still parse for archived runs in `processed/`.
 
 ### Triggers
 
@@ -265,25 +272,85 @@ wiki:
 
 ### Output
 
-A `LucidRun` JSON file in `~/.somora/wiki-lucid/<run-id>.json` with all
-findings. Each finding carries a structured `fix` (one of `update_page`,
-`create_page`, `delete_page`, `no_op`) the apply function uses verbatim
-— no second LLM call at apply-time.
+A `LucidRun` JSON file in `~/.somora/wiki-lucid/<run-id>.json` with up
+to 8 findings. Each finding is **informational only** — `fix.kind:
+'no_op'` with the description of the issue. The actual editing happens
+in a `dream_review` loop (next section), not via `dream_apply`.
 
-When all findings of a run are resolved (applied or dismissed), the run
-moves to `~/.somora/wiki-lucid/processed/`.
+When the review loop closes (or you dismiss the whole run), the file
+moves to `~/.somora/wiki-lucid/processed/` with the loop summary
+appended for the audit trail.
 
-## Reviewing findings — the unified `dream_*` tool surface
+### Reviewing Lucid findings — the `dream_review` loop
 
-REM (per-agent) and Lucid (platform-wide) both produce findings that
-need your approval. The same tools handle both:
+Findings are walked by an agent in conversation with you, not via
+button-click approval. You start the loop with one agent, talk through
+each finding, the agent writes changes via loop-scoped `wiki_*` tools
+when you OK each step, and you close the loop when done.
+
+```
+> du:    schau dir das lucid result mal an
+hans:    dream_list   → finds the Lucid run
+         dream_get(id) → reads all findings
+         dream_review({dream_id, action: 'start'})  ← opens the loop
+         "Hier ist was Lucid gefunden hat: 5 contradictions, 2 dead refs.
+          Ich fang mit der ersten an: page X sagt Y, page Z sagt W.
+          Mein Vorschlag: <konkrete Änderung>. OK?"
+
+> du:    ja, mach so
+hans:    wiki_edit({...})   ← writes the page
+         "Erledigt. Nächste Finding: ..."
+
+> [several rounds of walk-discuss-edit]
+
+> du:    passt, mach Schluss
+hans:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
+         loop is archived to processed/, normal tools come back
+```
+
+While the loop is active for an agent:
+
+- The agent gets `wiki_edit` / `wiki_create` / `wiki_delete` (loop-scoped)
+- The agent's `file_*` / `exec_*` / `agents_*` / `skill_*` / `tmux_*`
+  tools are temporarily hidden so the conversation stays focused
+- Other agents continue normal operation but cannot start their own
+  loop until this one ends — somora-instance-global lock
+- The TUI status line shows `📝 wiki-review:<agent>`
+- Per-turn cap: max 3 wiki_* calls in a single turn so the agent
+  cannot batch-edit without checking in. Resets on every user
+  message.
+- Auto-expiry: 24h idle without activity → loop auto-closes as a
+  safety net in case the agent forgot to call `action: 'end'`
+
+`wiki_edit` accepts body changes (`newBody`) and/or frontmatter ops
+(`relatedAdd`, `relatedRemove`, `sourcesAdd`, `sourcesRemove`) — all
+optional. Pass only what you want to touch. Useful pattern: clear a
+dead `related:` ref with `wiki_edit({wikiPath, relatedRemove: ['dead/page']})`
+without touching the body.
+
+## Reviewing findings — the `dream_*` tool surface
+
+REM and Lucid have different review flows because the cost of a wrong
+auto-apply differs:
+
+- **REM findings** are atomic memory writes — small, easy to audit
+  individually, isolated to one agent's inbox. They use the per-finding
+  approval pattern (`dream_apply` / `dream_dismiss`).
+- **Lucid findings** are wiki edits that ripple across multiple pages
+  and need the user's judgement. They use the conversational
+  `dream_review` loop described above.
+
+Tools:
 
 ```
 dream_list                              List pending dreams (REM + Lucid)
 dream_get(dream_id)                     Show full content of a dream
-dream_apply(dream_id, finding_id)       Accept finding → applied
+dream_apply(dream_id, finding_id)       Accept REM finding → applied
 dream_dismiss(dream_id, [finding_id])   Reject (one finding or whole run)
 dream_run({phase, [wait], [force]})     Trigger Deep or Lucid manually
+dream_review({dream_id, action, [summary]})
+                                        Open/close the wiki review loop
+                                        for a Lucid run (Lucid only)
 ```
 
 `dream_list` returns a `kind` discriminator per entry:
@@ -293,25 +360,36 @@ dream_run({phase, [wait], [force]})     Trigger Deep or Lucid manually
 - `kind: 'wiki_lucid'` — Lucid finding, platform-wide. Any agent with
   the `dream` toolset sees the same set.
 
-Typical flow when you ask "hast du was geträumt?":
+Typical REM flow:
 
 ```
 hans> dream_list
-   → memory dream (REM): 5 pending findings
-   → wiki_lucid run: 23 pending findings
-
+   → memory dream: 5 pending findings
 hans> dream_get dream_id=<id>
    → full finding list with action, slug, reason, proposed_content
-
 > walk through with me, finding by finding
 hans> dream_apply  (or dream_dismiss)
    → repeats until all resolved → dream_done: true
 ```
 
-When a finding's `fix.kind` is `no_op` (informational only — usually
-`inconsistent_xref` from Lucid), `dream_apply` succeeds but does
-nothing on disk; the finding is marked applied so the run can complete.
-Treat these as "noted, dismissable".
+Typical Lucid flow:
+
+```
+hans> dream_list
+   → wiki_lucid run: 6 pending findings
+hans> dream_get dream_id=<id>
+   → full finding list (all fix.kind = 'no_op' informational)
+hans> dream_review({dream_id, action: 'start'})
+   → loop opens, wiki_* tools become available, file_*/exec_* etc. hide
+[walk-discuss-edit conversation rounds]
+hans> dream_review({dream_id, action: 'end', summary: 'F1 applied as edit X, F2 dismissed, ...'})
+   → loop closes, run archived
+```
+
+`dream_apply` on a Lucid finding (which is always `no_op` now) marks
+it applied without writing anything — useful only as
+acknowledge-and-move-on if you don't want the loop. The actual fix
+path is the loop.
 
 ## Triggering manually
 

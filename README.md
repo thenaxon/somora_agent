@@ -89,7 +89,7 @@ and cadence:
 |---|---|---|---|---|---|
 | **REM** | Session → Memory inbox | Per-agent | `/reset` or 30 min idle | small/local (e.g. gemma) | ✓ you approve each finding |
 | **Deep** | Memory inbox → Wiki | Platform | every 12h or `dream_run({phase:'deep'})` | strong (e.g. opus) | ✗ auto-applies |
-| **Lucid** | Wiki cleanup | Platform | every 7d or `dream_run({phase:'lucid'})` | strong (e.g. opus) | ✓ you approve each finding |
+| **Lucid** | Wiki cleanup | Platform | every 7d or `dream_run({phase:'lucid'})` | strong (e.g. opus) | ✓ walk findings with the agent in a `dream_review` loop |
 
 After Deep promotes a memory file to the wiki, the source memory file is
 **deleted** — wiki is canonical, the inbox stays a clean queue. Lucid runs
@@ -217,7 +217,8 @@ and codex-cli) — same tool surface regardless of model.
 | Toolset | Examples | Purpose |
 |---|---|---|
 | memory | `memory_search`, `memory_get`, `memory_write`, `memory_edit`, `memory_delete`, `memory_list` | Read/write memory across all three layers (memory + wiki + vault). |
-| dream | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run` | Inspect findings from REM/Lucid; trigger Deep/Lucid manually. |
+| dream | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run`, `dream_review` | Inspect REM/Lucid findings, trigger Deep/Lucid manually, open/close the wiki review loop. |
+| wiki | `wiki_edit`, `wiki_create`, `wiki_delete` | Loop-scoped wiki writes — only exposed inside an active `dream_review` loop. |
 | file | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or any configured SSH resource. |
 | exec | `exec`, `process` | One-shot shell + background jobs, local or SSH. |
 | tmux | `tmux` | Persistent multi-turn terminal sessions for TUIs (claude/codex/vim/REPLs). |

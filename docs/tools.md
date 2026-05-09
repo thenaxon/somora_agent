@@ -10,7 +10,8 @@ in-process. The model never knows which path it's on.
 | Toolset | Tools | Purpose |
 |---|---|---|
 | `memory` | `memory_search`, `memory_get`, `memory_list`, `memory_write`, `memory_edit`, `memory_delete` | Read/write across the three layers — agent memory inbox, shared wiki, read-only vault. Hybrid retrieval (vector + BM25) with per-source boost. |
-| `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run` | Inspect findings from REM (per-agent) and Lucid (platform-wide); trigger Deep or Lucid manually via `dream_run({phase: 'deep'\|'lucid'})`. See `dream-phases.md`. |
+| `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run`, `dream_review` | Inspect findings from REM (per-agent) and Lucid (platform-wide); trigger Deep/Lucid via `dream_run({phase: 'deep'\|'lucid'})`. `dream_review({dream_id, action:'start'\|'end'})` opens/closes a conversational wiki-edit loop for a Lucid run. See `dream-phases.md`. |
+| `wiki` | `wiki_edit`, `wiki_create`, `wiki_delete` | Loop-scoped wiki write tools. Only exposed to the agent currently holding the active `dream_review` loop; otherwise hidden. `wiki_edit` mutates body and/or `related:`/`sources:` frontmatter. Per-turn cap of 3 wiki_* calls keeps the model from batch-editing without user check-in. See `dream-phases.md`. |
 | `time` | `time_now` | Current date/time/timezone — model never hallucinates "today". |
 | `web` | `web_search`, `web_fetch` | Search via Brave + fetch web pages as Markdown (Mozilla Readability + SSRF guards). |
 | `file` | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or against any configured SSH resource via `target=...`. `analyze_file` is the multimodal companion: dispatches images/PDFs to a configured `vision.worker` and returns a text description (see `files.md`). |
