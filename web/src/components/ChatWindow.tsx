@@ -1,15 +1,18 @@
-// Phase-1 ChatWindow skeleton: header + empty body placeholder +
-// disabled input. Step 3 = chrome only; streaming, markdown, tool
-// blocks, drag&drop, slash-commands all land in Step 4 when the
-// /chat/stream SSE wiring goes in.
+// Phase-1 ChatWindow skeleton: header (with rich live meta line) +
+// empty body placeholder + disabled input. Step 4 wires the chat
+// stream itself — until then the header still shows live data
+// (model, thinking, soon tokens + streaming-state).
 //
 // Layout matches the click-dummy chat.jsx: avatar + name + role
-// badge + session-id, three action icons (pin / branch / more),
-// scrollable body, input with paperclip + textarea + send.
+// badge on top, meta line beneath with session · model · thinking
+// · (tokens, step 4) · tools-toggle. Three action icons (pin /
+// branch / more) on the right.
 
-import { Pin, GitBranch, MoreHorizontal, Paperclip, Send } from 'lucide-react';
+import { useState } from 'react';
+import { Pin, GitBranch, MoreHorizontal, Paperclip, Send, Wrench } from 'lucide-react';
 import type { AgentInfo } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
+import { useSessionInfo } from '../hooks/useSessionInfo';
 
 interface Props {
   agent: AgentInfo;
@@ -18,6 +21,12 @@ interface Props {
 
 export function ChatWindow({ agent, sessionId }: Props) {
   const color = resolveAgentColor(agent);
+  const { model, thinking } = useSessionInfo(agent.name, sessionId);
+  const [showTools, setShowTools] = useState(false);
+
+  const modelLabel = model?.alias ?? model?.modelId ?? '—';
+  const thinkingActive =
+    thinking?.modelSupportsReasoning && thinking.effective && thinking.effective !== 'off';
 
   return (
     <div className="chat">
@@ -57,7 +66,56 @@ export function ChatWindow({ agent, sessionId }: Props) {
               </span>
             )}
           </div>
-          <div className="chat-header-meta">session: {sessionId}</div>
+          <div
+            className="chat-header-meta"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              fontFamily: '"JetBrains Mono", monospace',
+              fontSize: 10,
+            }}
+          >
+            <span>{sessionId}</span>
+            <Sep />
+            <span title={model?.modelId ?? 'no model resolved'} style={{ color: 'var(--text-1)' }}>
+              {modelLabel}
+            </span>
+            {thinkingActive && (
+              <>
+                <Sep />
+                <span style={{ color: 'var(--accent)' }} title={`thinking: ${thinking?.effective}`}>
+                  🧠 {thinking?.effective}
+                </span>
+              </>
+            )}
+            <Sep />
+            <button
+              type="button"
+              onClick={() => setShowTools((v) => !v)}
+              title={showTools ? 'tool-call rendering on' : 'tool-call rendering off'}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 3,
+                padding: '0 4px',
+                borderRadius: 3,
+                background: showTools ? `${color}25` : 'transparent',
+                border: showTools ? `1px solid ${color}55` : '1px solid var(--line)',
+                color: showTools ? color : 'var(--text-2)',
+              }}
+            >
+              <Wrench size={10} />
+              <span>tools</span>
+            </button>
+            <Sep />
+            <span style={{ color: 'var(--text-3)' }} title="streaming token counts arrive in step 4">
+              ↑— ↓—
+            </span>
+          </div>
         </div>
         <div className="chat-header-actions">
           <button type="button" className="chat-icon-btn" title="Pin (TODO)">
@@ -103,4 +161,8 @@ export function ChatWindow({ agent, sessionId }: Props) {
       </div>
     </div>
   );
+}
+
+function Sep() {
+  return <span style={{ color: 'var(--line-2)' }}>·</span>;
 }

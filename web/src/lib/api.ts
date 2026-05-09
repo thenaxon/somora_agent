@@ -36,6 +36,27 @@ export interface LoopState {
   lastActivityAt?: string;
 }
 
+export interface SessionModelInfo {
+  provider: string;
+  modelId: string;
+  alias: string | null;
+  engine: string;
+  contextWindow: number;
+  source: 'session-override' | 'persona-default';
+  override: string | null;
+  personaDefault: string | null;
+}
+
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+export interface SessionThinkingInfo {
+  effective: ThinkingLevel | null;
+  override: ThinkingLevel | null;
+  personaDefault: ThinkingLevel | null;
+  source: 'session-override' | 'persona-default' | 'engine-default';
+  modelSupportsReasoning: boolean;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(path);
   if (!res.ok) {
@@ -50,4 +71,12 @@ export const api = {
   sessions: (agent: string) =>
     getJson<SessionSummary[]>(`/agents/${encodeURIComponent(agent)}/sessions`),
   loopState: () => getJson<LoopState>('/dream/loop-state'),
+  sessionModel: (agent: string, session: string) =>
+    getJson<SessionModelInfo>(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/model`,
+    ),
+  sessionThinking: (agent: string, session: string) =>
+    getJson<SessionThinkingInfo>(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
+    ),
 } as const;
