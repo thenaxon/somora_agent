@@ -1,100 +1,85 @@
-// Default LLM dispatcher for Dream-B. Multi-engine since Stufe 4.5 —
+// Default LLM dispatcher for Deep. Multi-engine since Stufe 4.5 —
 // supports openai-compatible, claude-cli (subscription via SDK), and
 // codex-cli (subprocess) as worker. The actual LLM call lives in
 // `deep-llm.ts`; this module owns prompt-shaping and response-parsing.
 //
+// As of v2.3 there's a single `decideMemoryFate` per candidate — one
+// LLM call returns Skip/Promote/Merge in one shot.
+//
 // Robust JSON parsing: strips markdown fences if the model emits them
-// despite the prompt, and validates required fields. On parse failure
-// or invalid shape, returns a `skip`/`no_change` outcome with the
+// despite the prompt, and validates required fields per kind. On
+// parse failure or invalid shape, returns a `skip` outcome with the
 // failure reason — never throws on a single bad LLM response.
 
 import { logger } from '../server/logger.ts';
 import type {
-  MergeDecision,
+  MemoryFateDecision,
   PromotionCandidate,
-  PromotionDecision,
   PromotionDispatcher,
 } from '../wiki/types.ts';
-import { MERGE_SYSTEM_PROMPT, PROMOTE_SYSTEM_PROMPT } from './deep-prompts.ts';
+import { DEEP_SYSTEM_PROMPT } from './deep-prompts.ts';
 import { callOneShotLLM } from './deep-llm.ts';
 
 export class DefaultPromotionDispatcher implements PromotionDispatcher {
-  async decidePromotion(args: {
+  async decideMemoryFate(args: {
     candidate: PromotionCandidate;
-    existingWikiSummary: string;
+    wikiIndex: string;
+    relevantPages: Array<{ slug: string; markdown: string }>;
     workerModel: import('../config/types.ts').ResolvedModel;
     timeoutMs: number;
     signal?: AbortSignal;
-  }): Promise<PromotionDecision> {
-    const userMsg = buildPromoteUserMessage(args.candidate, args.existingWikiSummary);
+  }): Promise<MemoryFateDecision> {
+    const userMsg = buildDeepUserMessage(
+      args.candidate,
+      args.wikiIndex,
+      args.relevantPages,
+    );
     let text: string;
     try {
       text = await callOneShotLLM({
         workerModel: args.workerModel,
-        systemPrompt: PROMOTE_SYSTEM_PROMPT,
+        systemPrompt: DEEP_SYSTEM_PROMPT,
         userMessage: userMsg,
         timeoutMs: args.timeoutMs,
         ...(args.signal ? { signal: args.signal } : {}),
-        logCtx: { agent: args.candidate.agent, op: 'promote', slug: args.candidate.slug },
+        logCtx: { agent: args.candidate.agent, op: 'deep', slug: args.candidate.slug },
       });
     } catch (err) {
       logger.warn({
         msg: 'dream.deep.llm_call_failed',
-        op: 'promote',
         agent: args.candidate.agent,
         slug: args.candidate.slug,
         err: (err as Error).message,
       });
       return { kind: 'skip', reason: `LLM call failed: ${(err as Error).message}` };
     }
-    return parsePromotionDecision(text, args.candidate.slug);
-  }
-
-  async decideMerge(args: {
-    candidate: PromotionCandidate;
-    existingWikiPage: string;
-    workerModel: import('../config/types.ts').ResolvedModel;
-    timeoutMs: number;
-    signal?: AbortSignal;
-  }): Promise<MergeDecision> {
-    const userMsg = buildMergeUserMessage(args.candidate, args.existingWikiPage);
-    let text: string;
-    try {
-      text = await callOneShotLLM({
-        workerModel: args.workerModel,
-        systemPrompt: MERGE_SYSTEM_PROMPT,
-        userMessage: userMsg,
-        timeoutMs: args.timeoutMs,
-        ...(args.signal ? { signal: args.signal } : {}),
-        logCtx: { agent: args.candidate.agent, op: 'merge', slug: args.candidate.slug },
-      });
-    } catch (err) {
-      logger.warn({
-        msg: 'dream.deep.llm_call_failed',
-        op: 'merge',
-        agent: args.candidate.agent,
-        slug: args.candidate.slug,
-        err: (err as Error).message,
-      });
-      return { kind: 'no_change', reason: `LLM call failed: ${(err as Error).message}` };
-    }
-    return parseMergeDecision(text, args.candidate.slug);
+    return parseDeepDecision(text, args.candidate.slug);
   }
 }
 
-// ─── User-message builders ──────────────────────────────────────────
+// ─── User-message builder ───────────────────────────────────────────
 
-function buildPromoteUserMessage(
+function buildDeepUserMessage(
   c: PromotionCandidate,
-  wikiSummary: string,
+  wikiIndex: string,
+  relevantPages: Array<{ slug: string; markdown: string }>,
 ): string {
+  const pageBlocks = relevantPages.length === 0
+    ? '(no closely-matching wiki pages found by recall)'
+    : relevantPages
+        .map((p) => `<wiki_page slug="${p.slug}">\n${p.markdown.trim()}\n</wiki_page>`)
+        .join('\n\n');
   return [
     `Agent: ${c.agent}`,
     `Memory slug: ${c.slug}`,
     '',
-    '<existing_wiki_summary>',
-    wikiSummary || '(empty wiki — no pages yet)',
-    '</existing_wiki_summary>',
+    '<wiki_index>',
+    wikiIndex.trim() || '(empty)',
+    '</wiki_index>',
+    '',
+    '<relevant_wiki_pages>',
+    pageBlocks,
+    '</relevant_wiki_pages>',
     '',
     '<memory_file>',
     c.body.trim(),
@@ -102,31 +87,7 @@ function buildPromoteUserMessage(
   ].join('\n');
 }
 
-function buildMergeUserMessage(
-  c: PromotionCandidate,
-  existingWikiPage: string,
-): string {
-  // v2.2: candidates are full memory files (no stubs). Merge route
-  // means: existing wiki page collides with the slug Deep wanted to
-  // promote at. We feed Opus the full new memory content + the
-  // existing wiki page; Opus integrates new info into the page.
-  return [
-    `Agent: ${c.agent}`,
-    `Memory slug: ${c.slug}`,
-    '',
-    '<existing_wiki_page>',
-    existingWikiPage,
-    '</existing_wiki_page>',
-    '',
-    '<new_memory_content>',
-    c.body.trim(),
-    '</new_memory_content>',
-  ].join('\n');
-}
-
-// ─── (LLM dispatch moved to src/dream/deep-llm.ts in Stufe 4.5) ────
-
-// ─── Parsers ────────────────────────────────────────────────────────
+// ─── Parser ─────────────────────────────────────────────────────────
 
 function stripFences(raw: string): string {
   let text = raw.trim();
@@ -139,7 +100,7 @@ function stripFences(raw: string): string {
   return text;
 }
 
-function parsePromotionDecision(raw: string, slug: string): PromotionDecision {
+function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
   const text = stripFences(raw);
   let parsed: unknown;
   try {
@@ -147,101 +108,76 @@ function parsePromotionDecision(raw: string, slug: string): PromotionDecision {
   } catch (err) {
     logger.warn({
       msg: 'dream.deep.parse_failed',
-      op: 'promote',
       slug,
       err: (err as Error).message,
       sample: text.slice(0, 200),
     });
-    return { kind: 'skip', reason: `LLM output unparseable as JSON` };
+    return { kind: 'skip', reason: 'LLM output unparseable as JSON' };
   }
   if (!parsed || typeof parsed !== 'object') {
     return { kind: 'skip', reason: 'LLM output not an object' };
   }
   const obj = parsed as Record<string, unknown>;
+
   if (obj.kind === 'skip') {
     return {
       kind: 'skip',
       reason: typeof obj.reason === 'string' ? obj.reason : 'LLM declined without reason',
     };
   }
-  if (obj.kind !== 'promote') {
-    return { kind: 'skip', reason: `unknown decision kind: ${String(obj.kind)}` };
-  }
-  // Validate required fields for promote.
-  const subfolder = typeof obj.subfolder === 'string' ? obj.subfolder.trim() : '';
-  const slugOut = typeof obj.slug === 'string' ? obj.slug.trim() : '';
-  const type = typeof obj.type === 'string' ? obj.type.trim() : '';
-  const title = typeof obj.title === 'string' ? obj.title.trim() : '';
-  const body = typeof obj.body === 'string' ? obj.body : '';
-  if (!subfolder || !slugOut || !type || !title || !body) {
-    logger.warn({
-      msg: 'dream.deep.promote_missing_fields',
-      slug,
-      have: { subfolder, slugOut, type, title, body: body.length },
-    });
-    return { kind: 'skip', reason: 'LLM promote response missing required fields' };
-  }
-  // Sanity: slug should start with subfolder/.
-  const finalSlug = slugOut.startsWith(subfolder + '/') ? slugOut : `${subfolder}/${slugOut}`;
-  const related = Array.isArray(obj.related)
-    ? (obj.related.filter((r): r is string => typeof r === 'string'))
-    : undefined;
-  return {
-    kind: 'promote',
-    subfolder,
-    slug: finalSlug,
-    type,
-    title,
-    body,
-    ...(related && related.length > 0 ? { related } : {}),
-  };
-}
 
-function parseMergeDecision(raw: string, slug: string): MergeDecision {
-  const text = stripFences(raw);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    logger.warn({
-      msg: 'dream.deep.parse_failed',
-      op: 'merge',
-      slug,
-      err: (err as Error).message,
-      sample: text.slice(0, 200),
-    });
-    return { kind: 'no_change', reason: 'LLM output unparseable as JSON' };
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    return { kind: 'no_change', reason: 'LLM output not an object' };
-  }
-  const obj = parsed as Record<string, unknown>;
-  if (obj.kind === 'no_change') {
+  if (obj.kind === 'promote') {
+    const subfolder = typeof obj.subfolder === 'string' ? obj.subfolder.trim() : '';
+    const slugOut = typeof obj.slug === 'string' ? obj.slug.trim() : '';
+    const type = typeof obj.type === 'string' ? obj.type.trim() : '';
+    const title = typeof obj.title === 'string' ? obj.title.trim() : '';
+    const body = typeof obj.body === 'string' ? obj.body : '';
+    if (!subfolder || !slugOut || !type || !title || !body) {
+      logger.warn({
+        msg: 'dream.deep.promote_missing_fields',
+        slug,
+        have: { subfolder, slugOut, type, title, body: body.length },
+      });
+      return { kind: 'skip', reason: 'LLM promote response missing required fields' };
+    }
+    const finalSlug = slugOut.startsWith(subfolder + '/') ? slugOut : `${subfolder}/${slugOut}`;
+    const related = Array.isArray(obj.related)
+      ? obj.related.filter((r): r is string => typeof r === 'string')
+      : undefined;
     return {
-      kind: 'no_change',
-      reason: typeof obj.reason === 'string' ? obj.reason : 'LLM declined to update without reason',
+      kind: 'promote',
+      subfolder,
+      slug: finalSlug,
+      type,
+      title,
+      body,
+      ...(related && related.length > 0 ? { related } : {}),
     };
   }
-  if (obj.kind !== 'update') {
-    return { kind: 'no_change', reason: `unknown decision kind: ${String(obj.kind)}` };
+
+  if (obj.kind === 'merge') {
+    const wikiPath = typeof obj.wikiPath === 'string' ? obj.wikiPath.trim() : '';
+    const body = typeof obj.body === 'string' ? obj.body : '';
+    const logSummary = typeof obj.logSummary === 'string' ? obj.logSummary : '';
+    if (!wikiPath || !body || !logSummary) {
+      logger.warn({
+        msg: 'dream.deep.merge_missing_fields',
+        slug,
+        have: { wikiPath, body: body.length, logSummary },
+      });
+      return { kind: 'skip', reason: 'LLM merge response missing required fields' };
+    }
+    const related = Array.isArray(obj.related)
+      ? obj.related.filter((r): r is string => typeof r === 'string')
+      : undefined;
+    return {
+      kind: 'merge',
+      wikiPath,
+      body,
+      logSummary,
+      ...(related && related.length > 0 ? { related } : {}),
+    };
   }
-  const body = typeof obj.body === 'string' ? obj.body : '';
-  const logSummary = typeof obj.logSummary === 'string' ? obj.logSummary : '';
-  if (!body || !logSummary) {
-    logger.warn({
-      msg: 'dream.deep.merge_missing_fields',
-      slug,
-      have: { body: body.length, logSummary },
-    });
-    return { kind: 'no_change', reason: 'LLM update response missing required fields' };
-  }
-  const related = Array.isArray(obj.related)
-    ? (obj.related.filter((r): r is string => typeof r === 'string'))
-    : undefined;
-  return {
-    kind: 'update',
-    body,
-    logSummary,
-    ...(related && related.length > 0 ? { related } : {}),
-  };
+
+  return { kind: 'skip', reason: `unknown decision kind: ${String(obj.kind)}` };
 }

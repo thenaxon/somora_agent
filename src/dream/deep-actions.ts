@@ -26,9 +26,8 @@ import {
 } from '../wiki/templates.ts';
 import type {
   CandidateOutcome,
-  MergeDecision,
+  MemoryFateDecision,
   PromotionCandidate,
-  PromotionDecision,
 } from '../wiki/types.ts';
 
 export interface ActionContext {
@@ -51,7 +50,7 @@ export interface ActionContext {
  */
 export async function applyPromote(args: {
   candidate: PromotionCandidate;
-  decision: Extract<PromotionDecision, { kind: 'promote' }>;
+  decision: Extract<MemoryFateDecision, { kind: 'promote' }>;
   ctx: ActionContext;
 }): Promise<CandidateOutcome> {
   const { candidate, decision, ctx } = args;
@@ -112,12 +111,12 @@ export async function applyPromote(args: {
  */
 export async function applyMerge(args: {
   candidate: PromotionCandidate;
-  decision: Extract<MergeDecision, { kind: 'update' }>;
+  decision: Extract<MemoryFateDecision, { kind: 'merge' }>;
   ctx: ActionContext;
-  wikiPath: string;
   wikiPageMtimeMs: number;
 }): Promise<CandidateOutcome> {
-  const { candidate, decision, ctx, wikiPath, wikiPageMtimeMs } = args;
+  const { candidate, decision, ctx, wikiPageMtimeMs } = args;
+  const wikiPath = decision.wikiPath;
   const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
 
   // Re-read wiki page to get current content + parse fm. We don't

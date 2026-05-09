@@ -1216,6 +1216,12 @@ const deepWorker = new DeepWorker({
     }
     return out;
   },
+  getMemoryManager: (agent) =>
+    getMemoryManager(agent, {
+      config: config.memory,
+      wiki: config.wiki,
+      obsidian: config.obsidian,
+    }),
   preSweep: async () => {
     await remWorker.runPreSweep();
   },

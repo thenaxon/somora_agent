@@ -1,19 +1,21 @@
 // Deep single-run orchestrator. Collects candidates across all wiki-
 // participating agents, dispatches each to the LLM, applies the
-// resulting plan to disk, then regenerates index.md and appends the
-// monthly log.
+// resulting decision to disk, then regenerates index.md and appends
+// the monthly log.
+//
+// As of v2.3 there's a single LLM call per candidate (decideMemoryFate)
+// that returns Skip/Promote/Merge in one shot. Wiki-context (index +
+// top-N relevant pages) is loaded before the call so the LLM sees
+// what's already consolidated.
 //
 // As of v2.2 every memory file is a 'fresh' candidate (stub-pattern
-// gone). Merge-vs-promote is decided by collision-detection: try to
-// promote first; if the target wiki slug already exists, re-route to
-// merge in the same run. After successful action the source memory
-// file is DELETED (see deep-actions.ts), keeping the memory dir as a
-// clean inbox for un-consolidated knowledge.
+// gone). After successful action the source memory file is DELETED
+// (see deep-actions.ts), keeping the memory dir as a clean inbox for
+// un-consolidated knowledge.
 //
 // Idempotent: if a run is interrupted, the next run picks up. Wiki-
 // page write goes through writeIfNotExists / writeIfMtimeUnchanged.
-// Memory delete is best-effort and Deep recovers via the next run if
-// it fails.
+// Memory delete is best-effort.
 //
 // See `private/dream-system-v2.md`.
 
@@ -23,6 +25,7 @@ import matter from 'gray-matter';
 
 import type { Config, ResolvedModel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
+import type { MemoryManager } from '../memory/manager.ts';
 import { logger } from '../server/logger.ts';
 import {
   applyMerge,
@@ -33,6 +36,7 @@ import { DefaultPromotionDispatcher } from './deep-dispatcher.ts';
 import { regenerateIndex } from '../wiki/index-builder.ts';
 import { appendLogEntries, outcomeToLogEntry, type LogEntry } from '../wiki/log-builder.ts';
 import { readWithMtime } from '../wiki/conflict.ts';
+import { loadDeepWikiContext } from './wiki-context.ts';
 import type {
   CandidateOutcome,
   PromotionCandidate,
@@ -46,6 +50,9 @@ export interface RunDreamBArgs {
   /** Agents participating in the wiki (server-side opt-out via
    *  agent.yaml.rem.participate_in_wiki = false is filtered upstream). */
   agents: Array<{ name: string; vaultPath: string }>;
+  /** Resolves a per-agent MemoryManager — needed for wiki-context
+   *  embedding-search (index + top-N relevant pages). */
+  getMemoryManager: (agent: string) => Promise<MemoryManager>;
   dispatcher?: PromotionDispatcher;
   signal?: AbortSignal;
 }
@@ -72,10 +79,6 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
     return { outcomes: [], candidatesSeen: 0, durationMs: Date.now() - start };
   }
 
-  // All wiki participants share one vault subfolder layout. We assume
-  // all agents point at the same vault (the common case); if they
-  // don't, each agent's wiki lives in its own vault and we run per-
-  // agent with its own ActionContext.
   const wikiSubfolder = args.config.wiki.vaultSubfolder;
   // Group agents by their vault path so wiki-actions get one ctx per vault.
   const byVault = new Map<string, typeof args.agents>();
@@ -93,14 +96,13 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
     const wikiAbs = join(vaultPath, wikiSubfolder);
     const ctx: ActionContext = { wikiAbs };
 
-    // Build the existing-wiki summary once per vault — Deep feeds it
-    // to the promotion prompt so the LLM avoids dupes.
-    const wikiSummary = await summarizeWiki(wikiAbs);
-
     for (const agent of agentsInVault) {
       if (args.signal?.aborted) break;
       const candidates = await collectCandidates(agent.name);
       candidatesSeen += candidates.length;
+      if (candidates.length === 0) continue;
+
+      const mgr = await args.getMemoryManager(agent.name);
 
       for (const c of candidates) {
         if (args.signal?.aborted) break;
@@ -108,7 +110,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
           const outcome = await processCandidate({
             candidate: c,
             ctx,
-            wikiSummary,
+            mgr,
             workerModel,
             dispatcher,
             timeoutMs: 120_000,
@@ -209,72 +211,40 @@ async function collectCandidates(agent: string): Promise<PromotionCandidate[]> {
   return out;
 }
 
-async function summarizeWiki(wikiAbs: string): Promise<string> {
-  // Walks the wiki sub-folder and emits a compact text summary the
-  // promote-prompt can use to avoid duplicate creation.
-  try {
-    const entries = await readdir(wikiAbs, { withFileTypes: true });
-    const sections: string[] = [];
-    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (e.name.startsWith('.')) continue;
-      if (e.name === 'logs' || e.name === 'index.md') continue;
-      if (e.isDirectory()) {
-        const slugs = await listSlugs(join(wikiAbs, e.name));
-        if (slugs.length > 0) {
-          sections.push(`${e.name}: ${slugs.join(', ')}`);
-        }
-      }
-    }
-    return sections.length > 0
-      ? sections.join('\n')
-      : '(no wiki pages yet — first Deep run on this vault)';
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return '(wiki directory does not exist yet — first Deep run will create it)';
-    }
-    throw err;
-  }
-}
-
-async function listSlugs(dir: string): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const out: string[] = [];
-  for (const e of entries) {
-    if (e.name.startsWith('.')) continue;
-    if (e.isDirectory()) {
-      const sub = await listSlugs(join(dir, e.name));
-      out.push(...sub.map((s) => `${e.name}/${s}`));
-    } else if (e.isFile() && e.name.endsWith('.md')) {
-      out.push(e.name.replace(/\.md$/, ''));
-    }
-  }
-  return out;
-}
-
 // ─── per-candidate processing ───────────────────────────────────────
 
 async function processCandidate(args: {
   candidate: PromotionCandidate;
   ctx: ActionContext;
-  wikiSummary: string;
+  mgr: MemoryManager;
   workerModel: ResolvedModel;
   dispatcher: PromotionDispatcher;
   timeoutMs: number;
   signal?: AbortSignal;
 }): Promise<CandidateOutcome> {
-  const { candidate, ctx, wikiSummary, workerModel, dispatcher, timeoutMs, signal } = args;
+  const { candidate, ctx, mgr, workerModel, dispatcher, timeoutMs, signal } = args;
 
-  // Step 1: ask LLM if/how to promote.
-  const decision = await dispatcher.decidePromotion({
+  // 1. Load wiki context: index + top-N relevant pages.
+  const wikiCtx = await loadDeepWikiContext({
+    mgr,
+    memoryQuery: candidate.body,
+    wikiAbs: ctx.wikiAbs,
+  });
+
+  // 2. Single LLM call: skip / promote / merge.
+  const decision = await dispatcher.decideMemoryFate({
     candidate,
-    existingWikiSummary: wikiSummary,
+    wikiIndex: wikiCtx.indexSummary,
+    relevantPages: wikiCtx.relevantPages.map((p) => ({
+      slug: p.slug,
+      markdown: p.markdown,
+    })),
     workerModel,
     timeoutMs,
     ...(signal ? { signal } : {}),
   });
+
   if (decision.kind === 'skip') {
-    // Memory file stays — could become substantial later. Hash-cache
-    // (v2.4) avoids re-evaluating identical content on the next Deep run.
     return {
       kind: 'skipped',
       agent: candidate.agent,
@@ -283,20 +253,60 @@ async function processCandidate(args: {
     };
   }
 
-  // Step 2: try to promote (creates wiki page, deletes memory file).
-  const promoteResult = await applyPromote({ candidate, decision, ctx });
-  if (promoteResult.kind !== 'failed') {
-    return promoteResult;
+  if (decision.kind === 'promote') {
+    const promoteResult = await applyPromote({ candidate, decision, ctx });
+    if (promoteResult.kind !== 'failed') return promoteResult;
+    // Collision (LLM picked a slug that already exists despite our
+    // wiki-context). Fall back to merge with the existing page.
+    return await mergeCollidingPage({
+      candidate,
+      ctx,
+      mgr,
+      workerModel,
+      dispatcher,
+      wikiPath: decision.slug,
+      timeoutMs,
+      ...(signal ? { signal } : {}),
+    });
   }
 
-  // Step 3: collision — wiki page at decision.slug already exists.
-  // Re-route to merge in this run instead of waiting for the next.
-  const wikiPath = decision.slug;
+  // decision.kind === 'merge'
+  const wikiFileAbs = join(ctx.wikiAbs, `${decision.wikiPath}.md`);
+  const existing = await readWithMtime(wikiFileAbs);
+  if (!existing) {
+    // LLM picked a wikiPath that doesn't exist. Bail — next run sees
+    // no collision and may decide promote instead.
+    return {
+      kind: 'failed',
+      agent: candidate.agent,
+      memorySlug: candidate.slug,
+      error: `LLM merge target ${decision.wikiPath} does not exist`,
+    };
+  }
+  return applyMerge({
+    candidate,
+    decision,
+    ctx,
+    wikiPageMtimeMs: existing.mtimeMs,
+  });
+}
+
+/** Promote returned 'failed' because the slug exists. Recover by
+ *  asking the LLM to merge into the existing page instead. */
+async function mergeCollidingPage(args: {
+  candidate: PromotionCandidate;
+  ctx: ActionContext;
+  mgr: MemoryManager;
+  workerModel: ResolvedModel;
+  dispatcher: PromotionDispatcher;
+  wikiPath: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<CandidateOutcome> {
+  const { candidate, ctx, mgr, workerModel, dispatcher, wikiPath, timeoutMs, signal } = args;
   const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
   const existing = await readWithMtime(wikiFileAbs);
   if (!existing) {
-    // Race: file disappeared between writeIfNotExists and this read.
-    // Bail — memory file stays for next run.
     return {
       kind: 'failed',
       agent: candidate.agent,
@@ -310,28 +320,38 @@ async function processCandidate(args: {
     memorySlug: candidate.slug,
     wikiPath,
   });
-  const mergeDecision = await dispatcher.decideMerge({
+
+  // Re-call the LLM with the existing page now in the relevantPages
+  // context, asking it to merge.
+  const decision = await dispatcher.decideMemoryFate({
     candidate,
-    existingWikiPage: existing.text,
+    wikiIndex: '(collision recovery — single page focus)',
+    relevantPages: [{ slug: wikiPath, markdown: existing.text }],
     workerModel,
     timeoutMs,
     ...(signal ? { signal } : {}),
   });
-  if (mergeDecision.kind === 'no_change') {
-    // Observation already covered by the existing wiki page. Memory
-    // file stays for next-run hash-cache check.
+
+  if (decision.kind === 'skip') {
     return {
       kind: 'skipped',
       agent: candidate.agent,
       memorySlug: candidate.slug,
-      reason: mergeDecision.reason,
+      reason: decision.reason,
+    };
+  }
+  if (decision.kind !== 'merge') {
+    return {
+      kind: 'failed',
+      agent: candidate.agent,
+      memorySlug: candidate.slug,
+      error: `collision recovery: LLM returned ${decision.kind} instead of merge`,
     };
   }
   return applyMerge({
     candidate,
-    decision: mergeDecision,
+    decision,
     ctx,
-    wikiPath,
     wikiPageMtimeMs: existing.mtimeMs,
   });
 }

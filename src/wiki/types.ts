@@ -25,8 +25,13 @@ export interface PromotionCandidate {
   mtimeMs: number;
 }
 
-/** Outcome of running the LLM dispatcher on a candidate. */
-export type PromotionDecision =
+/** Unified Deep-decision for one memory candidate. Single LLM call
+ *  picks one of three outcomes — see `src/dream/deep-prompts.ts`. */
+export type MemoryFateDecision =
+  | {
+      kind: 'skip';
+      reason: string;
+    }
   | {
       kind: 'promote';
       /** Wiki sub-folder (relative to wiki root, e.g. 'personen'). */
@@ -45,15 +50,9 @@ export type PromotionDecision =
       related?: string[];
     }
   | {
-      kind: 'skip';
-      reason: string;
-    };
-
-/** Outcome of running the LLM dispatcher when merging a candidate
- *  into an existing wiki page (collision-fallback path). */
-export type MergeDecision =
-  | {
-      kind: 'update';
+      kind: 'merge';
+      /** Existing wiki page slug (without .md) to update. */
+      wikiPath: string;
       /** Updated body for the wiki page (no frontmatter — caller
        *  preserves frontmatter, only refreshes `updated`). */
       body: string;
@@ -61,10 +60,6 @@ export type MergeDecision =
       related?: string[];
       /** One-line summary for the wiki log. */
       logSummary: string;
-    }
-  | {
-      kind: 'no_change';
-      reason: string;
     };
 
 /** What a single candidate produced — the shape used by orchestrator
@@ -97,24 +92,19 @@ export type CandidateOutcome =
       error: string;
     };
 
-/** Dispatcher interface — wraps the LLM call so smoke tests can mock. */
+/** Dispatcher interface — wraps the LLM call so smoke tests can mock.
+ *  Single decision point per candidate; LLM decides skip/promote/merge
+ *  based on the wiki context provided. */
 export interface PromotionDispatcher {
-  /** Decide whether (and how) to promote a fresh memory file. */
-  decidePromotion(args: {
+  decideMemoryFate(args: {
     candidate: PromotionCandidate;
-    existingWikiSummary: string; // verkürzte index.md so the LLM knows topology
+    /** Wiki topology (index.md content). Always present. */
+    wikiIndex: string;
+    /** Full bodies of N most-relevant existing wiki pages
+     *  (embedding-matched against the candidate's memory body). */
+    relevantPages: Array<{ slug: string; markdown: string }>;
     workerModel: ResolvedModel;
     timeoutMs: number;
     signal?: AbortSignal;
-  }): Promise<PromotionDecision>;
-
-  /** Merge a candidate into an existing wiki page. Called when promote
-   *  hits a slug collision (writeIfNotExists fails). */
-  decideMerge(args: {
-    candidate: PromotionCandidate;
-    existingWikiPage: string; // full markdown of the existing page
-    workerModel: ResolvedModel;
-    timeoutMs: number;
-    signal?: AbortSignal;
-  }): Promise<MergeDecision>;
+  }): Promise<MemoryFateDecision>;
 }

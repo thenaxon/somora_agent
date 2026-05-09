@@ -10,6 +10,7 @@
 // See `private/dream-system-v2.md` for the full design.
 
 import type { Config } from '../config/types.ts';
+import type { MemoryManager } from '../memory/manager.ts';
 import { logger } from '../server/logger.ts';
 import { runDreamB, type RunDreamBResult } from './deep-runner.ts';
 import type { PromotionDispatcher } from '../wiki/types.ts';
@@ -18,6 +19,9 @@ export interface DeepWorkerDeps {
   config: Config;
   /** Resolves agents currently configured to participate in the wiki. */
   getParticipatingAgents: () => Promise<Array<{ name: string; vaultPath: string }>>;
+  /** Resolves a per-agent MemoryManager — Deep needs it for the wiki-
+   *  context embedding-search (index + top-N relevant pages). */
+  getMemoryManager: (agent: string) => Promise<MemoryManager>;
   /** Test injection point. Production passes undefined → Default. */
   dispatcher?: PromotionDispatcher;
   /** Optional callback fired before Deep for the pre-sweep — REM
@@ -115,6 +119,7 @@ export class DeepWorker {
       const result = await runDreamB({
         config: this.deps.config,
         agents,
+        getMemoryManager: this.deps.getMemoryManager,
         ...(this.deps.dispatcher ? { dispatcher: this.deps.dispatcher } : {}),
         signal: this.currentAbort.signal,
       });
