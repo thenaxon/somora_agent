@@ -22,6 +22,12 @@ body {
   overflow: hidden;
 }
 
+/* Two-line chat-header (name on top, live meta below) reads cramped
+ * in the click-dummy default — add a hair of breathing room. */
+.chat-header-meta {
+  margin-top: 3px;
+}
+
 /* Additional status-dot variants on top of click-dummy's online/busy.
  * Loop-holder = agent currently holds the dream_review wiki loop;
  * offline = server unreachable / agent absent from /agents. */
