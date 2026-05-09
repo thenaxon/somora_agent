@@ -1,0 +1,154 @@
+// Shared types between Ink components and the network layer.
+// Kept in plain .ts so non-React code (api.ts, stream.ts) can import them
+// without dragging React into modules that don't need it.
+
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
+
+export interface ThinkingState {
+  level: ThinkingLevel;
+  // True if the active model has the 'reasoning' capability — i.e.
+  // the setting is actually being applied. False = dormant.
+  active: boolean;
+}
+
+export interface TurnStats {
+  tokensIn: number;
+  tokensInCached: number | null;
+  tokensOut: number;
+  tokensOutReasoning: number | null;
+  contextWindow: number | null;
+  provider: string | null;
+  model: string | null;
+  thinking: ThinkingState | null;
+}
+
+export interface SessionThinkingInfo {
+  effective: ThinkingLevel | null;
+  override: ThinkingLevel | null;
+  personaDefault: ThinkingLevel | null;
+  source: 'session-override' | 'persona-default' | 'engine-default';
+  modelSupportsReasoning: boolean;
+}
+
+export interface AgentInfo {
+  name: string;
+  description: string;
+  icon?: string;
+}
+
+export interface SessionSummary {
+  id: string;
+  slug: string;
+  isMain: boolean;
+  createdAt: string | null;
+  lastActivity: string | null;
+  messageCount: number;
+}
+
+export interface ModelInfo {
+  provider: string;
+  id: string;
+  alias: string | null;
+  engine: string;
+  contextWindow: number;
+  capabilities: string[];
+  ref: string;
+}
+
+export interface SessionModelInfo {
+  provider: string;
+  modelId: string;
+  alias: string | null;
+  engine: string;
+  contextWindow: number;
+  source: 'session-override' | 'persona-default';
+  override: string | null;
+  personaDefault: string | null;
+}
+
+export interface ResetResult {
+  archivedId: string | null;
+  reason?: string;
+  dreamSpawned?: boolean;
+}
+
+// Mirrors the server's TuiConfig schema. Keep in sync with
+// src/config/types.ts → TuiConfigSchema. We don't import the server type
+// directly so the TUI stays decoupled from server modules.
+export interface TuiConfig {
+  show: {
+    memory: boolean;
+    tools: boolean;
+  };
+  verbose: {
+    tools: boolean;
+    memory: boolean;
+    system: boolean;
+  };
+}
+
+// All Turn-kinds that the scrollback can render. Kept flat (discriminated
+// union) so React reducers don't need a class hierarchy.
+export type Turn =
+  | { kind: 'user'; id: string; text: string; fromAgent?: string }
+  | { kind: 'agent'; id: string; text: string }
+  | {
+      kind: 'tool';
+      id: string;
+      tool: string;
+      phase: 'call' | 'result' | 'error';
+      // Server pre-formats both lines into renderable strings. The TUI
+      // never sees raw input/output — see src/server/tool-format.ts.
+      summary?: string;
+      error?: string;
+      // Pretty-printed full payload (for /verbose tools).
+      details?: string;
+    }
+  | {
+      kind: 'memory';
+      id: string;
+      count: number;
+      topScore: number | null;
+      refs: string[];
+      // Full inject text (for /verbose memory).
+      fullText?: string;
+    }
+  | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' };
+
+// Server-Sent Events from /chat/stream, normalized.
+export type StreamEvent =
+  | { kind: 'connected' }
+  | { kind: 'agent-start'; thinking?: ThinkingState }
+  | {
+      kind: 'agent-end';
+      usage?: {
+        tokens_in?: number;
+        tokens_in_cached?: number;
+        tokens_out?: number;
+        tokens_out_reasoning?: number;
+      };
+      contextWindow?: number;
+      provider?: string;
+      model?: string;
+      thinking?: ThinkingState;
+    }
+  | { kind: 'chat-delta'; text: string }
+  | { kind: 'chat-final'; text: string }
+  | { kind: 'memory'; count: number; topScore: number | null; refs: string[]; fullText?: string }
+  | {
+      kind: 'tool';
+      tool: string;
+      phase: 'call' | 'result' | 'error' | string;
+      summary?: string;
+      error?: string;
+      details?: string;
+    }
+  | {
+      // Live A2A user_message: another agent wrote into the session
+      // we're watching. Rendered with the sender's name as a marker
+      // instead of the local user icon.
+      kind: 'user-message';
+      text: string;
+      fromAgent: string;
+      callId?: string;
+    };

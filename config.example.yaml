@@ -1,0 +1,289 @@
+# Example somora config. Real config lives at ~/.somora/config.yaml
+# (created with sane defaults on first server start). API keys go in plain
+# text in the real file — that file stays local, never committed.
+#
+# Provider names are free-form keys. Pick whatever's memorable for you:
+# 'anthropic', 'ollama', 'lmstudio', 'home-gpu', 'pi-edge', etc.
+#
+# Per-model 'alias' lets you reference a model by short nickname anywhere
+# (persona frontmatter, later /model in the CLI). Aliases must be globally
+# unique across the whole config — server refuses to start otherwise.
+
+server:
+  port: 18737
+
+# capabilities (per model):
+#   text      — always present, plain text I/O
+#   image     — accepts image input (vision)
+#   reasoning — model exposes a thinking/reasoning-effort knob; per-engine
+#               adapter applies the cross-engine /thinking setting only for
+#               models with this capability. For models without it, the
+#               setting is dormant and the TUI marks it accordingly.
+providers:
+  # Anthropic via Claude Code subscription. Uses the local Claude Code
+  # binary (~/.local/bin/claude) — no baseUrl / apiKey needed.
+  anthropic:
+    engine: claude-cli
+    models:
+      - id: claude-opus-4-7
+        alias: opus
+        contextWindow: 1000000
+        capabilities: [text, image, pdf, reasoning]
+      - id: claude-sonnet-4-6
+        alias: sonnet
+        contextWindow: 200000
+        capabilities: [text, image, pdf, reasoning]
+      - id: claude-haiku-4-5
+        alias: haiku
+        contextWindow: 200000
+        capabilities: [text, image, pdf]
+
+  # OpenAI via Codex CLI subscription. Uses the local `codex` binary;
+  # auth is handled by the binary itself via `codex login` (ChatGPT
+  # Plus/Pro/Business subscription preferred) or OPENAI_API_KEY env.
+  # No baseUrl / apiKey needed here. Override binary path with
+  # SOMORA_CODEX_BIN env if not at ~/.npm-global/bin/codex or on PATH.
+  openai:
+    engine: codex-cli
+    models:
+      - id: gpt-5
+        alias: gpt5
+        contextWindow: 400000
+        capabilities: [text, image, pdf, reasoning]
+      - id: gpt-5-codex
+        alias: codex5
+        contextWindow: 400000
+        capabilities: [text, reasoning]
+      - id: o3
+        alias: o3
+        contextWindow: 200000
+        capabilities: [text, reasoning]
+
+  # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).
+  # Multiple providers of the same engine are fine — just give each a unique key.
+  omlx:
+    engine: openai-compatible
+    baseUrl: http://localhost:11434/v1
+    apiKey: lm-studio
+    models:
+      - id: gemma-4-31b-it-8bit
+        alias: gemma4big
+        contextWindow: 131072
+        capabilities: [text, image]
+      - id: gemma-4-26b-a4b-it-4bit
+        alias: gemma4small
+        contextWindow: 131072
+        capabilities: [text, image]
+
+  # Same engine, different host — totally fine.
+  # ollama:
+  #   engine: openai-compatible
+  #   baseUrl: http://other-host.local:11434/v1
+  #   apiKey: dummy
+  #   models:
+  #     - id: llama3.3:70b
+  #       alias: llama
+  #       contextWindow: 131072
+  #       capabilities: [text]
+
+  # OpenRouter — proxies Claude / GPT / many other models through an
+  # openai-compatible API. Useful as a vision worker (Anthropic via
+  # openrouter accepts native PDF document blocks) and for testing
+  # alternative text models without their bespoke SDKs. Get a key at
+  # openrouter.ai/keys.
+  # openrouter:
+  #   engine: openai-compatible
+  #   baseUrl: https://openrouter.ai/api/v1
+  #   apiKey: <YOUR_OPENROUTER_KEY>
+  #   models:
+  #     - id: anthropic/claude-haiku-4.5
+  #       alias: orhaiku
+  #       contextWindow: 200000
+  #       capabilities: [text, image, pdf]      # vision worker candidate
+  #     - id: minimax/minimax-m2.7
+  #       alias: minimax27
+  #       contextWindow: 197000
+  #       capabilities: [text]
+  #     - id: moonshotai/kimi-k2.5
+  #       alias: kimi25
+  #       contextWindow: 262144
+  #       capabilities: [text]
+
+# Vision / multimodal worker (Phase Y). Optional. When set, the
+# `analyze_file` tool dispatches images and PDFs to the worker model
+# and returns its text analysis — useful when the active main model
+# lacks `image` capability or when you want a token-cheap description
+# instead of dropping image-bytes into main context. Worker must be on
+# `openai-compatible` engine in v1 (use openrouter to proxy Claude/
+# GPT, same constraint as Dream-Mode).
+#
+# file_read polymorph (the workspace-drop UX) does NOT depend on this
+# — it uses the active main model's `image` capability directly. The
+# vision worker is only for the `analyze_file` route.
+# vision:
+#   worker: openrouter/anthropic/claude-haiku-4-5    # default for image + PDF
+#   pdfWorker: openrouter/anthropic/claude-sonnet-4-6  # optional override for PDFs
+
+# Compaction tunables (DECISION #21). All optional — built-in defaults apply
+# when omitted. SOMORA_COMPACTION_* env vars override these for ops/CI.
+# compaction:
+#   triggerRatio: 0.8          # compact when context >= 80% of window
+#   safetyCushionPairs: 4      # keep N most-recent user/assistant pairs uncompacted
+#   modelOverride: opus        # force a specific worker model (alias or provider/id)
+
+# Memory-Layer tunables (DECISIONS #25–#27). All optional. Per-agent
+# overrides can live in agent.yaml later. (Phase 2-Stufe-B — not yet
+# wired into the runtime.)
+# Agent-loop tunables (DECISION #31 + #37). Apply to engines that run
+# their own tool-call loop — currently openai-compatible — for the per-
+# tool-call race. The longTask* values ALSO inform CLI-engine tools
+# (subagent_result, agent_ask) which run inside MCP children, so all
+# three engines honor the same caller-friendly politik for slow models.
+#
+# Three timeout knobs, each for a different tool class:
+#   1. toolCallTimeoutMs       — fast tools (memory, web, file, time)
+#   2. longTaskDefaultTimeoutMs — slow A2A tools, used when the caller
+#                                 doesn't pass an explicit timeout_ms
+#   3. longTaskMaxTimeoutMs    — hard ceiling for slow A2A tools, even
+#                                 when the caller passes a higher value
+#
+# When a long-task hits its timeout, the tool returns state:"pending"
+# (NOT an error) — the sub keeps running, the caller can retry with a
+# higher timeout_ms or check status later. See DECISION #37.
+# agentLoop:
+#   maxRounds: 8                      # max tool-call rounds per turn (1..100).
+#                                     # Most conversations finish in 1-3;
+#                                     # 8 is defensive headroom against
+#                                     # runaway models.
+#
+#   toolCallTimeoutMs: 30000          # 30 sec — fast tools (memory_search,
+#                                     # web_fetch, time_now, file_read,
+#                                     # obsidian_*). Plenty for anything
+#                                     # that hits a local DB, reads a file,
+#                                     # or does a single HTTP round-trip.
+#                                     # Slow tools declare their own.
+#
+#   longTaskDefaultTimeoutMs: 300000  # 5 min — DEFAULT for slow A2A tools
+#                                     # (subagent_result wait_until_done,
+#                                     # agent_ask). Local models like
+#                                     # gemma4big regularly need minutes
+#                                     # for a turn — this default is
+#                                     # generous so agents don't have to
+#                                     # adapt with retries on every call.
+#                                     # Used when caller omits timeout_ms.
+#
+#   longTaskMaxTimeoutMs: 1800000     # 30 min — HARD CEILING for slow A2A
+#                                     # tools, even with explicit timeout_ms.
+#                                     # Bounds how long a single tool call
+#                                     # can sit blocking; the underlying
+#                                     # sub-task itself runs unbounded in
+#                                     # the background (capped by its own
+#                                     # agentLoop.maxRounds), so this is
+#                                     # really just a per-call ceiling.
+#                                     # Raise for exceptionally slow setups
+#                                     # (CPU-only inference, huge models).
+#                                     # claudeCli.mcpToolTimeoutMs and
+#                                     # codexCli.toolTimeoutSec MUST be ≥
+#                                     # this — the CLI's MCP layer sits
+#                                     # above us and will cut us off
+#                                     # otherwise.
+
+# claude-cli engine tunables. Surfaced from claude-agent-sdk env vars so
+# they're configurable here instead of hidden as undocumented env overrides.
+# Applied at server boot; an explicit env var (MCP_TOOL_TIMEOUT etc.) wins
+# over config (override layer).
+# claudeCli:
+#   mcpToolTimeoutMs: 1800000   # 30 min — per-MCP-tool-call timeout (ms);
+#                               # sets MCP_TOOL_TIMEOUT in the claude-agent-sdk
+#                               # subprocess. SDK hidden default is 5min — way
+#                               # too short for slow local models. Default 30min
+#                               # matches agentLoop.longTaskMaxTimeoutMs so the
+#                               # CLI's MCP layer never cuts off a long-blocking
+#                               # tool call before our own ceiling does. Raise
+#                               # both together if you need more; lower this for
+#                               # fail-fast on a fast setup.
+#   mcpConnectTimeoutMs: 60000  # 60 sec — initial MCP server connect handshake
+#                               # timeout (ms); sets MCP_TIMEOUT. Only affects
+#                               # startup, not running calls.
+
+# codex-cli engine tunables. Same posture as claudeCli — surface codex-
+# internal limits so they're configurable here. Applied via -c TOML
+# overrides on each `codex exec` invocation.
+# codexCli:
+#   toolTimeoutSec: 1800      # 30 min — per-MCP-tool-call timeout in
+#                             # seconds; sets mcp_servers.somora-memory.tool_timeout_sec
+#                             # in codex's TOML. Codex's hidden default is
+#                             # 60s — way too short for slow local models.
+#                             # Default 1800s matches claudeCli.mcpToolTimeoutMs
+#                             # and agentLoop.longTaskMaxTimeoutMs so the CLI's
+#                             # MCP layer never cuts off a long-blocking tool
+#                             # call before our own ceiling does.
+
+# memory:
+#   embedding:
+#     provider: local                     # 'local' (@huggingface/transformers) | future: openai/gemini/...
+#     model: all-MiniLM-L6-v2             # alias OR full HF repo path (e.g. 'Xenova/foo')
+#                                         # known-good aliases: all-MiniLM-L6-v2 (default,
+#                                         # 384 dim, ~30MB), all-mpnet-base-v2 (768 dim,
+#                                         # ~110MB), paraphrase-multilingual-MiniLM-L12-v2
+#                                         # (multilingual, 384 dim, ~120MB)
+#   chunking:
+#     targetTokens: 400
+#     overlapTokens: 80
+#   autoInject:
+#     queryTurns: 3                       # how many last turns feed the recall query
+#     maxResults: 5                       # top-N matches injected
+#     minScore: 0.5                       # discard matches below this score
+#     maxTokens: 1500                     # hard cap on the injected memory block
+#   hybrid:
+#     vectorWeight: 0.7                   # weight of vector similarity in fused score
+#     bm25Weight: 0.3                     # weight of BM25/FTS5 in fused score
+
+# Workspace — default cwd for file_* tools. NOT a sandbox: agents can
+# also write outside (their own persona files, the global config).
+# Protection comes from a path-blacklist in the file tools, not from
+# confinement here. Per-agent override in agent.yaml under
+# `workspace.path`. ~ expands. Auto-created at server start.
+# workspace:
+#   default: ~/somoraworkspace
+
+# Resources — named SSH targets. file_* and exec tools take an optional
+# `target` parameter (default `local`, otherwise one of these names).
+# `keyPath` is the private key on the somora server itself. `hostKey`
+# (sha256:...) enforces strict mode instead of TOFU.
+# resources:
+#   linuxserver-1:
+#     type: ssh
+#     host: 192.0.2.10
+#     user: alice
+#     keyPath: ~/.ssh/id_ed25519
+#     description: |
+#       Bastion in the workshop. Ubuntu 24.04, Docker installed.
+#     workspace: /home/alice/work
+#     # hostKey: 'sha256:abc...'      # optional; TOFU when omitted
+
+# Web-tools credentials. Per-provider keys — tools whose provider isn't
+# configured are hidden from the agent (the `available()` probe on the
+# tool returns false). Brave is the only provider today; free tier gives
+# 2k requests/month — sign up at https://api-dashboard.search.brave.com/.
+# web:
+#   brave:
+#     apiKey: "BSAxxx..."
+
+# TUI display defaults for the Ink CLI. Render-only — the server still
+# injects memory and runs tools regardless. Live-toggle via /show and
+# /verbose slash commands.
+#
+# show.*    — whether the row appears at all
+# verbose.* — how much detail shows when it does appear:
+#               tools  → full input/output payload below each call/result
+#               memory → full memory inject block below each [memory · …]
+#               system → /verbose system on prints the persona system prompt once
+# tui:
+#   show:
+#     memory: true
+#     tools: true
+#   verbose:
+#     tools: false
+#     memory: false
+#     system: false

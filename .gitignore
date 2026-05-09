@@ -1,0 +1,28 @@
+node_modules
+dist
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Local Claude Code state — settings.local.json holds personal permission
+# overrides; scheduled_tasks.lock is runtime state. Future team-shared
+# .claude/settings.json (if introduced) is intentionally NOT ignored.
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Internal / development notes — kept local, not for public repo.
+private/
+STATUS.md
+CONTEXT.md
+DECISIONS.md
+FUTURE.md
+
+# npm pack tarballs (built per release, never tracked)
+somora-*.tgz
+scripts/
+
+# Internal docs — kept local, not for public repo.
+docs/research/
+docs/install-and-release.md

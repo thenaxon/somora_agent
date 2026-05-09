@@ -1,0 +1,562 @@
+// spawn_subagent + spawn_subagents — A2A delegation tools (Modus 1).
+//
+// Runs a sealed task in a fresh session of a target persona (defaults
+// to a clone of the caller). Each spawn:
+//   - creates a sub-session with slug `sub-<parent>-<ms-ts>` (or
+//     `sub-self-<ms-ts>` for self-clones)
+//   - records spawn-meta on the session: { kind, parent_agent,
+//     parent_session, task_summary }
+//   - runs through the full somora pipeline (memory inject, tools,
+//     self-pointer with sub-context note, fallback engine)
+//   - returns the final assistant text + session slug for traceability
+//
+// Caps:
+//   - subagent_depth max 3 (configurable via SOMORA_MAX_SUBAGENT_DEPTH)
+//   - per-agent concurrent spawns: 4
+//   - global concurrent spawns: 16
+//
+// Memory + Dream: sub-sessions are normal sessions in the target
+// persona's session-dir. Auto-inject runs per turn; the auto-dream
+// worker picks them up like any other session.
+
+import { z } from 'zod';
+import { loadPersona } from '../../persona/loader.ts';
+import {
+  completeTask,
+  failTask,
+  getTask,
+  newTaskId,
+  registerTask,
+  type AsyncTaskEntry,
+} from '../../server/async-tasks.ts';
+import { logger } from '../../server/logger.ts';
+import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
+import { runChatTurn } from '../../server/run-turn.ts';
+import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
+import type { ToolDefinition } from '../types.ts';
+import { longTaskMaxMs } from './long-task-timeouts.ts';
+
+const MAX_SUBAGENT_DEPTH = parseInt(process.env.SOMORA_MAX_SUBAGENT_DEPTH ?? '3', 10) || 3;
+const MAX_CONCURRENT_PER_AGENT = 4;
+const MAX_CONCURRENT_GLOBAL = 16;
+
+// Process-wide concurrency tracker. Survives only as long as the
+// somora process — sub-spawns across server restarts are fresh starts.
+const activeByAgent = new Map<string, number>();
+let activeGlobal = 0;
+
+interface SpawnDeps {
+  chatTurnDeps: ChatTurnResolveDeps;
+}
+
+let injectedDeps: SpawnDeps | null = null;
+
+/**
+ * Server boot calls this once with the shared chatTurnDeps so the
+ * spawn tools can run the full chat pipeline without re-resolving
+ * server wiring on each call.
+ */
+export function configureSpawnTools(deps: SpawnDeps): void {
+  injectedDeps = deps;
+}
+
+const TaskSchema = z.object({
+  persona: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Target agent name. Omit to spawn a clone of the caller (<your-agent> → <your-agent>-clone).'),
+  model: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Model alias or "provider/modelId" override. Omit to use the persona\'s default.'),
+  task: z.string().min(1),
+  /**
+   * Optional per-spawn agent-loop override. Default global maxRounds=8
+   * is fine for sealed research subs; orchestrator subs that
+   * themselves spawn + poll can hit the cap fast — pass e.g.
+   * { maxRounds: 32 } for those.
+   */
+  maxRounds: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe(
+      'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) for ' +
+        'orchestrator subs that spawn further sub-subs and poll their results.',
+    ),
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// spawn_subagent (single)
+// ─────────────────────────────────────────────────────────────────────
+
+const SingleInput = TaskSchema.extend({
+  wait: z
+    .boolean()
+    .default(false)
+    .describe(
+      'When true: block this turn until the sub returns its final answer (good for "I need ' +
+        'the result NOW to compose my reply"). When false (default): fire-and-forget — returns ' +
+        'a task_id immediately, sub runs in the background. Check progress with subagent_status, ' +
+        'fetch the answer with subagent_result.',
+    ),
+}).strict();
+
+export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
+  name: 'spawn_subagent',
+  toolset: 'agents',
+  description:
+    'Spawn a sub-agent to handle a sealed task. The sub runs in a fresh session of the ' +
+    'target persona (defaults to a clone of you), goes through normal memory+tool+thinking ' +
+    'flow, and produces a final answer. ' +
+    'Default is fire-and-forget (wait:false): you get a task_id back immediately and your ' +
+    'turn ends — the user can keep chatting with you while the sub runs. Use ' +
+    'subagent_status / subagent_result to check on it later. ' +
+    'Set wait:true for synchronous "I need the result NOW to write my reply" delegations. ' +
+    'Depth cap: 3 (a sub itself can spawn further subs up to that limit). ' +
+    'Per-agent concurrent cap: 4. Cross-engine OK — <agent-a>-on-opus can spawn <agent-b>-on-gpt55. ' +
+    'Sub sessions stay visible in /sessions of the target persona with a "sub from X/Y" marker.',
+  inputSchema: SingleInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      persona: {
+        type: 'string',
+        description: 'Target agent name (e.g. "<agent-name>", "<other-agent>"). Omit for a clone of yourself.',
+      },
+      model: {
+        type: 'string',
+        description: 'Model alias or "provider/modelId" — omit to use the persona\'s default.',
+      },
+      task: { type: 'string', description: 'The task / question for the sub. Will become its first user message.' },
+      wait: { type: 'boolean', description: 'Block until sub returns. Default true.' },
+    },
+    required: ['task'],
+    additionalProperties: false,
+  },
+  // wait:false returns immediately (just registers + kicks off async),
+  // 30s is plenty. wait:true blocks for the full sub turn — sized off
+  // agentLoop.longTaskMaxTimeoutMs (default 30 min) so a sync spawn can
+  // legitimately wait for slow local models without artificial cutoff.
+  // The sub itself caps via its own agentLoop.maxRounds; this is just
+  // a runaway guard. Read at call time so config changes take effect
+  // without restart.
+  defaultTimeoutMs: 30_000,
+  timeoutFromInput: (input) => (input.wait ? longTaskMaxMs() : undefined),
+  // Static safety fence; actual cap is dynamic via timeoutFromInput.
+  maxTimeoutMs: 7_200_000,
+  async handler(input, ctx) {
+    const result = await runOneSpawn({
+      ctx,
+      wait: input.wait,
+      task: { task: input.task, ...(input.persona ? { persona: input.persona } : {}), ...(input.model ? { model: input.model } : {}) },
+    });
+    return result;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// spawn_subagents (parallel batch)
+// ─────────────────────────────────────────────────────────────────────
+
+const BatchInput = z
+  .object({
+    tasks: z
+      .array(TaskSchema)
+      .min(1)
+      .max(8)
+      .describe('Up to 8 tasks. Run in parallel; results returned together.'),
+    wait: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Default false (fire-and-forget): each task gets its own task_id, all run in ' +
+          'parallel in the background, your turn ends immediately. true blocks until all ' +
+          'complete and returns results inline.',
+      ),
+  })
+  .strict();
+
+export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
+  name: 'spawn_subagents',
+  toolset: 'agents',
+  description:
+    'Spawn multiple sub-agents in parallel. Each task is a {persona?, model?, task} record; ' +
+    'omitting persona = clone of you. Useful for fan-out queries: send the same task to ' +
+    'multiple personas to compare perspectives, or different focused tasks at once. ' +
+    'Returns one result per task in the same order. Same caps as spawn_subagent.',
+  inputSchema: BatchInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      tasks: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 8,
+        items: {
+          type: 'object',
+          properties: {
+            persona: { type: 'string' },
+            model: { type: 'string' },
+            task: { type: 'string' },
+          },
+          required: ['task'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['tasks'],
+    additionalProperties: false,
+  },
+  // Same posture as spawn_subagent: wait:false is instant, wait:true
+  // blocks for all subs — sized off agentLoop.longTaskMaxTimeoutMs.
+  defaultTimeoutMs: 30_000,
+  timeoutFromInput: (input) => (input.wait ? longTaskMaxMs() : undefined),
+  maxTimeoutMs: 7_200_000,
+  async handler(input, ctx) {
+    const settled = await Promise.allSettled(
+      input.tasks.map((t) => runOneSpawn({ ctx, wait: input.wait, task: t })),
+    );
+    const results = settled.map((s, i) => {
+      if (s.status === 'fulfilled') return s.value;
+      const err = (s.reason as Error).message;
+      const t = input.tasks[i]!;
+      return {
+        ok: false as const,
+        persona: t.persona ?? ctx.agent,
+        error: err,
+        ms: 0,
+      };
+    });
+    return { count: results.length, results };
+  },
+};
+
+
+// ─────────────────────────────────────────────────────────────────────
+// shared spawn machinery
+// ─────────────────────────────────────────────────────────────────────
+
+interface OneSpawnArgs {
+  ctx: import('../types.ts').ToolContext;
+  wait: boolean;
+  task: { persona?: string; model?: string; task: string; maxRounds?: number };
+}
+
+interface OneSpawnSyncResult {
+  ok: boolean;
+  wait: 'sync';
+  persona: string;
+  agent_kind: 'self-clone' | 'named';
+  session_slug: string;
+  model: string;
+  result?: string;
+  error?: string;
+  ms: number;
+  thinkingActive: boolean;
+}
+
+interface OneSpawnAsyncResult {
+  ok: true;
+  wait: 'async';
+  task_id: string;
+  persona: string;
+  agent_kind: 'self-clone' | 'named';
+  session_slug: string;
+  hint: string;
+}
+
+type OneSpawnResult = OneSpawnSyncResult | OneSpawnAsyncResult;
+
+async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
+  // injectedDeps absent is the normal MCP-child case (configureSpawnTools
+  // only runs in the main server). The handler dispatches to the HTTP
+  // fallback further down — this guard would have killed that path.
+  const { ctx, task } = args;
+  const parentDepth = ctx.subagentDepth ?? 0;
+  if (parentDepth >= MAX_SUBAGENT_DEPTH) {
+    throw new Error(
+      `spawn_subagent: recursion depth ${parentDepth} exceeds limit ${MAX_SUBAGENT_DEPTH}`,
+    );
+  }
+  const isSelfClone = !task.persona || task.persona === ctx.agent;
+  const targetPersona = task.persona ?? ctx.agent;
+  const personaCheck = await loadPersona(targetPersona);
+  if (!personaCheck) {
+    throw new Error(`spawn_subagent: persona '${targetPersona}' not found`);
+  }
+  // Concurrency
+  if (activeGlobal >= MAX_CONCURRENT_GLOBAL) {
+    throw new Error(`spawn_subagent: global concurrent cap (${MAX_CONCURRENT_GLOBAL}) reached`);
+  }
+  const perAgent = activeByAgent.get(targetPersona) ?? 0;
+  if (perAgent >= MAX_CONCURRENT_PER_AGENT) {
+    throw new Error(
+      `spawn_subagent: per-agent concurrent cap for '${targetPersona}' (${MAX_CONCURRENT_PER_AGENT}) reached`,
+    );
+  }
+
+  // Slug carries ms + random suffix so parallel spawns in the same
+  // millisecond don't collide (Math.random() collision in 4 lowercase
+  // alphanums is ~1/1.7M, paired with ms it's ~1/1.7B per same-ms
+  // pair). createSession also has its own collision-retry as a safety
+  // net. The slug stem `sub-self`/`sub-<parent>` stays grep-friendly
+  // for /sessions listings.
+  const ms = String(Date.now() % 1000).padStart(3, '0');
+  const rand = Math.random().toString(36).slice(2, 6).padEnd(4, '0');
+  const slug = isSelfClone
+    ? `sub-self-${ms}-${rand}`
+    : `sub-${ctx.agent}-${ms}-${rand}`;
+  const sessionId = await createSession(targetPersona, slug);
+  // Attach the spawn meta block so /sessions can label this entry
+  // "sub from <parent>" without re-deriving from the slug.
+  const existingMeta = await sessionMetaStore.get(targetPersona, sessionId);
+  await sessionMetaStore.set(targetPersona, sessionId, {
+    ...existingMeta,
+    spawn: {
+      kind: isSelfClone ? 'self-sub' : 'sub',
+      parent_agent: ctx.agent,
+      parent_session: ctx.session ?? '?',
+      task_summary: task.task.slice(0, 200),
+    },
+  });
+
+  // ─── async path (wait: false) ─────────────────────────────────────
+  // Fire-and-forget: register the task, kick off the background work,
+  // return the task_id immediately so the parent's turn can finish.
+  // Concurrency is still tracked but doesn't gate the immediate return.
+  if (!args.wait) {
+    const task_id = injectedDeps
+      ? await spawnAsyncInProcess({
+          targetPersona,
+          sessionId,
+          taskText: task.task,
+          parentAgent: ctx.agent,
+          parentSession: ctx.session ?? '?',
+          parentDepth,
+          modelOverride: task.model,
+          maxRoundsOverride: task.maxRounds,
+        })
+      : await spawnAsyncViaHttp({
+          targetAgent: targetPersona,
+          targetSession: sessionId,
+          taskText: task.task,
+          parentAgent: ctx.agent,
+          parentSession: ctx.session ?? '?',
+          parentDepth,
+          modelOverride: task.model,
+          maxRoundsOverride: task.maxRounds,
+        });
+    logger.info({
+      msg: 'spawn_subagent.async_started',
+      task_id,
+      parent_agent: ctx.agent,
+      target: targetPersona,
+      session: sessionId,
+      depth: parentDepth + 1,
+      via: injectedDeps ? 'in-process' : 'http',
+    });
+    return {
+      ok: true,
+      wait: 'async',
+      task_id,
+      persona: targetPersona,
+      agent_kind: isSelfClone ? 'self-clone' : 'named',
+      session_slug: slug,
+      hint:
+        `Sub is running in the background. Check progress with subagent_status({ task_id: "${task_id}" }) ` +
+        `or fetch the answer with subagent_result({ task_id: "${task_id}" }).`,
+    };
+  }
+
+  // ─── sync path (wait: true) ───────────────────────────────────────
+  activeByAgent.set(targetPersona, perAgent + 1);
+  activeGlobal++;
+  try {
+    logger.info({
+      msg: 'spawn_subagent.start_sync',
+      parent_agent: ctx.agent,
+      parent_session: ctx.session,
+      target: targetPersona,
+      session: sessionId,
+      depth: parentDepth + 1,
+      via: injectedDeps ? 'in-process' : 'http',
+    });
+
+    const result: ChatTurnResult = injectedDeps
+      ? await runChatTurn({
+          agent: targetPersona,
+          session: sessionId,
+          text: task.task,
+          subagentDepth: parentDepth + 1,
+          ...(task.model ? { modelOverride: task.model } : {}),
+          ...(task.maxRounds
+            ? { agentLoopOverride: { maxRounds: task.maxRounds } }
+            : {}),
+          deps: injectedDeps.chatTurnDeps,
+        })
+      : await runChatTurnViaHttp({
+          agent: targetPersona,
+          session: sessionId,
+          text: task.task,
+          subagentDepth: parentDepth + 1,
+          ...(task.model ? { modelOverride: task.model } : {}),
+          ...(task.maxRounds ? { maxRounds: task.maxRounds } : {}),
+        });
+
+    logger.info({
+      msg: 'spawn_subagent.done',
+      target: targetPersona,
+      session: sessionId,
+      ms: result.ms,
+      bytes: result.finalText.length,
+    });
+    return {
+      ok: !result.error,
+      wait: 'sync',
+      persona: targetPersona,
+      agent_kind: isSelfClone ? 'self-clone' : 'named',
+      session_slug: slug,
+      model: result.model,
+      result: result.finalText,
+      ...(result.error ? { error: result.error } : {}),
+      ms: result.ms,
+      thinkingActive: result.thinkingActive,
+    };
+  } finally {
+    activeGlobal--;
+    activeByAgent.set(targetPersona, perAgent); // restore prior count
+  }
+}
+
+/**
+ * In-process async dispatch: register the task, kick off runChatTurn
+ * as a background promise, return the task_id. completeTask /
+ * failTask write the result back into the shared task store.
+ */
+async function spawnAsyncInProcess(args: {
+  targetPersona: string;
+  sessionId: string;
+  taskText: string;
+  parentAgent: string;
+  parentSession: string;
+  parentDepth: number;
+  modelOverride?: string;
+  maxRoundsOverride?: number;
+}): Promise<string> {
+  if (!injectedDeps) throw new Error('spawnAsyncInProcess called without injectedDeps');
+  const task_id = newTaskId();
+  registerTask({
+    task_id,
+    parent_agent: args.parentAgent,
+    parent_session: args.parentSession,
+    target_agent: args.targetPersona,
+    target_session: args.sessionId,
+    started_at: Date.now(),
+  });
+  void (async () => {
+    try {
+      const result = await runChatTurn({
+        agent: args.targetPersona,
+        session: args.sessionId,
+        text: args.taskText,
+        subagentDepth: args.parentDepth + 1,
+        ...(args.modelOverride ? { modelOverride: args.modelOverride } : {}),
+        ...(args.maxRoundsOverride
+          ? { agentLoopOverride: { maxRounds: args.maxRoundsOverride } }
+          : {}),
+        deps: injectedDeps!.chatTurnDeps,
+      });
+      completeTask(task_id, result);
+    } catch (err) {
+      failTask(task_id, (err as Error).message);
+    }
+  })();
+  return task_id;
+}
+
+/**
+ * HTTP async dispatch: call /spawn-async on the localhost server. The
+ * server registers the task and runs it in its own process; we just
+ * return the task_id. status / result also go through HTTP later.
+ */
+async function spawnAsyncViaHttp(args: {
+  targetAgent: string;
+  targetSession: string;
+  taskText: string;
+  parentAgent: string;
+  parentSession: string;
+  parentDepth: number;
+  modelOverride?: string;
+  maxRoundsOverride?: number;
+}): Promise<string> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const res = await fetch(`http://${host}:${port}/spawn-async`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent: args.targetAgent,
+      session: args.targetSession,
+      text: args.taskText,
+      from_agent: args.parentAgent,
+      parent_agent: args.parentAgent,
+      parent_session: args.parentSession,
+      subagent_depth: args.parentDepth + 1,
+      ...(args.modelOverride ? { model: args.modelOverride } : {}),
+      ...(args.maxRoundsOverride ? { max_rounds: args.maxRoundsOverride } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`spawn-async HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as { task_id: string };
+  return data.task_id;
+}
+
+/**
+ * MCP-child fallback: when spawn_subagent is invoked from inside a
+ * claude-cli or codex-cli MCP server (configureSpawnTools never ran
+ * here), reach back to the somora HTTP server on localhost. Same
+ * inputs, same eventual JSONL state — just routed through HTTP rather
+ * than a direct in-process call.
+ *
+ * Server host/port from SOMORA_HOST + SOMORA_PORT env (set by the
+ * parent server on launch). Falls back to 127.0.0.1:18737.
+ */
+async function runChatTurnViaHttp(args: {
+  agent: string;
+  session: string;
+  text: string;
+  subagentDepth: number;
+  modelOverride?: string;
+  maxRounds?: number;
+}): Promise<ChatTurnResult> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const url = `http://${host}:${port}/chat/send-sync`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent: args.agent,
+      session: args.session,
+      text: args.text,
+      subagent_depth: args.subagentDepth,
+      ...(args.modelOverride ? { model: args.modelOverride } : {}),
+      ...(args.maxRounds ? { max_rounds: args.maxRounds } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`spawn_subagent HTTP fallback ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as ChatTurnResult;
+  return data;
+}
+

@@ -1,0 +1,565 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Box, Static, Text, useApp, useInput } from 'ink';
+import TextInput from 'ink-text-input';
+
+import { Api } from './api.ts';
+import { openStream, type StreamHandle } from './stream.ts';
+import { matchCommands, runCommand } from './commands.ts';
+import { Header } from './header.tsx';
+import { Footer } from './footer.tsx';
+import { Separator } from './separator.tsx';
+import { SlashAutocomplete } from './autocomplete.tsx';
+import { AgentBody, TurnView } from './turn-views.tsx';
+import { nextId, summarize } from './format.ts';
+import { rememberAgent } from './state.ts';
+import type { AgentInfo, StreamEvent, Turn, TurnStats } from './types.ts';
+
+interface Props {
+  base: string;
+  initialAgent: string;
+  initialSession: string;
+  initialShowMemory: boolean;
+  initialShowTools: boolean;
+  initialVerboseTools: boolean;
+  initialVerboseMemory: boolean;
+  initialVerboseSystem: boolean;
+}
+
+const HISTORY_MAX = 100;
+
+export function App({
+  base,
+  initialAgent,
+  initialSession,
+  initialShowMemory,
+  initialShowTools,
+  initialVerboseTools,
+  initialVerboseMemory,
+  initialVerboseSystem,
+}: Props) {
+  const { exit } = useApp();
+  const apiRef = useRef(new Api(base));
+
+  const [agent, setAgent] = useState(initialAgent);
+  const [session, setSession] = useState(initialSession);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [streamingText, setStreamingText] = useState<string>('');
+  const [streaming, setStreaming] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [stats, setStats] = useState<TurnStats | null>(null);
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [agentIcons, setAgentIcons] = useState<Record<string, string>>({});
+  const [showMemory, setShowMemory] = useState(initialShowMemory);
+  const [showTools, setShowTools] = useState(initialShowTools);
+  const [verboseTools, setVerboseTools] = useState(initialVerboseTools);
+  const [verboseMemory, setVerboseMemory] = useState(initialVerboseMemory);
+  const [verboseSystem, setVerboseSystem] = useState(initialVerboseSystem);
+  // Refs so the SSE handler always sees the current toggle without
+  // re-subscribing the stream on every flip.
+  const showMemoryRef = useRef(showMemory);
+  const showToolsRef = useRef(showTools);
+  useEffect(() => {
+    showMemoryRef.current = showMemory;
+  }, [showMemory]);
+  useEffect(() => {
+    showToolsRef.current = showTools;
+  }, [showTools]);
+
+  // Submit-history (newest at the end). Up/Down step through it.
+  const [history, setHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number | null>(null);
+  const [historyDraft, setHistoryDraft] = useState<string>('');
+
+  // Slash-autocomplete: matched against the input prefix, only when the
+  // input is a single token starting with `/`. Index is the highlighted
+  // suggestion (Tab cycles).
+  const [autocompleteIndex, setAutocompleteIndex] = useState(0);
+
+  const agentIcon = agentIcons[agent] ?? '';
+
+  const slashMatches = useMemo(() => {
+    const trimmed = input.trim();
+    if (!trimmed.startsWith('/')) return [];
+    if (trimmed.includes(' ')) return []; // user is typing args, hide popup
+    return matchCommands(trimmed);
+  }, [input]);
+
+  const safeAutocompleteIndex =
+    slashMatches.length > 0 ? autocompleteIndex % slashMatches.length : 0;
+
+  // Reset highlight to first match whenever the match-set changes (typing
+  // narrows the list).
+  useEffect(() => {
+    setAutocompleteIndex(0);
+  }, [slashMatches.length, slashMatches[0]?.name]);
+
+  // Fetch agents on mount and whenever we switch — populates icon-by-name
+  // map. Cheap call, the listing is tiny.
+  useEffect(() => {
+    let cancelled = false;
+    apiRef.current
+      .fetchAgents()
+      .then((list: AgentInfo[]) => {
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const a of list) if (a.icon) next[a.name] = a.icon;
+        setAgentIcons(next);
+      })
+      .catch(() => {
+        /* leave icons empty if endpoint is unreachable */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agent]);
+
+  // SSE lifecycle + history replay: on (agent, session) change clear
+  // the scrollback, fetch past events from /chat/history and replay
+  // them as scrollback Turns, THEN open the SSE stream for live
+  // events. History fetch is best-effort — empty/failing returns
+  // just give an empty starting state. SSE picks up events from
+  // connect-time forward so there's no overlap with replay.
+  useEffect(() => {
+    let cancelled = false;
+    setTurns([]);
+    setStats(null);
+
+    let handle: StreamHandle | null = null;
+
+    (async () => {
+      try {
+        const { events } = await apiRef.current.fetchHistory(agent, session);
+        if (cancelled) return;
+        const replayed = mapHistoryToTurns(events);
+        if (replayed.length > 0) {
+          setTurns(replayed);
+        }
+      } catch {
+        /* history endpoint failures are non-fatal — leave scrollback empty */
+      }
+
+      if (cancelled) return;
+      handle = openStream(
+        apiRef.current.streamUrl(agent, session),
+        (text, tone) => {
+          if (cancelled) return;
+          appendTurn({ kind: 'system', id: nextId(), text, tone });
+        },
+      );
+      const stream = handle;
+      (async () => {
+        for await (const ev of stream.events) {
+          if (cancelled) break;
+          applyEvent(ev);
+        }
+      })().catch(() => {
+        /* iterator close — nothing to do */
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+      handle?.close();
+      setConnected(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, session]);
+
+  /**
+   * Convert raw JSONL history events into TUI Turn entries. Skips
+   * deltas, turn-boundaries, errors — those are noise for replay.
+   * Tool events render as collapsed `tool` rows respecting the same
+   * showTools/showMemory toggles as live events do (we don't read
+   * the toggles here; we always emit the rows and let the renderer
+   * filter via the existing showToolsRef path... actually for replay
+   * we just emit them and trust the user can toggle). For simplicity
+   * we ALWAYS emit tool rows on replay — the user can /show tools off
+   * to hide globally.
+   */
+  function mapHistoryToTurns(events: import('./api.ts').HistoryEvent[]): Turn[] {
+    const out: Turn[] = [];
+    let id = 0;
+    const nid = () => {
+      id += 1;
+      return `replay-${id}`;
+    };
+    // History events come from JSONL with raw `mcp__<server>__<tool>`
+    // tool names; the SSE serializer strips this prefix on the live
+    // path. Replay needs the same shortening so the TUI doesn't show
+    // mcp__somora-memory__exec for old turns. Same regex as the
+    // server's shortToolName helper.
+    const stripMcpPrefix = (t: string): string => t.replace(/^mcp__[^_]+__/, '');
+    for (const ev of events) {
+      if (ev.kind === 'user_message' && typeof ev.text === 'string') {
+        out.push({
+          kind: 'user',
+          id: nid(),
+          text: ev.text,
+          ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
+        });
+      } else if (ev.kind === 'assistant_message' && typeof ev.text === 'string') {
+        out.push({ kind: 'agent', id: nid(), text: ev.text });
+      } else if (ev.kind === 'tool_call' && typeof ev.tool === 'string') {
+        out.push({
+          kind: 'tool',
+          id: nid(),
+          tool: stripMcpPrefix(ev.tool),
+          phase: 'call',
+          summary: typeof ev.input === 'object' && ev.input ? safeStringify(ev.input, 60) : '',
+        });
+      } else if (ev.kind === 'tool_result' && typeof ev.tool === 'string') {
+        if (ev.error) {
+          out.push({
+            kind: 'tool',
+            id: nid(),
+            tool: stripMcpPrefix(ev.tool),
+            phase: 'error',
+            error: summarize(ev.error, 200),
+          });
+        } else {
+          out.push({
+            kind: 'tool',
+            id: nid(),
+            tool: stripMcpPrefix(ev.tool),
+            phase: 'result',
+            summary: typeof ev.output === 'object' && ev.output ? safeStringify(ev.output, 60) : '',
+          });
+        }
+      }
+      // turn_start, turn_end, assistant_delta, error: skipped
+      // memory injects don't live in JSONL — they're SSE-only
+    }
+    return out;
+  }
+
+  function safeStringify(value: unknown, maxLen: number): string {
+    try {
+      const s = JSON.stringify(value);
+      return s.length > maxLen ? s.slice(0, maxLen - 1) + '…' : s;
+    } catch {
+      return '';
+    }
+  }
+
+  function appendTurn(t: Turn): void {
+    setTurns((prev) => [...prev, t]);
+  }
+
+  function applyEvent(ev: StreamEvent): void {
+    switch (ev.kind) {
+      case 'connected':
+        setConnected(true);
+        return;
+      case 'agent-start':
+        setStreaming(true);
+        setStreamingText('');
+        // If the server tells us the upcoming turn has a thinking level,
+        // pre-set it on stats so the header can show the "🧠 thinking…"
+        // pre-content badge before any tokens arrive.
+        if (ev.thinking) {
+          setStats((prev) => ({
+            tokensIn: prev?.tokensIn ?? 0,
+            tokensInCached: prev?.tokensInCached ?? null,
+            tokensOut: prev?.tokensOut ?? 0,
+            tokensOutReasoning: prev?.tokensOutReasoning ?? null,
+            contextWindow: prev?.contextWindow ?? null,
+            provider: prev?.provider ?? null,
+            model: prev?.model ?? null,
+            thinking: ev.thinking ?? null,
+          }));
+        }
+        return;
+      case 'chat-delta':
+        setStreamingText(ev.text);
+        return;
+      case 'chat-final':
+        setStreamingText(ev.text);
+        return;
+      case 'agent-end': {
+        setStreamingText((current) => {
+          if (current.length > 0) {
+            appendTurn({ kind: 'agent', id: nextId(), text: current });
+          }
+          return '';
+        });
+        setStreaming(false);
+        setBusy(false);
+        if (ev.usage || ev.contextWindow || ev.provider || ev.model || ev.thinking) {
+          setStats({
+            tokensIn: ev.usage?.tokens_in ?? 0,
+            tokensInCached: ev.usage?.tokens_in_cached ?? null,
+            tokensOut: ev.usage?.tokens_out ?? 0,
+            tokensOutReasoning: ev.usage?.tokens_out_reasoning ?? null,
+            contextWindow: ev.contextWindow ?? null,
+            provider: ev.provider ?? null,
+            model: ev.model ?? null,
+            thinking: ev.thinking ?? null,
+          });
+        }
+        return;
+      }
+      case 'memory':
+        // Display-only suppression. The injection itself already happened
+        // server-side; we just don't render the [memory · …] line.
+        if (!showMemoryRef.current) return;
+        appendTurn({
+          kind: 'memory',
+          id: nextId(),
+          count: ev.count,
+          topScore: ev.topScore,
+          refs: ev.refs,
+          fullText: ev.fullText,
+        });
+        return;
+      case 'tool': {
+        // Display-only suppression. Same caveat as memory: the tool ran,
+        // we just hide the call/result line.
+        if (!showToolsRef.current) return;
+        const phase: 'call' | 'result' | 'error' =
+          ev.phase === 'call' || ev.phase === 'result' || ev.phase === 'error'
+            ? ev.phase
+            : 'result';
+        appendTurn({
+          kind: 'tool',
+          id: nextId(),
+          tool: ev.tool,
+          phase,
+          summary: ev.summary,
+          // For errors we don't summarize details (already short-string);
+          // for call/result we keep the full pretty-printed payload so
+          // /verbose tools can show it.
+          details: phase === 'error' ? undefined : ev.details,
+          error: phase === 'error' ? summarize(ev.error, 200) : undefined,
+        });
+        return;
+      }
+      case 'user-message':
+        // A2A inbound: another agent wrote into the session we're
+        // watching. Render as a user-turn but tagged with the sender so
+        // it's visually distinct from our own typed turns.
+        appendTurn({
+          kind: 'user',
+          id: nextId(),
+          text: ev.text,
+          fromAgent: ev.fromAgent,
+        });
+        return;
+    }
+  }
+
+  function pushHistory(text: string): void {
+    setHistory((prev) => {
+      // Don't add a literal duplicate of the most recent entry.
+      if (prev[prev.length - 1] === text) return prev;
+      const next = [...prev, text];
+      return next.length > HISTORY_MAX ? next.slice(next.length - HISTORY_MAX) : next;
+    });
+    setHistoryIndex(null);
+    setHistoryDraft('');
+  }
+
+  // Wraps setInput so any modification while history-navigating clears the
+  // history-cursor — typing breaks you out of the history walk.
+  function handleInputChange(next: string): void {
+    if (historyIndex !== null && next !== history[historyIndex]) {
+      setHistoryIndex(null);
+    }
+    setInput(next);
+  }
+
+  // useInput captures every keypress. ink-text-input also reads stdin and
+  // handles its own keys (typing, left/right, backspace, enter); we only
+  // react to keys it doesn't touch (Tab, Up, Down, Esc, Ctrl+C/L).
+  useInput((char, key) => {
+    // Tab: cycle through autocomplete + replace input with selected command
+    if (key.tab && slashMatches.length > 0) {
+      const dir = key.shift ? -1 : 1;
+      const next =
+        (safeAutocompleteIndex + dir + slashMatches.length) % slashMatches.length;
+      setAutocompleteIndex(next);
+      const picked = slashMatches[next];
+      if (picked) setInput(picked.name + ' ');
+      return;
+    }
+    // Esc:
+    //   - while streaming: abort the in-flight turn server-side. Keep
+    //     the input buffer untouched — the user might be typing the
+    //     next message while the model is still talking.
+    //   - otherwise: clear the input (also hides the autocomplete popup,
+    //     since `/` prefix → matchCommands returns [] when empty).
+    if (key.escape) {
+      if (streaming) {
+        void apiRef.current.abortTurn(agent, session);
+        return;
+      }
+      if (input.length > 0) {
+        setInput('');
+        setHistoryIndex(null);
+      }
+      return;
+    }
+    // History navigation
+    if (key.upArrow && history.length > 0) {
+      if (historyIndex === null) {
+        setHistoryDraft(input);
+        const idx = history.length - 1;
+        setHistoryIndex(idx);
+        setInput(history[idx] ?? '');
+      } else if (historyIndex > 0) {
+        const idx = historyIndex - 1;
+        setHistoryIndex(idx);
+        setInput(history[idx] ?? '');
+      }
+      return;
+    }
+    if (key.downArrow && historyIndex !== null) {
+      if (historyIndex < history.length - 1) {
+        const idx = historyIndex + 1;
+        setHistoryIndex(idx);
+        setInput(history[idx] ?? '');
+      } else {
+        setHistoryIndex(null);
+        setInput(historyDraft);
+      }
+      return;
+    }
+    // Ctrl+C: first press soft-cancels (clear input / close popup), second
+    // press exits when there's nothing to clear.
+    if (key.ctrl && char === 'c') {
+      if (input.length > 0) {
+        setInput('');
+        setHistoryIndex(null);
+        return;
+      }
+      exit();
+      return;
+    }
+  });
+
+  async function handleSubmit(text: string): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed || busy) return;
+    setInput('');
+    pushHistory(trimmed);
+    if (trimmed.startsWith('/')) {
+      try {
+        const actions = await runCommand(trimmed, {
+          api: apiRef.current,
+          agent,
+          session,
+          showMemory,
+          showTools,
+          verboseTools,
+          verboseMemory,
+          verboseSystem,
+        });
+        for (const a of actions) {
+          if (a.kind === 'notice') {
+            appendTurn({ kind: 'system', id: nextId(), text: a.text, tone: a.tone });
+          } else if (a.kind === 'exit') {
+            exit();
+          } else if (a.kind === 'switchTo') {
+            setStats(null);
+            setStreamingText('');
+            setStreaming(false);
+            setAgent(a.agent);
+            setSession(a.session);
+            rememberAgent(a.agent);
+          } else if (a.kind === 'clearStats') {
+            setStats(null);
+          } else if (a.kind === 'setShow') {
+            if (a.target === 'memory') setShowMemory(a.value);
+            else setShowTools(a.value);
+          } else if (a.kind === 'setVerbose') {
+            if (a.target === 'tools') setVerboseTools(a.value);
+            else if (a.target === 'memory') setVerboseMemory(a.value);
+            else setVerboseSystem(a.value);
+          }
+        }
+      } catch (err) {
+        appendTurn({
+          kind: 'system',
+          id: nextId(),
+          text: `command failed: ${(err as Error).message}`,
+          tone: 'error',
+        });
+      }
+      return;
+    }
+    appendTurn({ kind: 'user', id: nextId(), text: trimmed });
+    setBusy(true);
+    try {
+      await apiRef.current.send(agent, session, trimmed);
+    } catch (err) {
+      appendTurn({
+        kind: 'system',
+        id: nextId(),
+        text: `send failed: ${(err as Error).message}`,
+        tone: 'error',
+      });
+      setBusy(false);
+    }
+  }
+
+  const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
+
+  return (
+    <Box flexDirection="column">
+      {/* Scrollback: every finalized turn flushes to terminal scrollback once
+          via Static, then is owned by the terminal — older messages scroll
+          up and out as new ones arrive. The dynamic frame below stays put. */}
+      <Static items={turns}>
+        {(turn) => (
+          <TurnView
+            key={turn.id}
+            turn={turn}
+            agentName={agent}
+            agentIcon={agentIcon}
+            verbose={{ tools: verboseTools, memory: verboseMemory }}
+          />
+        )}
+      </Static>
+
+      {streamingText.length > 0 ? (
+        <Box marginTop={1} flexDirection="column">
+          <Text color="cyan" bold>
+            {agentTag}
+          </Text>
+          <AgentBody text={streamingText} />
+        </Box>
+      ) : null}
+
+      {/* Bottom panel: separator → status → autocomplete (if any) → input →
+          hints. Stays anchored to the bottom of the visible terminal frame
+          because nothing below it ever changes height except the
+          autocomplete popup. */}
+      <Box marginTop={1}>
+        <Separator />
+      </Box>
+      <Header
+        agent={agent}
+        agentIcon={agentIcon}
+        session={session}
+        stats={stats}
+        streaming={streaming}
+        streamingPhase={streaming && streamingText.length === 0 ? 'pre' : 'content'}
+        connected={connected}
+        showMemory={showMemory}
+        showTools={showTools}
+      />
+      <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
+      <Box>
+        <Text color="cyan">{'> '}</Text>
+        <TextInput
+          value={input}
+          onChange={handleInputChange}
+          onSubmit={handleSubmit}
+          placeholder={busy ? '(waiting for response…)' : ''}
+          showCursor={!busy}
+        />
+      </Box>
+      <Footer />
+    </Box>
+  );
+}
