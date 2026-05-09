@@ -66,10 +66,10 @@ For PROMOTE:
 For MERGE:
 {
   "kind": "merge",
-  "wikiPath": "personen/familie-rene",
+  "wikiPath": "personen/familie-klein",
   "body": "## Aktueller Stand\\n...\\n\\n## Eigenschaften\\n...\\n\\n## Zeitleiste\\n- 2026-05-08: ...\\n",
   "related": ["personen/rene"],
-  "logSummary": "familie-rene aktualisiert: Hund Lilly hinzugefügt"
+  "logSummary": "familie-klein aktualisiert: Hund Bella hinzugefügt"
 }
 
 No commentary. Just the JSON object.`;

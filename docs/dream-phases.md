@@ -172,9 +172,9 @@ Returns a structured `MemoryFateDecision`:
   "type": "person", "title": "Luca",
   "body": "## Aktueller Stand\n…", "related": [...] }
 
-{ "kind": "merge", "wikiPath": "personen/familie-rene",
+{ "kind": "merge", "wikiPath": "personen/familie-klein",
   "body": "...full updated body...",
-  "logSummary": "familie-rene aktualisiert: ..." }
+  "logSummary": "familie-klein aktualisiert: ..." }
 ```
 
 Deep applies the decision verbatim. No second LLM call at apply-time.

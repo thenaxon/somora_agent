@@ -130,8 +130,8 @@ Output format example:
   {
     "action": "memory_write",
     "slug": "neuer-wagen",
-    "proposed_content": "User got an AMG One in 2026-05.",
-    "reason": "User said on 2026-05-09: 'mein AMG One ist letzte Woche gekommen'. Wiki personen/familie-rene mentions Ferrari + Mercedes-AMG GT63/53, but no AMG One — this is a new fact."
+    "proposed_content": "User confirmed a new family car arrived in 2026-05.",
+    "reason": "User said on 2026-05-09: 'der neue Familienwagen ist eingetroffen'. Wiki personen/familie-klein mentions verschiedene Fahrzeuge, but not this specific model — this is a new fact."
   },
   {
     "action": "memory_write",

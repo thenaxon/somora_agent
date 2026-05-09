@@ -38,12 +38,12 @@ Output: ONE JSON object — no commentary, no markdown fences:
   "findings": [
     {
       "kind": "contradiction",
-      "affected_pages": ["personen/anna", "personen/familie-mueller"],
-      "reason": "personen/anna says 'born 2017'; personen/familie-mueller says Anna was born 2018. The familie-mueller page has more context (her sibling's birth year corroborates 2018) — anna page likely has a typo.",
+      "affected_pages": ["personen/anna", "personen/familie-klein"],
+      "reason": "personen/anna says 'born 2017'; personen/familie-klein says Anna was born 2018. The familie-klein page has more context (her sibling's birth year corroborates 2018) — anna page likely has a typo.",
       "fix": {
         "kind": "update_page",
         "wikiPath": "personen/anna",
-        "newBody": "## Aktueller Stand\\nAnna, geboren 2018, Tochter von Maria Müller …\\n\\n## …",
+        "newBody": "## Aktueller Stand\\nAnna, geboren 2018, Tochter von Sarah Klein …\\n\\n## …",
         "logSummary": "anna aktualisiert: Geburtsjahr 2017→2018"
       }
     },
@@ -74,11 +74,11 @@ Output: ONE JSON object — no commentary, no markdown fences:
     },
     {
       "kind": "inconsistent_xref",
-      "affected_pages": ["personen/maria", "personen/familie-mueller"],
-      "reason": "personen/familie-mueller mentions Maria multiple times but personen/maria doesn't link back to familie-mueller. Tight family relationship suggests bidirectional reference.",
+      "affected_pages": ["personen/maria", "personen/familie-klein"],
+      "reason": "personen/familie-klein mentions Maria multiple times but personen/maria doesn't link back to familie-klein. Tight family relationship suggests bidirectional reference.",
       "fix": {
         "kind": "no_op",
-        "note": "Add [[personen/familie-mueller]] to personen/maria's related-list when next user-edited."
+        "note": "Add [[personen/familie-klein]] to personen/maria's related-list when next user-edited."
       }
     }
   ]

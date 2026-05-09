@@ -69,7 +69,7 @@ long-term wiki (consolidated, authoritative); [vault/...] = read-only vault.
 ## Wiki overview (shared long-term knowledge)
 # somora-Wiki Index
 ## Personen
-- [[personen/familie-mueller]] — Family around Maria Müller …
+- [[personen/familie-klein]] — Family around Sarah Klein …
 ## Projekte
 - [[projekte/internal-cms]] — Internal CMS used by the team …
 …
@@ -104,7 +104,7 @@ memory_delete(slug)                                 # remove
 
 `memory_search` ranks across all three sources by default; pass
 `source: 'memory' | 'wiki' | 'vault'` to constrain. `memory_get`
-accepts a reference like `wiki/personen/familie-rene` returned by
+accepts a reference like `wiki/personen/familie-klein` returned by
 search, fetches the full file content (vs. the snippet shown in
 search hits).
 

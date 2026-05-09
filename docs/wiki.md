@@ -17,7 +17,7 @@ and contribute to via the Deep dream phase.
 └── <wiki-subfolder>/                  ← THIS is the wiki
     ├── index.md                       ← auto-regenerated topology
     ├── personen/
-    │   ├── familie-rene.md
+    │   ├── familie-klein.md
     │   ├── luca-horinek.md
     │   └── …
     ├── projekte/
@@ -36,14 +36,15 @@ and contribute to via the Deep dream phase.
 
 Three reasons memory and wiki need to be separate:
 
-**Multi-agent.** Hans and Naxon each have their own conversation history
-and their own atomic observations. But "Conny is Rene's wife" is not
-hans-private information — it's a fact every agent should know. The
+**Multi-agent.** Each agent has its own conversation history and its
+own atomic observations. But a fact like "Lisa is the user's spouse"
+is not agent-private — it's something every agent should know. The
 wiki is where shared facts live.
 
-**Curation.** Memory inboxes accumulate raw observations ("user mentioned
-he bought an AMG One"). The wiki is the place where those observations
-get integrated into a coherent picture (`personen/familie-rene` is
+**Curation.** Memory inboxes accumulate raw observations ("user
+mentioned a new family car arrived"). The wiki is the place where
+those observations
+get integrated into a coherent picture (`personen/familie-klein` is
 updated; the source memory entry is deleted). One source of truth per
 topic.
 
@@ -85,35 +86,35 @@ Every wiki page is markdown with YAML frontmatter:
 
 ```markdown
 ---
-slug: personen/familie-mueller
+slug: personen/familie-klein
 type: family
 created: 2026-05-08
 updated: 2026-05-09
 sources:
-  - alpha/familie-mueller              # which agent's memory contributed
+  - alpha/familie-klein              # which agent's memory contributed
   - beta/people
 related:
   - wissen/family-cars
   - orte/main-house
 ---
 
-# Familie Müller
+# Familie Klein
 
 ## Aktueller Stand
 
-Familie around Maria Müller: spouse, sister, father, niece and
+Familie around Sarah Klein: spouse, sister, father, niece and
 two dogs. This page bundles the key people …
 
 ## Eigenschaften
 
-- **Spouse:** Dr. Cornelia Müller (* 03.02.1984)
-- **Sister:** Nathalie Müller (* 08.12.1973)
+- **Spouse:** Dr. Lisa Klein (* 03.02.1984)
+- **Sister:** Eva Klein (* 08.12.1973)
 - …
 
 ## Zeitleiste
 
-- 1941-04-30 — Walter Müller born
-- 1973-12-08 — Nathalie Müller born
+- 1941-04-30 — Hans Klein born
+- 1973-12-08 — Eva Klein born
 - …
 
 ## Notizen
@@ -149,7 +150,7 @@ shape.
 ### Wikilinks
 
 Use Obsidian's `[[wiki-path]]` syntax for cross-references between
-pages. Example: `Conny ist Renes [[personen/familie-rene|Ehefrau]]`.
+pages. Example: `Lisa ist die [[personen/familie-klein|Ehefrau]]`.
 
 Wikilinks are indexed as plain text (the brackets are tokenized away),
 so a search for `garten` finds pages mentioning `[[orte/garten]]`. They
@@ -172,7 +173,7 @@ Auto-regenerated after every Deep run. Contains:
 Letztes Update: 2026-05-09 07:45 UTC von Deep
 
 ## Personen
-- [[personen/familie-mueller]] — Family around Maria Müller …
+- [[personen/familie-klein]] — Family around Sarah Klein …
 - [[personen/anna]] — Niece, daughter of Nathalie …
 
 ## Projekte
@@ -183,7 +184,7 @@ Letztes Update: 2026-05-09 07:45 UTC von Deep
 - [[wissen/family-cars]] — Notes on the household vehicle fleet …
 
 ## Letzte Updates
-- 2026-05-09: [[personen/familie-mueller]] — familie-mueller aktualisiert: spouse + birthday
+- 2026-05-09: [[personen/familie-klein]] — familie-klein aktualisiert: spouse + birthday
 ```
 
 The index is the **topology header** Lucid and REM see — they know what
@@ -226,7 +227,7 @@ Three paths feed a chat turn:
 3. **Explicit tool calls** — `memory_search` or `memory_get` with a
    `wiki/<path>` reference. Agents fetch full pages on demand.
 
-Wiki paths in references look like `wiki/personen/familie-rene` — the
+Wiki paths in references look like `wiki/personen/familie-klein` — the
 `wiki/` prefix is the source-tag, the rest is the slug.
 
 ## Configuration
