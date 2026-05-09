@@ -195,11 +195,15 @@ export function openStream(
         }
         return null;
       case 'user_message':
-        if (typeof data.text !== 'string' || typeof data.from_agent !== 'string') return null;
+        if (typeof data.text !== 'string') return null;
         return {
           kind: 'user-message',
           text: data.text,
-          fromAgent: data.from_agent,
+          // from_agent is optional — server now echoes self-typed
+          // turns too so other clients (web tab, TUI tail) see
+          // them live. Self-echoes carry no from_agent; consumer
+          // dedupes by recent-text against its own optimistic copy.
+          ...(typeof data.from_agent === 'string' ? { fromAgent: data.from_agent } : {}),
           callId: typeof data.agent_ask_call_id === 'string' ? data.agent_ask_call_id : undefined,
         };
       default:

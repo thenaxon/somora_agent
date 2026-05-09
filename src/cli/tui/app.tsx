@@ -59,6 +59,12 @@ export function App({
   // re-subscribing the stream on every flip.
   const showMemoryRef = useRef(showMemory);
   const showToolsRef = useRef(showTools);
+  // Pending self-sent texts. Server now echoes user_message events
+  // for every /chat/send so other clients (a web tab on the same
+  // session) see them live. The TUI's own optimistic local-user
+  // turn already covers its own sends, so we drop matching echoes
+  // by recent-text instead of double-rendering.
+  const pendingSelfSendsRef = useRef<string[]>([]);
   useEffect(() => {
     showMemoryRef.current = showMemory;
   }, [showMemory]);
@@ -357,17 +363,34 @@ export function App({
         });
         return;
       }
-      case 'user-message':
+      case 'user-message': {
         // A2A inbound: another agent wrote into the session we're
-        // watching. Render as a user-turn but tagged with the sender so
+        // watching. Render as a user-turn tagged with the sender so
         // it's visually distinct from our own typed turns.
+        //
+        // Self-typed echoes (server now broadcasts user_message for
+        // every /chat/send so other clients can see them) arrive
+        // WITHOUT fromAgent. We dedupe against pendingSelfSendsRef
+        // — the entry was added when this TUI's own send() ran.
+        // Echoes from OTHER clients (a web tab on the same session)
+        // pass through with no pending match and render as normal
+        // user turns.
+        if (!ev.fromAgent) {
+          const pending = pendingSelfSendsRef.current;
+          const idx = pending.indexOf(ev.text);
+          if (idx >= 0) {
+            pending.splice(idx, 1);
+            return;
+          }
+        }
         appendTurn({
           kind: 'user',
           id: nextId(),
           text: ev.text,
-          fromAgent: ev.fromAgent,
+          ...(ev.fromAgent ? { fromAgent: ev.fromAgent } : {}),
         });
         return;
+      }
     }
   }
 
@@ -511,10 +534,16 @@ export function App({
       return;
     }
     appendTurn({ kind: 'user', id: nextId(), text: trimmed });
+    pendingSelfSendsRef.current.push(trimmed);
     setBusy(true);
     try {
       await apiRef.current.send(agent, session, trimmed);
     } catch (err) {
+      // Send failed — drop the pending dedupe entry so a future
+      // identical text echoes normally.
+      const cur = pendingSelfSendsRef.current;
+      const idx = cur.indexOf(trimmed);
+      if (idx >= 0) cur.splice(idx, 1);
       appendTurn({
         kind: 'system',
         id: nextId(),

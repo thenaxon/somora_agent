@@ -50,12 +50,11 @@ body {
 }
 
 /* Bubbles cap at 75% width (click-dummy) but need to break long
- * unbroken tokens. `overflow-wrap: anywhere` was too aggressive —
- * with min-width:0 the browser breaks every char of short replies
- * onto its own line ("Ja?" → 3 lines of 1 char). `break-word` only
- * breaks tokens that genuinely don't fit on a line. */
+ * unbroken tokens. Only `overflow-wrap: break-word` (standard) —
+ * the legacy `word-break: break-word` is non-standard and some
+ * engines treat it like `anywhere`, breaking each char onto its
+ * own line for short replies like "Ja?". */
 .chat-msg-bubble {
-  word-break: break-word;
   overflow-wrap: break-word;
 }
 

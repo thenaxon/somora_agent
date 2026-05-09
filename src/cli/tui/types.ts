@@ -147,8 +147,14 @@ export type StreamEvent =
       // Live A2A user_message: another agent wrote into the session
       // we're watching. Rendered with the sender's name as a marker
       // instead of the local user icon.
+      //
+      // Self-typed sends from other clients (e.g. a web tab open
+      // on the same session as the TUI) also come through this
+      // event WITHOUT fromAgent — the consumer dedupes its own
+      // optimistic copy by recent-text and renders the rest as
+      // normal user turns.
       kind: 'user-message';
       text: string;
-      fromAgent: string;
+      fromAgent?: string;
       callId?: string;
     };

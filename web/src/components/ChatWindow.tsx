@@ -3,7 +3,7 @@
 // abort. Slash-command popup, drag&drop attachments and the
 // memory-inject banner come in subsequent steps.
 
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pin,
   GitBranch,
@@ -62,16 +62,36 @@ export function ChatWindow({ agent, sessionId, windowFocused }: Props) {
     el.scrollTop = el.scrollHeight;
   }, [chat.messages, chat.streaming, chat.thinking]);
 
-  // Auto-focus the input whenever the window becomes focused (user
-  // clicks anywhere in it, taskbar selects it, etc.) — saves an
-  // extra click before typing. Skip if the user is currently
-  // selecting text in the body.
+  // Auto-focus the input on first focus AND on every mouse-click
+  // into the chat (handler below). Effect-based focus alone wasn't
+  // enough: clicking inside an already-focused window doesn't
+  // transition windowFocused, so the effect never re-runs.
   useEffect(() => {
     if (!windowFocused) return;
     const sel = window.getSelection?.();
     if (sel && sel.toString().length > 0) return;
     textareaRef.current?.focus();
   }, [windowFocused]);
+
+  const focusTextareaIfPossible = useCallback((target: EventTarget | null) => {
+    // Skip when the click landed on a real interactive element so
+    // we don't yank focus away mid-action (button click, link,
+    // text-selection drag, code-block scroll-grab, etc.).
+    if (target instanceof HTMLElement) {
+      if (
+        target.closest('button') ||
+        target.closest('a') ||
+        target.closest('input') ||
+        target.closest('textarea') ||
+        target.closest('pre')
+      ) {
+        return;
+      }
+    }
+    const sel = window.getSelection?.();
+    if (sel && sel.toString().length > 0) return;
+    textareaRef.current?.focus();
+  }, []);
 
   // Filter messages by tools-toggle. When off, hide tool_call +
   // tool_result rows from the view (they remain in the underlying
@@ -100,7 +120,7 @@ export function ChatWindow({ agent, sessionId, windowFocused }: Props) {
     thinking?.modelSupportsReasoning && thinking.effective && thinking.effective !== 'off';
 
   return (
-    <div className="chat">
+    <div className="chat" onMouseDown={(e) => focusTextareaIfPossible(e.target)}>
       <div className="chat-header">
         <div className="chat-avatar agent-bg" style={{ background: gradientFor(color) }}>
           <span
