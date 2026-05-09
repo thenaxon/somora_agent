@@ -1,29 +1,42 @@
 // Desktop = the whole app surface. Background grid + radial
 // gradients live in `.desktop` / `.desktop::before` / `::after` from
-// the click-dummy CSS; we mount the chrome (dock + taskbar) inside
-// the `.desktop-area` container.
-//
-// Phase 1: dock fetches agents and renders. Click on agent is a
-// no-op for now (Phase 1c will wire it to open a chat window).
-// Window manager state will land in this same component.
+// the click-dummy CSS. Inside `.desktop-area` we mount: the agent
+// dock (left), the live windows from the window manager, and the
+// taskbar (bottom). Window manager state is owned here so dock
+// clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { AgentDock } from './AgentDock';
 import { Taskbar } from './Taskbar';
+import { Window } from './Window';
+import { ChatWindow } from './ChatWindow';
 import { useAgents } from '../hooks/useAgents';
 import { useLoopState } from '../hooks/useLoopState';
+import { useWindowManager } from '../hooks/useWindowManager';
 import type { AgentInfo } from '../lib/api';
+import { resolveAgentColor } from '../lib/colors';
 
 export function Desktop() {
   const { agents, loading, error } = useAgents();
   const loopState = useLoopState();
+  const wm = useWindowManager();
 
   function handleAgentClick(agent: AgentInfo) {
-    // Phase 1c will replace this with: open / focus chat window for
-    // this agent's main session. Logging keeps the wiring obvious
-    // when you click around in the empty scaffold.
-    // eslint-disable-next-line no-console
-    console.log('[somora-web] agent click:', agent.name);
+    wm.openChat({
+      agentName: agent.name,
+      sessionId: 'main',
+      agentLabel: `${agent.name} · main`,
+      ...(agent.role ? { agentMeta: agent.role.toLowerCase() } : {}),
+      ...(agent.icon ? { agentIcon: agent.icon } : {}),
+    });
   }
+
+  // Names of agents whose chat is currently open as a window —
+  // drives the .active highlight on the dock tile.
+  const activeAgentIds = new Set(
+    wm.windows
+      .filter((w) => w.kind === 'chat' && w.agentName)
+      .map((w) => w.agentName as string),
+  );
 
   return (
     <div className="desktop">
@@ -34,10 +47,42 @@ export function Desktop() {
           error={error}
           onAgentClick={handleAgentClick}
           loopHolder={loopState.active ? loopState.agent : null}
+          activeAgentIds={activeAgentIds}
         />
-        {/* Window-manager + chat windows mount here in Phase 1c. */}
+
+        {wm.windows.map((win) => {
+          if (win.kind === 'chat') {
+            const agent = agents.find((a) => a.name === win.agentName);
+            if (!agent) return null;
+            const color = resolveAgentColor(agent);
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+                agentColor={color}
+              >
+                <ChatWindow agent={agent} sessionId={win.sessionId ?? 'main'} />
+              </Window>
+            );
+          }
+          return null;
+        })}
       </div>
-      <Taskbar />
+      <Taskbar
+        windows={wm.windows}
+        focusedId={wm.focusedId}
+        agents={agents}
+        onFocus={wm.focus}
+        onAutoArrange={wm.autoArrange}
+        onSaveLayout={wm.saveLayout}
+        onRestoreLayout={wm.restoreLayout}
+      />
     </div>
   );
 }

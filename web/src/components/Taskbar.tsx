@@ -1,7 +1,6 @@
-// Bottom taskbar. Replicates the click-dummy `.taskbar` —
-// somora-logo + window-list (placeholder for now) + tools (auto-
-// arrange / save / restore are stubs in Phase 1, will wire to the
-// window manager in Phase 1c) + cpu-mem stub + clock.
+// Bottom taskbar. Click-dummy layout: somora-logo + window-list
+// (one button per open window, color-tinted per agent) + tools
+// (auto-arrange / save / restore) + cpu/mem stub + clock.
 //
 // No logout button: somora is LAN-only, no auth, no session to
 // terminate.
@@ -9,8 +8,29 @@
 import { useEffect, useState } from 'react';
 import { Grid3x3, Pin, Sparkles } from 'lucide-react';
 import { Koala } from './Koala';
+import type { WindowState } from '../types/window';
+import type { AgentInfo } from '../lib/api';
+import { resolveAgentColor } from '../lib/colors';
 
-export function Taskbar() {
+interface Props {
+  windows: WindowState[];
+  focusedId: string | null;
+  agents: AgentInfo[];
+  onFocus: (id: string) => void;
+  onAutoArrange: () => void;
+  onSaveLayout: () => void;
+  onRestoreLayout: () => void;
+}
+
+export function Taskbar({
+  windows,
+  focusedId,
+  agents,
+  onFocus,
+  onAutoArrange,
+  onSaveLayout,
+  onRestoreLayout,
+}: Props) {
   const [clock, setClock] = useState(new Date());
 
   useEffect(() => {
@@ -34,19 +54,79 @@ export function Taskbar() {
       </div>
 
       <div className="taskbar-windows">
-        {/* window list — wired in Phase 1c */}
+        {windows.map((w) => {
+          const agent =
+            w.kind === 'chat' && w.agentName
+              ? agents.find((a) => a.name === w.agentName)
+              : undefined;
+          const color = agent ? resolveAgentColor(agent) : undefined;
+          const isFocused = focusedId === w.id && !w.minimized;
+          return (
+            <button
+              key={w.id}
+              type="button"
+              className={[
+                'taskbar-window',
+                isFocused ? 'focused' : '',
+                w.minimized ? 'minimized' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              onClick={() => onFocus(w.id)}
+              title={w.title}
+              style={color ? ({ '--row-color': color } as React.CSSProperties) : undefined}
+            >
+              <span
+                className="taskbar-window-dot"
+                style={
+                  color
+                    ? { background: color, boxShadow: `0 0 6px ${color}88` }
+                    : undefined
+                }
+              />
+              <span
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {agent && <span style={{ fontSize: 12 }}>{agent.icon ?? '🤖'}</span>}
+                <span className="taskbar-window-title">{w.title}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="taskbar-tools">
-        <button className="taskbar-tool" type="button" title="Auto-arrange windows" disabled>
+        <button
+          className="taskbar-tool"
+          type="button"
+          title="Auto-arrange windows"
+          onClick={onAutoArrange}
+        >
           <Grid3x3 size={14} />
           <span>Arrange</span>
         </button>
-        <button className="taskbar-tool" type="button" title="Save layout" disabled>
+        <button
+          className="taskbar-tool"
+          type="button"
+          title="Save current layout"
+          onClick={onSaveLayout}
+        >
           <Pin size={14} />
           <span>Save</span>
         </button>
-        <button className="taskbar-tool" type="button" title="Restore layout" disabled>
+        <button
+          className="taskbar-tool"
+          type="button"
+          title="Restore saved layout"
+          onClick={onRestoreLayout}
+        >
           <Sparkles size={14} />
           <span>Restore</span>
         </button>

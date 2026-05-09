@@ -1,0 +1,198 @@
+// Window manager: open / close / focus / move / resize / persist.
+// Mirrors the click-dummy desktop.jsx state model in TS-strict form,
+// with a few quality-of-life additions (auto-arrange, save/restore).
+
+import { useCallback, useEffect, useState } from 'react';
+import type { PersistedLayout, WindowState } from '../types/window';
+
+const STORAGE_KEY = 'somora-web-layout';
+const STORAGE_KEY_SAVED = 'somora-web-layout-saved';
+const TASKBAR_HEIGHT = 56;
+
+export interface OpenChatArgs {
+  agentName: string;
+  sessionId: string;
+  agentLabel: string;
+  agentMeta?: string;
+  agentIcon?: string;
+}
+
+export function useWindowManager() {
+  const [windows, setWindows] = useState<WindowState[]>([]);
+  const [zCounter, setZCounter] = useState(10);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+
+  // Restore persisted layout on first mount.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as PersistedLayout;
+        if (Array.isArray(parsed.windows)) {
+          setWindows(parsed.windows);
+          setZCounter(parsed.zCounter || 10);
+          setFocusedId(parsed.focusedId ?? null);
+        }
+      }
+    } catch {
+      // Corrupt storage — ignore, start with empty layout.
+    }
+    setHydrated(true);
+  }, []);
+
+  // Persist on every change, but only after initial hydration so we
+  // don't immediately wipe the saved layout with the empty-default.
+  useEffect(() => {
+    if (!hydrated) return;
+    const snap: PersistedLayout = { windows, zCounter, focusedId };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(snap));
+    } catch {
+      // Quota exceeded — silently drop, layout will live for the
+      // session at least.
+    }
+  }, [windows, zCounter, focusedId, hydrated]);
+
+  const focus = useCallback((id: string) => {
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+    setWindows((ws) =>
+      ws.map((w) => (w.id === id ? { ...w, z: zCounter + 1, minimized: false } : w)),
+    );
+  }, [zCounter]);
+
+  const close = useCallback((id: string) => {
+    setWindows((ws) => ws.filter((w) => w.id !== id));
+    setFocusedId((cur) => (cur === id ? null : cur));
+  }, []);
+
+  const minimize = useCallback((id: string) => {
+    setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, minimized: true } : w)));
+  }, []);
+
+  const move = useCallback((id: string, x: number, y: number) => {
+    setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, x, y } : w)));
+  }, []);
+
+  const resize = useCallback((id: string, w: number, h: number) => {
+    setWindows((ws) => ws.map((win) => (win.id === id ? { ...win, w, h } : win)));
+  }, []);
+
+  /** Open or focus a chat window for (agent, session). If a window
+   *  for the same agent+session already exists, focus it instead of
+   *  opening a duplicate. */
+  const openChat = useCallback(
+    (args: OpenChatArgs) => {
+      const existing = windows.find(
+        (w) => w.kind === 'chat' && w.agentName === args.agentName && w.sessionId === args.sessionId,
+      );
+      if (existing) {
+        focus(existing.id);
+        return;
+      }
+      const pos = randomPos(520, 460, zCounter + 1);
+      const id = `chat-${args.agentName}-${args.sessionId}-${Date.now()}`;
+      const next: WindowState = {
+        id,
+        kind: 'chat',
+        agentName: args.agentName,
+        sessionId: args.sessionId,
+        title: args.agentLabel,
+        ...(args.agentMeta ? { meta: args.agentMeta } : {}),
+        ...(args.agentIcon ? { icon: args.agentIcon } : {}),
+        ...pos,
+        minimized: false,
+      };
+      setWindows((ws) => [...ws, next]);
+      setZCounter((z) => z + 1);
+      setFocusedId(id);
+    },
+    [windows, zCounter, focus],
+  );
+
+  const autoArrange = useCallback(() => {
+    setWindows((ws) => {
+      const visible = ws.filter((w) => !w.minimized);
+      const n = visible.length;
+      if (n === 0) return ws;
+      const dockX = 140;
+      const padX = 24;
+      const padY = 24;
+      const gap = 16;
+      const areaW = window.innerWidth - dockX - padX;
+      const areaH = window.innerHeight - TASKBAR_HEIGHT - padY * 2;
+      const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
+      const rows = Math.ceil(n / cols);
+      const cellW = Math.floor((areaW - gap * (cols - 1)) / cols);
+      const cellH = Math.floor((areaH - gap * (rows - 1)) / rows);
+      return ws.map((w) => {
+        if (w.minimized) return w;
+        const idx = visible.indexOf(w);
+        if (idx === -1) return w;
+        const r = Math.floor(idx / cols);
+        const c = idx % cols;
+        return {
+          ...w,
+          x: dockX + c * (cellW + gap),
+          y: padY + r * (cellH + gap),
+          w: cellW,
+          h: cellH,
+        };
+      });
+    });
+  }, []);
+
+  const saveLayout = useCallback(() => {
+    const snap: PersistedLayout = { windows, zCounter, focusedId };
+    try {
+      localStorage.setItem(STORAGE_KEY_SAVED, JSON.stringify(snap));
+    } catch {
+      // Quota — non-fatal.
+    }
+  }, [windows, zCounter, focusedId]);
+
+  const restoreLayout = useCallback(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_SAVED);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw) as PersistedLayout;
+      if (Array.isArray(parsed.windows)) {
+        setWindows(parsed.windows);
+        setZCounter(parsed.zCounter || 10);
+        setFocusedId(parsed.focusedId ?? null);
+        return true;
+      }
+    } catch {
+      /* corrupt save — ignore */
+    }
+    return false;
+  }, []);
+
+  return {
+    windows,
+    focusedId,
+    openChat,
+    focus,
+    close,
+    minimize,
+    move,
+    resize,
+    autoArrange,
+    saveLayout,
+    restoreLayout,
+  };
+}
+
+function randomPos(
+  width: number,
+  height: number,
+  z: number,
+): { x: number; y: number; w: number; h: number; z: number } {
+  const dockOffset = 140;
+  const maxX = window.innerWidth - width - 40;
+  const maxY = window.innerHeight - height - TASKBAR_HEIGHT - 40;
+  const x = dockOffset + Math.floor(Math.random() * Math.max(1, maxX - dockOffset));
+  const y = 60 + Math.floor(Math.random() * Math.max(1, maxY - 60));
+  return { x, y, w: width, h: height, z };
+}
