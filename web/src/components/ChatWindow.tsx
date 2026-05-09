@@ -73,6 +73,19 @@ export function ChatWindow({ agent, sessionId, windowFocused }: Props) {
     textareaRef.current?.focus();
   }, [windowFocused]);
 
+  // After streaming ends, refocus the textarea so the user can
+  // immediately type the next message — the `disabled={streaming}`
+  // attribute blurs the field while the agent answers, and the
+  // browser doesn't auto-restore focus when disabled flips off.
+  // Gate on windowFocused so a streaming-end in a background
+  // session doesn't yank focus from whichever window the user is
+  // currently looking at.
+  useEffect(() => {
+    if (chat.streaming) return;
+    if (!windowFocused) return;
+    textareaRef.current?.focus();
+  }, [chat.streaming, windowFocused]);
+
   const focusTextareaIfPossible = useCallback((target: EventTarget | null) => {
     // Skip when the click landed on a real interactive element so
     // we don't yank focus away mid-action (button click, link,
