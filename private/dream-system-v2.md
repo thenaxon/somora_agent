@@ -240,6 +240,82 @@ User reviewt mit dream_apply / dream_dismiss wie heute.
 
 ---
 
+## Configuration Scope
+
+Klare Trennung wo welche Phase konfiguriert wird:
+
+### REM — pro Agent
+
+`~/.somora/agents/<agent>/agent.yaml`:
+```yaml
+rem:
+  enabled: true
+  model: gemma4big        # Worker-Model für Extraction
+  idleMinutes: 30         # Auto-Trigger nach N min Idle (manual /reset
+                          # ignoriert das, läuft sofort)
+  chunkTokens: 50000      # Range-Splitting für lokale Modelle
+  chunkTimeoutMs: 600000
+```
+
+Per-Agent weil:
+- Verschiedene Agents haben verschiedene Session-Volumina
+- Mancher Agent will häufig extrahieren, anderer selten
+- Worker-Model kann pro Agent variieren (z.B. teurer Agent kriegt opus)
+
+### Deep — Plattform-weit
+
+`~/.somora/config.yaml`:
+```yaml
+wiki:
+  enabled: true
+  vaultSubfolder: somora
+  deep:
+    enabled: true
+    model: opus           # Worker-Model für Single-Prompt-Decision
+    intervalHours: 12     # Auto-Trigger Schedule
+    preSweepMinutes: 60   # Vorlauf für REM-Pre-Sweep (alle Agents)
+                          # damit ihre Memory-Files settled sind
+```
+
+Plattform-weit weil:
+- Deep verarbeitet ALLE Agents in einem Run
+- Wiki ist ohnehin shared
+- Ein Worker-Model für die ganze Plattform reicht (Opus ist gut genug)
+
+### Lucid — Plattform-weit
+
+`~/.somora/config.yaml`:
+```yaml
+wiki:
+  lucid:
+    enabled: true
+    model: opus           # Worker-Model für Cleanup-Findings
+    intervalDays: 7       # Auto-Trigger Schedule
+    requireApproval: true # Findings landen pending, User approved
+    approvalAgent: <name> # Welcher Agent für Approval-Loop zuständig
+                          # (bekommt Notifications wenn Findings da sind)
+```
+
+Plattform-weit weil:
+- Lucid arbeitet auf dem gesamten Wiki
+- Wiki ist shared, Cleanup ist shared
+- Ein Approval-Agent reicht (default: erster konfigurierter Agent)
+
+### Was NICHT pro Agent ist
+
+- Wiki-Konfiguration (vaultSubfolder, Subfolder-Konventionen)
+- Deep- und Lucid-Worker-Models und Schedules
+- Cluster-Strategien (Lucid)
+- Hash-Cache-Mechanik (technisch pro Agent gespeichert, aber Logic ist global)
+
+### Was NICHT plattform-weit ist
+
+- REM-Frequenz und Worker-Model
+- REM-Approval-Status pro Findings
+- Memory-File-Eigentümer (jeder Agent hat eigenen Memory-Dir)
+
+---
+
 ## Lifecycle-Vertrag
 
 ### Memory-File-Lifecycle
@@ -317,77 +393,318 @@ WIRD INVALIDIERT durch:
 | Templates | `src/wiki/templates.ts` | Stub-Build + parse |
 | Tools | `src/tools/dream/tools.ts` | dream_run/list/get/apply/dismiss |
 
+### Migrations-Prinzip: clean delete, keine Compat-Shims
+
+**Wichtig:** somora hat keinen externen API-Konsumenten. Alle Tool-Calls 
+gehen durch Agents die wir kontrollieren, alle Configs liegen lokal. 
+Es gibt keinen Grund für Backward-Compat-Layer. Bei jedem Migrations-
+Schritt wird der ALTE Code KOMPLETT GELÖSCHT, nicht deprecated.
+
+Konkrete Konsequenzen:
+- Keine `mode → phase` Alias-Akzeptanz. `mode` ist nach v2.1 weg.
+- Kein „Stubs lesen für Compat". Wir machen einmal eine Migration und 
+  danach existiert das Stub-Konzept im Code nicht mehr.
+- Keine `wiki.promotion`-Config-Keys neben `wiki.deep`. Eine Schreibweise.
+- Keine alten Lint-Detector-Files die „nur für Notfall" da bleiben.
+
+Pro Stufe wird festgehalten:
+- Welche Files NEU entstehen
+- Welche Files VERÄNDERT werden
+- Welche Files / Funktionen / Symbole KOMPLETT GELÖSCHT werden
+- Welche Configs UMBENANNT werden (alte Keys → Error oder Auto-Migration)
+
 ### Phasenweise Migration
 
-**Stufe v2.1 — Naming + Tool-Surface (klein, low-risk)**
-- `dream_run({mode:'a'\|'b'\|'c'})` → `dream_run({phase:'rem'\|'deep'\|'lucid'})`
-- Backward-compat: `mode` als Alias akzeptieren mit deprecation-warning
-- Doku in `docs/dream-mode.md` umbenennen + verweisen
-- Tool-Descriptions anpassen
-- ~1h Aufwand, keine konzeptionelle Änderung
+**Stufe v2.1 — Naming + Tool-Surface**
 
-**Stufe v2.2 — Stub-Pattern abschaffen, Memory-File-Delete (mittel)**
-- `applyPromote`: writeStub → unlink Memory-File
-- `applyMerge`: clearObservations → unlink Memory-File
-- `classifyCandidate`: vereinfachen, Stub-Detection raus
-- `templates.ts`: isStub/parseStub/buildStub deprecaten (für Bootstrap-
-  Migration noch lesbar halten, aber nicht mehr schreibend verwenden)
-- Bestehende Stubs bei erstem Deep-Run nach Upgrade: als Memory-Files 
-  behandeln, mit Recent-observations als Body. Outcome: meist re-merge 
-  in existierende Wiki-Page, dann Memory-File weg.
-- ~3h Aufwand, höhere Komplexität
+Ziel: Phasen-Namen REM/Deep/Lucid in Tool-Surface, Configs, Docs.
 
-**Stufe v2.3 — Single-Prompt-Logic in Deep (mittel)**
-- `PROMOTE_SYSTEM_PROMPT` + `MERGE_SYSTEM_PROMPT` → ein gemeinsamer 
-  `DEEP_SYSTEM_PROMPT` mit drei Optionen (skip/promote/merge)
-- `dream-b-dispatcher.ts`: callOneShotLLM mit neuem Prompt + erweitertem 
-  Context (wiki-summary + relevant-page-bodies)
-- `processCandidate`: Routing-Code raus, alles via LLM-Output
-- `queued_merge` Outcome verschwindet — Slug-Collisions sind jetzt 
-  immer auto-merge via LLM
-- ~4h Aufwand
+Verändert:
+- `src/tools/dream/tools.ts`: `dream_run({mode:'a'\|'b'\|'c'})` → 
+  `dream_run({phase:'rem'\|'deep'\|'lucid'})`. `mode`-Feld komplett 
+  entfernt aus Schema und Handler.
+- `src/wiki/auto-worker.ts` → `src/dream/deep-worker.ts` (umbenannt + 
+  verschoben in dream/-Folder für Konsistenz mit rem)
+- `src/wiki/lint-worker.ts` → `src/dream/lucid-worker.ts`
+- `src/dream/auto-worker.ts` → `src/dream/rem-worker.ts`
+- `src/server/index.ts`: Worker-Variablen-Namen anpassen 
+  (`wikiPromotionWorker` → `deepWorker`, `wikiLintWorker` → `lucidWorker`, 
+  `autoDreamWorker` → `remWorker`)
+- HTTP-Endpunkte: `/wiki/run-promotion` → `/dream/run-deep`, 
+  `/wiki/run-lint` → `/dream/run-lucid`
+- Configs `wiki.promotion.*` → `wiki.deep.*`, `wiki.lint.*` → `wiki.lucid.*`
+- `agent.yaml.dream.*` → `agent.yaml.rem.*` mit Schema-Update
+- `docs/dream-mode.md` → `docs/dream-phases.md` (neuer Inhalt, alter weg)
 
-**Stufe v2.4 — Hash-Cache für Skips (klein)**
-- `.deep-skip-cache.json` pro Agent
-- Deep-Runner: vor LLM-Call Cache-Check, nach LLM-Call ggf. Cache-Update
-- ~1.5h Aufwand
+Komplett entfernt:
+- Config-Keys `wiki.promotion`, `wiki.lint`, `agent.yaml.dream` 
+  (alte Schreibweisen — kein Alias)
+- Tool-Schema-Param `mode`
+- HTTP-Routen `/wiki/run-promotion`, `/wiki/run-lint`
 
-**Stufe v2.5 — REM Wiki-Awareness (mittel)**
-- `wiki-context.ts` erweitern: index.md als default, Top-N Embedding-
-  Match-Pages, plus alle in Session erwähnten Slugs
-- System-Prompt klarstellen: „Wiki ist canonical, dedupe gegen Wiki, 
-  nicht gegen Memory"
-- ~2h Aufwand
+Aufwand ~2h. Trifft viele Files (Renames + Schema-Update), aber 
+mechanisch.
 
-**Stufe v2.6 — Lucid LLM-driven (groß)**
-- `lint-runner.ts` und `lint-detector.ts` beide ausmustern
-- Neuer `lucid-runner.ts` der Wiki-Pages an Opus übergibt mit dem 
-  Cleanup-Prompt
-- Cluster-Strategie initial: Single-Pass für <300 Pages
-- Findings-Schema neu: contradiction/stale/split/dead-ref/outdated/wanted-page
-- `lint-actions.ts` ersetzt durch `lucid-actions.ts` mit LLM-output-
-  driven Apply-Pfaden
-- Approval-Loop bleibt strukturell wie heute
-- ~6h Aufwand
+---
+
+**Stufe v2.2 — Stub-Pattern abschaffen**
+
+Ziel: Memory-Files leben full-content im Memory-Dir. Nach Deep-Konsoli-
+dierung werden sie GELÖSCHT, nicht gestubbt. Wiki = single source of truth.
+
+Pre-Migration: einmalige Konvertierung bestehender Stubs.
+
+Migrations-Skript `scripts/v2.2-destub-memories.ts`:
+```ts
+für jeden agent:
+  für jedes memory/<slug>.md das einen promoted_to-Frontmatter hat:
+    wenn das wiki/<promoted_to>.md existiert UND Recent-observations leer:
+      → memory-file LÖSCHEN (alles ist im Wiki, kein Verlust)
+    wenn Recent-observations NICHT leer:
+      → memory-file zurück zu fresh memory: Recent-observations als Body, 
+        promoted_to/promoted_at-Frontmatter raus
+        → wird beim nächsten Deep-Run als merge-candidate behandelt und 
+          dann gelöscht
+    wenn das wiki/<promoted_to>.md NICHT existiert (durch Smoke gelöscht 
+    oder ähnlich):
+      → memory-file zurück zu fresh memory mit Recent-observations als 
+        Body → wird beim nächsten Deep-Run als promote-candidate behandelt
+```
+
+Skript läuft einmal, danach existiert kein Stub mehr im Memory-Dir.
+
+Verändert:
+- `src/wiki/dream-b-actions.ts` (oder umbenannt zu `src/dream/deep-actions.ts`): 
+  - `applyPromote`: schreibt Wiki-File, dann `unlink(memoryPath)`
+  - `applyMerge`: schreibt Wiki-File, dann `unlink(memoryPath)`
+- `src/dream/deep-runner.ts` (umbenannt aus `dream-b-runner.ts`): 
+  - `classifyCandidate` entfernt — alle Memory-Files sind „fresh"
+  - `processCandidate` ohne Stub-Detection-Branch
+
+Komplett entfernt:
+- `src/wiki/templates.ts`: Funktionen `isStub`, `parseStub`, `buildStub`, 
+  `appendObservation`, `extractObservations`, `clearObservations`, 
+  Konstante `STUB_OBSERVATIONS_HEADER`, Type `MemoryStub`, Type 
+  `StubFrontmatter`, alle Helper `hasPromotedAt`/`coercePromotedAt`. 
+  Übrig bleiben nur `buildInitialWikiPage`, `parseWikiPage` für Wiki-
+  Page-IO.
+- `src/wiki/types.ts`: Outcome-Variant `queued_merge` (kommt durch 
+  v2.3 ohnehin weg, hier konsistent zusammen). PromotionCandidate-Field 
+  `kind: 'stub_with_observations'`. PromotionCandidate-Field `stub`.
+- Alle Stellen die `isStub`/`parseStub` aufrufen oder auf `promoted_to`-
+  Frontmatter prüfen.
+
+Aufwand ~3h: Migrations-Skript + Code-Cleanup + Testing.
+
+---
+
+**Stufe v2.3 — Single-Prompt-Logic in Deep**
+
+Ziel: Ein System-Prompt der Skip/Promote/Merge in einem LLM-Call 
+entscheidet. Wiki-Awareness im Prompt durch Index + Embedding-Match.
+
+Verändert:
+- `src/wiki/dream-b-prompts.ts` → `src/dream/deep-prompts.ts`: ein 
+  einziger `DEEP_SYSTEM_PROMPT` mit drei Output-Optionen.
+- `src/dream/deep-dispatcher.ts` (umbenannt aus dream-b-dispatcher.ts): 
+  ein `decideMemoryFate({memory, wikiContext, workerModel})`-Method 
+  statt zweier separater `decidePromotion`/`decideMerge`.
+- `src/dream/deep-runner.ts`: `processCandidate` ohne route-classification, 
+  alles via LLM-Output-Switch.
+- Wiki-Context-Loading: vor LLM-Call wird Wiki-Index + Top-N Embedding-
+  Match-Pages geladen (gleicher Mechanismus wie wir für REM in v2.5 bauen 
+  — Code-Sharing).
+
+Komplett entfernt:
+- `PROMOTE_SYSTEM_PROMPT` und `MERGE_SYSTEM_PROMPT` als separate Konstanten
+- `decidePromotion` und `decideMerge` als separate Dispatcher-Methoden
+- `classifyCandidate` als Code-Routing-Funktion (war bereits in v2.2 weg)
+- Outcome-Variant `queued_merge` aus `CandidateOutcome` (kommt nicht mehr 
+  vor, weil Single-Prompt direkt zwischen promote und merge entscheidet)
+- Alle Code-Stellen die zwischen merge-route und promote-route 
+  unterscheiden vor dem LLM-Call.
+
+Aufwand ~4h.
+
+---
+
+**Stufe v2.4 — Hash-Cache für Skips**
+
+Ziel: Skipped Memory-Files werden bei erneutem Deep-Run nicht erneut 
+LLM-evaluiert solange ihr Inhalt unverändert ist.
+
+Neu:
+- `src/dream/deep-skip-cache.ts`: Read/Write-Helper für 
+  `~/.somora/agents/<agent>/memory/.deep-skip-cache.json`. Schema: 
+  `{slug: {hash, skipped_at, reason}}`.
+
+Verändert:
+- `src/dream/deep-runner.ts`: vor `decideMemoryFate` Cache-Check; nach 
+  `decideMemoryFate` mit outcome=skip ggf. Cache-Update; bei 
+  outcome=promote/merge Cache-Entry für diesen Slug entfernen (Memory-
+  File wird ja gelöscht).
+- Optional CLI-Flag `dream_run({phase:'deep', force:true})` der den 
+  Skip-Cache ignoriert (für Re-Eval bei System-Prompt-Änderungen).
+
+Aufwand ~1.5h.
+
+---
+
+**Stufe v2.5 — REM Wiki-Awareness**
+
+Ziel: REM lädt vor Extraction den Wiki-Context vollständig genug um 
+Duplikate zu erkennen.
+
+Verändert:
+- `src/dream/wiki-context.ts`: erweiterte Loading-Strategie. Default-Set 
+  ist jetzt index.md + Top-N Embedding-Match-Pages (basierend auf 
+  Session-Content). Vorherige stub-pointer-derived-Logik fällt weg 
+  (gibt's keine Stubs mehr).
+- `src/dream/extract.ts`: `SYSTEM_PROMPT` klarstellen: „Wiki ist canonical 
+  source of truth, dedupe gegen Wiki-Pages, nicht gegen Memory-Files". 
+  Memory-Layer ist Inbox, nicht Knowledge-Base.
+- `src/dream/runner.ts` (umbenannt zu `rem-runner.ts`): Wiki-Context-
+  Aufruf erweitert.
+
+Komplett entfernt:
+- Stub-Pointer-Resolution-Logic in `wiki-context.ts` (kommt nicht mehr 
+  vor, Stubs sind seit v2.2 abgeschafft)
+- `referencedWiki`-Field-Splitting (heute: stub-derived vs recall-derived; 
+  künftig: ein einheitlicher `wikiContext`)
+
+Aufwand ~2h.
+
+---
+
+**Stufe v2.6 — Lucid LLM-driven**
+
+Ziel: Dream-C-Lint-Apparat komplett ersetzt durch LLM-driven Cleanup.
+
+Neu:
+- `src/dream/lucid-runner.ts`: Single-Pass-Runner. Lädt Wiki-Index + 
+  Page-Bodies (Single-Pass-Strategie für aktuelle Wiki-Größe), gibt an 
+  Opus mit Lucid-System-Prompt, sammelt Findings.
+- `src/dream/lucid-prompt.ts`: System-Prompt für Cleanup-Findings 
+  (contradictions, stale, split, dead-ref, outdated, wanted-page).
+- `src/dream/lucid-actions.ts`: Apply-Funktionen pro Finding-Kind. 
+  LLM gibt strukturierten Diff/Edit-Vorschlag, applyXxx wendet ihn an.
+- `src/dream/lucid-types.ts`: neue Finding-Typen.
+- `src/dream/lucid-storage.ts`: Lucid-Run-Persistierung 
+  (`~/.somora/wiki-lucid/runs/<id>.json`).
+
+Komplett entfernt:
+- `src/wiki/lint-runner.ts`
+- `src/wiki/lint-detector.ts`
+- `src/wiki/lint-actions.ts`
+- `src/wiki/lint-types.ts`
+- `src/wiki/lint-storage.ts`
+- `src/wiki/lint-worker.ts`
+- Alle Detector-Funktionen (`detectBrokenWikilinks`, `detectOrphanPages`, 
+  `detectIndexMissing`, `detectIndexStale`, `detectOneWayLinks`, 
+  `runAllDetectors`)
+- Alle Apply-Funktionen für deterministische Findings 
+  (`applyBrokenWikilinkFix`, `applyOrphanCleanup`, etc.)
+- LintFinding-Union mit alten Kinds
+- Storage-Pfad `~/.somora/wiki-lint/` wird auf `~/.somora/wiki-lucid/` 
+  umbenannt — alte runs umziehen oder einmalig löschen, kein Compat
+
+Approval-Loop in `dream_list/get/apply/dismiss` bleibt strukturell wie 
+heute, aber die Finding-Schemas sind neu.
+
+Aufwand ~6h.
+
+---
 
 **Stufe v2.7 — Cluster-Awareness aktivieren (deferred)**
-- Erst bei >300 Wiki-Pages relevant
-- Subfolder-Pass + Cross-Subfolder-Pass implementieren
-- Token-Budget-Watcher
-- Im FUTURE-Backlog notieren, jetzt nicht implementieren
 
-**Reihenfolge / Empfehlung:**
-1. v2.1 (Naming) zuerst — niedriges Risiko, sofortige UX-Verbesserung
-2. v2.2 (Stub-Abschaffung) als nächstes — entkernt das größte Konzept-
-   Problem
-3. v2.3 (Single-Prompt Deep) und v2.4 (Hash-Cache) zusammen
-4. v2.5 (REM Wiki-Awareness) parallel oder danach — REM kommt heute eh 
-   selten an die Schmerzgrenze, aber konzeptionell wichtig
-5. v2.6 (Lucid LLM-driven) als letztes — größter Brocken, schließt das 
-   Redesign ab
+Erst bei >300 Wiki-Pages relevant. Im FUTURE-Backlog notiert, jetzt 
+nicht implementieren. Wenn Bedarf kommt:
+- Subfolder-Pass-Logic in `lucid-runner.ts`
+- Cross-Subfolder-Pass-Logic
+- Token-Budget-Watcher der zwischen Single-Pass / Subfolder-Pass / 
+  Hierarchical schaltet basierend auf Page-Anzahl und Page-Größe
 
-Total Aufwand grob geschätzt: 17-20h Implementierung + Testing + 
-Migration verifying. Verteilt auf 3-5 Sessions möglich.
+### Reihenfolge / Empfehlung
+
+1. **v2.1 (Naming)** — niedriges Risiko, sofortige UX-Verbesserung. 
+   Nach diesem Schritt heißen alle Phasen REM/Deep/Lucid in Code, 
+   Tools, Docs, Configs. Compat-Layer existieren NICHT.
+2. **v2.2 (Stub-Abschaffung)** — entkernt das größte Konzept-Problem. 
+   Migration einmalig, danach kein Stub-Code mehr.
+3. **v2.3 (Single-Prompt Deep)** + **v2.4 (Hash-Cache)** zusammen — 
+   beide arbeiten am Deep-Runner, sinnvoll in einem Pass.
+4. **v2.5 (REM Wiki-Awareness)** — REM-Verbesserung, ergänzt v2.3 
+   durch geteilten Wiki-Context-Loader.
+5. **v2.6 (Lucid LLM-driven)** — größter Brocken, schließt Redesign ab. 
+   Hier wird der gesamte Lint-Apparat komplett gelöscht.
+
+Total Aufwand ca. 18-22h Implementierung + Testing + Verify. Verteilt 
+auf 3-5 Sessions möglich. Jede Stufe wird verifiziert (Smoke-Test plus 
+Real-Run mit Verifikation in Vault) bevor die nächste anfängt.
+
+### Files-Übersicht — was am Ende existiert vs. existiert heute
+
+**Heute** (Phase-4-Stand):
+```
+src/dream/
+  auto-worker.ts          (REM auto-worker)
+  runner.ts               (REM runner)
+  extract.ts              (REM extract prompt + parsing)
+  wiki-context.ts         (stub-pointer + recall wiki-loading)
+  storage.ts
+  dream-rules.ts          (DELETED in earlier cleanup)
+src/wiki/
+  auto-worker.ts          (Deep auto-worker)
+  dream-b-runner.ts       (Deep orchestrator)
+  dream-b-prompts.ts      (PROMOTE + MERGE prompts)
+  dream-b-llm.ts          (one-shot LLM caller)
+  dream-b-dispatcher.ts   (route-aware dispatcher)
+  dream-b-actions.ts      (applyPromote stubs / applyMerge clears)
+  templates.ts            (stub build/parse + wiki-page parse)
+  conflict.ts             (mtime-aware writes)
+  index-builder.ts        (regenerateIndex)
+  log-builder.ts          (appendLogEntries)
+  lint-runner.ts          (Lucid orchestrator)
+  lint-detector.ts        (deterministic checks)
+  lint-actions.ts         (deterministic apply)
+  lint-types.ts
+  lint-storage.ts
+  lint-worker.ts
+  types.ts                (PromotionCandidate, Outcome, queued_merge)
+```
+
+**Nach v2.6** (Endzustand des Redesigns):
+```
+src/dream/
+  rem-worker.ts           (Auto-trigger für REM)
+  rem-runner.ts           (REM runner)
+  rem-extract.ts          (REM extract prompt + parsing)
+  deep-worker.ts          (Auto-trigger für Deep)
+  deep-runner.ts          (Deep orchestrator, single-prompt)
+  deep-prompts.ts         (DEEP_SYSTEM_PROMPT)
+  deep-llm.ts             (one-shot LLM caller — kann shared sein für lucid)
+  deep-dispatcher.ts      (decideMemoryFate)
+  deep-actions.ts         (applyPromote → unlink, applyMerge → unlink)
+  deep-skip-cache.ts      (Hash-Cache)
+  lucid-worker.ts         (Auto-trigger für Lucid)
+  lucid-runner.ts         (Lucid orchestrator)
+  lucid-prompt.ts         (Lucid System-Prompt)
+  lucid-actions.ts        (LLM-output-driven applies)
+  lucid-types.ts          (neue Finding-Schemas)
+  lucid-storage.ts        (Lucid-Run-Persistierung)
+  wiki-context.ts         (shared loader für REM und Deep)
+  storage.ts              (REM-Findings-Storage)
+src/wiki/
+  templates.ts            (NUR noch buildInitialWikiPage, parseWikiPage)
+  conflict.ts             (mtime-aware writes — bleibt)
+  index-builder.ts        (regenerateIndex — bleibt)
+  log-builder.ts          (appendLogEntries — bleibt)
+  types.ts                (vereinfacht: Outcome ohne queued_merge)
+```
+
+**Was komplett verschwindet**: 11 Files plus zig Funktionen/Types/Konstanten 
+in den restlichen. Keine zurückbleibenden Compat-Marker oder Deprecation-
+Wrapper.
 
 ---
 
