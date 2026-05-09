@@ -108,10 +108,12 @@ export function useChatSession(agent: string, session: string): ChatSessionState
         setMessages((ms) => {
           const id = streamingAssistantIdRef.current;
           if (id) {
+            // Server-side deltas are CUMULATIVE — each event carries
+            // the full accumulated text, not the new chunk. Replace,
+            // don't append. (Wire-format note in src/types/events.ts:
+            // "Deltas are cumulative.")
             return ms.map((m) =>
-              m.role === 'assistant' && m.id === id
-                ? { ...m, text: m.text + d.text }
-                : m,
+              m.role === 'assistant' && m.id === id ? { ...m, text: d.text } : m,
             );
           }
           const fresh = newId('msg');
@@ -282,6 +284,17 @@ export function useChatSession(agent: string, session: string): ChatSessionState
   const send = useCallback(
     async (text: string) => {
       if (!text.trim()) return;
+      // Optimistic user-message append — the server doesn't broadcast
+      // an SSE `user_message` event for the user's own POST /chat/send
+      // (those events fire only for A2A inbounds from other agents).
+      // Without this the user's typed text would only show up on the
+      // next history refresh / browser reload. The id is unique so a
+      // future stream-side echo wouldn't duplicate; today there is no
+      // echo for self-sent messages.
+      setMessages((ms) => [
+        ...ms,
+        { id: newId('local-user'), role: 'user', ts: Date.now(), text },
+      ]);
       await api.send(agent, session, text);
     },
     [agent, session],
