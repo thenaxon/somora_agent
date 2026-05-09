@@ -7,7 +7,8 @@
 // terminate.
 
 import { useEffect, useState } from 'react';
-import { Zap, Grid3x3, Pin, Sparkles } from 'lucide-react';
+import { Grid3x3, Pin, Sparkles } from 'lucide-react';
+import { Koala } from './Koala';
 
 export function Taskbar() {
   const [clock, setClock] = useState(new Date());
@@ -24,7 +25,7 @@ export function Taskbar() {
     <div className="taskbar">
       <div className="taskbar-logo">
         <div className="taskbar-logo-mark">
-          <Zap size={16} strokeWidth={2.5} color="#0a0e15" />
+          <Koala size={18} color="#0a0e15" strokeWidth={1.8} />
         </div>
         <div>
           <div className="taskbar-logo-text">somora</div>

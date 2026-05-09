@@ -1,25 +1,56 @@
 // Left-side agent dock. Replicates the click-dummy's `.agent-dock`
 // behaviour — vertical column of 88-px wide tiles, each with a
-// glyph (emoji), label, and (eventually) a status-dot. Per-agent
-// color is applied to the glyph background gradient + status-dot
-// glow.
+// glyph (emoji), label, and a status-dot.
 //
-// Phase 1: static list from /agents. No right-click context menu
-// yet (Phase 2: open existing sessions / new session). No tools
-// section below (Phase 1.5+).
+// Status-dot semantics:
+//   online       — server reachable, agent listed, no special state
+//   busy         — agent currently streaming an answer (Phase 1c+)
+//   loop-holder  — agent currently holds the wiki review loop
+//   offline      — server unreachable (whole dock state shows error)
 
 import type { AgentInfo } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
+
+export type AgentStatus = 'online' | 'busy' | 'loop-holder' | 'offline';
 
 interface Props {
   agents: AgentInfo[];
   loading: boolean;
   error: string | null;
   onAgentClick: (agent: AgentInfo) => void;
+  /** Names of agents whose chat is currently streaming. Empty in
+   *  Phase 1; Phase 1c populates from the per-session streaming
+   *  registry once ChatWindow is in. */
+  streamingAgents?: Set<string>;
+  /** Name of the agent currently holding the wiki review loop, if
+   *  any. Comes from /dream/loop-state. */
+  loopHolder?: string | null;
+  /** Names of agents whose chat windows are currently open. Drives
+   *  the `.active` background tint. */
   activeAgentIds?: Set<string>;
 }
 
-export function AgentDock({ agents, loading, error, onAgentClick, activeAgentIds }: Props) {
+function computeStatus(
+  agentName: string,
+  hasError: boolean,
+  loopHolder: string | null | undefined,
+  isStreaming: boolean,
+): AgentStatus {
+  if (hasError) return 'offline';
+  if (loopHolder === agentName) return 'loop-holder';
+  if (isStreaming) return 'busy';
+  return 'online';
+}
+
+export function AgentDock({
+  agents,
+  loading,
+  error,
+  onAgentClick,
+  streamingAgents,
+  loopHolder,
+  activeAgentIds,
+}: Props) {
   return (
     <div className="agent-dock">
       {loading && (
@@ -41,14 +72,29 @@ export function AgentDock({ agents, loading, error, onAgentClick, activeAgentIds
         agents.map((agent) => {
           const color = resolveAgentColor(agent);
           const isActive = activeAgentIds?.has(agent.name);
+          const status = computeStatus(
+            agent.name,
+            !!error,
+            loopHolder,
+            !!streamingAgents?.has(agent.name),
+          );
+          // role+tabIndex+onKeyDown gives keyboard a11y without
+          // dropping the click-dummy's <div> markup that the CSS
+          // expects (button-element resets would fight .agent-icon).
           return (
-            <button
+            <div
               key={agent.name}
-              type="button"
+              role="button"
+              tabIndex={0}
               className={`agent-icon ${isActive ? 'active' : ''}`}
               onClick={() => onAgentClick(agent)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onAgentClick(agent);
+                }
+              }}
               title={agent.description}
-              style={{ all: 'unset', cursor: 'pointer' }}
             >
               <div
                 className="agent-icon-glyph"
@@ -67,11 +113,11 @@ export function AgentDock({ agents, loading, error, onAgentClick, activeAgentIds
                 >
                   {agent.icon ?? '🤖'}
                 </span>
-                <span className="status-dot online" />
+                <span className={`status-dot ${status}`} />
               </div>
               <div className="agent-icon-label">{agent.name}</div>
               <div className="agent-icon-sub">agent</div>
-            </button>
+            </div>
           );
         })}
     </div>
