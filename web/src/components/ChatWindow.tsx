@@ -88,9 +88,16 @@ export function ChatWindow({ agent, sessionId, windowFocused }: Props) {
         return;
       }
     }
-    const sel = window.getSelection?.();
-    if (sel && sel.toString().length > 0) return;
-    textareaRef.current?.focus();
+    // Defer focus to next tick: a synchronous .focus() during
+    // onMouseDown loses the race against the browser's own
+    // default focus dispatch (the click can move focus to whatever
+    // element it landed on, after our handler runs). setTimeout(0)
+    // queues us after that, so our focus on the textarea wins.
+    setTimeout(() => {
+      const sel = window.getSelection?.();
+      if (sel && sel.toString().length > 0) return;
+      textareaRef.current?.focus();
+    }, 0);
   }, []);
 
   // Filter messages by tools-toggle. When off, hide tool_call +

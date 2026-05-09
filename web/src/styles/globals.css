@@ -35,6 +35,22 @@ body {
   51%, 100% { opacity: 0; }
 }
 
+/* Hide the textarea scrollbar entirely — we auto-grow the height
+ * to match content (up to 120 px). The browser's default still
+ * shows a faint mini-scrollbar even when the content fits, which
+ * looks ugly. Always-on-hidden + dynamic overflow-y from JS keeps
+ * the field clean. When content actually exceeds 120 px the JS
+ * sets overflow-y:auto and the user can wheel-scroll without
+ * needing a visible track. */
+.chat-textarea {
+  scrollbar-width: none;
+}
+.chat-textarea::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* The chat container must strictly clip horizontally — the window
  * body already hides overflow but flex children can blow past their
  * parent's width if they have intrinsic min-content. */
