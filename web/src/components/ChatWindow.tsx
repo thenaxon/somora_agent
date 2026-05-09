@@ -39,7 +39,24 @@ export function ChatWindow({ agent, sessionId, windowFocused }: Props) {
   const color = resolveAgentColor(agent);
   const { model, thinking } = useSessionInfo(agent.name, sessionId);
   const chat = useChatSessionFromContext(agent.name, sessionId);
-  const [showTools, setShowTools] = useState(false);
+  // Tools-toggle persists per agent::session — a reload restores
+  // whatever state the user last clicked into. localStorage key is
+  // scoped so each chat-window remembers its own preference.
+  const showToolsKey = `somora.web.showTools.${agent.name}::${sessionId}`;
+  const [showTools, setShowTools] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(showToolsKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(showToolsKey, showTools ? '1' : '0');
+    } catch {
+      /* storage unavailable — drop silently */
+    }
+  }, [showTools, showToolsKey]);
   const [draft, setDraft] = useState('');
 
   const scrollRef = useRef<HTMLDivElement>(null);
