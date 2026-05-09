@@ -15,6 +15,11 @@ export default defineConfig({
     sourcemap: true,
   },
   server: {
+    // Bind to all interfaces so the dev server is reachable from the
+    // LAN (other machines on the same network browsing to e.g.
+    // http://naxon:5173). LAN-only-by-design — same threat model as
+    // the somora HTTP server: trusted local network, no auth.
+    host: true,
     port: 5173,
     strictPort: true,
     proxy: {

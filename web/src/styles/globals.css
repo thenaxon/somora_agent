@@ -1,4 +1,5 @@
 @import './tokens.css';
+@import './desktop.css';
 
 @tailwind base;
 @tailwind components;
@@ -13,18 +14,10 @@ body {
   padding: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  height: 100%;
 }
 
 #root {
-  min-height: 100vh;
-}
-
-/* Subtle background grid as in the click-dummy desktop. Layered as
- * pseudo-elements on the desktop component itself once we have it,
- * but a base body gradient keeps the empty scaffold from looking
- * like a flat block. */
-body {
-  background:
-    radial-gradient(1200px 800px at 70% 30%, var(--grid) 0%, transparent 60%),
-    var(--bg-0);
+  height: 100vh;
+  overflow: hidden;
 }
