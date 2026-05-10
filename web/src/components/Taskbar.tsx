@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 import { Grid3x3, Pin, Sparkles } from 'lucide-react';
 import { Koala } from './Koala';
 import type { WindowState } from '../types/window';
-import type { AgentInfo } from '../lib/api';
+import { api, type AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
 
 interface Props {
@@ -32,10 +32,20 @@ export function Taskbar({
   onRestoreLayout,
 }: Props) {
   const [clock, setClock] = useState(new Date());
+  const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000 * 30);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    // Fetched once at mount — server version doesn't change without a
+    // restart, and a restart drops every SSE anyway.
+    api
+      .version()
+      .then((r) => setVersion(r.version))
+      .catch(() => setVersion(null));
   }, []);
 
   const time = clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -49,7 +59,7 @@ export function Taskbar({
         </div>
         <div>
           <div className="taskbar-logo-text">somora</div>
-          <div className="taskbar-logo-sub">web · phase 1</div>
+          <div className="taskbar-logo-sub">{version ? `v${version}` : '—'}</div>
         </div>
       </div>
 
@@ -61,6 +71,15 @@ export function Taskbar({
               : undefined;
           const color = agent ? resolveAgentColor(agent) : undefined;
           const isFocused = focusedId === w.id && !w.minimized;
+          // Render the label LIVE from (agentName, sessionId). The
+          // window's `title` is cached at open-time and goes stale
+          // when the user runs `/session <slug>` — we'd display the
+          // old session name forever. Falling back to title only when
+          // the window isn't a chat (no sessionId to show).
+          const live =
+            w.kind === 'chat' && w.agentName
+              ? `${w.agentName} · ${w.sessionId ?? 'main'}`
+              : w.title;
           return (
             <button
               key={w.id}
@@ -73,7 +92,7 @@ export function Taskbar({
                 .filter(Boolean)
                 .join(' ')}
               onClick={() => onFocus(w.id)}
-              title={w.title}
+              title={live}
               style={color ? ({ '--row-color': color } as React.CSSProperties) : undefined}
             >
               <span
@@ -95,7 +114,7 @@ export function Taskbar({
                 }}
               >
                 {agent && <span style={{ fontSize: 12 }}>{agent.icon ?? '🤖'}</span>}
-                <span className="taskbar-window-title">{w.title}</span>
+                <span className="taskbar-window-title">{live}</span>
               </span>
             </button>
           );

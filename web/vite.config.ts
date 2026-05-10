@@ -61,6 +61,7 @@ export default defineConfig({
       '/tools': { target: proxyTarget, changeOrigin: true, secure: true },
       '/tui-config': { target: proxyTarget, changeOrigin: true, secure: true },
       '/health': { target: proxyTarget, changeOrigin: true, secure: true },
+      '/version': { target: proxyTarget, changeOrigin: true, secure: true },
     },
   },
 });

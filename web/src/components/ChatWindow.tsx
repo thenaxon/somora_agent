@@ -21,6 +21,7 @@ import { useChatSessionFromContext } from './ChatProvider';
 import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
 import { AttachmentTray, type PendingAttachment } from './AttachmentTray';
+import { ScreenshotCapture } from './ScreenshotCapture';
 
 interface Props {
   agent: AgentInfo;
@@ -708,6 +709,7 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
         >
           <Paperclip size={14} />
         </button>
+        <ScreenshotCapture onCaptured={(file) => stageFiles([file])} />
         <textarea
           ref={textareaRef}
           className="chat-textarea"

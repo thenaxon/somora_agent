@@ -289,6 +289,13 @@ app.use('*', async (c, next) => {
 
 app.get('/healthz', (c) => c.text('ok'));
 
+// Version endpoint — surfaced to the web client so the taskbar can
+// display the running build. Read once at boot from version.ts (which
+// reads package.json), so this is effectively a static snapshot for
+// the lifetime of the process. JSON keeps room for future fields
+// (build-time, git SHA, env name) without breaking the client.
+app.get('/version', (c) => c.json({ version: SOMORA_VERSION }));
+
 app.get('/env', (c) => c.json(getEffectiveEnv()));
 
 // Display preferences for thin clients (TUI, future web). Server is the

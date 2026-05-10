@@ -23,7 +23,20 @@ interface Props {
 
 type DragState =
   | { type: 'drag'; offsetX: number; offsetY: number }
-  | { type: 'resize'; startX: number; startY: number; startW: number; startH: number }
+  | {
+      type: 'resize';
+      startX: number;
+      startY: number;
+      startW: number;
+      startH: number;
+      /** Window's top-left at resize-start. Captured here so the
+       *  mouse-move handler can clamp the bottom edge against the
+       *  taskbar without having to read fresh win.x/y props (which
+       *  would either be stale in the closure or force the effect
+       *  to re-attach on every position change). */
+      startWinX: number;
+      startWinY: number;
+    }
   | null;
 
 const TASKBAR_HEIGHT = 56;
@@ -81,11 +94,13 @@ export function Window({
         startY: e.clientY,
         startW: win.w,
         startH: win.h,
+        startWinX: win.x,
+        startWinY: win.y,
       };
       e.preventDefault();
       e.stopPropagation();
     },
-    [onFocus, win.id, win.w, win.h],
+    [onFocus, win.id, win.w, win.h, win.x, win.y],
   );
 
   useEffect(() => {
@@ -100,8 +115,22 @@ export function Window({
         );
         onMove(win.id, x, y);
       } else if (ds.type === 'resize') {
-        const w = Math.max(MIN_WIDTH, ds.startW + (e.clientX - ds.startX));
-        const h = Math.max(MIN_HEIGHT, ds.startH + (e.clientY - ds.startY));
+        // Clamp the bottom-right corner so the resize handle never
+        // pushes the window past the taskbar — once the title bar
+        // goes under the taskbar the user can't drag it back up.
+        const maxW = Math.max(MIN_WIDTH, window.innerWidth - ds.startWinX);
+        const maxH = Math.max(
+          MIN_HEIGHT,
+          window.innerHeight - ds.startWinY - TASKBAR_HEIGHT,
+        );
+        const w = Math.min(
+          maxW,
+          Math.max(MIN_WIDTH, ds.startW + (e.clientX - ds.startX)),
+        );
+        const h = Math.min(
+          maxH,
+          Math.max(MIN_HEIGHT, ds.startH + (e.clientY - ds.startY)),
+        );
         onResize(win.id, w, h);
       }
     }

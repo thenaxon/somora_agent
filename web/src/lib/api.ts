@@ -122,6 +122,7 @@ export interface HistoryResponse {
 }
 
 export const api = {
+  version: () => getJson<{ version: string }>('/version'),
   agents: () => getJson<AgentInfo[]>('/agents'),
   sessions: (agent: string) =>
     getJson<SessionSummary[]>(`/agents/${encodeURIComponent(agent)}/sessions`),
