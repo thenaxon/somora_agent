@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/somora-hero.png" alt="somora — agent runtime. Run. Rest. Dream. Agents that dream of what they did and never forget." />
+</p>
+
 # somora 🐨
 
 > A local-first runtime for personal AI agents — multiple personas with
@@ -7,17 +11,6 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
 [![Node ≥20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](#requirements)
-
-<table>
-  <tr>
-    <td><img src="docs/images/somora-tui.png" alt="somora TUI: terminal multi-agent chat with memory injection and tool calls" /></td>
-    <td><img src="docs/images/somora-web.png" alt="somora web: browser desktop with multi-window chat, agent dock, and tmux app" /></td>
-  </tr>
-  <tr>
-    <td align="center"><sub>TUI client (<code>somora tui</code>)</sub></td>
-    <td align="center"><sub>Web client (<code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net:18737/web/</code>)</sub></td>
-  </tr>
-</table>
 
 ## What is somora?
 
@@ -159,6 +152,14 @@ Three first-party clients, all hitting the same local server:
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
 | **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
+
+### TUI — `somora tui`
+
+![somora TUI screenshot — terminal multi-agent chat with memory injection and tool calls](docs/images/somora-tui.png)
+
+### Web — browser desktop
+
+![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web.png)
 
 ## Requirements
 
