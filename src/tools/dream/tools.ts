@@ -645,7 +645,8 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
 async function runDeepViaHttp(wait: boolean, force: boolean): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
-  const url = `http://${host}:${port}/dream/run-deep`;
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  const url = `${scheme}://${host}:${port}/dream/run-deep`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -662,7 +663,8 @@ async function runDeepViaHttp(wait: boolean, force: boolean): Promise<unknown> {
 async function runLucidViaHttp(wait: boolean): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
-  const url = `http://${host}:${port}/dream/run-lucid`;
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  const url = `${scheme}://${host}:${port}/dream/run-lucid`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

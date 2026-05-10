@@ -496,7 +496,10 @@ async function spawnAsyncViaHttp(args: {
 }): Promise<string> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
-  const res = await fetch(`http://${host}:${port}/spawn-async`, {
+  // SOMORA_TLS=1 → server is HTTP/2-over-TLS; loopback must use
+  // https://<publicHost> (see runChatTurnViaHttp below).
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  const res = await fetch(`${scheme}://${host}:${port}/spawn-async`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

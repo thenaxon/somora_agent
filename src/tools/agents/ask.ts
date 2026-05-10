@@ -177,6 +177,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     const start = Date.now();
     const host = process.env.SOMORA_HOST || '127.0.0.1';
     const port = process.env.SOMORA_PORT || '18737';
+    // SOMORA_TLS=1 → server is HTTP/2-over-TLS; A2A loopback must use
+    // https://<publicHost> (see spawn.ts:runChatTurnViaHttp).
+    const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
 
     // AbortController hard-bounds the wait. If the timer fires before
     // the response comes back, the fetch errors with AbortError and we
@@ -189,7 +192,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     const timer = setTimeout(() => ac.abort(), timeoutMs);
 
     try {
-      const res = await fetch(`http://${host}:${port}/chat/send-sync`, {
+      const res = await fetch(`${scheme}://${host}:${port}/chat/send-sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

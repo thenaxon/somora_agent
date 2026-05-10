@@ -54,11 +54,13 @@ export function somoraMemoryServerSpawn(args: {
         ? { SOMORA_SUBAGENT_DEPTH: String(args.subagentDepth) }
         : {}),
       ...(args.activeModelRef ? { SOMORA_ACTIVE_MODEL: args.activeModelRef } : {}),
-      // SOMORA_HOST/PORT are inherited via filterEnv (the parent server
-      // process has them), so spawn_subagent's HTTP-fallback can find
-      // the localhost endpoint. Belt-and-suspenders explicit:
+      // SOMORA_HOST/PORT/TLS are inherited via filterEnv (the parent
+      // server process has them), so spawn_subagent's HTTP-fallback can
+      // find the endpoint and pick the right scheme. Belt-and-suspenders
+      // explicit:
       ...(process.env.SOMORA_HOST ? { SOMORA_HOST: process.env.SOMORA_HOST } : {}),
       ...(process.env.SOMORA_PORT ? { SOMORA_PORT: process.env.SOMORA_PORT } : {}),
+      ...(process.env.SOMORA_TLS ? { SOMORA_TLS: process.env.SOMORA_TLS } : {}),
     },
   };
 }
@@ -111,6 +113,11 @@ export function somoraMemoryCodexFlags(args: {
   }
   if (process.env.SOMORA_PORT) {
     envEntries.push(`SOMORA_PORT = ${tomlString(process.env.SOMORA_PORT)}`);
+  }
+  // Forward TLS flag so the MCP child's HTTP fallback uses https://
+  // when the parent runs HTTP/2-over-TLS (see spawn.ts:runChatTurnViaHttp).
+  if (process.env.SOMORA_TLS) {
+    envEntries.push(`SOMORA_TLS = ${tomlString(process.env.SOMORA_TLS)}`);
   }
   if (args.session) {
     envEntries.push(`SOMORA_SESSION = ${tomlString(args.session)}`);
