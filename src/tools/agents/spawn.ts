@@ -539,7 +539,13 @@ async function runChatTurnViaHttp(args: {
 }): Promise<ChatTurnResult> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
-  const url = `http://${host}:${port}/chat/send-sync`;
+  // SOMORA_TLS=1 means the parent server is on HTTP/2-over-TLS — the
+  // MCP child must reach back via https://<publicHost> rather than
+  // plain HTTP loopback, since the cert is bound to that hostname.
+  // SOMORA_HOST is rewritten to the publicHost FQDN by the parent at
+  // startup when TLS is on, so this is just a scheme switch.
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  const url = `${scheme}://${host}:${port}/chat/send-sync`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

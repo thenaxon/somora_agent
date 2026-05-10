@@ -144,7 +144,7 @@ Three first-party clients, all hitting the same local server:
 | Client | Where | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `http://<host>:18737/web/` | Browser desktop with multi-window chat per agent. LAN-trust, no auth — bind via `SOMORA_HOST=0.0.0.0`. See [docs/web.md](docs/web.md). |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
 
 ## Requirements

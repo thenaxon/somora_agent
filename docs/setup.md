@@ -170,13 +170,96 @@ wiki:
 Per-agent REM (session→memory extraction) is configured in each
 `agent.yaml`, not here — see [agents.md](agents.md).
 
+## HTTPS (Tailscale) — required for the web client at scale
+
+The web client opens **one persistent SSE connection per chat window**.
+Browsers cap HTTP/1.1 at 6 concurrent connections per origin, so a multi-
+agent setup (and tmux session attaches in Phase 1.5) hits that ceiling
+fast — symptom: new chat tabs silently fail to send, agents seem
+unresponsive.
+
+Solution: serve somora over **HTTP/2-over-TLS**. HTTP/2 multiplexes
+every stream over a single TCP connection, lifting the limit entirely.
+The same upgrade also unlocks secure-context-only browser APIs that the
+roadmap depends on (mic / screenshare / clipboard write / push
+notifications / service workers).
+
+**somora's blessed path is Tailscale.** Tailscale issues
+publicly-trusted Let's Encrypt certs for your tailnet's `*.ts.net`
+hostnames, free, with a single command — Node + every browser accept
+them with no warnings, no CA installs, and no manual cert pinning. If
+you're not on Tailscale you'll need to wire up your own cert (mkcert
+for LAN-only, or a real DNS-validated LE cert) — same config block,
+different acquisition.
+
+### Set up TLS via Tailscale
+
+1. Install Tailscale on the somora host (`sudo tailscale up`).
+2. In the [Tailscale admin DNS panel](https://login.tailscale.com/admin/dns),
+   enable **MagicDNS** and **HTTPS Certificates** (one-time tailnet setting).
+3. Generate certs into `~/.somora/certs/`:
+
+   ```bash
+   mkdir -p ~/.somora/certs
+   cd ~/.somora/certs
+   tailscale cert <your-host>.<your-tailnet>.ts.net
+   ```
+
+   `tailscale status` shows your hostname; the FQDN is
+   `<host>.<tailnet>.ts.net`. The command writes
+   `<fqdn>.crt` (cert) and `<fqdn>.key` (private key, mode 0600).
+4. Reference them in `~/.somora/config.yaml`:
+
+   ```yaml
+   server:
+     port: 18737
+     tls:
+       cert: ~/.somora/certs/naxon.tailf6ec51.ts.net.crt
+       key:  ~/.somora/certs/naxon.tailf6ec51.ts.net.key
+       publicHost: naxon.tailf6ec51.ts.net
+   ```
+
+   `publicHost` MUST match the cert subject — strict TLS verification is
+   on. Internal MCP-child callers (subagent fallback in
+   `src/tools/agents/spawn.ts`) read this hostname from env at server
+   startup and use it for their own HTTPS callbacks; loopback bypasses
+   are gone now that everything goes through one secure listener.
+5. Restart somora. Connect with the full URL:
+   `https://naxon.tailf6ec51.ts.net:18737/web/`. The `:port` part is
+   required because somora doesn't run on 443.
+
+### Cert renewal
+
+Tailscale certs are valid for ~90 days. Re-run
+`tailscale cert <fqdn>` to refresh. somora doesn't auto-reload —
+restart it after each renewal, or set up a systemd timer that
+re-issues + sends `SIGHUP` (current build doesn't handle `SIGHUP`
+yet, so the timer should `systemctl --user restart somora`).
+
+### Without Tailscale
+
+Drop in any cert + key — the config doesn't care about the issuer, only
+that the file paths point at valid PEM. For local LAN dev,
+[mkcert](https://github.com/FiloSottile/mkcert) is the cleanest
+non-Tailscale option (`mkcert -install` once per device, then
+`mkcert <host>.local 192.168.x.y`). Self-signed (without an installed
+CA) will work but every browser will scream — only acceptable for
+single-developer scratch use.
+
+### Falling back to plain HTTP
+
+Omit the `server.tls` block entirely. somora reverts to HTTP/1.1 plain.
+You'll keep the 6-connection limit and lose secure-context features.
+Fine for single-window dev, no good for multi-agent daily use.
+
 ## Environment overrides
 
 | Var                              | Default                      | Purpose                                  |
 | -------------------------------- | ---------------------------- | ---------------------------------------- |
 | `SOMORA_HOME`                    | `~/.somora`                  | data root for config / agents / sessions |
 | `SOMORA_PORT`                    | `config.yaml:server.port`    | server bind port (override)              |
-| `SOMORA_HOST`                    | `127.0.0.1`                  | CLI connect host                         |
+| `SOMORA_HOST`                    | `127.0.0.1`                  | CLI connect host (auto-set to `tls.publicHost` when TLS is on) |
+| `SOMORA_TLS`                     | `0`                          | set to `1` by parent when serving HTTPS — MCP-child callers use it to switch to https:// |
 | `SOMORA_LOG_LEVEL`               | `info`                       | Pino log level                           |
 | `SOMORA_CLAUDE_BIN`              | `~/.local/bin/claude`        | Claude Code binary path                  |
 | `SOMORA_CODEX_BIN`               | `~/.npm-global/bin/codex`    | Codex CLI binary path                    |

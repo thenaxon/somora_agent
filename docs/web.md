@@ -28,36 +28,81 @@ windows render the same live transcript.
 
 ## Access
 
-The somora server mounts the production bundle at `/web/*`:
+The somora server mounts the production bundle at `/web/*`. **HTTPS is
+a hard requirement once you open more than one chat window** — see
+"Why HTTPS is required" below. The blessed path is Tailscale, which
+hands out free Let's Encrypt certs for your tailnet's hostnames.
 
 ```
-http://<somora-host>:18737/web/
+https://<your-host>.<your-tailnet>.ts.net:18737/web/
 ```
 
-By default the server binds `127.0.0.1`. To make the web client
-reachable from the LAN, set `SOMORA_HOST=0.0.0.0` in the systemd env
-file (or wherever you launch from):
+For full Tailscale + cert setup steps see [setup.md](setup.md#https-tailscale--required-for-the-web-client-at-scale).
+Short version:
+
+```bash
+# in the Tailscale admin: enable MagicDNS + HTTPS Certificates (one-time)
+mkdir -p ~/.somora/certs && cd ~/.somora/certs
+tailscale cert naxon.tailf6ec51.ts.net   # use your own FQDN
+```
+
+Add to `~/.somora/config.yaml`:
+
+```yaml
+server:
+  port: 18737
+  tls:
+    cert: ~/.somora/certs/naxon.tailf6ec51.ts.net.crt
+    key:  ~/.somora/certs/naxon.tailf6ec51.ts.net.key
+    publicHost: naxon.tailf6ec51.ts.net
+```
+
+Then `systemctl --user restart somora` (or however you launch it).
+
+By default the server binds `127.0.0.1`. To reach it across the
+tailnet/LAN, set `SOMORA_HOST=0.0.0.0`:
 
 ```bash
 # ~/.config/systemd/user/somora.env
 SOMORA_HOST=0.0.0.0
 ```
 
-Then `systemctl --user restart somora`. The server listens on all
-interfaces; child processes (MCP, openai-compat HTTP fallback) keep
-talking to `127.0.0.1` regardless. **There is no auth** — same trust
-model as the API server. LAN-only by design.
+**There is no auth** — same trust model as the API server. Tailnet-only
+by design (everyone with a Tailscale node on your tailnet can reach it,
+no public exposure).
 
 For development:
 
 ```bash
 cd web
 npm install
-npm run dev   # vite on :5173, proxies /agents /chat /dream /tools /tui-config /health to :18737
+npm run dev
+# vite reads ~/.somora/certs automatically and serves
+# https://<host>.<tailnet>.ts.net:5173/web/  (HTTP/2)
+# proxies /agents /chat /dream /tools /tui-config /health to the
+# https somora server
 ```
 
-The dev server also binds `0.0.0.0`, so you can browse from another
-machine while iterating on the UI.
+If `~/.somora/certs/<host>.{crt,key}` aren't present (`SOMORA_TLS_HOST`
+overrides the host name), Vite falls back to plain HTTP/1.1 — works for
+one-window debugging, hits the 6-connection wall fast otherwise.
+
+## Why HTTPS is required
+
+Browsers cap **HTTP/1.1** at 6 concurrent connections per origin. Each
+chat window holds one persistent SSE stream — so 6 windows max before
+new tabs silently fail to send and agents look unresponsive. Tmux
+session attaches (Phase 1.5) and any future xterm.js/WebSocket panels
+will eat connections from the same pool.
+
+HTTP/2-over-TLS multiplexes every stream over **one** TCP connection.
+The 6-limit becomes effectively unlimited, end of problem.
+
+Plus the secure-context bonus that the roadmap leans on — `getUserMedia`
+(mic), `getDisplayMedia` (screenshare), Clipboard async, Service Workers
+(offline + push notifications), Web Push: all require HTTPS. You can
+build a chat app over plain HTTP, but you can't add voice or push
+without it.
 
 ## Window manager
 

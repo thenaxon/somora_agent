@@ -196,14 +196,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         // delta MOVES the bubble back to the end — ensuring tools
         // always render ABOVE the agent's running text (TUI-style)
         // and the cumulative prefix never duplicates.
+        //
+        // Ref bookkeeping (assigning + clearing the streaming id)
+        // happens OUTSIDE the setMessages updater. React StrictMode
+        // double-invokes updaters in dev — any side effect inside
+        // would run twice, with the second pass observing different
+        // ref state, and the bubble would be duplicated on every
+        // chat:final.
         if (d.state === 'delta') {
           patchStream(key, { thinking: false });
+          let trackedId = streamingIdRef.current.get(key);
+          if (!trackedId) {
+            trackedId = newId('msg');
+            streamingIdRef.current.set(key, trackedId);
+          }
+          const id = trackedId;
           setMessages((prev) => {
             const list = prev[key] ?? [];
-            const trackedId = streamingIdRef.current.get(key);
-            const filtered = trackedId ? list.filter((m) => m.id !== trackedId) : list;
-            const id = trackedId ?? newId('msg');
-            if (!trackedId) streamingIdRef.current.set(key, id);
+            const filtered = list.filter((m) => m.id !== id);
             return {
               ...prev,
               [key]: [
@@ -219,12 +229,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             };
           });
         } else if (d.state === 'final') {
+          const id = streamingIdRef.current.get(key) ?? newId('msg');
+          streamingIdRef.current.delete(key);
           setMessages((prev) => {
             const list = prev[key] ?? [];
-            const trackedId = streamingIdRef.current.get(key);
-            const filtered = trackedId ? list.filter((m) => m.id !== trackedId) : list;
-            const id = trackedId ?? newId('msg');
-            streamingIdRef.current.delete(key);
+            const filtered = list.filter((m) => m.id !== id);
             return {
               ...prev,
               [key]: [

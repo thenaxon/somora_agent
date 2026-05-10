@@ -2,6 +2,10 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { readFileSync } from 'node:fs';
+import { createSecureServer as createHttp2SecureServer } from 'node:http2';
+import { homedir } from 'node:os';
+import { resolve as resolvePath } from 'node:path';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
 import { type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
 import {
@@ -1118,6 +1122,36 @@ if (bindHost === '0.0.0.0') {
   process.env.SOMORA_HOST = '127.0.0.1';
 }
 
+// TLS load. config.server.tls is optional; when present, the listener
+// is HTTP/2-over-TLS instead of plain HTTP/1.1. The MCP-child fallback
+// in spawn.ts honors SOMORA_TLS=1 + SOMORA_HOST=<publicHost> env to
+// switch its inner /chat/send-sync caller from http://127.0.0.1 to
+// https://<publicHost> — strict TLS verification kicks in once we go
+// HTTPS, so the hostname must match the cert SAN/CN.
+function expandHomePath(p: string): string {
+  return p.startsWith('~/') ? resolvePath(homedir(), p.slice(2)) : resolvePath(p);
+}
+const tlsConf = config.server.tls;
+let tlsCert: Buffer | undefined;
+let tlsKey: Buffer | undefined;
+if (tlsConf) {
+  try {
+    tlsCert = readFileSync(expandHomePath(tlsConf.cert));
+    tlsKey = readFileSync(expandHomePath(tlsConf.key));
+  } catch (err) {
+    logger.error({
+      msg: 'server.tls.load_failed',
+      cert: tlsConf.cert,
+      key: tlsConf.key,
+      err: (err as Error).message,
+      hint: 'check that `tailscale cert <fqdn>` produced both files; see docs/setup.md.',
+    });
+    process.exit(1);
+  }
+  process.env.SOMORA_TLS = '1';
+  process.env.SOMORA_HOST = tlsConf.publicHost;
+}
+
 // Static mount for the web client. Built artifacts live at
 // `web/dist/` (vite output, base `/web/`), so mounting them at
 // `/web/*` makes the same-origin path work in production. Dev still
@@ -1287,9 +1321,35 @@ const lucidWorker = new LucidWorker({ config });
 lucidWorker.start();
 configureDreamRunTool({ deepWorker, lucidWorker });
 
-serve({ fetch: app.fetch, port, hostname: bindHost }, (info) => {
-  logger.info({ msg: 'server.start', port: info.port, host: bindHost });
-});
+if (tlsCert && tlsKey && tlsConf) {
+  serve(
+    {
+      fetch: app.fetch,
+      port,
+      hostname: bindHost,
+      // allowHTTP1: true keeps HTTP/1.1 fallback available for legacy
+      // tooling (curl, ancient health-check probes, etc.) — modern
+      // browsers negotiate HTTP/2 via ALPN and get the multiplex benefit
+      // automatically. Cert MUST be valid for `publicHost`.
+      createServer: createHttp2SecureServer,
+      serverOptions: { cert: tlsCert, key: tlsKey, allowHTTP1: true },
+    },
+    (info) => {
+      logger.info({
+        msg: 'server.start',
+        port: info.port,
+        host: bindHost,
+        tls: true,
+        publicHost: tlsConf.publicHost,
+        protocol: 'h2',
+      });
+    },
+  );
+} else {
+  serve({ fetch: app.fetch, port, hostname: bindHost }, (info) => {
+    logger.info({ msg: 'server.start', port: info.port, host: bindHost, tls: false });
+  });
+}
 
 // Best-effort cleanup on signal — keeps embedding processes from lingering
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.

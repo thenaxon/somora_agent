@@ -555,10 +555,43 @@ export const WikiConfigSchema = z
   });
 export type WikiConfig = z.infer<typeof WikiConfigSchema>;
 
+// TLS — switches the server from plain HTTP/1.1 to HTTP/2-over-TLS.
+// HTTP/2 multiplexes all streams (SSE, fetch, future WebSocket) over a
+// single TCP connection, dodging the 6-per-origin browser limit that
+// otherwise caps how many chat windows + tmux attaches a user can open.
+//
+// somora's only supported deployment for HTTPS is **Tailscale**: run
+// `tailscale cert <your-tailnet-fqdn>` to get Let's-Encrypt-signed
+// certs for free, then point cert/key at the resulting files. Tailscale
+// certs are publicly trusted (Node + browsers accept them out of the
+// box) and renew via the same one-shot command. Setups without
+// Tailscale would need to plug in their own CA — secure-context-only
+// browser APIs (mic, screenshare, clipboard, push) require HTTPS too,
+// so this is a hard prerequisite for those features.
+export const TlsConfigSchema = z
+  .object({
+    /** Path to TLS certificate file (PEM). When set together with `key`,
+     *  the server listens on HTTP/2-over-TLS instead of plain HTTP. `~`
+     *  expands to $HOME. */
+    cert: z.string().min(1),
+    /** Path to TLS private key file (PEM). `~` expands to $HOME. */
+    key: z.string().min(1),
+    /** External hostname clients should use to reach the server — must
+     *  match the cert's CN/SAN, otherwise strict TLS verification will
+     *  reject the connection. Used by the MCP-child fallback caller in
+     *  src/tools/agents/spawn.ts (which switches from plain-HTTP
+     *  loopback to HTTPS once TLS is on) and surfaced in client docs.
+     *  Example: `naxon.tailf6ec51.ts.net`. */
+    publicHost: z.string().min(1),
+  })
+  .optional();
+export type TlsConfig = z.infer<typeof TlsConfigSchema>;
+
 export const ConfigSchema = z.object({
   server: z
     .object({
       port: z.number().int().positive().default(18737),
+      tls: TlsConfigSchema,
     })
     .default({ port: 18737 }),
   providers: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/), ProviderSchema),
