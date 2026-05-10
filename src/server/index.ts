@@ -1,4 +1,4 @@
-import { serve } from '@hono/node-server';
+import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
@@ -6,12 +6,14 @@ import { readFileSync } from 'node:fs';
 import { createSecureServer as createHttp2SecureServer } from 'node:http2';
 import { homedir } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
+import { WebSocketServer } from 'ws';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
 import { type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
 import { storeAttachment } from '../attachments/store.ts';
 import { detectMimeFromPath } from '../multimodal/mime.ts';
 import { existsSync } from 'node:fs';
 import { readFile as fsReadFile } from 'node:fs/promises';
+import { listTmuxSessions } from '../tmux/list.ts';
 import {
   ensureMemoryDirs,
   getMemoryManager,
@@ -288,6 +290,125 @@ app.use('*', async (c, next) => {
 });
 
 app.get('/healthz', (c) => c.text('ok'));
+
+// Tmux session listing for the web tmux-app. Joins live `tmux ls`
+// output with somora's origin store. Empty list when no tmux server
+// is running — that's a normal state, not an error.
+app.get('/tmux/sessions', async (c) => {
+  const sessions = await listTmuxSessions();
+  return c.json({ sessions });
+});
+
+// Tmux attach: WebSocket bridge to a `tmux attach-session -d -t <name>`
+// PTY. Bidirectional binary frames carry tmux's terminal stream;
+// text frames carry control messages (resize). Sessions only —
+// remote tmux is not browse-able from here yet.
+//
+// Flow:
+//   1. Client opens WSS .../tmux/attach?session=<name>
+//   2. Server spawns `tmux attach-session -d -t <name>` in a PTY
+//      sized 80×24 (refined immediately by the first resize msg)
+//   3. PTY stdout → WS binary frames
+//   4. WS binary frames → PTY stdin
+//   5. WS text frames "{type:'resize',cols,rows}" → PTY resize
+//   6. PTY exit → WS close, or WS close → kill PTY
+app.get(
+  '/tmux/attach',
+  upgradeWebSocket((c) => {
+    const session = c.req.query('session') ?? '';
+    return {
+      async onOpen(_evt, ws) {
+        if (!session || !/^[A-Za-z0-9_./-]+$/.test(session)) {
+          ws.close(1008, 'invalid session name');
+          return;
+        }
+        const sessions = await listTmuxSessions();
+        if (!sessions.find((s) => s.name === session)) {
+          ws.close(1008, `tmux session '${session}' not found`);
+          return;
+        }
+        try {
+          const pty = await import('node-pty');
+          const term = pty.spawn(
+            'tmux',
+            ['attach-session', '-d', '-t', session],
+            {
+              name: 'xterm-256color',
+              cols: 80,
+              rows: 24,
+              cwd: process.env.HOME,
+              env: { ...process.env, TERM: 'xterm-256color' },
+            },
+          );
+          // PTY → WS. node-pty data is a string; we send as binary so
+          // xterm.js decodes the bytes verbatim (tmux emits UTF-8).
+          term.onData((data: string) => {
+            try {
+              ws.send(Buffer.from(data, 'utf8'));
+            } catch {
+              /* socket closed mid-write */
+            }
+          });
+          term.onExit(({ exitCode }) => {
+            try {
+              ws.close(1000, `tmux exited (${exitCode})`);
+            } catch {
+              /* ignore */
+            }
+          });
+          // Stash the term on the raw ws so onMessage / onClose can
+          // reach it — WSContext.raw is the underlying node `ws`
+          // instance (via @hono/node-server). Hand-rolled property
+          // bag because hono's WSContext doesn't expose its own
+          // closure scope.
+          const raw = ws.raw as { __pty?: typeof term } | undefined;
+          if (raw) raw.__pty = term;
+          logger.info({ msg: 'tmux.attach.open', session });
+        } catch (err) {
+          logger.error({
+            msg: 'tmux.attach.spawn_failed',
+            session,
+            err: (err as Error).message,
+          });
+          ws.close(1011, `failed to spawn tmux: ${(err as Error).message}`);
+        }
+      },
+      onMessage(evt, ws) {
+        const raw = ws.raw as { __pty?: { write: (s: string) => void; resize: (cols: number, rows: number) => void } } | undefined;
+        const term = raw?.__pty;
+        if (!term) return;
+        const data = evt.data;
+        if (typeof data === 'string') {
+          // Text frame = control message (JSON). Currently only
+          // resize.
+          try {
+            const msg = JSON.parse(data) as { type?: string; cols?: number; rows?: number };
+            if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+              term.resize(Math.max(2, msg.cols), Math.max(2, msg.rows));
+            }
+          } catch {
+            // unparseable text → ignore; binary path handles real input
+          }
+        } else if (data instanceof ArrayBuffer) {
+          term.write(Buffer.from(data).toString('utf8'));
+        } else if (data instanceof Uint8Array) {
+          term.write(Buffer.from(data).toString('utf8'));
+        } else if (Buffer.isBuffer(data)) {
+          term.write((data as Buffer).toString('utf8'));
+        }
+      },
+      onClose(_evt, ws) {
+        const raw = ws.raw as { __pty?: { kill: () => void } } | undefined;
+        try {
+          raw?.__pty?.kill();
+        } catch {
+          /* already dead */
+        }
+        logger.info({ msg: 'tmux.attach.close', session });
+      },
+    };
+  }),
+);
 
 // Version endpoint — surfaced to the web client so the taskbar can
 // display the running build. Read once at boot from version.ts (which
@@ -1451,6 +1572,13 @@ const lucidWorker = new LucidWorker({ config });
 lucidWorker.start();
 configureDreamRunTool({ deepWorker, lucidWorker });
 
+// WebSocket upgrade goes through a noServer wss so the same listener
+// (HTTPS+H2 or plain HTTP) can route both /chat/stream SSE and
+// /tmux/attach WS in one process. ws upgrades land here when the
+// Hono route uses upgradeWebSocket(). Browsers happily speak WSS
+// over HTTP/2 (RFC 8441) — tested against this server.
+const wss = new WebSocketServer({ noServer: true });
+
 if (tlsCert && tlsKey && tlsConf) {
   serve(
     {
@@ -1463,6 +1591,7 @@ if (tlsCert && tlsKey && tlsConf) {
       // automatically. Cert MUST be valid for `publicHost`.
       createServer: createHttp2SecureServer,
       serverOptions: { cert: tlsCert, key: tlsKey, allowHTTP1: true },
+      websocket: { server: wss },
     },
     (info) => {
       logger.info({
@@ -1476,9 +1605,12 @@ if (tlsCert && tlsKey && tlsConf) {
     },
   );
 } else {
-  serve({ fetch: app.fetch, port, hostname: bindHost }, (info) => {
-    logger.info({ msg: 'server.start', port: info.port, host: bindHost, tls: false });
-  });
+  serve(
+    { fetch: app.fetch, port, hostname: bindHost, websocket: { server: wss } },
+    (info) => {
+      logger.info({ msg: 'server.start', port: info.port, host: bindHost, tls: false });
+    },
+  );
 }
 
 // Best-effort cleanup on signal — keeps embedding processes from lingering

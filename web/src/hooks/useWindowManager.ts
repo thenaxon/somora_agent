@@ -91,6 +91,60 @@ export function useWindowManager() {
     );
   }, []);
 
+  /** Open or focus the tmux-app list window. Singleton — only one
+   *  list view exists at a time. Phase 1.5. */
+  const openTmuxList = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'tmux-list');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(520, 460, zCounter + 1);
+    const id = `tmux-list-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'tmux-list',
+      title: 'tmux sessions',
+      icon: '⌨',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
+  /** Open or focus an xterm.js window attached to a specific tmux
+   *  session. Per-(tmux-name) deduped — clicking the same session
+   *  twice in the list focuses the existing terminal instead of
+   *  spawning a second attach. Phase 1.5. */
+  const openTmuxTerm = useCallback(
+    (tmuxName: string) => {
+      const existing = windows.find(
+        (w) => w.kind === 'tmux-term' && w.tmuxName === tmuxName,
+      );
+      if (existing) {
+        focus(existing.id);
+        return;
+      }
+      const pos = randomPos(720, 520, zCounter + 1);
+      const id = `tmux-term-${tmuxName}-${Date.now()}`;
+      const next: WindowState = {
+        id,
+        kind: 'tmux-term',
+        title: tmuxName,
+        meta: 'tmux',
+        tmuxName,
+        ...pos,
+        minimized: false,
+      };
+      setWindows((ws) => [...ws, next]);
+      setZCounter((z) => z + 1);
+      setFocusedId(id);
+    },
+    [windows, zCounter, focus],
+  );
+
   /** Open or focus a chat window for (agent, session). If a window
    *  for the same agent+session already exists, focus it instead of
    *  opening a duplicate. */
@@ -194,6 +248,8 @@ export function useWindowManager() {
     saveLayout,
     restoreLayout,
     setWindowSession,
+    openTmuxList,
+    openTmuxTerm,
   };
 }
 

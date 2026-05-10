@@ -1,9 +1,9 @@
-// Window-manager state shapes. Phase 1 only knows `kind: 'chat'`;
-// Phase 1.5 adds `tmux` + `xterm`, future steps add `kanban` etc.
-// New kinds slot in by extending WindowKind + the discriminated
-// fields on WindowState.
+// Window-manager state shapes. Phase 1 knows `kind: 'chat'`;
+// Phase 1.5 adds `tmux-list` (the apps-dock entry, lists live tmux
+// sessions) and `tmux-term` (an xterm.js attached to one specific
+// session). Future kinds slot in by extending WindowKind.
 
-export type WindowKind = 'chat';
+export type WindowKind = 'chat' | 'tmux-list' | 'tmux-term';
 
 /** A live window in the desktop's window manager. */
 export interface WindowState {
@@ -19,6 +19,8 @@ export interface WindowState {
   // Chat-specific
   agentName?: string;
   sessionId?: string;
+  // tmux-term specific — which tmux session this xterm is attached to.
+  tmuxName?: string;
   // Geometry
   x: number;
   y: number;

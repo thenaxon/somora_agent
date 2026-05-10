@@ -30,6 +30,7 @@ import {
   tmuxRemoteSend,
   tmuxRemoteSendKey,
 } from './remote.ts';
+import { recordTmuxOrigin, removeTmuxOrigin } from '../../tmux/origin-store.ts';
 
 // One or more tmux key tokens separated by whitespace. Each token is
 // `[A-Za-z0-9_-]+` — covers tmux's full key-name vocabulary (Escape,
@@ -443,6 +444,24 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           error: r.stderr.trim() || `exit ${r.exit_code}`,
         };
       }
+      // Track origin for the web tmux-list view (local sessions only;
+      // remote sessions live on other hosts and aren't browse-able from
+      // here yet). Failure to record never blocks the tool.
+      if (target === 'local') {
+        try {
+          recordTmuxOrigin({
+            name,
+            agent: ctx.agent,
+            ...(ctx.session ? { session: ctx.session } : {}),
+          });
+        } catch (err) {
+          logger.warn({
+            msg: 'tmux.origin.record_failed',
+            name,
+            err: (err as Error).message,
+          });
+        }
+      }
       return {
         action: 'create',
         ok: true,
@@ -728,6 +747,20 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       target === 'local'
         ? await tmuxLocalKill(name)
         : await tmuxRemoteKill(ctx.agent, target, name);
+    // Drop the origin record on successful kill — also when we're
+    // about to return was_running=false since the session is gone
+    // either way. Best-effort, never blocks.
+    if (target === 'local') {
+      try {
+        removeTmuxOrigin(name);
+      } catch (err) {
+        logger.warn({
+          msg: 'tmux.origin.remove_failed',
+          name,
+          err: (err as Error).message,
+        });
+      }
+    }
     // tmux kill-session exits non-zero with "can't find session" on
     // stderr if the name is gone — treat that as "was_running:false"
     // rather than an error.

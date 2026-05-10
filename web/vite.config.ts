@@ -62,6 +62,11 @@ export default defineConfig({
       '/tui-config': { target: proxyTarget, changeOrigin: true, secure: true },
       '/health': { target: proxyTarget, changeOrigin: true, secure: true },
       '/version': { target: proxyTarget, changeOrigin: true, secure: true },
+      // /tmux carries both REST (/tmux/sessions) AND a WebSocket
+      // upgrade (/tmux/attach). `ws: true` tells vite's proxy to
+      // forward Upgrade requests, otherwise xterm.js can never
+      // connect through the dev server.
+      '/tmux': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
     },
   },
 });

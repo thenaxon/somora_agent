@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.05.10.6",
+  "version": "2026.05.10.7",
   "private": true,
   "type": "module",
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
@@ -61,6 +61,7 @@
     "@types/react": "^19.2.14",
     "@types/ssh2": "^1.15.5",
     "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.1",
     "pino-pretty": "^13.1.3",
     "typescript": "^6.0.3"
   }

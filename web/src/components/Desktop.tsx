@@ -7,9 +7,12 @@
 
 import { useMemo } from 'react';
 import { AgentDock } from './AgentDock';
+import { AppDock } from './AppDock';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
 import { ChatWindow } from './ChatWindow';
+import { TmuxListWindow } from './TmuxListWindow';
+import { TmuxTerminalWindow } from './TmuxTerminalWindow';
 import { useChatContext } from './ChatProvider';
 import { useAgents } from '../hooks/useAgents';
 import { useLoopState } from '../hooks/useLoopState';
@@ -62,6 +65,14 @@ export function Desktop() {
           activeAgentIds={activeAgentIds}
           streamingAgents={streamingAgents}
         />
+        <AppDock
+          activeApps={
+            new Set(
+              wm.windows.filter((w) => w.kind === 'tmux-list').map(() => 'tmux'),
+            )
+          }
+          onTmuxClick={() => wm.openTmuxList()}
+        />
 
         {wm.windows.map((win) => {
           if (win.kind === 'chat') {
@@ -86,6 +97,38 @@ export function Desktop() {
                   windowFocused={wm.focusedId === win.id}
                   onSwitchSession={(sessionId) => wm.setWindowSession(win.id, sessionId)}
                 />
+              </Window>
+            );
+          }
+          if (win.kind === 'tmux-list') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <TmuxListWindow onAttach={(tmuxName) => wm.openTmuxTerm(tmuxName)} />
+              </Window>
+            );
+          }
+          if (win.kind === 'tmux-term' && win.tmuxName) {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <TmuxTerminalWindow tmuxName={win.tmuxName} />
               </Window>
             );
           }

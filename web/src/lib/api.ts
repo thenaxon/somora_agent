@@ -50,6 +50,25 @@ export interface AttachmentRef {
   size: number;
 }
 
+/** A single live tmux session as the web tmux-app list-view consumes
+ *  it. Joined server-side with somora's origin store, so `origin` is
+ *  set when we know who created the session and absent otherwise
+ *  ("orphan" — created from a host shell). */
+export interface TmuxSessionInfo {
+  name: string;
+  windows: number;
+  activeCommand: string | null;
+  activeTitle: string | null;
+  createdEpoch: number | null;
+  lastActivityEpoch: number | null;
+  origin?: {
+    name: string;
+    agent: string;
+    session?: string;
+    createdAt: string;
+  };
+}
+
 export interface LoopState {
   active: boolean;
   agent?: string;
@@ -124,6 +143,8 @@ export interface HistoryResponse {
 export const api = {
   version: () => getJson<{ version: string }>('/version'),
   agents: () => getJson<AgentInfo[]>('/agents'),
+  tmuxSessions: () =>
+    getJson<{ sessions: TmuxSessionInfo[] }>('/tmux/sessions').then((r) => r.sessions),
   sessions: (agent: string) =>
     getJson<SessionSummary[]>(`/agents/${encodeURIComponent(agent)}/sessions`),
   loopState: () => getJson<LoopState>('/dream/loop-state'),
