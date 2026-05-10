@@ -224,12 +224,26 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
           await api.createSession(agent.name, cmd.slug);
           onSwitchSession?.(cmd.slug);
           setSystemNotice({ text: `created + switched to "${cmd.slug}"`, tone: 'info' });
+        } else if (cmd.kind === 'reset') {
+          const r = await api.resetSession(agent.name, sessionId);
+          // Server archived the old jsonl + touched a fresh empty
+          // one. SSE stays connected on the same session id — we just
+          // wipe the local buffer so the chat-body reflects the now-
+          // empty session immediately. Stream/memory/usage snapshots
+          // also clear (fresh session, none of them apply anymore).
+          chat.clearMessages();
+          setSystemNotice({
+            text: r.archivedId
+              ? `reset → archived as ${r.archivedId} · REM scheduled`
+              : 'reset → session was empty, nothing to archive',
+            tone: 'info',
+          });
         }
       } catch (err) {
         setSystemNotice({ text: `error: ${(err as Error).message}`, tone: 'error' });
       }
     },
-    [agent.name, sessionId, onSwitchSession, refreshSessionInfo],
+    [agent.name, sessionId, onSwitchSession, refreshSessionInfo, chat],
   );
 
   // Auto-dismiss the notice after a few seconds so it doesn't pile up.

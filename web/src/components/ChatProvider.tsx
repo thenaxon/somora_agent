@@ -79,6 +79,11 @@ interface ChatContextValue {
   /** Whether older messages exist beyond the current loaded slice.
    *  Drives the chat-window's "load older" trigger visibility. */
   getHasMore: (agent: string, session: string) => boolean;
+  /** Wipe the in-memory transcript for (agent, session). Used by
+   *  `/reset` after the server archives the jsonl — the SSE stream
+   *  stays connected on the same session id, the local buffer just
+   *  needs to drop so the freshly-empty session shows as empty. */
+  clearMessages: (agent: string, session: string) => void;
 }
 
 const ChatContext = createContext<ChatContextValue>({
@@ -90,6 +95,7 @@ const ChatContext = createContext<ChatContextValue>({
   abort: async () => {},
   loadOlder: async () => false,
   getHasMore: () => false,
+  clearMessages: () => {},
 });
 
 const INITIAL_HISTORY_LIMIT = 100;
@@ -555,6 +561,31 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [paginationTick],
   );
 
+  const clearMessages = useCallback<ChatContextValue['clearMessages']>(
+    (agent, session) => {
+      const key = sessionKey(agent, session);
+      setMessages((prev) => ({ ...prev, [key]: [] }));
+      // Reset transient streaming refs so a stale tracked-id from
+      // before the reset doesn't try to mutate a non-existent bubble
+      // when the next chat:delta arrives.
+      streamingIdRef.current.delete(key);
+      pendingSelfSendsRef.current.delete(key);
+      // Stream state (usage, memory snapshot) clears too — fresh
+      // session means none of those snapshots apply anymore.
+      patchStream(key, {
+        thinking: false,
+        streaming: false,
+        usage: null,
+        memory: null,
+      });
+      // Pagination resets — the freshly-archived session has no older
+      // history, the "load older" button should disappear.
+      paginationRef.current.set(key, { hasMore: false, oldestTs: null, inFlight: false });
+      setPaginationTick((t) => t + 1);
+    },
+    [patchStream],
+  );
+
   // Cleanup on provider unmount (rare — App lives as long as the
   // page; but covers HMR + future router-based unmounts).
   useEffect(() => {
@@ -582,8 +613,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       abort,
       loadOlder,
       getHasMore,
+      clearMessages,
     }),
-    [subscribe, getMessages, getStream, streamingKeys, send, abort, loadOlder, getHasMore],
+    [
+      subscribe,
+      getMessages,
+      getStream,
+      streamingKeys,
+      send,
+      abort,
+      loadOlder,
+      getHasMore,
+      clearMessages,
+    ],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
@@ -607,6 +649,7 @@ export function useChatSessionFromContext(agent: string, session: string) {
     abort: () => ctx.abort(agent, session),
     loadOlder: () => ctx.loadOlder(agent, session),
     hasMore: ctx.getHasMore(agent, session),
+    clearMessages: () => ctx.clearMessages(agent, session),
   };
 }
 

@@ -20,7 +20,8 @@ export type SlashCommand =
   | { kind: 'model'; ref: string }
   | { kind: 'session'; slug: string }
   | { kind: 'new'; slug: string }
-  | { kind: 'thinking'; level: 'off' | 'low' | 'medium' | 'high' | 'default' };
+  | { kind: 'thinking'; level: 'off' | 'low' | 'medium' | 'high' | 'default' }
+  | { kind: 'reset' };
 
 interface CommandSpec {
   name: string;
@@ -33,6 +34,11 @@ const COMMANDS: CommandSpec[] = [
   { name: '/session', usage: '/session <slug>', hint: 'switch to another session of this agent' },
   { name: '/new', usage: '/new <slug>', hint: 'create a new session and switch to it' },
   { name: '/thinking', usage: '/thinking <level>', hint: 'off | low | medium | high | default' },
+  {
+    name: '/reset',
+    usage: '/reset YES',
+    hint: 'archive this session, force REM dream — type YES to confirm',
+  },
 ];
 
 interface Props {
@@ -162,6 +168,31 @@ export function SlashCommandPopup({
           label: `create session "${slug}"`,
           detail: 'POST /agents/.../sessions, then switch this window to it',
           resolved: { kind: 'new', slug } as SlashCommand,
+        },
+      ];
+    }
+
+    if (cmd === '/reset') {
+      // Two-step confirmation: bare `/reset` shows a non-resolving
+      // warning row; only `/reset YES` resolves to an actual reset.
+      // Mirrors the TUI's `/reset [YES]` semantics — destructive
+      // commands shouldn't fire on a single Enter.
+      const arg = argPrefix.trim();
+      if (arg !== 'YES') {
+        return [
+          {
+            commit: '/reset YES',
+            label: 'type "YES" to confirm reset',
+            detail: 'archives current session jsonl + forces REM dream over the just-closed range',
+          },
+        ];
+      }
+      return [
+        {
+          commit: '/reset YES',
+          label: 'reset session NOW',
+          detail: 'session jsonl moves to <session>-archive, REM dream spawns over it',
+          resolved: { kind: 'reset' } as SlashCommand,
         },
       ];
     }

@@ -158,6 +158,20 @@ export const api = {
     }
     return (await res.json()) as { id: string; slug: string };
   },
+  resetSession: async (
+    agent: string,
+    session: string,
+  ): Promise<{ archivedId: string | null }> => {
+    const res = await fetch(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/reset`,
+      { method: 'POST' },
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`reset ${res.status}: ${body.slice(0, 200)}`);
+    }
+    return (await res.json()) as { archivedId: string | null };
+  },
   sessionThinking: (agent: string, session: string) =>
     getJson<SessionThinkingInfo>(
       `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
