@@ -299,6 +299,91 @@ app.get('/tmux/sessions', async (c) => {
   return c.json({ sessions });
 });
 
+// Plain shell terminal: WebSocket bridge to a fresh `$SHELL` PTY
+// rooted in the configured workspace (`config.workspace.default`,
+// usually `~/somoraworkspace`). One terminal per WS connection —
+// closing the WS kills the shell, opening multiple windows gets you
+// multiple independent shells. No session-id concept; nothing
+// persistent to attach to.
+app.get(
+  '/terminal/attach',
+  upgradeWebSocket(() => {
+    return {
+      async onOpen(_evt, ws) {
+        try {
+          const pty = await import('node-pty');
+          const shell = process.env.SHELL || '/bin/bash';
+          const cwdRaw = config.workspace.default;
+          const cwd = cwdRaw.startsWith('~/')
+            ? resolvePath(homedir(), cwdRaw.slice(2))
+            : resolvePath(cwdRaw);
+          const term = pty.spawn(shell, [], {
+            name: 'xterm-256color',
+            cols: 80,
+            rows: 24,
+            cwd,
+            env: { ...process.env, TERM: 'xterm-256color' },
+          });
+          term.onData((data: string) => {
+            try {
+              ws.send(Buffer.from(data, 'utf8'));
+            } catch {
+              /* socket closed */
+            }
+          });
+          term.onExit(({ exitCode }) => {
+            try {
+              ws.close(1000, `shell exited (${exitCode})`);
+            } catch {
+              /* ignore */
+            }
+          });
+          const raw = ws.raw as { __pty?: typeof term } | undefined;
+          if (raw) raw.__pty = term;
+          logger.info({ msg: 'terminal.attach.open', shell, cwd });
+        } catch (err) {
+          logger.error({
+            msg: 'terminal.attach.spawn_failed',
+            err: (err as Error).message,
+          });
+          ws.close(1011, `failed to spawn shell: ${(err as Error).message}`);
+        }
+      },
+      onMessage(evt, ws) {
+        const raw = ws.raw as { __pty?: { write: (s: string) => void; resize: (cols: number, rows: number) => void } } | undefined;
+        const term = raw?.__pty;
+        if (!term) return;
+        const data = evt.data;
+        if (typeof data === 'string') {
+          try {
+            const msg = JSON.parse(data) as { type?: string; cols?: number; rows?: number };
+            if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+              term.resize(Math.max(2, msg.cols), Math.max(2, msg.rows));
+            }
+          } catch {
+            /* ignore */
+          }
+        } else if (data instanceof ArrayBuffer) {
+          term.write(Buffer.from(data).toString('utf8'));
+        } else if (data instanceof Uint8Array) {
+          term.write(Buffer.from(data).toString('utf8'));
+        } else if (Buffer.isBuffer(data)) {
+          term.write((data as Buffer).toString('utf8'));
+        }
+      },
+      onClose(_evt, ws) {
+        const raw = ws.raw as { __pty?: { kill: () => void } } | undefined;
+        try {
+          raw?.__pty?.kill();
+        } catch {
+          /* already dead */
+        }
+        logger.info({ msg: 'terminal.attach.close' });
+      },
+    };
+  }),
+);
+
 // Tmux attach: WebSocket bridge to a `tmux attach-session -d -t <name>`
 // PTY. Bidirectional binary frames carry tmux's terminal stream;
 // text frames carry control messages (resize). Sessions only —

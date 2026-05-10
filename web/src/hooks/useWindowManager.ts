@@ -114,6 +114,25 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open a fresh shell-terminal window rooted in the somora
+   *  workspace. NOT deduped — every click spawns another independent
+   *  shell. Phase 1.5. */
+  const openShellTerm = useCallback(() => {
+    const pos = randomPos(720, 520, zCounter + 1);
+    const id = `shell-term-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'shell-term',
+      title: 'terminal',
+      meta: 'shell',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [zCounter]);
+
   /** Open or focus an xterm.js window attached to a specific tmux
    *  session. Per-(tmux-name) deduped — clicking the same session
    *  twice in the list focuses the existing terminal instead of
@@ -250,6 +269,7 @@ export function useWindowManager() {
     setWindowSession,
     openTmuxList,
     openTmuxTerm,
+    openShellTerm,
   };
 }
 

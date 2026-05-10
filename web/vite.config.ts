@@ -67,6 +67,8 @@ export default defineConfig({
       // forward Upgrade requests, otherwise xterm.js can never
       // connect through the dev server.
       '/tmux': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
+      // /terminal/attach is a WS upgrade (plain shell PTY).
+      '/terminal': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
     },
   },
 });

@@ -4,7 +4,7 @@
 // lucide glyphs in a flat tinted square instead of gradient avatars.
 
 import type { ReactNode } from 'react';
-import { Terminal } from 'lucide-react';
+import { Square, Terminal } from 'lucide-react';
 
 interface Props {
   /** Names of apps whose window is currently open — drives the
@@ -12,20 +12,32 @@ interface Props {
    *  now; future apps register here. */
   activeApps?: Set<string>;
   onTmuxClick: () => void;
+  /** Spawns a fresh shell terminal in the somora workspace.
+   *  Non-singleton: every click adds another independent terminal
+   *  window, so the tile never shows an active state. */
+  onTerminalClick: () => void;
 }
 
-export function AppDock({ activeApps, onTmuxClick }: Props) {
+export function AppDock({ activeApps, onTmuxClick, onTerminalClick }: Props) {
   const isTmuxActive = activeApps?.has('tmux') ?? false;
   // No own positioned wrapper — slots into the unified `.agent-dock`
   // flex-wrap container alongside agent tiles. Apps follow agents in
   // the same column; overflow wraps right.
   return (
-    <AppTile
-      label="tmux"
-      icon={<Terminal size={28} />}
-      active={isTmuxActive}
-      onClick={onTmuxClick}
-    />
+    <>
+      <AppTile
+        label="tmux"
+        icon={<Terminal size={28} />}
+        active={isTmuxActive}
+        onClick={onTmuxClick}
+      />
+      <AppTile
+        label="terminal"
+        icon={<Square size={26} strokeWidth={1.5} />}
+        active={false}
+        onClick={onTerminalClick}
+      />
+    </>
   );
 }
 

@@ -13,6 +13,7 @@ import { Window } from './Window';
 import { ChatWindow } from './ChatWindow';
 import { TmuxListWindow } from './TmuxListWindow';
 import { TmuxTerminalWindow } from './TmuxTerminalWindow';
+import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { useChatContext } from './ChatProvider';
 import { useAgents } from '../hooks/useAgents';
 import { useLoopState } from '../hooks/useLoopState';
@@ -73,6 +74,7 @@ export function Desktop() {
               )
             }
             onTmuxClick={() => wm.openTmuxList()}
+            onTerminalClick={() => wm.openShellTerm()}
           />
         </div>
 
@@ -131,6 +133,22 @@ export function Desktop() {
                 onResize={wm.resize}
               >
                 <TmuxTerminalWindow tmuxName={win.tmuxName} />
+              </Window>
+            );
+          }
+          if (win.kind === 'shell-term') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <ShellTerminalWindow />
               </Window>
             );
           }
