@@ -30,6 +30,7 @@ import {
   type AsyncTaskEntry,
 } from '../../server/async-tasks.ts';
 import { logger } from '../../server/logger.ts';
+import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
 import { runChatTurn } from '../../server/run-turn.ts';
 import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
@@ -499,21 +500,30 @@ async function spawnAsyncViaHttp(args: {
   // SOMORA_TLS=1 → server is HTTP/2-over-TLS; loopback must use
   // https://<publicHost> (see runChatTurnViaHttp below).
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
-  const res = await fetch(`${scheme}://${host}:${port}/spawn-async`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      agent: args.targetAgent,
-      session: args.targetSession,
-      text: args.taskText,
-      from_agent: args.parentAgent,
-      parent_agent: args.parentAgent,
-      parent_session: args.parentSession,
-      subagent_depth: args.parentDepth + 1,
-      ...(args.modelOverride ? { model: args.modelOverride } : {}),
-      ...(args.maxRoundsOverride ? { max_rounds: args.maxRoundsOverride } : {}),
-    }),
-  });
+  let res;
+  try {
+    res = await loopbackFetch(`${scheme}://${host}:${port}/spawn-async`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: args.targetAgent,
+        session: args.targetSession,
+        text: args.taskText,
+        from_agent: args.parentAgent,
+        parent_agent: args.parentAgent,
+        parent_session: args.parentSession,
+        subagent_depth: args.parentDepth + 1,
+        ...(args.modelOverride ? { model: args.modelOverride } : {}),
+        ...(args.maxRoundsOverride ? { max_rounds: args.maxRoundsOverride } : {}),
+      }),
+    });
+  } catch (err) {
+    const c = classifyFetchError(err);
+    throw new Error(
+      `spawn-async [${c.category}${c.code ? '/' + c.code : ''}]: ${c.message}` +
+        (c.hint ? ` — hint: ${c.hint}` : ''),
+    );
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`spawn-async HTTP ${res.status}: ${body.slice(0, 300)}`);
@@ -549,18 +559,27 @@ async function runChatTurnViaHttp(args: {
   // startup when TLS is on, so this is just a scheme switch.
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
   const url = `${scheme}://${host}:${port}/chat/send-sync`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      agent: args.agent,
-      session: args.session,
-      text: args.text,
-      subagent_depth: args.subagentDepth,
-      ...(args.modelOverride ? { model: args.modelOverride } : {}),
-      ...(args.maxRounds ? { max_rounds: args.maxRounds } : {}),
-    }),
-  });
+  let res;
+  try {
+    res = await loopbackFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent: args.agent,
+        session: args.session,
+        text: args.text,
+        subagent_depth: args.subagentDepth,
+        ...(args.modelOverride ? { model: args.modelOverride } : {}),
+        ...(args.maxRounds ? { max_rounds: args.maxRounds } : {}),
+      }),
+    });
+  } catch (err) {
+    const c = classifyFetchError(err);
+    throw new Error(
+      `spawn_subagent HTTP fallback [${c.category}${c.code ? '/' + c.code : ''}]: ${c.message}` +
+        (c.hint ? ` — hint: ${c.hint}` : ''),
+    );
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`spawn_subagent HTTP fallback ${res.status}: ${body.slice(0, 300)}`);

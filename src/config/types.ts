@@ -297,8 +297,26 @@ export const CodexCliConfigSchema = z
      * cuts off a long-blocking tool call before our own ceiling does.
      */
     toolTimeoutSec: z.number().int().positive().default(1800),
+    /**
+     * How codex's `--sandbox read-only` mode forwards env vars to the
+     * shell processes spawned by its `exec` tool.
+     *
+     * `inherit-all` (default) — pass the full somora-server process
+     *   env into codex's tool shells. Required for skills like `gog`
+     *   that depend on credentials living in the server's env (loaded
+     *   via systemd EnvironmentFile or ~/.somora/somora.env).
+     * `core-only` — codex's own restrictive default, which keeps only
+     *   PATH/HOME/USER/LANG/etc. Skills with declared env_vars then
+     *   silently see them as missing inside the shell — exactly the
+     *   2026-05-10 lisa/GOG_KEYRING_PASSWORD bug. Use only if you have
+     *   a hardening reason and have audited every skill.
+     *
+     * Maps to codex's `-c shell_environment_policy.inherit=all|core`
+     * flag (codex 0.125+).
+     */
+    shellEnvironmentPolicy: z.enum(['inherit-all', 'core-only']).default('inherit-all'),
   })
-  .default({ toolTimeoutSec: 1800 });
+  .default({ toolTimeoutSec: 1800, shellEnvironmentPolicy: 'inherit-all' });
 export type CodexCliConfig = z.infer<typeof CodexCliConfigSchema>;
 
 // Workspace — default cwd for the file_* tools. NOT a sandbox: agents

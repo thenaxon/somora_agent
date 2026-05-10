@@ -19,6 +19,7 @@ import {
   updateFindingStatus,
 } from '../../dream/storage.ts';
 import type { Finding } from '../../dream/types.ts';
+import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ToolDefinition } from '../types.ts';
 import type { DeepWorker } from '../../dream/deep-worker.ts';
 import type { LucidWorker } from '../../dream/lucid-worker.ts';
@@ -647,7 +648,7 @@ async function runDeepViaHttp(wait: boolean, force: boolean): Promise<unknown> {
   const port = process.env.SOMORA_PORT || '18737';
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
   const url = `${scheme}://${host}:${port}/dream/run-deep`;
-  const res = await fetch(url, {
+  const res = await loopbackFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ wait, force }),
@@ -665,7 +666,7 @@ async function runLucidViaHttp(wait: boolean): Promise<unknown> {
   const port = process.env.SOMORA_PORT || '18737';
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
   const url = `${scheme}://${host}:${port}/dream/run-lucid`;
-  const res = await fetch(url, {
+  const res = await loopbackFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ wait }),

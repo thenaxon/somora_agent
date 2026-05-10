@@ -14,6 +14,7 @@
 // long-term knowledge. Wiki = source of truth. Memory = volatile inbox.
 
 import OpenAI from 'openai';
+import { createPatientOpenAIClient } from '../server/openai-client.ts';
 import { readFile } from 'node:fs/promises';
 import matter from 'gray-matter';
 import type { Config, ResolvedModel } from '../config/types.ts';
@@ -162,7 +163,7 @@ function buildClient(model: ResolvedModel): OpenAI {
         `only openai-compatible engines are supported as dream workers in v1.`,
     );
   }
-  return new OpenAI({
+  return createPatientOpenAIClient({
     baseURL: model.provider.baseUrl,
     apiKey: model.provider.apiKey,
   });

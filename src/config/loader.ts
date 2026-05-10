@@ -250,4 +250,16 @@ export function applyCodexCliEnv(config: Config): void {
   ) {
     process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC = String(c.toolTimeoutSec);
   }
+  // shellEnvironmentPolicy is consumed by somoraMemoryCodexFlags() via
+  // SOMORA_CODEX_SHELL_ENV_POLICY → `-c shell_environment_policy.inherit=…`.
+  // Default 'inherit-all' makes codex's exec-shells see the full somora
+  // server env (GOG_KEYRING_PASSWORD etc.) — fixes the 2026-05-10
+  // lisa/gog regression where codex's default core-only env stripping
+  // hid skill-required vars from the agent's shell.
+  if (
+    process.env.SOMORA_CODEX_SHELL_ENV_POLICY === undefined ||
+    process.env.SOMORA_CODEX_SHELL_ENV_POLICY === ''
+  ) {
+    process.env.SOMORA_CODEX_SHELL_ENV_POLICY = c.shellEnvironmentPolicy;
+  }
 }

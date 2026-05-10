@@ -4,6 +4,7 @@
 
 import { z } from 'zod';
 import { getTask, listTasksForAgent, waitForTaskCompletion, type AsyncTaskEntry } from '../../server/async-tasks.ts';
+import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResult } from '../../server/run-turn-types.ts';
 import type { ToolDefinition } from '../types.ts';
 import { longTaskDefaultMs, longTaskMaxMs } from './long-task-timeouts.ts';
@@ -16,7 +17,7 @@ async function fetchStatusViaHttp(task_id: string): Promise<AsyncTaskEntry | nul
   const port = process.env.SOMORA_PORT || '18737';
   // SOMORA_TLS=1 → loopback must use HTTPS to match the cert hostname.
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
-  const res = await fetch(
+  const res = await loopbackFetch(
     `${scheme}://${host}:${port}/spawn-status?task_id=${encodeURIComponent(task_id)}`,
   );
   if (res.status === 404) return null;
@@ -37,7 +38,7 @@ async function fetchResultViaHttp(
   const params = new URLSearchParams({ task_id });
   if (opts.wait_until_done) params.set('wait_until_done', '1');
   if (opts.timeout_ms !== undefined) params.set('timeout_ms', String(opts.timeout_ms));
-  const res = await fetch(`${scheme}://${host}:${port}/spawn-result?${params.toString()}`);
+  const res = await loopbackFetch(`${scheme}://${host}:${port}/spawn-result?${params.toString()}`);
   if (res.status === 404) return null;
   if (res.status === 409) {
     return (await res.json()) as { task_id: string; state: string; error?: string };
@@ -258,7 +259,7 @@ async function fetchListViaHttp(parent_agent: string): Promise<AsyncTaskEntry[]>
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
-  const res = await fetch(
+  const res = await loopbackFetch(
     `${scheme}://${host}:${port}/spawn-list?parent_agent=${encodeURIComponent(parent_agent)}`,
   );
   if (!res.ok) {

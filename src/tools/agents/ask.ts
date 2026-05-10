@@ -31,6 +31,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
+import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ToolDefinition } from '../types.ts';
 import { longTaskDefaultMs, longTaskMaxMs } from './long-task-timeouts.ts';
 
@@ -192,7 +193,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     const timer = setTimeout(() => ac.abort(), timeoutMs);
 
     try {
-      const res = await fetch(`${scheme}://${host}:${port}/chat/send-sync`, {
+      const res = await loopbackFetch(`${scheme}://${host}:${port}/chat/send-sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -238,7 +239,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
       };
     } catch (err) {
       // AbortError when our timer fired — translate to pending. Real
-      // network errors (target unreachable, malformed response) bubble.
+      // network errors (target unreachable, malformed response) bubble,
+      // but we classify them first so the agent gets actionable info
+      // instead of the bare `fetch failed` undici emits.
       if (ac.signal.aborted) {
         logger.info({
           msg: 'agent_ask.pending',
@@ -262,7 +265,22 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           ms: Date.now() - start,
         };
       }
-      throw err;
+      const classified = classifyFetchError(err);
+      logger.warn({
+        msg: 'agent_ask.fetch_error',
+        from: ctx.agent,
+        to: targetAgent,
+        call_id: callId,
+        waited_ms: Date.now() - start,
+        category: classified.category,
+        code: classified.code,
+        err: classified.message,
+      });
+      throw new Error(
+        `agent_ask [${classified.category}${classified.code ? '/' + classified.code : ''}]: ` +
+          `${classified.message}` +
+          (classified.hint ? ` — hint: ${classified.hint}` : ''),
+      );
     } finally {
       clearTimeout(timer);
     }

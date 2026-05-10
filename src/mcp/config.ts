@@ -104,29 +104,39 @@ export function somoraMemoryCodexFlags(args: {
   const cmdArgs = useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS];
   const argsToml = `[${cmdArgs.map(tomlString).join(', ')}]`;
 
-  const envEntries: string[] = [`SOMORA_AGENT = ${tomlString(args.agent)}`];
-  if (process.env.SOMORA_HOME) {
-    envEntries.push(`SOMORA_HOME = ${tomlString(process.env.SOMORA_HOME)}`);
+  // Forward the full parent process.env into the MCP child so skill-
+  // backed tools (gog, etc.) inside the somora-memory exec path see
+  // GOG_KEYRING_PASSWORD, GOG_ACCOUNT and any other credentials loaded
+  // from ~/.config/systemd/user/somora.env or ~/.somora/somora.env at
+  // server start. This mirrors claude-cli's somoraMemoryServerSpawn()
+  // which simply does `...filterEnv(process.env)`. Without this the
+  // codex-cli MCP child got only the SOMORA_* subset and skills that
+  // depend on env-injected secrets silently broke for codex-driven
+  // agents (lisa) but worked for claude-driven agents (naxon) —
+  // exactly the 2026-05-10 gog/lisa regression.
+  //
+  // The somora-specific keys are appended LAST so they override the
+  // inherited values (e.g. SOMORA_AGENT is forced to this agent even
+  // if the parent process had a different value).
+  const envMap = new Map<string, string>();
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v !== 'string') continue;
+    // codex parses the env TOML inline-table; keep keys to plain
+    // identifier-like ones to avoid TOML escaping edge cases (env vars
+    // shouldn't contain dots/brackets anyway, but be defensive).
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
+    envMap.set(k, v);
   }
-  if (process.env.SOMORA_HOST) {
-    envEntries.push(`SOMORA_HOST = ${tomlString(process.env.SOMORA_HOST)}`);
-  }
-  if (process.env.SOMORA_PORT) {
-    envEntries.push(`SOMORA_PORT = ${tomlString(process.env.SOMORA_PORT)}`);
-  }
-  // Forward TLS flag so the MCP child's HTTP fallback uses https://
-  // when the parent runs HTTP/2-over-TLS (see spawn.ts:runChatTurnViaHttp).
-  if (process.env.SOMORA_TLS) {
-    envEntries.push(`SOMORA_TLS = ${tomlString(process.env.SOMORA_TLS)}`);
-  }
-  if (args.session) {
-    envEntries.push(`SOMORA_SESSION = ${tomlString(args.session)}`);
-  }
+  envMap.set('SOMORA_AGENT', args.agent);
+  if (args.session) envMap.set('SOMORA_SESSION', args.session);
   if (args.subagentDepth !== undefined && args.subagentDepth > 0) {
-    envEntries.push(`SOMORA_SUBAGENT_DEPTH = ${tomlString(String(args.subagentDepth))}`);
+    envMap.set('SOMORA_SUBAGENT_DEPTH', String(args.subagentDepth));
   }
-  if (args.activeModelRef) {
-    envEntries.push(`SOMORA_ACTIVE_MODEL = ${tomlString(args.activeModelRef)}`);
+  if (args.activeModelRef) envMap.set('SOMORA_ACTIVE_MODEL', args.activeModelRef);
+
+  const envEntries: string[] = [];
+  for (const [k, v] of envMap) {
+    envEntries.push(`${k} = ${tomlString(v)}`);
   }
   const envToml = `{ ${envEntries.join(', ')} }`;
 
@@ -146,7 +156,31 @@ export function somoraMemoryCodexFlags(args: {
     '-c',
     `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
     ...resolveToolTimeoutFlag(args.toolTimeoutSec),
+    ...resolveShellEnvPolicyFlag(),
   ];
+}
+
+/**
+ * Resolve codex's `shell_environment_policy.inherit` setting. With
+ * codex's default ('core'), only PATH/HOME/USER/LANG and a small core
+ * set survive into shells spawned by the codex `exec` tool — agents
+ * lose access to the somora-server env (GOG_KEYRING_PASSWORD,
+ * GOG_ACCOUNT, custom skill credentials). With 'all', the parent env
+ * is inherited.
+ *
+ * Reads SOMORA_CODEX_SHELL_ENV_POLICY (set by applyCodexCliEnv from
+ * config.codexCli.shellEnvironmentPolicy). Default behavior here, in
+ * the absence of env, is to emit the 'all' flag — the somora server
+ * is already a trusted process and the env is the canonical place for
+ * skill secrets.
+ */
+function resolveShellEnvPolicyFlag(): string[] {
+  const raw = process.env.SOMORA_CODEX_SHELL_ENV_POLICY;
+  // 'core-only' → codex default; emit nothing so codex's built-in default
+  // applies (less surface area).
+  if (raw === 'core-only') return [];
+  // 'inherit-all' or unset → emit the inherit=all flag.
+  return ['-c', 'shell_environment_policy.inherit="all"'];
 }
 
 /**

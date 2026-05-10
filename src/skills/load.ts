@@ -23,6 +23,7 @@ import matter from 'gray-matter';
 import { z } from 'zod';
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
+import { lintSkillBody, summarizeFindings, type LintFinding } from './lint.ts';
 
 const execFileP = promisify(execFile);
 
@@ -51,13 +52,28 @@ const SomoraExtrasSchema = z
   })
   .strict();
 
+// Top-level frontmatter is `.strict()` — unknown top-level keys are an
+// authoring mistake that should fail loud, not pass through silently.
+// The agentskills.io spec is finite and well-defined; if we want to
+// support a new top-level key we add it explicitly here.
+//
+// `metadata` itself stays `.passthrough()` because it's the documented
+// extension point of the spec — somora uses `metadata.somora.*`,
+// openclaw uses `metadata.openclaw.*`, and other ecosystems may add
+// their own. Inside `metadata.somora` we ARE strict (SomoraExtrasSchema
+// above), so somora-side typos still fail loud.
+//
+// `homepage` is listed as a top-level field because it's a common
+// agentskills.io convention; if you add another, add it here too.
 const SkillFrontmatterSchema = z
   .object({
     name: z.string().min(1).max(64),
     description: z.string().min(1).max(1024),
+    homepage: z.string().max(500).optional(),
     license: z.string().max(200).optional(),
     compatibility: z.string().max(500).optional(),
     'allowed-tools': z.string().max(500).optional(),
+    'disable-model-invocation': z.boolean().optional(),
     metadata: z
       .object({
         somora: SomoraExtrasSchema.optional(),
@@ -65,7 +81,7 @@ const SkillFrontmatterSchema = z
       .passthrough()
       .optional(),
   })
-  .passthrough();
+  .strict();
 
 export type SkillFrontmatter = z.infer<typeof SkillFrontmatterSchema>;
 
@@ -92,6 +108,10 @@ export interface LoadedSkill {
   available: boolean;
   /** Human-readable reason when `available` is false (e.g. "missing bin: op"). */
   unavailableReason?: string;
+  /** Body-lint findings (anti-pattern detection). Errors mark the skill
+   *  unavailable so the agent never sees a misleading body; warnings
+   *  surface to the operator log without blocking. */
+  lintFindings: LintFinding[];
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -146,6 +166,27 @@ async function checkAvailability(
     if (!isConfigKeySet(config, key)) {
       return { available: false, reason: `missing config: ${key}` };
     }
+  }
+  // Verify declared env_vars are actually present in this server's
+  // process env. Skills that fail this check should report unavailable
+  // with a precise reason instead of letting the agent hack around it
+  // (the gog-skill-body anti-pattern from 2026-05-10: the body grew a
+  // 17-line `eval $(brew shellenv) + export GOG_*=…` recipe precisely
+  // because env-inheritance was inconsistent across agents and there
+  // was no precondition check).
+  const envVars = requires.env_vars ?? [];
+  const missingEnv: string[] = [];
+  for (const name of envVars) {
+    if (!process.env[name]) missingEnv.push(name);
+  }
+  if (missingEnv.length > 0) {
+    return {
+      available: false,
+      reason:
+        `missing env vars: ${missingEnv.join(', ')} — set them in ~/.somora/somora.env ` +
+        `(loaded at server start) or in the agent's launch environment. Do NOT inject ` +
+        `them per-call from inside the agent.`,
+    };
   }
   return { available: true };
 }
@@ -224,7 +265,46 @@ async function loadOneSkill(slug: string, config: Config): Promise<LoadedSkill |
   }
 
   const somora = fm.metadata?.somora;
+  const body = parsed.content.trim();
+
+  // Body-lint runs before availability so authoring errors (Setup-in-body,
+  // eval $(brew shellenv), ...) preempt env/bin checks. Errors mark the
+  // skill unavailable — we never expose a misleading body to the agent.
+  // Warnings just log; the skill stays usable.
+  const lintFindings = lintSkillBody(body);
+  const lintSummary = summarizeFindings(lintFindings);
+  if (lintSummary.warningCount > 0) {
+    logger.warn({
+      msg: 'skills.lint_warnings',
+      slug,
+      count: lintSummary.warningCount,
+      rules: lintFindings
+        .filter((f) => f.severity === 'warning')
+        .map((f) => `${f.rule}@L${f.line}`)
+        .slice(0, 5)
+        .join(','),
+    });
+  }
+  if (lintSummary.errorCount > 0) {
+    logger.warn({
+      msg: 'skills.lint_errors',
+      slug,
+      count: lintSummary.errorCount,
+      rules: lintSummary.shortReason,
+    });
+  }
+
+  // Availability rolls in lint errors: if the body has anti-patterns the
+  // skill can't be safely activated even if bins/env are present. The
+  // operator sees the skill in `skill list` with available:false and a
+  // reason that points at the lint findings.
   const avail = await checkAvailability(fm, config);
+  let available = avail.available;
+  let unavailableReason = avail.reason;
+  if (available && lintSummary.errorCount > 0) {
+    available = false;
+    unavailableReason = `body lint failed: ${lintSummary.shortReason}. Inspect with logs (msg=skills.lint_errors).`;
+  }
 
   return {
     name: fm.name,
@@ -235,9 +315,10 @@ async function loadOneSkill(slug: string, config: Config): Promise<LoadedSkill |
     requiresEnvVars: somora?.requires?.env_vars ?? [],
     tags: somora?.tags ?? [],
     dir,
-    body: parsed.content.trim(),
-    available: avail.available,
-    unavailableReason: avail.reason,
+    body,
+    available,
+    unavailableReason,
+    lintFindings,
   };
 }
 

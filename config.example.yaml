@@ -218,6 +218,17 @@ providers:
 #                             # and agentLoop.longTaskMaxTimeoutMs so the CLI's
 #                             # MCP layer never cuts off a long-blocking tool
 #                             # call before our own ceiling does.
+#   shellEnvironmentPolicy: inherit-all
+#                             # 'inherit-all' (default) — pass the full somora-
+#                             # server process env into codex's exec-tool shells.
+#                             # Required for skills like `gog` that depend on env
+#                             # secrets (GOG_KEYRING_PASSWORD, GOG_ACCOUNT, ...)
+#                             # loaded from systemd EnvironmentFile or
+#                             # ~/.somora/somora.env.
+#                             # 'core-only' — codex's restrictive default
+#                             # (PATH/HOME/USER/LANG only). Use only after
+#                             # auditing every skill — declared env_vars will
+#                             # silently appear missing inside shells.
 
 # memory:
 #   embedding:

@@ -13,6 +13,7 @@
 // model-capability gating in `file_read` for the polymorphic complement.
 
 import OpenAI from 'openai';
+import { createPatientOpenAIClient } from '../../server/openai-client.ts';
 import { z } from 'zod';
 import { resolveAnyRef, type ResolvedModel } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
@@ -62,7 +63,7 @@ function buildClient(model: ResolvedModel): OpenAI {
         `Use openrouter or another openai-compatible proxy if you want a Claude/GPT model.`,
     );
   }
-  return new OpenAI({
+  return createPatientOpenAIClient({
     baseURL: model.provider.baseUrl,
     apiKey: model.provider.apiKey,
   });

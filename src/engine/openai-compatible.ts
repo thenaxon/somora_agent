@@ -17,6 +17,7 @@
 // MCP server out-of-process and let their CLI handle dispatch.
 
 import OpenAI from 'openai';
+import { createPatientOpenAIClient } from '../server/openai-client.ts';
 import {
   pickLatest,
   runCompaction,
@@ -326,7 +327,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       });
     }
 
-    const client = new OpenAI({
+    const client = createPatientOpenAIClient({
       baseURL: resolvedModel.provider.baseUrl,
       apiKey: resolvedModel.provider.apiKey,
     });

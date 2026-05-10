@@ -1,6 +1,14 @@
 // HTTP client for the somora server. Keeps fetch-shaped code out of
 // components — they just await these.
+//
+// Uses loopbackFetch (undici dispatcher with no headers/body timeout)
+// because the TUI client polls and posts into the same somora server
+// over loopback, and several routes (`/chat/send-sync`, `/chat/history`
+// when long, `send` during a long turn) can legitimately keep the
+// connection idle for many minutes. With plain fetch undici would kill
+// these at 5 minutes once HTTPS is the transport.
 
+import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type {
   AgentInfo,
   ModelInfo,
@@ -16,18 +24,18 @@ export class Api {
   constructor(private readonly base: string) {}
 
   async fetchAgents(): Promise<AgentInfo[]> {
-    const res = await fetch(`${this.base}/agents`);
+    const res = await loopbackFetch(`${this.base}/agents`);
     return (await res.json()) as AgentInfo[];
   }
 
   async fetchTuiConfig(): Promise<TuiConfig> {
-    const res = await fetch(`${this.base}/tui-config`);
+    const res = await loopbackFetch(`${this.base}/tui-config`);
     if (!res.ok) throw new Error(`tui-config ${res.status}`);
     return (await res.json()) as TuiConfig;
   }
 
   async fetchSystemPrompt(agent: string): Promise<string | null> {
-    const res = await fetch(`${this.base}/agents/${encodeURIComponent(agent)}/system-prompt`);
+    const res = await loopbackFetch(`${this.base}/agents/${encodeURIComponent(agent)}/system-prompt`);
     if (!res.ok) return null;
     const data = (await res.json()) as { systemPrompt?: string };
     return typeof data.systemPrompt === 'string' ? data.systemPrompt : null;
@@ -35,7 +43,7 @@ export class Api {
 
   async fetchLoopState(): Promise<{ active: boolean; agent?: string; dreamId?: string } | null> {
     try {
-      const res = await fetch(`${this.base}/dream/loop-state`);
+      const res = await loopbackFetch(`${this.base}/dream/loop-state`);
       if (!res.ok) return null;
       const data = (await res.json()) as {
         active?: boolean;
@@ -55,13 +63,13 @@ export class Api {
   }
 
   async fetchSessions(agent: string): Promise<SessionSummary[]> {
-    const res = await fetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions`);
+    const res = await loopbackFetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions`);
     if (!res.ok) return [];
     return (await res.json()) as SessionSummary[];
   }
 
   async createSession(agent: string, slug: string): Promise<string> {
-    const res = await fetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions`, {
+    const res = await loopbackFetch(`${this.base}/agents/${encodeURIComponent(agent)}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug }),
@@ -72,7 +80,7 @@ export class Api {
   }
 
   async resetSession(agent: string, session: string): Promise<ResetResult> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/reset`,
       { method: 'POST' },
     );
@@ -81,13 +89,13 @@ export class Api {
   }
 
   async fetchModels(): Promise<ModelInfo[]> {
-    const res = await fetch(`${this.base}/models`);
+    const res = await loopbackFetch(`${this.base}/models`);
     if (!res.ok) return [];
     return (await res.json()) as ModelInfo[];
   }
 
   async fetchSessionModel(agent: string, session: string): Promise<SessionModelInfo | null> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/model`,
     );
     if (!res.ok) return null;
@@ -95,7 +103,7 @@ export class Api {
   }
 
   async setSessionModel(agent: string, session: string, ref: string): Promise<void> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/model`,
       {
         method: 'PUT',
@@ -107,7 +115,7 @@ export class Api {
   }
 
   async clearSessionModel(agent: string, session: string): Promise<void> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/model`,
       { method: 'DELETE' },
     );
@@ -115,7 +123,7 @@ export class Api {
   }
 
   async fetchSessionThinking(agent: string, session: string): Promise<SessionThinkingInfo | null> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
     );
     if (!res.ok) return null;
@@ -123,7 +131,7 @@ export class Api {
   }
 
   async setSessionThinking(agent: string, session: string, level: ThinkingLevel): Promise<void> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
       {
         method: 'PUT',
@@ -135,7 +143,7 @@ export class Api {
   }
 
   async clearSessionThinking(agent: string, session: string): Promise<void> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
       { method: 'DELETE' },
     );
@@ -143,7 +151,7 @@ export class Api {
   }
 
   async send(agent: string, session: string, text: string): Promise<void> {
-    const res = await fetch(`${this.base}/chat/send`, {
+    const res = await loopbackFetch(`${this.base}/chat/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent, session, text }),
@@ -165,7 +173,7 @@ export class Api {
     agent: string,
     session: string,
   ): Promise<{ events: HistoryEvent[] }> {
-    const res = await fetch(
+    const res = await loopbackFetch(
       `${this.base}/chat/history?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
     );
     if (!res.ok) return { events: [] };
@@ -177,7 +185,7 @@ export class Api {
    * (agent, session). No-op if no turn is running.
    */
   async abortTurn(agent: string, session: string): Promise<void> {
-    await fetch(
+    await loopbackFetch(
       `${this.base}/chat/abort?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
       { method: 'POST' },
     ).catch(() => {

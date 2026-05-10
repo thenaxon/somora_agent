@@ -20,6 +20,7 @@ import {
   shutdownMemoryRegistry,
 } from '../memory/registry.ts';
 import { getEffectiveEnv } from './env.ts';
+import { loadSomoraEnvFile } from './env-file.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 import { ensureWorkspaceDirs } from './workspace.ts';
 import {
@@ -180,6 +181,25 @@ function resolveEffectiveThinking(
 // runTurnWithFallback + createTurnSerializer extracted to separate
 // modules so spawn_subagent can reuse them via runChatTurn without
 // pulling all of server/index.ts.
+
+// Load ~/.somora/somora.env BEFORE config so secrets/per-host env
+// (GOG_KEYRING_PASSWORD, GOG_ACCOUNT, …) reach every agent's server
+// regardless of how it was launched (shell, systemd, tmux). The file
+// is a default-provider — values already in process.env win, matching
+// the "env-as-override" policy. Existing process.env takes precedence;
+// only missing keys are filled in.
+const envFileResult = loadSomoraEnvFile();
+if (envFileResult.exists) {
+  logger.info({
+    msg: 'env_file.loaded',
+    path: envFileResult.path,
+    loaded: envFileResult.loaded,
+    skipped: envFileResult.skipped,
+  });
+  if (envFileResult.permissionWarning) {
+    logger.warn({ msg: 'env_file.permissions', warning: envFileResult.permissionWarning });
+  }
+}
 
 let config: Config;
 try {
@@ -1665,39 +1685,76 @@ configureDreamRunTool({ deepWorker, lucidWorker });
 // over HTTP/2 (RFC 8441) — tested against this server.
 const wss = new WebSocketServer({ noServer: true });
 
-if (tlsCert && tlsKey && tlsConf) {
-  serve(
-    {
-      fetch: app.fetch,
-      port,
-      hostname: bindHost,
-      // allowHTTP1: true keeps HTTP/1.1 fallback available for legacy
-      // tooling (curl, ancient health-check probes, etc.) — modern
-      // browsers negotiate HTTP/2 via ALPN and get the multiplex benefit
-      // automatically. Cert MUST be valid for `publicHost`.
-      createServer: createHttp2SecureServer,
-      serverOptions: { cert: tlsCert, key: tlsKey, allowHTTP1: true },
-      websocket: { server: wss },
-    },
-    (info) => {
-      logger.info({
-        msg: 'server.start',
-        port: info.port,
-        host: bindHost,
-        tls: true,
-        publicHost: tlsConf.publicHost,
-        protocol: 'h2',
-      });
-    },
-  );
-} else {
-  serve(
-    { fetch: app.fetch, port, hostname: bindHost, websocket: { server: wss } },
-    (info) => {
-      logger.info({ msg: 'server.start', port: info.port, host: bindHost, tls: false });
-    },
-  );
-}
+// Long A2A turns (agent_ask) and long subagent spawns block on
+// /chat/send-sync for up to agentLoop.longTaskMaxTimeoutMs (30 min by
+// default). The h2 server and its underlying TCP socket must NOT have
+// shorter implicit timeouts than that, or they drop the connection
+// mid-turn and the caller sees `fetch failed`. We disable the socket-
+// level timeouts and the h2 sessionTimeout explicitly; headersTimeout
+// keeps its sensible 60s default as DoS protection (it only governs
+// request HEADER receipt, not the response wait).
+//
+// Equivalent client-side fix lives in src/server/loopback-fetch.ts
+// (undici dispatcher with bodyTimeout/headersTimeout=0).
+const httpServer = tlsCert && tlsKey && tlsConf
+  ? serve(
+      {
+        fetch: app.fetch,
+        port,
+        hostname: bindHost,
+        // allowHTTP1: true keeps HTTP/1.1 fallback available for legacy
+        // tooling (curl, ancient health-check probes, etc.) — modern
+        // browsers negotiate HTTP/2 via ALPN and get the multiplex benefit
+        // automatically. Cert MUST be valid for `publicHost`.
+        createServer: createHttp2SecureServer,
+        serverOptions: {
+          cert: tlsCert,
+          key: tlsKey,
+          allowHTTP1: true,
+          // 0 = no h2 session inactivity timeout. Default is also 0 in
+          // current Node, but we make it explicit so a future Node
+          // default change doesn't silently re-introduce the regression.
+          sessionTimeout: 0,
+        },
+        websocket: { server: wss },
+      },
+      (info) => {
+        logger.info({
+          msg: 'server.start',
+          port: info.port,
+          host: bindHost,
+          tls: true,
+          publicHost: tlsConf.publicHost,
+          protocol: 'h2',
+        });
+      },
+    )
+  : serve(
+      { fetch: app.fetch, port, hostname: bindHost, websocket: { server: wss } },
+      (info) => {
+        logger.info({ msg: 'server.start', port: info.port, host: bindHost, tls: false });
+      },
+    );
+
+// Disable socket and request-body timeouts so long A2A / spawn turns
+// (up to longTaskMaxTimeoutMs) ride through without server-side
+// connection drops. keepAliveTimeout is bumped from Node's 5s default
+// to 60s so h1-fallback keep-alive survives normal model thinking
+// pauses. headersTimeout (60s default) is left alone — it caps the
+// time spent waiting for the request HEADERS, not the response, so
+// it doesn't fight long agent turns.
+//
+// The cast is needed because @hono/node-server's ServerType union
+// covers both http.Server and http2.Http2SecureServer; their timeout
+// properties differ in the type defs even though both classes carry
+// them at runtime via inheritance from net.Server / setTimeout().
+httpServer.setTimeout(0);
+const tunable = httpServer as unknown as {
+  requestTimeout?: number;
+  keepAliveTimeout?: number;
+};
+tunable.requestTimeout = 0;
+tunable.keepAliveTimeout = 60_000;
 
 // Best-effort cleanup on signal — keeps embedding processes from lingering
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.

@@ -24,6 +24,7 @@ import {
   type SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import OpenAI from 'openai';
+import { createPatientOpenAIClient } from '../server/openai-client.ts';
 import type { ResolvedModel } from '../config/types.ts';
 import type { ReplayPair } from '../engine/replay.ts';
 import { logger } from '../server/logger.ts';
@@ -127,7 +128,7 @@ async function summarizeViaOpenAiCompatible(
       `summarizeViaOpenAiCompatible called with non-openai-compatible provider: ${resolvedModel.provider.engine}`,
     );
   }
-  const client = new OpenAI({
+  const client = createPatientOpenAIClient({
     baseURL: resolvedModel.provider.baseUrl,
     apiKey: resolvedModel.provider.apiKey,
   });

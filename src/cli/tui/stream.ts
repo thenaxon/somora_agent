@@ -1,7 +1,13 @@
 // SSE consumer for /chat/stream. Yields normalized StreamEvent values via
 // an async iterator so the React side can pull events with a simple for-await
 // loop. Auto-reconnect with exponential backoff lives here too.
+//
+// Uses loopbackFetch so undici's default 5-min headersTimeout doesn't
+// kill the initial response wait when the server takes a while to flush
+// the first SSE frame (slow models, busy session lock, etc.). Body
+// streaming is chunk-based and doesn't have an undici body timeout.
 
+import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { StreamEvent } from './types.ts';
 
 export interface StreamHandle {
@@ -59,7 +65,7 @@ export function openStream(
     abort = new AbortController();
     let res: Response;
     try {
-      res = await fetch(url, {
+      res = await loopbackFetch(url, {
         headers: { Accept: 'text/event-stream' },
         signal: abort.signal,
       });

@@ -21,6 +21,7 @@ import { join } from 'node:path';
 
 import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import OpenAI from 'openai';
+import { createPatientOpenAIClient } from '../server/openai-client.ts';
 
 import type { ResolvedModel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
@@ -58,7 +59,7 @@ export async function callOneShotLLM(args: OneShotArgs): Promise<string> {
 
 async function callOpenAICompat(args: OneShotArgs): Promise<string> {
   const provider = args.workerModel.provider as { baseUrl?: string; apiKey?: string };
-  const client = new OpenAI({
+  const client = createPatientOpenAIClient({
     baseURL: provider.baseUrl,
     apiKey: provider.apiKey ?? 'dummy',
   });

@@ -124,6 +124,13 @@ export const webSearch: ToolDefinition<z.infer<typeof SearchInput>, SearchOutput
 
     const url = `${BRAVE_ENDPOINT}?${params.toString()}`;
     const start = Date.now();
+    // External API: bound the wait explicitly. Without an AbortController
+    // we'd inherit undici's default 5-min bodyTimeout which is far too
+    // generous for a search call — Brave should respond in a couple of
+    // seconds; if it doesn't, fail fast and let the model decide what to
+    // do (retry, give up, ask the user).
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 30_000);
     let res: Response;
     try {
       res = await fetch(url, {
@@ -131,9 +138,17 @@ export const webSearch: ToolDefinition<z.infer<typeof SearchInput>, SearchOutput
           'X-Subscription-Token': apiKey,
           Accept: 'application/json',
         },
+        signal: ac.signal,
       });
     } catch (err) {
-      throw new Error(`brave search request failed: ${(err as Error).message}`);
+      const aborted = ac.signal.aborted;
+      throw new Error(
+        aborted
+          ? `brave search timed out after 30s`
+          : `brave search request failed: ${(err as Error).message}`,
+      );
+    } finally {
+      clearTimeout(timer);
     }
 
     if (!res.ok) {
