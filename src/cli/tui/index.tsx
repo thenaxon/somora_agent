@@ -7,10 +7,30 @@ import { render } from 'ink';
 import { Api } from './api.ts';
 import { App } from './app.tsx';
 import { readTuiState } from './state.ts';
+import { loadConfig } from '../../config/loader.ts';
 
+// Resolve scheme + host + port. When `server.tls` is configured in
+// config.yaml, the somora server serves HTTPS-only on its publicHost
+// (matches the TLS cert SAN/CN); plain HTTP isn't accepted anymore,
+// so the TUI HAS to follow. Env-var overrides still win for power
+// users (SOMORA_BASE forces a specific URL, SOMORA_TLS=1/0 toggles
+// the scheme, SOMORA_HOST/SOMORA_PORT override the components).
 const port = Number(process.env.SOMORA_PORT ?? 18737);
-const host = process.env.SOMORA_HOST ?? '127.0.0.1';
-const base = `http://${host}:${port}`;
+let cfg: Awaited<ReturnType<typeof loadConfig>> | null = null;
+try {
+  cfg = await loadConfig();
+} catch {
+  /* missing config = first-run, fall through to plain-HTTP defaults */
+}
+const tlsConfigured = !!cfg?.server.tls;
+const tlsEnv = process.env.SOMORA_TLS;
+const useTls = tlsEnv === '0' ? false : tlsEnv === '1' ? true : tlsConfigured;
+const scheme = useTls ? 'https' : 'http';
+const defaultHost = useTls
+  ? cfg?.server.tls?.publicHost ?? '127.0.0.1'
+  : '127.0.0.1';
+const host = process.env.SOMORA_HOST ?? defaultHost;
+const base = process.env.SOMORA_BASE ?? `${scheme}://${host}:${port}`;
 
 // TUI display defaults — fetched from the server (single config reader).
 // If the server is unreachable at boot (e.g. user runs dev:cli before
