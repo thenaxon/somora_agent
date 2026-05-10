@@ -280,7 +280,7 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
   toolset: 'wiki',
   description:
     'Create a new wiki page. ONLY available while you hold the active dream_review loop. ' +
-    'The path must be a sub-folder + slug (e.g. "personen/lisa", "projekte/orbit"). ' +
+    'The path must be a sub-folder + slug (e.g. "personen/jane-doe", "projekte/orbit"). ' +
     'Fails if a page already exists at that path. Pass body content WITHOUT frontmatter ' +
     'and WITHOUT a leading H1 — the title argument is rendered as H1 automatically.',
   inputSchema: CreateInput,
@@ -289,7 +289,7 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
     properties: {
       wikiPath: {
         type: 'string',
-        description: 'Wiki page path with subfolder, no .md, e.g. "personen/lisa".',
+        description: 'Wiki page path with subfolder, no .md, e.g. "personen/jane-doe".',
       },
       type: {
         type: 'string',
@@ -320,7 +320,7 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
     const wikiAbs = resolveWikiAbs(ctx);
     const wikiPath = validateWikiPath(input.wikiPath);
     if (!wikiPath.includes('/')) {
-      throw new Error(`wiki_create: wikiPath '${wikiPath}' must include a subfolder (e.g. 'personen/lisa')`);
+      throw new Error(`wiki_create: wikiPath '${wikiPath}' must include a subfolder (e.g. 'personen/jane-doe')`);
     }
     const fileAbs = join(wikiAbs, `${wikiPath}.md`);
     await mkdir(dirname(fileAbs), { recursive: true });

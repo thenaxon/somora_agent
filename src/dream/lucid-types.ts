@@ -46,7 +46,7 @@ export type LucidFix =
       kind: 'create_page';
       /** Subfolder within the wiki (e.g. 'personen', 'projekte'). */
       subfolder: string;
-      /** Wiki path including subfolder (e.g. 'personen/lisa'). */
+      /** Wiki path including subfolder (e.g. 'personen/jane-doe'). */
       wikiPath: string;
       /** Frontmatter `type` (person | projekt | konzept | ort | ...). */
       type: string;

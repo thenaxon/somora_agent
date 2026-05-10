@@ -600,7 +600,7 @@ export const TlsConfigSchema = z
      *  reject the connection. Used by the MCP-child fallback caller in
      *  src/tools/agents/spawn.ts (which switches from plain-HTTP
      *  loopback to HTTPS once TLS is on) and surfaced in client docs.
-     *  Example: `naxon.tailf6ec51.ts.net`. */
+     *  Example: `<your-host>.<your-tailnet>.ts.net`. */
     publicHost: z.string().min(1),
   })
   .optional();

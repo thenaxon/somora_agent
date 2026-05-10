@@ -1,7 +1,7 @@
-/* somora-web color + effect tokens. Ported 1:1 from the click-dummy
- * (/mnt/naxon/somora_UX/somora_UX/styles.css) so the look matches
- * exactly. Tailwind config in /tailwind.config.ts references these
- * via var(--token) — never hardcode hex codes in components. */
+/* somora-web color + effect tokens. Ported 1:1 from the design
+ * source so the look matches exactly. Tailwind config in
+ * /tailwind.config.ts references these via var(--token) — never
+ * hardcode hex codes in components. */
 
 :root {
   /* Backgrounds — darkest at the canvas edge, lighter for surfaces. */

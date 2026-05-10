@@ -4,6 +4,30 @@
 > Together they turn raw conversation into curated long-term knowledge
 > without any single LLM call doing too much.
 
+## Why three phases?
+
+When you chat with an agent, useful facts get said in passing. „I moved
+to Berlin." „My new car is a hybrid." „We decided to ship the dark-mode
+toggle next sprint." A naive memory layer would either dump every turn
+into long-term storage (noise) or rely on the agent to manually save
+(unreliable + tedious). somora splits the work:
+
+1. **REM** notices what's new in a recent session and proposes facts to
+   keep — small per-agent jobs, you approve each one. Result lands in
+   the agent's *private memory inbox*.
+2. **Deep** rolls multiple inbox entries up into the *shared wiki*
+   pages — bigger consolidation runs across all agents, every ~12 h.
+   Auto-applies (you'd be drowning in approvals otherwise) but the wiki
+   stays editable in Obsidian.
+3. **Lucid** audits the wiki for contradictions, stale claims, dead
+   refs, missing pages — every ~7 d. Findings come back as proposals
+   you walk through with the agent in a `dream_review` loop.
+
+Each phase has its own LLM worker (small/cheap for REM, strong/expensive
+for Deep+Lucid), its own cadence, and its own approval semantics. No
+single prompt has to do everything; the system just keeps grinding
+incrementally in the background while you use somora normally.
+
 ## The mental model
 
 ```
@@ -290,7 +314,7 @@ when you OK each step, and you close the loop when done.
 
 ```
 > du:    schau dir das lucid result mal an
-hans:    dream_list   → finds the Lucid run
+scribe:    dream_list   → finds the Lucid run
          dream_get(id) → reads all findings
          dream_review({dream_id, action: 'start'})  ← opens the loop
          "Hier ist was Lucid gefunden hat: 5 contradictions, 2 dead refs.
@@ -298,13 +322,13 @@ hans:    dream_list   → finds the Lucid run
           Mein Vorschlag: <konkrete Änderung>. OK?"
 
 > du:    ja, mach so
-hans:    wiki_edit({...})   ← writes the page
+scribe:    wiki_edit({...})   ← writes the page
          "Erledigt. Nächste Finding: ..."
 
 > [several rounds of walk-discuss-edit]
 
 > du:    passt, mach Schluss
-hans:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
+scribe:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
          loop is archived to processed/, normal tools come back
 ```
 
@@ -367,26 +391,26 @@ dream_review({dream_id, action, [summary]})
 Typical REM flow:
 
 ```
-hans> dream_list
+scribe> dream_list
    → memory dream: 5 pending findings
-hans> dream_get dream_id=<id>
+scribe> dream_get dream_id=<id>
    → full finding list with action, slug, reason, proposed_content
 > walk through with me, finding by finding
-hans> dream_apply  (or dream_dismiss)
+scribe> dream_apply  (or dream_dismiss)
    → repeats until all resolved → dream_done: true
 ```
 
 Typical Lucid flow:
 
 ```
-hans> dream_list
+scribe> dream_list
    → wiki_lucid run: 6 pending findings
-hans> dream_get dream_id=<id>
+scribe> dream_get dream_id=<id>
    → full finding list (all fix.kind = 'no_op' informational)
-hans> dream_review({dream_id, action: 'start'})
+scribe> dream_review({dream_id, action: 'start'})
    → loop opens, wiki_* tools become available, file_*/exec_* etc. hide
 [walk-discuss-edit conversation rounds]
-hans> dream_review({dream_id, action: 'end', summary: 'F1 applied as edit X, F2 dismissed, ...'})
+scribe> dream_review({dream_id, action: 'end', summary: 'F1 applied as edit X, F2 dismissed, ...'})
    → loop closes, run archived
 ```
 

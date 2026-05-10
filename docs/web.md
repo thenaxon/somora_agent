@@ -8,13 +8,13 @@ Phase 1 ships chat windows; tmux + xterm.js attaches come later.
 
 ```
   ┌─────────────────────────────── browser ─────────────────────────┐
-  │  ┌─ agent dock ─┐  ┌─── chat: hans ────┐  ┌─── chat: naxon ───┐ │
-  │  │  hans   ●    │  │ history + stream  │  │ history + stream  │ │
-  │  │  naxon  ●    │  │ tool blocks       │  │ tool blocks       │ │
-  │  │  rene   ◯    │  │ [paperclip] ▢▷▶   │  │ [paperclip] ▢▷▶   │ │
+  │  ┌─ agent dock ─┐  ┌── chat: scribe ───┐  ┌── chat: coach ────┐ │
+  │  │  scribe ●    │  │ history + stream  │  │ history + stream  │ │
+  │  │  coach  ●    │  │ tool blocks       │  │ tool blocks       │ │
+  │  │  archi. ◯    │  │ [paperclip] ▢▷▶   │  │ [paperclip] ▢▷▶   │ │
   │  └──────────────┘  └───────────────────┘  └───────────────────┘ │
   │                                                                 │
-  │  taskbar: [hans] [naxon]   ▢ auto-arrange  💾 save layout       │
+  │  taskbar: [scribe] [coach]  ▢ auto-arrange  💾 save layout      │
   └─────────────────────────────────────────────────────────────────┘
                               │ HTTP + SSE
                               ▼
@@ -43,7 +43,7 @@ Short version:
 ```bash
 # in the Tailscale admin: enable MagicDNS + HTTPS Certificates (one-time)
 mkdir -p ~/.somora/certs && cd ~/.somora/certs
-tailscale cert naxon.tailf6ec51.ts.net   # use your own FQDN
+tailscale cert <your-host>.<your-tailnet>.ts.net   # use your own FQDN
 ```
 
 Add to `~/.somora/config.yaml`:
@@ -52,9 +52,9 @@ Add to `~/.somora/config.yaml`:
 server:
   port: 18737
   tls:
-    cert: ~/.somora/certs/naxon.tailf6ec51.ts.net.crt
-    key:  ~/.somora/certs/naxon.tailf6ec51.ts.net.key
-    publicHost: naxon.tailf6ec51.ts.net
+    cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
+    key:  ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
+    publicHost: <your-host>.<your-tailnet>.ts.net
 ```
 
 Then `systemctl --user restart somora` (or however you launch it).
@@ -124,14 +124,14 @@ manager — each device remembers its own arrangement.
 
 ```
  ┌──────────────────────────────────────────────────────┐
- │ 🧠  hans  · butler                  ● streaming     │ ← header
- │ main · gpt-4o · think:medium · 🔧 on · ↑12k ↓4k · ●  │ ← live meta
+ │ 🧠  scribe  · assistant             ● streaming     │ ← header
+ │ main · opus · think:medium · 🔧 on · ↑12k ↓4k · ●    │ ← live meta
  ├──────────────────────────────────────────────────────┤
- │  [user]   wo wohnt rene?                             │
+ │  [user]   summarize today's notes                    │
  │                                                       │
- │  [tool]   memory_search "rene wohnort"               │ ← above
- │  [tool]   → personen/rene · 0.71                     │
- │  [hans]   In Wien, in der Hofgasse.                  │ ← below
+ │  [tool]   memory_search "today notes"                │ ← above
+ │  [tool]   → notes/2026-05-10 · 0.71                  │
+ │  [scribe] You spent the morning on the cache fix...  │ ← below
  │  ▮                                                   │
  ├──────────────────────────────────────────────────────┤
  │  📎  Type a message…                            ▷    │ ← input

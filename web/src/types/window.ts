@@ -10,7 +10,7 @@ export interface WindowState {
   /** Unique id; stable across drags / focus changes / persistence. */
   id: string;
   kind: WindowKind;
-  /** Title shown in the title bar (e.g. "hans · main"). */
+  /** Title shown in the title bar (e.g. "<agent> · <session>"). */
   title: string;
   /** Optional small subtitle next to the title (e.g. "assistant"). */
   meta?: string;

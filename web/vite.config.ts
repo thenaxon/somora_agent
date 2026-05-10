@@ -15,13 +15,14 @@ import { resolve } from 'node:path';
 // dev experience matches production. Without the cert files, falls
 // back to plain HTTP/1.1 — fine for one-window debugging but you'll
 // hit the 6-connection-per-origin limit fast with multi-agent setups.
-// SOMORA_TLS_HOST overrides which cert pair to load (default:
-// SOMORA_PUBLIC_HOST or `naxon.tailf6ec51.ts.net`).
+// Set SOMORA_PUBLIC_HOST or SOMORA_TLS_HOST to your tailnet FQDN
+// (e.g. `your-host.your-tailnet.ts.net`) so vite knows which cert
+// pair to load.
 const certsDir = resolve(homedir(), '.somora/certs');
 const tlsHost =
   process.env.SOMORA_TLS_HOST ||
   process.env.SOMORA_PUBLIC_HOST ||
-  'naxon.tailf6ec51.ts.net';
+  '';
 const certPath = resolve(certsDir, `${tlsHost}.crt`);
 const keyPath = resolve(certsDir, `${tlsHost}.key`);
 const tlsAvailable = existsSync(certPath) && existsSync(keyPath);
@@ -41,7 +42,7 @@ export default defineConfig({
   server: {
     // Bind to all interfaces so the dev server is reachable from the
     // LAN / Tailscale (other devices browsing to
-    // https://naxon.tailf6ec51.ts.net:5173/web/). LAN+tailnet-only
+    // https://<your-host>.<your-tailnet>.ts.net:5173/web/). LAN+tailnet-only
     // by design — same threat model as the somora HTTP server, no auth.
     host: true,
     port: 5173,

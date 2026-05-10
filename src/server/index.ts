@@ -82,9 +82,10 @@ const streams = new Map<string, Set<Subscriber>>();
  * Compose the pubsub key from (agent, session). Every persona has a
  * `main` session by default, so keying by session-id alone caused
  * cross-agent leaks for any client that opened multiple SSE
- * subscriptions in parallel — observed 2026-05-09 in the web client
- * with multiple chat windows: events for hans/main arrived in
- * naxon/main's stream because both subscribed to bare "main".
+ * subscriptions in parallel — observed in the web client with
+ * multiple chat windows: events for one agent's main session arrived
+ * in another agent's main stream because both subscribed to bare
+ * "main".
  */
 function streamKey(agent: string, session: string): string {
   return `${agent}::${session}`;

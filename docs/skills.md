@@ -268,10 +268,10 @@ specific stylistic preferences override skill defaults). Skills should
 describe STRUCTURE; memory layers STYLE on top. Persona is always-on
 and shapes voice through everything.
 
-If you find yourself adding "Rene wants X" to a skill body, it
-belongs in memory instead. If you find yourself adding "use these N
-tools in this sequence" to a tool description, it should probably be
-a skill.
+If you find yourself adding "the operator wants X" to a skill body,
+it belongs in memory instead. If you find yourself adding "use these
+N tools in this sequence" to a tool description, it should probably
+be a skill.
 
 ## Configuration
 
