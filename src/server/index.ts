@@ -1,7 +1,7 @@
 import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { streamSSE } from 'hono/streaming';
+import { streamSSEH2Safe } from './sse-h2-safe.ts';
 import { readFileSync } from 'node:fs';
 import { createSecureServer as createHttp2SecureServer } from 'node:http2';
 import { homedir } from 'node:os';
@@ -900,7 +900,7 @@ app.get('/chat/stream', async (c) => {
   if (!session) {
     return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
   }
-  return streamSSE(c, async (stream) => {
+  return streamSSEH2Safe(c, async (stream) => {
     logger.info({ msg: 'sse.connect', agent, session });
     const unsub = subscribe(agent, session, async (event) => {
       await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
