@@ -61,6 +61,25 @@ export const OpenAiCompatibleProviderSchema = z.object({
   apiKey: z.string().min(1),
   models: z.array(ModelSchema).min(1),
   /**
+   * How PDFs ride along on user-attachments via this provider.
+   *   - `rasterize` (default): render PDF pages to PNG via pdf-to-img
+   *     and pass them as image_url blocks. Works against every backend
+   *     that supports vision (omlx, ollama, gemma, anything OpenAI-
+   *     style image-capable). Pages × image-tokens cost-wise, but
+   *     universally compatible.
+   *   - `native`: pass the PDF as a `{type:'file', file:{file_data:
+   *     'data:application/pdf;base64,…'}}` content block. Anthropic
+   *     via OpenRouter and OpenAI direct accept this; most local
+   *     servers (omlx, ollama) do not. Only enable when you've
+   *     verified the backend behind this provider supports it.
+   * claude-cli always uses native DocumentBlock (Anthropic SDK
+   * supports it), codex-cli always rasterizes (its `--image` flag
+   * accepts only images). The knob is intentionally limited to this
+   * provider type because only here does the answer vary by the
+   * concrete backend.
+   */
+  pdfMode: z.enum(['rasterize', 'native']).default('rasterize').optional(),
+  /**
    * Where the per-turn memory recall block lands in the prompt sent to
    * the backend. The choice matters because openai-compatible can sit
    * in front of any backend (mlx-omx, ollama, vLLM, OpenAI itself,
@@ -587,6 +606,30 @@ export const TlsConfigSchema = z
   .optional();
 export type TlsConfig = z.infer<typeof TlsConfigSchema>;
 
+// Attachments — caps + per-turn count for user-uploaded files (Y.B).
+// Defaults pick the LOWEST-COMMON-DENOMINATOR across all engines:
+//   image: 5 MB (Anthropic ceiling)
+//   pdf:   32 MB (Anthropic ceiling)
+//   text:  1 MB (file_read fallback ceiling)
+// Operators with a fleet that can handle bigger files raise these
+// in config; nobody who runs against Anthropic ever has to lower
+// them. maxPerTurn is a UX-sanity cap well under any engine's
+// hard limit (Anthropic 100, OpenAI ~50, codex/omlx undocumented).
+export const AttachmentsConfigSchema = z
+  .object({
+    maxImageBytes: z.number().int().positive().default(5 * 1024 * 1024),
+    maxPdfBytes: z.number().int().positive().default(32 * 1024 * 1024),
+    maxTextBytes: z.number().int().positive().default(1 * 1024 * 1024),
+    maxPerTurn: z.number().int().positive().default(10),
+  })
+  .default({
+    maxImageBytes: 5 * 1024 * 1024,
+    maxPdfBytes: 32 * 1024 * 1024,
+    maxTextBytes: 1 * 1024 * 1024,
+    maxPerTurn: 10,
+  });
+export type AttachmentsConfig = z.infer<typeof AttachmentsConfigSchema>;
+
 export const ConfigSchema = z.object({
   server: z
     .object({
@@ -608,6 +651,7 @@ export const ConfigSchema = z.object({
   vision: VisionConfigSchema,
   obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
+  attachments: AttachmentsConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

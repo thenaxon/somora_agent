@@ -8,6 +8,10 @@ import { homedir } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
 import { type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
+import { storeAttachment } from '../attachments/store.ts';
+import { detectMimeFromPath } from '../multimodal/mime.ts';
+import { existsSync } from 'node:fs';
+import { readFile as fsReadFile } from 'node:fs/promises';
 import {
   ensureMemoryDirs,
   getMemoryManager,
@@ -638,8 +642,35 @@ app.get('/chat/history', async (c) => {
   if (!id) {
     return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
   }
-  const events = await getHistory(agent, id);
-  return c.json({ agent, session: id, events });
+  // Pagination (Phase 1 web lazy-load): when `limit` is given the
+  // server returns only the LAST `limit` events plus a `hasMore` +
+  // `oldestTs` marker; subsequent calls supply `before=<oldestTs>` to
+  // pull the next older window. Without `limit` the response is the
+  // full session — backwards compatible for older clients (TUI
+  // hydrates everything anyway, web only opts into paging when it
+  // explicitly asks for it).
+  const all = await getHistory(agent, id);
+  const limitParam = c.req.query('limit');
+  const beforeParam = c.req.query('before');
+  if (!limitParam && !beforeParam) {
+    return c.json({ agent, session: id, events: all, hasMore: false });
+  }
+  const limit = Math.max(1, Math.min(2000, Number(limitParam) || 200));
+  const before = beforeParam ? Number(beforeParam) : Number.POSITIVE_INFINITY;
+  if (Number.isNaN(before)) {
+    return c.json({ error: 'query param "before" must be a numeric timestamp (ms)' }, 400);
+  }
+  const filtered = all.filter((e) => e.ts < before);
+  const slice = filtered.slice(-limit);
+  const hasMore = filtered.length > slice.length;
+  const oldestTs = slice.length > 0 ? slice[0]!.ts : null;
+  return c.json({
+    agent,
+    session: id,
+    events: slice,
+    hasMore,
+    ...(oldestTs !== null ? { oldestTs } : {}),
+  });
 });
 
 app.get('/chat/stream', async (c) => {
@@ -679,6 +710,91 @@ app.get('/chat/stream', async (c) => {
   });
 });
 
+// Phase Y.B — User-attachment upload. Streams the body into a tmp
+// file, sniffs MIME via magic-bytes (extensions are untrusted),
+// validates against per-kind caps, hashes, and atomically moves into
+// content-addressed storage at ~/.somora/attachments/<sha256>.<ext>.
+// Returns the metadata the client then references in /chat/send.
+//
+// Multipart parsing is intentionally avoided — Hono's parseBody pulls
+// the whole body into memory as a Buffer, which would defeat the
+// streaming caps. Clients send the raw bytes as the request body
+// with Content-Type: <mime> (sniffed server-side anyway) and the
+// filename via the X-Somora-Filename header.
+app.post('/attachments', async (c) => {
+  const rawName =
+    c.req.header('X-Somora-Filename') ||
+    c.req.header('x-somora-filename') ||
+    'unnamed';
+  // Filenames travel URL-encoded so non-ASCII / spaces survive HTTP
+  // header constraints. Decode before storing — display only.
+  let name: string;
+  try {
+    name = decodeURIComponent(rawName);
+  } catch {
+    name = rawName;
+  }
+  const body = c.req.raw.body;
+  if (!body) {
+    return c.json({ error: 'request body required' }, 400);
+  }
+  try {
+    const stored = await storeAttachment({
+      body,
+      name,
+      config: config.attachments,
+    });
+    logger.info({
+      msg: 'attachments.stored',
+      hash: stored.hash,
+      name: stored.name,
+      mime: stored.mime.mimeType,
+      kind: stored.mime.kind,
+      size: stored.size,
+    });
+    return c.json({
+      hash: stored.hash,
+      name: stored.name,
+      mime: stored.mime.mimeType,
+      kind: stored.mime.kind,
+      size: stored.size,
+    });
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.warn({ msg: 'attachments.store_failed', name, err: msg });
+    return c.json({ error: msg }, 400);
+  }
+});
+
+// Serve a stored attachment by hash. Used by the web client to
+// display thumbnails of past-turn user-attachments (the bytes never
+// re-travel on /chat/send, so the bubble row needs a way to fetch
+// them). Loopback-trust same as everything else; sniffs MIME from
+// disk so a renamed-on-disk file can't claim a different content
+// type than its bytes say.
+app.get('/attachments/:hash', async (c) => {
+  const hash = c.req.param('hash');
+  if (!/^[0-9a-f]{64}$/.test(hash)) {
+    return c.json({ error: 'invalid hash' }, 400);
+  }
+  const candidates = ['png', 'jpg', 'gif', 'webp', 'pdf', 'txt', 'bin'];
+  for (const ext of candidates) {
+    const p = `${SOMORA_HOME_DIR}/attachments/${hash}.${ext}`;
+    if (existsSync(p)) {
+      const bytes = await fsReadFile(p);
+      const sniffed = await detectMimeFromPath(p);
+      return new Response(bytes, {
+        headers: {
+          'Content-Type': sniffed.mimeType,
+          // Long-cache: content is content-addressed, hash never re-issues different bytes.
+          'Cache-Control': 'public, max-age=31536000, immutable',
+        },
+      });
+    }
+  }
+  return c.json({ error: 'not found' }, 404);
+});
+
 app.post('/chat/send', async (c) => {
   const body = (await c.req.json()) as {
     agent?: string;
@@ -695,6 +811,10 @@ app.post('/chat/send', async (c) => {
     agent_ask_call_id?: string;
     /** Sub-agent nesting depth (0 = top-level). Reserved for future spawn flow. */
     subagent_depth?: number;
+    /** Phase Y.B — files the user attached to this turn. Each entry is
+     *  the response shape returned by POST /attachments. Bytes are NOT
+     *  inline; the server resolves hash → ~/.somora/attachments path. */
+    attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
   };
   const agent = body.agent ?? (await defaultAgentFallback());
   if (!agent) {
@@ -750,6 +870,9 @@ app.post('/chat/send', async (c) => {
         ...(fromAgent ? { fromAgent } : {}),
         ...(agentAskCallId ? { agentAskCallId } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
+        ...(body.attachments && body.attachments.length > 0
+          ? { attachments: body.attachments }
+          : {}),
         publishSse: (event) => publish(agent, session, event),
         deps: chatTurnDeps,
       });

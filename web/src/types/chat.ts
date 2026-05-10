@@ -31,11 +31,27 @@ export interface ToolResultPayload {
   output?: unknown;
 }
 
+export interface AttachmentDisplay {
+  hash: string;
+  name: string;
+  mime: string;
+  kind: 'image' | 'pdf' | 'text';
+  size: number;
+}
+
 export type ChatMessage =
-  | { id: string; role: 'user'; ts: number; text: string; fromAgent?: string }
+  | {
+      id: string;
+      role: 'user';
+      ts: number;
+      text: string;
+      fromAgent?: string;
+      attachments?: AttachmentDisplay[];
+    }
   | { id: string; role: 'assistant'; ts: number; text: string; streaming?: boolean }
   | { id: string; role: 'tool_call'; ts: number; toolCall: ToolCallPayload }
-  | { id: string; role: 'tool_result'; ts: number; toolResult: ToolResultPayload };
+  | { id: string; role: 'tool_result'; ts: number; toolResult: ToolResultPayload }
+  | { id: string; role: 'memory_inject'; ts: number; memory: MemoryHitsSnapshot };
 
 export interface ChatUsage {
   tokens_in?: number;

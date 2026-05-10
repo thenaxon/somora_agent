@@ -27,7 +27,9 @@ import { logger } from '../server/logger.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { withFromAgentHeader } from './a2a.ts';
-import type { AgentEngine, TurnInput } from './types.ts';
+import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
+import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
+import { resolveAttachmentByHash } from '../attachments/store.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -50,11 +52,12 @@ interface OpenAiCompatibleMeta {
   compactions?: Compaction[];
 }
 
-function buildMessages(
+async function buildMessages(
   systemPrompt: string,
   history: NormalizedEvent[],
   compactions: Compaction[] | undefined,
-): ChatMessage[] {
+  pdfMode: 'native' | 'rasterize',
+): Promise<ChatMessage[]> {
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
 
   // Prepend the latest compaction summary as a second system message.
@@ -92,8 +95,6 @@ function buildMessages(
   for (const ev of history) {
     if (ev.ts <= sinceTs) continue; // skip events covered by compaction
     if (ev.kind === 'user_message') {
-      if (pendingRole !== 'user') flush();
-      pendingRole = 'user';
       // A2A attribution: prepend a header when this user-message was
       // written by another agent so the model sees the provenance
       // even after replay across engines.
@@ -106,6 +107,52 @@ function buildMessages(
       // sessions (claude-cli/codex-cli) don't reconstruct full
       // history so they ignore this code path.
       const composed = ev.ephemeral ? `${ev.ephemeral}\n\n${headed}` : headed;
+      // Phase Y.B — when this past turn carried attachments, it must
+      // become its own array-content message (can't be collapsed with
+      // siblings). Resolve refs from disk and build the content parts;
+      // missing files degrade to a text marker so a long-deleted
+      // attachment doesn't kill the turn replay.
+      if (ev.attachments && ev.attachments.length > 0) {
+        flush();
+        const resolved: ResolvedAttachment[] = [];
+        for (const a of ev.attachments) {
+          try {
+            const r = await resolveAttachmentByHash({ hash: a.hash, expectedMime: a.mime });
+            resolved.push({
+              hash: a.hash,
+              path: r.path,
+              name: a.name,
+              mime: r.mime,
+              size: r.size,
+            });
+          } catch (err) {
+            logger.warn({
+              msg: 'engine.replay.attachment_missing',
+              hash: a.hash,
+              name: a.name,
+              err: (err as Error).message,
+            });
+          }
+        }
+        if (resolved.length === 0) {
+          // All refs were stale — fall back to text-only with a marker
+          // so the model sees that something *was* attached at this turn.
+          const lostNames = ev.attachments.map((a) => a.name).join(', ');
+          messages.push({
+            role: 'user',
+            content: `[Attachments lost from disk: ${lostNames}]\n\n${composed}`,
+          });
+        } else {
+          const content = await buildOpenAiUserContent(composed, resolved, pdfMode);
+          messages.push({
+            role: 'user',
+            content: content as OpenAI.Chat.Completions.ChatCompletionUserMessageParam['content'],
+          });
+        }
+        continue;
+      }
+      if (pendingRole !== 'user') flush();
+      pendingRole = 'user';
       pendingText = pendingText ? `${pendingText}\n\n${composed}` : composed;
     } else if (ev.kind === 'assistant_message') {
       if (pendingRole !== 'assistant') flush();
@@ -259,7 +306,9 @@ export const openAiCompatibleEngine: AgentEngine = {
       useLegacySystemConcat && ephemeralContext
         ? `${systemPrompt}\n\n---\n\n${ephemeralContext}`
         : systemPrompt;
-    const messages = buildMessages(effectiveSystemPrompt, history, compactions);
+    const pdfMode =
+      (resolvedModel.provider as { pdfMode?: 'native' | 'rasterize' }).pdfMode ?? 'rasterize';
+    const messages = await buildMessages(effectiveSystemPrompt, history, compactions, pdfMode);
     const estTokens = estimateTokens(messages);
     const ctxRatio = estTokens / resolvedModel.model.contextWindow;
     if (ctxRatio > 0.7) {

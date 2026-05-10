@@ -79,6 +79,18 @@ export function useWindowManager() {
     setWindows((ws) => ws.map((win) => (win.id === id ? { ...win, w, h } : win)));
   }, []);
 
+  /** Mutate the sessionId of an open chat window in place. Used by
+   *  the slash-command popup's `/session` and `/new` handlers — the
+   *  ChatWindow then re-subscribes to the new session's SSE via
+   *  ChatProvider, no remount required. */
+  const setWindowSession = useCallback((id: string, sessionId: string) => {
+    setWindows((ws) =>
+      ws.map((w) =>
+        w.id === id && w.kind === 'chat' ? { ...w, sessionId } : w,
+      ),
+    );
+  }, []);
+
   /** Open or focus a chat window for (agent, session). If a window
    *  for the same agent+session already exists, focus it instead of
    *  opening a duplicate. */
@@ -181,6 +193,7 @@ export function useWindowManager() {
     autoArrange,
     saveLayout,
     restoreLayout,
+    setWindowSession,
   };
 }
 

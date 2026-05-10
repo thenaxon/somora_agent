@@ -2,6 +2,22 @@ import type { CompactionConfig } from '../compaction/types.ts';
 import type { AgentLoopConfig, ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import type { ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import type { DetectedMime } from '../multimodal/mime.ts';
+
+/**
+ * User-attached file resolved to a usable on-disk path. Constructed
+ * by the server (run-turn) from the JSONL `attachments[]` refs before
+ * the engine adapter runs. Phase Y.B.
+ */
+export interface ResolvedAttachment {
+  hash: string;
+  /** Absolute path under ~/.somora/attachments/. */
+  path: string;
+  /** Original client-supplied filename, display-only. */
+  name: string;
+  mime: DetectedMime;
+  size: number;
+}
 
 // Per-session metadata, free-form. Engines stash their own internas here
 // (e.g. claude-cli writes sdkSessionId). Server-side bookkeeping
@@ -103,6 +119,18 @@ export interface TurnInput {
    * empty) plus a turn_end so the SSE stream closes cleanly.
    */
   signal?: AbortSignal;
+  /**
+   * Resolved user-attachments for THIS turn (Phase Y.B). When present,
+   * engines build a multimodal user-message-content array instead of
+   * pure text. Each engine adapter handles its own native shape
+   * (claude-cli: ContentBlockParam[]; openai-compatible: chat-completion
+   * content parts; codex-cli: --image flags + rasterised PDFs).
+   *
+   * Past-turn attachments come back via NormalizedEvent.user_message.
+   * attachments on history events — engines that replay history
+   * (openai-compatible) reconstruct the full content array per turn.
+   */
+  attachments?: ResolvedAttachment[];
 }
 
 export interface AgentEngine {

@@ -28,6 +28,7 @@ import {
 } from './replay.ts';
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
+import { buildCodexAttachments } from '../multimodal/user-content.ts';
 
 const ENGINE = 'codex-cli';
 
@@ -206,9 +207,16 @@ export const codexCliEngine: AgentEngine = {
     // the cross-engine replay prefix.
     const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
     const taggedUserMessage = withFromAgentHeader(userMessage, fromAgent);
+    // Phase Y.B — codex's `--image` flag accepts only image files.
+    // PDFs get rasterised to PNG-pages, text attachments get inlined
+    // into the prompt prefix (codex has no native non-image attachment
+    // surface). buildCodexAttachments handles all three cases.
+    const { imagePaths, promptPrefix: attachmentPrefix } = await buildCodexAttachments(
+      input.attachments ?? [],
+    );
     const promptPayload = resumeId
-      ? `${ephemeralBlock}${replayPrefix}${taggedUserMessage}`
-      : `${systemPrompt}\n\n---\n\n${ephemeralBlock}${replayPrefix}${taggedUserMessage}`;
+      ? `${attachmentPrefix}${ephemeralBlock}${replayPrefix}${taggedUserMessage}`
+      : `${systemPrompt}\n\n---\n\n${attachmentPrefix}${ephemeralBlock}${replayPrefix}${taggedUserMessage}`;
 
     // Argument order matters: `exec` accepts --sandbox, but `exec resume`
     // inherits the sandbox policy from the original thread and rejects
@@ -266,6 +274,12 @@ export const codexCliEngine: AgentEngine = {
     }
     args.push('--json', '--skip-git-repo-check');
     if (!resumeId) args.push('--sandbox', 'read-only');
+    // Phase Y.B — image attachments. codex exec accepts repeated
+    // `-i <PATH>` for both fresh and resumed sessions. Order vs the
+    // other flags doesn't matter to codex's parser. PDF pages
+    // already pre-rendered and surfaced as image paths by
+    // buildCodexAttachments above.
+    for (const p of imagePaths) args.push('-i', p);
     args.push('-m', resolvedModel.modelId);
     if (resumeId) args.push(resumeId);
     args.push('-');

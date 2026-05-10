@@ -159,10 +159,77 @@ provider ceilings). PDF render: max 20 pages by default, scale 1.5×
 **Future work — Phase Y.B:** user-uploaded attachments via TUI/web
 client. The multimodal helper modules in `src/multimodal/` are
 designed to feed both the agent-driven path (file_read / analyze_file)
-and the user-driven path (chat-message attachments). When Y.B lands,
-PDFs sent via the user-message route will use Anthropic's native
-`document` block and OpenAI's `input_file` content for full-quality
-delivery without rasterization.
+and the user-driven path (chat-message attachments).
+
+## User-attachments (Phase Y.B, web client)
+
+The web client exposes paperclip / drag&drop / paste so users can
+attach files directly to a chat turn. Pipeline:
+
+1. `POST /attachments` — raw bytes go to a streaming endpoint that
+   sniffs MIME via magic-bytes (extensions are untrusted), enforces
+   per-kind caps from `config.attachments`, and lands the file at
+   `~/.somora/attachments/<sha256>.<ext>`. Returns
+   `{hash, mime, kind, size, name}`. Same content uploaded twice =
+   same file on disk (sha256 dedup).
+2. `POST /chat/send` — body extension `attachments: [{hash, name,
+   mime, size}]`. Server resolves refs, validates the active model's
+   capabilities, refuses with a clear error if the model lacks
+   `image` / `pdf` cap.
+3. JSONL persists refs only on the `user_message` event — bytes never
+   travel into JSONL or back out. History replay re-loads bytes from
+   disk on demand.
+4. Each engine adapter builds its native multimodal user-message
+   shape: claude-cli inlines as `ContentBlockParam[]` with
+   `ImageBlockParam` / `DocumentBlockParam`; codex-cli pipes images
+   through `-i <PATH>` and rasterises PDFs to per-page PNGs into a
+   sibling cache dir; openai-compatible produces an array-content
+   user message (`{type:'image_url'}` / `{type:'file'}` / rasterised
+   PNGs depending on the provider's `pdfMode`).
+
+### Caps + per-turn count
+
+```yaml
+attachments:
+  maxImageBytes: 5242880   # 5 MB — Anthropic ceiling, lowest common denominator
+  maxPdfBytes:   33554432  # 32 MB — Anthropic ceiling
+  maxTextBytes:  1048576   # 1 MB
+  maxPerTurn:    10        # UX sanity cap
+```
+
+Defaults match the strictest engine in the supported set so a config
+that accepts any of them is safe everywhere. Operators with a
+single-engine fleet can raise these.
+
+### `pdfMode` — only on `openai-compatible` providers
+
+```yaml
+providers:
+  openrouter:
+    engine: openai-compatible
+    pdfMode: native    # opt-in; default is 'rasterize'
+```
+
+- `claude-cli` providers: always native (Anthropic supports inline
+  PDF). No knob.
+- `codex-cli` providers: always rasterise (codex's `--image` accepts
+  only images). No knob.
+- `openai-compatible` providers: depends on the actual backend
+  behind the URL. `rasterize` (default) renders pages to PNG and
+  works against omlx, ollama, anything image-capable. `native`
+  passes the PDF as a `{type:'file'}` content block — Anthropic
+  via OpenRouter and OpenAI direct accept this; most local servers
+  do not. Enable per-provider only when you've verified.
+
+### Garbage collection
+
+Out of scope for v1. Every uploaded file lands in `~/.somora/
+attachments/<hash>.<ext>` and stays. After heavy use, orphaned
+files (referenced only by JSONL sessions that have since been reset
+or deleted) accumulate. Acceptable trade-off: disk is cheap, single-
+user setup. Future plan: a sweep that scans all session JSONLs,
+collects referenced hashes, and deletes the rest. Track in
+`private/FUTURE.md`.
 
 ## Limits
 

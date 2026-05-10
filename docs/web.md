@@ -197,10 +197,52 @@ window manager + persistence.
 
 Not yet shipped (planned within Phase 1):
 
-- Slash-command popup (`/agent`, `/session`, `/skill`, ...)
-- Drag&drop attachments + multimodal preview
-- Memory-inject banner (visible per-turn injection summary)
-- Older-messages lazy-load (history is full-snapshot on subscribe today)
+- Native PDF for `openai-compatible` providers verified against
+  OpenRouter / OpenAI direct (today defaults to `rasterize` which
+  works everywhere; `pdfMode: native` is opt-in per provider until
+  smoke-tested across the fleet).
+
+Recently landed:
+
+- **Drag & drop / paste / paperclip attachments** (Phase Y.B).
+  Per-turn user-attachments end-to-end through all three engines:
+  claude-cli inlines as native ImageBlock / DocumentBlock;
+  codex-cli pipes images through `--image` and rasterises PDFs to
+  per-page PNGs; openai-compatible builds an array-content user
+  message (`image_url` for images, `file` or rasterised pages for
+  PDFs depending on `pdfMode`). Bytes live content-addressed at
+  `~/.somora/attachments/<sha256>.<ext>`; JSONL refs only, never
+  inline. See `docs/files.md` (and config block below) for the
+  Server side; the client surface is paperclip + Cmd/Ctrl+V paste
+  + drag&drop overlay + a per-bubble thumbnail row. Capability
+  gate refuses uploads for models without `image`/`pdf` capability
+  with a clear nudge to `/model`.
+- **Older-messages lazy-load**. Initial history load is paginated
+  to the last 100 events; scrolling near the top auto-fetches the
+  next 100, anchoring the visible position so you stay where you
+  were reading. There's also an explicit "↑ load older" button
+  for clarity.
+
+- **Memory-inject banner** — per-turn `🧠 memory · N hits · refs…` line
+  in the chat flow, mirrors the TUI's `◇ memory · …` row. Brain icon in
+  the meta-line toggles visibility; chevron expands the full injected
+  text. Persists per `agent::session` like the tools toggle.
+- **Slash-command popup** — type `/` in the input to bring up a
+  command picker:
+  - `/model <ref>` — switch model for this session (autocompletes from
+    `/models`).
+  - `/session <slug>` — switch the window to another session of this
+    agent (in-place, the SSE re-subscribes).
+  - `/new <slug>` — create a new session and switch this window to it.
+  - `/thinking <off|low|medium|high|default>` — set / clear the
+    thinking-effort override.
+
+  Arrow-keys navigate, Enter or Tab accepts, Escape dismisses. Note:
+  `/agent` is intentionally *not* a slash-command — the agent dock on
+  the left is the agent switcher, switching agent inside an existing
+  window would mean discarding the window's identity. `/skill` is also
+  out, because skills are activated by the agent itself via the `skill`
+  tool, not by user-facing CLI shortcuts.
 
 Phase 1.5 adds tmux session windows attached via xterm.js + a
 WebSocket bridge. Phase 2 adds skill catalog, dream-runner controls,

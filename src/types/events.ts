@@ -59,6 +59,19 @@ export type NormalizedEvent =
        * the recall block is internal scaffolding, not user-typed.
        */
       ephemeral?: string;
+      /**
+       * User-attached files (Phase Y.B, web upload). Refs only — bytes
+       * live at `~/.somora/attachments/<hash>.<ext>` content-
+       * addressed. JSONL persists name/mime/size for display +
+       * sanity-checks at replay time; the path is derived from the
+       * hash on demand.
+       */
+      attachments?: Array<{
+        hash: string;
+        name: string;
+        mime: string;
+        size: number;
+      }>;
     }
   | { kind: 'assistant_delta'; ts: number; engine: string; text: string }
   | { kind: 'assistant_message'; ts: number; engine: string; text: string }

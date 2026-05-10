@@ -20,7 +20,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, type HistoryEvent } from '../lib/api';
+import { api, type AttachmentRef, type HistoryEvent } from '../lib/api';
 import type {
   ChatMessage,
   ChatUsage,
@@ -64,8 +64,21 @@ interface ChatContextValue {
    *  Drives the dock's per-agent streaming dot — Desktop derives a
    *  Set<agentName> from this snapshot. */
   streamingKeys: string[];
-  send: (agent: string, session: string, text: string) => Promise<void>;
+  send: (
+    agent: string,
+    session: string,
+    text: string,
+    attachments?: AttachmentRef[],
+  ) => Promise<void>;
   abort: (agent: string, session: string) => Promise<void>;
+  /** Lazy-load older history. Returns true when more is available
+   *  after this load (so the caller can keep paging), false when the
+   *  beginning of the session has been reached. No-op when there's
+   *  nothing more to fetch or a load is already in flight. */
+  loadOlder: (agent: string, session: string) => Promise<boolean>;
+  /** Whether older messages exist beyond the current loaded slice.
+   *  Drives the chat-window's "load older" trigger visibility. */
+  getHasMore: (agent: string, session: string) => boolean;
 }
 
 const ChatContext = createContext<ChatContextValue>({
@@ -75,7 +88,12 @@ const ChatContext = createContext<ChatContextValue>({
   streamingKeys: [],
   send: async () => {},
   abort: async () => {},
+  loadOlder: async () => false,
+  getHasMore: () => false,
 });
+
+const INITIAL_HISTORY_LIMIT = 100;
+const OLDER_PAGE_SIZE = 100;
 
 export function useChatContext(): ChatContextValue {
   return useContext(ChatContext);
@@ -97,6 +115,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // user_message echo against our optimistic local-user message so
   // we don't render the same text twice.
   const pendingSelfSendsRef = useRef<Map<string, string[]>>(new Map());
+  // Pagination cursor per session: where the loaded slice begins
+  // (oldestTs), whether older messages exist beyond, and a guard
+  // against concurrent loadOlder calls.
+  const paginationRef = useRef<
+    Map<string, { hasMore: boolean; oldestTs: number | null; inFlight: boolean }>
+  >(new Map());
+  // Bumped whenever pagination state changes — drives consumers'
+  // re-renders since refs themselves don't trigger React updates.
+  const [paginationTick, setPaginationTick] = useState(0);
 
   const patchStream = useCallback((key: string, patch: Partial<SessionStreamState>) => {
     setStreams((prev) => {
@@ -148,8 +175,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // Load history once per session-key. Stream events that happen
       // between history-snapshot and EventSource-open could be missed
       // — the race is rare and the reload UX is just F5.
+      // Initial load is paginated (last N events). Older windows
+      // come in via loadOlder() when the user scrolls to the top.
       api
-        .history(agent, session)
+        .history(agent, session, { limit: INITIAL_HISTORY_LIMIT })
         .then((res) => {
           const entry = sourcesRef.current.get(key);
           if (!entry) return;
@@ -158,6 +187,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             ...prev,
             [key]: res.events.flatMap(historyEventToMessages),
           }));
+          if (typeof res.oldestTs === 'number') {
+            paginationRef.current.set(key, {
+              hasMore: Boolean(res.hasMore),
+              oldestTs: res.oldestTs,
+              inFlight: false,
+            });
+          } else {
+            paginationRef.current.set(key, {
+              hasMore: false,
+              oldestTs: null,
+              inFlight: false,
+            });
+          }
+          // Notify subscribers so the "load older" trigger appears.
+          setPaginationTick((t) => t + 1);
           patchStream(key, { loading: false });
         })
         .catch((err: Error) => {
@@ -290,13 +334,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           fullText?: string;
         }>(ev as MessageEvent);
         if (!d) return;
-        patchStream(key, {
-          memory: {
-            count: d.count,
-            topScore: d.topScore ?? null,
-            refs: d.refs,
-            ...(d.fullText !== undefined ? { fullText: d.fullText } : {}),
-          },
+        const snapshot = {
+          count: d.count,
+          topScore: d.topScore ?? null,
+          refs: d.refs,
+          ...(d.fullText !== undefined ? { fullText: d.fullText } : {}),
+        };
+        // Latest snapshot stays in stream state (header pills, badges).
+        patchStream(key, { memory: snapshot });
+        // Plus a chat-flow item so the user sees what was injected at
+        // each turn in scrollback — mirrors the TUI's `◇ memory · …`
+        // line. Anchored before the turn's first chat:delta, so it
+        // sits ABOVE the agent's reply for the turn it informed.
+        appendMessage(key, {
+          id: newId('mi'),
+          role: 'memory_inject',
+          ts: Date.now(),
+          memory: snapshot,
         });
       });
 
@@ -401,8 +455,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   const send = useCallback<ChatContextValue['send']>(
-    async (agent, session, text) => {
-      if (!text.trim()) return;
+    async (agent, session, text, attachments) => {
+      if (!text.trim() && (!attachments || attachments.length === 0)) return;
       const key = sessionKey(agent, session);
       // Track the text so we can dedupe the server's user_message
       // echo against our optimistic local copy.
@@ -410,15 +464,28 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       pending.push(text);
       pendingSelfSendsRef.current.set(key, pending);
       // Optimistic user-message append — better UX than waiting for
-      // the server round-trip.
+      // the server round-trip. Attachments ride along in display state
+      // so the bubble shows the same thumbnail row the user just
+      // confirmed in the input.
       appendMessage(key, {
         id: newId('local-user'),
         role: 'user',
         ts: Date.now(),
         text,
+        ...(attachments && attachments.length > 0
+          ? {
+              attachments: attachments.map((a) => ({
+                hash: a.hash,
+                name: a.name,
+                mime: a.mime,
+                kind: a.kind,
+                size: a.size,
+              })),
+            }
+          : {}),
       });
       try {
-        await api.send(agent, session, text);
+        await api.send(agent, session, text, attachments);
       } catch (err) {
         // Send failed — remove the pending dedupe entry so a future
         // identical text can still be echoed normally.
@@ -438,6 +505,56 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     await api.abort(agent, session);
   }, []);
 
+  const loadOlder = useCallback<ChatContextValue['loadOlder']>(
+    async (agent, session) => {
+      const key = sessionKey(agent, session);
+      const cur = paginationRef.current.get(key);
+      if (!cur) return false;
+      if (!cur.hasMore || cur.inFlight || cur.oldestTs === null) return cur.hasMore;
+      cur.inFlight = true;
+      paginationRef.current.set(key, cur);
+      setPaginationTick((t) => t + 1);
+      try {
+        const res = await api.history(agent, session, {
+          limit: OLDER_PAGE_SIZE,
+          before: cur.oldestTs,
+        });
+        const olderMessages = res.events.flatMap(historyEventToMessages);
+        if (olderMessages.length > 0) {
+          setMessages((prev) => ({
+            ...prev,
+            [key]: [...olderMessages, ...(prev[key] ?? [])],
+          }));
+        }
+        const next = {
+          hasMore: Boolean(res.hasMore),
+          oldestTs: typeof res.oldestTs === 'number' ? res.oldestTs : cur.oldestTs,
+          inFlight: false,
+        };
+        paginationRef.current.set(key, next);
+        setPaginationTick((t) => t + 1);
+        return next.hasMore;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[somora-web] loadOlder failed', key, (err as Error).message);
+        cur.inFlight = false;
+        paginationRef.current.set(key, cur);
+        setPaginationTick((t) => t + 1);
+        return cur.hasMore;
+      }
+    },
+    [],
+  );
+
+  const getHasMore = useCallback<ChatContextValue['getHasMore']>(
+    (agent, session) => {
+      // paginationTick is read so React re-runs this when state moves.
+      void paginationTick;
+      return paginationRef.current.get(sessionKey(agent, session))?.hasMore ?? false;
+    },
+    [paginationTick],
+  );
+
   // Cleanup on provider unmount (rare — App lives as long as the
   // page; but covers HMR + future router-based unmounts).
   useEffect(() => {
@@ -456,8 +573,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<ChatContextValue>(
-    () => ({ subscribe, getMessages, getStream, streamingKeys, send, abort }),
-    [subscribe, getMessages, getStream, streamingKeys, send, abort],
+    () => ({
+      subscribe,
+      getMessages,
+      getStream,
+      streamingKeys,
+      send,
+      abort,
+      loadOlder,
+      getHasMore,
+    }),
+    [subscribe, getMessages, getStream, streamingKeys, send, abort, loadOlder, getHasMore],
   );
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
@@ -476,8 +602,11 @@ export function useChatSessionFromContext(agent: string, session: string) {
   return {
     messages: ctx.getMessages(agent, session),
     ...ctx.getStream(agent, session),
-    send: (text: string) => ctx.send(agent, session, text),
+    send: (text: string, attachments?: AttachmentRef[]) =>
+      ctx.send(agent, session, text, attachments),
     abort: () => ctx.abort(agent, session),
+    loadOlder: () => ctx.loadOlder(agent, session),
+    hasMore: ctx.getHasMore(agent, session),
   };
 }
 
@@ -490,6 +619,17 @@ function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
         ts: e.ts,
         text: e.text,
         ...(e.from_agent ? { fromAgent: e.from_agent } : {}),
+        ...(e.attachments && e.attachments.length > 0
+          ? {
+              attachments: e.attachments.map((a) => ({
+                hash: a.hash,
+                name: a.name,
+                mime: a.mime,
+                size: a.size,
+                kind: kindFromMime(a.mime),
+              })),
+            }
+          : {}),
       },
     ];
   }
@@ -525,4 +665,10 @@ function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
     ];
   }
   return [];
+}
+
+function kindFromMime(mime: string): 'image' | 'pdf' | 'text' {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime === 'application/pdf') return 'pdf';
+  return 'text';
 }

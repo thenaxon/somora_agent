@@ -18,12 +18,15 @@ import {
 } from './replay.ts';
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
+import { buildAnthropicUserContent } from '../multimodal/user-content.ts';
 
-async function* userInputStream(text: string): AsyncIterable<SDKUserMessage> {
+async function* userInputStream(
+  content: SDKUserMessage['message']['content'],
+): AsyncIterable<SDKUserMessage> {
   yield {
     type: 'user',
     parent_tool_use_id: null,
-    message: { role: 'user', content: text },
+    message: { role: 'user', content },
   };
 }
 
@@ -123,6 +126,15 @@ export const claudeCliEngine: AgentEngine = {
     const memoryBlock = ephemeralContext ? `${ephemeralContext}\n\n` : '';
     const effectiveUserMessage =
       replayPrefix + memoryBlock + withFromAgentHeader(userMessage, fromAgent);
+    // Phase Y.B — when the user attached files to this turn, build the
+    // multimodal content array. Image/PDF blocks come first, the
+    // composed text block last (replay + memory + user text). Anthropic's
+    // MessageParam.content is polymorphic (string | ContentBlockParam[])
+    // so we just hand the SDK either form.
+    const userContent =
+      input.attachments && input.attachments.length > 0
+        ? buildAnthropicUserContent(effectiveUserMessage, input.attachments)
+        : effectiveUserMessage;
 
     const turnId = `t-${Date.now()}`;
     const ts = () => Date.now();
@@ -180,7 +192,7 @@ export const claudeCliEngine: AgentEngine = {
           : {};
 
       const stream = query({
-        prompt: userInputStream(effectiveUserMessage),
+        prompt: userInputStream(userContent),
         options: {
           model: resolvedModel.modelId,
           systemPrompt: systemPromptForTurn,

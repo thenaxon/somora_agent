@@ -54,8 +54,10 @@ export default defineConfig({
       // when TLS is on so the parent server's cert-bound hostname is
       // honored end-to-end.
       '/agents': { target: proxyTarget, changeOrigin: true, secure: true },
+      '/attachments': { target: proxyTarget, changeOrigin: true, secure: true },
       '/chat': { target: proxyTarget, changeOrigin: true, secure: true },
       '/dream': { target: proxyTarget, changeOrigin: true, secure: true },
+      '/models': { target: proxyTarget, changeOrigin: true, secure: true },
       '/tools': { target: proxyTarget, changeOrigin: true, secure: true },
       '/tui-config': { target: proxyTarget, changeOrigin: true, secure: true },
       '/health': { target: proxyTarget, changeOrigin: true, secure: true },

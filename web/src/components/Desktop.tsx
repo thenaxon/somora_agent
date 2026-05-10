@@ -84,6 +84,7 @@ export function Desktop() {
                   agent={agent}
                   sessionId={win.sessionId ?? 'main'}
                   windowFocused={wm.focusedId === win.id}
+                  onSwitchSession={(sessionId) => wm.setWindowSession(win.id, sessionId)}
                 />
               </Window>
             );

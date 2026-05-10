@@ -32,6 +32,8 @@ import {
 } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
+import type { ResolvedAttachment } from '../engine/types.ts';
+import { resolveAttachmentByHash } from '../attachments/store.ts';
 import {
   buildReviewLoopBlock,
   refreshLoopActivity,
@@ -109,6 +111,10 @@ export interface RunChatTurnArgs {
    *  don't pass this — they propagate parent-cancellation through
    *  the depth chain via their own mechanism. */
   signal?: AbortSignal;
+  /** User-attached files for this turn (Phase Y.B). Refs persisted on
+   *  the user_message event in JSONL; resolved to absolute paths +
+   *  metadata before the engine runs. */
+  attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
   /** Wiring deps. Server boot constructs these once and reuses. */
   deps: ChatTurnResolveDeps;
 }
@@ -126,6 +132,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     agentLoopOverride,
     publishSse,
     signal,
+    attachments,
     deps,
   } = args;
 
@@ -221,6 +228,56 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     logger.warn({ msg: 'dream.loop.inject_failed', agent, err: (err as Error).message });
   }
 
+  // Resolve attachment refs to absolute paths + metadata BEFORE the
+  // user_message is persisted. If a hash isn't on disk we fail the
+  // whole turn early (clean error to client) rather than persisting
+  // a ref that points at nothing. Per-turn count + per-file caps
+  // were enforced at upload time; here we just do a sanity stat.
+  const resolvedAttachments: ResolvedAttachment[] = [];
+  if (attachments && attachments.length > 0) {
+    if (attachments.length > deps.config.attachments.maxPerTurn) {
+      throw new Error(
+        `${attachments.length} attachments exceed the per-turn cap of ${deps.config.attachments.maxPerTurn} (config.attachments.maxPerTurn)`,
+      );
+    }
+    for (const a of attachments) {
+      const r = await resolveAttachmentByHash({ hash: a.hash, expectedMime: a.mime });
+      resolvedAttachments.push({
+        hash: a.hash,
+        path: r.path,
+        name: a.name,
+        mime: r.mime,
+        size: r.size,
+      });
+    }
+    // Capability gate (Phase Y.B requirement #5): hard refuse when
+    // the resolved model can't see the attached kind. Surfaces the
+    // mismatch BEFORE the engine spends tokens trying to interpret
+    // the file. The user nudge is the slash-command for the win.
+    const caps = resolvedModel.model.capabilities;
+    for (const r of resolvedAttachments) {
+      if (r.mime.kind === 'image' && !caps.includes('image')) {
+        throw new Error(
+          `model '${resolvedModel.providerName}/${resolvedModel.modelId}' does not support image inputs — switch to a vision-capable model first (try /model)`,
+        );
+      }
+      if (r.mime.kind === 'pdf' && !caps.includes('pdf') && !caps.includes('image')) {
+        // PDFs ride either as native document blocks (cap=pdf) or as
+        // rasterised PNGs (cap=image). Refuse only if neither is on.
+        throw new Error(
+          `model '${resolvedModel.providerName}/${resolvedModel.modelId}' does not support PDF inputs — switch to a model with 'pdf' or 'image' capability (try /model)`,
+        );
+      }
+    }
+    logger.info({
+      msg: 'chat.attachments.resolved',
+      agent,
+      session,
+      count: resolvedAttachments.length,
+      kinds: resolvedAttachments.map((r) => r.mime.kind),
+    });
+  }
+
   await appendEvent(agent, session, {
     kind: 'user_message',
     ts: Date.now(),
@@ -229,6 +286,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(fromAgent ? { from_agent: fromAgent } : {}),
     ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
     ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
+    ...(attachments && attachments.length > 0 ? { attachments } : {}),
   });
 
   // Live broadcast user_message to ALL session subscribers — A2A
@@ -378,6 +436,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           : deps.config.agentLoop,
         ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
         ...(signal ? { signal } : {}),
+        ...(resolvedAttachments.length > 0 ? { attachments: resolvedAttachments } : {}),
       },
     });
 
