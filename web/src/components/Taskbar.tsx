@@ -6,7 +6,7 @@
 // terminate.
 
 import { useEffect, useState } from 'react';
-import { Grid3x3, Pin, Sparkles } from 'lucide-react';
+import { Grid3x3, Maximize, Minimize, Pin, Sparkles } from 'lucide-react';
 import { Koala } from './Koala';
 import type { WindowState } from '../types/window';
 import { api, type AgentInfo } from '../lib/api';
@@ -33,6 +33,7 @@ export function Taskbar({
 }: Props) {
   const [clock, setClock] = useState(new Date());
   const [version, setVersion] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000 * 30);
@@ -47,6 +48,31 @@ export function Taskbar({
       .then((r) => setVersion(r.version))
       .catch(() => setVersion(null));
   }, []);
+
+  useEffect(() => {
+    // Track external fullscreen changes — user can press F11 / Esc
+    // outside our button, the icon needs to follow.
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  // Capability detection: most desktop browsers support requestFullscreen;
+  // iPadOS Safari does not (the API is on Element but a no-op for non-
+  // video elements). Hide the button entirely there — same pattern as
+  // the screenshot button.
+  const fullscreenSupported =
+    typeof document !== 'undefined' &&
+    typeof document.documentElement.requestFullscreen === 'function' &&
+    document.fullscreenEnabled !== false;
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      void document.documentElement.requestFullscreen();
+    }
+  };
 
   const time = clock.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const date = clock.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
@@ -149,6 +175,17 @@ export function Taskbar({
           <Sparkles size={14} />
           <span>Restore</span>
         </button>
+        {fullscreenSupported && (
+          <button
+            className="taskbar-tool"
+            type="button"
+            title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+            onClick={toggleFullscreen}
+          >
+            {isFullscreen ? <Minimize size={14} /> : <Maximize size={14} />}
+            <span>{isFullscreen ? 'Windowed' : 'Fullscreen'}</span>
+          </button>
+        )}
       </div>
 
       <div className="taskbar-stat">

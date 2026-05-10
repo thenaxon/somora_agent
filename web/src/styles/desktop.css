@@ -76,14 +76,23 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   inset: 0 0 56px 0;
 }
 
-/* ===== Agent dock (left side icons) ===== */
+/* ===== Sidebar dock (left side icons — agents + apps) =====
+ * Vertical column anchored top-left. Wraps to a new column when tiles
+ * would otherwise extend past the taskbar — agents flow first, then
+ * apps continue in the same column, and overflow spills right. The
+ * max-height = viewport - taskbar(56) - top padding(24) - safety(8). */
 .agent-dock {
   position: absolute;
   top: 24px;
   left: 24px;
   display: flex;
   flex-direction: column;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  max-height: calc(100vh - 56px - 32px);
   gap: 14px;
+  /* Column-gap kicks in when the flex line wraps to a second column. */
+  column-gap: 14px;
   z-index: 5;
 }
 .agent-icon {

@@ -52,7 +52,7 @@ export function AgentDock({
   activeAgentIds,
 }: Props) {
   return (
-    <div className="agent-dock">
+    <>
       {loading && (
         <div className="agent-icon-sub" style={{ padding: 8, fontSize: 10 }}>
           loading…
@@ -122,6 +122,6 @@ export function AgentDock({
             </div>
           );
         })}
-    </div>
+    </>
   );
 }

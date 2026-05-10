@@ -56,23 +56,25 @@ export function Desktop() {
   return (
     <div className="desktop">
       <div className="desktop-area">
-        <AgentDock
-          agents={agents}
-          loading={loading}
-          error={error}
-          onAgentClick={handleAgentClick}
-          loopHolder={loopState.active ? loopState.agent : null}
-          activeAgentIds={activeAgentIds}
-          streamingAgents={streamingAgents}
-        />
-        <AppDock
-          activeApps={
-            new Set(
-              wm.windows.filter((w) => w.kind === 'tmux-list').map(() => 'tmux'),
-            )
-          }
-          onTmuxClick={() => wm.openTmuxList()}
-        />
+        <div className="agent-dock">
+          <AgentDock
+            agents={agents}
+            loading={loading}
+            error={error}
+            onAgentClick={handleAgentClick}
+            loopHolder={loopState.active ? loopState.agent : null}
+            activeAgentIds={activeAgentIds}
+            streamingAgents={streamingAgents}
+          />
+          <AppDock
+            activeApps={
+              new Set(
+                wm.windows.filter((w) => w.kind === 'tmux-list').map(() => 'tmux'),
+              )
+            }
+            onTmuxClick={() => wm.openTmuxList()}
+          />
+        </div>
 
         {wm.windows.map((win) => {
           if (win.kind === 'chat') {

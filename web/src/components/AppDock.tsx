@@ -16,26 +16,16 @@ interface Props {
 
 export function AppDock({ activeApps, onTmuxClick }: Props) {
   const isTmuxActive = activeApps?.has('tmux') ?? false;
+  // No own positioned wrapper — slots into the unified `.agent-dock`
+  // flex-wrap container alongside agent tiles. Apps follow agents in
+  // the same column; overflow wraps right.
   return (
-    <div
-      className="app-dock"
-      style={{
-        position: 'absolute',
-        top: 24,
-        left: 132,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 14,
-        zIndex: 5,
-      }}
-    >
-      <AppTile
-        label="tmux"
-        icon={<Terminal size={28} />}
-        active={isTmuxActive}
-        onClick={onTmuxClick}
-      />
-    </div>
+    <AppTile
+      label="tmux"
+      icon={<Terminal size={28} />}
+      active={isTmuxActive}
+      onClick={onTmuxClick}
+    />
   );
 }
 

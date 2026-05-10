@@ -109,10 +109,12 @@ export function Window({
       if (!ds) return;
       if (ds.type === 'drag') {
         const x = Math.max(0, Math.min(window.innerWidth - 100, e.clientX - ds.offsetX));
-        const y = Math.max(
-          0,
-          Math.min(window.innerHeight - TASKBAR_HEIGHT - 40, e.clientY - ds.offsetY),
-        );
+        // Clamp so the WHOLE window stays above the taskbar — title
+        // bar AND body. Was previously only clamping the title bar
+        // 40px above the taskbar, which let the lower portion of the
+        // window slide underneath and overlap the taskbar.
+        const maxY = Math.max(0, window.innerHeight - TASKBAR_HEIGHT - win.h);
+        const y = Math.max(0, Math.min(maxY, e.clientY - ds.offsetY));
         onMove(win.id, x, y);
       } else if (ds.type === 'resize') {
         // Clamp the bottom-right corner so the resize handle never
@@ -143,7 +145,7 @@ export function Window({
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
-  }, [onMove, onResize, win.id]);
+  }, [onMove, onResize, win.id, win.h]);
 
   return (
     <div
