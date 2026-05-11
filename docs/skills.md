@@ -99,9 +99,9 @@ Validation at scan time:
 - `requires.bins` checked at scan time. Hybrid lookup: a fast
   `which` first, then a stat-based scan of well-known user-install
   dirs (linuxbrew, homebrew, `~/.local/bin`, `~/go/bin`,
-  `~/.cargo/bin`, `~/bin`) so brew/cargo/go binaries that aren't on
-  the systemd-service PATH are still found. Missing → skill marked
-  `unavailable` (still listed, with a reason).
+  `~/.cargo/bin`, `~/.npm-global/bin`, `~/bin`) so brew/cargo/go/npm
+  binaries that aren't on the systemd-service PATH are still found.
+  Missing → skill marked `unavailable` (still listed, with a reason).
 - `requires.config` checked against the loaded config; missing →
   same `unavailable` treatment.
 - `requires.env_vars` is documentation only — somora does NOT
@@ -120,6 +120,34 @@ install the missing dep or run via `exec({target: <other-host>})`.
 Skills that fail to parse (broken YAML, name/dirname mismatch) are
 warn-logged and silently skipped — the rest of the registry stays
 intact.
+
+## Body linter (anti-pattern detection)
+
+Skill bodies land in the agent's context verbatim whenever the
+`skill` tool activates a skill, so anything written like an
+instruction gets followed like an instruction. The loader runs a
+**body linter** before exposing a skill to the agent. Lint errors
+mark the skill `unavailable` (the body still ships, but with a
+warning header so the agent doesn't blindly act on it).
+
+Rules:
+
+| Rule | Severity | What it catches |
+|---|---|---|
+| `setup-section-in-body` | error | `## Setup on this host` etc. — operator-only setup belongs in a `BOOTSTRAP.md` sibling (not loaded), not in the agent's per-turn context |
+| `eval-brew-shellenv-in-body` | error | `eval $(brew shellenv)` inside fenced code blocks — agents reflexively prepend it to every command. PATH belongs in the somora launch environment, not the skill body |
+| `export-env-in-body` | error | `export KEY=...` inside fenced code blocks — declare in `metadata.somora.requires.env_vars` and set via `~/.somora/somora.env` or the systemd EnvironmentFile |
+| `env-prefix-cmd-in-body` | warning | `KEY=value cmd ...` inline snippets — same family as above, but soft-flagged |
+| `html-document-in-body` | error | `<!DOCTYPE html>` / `<html>` at the body start — happens when `--from-url` pointed at a marketplace landing page; the body would be unusable HTML |
+| `body-too-large` | warning | >200 lines — the body lands in every turn that uses the skill; split into sub-resources |
+
+Linter is fence-aware: rules tagged `codeBlocksOnly` only fire inside
+fenced blocks (since prose mentions of a pattern are usually
+documentation, often in a "do NOT do X" sentence).
+
+The bundled `gog` skill is the clean reference — `SKILL.md` is
+usage-only, `BOOTSTRAP.md` next to it carries the one-time setup
+notes (read on demand via `file_read`, not as ambient context).
 
 ## Per-agent allow-list
 
@@ -145,38 +173,120 @@ entirely or use a list with one harmless name and remove it.
 Allow-list entries that don't match any skill on disk are warn-logged
 and ignored — typos don't break the agent.
 
-## Creating a skill
+## Creating a skill — the `somora skill` CLI
 
-Either hand-write a `SKILL.md` under `~/.somora/skills/<slug>/` or
-ask the agent to do it — the `skill` tool's description teaches the
-agent the path and schema, so a one-shot prompt like:
+The recommended path is the bundled `somora skill` CLI, which
+pre-flights the same body-linter the loader uses, writes atomically,
+and verifies the result with the loader before printing success.
 
-> Build me a `release-notes` skill that drafts our weekly release
-> summary in the format we usually use.
+```
+somora skill list [--all] [--available-only]
+somora skill check <slug>
+somora skill add <slug> [--template <name>] [--description <text>]
+                        [--from-url <url>] [--from-file <path>]
+                        [--force] [--yes]
+somora skill update <slug>          # force re-seed of a built-in
+somora skill remove <slug> [--yes]
+```
 
-is enough for the agent to `file_write` the right file in the right
-place. After the file lands, the skill appears in `<available_skills>`
-on the **next turn** — no server restart needed.
+### `somora skill add` — three sources
 
-### Importing an existing ClawHub / OpenClaw skill
+**From a template** — `default`, `cli-wrapper`, or `api-wrapper`:
 
-somora has no auto-installer for ClawHub today; bring a skill in
-manually:
+```
+somora skill add release-notes --template default \
+  --description "Draft a weekly release summary in our format"
+```
 
-1. The raw `SKILL.md` for OpenClaw-published skills lives at
-   `https://raw.githubusercontent.com/openclaw/openclaw/main/skills/<name>/SKILL.md`.
-   Fetch it with `web_fetch` or curl.
-2. Adapt the frontmatter to somora's namespace: somora reads only
-   `metadata.somora.*`, so move OpenClaw's `requires` / `when_to_use`
-   into a `metadata.somora` block. Leaving the original
-   `metadata.openclaw.*` next to it is fine — it's ignored.
-3. `file_write` the result to `~/.somora/skills/<slug>/SKILL.md`.
-   The slug must equal the dirname AND the frontmatter `name`.
-4. If the skill has scripts/ or assets/, fetch those into the same
-   folder.
-5. Hit the `skill` tool with the slug — body comes back live. If
-   `available: false`, install the missing bin (or set the env vars
-   from `requires_env_vars`) and call again.
+`cli-wrapper` is for skills that orchestrate a command-line tool
+(includes a `BOOTSTRAP.md` sibling skeleton for operator notes).
+`api-wrapper` is for HTTP-API skills.
+
+**From a local file** — useful when you already have a `SKILL.md`:
+
+```
+somora skill add my-skill --from-file ./SKILL.md
+```
+
+**From a URL** — see next section for ClawHub; for any other URL the
+CLI sniffs the response for HTML and rejects landing pages before
+writing.
+
+After a successful `add`, the loader-verification step confirms the
+new skill is actually loadable (not just that bytes landed on disk).
+Failures roll the change back so you never end up with a half-broken
+skill folder.
+
+### Agent flow
+
+Either run the commands yourself or let the agent do it — the
+bundled `skill-author` skill (a Skill-for-Skills) teaches every agent
+to use this CLI instead of hand-writing `SKILL.md` with the `Write`
+tool. After a `skill add`, the new skill appears in
+`<available_skills>` on the **next turn** — no server restart
+needed.
+
+### Importing a ClawHub skill
+
+[ClawHub](https://clawhub.ai) is OpenClaw's public skill registry.
+somora ships a dedicated resolver for it — pass any
+`clawhub.ai/<owner>/<slug>` URL straight to `--from-url`:
+
+```
+somora skill add github --from-url https://clawhub.ai/steipete/github
+```
+
+What the resolver does end-to-end:
+
+1. Detects the ClawHub host and routes through the resolver instead
+   of the plain fetch path.
+2. Hits `GET https://clawhub.ai/api/v1/skills/<slug>` for the
+   canonical slug + latest version + moderation status. Refuses the
+   install if ClawHub has the skill flagged as malware-blocked.
+3. Downloads the zipped bundle via
+   `GET https://clawhub.ai/api/v1/download?slug=<canonical>` (50MB
+   hard cap, 60s timeout).
+4. Unpacks the ZIP with path-sanitization (no `..`, no absolute
+   paths, text-file allowlist), strips the common top-level folder,
+   keeps `SKILL.md` plus any text sub-resources (BOOTSTRAP.md,
+   scripts/, references/, etc.).
+5. Translates `metadata.openclaw.*` frontmatter to `metadata.somora.*`
+   so somora's loader picks up the `requires.bins` / `env_vars`
+   runtime checks. The original `metadata.openclaw` stays in place;
+   the file remains valid in both ecosystems.
+6. Runs the normal pre-flight lint + atomic write + post-write
+   loader verification.
+
+The resolver honors ClawHub's rate limits (30 anonymous req/min on
+the download endpoint) — a `429` response surfaces the `Retry-After`
+value in the error message.
+
+### Updating a built-in skill
+
+somora ships some skills bundled in its own package — currently
+`skill-author` (the Skill-for-Skills). On server start, the
+content-hash bootstrap seeds these into `~/.somora/skills/<slug>/`
+the first time, then on each restart compares the on-disk SHA-256
+against the recorded seeded-hash in
+`~/.somora/.skill-seed-state.json`:
+
+| User dir state | State-file hash | Action |
+|---|---|---|
+| Doesn't exist | — | **Seed** — copy template, record hash |
+| Matches state-file (unedited) | matches | **Silent update** — overwrite with new template, record new hash |
+| Doesn't match state-file (edited) | mismatched | **Leave alone** — warn-log with pointer to `somora skill update <slug>` |
+| Exists but no state-file entry | adopted | **Adopt** — record current hash as baseline, no overwrite |
+
+To force-re-seed a built-in (overwriting your local edits):
+
+```
+somora skill update skill-author
+```
+
+To add a new built-in to somora itself: drop a folder under
+`templates/skills/<slug>/` in the somora repo, bump the version,
+release. The bootstrap rolls it out to every user on next server
+start.
 
 ## The `skill` tool
 
