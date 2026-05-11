@@ -3,7 +3,7 @@
 // abort. Slash-command popup, drag&drop attachments and the
 // memory-inject banner come in subsequent steps.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Brain,
   Pin,
@@ -105,6 +105,25 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Keep the textarea height in sync with the current draft. Driving this
+  // from a layout-effect — rather than from the onChange handler alone —
+  // ensures the height also shrinks when the draft is cleared from outside
+  // typing (e.g. setDraft('') after send, slash-popup dismiss). Previously
+  // the field stayed expanded until the turn ended.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = '0px';
+    const desired = el.scrollHeight;
+    if (desired <= 120) {
+      el.style.height = desired + 'px';
+      el.style.overflowY = 'hidden';
+    } else {
+      el.style.height = '120px';
+      el.style.overflowY = 'auto';
+    }
+  }, [draft]);
 
   // Pinned-to-bottom: only auto-scroll while user is at the bottom
   // of the message list. Manual scroll-up unpins.
@@ -746,25 +765,7 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
           rows={1}
           placeholder={`Message ${agent.name}…  (try /)`}
           value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            // Auto-grow up to 120px. Reset to 0 so scrollHeight
-            // reflects the new content exactly; otherwise the
-            // browser keeps the prior height as the floor and we
-            // can't shrink. Setting overflowY explicitly avoids
-            // the always-on mini scrollbar that the default `auto`
-            // shows even when the content fits.
-            const el = e.target;
-            el.style.height = '0px';
-            const desired = el.scrollHeight;
-            if (desired <= 120) {
-              el.style.height = desired + 'px';
-              el.style.overflowY = 'hidden';
-            } else {
-              el.style.height = '120px';
-              el.style.overflowY = 'auto';
-            }
-          }}
+          onChange={(e) => setDraft(e.target.value)}
           onPaste={onPaste}
           onKeyDown={(e) => {
             // Slash-popup intercepts navigation keys when active.
