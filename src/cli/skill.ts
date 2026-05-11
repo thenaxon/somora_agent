@@ -32,6 +32,7 @@ import {
   forceUpdateBuiltinSkill,
   listBuiltinSkillSlugs,
 } from '../skills/bootstrap.ts';
+import { isClawHubUrl, resolveClawHubUrl } from './resolvers/clawhub.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const USER_SKILLS_DIR = join(SOMORA_HOME, 'skills');
@@ -245,9 +246,27 @@ async function cmdAdd(args: string[]): Promise<number> {
 
   if (flags['from-url']) {
     const url = flags['from-url'] as string;
-    sourceLabel = `URL: ${url}`;
-    skillMdContent = await downloadSkillMd(url);
-    rejectIfHtml(skillMdContent, sourceLabel);
+    if (isClawHubUrl(url)) {
+      // ClawHub URLs go through the marketplace resolver: ZIP download,
+      // sub-resource extraction, openclaw→somora frontmatter translation.
+      // The resolver throws on rate-limit / moderation-block / 404 / etc.
+      const resolution = await resolveClawHubUrl(url);
+      sourceLabel = resolution.sourceLabel;
+      skillMdContent = resolution.skillMd;
+      extraFiles = resolution.extraFiles;
+      // If the canonical slug differs from the user's requested slug, warn
+      // but proceed — the user named it `<slug>` and we honor that.
+      if (resolution.canonicalSlug !== slug) {
+        process.stderr.write(
+          `${c.yellow('Note:')} ClawHub's canonical slug for this skill is '${resolution.canonicalSlug}'; ` +
+            `installing under your requested local slug '${slug}'.\n`,
+        );
+      }
+    } else {
+      sourceLabel = `URL: ${url}`;
+      skillMdContent = await downloadSkillMd(url);
+      rejectIfHtml(skillMdContent, sourceLabel);
+    }
   } else if (flags['from-file']) {
     const path = resolve(flags['from-file'] as string);
     sourceLabel = `file: ${path}`;
