@@ -339,7 +339,9 @@ export const openAiCompatibleEngine: AgentEngine = {
     // monotonically — matches how claude-cli's SDK presents
     // tool-using turns to us (one final assistant_message at the end).
     let cumulative = '';
-    let totalUsage: { tokens_in: number; tokens_out: number } | undefined;
+    let totalUsage:
+      | { tokens_in: number; tokens_out: number; tokens_out_reasoning?: number }
+      | undefined;
     let tokensInCached: number | undefined;
 
     const tools = input.tools;
@@ -429,18 +431,37 @@ export const openAiCompatibleEngine: AgentEngine = {
           }
           if (choice?.finish_reason) finishReason = choice.finish_reason;
           if (chunk.usage) {
-            tokensInCached = (
-              chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } }
-            ).prompt_tokens_details?.cached_tokens;
+            const rawUsage = chunk.usage as {
+              prompt_tokens_details?: { cached_tokens?: number };
+              completion_tokens_details?: { reasoning_tokens?: number };
+            };
+            tokensInCached = rawUsage.prompt_tokens_details?.cached_tokens;
+            // OpenAI returns reasoning_tokens inside completion_tokens_details
+            // for reasoning models (gpt-5/o-series). It's already INCLUDED in
+            // the top-level completion_tokens, so we surface it as a separate
+            // counter for the UI's (N🧠) display without double-counting in
+            // tokens_out.
+            const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens;
             const u = {
               tokens_in: chunk.usage.prompt_tokens ?? 0,
               tokens_out: chunk.usage.completion_tokens ?? 0,
+              ...(reasoningTokens !== undefined
+                ? { tokens_out_reasoning: reasoningTokens }
+                : {}),
             };
             // Accumulate across rounds for the final turn_end usage.
             totalUsage = totalUsage
               ? {
                   tokens_in: totalUsage.tokens_in + u.tokens_in,
                   tokens_out: totalUsage.tokens_out + u.tokens_out,
+                  ...(u.tokens_out_reasoning !== undefined ||
+                  totalUsage.tokens_out_reasoning !== undefined
+                    ? {
+                        tokens_out_reasoning:
+                          (totalUsage.tokens_out_reasoning ?? 0) +
+                          (u.tokens_out_reasoning ?? 0),
+                      }
+                    : {}),
                 }
               : u;
           }
@@ -666,11 +687,21 @@ export const openAiCompatibleEngine: AgentEngine = {
             }
             const usage = chunk.usage;
             if (usage) {
+              const reasoningTokens = (
+                usage as { completion_tokens_details?: { reasoning_tokens?: number } }
+              ).completion_tokens_details?.reasoning_tokens;
               const prevIn = totalUsage?.tokens_in ?? 0;
               const prevOut = totalUsage?.tokens_out ?? 0;
+              const prevReasoning = totalUsage?.tokens_out_reasoning;
               totalUsage = {
                 tokens_in: prevIn + (usage.prompt_tokens ?? 0),
                 tokens_out: prevOut + (usage.completion_tokens ?? 0),
+                ...(reasoningTokens !== undefined || prevReasoning !== undefined
+                  ? {
+                      tokens_out_reasoning:
+                        (prevReasoning ?? 0) + (reasoningTokens ?? 0),
+                    }
+                  : {}),
               };
             }
           }

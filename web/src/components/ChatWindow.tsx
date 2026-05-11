@@ -360,8 +360,12 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
   );
 
   const modelLabel = model?.alias ?? model?.modelId ?? '—';
-  const thinkingActive =
-    thinking?.modelSupportsReasoning && thinking.effective && thinking.effective !== 'off';
+  // Three-state thinking display: active (model supports reasoning + level set),
+  // dormant (level set but active model has no 'reasoning' capability — TUI
+  // shows the same dormant label), or hidden (no level / off).
+  const thinkingLevelSet = thinking?.effective && thinking.effective !== 'off';
+  const thinkingActive = thinkingLevelSet && thinking?.modelSupportsReasoning;
+  const thinkingDormant = thinkingLevelSet && !thinking?.modelSupportsReasoning;
 
   return (
     <div
@@ -486,6 +490,18 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
                 <Sep />
                 <span style={{ color: 'var(--accent)' }} title={`thinking: ${thinking?.effective}`}>
                   🧠 {thinking?.effective}
+                </span>
+              </>
+            )}
+            {thinkingDormant && (
+              <>
+                <Sep />
+                <span
+                  style={{ color: 'var(--text-2)' }}
+                  title="thinking level is set but the active model has no 'reasoning' capability — switch model, or run /thinking off"
+                >
+                  thinking={thinking?.effective}{' '}
+                  <span style={{ color: 'var(--warn)' }}>(dormant)</span>
                 </span>
               </>
             )}
