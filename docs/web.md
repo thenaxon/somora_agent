@@ -110,6 +110,10 @@ without it.
   opens a chat window; clicking again focuses the existing window.
   Status dot: green = idle, amber blink = streaming, violet = holds
   the dream review loop, grey = offline.
+- **App dock (below the agent dock)**: non-agent surfaces — `tmux`
+  (attach to an existing tmux session), `terminal` (fresh shell in
+  the somora workspace), and `sessions` (cross-agent session browser
+  — see next section).
 - **Window**: drag the title bar to move, drag the bottom-right
   corner to resize. Close button removes the window without
   unsubscribing other clients.
@@ -119,6 +123,58 @@ without it.
 
 Layout state is per-browser-profile. There's no server-side window
 manager — each device remembers its own arrangement.
+
+## Sessions tool
+
+A cross-agent session browser launched from the `sessions` tile in
+the app dock. The single window where you keep order across the
+hundreds of sessions somora accumulates over weeks.
+
+```
+ ┌───────────────────────────── Sessions ──────────────────────────────┐
+ │ 172 total · 1 live · 28 archived · 94 dreamed · 50 partial   [⟳]   │
+ │ [Active] [Archived] [All]                                            │
+ │ search: ____   agent: hans lisa  engine: codex-cli  REM: partial    │
+ │ ─────────────────────────────────────────────────────────────────── │
+ │ ☐  Agent  Slug             Engine     Status  Last act.  Msgs  Size │
+ │ ☐  hans   main ★           codex-cli  ●★      5 min ago  46    280k │
+ │ ☐  lisa   debug-auth-x     claude-cli         3h ago     12    22k  │
+ │ ☑  hans   sub-self-477…    openai-c.          yesterday  2     35k  │
+ │ ...                                                                  │
+ │ [2 selected] [Archive selected] [Clear]                              │
+ └─────────────────────────────────────────────────────────────────────┘
+```
+
+**What it shows per row:**
+
+| Column | Meaning |
+|---|---|
+| Agent | Persona name, coloured with the agent's `color` from `AGENTS.md` frontmatter |
+| Slug | Session slug — `★` marks the magic `main` session |
+| Engine | `claude-cli` / `codex-cli` / `openai-compatible` (last engine that touched it) |
+| Status | `●` (green) = at least one SSE subscriber is live on this session right now · `📦` = archived · `★` = main |
+| Last activity | Human-readable relative time (`5 min ago`, `yesterday`, `3w ago`) |
+| Msgs | `user_message` + `assistant_message` count |
+| Size | Bytes on disk for the JSONL |
+| REM | `🧠 ✓` = REM dreamed up to the latest event · `🧠 ⚠N` = N events new since last REM · `🧠 ○` = never dreamed |
+
+**Tabs:**
+
+- **Active** — non-archived sessions (default). Same set the `/session` slash-popup sees.
+- **Archived** — sessions explicitly archived OR legacy `/reset` outputs (ids ending in `-archive`).
+- **All** — both.
+
+**Filters + sort:** agent (multi-select chip group), engine, REM-state (`dreamed` / `partial` / `never`), plus a free-text search across slug / agent / id. Column headers sort by last-activity / messages / size / agent (click to toggle direction).
+
+**Click a row** (outside the checkbox / action buttons) → opens a chat window for that (agent, session). Same `wm.openChat()` path the agent dock uses.
+
+**Archive / Unarchive:** the right-edge action button on each row archives (or unarchives in the Archived tab). Bulk-select with the checkboxes and the bulk-action bar archives multiple at once. The magic `main` session can't be archived directly — use `/reset` to spawn an archived copy.
+
+**Reload:** manual reload icon top-right, plus a 60-second auto-refresh toggle (default on). Stats are cached in each session's `<id>.meta.json` and invalidated by JSONL mtime, so reloads stay cheap.
+
+**Archive semantics (DECISION):** archive is **meta-flag based**, no file movement. `meta.archived = true` (with `archivedAt` + optional `archiveReason`) is the source of truth. The `<id>.jsonl` and `<id>.meta.json` files stay where they are. Default-filtering at `listSessions()` keeps archives out of the slash-popup, chat-window session picker, and the Active tab — they only surface in the Sessions tool. No hard-delete option, on purpose: archive is fully reversible, and you can always clean up `~/.somora/agents/<agent>/sessions/` by hand if you really want bytes gone.
+
+**Why this exists:** sessions accumulate fast (REM idle-trigger, sub-agent spawns, `/reset` archives, debugging sessions). Without a place to see everything at once, slash-popups grow until they're useless and you can't tell which old sessions are still worth keeping. The Sessions tool is the housekeeping surface — search, filter, archive, see at a glance which sessions have unconsolidated memory waiting for REM.
 
 ## Chat window anatomy
 
