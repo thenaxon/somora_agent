@@ -30,7 +30,13 @@
 //   ~/.local/bin                              pip --user, pipx
 //   ~/go/bin                                  Go binaries
 //   ~/.cargo/bin                              Rust / cargo install
+//   ~/.npm-global/bin                         npm install -g (non-root prefix)
 //   ~/bin                                     historical user bin
+//
+// Hans hit the npm-global gap 2026-05-11: he ran `node bin/somora.mjs ...`
+// as a workaround because the globally-installed `somora` CLI at
+// ~/.npm-global/bin/somora was unreachable from agent exec calls — same
+// failure mode as the 2026-05-09 gog/Linuxbrew case.
 //
 // If the user wants more, a future config-level override can extend
 // the list. For now hardcoded — covers ~all real-world cases that
@@ -55,6 +61,7 @@ function knownBinDirs(): string[] {
     join(home, '.local', 'bin'),
     join(home, 'go', 'bin'),
     join(home, '.cargo', 'bin'),
+    join(home, '.npm-global', 'bin'),
     join(home, 'bin'),
   ];
 }
