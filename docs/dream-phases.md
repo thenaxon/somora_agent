@@ -101,6 +101,11 @@ rem:
   chunkTokens: 50000         # range-split for very long sessions
   chunkTimeoutMs: 600000     # 10 min per chunk (gemma-friendly)
   participate_in_wiki: true  # default true; false = REM only, never Deep
+  # thinking: medium         # optional; off | low | medium | high
+                             # only honored if the REM worker model has the
+                             # 'reasoning' capability — gemma does not, so
+                             # the knob is dormant by default. Set this only
+                             # if you switch the worker to gpt-5/o3/opus.
 ```
 
 Default worker is small/local (`gemma4big` via mlx-omx, ~31B params).
@@ -177,6 +182,11 @@ wiki:
     enabled: true
     intervalHours: 12
     model: opus              # opus by default; via Claude subscription
+    # thinking: medium       # optional; per-engine reasoning_effort. Honored
+                             # when the worker model has the 'reasoning'
+                             # capability. Opus does — turning this on tends
+                             # to improve skip/promote/merge judgement at
+                             # the cost of more rate-limit budget.
 ```
 
 ### Single-prompt logic (skip / promote / merge in one call)
@@ -292,6 +302,10 @@ wiki:
     intervalDays: 7
     model: opus
     requireApproval: true
+    # thinking: medium       # optional; same semantics as wiki.deep.thinking.
+                             # Lucid is judgement-heavy (consistency + dead-
+                             # ref detection) so medium thinking is often
+                             # the sweet spot on cost/quality.
 ```
 
 ### Output
@@ -453,11 +467,15 @@ wiki:
     enabled: true
     intervalHours: 12
     model: opus
+    # thinking: medium                   # optional; reasoning_effort for the
+                                         # Deep worker LLM. Off by default.
   lucid:
     enabled: true
     intervalDays: 7
     model: opus
     requireApproval: true
+    # thinking: medium                   # optional; reasoning_effort for the
+                                         # Lucid worker LLM. Off by default.
   search:
     boostWiki: 1.4                       # wiki hits rank above memory
     boostMemory: 0.85
@@ -473,7 +491,14 @@ rem:
   chunkTokens: 50000
   chunkTimeoutMs: 600000
   participate_in_wiki: true
+  # thinking: medium                     # optional; dormant unless the REM
+                                         # worker model has the 'reasoning'
+                                         # capability (gemma doesn't).
 ```
+
+All three `thinking` fields are optional and unset = engine default
+(no reasoning_effort sent). See [thinking.md](thinking.md) for the
+per-engine mapping table and dormant-state semantics.
 
 ## Where things live
 
