@@ -91,6 +91,29 @@ export function useWindowManager() {
     );
   }, []);
 
+  /** Open or focus the cross-agent Sessions list window. Singleton —
+   *  only one Sessions tool exists at a time. */
+  const openSessionsList = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'sessions-list');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(880, 600, zCounter + 1);
+    const id = `sessions-list-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'sessions-list',
+      title: 'Sessions',
+      icon: '🗂',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   /** Open or focus the tmux-app list window. Singleton — only one
    *  list view exists at a time. Phase 1.5. */
   const openTmuxList = useCallback(() => {
@@ -270,6 +293,7 @@ export function useWindowManager() {
     openTmuxList,
     openTmuxTerm,
     openShellTerm,
+    openSessionsList,
   };
 }
 

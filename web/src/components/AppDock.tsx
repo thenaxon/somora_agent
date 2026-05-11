@@ -4,22 +4,25 @@
 // lucide glyphs in a flat tinted square instead of gradient avatars.
 
 import type { ReactNode } from 'react';
-import { Square, Terminal } from 'lucide-react';
+import { MessagesSquare, Square, Terminal } from 'lucide-react';
 
 interface Props {
   /** Names of apps whose window is currently open — drives the
-   *  `.active` highlight on the dock tile. Tmux is the only one for
-   *  now; future apps register here. */
+   *  `.active` highlight on the dock tile. Today: 'tmux' and
+   *  'sessions'. Future apps register here. */
   activeApps?: Set<string>;
   onTmuxClick: () => void;
   /** Spawns a fresh shell terminal in the somora workspace.
    *  Non-singleton: every click adds another independent terminal
    *  window, so the tile never shows an active state. */
   onTerminalClick: () => void;
+  /** Open or focus the cross-agent Sessions browser. Singleton. */
+  onSessionsClick: () => void;
 }
 
-export function AppDock({ activeApps, onTmuxClick, onTerminalClick }: Props) {
+export function AppDock({ activeApps, onTmuxClick, onTerminalClick, onSessionsClick }: Props) {
   const isTmuxActive = activeApps?.has('tmux') ?? false;
+  const isSessionsActive = activeApps?.has('sessions') ?? false;
   // No own positioned wrapper — slots into the unified `.agent-dock`
   // flex-wrap container alongside agent tiles. Apps follow agents in
   // the same column; overflow wraps right.
@@ -36,6 +39,12 @@ export function AppDock({ activeApps, onTmuxClick, onTerminalClick }: Props) {
         icon={<Square size={26} strokeWidth={1.5} />}
         active={false}
         onClick={onTerminalClick}
+      />
+      <AppTile
+        label="sessions"
+        icon={<MessagesSquare size={26} />}
+        active={isSessionsActive}
+        onClick={onSessionsClick}
       />
     </>
   );

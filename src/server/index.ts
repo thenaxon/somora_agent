@@ -33,6 +33,8 @@ import {
   createSession,
   getHistory,
   listSessions,
+  archiveSession,
+  unarchiveSession,
   resetSession,
   resolveSessionId,
   sessionMetaStore,
@@ -672,7 +674,102 @@ app.get('/agents/:agent/sessions', async (c) => {
   if (!(await loadPersona(agent))) {
     return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   }
-  return c.json(await listSessions(agent));
+  const includeArchived = c.req.query('include_archived') === 'true';
+  return c.json(await listSessions(agent, { includeArchived }));
+});
+
+// Cross-agent flat list. Powers the web "Sessions" tool. Each row carries
+// the agent color/icon (so the UI can render the agent column without a
+// second roundtrip), the live-subscriber count (so a green-dot marker
+// reflects "someone is chatting this right now"), and the resolved
+// dream-status. Heavy fields (messageCount, byteSize, lastEventTs) are
+// served from the per-meta cache when its jsonlMtime still matches.
+app.get('/sessions', async (c) => {
+  const includeArchived = c.req.query('include_archived') === 'true';
+  const agents = await listAgents();
+  const rows: Array<Record<string, unknown>> = [];
+  let liveByKey: Map<string, number> | null = null;
+  for (const agentInfo of agents) {
+    const sessions = await listSessions(agentInfo.name, { includeArchived });
+    for (const s of sessions) {
+      if (!liveByKey) {
+        // Built lazily once we know we have at least one session, so the
+        // empty-agents case stays cheap.
+        liveByKey = new Map<string, number>();
+        for (const [key, subs] of streams) {
+          liveByKey.set(key, subs.size);
+        }
+      }
+      const liveKey = `${agentInfo.name}:${s.id}`;
+      const liveSubscribers = liveByKey.get(liveKey) ?? 0;
+      const dreamStatus: 'dreamed' | 'partial' | 'never' = s.dreamCoverageTs === null
+        ? 'never'
+        : s.dreamLagEvents === 0
+          ? 'dreamed'
+          : 'partial';
+      rows.push({
+        agent: agentInfo.name,
+        agentColor: agentInfo.color,
+        agentIcon: agentInfo.icon,
+        sessionId: s.id,
+        slug: s.slug,
+        isMain: s.isMain,
+        isArchived: s.isArchived,
+        createdAt: s.createdAt,
+        lastActivity: s.lastActivity,
+        messageCount: s.messageCount,
+        byteSize: s.byteSize,
+        ...(s.engine !== undefined ? { engine: s.engine } : {}),
+        liveSubscribers,
+        dream: {
+          status: dreamStatus,
+          coverageTs: s.dreamCoverageTs,
+          lagEvents: s.dreamLagEvents,
+        },
+        ...(s.archivedAt !== undefined ? { archivedAt: s.archivedAt } : {}),
+        ...(s.archiveReason !== undefined ? { archiveReason: s.archiveReason } : {}),
+      });
+    }
+  }
+  return c.json({ sessions: rows });
+});
+
+app.post('/agents/:agent/sessions/:session/archive', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
+  try {
+    await archiveSession(agent, session, body.reason);
+    logger.info({ msg: 'session.archive', agent, session, reason: body.reason });
+    return c.json({ archived: true, agent, session });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+app.post('/agents/:agent/sessions/:session/unarchive', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  // Resolve against the include_archived view, otherwise an archived
+  // session is not addressable by slug lookup. resolveSessionId works on
+  // raw file existence so it's already include-archived-aware.
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  try {
+    await unarchiveSession(agent, session);
+    logger.info({ msg: 'session.unarchive', agent, session });
+    return c.json({ archived: false, agent, session });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
 });
 
 app.post('/agents/:agent/sessions', async (c) => {

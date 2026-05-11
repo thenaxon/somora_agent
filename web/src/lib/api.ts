@@ -298,4 +298,62 @@ export const api = {
   },
   streamUrl: (agent: string, session: string) =>
     `/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
+  /** Cross-agent sessions list. Powers the web Sessions tool. */
+  globalSessions: (opts?: { includeArchived?: boolean; signal?: AbortSignal }) => {
+    const qs = opts?.includeArchived ? '?include_archived=true' : '';
+    return getJson<{ sessions: GlobalSessionRow[] }>(
+      `/sessions${qs}`,
+      opts?.signal ? { signal: opts.signal } : undefined,
+    ).then((r) => r.sessions);
+  },
+  archiveSession: async (agent: string, session: string, reason?: string): Promise<void> => {
+    const res = await fetch(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/archive`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reason ? { reason } : {}),
+      },
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`archive ${res.status}: ${body.slice(0, 200)}`);
+    }
+  },
+  unarchiveSession: async (agent: string, session: string): Promise<void> => {
+    const res = await fetch(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/unarchive`,
+      { method: 'POST' },
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`unarchive ${res.status}: ${body.slice(0, 200)}`);
+    }
+  },
 } as const;
+
+/** Row shape returned by GET /sessions (cross-agent). The web Sessions
+ *  tool consumes this directly; per-agent endpoints still return the
+ *  thinner SessionSummary shape for backward compat. */
+export interface GlobalSessionRow {
+  agent: string;
+  agentColor?: string;
+  agentIcon?: string;
+  sessionId: string;
+  slug: string;
+  isMain: boolean;
+  isArchived: boolean;
+  createdAt: string | null;
+  lastActivity: string | null;
+  messageCount: number;
+  byteSize: number;
+  engine?: string;
+  liveSubscribers: number;
+  dream: {
+    status: 'dreamed' | 'partial' | 'never';
+    coverageTs: number | null;
+    lagEvents: number;
+  };
+  archivedAt?: string;
+  archiveReason?: string;
+}

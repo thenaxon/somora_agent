@@ -15,7 +15,7 @@
 //   ref matches exact-id     → that exact id (404 if file missing)
 //   ref is a slug            → newest existing file with that slug (404 if none)
 
-import { access, appendFile, mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { access, appendFile, mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionMeta, SessionMetaStore } from '../engine/types.ts';
@@ -212,15 +212,29 @@ export async function resetSession(
   await rename(srcJsonl, dstJsonl);
   const srcMetaPath = metaPath(agent, session);
   let preservedSlug: string | undefined;
+  let archivedMeta: SessionMeta | null = null;
   if (await fileExists(srcMetaPath)) {
     try {
       const raw = await readFile(srcMetaPath, 'utf8');
       const parsed = JSON.parse(raw) as SessionMeta;
       preservedSlug = typeof parsed.slug === 'string' ? parsed.slug : undefined;
+      archivedMeta = parsed;
     } catch {
       // best-effort; don't block reset on a malformed meta
     }
     await rename(srcMetaPath, dstMeta);
+  }
+  // Flag the new archive copy explicitly so the Sessions tool surfaces it
+  // in the Archived tab without relying solely on the `-archive` id-suffix
+  // detection. Legacy archives created before this commit are still picked
+  // up via the suffix check in metaIsArchived().
+  if (archivedMeta) {
+    await sessionMetaStore.set(agent, archivedId, {
+      ...archivedMeta,
+      archived: true,
+      archivedAt: new Date().toISOString(),
+      archiveReason: archivedMeta.archiveReason ?? 'auto-archive on /reset',
+    });
   }
 
   // Fresh meta for the resurrected session id. Slug preserved so
@@ -249,9 +263,108 @@ export interface SessionSummary {
   createdAt: string | null;
   lastActivity: string | null;
   messageCount: number;
+  /** True if `meta.archived === true` or the id ends in `-archive`. */
+  isArchived: boolean;
+  /** Bytes on disk for the jsonl file (0 if file is missing — e.g. magic main). */
+  byteSize: number;
+  /** Last engine that touched this session (claude-cli / codex-cli / openai-compatible). */
+  engine?: string;
+  /** REM read-through marker (ms since epoch) — null if never. */
+  dreamCoverageTs: number | null;
+  /** Number of events with ts > dreamCoverageTs (i.e. not yet REM'd). */
+  dreamLagEvents: number;
+  /** Optional human note from the archive call. */
+  archiveReason?: string;
+  /** ISO timestamp when archived (manual archive or /reset). */
+  archivedAt?: string;
 }
 
-export async function listSessions(agent: string): Promise<SessionSummary[]> {
+/** Returns true if the session is considered archived for filtering purposes:
+ *  either the meta has `archived: true` (explicit user action OR /reset
+ *  writing it forward), or the id ends in `-archive` (legacy /reset output
+ *  before the explicit flag — backward-compat detect). */
+function metaIsArchived(id: string, meta: SessionMeta): boolean {
+  return meta.archived === true || id.endsWith('-archive');
+}
+
+interface CachedStats {
+  jsonlMtime: number;
+  messageCount: number;
+  byteSize: number;
+  lastEventTs: number | null;
+}
+
+/** Cached projection of jsonl stats. Reads the cache from meta and trusts it
+ *  if the recorded jsonlMtime matches the current file mtime; otherwise
+ *  recomputes and writes back. Active-chat sessions invalidate naturally
+ *  every turn (mtime bumps) — that's OK, list calls are rare relative to
+ *  turns. */
+async function readSessionStats(agent: string, id: string, meta: SessionMeta): Promise<CachedStats> {
+  let jsonlMtime: number;
+  let byteSize: number;
+  try {
+    const s = await stat(jsonlPath(agent, id));
+    jsonlMtime = s.mtimeMs;
+    byteSize = s.size;
+  } catch (err) {
+    if (isEnoent(err)) {
+      // Magic main without a file yet — return zeros, no cache write.
+      return { jsonlMtime: 0, messageCount: 0, byteSize: 0, lastEventTs: null };
+    }
+    throw err;
+  }
+  const cache = meta.cache as CachedStats | undefined;
+  if (cache && typeof cache.jsonlMtime === 'number' && cache.jsonlMtime === jsonlMtime) {
+    // Hit — trust the cache for messageCount + lastEventTs, but always
+    // surface the live byteSize from stat (matches the cached value since
+    // mtime is the same, but cheaper to trust stat).
+    return {
+      jsonlMtime,
+      messageCount: cache.messageCount,
+      byteSize,
+      lastEventTs: cache.lastEventTs ?? null,
+    };
+  }
+  // Miss — recompute by streaming the jsonl. getHistory parses every line;
+  // for very large sessions this is the slow path. Acceptable on cache-miss
+  // (which only happens after a real write).
+  const events = await getHistory(agent, id);
+  const lastEv = events[events.length - 1];
+  const messageCount = events.filter(
+    (e) => e.kind === 'user_message' || e.kind === 'assistant_message',
+  ).length;
+  const lastEventTs = lastEv ? (lastEv.ts as number) : null;
+  const stats: CachedStats = { jsonlMtime, messageCount, byteSize, lastEventTs };
+  // Write back the cache. Best-effort — if the meta write races a concurrent
+  // turn writing other fields, the LAST writer wins. Cache is regenerable
+  // so loss isn't a correctness issue.
+  try {
+    await sessionMetaStore.set(agent, id, { ...meta, cache: stats });
+  } catch {
+    /* best-effort cache write */
+  }
+  return stats;
+}
+
+/** Count events with ts > coverage. coverage=null means REM has never run,
+ *  so all events are lag. */
+function dreamLag(events: NormalizedEvent[], coverage: number | null): number {
+  if (coverage === null || coverage === 0) return events.length;
+  return events.filter((e) => (e.ts as number) > coverage).length;
+}
+
+export interface ListSessionsOptions {
+  /** Include archived sessions in the result. Defaults to false — archived
+   *  sessions should only surface in the dedicated Sessions tool, not in
+   *  slash-command pickers or default chat-window UI. */
+  includeArchived?: boolean;
+}
+
+export async function listSessions(
+  agent: string,
+  options: ListSessionsOptions = {},
+): Promise<SessionSummary[]> {
+  const includeArchived = options.includeArchived ?? false;
   let entries: string[];
   try {
     entries = await readdir(sessionDir(agent));
@@ -266,22 +379,44 @@ export async function listSessions(agent: string): Promise<SessionSummary[]> {
     const isMain = id === 'main';
     const slug = isMain ? 'main' : (id.match(/^\d{8}-\d{6}_(.+)$/)?.[1] ?? id);
     const meta = await sessionMetaStore.get(agent, id);
-    const events = await getHistory(agent, id);
-    const lastEv = events[events.length - 1];
-    const messageCount = events.filter(
-      (e) => e.kind === 'user_message' || e.kind === 'assistant_message',
-    ).length;
+    const isArchived = metaIsArchived(id, meta);
+    if (isArchived && !includeArchived) continue;
+    const stats = await readSessionStats(agent, id, meta);
+    // Dream-lag needs the event list — only fetch it for cache-miss or for
+    // the live sessions where the coverage might lag the latest event. We
+    // already paid for getHistory in the cache-miss branch above; for hits
+    // we re-fetch only when there's a chance of lag (coverage < lastEventTs).
+    const coverage = typeof meta.dreamReadThroughTs === 'number' ? meta.dreamReadThroughTs : null;
+    let lag = 0;
+    if (stats.lastEventTs !== null) {
+      if (coverage === null) {
+        lag = stats.messageCount; // approximate: never-dreamed → all events lag
+      } else if (coverage < stats.lastEventTs) {
+        // Refetch events for an exact count — list-call performance is OK
+        // because this only fires for sessions with actual dream-lag.
+        const events = await getHistory(agent, id);
+        lag = dreamLag(events, coverage);
+      }
+    }
     summaries.push({
       id,
       slug,
       isMain,
       createdAt: typeof meta.createdAt === 'string' ? meta.createdAt : null,
-      lastActivity: lastEv ? new Date(lastEv.ts).toISOString() : null,
-      messageCount,
+      lastActivity: stats.lastEventTs !== null ? new Date(stats.lastEventTs).toISOString() : null,
+      messageCount: stats.messageCount,
+      isArchived,
+      byteSize: stats.byteSize,
+      engine: typeof meta.engine === 'string' ? meta.engine : undefined,
+      dreamCoverageTs: coverage,
+      dreamLagEvents: lag,
+      archiveReason: typeof meta.archiveReason === 'string' ? meta.archiveReason : undefined,
+      archivedAt: typeof meta.archivedAt === 'string' ? meta.archivedAt : undefined,
     });
   }
 
-  // Always surface main, even if its file doesn't exist yet
+  // Always surface main, even if its file doesn't exist yet (and it's
+  // never archived).
   if (!summaries.some((s) => s.isMain)) {
     summaries.push({
       id: 'main',
@@ -290,6 +425,10 @@ export async function listSessions(agent: string): Promise<SessionSummary[]> {
       createdAt: null,
       lastActivity: null,
       messageCount: 0,
+      isArchived: false,
+      byteSize: 0,
+      dreamCoverageTs: null,
+      dreamLagEvents: 0,
     });
   }
 
@@ -300,4 +439,40 @@ export async function listSessions(agent: string): Promise<SessionSummary[]> {
     return (b.lastActivity ?? '').localeCompare(a.lastActivity ?? '');
   });
   return summaries;
+}
+
+/** Mark a session archived via its meta. No file movement — the jsonl stays
+ *  where it is, the meta gains `archived: true` + timestamp + optional reason.
+ *  The `main` session is special: archiving main creates a `<ts>_main-archive`
+ *  copy via resetSession instead (because main must always remain usable). */
+export async function archiveSession(
+  agent: string,
+  session: string,
+  reason?: string,
+): Promise<void> {
+  if (session === 'main') {
+    throw new Error(
+      "cannot archive the magic 'main' session directly — use /reset to spawn an archived copy",
+    );
+  }
+  const meta = await sessionMetaStore.get(agent, session);
+  await sessionMetaStore.set(agent, session, {
+    ...meta,
+    archived: true,
+    archivedAt: new Date().toISOString(),
+    ...(reason ? { archiveReason: reason } : {}),
+  });
+}
+
+/** Clear the archived flag. The id-suffix detection (`-archive`) still
+ *  fires for legacy reset-archives, so unarchiving one of those is a no-op
+ *  for visibility purposes — the suffix check overrides the meta flag.
+ *  We still clear the meta flag for consistency. */
+export async function unarchiveSession(agent: string, session: string): Promise<void> {
+  const meta = await sessionMetaStore.get(agent, session);
+  const next = { ...meta };
+  delete next.archived;
+  delete next.archivedAt;
+  delete next.archiveReason;
+  await sessionMetaStore.set(agent, session, next);
 }

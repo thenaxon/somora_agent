@@ -3,7 +3,7 @@
 // sessions) and `tmux-term` (an xterm.js attached to one specific
 // session). Future kinds slot in by extending WindowKind.
 
-export type WindowKind = 'chat' | 'tmux-list' | 'tmux-term' | 'shell-term';
+export type WindowKind = 'chat' | 'tmux-list' | 'tmux-term' | 'shell-term' | 'sessions-list';
 
 /** A live window in the desktop's window manager. */
 export interface WindowState {
