@@ -6,8 +6,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Brain,
-  Pin,
-  GitBranch,
   MoreHorizontal,
   Paperclip,
   Send,
@@ -596,12 +594,6 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
           </div>
         </div>
         <div className="chat-header-actions">
-          <button type="button" className="chat-icon-btn" title="Pin (TODO)">
-            <Pin size={14} />
-          </button>
-          <button type="button" className="chat-icon-btn" title="Branch session (TODO)">
-            <GitBranch size={14} />
-          </button>
           <button type="button" className="chat-icon-btn" title="More (TODO)">
             <MoreHorizontal size={14} />
           </button>
