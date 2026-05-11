@@ -146,6 +146,21 @@ async function cmdCheck(args: string[]): Promise<number> {
   const skills = await loadAvailableSkills(config);
   const skill = skills.find((s) => s.name === slug);
   if (!skill) {
+    // Distinguish "no file on disk" from "file exists but loader rejected".
+    // The bare 'not found' message used to hide parse/schema errors that the
+    // loader logs as warnings and silently skips (see hans bug 2026-05-11).
+    const skillDir = join(USER_SKILLS_DIR, slug);
+    const skillMdPath = join(skillDir, 'SKILL.md');
+    if (await pathExists(skillMdPath)) {
+      process.stderr.write(
+        `Skill '${slug}' has a SKILL.md on disk at ${skillMdPath}, ` +
+          `but the loader skipped it (frontmatter schema mismatch, name/dir mismatch, ` +
+          `or read error). Check server logs for 'skills.frontmatter_invalid' / ` +
+          `'skills.name_mismatch' / 'skills.read_failed' entries. ` +
+          `Run \`head ${skillMdPath}\` to inspect the file contents.\n`,
+      );
+      return 1;
+    }
     process.stderr.write(`Skill '${slug}' not found in ${USER_SKILLS_DIR}.\n`);
     return 1;
   }
@@ -232,10 +247,12 @@ async function cmdAdd(args: string[]): Promise<number> {
     const url = flags['from-url'] as string;
     sourceLabel = `URL: ${url}`;
     skillMdContent = await downloadSkillMd(url);
+    rejectIfHtml(skillMdContent, sourceLabel);
   } else if (flags['from-file']) {
     const path = resolve(flags['from-file'] as string);
     sourceLabel = `file: ${path}`;
     skillMdContent = await fs.readFile(path, 'utf8');
+    rejectIfHtml(skillMdContent, sourceLabel);
   } else {
     const templateName = (flags.template as string | undefined) ?? 'default';
     sourceLabel = `template: ${templateName}`;
@@ -305,7 +322,10 @@ async function cmdAdd(args: string[]): Promise<number> {
     return 1;
   }
 
-  // Atomic write: stage to temp dir, rename into place.
+  // Atomic write: stage to temp dir, rename into place. We also need to
+  // remember the *prior* userDir contents in case the post-write loader
+  // verification fails — then we restore the original (or remove the new
+  // dir if there was no prior).
   await fs.mkdir(USER_SKILLS_DIR, { recursive: true });
   const stagePath = `${userDir}.add-${process.pid}-${Date.now()}`;
   await fs.mkdir(stagePath, { recursive: true });
@@ -315,10 +335,43 @@ async function cmdAdd(args: string[]): Promise<number> {
     await fs.mkdir(join(dst, '..'), { recursive: true });
     await fs.writeFile(dst, e.content);
   }
-  if (exists) {
-    await fs.rm(userDir, { recursive: true, force: true });
+  const backupPath = exists ? `${userDir}.add-backup-${process.pid}-${Date.now()}` : null;
+  if (exists && backupPath) {
+    await fs.rename(userDir, backupPath);
   }
   await fs.rename(stagePath, userDir);
+
+  // Post-write verification: success means the loader can actually read
+  // the skill, not just that bytes landed on disk. If lint passed but
+  // the loader still drops it (frontmatter schema mismatch, name/dir
+  // collision, fs error etc.), roll back rather than report a false
+  // success. See feedback 2026-05-11_skill-from-url-html-success.md.
+  try {
+    loadSomoraEnvFile();
+    const config = await loadConfig();
+    const loaded = await loadAvailableSkills(config);
+    const seen = loaded.find((s) => s.name === slug);
+    if (!seen) {
+      throw new Error(
+        `loader did not return '${slug}' after write — frontmatter or schema mismatch. ` +
+          `Inspect ${join(userDir, 'SKILL.md')} for issues.`,
+      );
+    }
+  } catch (err) {
+    // Roll back: remove the freshly-written dir, restore the backup if any.
+    await fs.rm(userDir, { recursive: true, force: true }).catch(() => {});
+    if (backupPath) {
+      await fs.rename(backupPath, userDir).catch(() => {});
+    }
+    process.stderr.write(
+      `${c.red('Post-write verification failed:')} ${(err as Error).message}\n`,
+    );
+    process.stderr.write(`No changes left on disk. (source: ${sourceLabel})\n`);
+    return 1;
+  }
+  if (backupPath) {
+    await fs.rm(backupPath, { recursive: true, force: true }).catch(() => {});
+  }
 
   process.stdout.write(`${c.green('✓')} Skill '${slug}' added at ${userDir}\n`);
   process.stdout.write(`  source: ${sourceLabel}\n`);
@@ -327,6 +380,22 @@ async function cmdAdd(args: string[]): Promise<number> {
   }
   process.stdout.write(`\nThe running server picks up new skills on the next agent turn.\n`);
   return 0;
+}
+
+/** Reject the source if it looks like an HTML document instead of a SKILL.md.
+ *  Catches the common case where --from-url points at a marketplace landing
+ *  page (e.g. ClawHub) instead of the raw markdown file. The lint layer also
+ *  carries a body-rule for the same pattern, but failing early here yields a
+ *  clearer message tied to the source URL/file. */
+function rejectIfHtml(content: string, sourceLabel: string): void {
+  const head = content.slice(0, 4000).toLowerCase();
+  if (/<!doctype\s+html/.test(head) || /<html[\s>]/.test(head)) {
+    throw new Error(
+      `${sourceLabel} returned an HTML document, not a SKILL.md. ` +
+        `If this is a marketplace landing page (e.g. ClawHub), use the raw markdown URL ` +
+        `or download the SKILL.md and reinstall via --from-file.`,
+    );
+  }
 }
 
 async function downloadSkillMd(url: string): Promise<string> {

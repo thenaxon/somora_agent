@@ -127,6 +127,25 @@ const BODY_RULES: BodyRule[] = [
     message:
       'Skill body is large; the whole thing lands in the agent context on every activation. Consider splitting reference material out (BOOTSTRAP.md for operators, REFERENCE.md not loaded into context) and keeping SKILL.md as a tight usage cheatsheet.',
   },
+  {
+    rule: 'html-document-in-body',
+    severity: 'error',
+    test: (body: string) => {
+      // Scan the first ~20 non-blank lines for HTML document markers.
+      // A `<!DOCTYPE` or `<html` near the top is a strong signal that the
+      // body is a downloaded web page, not a SKILL.md (see hans bug-report
+      // 2026-05-11_skill-from-url-html-success.md — `--from-url` on a
+      // ClawHub landing page wrote the full HTML response into SKILL.md).
+      const lines = body.split('\n').slice(0, 50);
+      const head = lines.join('\n').toLowerCase();
+      if (/<!doctype\s+html/.test(head) || /<html[\s>]/.test(head)) {
+        return 'HTML document detected at start of body';
+      }
+      return null;
+    },
+    message:
+      'Body looks like a full HTML document, not skill markdown. This happens when --from-url points at a marketplace landing page (e.g. ClawHub) instead of a raw SKILL.md. Use the raw markdown URL, or download the SKILL.md manually and use --from-file.',
+  },
 ];
 
 export function lintSkillBody(body: string): LintFinding[] {
