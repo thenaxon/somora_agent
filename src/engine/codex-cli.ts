@@ -267,7 +267,26 @@ export const codexCliEngine: AgentEngine = {
     // (codex has no true off-switch for reasoning models).
     args.push(...codexCliReasoningArgs(thinking, resolvedModel.model));
     args.push('--json', '--skip-git-repo-check');
-    if (!resumeId) args.push('--sandbox', 'read-only');
+    // Sandbox policy: 'danger-full-access' on fresh exec. This *looks* alarming
+    // but is the honest setting for somora:
+    //   - codex's own filesystem tools (shell_tool, unified_exec, apply_patch_*,
+    //     edit_*) are ALL disabled via the --disable list above. codex has no
+    //     way to touch the filesystem on its own.
+    //   - the agent's actual write capability comes from somora's MCP tools
+    //     (mcp__somora-memory__file_write/exec/file_patch/…) which live OUTSIDE
+    //     codex's sandbox surface entirely. somora is the external sandbox.
+    //   - codex injects a sandbox-info block into the model's system prompt
+    //     based on this flag. Setting 'read-only' (the prior default) made
+    //     codex tell the agent "filesystem is read-only" while somora's tools
+    //     happily allowed writes — agents would refuse legitimate writes and
+    //     only proceed after the user manually overrode them (hans bug-report
+    //     2026-05-11_sandbox-permission-mismatch.md).
+    //   - 'danger-full-access' matches reality: somora's MCP tools CAN write
+    //     to the locations they advertise, and codex itself has no FS tools
+    //     to abuse. The 'danger' label is a codex-side warning aimed at users
+    //     who run codex standalone; in somora the actual gatekeeper is the
+    //     MCP tool layer, which we control.
+    if (!resumeId) args.push('--sandbox', 'danger-full-access');
     // Phase Y.B — image attachments. codex exec accepts repeated
     // `-i <PATH>` for both fresh and resumed sessions. Order vs the
     // other flags doesn't matter to codex's parser. PDF pages
