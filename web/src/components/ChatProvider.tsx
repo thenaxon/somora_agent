@@ -110,10 +110,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [streams, setStreams] = useState<Record<string, SessionStreamState>>({});
 
   // EventSource map (open per session). Ref-counted: a session is
-  // opened on first subscribe, closed when refcount hits zero.
-  const sourcesRef = useRef<Map<string, { es: EventSource; refs: number; loaded: boolean }>>(
-    new Map(),
-  );
+  // opened on first subscribe, closed when refcount hits zero. Each
+  // entry also carries an AbortController that signals all in-flight
+  // history/loadOlder fetches for that session — closeStream() aborts
+  // it so a slow history response can't flip state on a session the
+  // user has already left.
+  const sourcesRef = useRef<
+    Map<string, { es: EventSource; refs: number; loaded: boolean; ac: AbortController }>
+  >(new Map());
   // Track the in-flight assistant message id per session — a delta
   // appends to that bubble, an agent.end finalizes it.
   const streamingIdRef = useRef<Map<string, string>>(new Map());
@@ -175,7 +179,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
 
       const es = new EventSource(api.streamUrl(agent, session));
-      sourcesRef.current.set(key, { es, refs: 1, loaded: false });
+      const ac = new AbortController();
+      sourcesRef.current.set(key, { es, refs: 1, loaded: false, ac });
       patchStream(key, { connected: false, loading: true });
 
       // Load history once per session-key. Stream events that happen
@@ -183,8 +188,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // — the race is rare and the reload UX is just F5.
       // Initial load is paginated (last N events). Older windows
       // come in via loadOlder() when the user scrolls to the top.
+      // signal: ac.signal so closeStream() aborts an in-flight history
+      // fetch instead of letting it land on a no-longer-subscribed key.
       api
-        .history(agent, session, { limit: INITIAL_HISTORY_LIMIT })
+        .history(agent, session, { limit: INITIAL_HISTORY_LIMIT, signal: ac.signal })
         .then((res) => {
           const entry = sourcesRef.current.get(key);
           if (!entry) return;
@@ -211,6 +218,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           patchStream(key, { loading: false });
         })
         .catch((err: Error) => {
+          // An aborted history fetch is the expected outcome when the
+          // session was closed mid-load — swallow it silently.
+          if (err.name === 'AbortError') return;
           patchStream(key, { loading: false });
           // eslint-disable-next-line no-console
           console.warn('[somora-web] history load failed', key, err.message);
@@ -437,6 +447,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     entry.refs -= 1;
     if (entry.refs > 0) return;
     entry.es.close();
+    entry.ac.abort();
     sourcesRef.current.delete(key);
     streamingIdRef.current.delete(key);
     patchStream(key, { connected: false, streaming: false, thinking: false });
@@ -517,6 +528,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const cur = paginationRef.current.get(key);
       if (!cur) return false;
       if (!cur.hasMore || cur.inFlight || cur.oldestTs === null) return cur.hasMore;
+      const entry = sourcesRef.current.get(key);
       cur.inFlight = true;
       paginationRef.current.set(key, cur);
       setPaginationTick((t) => t + 1);
@@ -524,6 +536,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const res = await api.history(agent, session, {
           limit: OLDER_PAGE_SIZE,
           before: cur.oldestTs,
+          ...(entry ? { signal: entry.ac.signal } : {}),
         });
         const olderMessages = res.events.flatMap(historyEventToMessages);
         if (olderMessages.length > 0) {
@@ -541,11 +554,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setPaginationTick((t) => t + 1);
         return next.hasMore;
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[somora-web] loadOlder failed', key, (err as Error).message);
         cur.inFlight = false;
         paginationRef.current.set(key, cur);
         setPaginationTick((t) => t + 1);
+        if ((err as Error).name === 'AbortError') return cur.hasMore;
+        // eslint-disable-next-line no-console
+        console.warn('[somora-web] loadOlder failed', key, (err as Error).message);
         return cur.hasMore;
       }
     },
@@ -587,10 +601,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   // Cleanup on provider unmount (rare — App lives as long as the
-  // page; but covers HMR + future router-based unmounts).
+  // page; but covers HMR + future router-based unmounts). Aborting
+  // each entry's controller cancels in-flight history/loadOlder so
+  // the resolver does not fire on a torn-down provider.
   useEffect(() => {
     return () => {
-      for (const entry of sourcesRef.current.values()) entry.es.close();
+      for (const entry of sourcesRef.current.values()) {
+        entry.es.close();
+        entry.ac.abort();
+      }
       sourcesRef.current.clear();
     };
   }, []);

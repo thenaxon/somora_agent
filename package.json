@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.05.10.15",
+  "version": "2026.05.11.1",
   "private": true,
   "type": "module",
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
@@ -15,6 +15,7 @@
     "bin",
     "src",
     "docs",
+    "templates",
     "web/dist",
     "tsconfig.json",
     "package.json",

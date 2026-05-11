@@ -98,8 +98,8 @@ export interface SessionThinkingInfo {
   modelSupportsReasoning: boolean;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path);
+async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, init);
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`${path} ${res.status}: ${body.slice(0, 200)}`);
@@ -222,12 +222,15 @@ export const api = {
   history: (
     agent: string,
     session: string,
-    opts?: { limit?: number; before?: number },
+    opts?: { limit?: number; before?: number; signal?: AbortSignal },
   ) => {
     const params = new URLSearchParams({ agent, session });
     if (opts?.limit !== undefined) params.set('limit', String(opts.limit));
     if (opts?.before !== undefined) params.set('before', String(opts.before));
-    return getJson<HistoryResponse>(`/chat/history?${params.toString()}`);
+    return getJson<HistoryResponse>(
+      `/chat/history?${params.toString()}`,
+      opts?.signal ? { signal: opts.signal } : undefined,
+    );
   },
   send: async (
     agent: string,

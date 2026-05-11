@@ -38,6 +38,7 @@ import {
   sessionMetaStore,
 } from '../storage/sessions.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
+import { seedBuiltinSkills } from '../skills/bootstrap.ts';
 import {
   configureDreamRunTool,
   configureExecConcurrencyCaps,
@@ -281,6 +282,20 @@ logger.info({
   msg: 'somora.env',
   env: getEffectiveEnv(),
 });
+
+// Seed built-in skills into ~/.somora/skills/. Idempotent; on each start the
+// content-hash matrix decides whether to seed-fresh, silently update an
+// unedited copy, or leave a user-edited copy untouched. State is recorded in
+// ~/.somora/.skill-seed-state.json. Failures here are logged but never block
+// server start — agents fall back to the user's existing skills directory.
+try {
+  await seedBuiltinSkills();
+} catch (err) {
+  logger.warn({
+    msg: 'skills.bootstrap_unhandled_error',
+    err: (err as Error).message,
+  });
+}
 
 // Construct the process-wide tool registry. Built once at startup,
 // shared by HTTP debug endpoints + the in-process openai-compatible

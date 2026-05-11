@@ -68,7 +68,24 @@ function resolveModelRepoId(modelName: string): string {
 async function createLocalProvider(modelName: string): Promise<EmbeddingProvider> {
   // Lazy import — pulling @huggingface/transformers on every server start
   // adds ~80ms even when memory isn't in use.
-  const { pipeline } = await import('@huggingface/transformers');
+  const { pipeline, env } = await import('@huggingface/transformers');
+
+  // Override env.fetch with an undici-backed fetch that disables the
+  // 5-minute body/headers timeouts. Defaults are fine for all-MiniLM-L6-v2
+  // (~30MB) on a normal link, but a larger model (e.g. embeddinggemma-300m
+  // ~300MB) or a slow connection would hit undici's 5-min cliff and abort
+  // mid-download. The HF lib only downloads on cache-miss, so this matters
+  // exactly once per (machine, model) pair — but when it matters, it must
+  // not fail. See DECISIONS #47 for the rest of the HTTPS-timeout sweep.
+  const { Agent, fetch: undiciFetch } = await import('undici');
+  const patientAgent = new Agent({
+    bodyTimeout: 0,
+    headersTimeout: 0,
+    connectTimeout: 30_000,
+  });
+  env.fetch = ((input: string | URL, init?: unknown) =>
+    undiciFetch(input as never, { ...(init as object), dispatcher: patientAgent } as never)) as typeof env.fetch;
+
   const repoId = resolveModelRepoId(modelName);
   logger.info({ msg: 'memory.embedding_load_start', model: modelName, repoId });
   const start = Date.now();

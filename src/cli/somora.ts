@@ -45,6 +45,8 @@ Usage:
   somora server restart              restart via systemd
   somora server status               show server status + lockfile info
   somora tui                         launch the TUI against the running server
+  somora skill <subcommand>          list/check/add/update/remove skills
+                                     (run \`somora skill\` for sub-help)
   somora update [<version>]          npm install -g somora@<version> + restart
   somora --version                   show version
   somora --help                      this help
@@ -334,6 +336,10 @@ async function main(): Promise<number> {
       return await cmdServer(rest);
     case 'tui':
       return await cmdTui();
+    case 'skill': {
+      const { runSkillCli } = await import('./skill.ts');
+      return await runSkillCli(rest);
+    }
     case 'update':
       return await cmdUpdate(rest);
     default:
