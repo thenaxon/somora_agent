@@ -7,7 +7,7 @@ runs the turn — somora translates per engine.
 
 ## The user surface
 
-Three places to set it (later sources beat earlier ones):
+For **chat turns**, three places to set it (later sources beat earlier ones):
 
 1. **`agent.yaml` per persona** — global default for that agent
 
@@ -16,7 +16,8 @@ Three places to set it (later sources beat earlier ones):
    thinking: medium     # off | low | medium | high
    ```
 
-2. **`/thinking <level>` slash command** — per-session override
+2. **`/thinking <level>` slash command** — per-session override (works
+   in TUI and Web)
 
    ```
    /thinking high           # crank it up for this session
@@ -29,13 +30,36 @@ Three places to set it (later sources beat earlier ones):
    the model's own default is (typically `medium` for adaptive thinking,
    `medium` for codex reasoning models)
 
-The TUI header surfaces the effective state:
+For the **three dream-system phases** (REM, Deep, Lucid — background
+memory consolidation, see [dream-phases.md](dream-phases.md)), the
+worker LLMs have their own per-phase thinking knobs:
+
+| Phase | Where | Field |
+|---|---|---|
+| REM | `agent.yaml` per persona | `rem.thinking` |
+| Deep | `config.yaml` server-global | `wiki.deep.thinking` |
+| Lucid | `config.yaml` server-global | `wiki.lucid.thinking` |
+
+All three are optional; unset = engine default (no reasoning_effort
+sent). Dream phases share the same engine adapters + per-engine
+mapping table below, so the values follow identical semantics. REM
+is per-agent because session-extraction styles vary by persona;
+Deep/Lucid are server-global because they operate on the shared
+wiki across all agents.
+
+The TUI header surfaces the effective state (chat turns only — dream
+runs are background workers and don't render in the TUI):
 
 - `🧠 medium` (cyan) — active and being applied
 - `🧠 thinking…` (cyan, during streaming, before first content token) —
   visual cue that the model is in its reasoning pass
 - `thinking=medium (dormant)` (yellow) — setting is stored but the active
   model has no `reasoning` capability, so it has no effect
+
+The Web client renders the same three states in its chat-window
+header next to the model name. Parity between TUI and Web is
+intentional — both clients hit the same `/agents/<a>/sessions/<s>/thinking`
+endpoint and consume the same SSE events.
 
 The output-token segment additionally shows the reasoning tokens spent
 when the engine reports them: `↓ 412 (1.2k 🧠)`.
@@ -106,11 +130,20 @@ and is the smallest set users actually distinguish in practice.
 
 When the engine reports reasoning tokens in the turn's usage, somora
 forwards them as `tokens_out_reasoning` on the `agent-end` SSE event.
-Today only **codex-cli** provides this granularly (via
-`reasoning_output_tokens` in its turn-completed JSON). claude-agent-sdk
-folds reasoning into total output tokens; openai-compatible varies by
-upstream. When present, the TUI shows the count next to total output
-tokens with a 🧠 glyph.
+Both the TUI and the Web client render the count next to total output
+tokens with a 🧠 glyph (`↓ 412 (1.2k 🧠)`).
+
+Per-engine support, today:
+
+| Engine | Reasoning-token count surfaced? | How |
+|---|---|---|
+| `codex-cli` | ✓ | parsed from `reasoning_output_tokens` in codex's turn-completed JSON |
+| `openai-compatible` | ✓ | parsed from `completion_tokens_details.reasoning_tokens` in the chat.completions usage chunk (added 2026-05-11) |
+| `claude-cli` | ✗ | Anthropic's `usage` object reports `input_tokens` / `output_tokens` / `cache_*` — thinking-tokens are rolled into `output_tokens`, no separate counter |
+
+If Anthropic later exposes thinking-tokens as a distinct field in the
+SDK usage block, somora will pick it up the same way — until then
+claude-cli turns show only the combined output count.
 
 Per-token streaming of *thinking content* (the actual reasoning text)
 is **not** wired up — see "What's not built" below.
