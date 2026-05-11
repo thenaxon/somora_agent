@@ -27,11 +27,25 @@ somora skill add <slug> --template <template-name> --description "<one-line>"
 
 ## Install a skill from a URL
 
+### Direct markdown URL
+
 ```
-somora skill add <slug> --from-url <https-url>
+somora skill add <slug> --from-url <https-url-to-raw-SKILL.md>
 ```
 
-The CLI downloads, lints, and only writes the file if the lint passes. If lint fails, **do not** work around it by writing the file manually — fix the source SKILL.md instead.
+The CLI downloads, sniffs for HTML (rejects landing pages), lints, and only writes if everything passes.
+
+### ClawHub marketplace
+
+ClawHub (`https://clawhub.ai`, repo `openclaw/clawhub`) is OpenClaw's public skill registry. Pass any `clawhub.ai/<owner>/<slug>` web URL directly — somora detects it, downloads the ZIP via ClawHub's public API, extracts sub-resources, and translates `metadata.openclaw.*` frontmatter to `metadata.somora.*` automatically.
+
+```
+somora skill add github --from-url https://clawhub.ai/steipete/github
+```
+
+If ClawHub has the skill flagged as malware-blocked, the install refuses with a precise reason. Rate-limit errors (429) surface the `Retry-After` value so the user knows when to retry.
+
+If lint fails, **do not** work around it by writing the file manually — fix the source SKILL.md instead.
 
 ## Verify a skill before reload
 
@@ -66,5 +80,6 @@ The server re-reads SKILL.md at the next agent turn (no restart required). `somo
 - Setup instructions in the body (`Setup on this host`, `eval $(brew shellenv)`, `export X=...`) — these get loaded verbatim into agent context every turn. Use a `BOOTSTRAP.md` sibling instead (read on demand via `file_read`, not as ambient context).
 - Inline secrets (`export TOKEN=xyz`) — declare `requires.env_vars` in frontmatter; somora reports the skill unavailable with a precise reason if the env vars are missing.
 - Body > 200 lines — split into sub-resources and reference them by relative path.
+- Full HTML documents (`<!DOCTYPE html>`, `<html>`) — happens when `--from-url` points at a marketplace landing page instead of raw markdown. Use the marketplace's canonical URL (e.g. `clawhub.ai/<owner>/<slug>`) which routes through a dedicated resolver, or download SKILL.md manually and use `--from-file`.
 
 See the `gog` skill (`~/.somora/skills/gog/`) for a clean reference implementation.
