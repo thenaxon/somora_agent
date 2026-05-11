@@ -23,7 +23,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import matter from 'gray-matter';
 
-import type { Config, ResolvedModel } from '../config/types.ts';
+import type { Config, ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import { logger } from '../server/logger.ts';
@@ -95,6 +95,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
     return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: Date.now() - start };
   }
 
+  const thinking = args.config.wiki.deep.thinking;
   const wikiSubfolder = args.config.wiki.vaultSubfolder;
   // Group agents by their vault path so wiki-actions get one ctx per vault.
   const byVault = new Map<string, typeof args.agents>();
@@ -151,6 +152,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
             dispatcher,
             timeoutMs: 120_000,
             signal: args.signal,
+            ...(thinking ? { thinking } : {}),
           });
           allOutcomes.push(outcome);
           const logEntry = outcomeToLogEntry(outcome, Date.now());
@@ -288,8 +290,9 @@ async function processCandidate(args: {
   dispatcher: PromotionDispatcher;
   timeoutMs: number;
   signal?: AbortSignal;
+  thinking?: ThinkingLevel;
 }): Promise<CandidateOutcome> {
-  const { candidate, ctx, mgr, workerModel, dispatcher, timeoutMs, signal } = args;
+  const { candidate, ctx, mgr, workerModel, dispatcher, timeoutMs, signal, thinking } = args;
 
   // 1. Load wiki context: index + top-N relevant pages.
   const wikiCtx = await loadWikiContext({
@@ -309,6 +312,7 @@ async function processCandidate(args: {
     workerModel,
     timeoutMs,
     ...(signal ? { signal } : {}),
+    ...(thinking ? { thinking } : {}),
   });
 
   if (decision.kind === 'skip') {
@@ -335,6 +339,7 @@ async function processCandidate(args: {
       wikiPath: decision.slug,
       timeoutMs,
       ...(signal ? { signal } : {}),
+      ...(thinking ? { thinking } : {}),
     });
   }
 
@@ -370,8 +375,9 @@ async function mergeCollidingPage(args: {
   wikiPath: string;
   timeoutMs: number;
   signal?: AbortSignal;
+  thinking?: ThinkingLevel;
 }): Promise<CandidateOutcome> {
-  const { candidate, ctx, mgr, workerModel, dispatcher, wikiPath, timeoutMs, signal } = args;
+  const { candidate, ctx, mgr, workerModel, dispatcher, wikiPath, timeoutMs, signal, thinking } = args;
   const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
   const existing = await readWithMtime(wikiFileAbs);
   if (!existing) {
@@ -398,6 +404,7 @@ async function mergeCollidingPage(args: {
     workerModel,
     timeoutMs,
     ...(signal ? { signal } : {}),
+    ...(thinking ? { thinking } : {}),
   });
 
   if (decision.kind === 'skip') {

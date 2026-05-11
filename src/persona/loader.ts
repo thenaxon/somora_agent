@@ -87,6 +87,13 @@ const RemConfigSchema = z.object({
    * Useful for scratch/test agents. Default true.
    */
   participate_in_wiki: z.boolean().default(true),
+  /**
+   * Optional thinking-level for the REM worker LLM call. When set and
+   * the configured worker model declares the 'reasoning' capability,
+   * the openai-compatible request adds reasoning_effort=<level>.
+   * Unset = engine default (no thinking).
+   */
+  thinking: ThinkingLevelSchema.optional(),
 });
 
 const AgentYamlSchema = z

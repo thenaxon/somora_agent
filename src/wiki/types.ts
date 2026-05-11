@@ -6,7 +6,7 @@
 // are 'fresh' memory files; merge-vs-promote is decided by Deep at
 // processing time (collision-detection on slug-write).
 
-import type { ResolvedModel } from '../config/types.ts';
+import type { ResolvedModel, ThinkingLevel } from '../config/types.ts';
 
 /** A memory file that's a candidate for promotion or merge. */
 export interface PromotionCandidate {
@@ -121,5 +121,8 @@ export interface PromotionDispatcher {
     workerModel: ResolvedModel;
     timeoutMs: number;
     signal?: AbortSignal;
+    /** Optional thinking-level forwarded into the LLM call. Set from
+     *  `config.wiki.deep.thinking` by the runner. */
+    thinking?: ThinkingLevel;
   }): Promise<MemoryFateDecision>;
 }

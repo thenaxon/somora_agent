@@ -23,8 +23,13 @@ import { query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../server/openai-client.ts';
 
-import type { ResolvedModel } from '../config/types.ts';
+import type { ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
+import {
+  claudeCliThinkingOptions,
+  codexCliReasoningArgs,
+  openAiReasoningParam,
+} from '../engine/thinking-params.ts';
 
 export interface OneShotArgs {
   workerModel: ResolvedModel;
@@ -36,6 +41,10 @@ export interface OneShotArgs {
   signal?: AbortSignal;
   /** Logger context for diagnostic lines (agent, op, slug, …). */
   logCtx: Record<string, unknown>;
+  /** Optional thinking-level. Caller (DEEP/LUCID runner) supplies the
+   *  value from `wiki.deep.thinking` / `wiki.lucid.thinking`. Helper
+   *  guards on the worker model's 'reasoning' capability. */
+  thinking?: ThinkingLevel;
 }
 
 /** Dispatch a one-shot LLM call to the right engine adapter. Returns
@@ -71,6 +80,7 @@ async function callOpenAICompat(args: OneShotArgs): Promise<string> {
     model: args.workerModel.modelId,
   });
 
+  const reasoningParam = openAiReasoningParam(args.thinking, args.workerModel.model);
   const completion = await Promise.race([
     client.chat.completions.create(
       {
@@ -80,6 +90,7 @@ async function callOpenAICompat(args: OneShotArgs): Promise<string> {
           { role: 'user', content: args.userMessage },
         ],
         stream: false,
+        ...reasoningParam,
       },
       args.signal ? { signal: args.signal } : undefined,
     ),
@@ -128,6 +139,7 @@ async function callClaudeCli(args: OneShotArgs): Promise<string> {
     model: args.workerModel.modelId,
   });
 
+  const thinkingOpts = claudeCliThinkingOptions(args.thinking, args.workerModel.model);
   let result = '';
   try {
     const stream = query({
@@ -143,6 +155,7 @@ async function callClaudeCli(args: OneShotArgs): Promise<string> {
         mcpServers: {},
         managedSettings: { autoMemoryEnabled: false },
         abortController: sdkAbort,
+        ...thinkingOpts,
         ...(claudeBin ? { pathToClaudeCodeExecutable: claudeBin } : {}),
       },
     });
@@ -207,12 +220,14 @@ function resolveClaudeBin(): string | undefined {
 
 async function callCodexCli(args: OneShotArgs): Promise<string> {
   const codexBin = resolveCodexBin();
+  const reasoningArgs = codexCliReasoningArgs(args.thinking, args.workerModel.model);
   const cliArgs: string[] = [
     'exec',
     '--ignore-user-config',
     '--ignore-rules',
     '-c',
     'project_root_markers=[]',
+    ...reasoningArgs,
     '--json',
     '--skip-git-repo-check',
     '--sandbox',

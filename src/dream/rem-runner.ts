@@ -319,6 +319,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       workerModel,
       chunkTimeoutMs: args.rem.chunkTimeoutMs,
       chunkTokens: args.rem.chunkTokens,
+      thinking: args.rem.thinking,
       signal: args.signal,
       onChunkComplete: async ({ chunkIndex, totalChunks }) => {
         // Persist progress so a crash mid-flight leaves a recoverable file.

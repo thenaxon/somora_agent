@@ -17,6 +17,7 @@ import type {
   PromotionCandidate,
   PromotionDispatcher,
 } from '../wiki/types.ts';
+import type { ThinkingLevel } from '../config/types.ts';
 import { DEEP_SYSTEM_PROMPT } from './deep-prompts.ts';
 import { callOneShotLLM } from './deep-llm.ts';
 
@@ -28,6 +29,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
     workerModel: import('../config/types.ts').ResolvedModel;
     timeoutMs: number;
     signal?: AbortSignal;
+    thinking?: ThinkingLevel;
   }): Promise<MemoryFateDecision> {
     const userMsg = buildDeepUserMessage(
       args.candidate,
@@ -42,6 +44,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
         userMessage: userMsg,
         timeoutMs: args.timeoutMs,
         ...(args.signal ? { signal: args.signal } : {}),
+        ...(args.thinking ? { thinking: args.thinking } : {}),
         logCtx: { agent: args.candidate.agent, op: 'deep', slug: args.candidate.slug },
       });
     } catch (err) {

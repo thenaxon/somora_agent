@@ -31,6 +31,7 @@ import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
+import { openAiReasoningParam } from './thinking-params.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -366,16 +367,11 @@ export const openAiCompatibleEngine: AgentEngine = {
       });
 
       // Cross-engine thinking knob → OpenAI's `reasoning_effort` body param
-       // (gpt-5/o1-style). Only applied when the model declares 'reasoning'
-      // capability; for opaque local endpoints (Gemma etc.) we omit it
-      // entirely so the request stays clean and the user sees the dormant
-      // state in the header.
-      const reasoningEffort =
-        thinking &&
-        thinking !== 'off' &&
-        resolvedModel.model.capabilities.includes('reasoning')
-          ? thinking
-          : null;
+      // via shared helper. Helper internally guards on the model's
+      // 'reasoning' capability — for opaque local endpoints (Gemma etc.)
+      // it returns {} so the request stays clean and the user sees the
+      // dormant state in the header.
+      const reasoningParam = openAiReasoningParam(thinking, resolvedModel.model);
 
       let round = 0;
       while (round < maxRounds) {
@@ -389,7 +385,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             stream_options: { include_usage: true },
             ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' } : {}),
             ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
-            ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+            ...reasoningParam,
           },
           ...(signal ? [{ signal }] as const : ([] as const)),
         );
@@ -668,7 +664,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               ...(resolvedModel.model.maxTokens
                 ? { max_tokens: resolvedModel.model.maxTokens }
                 : {}),
-              ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+              ...reasoningParam,
               // No tools, no tool_choice — pure text response.
             },
             ...(signal ? [{ signal }] as const : ([] as const)),

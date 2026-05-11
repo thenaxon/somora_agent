@@ -18,6 +18,7 @@ import {
 } from './replay.ts';
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
+import { claudeCliThinkingOptions } from './thinking-params.ts';
 import { buildAnthropicUserContent } from '../multimodal/user-content.ts';
 
 async function* userInputStream(
@@ -179,17 +180,13 @@ export const claudeCliEngine: AgentEngine = {
       const systemPromptForTurn = systemPrompt;
 
       // Map somora's cross-engine thinking knob to the Claude Agent SDK's
-      // thinking/effort surface. Only applied when the model declares the
-      // 'reasoning' capability — otherwise the user's setting is dormant
-      // and the header should reflect that.
-      const modelSupportsReasoning =
-        resolvedModel.model.capabilities.includes('reasoning');
-      const thinkingOptions =
-        modelSupportsReasoning && thinking
-          ? thinking === 'off'
-            ? { thinking: { type: 'disabled' as const } }
-            : { effort: thinking }
-          : {};
+      // thinking/effort surface via shared helper. Helper guards on the
+      // model's 'reasoning' capability — otherwise the user's setting is
+      // dormant and the header reflects that.
+      const thinkingOptions = claudeCliThinkingOptions(
+        thinking,
+        resolvedModel.model,
+      );
 
       const stream = query({
         prompt: userInputStream(userContent),

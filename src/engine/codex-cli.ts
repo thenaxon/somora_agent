@@ -29,6 +29,7 @@ import {
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
+import { codexCliReasoningArgs } from './thinking-params.ts';
 
 const ENGINE = 'codex-cli';
 
@@ -261,17 +262,10 @@ export const codexCliEngine: AgentEngine = {
     //                          load, but that's an explicit, known location.
     args.push('--ignore-user-config', '--ignore-rules');
     args.push('-c', 'project_root_markers=[]');
-    // Cross-engine thinking knob → codex's TOML override. Only applied if
-    // the model declares 'reasoning' capability; otherwise dormant. 'off'
-    // maps to 'minimal' since codex doesn't expose a true off-switch for
-    // reasoning models.
-    if (
-      thinking &&
-      resolvedModel.model.capabilities.includes('reasoning')
-    ) {
-      const codexEffort = thinking === 'off' ? 'minimal' : thinking;
-      args.push('-c', `model_reasoning_effort=${codexEffort}`);
-    }
+    // Cross-engine thinking knob → codex's TOML override via shared helper.
+    // Helper guards on 'reasoning' capability + maps 'off' → 'minimal'
+    // (codex has no true off-switch for reasoning models).
+    args.push(...codexCliReasoningArgs(thinking, resolvedModel.model));
     args.push('--json', '--skip-git-repo-check');
     if (!resumeId) args.push('--sandbox', 'read-only');
     // Phase Y.B — image attachments. codex exec accepts repeated

@@ -17,11 +17,12 @@ import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../server/openai-client.ts';
 import { readFile } from 'node:fs/promises';
 import matter from 'gray-matter';
-import type { Config, ResolvedModel } from '../config/types.ts';
+import type { Config, ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { Finding, FindingAction } from './types.ts';
+import { openAiReasoningParam } from '../engine/thinking-params.ts';
 
 export interface ExtractContext {
   agent: string;
@@ -49,6 +50,10 @@ export interface ExtractContext {
   chunkTimeoutMs: number;
   /** Roughly tokens per chunk; events are packed up to this size. */
   chunkTokens: number;
+  /** Optional thinking-level for the REM extraction LLM. Per-agent via
+   *  `rem.thinking` in AGENTS.md. Helper handles `model.capabilities`
+   *  guarding — unset / non-reasoning models skip the param. */
+  thinking?: ThinkingLevel;
   /** Optional cancellation signal — set by AutoDreamWorker on user activity. */
   signal?: AbortSignal;
   /** Skip the first N chunks (for resume after pause/crash). */
@@ -451,6 +456,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         eventsInChunk: chunk.events.length,
         estimatedTokensIn: reqTokens,
       });
+      const reasoningParam = openAiReasoningParam(ctx.thinking, ctx.workerModel.model);
       const completion = await Promise.race([
         client.chat.completions.create({
           model: ctx.workerModel.modelId,
@@ -459,6 +465,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
             { role: 'user', content: userMsg },
           ],
           stream: false,
+          ...reasoningParam,
         }),
         new Promise<never>((_, reject) =>
           setTimeout(

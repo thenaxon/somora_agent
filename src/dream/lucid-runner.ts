@@ -64,6 +64,7 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
   if (!workerModel) {
     return failedRun(id, args.trigger, start, 0, `worker model '${ref}' did not resolve`);
   }
+  const thinking = args.config.wiki.lucid.thinking;
 
   // Resolve wiki root.
   const obs = resolveObsidianSource(args.config.obsidian);
@@ -122,6 +123,7 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
         userMessage: userMsg,
         timeoutMs: 600_000,
         ...(args.signal ? { signal: args.signal } : {}),
+        ...(thinking ? { thinking } : {}),
         logCtx: { agent: 'lucid', op: `subfolder:${subfolder}`, slug: id },
       });
     } catch (err) {
@@ -156,6 +158,7 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
         userMessage: userMsg,
         timeoutMs: 600_000,
         ...(args.signal ? { signal: args.signal } : {}),
+        ...(thinking ? { thinking } : {}),
         logCtx: { agent: 'lucid', op: 'cross', slug: id },
       });
       const xFindings = parseLucidFindings(llmText, `${id}:cross`);

@@ -503,6 +503,11 @@ export const WikiDeepConfigSchema = z
     /** Deep auto-applies (no approval). Reserved as bool in case we
      *  ever need to flip back on. */
     requireApproval: z.boolean().default(false),
+    /** Optional thinking-level for the Deep LLM one-shot. When set and
+     *  the worker model declares the 'reasoning' capability, the call
+     *  forwards effort/reasoning_effort per engine. Unset = engine
+     *  default (no thinking). */
+    thinking: ThinkingLevelSchema.optional(),
   })
   .default({
     enabled: true,
@@ -521,6 +526,9 @@ export const WikiLucidConfigSchema = z
      *  / `dream_dismiss` — any agent with the `dream` toolset can
      *  review platform-wide Lucid runs. */
     requireApproval: z.boolean().default(true),
+    /** Optional thinking-level for the Lucid LLM one-shot. Semantics
+     *  identical to wiki.deep.thinking. */
+    thinking: ThinkingLevelSchema.optional(),
   })
   .default({
     enabled: true,
