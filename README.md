@@ -216,6 +216,19 @@ the web client + provider configuration + Tailscale HTTPS setup, see
 
 Want to hack on somora itself? See the [contributor section in docs/setup.md](docs/setup.md#develop-from-a-checkout-contributors).
 
+## Managing skills — `somora skill`
+
+Skills (Markdown how-tos the agent can activate) are installed under `~/.somora/skills/`. The CLI handles authoring, install, and verification with a pre-flight body-linter and post-write loader-verification:
+
+```bash
+somora skill list                                       # what's installed
+somora skill add <slug> --template cli-wrapper          # scaffold from template
+somora skill add github --from-url https://clawhub.ai/steipete/github   # install from ClawHub
+somora skill check <slug>                               # verify before reload
+```
+
+See [docs/skills.md](docs/skills.md) for the full CLI reference, ClawHub-resolver internals, and the body-linter rules.
+
 ## Configuration
 
 Three files matter, all optional except `config.yaml`:
