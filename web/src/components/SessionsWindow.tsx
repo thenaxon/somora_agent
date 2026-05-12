@@ -173,7 +173,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
   const allInTabSelected = filtered.length > 0 && filtered.every((r) => selected.has(rowKey(r)));
 
   return (
-    <div style={{ padding: 12, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: 'var(--text-1)' }}>
+    <div style={{ padding: 12, fontFamily: '"JetBrains Mono", monospace', fontSize: 12, color: 'var(--text-1)', height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       {/* Header / KPI / controls */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
         <div style={{ fontWeight: 600, fontSize: 14 }}>Sessions</div>
@@ -318,7 +318,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
       ) : filtered.length === 0 ? (
         <div style={{ color: 'var(--text-2)', padding: 8 }}>No sessions match.</div>
       ) : (
-        <div style={{ overflow: 'auto', maxHeight: 'calc(100% - 200px)' }}>
+        <div style={{ overflow: 'auto', flex: 1, minHeight: 0 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead>
               <tr style={{ color: 'var(--text-2)', textAlign: 'left' }}>
