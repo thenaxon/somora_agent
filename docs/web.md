@@ -241,6 +241,17 @@ archived copy at the next idle window.
   Enter sends, Shift+Enter newline. The disabled-during-streaming
   flag refocuses the field automatically when the response ends, so
   you can keep typing without an extra click.
+- **Mic button** (next to send, when STT is configured): click-to-toggle
+  voice input. Click once to start recording — the icon switches to a
+  red stop-square and `MediaRecorder` captures from the default mic.
+  Click again to stop; the audio blob is POSTed to `/stt/transcribe`,
+  somora forwards it to the configured upstream (e.g. oMLX Whisper),
+  and the returned transcript is appended to the textarea — your
+  existing draft is preserved, voice gets added with a separating
+  space. Hidden when the browser lacks `MediaRecorder` /
+  `getUserMedia` (capability gate identical to the screenshot
+  button), or when somora's `/stt/config` reports STT disabled.
+  Configuration in [setup.md §7](setup.md#7-speech-to-text-optional).
 
 Markdown is rendered via `react-markdown` + `remark-gfm` +
 `rehype-highlight`. Code blocks scroll horizontally inside the

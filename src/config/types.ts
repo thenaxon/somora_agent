@@ -451,6 +451,34 @@ export const VisionConfigSchema = z
   .default({});
 export type VisionConfig = z.infer<typeof VisionConfigSchema>;
 
+// Speech-to-Text config. Standalone (not in providers.X.models) so the
+// STT model never leaks into chat-model pickers, agent-config validation,
+// or `/v1/models` — STT is a separate service surface, not "another
+// model to pick". The web mic button POSTs audio to `/stt/transcribe`,
+// somora forwards multipart to `providers[stt.provider].baseUrl +
+// /audio/transcriptions` (OpenAI-compatible STT endpoint, supported by
+// oMLX, faster-whisper-server, OpenAI itself, etc.).
+export const SttConfigSchema = z
+  .object({
+    /** Master toggle. When false (or block omitted), the /stt/transcribe
+     *  endpoint returns 503 and the web mic button auto-hides. */
+    enabled: z.boolean().default(false),
+    /** Name of an existing entry in `providers`. Reuses its baseUrl +
+     *  apiKey so connection details aren't duplicated. Provider must be
+     *  `openai-compatible` engine. */
+    provider: z.string().min(1),
+    /** Model id passed in the `model` field of the multipart request
+     *  (e.g. `mlx-community/whisper-large-v3-turbo`). Whatever string
+     *  the upstream STT server expects. */
+    model: z.string().min(1),
+    /** Optional default language hint (ISO 639-1: `de`, `en`, …). Whisper
+     *  auto-detects without it, but a hint cuts latency and prevents
+     *  language confusion on short utterances. */
+    language: z.string().min(2).max(8).optional(),
+  })
+  .optional();
+export type SttConfig = z.infer<typeof SttConfigSchema>;
+
 // Skills budget. Mirrors OpenClaw's defaults — they've shipped 53 real
 // skills against these limits for months, so we treat them as known-
 // good rather than re-deriving. Configurable via config.yaml per
@@ -675,6 +703,7 @@ export const ConfigSchema = z.object({
   resources: ResourcesConfigSchema,
   skills: SkillsConfigSchema,
   vision: VisionConfigSchema,
+  stt: SttConfigSchema,
   obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
   attachments: AttachmentsConfigSchema,

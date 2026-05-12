@@ -1152,6 +1152,105 @@ app.get('/attachments/:hash', async (c) => {
   return c.json({ error: 'not found' }, 404);
 });
 
+// Speech-to-Text. Web mic button POSTs multipart with `file` (audio
+// blob); we forward to the configured OpenAI-compatible STT endpoint
+// (oMLX `/v1/audio/transcriptions`, faster-whisper-server, OpenAI, …)
+// and return `{text}`. Standalone surface so the STT model never leaks
+// into chat-model registries.
+app.get('/stt/config', (c) => {
+  const stt = config.stt;
+  if (!stt?.enabled) return c.json({ enabled: false });
+  const provider = config.providers[stt.provider];
+  const ok = provider?.engine === 'openai-compatible';
+  return c.json({
+    enabled: ok,
+    language: stt.language ?? null,
+  });
+});
+
+app.post('/stt/transcribe', async (c) => {
+  const stt = config.stt;
+  if (!stt?.enabled) {
+    return c.json({ error: 'stt not enabled in config.yaml' }, 503);
+  }
+  const provider = config.providers[stt.provider];
+  if (!provider) {
+    return c.json({ error: `stt.provider '${stt.provider}' not found in providers` }, 500);
+  }
+  if (provider.engine !== 'openai-compatible') {
+    return c.json({ error: `stt.provider '${stt.provider}' is engine '${provider.engine}', needs openai-compatible` }, 500);
+  }
+
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ error: 'expected multipart/form-data with a `file` field' }, 400);
+  }
+  const audio = form.get('file');
+  if (!(audio instanceof Blob)) {
+    return c.json({ error: "missing or invalid `file` field" }, 400);
+  }
+  const language = (form.get('language') as string | null) || stt.language;
+
+  // Re-encode multipart for the upstream so we don't depend on Hono's
+  // boundary surviving the proxy. The audio Blob is re-attached with a
+  // sensible filename (upstream sniffs format from bytes, not name —
+  // but mlx-audio routes some video containers via the extension).
+  const fwd = new FormData();
+  const filename = audio instanceof File && audio.name ? audio.name : guessAudioFilename(audio.type);
+  fwd.append('file', audio, filename);
+  fwd.append('model', stt.model);
+  if (language) fwd.append('language', language);
+
+  const url = provider.baseUrl.replace(/\/+$/, '') + '/audio/transcriptions';
+  const headers: Record<string, string> = {};
+  if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+
+  const startedAt = Date.now();
+  let upstream: Response;
+  try {
+    upstream = await fetch(url, { method: 'POST', headers, body: fwd });
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.warn({ msg: 'stt.upstream_unreachable', url, err: msg });
+    return c.json({ error: `STT upstream unreachable: ${msg}` }, 502);
+  }
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => '');
+    logger.warn({ msg: 'stt.upstream_error', status: upstream.status, body: text.slice(0, 500) });
+    return c.json({ error: `STT upstream returned ${upstream.status}` }, 502);
+  }
+  let data: { text?: string };
+  try {
+    data = (await upstream.json()) as { text?: string };
+  } catch (err) {
+    return c.json({ error: `STT upstream returned non-JSON: ${(err as Error).message}` }, 502);
+  }
+  if (typeof data.text !== 'string') {
+    return c.json({ error: 'STT upstream JSON missing `text` field' }, 502);
+  }
+  logger.info({
+    msg: 'stt.transcribed',
+    provider: stt.provider,
+    model: stt.model,
+    language: language ?? null,
+    audioBytes: audio.size,
+    chars: data.text.length,
+    ms: Date.now() - startedAt,
+  });
+  return c.json({ text: data.text });
+});
+
+function guessAudioFilename(mime: string): string {
+  if (mime.includes('webm')) return 'recording.webm';
+  if (mime.includes('ogg')) return 'recording.ogg';
+  if (mime.includes('mp4') || mime.includes('m4a')) return 'recording.m4a';
+  if (mime.includes('wav')) return 'recording.wav';
+  if (mime.includes('mpeg')) return 'recording.mp3';
+  return 'recording.bin';
+}
+
 app.post('/chat/send', async (c) => {
   const body = (await c.req.json()) as {
     agent?: string;

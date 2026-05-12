@@ -20,6 +20,7 @@ import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
 import { AttachmentTray, type PendingAttachment } from './AttachmentTray';
 import { ScreenshotCapture } from './ScreenshotCapture';
+import { MicCapture } from './MicCapture';
 import { ChatMenuPopover } from './ChatMenuPopover';
 
 interface Props {
@@ -861,6 +862,15 @@ export function ChatWindow({
           }}
           disabled={chat.streaming}
           style={{ overflowY: 'hidden' }}
+        />
+        <MicCapture
+          onTranscript={(text) => {
+            // Append to existing draft (with a separating space) so a
+            // user can type a stem and dictate the rest, or vice versa.
+            // Empty draft → just set the transcript.
+            setDraft((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')} ${text}` : text));
+            textareaRef.current?.focus();
+          }}
         />
         {chat.streaming ? (
           <button

@@ -124,6 +124,27 @@ providers:
 #   worker: openrouter/anthropic/claude-haiku-4-5    # default for image + PDF
 #   pdfWorker: openrouter/anthropic/claude-sonnet-4-6  # optional override for PDFs
 
+# Speech-to-Text (Phase voice). Optional. When `enabled: true`, the
+# web chat input grows a mic button next to send: click → record, click
+# again → transcribe → text lands in the textarea ready to send. Audio
+# is forwarded to an OpenAI-compatible STT endpoint
+# (`POST /v1/audio/transcriptions`); supported upstreams include oMLX
+# (mlx-audio backend), faster-whisper-server, OpenAI itself, etc.
+#
+# `provider` references an entry from `providers` above so connection
+# details (baseUrl, apiKey) aren't duplicated. The STT model is NOT
+# listed in `providers.<x>.models` — keeps it out of chat-model pickers,
+# agent-config validation, and `/v1/models`.
+#
+# Browser-side capability gate: the mic button auto-hides when the
+# browser lacks MediaRecorder / getUserMedia (e.g. some older Safari
+# variants), so a feature that'd fail on click never tease-renders.
+# stt:
+#   enabled: true
+#   provider: omlx                              # ← references providers.omlx
+#   model: mlx-community/whisper-large-v3-turbo
+#   language: de                                # optional default lang hint
+
 # Compaction tunables (DECISION #21). All optional — built-in defaults apply
 # when omitted. SOMORA_COMPACTION_* env vars override these for ops/CI.
 # compaction:

@@ -770,6 +770,12 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* Mic transcribing spinner. lucide-react's Loader2 is a static spiral —
+   we rotate it. Kept generic (somora-spin) so other rotating icons can
+   reuse it without duplicating the keyframes. */
+.somora-spin { animation: somora-spin 0.9s linear infinite; }
+@keyframes somora-spin { to { transform: rotate(360deg); } }
+
 /* ===== Selection ring (when context menu opens an icon) ===== */
 .agent-icon.menu-open {
   background: rgba(92,242,214,0.15);

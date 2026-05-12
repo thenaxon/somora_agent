@@ -231,6 +231,57 @@ providers:
 Multiple OpenAI-compatible providers can coexist — give each one a unique
 name (`local`, `lmstudio`, `office`, …).
 
+## 7. Speech-to-Text (optional)
+
+When enabled, the web chat input grows a mic button next to send. Click
+→ record, click again → transcribe → text lands in the textarea ready to
+send. Audio is forwarded to an OpenAI-compatible STT endpoint
+(`POST /v1/audio/transcriptions`) and the result lands locally — never
+travels via a cloud API unless you configure one.
+
+Supported upstreams: **oMLX** (mlx-audio, Apple Silicon — full audio API
+including TTS), **faster-whisper-server**, **OpenAI Whisper API**, and
+anything else exposing the OpenAI audio shape. Configure once, switch
+backends by editing one block.
+
+```yaml
+stt:
+  enabled: true
+  provider: omlx                              # ← name of an entry in `providers`
+  model: mlx-community/whisper-large-v3-turbo
+  language: de                                # optional default hint (ISO 639-1)
+```
+
+`stt.provider` must reference an existing `openai-compatible` provider
+in your `providers` block — the STT call reuses its `baseUrl` and
+`apiKey`. The STT model is **not** listed in `providers.<x>.models`;
+keeping it separate keeps it out of chat-model pickers, agent-config
+validation, and `/v1/models`.
+
+The web mic button **auto-hides** when:
+- the server reports `stt.enabled: false` (or the block is omitted)
+- the browser lacks `MediaRecorder` / `navigator.mediaDevices.getUserMedia`
+- the page wasn't loaded over a secure context (HTTPS — required by the
+  mic-permission API in most browsers; via Tailscale, that's already
+  satisfied)
+
+### Recommended model
+
+`mlx-community/whisper-large-v3-turbo` is the practical sweet spot on
+Apple Silicon: ~800M params, near-real-time on M-series chips,
+multilingual incl. German, marginal quality difference vs. the full
+large-v3. If oMLX flags the model as missing the HuggingFace
+preprocessor/tokenizer files (MLX-converted repos sometimes ship
+weights only), drop the upstream config JSONs in alongside the weights:
+
+```bash
+cd ~/.omlx/models/whisper-large-v3-turbo
+for f in preprocessor_config.json tokenizer.json special_tokens_map.json \
+         tokenizer_config.json generation_config.json; do
+  curl -L -O "https://huggingface.co/openai/whisper-large-v3-turbo/resolve/main/$f"
+done
+```
+
 ## Tunables
 
 These all live in `config.yaml` with conservative defaults; uncomment to
