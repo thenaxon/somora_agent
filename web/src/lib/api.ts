@@ -77,6 +77,12 @@ export interface LoopState {
   lastActivityAt?: string;
 }
 
+export interface DreamStates {
+  rem: Record<string, { active: boolean; pendingCount: number }>;
+  deep: { active: boolean };
+  lucid: { active: boolean; loopHolder?: string };
+}
+
 export interface SessionModelInfo {
   provider: string;
   modelId: string;
@@ -148,6 +154,7 @@ export const api = {
   sessions: (agent: string) =>
     getJson<SessionSummary[]>(`/agents/${encodeURIComponent(agent)}/sessions`),
   loopState: () => getJson<LoopState>('/dream/loop-state'),
+  dreamStates: () => getJson<DreamStates>('/dream-states'),
   models: () => getJson<ModelOption[]>('/models'),
   sessionModel: (agent: string, session: string) =>
     getJson<SessionModelInfo>(

@@ -69,6 +69,10 @@ export class DeepWorker {
     return this.fire('manual', opts?.force ?? false);
   }
 
+  isRunning(): boolean {
+    return this.running;
+  }
+
   shutdown(): void {
     this.shuttingDown = true;
     if (this.timer) {

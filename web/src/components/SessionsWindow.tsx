@@ -10,8 +10,9 @@
 // private/sessions-tool-design.md for the full architecture.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Archive, ArchiveRestore, Brain, MessageSquare } from 'lucide-react';
+import { RefreshCw, Archive, ArchiveRestore, MessageSquare } from 'lucide-react';
 import { api, type GlobalSessionRow } from '../lib/api';
+import { DreamPhaseIcon } from './DreamPhaseIcon';
 
 type TabKey = 'active' | 'archived' | 'all';
 type SortKey = 'lastActivity' | 'messageCount' | 'byteSize' | 'agent';
@@ -488,21 +489,21 @@ function DreamCell({ row }: { row: GlobalSessionRow }) {
   const { status, lagEvents } = row.dream;
   if (status === 'dreamed') {
     return (
-      <span title="fully dreamed" style={{ color: '#4ade80', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-        <Brain size={11} /> ✓
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+        <DreamPhaseIcon phase="rem" size={11} title="fully dreamed" /> ✓
       </span>
     );
   }
   if (status === 'partial') {
     return (
-      <span title={`${lagEvents} new events since last REM`} style={{ color: 'var(--warn)', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-        <Brain size={11} /> ⚠{lagEvents}
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: 'var(--warn)' }}>
+        <DreamPhaseIcon phase="rem" size={11} title={`${lagEvents} new events since last REM`} /> ⚠{lagEvents}
       </span>
     );
   }
   return (
-    <span title="never dreamed" style={{ color: 'var(--text-2)', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-      <Brain size={11} /> ○
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, color: 'var(--text-2)' }}>
+      <DreamPhaseIcon phase="rem" size={11} title="never dreamed" /> ○
     </span>
   );
 }

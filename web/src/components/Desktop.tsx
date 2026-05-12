@@ -17,6 +17,7 @@ import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
 import { useChatContext } from './ChatProvider';
 import { useAgents } from '../hooks/useAgents';
+import { useDreamStates } from '../hooks/useDreamStates';
 import { useLoopState } from '../hooks/useLoopState';
 import { useWindowManager } from '../hooks/useWindowManager';
 import type { AgentInfo } from '../lib/api';
@@ -25,6 +26,7 @@ import { resolveAgentColor } from '../lib/colors';
 export function Desktop() {
   const { agents, loading, error } = useAgents();
   const loopState = useLoopState();
+  const dreamStates = useDreamStates();
   const wm = useWindowManager();
   const chatCtx = useChatContext();
 
@@ -67,6 +69,7 @@ export function Desktop() {
             loopHolder={loopState.active ? loopState.agent : null}
             activeAgentIds={activeAgentIds}
             streamingAgents={streamingAgents}
+            dreamStates={dreamStates}
           />
           <AppDock
             activeApps={

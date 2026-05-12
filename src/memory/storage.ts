@@ -26,7 +26,7 @@ export const SCHEMA_VERSION = 1;
 
 export interface FileRow {
   path: string;
-  source: string; // 'memory' | 'vault'
+  source: string; // 'memory' | 'vault' | 'wiki' — see ChunkSource in manager.ts
   hash: string;
   mtime: number;
   size: number;

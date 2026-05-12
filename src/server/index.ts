@@ -54,6 +54,7 @@ import { shutdownSshPool } from '../ssh/index.ts';
 import {
   archiveEmptyCompletedDreams,
   consolidateStalePausedDreams,
+  listDreams,
   recoverOrphanRunningDreams,
 } from '../dream/storage.ts';
 import { runDream } from '../dream/rem-runner.ts';
@@ -1492,6 +1493,37 @@ app.get('/dream/loop-state', (c) => {
     dreamId: state.dreamId,
     startedAt: state.startedAt,
     lastActivityAt: state.lastActivityAt,
+  });
+});
+
+// Snapshot of all three dream phases. AgentDock polls this every 30s for
+// per-agent REM activity + pending-review counts, plus the server-global
+// DEEP/LUCID running state. REM is filesystem-driven (running/completed
+// dream files under .dreams/); DEEP/LUCID expose isRunning() on their
+// worker. LUCID also surfaces the active loopHolder when present.
+app.get('/dream-states', async (c) => {
+  const agents = await listAgents();
+  const rem: Record<string, { active: boolean; pendingCount: number }> = {};
+  await Promise.all(
+    agents.map(async (a) => {
+      try {
+        const dreams = await listDreams(a.name);
+        const active = dreams.some((d) => d.meta.status === 'running');
+        const pendingCount = dreams.filter((d) => d.meta.status === 'completed').length;
+        rem[a.name] = { active, pendingCount };
+      } catch {
+        rem[a.name] = { active: false, pendingCount: 0 };
+      }
+    }),
+  );
+  const lucidLoop = getLoopState();
+  return c.json({
+    rem,
+    deep: { active: deepWorker.isRunning() },
+    lucid: {
+      active: lucidWorker.isRunning(),
+      ...(lucidLoop ? { loopHolder: lucidLoop.agent } : {}),
+    },
   });
 });
 

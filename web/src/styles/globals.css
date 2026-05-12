@@ -119,3 +119,59 @@ body {
   background: var(--text-3);
   box-shadow: none;
 }
+
+/* Dream-phase visual language. One color + glow per phase, used in
+ * AgentDock pulse, SessionsWindow REM-cell, and future dream-runner
+ * UIs. Stay in sync with src/cli/tui/dream-glyphs.ts (emoji+chalk
+ * mirror for TUI). */
+:root {
+  --dream-rem: #4ade80;
+  --dream-rem-glow: rgba(74, 222, 128, 0.55);
+  --dream-deep: #6366f1;
+  --dream-deep-glow: rgba(99, 102, 241, 0.55);
+  --dream-lucid: #a855f7;
+  --dream-lucid-glow: rgba(168, 85, 247, 0.55);
+}
+
+/* Pulse animation for "this agent's dream phase is currently active".
+ * Lives on .agent-icon-glyph; the color is set per-phase via a CSS
+ * custom property --pulse-color so one keyframe serves all phases. */
+@keyframes somora-dream-pulse {
+  0%, 100% {
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4),
+                0 0 0 1px var(--pulse-color, transparent),
+                inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  50% {
+    box-shadow: 0 6px 18px rgba(0,0,0,0.4),
+                0 0 14px 3px var(--pulse-color, transparent),
+                inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+}
+.agent-icon-glyph.dream-active {
+  animation: somora-dream-pulse 2.2s ease-in-out infinite;
+}
+.agent-icon-glyph.dream-rem    { --pulse-color: var(--dream-rem-glow); }
+.agent-icon-glyph.dream-deep   { --pulse-color: var(--dream-deep-glow); }
+.agent-icon-glyph.dream-lucid  { --pulse-color: var(--dream-lucid-glow); }
+
+/* REM pending-review badge — top-right counter on agent icons.
+ * Mirrors the bottom-right status-dot but inverted positioning so
+ * the two coexist without overlap. */
+.agent-icon-glyph .rem-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 10px;
+  background: var(--dream-rem);
+  color: #0a1010;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 8px var(--dream-rem-glow);
+}

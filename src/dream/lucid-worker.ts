@@ -51,6 +51,10 @@ export class LucidWorker {
     return this.fire('manual');
   }
 
+  isRunning(): boolean {
+    return this.running;
+  }
+
   shutdown(): void {
     this.shuttingDown = true;
     if (this.timer) {

@@ -8,10 +8,11 @@
 //   loop-holder  — agent currently holds the wiki review loop
 //   offline      — server unreachable (whole dock state shows error)
 
-import type { AgentInfo } from '../lib/api';
+import type { AgentInfo, DreamStates } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
 
 export type AgentStatus = 'online' | 'busy' | 'loop-holder' | 'offline';
+type DreamPulse = 'rem' | 'deep' | 'lucid' | null;
 
 interface Props {
   agents: AgentInfo[];
@@ -28,6 +29,9 @@ interface Props {
   /** Names of agents whose chat windows are currently open. Drives
    *  the `.active` background tint. */
   activeAgentIds?: Set<string>;
+  /** Per-agent REM + server-global DEEP/LUCID state. Drives the
+   *  per-icon pulse-glow and the REM pending-review counter badge. */
+  dreamStates?: DreamStates;
 }
 
 function computeStatus(
@@ -42,6 +46,24 @@ function computeStatus(
   return 'online';
 }
 
+/** Determine which dream phase (if any) should pulse on this agent's
+ *  icon. Priority: LUCID > DEEP > REM — most specific wins. LUCID only
+ *  pulses on the loopHolder agent; DEEP pulses on every agent (system-
+ *  wide consolidation); REM pulses only on the agent whose worker is
+ *  currently extracting. */
+function computeDreamPulse(
+  agentName: string,
+  dreamStates: DreamStates | undefined,
+): DreamPulse {
+  if (!dreamStates) return null;
+  if (dreamStates.lucid.active && dreamStates.lucid.loopHolder === agentName) {
+    return 'lucid';
+  }
+  if (dreamStates.deep.active) return 'deep';
+  if (dreamStates.rem[agentName]?.active) return 'rem';
+  return null;
+}
+
 export function AgentDock({
   agents,
   loading,
@@ -50,6 +72,7 @@ export function AgentDock({
   streamingAgents,
   loopHolder,
   activeAgentIds,
+  dreamStates,
 }: Props) {
   return (
     <>
@@ -78,6 +101,10 @@ export function AgentDock({
             loopHolder,
             !!streamingAgents?.has(agent.name),
           );
+          const pulse = computeDreamPulse(agent.name, dreamStates);
+          const pendingCount = dreamStates?.rem[agent.name]?.pendingCount ?? 0;
+          const glyphClass =
+            'agent-icon-glyph' + (pulse ? ` dream-active dream-${pulse}` : '');
           // role+tabIndex+onKeyDown gives keyboard a11y without
           // dropping the click-dummy's <div> markup that the CSS
           // expects (button-element resets would fight .agent-icon).
@@ -97,7 +124,7 @@ export function AgentDock({
               title={agent.description}
             >
               <div
-                className="agent-icon-glyph"
+                className={glyphClass}
                 style={{
                   background: gradientFor(color),
                   borderColor: `${color}40`,
@@ -114,6 +141,14 @@ export function AgentDock({
                   {agent.icon ?? '🤖'}
                 </span>
                 <span className={`status-dot ${status}`} />
+                {pendingCount > 0 && (
+                  <span
+                    className="rem-badge"
+                    title={`${pendingCount} REM dream${pendingCount === 1 ? '' : 's'} ready for review`}
+                  >
+                    {pendingCount > 9 ? '9+' : pendingCount}
+                  </span>
+                )}
               </div>
               <div className="agent-icon-label">{agent.name}</div>
               <div className="agent-icon-sub">
