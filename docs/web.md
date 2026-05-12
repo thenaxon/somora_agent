@@ -270,6 +270,76 @@ window via a portal so it can't be clipped. Three sections:
 Close the menu by clicking the `•••` button again, clicking anywhere
 outside the popover, or pressing `Escape`.
 
+### Bubble actions: copy and pin
+
+Hover any finished assistant bubble and two small icons appear in the
+top-right corner. They show up only once the message has finished
+streaming — partial content can't be copied or pinned. The buttons
+sit inside the bubble so they travel with their message as you scroll
+and don't clutter the chat header.
+
+- **Copy** writes the bubble's raw markdown to the clipboard. The
+  icon swaps to a check glyph for ~1.5 s as a confirmation cue, then
+  reverts. Pasting elsewhere preserves headings, lists, code blocks,
+  tables — anything markdown carries.
+- **Pin** opens a free-floating pin-note window with a snapshot of
+  that message (see below). The pin icon turns yellow + filled and
+  stays visible even without hover, so pinned messages stand out
+  while you scroll the history.
+
+Clicking an active pin again closes its pin-note window. Closing the
+pin-note window via its `×` does the same thing — the two affordances
+stay in sync.
+
+### Pin-note windows
+
+A pin-note is a small free-floating window that captures one
+assistant message for working memory. Use it when an answer is
+important to refer back to while the conversation continues — a
+recipe, a config snippet, a decision summary.
+
+Layout:
+
+```
+ ┌──────────────────────────────────────┐
+ │ 📌 hans note                  × ─ ⤢ │ ← yellow titlebar tint
+ ├──────────────────────────────────────┤
+ │ 🤖 hans · main             14:08    │ ← agent + source + when said
+ ├──────────────────────────────────────┤
+ │                                      │
+ │ rendered markdown body, scrollable,  │ ← same renderer as the chat
+ │ selectable…                          │
+ │                                      │
+ ├──────────────────────────────────────┤
+ │ 📌 pinned 3 min ago                   │ ← when the pin itself was made
+ └──────────────────────────────────────┘
+```
+
+Behaviour:
+
+- **Free-floating.** Drag the titlebar to move, drag the bottom-right
+  corner to resize, same as any other window. Pin-notes have their
+  own z-stack so you can leave one over a chat while continuing the
+  conversation.
+- **Yellow titlebar tint** distinguishes them at a glance from chat,
+  tmux, and sessions windows.
+- **Snapshot semantics.** The content is frozen at pin time. If the
+  agent continues streaming additions to the same turn, the pin
+  doesn't update — re-pin to capture the new state.
+- **Multiple in parallel.** Pin as many messages as you like; each
+  gets its own window. Re-pinning the same message focuses the
+  existing note instead of duplicating.
+- **Survives reloads.** Pin-notes live in the window-manager's
+  `localStorage` layout, so a browser refresh restores them.
+- **Survives the source.** Even if the original session is archived
+  or the chat window is closed, the pin-note keeps its content. The
+  header still shows the source agent and session label so you can
+  retrace where the message came from.
+
+Closing a pin-note (`×` button on the window, or click the active
+pin button on the source bubble) just removes the note window — the
+original message stays in chat history.
+
 ## Cross-client echo
 
 When you type a message in a Web window, the somora server echoes a
