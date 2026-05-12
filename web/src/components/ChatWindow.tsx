@@ -20,6 +20,7 @@ import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
 import { AttachmentTray, type PendingAttachment } from './AttachmentTray';
 import { ScreenshotCapture } from './ScreenshotCapture';
+import { ChatMenuPopover } from './ChatMenuPopover';
 
 interface Props {
   agent: AgentInfo;
@@ -103,6 +104,11 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Three-dots ••• menu state. We snapshot the anchor button's rect on
+  // open so the popover can position itself without prop-drilling refs.
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
 
   // Keep the textarea height in sync with the current draft. Driving this
   // from a layout-effect — rather than from the onChange handler alone —
@@ -594,11 +600,34 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
           </div>
         </div>
         <div className="chat-header-actions">
-          <button type="button" className="chat-icon-btn" title="More (TODO)">
+          <button
+            ref={menuButtonRef}
+            type="button"
+            className="chat-icon-btn"
+            title="Session actions"
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+            onClick={() => {
+              if (menuOpen) {
+                setMenuOpen(false);
+                return;
+              }
+              setMenuAnchorRect(menuButtonRef.current?.getBoundingClientRect() ?? null);
+              setMenuOpen(true);
+            }}
+          >
             <MoreHorizontal size={14} />
           </button>
         </div>
       </div>
+      <ChatMenuPopover
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        anchorRect={menuAnchorRect}
+        model={model}
+        thinking={thinking}
+        onSlash={dispatchSlash}
+      />
 
       <div className="chat-body" ref={scrollRef} onScroll={handleScroll}>
         {chat.hasMore && !chat.loading && (
