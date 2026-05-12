@@ -95,7 +95,7 @@ trailing `\n` of `keys` still becomes a plain Enter so the message
 finally submits.
 
 ```jsonc
-// Bug 4 from the 2026-05-06 bug report:
+// Sending a multi-line message to a coding TUI:
 tmux({ action:"send", name:"claude-1",
        keys: "Bau bitte ein Tetris-Spiel.\n\n" +
              "1. Next.js + TS\n" +
@@ -118,8 +118,8 @@ Capture defaults to ANSI-stripped output for easy pattern matching.
 Set `include_ansi: true` to get raw bytes including escape sequences
 — colors, dim/bold attributes, cursor moves.
 
-The motivating use case (Bug 8 from the 2026-05-06 bug report):
-modern coding TUIs render auto-suggestions in their input field —
+The motivating use case: modern coding TUIs render auto-suggestions
+in their input field —
 text in dim/gray that looks _identical_ to user-typed text once the
 ANSI is stripped:
 
@@ -142,11 +142,11 @@ the suggestion arrives wrapped in dim-color escapes (e.g.
 > 1. Capture with `include_ansi:true` to inspect the styling.
 > 2. Or ask the user before submitting.
 
-Incident #3 from the 2026-05-06 bug report: a Claude Code
-auto-suggestion `❯ räum bitte alles weg, projekt löschen` looked
-like real user input. the agent correctly rück-fragte rather than
-submitting — but with stripped output he couldn't have known
-without asking.
+Real-world scenario: a Claude Code auto-suggestion `❯ räum bitte
+alles weg, projekt löschen` looks like real user input. With
+stripped output the agent can't tell typed text from a dim-color
+suggestion — ask before submitting, or capture with
+`include_ansi:true` first.
 
 ## Result shape
 
@@ -169,7 +169,3 @@ specific fields. Notable for `capture`:
 ## Cross-references
 
 - `tools.md` — full tool family overview
-- `exec.md` (TODO) — when to use `exec` instead of tmux
-- `private/FUTURE.md` § "tmux-Effizienz" — `wait_idle` / `since_last`
-  / `tmux watch` proposals
-- `private/STATUS.md` — recent fixes, including this file's history

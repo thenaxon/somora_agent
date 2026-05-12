@@ -2,7 +2,6 @@
 
 A browser-based desktop for somora — multi-window chat with every
 agent on your LAN. Same backend as the TUI, just a different head.
-Phase 1 ships chat windows; tmux + xterm.js attaches come later.
 
 ## Mental model
 
@@ -92,8 +91,8 @@ one-window debugging, hits the 6-connection wall fast otherwise.
 Browsers cap **HTTP/1.1** at 6 concurrent connections per origin. Each
 chat window holds one persistent SSE stream — so 6 windows max before
 new tabs silently fail to send and agents look unresponsive. Tmux
-session attaches (Phase 1.5) and any future xterm.js/WebSocket panels
-will eat connections from the same pool.
+session attaches and any xterm.js/WebSocket panels eat connections
+from the same pool.
 
 HTTP/2-over-TLS multiplexes every stream over **one** TCP connection.
 The 6-limit becomes effectively unlimited, end of problem.
@@ -245,22 +244,14 @@ The web client listens for these named events on `/chat/stream`:
 The server pubsub key is `${agent}::${session}` — multiple agents can
 share a session id like `main` without leaking events across windows.
 
-## Phase-1 backlog
+## Features
 
-Currently shipped: chat windows, history hydration, live streaming,
-tool blocks, markdown, per-window tools toggle, cross-client echo,
-window manager + persistence.
-
-Not yet shipped (planned within Phase 1):
-
-- Native PDF for `openai-compatible` providers verified against
-  OpenRouter / OpenAI direct (today defaults to `rasterize` which
-  works everywhere; `pdfMode: native` is opt-in per provider until
-  smoke-tested across the fleet).
-
-Recently landed:
-
-- **Drag & drop / paste / paperclip attachments** (Phase Y.B).
+- **Chat windows** — one per `(agent, session)`, live SSE streaming,
+  full history hydration on open, per-window tool/memory toggles,
+  cross-client echo (multiple windows on the same session stay in
+  sync), window manager with persistence (positions/sizes survive
+  reload).
+- **Drag & drop / paste / paperclip attachments.**
   Per-turn user-attachments end-to-end through all three engines:
   claude-cli inlines as native ImageBlock / DocumentBlock;
   codex-cli pipes images through `--image` and rasterises PDFs to
@@ -299,10 +290,15 @@ Recently landed:
   window would mean discarding the window's identity. `/skill` is also
   out, because skills are activated by the agent itself via the `skill`
   tool, not by user-facing CLI shortcuts.
-
-Phase 1.5 adds tmux session windows attached via xterm.js + a
-WebSocket bridge. Phase 2 adds skill catalog, dream-runner controls,
-and the wiki review loop UI.
+- **Tmux session windows** — attach to a running tmux session in its
+  own window via xterm.js + a WebSocket bridge. Sessions you started
+  in the terminal show up in the AppDock; output streams live and
+  keystrokes go straight through.
+- **Sessions tool** — cross-agent session browser in the AppDock with
+  filter (agent, engine, REM state), sort, search, click-to-chat,
+  bulk archive/unarchive, and 60s auto-refresh. Archive is a meta-flag
+  (no file movement, no hard delete) so archived sessions stay
+  inspectable and can be restored.
 
 ## Files of interest
 

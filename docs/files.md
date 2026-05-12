@@ -147,21 +147,20 @@ provider ceilings). PDF render: max 20 pages by default, scale 1.5×
 (configurable in code).
 
 **Engine support:**
-- claude-cli (Anthropic) — full polymorph support; verified live with
-  Opus describing real images and reading rendered PDFs accurately
-- codex-cli (OpenAI) — same MCP-image-content path; structurally
-  identical, expected to work
+- claude-cli (Anthropic) — full polymorph support; images and rendered
+  PDFs ride as native ImageBlock / DocumentBlock content
+- codex-cli (OpenAI) — same MCP-image-content path; images forward
+  natively, PDFs rasterise to per-page PNGs
 - openai-compatible (omlx, openrouter, ollama) — works for vision-
   capable models (gemma-vision, gpt-5 via openrouter, etc.); local
   servers vary in tool-result image-content support — failures
   surface as explicit API errors
 
-**Future work — Phase Y.B:** user-uploaded attachments via TUI/web
-client. The multimodal helper modules in `src/multimodal/` are
-designed to feed both the agent-driven path (file_read / analyze_file)
-and the user-driven path (chat-message attachments).
+The multimodal helper modules in `src/multimodal/` feed both the
+agent-driven path (file_read / analyze_file) and the user-driven
+path (chat-message attachments via paperclip / paste / drag&drop).
 
-## User-attachments (Phase Y.B, web client)
+## User-attachments (web + TUI client)
 
 The web client exposes paperclip / drag&drop / paste so users can
 attach files directly to a chat turn. Pipeline:
@@ -219,7 +218,15 @@ providers:
   works against omlx, ollama, anything image-capable. `native`
   passes the PDF as a `{type:'file'}` content block — Anthropic
   via OpenRouter and OpenAI direct accept this; most local servers
-  do not. Enable per-provider only when you've verified.
+  do not. Enable `native` per-provider when your backend supports
+  it.
+
+Token economics: `native` ships the PDF as text (the provider
+extracts on their side) — a few-page invoice lands at ~3–4k
+prompt tokens. `rasterize` sends one image per page; image-capable
+providers charge ~1.5–2k image-tokens per page on top of the
+page-PNG bytes, so a 5-page PDF can easily 3–5× the prompt-token
+cost of `native`. Pick `native` when the backend supports it.
 
 ### Garbage collection
 

@@ -247,9 +247,8 @@ Per-agent REM (session→memory extraction) is configured in each
 
 The web client opens **one persistent SSE connection per chat window**.
 Browsers cap HTTP/1.1 at 6 concurrent connections per origin, so a multi-
-agent setup (and tmux session attaches in Phase 1.5) hits that ceiling
-fast — symptom: new chat tabs silently fail to send, agents seem
-unresponsive.
+agent setup (plus tmux session attaches) hits that ceiling fast —
+symptom: new chat tabs silently fail to send, agents seem unresponsive.
 
 Solution: serve somora over **HTTP/2-over-TLS**. HTTP/2 multiplexes
 every stream over a single TCP connection, lifting the limit entirely.

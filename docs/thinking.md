@@ -138,7 +138,7 @@ Per-engine support, today:
 | Engine | Reasoning-token count surfaced? | How |
 |---|---|---|
 | `codex-cli` | ✓ | parsed from `reasoning_output_tokens` in codex's turn-completed JSON |
-| `openai-compatible` | ✓ | parsed from `completion_tokens_details.reasoning_tokens` in the chat.completions usage chunk (added 2026-05-11) |
+| `openai-compatible` | ✓ | parsed from `completion_tokens_details.reasoning_tokens` in the chat.completions usage chunk |
 | `claude-cli` | ✗ | Anthropic's `usage` object reports `input_tokens` / `output_tokens` / `cache_*` — thinking-tokens are rolled into `output_tokens`, no separate counter |
 
 If Anthropic later exposes thinking-tokens as a distinct field in the

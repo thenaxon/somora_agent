@@ -221,8 +221,8 @@ Skipped memory files get cached by body-hash in
 `~/.somora/agents/<name>/memory/.deep-skip-cache.json`. On the next Deep
 run, files whose hash matches the cached entry are skipped without an
 LLM call. Saves opus tokens dramatically when most memories are
-unchanged between runs (verified: 1500× speedup on a 56-file all-cached
-run).
+unchanged between runs (measured at 1500× speedup on a 56-file
+all-cached run).
 
 The cache invalidates automatically when:
 - Memory body changes (hash mismatch → re-evaluate)
