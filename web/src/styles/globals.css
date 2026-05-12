@@ -131,6 +131,80 @@ body {
   --dream-deep-glow: rgba(99, 102, 241, 0.55);
   --dream-lucid: #a855f7;
   --dream-lucid-glow: rgba(168, 85, 247, 0.55);
+  /* Pin accent — used for bubble pin-button active state + pin-note
+   * window titlebar tint so pinned content is recognizable at a
+   * glance. yellow-400. */
+  --pin-accent: #facc15;
+  --pin-accent-soft: rgba(250, 204, 21, 0.12);
+  --pin-accent-line: rgba(250, 204, 21, 0.3);
+}
+
+/* Bubble action buttons (copy + pin) — hover-revealed cluster in the
+ * top-right corner of an assistant bubble. Position: absolute inside
+ * .chat-msg-bubble (which is set to position: relative inline). */
+.bubble-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.chat-msg-bubble:hover > .bubble-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* When the message has an active pin, surface that fact even without
+ * hover so users can spot pinned messages while scrolling. The copy
+ * button stays hover-revealed; only the pin button is forced visible
+ * via .bubble-action-btn.pin-btn.active below. */
+.bubble-actions.has-pinned {
+  opacity: 1;
+  pointer-events: auto;
+}
+.bubble-actions.has-pinned .bubble-action-btn:not(.active) {
+  opacity: 0;
+}
+.bubble-actions.has-pinned:hover .bubble-action-btn:not(.active) {
+  opacity: 1;
+}
+.bubble-action-btn {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.bubble-action-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-0);
+}
+.bubble-action-btn.pin-btn.active {
+  color: var(--pin-accent);
+}
+.bubble-action-btn.pin-btn.active:hover {
+  background: var(--pin-accent-soft);
+}
+
+/* Pin-note window — subtle yellow titlebar tint so the user
+ * recognizes pinned-content windows on sight without colouring the
+ * whole chrome. Body stays neutral so the markdown reads normally. */
+.window.pin-tinted .window-titlebar {
+  background: linear-gradient(180deg, var(--pin-accent-soft), transparent);
+  border-bottom-color: var(--pin-accent-line);
+}
+.window.pin-tinted.focused {
+  box-shadow:
+    var(--shadow-window),
+    0 0 0 1px var(--pin-accent-line),
+    0 0 40px -10px var(--pin-accent-soft);
 }
 
 /* Pulse animation for "this agent's dream phase is currently active".

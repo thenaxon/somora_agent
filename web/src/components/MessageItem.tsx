@@ -10,7 +10,17 @@
 //   memory_inject  — inline `◇ memory · N hits · refs…` line (TUI-style)
 
 import { memo, useState } from 'react';
-import { Brain, ChevronDown, ChevronUp, FileText, File as FileIcon, User } from 'lucide-react';
+import {
+  Brain,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  FileText,
+  File as FileIcon,
+  Pin,
+  User,
+} from 'lucide-react';
 import type { AttachmentDisplay, ChatMessage } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
@@ -19,9 +29,20 @@ interface Props {
   msg: ChatMessage;
   agentColor?: string;
   agentIcon?: string;
+  /** True when a pin-note window for this message is currently open. */
+  isPinned?: boolean;
+  /** Click handler for the pin button — toggles pin on/off. Omitted
+   *  when the parent isn't wired for pinning (e.g. read-only renders). */
+  onPinClick?: () => void;
 }
 
-export const MessageItem = memo(function MessageItem({ msg, agentColor, agentIcon }: Props) {
+export const MessageItem = memo(function MessageItem({
+  msg,
+  agentColor,
+  agentIcon,
+  isPinned,
+  onPinClick,
+}: Props) {
   if (msg.role === 'tool_call') {
     return <ToolCallBlock toolCall={msg.toolCall} />;
   }
@@ -66,6 +87,7 @@ export const MessageItem = memo(function MessageItem({ msg, agentColor, agentIco
   // it below content size, making the bubble's `max-width: 75%`
   // resolve against a tiny container and break short text like
   // "Danke" mid-word. Mirrors orbit's layout pattern.
+  const showActions = !msg.streaming && !!msg.text;
   return (
     <div className="chat-msg agent">
       <div
@@ -82,7 +104,7 @@ export const MessageItem = memo(function MessageItem({ msg, agentColor, agentIco
       >
         {agentIcon ?? '🤖'}
       </div>
-      <div className="chat-msg-bubble">
+      <div className="chat-msg-bubble agent-bubble" style={{ position: 'relative' }}>
         {msg.text ? (
           <AssistantMarkdown content={msg.text} />
         ) : (
@@ -101,10 +123,76 @@ export const MessageItem = memo(function MessageItem({ msg, agentColor, agentIco
             }}
           />
         )}
+        {showActions && (
+          <BubbleActions
+            text={msg.text ?? ''}
+            isPinned={!!isPinned}
+            {...(onPinClick ? { onPinClick } : {})}
+          />
+        )}
       </div>
     </div>
   );
 });
+
+// Hover-revealed copy + pin buttons in the top-right corner of an
+// assistant bubble. When `isPinned` is true the pin icon is always
+// visible (yellow, filled) so the user can spot pinned messages in
+// the scroll without having to hover each one.
+function BubbleActions({
+  text,
+  isPinned,
+  onPinClick,
+}: {
+  text: string;
+  isPinned: boolean;
+  onPinClick?: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API can fail in non-secure contexts. Silent — user
+      // will see no feedback and can retry with a manual selection.
+    }
+  }
+
+  return (
+    <div
+      className={`bubble-actions ${isPinned ? 'has-pinned' : ''}`}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="bubble-action-btn"
+        title={copied ? 'Copied' : 'Copy message'}
+        onClick={handleCopy}
+        aria-label="Copy message"
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+      {onPinClick && (
+        <button
+          type="button"
+          className={`bubble-action-btn pin-btn ${isPinned ? 'active' : ''}`}
+          title={isPinned ? 'Unpin' : 'Pin this message'}
+          onClick={onPinClick}
+          aria-label={isPinned ? 'Unpin message' : 'Pin message'}
+          aria-pressed={isPinned}
+        >
+          <Pin
+            size={12}
+            fill={isPinned ? 'currentColor' : 'none'}
+          />
+        </button>
+      )}
+    </div>
+  );
+}
 
 // Attachment row inside a user-bubble. Image attachments render as
 // thumbnails sourced from `/attachments/<hash>` (a tiny helper route

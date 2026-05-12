@@ -3,7 +3,34 @@
 // sessions) and `tmux-term` (an xterm.js attached to one specific
 // session). Future kinds slot in by extending WindowKind.
 
-export type WindowKind = 'chat' | 'tmux-list' | 'tmux-term' | 'shell-term' | 'sessions-list';
+export type WindowKind =
+  | 'chat'
+  | 'tmux-list'
+  | 'tmux-term'
+  | 'shell-term'
+  | 'sessions-list'
+  | 'pin-note';
+
+/** A snapshot of an agent message that the user pinned for working-
+ *  memory. Stored on the WindowState.payload of `kind: 'pin-note'`
+ *  windows. Frozen at pin time — does not live-update with later
+ *  streaming continuations. */
+export interface PinNote {
+  /** Source message id (from ChatProvider). Used for dedup + state-sync. */
+  msgId: string;
+  /** Markdown content snapshot. */
+  text: string;
+  agentName: string;
+  agentIcon?: string;
+  agentColor?: string;
+  sessionId: string;
+  /** Source session label used for the chat window's title. */
+  sessionLabel?: string;
+  /** Original message timestamp (ms epoch). */
+  ts: number;
+  /** Timestamp at which the pin itself was created (ms epoch). */
+  pinnedAt: number;
+}
 
 /** A live window in the desktop's window manager. */
 export interface WindowState {
@@ -21,6 +48,8 @@ export interface WindowState {
   sessionId?: string;
   // tmux-term specific — which tmux session this xterm is attached to.
   tmuxName?: string;
+  // pin-note specific — the captured message snapshot.
+  pinNote?: PinNote;
   // Geometry
   x: number;
   y: number;

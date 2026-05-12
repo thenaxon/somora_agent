@@ -2,8 +2,8 @@
 // Mirrors the click-dummy desktop.jsx state model in TS-strict form,
 // with a few quality-of-life additions (auto-arrange, save/restore).
 
-import { useCallback, useEffect, useState } from 'react';
-import type { PersistedLayout, WindowState } from '../types/window';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { PersistedLayout, PinNote, WindowState } from '../types/window';
 
 const STORAGE_KEY = 'somora-web-layout';
 const STORAGE_KEY_SAVED = 'somora-web-layout-saved';
@@ -219,6 +219,65 @@ export function useWindowManager() {
     [windows, zCounter, focus],
   );
 
+  /** Open or focus a pin-note window snapshotting one chat message.
+   *  De-dups by `msgId` — re-pinning the same message focuses the
+   *  existing note instead of opening a duplicate. */
+  const openPinNote = useCallback(
+    (note: PinNote) => {
+      const existing = windows.find(
+        (w) => w.kind === 'pin-note' && w.pinNote?.msgId === note.msgId,
+      );
+      if (existing) {
+        focus(existing.id);
+        return;
+      }
+      const pos = randomPos(360, 320, zCounter + 1);
+      const id = `pin-note-${note.msgId}-${Date.now()}`;
+      const next: WindowState = {
+        id,
+        kind: 'pin-note',
+        title: `${note.agentName} note`,
+        icon: '📌',
+        pinNote: note,
+        ...pos,
+        minimized: false,
+      };
+      setWindows((ws) => [...ws, next]);
+      setZCounter((z) => z + 1);
+      setFocusedId(id);
+    },
+    [windows, zCounter, focus],
+  );
+
+  /** Set of message ids currently pinned. Drives the pin-button
+   *  active state on chat bubbles — when a pin-note window closes,
+   *  the set updates automatically and the bubble's pin icon flips
+   *  back to its inactive style. */
+  const pinnedMsgIds = useMemo(
+    () =>
+      new Set(
+        windows
+          .filter((w) => w.kind === 'pin-note' && w.pinNote)
+          .map((w) => w.pinNote!.msgId),
+      ),
+    [windows],
+  );
+
+  /** Close the pin-note window that captures a given message id, if
+   *  any. Used by the bubble's pin-button when it's clicked while
+   *  active — the user toggles the pin off from the source side. */
+  const unpinMessage = useCallback(
+    (msgId: string) => {
+      const target = windows.find(
+        (w) => w.kind === 'pin-note' && w.pinNote?.msgId === msgId,
+      );
+      if (!target) return;
+      setWindows((ws) => ws.filter((w) => w.id !== target.id));
+      setFocusedId((cur) => (cur === target.id ? null : cur));
+    },
+    [windows],
+  );
+
   const autoArrange = useCallback(() => {
     setWindows((ws) => {
       const visible = ws.filter((w) => !w.minimized);
@@ -294,6 +353,9 @@ export function useWindowManager() {
     openTmuxTerm,
     openShellTerm,
     openSessionsList,
+    openPinNote,
+    unpinMessage,
+    pinnedMsgIds,
   };
 }
 

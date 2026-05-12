@@ -32,6 +32,13 @@ interface Props {
   /** Provided by the window manager so slash-commands `/session` and
    *  `/new` can mutate this window's sessionId in place. */
   onSwitchSession?: (sessionId: string) => void;
+  /** Message ids currently pinned (have an open pin-note window).
+   *  Drives the bubble pin-icon's active state. */
+  pinnedMsgIds?: Set<string>;
+  /** Open a new pin-note for one message snapshot. */
+  onPin?: (note: import('../types/window').PinNote) => void;
+  /** Close the pin-note window for a given message id. */
+  onUnpin?: (msgId: string) => void;
 }
 
 function formatTokens(n: number | undefined | null): string {
@@ -41,7 +48,15 @@ function formatTokens(n: number | undefined | null): string {
   return String(n);
 }
 
-export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }: Props) {
+export function ChatWindow({
+  agent,
+  sessionId,
+  windowFocused,
+  onSwitchSession,
+  pinnedMsgIds,
+  onPin,
+  onUnpin,
+}: Props) {
   const color = resolveAgentColor(agent);
   const { model, thinking, refresh: refreshSessionInfo } = useSessionInfo(agent.name, sessionId);
   const chat = useChatSessionFromContext(agent.name, sessionId);
@@ -691,9 +706,39 @@ export function ChatWindow({ agent, sessionId, windowFocused, onSwitchSession }:
             no messages yet — say hi
           </div>
         ) : (
-          visibleMessages.map((m) => (
-            <MessageItem key={m.id} msg={m} agentColor={color} agentIcon={agent.icon} />
-          ))
+          visibleMessages.map((m) => {
+            const isPinned = pinnedMsgIds?.has(m.id) ?? false;
+            const onPinClick = onPin
+              ? () => {
+                  if (m.role !== 'assistant' || !m.text) return;
+                  if (isPinned) {
+                    onUnpin?.(m.id);
+                    return;
+                  }
+                  onPin({
+                    msgId: m.id,
+                    text: m.text,
+                    agentName: agent.name,
+                    ...(agent.icon ? { agentIcon: agent.icon } : {}),
+                    ...(color ? { agentColor: color } : {}),
+                    sessionId,
+                    sessionLabel: sessionId === 'main' ? 'main' : sessionId,
+                    ts: m.ts,
+                    pinnedAt: Date.now(),
+                  });
+                }
+              : undefined;
+            return (
+              <MessageItem
+                key={m.id}
+                msg={m}
+                agentColor={color}
+                agentIcon={agent.icon}
+                isPinned={isPinned}
+                {...(onPinClick ? { onPinClick } : {})}
+              />
+            );
+          })
         )}
         {chat.thinking && !chat.streaming && (
           <div className="chat-msg agent">

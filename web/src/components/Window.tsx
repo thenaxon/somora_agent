@@ -155,6 +155,7 @@ export function Window({
         focused ? 'focused' : '',
         win.minimized ? 'minimized' : '',
         agentColor ? 'agent-tinted' : '',
+        win.kind === 'pin-note' ? 'pin-tinted' : '',
       ]
         .filter(Boolean)
         .join(' ')}
