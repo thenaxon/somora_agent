@@ -219,10 +219,6 @@ export const codexCliEngine: AgentEngine = {
       ? `${attachmentPrefix}${ephemeralBlock}${replayPrefix}${taggedUserMessage}`
       : `${systemPrompt}\n\n---\n\n${attachmentPrefix}${ephemeralBlock}${replayPrefix}${taggedUserMessage}`;
 
-    // Argument order matters: `exec` accepts --sandbox, but `exec resume`
-    // inherits the sandbox policy from the original thread and rejects
-    // re-passing it (codex 0.125.0). Common flags first, sandbox only on
-    // fresh exec, then the resume positional + stdin marker.
     const args: string[] = ['exec'];
     if (resumeId) args.push('resume');
     // Register the somora-memory MCP server for this exec via `-c` overrides.
@@ -267,26 +263,32 @@ export const codexCliEngine: AgentEngine = {
     // (codex has no true off-switch for reasoning models).
     args.push(...codexCliReasoningArgs(thinking, resolvedModel.model));
     args.push('--json', '--skip-git-repo-check');
-    // Sandbox policy: 'danger-full-access' on fresh exec. This *looks* alarming
-    // but is the honest setting for somora:
+    // Sandbox policy: `--dangerously-bypass-approvals-and-sandbox` instead
+    // of `--sandbox danger-full-access`. The scary name is the accurate one
+    // for somora:
     //   - codex's own filesystem tools (shell_tool, unified_exec, apply_patch_*,
     //     edit_*) are ALL disabled via the --disable list above. codex has no
     //     way to touch the filesystem on its own.
     //   - the agent's actual write capability comes from somora's MCP tools
     //     (mcp__somora-memory__file_write/exec/file_patch/…) which live OUTSIDE
-    //     codex's sandbox surface entirely. somora is the external sandbox.
+    //     codex's sandbox surface entirely. somora is the external sandbox —
+    //     and that's precisely what the bypass flag is documented for:
+    //     "intended solely for running in environments that are externally
+    //     sandboxed" (`codex exec --help`).
     //   - codex injects a sandbox-info block into the model's system prompt
-    //     based on this flag. Setting 'read-only' (the prior default) made
-    //     codex tell the agent "filesystem is read-only" while somora's tools
-    //     happily allowed writes — agents would refuse legitimate writes and
-    //     only proceed after the user manually overrode them (hans bug-report
-    //     2026-05-11_sandbox-permission-mismatch.md).
-    //   - 'danger-full-access' matches reality: somora's MCP tools CAN write
-    //     to the locations they advertise, and codex itself has no FS tools
-    //     to abuse. The 'danger' label is a codex-side warning aimed at users
-    //     who run codex standalone; in somora the actual gatekeeper is the
-    //     MCP tool layer, which we control.
-    if (!resumeId) args.push('--sandbox', 'danger-full-access');
+    //     based on the sandbox state. Earlier we used
+    //     `--sandbox danger-full-access` on fresh exec only, relying on
+    //     codex to inherit the policy on `exec resume`. That stopped working
+    //     in codex 0.126+: resumed threads fall back to read-only in the
+    //     prompt regardless of how the thread was created, so the model
+    //     sees `sandbox_mode=read-only` and refuses legitimate writes via
+    //     somora's MCP tools (hans 2026-05-12 report).
+    //   - the bypass flag is a runtime-level option, accepted by both
+    //     `codex exec` and `codex exec resume`, so it doesn't have the
+    //     resume-vs-fresh asymmetry. It also bypasses approval prompts,
+    //     which we don't use anyway (non-interactive exec would hang on
+    //     them).
+    args.push('--dangerously-bypass-approvals-and-sandbox');
     // Phase Y.B — image attachments. codex exec accepts repeated
     // `-i <PATH>` for both fresh and resumed sessions. Order vs the
     // other flags doesn't matter to codex's parser. PDF pages
