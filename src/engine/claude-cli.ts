@@ -312,7 +312,20 @@ export const claudeCliEngine: AgentEngine = {
           }
         } else if (msg.type === 'result') {
           if (msg.subtype === 'success') {
-            finalText = msg.result;
+            // `msg.result` from claude-agent-sdk only carries the final
+            // assistant text block — for multi-block turns that
+            // intersperse `[text A, tool_use, tool_result, text B]`,
+            // it equals just "B" and drops "A" on the floor. Sourcing
+            // finalText from there made the chat:final event clobber
+            // the streaming bubble to the post-tool text only, so the
+            // web client locked in with text-A erased (luca 2026-05-12
+            // bug report). `cumulative` is the running total of every
+            // text_delta we saw across the whole turn, so it always
+            // contains every text block in order — use it as the source
+            // of truth, and fall back to `msg.result` only when no
+            // streaming happened (defensive — shouldn't trigger in
+            // practice since claude-agent-sdk always streams).
+            finalText = cumulative || msg.result;
             // Anthropic returns input_tokens (uncached new) separate from
             // cache_read_input_tokens and cache_creation_input_tokens.
             // For somora's display we want TOTAL context size used this

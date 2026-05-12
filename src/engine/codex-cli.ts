@@ -417,8 +417,14 @@ export const codexCliEngine: AgentEngine = {
             if (itemType === 'agent_message') {
               const text = item.text;
               if (typeof text === 'string') {
-                cumulative = text;
-                finalText = text;
+                // Concatenate, don't overwrite. Multi-block turns
+                // (text-before-tool → mcp_tool_call → text-after-tool)
+                // surface as multiple `agent_message` completion events;
+                // a plain `cumulative = text` would clobber text-A with
+                // text-B at the chat:final clamp, identical class of
+                // bug to claude-cli pre-2026-05-12 (luca report).
+                cumulative = cumulative ? `${cumulative}\n\n${text}` : text;
+                finalText = cumulative;
                 yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
               }
             } else if (itemType === 'mcp_tool_call') {
