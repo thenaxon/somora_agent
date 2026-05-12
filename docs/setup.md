@@ -46,7 +46,8 @@ codex login        # ChatGPT Plus/Pro/Business
 **Local models** — Ollama, LM Studio, vLLM, or oMLX. Install separately
 per their docs and have a `/v1/chat/completions` endpoint reachable on
 some `http://host:port`. somora talks to them via the `openai-compatible`
-engine — see step 5 for the config block.
+engine — see [§6 Configuring providers](#6-configuring-providers) for
+the config block.
 
 ## 3. Optional but recommended
 
@@ -66,23 +67,37 @@ single-window-only; the TUI is unaffected.
 ```bash
 git clone https://github.com/thenaxon/somora_agent.git somora
 cd somora
-npm install -g .
+npm install -g "$(npm pack | tail -1)"
 ```
 
-This compiles the native modules and installs the `somora` binary on
-your `PATH`.
+`npm pack` fires the `prepack` lifecycle hook, which builds the web
+bundle (`cd web && npm ci && npm run build`) and emits a tarball with
+everything baked in. The `npm install -g <tarball>` step then does a
+real global install — the bin lands on your `PATH`, runtime deps land
+under `lib/node_modules/somora/`, and `web/dist` is shipped along.
+
+A bare `npm install -g .` from the clone may *look* like it works on
+some setups, but npm often treats a local-folder install as
+`npm link` and just symlinks the global path back to your checkout —
+no deps, no built web bundle, broken binary. Going via `npm pack` is
+the reliable path. (Subsequent upgrades use `somora update`, which
+does the same clone→pack→install under the hood — see [Updating
+somora](#updating-somora) below.)
 
 ## 5. Start the server + chat
 
 ```bash
-somora server start    # registers a systemd user service that auto-starts
+somora init            # creates ~/.somora/ + writes the systemd user-service unit
+somora server start    # starts the unit (auto-starts on login)
 somora tui             # opens the TUI against the running server
 ```
 
-`somora server start` writes a systemd user-service unit
-(`~/.config/systemd/user/somora.service`) on first run, then enables +
-starts it. After that the server runs in the background and survives
-logout / reboot. To stop / restart / inspect:
+`somora init` is idempotent and one-time: it creates `~/.somora/`
+(config + lockfile + logs land here) and writes the systemd unit at
+`~/.config/systemd/user/somora.service` with `ExecStart` baked to your
+freshly installed global binary. From then on, `somora server start`
+just brings the unit up; the server runs in the background and
+survives logout / reboot. To stop / restart / inspect:
 
 ```bash
 somora server stop
