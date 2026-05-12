@@ -303,6 +303,7 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 - [docs/skills.md](docs/skills.md) — markdown how-tos the agent can activate
 - [docs/files.md](docs/files.md) — file_* tools, multimodal `analyze_file`, user attachments
 - [docs/web.md](docs/web.md) — web client architecture, slash commands, tmux app, screenshot
+- [docs/api.md](docs/api.md) — HTTP+SSE+WS API reference for building custom clients
 - [docs/tmux.md](docs/tmux.md) — long-lived terminal sessions for TUIs
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning-depth surface across engines

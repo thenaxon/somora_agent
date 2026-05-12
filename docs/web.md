@@ -107,8 +107,20 @@ without it.
 
 - **Agent dock (left edge)**: one tile per agent from `/agents`. Click
   opens a chat window; clicking again focuses the existing window.
-  Status dot: green = idle, amber blink = streaming, violet = holds
-  the dream review loop, grey = offline.
+  Each tile carries up to three live signals:
+  - **Status dot** (bottom-right of the icon): green = idle,
+    amber = streaming, violet = holds the dream review loop, grey =
+    offline.
+  - **Pulse glow** around the icon when a dream phase is running for
+    this agent: green = REM (per-agent session→memory extraction),
+    indigo = Deep (server-wide consolidation, every participating
+    agent pulses), violet = Lucid (review-loop holder). Polled every
+    30 s from `GET /dream-states`. See
+    [dream-phases.md](dream-phases.md) for what each phase does.
+  - **REM badge** (top-right of the icon) when the agent has REM
+    extractions waiting for review: a small green counter (`1`, `2`,
+    `9+`). The badge clears as you work through findings via
+    `dream_apply` / `dream_dismiss`.
 - **App dock (below the agent dock)**: non-agent surfaces — `tmux`
   (attach to an existing tmux session), `terminal` (fresh shell in
   the somora workspace), and `sessions` (cross-agent session browser
@@ -155,7 +167,26 @@ hundreds of sessions somora accumulates over weeks.
 | Last activity | Human-readable relative time (`5 min ago`, `yesterday`, `3w ago`) |
 | Msgs | `user_message` + `assistant_message` count |
 | Size | Bytes on disk for the JSONL |
-| REM | `🧠 ✓` = REM dreamed up to the latest event · `🧠 ⚠N` = N events new since last REM · `🧠 ○` = never dreamed |
+| REM | `🧠 ✓` (green) = REM dreamed up to the latest event · `🧠 ⚠N` (orange) = REM ran once but `N` new events have arrived since · `🧠 ○` (grey) = never dreamed |
+
+**About the REM column.** REM is the per-agent background phase that turns
+finished session content into memory candidates (see
+[dream-phases.md](dream-phases.md)). The column tells you, per session, how
+much of its history REM has already processed:
+
+- **`🧠 ✓` (dreamed).** REM has worked through every event in this session.
+  Nothing waiting.
+- **`🧠 ⚠N` (partial).** REM ran at some point — but you've chatted further
+  since. The number is how many user/assistant events have piled up beyond
+  REM's last read-through marker. They'll be picked up on the next idle-
+  triggered REM run for this agent.
+- **`🧠 ○` (never).** No REM run has touched this session yet. Common for
+  brand-new sessions, sub-agent spawns that finished quickly, or sessions
+  on agents where REM is disabled in `agent.yaml`.
+
+The lag count is informational — you don't have to do anything about it. If
+you want to nudge a session, end it (`/reset`) and REM will fire on the
+archived copy at the next idle window.
 
 **Tabs:**
 
@@ -214,6 +245,30 @@ hundreds of sessions somora accumulates over weeks.
 Markdown is rendered via `react-markdown` + `remark-gfm` +
 `rehype-highlight`. Code blocks scroll horizontally inside the
 75%-width bubble; tables overflow-scroll independently.
+
+### Session actions menu (`•••`)
+
+The three-dots button in the chat header opens a popover anchored to
+that button — same screen position every time, escapes the chat
+window via a portal so it can't be clipped. Three sections:
+
+- **MODEL** — current model + engine + context window. "Switch
+  model…" expands an inline picker with a free-text filter; clicking
+  a model commits a per-session override (`PUT /agents/<a>/sessions/
+  <s>/model`). Same flow as the `/model` slash command.
+- **THINKING** — current effective level and its source (session
+  override / persona default / engine default). A segmented control
+  (off / low / medium / high) sets a session override; "Reset to
+  default" removes the override and falls back to persona / engine
+  default.
+- **DANGER ZONE — Reset session** — archives the current chat (the
+  jsonl is kept as `<id>-archive`) and starts a fresh session. If the
+  agent has REM enabled in `agent.yaml`, REM fires asynchronously
+  over the archived range to extract memory candidates. Two-click
+  confirm so it can't trigger by accident.
+
+Close the menu by clicking the `•••` button again, clicking anywhere
+outside the popover, or pressing `Escape`.
 
 ## Cross-client echo
 
