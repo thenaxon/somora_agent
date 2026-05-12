@@ -776,6 +776,17 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .somora-spin { animation: somora-spin 0.9s linear infinite; }
 @keyframes somora-spin { to { transform: rotate(360deg); } }
 
+/* Mic in recording state — same glyph, but pulsing red so the active
+   state is unmistakable without swapping to a different shape. */
+.somora-mic-active {
+  color: var(--danger);
+  animation: somora-mic-pulse 1.2s ease-in-out infinite;
+}
+@keyframes somora-mic-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
 /* ===== Selection ring (when context menu opens an icon) ===== */
 .agent-icon.menu-open {
   background: rgba(92,242,214,0.15);

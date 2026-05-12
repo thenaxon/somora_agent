@@ -9,7 +9,7 @@
 // Either missing ⇒ button hidden (no tease of a feature that'd fail).
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Mic, Square } from 'lucide-react';
+import { Loader2, Mic } from 'lucide-react';
 
 interface Props {
   /** Called with the transcript string when the upstream returns. The
@@ -143,10 +143,12 @@ export function MicCapture({ onTranscript }: Props) {
     : state === 'recording' ? 'Stop recording'
     : 'Transcribing…';
 
+  // Recording: same mic glyph in red + gentle pulse so the affordance
+  // ("this is the mic") stays consistent and the active state is
+  // unambiguous without a confusing stop-square stand-in.
   const icon =
-    state === 'recording' ? <Square size={14} />
-    : state === 'transcribing' ? <Loader2 size={14} className="somora-spin" />
-    : <Mic size={14} />;
+    state === 'transcribing' ? <Loader2 size={14} className="somora-spin" />
+    : <Mic size={14} className={state === 'recording' ? 'somora-mic-active' : undefined} />;
 
   return (
     <button
@@ -155,7 +157,6 @@ export function MicCapture({ onTranscript }: Props) {
       title={title}
       onClick={onClick}
       disabled={state === 'transcribing'}
-      style={state === 'recording' ? { color: 'var(--danger)' } : undefined}
     >
       {icon}
     </button>
