@@ -22,6 +22,7 @@ import {
 import { getEffectiveEnv } from './env.ts';
 import { loadSomoraEnvFile } from './env-file.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
+import { shortToolName } from './tool-format.ts';
 import { ensureWorkspaceDirs } from './workspace.ts';
 import {
   ensureDefaultAgent,
@@ -996,7 +997,16 @@ app.get('/chat/history', async (c) => {
   // full session — backwards compatible for older clients (TUI
   // hydrates everything anyway, web only opts into paging when it
   // explicitly asks for it).
-  const all = await getHistory(agent, id);
+  //
+  // Tool names are normalized through shortToolName so clients render
+  // `memory_search` instead of `mcp__somora-memory__memory_search`
+  // (claude-cli + codex-cli wrap MCP tools with that prefix). Live SSE
+  // already strips it via the per-turn serializer; this endpoint is
+  // the parity for the load-from-JSONL path.
+  const rawAll = await getHistory(agent, id);
+  const all = rawAll.map((e) =>
+    e.kind === 'tool_call' ? { ...e, tool: shortToolName(e.tool) } : e,
+  );
   const limitParam = c.req.query('limit');
   const beforeParam = c.req.query('before');
   if (!limitParam && !beforeParam) {
