@@ -1,21 +1,22 @@
 // Top-level somora CLI — `somora <subcommand>`.
 //
 // Subcommands:
-//   init                     idempotent setup (~/.somora/, systemd unit)
+//   init                              idempotent setup (~/.somora/, systemd unit)
 //   server start [--foreground]
 //   server stop
 //   server status
 //   server restart
-//   tui                      launch TUI against running server
-//   update [<version>]       npm install -g somora@<version> + restart
+//   tui                               launch TUI against running server
+//   update [<version>] [--edge]       install + rebake systemd + restart
+//                                     (see `somora update --help`)
 //   --version | -v
 //   --help | -h
 //
 // See DECISIONS #42.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,7 +48,8 @@ Usage:
   somora tui                         launch the TUI against the running server
   somora skill <subcommand>          list/check/add/update/remove skills
                                      (run \`somora skill\` for sub-help)
-  somora update [<version>]          npm install -g somora@<version> + restart
+  somora update [<version>|--edge]   install + rebake systemd + restart
+                                     (run \`somora update --help\` for options)
   somora --version                   show version
   somora --help                      this help
 `;
@@ -325,19 +327,199 @@ function cmdTui(): Promise<number> {
 
 // ─── update ─────────────────────────────────────────────────────────
 
-async function cmdUpdate(args: string[]): Promise<number> {
-  const target = args[0]; // optional version, e.g. "2026.05.08.2"
-  const pkgSpec = target ? `somora@${target}` : 'somora@latest';
+const SOMORA_REPO = 'thenaxon/somora_agent';
+const SOMORA_GIT_URL = `https://github.com/${SOMORA_REPO}.git`;
 
-  process.stdout.write(`somora update: npm install -g ${pkgSpec}\n`);
-  const r = run('npm', ['install', '-g', pkgSpec], { stdio: 'inherit' });
-  if (r.code !== 0) return r.code;
+function updateUsage(): string {
+  return `somora update — install a new version + rebake systemd + restart
+
+Usage:
+  somora update                latest GitHub release (curated, default)
+  somora update --edge         latest git tag (incl. interim status markers)
+  somora update <version>      specific version, e.g. 2026.05.12.7
+  somora update --no-reinit    skip re-running \`somora init\` after install
+
+Channels:
+  --release   default. Installs only versions you've published as
+              GitHub Releases — safe path for external users.
+  --edge      power-user channel. Installs the latest git tag,
+              including between-release status markers.
+
+Other:
+  --no-reinit  skip rebaking the systemd unit's ExecStart. Default is
+               to re-run \`somora init\` after install so the unit
+               points at the freshly installed global binary.
+  --help, -h   this help
+`;
+}
+
+type UpdateOpts =
+  | { kind: 'opts'; channel: 'release' | 'edge'; version?: string; reinit: boolean }
+  | { kind: 'help' }
+  | { kind: 'error'; message: string };
+
+function parseUpdateArgs(args: string[]): UpdateOpts {
+  let channel: 'release' | 'edge' = 'release';
+  let reinit = true;
+  let version: string | undefined;
+  for (const arg of args) {
+    if (arg === '--edge') channel = 'edge';
+    else if (arg === '--release') channel = 'release';
+    else if (arg === '--no-reinit') reinit = false;
+    else if (arg === '--help' || arg === '-h') return { kind: 'help' };
+    else if (arg.startsWith('--')) return { kind: 'error', message: `unknown flag: ${arg}` };
+    else if (version) return { kind: 'error', message: `multiple version args: ${version}, ${arg}` };
+    else version = arg;
+  }
+  if (version && channel === 'edge') {
+    return { kind: 'error', message: '--edge and an explicit version are mutually exclusive' };
+  }
+  return { kind: 'opts', channel, version, reinit };
+}
+
+/** Latest tag from `gh release view`, with a curl fallback to the public
+ *  GitHub API. Returns the tag name (e.g. "v2026.05.12.4") or null. */
+function resolveLatestRelease(): string | null {
+  const gh = run('gh', ['release', 'view', '--repo', SOMORA_REPO, '--json', 'tagName']);
+  if (gh.code === 0) {
+    try {
+      const j = JSON.parse(gh.stdout);
+      if (typeof j.tagName === 'string') return j.tagName;
+    } catch { /* fall through */ }
+  }
+  const cr = run('curl', ['-fsSL', `https://api.github.com/repos/${SOMORA_REPO}/releases/latest`]);
+  if (cr.code === 0) {
+    try {
+      const j = JSON.parse(cr.stdout);
+      if (typeof j.tag_name === 'string') return j.tag_name;
+    } catch { /* fall through */ }
+  }
+  return null;
+}
+
+/** Highest version-sorted tag on the remote. Doesn't require gh — uses
+ *  plain git so it works on minimal installs. */
+function resolveLatestTag(): string | null {
+  const r = run('git', ['ls-remote', '--tags', '--refs', '--sort=-version:refname', SOMORA_GIT_URL]);
+  if (r.code !== 0) return null;
+  for (const line of r.stdout.split('\n')) {
+    const m = line.match(/refs\/tags\/(v[0-9][0-9.]*)$/);
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
+/** Resolve the freshly-installed global somora bin so reinit fires
+ *  against the new binary, not whatever was running before. */
+function resolveGlobalBin(): string | null {
+  const r = run('npm', ['root', '-g']);
+  if (r.code !== 0) return null;
+  const candidate = join(r.stdout.trim(), 'somora', 'bin', 'somora.mjs');
+  return existsSync(candidate) ? candidate : null;
+}
+
+async function cmdUpdate(args: string[]): Promise<number> {
+  const parsed = parseUpdateArgs(args);
+  if (parsed.kind === 'help') { process.stdout.write(updateUsage()); return 0; }
+  if (parsed.kind === 'error') {
+    process.stderr.write(`${parsed.message}\nrun \`somora update --help\` for usage\n`);
+    return 2;
+  }
+  const { channel, version, reinit } = parsed;
+
+  let ref: string;
+  let label: string;
+  if (version) {
+    ref = version.startsWith('v') ? version : `v${version}`;
+    label = `${ref} (explicit version)`;
+  } else if (channel === 'edge') {
+    const tag = resolveLatestTag();
+    if (!tag) {
+      process.stderr.write('could not resolve latest git tag from GitHub\n');
+      return 1;
+    }
+    ref = tag;
+    label = `${ref} (edge channel — latest git tag)`;
+  } else {
+    const tag = resolveLatestRelease();
+    if (!tag) {
+      process.stderr.write(
+        'could not resolve latest GitHub release.\n' +
+        '  - check connectivity / `gh auth status`\n' +
+        '  - if no releases are published yet, try `somora update --edge`\n',
+      );
+      return 1;
+    }
+    ref = tag;
+    label = `${ref} (release channel — latest GitHub release)`;
+  }
+
+  process.stdout.write(`somora update → ${label}\n`);
+
+  // Pack-then-install is the only reliable path:
+  //  - `npm install -g git+…#<ref>` races on the shared cacache when
+  //    prepack triggers nested `npm ci` inside web/, producing
+  //    half-extracted dep tarballs (ENOTEMPTY rename / TAR_ENTRY_ERROR).
+  //  - `npm install -g .` from a local dir only symlinks (npm-link
+  //    style), so deps + the built web/dist never land in the global.
+  // So we clone the target ref, run `npm pack` (which fires prepack
+  // → builds web/dist → produces a real tarball with everything
+  // baked in), then install that tarball globally.
+  const tmpRoot = mkdtempSync(join(tmpdir(), 'somora-update-'));
+  const cloneDir = join(tmpRoot, 'src');
+  let installCode = 0;
+  try {
+    process.stdout.write(`  cloning ${ref} into ${cloneDir}\n`);
+    const cl = run('git', ['clone', '--depth', '1', '--branch', ref, SOMORA_GIT_URL, cloneDir], { stdio: 'inherit' });
+    if (cl.code !== 0) {
+      process.stderr.write(`git clone failed (exit ${cl.code})\n`);
+      return cl.code;
+    }
+
+    process.stdout.write('  packing tarball (builds web bundle)…\n');
+    const pk = spawnSync('npm', ['pack'], { cwd: cloneDir, encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
+    if (pk.status !== 0) {
+      process.stderr.write(`npm pack failed (exit ${pk.status ?? 'unknown'})\n`);
+      return pk.status ?? 1;
+    }
+    // npm pack prints the tarball filename as its last stdout line.
+    const tarballName = pk.stdout.trim().split('\n').pop();
+    if (!tarballName) {
+      process.stderr.write('could not parse tarball name from `npm pack` output\n');
+      return 1;
+    }
+    const tarballPath = join(cloneDir, tarballName);
+
+    process.stdout.write(`  npm install -g ${tarballPath}\n`);
+    const ri = run('npm', ['install', '-g', tarballPath], { stdio: 'inherit' });
+    installCode = ri.code;
+  } finally {
+    try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+  if (installCode !== 0) return installCode;
+
+  // Re-run init from the freshly-installed global binary so the
+  // systemd unit's ExecStart picks up the new path. Without this,
+  // a unit that was originally baked from a dev checkout keeps
+  // launching the old binary even after `npm install -g` succeeds.
+  if (reinit) {
+    const globalBin = resolveGlobalBin();
+    if (globalBin) {
+      process.stdout.write(`\nrebaking systemd ExecStart via init at ${globalBin}\n`);
+      const ir = run(process.execPath, [globalBin, 'init'], { stdio: 'inherit' });
+      if (ir.code !== 0) {
+        process.stderr.write('warning: somora init failed — systemd unit may still point at the old binary\n');
+      }
+    } else {
+      process.stderr.write('warning: could not locate global somora binary — skipping reinit (run `somora init` manually)\n');
+    }
+  }
 
   if (isSystemdAvailable() && existsSync(SYSTEMD_UNIT_PATH)) {
-    process.stdout.write('restarting systemd service…\n');
+    process.stdout.write('\nrestarting systemd service…\n');
     return cmdServerRestart();
   }
-  process.stdout.write('done. Restart any running server manually.\n');
+  process.stdout.write('\ndone. Restart any running server manually.\n');
   return 0;
 }
 
