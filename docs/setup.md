@@ -98,6 +98,52 @@ debugging):
 somora server start --foreground    # blocks the terminal; Ctrl-C to stop
 ```
 
+### Switching from a dev checkout to a release tarball
+
+The systemd unit's `ExecStart` is baked in by whichever copy of somora
+ran `somora init`. That's normally the binary you just installed
+globally — perfect. But if you initially ran `init` from a git checkout
+(common for early adopters who cloned the repo and developed against
+it), the unit pins to that checkout path:
+
+```
+ExecStart=/home/<you>/somora/bin/somora.mjs server start --foreground
+```
+
+Later `npm install -g <tarball>` then has no effect on the running
+service — systemd keeps launching the checkout binary, which serves
+its old (possibly stale) `web/dist`. Symptoms: new features missing
+in the web UI even after install + restart.
+
+**How to spot it:**
+
+```bash
+systemctl --user cat somora.service | grep ExecStart
+# good:  ExecStart=/usr/bin/somora server start --foreground
+#  or:   ExecStart=/home/<you>/.npm-global/lib/node_modules/somora/bin/somora.mjs ...
+# bad:   ExecStart=/home/<you>/somora/bin/somora.mjs ...   (← checkout, not global)
+```
+
+**Fix — let `somora init` regenerate the unit against the global
+install:**
+
+```bash
+# Run init from the globally-installed binary, not the checkout.
+# `which somora` should already resolve there; if not, call by path:
+"$(npm root -g)"/somora/bin/somora.mjs init
+systemctl --user daemon-reload
+systemctl --user restart somora.service
+curl -ks https://<host>:18737/version    # verify the new version
+```
+
+Then hard-reload the browser (Ctrl+Shift+R / Cmd+Shift+R) so it
+doesn't serve the previous JS bundle from cache.
+
+`somora init` from `2026.05.12.6` onward emits a warning when the
+detected `BIN_PATH` doesn't look like a global install path —
+designed to catch this case at setup time so you don't run into
+silent upgrades later.
+
 On first start somora creates `~/.somora/`:
 
 ```

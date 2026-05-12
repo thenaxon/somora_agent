@@ -169,8 +169,37 @@ function cmdInit(): number {
   if (!isSystemdAvailable()) {
     process.stdout.write('  note: systemctl --user not available — only `somora server start --foreground` will work\n');
   }
+
+  // Footgun guard: BIN_PATH baked into the unit points at whichever
+  // copy of somora ran `init`. If the user ran `somora init` from a
+  // dev checkout, the unit pins to that checkout — `npm install -g`
+  // tarball updates won't take effect because systemd keeps launching
+  // the checkout binary. Warn so the user can re-run init from the
+  // global install if that wasn't intentional.
+  if (!looksLikeGlobalNpmInstall(BIN_PATH)) {
+    const warn = (s: string) => (process.stderr.isTTY ? `\x1b[33m${s}\x1b[0m` : s);
+    process.stderr.write('\n');
+    process.stderr.write(warn('  ! heads up: ExecStart in the unit points at a non-global path:\n'));
+    process.stderr.write(warn(`      ${BIN_PATH}\n`));
+    process.stderr.write(warn('    Typical global installs live under .../lib/node_modules/somora/.\n'));
+    process.stderr.write(warn('    If this is your dev checkout — fine, ignore.\n'));
+    process.stderr.write(warn('    If you meant to install via `npm install -g`, re-run `somora init`\n'));
+    process.stderr.write(warn('    from the global binary so the unit picks up the right path:\n'));
+    process.stderr.write(warn('      $(npm root -g)/somora/bin/somora.mjs init\n'));
+    process.stderr.write(warn('    then `systemctl --user daemon-reload && systemctl --user restart somora.service`\n'));
+  }
+
   process.stdout.write('\nNext: `somora server start` to launch the server.\n');
   return 0;
+}
+
+/** Heuristic: does this absolute path look like it came from an npm
+ *  global install (or an `npm link` setup that targets one)? The
+ *  canonical marker is `/lib/node_modules/somora/` somewhere in the
+ *  path. A pure dev checkout (`/home/<user>/somora/bin/...`) doesn't
+ *  match — that's the case the warning is designed to catch. */
+function looksLikeGlobalNpmInstall(absPath: string): boolean {
+  return absPath.includes('/lib/node_modules/somora/');
 }
 
 // ─── server ─────────────────────────────────────────────────────────
