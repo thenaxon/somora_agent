@@ -15,6 +15,7 @@ import { execTools } from './exec/index.ts';
 import { tmuxTools } from './tmux/index.ts';
 import { skillTools } from './skill/index.ts';
 import { wikiTools } from './wiki/index.ts';
+import { projectTools } from './projects/index.ts';
 
 export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
@@ -35,6 +36,7 @@ export {
 export { tmuxTools } from './tmux/index.ts';
 export { skillTools } from './skill/index.ts';
 export { wikiTools } from './wiki/index.ts';
+export { projectTools } from './projects/index.ts';
 export { configureDreamRunTool } from './dream/index.ts';
 
 /**
@@ -67,4 +69,9 @@ export function registerAllTools(registry: ToolRegistry): void {
   registry.registerMany(tmuxTools());
   registry.registerMany(skillTools());
   registry.registerMany(wikiTools());
+  // Project tools self-gate via their `available` probe on
+  // config.projects.enabled — when disabled, the registry filters them
+  // out of the model-facing list. So we always register; only the
+  // visibility flips based on config. Same pattern as wikiTools.
+  registry.registerMany(projectTools());
 }
