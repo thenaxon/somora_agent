@@ -440,16 +440,27 @@ export const projectUpdate: ToolDefinition<z.infer<typeof UpdateInput>> = {
   name: 'project_update',
   toolset: 'projects',
   description:
-    'Apply one or more mutations to a project transactionally. Pass an `ops` array; all ops ' +
-    'validate first, then a single write happens. If ANY op fails, NOTHING is written. ' +
-    'Supported ops: ' +
-    '`set_field` (name/description/color/expires — value=null clears optional fields except name), ' +
-    '`add_path` (ref + optional label, scheme + resource cross-check), ' +
-    '`remove_path` (by ref), ' +
-    '`set_tags` (replaces full tag array), ' +
-    '`archive` (soft-delete with optional reason), ' +
-    '`unarchive` (restore). ' +
-    'Entity cannot be mutated — delete and recreate to move a project between entities. ' +
+    'Apply one or more mutations to a project transactionally. Each entry in `ops` is an ' +
+    'OBJECT with an `op` discriminator plus op-specific fields. All ops validate first, ' +
+    'then a single write happens; if any op fails, nothing is written.\n' +
+    '\n' +
+    'Example — add a path AND change the description in one call:\n' +
+    '  { "slug": "heimkino", "ops": [\n' +
+    '    { "op": "add_path", "ref": "~/code/foo", "label": "Sourcecode" },\n' +
+    '    { "op": "set_field", "field": "description", "value": "Updated" }\n' +
+    '  ] }\n' +
+    '\n' +
+    'Supported ops (each `op` value has its own required fields — see the input schema):\n' +
+    '  - set_field { field: name|description|color|expires, value: string|null }\n' +
+    '      value=null clears optional fields (cannot clear name).\n' +
+    '  - add_path { ref: string, label?: string }\n' +
+    '      `ref` is scheme-inferred: `https://…` / `~/abs` or `/abs` / `<resource>:/path`.\n' +
+    '  - remove_path { ref: string } — removes by ref match.\n' +
+    '  - set_tags { tags: string[] } — replaces the full tag array.\n' +
+    '  - archive { reason?: string } — soft-delete.\n' +
+    '  - unarchive { } — restore.\n' +
+    '\n' +
+    'Entity cannot be mutated (delete and recreate to move between entities). ' +
     'Slug cannot be renamed in v1 (would break session links).',
   inputSchema: UpdateInput,
   jsonSchema: {
@@ -459,18 +470,74 @@ export const projectUpdate: ToolDefinition<z.infer<typeof UpdateInput>> = {
       ops: {
         type: 'array',
         minItems: 1,
-        items: {
-          type: 'object',
-          properties: {
-            op: { type: 'string' },
-          },
-          required: ['op'],
-          additionalProperties: true,
-        },
         description:
-          'Array of UpdateOp objects. Each must have an `op` field naming one of: ' +
-          'set_field, add_path, remove_path, set_tags, archive, unarchive. ' +
-          'Op-specific fields follow per shape.',
+          'Array of UpdateOp objects. Each entry is an object — NOT a string. The shape ' +
+          'depends on the `op` discriminator; see the per-variant entries in items.oneOf.',
+        items: {
+          oneOf: [
+            {
+              type: 'object',
+              description: 'Replace a top-level frontmatter field. `value: null` clears optional fields (cannot clear name).',
+              properties: {
+                op: { const: 'set_field' },
+                field: { enum: ['name', 'description', 'color', 'expires'] },
+                value: { type: ['string', 'null'] },
+              },
+              required: ['op', 'field', 'value'],
+              additionalProperties: false,
+            },
+            {
+              type: 'object',
+              description: 'Append a pointer to the paths array. `ref` is scheme-inferred (URL / local / resource).',
+              properties: {
+                op: { const: 'add_path' },
+                ref: { type: 'string', description: 'https://… or ~/abs or /abs or <resource>:/path' },
+                label: { type: 'string' },
+              },
+              required: ['op', 'ref'],
+              additionalProperties: false,
+            },
+            {
+              type: 'object',
+              description: 'Remove a path by exact ref match.',
+              properties: {
+                op: { const: 'remove_path' },
+                ref: { type: 'string' },
+              },
+              required: ['op', 'ref'],
+              additionalProperties: false,
+            },
+            {
+              type: 'object',
+              description: 'Replace the entire tags array.',
+              properties: {
+                op: { const: 'set_tags' },
+                tags: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['op', 'tags'],
+              additionalProperties: false,
+            },
+            {
+              type: 'object',
+              description: 'Soft-delete with optional reason; project_list hides archived by default.',
+              properties: {
+                op: { const: 'archive' },
+                reason: { type: 'string' },
+              },
+              required: ['op'],
+              additionalProperties: false,
+            },
+            {
+              type: 'object',
+              description: 'Restore an archived project.',
+              properties: {
+                op: { const: 'unarchive' },
+              },
+              required: ['op'],
+              additionalProperties: false,
+            },
+          ],
+        },
       },
     },
     required: ['slug', 'ops'],
