@@ -145,6 +145,28 @@ providers:
 #   model: mlx-community/whisper-large-v3-turbo
 #   language: de                                # optional default lang hint
 
+# Projects — pointer-file index over existing storage locations. Each
+# project lives as ~/.somora/projects/<slug>.md with YAML frontmatter
+# that lists Obsidian paths, local paths, URLs, and remote-resource
+# refs (`<resource>:/path`). A session can `/projekt <slug>` to pin
+# the project, and the pointer-list lands in the system-prompt tail so
+# the agent knows which paths matter for this conversation.
+#
+# `entities` is a CONTROLLED VOCABULARY — projects belong to one
+# entity (e.g. "privat", "enovom"), and the agent picks FROM this list
+# at create time. Prevents STT mishearings from inventing phantom
+# entities ("enofhom" silently becoming a new category). Only edited
+# here — agents cannot extend it via tools.
+# projects:
+#   enabled: true
+#   entities:
+#     - slug: privat
+#       label: Privat
+#     - slug: enovom
+#       label: enovom GmbH
+#     - slug: firma2
+#       label: Firma Zwei
+
 # Compaction tunables (DECISION #21). All optional — built-in defaults apply
 # when omitted. SOMORA_COMPACTION_* env vars override these for ops/CI.
 # compaction:

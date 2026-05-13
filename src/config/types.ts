@@ -479,6 +479,41 @@ export const SttConfigSchema = z
   .optional();
 export type SttConfig = z.infer<typeof SttConfigSchema>;
 
+// Projects — pointer-file index over existing storage locations
+// (Obsidian, local paths, URLs, remote resources). Each project is a
+// Markdown+frontmatter file under ~/.somora/projects/<slug>.md; a
+// session can pin one as its current focus, and the pointer-list lands
+// in the system prompt so the agent knows which paths matter.
+//
+// Entities are a CONTROLLED VOCABULARY — projects belong to one entity
+// (e.g. "privat", "enovom"), and at write time the agent's chosen
+// entity is validated against this list. Prevents STT mishearings from
+// inventing new phantom entities ("enofhom" silently becomes a new
+// category). The list is intentionally USER-curated and edited in
+// config.yaml — agents cannot extend it via tools.
+export const ProjectEntitySchema = z.object({
+  slug: z
+    .string()
+    .regex(/^[a-z0-9_-]+$/, 'entity slug must match [a-z0-9_-]+'),
+  label: z.string().min(1),
+});
+export type ProjectEntity = z.infer<typeof ProjectEntitySchema>;
+
+export const ProjectsConfigSchema = z
+  .object({
+    /** Master toggle. When false (or block omitted) the project tools,
+     *  slash-commands, HTTP routes and UI surfaces are all dormant.
+     *  Existing setups don't change behavior until the operator opts in. */
+    enabled: z.boolean().default(false),
+    /** Curated entity list. Required when enabled. With enabled=true
+     *  but entities=[], project_create errors with "no entities
+     *  configured" — anti-foot-gun (better than silently letting the
+     *  agent pick any string). */
+    entities: z.array(ProjectEntitySchema).default([]),
+  })
+  .optional();
+export type ProjectsConfig = z.infer<typeof ProjectsConfigSchema>;
+
 // Skills budget. Mirrors OpenClaw's defaults — they've shipped 53 real
 // skills against these limits for months, so we treat them as known-
 // good rather than re-deriving. Configurable via config.yaml per
@@ -704,6 +739,7 @@ export const ConfigSchema = z.object({
   skills: SkillsConfigSchema,
   vision: VisionConfigSchema,
   stt: SttConfigSchema,
+  projects: ProjectsConfigSchema,
   obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
   attachments: AttachmentsConfigSchema,

@@ -22,6 +22,26 @@ export interface ResolvedAttachment {
 // Per-session metadata, free-form. Engines stash their own internas here
 // (e.g. claude-cli writes sdkSessionId). Server-side bookkeeping
 // (createdAt, slug, ...) also lives here.
+//
+// Well-known optional fields (documented here so future-me doesn't
+// re-discover them by grep):
+//   - sdkSessionId       claude-cli — SDK session ID for resume
+//   - codexSessionId     codex-cli — thread ID for resume
+//   - engine             last engine that wrote to this session
+//   - slug               session slug (set at create)
+//   - createdAt          ISO timestamp at create
+//   - modelOverride      session-level model override (set via /model)
+//   - thinkingOverride   session-level thinking-level override
+//   - archived           true if user/reset archived this session
+//   - archivedAt         ISO timestamp at archive
+//   - archiveReason      human note
+//   - cache              CachedStats for listSessions perf
+//   - projectSlug        currently-pinned project (Phase Projects v1)
+//   - projectLinkedAt    ISO timestamp at last focus change
+//   - dreamReadThroughTs REM coverage marker
+//
+// Kept as a free-form Record so adding a field doesn't require coordinated
+// migrations across all writers.
 export type SessionMeta = Record<string, unknown>;
 
 export interface SessionMetaStore {

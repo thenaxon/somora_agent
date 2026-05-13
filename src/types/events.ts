@@ -92,7 +92,22 @@ export type NormalizedEvent =
         tokens_out_reasoning?: number;
       };
     }
-  | { kind: 'error'; ts: number; engine: string; message: string };
+  | { kind: 'error'; ts: number; engine: string; message: string }
+  // Server-side marker for project focus changes within a session. Fired
+  // whenever the user pins a project via slash-command OR an agent
+  // autonomously calls project_focus via the Tool surface. Persists in
+  // JSONL purely for forensics: lets you reconstruct "from which turn
+  // onwards did this session see project context X?" months later
+  // without needing to replay session.meta history. The `engine` field
+  // is the sentinel `'somora'` here — these aren't engine-emitted.
+  | {
+      kind: 'project_switched';
+      ts: number;
+      engine: string;
+      from: string | null;
+      to: string | null;
+      via: 'tool' | 'slash_command';
+    };
 
 // Wire format over SSE — orbit-compatible. Deltas are cumulative.
 export type SseEvent =
