@@ -40,6 +40,14 @@ What makes it different:
   commands, web fetches, sub-agent spawning, multimodal attachments — is a
   typed tool the agent can call. The same registry feeds all three engines
   via either an in-process loop or per-turn MCP child processes.
+- **Projects (optional).** Bind a chat session to a real-world thing —
+  a renovation, a research thread, a piece of code — via a curated
+  manifest of pointers (Obsidian notes, local source dirs, GDrive URLs,
+  remote-machine paths). When you `/projekt heimkino`, the manifest
+  lands in the agent's prompt so it knows the canonical list of files
+  that belong to this conversation. Opt-in, off by default — flip
+  `projects.enabled: true` in `config.yaml` to use.
+  See [docs/projects.md](docs/projects.md).
 
 ## Architecture at a glance
 
@@ -266,6 +274,10 @@ Both TUI and web support these:
 /model <alias-or-ref>          override model for this session
 /model default                 clear override
 /thinking <off|low|medium|high>  reasoning depth (where the model supports it)
+/projekt                       show currently-pinned project   (requires projects feature)
+/projekt <slug>                pin a project to this session
+/projekt unlink                clear the pinned project
+/projects                      list configured projects        (TUI only)
 /show <memory|tools> on|off    toggle TUI display of memory-injection / tool-calls
 /verbose <memory|tools|system> on|off  more detail per turn
 /quit, /exit                   leave somora                  (TUI only)
@@ -291,6 +303,7 @@ and codex-cli) — same tool surface regardless of model.
 | web | `web_search`, `web_fetch` | Brave-API search + Mozilla-Readability fetch. |
 | agents | `spawn_subagent`, `subagent_*`, `agent_ask` | Sub-agent orchestration; ask another agent something. |
 | skills | `skill` | Activate a Markdown how-to from `~/.somora/skills/`. |
+| projects (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests linking a session to a real-world thing. Only registered when `projects.enabled: true`. |
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
 | resources | `resource_list`, `resource_test` | Discover/probe configured SSH targets. |
 | time | `time_now` | Current date/time/timezone. |
@@ -303,6 +316,7 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 - [docs/agents.md](docs/agents.md) — creating agents, persona files, model overrides
 - [docs/memory.md](docs/memory.md) — how the memory inbox works, vault integration, retrieval
 - [docs/wiki.md](docs/wiki.md) — the shared long-term wiki layer
+- [docs/projects.md](docs/projects.md) — opt-in pointer-file manifests for binding sessions to real-world projects
 - [docs/dream-phases.md](docs/dream-phases.md) — REM / Deep / Lucid in detail, the approval loop
 - [docs/tools.md](docs/tools.md) — full tool reference with descriptions
 - [docs/skills.md](docs/skills.md) — markdown how-tos the agent can activate

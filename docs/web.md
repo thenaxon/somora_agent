@@ -376,6 +376,7 @@ The web client listens for these named events on `/chat/stream`:
 | `chat` | `{state: 'delta'\|'final', text}` | Cumulative assistant text (each delta carries the full running text, not just the new chunk) |
 | `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | Tool invocation lifecycle |
 | `memory` | `{count, topScore, refs, fullText?}` | Memory auto-inject for this turn |
+| `project` | `{from, to, via}` | Project focus change — fired by `/projekt` slash + HTTP routes. MCP-routed agent tool calls don't emit this; clients re-GET `/…/project` on `agent:end` instead. Only fires when the projects feature is enabled. |
 
 The server pubsub key is `${agent}::${session}` — multiple agents can
 share a session id like `main` without leaking events across windows.
@@ -419,6 +420,11 @@ share a session id like `main` without leaking events across windows.
   - `/new <slug>` — create a new session and switch this window to it.
   - `/thinking <off|low|medium|high|default>` — set / clear the
     thinking-effort override.
+  - `/projekt <slug>` (alias `/project`) — pin a project to this
+    session. Autocompletes from `/projects` with entity + path-count
+    detail per row. `/projekt unlink` is always the first row so
+    clearing the pin doesn't require waiting for the list to load.
+    Only present when the projects feature is enabled in `config.yaml`.
 
   Arrow-keys navigate, Enter or Tab accepts, Escape dismisses. Note:
   `/agent` is intentionally *not* a slash-command — the agent dock on
@@ -434,7 +440,16 @@ share a session id like `main` without leaking events across windows.
   filter (agent, engine, REM state), sort, search, click-to-chat,
   bulk archive/unarchive, and 60s auto-refresh. Archive is a meta-flag
   (no file movement, no hard delete) so archived sessions stay
-  inspectable and can be restored.
+  inspectable and can be restored. When the projects feature is on,
+  the table also has a Project column with color-coded chips per row.
+- **Project chip + switcher** (opt-in) — when `projects.enabled` is
+  on, the chat-window header gains a chip next to the ••• action
+  button. Color-pill with project name when pinned; ghost folder
+  button when unpinned. Click opens a switcher popover with all
+  configured projects grouped by entity + a search field. Cross-
+  client live update via SSE: pin via `/projekt` in the TUI, the
+  open web window updates within 100 ms. See
+  [projects.md](projects.md) for the feature model.
 
 ## Files of interest
 

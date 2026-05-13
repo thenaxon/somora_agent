@@ -493,6 +493,187 @@ Same shape as `run-deep`, for the Lucid (wiki review) phase.
 
 ---
 
+## Projects
+
+Curated pointer-file manifests linking a session to a real-world
+project. **Opt-in feature** — every route below returns `503` when
+`projects.enabled` is `false` in `config.yaml`. Clients should probe
+[`GET /projects/feature`](#get-projectsfeature) once at boot to
+decide whether to surface the feature at all. See
+[projects.md](projects.md) for the user-level model.
+
+### `GET /projects/feature`
+
+Feature-flag probe. **Always returns 200**, regardless of the
+configured state — clients use this to detect availability without
+ambiguity (empty entities array vs. feature off).
+
+```json
+{ "enabled": true, "entityCount": 2 }
+```
+
+### `GET /projects/entities`
+
+The controlled entity vocabulary from `config.projects.entities`.
+
+```json
+{
+  "entities": [
+    { "slug": "privat", "label": "Privat" },
+    { "slug": "enovom", "label": "enovom GmbH" }
+  ]
+}
+```
+
+Agents call this before `project_create` when they're uncertain
+about an entity name they heard via STT — the response is the
+canonical match list. Direct clients fetch it once to populate
+filter dropdowns.
+
+### `GET /projects`
+
+List configured projects.
+
+Query params (all optional):
+- `entity=<slug>` — filter to one entity
+- `tag=<string>` — filter to projects whose `tags[]` contains this
+- `includeArchived=true` — include soft-deleted projects (hidden by
+  default)
+
+```json
+{
+  "total": 3,
+  "projects": [
+    {
+      "slug": "heimkino",
+      "name": "Heimkino",
+      "entity": "privat",
+      "description": "Receiver, beamer, …",
+      "color": "#4f46e5",
+      "tags": ["hardware", "wip"],
+      "created": "2026-04-15T10:23:00Z",
+      "updated": "2026-05-13T09:42:00Z",
+      "archived": false,
+      "paths": [
+        { "ref": "~/code/heimkino", "label": "Sourcecode" },
+        { "ref": "https://drive.google.com/..." }
+      ]
+    }
+  ]
+}
+```
+
+### `GET /projects/:slug`
+
+Full project file content. `404` if the slug doesn't exist.
+
+```bash
+curl https://<host>:18737/projects/heimkino
+```
+
+### `POST /projects`
+
+Create a new project. Returns `201` with the full project on
+success.
+
+Body:
+```json
+{
+  "slug": "heimkino",
+  "name": "Heimkino",
+  "entity": "privat",
+  "description": "Receiver, beamer, acoustic treatment",
+  "color": "#4f46e5",
+  "tags": ["hardware", "wip"],
+  "expires": null,
+  "paths": [
+    { "ref": "~/code/heimkino", "label": "Sourcecode" },
+    { "ref": "https://drive.google.com/..." }
+  ]
+}
+```
+
+Validation:
+- `slug` must match `[a-z0-9_-]+` and be unique (`409` on collision)
+- `entity` must match one of `config.projects.entities[].slug`
+  (`400` with the available list when unknown)
+- each `paths[].ref` must be scheme-recognised — `https://...`,
+  `~/abs`, `/abs`, or `<resource-slug>:/path` where the slug
+  exists in `config.resources` (`400` with the available list
+  when the resource is unknown)
+
+### `PATCH /projects/:slug`
+
+Transactional multi-op update. All ops validate first; if any one
+fails, **nothing is written**. Returns `200` with the updated
+project on success.
+
+Body:
+```json
+{
+  "ops": [
+    { "op": "add_path", "ref": "~/research/atmos.md", "label": "Atmos notes" },
+    { "op": "set_field", "field": "description", "value": "Updated" },
+    { "op": "set_tags", "tags": ["hardware", "wip", "avr"] }
+  ]
+}
+```
+
+Supported op shapes:
+
+| `op` | Required fields | Effect |
+|---|---|---|
+| `set_field` | `field` ∈ {name,description,color,expires}, `value` (string or null) | Update top-level field; `null` clears optional fields (cannot clear `name`). |
+| `add_path` | `ref`, `label?` | Append a pointer. Same scheme validation as `POST /projects`. |
+| `remove_path` | `ref` | Remove by exact ref match. `400` if `ref` isn't in the list. |
+| `set_tags` | `tags: string[]` | Replace the full tag array. |
+| `archive` | `reason?` | Soft-delete. |
+| `unarchive` | — | Restore. |
+
+Slug and entity are intentionally **not** mutable in v1 — would
+break session pins. Workaround: delete the file and recreate.
+
+### `GET /agents/:agent/sessions/:session/project`
+
+Current pinned project for a session. Always returns `200` (or
+`404` if the agent/session itself doesn't exist).
+
+```json
+{
+  "agent": "naxon",
+  "session": "main",
+  "slug": "heimkino",
+  "project": { … full ProjectInfo … }
+}
+```
+
+When no project is pinned: `{ "agent": …, "session": …, "slug": null, "project": null }`.
+When the slug is set but the file is missing on disk:
+`{ …, "slug": "ghost", "project": null, "missing": true }`.
+
+### `POST /agents/:agent/sessions/:session/project`
+
+Pin a project to a session.
+
+```bash
+curl -X POST https://<host>:18737/agents/naxon/sessions/main/project \
+     -H 'Content-Type: application/json' \
+     -d '{"slug":"heimkino"}'
+```
+
+Returns `{ agent, session, previousSlug, currentSlug }`. Re-pinning
+the same project is a noop — no `project_switched` event is written
+to the JSONL.
+
+Emits an SSE `project` event to every subscriber of (agent, session).
+
+### `DELETE /agents/:agent/sessions/:session/project`
+
+Clear the pin. Returns `{ agent, session, cleared: true, previousSlug }`.
+Also emits an SSE `project` event.
+
+---
+
 ## Attachments
 
 Files attached to chat turns (images, PDFs, plain-text snippets)

@@ -327,6 +327,28 @@ memory:
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3
+
+# Projects (opt-in, off by default) — pointer-file manifests binding
+# a chat session to a real-world thing (Obsidian notes, code dirs,
+# URLs, remote-resource paths). When enabled, agents see six tools
+# (entity_list, project_list, project_get, project_create,
+# project_update, project_focus), the chat-header gets a project chip,
+# and slash commands /projekt + /projects activate. See
+# docs/projects.md for the full model.
+#
+# `entities` is a CURATED VOCABULARY — projects belong to one entity
+# (e.g. "privat", "enovom"), and the agent must pick from this list
+# at create time. Prevents STT mishearings from inventing phantom
+# entities and gives you a free filter axis ("list all private
+# projects"). Agents cannot extend this list via tools.
+# projects:
+#   enabled: true
+#   entities:
+#     - slug: privat
+#       label: Privat
+#     - slug: enovom
+#       label: enovom GmbH
+#     # add as many as you need — these are YOURS to curate
 ```
 
 ### Wiki + dream-system (optional but recommended)
