@@ -69,6 +69,28 @@ export interface TurnInput {
    * should not emit any wrapper / delimiter / placeholder in that case.
    */
   ephemeralContext?: string;
+  /**
+   * Session-pinned project block (Phase Projects v1). When a session has
+   * `sessionMeta.projectSlug` set, run-turn renders the project pointer-
+   * list via renderProjectBlock() and stashes the result HERE in addition
+   * to including it in `systemPrompt`.
+   *
+   * The duplication is intentional because two engines treat systemPrompt
+   * differently across fresh-vs-resume:
+   *   - claude-cli, openai-compatible: re-send `systemPrompt` on every
+   *     turn → the project block flows in via systemPrompt; this field
+   *     is informational and unused.
+   *   - codex-cli RESUME: drops systemPrompt entirely (codex remembers
+   *     it internally from session-start). On resumed sessions a
+   *     mid-session `/projekt` pin would be invisible to the model
+   *     unless we inline the block via the user-message-prefix path.
+   *     The codex adapter consumes THIS field on the resume branch.
+   *
+   * Empty/undefined means "no project pinned" — engines should not emit
+   * any wrapper. The string is already prefixed with `\n\n---\n\n` from
+   * the renderer; just concatenate as-is.
+   */
+  projectContext?: string;
   userMessage: string;
   history: NormalizedEvent[];
   metaStore: SessionMetaStore;

@@ -499,6 +499,11 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         session,
         systemPrompt: systemPromptForTurn,
         ephemeralContext,
+        // Pass the project block separately so codex-cli (which drops
+        // systemPrompt on resumed sessions) can inline it via the
+        // user-message-prefix path. claude-cli + openai-compatible
+        // already see it via systemPrompt and ignore this field.
+        ...(projectBlock ? { projectContext: projectBlock } : {}),
         userMessage: text,
         ...(fromAgent ? { fromAgent } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),

@@ -171,6 +171,7 @@ export const codexCliEngine: AgentEngine = {
       session,
       systemPrompt,
       ephemeralContext,
+      projectContext,
       userMessage,
       history,
       metaStore,
@@ -207,6 +208,14 @@ export const codexCliEngine: AgentEngine = {
     // remembered systemPrompt is frozen at session-start. Same goes for
     // the cross-engine replay prefix.
     const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
+    // Project block on resume: codex's frozen systemPrompt also locks
+    // out a mid-session project pin. Mirror the ephemeralBlock pattern
+    // here — inline the project block on resume so a `/projekt` switch
+    // is visible to the model from the next turn onward. On fresh
+    // sessions the block is already in `systemPrompt` (run-turn includes
+    // it there); we skip projectContext on fresh to avoid duplicating it.
+    const projectBlockForResume =
+      resumeId && projectContext ? `${projectContext}\n\n---\n\n` : '';
     const taggedUserMessage = withFromAgentHeader(userMessage, fromAgent);
     // Phase Y.B — codex's `--image` flag accepts only image files.
     // PDFs get rasterised to PNG-pages, text attachments get inlined
@@ -216,7 +225,7 @@ export const codexCliEngine: AgentEngine = {
       input.attachments ?? [],
     );
     const promptPayload = resumeId
-      ? `${attachmentPrefix}${ephemeralBlock}${replayPrefix}${taggedUserMessage}`
+      ? `${attachmentPrefix}${ephemeralBlock}${projectBlockForResume}${replayPrefix}${taggedUserMessage}`
       : `${systemPrompt}\n\n---\n\n${attachmentPrefix}${ephemeralBlock}${replayPrefix}${taggedUserMessage}`;
 
     const args: string[] = ['exec'];
