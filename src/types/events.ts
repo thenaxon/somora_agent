@@ -184,4 +184,22 @@ export type SseEvent =
         from_agent?: string;
         agent_ask_call_id?: string;
       };
+    }
+  | {
+      // Project focus change. Fired when the user (via /projekt slash-
+      // command or web button) pins or clears a project for this
+      // session. Clients use this to live-update the project-chip in
+      // the chat header without polling.
+      //
+      // `to: null` means the focus was cleared. Agent-initiated focus
+      // changes from MCP-routed tool calls (claude-cli / codex-cli)
+      // don't have SSE access from the child process — the client
+      // catches up on the next chat:final or by refetching
+      // /agents/:agent/sessions/:session/project explicitly.
+      event: 'project';
+      data: {
+        from: string | null;
+        to: string | null;
+        via: 'tool' | 'slash_command';
+      };
     };
