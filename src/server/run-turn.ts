@@ -23,6 +23,8 @@
 import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { healOrphanToolCalls } from './heal-session.ts';
+import { readProject } from '../projects/store.ts';
+import { renderProjectBlock } from '../projects/prompt-block.ts';
 import { resolveCompactionConfig } from '../compaction/index.ts';
 import { getFreshConfig } from '../config/loader.ts';
 import {
@@ -53,6 +55,45 @@ import { buildSelfPointer } from './workspace.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 
 const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
+
+/**
+ * Build the project-block portion of the system prompt. Returns the
+ * empty string when:
+ *   - config.projects is missing or `enabled: false`
+ *   - session has no `projectSlug` (nothing pinned)
+ *   - the slug points at a missing file (warn-log + soft-degrade)
+ *
+ * Reads from disk every turn so a `project_update` lands in the next
+ * turn's prompt without any cache-invalidation step. The pure-frontmatter
+ * file format keeps this read cheap.
+ */
+async function buildProjectBlock(
+  sessionMeta: Record<string, unknown>,
+  config: Config,
+): Promise<string> {
+  if (!config.projects?.enabled) return '';
+  const slug = sessionMeta.projectSlug;
+  if (typeof slug !== 'string' || slug.length === 0) return '';
+  try {
+    const project = await readProject(slug);
+    if (!project) {
+      logger.warn({
+        msg: 'project.focused_but_missing',
+        slug,
+        hint: 'session.meta points at a project file that no longer exists; project block will be empty',
+      });
+      return '';
+    }
+    return renderProjectBlock(project);
+  } catch (err) {
+    logger.warn({
+      msg: 'project.load_failed',
+      slug,
+      err: (err as Error).message,
+    });
+    return '';
+  }
+}
 
 function resolveEffectiveModel(
   config: Config,
@@ -438,7 +479,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     const allSkills = await loadAvailableSkills(freshConfig);
     const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillsAllowList, freshConfig);
     const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
-    const systemPromptForTurn = `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${skillsBlock}`;
+    // Project block — sits AFTER skills in the cache hierarchy because
+    // it's more volatile (changes on /projekt switch — rare but more
+    // often than SKILL.md edits). Putting it after skills means a
+    // project switch only invalidates from this point onward; selfPointer
+    // + persona + skills all stay cached. The block is empty when no
+    // project is pinned. Project lookup uses freshly-read from disk so
+    // a project_update on the same turn lands in the next turn.
+    const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
+    const systemPromptForTurn =
+      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${skillsBlock}${projectBlock}`;
 
     const stream = runTurnWithFallback({
       primary: resolvedModel,
