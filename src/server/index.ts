@@ -1005,6 +1005,19 @@ function requireProjectsEnabled(c: Context): Response | null {
   return null;
 }
 
+// Feature-flag probe. ALWAYS returns 200 — clients use this to decide
+// whether to render project UI surfaces (chip, sessions column, slash
+// commands). The other /projects/* routes return 503 when disabled,
+// which is fine for tools but creates ambiguity at the UI layer
+// ("empty entities array? or feature off?"). One dedicated probe
+// removes the doubt.
+app.get('/projects/feature', async (c) => {
+  return c.json({
+    enabled: Boolean(config.projects?.enabled),
+    entityCount: config.projects?.entities?.length ?? 0,
+  });
+});
+
 app.get('/projects/entities', async (c) => {
   const gate = requireProjectsEnabled(c);
   if (gate) return gate;

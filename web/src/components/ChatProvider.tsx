@@ -65,6 +65,11 @@ const initialStreamState: SessionStreamState = {
 };
 
 interface ChatContextValue {
+  /** Feature-flag from /projects/feature, fetched once at provider
+   *  mount. null while loading; true/false once probed. Drives all
+   *  UI visibility for the projects feature (chip, sessions column,
+   *  slash commands). */
+  projectsEnabled: boolean | null;
   subscribe: (agent: string, session: string) => () => void;
   getMessages: (agent: string, session: string) => ChatMessage[];
   getStream: (agent: string, session: string) => SessionStreamState;
@@ -100,6 +105,7 @@ interface ChatContextValue {
 }
 
 const ChatContext = createContext<ChatContextValue>({
+  projectsEnabled: null,
   subscribe: () => () => {},
   getMessages: () => [],
   getStream: () => initialStreamState,
@@ -122,6 +128,20 @@ export function useChatContext(): ChatContextValue {
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [streams, setStreams] = useState<Record<string, SessionStreamState>>({});
+  // Feature-flag for projects — one boot-time probe, then all UI
+  // surfaces (chip in ChatWindow, column in SessionsWindow, slash
+  // commands in SlashCommandPopup) read this. Starts null so they
+  // can render in a hidden/loading state without flashing.
+  const [projectsEnabled, setProjectsEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void api.projectsFeature().then((r) => {
+      if (!cancelled) setProjectsEnabled(r.enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // EventSource map (open per session). Ref-counted: a session is
   // opened on first subscribe, closed when refcount hits zero. Each
@@ -688,6 +708,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ChatContextValue>(
     () => ({
+      projectsEnabled,
       subscribe,
       getMessages,
       getStream,
@@ -700,6 +721,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       refreshProject,
     }),
     [
+      projectsEnabled,
       subscribe,
       getMessages,
       getStream,
@@ -736,6 +758,7 @@ export function useChatSessionFromContext(agent: string, session: string) {
     hasMore: ctx.getHasMore(agent, session),
     clearMessages: () => ctx.clearMessages(agent, session),
     refreshProject: () => ctx.refreshProject(agent, session),
+    projectsEnabled: ctx.projectsEnabled,
   };
 }
 

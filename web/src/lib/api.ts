@@ -377,6 +377,19 @@ export const api = {
 
   // ─── Projects ──────────────────────────────────────────────────────
 
+  /** Feature-flag probe — always 200, no ambiguity. Clients use this
+   *  at boot to decide whether to render project UI (chip, sessions
+   *  column, slash commands). */
+  projectsFeature: async (): Promise<{ enabled: boolean; entityCount: number }> => {
+    try {
+      const res = await fetch('/projects/feature');
+      if (!res.ok) return { enabled: false, entityCount: 0 };
+      return (await res.json()) as { enabled: boolean; entityCount: number };
+    } catch {
+      return { enabled: false, entityCount: 0 };
+    }
+  },
+
   /** Read the curated entity vocabulary from config. Empty array when
    *  projects.enabled is false on the server (we treat 503 as "feature
    *  off" rather than an error). */

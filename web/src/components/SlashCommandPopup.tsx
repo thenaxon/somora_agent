@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type ModelOption, type ProjectInfo, type SessionSummary } from '../lib/api';
+import { useChatContext } from './ChatProvider';
 
 export type SlashCommand =
   | { kind: 'model'; ref: string }
@@ -86,11 +87,23 @@ export function SlashCommandPopup({
   onAccept,
   onDismiss,
 }: Props) {
+  const { projectsEnabled } = useChatContext();
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [projects, setProjects] = useState<ProjectInfo[] | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const lastConsumedNonce = useRef<number | null>(null);
+
+  // Filter project commands out of the menu entirely when the feature
+  // is disabled (or still loading at boot). Keeps the slash surface
+  // clean for users who don't run projects.
+  const visibleCommands = useMemo(
+    () =>
+      COMMANDS.filter(
+        (c) => projectsEnabled || (c.name !== '/projekt' && c.name !== '/project'),
+      ),
+    [projectsEnabled],
+  );
 
   // Lazy-load arg-picker data only when first needed. Cached for the
   // popup's lifetime (closing + reopening the popup re-mounts and
@@ -122,7 +135,7 @@ export function SlashCommandPopup({
     const firstSpace = trimmed.indexOf(' ');
     if (firstSpace === -1) {
       const prefix = trimmed.toLowerCase();
-      return COMMANDS.filter((c) => c.name.startsWith(prefix)).map((c) => ({
+      return visibleCommands.filter((c) => c.name.startsWith(prefix)).map((c) => ({
         commit: `${c.name} `,
         label: c.usage,
         detail: c.hint,
@@ -234,6 +247,12 @@ export function SlashCommandPopup({
     }
 
     if (cmd === '/projekt' || cmd === '/project') {
+      if (!projectsEnabled) {
+        // Defensive — if a user types /projekt directly even though
+        // the autocomplete hides it, return nothing so the popup
+        // dismisses cleanly instead of fetching a 503'd endpoint.
+        return [];
+      }
       // First row is always the unlink action so it's reachable even
       // before the projects list has loaded — common case when the
       // user knows they want to clear the pin.
@@ -275,7 +294,7 @@ export function SlashCommandPopup({
 
     // Unknown command — show nothing and let the parent dismiss.
     return [];
-  }, [draft, models, sessions, projects]);
+  }, [draft, models, sessions, projects, projectsEnabled, visibleCommands]);
 
   // Reset highlight when the row list shrinks/grows so we never point
   // past the end.

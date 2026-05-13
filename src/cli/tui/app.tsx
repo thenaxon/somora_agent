@@ -81,6 +81,24 @@ export function App({
   // agent/session change, on /projekt slash command (via
   // projectFocusRefresh action), and on SSE 'project' events.
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  // Feature-flag fetched once at App mount. Hides /projekt commands
+  // from autocomplete + /help and stops the chip-related effects from
+  // firing useless GETs.
+  const [projectsEnabled, setProjectsEnabled] = useState<boolean>(false);
+  useEffect(() => {
+    let cancelled = false;
+    apiRef.current
+      .fetchProjectsEnabled()
+      .then((enabled) => {
+        if (!cancelled) setProjectsEnabled(enabled);
+      })
+      .catch(() => {
+        /* server unreachable — leave the feature off */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Slash-autocomplete: matched against the input prefix, only when the
   // input is a single token starting with `/`. Index is the highlighted
@@ -93,8 +111,8 @@ export function App({
     const trimmed = input.trim();
     if (!trimmed.startsWith('/')) return [];
     if (trimmed.includes(' ')) return []; // user is typing args, hide popup
-    return matchCommands(trimmed);
-  }, [input]);
+    return matchCommands(trimmed, { projects: projectsEnabled });
+  }, [input, projectsEnabled]);
 
   const safeAutocompleteIndex =
     slashMatches.length > 0 ? autocompleteIndex % slashMatches.length : 0;
@@ -133,24 +151,28 @@ export function App({
       .catch(() => {
         /* server unreachable — leave loop indicator off */
       });
-    // Pinned project for the current (agent, session). Server returns
-    // {slug:null, project:null} when nothing is pinned OR when the
-    // projects feature is disabled — both surface the same way here
-    // (chip hidden).
-    apiRef.current
-      .fetchSessionProject(agent, session)
-      .then((info) => {
-        if (cancelled) return;
-        setProject(info.project);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setProject(null);
-      });
+    // Pinned project for the current (agent, session). Skip the fetch
+    // entirely when the feature is off — there's nothing to learn and
+    // the request would 503. Chip never renders anyway since project
+    // stays null.
+    if (projectsEnabled) {
+      apiRef.current
+        .fetchSessionProject(agent, session)
+        .then((info) => {
+          if (cancelled) return;
+          setProject(info.project);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setProject(null);
+        });
+    } else {
+      setProject(null);
+    }
     return () => {
       cancelled = true;
     };
-  }, [agent, session]);
+  }, [agent, session, projectsEnabled]);
 
   // SSE lifecycle + history replay: on (agent, session) change clear
   // the scrollback, fetch past events from /chat/history and replay
@@ -334,13 +356,14 @@ export function App({
         });
         // Refetch project too — the just-finished turn might have
         // called project_focus via the MCP-tool path (no SSE broadcast
-        // for that route). Cheap GET; only changes the chip when the
-        // server has a different state than we know about.
-        apiRef.current.fetchSessionProject(agent, session).then((info) => {
-          setProject(info.project);
-        }).catch(() => {
-          /* leave previous state */
-        });
+        // for that route). Skip when feature is off.
+        if (projectsEnabled) {
+          apiRef.current.fetchSessionProject(agent, session).then((info) => {
+            setProject(info.project);
+          }).catch(() => {
+            /* leave previous state */
+          });
+        }
         if (ev.usage || ev.contextWindow || ev.provider || ev.model || ev.thinking) {
           setStats({
             tokensIn: ev.usage?.tokens_in ?? 0,
@@ -540,6 +563,7 @@ export function App({
           verboseTools,
           verboseMemory,
           verboseSystem,
+          featureFlags: { projects: projectsEnabled },
         });
         for (const a of actions) {
           if (a.kind === 'notice') {

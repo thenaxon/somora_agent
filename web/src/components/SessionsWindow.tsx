@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Archive, ArchiveRestore, MessageSquare } from 'lucide-react';
 import { api, type GlobalSessionRow, type ProjectInfo } from '../lib/api';
 import { DreamPhaseIcon } from './DreamPhaseIcon';
+import { useChatContext } from './ChatProvider';
 
 type TabKey = 'active' | 'archived' | 'all';
 type SortKey = 'lastActivity' | 'messageCount' | 'byteSize' | 'agent';
@@ -37,9 +38,12 @@ export function SessionsWindow({ onOpenChat }: Props) {
   // Project lookup — single GET /projects (including archived) at mount,
   // then session rows resolve their slug → name + color from this map.
   // Cheap because the list is small and rarely changes during a Sessions-
-  // window lifetime.
+  // window lifetime. Only fetched when the feature is enabled — saves a
+  // round-trip otherwise.
+  const { projectsEnabled } = useChatContext();
   const [projectsBySlug, setProjectsBySlug] = useState<Record<string, ProjectInfo>>({});
   useEffect(() => {
+    if (!projectsEnabled) return;
     api
       .projects(true)
       .then((list) => {
@@ -50,7 +54,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
       .catch(() => {
         /* projects feature off — leave map empty, rows just show slug */
       });
-  }, []);
+  }, [projectsEnabled]);
 
   // Fetch covers both active + archived in one round-trip (the backend
   // returns archived only when explicitly requested). The tab decides
@@ -355,7 +359,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
                 </th>
                 <SortHead label="Agent" onClick={() => toggleSort(setSortKey, setSortDir, sortKey, sortDir, 'agent')} active={sortKey === 'agent'} dir={sortDir} />
                 <th style={cellHead}>Slug</th>
-                <th style={cellHead}>Project</th>
+                {projectsEnabled && <th style={cellHead}>Project</th>}
                 <th style={cellHead}>Engine</th>
                 <th style={cellHead}>Status</th>
                 <SortHead label="Last activity" onClick={() => toggleSort(setSortKey, setSortDir, sortKey, sortDir, 'lastActivity')} active={sortKey === 'lastActivity'} dir={sortDir} />
@@ -401,9 +405,14 @@ export function SessionsWindow({ onOpenChat }: Props) {
                       {r.agentIcon ? `${r.agentIcon} ` : ''}{r.agent}
                     </td>
                     <td style={cellBody}>{r.slug}{r.isMain ? ' ★' : ''}</td>
-                    <td style={cellBody}>
-                      <ProjectCell slug={r.projectSlug} project={r.projectSlug ? projectsBySlug[r.projectSlug] : undefined} />
-                    </td>
+                    {projectsEnabled && (
+                      <td style={cellBody}>
+                        <ProjectCell
+                          slug={r.projectSlug}
+                          project={r.projectSlug ? projectsBySlug[r.projectSlug] : undefined}
+                        />
+                      </td>
+                    )}
                     <td style={{ ...cellBody, color: 'var(--text-2)' }}>{r.engine ?? '—'}</td>
                     <td style={cellBody}>
                       <StatusCell row={r} />

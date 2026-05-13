@@ -55,11 +55,30 @@ export const COMMANDS: readonly CommandMeta[] = [
 // raw input value while the user is still typing the command name —
 // caller should bail out if there's already a space in the input,
 // meaning the user is typing args, not the command name).
-export function matchCommands(prefix: string): CommandMeta[] {
-  return COMMANDS.filter((c) => c.name.startsWith(prefix));
+//
+// `featureFlags` filters commands tied to optional features so users
+// without the feature don't see commands they can't actually run.
+export interface FeatureFlags {
+  projects: boolean;
 }
 
-const HELP_TEXT = `Available commands:
+const PROJECT_COMMANDS = new Set(['/projekt', '/project', '/projects']);
+
+export function matchCommands(prefix: string, flags?: FeatureFlags): CommandMeta[] {
+  return COMMANDS.filter((c) => {
+    if (!c.name.startsWith(prefix)) return false;
+    if (!flags?.projects && PROJECT_COMMANDS.has(c.name)) return false;
+    return true;
+  });
+}
+
+const HELP_TEXT_PROJECTS = `  /projekt                    — show currently-pinned project (alias: /project)
+  /projekt <slug>             — pin a project to this session
+  /projekt unlink             — clear the pinned project for this session
+  /projects                   — list available projects (with entity, archived hidden)
+`;
+
+const HELP_TEXT_BASE = `Available commands:
   /help                       — show this help
   /agents                     — list agents
   /agent <name> [session]     — switch agent (defaults to main session)
@@ -84,11 +103,17 @@ const HELP_TEXT = `Available commands:
   /thinking                   — show effective thinking depth + source
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
-  /projekt                    — show currently-pinned project (alias: /project)
-  /projekt <slug>             — pin a project to this session
-  /projekt unlink             — clear the pinned project for this session
-  /projects                   — list available projects (with entity, archived hidden)
   /quit, /exit                — leave somora`;
+
+function helpText(featureFlags: FeatureFlags | undefined): string {
+  if (!featureFlags?.projects) return HELP_TEXT_BASE;
+  // Splice the project block ABOVE the /quit footer so it stays
+  // visually grouped with the other session-scoped commands.
+  return HELP_TEXT_BASE.replace(
+    '  /quit, /exit                — leave somora',
+    `${HELP_TEXT_PROJECTS}  /quit, /exit                — leave somora`,
+  );
+}
 
 export interface CommandContext {
   api: Api;
@@ -99,6 +124,10 @@ export interface CommandContext {
   verboseTools: boolean;
   verboseMemory: boolean;
   verboseSystem: boolean;
+  /** Live feature flags fetched once at App mount. Optional features
+   *  filter their commands out of /help and matchCommands when off; the
+   *  handlers below still reject defensively if reached anyway. */
+  featureFlags?: FeatureFlags;
 }
 
 export async function runCommand(
@@ -110,7 +139,7 @@ export async function runCommand(
 
   switch (cmd) {
     case '/help':
-      out.push({ kind: 'notice', text: HELP_TEXT, tone: 'info' });
+      out.push({ kind: 'notice', text: helpText(ctx.featureFlags), tone: 'info' });
       return out;
 
     case '/quit':
@@ -455,6 +484,14 @@ export async function runCommand(
 
     case '/projekt':
     case '/project': {
+      if (!ctx.featureFlags?.projects) {
+        out.push({
+          kind: 'notice',
+          text: 'projects feature is disabled in config.yaml (set projects.enabled: true to use)',
+          tone: 'warn',
+        });
+        return out;
+      }
       const arg = args[0];
       // No arg → show status.
       if (!arg) {
@@ -518,6 +555,14 @@ export async function runCommand(
     }
 
     case '/projects': {
+      if (!ctx.featureFlags?.projects) {
+        out.push({
+          kind: 'notice',
+          text: 'projects feature is disabled in config.yaml (set projects.enabled: true to use)',
+          tone: 'warn',
+        });
+        return out;
+      }
       const projects = await ctx.api.fetchProjects();
       if (projects.length === 0) {
         out.push({

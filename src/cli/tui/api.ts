@@ -196,6 +196,20 @@ export class Api {
     });
   }
 
+  /** Feature-flag probe for the projects feature. Always 200; clients
+   *  use this at boot to decide whether to register the /projekt slash
+   *  commands and render the project chip. */
+  async fetchProjectsEnabled(): Promise<boolean> {
+    try {
+      const res = await loopbackFetch(`${this.base}/projects/feature`);
+      if (!res.ok) return false;
+      const data = (await res.json()) as { enabled?: boolean };
+      return Boolean(data.enabled);
+    } catch {
+      return false;
+    }
+  }
+
   /** Phase Projects v1 — read controlled-vocab entity list. Returns []
    *  when projects.enabled is false (server returns 503 → treat as
    *  feature-off, no error). */

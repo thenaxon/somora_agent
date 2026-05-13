@@ -625,12 +625,14 @@ export function ChatWindow({
           </div>
         </div>
         <div className="chat-header-actions">
-          <ProjectChip
-            agent={agent.name}
-            session={sessionId}
-            project={chat.project}
-            onMutated={() => void chat.refreshProject()}
-          />
+          {chat.projectsEnabled && (
+            <ProjectChip
+              agent={agent.name}
+              session={sessionId}
+              project={chat.project}
+              onMutated={() => void chat.refreshProject()}
+            />
+          )}
           <button
             ref={menuButtonRef}
             type="button"
