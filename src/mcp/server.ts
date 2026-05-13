@@ -159,8 +159,12 @@ async function main(): Promise<void> {
   // because the client can't parse the resulting mixed stream.
 
   // Graceful shutdown — let the parent close stdin and we exit cleanly.
+  // Pass `agent` explicitly: in a multi-agent setup with several MCP
+  // children alive at once, the parent-side forensics need to know which
+  // agent's MCP just lost its peer. Without the tag, an engine-subprocess
+  // crash is ambiguous across agents (jarvis 2026-05-13 incident).
   const shutdown = async (signal: string) => {
-    logger.info({ msg: 'mcp.server_shutdown', signal });
+    logger.info({ msg: 'mcp.server_shutdown', agent, signal });
     await server.close().catch(() => {});
     await shutdownMemoryRegistry();
     process.exit(0);

@@ -22,6 +22,7 @@
 
 import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
+import { healOrphanToolCalls } from './heal-session.ts';
 import { resolveCompactionConfig } from '../compaction/index.ts';
 import { getFreshConfig } from '../config/loader.ts';
 import {
@@ -169,6 +170,31 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // codex-cli) ignore this field — they inline the block once into
   // the outgoing message and the provider remembers everything.
   const historyBeforeTurn = await getHistory(agent, session);
+
+  // Self-heal: if the previous turn died mid-flight (engine subprocess
+  // crash after tool_use but before tool_result), the JSONL tail will
+  // have an orphan tool_call. Inject synthetic tool_result + turn_end
+  // and clear the SDK session-id BEFORE we append the new user_message
+  // so the engine sees a consistent history when it starts. The user
+  // gets self-recovery just by sending another message; no /reset
+  // needed. Reference: jarvis 2026-05-13 silent claude-cli crash.
+  try {
+    await healOrphanToolCalls({
+      agent,
+      session,
+      history: historyBeforeTurn,
+      metaStore: deps.sessionMetaStore,
+      fallbackEngine: engine.name,
+    });
+  } catch (err) {
+    logger.warn({
+      msg: 'session.heal_failed',
+      agent,
+      session,
+      err: (err as Error).message,
+    });
+  }
+
   let ephemeralContext: string | undefined;
   let memoryHits: Array<{ source: string; slug: string; score: number }> = [];
   let memoryInjectedCount = 0;

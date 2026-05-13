@@ -160,6 +160,43 @@ export const claudeCliEngine: AgentEngine = {
       else signal.addEventListener('abort', onUpstreamAbort, { once: true });
     }
 
+    // Idle watchdog. Catches the "SDK iterator hangs forever because the
+    // underlying claude-cli child died" failure mode — the SDK's stdio
+    // peer sometimes doesn't propagate child exit, so `for await` just
+    // suspends, no error is thrown, no turn_end is ever yielded, and the
+    // session ends up with an orphan tool_call in JSONL (jarvis 2026-05-13).
+    // The watchdog is reset on every received event; if N seconds pass
+    // without any event, we abort the SDK to surface the failure loudly.
+    //
+    // Threshold: 180s is conservative. Thinking models with deep reasoning
+    // and big contexts can stream slowly; legitimate tool calls return in
+    // <5s; an idle gap >180s is almost certainly a dead peer, not slow
+    // work. Tunable later if users hit false positives.
+    const IDLE_TIMEOUT_MS = 180_000;
+    let watchdogFired = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const armIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        watchdogFired = true;
+        logger.error({
+          msg: 'engine.watchdog_idle_timeout',
+          engine: ENGINE,
+          agent,
+          session,
+          idleMs: IDLE_TIMEOUT_MS,
+          hint: 'no SDK events received — likely underlying claude-cli child died silently after tool_use; aborting to surface as error',
+        });
+        sdkAbortController.abort();
+      }, IDLE_TIMEOUT_MS);
+    };
+    const disarmIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = undefined;
+      }
+    };
+
     try {
       logger.info({
         msg: 'engine.replay',
@@ -229,7 +266,9 @@ export const claudeCliEngine: AgentEngine = {
       // message because they're not streamed as deltas.
       let receivedTextViaStream = false;
 
+      armIdleTimer();
       for await (const msg of stream) {
+        armIdleTimer();
         if ('session_id' in msg && typeof msg.session_id === 'string') {
           lastSdkSessionId = msg.session_id;
         }
@@ -417,6 +456,24 @@ export const claudeCliEngine: AgentEngine = {
           : '[somora] aborted by user';
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      } else if (watchdogFired) {
+        // Idle watchdog tripped — SDK iterator was stuck. Loud surface
+        // beats silent stuck-session. Next user turn will hit
+        // healOrphanToolCalls() if a tool_use was outstanding.
+        logger.error({
+          msg: 'engine.fail',
+          engine: ENGINE,
+          agent,
+          session,
+          err: 'idle watchdog timeout',
+        });
+        yield {
+          kind: 'error',
+          ts: ts(),
+          engine: ENGINE,
+          message: `engine timed out: no SDK events for ${IDLE_TIMEOUT_MS / 1000}s (claude-cli child likely died silently)`,
+        };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else {
         const errMsg = (err as Error).message;
 
@@ -454,6 +511,7 @@ export const claudeCliEngine: AgentEngine = {
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       }
     } finally {
+      disarmIdleTimer();
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
   },
