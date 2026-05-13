@@ -212,6 +212,13 @@ export function openStream(
           ...(typeof data.from_agent === 'string' ? { fromAgent: data.from_agent } : {}),
           callId: typeof data.agent_ask_call_id === 'string' ? data.agent_ask_call_id : undefined,
         };
+      case 'project':
+        return {
+          kind: 'project',
+          from: typeof data.from === 'string' ? data.from : null,
+          to: typeof data.to === 'string' ? data.to : null,
+          via: data.via === 'tool' ? 'tool' : 'slash_command',
+        };
       default:
         return null;
     }

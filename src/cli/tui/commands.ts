@@ -18,7 +18,11 @@ export type CommandAction =
   | { kind: 'exit' }
   | { kind: 'clearStats' }
   | { kind: 'setShow'; target: ShowTarget; value: boolean }
-  | { kind: 'setVerbose'; target: VerboseTarget; value: boolean };
+  | { kind: 'setVerbose'; target: VerboseTarget; value: boolean }
+  // Project focus changed locally — App can refresh its project state
+  // immediately without waiting for the SSE round-trip (which also
+  // arrives, but feels snappier this way).
+  | { kind: 'projectFocusRefresh' };
 
 export interface CommandMeta {
   name: string;   // the bare slash command (used for prefix-match)
@@ -40,6 +44,9 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
   { name: '/verbose', usage: '/verbose [tools|memory|system] [on|off]' },
   { name: '/thinking', usage: '/thinking [off|low|medium|high|default]' },
+  { name: '/projekt', usage: '/projekt [<slug>|unlink]' },
+  { name: '/project', usage: '/project [<slug>|unlink]' },
+  { name: '/projects', usage: '/projects' },
   { name: '/quit', usage: '/quit' },
   { name: '/exit', usage: '/exit' },
 ];
@@ -77,6 +84,10 @@ const HELP_TEXT = `Available commands:
   /thinking                   — show effective thinking depth + source
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
+  /projekt                    — show currently-pinned project (alias: /project)
+  /projekt <slug>             — pin a project to this session
+  /projekt unlink             — clear the pinned project for this session
+  /projects                   — list available projects (with entity, archived hidden)
   /quit, /exit                — leave somora`;
 
 export interface CommandContext {
@@ -157,7 +168,10 @@ export async function runCommand(
       for (const s of sessions) {
         const marker = s.id === ctx.session || s.slug === ctx.session ? '*' : ' ';
         const stamp = s.lastActivity ? s.lastActivity.slice(0, 16).replace('T', ' ') : 'empty';
-        lines.push(`  ${marker} ${s.slug.padEnd(24)}  ${String(s.messageCount).padStart(3)} msgs  ${stamp}`);
+        const project = s.projectSlug ? `  📁 ${s.projectSlug}` : '';
+        lines.push(
+          `  ${marker} ${s.slug.padEnd(24)}  ${String(s.messageCount).padStart(3)} msgs  ${stamp}${project}`,
+        );
       }
       out.push({ kind: 'notice', text: lines.join('\n'), tone: 'info' });
       return out;
@@ -436,6 +450,99 @@ export async function runCommand(
           tone: 'info',
         });
       }
+      return out;
+    }
+
+    case '/projekt':
+    case '/project': {
+      const arg = args[0];
+      // No arg → show status.
+      if (!arg) {
+        const info = await ctx.api.fetchSessionProject(ctx.agent, ctx.session);
+        if (!info.slug) {
+          out.push({
+            kind: 'notice',
+            text: 'no project linked to this session. /projects to list, /projekt <slug> to pin.',
+            tone: 'info',
+          });
+          return out;
+        }
+        if (!info.project) {
+          out.push({
+            kind: 'notice',
+            text: `pinned slug '${info.slug}' but project file is missing on disk`,
+            tone: 'warn',
+          });
+          return out;
+        }
+        const p = info.project;
+        const tagLine = p.tags.length > 0 ? `\n  tags:    ${p.tags.join(', ')}` : '';
+        const descLine = p.description ? `\n  desc:    ${p.description}` : '';
+        const pathsLine =
+          p.paths.length > 0
+            ? `\n  paths:\n${p.paths
+                .map((path) => `    - ${path.ref}${path.label ? ` (${path.label})` : ''}`)
+                .join('\n')}`
+            : '\n  paths:   (none)';
+        out.push({
+          kind: 'notice',
+          text: `Project: ${p.name} (${p.slug})\n  entity:  ${p.entity}${descLine}${tagLine}${pathsLine}`,
+          tone: 'info',
+        });
+        return out;
+      }
+      // unlink / off / clear / "-" → drop the pin
+      if (arg === 'unlink' || arg === 'off' || arg === 'clear' || arg === '-') {
+        try {
+          await ctx.api.clearSessionProject(ctx.agent, ctx.session);
+          out.push({ kind: 'notice', text: 'project unlinked for this session', tone: 'info' });
+          out.push({ kind: 'projectFocusRefresh' });
+        } catch (err) {
+          out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+        }
+        return out;
+      }
+      // arg = slug → pin
+      try {
+        await ctx.api.setSessionProject(ctx.agent, ctx.session, arg);
+        out.push({
+          kind: 'notice',
+          text: `project pinned: ${arg} (active from the next turn onward)`,
+          tone: 'info',
+        });
+        out.push({ kind: 'projectFocusRefresh' });
+      } catch (err) {
+        out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+      }
+      return out;
+    }
+
+    case '/projects': {
+      const projects = await ctx.api.fetchProjects();
+      if (projects.length === 0) {
+        out.push({
+          kind: 'notice',
+          text: 'no projects configured (or projects.enabled is false in config.yaml)',
+          tone: 'info',
+        });
+        return out;
+      }
+      const slugW = Math.max(4, ...projects.map((p) => p.slug.length));
+      const nameW = Math.max(4, ...projects.map((p) => p.name.length));
+      const entityW = Math.max(6, ...projects.map((p) => p.entity.length));
+      const lines = [
+        `Projects (${projects.length}):`,
+        `  ${'slug'.padEnd(slugW)}  ${'name'.padEnd(nameW)}  ${'entity'.padEnd(entityW)}  paths  tags`,
+      ];
+      for (const p of projects) {
+        const slug = p.slug.padEnd(slugW);
+        const name = p.name.padEnd(nameW);
+        const entity = p.entity.padEnd(entityW);
+        const paths = String(p.paths.length).padStart(5);
+        const tags = p.tags.join(', ');
+        lines.push(`  ${slug}  ${name}  ${entity}  ${paths}  ${tags}`);
+      }
+      out.push({ kind: 'notice', text: lines.join('\n'), tone: 'info' });
       return out;
     }
 

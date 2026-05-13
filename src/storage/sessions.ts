@@ -277,6 +277,12 @@ export interface SessionSummary {
   archiveReason?: string;
   /** ISO timestamp when archived (manual archive or /reset). */
   archivedAt?: string;
+  /** Currently-pinned project slug, if any (Phase Projects v1). Reflects
+   *  the CURRENT state of session.meta.projectSlug — over a session's
+   *  lifetime this can change as /projekt switches happen. Clients that
+   *  want full per-session project history derive it from JSONL
+   *  `project_switched` events. */
+  projectSlug?: string;
 }
 
 /** Returns true if the session is considered archived for filtering purposes:
@@ -412,6 +418,7 @@ export async function listSessions(
       dreamLagEvents: lag,
       archiveReason: typeof meta.archiveReason === 'string' ? meta.archiveReason : undefined,
       archivedAt: typeof meta.archivedAt === 'string' ? meta.archivedAt : undefined,
+      projectSlug: typeof meta.projectSlug === 'string' ? meta.projectSlug : undefined,
     });
   }
 

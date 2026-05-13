@@ -43,6 +43,40 @@ export interface SessionSummary {
   createdAt: string | null;
   lastActivity: string | null;
   messageCount: number;
+  /** Currently-pinned project, if any (Phase Projects v1). */
+  projectSlug?: string;
+}
+
+// Project surface — mirror of the server's project frontmatter, kept lean
+// for what the TUI actually renders.
+export interface ProjectEntityInfo {
+  slug: string;
+  label: string;
+}
+
+export interface ProjectPathInfo {
+  ref: string;
+  label?: string;
+}
+
+export interface ProjectInfo {
+  slug: string;
+  name: string;
+  entity: string;
+  description?: string;
+  color?: string;
+  tags: string[];
+  paths: ProjectPathInfo[];
+  archived: boolean;
+}
+
+export interface SessionProjectInfo {
+  /** Pinned project slug or null if none. */
+  slug: string | null;
+  /** Loaded project frontmatter (null when slug is null OR when the
+   *  pinned slug points at a missing file — server returns `missing:true`
+   *  in that case but the TUI just sees `project: null`). */
+  project: ProjectInfo | null;
 }
 
 export interface ModelInfo {
@@ -157,4 +191,13 @@ export type StreamEvent =
       text: string;
       fromAgent?: string;
       callId?: string;
+    }
+  | {
+      // Project focus change broadcast (HTTP-route initiated). MCP-routed
+      // agent project_focus tool calls don't reach SSE — clients catch
+      // those up via fetch on next chat:final.
+      kind: 'project';
+      from: string | null;
+      to: string | null;
+      via: 'tool' | 'slash_command';
     };

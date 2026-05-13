@@ -1,7 +1,7 @@
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type { ReactElement } from 'react';
-import type { ThinkingState, TurnStats } from './types.ts';
+import type { ProjectInfo, ThinkingState, TurnStats } from './types.ts';
 import { formatTokens } from './format.ts';
 
 interface Props {
@@ -18,6 +18,8 @@ interface Props {
   showMemory: boolean;
   showTools: boolean;
   reviewLoop?: { agent: string; dreamId: string } | null;
+  /** Currently-pinned project for this (agent, session), or null. */
+  project?: ProjectInfo | null;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -38,6 +40,7 @@ export function Header({
   showMemory,
   showTools,
   reviewLoop,
+  project,
 }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
@@ -80,6 +83,12 @@ export function Header({
           </Text>
         </>
       ) : null}
+      {project ? (
+        <>
+          <Text color="gray">{'   '}</Text>
+          <ProjectChip project={project} />
+        </>
+      ) : null}
       <Box flexGrow={1} justifyContent="flex-end">
         {streaming ? (
           streamingPhase === 'pre' && stats?.thinking?.active ? (
@@ -103,6 +112,20 @@ export function Header({
         )}
       </Box>
     </Box>
+  );
+}
+
+// Compact project indicator in the header. Folder glyph + name. We
+// don't render `color` as an actual color because Ink's color support
+// is limited to named ANSI colors / hex with broad terminal support,
+// and per-user hex colors would be unpredictable. The presence of the
+// chip itself is the affordance; the web UI does the full color tint.
+function ProjectChip({ project }: { project: ProjectInfo }) {
+  return (
+    <Text color="blueBright" bold>
+      📁 {project.name}
+      {project.archived ? <Text color="yellow"> ⚠</Text> : null}
+    </Text>
   );
 }
 

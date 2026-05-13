@@ -739,6 +739,7 @@ app.get('/sessions', async (c) => {
         },
         ...(s.archivedAt !== undefined ? { archivedAt: s.archivedAt } : {}),
         ...(s.archiveReason !== undefined ? { archiveReason: s.archiveReason } : {}),
+        ...(s.projectSlug !== undefined ? { projectSlug: s.projectSlug } : {}),
       });
     }
   }

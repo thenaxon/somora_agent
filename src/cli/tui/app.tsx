@@ -12,7 +12,7 @@ import { SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
 import { nextId, summarize } from './format.ts';
 import { rememberAgent } from './state.ts';
-import type { AgentInfo, StreamEvent, Turn, TurnStats } from './types.ts';
+import type { AgentInfo, ProjectInfo, StreamEvent, Turn, TurnStats } from './types.ts';
 
 interface Props {
   base: string;
@@ -77,6 +77,10 @@ export function App({
   const [historyIndex, setHistoryIndex] = useState<number | null>(null);
   const [historyDraft, setHistoryDraft] = useState<string>('');
   const [reviewLoop, setReviewLoop] = useState<{ agent: string; dreamId: string } | null>(null);
+  // Currently-pinned project for (agent, session). Refetched on
+  // agent/session change, on /projekt slash command (via
+  // projectFocusRefresh action), and on SSE 'project' events.
+  const [project, setProject] = useState<ProjectInfo | null>(null);
 
   // Slash-autocomplete: matched against the input prefix, only when the
   // input is a single token starting with `/`. Index is the highlighted
@@ -129,10 +133,24 @@ export function App({
       .catch(() => {
         /* server unreachable — leave loop indicator off */
       });
+    // Pinned project for the current (agent, session). Server returns
+    // {slug:null, project:null} when nothing is pinned OR when the
+    // projects feature is disabled — both surface the same way here
+    // (chip hidden).
+    apiRef.current
+      .fetchSessionProject(agent, session)
+      .then((info) => {
+        if (cancelled) return;
+        setProject(info.project);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProject(null);
+      });
     return () => {
       cancelled = true;
     };
-  }, [agent]);
+  }, [agent, session]);
 
   // SSE lifecycle + history replay: on (agent, session) change clear
   // the scrollback, fetch past events from /chat/history and replay
@@ -314,6 +332,15 @@ export function App({
             setReviewLoop(null);
           }
         });
+        // Refetch project too — the just-finished turn might have
+        // called project_focus via the MCP-tool path (no SSE broadcast
+        // for that route). Cheap GET; only changes the chip when the
+        // server has a different state than we know about.
+        apiRef.current.fetchSessionProject(agent, session).then((info) => {
+          setProject(info.project);
+        }).catch(() => {
+          /* leave previous state */
+        });
         if (ev.usage || ev.contextWindow || ev.provider || ev.model || ev.thinking) {
           setStats({
             tokensIn: ev.usage?.tokens_in ?? 0,
@@ -388,6 +415,20 @@ export function App({
           id: nextId(),
           text: ev.text,
           ...(ev.fromAgent ? { fromAgent: ev.fromAgent } : {}),
+        });
+        return;
+      }
+      case 'project': {
+        // Server broadcasts project focus changes on the HTTP path
+        // (slash-command from any client, or DELETE via REST). On the
+        // tool path (agent calling project_focus in an MCP child),
+        // there's no SSE — the chat:final event triggers a refetch.
+        // Refetch unconditionally here too so the chip reflects the
+        // latest server state including the project's frontmatter.
+        apiRef.current.fetchSessionProject(agent, session).then((info) => {
+          setProject(info.project);
+        }).catch(() => {
+          setProject(null);
         });
         return;
       }
@@ -521,6 +562,14 @@ export function App({
             if (a.target === 'tools') setVerboseTools(a.value);
             else if (a.target === 'memory') setVerboseMemory(a.value);
             else setVerboseSystem(a.value);
+          } else if (a.kind === 'projectFocusRefresh') {
+            // Refetch project after a successful /projekt pin/unlink so
+            // the chip updates immediately. Server's SSE 'project'
+            // broadcast also lands, but this gives the snappier feel.
+            apiRef.current
+              .fetchSessionProject(agent, session)
+              .then((info) => setProject(info.project))
+              .catch(() => setProject(null));
           }
         }
       } catch (err) {
@@ -600,6 +649,7 @@ export function App({
         showMemory={showMemory}
         showTools={showTools}
         reviewLoop={reviewLoop}
+        project={project}
       />
       <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>

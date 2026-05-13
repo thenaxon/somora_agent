@@ -12,8 +12,11 @@ import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type {
   AgentInfo,
   ModelInfo,
+  ProjectEntityInfo,
+  ProjectInfo,
   ResetResult,
   SessionModelInfo,
+  SessionProjectInfo,
   SessionSummary,
   SessionThinkingInfo,
   ThinkingLevel,
@@ -191,6 +194,67 @@ export class Api {
     ).catch(() => {
       /* best-effort — UI shouldn't error on abort */
     });
+  }
+
+  /** Phase Projects v1 — read controlled-vocab entity list. Returns []
+   *  when projects.enabled is false (server returns 503 → treat as
+   *  feature-off, no error). */
+  async fetchProjectEntities(): Promise<ProjectEntityInfo[]> {
+    const res = await loopbackFetch(`${this.base}/projects/entities`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { entities?: ProjectEntityInfo[] };
+    return data.entities ?? [];
+  }
+
+  /** List all (non-archived by default) projects. Empty when projects
+   *  feature is off. */
+  async fetchProjects(includeArchived = false): Promise<ProjectInfo[]> {
+    const url = includeArchived
+      ? `${this.base}/projects?includeArchived=true`
+      : `${this.base}/projects`;
+    const res = await loopbackFetch(url);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { projects?: ProjectInfo[] };
+    return data.projects ?? [];
+  }
+
+  /** Fetch current project focus for a session. Returns slug=null when
+   *  nothing is pinned OR when the feature is disabled. */
+  async fetchSessionProject(agent: string, session: string): Promise<SessionProjectInfo> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/project`,
+    );
+    if (!res.ok) return { slug: null, project: null };
+    const data = (await res.json()) as {
+      slug?: string | null;
+      project?: ProjectInfo | null;
+    };
+    return {
+      slug: data.slug ?? null,
+      project: data.project ?? null,
+    };
+  }
+
+  /** Pin a project to a session. */
+  async setSessionProject(agent: string, session: string, slug: string): Promise<void> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/project`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug }),
+      },
+    );
+    if (!res.ok) throw new Error(await res.text());
+  }
+
+  /** Clear the pinned project for a session. */
+  async clearSessionProject(agent: string, session: string): Promise<void> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/project`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) throw new Error(await res.text());
   }
 }
 
