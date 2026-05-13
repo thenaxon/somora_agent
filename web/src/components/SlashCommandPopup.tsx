@@ -14,14 +14,16 @@
 // handler.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type ModelOption, type SessionSummary } from '../lib/api';
+import { api, type ModelOption, type ProjectInfo, type SessionSummary } from '../lib/api';
 
 export type SlashCommand =
   | { kind: 'model'; ref: string }
   | { kind: 'session'; slug: string }
   | { kind: 'new'; slug: string }
   | { kind: 'thinking'; level: 'off' | 'low' | 'medium' | 'high' | 'default' }
-  | { kind: 'reset' };
+  | { kind: 'reset' }
+  | { kind: 'projekt'; slug: string }
+  | { kind: 'projekt-unlink' };
 
 interface CommandSpec {
   name: string;
@@ -34,6 +36,8 @@ const COMMANDS: CommandSpec[] = [
   { name: '/session', usage: '/session <slug>', hint: 'switch to another session of this agent' },
   { name: '/new', usage: '/new <slug>', hint: 'create a new session and switch to it' },
   { name: '/thinking', usage: '/thinking <level>', hint: 'off | low | medium | high | default' },
+  { name: '/projekt', usage: '/projekt <slug>', hint: 'pin a project to this session (or "unlink" to clear)' },
+  { name: '/project', usage: '/project <slug>', hint: 'alias of /projekt' },
   {
     name: '/reset',
     usage: '/reset YES',
@@ -84,6 +88,7 @@ export function SlashCommandPopup({
 }: Props) {
   const [models, setModels] = useState<ModelOption[] | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
+  const [projects, setProjects] = useState<ProjectInfo[] | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const lastConsumedNonce = useRef<number | null>(null);
 
@@ -100,6 +105,13 @@ export function SlashCommandPopup({
       api.sessions(agent).then(setSessions).catch(() => setSessions([]));
     }
   }, [draft, agent, sessions]);
+  useEffect(() => {
+    const wantsProjects =
+      draft.startsWith('/projekt ') || draft.startsWith('/project ');
+    if (wantsProjects && projects === null) {
+      api.projects().then(setProjects).catch(() => setProjects([]));
+    }
+  }, [draft, projects]);
 
   // Compute current rows based on what phase the draft is in.
   const rows: PickerRow[] = useMemo(() => {
@@ -221,9 +233,49 @@ export function SlashCommandPopup({
         }));
     }
 
+    if (cmd === '/projekt' || cmd === '/project') {
+      // First row is always the unlink action so it's reachable even
+      // before the projects list has loaded — common case when the
+      // user knows they want to clear the pin.
+      const out: PickerRow[] = [];
+      const arg = argPrefix.trim().toLowerCase();
+      if (
+        !arg ||
+        'unlink'.startsWith(arg) ||
+        'off'.startsWith(arg) ||
+        'clear'.startsWith(arg) ||
+        arg === '-'
+      ) {
+        out.push({
+          commit: `${cmd} unlink`,
+          label: 'unlink — clear pinned project for this session',
+          resolved: { kind: 'projekt-unlink' } as SlashCommand,
+        });
+      }
+      if (!projects) {
+        out.push({ commit: draft, label: 'loading projects…' });
+        return out;
+      }
+      for (const p of projects) {
+        const matches =
+          !arg ||
+          p.slug.toLowerCase().includes(arg) ||
+          p.name.toLowerCase().includes(arg) ||
+          p.entity.toLowerCase().includes(arg);
+        if (!matches) continue;
+        out.push({
+          commit: `${cmd} ${p.slug}`,
+          label: p.name,
+          detail: `${p.entity}${p.tags.length ? ` · ${p.tags.join(', ')}` : ''} · ${p.paths.length} path${p.paths.length === 1 ? '' : 's'}`,
+          resolved: { kind: 'projekt', slug: p.slug } as SlashCommand,
+        });
+      }
+      return out;
+    }
+
     // Unknown command — show nothing and let the parent dismiss.
     return [];
-  }, [draft, models, sessions]);
+  }, [draft, models, sessions, projects]);
 
   // Reset highlight when the row list shrinks/grows so we never point
   // past the end.

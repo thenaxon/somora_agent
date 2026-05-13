@@ -20,7 +20,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, type AttachmentRef, type HistoryEvent } from '../lib/api';
+import { api, type AttachmentRef, type HistoryEvent, type ProjectInfo } from '../lib/api';
 import type {
   ChatMessage,
   ChatUsage,
@@ -45,6 +45,13 @@ export interface SessionStreamState {
   connected: boolean;
   usage: ChatUsage | null;
   memory: MemoryHitsSnapshot | null;
+  /** Currently-pinned project for this (agent, session), or null.
+   *  Set on subscribe via fetch, updated by:
+   *   - SSE `project` event broadcasts (slash-command / HTTP route)
+   *   - re-fetch after each agent-end (catches MCP-tool focus changes
+   *     that don't reach SSE because they happen in a child process)
+   *  Phase Projects v1. */
+  project: ProjectInfo | null;
 }
 
 const initialStreamState: SessionStreamState = {
@@ -54,6 +61,7 @@ const initialStreamState: SessionStreamState = {
   connected: false,
   usage: null,
   memory: null,
+  project: null,
 };
 
 interface ChatContextValue {
@@ -84,6 +92,11 @@ interface ChatContextValue {
    *  stays connected on the same session id, the local buffer just
    *  needs to drop so the freshly-empty session shows as empty. */
   clearMessages: (agent: string, session: string) => void;
+  /** Refetch the pinned project for (agent, session) and store in
+   *  stream state. Called after the chip/switcher mutates focus via
+   *  api.setSessionProject / api.clearSessionProject, and also after
+   *  every agent-end to catch tool-path focus changes. */
+  refreshProject: (agent: string, session: string) => Promise<void>;
 }
 
 const ChatContext = createContext<ChatContextValue>({
@@ -96,6 +109,7 @@ const ChatContext = createContext<ChatContextValue>({
   loadOlder: async () => false,
   getHasMore: () => false,
   clearMessages: () => {},
+  refreshProject: async () => {},
 });
 
 const INITIAL_HISTORY_LIMIT = 100;
@@ -226,6 +240,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           console.warn('[somora-web] history load failed', key, err.message);
         });
 
+      // Initial project fetch — populates the chip on first subscribe.
+      // Empty-handed on 503 (projects feature off) or no pin, which
+      // surfaces as project: null and the chip stays hidden.
+      void api
+        .sessionProject(agent, session)
+        .then((info) => {
+          const entry = sourcesRef.current.get(key);
+          if (!entry) return;
+          patchStream(key, { project: info.project });
+        })
+        .catch(() => {
+          /* feature off or unavailable — leave project null */
+        });
+
       function parse<T>(ev: MessageEvent): T | null {
         try {
           return JSON.parse(ev.data) as T;
@@ -339,7 +367,30 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             return { ...prev, [key]: next };
           });
           streamingIdRef.current.delete(key);
+          // Refetch project — tool-path focus changes (project_focus
+          // called inside an MCP child for claude-cli / codex-cli)
+          // don't reach SSE because the child has no broadcaster.
+          // Slash-command / HTTP-route changes DO emit a 'project'
+          // event (handler below). Refetching here costs one GET per
+          // turn-end; cheap and reliably catches both paths.
+          void api
+            .sessionProject(agent, session)
+            .then((info) => patchStream(key, { project: info.project }))
+            .catch(() => {
+              /* leave previous state */
+            });
         }
+      });
+
+      es.addEventListener('project', () => {
+        // Broadcast carries from/to slugs, but the chip needs the
+        // full ProjectInfo for name + color, so we re-GET regardless.
+        void api
+          .sessionProject(agent, session)
+          .then((info) => patchStream(key, { project: info.project }))
+          .catch(() => {
+            /* ignore — chip just won't update */
+          });
       });
 
       es.addEventListener('memory', (ev) => {
@@ -614,6 +665,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const refreshProject = useCallback<ChatContextValue['refreshProject']>(
+    async (agent, session) => {
+      const key = sessionKey(agent, session);
+      try {
+        const info = await api.sessionProject(agent, session);
+        patchStream(key, { project: info.project });
+      } catch {
+        /* leave previous state — caller can retry */
+      }
+    },
+    [patchStream],
+  );
+
   const streamingKeys = useMemo(
     () =>
       Object.entries(streams)
@@ -633,6 +697,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       loadOlder,
       getHasMore,
       clearMessages,
+      refreshProject,
     }),
     [
       subscribe,
@@ -644,6 +709,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       loadOlder,
       getHasMore,
       clearMessages,
+      refreshProject,
     ],
   );
 
@@ -669,6 +735,7 @@ export function useChatSessionFromContext(agent: string, session: string) {
     loadOlder: () => ctx.loadOlder(agent, session),
     hasMore: ctx.getHasMore(agent, session),
     clearMessages: () => ctx.clearMessages(agent, session),
+    refreshProject: () => ctx.refreshProject(agent, session),
   };
 }
 

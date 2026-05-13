@@ -22,6 +22,7 @@ import { AttachmentTray, type PendingAttachment } from './AttachmentTray';
 import { ScreenshotCapture } from './ScreenshotCapture';
 import { MicCapture } from './MicCapture';
 import { ChatMenuPopover } from './ChatMenuPopover';
+import { ProjectChip } from './ProjectChip';
 
 interface Props {
   agent: AgentInfo;
@@ -277,6 +278,14 @@ export function ChatWindow({
               : 'reset → session was empty, nothing to archive',
             tone: 'info',
           });
+        } else if (cmd.kind === 'projekt') {
+          await api.setSessionProject(agent.name, sessionId, cmd.slug);
+          void chat.refreshProject();
+          setSystemNotice({ text: `project pinned: ${cmd.slug}`, tone: 'info' });
+        } else if (cmd.kind === 'projekt-unlink') {
+          await api.clearSessionProject(agent.name, sessionId);
+          void chat.refreshProject();
+          setSystemNotice({ text: 'project unlinked', tone: 'info' });
         }
       } catch (err) {
         setSystemNotice({ text: `error: ${(err as Error).message}`, tone: 'error' });
@@ -616,6 +625,12 @@ export function ChatWindow({
           </div>
         </div>
         <div className="chat-header-actions">
+          <ProjectChip
+            agent={agent.name}
+            session={sessionId}
+            project={chat.project}
+            onMutated={() => void chat.refreshProject()}
+          />
           <button
             ref={menuButtonRef}
             type="button"

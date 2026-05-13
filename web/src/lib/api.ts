@@ -26,6 +26,43 @@ export interface SessionSummary {
   createdAt: string;
   lastActivity: string;
   messageCount: number;
+  /** Currently-pinned project slug, if any (Phase Projects v1). */
+  projectSlug?: string;
+}
+
+// ─── Projects (Phase Projects v1) ────────────────────────────────────
+
+export interface ProjectEntityInfo {
+  slug: string;
+  label: string;
+}
+
+export interface ProjectPathInfo {
+  ref: string;
+  label?: string;
+}
+
+export interface ProjectInfo {
+  slug: string;
+  name: string;
+  entity: string;
+  description?: string;
+  color?: string;
+  tags: string[];
+  paths: ProjectPathInfo[];
+  archived: boolean;
+  archivedAt?: string;
+  archiveReason?: string;
+  created: string;
+  updated: string;
+  expires?: string | null;
+}
+
+export interface SessionProjectResponse {
+  agent: string;
+  session: string;
+  slug: string | null;
+  project: ProjectInfo | null;
 }
 
 export interface ModelOption {
@@ -337,6 +374,68 @@ export const api = {
       throw new Error(`unarchive ${res.status}: ${body.slice(0, 200)}`);
     }
   },
+
+  // ─── Projects ──────────────────────────────────────────────────────
+
+  /** Read the curated entity vocabulary from config. Empty array when
+   *  projects.enabled is false on the server (we treat 503 as "feature
+   *  off" rather than an error). */
+  projectEntities: async (): Promise<ProjectEntityInfo[]> => {
+    const res = await fetch('/projects/entities');
+    if (!res.ok) return [];
+    const data = (await res.json()) as { entities?: ProjectEntityInfo[] };
+    return data.entities ?? [];
+  },
+
+  /** List configured projects. Includes archived only when explicitly
+   *  asked. Empty array when feature is off. */
+  projects: async (includeArchived = false): Promise<ProjectInfo[]> => {
+    const url = includeArchived ? '/projects?includeArchived=true' : '/projects';
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { projects?: ProjectInfo[] };
+    return data.projects ?? [];
+  },
+
+  /** Read the current focus for a session. Returns slug=null when no
+   *  pin is set OR when the feature is disabled. */
+  sessionProject: async (agent: string, session: string): Promise<SessionProjectResponse> => {
+    const res = await fetch(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/project`,
+    );
+    if (!res.ok) {
+      return { agent, session, slug: null, project: null };
+    }
+    return (await res.json()) as SessionProjectResponse;
+  },
+
+  /** Pin a project to a session. */
+  setSessionProject: async (agent: string, session: string, slug: string): Promise<void> => {
+    const res = await fetch(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/project`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slug }),
+      },
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`set-project ${res.status}: ${body.slice(0, 200)}`);
+    }
+  },
+
+  /** Clear a session's pinned project. */
+  clearSessionProject: async (agent: string, session: string): Promise<void> => {
+    const res = await fetch(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/project`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`clear-project ${res.status}: ${body.slice(0, 200)}`);
+    }
+  },
 } as const;
 
 /** Row shape returned by GET /sessions (cross-agent). The web Sessions
@@ -363,4 +462,6 @@ export interface GlobalSessionRow {
   };
   archivedAt?: string;
   archiveReason?: string;
+  /** Currently-pinned project slug (Phase Projects v1). */
+  projectSlug?: string;
 }

@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Archive, ArchiveRestore, MessageSquare } from 'lucide-react';
-import { api, type GlobalSessionRow } from '../lib/api';
+import { api, type GlobalSessionRow, type ProjectInfo } from '../lib/api';
 import { DreamPhaseIcon } from './DreamPhaseIcon';
 
 type TabKey = 'active' | 'archived' | 'all';
@@ -34,6 +34,23 @@ export function SessionsWindow({ onOpenChat }: Props) {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // Project lookup — single GET /projects (including archived) at mount,
+  // then session rows resolve their slug → name + color from this map.
+  // Cheap because the list is small and rarely changes during a Sessions-
+  // window lifetime.
+  const [projectsBySlug, setProjectsBySlug] = useState<Record<string, ProjectInfo>>({});
+  useEffect(() => {
+    api
+      .projects(true)
+      .then((list) => {
+        const map: Record<string, ProjectInfo> = {};
+        for (const p of list) map[p.slug] = p;
+        setProjectsBySlug(map);
+      })
+      .catch(() => {
+        /* projects feature off — leave map empty, rows just show slug */
+      });
+  }, []);
 
   // Fetch covers both active + archived in one round-trip (the backend
   // returns archived only when explicitly requested). The tab decides
@@ -338,6 +355,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
                 </th>
                 <SortHead label="Agent" onClick={() => toggleSort(setSortKey, setSortDir, sortKey, sortDir, 'agent')} active={sortKey === 'agent'} dir={sortDir} />
                 <th style={cellHead}>Slug</th>
+                <th style={cellHead}>Project</th>
                 <th style={cellHead}>Engine</th>
                 <th style={cellHead}>Status</th>
                 <SortHead label="Last activity" onClick={() => toggleSort(setSortKey, setSortDir, sortKey, sortDir, 'lastActivity')} active={sortKey === 'lastActivity'} dir={sortDir} />
@@ -383,6 +401,9 @@ export function SessionsWindow({ onOpenChat }: Props) {
                       {r.agentIcon ? `${r.agentIcon} ` : ''}{r.agent}
                     </td>
                     <td style={cellBody}>{r.slug}{r.isMain ? ' ★' : ''}</td>
+                    <td style={cellBody}>
+                      <ProjectCell slug={r.projectSlug} project={r.projectSlug ? projectsBySlug[r.projectSlug] : undefined} />
+                    </td>
                     <td style={{ ...cellBody, color: 'var(--text-2)' }}>{r.engine ?? '—'}</td>
                     <td style={cellBody}>
                       <StatusCell row={r} />
@@ -577,5 +598,48 @@ function SortHead({
     >
       {label}{active ? (dir === 'asc' ? ' ↑' : ' ↓') : ''}
     </th>
+  );
+}
+
+/** Renders a small color-coded chip in the Sessions table when a row
+ *  has a pinned project. Falls back to slug-as-text when the project
+ *  lookup map hasn't loaded yet, or has been deleted on disk after
+ *  the session got its pin (`project` undefined but slug present). */
+function ProjectCell({ slug, project }: { slug?: string; project?: ProjectInfo }) {
+  if (!slug) return <span style={{ color: 'var(--text-3)' }}>—</span>;
+  if (!project) {
+    return (
+      <span style={{ color: 'var(--text-3)', fontStyle: 'italic' }} title="project not loaded">
+        {slug}
+      </span>
+    );
+  }
+  const color = project.color ?? 'var(--text-2)';
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '1px 6px',
+        background: `${typeof color === 'string' && color.startsWith('#') ? `${color}22` : 'transparent'}`,
+        border: `1px solid ${typeof color === 'string' && color.startsWith('#') ? `${color}55` : 'var(--line)'}`,
+        borderRadius: 3,
+        color,
+        fontSize: 10,
+      }}
+      title={`entity: ${project.entity}${project.archived ? ' (archived)' : ''}`}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 1,
+          background: color,
+        }}
+      />
+      {project.name}
+      {project.archived ? ' ⚠' : ''}
+    </span>
   );
 }
