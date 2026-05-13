@@ -57,30 +57,45 @@ export function ProjectChip({ agent, session, project, onMutated }: Props) {
         <button
           ref={buttonRef}
           type="button"
-          className="chat-icon-btn"
           title={`Project: ${project.name}\nentity: ${project.entity}\n${project.paths.length} pointer${
             project.paths.length === 1 ? '' : 's'
           }`}
           aria-expanded={open}
           aria-haspopup="menu"
           onClick={toggle}
+          // Custom pill — explicitly NOT using .chat-icon-btn here.
+          // That class forces width:28px height:28px display:grid which
+          // would clip the name to a single character. The ghost-button
+          // (no-project state below) keeps the class because it's a
+          // 28x28 square by design.
           style={{
+            all: 'unset',
+            cursor: 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
             gap: 4,
-            padding: '2px 8px',
+            padding: '4px 8px',
             background: `${color}22`,
             border: `1px solid ${color}66`,
             color,
             borderRadius: 4,
             fontFamily: '"JetBrains Mono", monospace',
             fontSize: 10,
-            maxWidth: 160,
-            overflow: 'hidden',
+            maxWidth: 200,
+            height: 20,
+            boxSizing: 'border-box',
+            lineHeight: 1,
           }}
         >
           {project.archived ? <FolderX size={11} /> : <FolderOpen size={11} />}
-          <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span
+            style={{
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              minWidth: 0,
+            }}
+          >
             {project.name}
           </span>
         </button>
