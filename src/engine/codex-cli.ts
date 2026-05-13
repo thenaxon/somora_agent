@@ -585,11 +585,19 @@ export const codexCliEngine: AgentEngine = {
       };
 
       if (lastThreadId) {
+        // Re-read meta from disk before merging — tools running in the
+        // MCP child during this turn may have mutated session-scoped
+        // fields (project_focus writes projectSlug + projectLinkedAt;
+        // future tools may write others). The `meta` snapshot above is
+        // from turn START and would clobber those mid-turn writes if
+        // we spread it directly. Refs: naxon 2026-05-13 — project_focus
+        // pin survived inside the turn, then vanished at turn end.
+        const freshMeta = await metaStore.get(agent, session);
         await metaStore.set(agent, session, {
-          ...meta,
+          ...freshMeta,
           engine: ENGINE,
           codexSessionId: lastThreadId,
-          engineLastSeen: withLastSeenTs(meta, ENGINE, ts()),
+          engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
         });
       }
     } catch (err) {

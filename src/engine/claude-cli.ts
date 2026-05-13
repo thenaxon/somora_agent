@@ -439,11 +439,19 @@ export const claudeCliEngine: AgentEngine = {
       };
 
       if (lastSdkSessionId) {
+        // Re-read meta from disk before merging — tools running in the
+        // MCP child during this turn may have mutated session-scoped
+        // fields (project_focus writes projectSlug + projectLinkedAt;
+        // future tools may write others). The `meta` snapshot above is
+        // from turn START and would clobber those mid-turn writes if
+        // we spread it directly. Refs: naxon 2026-05-13 — project_focus
+        // pin survived inside the turn, then vanished at turn end.
+        const freshMeta = await metaStore.get(agent, session);
         await metaStore.set(agent, session, {
-          ...meta,
+          ...freshMeta,
           engine: ENGINE,
           sdkSessionId: lastSdkSessionId,
-          engineLastSeen: withLastSeenTs(meta, ENGINE, ts()),
+          engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
         });
       }
     } catch (err) {
@@ -486,7 +494,10 @@ export const claudeCliEngine: AgentEngine = {
         // the stale id from meta so the next attempt starts fresh.
         if (resume && /No conversation found/i.test(errMsg)) {
           try {
-            const { sdkSessionId: _drop, ...metaWithoutSession } = meta;
+            // Same fresh-read pattern as the success branch — preserve
+            // any mid-turn meta writes from tools (project_focus, ...).
+            const freshMeta = await metaStore.get(agent, session);
+            const { sdkSessionId: _drop, ...metaWithoutSession } = freshMeta;
             await metaStore.set(agent, session, metaWithoutSession);
             logger.info({
               msg: 'engine.session_resume_cleared',
