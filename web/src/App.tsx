@@ -9,22 +9,26 @@ import { useEffect } from 'react';
 import { ChatProvider } from './components/ChatProvider';
 import { Desktop } from './components/Desktop';
 
-// Document-level capture-phase handler for Markdown links in chat
-// bubbles. Even after restoring CSS link affordance + per-anchor
-// onClick + target=_blank, real-world clicks were silently doing
-// nothing — `window.open(...)` from the console worked, so the
-// browser was fine; some upstream React event interceptor was eating
-// the click before it reached the anchor's bound onClick handler.
-// Listening on `document` with `capture: true` puts us at the very
-// top of the dispatch order so we see the click before any other
-// handler can stopPropagation / preventDefault it. We narrow to
-// `<a target="_blank">` so we don't hijack any other anchor.
+// Document-level mouseup-capture handler for Markdown links in chat
+// bubbles. We listen on `mouseup` rather than `click` because the
+// real-world failure mode on 2026-05-14 (naxon) was: mousedown +
+// mouseup fired on the anchor as expected, but no click event ever
+// followed — the browser had interpreted the gesture as a (cancelled)
+// drag-start on the anchor (HTML's `<a>` is draggable by default),
+// which silently suppresses the subsequent click. Per-anchor
+// `draggable={false}` is also set in AssistantMarkdown to neutralize
+// that path; this listener is the belt-and-suspenders fix that opens
+// the link from `mouseup` directly, before any drag detection has a
+// chance to interfere.
+//
+// Capture phase + `document` puts us at the very top of the dispatch
+// order so we run before any component-tree handler. Narrowed to
+// `<a target="_blank">` with http(s) href and primary-button
+// unmodified release, so modifier-mouseups + non-blank anchors stay
+// native.
 function useGlobalMarkdownLinkOpener(): void {
   useEffect(() => {
     const handler = (event: MouseEvent) => {
-      // Only intercept primary (left) clicks. Middle/right click and
-      // modifier-clicks (Ctrl/Cmd/Shift) carry their own native
-      // browser semantics that we shouldn't override.
       if (event.button !== 0) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
@@ -34,14 +38,13 @@ function useGlobalMarkdownLinkOpener(): void {
       if (anchor.getAttribute('target') !== '_blank') return;
       const href = anchor.getAttribute('href');
       if (!href) return;
-      // Only http(s) — let mailto:, tel:, etc. follow native handling.
       if (!/^https?:\/\//i.test(href)) return;
       event.preventDefault();
       event.stopPropagation();
       window.open(href, '_blank', 'noopener,noreferrer');
     };
-    document.addEventListener('click', handler, { capture: true });
-    return () => document.removeEventListener('click', handler, { capture: true });
+    document.addEventListener('mouseup', handler, { capture: true });
+    return () => document.removeEventListener('mouseup', handler, { capture: true });
   }, []);
 }
 

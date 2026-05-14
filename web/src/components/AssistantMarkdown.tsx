@@ -19,25 +19,20 @@ export function AssistantMarkdown({ content }: Props) {
       rehypePlugins={[rehypeHighlight]}
       components={{
         a: ({ href, children }) => (
+          // `draggable={false}` is the critical one. HTML anchors are
+          // draggable by default — if the browser interprets the mouse
+          // gesture as the start of a drag (even 1px of trackpad
+          // jitter can do it), the click event is silently suppressed
+          // even though mousedown + mouseup fire on the anchor. Diag
+          // 2026-05-14 (naxon): mouse logs showed exactly that
+          // pattern. The actual navigation happens in App.tsx's
+          // document-level mouseup capture handler — works in every
+          // case because mouseup is fundamental and always fires.
           <a
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            onClick={(e) => {
-              // `target="_blank"` alone *should* navigate, and the link
-              // is in the DOM with the right attrs, but on 2026-05-14
-              // tests "click does nothing" was reported even with the
-              // anchor visible + cursor:pointer + no preventDefault on
-              // any ancestor mousedown. Explicit window.open() is the
-              // belt-and-suspenders fix: we stopPropagation so no
-              // window-manager / chat-body handler can interfere, then
-              // open the URL ourselves. Works in every browser and
-              // around any CSP / popup-blocker edge case we missed.
-              if (!href) return;
-              e.stopPropagation();
-              e.preventDefault();
-              window.open(href, '_blank', 'noopener,noreferrer');
-            }}
+            draggable={false}
           >
             {children}
           </a>
