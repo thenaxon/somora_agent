@@ -585,12 +585,24 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 }
 .chat-msg-bubble {
   max-width: 75%;
+  /* `min-width: 0` lets the bubble shrink below its content's intrinsic
+   * width so wrap-rules below can actually break long URLs/paths.
+   * Without it `max-width: 75%` resolves against an oversized intrinsic
+   * width and a single long URL pushes the bubble out of the chat
+   * column. */
+  min-width: 0;
   padding: 8px 12px;
   border-radius: 10px;
   background: var(--bg-2);
   border: 1px solid var(--line);
   line-height: 1.5;
   font-size: 13px;
+  /* Long URLs, filesystem paths, and inline code can be > 100 chars
+   * with no whitespace — `anywhere` breaks them inside the bubble
+   * instead of forcing horizontal overflow. Hans 2026-05-13 polish
+   * report; Naxon 2026-05-13 link visibility report. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .chat-msg.agent .chat-msg-bubble {
   background: var(--agent-tint-strong, var(--bg-2));
@@ -600,6 +612,52 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   background: rgba(255,255,255,0.04);
   border-color: var(--line-2);
   color: var(--text-0);
+}
+
+/* Tailwind preflight (@tailwind base in globals.css) strips browser
+ * anchor styling (`a { color: inherit; text-decoration: inherit }`),
+ * so without an explicit rule a Markdown link inside an assistant
+ * bubble reads as plain text — same color, no underline. Naxon
+ * 2026-05-13: "link nicht klickbar" was actually "link nicht
+ * erkennbar". Restore visible link affordance, scoped to the bubble
+ * so we don't accidentally re-style unrelated anchors. */
+.chat-msg-bubble a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  word-break: break-all;
+}
+.chat-msg-bubble a:hover {
+  color: var(--accent-glow, var(--accent));
+  text-decoration-thickness: 2px;
+}
+
+/* Markdown lists inside assistant bubbles. Without these rules the
+ * default tailwind-preflight `ul,ol { list-style: none; padding: 0 }`
+ * leaves bullet/number markers invisible and items glued to the bubble
+ * edge — hard-to-scan for longer answers. Hans 2026-05-13 polish. */
+.chat-msg-bubble ul,
+.chat-msg-bubble ol {
+  margin: 6px 0;
+  padding-left: 1.4em;
+}
+.chat-msg-bubble ul { list-style: disc; }
+.chat-msg-bubble ol { list-style: decimal; }
+.chat-msg-bubble li { margin: 2px 0; }
+.chat-msg-bubble li > p:first-child { margin-top: 0; }
+.chat-msg-bubble li > p:last-child { margin-bottom: 0; }
+.chat-msg-bubble p { margin: 6px 0; }
+.chat-msg-bubble p:first-child { margin-top: 0; }
+.chat-msg-bubble p:last-child { margin-bottom: 0; }
+/* Code blocks: keep horizontal scroll INSIDE the block so a long line
+ * doesn't push the whole bubble out of the chat column. */
+.chat-msg-bubble pre {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+.chat-msg-bubble code {
+  word-break: break-all;
 }
 .chat-msg-name {
   font-size: 10px;
