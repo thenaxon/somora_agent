@@ -85,6 +85,58 @@ curl https://<host>:18737/version
 Liveness probe. Returns the plain-text `ok` with status 200. Use it
 to wait for server start, smoke-test load balancers, etc.
 
+### `GET /health`
+
+Diagnostic snapshot. Use this when something looks stuck — e.g. an
+agent's session has stopped responding but the server is still
+accepting HTTP. The response shows which `(agent, session)` is busy,
+since when, what its current turn id is, queue depth behind it, and
+how long ago the last engine event reached SSE subscribers. Read-only,
+cheap (in-memory only).
+
+```bash
+curl https://<host>:18737/health
+```
+
+Returns:
+
+```json
+{
+  "ok": true,
+  "serverPid": 12345,
+  "serverBootedAt": 1778756948428,
+  "serverUptimeMs": 5142,
+  "lockfilePid": 12345,
+  "lockfileStartedAt": "2026-05-14T11:09:08.429Z",
+  "activeSessions": 1,
+  "totalKnownSessions": 3,
+  "sessions": [
+    {
+      "agent": "hans",
+      "session": "main",
+      "busy": true,
+      "activePriority": "user",
+      "activeSince": 1778757036447,
+      "activeAgeMs": 1024,
+      "activeCallId": null,
+      "activeTurnId": "b5b7a734-...",
+      "queueLength": 0,
+      "userWaiting": 0,
+      "agentWaiting": 0,
+      "lastEngineEventAt": 1778757036900,
+      "lastEngineEventAgoMs": 571
+    }
+  ]
+}
+```
+
+`activeAgeMs` is how long the current turn has been holding the
+per-session lock. `lastEngineEventAgoMs` ticks up while the engine is
+silent — if it climbs past a few minutes on a chat turn (vs. a long
+local-LLM job), the turn is wedged and the engine watchdog will abort
+it. See [setup.md](setup.md#tunables) `engineWatchdog` to tune
+thresholds per engine.
+
 ### `GET /tools`
 
 List every tool registered on the server (the same tools agents see).

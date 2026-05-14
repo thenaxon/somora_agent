@@ -312,6 +312,18 @@ agentLoop:
   maxRounds: 8                # tool-call rounds per turn (openai-compatible)
   toolCallTimeoutMs: 30000    # per-tool-call timeout
 
+# Per-engine idle-event watchdog. If an engine produces no events
+# (assistant_delta, tool_call, …) for this duration mid-turn, the
+# turn is aborted so the per-session lock releases and the user
+# sees a clean error instead of all agents looking dead. Dream
+# workers (Deep/Lucid) bypass this — they run on their own path.
+engineWatchdog:
+  claudeCliIdleMs: 300000        # 5 min — subscription, fast first event
+  codexCliIdleMs: 300000         # 5 min — subscription, fast first event
+  openaiCompatibleIdleMs: 1200000 # 20 min — local LLMs can stream slowly;
+                                  # raise if your backend regularly silences
+                                  # for longer than 20 min mid-turn
+
 memory:
   embedding:
     provider: local           # 'local' uses @huggingface/transformers (ONNX)
