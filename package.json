@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.05.14.1",
+  "version": "2026.05.14.2",
   "private": true,
   "type": "module",
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
