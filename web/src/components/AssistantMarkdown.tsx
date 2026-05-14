@@ -19,7 +19,26 @@ export function AssistantMarkdown({ content }: Props) {
       rehypePlugins={[rehypeHighlight]}
       components={{
         a: ({ href, children }) => (
-          <a href={href} target="_blank" rel="noopener noreferrer">
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => {
+              // `target="_blank"` alone *should* navigate, and the link
+              // is in the DOM with the right attrs, but on 2026-05-14
+              // tests "click does nothing" was reported even with the
+              // anchor visible + cursor:pointer + no preventDefault on
+              // any ancestor mousedown. Explicit window.open() is the
+              // belt-and-suspenders fix: we stopPropagation so no
+              // window-manager / chat-body handler can interfere, then
+              // open the URL ourselves. Works in every browser and
+              // around any CSP / popup-blocker edge case we missed.
+              if (!href) return;
+              e.stopPropagation();
+              e.preventDefault();
+              window.open(href, '_blank', 'noopener,noreferrer');
+            }}
+          >
             {children}
           </a>
         ),
