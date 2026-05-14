@@ -177,6 +177,34 @@ export const MemoryConfigSchema = z.object({
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
+// Engine watchdog tunables (Phase A2 — 2026-05-14). Idle-event timeout
+// per engine. If an engine produces no events for the configured
+// duration mid-turn we assume the underlying subprocess died (or the
+// remote HTTP call is wedged), abort, and surface a clean error so the
+// per-session lock releases and the user can try again.
+//
+// Defaults are tuned to engine-realistic latency:
+//   - claude-cli / codex-cli: 300s. Subscription-hosted, fast first
+//     event; any 5min silence is a dead child, not slow thinking.
+//   - openai-compatible: 1200s. Local LLMs (oMLX, ollama, vLLM) on
+//     consumer hardware can legitimately take many minutes per turn,
+//     especially Wan/Flux-class image pipelines or 30B+ models on
+//     CPU/MPS. 20min is generous — raise per-provider if needed.
+//
+// Dream workers (Deep/Lucid) bypass this entirely — they run via
+// src/dream/deep-llm.ts which spawns its own children with its own
+// abort timing, never enters the per-session chat lock.
+export const EngineWatchdogConfigSchema = z.object({
+  claudeCliIdleMs: z.number().int().positive().default(300_000),
+  codexCliIdleMs: z.number().int().positive().default(300_000),
+  openaiCompatibleIdleMs: z.number().int().positive().default(1_200_000),
+}).default({
+  claudeCliIdleMs: 300_000,
+  codexCliIdleMs: 300_000,
+  openaiCompatibleIdleMs: 1_200_000,
+});
+export type EngineWatchdogConfig = z.infer<typeof EngineWatchdogConfigSchema>;
+
 // Agent-loop tunables for engines that run their own tool-call loop
 // (currently only openai-compatible — Phase 2-Stufe-C). claude-cli and
 // codex-cli have their own internal loops and ignore these values for
@@ -730,6 +758,7 @@ export const ConfigSchema = z.object({
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,
   agentLoop: AgentLoopConfigSchema,
+  engineWatchdog: EngineWatchdogConfigSchema,
   claudeCli: ClaudeCliConfigSchema,
   codexCli: CodexCliConfigSchema,
   tui: TuiConfigSchema,

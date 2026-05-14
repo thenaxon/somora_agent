@@ -126,6 +126,15 @@ export interface TurnInput {
    */
   agentLoopConfig?: AgentLoopConfig;
   /**
+   * Idle-event watchdog timeout in milliseconds. If the engine produces
+   * no events (assistant_delta, tool_call, tool_result, …) for this
+   * duration, abort the in-flight engine call so the per-session lock
+   * releases and the user sees a clean error. Resolved by the server
+   * from `config.engineWatchdog.<engineName>IdleMs`. Engines fall back
+   * to a built-in safe default when this is undefined.
+   */
+  idleTimeoutMs?: number;
+  /**
    * Effective thinking depth for this turn — server resolves persona
    * default + session override. Engine adapters apply only when the
    * active model has the 'reasoning' capability; otherwise this is

@@ -356,6 +356,45 @@ export const codexCliEngine: AgentEngine = {
       child.on('exit', (code) => resolve(code));
     });
 
+    // Idle-event watchdog — symmetric to claude-cli. If codex stops
+    // emitting JSON lines for the configured window we assume the child
+    // is wedged (kernel pause, deadlocked threadpool, …) and SIGTERM it
+    // so the upstream abort path takes over. Subprocess-death without
+    // idle is already handled — child.on('exit') closes stdout which
+    // ends the for-await loop, and the existing code !== 0 branch fires.
+    // The watchdog catches the harder case: child alive, stdout silent.
+    // Threshold from config.engineWatchdog.codexCliIdleMs (default 300s).
+    const IDLE_TIMEOUT_MS = input.idleTimeoutMs ?? 300_000;
+    let watchdogFired = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const armIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        if (child.exitCode !== null) return; // already exited cleanly
+        watchdogFired = true;
+        logger.error({
+          msg: 'engine.watchdog_idle_timeout',
+          engine: ENGINE,
+          agent,
+          session,
+          idleMs: IDLE_TIMEOUT_MS,
+          hint: 'no codex events received — likely subprocess wedged; SIGTERM to surface as error',
+        });
+        try {
+          child.kill('SIGTERM');
+        } catch {
+          /* already exited */
+        }
+      }, IDLE_TIMEOUT_MS);
+    };
+    const disarmIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = undefined;
+      }
+    };
+    armIdleTimer();
+
     child.stdin.end(promptPayload);
     child.stdout.setEncoding('utf8');
 
@@ -388,6 +427,7 @@ export const codexCliEngine: AgentEngine = {
             continue;
           }
           receivedAnyEvent = true;
+          armIdleTimer();
 
           if (ev.type === 'thread.started') {
             const id = ev.thread_id;
@@ -510,6 +550,23 @@ export const codexCliEngine: AgentEngine = {
       }
 
       const code = await exitPromise;
+      disarmIdleTimer();
+
+      if (watchdogFired) {
+        const message = `codex exec timed out (${IDLE_TIMEOUT_MS / 1000}s idle, exit ${code}): ${stderrBuf.slice(0, 300).trim()}`;
+        logger.error({
+          msg: 'engine.fail',
+          engine: ENGINE,
+          agent,
+          session,
+          exitCode: code,
+          stderr: stderrBuf.slice(0, 1000),
+          err: 'idle watchdog timeout',
+        });
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+        return;
+      }
 
       if (abortFired) {
         // ESC mid-turn — emit whatever streamed so far + marker, no error.
@@ -631,6 +688,7 @@ export const codexCliEngine: AgentEngine = {
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       }
     } finally {
+      disarmIdleTimer();
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
   },

@@ -215,6 +215,48 @@ export const openAiCompatibleEngine: AgentEngine = {
     const turnId = `t-${Date.now()}`;
     const ts = () => Date.now();
 
+    // Idle watchdog — bridges the upstream user-abort signal with an
+    // event-idle timer. If the local LLM stops streaming chunks for the
+    // configured window we abort the fetch so the per-session lock
+    // releases cleanly instead of a Node process hanging forever.
+    // Threshold from config.engineWatchdog.openaiCompatibleIdleMs
+    // (default 1200s = 20min). Local-LLM workloads can legitimately
+    // take many minutes per turn; the timer resets on every received
+    // chunk so a slow-but-streaming model never trips this.
+    const IDLE_TIMEOUT_MS = input.idleTimeoutMs ?? 1_200_000;
+    const watchdogAbort = new AbortController();
+    let watchdogFired = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const armIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        watchdogFired = true;
+        logger.error({
+          msg: 'engine.watchdog_idle_timeout',
+          engine: ENGINE,
+          agent,
+          session,
+          idleMs: IDLE_TIMEOUT_MS,
+          hint: 'no stream chunks received from openai-compatible backend; aborting',
+        });
+        watchdogAbort.abort();
+      }, IDLE_TIMEOUT_MS);
+    };
+    const disarmIdleTimer = () => {
+      if (idleTimer) {
+        clearTimeout(idleTimer);
+        idleTimer = undefined;
+      }
+    };
+    // Forward upstream user-abort to the same controller, so create()
+    // sees a single combined signal.
+    const onUpstreamAbort = () => watchdogAbort.abort();
+    if (signal) {
+      if (signal.aborted) watchdogAbort.abort();
+      else signal.addEventListener('abort', onUpstreamAbort, { once: true });
+    }
+    const effectiveSignal = watchdogAbort.signal;
+
     yield { kind: 'turn_start', ts: ts(), engine: ENGINE, turnId };
 
     let meta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
@@ -376,7 +418,8 @@ export const openAiCompatibleEngine: AgentEngine = {
       let round = 0;
       while (round < maxRounds) {
         round++;
-        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
+        armIdleTimer();
         const stream = await client.chat.completions.create(
           {
             model: resolvedModel.modelId,
@@ -387,7 +430,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
             ...reasoningParam,
           },
-          ...(signal ? [{ signal }] as const : ([] as const)),
+          { signal: effectiveSignal },
         );
 
         // Per-round accumulators
@@ -401,7 +444,8 @@ export const openAiCompatibleEngine: AgentEngine = {
           // for-await just terminates. Detect that here so we don't
           // silently emit a truncated assistant_message as if it were
           // a clean completion.
-          if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+          if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
+          armIdleTimer();
           const choice = chunk.choices[0];
           const delta = choice?.delta;
           if (delta?.content && typeof delta.content === 'string') {
@@ -470,8 +514,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         }
 
         // Also catch silent abort-close: if the stream ended without a
-        // throw but the upstream signal fired, treat as user-cancel.
-        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        // throw but the upstream signal (or watchdog) fired, treat as
+        // user-cancel / wedge.
+        if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
         if (roundToolCalls.size === 0) {
           // No tools requested — model gave its final answer this round.
@@ -667,7 +712,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               ...reasoningParam,
               // No tools, no tool_choice — pure text response.
             },
-            ...(signal ? [{ signal }] as const : ([] as const)),
+            { signal: effectiveSignal },
           );
           for await (const chunk of summaryStream) {
             const choice = chunk.choices[0];
@@ -764,7 +809,19 @@ export const openAiCompatibleEngine: AgentEngine = {
         await metaStore.set(agent, session, { ...fresh, engine: ENGINE });
       }
     } catch (err) {
-      if (signal?.aborted) {
+      if (watchdogFired) {
+        const message = `openai-compatible backend timed out (${IDLE_TIMEOUT_MS / 1000}s idle, no chunks)`;
+        logger.error({
+          msg: 'engine.fail',
+          engine: ENGINE,
+          agent,
+          session,
+          err: 'idle watchdog timeout',
+          idleMs: IDLE_TIMEOUT_MS,
+        });
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      } else if (signal?.aborted) {
         logger.info({ msg: 'engine.aborted', engine: ENGINE, agent, session });
         const partial = cumulative
           ? `${cumulative}\n\n[somora] aborted by user`
@@ -776,6 +833,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       }
+    } finally {
+      disarmIdleTimer();
+      if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
   },
 };

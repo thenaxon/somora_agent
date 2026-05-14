@@ -168,11 +168,10 @@ export const claudeCliEngine: AgentEngine = {
     // The watchdog is reset on every received event; if N seconds pass
     // without any event, we abort the SDK to surface the failure loudly.
     //
-    // Threshold: 180s is conservative. Thinking models with deep reasoning
-    // and big contexts can stream slowly; legitimate tool calls return in
-    // <5s; an idle gap >180s is almost certainly a dead peer, not slow
-    // work. Tunable later if users hit false positives.
-    const IDLE_TIMEOUT_MS = 180_000;
+    // Threshold comes from config.engineWatchdog.claudeCliIdleMs (default
+    // 300s). Subscription-hosted claude-cli is fast; any 5min silence is
+    // a dead child, not slow thinking. Operator can raise via config.yaml.
+    const IDLE_TIMEOUT_MS = input.idleTimeoutMs ?? 300_000;
     let watchdogFired = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const armIdleTimer = () => {

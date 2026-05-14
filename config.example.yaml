@@ -236,6 +236,24 @@ providers:
 #                                     # above us and will cut us off
 #                                     # otherwise.
 
+
+# Engine watchdog — idle-event timeout per engine. If an engine produces
+# no events (assistant_delta, tool_call, …) for the configured window
+# mid-turn, we assume the subprocess (claude-cli / codex-cli) died or
+# the remote HTTP call (openai-compatible) is wedged. The turn is
+# aborted, an error is surfaced to the client, and the per-session lock
+# releases — so the user can simply send the next message instead of
+# restarting the server. Dream workers (Deep/Lucid) bypass this entirely;
+# they have their own timing.
+# engineWatchdog:
+#   claudeCliIdleMs: 300000        # 5 min — subscription, fast first event
+#   codexCliIdleMs: 300000         # 5 min — subscription, fast first event
+#   openaiCompatibleIdleMs: 1200000 # 20 min — local LLMs (oMLX, ollama, vLLM)
+#                                  # can legitimately stream slowly on
+#                                  # consumer hardware. Raise if your
+#                                  # backend regularly silences for longer
+#                                  # than 20 min mid-turn.
+
 # claude-cli engine tunables. Surfaced from claude-agent-sdk env vars so
 # they're configurable here instead of hidden as undocumented env overrides.
 # Applied at server boot; an explicit env var (MCP_TOOL_TIMEOUT etc.) wins

@@ -105,7 +105,33 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
     fallback_model: fallbackResolved.modelId,
   });
 
-  for await (const ev of fallbackEngine.runTurn({ ...baseInput, resolvedModel: fallbackResolved })) {
+  // Recompute the watchdog timeout for the fallback engine — the
+  // primary's value would otherwise stick (e.g. claude-cli 300s used
+  // against a 20-min openai-compatible fallback would false-positive
+  // long local-model runs).
+  const fallbackInput = {
+    ...baseInput,
+    resolvedModel: fallbackResolved,
+    idleTimeoutMs: pickIdleTimeoutForEngine(
+      config.engineWatchdog,
+      fallbackResolved.provider.engine,
+    ),
+  };
+  for await (const ev of fallbackEngine.runTurn(fallbackInput)) {
     yield ev;
+  }
+}
+
+function pickIdleTimeoutForEngine(
+  cfg: import('../config/types.ts').EngineWatchdogConfig,
+  engine: import('../config/types.ts').EngineName,
+): number {
+  switch (engine) {
+    case 'claude-cli':
+      return cfg.claudeCliIdleMs;
+    case 'codex-cli':
+      return cfg.codexCliIdleMs;
+    case 'openai-compatible':
+      return cfg.openaiCompatibleIdleMs;
   }
 }
