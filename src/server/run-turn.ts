@@ -20,6 +20,7 @@
 // agent's auto-dream worker still resets, JSONL still grows, memory
 // inject still happens. This is the hot path for spawn_subagent.
 
+import { randomUUID } from 'node:crypto';
 import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { healOrphanToolCalls } from './heal-session.ts';
@@ -106,6 +107,22 @@ function resolveEffectiveModel(
   return resolveAnyRef(config, ref);
 }
 
+// Resolve the idle-event watchdog timeout per engine. Defaults live in
+// EngineWatchdogConfigSchema; this just bridges engine-name → field.
+function pickIdleTimeoutForEngine(
+  cfg: import('../config/types.ts').EngineWatchdogConfig,
+  engine: import('../config/types.ts').EngineName,
+): number {
+  switch (engine) {
+    case 'claude-cli':
+      return cfg.claudeCliIdleMs;
+    case 'codex-cli':
+      return cfg.codexCliIdleMs;
+    case 'openai-compatible':
+      return cfg.openaiCompatibleIdleMs;
+  }
+}
+
 function resolveEffectiveThinking(
   persona: Persona,
   sessionMeta: Record<string, unknown>,
@@ -122,6 +139,11 @@ export interface RunChatTurnArgs {
   session: string;
   /** The new user-message text (the model's input for this turn). */
   text: string;
+  /** Stable id used to correlate all log lines produced for this turn —
+   *  from /chat/send acceptance through engine init, first event, and
+   *  completion. Auto-generated when omitted; callers (HTTP handlers)
+   *  pass one if they logged it earlier so the trace stays connected. */
+  turnId?: string;
   /** A2A: when set, this turn was authored by another agent, not by the
    *  human user. Persists in user_message.from_agent. */
   fromAgent?: string;
@@ -177,6 +199,22 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     attachments,
     deps,
   } = args;
+  // Turn-lifecycle id — stable across every log line this turn produces,
+  // so an overnight forensics pass can trace a hung turn from /chat/send
+  // through memory inject + engine init + first event + completion.
+  // Caller may pre-generate one (HTTP /chat/send does, so the trace
+  // begins at request acceptance) — otherwise we mint here.
+  const turnId = args.turnId ?? randomUUID();
+  logger.info({
+    msg: 'turn.started',
+    turnId,
+    agent,
+    session,
+    subagentDepth,
+    fromAgent: fromAgent ?? null,
+    textLen: text.length,
+    attachmentCount: attachments?.length ?? 0,
+  });
 
   const persona = await loadPersona(agent);
   if (!persona) {
@@ -265,6 +303,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     if (inject.injectedCount > 0) {
       logger.info({
         msg: 'memory.injected',
+        turnId,
         agent,
         session,
         count: inject.injectedCount,
@@ -273,7 +312,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       });
     }
   } catch (err) {
-    logger.warn({ msg: 'memory.inject_failed', agent, err: (err as Error).message });
+    logger.warn({ msg: 'memory.inject_failed', turnId, agent, err: (err as Error).message });
   }
 
   // Loop-holder gets the active Lucid review block prepended to the
@@ -490,6 +529,18 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     const systemPromptForTurn =
       `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${skillsBlock}${projectBlock}`;
 
+    logger.info({
+      msg: 'turn.engine_init',
+      turnId,
+      agent,
+      session,
+      provider: resolvedModel.providerName,
+      model: resolvedModel.modelId,
+      engine: resolvedModel.provider.engine,
+      historyEvents: history.length,
+      memoryInjectedCount,
+    });
+
     const stream = runTurnWithFallback({
       primary: resolvedModel,
       fallbackRef: persona.fallback,
@@ -515,6 +566,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         agentLoopConfig: agentLoopOverride
           ? { ...deps.config.agentLoop, ...agentLoopOverride }
           : deps.config.agentLoop,
+        idleTimeoutMs: pickIdleTimeoutForEngine(
+          deps.config.engineWatchdog,
+          resolvedModel.provider.engine,
+        ),
         ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
         ...(signal ? { signal } : {}),
         ...(resolvedAttachments.length > 0 ? { attachments: resolvedAttachments } : {}),
@@ -522,7 +577,19 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     });
 
     const serialize = publishSse ? createTurnSerializer() : null;
+    let firstEventLogged = false;
     for await (const ev of stream) {
+      if (!firstEventLogged) {
+        firstEventLogged = true;
+        logger.info({
+          msg: 'turn.first_event',
+          turnId,
+          agent,
+          session,
+          kind: ev.kind,
+          msSinceStart: Date.now() - start,
+        });
+      }
       if (ev.kind !== 'assistant_delta') {
         await appendEvent(agent, session, ev);
       }
@@ -540,7 +607,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     }
   } catch (err) {
     errorMessage = (err as Error).message;
-    logger.error({ msg: 'turn.fail', agent, session, err: errorMessage });
+    logger.error({
+      msg: 'turn.failed',
+      turnId,
+      agent,
+      session,
+      err: errorMessage,
+      msSinceStart: Date.now() - start,
+    });
     if (publishSse) {
       await publishSse({
         event: 'status',
@@ -565,6 +639,18 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       },
     });
   }
+
+  logger.info({
+    msg: errorMessage ? 'turn.ended_degraded' : 'turn.completed',
+    turnId,
+    agent,
+    session,
+    ms: Date.now() - start,
+    finalTextLen: finalText.length,
+    tokensIn: lastUsage?.tokens_in,
+    tokensOut: lastUsage?.tokens_out,
+    ...(errorMessage ? { err: errorMessage } : {}),
+  });
 
   return {
     finalText,

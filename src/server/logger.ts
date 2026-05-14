@@ -7,22 +7,36 @@ const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const LOG_DIR = join(SOMORA_HOME, 'logs');
 mkdirSync(LOG_DIR, { recursive: true });
 
-const today = new Date().toISOString().slice(0, 10);
-const logFile = join(LOG_DIR, `server-${today}.log`);
-
 const level = process.env.SOMORA_LOG_LEVEL ?? 'info';
 const isTty = Boolean(process.stdout.isTTY);
 
-// File target is unconditional — the canonical log channel.
-// stdout target is ONLY added when stdout is a TTY (i.e. someone is
-// running `npm run dev:server` in a terminal and wants the live
-// pino-pretty output). When stdout is a pipe — e.g. the somora MCP
-// server spawned as a child by claude-cli/codex-cli, where stdout is
-// the JSON-RPC stream to the parent — writing pino JSON to it would
-// corrupt the protocol stream and silently break tool registration.
-// Logs in that case still go to ~/.somora/logs/server-YYYY-MM-DD.log.
+// File target uses `pino-roll` so events after midnight land in the
+// new day's file even when the server has been running for days.
+// `frequency: 'daily'` rolls at 00:00 local; `dateFormat: 'yyyy-MM-dd'`
+// produces `server.YYYY-MM-DD.log`; `file: 'server'` is the basename.
+// Pre-fix behavior: filename was chosen exactly once at module load
+// (`new Date().toISOString().slice(0,10)`), so an overnight server
+// kept writing 2026-05-14 events into `server-2026-05-13.log` until
+// restart. Hans 2026-05-14 forensics report.
+//
+// stdout target is ONLY added when stdout is a TTY (running
+// `npm run dev:server` in a terminal). When stdout is a pipe — e.g.
+// the somora MCP server spawned as a child by claude-cli/codex-cli,
+// where stdout is the JSON-RPC stream to the parent — writing pino
+// JSON to it would corrupt the protocol stream and silently break
+// tool registration.
 const targets: pino.TransportTargetOptions[] = [
-  { target: 'pino/file', options: { destination: logFile, mkdir: true }, level },
+  {
+    target: 'pino-roll',
+    options: {
+      file: join(LOG_DIR, 'server'),
+      frequency: 'daily',
+      dateFormat: 'yyyy-MM-dd',
+      extension: '.log',
+      mkdir: true,
+    },
+    level,
+  },
 ];
 if (isTty) {
   targets.push({

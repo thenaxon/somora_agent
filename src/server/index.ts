@@ -2,6 +2,7 @@ import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { streamSSEH2Safe } from './sse-h2-safe.ts';
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createSecureServer as createHttp2SecureServer } from 'node:http2';
 import { homedir } from 'node:os';
@@ -77,7 +78,8 @@ import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
-import { acquireSessionLock } from './session-queue.ts';
+import { acquireSessionLock, listAllSessionLockStates } from './session-queue.ts';
+import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
 import {
@@ -120,8 +122,15 @@ function subscribe(agent: string, session: string, sub: Subscriber): () => void 
   };
 }
 
+// Track the last SSE event we published per (agent, session). The
+// `/health` endpoint surfaces "seconds since last engine activity" so
+// an operator can tell at a glance whether a session is silently
+// wedged. Cheap: a single Map.set per published event.
+const lastEngineEventAt = new Map<string, number>();
+
 async function publish(agent: string, session: string, event: SseEvent): Promise<void> {
   const key = streamKey(agent, session);
+  lastEngineEventAt.set(key, Date.now());
   const subs = streams.get(key);
   if (!subs) return;
   // Snapshot — failed subscribers get evicted mid-iteration
@@ -339,6 +348,51 @@ app.use('*', async (c, next) => {
 });
 
 app.get('/healthz', (c) => c.text('ok'));
+
+// Server startup wall-clock — used by /health to compute uptime.
+const SERVER_BOOTED_AT = Date.now();
+
+// Diagnostic endpoint. Read-only snapshot of per-session lock state +
+// queue depth + last SSE/engine event timestamp. Designed for the
+// "morning incident" scenario where a single session has wedged: a
+// curl against /health shows which (agent,session) is busy, for how
+// long, when its last engine event arrived, and how many turns are
+// queued behind it — no restart needed to diagnose.
+app.get('/health', (c) => {
+  const now = Date.now();
+  const lockfile = readLockfile();
+  const sessions = listAllSessionLockStates().map((s) => {
+    const key = `${s.agent}/${s.session}`;
+    const lastEvent = lastEngineEventAt.get(key);
+    return {
+      agent: s.agent,
+      session: s.session,
+      busy: s.busy,
+      activePriority: s.activePriority,
+      activeSince: s.activeSince,
+      activeAgeMs: s.activeSince ? now - s.activeSince : null,
+      activeCallId: s.activeCallId ?? null,
+      activeTurnId: s.activeTurnId ?? null,
+      queueLength: s.queueLength,
+      userWaiting: s.userWaiting,
+      agentWaiting: s.agentWaiting,
+      lastEngineEventAt: lastEvent ?? null,
+      lastEngineEventAgoMs: lastEvent ? now - lastEvent : null,
+    };
+  });
+  const busySessions = sessions.filter((s) => s.busy);
+  return c.json({
+    ok: true,
+    serverPid: process.pid,
+    serverBootedAt: SERVER_BOOTED_AT,
+    serverUptimeMs: now - SERVER_BOOTED_AT,
+    lockfilePid: lockfile?.pid ?? null,
+    lockfileStartedAt: lockfile?.startedAt ?? null,
+    activeSessions: busySessions.length,
+    totalKnownSessions: sessions.length,
+    sessions,
+  });
+});
 
 // Tmux session listing for the web tmux-app. Joins live `tmux ls`
 // output with somora's origin store. Empty list when no tmux server
@@ -1644,7 +1698,20 @@ app.post('/chat/send', async (c) => {
     );
   }
 
-  logger.info({ msg: 'chat.send', agent, session, ref: sessionRef, len: text.length });
+  // Generate the turn-lifecycle id up here so the HTTP-layer log line
+  // already carries it. runChatTurn re-uses this same id for every
+  // subsequent stage log (turn.started / .engine_init / .first_event /
+  // .completed / .failed). Forensic chain from HTTP acceptance through
+  // engine completion.
+  const turnId = randomUUID();
+  logger.info({
+    msg: 'chat.send',
+    turnId,
+    agent,
+    session,
+    ref: sessionRef,
+    len: text.length,
+  });
 
   // Fire-and-forget. Acquire the per-session lock with priority='user'
   // (default for /chat/send unless from_agent is set, in which case the
@@ -1652,8 +1719,10 @@ app.post('/chat/send', async (c) => {
   // the finally block — forgetting deadlocks future turns on the session.
   const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
   void (async () => {
+    logger.info({ msg: 'turn.queued', turnId, agent, session, priority });
     const release = await acquireSessionLock(agent, session, {
       priority,
+      turnId,
       ...(agentAskCallId ? { callId: agentAskCallId } : {}),
     });
     // Register the per-session AbortController. /chat/abort looks this
@@ -1664,6 +1733,7 @@ app.post('/chat/send', async (c) => {
         agent,
         session,
         text,
+        turnId,
         signal: abort.signal,
         ...(fromAgent ? { fromAgent } : {}),
         ...(agentAskCallId ? { agentAskCallId } : {}),
@@ -1675,7 +1745,13 @@ app.post('/chat/send', async (c) => {
         deps: chatTurnDeps,
       });
     } catch (err) {
-      logger.error({ msg: 'chat.send.run_failed', agent, session, err: (err as Error).message });
+      logger.error({
+        msg: 'chat.send.run_failed',
+        turnId,
+        agent,
+        session,
+        err: (err as Error).message,
+      });
       void publish(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     } finally {
       abort.release();

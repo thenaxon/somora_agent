@@ -42,16 +42,25 @@ export async function listTmuxSessions(): Promise<TmuxSessionInfo[]> {
   const fmt = '#{session_name}\t#{session_windows}\t#{pane_current_command}\t#{window_name}\t#{session_created}\t#{session_last_attached}';
   let raw: string;
   try {
-    const { stdout } = await execP(`tmux list-sessions -F '${fmt}' 2>/dev/null`, {
+    // Do NOT pipe stderr to /dev/null — we want to read it in the
+    // catch branch below to distinguish "no tmux server running" (the
+    // overwhelmingly common case, ~2300x/day on machines without an
+    // active tmux) from real failures (tmux missing, perms, …). Pre-fix
+    // we redirected stderr and then tried to pattern-match against an
+    // err.message that no longer contained the discriminating text →
+    // every poll spammed a warn-level log.
+    const { stdout } = await execP(`tmux list-sessions -F '${fmt}'`, {
       timeout: 5_000,
     });
     raw = stdout;
   } catch (err) {
-    // No tmux server (no sessions) is the most common case — exit 1
-    // with "no server running on …" to stderr.
-    const msg = (err as Error & { stderr?: string }).stderr ?? (err as Error).message;
-    if (typeof msg === 'string' && /no server running/i.test(msg)) return [];
-    logger.warn({ msg: 'tmux.list_failed', err: (err as Error).message });
+    const stderr = (err as Error & { stderr?: string }).stderr ?? '';
+    const message = (err as Error).message ?? '';
+    // Either source is fine; tmux prints to stderr but child_process
+    // sometimes folds it into err.message ("Command failed: … no server
+    // running").
+    if (/no server running/i.test(stderr) || /no server running/i.test(message)) return [];
+    logger.warn({ msg: 'tmux.list_failed', err: message, stderr: stderr.slice(0, 200) });
     return [];
   }
 
