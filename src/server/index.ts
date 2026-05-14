@@ -362,8 +362,7 @@ app.get('/health', (c) => {
   const now = Date.now();
   const lockfile = readLockfile();
   const sessions = listAllSessionLockStates().map((s) => {
-    const key = `${s.agent}/${s.session}`;
-    const lastEvent = lastEngineEventAt.get(key);
+    const lastEvent = lastEngineEventAt.get(streamKey(s.agent, s.session));
     return {
       agent: s.agent,
       session: s.session,
