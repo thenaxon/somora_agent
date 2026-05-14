@@ -545,6 +545,23 @@ export const codexCliEngine: AgentEngine = {
         return;
       }
 
+      // Partial-event failure: codex emitted at least one event then exited
+      // non-zero. We keep whatever streamed text we have (final assistant
+      // message below) but loudly log a warning with the stderr tail so
+      // ops can see WHY the turn ended badly. Luca's 2026-05-13 report —
+      // pre-fix the only signal was `exitCode` on the engine.turn info log.
+      if (code !== 0 && receivedAnyEvent) {
+        logger.warn({
+          msg: 'engine.degraded',
+          engine: ENGINE,
+          agent,
+          session,
+          exitCode: code,
+          stderr: stderrBuf.slice(0, 1000),
+          hint: 'codex exited non-zero after partial events; turn surfaced what streamed before the exit',
+        });
+      }
+
       if (finalText) {
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: finalText };
       }

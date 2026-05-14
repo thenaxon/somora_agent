@@ -43,20 +43,25 @@ providers:
   # Plus/Pro/Business subscription preferred) or OPENAI_API_KEY env.
   # No baseUrl / apiKey needed here. Override binary path with
   # SOMORA_CODEX_BIN env if not at ~/.npm-global/bin/codex or on PATH.
+  # Codex CLI / OpenAI model IDs are subscription/provider-owned and
+  # change with codex-cli releases (e.g. 0.130 retired `gpt-5`/`o3`,
+  # renamed `gpt-5-codex` → `gpt-5.3-codex`). If you hit HTTP 400 from
+  # the backend, run `codex models list` (or check the codex release
+  # notes) for the current valid ids and update this block.
   openai:
     engine: codex-cli
     models:
-      - id: gpt-5
-        alias: gpt5
+      - id: gpt-5.5
+        alias: gpt55
         contextWindow: 400000
         capabilities: [text, image, pdf, reasoning]
-      - id: gpt-5-codex
-        alias: codex5
+      - id: gpt-5.4-mini
+        alias: gpt54mini
         contextWindow: 400000
         capabilities: [text, reasoning]
-      - id: o3
-        alias: o3
-        contextWindow: 200000
+      - id: gpt-5.3-codex
+        alias: codex53
+        contextWindow: 400000
         capabilities: [text, reasoning]
 
   # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).

@@ -119,6 +119,12 @@ export function ChatWindow({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomSentinelRef = useRef<HTMLDivElement>(null);
+  // Pinned = "stick to latest". Only flipped to false by trusted user
+  // intent (wheel-up, touch-drag-up, pointer-drag-up while NOT scrolling
+  // toward the bottom). Programmatic scrolls and content-height changes
+  // during streaming must not flip it — that was the root of the
+  // intermittent unpin bug.
   const pinnedRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Three-dots ••• menu state. We snapshot the anchor button's rect on
@@ -147,16 +153,20 @@ export function ChatWindow({
   }, [draft]);
 
   // Pinned-to-bottom: only auto-scroll while user is at the bottom
-  // of the message list. Manual scroll-up unpins.
-  // Also lazy-load older messages when the user nears the top of the
-  // scrollback. We capture scrollHeight before the load so we can
-  // restore the visual position after the older slice prepends —
-  // otherwise the user gets yanked further up by the new content.
+  // of the message list. Manual scroll-up via wheel/touch/drag unpins;
+  // programmatic scrolls do not. Lazy-load older messages when the user
+  // nears the top of the scrollback — we capture scrollHeight before
+  // the load and restore the visual anchor after older slice prepends.
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
+    // Re-pin when the user scrolls back to (or near) the bottom — even
+    // if they had unpinned earlier with a wheel-up. Threshold 120 is
+    // intentionally looser than the unpin threshold below so heights
+    // that grow by a couple of lines between scroll events don't kick
+    // the user off the live tail.
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
-    pinnedRef.current = dist < 80;
+    if (dist < 120) pinnedRef.current = true;
     if (el.scrollTop < 60 && chat.hasMore) {
       const beforeHeight = el.scrollHeight;
       const beforeTop = el.scrollTop;
@@ -174,11 +184,47 @@ export function ChatWindow({
     }
   }, [chat]);
 
-  useEffect(() => {
-    if (!pinnedRef.current) return;
+  // Trusted user-intent unpin: wheel-up or touch-drag-up away from
+  // the bottom. Programmatic scrolls don't fire these — keeps the
+  // auto-pin from getting clobbered during streaming when bubble
+  // heights settle a few ms after React commit.
+  const userScrollUnpin = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist > 120) pinnedRef.current = false;
+  }, []);
+
+  // Pinned auto-scroll: useLayoutEffect runs before paint, so the first
+  // correction is invisible to the user. Two RAFs follow to catch late
+  // height changes from markdown re-layout (code blocks, images) and
+  // tool-block rendering — bug class is "scrollTop set once, then bubble
+  // grows another 40px after layout settles, latest line ends up below
+  // viewport". RAFs are throttled in background tabs which matches the
+  // user's observation that the miss is more frequent there; an extra
+  // post-commit retry mitigates it for foreground sessions.
+  useLayoutEffect(() => {
+    if (!pinnedRef.current) return;
+    const sentinel = bottomSentinelRef.current;
+    if (sentinel) {
+      sentinel.scrollIntoView({ block: 'end' });
+    } else {
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      const s = bottomSentinelRef.current;
+      if (s) s.scrollIntoView({ block: 'end' });
+      raf2 = requestAnimationFrame(() => {
+        const s2 = bottomSentinelRef.current;
+        if (s2) s2.scrollIntoView({ block: 'end' });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
+    };
   }, [chat.messages, chat.streaming, chat.thinking]);
 
   // Auto-focus the input on first focus AND on every mouse-click
@@ -662,7 +708,15 @@ export function ChatWindow({
         onSlash={dispatchSlash}
       />
 
-      <div className="chat-body" ref={scrollRef} onScroll={handleScroll}>
+      <div
+        className="chat-body"
+        ref={scrollRef}
+        onScroll={handleScroll}
+        onWheel={(e) => {
+          if (e.deltaY < 0) userScrollUnpin();
+        }}
+        onTouchMove={userScrollUnpin}
+      >
         {chat.hasMore && !chat.loading && (
           <div
             style={{
@@ -775,6 +829,7 @@ export function ChatWindow({
             </div>
           </div>
         )}
+        <div ref={bottomSentinelRef} aria-hidden="true" />
       </div>
 
       <AttachmentTray items={pendingAttachments} onRemove={removePendingAttachment} />
