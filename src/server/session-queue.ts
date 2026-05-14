@@ -36,14 +36,23 @@ interface Waiter {
 class SessionLock {
   private busy = false;
   private queue: Waiter[] = [];
+  private activeSince: number | null = null;
+  private activePriority: Priority | null = null;
+  private activeCallId: string | undefined = undefined;
+  private activeTurnId: string | undefined = undefined;
 
   acquire(opts: {
     priority: Priority;
     callId?: string;
     signal?: AbortSignal;
+    turnId?: string;
   }): Promise<() => void> {
     if (!this.busy) {
       this.busy = true;
+      this.activeSince = Date.now();
+      this.activePriority = opts.priority;
+      this.activeCallId = opts.callId;
+      this.activeTurnId = opts.turnId;
       return Promise.resolve(() => this.release());
     }
     return new Promise<() => void>((resolve, reject) => {
@@ -85,11 +94,18 @@ class SessionLock {
   }
 
   private release(): void {
+    this.activeSince = null;
+    this.activePriority = null;
+    this.activeCallId = undefined;
+    this.activeTurnId = undefined;
     while (this.queue.length > 0) {
       const next = this.queue.shift()!;
       if (next.cancelled) continue;
       // Hand the lock to the next waiter; busy stays true so a fresh
       // acquire() called between releases can't slip in front of them.
+      this.activeSince = Date.now();
+      this.activePriority = next.priority;
+      this.activeCallId = next.callId;
       next.resolve(() => this.release());
       return;
     }
@@ -101,12 +117,20 @@ class SessionLock {
     queueLength: number;
     userWaiting: number;
     agentWaiting: number;
+    activeSince: number | null;
+    activePriority: Priority | null;
+    activeCallId: string | undefined;
+    activeTurnId: string | undefined;
   } {
     return {
       busy: this.busy,
       queueLength: this.queue.length,
       userWaiting: this.queue.filter((w) => w.priority === 'user').length,
       agentWaiting: this.queue.filter((w) => w.priority === 'agent').length,
+      activeSince: this.activeSince,
+      activePriority: this.activePriority,
+      activeCallId: this.activeCallId,
+      activeTurnId: this.activeTurnId,
     };
   }
 }
@@ -131,7 +155,7 @@ function key(agent: string, session: string): string {
 export async function acquireSessionLock(
   agent: string,
   session: string,
-  opts: { priority: Priority; callId?: string; signal?: AbortSignal },
+  opts: { priority: Priority; callId?: string; signal?: AbortSignal; turnId?: string },
 ): Promise<() => void> {
   let lock = locks.get(key(agent, session));
   if (!lock) {
@@ -154,17 +178,45 @@ export async function acquireSessionLock(
   return lock.acquire(opts);
 }
 
-export function getSessionLockStatus(agent: string, session: string): {
-  busy: boolean;
-  queueLength: number;
-  userWaiting: number;
-  agentWaiting: number;
-} {
+export function getSessionLockStatus(agent: string, session: string): ReturnType<SessionLock['status']> {
   const lock = locks.get(key(agent, session));
   return lock?.status() ?? {
     busy: false,
     queueLength: 0,
     userWaiting: 0,
     agentWaiting: 0,
+    activeSince: null,
+    activePriority: null,
+    activeCallId: undefined,
+    activeTurnId: undefined,
   };
+}
+
+/**
+ * Snapshot of every known session lock — busy or not — for diagnostic
+ * surfaces (`GET /health`). Returns one entry per (agent, session) that
+ * has ever held or queued a turn since server start. Cheap: in-memory
+ * map iteration.
+ */
+export function listAllSessionLockStates(): Array<{
+  agent: string;
+  session: string;
+  busy: boolean;
+  queueLength: number;
+  userWaiting: number;
+  agentWaiting: number;
+  activeSince: number | null;
+  activePriority: Priority | null;
+  activeCallId: string | undefined;
+  activeTurnId: string | undefined;
+}> {
+  const out: ReturnType<typeof listAllSessionLockStates> = [];
+  for (const [k, lock] of locks.entries()) {
+    const slashIdx = k.indexOf('/');
+    if (slashIdx < 0) continue;
+    const agent = k.slice(0, slashIdx);
+    const session = k.slice(slashIdx + 1);
+    out.push({ agent, session, ...lock.status() });
+  }
+  return out;
 }
