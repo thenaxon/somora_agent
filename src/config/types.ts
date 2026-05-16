@@ -448,6 +448,27 @@ export const TuiConfigSchema = z.object({
 });
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 
+// Mobile PWA display knobs. Reduced-surface counterpart to TuiConfig:
+// the mobile chat surface is minimal by design (chat-only), and the
+// tool/memory rows that desktop +TUI default-on are default-off here
+// to keep screen real-estate for the conversation. Operators can flip
+// them on per-deployment in config.yaml if they prefer the verbose
+// view on phone too.
+export const MobileConfigSchema = z.object({
+  show: z.object({
+    /** Show `[tool call · …]` / `[tool result · …]` rows in the
+     *  mobile chat. Default off; flip to true if you want
+     *  desktop-parity verbosity. */
+    tools: z.boolean().default(false),
+    /** Show `[memory · …]` inject rows in the mobile chat. Default
+     *  off; same rationale as `tools`. */
+    memory: z.boolean().default(false),
+  }).default({ tools: false, memory: false }),
+}).default({
+  show: { tools: false, memory: false },
+});
+export type MobileConfig = z.infer<typeof MobileConfigSchema>;
+
 // Vision/multimodal worker config. Two tools route through this:
 //   - file_read polymorph (for the active main model, when it has the
 //     right capability — content blocks land directly in main context)
@@ -771,6 +792,7 @@ export const ConfigSchema = z.object({
   claudeCli: ClaudeCliConfigSchema,
   codexCli: CodexCliConfigSchema,
   tui: TuiConfigSchema,
+  mobile: MobileConfigSchema,
   web: WebConfigSchema,
   workspace: WorkspaceConfigSchema,
   resources: ResourcesConfigSchema,

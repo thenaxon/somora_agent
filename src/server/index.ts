@@ -709,6 +709,7 @@ app.get('/env', (c) => c.json(getEffectiveEnv()));
 // single config reader — clients fetch this rather than parsing config.yaml
 // themselves.
 app.get('/tui-config', (c) => c.json(config.tui));
+app.get('/mobile-config', (c) => c.json(config.mobile));
 
 // Verbose-mode helper: returns the persona's compiled system prompt.
 // Used by /verbose system in the TUI to surface what the model is
@@ -2291,6 +2292,25 @@ app.use(
   }),
 );
 app.get('/web', (c) => c.redirect('/web/'));
+
+// Static mount for the mobile PWA client. Same pattern as /web/ —
+// vite-built artifacts live at `web-mobile/dist/` with base `/mobile/`,
+// served same-origin in production. Dev uses vite at :5174.
+//
+// The manifest.webmanifest + service-worker.js sit in the dist root
+// alongside index.html so they're picked up by the rewriteRequestPath
+// passthrough. Service-worker scope is `/mobile/`, manifest start_url
+// is `/mobile/` — both match this mount, so "add to home screen"
+// from a phone parks the user at the right entry point.
+const mobileDistDir = new URL('../../web-mobile/dist/', import.meta.url).pathname;
+app.use(
+  '/mobile/*',
+  serveStatic({
+    root: mobileDistDir,
+    rewriteRequestPath: (path) => path.replace(/^\/mobile\/?/, '/'),
+  }),
+);
+app.get('/mobile', (c) => c.redirect('/mobile/'));
 
 // Acquire single-active-server lockfile. Refuses to start if another
 // somora process is alive (live PID match). Stale locks (process gone)
