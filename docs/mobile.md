@@ -37,9 +37,25 @@ own app switcher entry.
   session. Markdown rendering for code blocks, links, lists, etc.
   Pinch-to-zoom is disabled; tap-to-zoom into a code block by scrolling
   the block horizontally.
-- **Input bar** at the bottom: textarea, mic placeholder (Phase 2),
-  send. Enter sends, Shift+Enter inserts a newline. Send-button is
-  disabled while empty so you can't accidentally fire blanks.
+- **Input bar** at the bottom: paperclip (attachments), mic (voice),
+  textarea, send. Enter sends, Shift+Enter inserts a newline.
+- **Voice input:** tap the mic — it goes red and pulses while
+  recording. Tap again to stop; the transcript lands in the textarea
+  ready for you to edit before sending. Never auto-sends. Requires
+  `stt.enabled: true` in the server config and a browser that
+  supports `getUserMedia` + `MediaRecorder` (every modern phone
+  browser does). The button is hidden when either prerequisite is
+  missing.
+- **Attachments:** tap the paperclip to open the phone's native file
+  picker — iOS / Android both let you choose Camera, Photo Library, or
+  Files there. Pictures (`image/*`) and PDFs are accepted. Picked
+  files upload to the server immediately and appear as chips above
+  the textarea; tap the × on a chip to drop it before sending. You
+  can send with attachments only (no text).
+- **Typing indicator:** when you've sent and the agent is still
+  thinking / running tools, a three-dot pulse appears in an agent
+  bubble. It's replaced by the actual streaming response as soon as
+  the model starts emitting text.
 - **Connection-lost banner** appears when the SSE stream drops (e.g.
   Tailscale wakes up, server briefly down). The browser auto-reconnects
   the EventSource; the banner clears once the stream is back.
@@ -52,10 +68,11 @@ own app switcher entry.
 - Markdown rendering of agent replies
 - localStorage-persisted last-agent
 
-**Phase 2 (planned):**
+**Phase 2 (current):**
 - Voice input via STT (mic-button → record → transcript editable in
   input → send manually)
-- Camera / photo-roll attachments
+- Camera / photo-roll attachments via the native picker
+- Typing-indicator while the agent is working
 - Smarter reconnect handling
 
 **Phase 3+ (planned):**
@@ -116,7 +133,26 @@ stay server-side; the phone just speaks to the somora HTTP API.
   via the share menu.
 
 **Voice input greyed out:**
-- That's the Phase 2 placeholder. STT integration ships separately.
+- The button is permanently disabled when `stt.enabled` is `false`
+  in the server's `config.yaml`. Flip to `true`, configure the
+  provider + model (see [setup.md](setup.md) → "Speech-to-Text"),
+  and restart somora.
+- iOS Safari needs explicit microphone permission the first time —
+  tap the mic, accept the prompt. Once accepted, the permission
+  sticks for the PWA.
+- If you see the mic spinner forever after stopping a recording:
+  `/stt/transcribe` is timing out (the worker model might be down
+  or overloaded). Check the somora server logs for the request.
+
+**Attachment upload fails / chip never appears:**
+- Big files: somora caps per-kind upload sizes (see
+  `src/attachments/store.ts`). If the picker accepted a file but
+  the upload errors out, the server's response message appears
+  briefly above the input — it tells you what limit was hit.
+- HEIC photos from iOS: most somora pipelines accept HEIC fine, but
+  if an agent reports inability to read the image, set your iPhone's
+  Camera setting to "Most Compatible" (Settings → Camera → Formats)
+  so it captures JPEG instead.
 
 ## Building from source
 
