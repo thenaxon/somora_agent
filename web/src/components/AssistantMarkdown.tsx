@@ -5,7 +5,8 @@
 // in a new tab — except absolute filesystem-paths emitted by agents,
 // which open in a FileView window (see useFileViewOpener).
 
-import ReactMarkdown from 'react-markdown';
+import { memo, useMemo } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useFileViewOpener } from './FileViewContext';
@@ -23,13 +24,51 @@ interface Props {
 // server-side, not at web build time).
 const FILESYSTEM_PATH_RE = /^(~|\/(home|Users|var|opt|tmp|etc|mnt|root))(\/|$)/;
 
-export function AssistantMarkdown({ content }: Props) {
+// Module-level remark/rehype plugin arrays. ReactMarkdown re-runs its
+// processor when the prop reference changes — fresh inline `[remarkGfm]`
+// arrays were forcing a rebuild on every parent render.
+const REMARK_PLUGINS = [remarkGfm];
+const REHYPE_PLUGINS = [rehypeHighlight];
+
+// Module-level renderer overrides that don't depend on context. Same
+// reasoning as the plugin arrays: stable function identity prevents
+// ReactMarkdown from creating fresh component types per render. Without
+// this, a parent re-render (e.g. the 2-second useLoopState tick) caused
+// React to unmount and remount each <pre>/<img>/<table>, resetting any
+// horizontal scroll the user had set inside a code block (Luca
+// 2026-05-16 report).
+const STATIC_COMPONENTS = {
+  pre: ({ children }) => (
+    <pre style={{ maxWidth: '100%', overflowX: 'auto' }}>{children}</pre>
+  ),
+  img: ({ src, alt }) => {
+    const url = typeof src === 'string' ? src : undefined;
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer">
+        <img
+          src={url}
+          alt={typeof alt === 'string' ? alt : ''}
+          style={{ maxWidth: '100%', maxHeight: 360, borderRadius: 6, cursor: 'pointer' }}
+        />
+      </a>
+    );
+  },
+  table: ({ children }) => (
+    <div style={{ overflowX: 'auto' }}>
+      <table>{children}</table>
+    </div>
+  ),
+} satisfies Partial<Components>;
+
+function AssistantMarkdownImpl({ content }: Props) {
   const openFileView = useFileViewOpener();
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlight]}
-      components={{
+  // Anchor-handler depends on the FileView opener from context, so it
+  // can't move to module scope. useMemo with a stable openFileView ref
+  // (the context value is itself memoized in FileViewContext) keeps
+  // the components object identity stable across re-renders.
+  const components = useMemo<Partial<Components>>(
+    () => ({
+      ...STATIC_COMPONENTS,
         a: ({ href, children }) => {
           const isLocalFile =
             typeof href === 'string' && FILESYSTEM_PATH_RE.test(href);
@@ -107,29 +146,22 @@ export function AssistantMarkdown({ content }: Props) {
             </a>
           );
         },
-        img: ({ src, alt }) => {
-          const url = typeof src === 'string' ? src : undefined;
-          return (
-            <a href={url} target="_blank" rel="noopener noreferrer">
-              <img
-                src={url}
-                alt={typeof alt === 'string' ? alt : ''}
-                style={{ maxWidth: '100%', maxHeight: 360, borderRadius: 6, cursor: 'pointer' }}
-              />
-            </a>
-          );
-        },
-        pre: ({ children }) => (
-          <pre style={{ maxWidth: '100%', overflowX: 'auto' }}>{children}</pre>
-        ),
-        table: ({ children }) => (
-          <div style={{ overflowX: 'auto' }}>
-            <table>{children}</table>
-          </div>
-        ),
-      }}
+    }),
+    [openFileView],
+  );
+  return (
+    <ReactMarkdown
+      remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={REHYPE_PLUGINS}
+      components={components}
     >
       {content}
     </ReactMarkdown>
   );
 }
+
+// Memoize on `content` only — when the same message string re-passes
+// through (parent re-rendered for unrelated reasons), skip the
+// react-markdown re-parse entirely so the rendered DOM keeps its
+// identity (and code-block scrollLeft survives).
+export const AssistantMarkdown = memo(AssistantMarkdownImpl);
