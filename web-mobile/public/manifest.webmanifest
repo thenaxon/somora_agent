@@ -10,19 +10,19 @@
   "theme_color": "#5cf2d6",
   "icons": [
     {
-      "src": "./favicon.svg",
+      "src": "/mobile/favicon.svg",
       "type": "image/svg+xml",
       "sizes": "any",
       "purpose": "any"
     },
     {
-      "src": "./icon-192.png",
+      "src": "/mobile/icon-192.png",
       "type": "image/png",
       "sizes": "192x192",
       "purpose": "any maskable"
     },
     {
-      "src": "./icon-512.png",
+      "src": "/mobile/icon-512.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any maskable"

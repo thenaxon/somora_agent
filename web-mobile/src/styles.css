@@ -326,31 +326,41 @@ button { cursor: pointer; }
   to { transform: rotate(360deg); }
 }
 
-/* ── Attachment button (label wrapping native input) ──────────── */
-/* iOS PWA standalone mode mishandles `<input type="file">` triggered
- * by JS .click() on display:none inputs. The native-label pattern
- * sidesteps the bug — the label's tap natively proxies to the input
- * without JS involvement. The input itself is positioned off-screen
- * (not display:none) so iOS still considers it tap-eligible. */
+/* ── Attachment button (label + htmlFor + WCAG-hidden input) ──── */
+/* The input is visually hidden but stays in layout + tab-order via
+ * the clip-rect trick (WCAG visually-hidden pattern). The visible
+ * label is `htmlFor`-bound to it, so a tap on the label dispatches
+ * to the input through the browser's native label-proxy semantics —
+ * no JS involvement. This is the most cross-platform-bulletproof
+ * shape for file inputs; works in iOS Safari standalone PWAs,
+ * macOS Safari, Chrome on all platforms, Firefox, etc.
+ *
+ * Why not `display:none` on the input: Safari (iOS especially)
+ * treats display-none inputs as non-existent for picker purposes
+ * and the proxy silently no-ops.
+ *
+ * Why not `position:absolute` over the label: works on most browsers
+ * but adds a 2nd potential failure mode (z-stacking, hit-testing).
+ * htmlFor-binding is browser-native and doesn't need positioning. */
+.attach-input-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 .attach-btn {
-  position: relative;
   cursor: pointer;
 }
 .attach-btn.disabled {
   opacity: 0.4;
   pointer-events: none;
 }
-.attach-input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-  /* Don't shrink the label's hit-area by sizing the input weirdly —
-   * we want the whole 44×44 circle to dispatch the tap. */
-}
-.attach-input::-webkit-file-upload-button { cursor: pointer; }
 
 /* ── Attachment strip ───────────────────────────────────────────── */
 

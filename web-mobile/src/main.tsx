@@ -15,7 +15,7 @@ if (!root) {
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
-      .register('./service-worker.js', { scope: '/mobile/' })
+      .register('/mobile/service-worker.js', { scope: '/mobile/' })
       .catch((err) => {
         console.warn('[somora-mobile] service-worker registration failed:', err);
       });

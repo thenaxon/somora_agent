@@ -59,36 +59,47 @@ export function AttachmentPicker({ staged, onStage, onRemove, disabled }: Props)
     }
   };
 
-  // iOS PWAs in standalone mode have long-standing trouble with
-  // `<input type="file">` opening the picker when triggered by a
-  // programmatic `.click()` on a `display:none` input. The reliable
-  // cross-platform pattern is a `<label>` that visually styles like
-  // a button and wraps the input — the label's native semantics
-  // proxy the tap to the input without any JS involvement, which
-  // works in Safari standalone mode where button.onClick → ref.click
-  // sometimes silently does nothing.
+  // Two-element pattern (WCAG-style):
+  //   <input id="..."> is the actual file input, visually hidden
+  //                    but still in the tab order + click-able via
+  //                    `htmlFor` from the label.
+  //   <label htmlFor="..."> is the visible button; tapping it
+  //                    natively proxies to the input's click event
+  //                    without any JS involvement.
   //
-  // `accept` covers images + PDFs; on iOS / Android the picker
-  // shows Camera / Photo Library / Files based on this list.
-  // The input is positioned off-screen-but-in-layout (instead of
-  // display:none) — iOS Safari treats display:none inputs as
-  // "not really there" and skips them.
+  // Why this shape over button-with-onClick-triggering-ref.click():
+  // - Safari (both iOS standalone PWA and macOS in some contexts)
+  //   silently ignores JS-dispatched `.click()` on file inputs.
+  //   Label→input proxy uses the browser's own semantic wiring
+  //   which all platforms honor.
+  // - Hiding via clip-rect/absolute keeps the input in layout
+  //   (iOS / older Safari treat display:none inputs as if they
+  //   don't exist for picker purposes).
   return (
     <>
+      <input
+        id="somora-attach-input"
+        type="file"
+        accept="image/*,application/pdf"
+        multiple
+        disabled={busy}
+        onChange={onChange}
+        className="attach-input-hidden"
+      />
       <label
+        htmlFor="somora-attach-input"
         className={`input-btn attach-btn ${busy ? 'disabled' : ''}`}
         aria-label="Datei anhängen"
         title="Foto, Bild oder PDF anhängen"
+        onClick={() => {
+          // Diagnostic: track whether the label-tap reaches us at
+          // all. The browser then dispatches to the input as a
+          // separate event; if the picker never opens after this
+          // log fires, the bug is in the picker step, not the tap.
+          console.info('[somora-mobile] attach label tapped');
+        }}
       >
         {uploading > 0 ? <span className="mic-spinner" /> : '📎'}
-        <input
-          type="file"
-          accept="image/*,application/pdf"
-          multiple
-          disabled={busy}
-          onChange={onChange}
-          className="attach-input"
-        />
       </label>
       {err && <div className="attach-err">{err}</div>}
       {staged.length > 0 && (
