@@ -16,9 +16,9 @@
 
 A small server you run on your machine that hosts one or more AI **agents**,
 each with its own personality, memory, and configuration. You chat with them
-via terminal or browser; they remember things across sessions; they can use
-the same tool surface (memory, files, web, exec, tmux, attachments) regardless
-of which LLM you point them at.
+via terminal, browser, or installable mobile PWA; they remember things across
+sessions; they can use the same tool surface (memory, files, web, exec, tmux,
+attachments) regardless of which LLM you point them at.
 
 What makes it different:
 
@@ -153,12 +153,13 @@ Active development. Customer-facing for early testers. Phase 4 (memory + wiki
 
 ## Clients
 
-Three first-party clients, all hitting the same local server:
+Four first-party clients, all hitting the same local server:
 
 | Client | How to launch | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
 | **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
+| **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
 
 ### TUI — `somora tui`
@@ -168,6 +169,12 @@ Three first-party clients, all hitting the same local server:
 ### Web — browser desktop
 
 ![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web.png)
+
+### Mobile — installable PWA on your phone
+
+Tailscale-only by design — same posture as `/web/`. Build pipeline ships
+`web/dist` and `web-mobile/dist` together; `somora update` picks up
+both with no operator intervention.
 
 ## Requirements
 
@@ -322,6 +329,7 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 - [docs/skills.md](docs/skills.md) — markdown how-tos the agent can activate
 - [docs/files.md](docs/files.md) — file_* tools, multimodal `analyze_file`, user attachments
 - [docs/web.md](docs/web.md) — web client architecture, slash commands, tmux app, screenshot
+- [docs/mobile.md](docs/mobile.md) — mobile PWA install + usage, scope, troubleshooting
 - [docs/api.md](docs/api.md) — HTTP+SSE+WS API reference for building custom clients
 - [docs/tmux.md](docs/tmux.md) — long-lived terminal sessions for TUIs
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
