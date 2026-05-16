@@ -222,6 +222,35 @@ button { cursor: pointer; }
   padding: 0 24px;
 }
 
+/* ── Typing indicator ───────────────────────────────────────────── */
+/* Three pulsing dots inside an agent-style bubble. Surfaces while
+ * the turn is in flight but the agent hasn't started emitting text
+ * yet (ToolSearch, tool calls, thinking) — gives the user feedback
+ * that the server is working instead of staring at an empty chat.
+ * Replaced by the actual streaming bubble as soon as text deltas
+ * start arriving. */
+.typing-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 14px;
+  min-height: 20px;
+}
+.typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-2);
+  display: inline-block;
+  animation: typing-pulse 1.2s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing-pulse {
+  0%, 60%, 100% { transform: scale(0.85); opacity: 0.5; }
+  30%           { transform: scale(1.15); opacity: 1; }
+}
+
 /* ── Input bar ──────────────────────────────────────────────────── */
 
 .input-bar {

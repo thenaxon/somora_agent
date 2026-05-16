@@ -80,6 +80,20 @@ export function ChatArea({ agent, messages, streaming, connectionError }: Props)
             </div>
           </div>
         ))}
+        {/* Typing-indicator: shown when the server is working but the
+            agent hasn't started emitting text yet (model thinking,
+            ToolSearch, tool_call still running). Disappears as soon
+            as the first chat.delta lands and the streaming bubble
+            takes over. Three-dot animation lives in styles.css. */}
+        {streaming && !messages.some((m) => m.role === 'agent' && m.streaming) && (
+          <div className="msg-row agent" aria-live="polite">
+            <div className="msg-bubble agent typing-indicator">
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
