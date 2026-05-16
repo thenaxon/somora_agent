@@ -58,6 +58,7 @@ export default defineConfig({
       '/attachments': { target: proxyTarget, changeOrigin: true, secure: true },
       '/chat': { target: proxyTarget, changeOrigin: true, secure: true },
       '/dream': { target: proxyTarget, changeOrigin: true, secure: true },
+      '/files': { target: proxyTarget, changeOrigin: true, secure: true },
       '/models': { target: proxyTarget, changeOrigin: true, secure: true },
       '/tools': { target: proxyTarget, changeOrigin: true, secure: true },
       '/tui-config': { target: proxyTarget, changeOrigin: true, secure: true },

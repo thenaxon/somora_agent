@@ -43,6 +43,9 @@ function useGlobalMarkdownLinkOpener(): void {
       if (!target || typeof target.closest !== 'function') return;
       const anchor = target.closest('a');
       if (!anchor) return;
+      // FileView-bound anchors don't have target=_blank — they navigate
+      // via the React onClick handler in AssistantMarkdown. Skip them
+      // here so we don't double-fire or hijack the window-manager path.
       if (anchor.getAttribute('target') !== '_blank') return;
       const href = anchor.getAttribute('href');
       if (!href) return;

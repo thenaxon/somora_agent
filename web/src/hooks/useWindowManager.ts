@@ -249,6 +249,39 @@ export function useWindowManager() {
     [windows, zCounter, focus],
   );
 
+  /** Open or focus a FileView window for the given absolute filesystem
+   *  path. De-dups by path — re-clicking the same link focuses the
+   *  existing window instead of opening a duplicate. The content is
+   *  fetched inside the FileViewWindow component, so opening is cheap. */
+  const openFileView = useCallback(
+    (path: string) => {
+      const existing = windows.find(
+        (w) => w.kind === 'file-view' && w.filePath === path,
+      );
+      if (existing) {
+        focus(existing.id);
+        return;
+      }
+      const pos = randomPos(560, 520, zCounter + 1);
+      const id = `file-view-${Date.now()}`;
+      const baseName = path.split('/').filter(Boolean).pop() ?? path;
+      const next: WindowState = {
+        id,
+        kind: 'file-view',
+        title: baseName,
+        meta: path,
+        icon: '📄',
+        filePath: path,
+        ...pos,
+        minimized: false,
+      };
+      setWindows((ws) => [...ws, next]);
+      setZCounter((z) => z + 1);
+      setFocusedId(id);
+    },
+    [windows, zCounter, focus],
+  );
+
   /** Set of message ids currently pinned. Drives the pin-button
    *  active state on chat bubbles — when a pin-note window closes,
    *  the set updates automatically and the bubble's pin icon flips
@@ -356,6 +389,7 @@ export function useWindowManager() {
     openPinNote,
     unpinMessage,
     pinnedMsgIds,
+    openFileView,
   };
 }
 

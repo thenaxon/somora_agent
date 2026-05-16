@@ -9,7 +9,8 @@ export type WindowKind =
   | 'tmux-term'
   | 'shell-term'
   | 'sessions-list'
-  | 'pin-note';
+  | 'pin-note'
+  | 'file-view';
 
 /** A snapshot of an agent message that the user pinned for working-
  *  memory. Stored on the WindowState.payload of `kind: 'pin-note'`
@@ -50,6 +51,11 @@ export interface WindowState {
   tmuxName?: string;
   // pin-note specific — the captured message snapshot.
   pinNote?: PinNote;
+  // file-view specific — absolute path to the artefact being viewed.
+  // The content is fetched lazily from /files/view on render so the
+  // window state stays small (resumable from localStorage after a
+  // reload without keeping the full body around).
+  filePath?: string;
   // Geometry
   x: number;
   y: number;

@@ -162,6 +162,68 @@ curl -X POST https://<host>:18737/agents/hans/tools/memory_search \
 
 ---
 
+## Files
+
+### `GET /files/view`
+
+Read a server-local file by absolute path. Used by the web client's
+FileView window so users can click absolute-path links emitted in
+agent messages (e.g. `[report.md](/home/user/somoraworkspace/...)`)
+and see the content in-app without SSH-ing into the server.
+
+Policy is reused 1:1 from the `file_read` tool — the same allowlist
+(workspace + somora-home roots) and the same blocklist (`~/.ssh`,
+credential stores, system dirs, …). Symlink-resolution prevents path
+escapes via realpath check on the closest existing ancestor.
+
+Read-only, no writes. Bytes are returned as UTF-8 in the JSON body
+and capped at 200 000 characters; oversize files come back with
+`truncated: true`.
+
+**Query parameters**
+
+| Name | Required | Description |
+|---|---|---|
+| `path` | yes | Absolute filesystem path. `~`-prefix is expanded server-side. Relative paths are rejected (no agent-context cwd here). |
+
+**Supported file kinds** — only types the FileView renderer knows
+what to do with are accepted; everything else returns `415`.
+
+| Extension | `kind` | Renderer hint |
+|---|---|---|
+| `.md`, `.markdown` | `markdown` | full Markdown render (same plugins as chat) |
+| `.txt`, `.log` | `text` | monospace preformatted, no highlighting |
+| `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml` | `code` | monospace + syntax highlighting via rehype-highlight |
+
+**Success response (200)**
+
+```json
+{
+  "path": "/home/user/somoraworkspace/somora_feedback/example.md",
+  "kind": "markdown",
+  "ext": ".md",
+  "bytes": 4321,
+  "content": "# Report\n…",
+  "truncated": false
+}
+```
+
+**Error responses**
+
+| Status | When |
+|---|---|
+| `400` | Missing `path` query, relative path, path is a directory or non-regular file |
+| `403` | Policy blocked (path resolves under a blacklisted root or a denied somora-internal location) |
+| `404` | File does not exist |
+| `415` | File extension not in the supported set |
+
+```bash
+curl -G "https://<host>:18737/files/view" \
+     --data-urlencode "path=/home/user/somoraworkspace/somora_feedback/example.md"
+```
+
+---
+
 ## Agents
 
 ### `GET /agents`

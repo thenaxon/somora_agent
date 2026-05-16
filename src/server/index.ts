@@ -13,7 +13,9 @@ import { type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.
 import { storeAttachment } from '../attachments/store.ts';
 import { detectMimeFromPath } from '../multimodal/mime.ts';
 import { existsSync } from 'node:fs';
-import { readFile as fsReadFile } from 'node:fs/promises';
+import { readFile as fsReadFile, stat as statFs, readFile as readFileFs } from 'node:fs/promises';
+import { isAbsolute, normalize } from 'node:path';
+import { checkReadAllowed, expandHome, realpathSafeAncestor } from '../tools/file/policy.ts';
 import { listTmuxSessions } from '../tmux/list.ts';
 import {
   ensureMemoryDirs,
@@ -390,6 +392,96 @@ app.get('/health', (c) => {
     activeSessions: busySessions.length,
     totalKnownSessions: sessions.length,
     sessions,
+  });
+});
+
+// FileView: read-only viewer for filesystem artefacts that agents
+// reference by absolute path in chat messages (feedback reports, logs,
+// generated docs, ...). Returns the file contents + a coarse `kind`
+// hint the web client uses to pick a renderer (markdown / text /
+// code). Policy is reused 1:1 from file_read — what the agent can read,
+// the user can view in the FileView window.
+//
+// Web-only concept: TUI users see the raw path in chat output and use
+// `cat`/`less` directly; the link rewrite that opens this endpoint
+// lives in the web client's Markdown renderer.
+const FILEVIEW_HARD_CAP = 200_000; // chars, mirrors file_read
+const FILEVIEW_EXT_KIND: Record<string, 'markdown' | 'text' | 'code'> = {
+  '.md': 'markdown',
+  '.markdown': 'markdown',
+  '.txt': 'text',
+  '.log': 'text',
+  '.json': 'code',
+  '.jsonl': 'code',
+  '.yaml': 'code',
+  '.yml': 'code',
+  '.toml': 'code',
+};
+app.get('/files/view', async (c) => {
+  const raw = c.req.query('path');
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return c.json({ error: 'missing path query' }, 400);
+  }
+  // Web only sends absolute paths emitted by agents (e.g.
+  // `/home/<user>/somoraworkspace/...`). Relative paths have no
+  // meaning here — there is no agent-context cwd to resolve them
+  // against.
+  const expanded = expandHome(raw);
+  if (!isAbsolute(expanded)) {
+    return c.json({ error: 'path must be absolute' }, 400);
+  }
+  const absolute = normalize(expanded);
+  // Two-pass policy check matches file_read: raw path first, then
+  // realpath of the closest existing ancestor so a symlink can't
+  // escape a blocked root.
+  const policy = checkReadAllowed(absolute);
+  if (!policy.ok) {
+    return c.json({ error: policy.reason }, 403);
+  }
+  const real = await realpathSafeAncestor(absolute);
+  const policyReal = checkReadAllowed(real);
+  if (!policyReal.ok) {
+    return c.json({ error: policyReal.reason }, 403);
+  }
+  // Stat first to give a clean 404 before reading; also rejects
+  // directories with a meaningful message.
+  let st: Awaited<ReturnType<typeof statFs>>;
+  try {
+    st = await statFs(absolute);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return c.json({ error: 'file not found' }, 404);
+    }
+    throw err;
+  }
+  if (st.isDirectory()) {
+    return c.json({ error: 'path is a directory' }, 400);
+  }
+  if (!st.isFile()) {
+    return c.json({ error: 'path is not a regular file' }, 400);
+  }
+  const ext = absolute.slice(absolute.lastIndexOf('.')).toLowerCase();
+  const kind = FILEVIEW_EXT_KIND[ext] ?? null;
+  if (!kind) {
+    return c.json({ error: `unsupported file type for FileView (${ext || 'no extension'})` }, 415);
+  }
+  const buf = await readFileFs(absolute);
+  let content = buf.toString('utf8');
+  let truncated = false;
+  let truncatedReason: string | undefined;
+  if (content.length > FILEVIEW_HARD_CAP) {
+    content = content.slice(0, FILEVIEW_HARD_CAP) + '\n[…content truncated at 200k chars]';
+    truncated = true;
+    truncatedReason = `byte cap (${FILEVIEW_HARD_CAP} chars)`;
+  }
+  return c.json({
+    path: absolute,
+    kind,
+    ext,
+    bytes: st.size,
+    content,
+    truncated,
+    ...(truncatedReason ? { truncated_reason: truncatedReason } : {}),
   });
 });
 

@@ -16,6 +16,8 @@ import { TmuxTerminalWindow } from './TmuxTerminalWindow';
 import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
 import { PinNoteWindow } from './PinNoteWindow';
+import { FileViewWindow } from './FileViewWindow';
+import { FileViewProvider } from './FileViewContext';
 import { useChatContext } from './ChatProvider';
 import { useAgents } from '../hooks/useAgents';
 import { useDreamStates } from '../hooks/useDreamStates';
@@ -59,6 +61,7 @@ export function Desktop() {
   );
 
   return (
+    <FileViewProvider open={wm.openFileView}>
     <div className="desktop">
       <div className="desktop-area">
         <div className="agent-dock">
@@ -130,6 +133,22 @@ export function Desktop() {
                 onResize={wm.resize}
               >
                 <PinNoteWindow note={win.pinNote} />
+              </Window>
+            );
+          }
+          if (win.kind === 'file-view' && win.filePath) {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <FileViewWindow path={win.filePath} />
               </Window>
             );
           }
@@ -221,5 +240,6 @@ export function Desktop() {
         onRestoreLayout={wm.restoreLayout}
       />
     </div>
+    </FileViewProvider>
   );
 }
