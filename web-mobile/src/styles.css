@@ -300,6 +300,116 @@ button { cursor: pointer; }
   color: var(--text-3);
 }
 
+/* ── Mic button states ──────────────────────────────────────────── */
+
+.mic-btn.recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
+  animation: mic-pulse 1.2s infinite ease-in-out;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.5); }
+  50%      { box-shadow: 0 0 0 8px rgba(255, 107, 107, 0); }
+}
+
+.mic-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--line-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Attachment strip ───────────────────────────────────────────── */
+
+.attach-strip {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 100%;
+  padding: 6px 4px 8px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+  scrollbar-width: none;
+  z-index: 2;
+}
+.attach-strip::-webkit-scrollbar { display: none; }
+
+.attach-chip {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 6px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  max-width: 200px;
+}
+.attach-thumb {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 5px;
+  flex-shrink: 0;
+}
+.attach-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-3);
+  border-radius: 5px;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+.attach-name {
+  font-size: 11px;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+.attach-remove {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  color: var(--text-2);
+  font-size: 14px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.attach-err {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: calc(100% + 4px);
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.15);
+  color: var(--danger);
+  font-size: 11px;
+  z-index: 3;
+}
+
+/* The input-bar wraps both the staged-strip (absolutely positioned
+ * above) and the actual input row. Need position:relative for the
+ * strip's "bottom: 100%" anchor. */
+.input-bar { position: relative; }
+
 /* ── Status banners ─────────────────────────────────────────────── */
 
 .banner {

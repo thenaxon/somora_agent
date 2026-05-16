@@ -3,6 +3,8 @@
 // Loads history on agent-switch so the chat surface shows the existing
 // conversation immediately, then streams new events on top.
 //
+import type { AttachmentRef } from '../components/AttachmentPicker';
+
 // SSE event protocol (must match what the server's createTurnSerializer
 // + run-turn.ts publish() actually emit — see ChatProvider in web/ for
 // the desktop equivalent):
@@ -40,10 +42,11 @@ export interface ChatStream {
   /** True from the moment the user sends until the server emits
    *  agent.phase='end'. */
   streaming: boolean;
-  /** Send a user message via POST /chat/send. Optimistically appends
-   *  to local messages so the bubble shows up without waiting for
-   *  the server. */
-  send: (text: string) => Promise<void>;
+  /** Send a user message via POST /chat/send. Optionally includes
+   *  staged attachment refs (already uploaded to /attachments).
+   *  Optimistically appends to local messages so the bubble shows
+   *  up without waiting for the server. */
+  send: (text: string, attachments?: AttachmentRef[]) => Promise<void>;
   /** Last connection error if the SSE link dropped. Null when healthy. */
   connectionError: string | null;
 }
@@ -177,17 +180,20 @@ export function useChatStream(agent: string | null): ChatStream {
     };
   }, [agent]);
 
-  const send = async (text: string) => {
+  const send = async (text: string, attachments?: AttachmentRef[]) => {
     if (!agent) return;
     // Optimistically add the user's message so the bubble appears
     // instantly — the server doesn't broadcast user_message back to
     // SSE subscribers, so without this the message would only show
-    // up on the next history-reload.
+    // up on the next history-reload. Attachment-thumbs in the user's
+    // own bubble are a Phase-3 polish; v1 just shows the text.
     const userMsg: ChatMessage = {
       id: newId('u'),
       role: 'user',
       ts: Date.now(),
-      text,
+      text: text || (attachments && attachments.length > 0
+        ? `📎 ${attachments.map((a) => a.name).join(', ')}`
+        : ''),
     };
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
@@ -195,7 +201,14 @@ export function useChatStream(agent: string | null): ChatStream {
       await fetch('/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent, session: 'main', text }),
+        body: JSON.stringify({
+          agent,
+          session: 'main',
+          text,
+          ...(attachments && attachments.length > 0
+            ? { attachments: attachments.map((a) => ({ hash: a.hash, name: a.name, mime: a.mime })) }
+            : {}),
+        }),
       });
     } catch (err) {
       console.warn('[somora-mobile] /chat/send failed:', err);
