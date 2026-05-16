@@ -438,12 +438,49 @@ export const openAiCompatibleEngine: AgentEngine = {
         const roundToolCalls = new Map<number, StreamingToolCall>();
         let finishReason: string | null = null;
 
-        for await (const chunk of stream) {
+        // Manual iteration with abort-race instead of plain `for await
+        // (const chunk of stream)`. The OpenAI SDK passes our
+        // effectiveSignal down to the underlying fetch, and undici is
+        // supposed to abort the body-stream read when the signal fires.
+        // Some openai-compatible backends (omlx in particular, but also
+        // local ollama under load) hold the HTTP connection open without
+        // emitting bytes and don't react to the abort — the for-await
+        // just hangs on the body reader. Racing iter.next() against the
+        // signal guarantees the watchdog can escape regardless.
+        const chunkIter = (stream as AsyncIterable<typeof stream extends AsyncIterable<infer C> ? C : never>)[Symbol.asyncIterator]();
+        while (true) {
+          let next: IteratorResult<typeof stream extends AsyncIterable<infer C> ? C : never>;
+          try {
+            next = await new Promise<typeof next>((resolve, reject) => {
+              if (effectiveSignal.aborted) {
+                reject(new DOMException('Aborted', 'AbortError'));
+                return;
+              }
+              const onAbort = (): void => {
+                reject(new DOMException('Aborted', 'AbortError'));
+              };
+              effectiveSignal.addEventListener('abort', onAbort, { once: true });
+              chunkIter.next().then(
+                (r) => {
+                  effectiveSignal.removeEventListener('abort', onAbort);
+                  resolve(r);
+                },
+                (err: unknown) => {
+                  effectiveSignal.removeEventListener('abort', onAbort);
+                  reject(err instanceof Error ? err : new Error(String(err)));
+                },
+              );
+            });
+          } catch (err) {
+            try { await chunkIter.return?.(undefined); } catch { /* ignore */ }
+            throw err;
+          }
+          if (next.done) break;
+          const chunk = next.value;
           // Some openai-compatible backends (omlx in particular) close
-          // the stream on signal-abort *without* throwing — the
-          // for-await just terminates. Detect that here so we don't
-          // silently emit a truncated assistant_message as if it were
-          // a clean completion.
+          // the stream on signal-abort *without* throwing — the iterator
+          // just terminates. Detect that here so we don't silently emit
+          // a truncated assistant_message as if it were a clean completion.
           if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
           armIdleTimer();
           const choice = chunk.choices[0];

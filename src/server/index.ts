@@ -144,11 +144,11 @@ async function publish(agent: string, session: string, event: SseEvent): Promise
     }
   }
   if (dead.length > 0) {
-    const set = streams.get(session);
+    const set = streams.get(key);
     if (set) {
       for (const d of dead) set.delete(d);
-      if (set.size === 0) streams.delete(session);
-      logger.info({ msg: 'sse.publish_evict_dead', session, count: dead.length });
+      if (set.size === 0) streams.delete(key);
+      logger.info({ msg: 'sse.publish_evict_dead', agent, session, count: dead.length });
     }
   }
 }

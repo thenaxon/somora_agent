@@ -5,7 +5,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { query, type CanUseTool, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type CanUseTool, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, somoraMemoryServerSpawn } from '../mcp/config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -265,8 +265,55 @@ export const claudeCliEngine: AgentEngine = {
       // message because they're not streamed as deltas.
       let receivedTextViaStream = false;
 
+      // Manual iteration with abort-race instead of `for await (... of
+      // stream)`. The SDK's iterator sits on top of an stdio pipe to the
+      // claude-cli child; if the child dies silently the pipe stays
+      // half-open and the SDK's internal `read()` await never resolves.
+      // Calling `sdkAbortController.abort()` from the watchdog does NOT
+      // unblock that read on every Node/SDK version — we have seen it
+      // hang on subscription-hosted claude-cli on linux. Symptom:
+      // watchdog fires, logs "aborting", but the for-await loop just
+      // sits there forever, the catch never runs, no error/turn_end is
+      // yielded, lock+queue stay held until server restart.
+      //
+      // Fix: race each iter.next() against the abort signal ourselves.
+      // When the watchdog (or upstream user-abort) fires, the race
+      // rejects synchronously and the catch below sees `watchdogFired`
+      // or `signal.aborted` and emits proper terminal events.
+      const iter = stream[Symbol.asyncIterator]();
       armIdleTimer();
-      for await (const msg of stream) {
+      while (true) {
+        let next: IteratorResult<SDKMessage>;
+        try {
+          next = await new Promise<IteratorResult<SDKMessage>>((resolve, reject) => {
+            if (sdkAbortController.signal.aborted) {
+              reject(new Error('claude-cli iterator aborted (watchdog or upstream)'));
+              return;
+            }
+            const onAbort = (): void => {
+              reject(new Error('claude-cli iterator aborted (watchdog or upstream)'));
+            };
+            sdkAbortController.signal.addEventListener('abort', onAbort, { once: true });
+            iter.next().then(
+              (r: IteratorResult<SDKMessage>) => {
+                sdkAbortController.signal.removeEventListener('abort', onAbort);
+                resolve(r);
+              },
+              (err: unknown) => {
+                sdkAbortController.signal.removeEventListener('abort', onAbort);
+                reject(err instanceof Error ? err : new Error(String(err)));
+              },
+            );
+          });
+        } catch (err) {
+          // Best-effort: tell the SDK iterator we're done so it has a
+          // chance to clean up. It may or may not respond — that's why
+          // we escaped via the race in the first place.
+          try { await iter.return?.(undefined); } catch { /* ignore */ }
+          throw err;
+        }
+        if (next.done) break;
+        const msg = next.value;
         armIdleTimer();
         if ('session_id' in msg && typeof msg.session_id === 'string') {
           lastSdkSessionId = msg.session_id;

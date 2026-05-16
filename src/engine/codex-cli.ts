@@ -378,13 +378,36 @@ export const codexCliEngine: AgentEngine = {
           agent,
           session,
           idleMs: IDLE_TIMEOUT_MS,
-          hint: 'no codex events received — likely subprocess wedged; SIGTERM to surface as error',
+          hint: 'no codex events received — likely subprocess wedged; SIGTERM + force-close stdout',
         });
+        // SIGTERM first — gives the child a chance to flush + exit cleanly.
         try {
           child.kill('SIGTERM');
         } catch {
           /* already exited */
         }
+        // Force-close stdout immediately so the for-await escapes even if
+        // libuv hasn't picked up the child exit yet. Without this, a child
+        // that's blocked in uninterruptible state (or whose SIGTERM
+        // handler refuses to exit) leaves the parent stuck reading a
+        // half-open pipe.
+        try {
+          child.stdout?.destroy(new Error('codex-cli watchdog: forced stdout close'));
+        } catch {
+          /* already destroyed */
+        }
+        // SIGKILL escalation after a short grace window — last resort
+        // if the child ignored SIGTERM. Race-condition-safe: a child
+        // that already exited cleanly returns false from kill().
+        setTimeout(() => {
+          if (child.exitCode === null) {
+            try {
+              child.kill('SIGKILL');
+            } catch {
+              /* already exited */
+            }
+          }
+        }, 2_000).unref();
       }, IDLE_TIMEOUT_MS);
     };
     const disarmIdleTimer = () => {
@@ -681,6 +704,24 @@ export const codexCliEngine: AgentEngine = {
           ? `${cumulative}\n\n[somora] aborted by user`
           : '[somora] aborted by user';
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      } else if (watchdogFired) {
+        // Stdout-destroy from the watchdog timer rejected the for-await.
+        // Surface as the same canonical timeout message as the clean-exit
+        // path so log forensics see one error class either way.
+        logger.error({
+          msg: 'engine.fail',
+          engine: ENGINE,
+          agent,
+          session,
+          err: 'idle watchdog timeout (forced stdout close)',
+        });
+        yield {
+          kind: 'error',
+          ts: ts(),
+          engine: ENGINE,
+          message: `codex exec timed out (${IDLE_TIMEOUT_MS / 1000}s idle, stdout force-closed): ${stderrBuf.slice(0, 300).trim()}`,
+        };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else {
         logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });

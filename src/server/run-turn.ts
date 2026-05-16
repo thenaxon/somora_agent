@@ -578,6 +578,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
 
     const serialize = publishSse ? createTurnSerializer() : null;
     let firstEventLogged = false;
+    let sawTurnEnd = false;
+    let lastSeenEngine: string = resolvedModel.provider.engine;
     for await (const ev of stream) {
       if (!firstEventLogged) {
         firstEventLogged = true;
@@ -590,10 +592,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           msSinceStart: Date.now() - start,
         });
       }
+      if ('engine' in ev && typeof ev.engine === 'string' && ev.engine.length > 0) {
+        lastSeenEngine = ev.engine;
+      }
       if (ev.kind !== 'assistant_delta') {
         await appendEvent(agent, session, ev);
       }
-      if (ev.kind === 'turn_end' && ev.usage) lastUsage = ev.usage;
+      if (ev.kind === 'turn_end') {
+        sawTurnEnd = true;
+        if (ev.usage) lastUsage = ev.usage;
+      }
       if (ev.kind === 'assistant_message') {
         finalText = ev.text;
       } else if (ev.kind === 'assistant_delta' && !finalText) {
@@ -605,6 +613,32 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         if (sse) await publishSse(sse);
       }
     }
+    // Defense in depth: if the stream ended cleanly but no turn_end was
+    // ever yielded, the session JSONL would be left with an orphan
+    // turn_start. healOrphanToolCalls fixes the tool-call case; this
+    // covers the turn_start case symmetrically.
+    if (!sawTurnEnd) {
+      logger.warn({
+        msg: 'turn.missing_turn_end',
+        turnId,
+        agent,
+        session,
+        engine: lastSeenEngine,
+        hint: 'engine stream ended without yielding turn_end; persisting synthetic close',
+      });
+      await appendEvent(agent, session, {
+        kind: 'error',
+        ts: Date.now(),
+        engine: lastSeenEngine,
+        message: 'engine stream ended without turn_end (synthetic close)',
+      });
+      await appendEvent(agent, session, {
+        kind: 'turn_end',
+        ts: Date.now(),
+        engine: lastSeenEngine,
+        turnId: `t-${Date.now()}`,
+      });
+    }
   } catch (err) {
     errorMessage = (err as Error).message;
     logger.error({
@@ -615,6 +649,39 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       err: errorMessage,
       msSinceStart: Date.now() - start,
     });
+    // Persist the failure into the session JSONL so the next turn can
+    // run cleanly. Without these synthetic records, an engine that
+    // throws mid-stream (claude-cli watchdog escape, codex SIGTERM,
+    // openai-compat fetch-abort, …) leaves the session log dangling at
+    // an unmatched turn_start or tool_call — the queue/lock release
+    // happens in the outer finally but the persisted state stays broken
+    // until healOrphanToolCalls fires on the next user turn. Surfacing
+    // an explicit `error` + `turn_end` here makes the failure visible
+    // and ends the turn properly. Best-effort: any append failure is
+    // logged but does not re-throw so the outer finally still releases.
+    try {
+      await appendEvent(agent, session, {
+        kind: 'error',
+        ts: Date.now(),
+        engine: resolvedModel.provider.engine,
+        message: `turn aborted: ${errorMessage}`,
+      });
+      await appendEvent(agent, session, {
+        kind: 'turn_end',
+        ts: Date.now(),
+        engine: resolvedModel.provider.engine,
+        turnId: `t-failed-${Date.now()}`,
+      });
+    } catch (persistErr) {
+      logger.error({
+        msg: 'turn.failed_persist_failed',
+        turnId,
+        agent,
+        session,
+        err: String(persistErr),
+        hint: 'could not append synthetic error+turn_end on turn failure; healOrphanToolCalls will run on next user turn',
+      });
+    }
     if (publishSse) {
       await publishSse({
         event: 'status',
