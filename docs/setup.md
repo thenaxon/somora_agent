@@ -496,6 +496,49 @@ Omit the `server.tls` block entirely. somora reverts to HTTP/1.1 plain.
 You'll keep the 6-connection limit and lose secure-context features.
 Fine for single-window dev, no good for multi-agent daily use.
 
+## Isolated Claude config dir
+
+somora-spawned claude-cli subprocesses run with their own config tree
+under `~/.somora/claude-home/`, not the user's `~/.claude/`. On first
+server start the dir is auto-created and the user's
+`~/.claude/.credentials.json` is symlinked into it so OAuth token
+refreshes stay in sync between somora and the user's own Claude Code.
+
+Everything else (project history, sessions, plugin marketplace state,
+shell snapshots, MCP-needs-auth cache, …) lives separately. somora's
+agents never see the user's interactive-CLI state, and vice versa.
+
+**Why it matters**
+
+- **Auto-update insulation.** Anthropic's launcher silently rolls
+  forward the user's claude binary. If a release migrates the state
+  schema, somora's spawn — which may run a different binary version —
+  no longer reads the migrated tree cleanly. The 2026-05-16 incident
+  (`2.1.143` regressed MCP tool registration for everything sharing
+  state with it) exposed this; the isolated dir makes somora resilient
+  against the next time it happens.
+- **Privacy + predictability.** The user's project conversations,
+  installed plugins, and per-project skill caches never leak into
+  agent context.
+- **Reproducible deploys.** A fresh somora install on a new machine
+  starts from the same blank slate regardless of how the user's
+  personal Claude Code is set up.
+
+**Overriding**
+
+Set `CLAUDE_CONFIG_DIR` in `~/.somora/somora.env` (or shell env) to
+point at any directory you prefer — useful for shared multi-host
+setups, or when you want somora to read a hand-curated config tree.
+The auto-create + credentials-symlink still runs on whichever path
+you supply.
+
+**If the user hasn't run `claude login`**
+
+The credentials file at `~/.claude/.credentials.json` won't exist
+yet, and the bootstrap logs a warning instead of failing. Run
+`claude login` once interactively (any session), then restart
+somora — the symlink picks up on the next boot.
+
 ## Environment overrides
 
 | Var                              | Default                      | Purpose                                  |
@@ -506,6 +549,7 @@ Fine for single-window dev, no good for multi-agent daily use.
 | `SOMORA_TLS`                     | `0`                          | set to `1` by parent when serving HTTPS — MCP-child callers use it to switch to https:// |
 | `SOMORA_LOG_LEVEL`               | `info`                       | Pino log level                           |
 | `SOMORA_CLAUDE_BIN`              | `~/.local/bin/claude`        | Claude Code binary path                  |
+| `CLAUDE_CONFIG_DIR`              | `~/.somora/claude-home`      | Isolated state dir for claude-cli subprocesses (auto-created on boot, see "Isolated Claude config dir") |
 | `SOMORA_CODEX_BIN`               | `~/.npm-global/bin/codex`    | Codex CLI binary path                    |
 | `SOMORA_COMPACTION_TRIGGER_RATIO`| from config                  | override compaction trigger              |
 | `SOMORA_COMPACTION_SAFETY_PAIRS` | from config                  | override compaction cushion              |
