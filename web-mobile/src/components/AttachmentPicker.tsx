@@ -44,14 +44,18 @@ export function AttachmentPicker({ staged, onStage, onRemove, disabled }: Props)
     const files = e.target.files;
     if (!files || files.length === 0) return;
     setErr(null);
-    // Reset the input so the same file can be re-picked after removal.
+    // Snapshot file list FIRST, then reset the input — reassigning
+    // e.target.value before reading e.target.files empties the
+    // FileList we already have in some browsers.
+    const fileArray = Array.from(files);
     e.target.value = '';
-    for (const file of Array.from(files)) {
+    for (const file of fileArray) {
       setUploading((n) => n + 1);
       try {
         const ref = await uploadAttachment(file);
         onStage(ref);
       } catch (uploadErr) {
+        console.warn('[somora-mobile] attachment upload failed:', uploadErr);
         setErr(`Upload fehlgeschlagen: ${(uploadErr as Error).message}`);
       } finally {
         setUploading((n) => n - 1);
@@ -91,13 +95,6 @@ export function AttachmentPicker({ staged, onStage, onRemove, disabled }: Props)
         className={`input-btn attach-btn ${busy ? 'disabled' : ''}`}
         aria-label="Datei anhängen"
         title="Foto, Bild oder PDF anhängen"
-        onClick={() => {
-          // Diagnostic: track whether the label-tap reaches us at
-          // all. The browser then dispatches to the input as a
-          // separate event; if the picker never opens after this
-          // log fires, the bug is in the picker step, not the tap.
-          console.info('[somora-mobile] attach label tapped');
-        }}
       >
         {uploading > 0 ? <span className="mic-spinner" /> : '📎'}
       </label>
