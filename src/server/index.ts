@@ -2343,9 +2343,9 @@ const deepWorker = new DeepWorker({
       obsidian: config.obsidian,
     }),
 });
-deepWorker.start();
+void deepWorker.start();
 const lucidWorker = new LucidWorker({ config });
-lucidWorker.start();
+void lucidWorker.start();
 configureDreamRunTool({ deepWorker, lucidWorker });
 
 // WebSocket upgrade goes through a noServer wss so the same listener
