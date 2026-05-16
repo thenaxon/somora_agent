@@ -16,7 +16,7 @@
 // We render image thumbnails via `/attachments/<hash>` for instant
 // preview; non-image files just show a generic icon + filename.
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 
 export interface AttachmentRef {
   hash: string;
@@ -36,14 +36,9 @@ interface Props {
 }
 
 export function AttachmentPicker({ staged, onStage, onRemove, disabled }: Props) {
-  const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(0);
   const [err, setErr] = useState<string | null>(null);
-
-  const trigger = () => {
-    if (disabled || uploading > 0) return;
-    inputRef.current?.click();
-  };
+  const busy = Boolean(disabled) || uploading > 0;
 
   const onChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -64,29 +59,37 @@ export function AttachmentPicker({ staged, onStage, onRemove, disabled }: Props)
     }
   };
 
+  // iOS PWAs in standalone mode have long-standing trouble with
+  // `<input type="file">` opening the picker when triggered by a
+  // programmatic `.click()` on a `display:none` input. The reliable
+  // cross-platform pattern is a `<label>` that visually styles like
+  // a button and wraps the input — the label's native semantics
+  // proxy the tap to the input without any JS involvement, which
+  // works in Safari standalone mode where button.onClick → ref.click
+  // sometimes silently does nothing.
+  //
+  // `accept` covers images + PDFs; on iOS / Android the picker
+  // shows Camera / Photo Library / Files based on this list.
+  // The input is positioned off-screen-but-in-layout (instead of
+  // display:none) — iOS Safari treats display:none inputs as
+  // "not really there" and skips them.
   return (
     <>
-      {/* The hidden native input. `accept` covers images + PDFs; the
-          mobile file picker on iOS/Android exposes the right sources
-          (Camera, Photo Library, Files) based on this list. */}
-      <input
-        ref={inputRef}
-        type="file"
-        accept="image/*,application/pdf"
-        multiple
-        style={{ display: 'none' }}
-        onChange={onChange}
-      />
-      <button
-        type="button"
-        className="input-btn"
-        onClick={trigger}
-        disabled={disabled || uploading > 0}
+      <label
+        className={`input-btn attach-btn ${busy ? 'disabled' : ''}`}
         aria-label="Datei anhängen"
         title="Foto, Bild oder PDF anhängen"
       >
         {uploading > 0 ? <span className="mic-spinner" /> : '📎'}
-      </button>
+        <input
+          type="file"
+          accept="image/*,application/pdf"
+          multiple
+          disabled={busy}
+          onChange={onChange}
+          className="attach-input"
+        />
+      </label>
       {err && <div className="attach-err">{err}</div>}
       {staged.length > 0 && (
         <AttachmentStrip staged={staged} onRemove={onRemove} />

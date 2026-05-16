@@ -326,6 +326,32 @@ button { cursor: pointer; }
   to { transform: rotate(360deg); }
 }
 
+/* ── Attachment button (label wrapping native input) ──────────── */
+/* iOS PWA standalone mode mishandles `<input type="file">` triggered
+ * by JS .click() on display:none inputs. The native-label pattern
+ * sidesteps the bug — the label's tap natively proxies to the input
+ * without JS involvement. The input itself is positioned off-screen
+ * (not display:none) so iOS still considers it tap-eligible. */
+.attach-btn {
+  position: relative;
+  cursor: pointer;
+}
+.attach-btn.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.attach-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  /* Don't shrink the label's hit-area by sizing the input weirdly —
+   * we want the whole 44×44 circle to dispatch the tap. */
+}
+.attach-input::-webkit-file-upload-button { cursor: pointer; }
+
 /* ── Attachment strip ───────────────────────────────────────────── */
 
 .attach-strip {
