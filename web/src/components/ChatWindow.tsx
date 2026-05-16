@@ -126,6 +126,15 @@ export function ChatWindow({
   // during streaming must not flip it — that was the root of the
   // intermittent unpin bug.
   const pinnedRef = useRef(true);
+  // Suspends the pinned-autoscroll RAF chain while the user is mid-drag
+  // on a horizontally-scrolling element inside a bubble (a fenced code
+  // block's <pre> scrollbar, a wide <table>'s scrollbar). Each streaming
+  // delta otherwise re-runs scrollIntoView 3x via the RAF chain below,
+  // which on touch devices contributes to the "horizontal scrollbar
+  // won't stay where I dragged it" symptom (Luca 2026-05-16 report).
+  // Cleared 300ms after pointerup so a single rapid drag isn't broken
+  // by an intervening React commit.
+  const userScrollGuardRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Three-dots ••• menu state. We snapshot the anchor button's rect on
   // open so the popover can position itself without prop-drilling refs.
@@ -205,6 +214,10 @@ export function ChatWindow({
   // post-commit retry mitigates it for foreground sessions.
   useLayoutEffect(() => {
     if (!pinnedRef.current) return;
+    // Don't fight the user. If they're mid-drag on a code-block's
+    // horizontal scrollbar, the RAF chain below would clobber their
+    // pointer interaction every streaming delta.
+    if (userScrollGuardRef.current) return;
     const sentinel = bottomSentinelRef.current;
     if (sentinel) {
       sentinel.scrollIntoView({ block: 'end' });
@@ -214,9 +227,11 @@ export function ChatWindow({
     }
     let raf2 = 0;
     const raf1 = requestAnimationFrame(() => {
+      if (userScrollGuardRef.current) return;
       const s = bottomSentinelRef.current;
       if (s) s.scrollIntoView({ block: 'end' });
       raf2 = requestAnimationFrame(() => {
+        if (userScrollGuardRef.current) return;
         const s2 = bottomSentinelRef.current;
         if (s2) s2.scrollIntoView({ block: 'end' });
       });
@@ -226,6 +241,45 @@ export function ChatWindow({
       if (raf2) cancelAnimationFrame(raf2);
     };
   }, [chat.messages, chat.streaming, chat.thinking]);
+
+  // Set userScrollGuardRef while the user is dragging the horizontal
+  // scrollbar of a code block / table inside a bubble. Detection: a
+  // pointerdown landing on a <pre> or wide <table> element, cleared 300
+  // ms after pointerup so the next render commit doesn't fight a still-
+  // active drag. Listener lives on the scrollRef container (not document)
+  // so it doesn't fire on other windows' content.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      // Only guard when the gesture starts inside an element that owns
+      // horizontal scroll. closest('pre, table') covers both fenced
+      // code blocks and markdown tables (rehype-highlight wraps the
+      // pre, react-markdown emits tables in a scrollable wrapper).
+      if (!target.closest('pre, table')) return;
+      userScrollGuardRef.current = true;
+      if (releaseTimer) clearTimeout(releaseTimer);
+    };
+    const onUp = () => {
+      if (!userScrollGuardRef.current) return;
+      if (releaseTimer) clearTimeout(releaseTimer);
+      releaseTimer = setTimeout(() => {
+        userScrollGuardRef.current = false;
+      }, 300);
+    };
+    el.addEventListener('pointerdown', onDown, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+    return () => {
+      el.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      if (releaseTimer) clearTimeout(releaseTimer);
+    };
+  }, []);
 
   // Auto-focus the input on first focus AND on every mouse-click
   // into the chat (handler below). Effect-based focus alone wasn't

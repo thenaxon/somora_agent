@@ -664,15 +664,13 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .chat-msg-bubble p { margin: 6px 0; }
 .chat-msg-bubble p:first-child { margin-top: 0; }
 .chat-msg-bubble p:last-child { margin-bottom: 0; }
-/* Code blocks: keep horizontal scroll INSIDE the block so a long line
- * doesn't push the whole bubble out of the chat column. */
+/* Code blocks: scroll/wrap rules live in globals.css (single source of
+ * truth as of 2026-05-16 — two-file rules conflicted on word-break +
+ * white-space, leading to inline code overflowing the bubble per Luca
+ * 2026-05-16 report). Only the margin stays here as a desktop-chrome
+ * detail. */
 .chat-msg-bubble pre {
-  max-width: 100%;
-  overflow-x: auto;
   margin: 6px 0;
-}
-.chat-msg-bubble code {
-  word-break: break-all;
 }
 .chat-msg-name {
   font-size: 10px;

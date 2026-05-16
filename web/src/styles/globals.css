@@ -89,23 +89,57 @@ body {
  * break short replies ("Danke" → "Dank\ne"). Avatar already has
  * flex-shrink:0 from desktop.css so it stays its 26-px square. */
 
-/* Markdown-rendered code blocks inside assistant bubbles need to
- * scroll instead of pushing the bubble wider. */
-.chat-msg-bubble pre,
-.chat-msg-bubble code {
+/* Fenced code blocks (markdown ```...```) must scroll INSIDE the bubble
+ * instead of pushing the bubble past its 75% cap. White-space: pre keeps
+ * long single lines unbroken so syntax highlighting stays readable, and
+ * overflow-x: auto puts the scrollbar on the pre itself. overscroll-
+ * behavior-x: contain stops the scroll from chaining out to ancestors
+ * (which on touch devices can cause the page to pan and snap back). */
+.chat-msg-bubble pre {
   max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   white-space: pre;
   word-break: normal;
   overflow-wrap: normal;
 }
 .chat-msg-bubble pre code {
   white-space: pre;
+  overflow: visible;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+/* Inline code (single-backtick) — distinct rule from fenced code. Must
+ * wrap inside the bubble; otherwise a long inline token like a path or
+ * URL pushes the bubble past 75% width and the user sees a horizontal
+ * scrollbar that won't stay scrolled (Luca 2026-05-16 report). pre-wrap
+ * preserves the monospace look while allowing breaks at any point via
+ * overflow-wrap: anywhere. */
+.chat-msg-bubble :not(pre) > code {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  overflow: visible;
 }
 .chat-msg-bubble table {
   max-width: 100%;
   display: block;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+/* Belt for the bubble containment chain: react-markdown emits an
+ * unclassed wrapping <div> plus block-level <p>/<ul>/<ol>/<pre> children
+ * inside it. None of those get min-width:0 from the bubble's rules above,
+ * so an intrinsic-wide descendant (a <pre> with a long line, an inline
+ * code that somehow didn't wrap) could push the wrapper past the bubble's
+ * max-width:75% via min-content propagation. Force every descendant
+ * block in the bubble to cap at parent width. */
+.chat-msg-bubble > *,
+.chat-msg-bubble > * > * {
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* Additional status-dot variants on top of click-dummy's online/busy.
