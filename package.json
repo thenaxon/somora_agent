@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.05.16.18",
+  "version": "2026.05.16.19",
   "private": true,
   "type": "module",
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
@@ -17,6 +17,7 @@
     "docs",
     "templates",
     "web/dist",
+    "web-mobile/dist",
     "tsconfig.json",
     "package.json",
     "README.md",
@@ -28,7 +29,9 @@
     "dev:cli": "tsx src/cli/tui/index.tsx",
     "typecheck": "tsc --noEmit",
     "build:web": "cd web && npm ci && npm run build",
-    "prepack": "npm run build:web"
+    "build:mobile": "cd web-mobile && npm ci && npm run build",
+    "build:all": "npm run build:web && npm run build:mobile",
+    "prepack": "npm run build:all"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.128",
