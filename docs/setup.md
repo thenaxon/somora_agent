@@ -503,6 +503,28 @@ Omit the `server.tls` block entirely. somora reverts to HTTP/1.1 plain.
 You'll keep the 6-connection limit and lose secure-context features.
 Fine for single-window dev, no good for multi-agent daily use.
 
+## Mobile PWA — `/mobile`
+
+somora ships a second web client at `/mobile` aimed at phones. It's a
+PWA — installable to your home screen on iOS / Android, runs in
+standalone-app mode with no browser chrome. Minimal-scope by design:
+chat only, no tmux / no file viewer / no multi-window layout. See
+[mobile.md](mobile.md) for the full feature scope, install flow per
+platform, and configuration knobs.
+
+Installing:
+
+1. On the phone, with Tailscale connected, visit
+   `https://<your-host>.<your-tailnet>.ts.net:18737/mobile/` in Safari
+   (iOS) or Chrome (Android).
+2. **iOS:** share menu → "Add to Home Screen".
+3. **Android:** Chrome's install banner, or menu → "Install app".
+
+Build pipeline: `build:mobile` script alongside `build:web`, both run
+by `build:all` and triggered by the `prepack` hook on `npm pack`. The
+`somora update` flow picks this up automatically — no manual step. The
+release tarball always contains both `web/dist` and `web-mobile/dist`.
+
 ## Isolated Claude config dir
 
 somora-spawned claude-cli subprocesses run with their own config tree
