@@ -70,7 +70,10 @@ export async function ensureJobDir(agent: string, jobId: string): Promise<string
 }
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
-  const tmp = `${path}.tmp`;
+  // Per-call unique tmp so a `completeJob` and a `markJobKilled` racing
+  // on the same job meta.json don't share `<path>.tmp` and ENOENT each
+  // other. Audit 2026-05-16.
+  const tmp = `${path}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
   await writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
   await rename(tmp, path);
 }

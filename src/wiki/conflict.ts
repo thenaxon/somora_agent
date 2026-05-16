@@ -95,13 +95,19 @@ export async function writeIfNotExists(
   path: string,
   content: string,
 ): Promise<WriteOutcome> {
+  // Exclusive-create via O_EXCL (`wx` flag). Pre-audit-2026-05-16 this
+  // was stat-then-write — a classic TOCTOU window let two parallel
+  // wiki_create calls both pass the existence check and the second
+  // overwrite the first. EEXIST now maps to skipped_conflict.
   try {
-    const st = await stat(path);
-    return { kind: 'skipped_conflict', observedMtimeMs: st.mtimeMs, expectedMtimeMs: 0 };
+    await writeFile(path, content, { encoding: 'utf8', flag: 'wx' });
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+      const st = await stat(path);
+      return { kind: 'skipped_conflict', observedMtimeMs: st.mtimeMs, expectedMtimeMs: 0 };
+    }
+    throw err;
   }
-  await writeFile(path, content, 'utf8');
   const finalSt = await stat(path);
   return { kind: 'written', mtimeMs: finalSt.mtimeMs };
 }

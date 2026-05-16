@@ -94,6 +94,7 @@ import {
   registerTask,
   waitForTaskCompletion,
 } from './async-tasks.ts';
+import { reserveSpawnSlot, releaseSpawnSlot } from '../tools/agents/spawn.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 const streams = new Map<string, Set<Subscriber>>();
@@ -2002,6 +2003,14 @@ app.post('/spawn-async', async (c) => {
   const parent_agent = body.parent_agent ?? fromAgent ?? agent;
   const parent_session = body.parent_session ?? '?';
 
+  // Concurrency cap — same per-agent / global limits as the in-process
+  // spawn tool. Pre-audit 2026-05-16 this endpoint accepted unlimited
+  // parallel POSTs, letting an agent fan out way past 4 per-target.
+  const slotErr = reserveSpawnSlot(agent);
+  if (slotErr) {
+    return c.json({ error: slotErr }, 429);
+  }
+
   const task_id = newTaskId();
   registerTask({
     task_id,
@@ -2013,8 +2022,15 @@ app.post('/spawn-async', async (c) => {
   });
 
   // Fire-and-forget. Errors land in the task entry, not the HTTP
-  // response — the caller already got their task_id back.
+  // response — the caller already got their task_id back. Background
+  // acquires the per-session lock so two parallel /spawn-async POSTs
+  // on the same (agent, session) serialize like /chat/send does — pre-
+  // audit they interleaved JSONL events and corrupted engine state.
   void (async () => {
+    const release = await acquireSessionLock(agent, session, {
+      priority: 'agent',
+      turnId: task_id,
+    });
     try {
       const result = await runChatTurn({
         agent,
@@ -2031,6 +2047,9 @@ app.post('/spawn-async', async (c) => {
       completeTask(task_id, result);
     } catch (err) {
       failTask(task_id, (err as Error).message);
+    } finally {
+      release();
+      releaseSpawnSlot(agent);
     }
   })();
 

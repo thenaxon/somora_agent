@@ -135,9 +135,19 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGTERM');
-      // Give it 2s to clean up, then SIGKILL.
+      // Give it 2s to clean up, then SIGKILL. `child.killed` flips true
+      // as soon as the signal is *sent*, not when the process actually
+      // dies — so checking it skips the escalation for any command that
+      // traps/ignores SIGTERM. Use `exitCode === null` (process still
+      // running) instead. Audit 2026-05-16.
       setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL');
+        if (child.exitCode === null) {
+          try {
+            child.kill('SIGKILL');
+          } catch {
+            /* already dead */
+          }
+        }
       }, 2000);
     }, timeoutMs);
 

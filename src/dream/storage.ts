@@ -62,7 +62,11 @@ export async function writeDreamFile(
 ): Promise<{ path: string }> {
   await ensureDreamDirs(agent);
   const path = dreamFilePath(agent, file.meta.id, file.meta.status);
-  const tmp = `${path}.tmp`;
+  // Per-call unique tmp so parallel writes to the same dream (e.g.
+  // a `dream_apply` flight + a status transition triggered by REM)
+  // don't race on a shared `<path>.tmp` and ENOENT each other.
+  // Audit 2026-05-16.
+  const tmp = `${path}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
   const yaml = matter.stringify(file.body, file.meta as unknown as Record<string, unknown>);
   await writeFile(tmp, yaml, 'utf8');
   await rename(tmp, path);

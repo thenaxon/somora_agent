@@ -11,6 +11,15 @@ import type { ListEntry, ListResult, ReadResult, SearchResult, SearchHit, WriteR
 
 const READ_HARD_CAP = 200_000;
 
+/** Per-call unique remote tmp filename — same reasoning as local.ts'
+ *  uniqueTmpPath. Two parallel writes to the same remote path used to
+ *  share the fixed `.somora-tmp` and race on rename. */
+function uniqueRemoteTmp(remotePath: string): string {
+  const ts = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${remotePath}.somora-tmp.${process.pid}.${ts}.${rand}`;
+}
+
 /**
  * Resolve a remote path to an absolute server path. SFTP does NOT
  * expand `~` (unlike a login shell), so we resolve the SSH user's
@@ -163,12 +172,15 @@ export async function remoteWrite(args: {
     if (args.mode === 'append' && exists) {
       const existing = (await sftpReadFile(sftp, remotePath)).toString('utf8');
       const sep = existing.endsWith('\n') ? '' : '\n';
-      // Atomic via tmp+rename.
-      const tmp = `${remotePath}.somora-tmp`;
+      // Atomic via tmp+rename. Per-call unique tmp suffix — parallel
+      // writes to the same remote path would otherwise share the fixed
+      // `.somora-tmp` and one rename would race the other to ENOENT.
+      // Audit 2026-05-16.
+      const tmp = uniqueRemoteTmp(remotePath);
       await sftpWriteFile(sftp, tmp, existing + sep + args.content);
       await sftpRename(sftp, tmp, remotePath);
     } else {
-      const tmp = `${remotePath}.somora-tmp`;
+      const tmp = uniqueRemoteTmp(remotePath);
       await sftpWriteFile(sftp, tmp, args.content);
       await sftpRename(sftp, tmp, remotePath);
     }
@@ -224,7 +236,7 @@ export async function remotePatch(args: {
       updated = original.replace(args.oldString, args.newString);
       count = 1;
     }
-    const tmp = `${remotePath}.somora-tmp`;
+    const tmp = uniqueRemoteTmp(remotePath);
     await sftpWriteFile(sftp, tmp, updated);
     await sftpRename(sftp, tmp, remotePath);
     const newStats = await sftpStat(sftp, remotePath);

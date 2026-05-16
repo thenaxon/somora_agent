@@ -15,6 +15,17 @@ import type { Config } from '../../config/types.ts';
 
 const READ_HARD_CAP = 200_000; // chars
 
+/** Build a per-call unique temp filename next to the target. The previous
+ *  `<path>.somora-tmp-<pid>` was shared by every concurrent writer in the
+ *  same process (the MCP-child has one pid), so parallel file_write/
+ *  file_patch calls overwrote each other's tmp and the later rename
+ *  failed with ENOENT. Audit 2026-05-16. */
+function uniqueTmpPath(absolute: string): string {
+  const ts = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `${absolute}.somora-tmp.${process.pid}.${ts}.${rand}`;
+}
+
 export interface ReadResult {
   path: string;
   workspace_relative: string | null;
@@ -100,7 +111,7 @@ export async function localWrite(args: {
   } else {
     // Atomic write via tmp + rename — avoids torn writes if the process
     // dies mid-write.
-    const tmp = `${absolute}.somora-tmp-${process.pid}`;
+    const tmp = uniqueTmpPath(absolute);
     await writeFile(tmp, args.content, 'utf8');
     await rename(tmp, absolute);
   }
@@ -167,7 +178,7 @@ export async function localPatch(args: {
     count = 1;
   }
 
-  const tmp = `${absolute}.somora-tmp-${process.pid}`;
+  const tmp = uniqueTmpPath(absolute);
   await writeFile(tmp, updated, 'utf8');
   await rename(tmp, absolute);
 

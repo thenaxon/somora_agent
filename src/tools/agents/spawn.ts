@@ -33,6 +33,7 @@ import { logger } from '../../server/logger.ts';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
 import { runChatTurn } from '../../server/run-turn.ts';
+import { acquireSessionLock } from '../../server/session-queue.ts';
 import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
 import type { ToolDefinition } from '../types.ts';
 import { longTaskMaxMs } from './long-task-timeouts.ts';
@@ -45,6 +46,31 @@ const MAX_CONCURRENT_GLOBAL = 16;
 // somora process — sub-spawns across server restarts are fresh starts.
 const activeByAgent = new Map<string, number>();
 let activeGlobal = 0;
+
+/** Try to reserve a spawn slot. Returns null on success, or an error
+ *  message string on cap-rejection. Slot must be paired with
+ *  releaseSpawnSlot() — release in a finally so a thrown background
+ *  doesn't leak the counter. Same semantics for sync and async paths;
+ *  the bug audit 2026-05-16 found the async path skipped accounting
+ *  entirely, letting agents fan out way past the per-agent cap. */
+export function reserveSpawnSlot(targetPersona: string): string | null {
+  if (activeGlobal >= MAX_CONCURRENT_GLOBAL) {
+    return `spawn_subagent: global concurrent cap (${MAX_CONCURRENT_GLOBAL}) reached`;
+  }
+  const perAgent = activeByAgent.get(targetPersona) ?? 0;
+  if (perAgent >= MAX_CONCURRENT_PER_AGENT) {
+    return `spawn_subagent: per-agent concurrent cap for '${targetPersona}' (${MAX_CONCURRENT_PER_AGENT}) reached`;
+  }
+  activeByAgent.set(targetPersona, perAgent + 1);
+  activeGlobal++;
+  return null;
+}
+
+export function releaseSpawnSlot(targetPersona: string): void {
+  const cur = activeByAgent.get(targetPersona) ?? 0;
+  if (cur > 0) activeByAgent.set(targetPersona, cur - 1);
+  if (activeGlobal > 0) activeGlobal--;
+}
 
 interface SpawnDeps {
   chatTurnDeps: ChatTurnResolveDeps;
@@ -290,16 +316,13 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   if (!personaCheck) {
     throw new Error(`spawn_subagent: persona '${targetPersona}' not found`);
   }
-  // Concurrency
-  if (activeGlobal >= MAX_CONCURRENT_GLOBAL) {
-    throw new Error(`spawn_subagent: global concurrent cap (${MAX_CONCURRENT_GLOBAL}) reached`);
-  }
-  const perAgent = activeByAgent.get(targetPersona) ?? 0;
-  if (perAgent >= MAX_CONCURRENT_PER_AGENT) {
-    throw new Error(
-      `spawn_subagent: per-agent concurrent cap for '${targetPersona}' (${MAX_CONCURRENT_PER_AGENT}) reached`,
-    );
-  }
+  // Concurrency — slot must be held across the full lifetime of the
+  // sub-turn (sync + async both). reserveSpawnSlot also increments the
+  // counters atomically; the matching releaseSpawnSlot lives in the
+  // finally of each path (sync: line below; async: inside the
+  // background IIFE in spawnAsyncInProcess + the HTTP route).
+  const slotErr = reserveSpawnSlot(targetPersona);
+  if (slotErr) throw new Error(slotErr);
 
   // Slug carries ms + random suffix so parallel spawns in the same
   // millisecond don't collide (Math.random() collision in 4 lowercase
@@ -329,54 +352,61 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   // ─── async path (wait: false) ─────────────────────────────────────
   // Fire-and-forget: register the task, kick off the background work,
   // return the task_id immediately so the parent's turn can finish.
-  // Concurrency is still tracked but doesn't gate the immediate return.
+  // The slot reserved above is HELD by the background promise and
+  // released in its own finally — caller's `wait:false` is not the
+  // same as "free this slot".
   if (!args.wait) {
-    const task_id = injectedDeps
-      ? await spawnAsyncInProcess({
-          targetPersona,
-          sessionId,
-          taskText: task.task,
-          parentAgent: ctx.agent,
-          parentSession: ctx.session ?? '?',
-          parentDepth,
-          modelOverride: task.model,
-          maxRoundsOverride: task.maxRounds,
-        })
-      : await spawnAsyncViaHttp({
-          targetAgent: targetPersona,
-          targetSession: sessionId,
-          taskText: task.task,
-          parentAgent: ctx.agent,
-          parentSession: ctx.session ?? '?',
-          parentDepth,
-          modelOverride: task.model,
-          maxRoundsOverride: task.maxRounds,
-        });
-    logger.info({
-      msg: 'spawn_subagent.async_started',
-      task_id,
-      parent_agent: ctx.agent,
-      target: targetPersona,
-      session: sessionId,
-      depth: parentDepth + 1,
-      via: injectedDeps ? 'in-process' : 'http',
-    });
-    return {
-      ok: true,
-      wait: 'async',
-      task_id,
-      persona: targetPersona,
-      agent_kind: isSelfClone ? 'self-clone' : 'named',
-      session_slug: slug,
-      hint:
-        `Sub is running in the background. Check progress with subagent_status({ task_id: "${task_id}" }) ` +
-        `or fetch the answer with subagent_result({ task_id: "${task_id}" }).`,
-    };
+    try {
+      const task_id = injectedDeps
+        ? await spawnAsyncInProcess({
+            targetPersona,
+            sessionId,
+            taskText: task.task,
+            parentAgent: ctx.agent,
+            parentSession: ctx.session ?? '?',
+            parentDepth,
+            modelOverride: task.model,
+            maxRoundsOverride: task.maxRounds,
+          })
+        : await spawnAsyncViaHttp({
+            targetAgent: targetPersona,
+            targetSession: sessionId,
+            taskText: task.task,
+            parentAgent: ctx.agent,
+            parentSession: ctx.session ?? '?',
+            parentDepth,
+            modelOverride: task.model,
+            maxRoundsOverride: task.maxRounds,
+          });
+      logger.info({
+        msg: 'spawn_subagent.async_started',
+        task_id,
+        parent_agent: ctx.agent,
+        target: targetPersona,
+        session: sessionId,
+        depth: parentDepth + 1,
+        via: injectedDeps ? 'in-process' : 'http',
+      });
+      return {
+        ok: true,
+        wait: 'async',
+        task_id,
+        persona: targetPersona,
+        agent_kind: isSelfClone ? 'self-clone' : 'named',
+        session_slug: slug,
+        hint:
+          `Sub is running in the background. Check progress with subagent_status({ task_id: "${task_id}" }) ` +
+          `or fetch the answer with subagent_result({ task_id: "${task_id}" }).`,
+      };
+    } catch (err) {
+      // Slot release on synchronous setup failure — the background
+      // never actually started, so no IIFE finally will fire.
+      releaseSpawnSlot(targetPersona);
+      throw err;
+    }
   }
 
   // ─── sync path (wait: true) ───────────────────────────────────────
-  activeByAgent.set(targetPersona, perAgent + 1);
-  activeGlobal++;
   try {
     logger.info({
       msg: 'spawn_subagent.start_sync',
@@ -429,8 +459,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
       thinkingActive: result.thinkingActive,
     };
   } finally {
-    activeGlobal--;
-    activeByAgent.set(targetPersona, perAgent); // restore prior count
+    releaseSpawnSlot(targetPersona);
   }
 }
 
@@ -460,6 +489,13 @@ async function spawnAsyncInProcess(args: {
     started_at: Date.now(),
   });
   void (async () => {
+    // Hold the per-session lock so two parallel async-spawns on the
+    // same (agent, session) serialize like /chat/send does. Pre-audit
+    // 2026-05-16 they ran concurrently and interleaved JSONL events.
+    const release = await acquireSessionLock(args.targetPersona, args.sessionId, {
+      priority: 'agent',
+      turnId: task_id,
+    });
     try {
       const result = await runChatTurn({
         agent: args.targetPersona,
@@ -475,6 +511,11 @@ async function spawnAsyncInProcess(args: {
       completeTask(task_id, result);
     } catch (err) {
       failTask(task_id, (err as Error).message);
+    } finally {
+      release();
+      // Release the concurrency slot reserved by runOneSpawn — the
+      // background promise's lifetime IS the slot lifetime.
+      releaseSpawnSlot(args.targetPersona);
     }
   })();
   return task_id;
