@@ -3,12 +3,20 @@
 // Loads history on agent-switch so the chat surface shows the existing
 // conversation immediately, then streams new events on top.
 //
-// Mobile-data-friendly: at most one open SSE connection per app instance.
-// When the app is backgrounded the browser may pause the EventSource,
-// resuming it on foreground (we don't try to "catch up" missed events
-// — the next history fetch on agent-switch picks them up naturally,
-// and within a session the message stream is idempotent enough that
-// minor drops are acceptable).
+// SSE event protocol (must match what the server's createTurnSerializer
+// + run-turn.ts publish() actually emit — see ChatProvider in web/ for
+// the desktop equivalent):
+//   - 'chat' { state: 'delta', text }  — running cumulative text
+//   - 'chat' { state: 'final', text }  — final assistant text for the turn
+//   - 'agent' { phase: 'start'|'end', usage?: ... } — turn lifecycle
+//   - 'status' { msg }                  — error / connection messages
+//   - 'tool' { phase, tool, summary }   — tool call/result (ignored in
+//                                          default mobile view)
+//   - 'memory' { ... }                  — memory inject (ignored by default)
+//   - 'project' ...                     — project pin (ignored by mobile)
+//
+// User-message events are NOT broadcast over SSE — the user knows what
+// they sent (we add it optimistically client-side on send() success).
 
 import { useEffect, useRef, useState } from 'react';
 
@@ -25,39 +33,47 @@ interface HistoryEvent {
   kind: string;
   ts?: number;
   text?: string;
-  callId?: string;
-  tool?: string;
-  // tool_result + others — we discard for mobile-default view
 }
 
 export interface ChatStream {
   messages: ChatMessage[];
-  /** Currently streaming an agent reply? */
+  /** True from the moment the user sends until the server emits
+   *  agent.phase='end'. */
   streaming: boolean;
-  /** Send a user message via POST /chat/send. The streamed reply lands
-   *  back over the SSE subscription. */
+  /** Send a user message via POST /chat/send. Optimistically appends
+   *  to local messages so the bubble shows up without waiting for
+   *  the server. */
   send: (text: string) => Promise<void>;
   /** Last connection error if the SSE link dropped. Null when healthy. */
   connectionError: string | null;
+}
+
+let msgIdCounter = 0;
+function newId(prefix: string): string {
+  msgIdCounter++;
+  return `${prefix}-${Date.now()}-${msgIdCounter}`;
 }
 
 export function useChatStream(agent: string | null): ChatStream {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const streamingRef = useRef<{ id: string; text: string } | null>(null);
+  // Track the currently-streaming agent message id outside React state
+  // so successive deltas can find it without re-render races.
+  const streamingIdRef = useRef<string | null>(null);
+  const agentRef = useRef<string | null>(agent);
 
   useEffect(() => {
+    agentRef.current = agent;
     if (!agent) return;
 
     let cancelled = false;
     setMessages([]);
     setStreaming(false);
-    streamingRef.current = null;
+    setConnectionError(null);
+    streamingIdRef.current = null;
 
-    // 1. Hydrate from /chat/history (most-recent N events). Server
-    //    paginates; for mobile we just take the default tail and trust
-    //    it's enough — long-history scroll-back can be a future polish.
+    // 1. Hydrate from /chat/history (most-recent N events).
     void fetch(
       `/chat/history?agent=${encodeURIComponent(agent)}&session=main`,
     )
@@ -79,113 +95,112 @@ export function useChatStream(agent: string | null): ChatStream {
     const url = `/chat/stream?agent=${encodeURIComponent(agent)}&session=main`;
     const es = new EventSource(url);
 
-    es.addEventListener('open', () => {
+    const onOpen = () => {
       if (cancelled) return;
       setConnectionError(null);
-    });
-
-    es.addEventListener('error', () => {
+    };
+    const onError = () => {
       if (cancelled) return;
-      // EventSource auto-reconnects; surface only if it stays down by
-      // setting connectionError. Browser's default is to retry every
-      // few seconds, which is fine over Tailscale.
       setConnectionError('Verbindung wackelt — versuche neu zu verbinden…');
-    });
+    };
 
-    const handleEvent = (kind: string, data: string) => {
-      let parsed: Record<string, unknown> | null = null;
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        return;
-      }
-      if (!parsed) return;
+    const onChat = (e: MessageEvent) => {
+      let d: { state?: string; text?: string } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.text !== 'string') return;
+      const text = d.text;
 
-      if (kind === 'user_message') {
-        const text = typeof parsed.text === 'string' ? parsed.text : '';
-        const ts = typeof parsed.ts === 'number' ? parsed.ts : Date.now();
-        setMessages((prev) => [
-          ...prev,
-          { id: `u-${ts}-${Math.random().toString(36).slice(2, 6)}`, role: 'user', text, ts },
-        ]);
-        return;
-      }
-
-      if (kind === 'assistant_delta') {
-        const text = typeof parsed.text === 'string' ? parsed.text : '';
-        const ts = typeof parsed.ts === 'number' ? parsed.ts : Date.now();
-        const cur = streamingRef.current;
-        if (!cur) {
-          const id = `a-${ts}-${Math.random().toString(36).slice(2, 6)}`;
-          streamingRef.current = { id, text };
-          setStreaming(true);
-          setMessages((prev) => [
-            ...prev,
-            { id, role: 'agent', text, ts, streaming: true },
-          ]);
-        } else {
-          cur.text = text;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === cur.id ? { ...m, text } : m)),
-          );
+      if (d.state === 'delta') {
+        let id = streamingIdRef.current;
+        if (!id) {
+          id = newId('a');
+          streamingIdRef.current = id;
         }
-        return;
-      }
-
-      if (kind === 'assistant_message') {
-        const text = typeof parsed.text === 'string' ? parsed.text : '';
-        const ts = typeof parsed.ts === 'number' ? parsed.ts : Date.now();
-        const cur = streamingRef.current;
-        if (cur) {
-          // Flatten the streaming bubble into the final message
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === cur.id ? { ...m, text, streaming: false } : m,
-            ),
-          );
-          streamingRef.current = null;
-        } else {
-          setMessages((prev) => [
-            ...prev,
-            { id: `a-${ts}-${Math.random().toString(36).slice(2, 6)}`, role: 'agent', text, ts },
-          ]);
-        }
-        return;
-      }
-
-      if (kind === 'turn_end') {
-        const cur = streamingRef.current;
-        if (cur) {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === cur.id ? { ...m, streaming: false } : m)),
-          );
-          streamingRef.current = null;
-        }
-        setStreaming(false);
+        const trackedId = id;
+        setMessages((prev) => {
+          const filtered = prev.filter((m) => m.id !== trackedId);
+          return [
+            ...filtered,
+            { id: trackedId, role: 'agent', ts: Date.now(), text, streaming: true },
+          ];
+        });
+      } else if (d.state === 'final') {
+        const id = streamingIdRef.current ?? newId('a');
+        streamingIdRef.current = null;
+        setMessages((prev) => {
+          const filtered = prev.filter((m) => m.id !== id);
+          return [
+            ...filtered,
+            { id, role: 'agent', ts: Date.now(), text },
+          ];
+        });
       }
     };
 
-    const handlers = ['user_message', 'assistant_delta', 'assistant_message', 'turn_end'];
-    const listeners = handlers.map((kind) => {
-      const fn = (e: MessageEvent) => handleEvent(kind, e.data);
-      es.addEventListener(kind, fn);
-      return [kind, fn] as const;
-    });
+    const onAgent = (e: MessageEvent) => {
+      let d: { phase?: string } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d) return;
+      if (d.phase === 'start') {
+        setStreaming(true);
+      } else if (d.phase === 'end') {
+        setStreaming(false);
+        streamingIdRef.current = null;
+      }
+    };
+
+    const onStatus = (e: MessageEvent) => {
+      let d: { msg?: string } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || !d.msg) return;
+      if (d.msg.startsWith('error') || d.msg.startsWith('turn failed')) {
+        setConnectionError(d.msg);
+        setStreaming(false);
+        streamingIdRef.current = null;
+      }
+    };
+
+    es.addEventListener('open', onOpen);
+    es.addEventListener('error', onError);
+    es.addEventListener('chat', onChat);
+    es.addEventListener('agent', onAgent);
+    es.addEventListener('status', onStatus);
 
     return () => {
       cancelled = true;
-      for (const [kind, fn] of listeners) es.removeEventListener(kind, fn);
+      es.removeEventListener('open', onOpen);
+      es.removeEventListener('error', onError);
+      es.removeEventListener('chat', onChat);
+      es.removeEventListener('agent', onAgent);
+      es.removeEventListener('status', onStatus);
       es.close();
     };
   }, [agent]);
 
   const send = async (text: string) => {
     if (!agent) return;
-    await fetch('/chat/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent, session: 'main', text }),
-    });
+    // Optimistically add the user's message so the bubble appears
+    // instantly — the server doesn't broadcast user_message back to
+    // SSE subscribers, so without this the message would only show
+    // up on the next history-reload.
+    const userMsg: ChatMessage = {
+      id: newId('u'),
+      role: 'user',
+      ts: Date.now(),
+      text,
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setStreaming(true);
+    try {
+      await fetch('/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agent, session: 'main', text }),
+      });
+    } catch (err) {
+      console.warn('[somora-mobile] /chat/send failed:', err);
+      setStreaming(false);
+    }
   };
 
   return { messages, streaming, send, connectionError };
@@ -194,7 +209,7 @@ export function useChatStream(agent: string | null): ChatStream {
 function eventToMessage(ev: HistoryEvent): ChatMessage | null {
   if (ev.kind === 'user_message') {
     return {
-      id: `u-${ev.ts ?? 0}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `u-${ev.ts ?? 0}-${msgIdCounter++}`,
       role: 'user',
       text: ev.text ?? '',
       ts: ev.ts ?? 0,
@@ -202,7 +217,7 @@ function eventToMessage(ev: HistoryEvent): ChatMessage | null {
   }
   if (ev.kind === 'assistant_message') {
     return {
-      id: `a-${ev.ts ?? 0}-${Math.random().toString(36).slice(2, 6)}`,
+      id: `a-${ev.ts ?? 0}-${msgIdCounter++}`,
       role: 'agent',
       text: ev.text ?? '',
       ts: ev.ts ?? 0,
