@@ -22,6 +22,7 @@ import {
   getMemoryManager,
   shutdownMemoryRegistry,
 } from '../memory/registry.ts';
+import { setupClaudeConfigDir } from './claude-config-dir.ts';
 import { getEffectiveEnv } from './env.ts';
 import { loadSomoraEnvFile } from './env-file.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
@@ -225,6 +226,12 @@ if (envFileResult.exists) {
     logger.warn({ msg: 'env_file.permissions', warning: envFileResult.permissionWarning });
   }
 }
+
+// Bootstrap the isolated claude-cli config dir BEFORE any engine code
+// loads. resolveClaudeBin() etc. are module-level consts that snapshot
+// process.env at import time; we need CLAUDE_CONFIG_DIR to be present
+// before those imports trigger.
+setupClaudeConfigDir();
 
 let config: Config;
 try {
