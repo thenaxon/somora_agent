@@ -34,93 +34,49 @@ import { codexCliReasoningArgs } from './thinking-params.ts';
 const ENGINE = 'codex-cli';
 
 // codex feature flags we explicitly disable for somora sessions (DECISION
-// #23). These are codex's default-on built-in tools that would otherwise
-// give the model filesystem read, file editing, web search, browser
-// automation, JS execution, and image generation — all way outside what
-// a somora agent should be able to do.
+// #23). These are codex's stable, default-on built-in tools that would
+// otherwise give the model filesystem read, file editing, web search,
+// browser automation, image generation, and host-config exfiltration —
+// all way outside what a somora agent should be able to do.
 //
-// The somora-memory MCP server is unaffected because MCP tool dispatch
-// is infrastructure (`tool_call_mcp_elicitation`), not gated by these
-// feature flags.
+// Scope of this list: codex-CLI-LOCAL surface only. The OpenAI Responses
+// API additionally injects a server-side built-in tool set based on the
+// model preset (codex-* family → `web.run`, `functions.apply_patch`,
+// `functions.update_plan`, `functions.view_image`, `multi_tool_use.*`,
+// etc.). Those live in OpenAI's `RESERVED_RESPONSES_NAMESPACES` and are
+// NOT controllable via codex feature flags — they require config-level
+// overrides (see -c web_search="disabled" + tools.view_image=false in
+// the spawn block below) or a model-preset change. Issue openai/codex#6049
+// tracks the upstream gap; somora can only do its half here.
 //
-// Maintained as a list of feature names from `codex features list`. If
-// the codex binary version changes and a feature gets renamed, the
-// `--disable <feature>` flag for the missing name is silently ignored,
-// so this list is forward-compatible (no hard break) but might miss
-// newly-introduced tools — re-audit with `codex features list` when
-// upgrading codex.
-// Source: `codex features list`. Disabled = features.<name>=false.
-// Strategy: somora is "all-own-tools", so we disable EVERY codex
-// built-in feature that can expose a tool surface or pull host context.
-// We keep only the meta-features that route MCP tools to/from the
-// model — without those, our somora-memory tools wouldn't reach the
-// model at all.
-//
-// Re-audit whenever codex is upgraded. `codex features list` shows the
-// authoritative current set; `--disable <name>` is silently ignored if
-// the feature was renamed/removed, so the list is forward-tolerant but
-// may miss newly-introduced tools. CI would be ideal here later.
+// Audit policy: list contains ONLY features that are currently `stable`
+// AND `default true` per `codex features list`. Stale entries (removed /
+// deprecated / under-development) are silently no-ops and were pruned
+// 2026-05-16 — they cluttered without effect. Re-audit on every codex
+// upgrade: any new stable+default-true entry that exposes a tool surface
+// or host-config leak goes here.
 const CODEX_DISABLED_FEATURES = [
-  // ── Direct system access ──
-  'shell_tool', // direct shell command execution
-  'unified_exec', // newer exec mechanism
-  'shell_zsh_fork', // shell variant
-  'shell_snapshot', // captures host shell env into prompt — context leak
-  // ── File editing ──
-  'apply_patch_freeform', // free-form file editing
-  'apply_patch_streaming_events', // streaming patch events
-  // ── External integrations ──
-  'browser_use', // browser automation
-  'in_app_browser', // in-app browser
-  'computer_use', // desktop / screen control
-  'image_generation', // image generation
-  'js_repl', // arbitrary JS execution
-  'js_repl_tools_only', // partial js_repl variant
-  'apps', // codex "apps" tool
-  // ── Web search variants (somora will provide its own via Brave API) ──
-  'web_search_cached',
-  'web_search_request',
-  'search_tool',
-  // ── Sub-agent / multi-agent ──
-  'multi_agent', // sub-agent spawning
-  'multi_agent_v2',
-  'enable_fanout', // parallel sub-runs
+  // Direct system access
+  'shell_tool',
+  'unified_exec',
+  'shell_snapshot', // captures host shell env into prompt
+  // External integrations
+  'browser_use',
+  'browser_use_external', // added 2026-05-16 — was leaking `web.run` to model
+  'in_app_browser',
+  'computer_use',
+  'image_generation',
+  'apps', // connector/apps surface
+  // Sub-agent / multi-agent (somora has its own spawn_subagent)
+  'multi_agent',
   'collaboration_modes',
-  // ── Context-leak vectors (pull host config into prompt) ──
+  // Context-leak vectors (pull host config into prompt)
   'personality', // <personality_spec> from ~/.codex migration files
-  'memories', // auto-memory from ~/.codex/memories/
-  'child_agents_md', // walk-up of nested AGENTS.md files
-  // ── Codex-side hooks / plugins / skills ──
-  'codex_hooks', // user-defined hooks; could exec arbitrary scripts
-  'plugins', // codex plugin system
-  'remote_plugin',
-  'skill_env_var_dependency_prompt',
-  // ── Code-mode / artifact / chronicle (codex internal workflows) ──
-  'code_mode',
-  'code_mode_only',
-  'artifact',
-  'chronicle',
-  'codex_git_commit',
-  // ── Realtime / remote ──
-  'realtime_conversation',
-  'remote_control',
-  'remote_models',
-  // ── Misc behavior toggles we don't want flipping under us ──
-  'undo',
-  'fast_mode', // codex's "fast mode" picks a different model — somora picks models
-  // 'general_analytics' — REMOVED 2026-05-05 after codex 0.128 dropped the
-  // flag from its catalog entirely. Older codex versions accepted it as a
-  // "removed but still in catalog" no-op; 0.128 errors with `Unknown feature
-  // flag` which fail-stopped every codex turn (silently masked by our
-  // fallback to claude-cli during the maintenance-sweep smoke test).
-  // Codex's analytics behavior in 0.128+ is no longer controlled by this
-  // flag — re-evaluate via `codex features list` if a privacy-relevant
-  // alternative surfaces.
-  'request_permissions_tool',
-  'request_rule',
-  'default_mode_request_user_input',
-  'image_detail_original',
-  'tool_search_always_defer_mcp_tools', // would re-route our mcp tools through codex meta-search
+  // Codex-side hooks / plugins (could exec arbitrary scripts)
+  'hooks',
+  'plugins',
+  // Misc behavior toggles we don't want flipping under us
+  'fast_mode', // picks a different model — somora picks models
   'unavailable_dummy_tools',
   //
   // KEPT enabled (intentionally NOT in this list) because somora's
@@ -267,6 +223,19 @@ export const codexCliEngine: AgentEngine = {
     //                          load, but that's an explicit, known location.
     args.push('--ignore-user-config', '--ignore-rules');
     args.push('-c', 'project_root_markers=[]');
+    // Server-side tool-surface lock-down. These config keys kill codex-CLI
+    // built-ins that aren't gated by the feature catalog above:
+    //   web_search="disabled"   → hides `web.run` (hosted web-search tool).
+    //                             Without this, the model sees web.run even
+    //                             with browser_use* disabled.
+    //   tools.view_image=false  → hides `functions.view_image`.
+    // Other `functions.*` namespaces (apply_patch, update_plan,
+    // request_user_input, list_mcp_resources) are server-injected by the
+    // Responses API based on the codex-* model preset and cannot be
+    // suppressed from the codex CLI side — issue openai/codex#6049.
+    // somora-memory's web_search/file_patch/etc. are the intended path.
+    args.push('-c', 'web_search="disabled"');
+    args.push('-c', 'tools.view_image=false');
     // Cross-engine thinking knob → codex's TOML override via shared helper.
     // Helper guards on 'reasoning' capability + maps 'off' → 'minimal'
     // (codex has no true off-switch for reasoning models).
@@ -544,10 +513,19 @@ export const codexCliEngine: AgentEngine = {
                 ...(isErr ? { error: 'tool error' } : {}),
               };
             } else {
-              logger.debug({
+              // Unknown item type — surface as warn so future codex / Responses-API
+              // tool-surface additions don't go silent. Pre-2026-05-16 this was
+              // `debug`, which let `web.run` leak unnoticed for a day. Item-level
+              // events are concrete activities (agent_message, mcp_tool_call,
+              // tool_use, tool_result) so unknowns here almost always mean a new
+              // tool plane we need to react to. Keep `engine.unknown_event` (top
+              // level) at debug — those include reasoning-trace noise.
+              logger.warn({
                 msg: 'engine.unknown_item',
                 engine: ENGINE,
                 itemType,
+                itemKeys: Object.keys(item).slice(0, 16),
+                hint: 'codex emitted item type we do not handle — check for new built-in tool surface',
               });
             }
           } else if (ev.type === 'turn.completed') {
