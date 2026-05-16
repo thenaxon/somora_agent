@@ -399,6 +399,22 @@ wiki:
 Per-agent REM (session→memory extraction) is configured in each
 `agent.yaml`, not here — see [agents.md](agents.md).
 
+**Scheduler state files** — Deep and Lucid persist their cadence
+to `~/.somora/dream-state/{deep,lucid}.json` so server restarts
+don't reset the timer. Each file holds the last started / completed /
+failed timestamps; the worker reads these at boot and schedules the
+next run at `lastCompletedAt + interval`, with a 60 s startup grace
+when the run is already overdue. Fresh installs get an `lastCompletedAt
+= now` anchor on first boot so restart-storms before the first auto-
+fire don't starve out the schedule.
+
+You normally never touch these files. If you want to **force the
+next auto-Deep/Lucid to fire sooner** without manually triggering
+it, edit `lastCompletedAt` to an older timestamp (or delete the
+file — the bootstrap anchor is rewritten on the next start). If
+you want to **pause auto-firing** without disabling the worker,
+set `lastCompletedAt` to a future timestamp.
+
 ## HTTPS (Tailscale) — required for the web client at scale
 
 The web client opens **one persistent SSE connection per chat window**.
