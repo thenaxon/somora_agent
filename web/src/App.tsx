@@ -31,6 +31,14 @@ function useGlobalMarkdownLinkOpener(): void {
     const handler = (event: MouseEvent) => {
       if (event.button !== 0) return;
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      // Bail out if the user just finished selecting text. Without this
+      // check we hijack every mouseup landing on a link — including the
+      // release-after-drag that committed a selection across the link's
+      // text. preventDefault + window.open would then dump the just-
+      // selected text and pop a tab the user did not want. Report:
+      // 2026-05-15_web-client-text-selection-broken.md
+      const sel = window.getSelection?.();
+      if (sel && sel.toString().length > 0) return;
       const target = event.target as HTMLElement | null;
       if (!target || typeof target.closest !== 'function') return;
       const anchor = target.closest('a');

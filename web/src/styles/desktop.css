@@ -603,6 +603,21 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
    * report; Naxon 2026-05-13 link visibility report. */
   overflow-wrap: anywhere;
   word-break: break-word;
+  /* Explicit re-assert of `user-select: text` so descendants always
+   * pick up the selectable behavior. The global `html, body, #root`
+   * rule sets it to `none` (chrome stays unselectable so window-frame
+   * drags don't accidentally mark text), and the `.chat-body` rule
+   * re-enables it for the message area. Setting it again here is
+   * belt-and-suspenders: some browsers don't propagate the cascade
+   * reliably through deeply nested react-markdown children, and we've
+   * seen "Geduldsspiel"-style sporadic failures pre-fix. Report:
+   * 2026-05-15_web-client-text-selection-broken.md */
+  user-select: text;
+  -webkit-user-select: text;
+}
+.chat-msg-bubble * {
+  user-select: inherit;
+  -webkit-user-select: inherit;
 }
 .chat-msg.agent .chat-msg-bubble {
   background: var(--agent-tint-strong, var(--bg-2));
