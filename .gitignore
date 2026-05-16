@@ -31,6 +31,14 @@ web/.vite
 web/.vite-cache
 web/tsconfig.tsbuildinfo
 
+# Mobile PWA client (somora-web-mobile) build + cache artefacts.
+# Sources under web-mobile/ itself ARE tracked.
+web-mobile/node_modules
+web-mobile/dist
+web-mobile/.vite
+web-mobile/.vite-cache
+web-mobile/tsconfig.tsbuildinfo
+
 # Internal docs that used to live here — moved to private/docs-archive/
 # in the public release. Kept ignored in case anything re-creates them
 # under docs/.
