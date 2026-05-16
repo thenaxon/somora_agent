@@ -1,6 +1,17 @@
 # Example somora config. Real config lives at ~/.somora/config.yaml
-# (created with sane defaults on first server start). API keys go in plain
-# text in the real file — that file stays local, never committed.
+# (created with sane defaults on first server start).
+#
+# Secrets:
+# - Subscription engines (claude-cli, codex-cli) do not need any keys
+#   here — they authenticate via their CLI's own `login` flow.
+# - OpenAI-compatible providers (custom endpoints, OpenRouter, oMLX,
+#   Ollama, …) read `apiKey` directly from this file. The recommended
+#   posture is to put the keys here in plain text — ~/.somora/config.yaml
+#   stays under your home, is never committed, and is the same file
+#   somora itself reads.
+# - For skills (CLI tools an agent shells out to via `exec`), credentials
+#   go in env vars on the somora service (systemd EnvironmentFile, etc.)
+#   — skill subprocesses don't read this file. See docs/skills.md.
 #
 # Provider names are free-form keys. Pick whatever's memorable for you:
 # 'anthropic', 'ollama', 'lmstudio', 'home-gpu', 'pi-edge', etc.

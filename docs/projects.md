@@ -19,7 +19,7 @@ files actually live, plus some metadata (name, color, description, tags).
 When you pin a project to a chat session, that manifest gets injected
 into the agent's system prompt so the agent has the canonical list of
 "things that belong to this conversation". The agent still uses its
-regular tools (`file_read`, `obsidian_get`, `web_fetch`, `resource_*`)
+regular tools (`file_read`, `memory_get`, `web_fetch`, `resource_*`)
 to actually open any of those pointers — projects just answer the
 question *which pointers*.
 

@@ -78,9 +78,9 @@ quoting issues, works the same locally and over SSH (SFTP)." This is
 deliberate policy: in cross-engine tool design, the orchestrator
 prefers tools whose description tells it when to pick them.
 
-When the future `exec` tool lands, its description will mirror this in
-reverse: "use file_* for read/write/patch/search; exec is for things
-the file tools can't do (run a build, start a server, etc.)".
+The `exec` tool mirrors this in reverse: "use file_* for
+read/write/patch/search; exec is for things the file tools can't do
+(run a build, start a server, etc.)".
 
 ## Multimodal: `file_read` polymorph + `analyze_file`
 
@@ -234,9 +234,7 @@ Out of scope for v1. Every uploaded file lands in `~/.somora/
 attachments/<hash>.<ext>` and stays. After heavy use, orphaned
 files (referenced only by JSONL sessions that have since been reset
 or deleted) accumulate. Acceptable trade-off: disk is cheap, single-
-user setup. Future plan: a sweep that scans all session JSONLs,
-collects referenced hashes, and deletes the rest. Track in
-`private/FUTURE.md`.
+user setup. A sweep tool may land later.
 
 ## Limits
 

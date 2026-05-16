@@ -34,9 +34,8 @@ resources:
 ## Authentication
 
 Private-key only. No passwords, no agent-forwarding (deliberate
-security stance — see `research/tool-architecture.md`). The keyfile is
-loaded once at first connection and held in process memory for the
-pool's lifetime.
+security stance). The keyfile is loaded once at first connection and
+held in process memory for the pool's lifetime.
 
 `keyPath` resolves `~` to `$HOME` on the somora server.
 

@@ -52,33 +52,149 @@ What makes it different:
 ## Architecture at a glance
 
 ```
-[your terminal / browser] ─► CLI/TUI/Web ─► HTTP+SSE / WebSocket ─► somora-server ─► engine adapter
-                                                                          │              ├─ claude-cli       (Claude subscription)
-                                                                          │              ├─ codex-cli        (ChatGPT subscription)
-                                                                          │              └─ openai-compatible (any /v1/chat/completions)
-                                                                          │
-                                                                          ├─ Memory layer (per-agent)
-                                                                          │   ~/.somora/agents/<name>/memory/*.md
-                                                                          │   indexed: SQLite + sqlite-vec + FTS5 (hybrid retrieval)
-                                                                          │
-                                                                          ├─ Wiki layer (shared, optional)
-                                                                          │   <obsidian-vault>/<wiki-subfolder>/
-                                                                          │   personen/ projekte/ wissen/ orte/ …
-                                                                          │   index.md auto-regenerated, monthly logs
-                                                                          │
-                                                                          ├─ Attachments (content-addressed)
-                                                                          │   ~/.somora/attachments/<sha256>.<ext>
-                                                                          │
-                                                                          ├─ Tool registry
-                                                                          │   memory_*, dream_*, file_*, exec, tmux, web_*,
-                                                                          │   spawn_subagent, somora_docs_*, skill, resource_*,
-                                                                          │   time_now, analyze_file
-                                                                          │
-                                                                          └─ Three-phase dream system
-                                                                              REM   (per-agent, session → memory inbox)
-                                                                              Deep  (platform, memory inbox → shared wiki)
-                                                                              Lucid (platform, wiki cleanup)
+   you / your terminal / browser
+         │
+   CLI / TUI / Web / Mobile
+         │
+   HTTP + SSE / WebSocket
+         │
+         ▼
+  somora-server
+   │
+   ├─ Engine adapters
+   │    ├─ claude-cli         (Claude subscription)
+   │    ├─ codex-cli          (ChatGPT subscription)
+   │    └─ openai-compatible  (any /v1/chat/completions)
+   │
+   ├─ Memory layer (per-agent)
+   │    ~/.somora/agents/<name>/memory/*.md
+   │    indexed: SQLite + sqlite-vec + FTS5 (hybrid retrieval)
+   │
+   ├─ Wiki layer (shared, optional)
+   │    <obsidian-vault>/<wiki-subfolder>/
+   │    personen/ projekte/ wissen/ orte/ …
+   │    index.md auto-regenerated, monthly logs
+   │
+   ├─ Attachments (content-addressed)
+   │    ~/.somora/attachments/<sha256>.<ext>
+   │
+   ├─ Tool registry
+   │    memory_*, dream_*, file_*, exec, tmux, web_*,
+   │    spawn_subagent, somora_docs_*, skill, resource_*,
+   │    time_now, analyze_file
+   │
+   └─ Three-phase dream system
+        REM   (per-agent, session → memory inbox)
+        Deep  (platform, memory inbox → shared wiki)
+        Lucid (platform, wiki cleanup)
 ```
+
+## Requirements
+
+Hard:
+
+- **Node ≥20** — uses native `node:sqlite` plus `better-sqlite3`.
+- **tmux** — required by the `tmux` tool (long-lived terminal sessions for
+  agents) and by the web tmux app. Install via your package manager.
+- **At least one LLM backend.** Pick what you have:
+  - Claude Code binary (Claude subscription) — for `claude-cli` engine.
+  - Codex CLI binary (ChatGPT subscription) — for `codex-cli` engine.
+  - Any OpenAI-compatible HTTP server — Ollama, LM Studio, vLLM, oMLX, OpenRouter, etc.
+
+Optional:
+
+- **Obsidian vault** — for the wiki + read-only vault recall. Without it
+  somora still works (memory inbox + per-agent storage), you just lose the
+  shared long-term layer.
+- **Tailscale** — strongly recommended for the web client. HTTPS via
+  `tailscale cert` lifts the browser's 6-connection limit (HTTP/2 multiplex)
+  and unlocks secure-context-only browser APIs (microphone, screen-share,
+  clipboard, push). Without it the web client is single-window-only.
+- **ripgrep (`rg`)** — required for `file_search`. Install via your
+  package manager.
+
+See [docs/setup.md](docs/setup.md) for the full install walkthrough,
+including step-by-step prereq setup.
+
+## Quickstart
+
+> somora is currently installed **from source** — there is no npm
+> registry release yet. The `npm pack` + tarball install below is the
+> supported install path; updates come via `somora update`.
+
+```bash
+# 1. Install prereqs (see docs/setup.md for details per OS)
+sudo apt install tmux ripgrep         # Debian/Ubuntu
+# brew install tmux ripgrep           # macOS
+
+# 2. Install at least one LLM backend (pick one or more):
+npm install -g @anthropic-ai/claude-code  &&  claude login
+npm install -g @openai/codex              &&  codex login
+# (for local models: install Ollama / LM Studio / oMLX separately)
+
+# 3. Install somora from source
+#    `npm pack` triggers the prepack hook → builds web/dist, then emits
+#    a tarball. Installing from the tarball is the reliable path; bare
+#    `npm install -g .` falls into npm's link semantics on some setups
+#    and would leave a broken install.
+git clone https://github.com/thenaxon/somora_agent.git somora
+cd somora
+npm install -g "$(npm pack | tail -1)"
+
+# 4. First-run setup + start
+somora init                    # creates ~/.somora/ and registers the systemd unit
+somora server start            # starts the unit (auto-starts on login)
+somora tui                     # default agent is created on first run
+```
+
+First run creates `~/.somora/config.yaml` and a default agent. For
+the web client + provider configuration + Tailscale HTTPS setup, see
+[docs/setup.md](docs/setup.md) — full step-by-step.
+
+Want to hack on somora itself? See the [contributor section in docs/setup.md](docs/setup.md#develop-from-a-checkout-contributors).
+
+## Status
+
+Active development. Open to early testers. Core surface (memory + wiki +
+dream-system + web + tmux + mobile) is feature-complete and used daily:
+
+| Capability | claude-cli | codex-cli | openai-compatible |
+|---|:-:|:-:|:-:|
+| Chat (streaming) | ✓ | ✓ | ✓ |
+| Memory auto-injection | ✓ | ✓ | ✓ |
+| Memory tools (read + write) | ✓ via MCP | ✓ via MCP | ✓ in-process |
+| Wiki layer (shared) | ✓ | ✓ | ✓ |
+| Three-phase dreams | ✓ | ✓ | ✓ |
+| Tool surface (40+ tools) | ✓ via MCP | ✓ via MCP | ✓ in-process |
+| Skills (markdown how-tos) | ✓ | ✓ | ✓ |
+| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | ✓ image; PDF native or rasterized per provider |
+| Sub-agent spawning | ✓ | ✓ | ✓ |
+| SSH-resource exec | ✓ | ✓ | ✓ |
+
+## Clients
+
+Four first-party clients, all hitting the same local server:
+
+| Client | How to launch | Use |
+|---|---|---|
+| **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
+| **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
+| **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
+
+### TUI — `somora tui`
+
+![somora TUI screenshot — terminal multi-agent chat with memory injection and tool calls](docs/images/somora-tui.png)
+
+### Web — browser desktop
+
+![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web.png)
+
+### Mobile — installable PWA on your phone
+
+Tailscale-only by design — same posture as `/web/`. Build pipeline ships
+`web/dist` and `web-mobile/dist` together; `somora update` picks up
+both with no operator intervention.
 
 ## Memory model — three layers
 
@@ -132,109 +248,6 @@ the new engine just picks up the thread.
 | `claude-cli` | Claude Code binary in `~/.local/bin/claude` (subscription) | Best quality on Anthropic stack, no API key needed. |
 | `codex-cli` | `codex` binary on PATH (ChatGPT subscription) | Strong reasoning, ChatGPT subscription cost. |
 | `openai-compatible` | Any baseUrl + apiKey config | Local models, OpenRouter, any OpenAI-shaped endpoint. |
-
-## Status
-
-Active development. Customer-facing for early testers. Phase 4 (memory + wiki
-+ dream-system) and Phase 1.5 (web + tmux app) feature-complete:
-
-| Capability | claude-cli | codex-cli | openai-compatible |
-|---|:-:|:-:|:-:|
-| Chat (streaming) | ✓ | ✓ | ✓ |
-| Memory auto-injection | ✓ | ✓ | ✓ |
-| Memory tools (read + write) | ✓ via MCP | ✓ via MCP | ✓ in-process |
-| Wiki layer (shared) | ✓ | ✓ | ✓ |
-| Three-phase dreams | ✓ | ✓ | ✓ |
-| Tool surface (40+ tools) | ✓ via MCP | ✓ via MCP | ✓ in-process |
-| Skills (markdown how-tos) | ✓ | ✓ | ✓ |
-| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | ✓ image; PDF native or rasterized per provider |
-| Sub-agent spawning | ✓ | ✓ | ✓ |
-| SSH-resource exec | ✓ | ✓ | ✓ |
-
-## Clients
-
-Four first-party clients, all hitting the same local server:
-
-| Client | How to launch | Use |
-|---|---|---|
-| **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
-| **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
-| **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
-
-### TUI — `somora tui`
-
-![somora TUI screenshot — terminal multi-agent chat with memory injection and tool calls](docs/images/somora-tui.png)
-
-### Web — browser desktop
-
-![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web.png)
-
-### Mobile — installable PWA on your phone
-
-Tailscale-only by design — same posture as `/web/`. Build pipeline ships
-`web/dist` and `web-mobile/dist` together; `somora update` picks up
-both with no operator intervention.
-
-## Requirements
-
-Hard:
-
-- **Node ≥20** — uses native `node:sqlite` plus `better-sqlite3`.
-- **tmux** — required by the `tmux` tool (long-lived terminal sessions for
-  agents) and by the web tmux app. Install via your package manager.
-- **At least one LLM backend.** Pick what you have:
-  - Claude Code binary (Claude subscription) — for `claude-cli` engine.
-  - Codex CLI binary (ChatGPT subscription) — for `codex-cli` engine.
-  - Any OpenAI-compatible HTTP server — Ollama, LM Studio, vLLM, oMLX, OpenRouter, etc.
-
-Optional:
-
-- **Obsidian vault** — for the wiki + read-only vault recall. Without it
-  somora still works (memory inbox + per-agent storage), you just lose the
-  shared long-term layer.
-- **Tailscale** — strongly recommended for the web client. HTTPS via
-  `tailscale cert` lifts the browser's 6-connection limit (HTTP/2 multiplex)
-  and unlocks secure-context-only browser APIs (microphone, screen-share,
-  clipboard, push). Without it the web client is single-window-only.
-- **ripgrep (`rg`)** — required for `file_search`. Install via your
-  package manager.
-
-See [docs/setup.md](docs/setup.md) for the full install walkthrough,
-including step-by-step prereq setup.
-
-## Quickstart
-
-```bash
-# 1. Install prereqs (see docs/setup.md for details per OS)
-sudo apt install tmux ripgrep         # Debian/Ubuntu
-# brew install tmux ripgrep           # macOS
-
-# 2. Install at least one LLM backend (pick one or more):
-npm install -g @anthropic-ai/claude-code  &&  claude login
-npm install -g @openai/codex              &&  codex login
-# (for local models: install Ollama / LM Studio / oMLX separately)
-
-# 3. Install somora
-#    `npm pack` triggers the prepack hook → builds web/dist, then emits
-#    a tarball. Installing from the tarball is the reliable path; bare
-#    `npm install -g .` falls into npm's link semantics on some setups
-#    and would leave a broken install.
-git clone https://github.com/thenaxon/somora_agent.git somora
-cd somora
-npm install -g "$(npm pack | tail -1)"
-
-# 4. First-run setup + start
-somora init                    # creates ~/.somora/ and registers the systemd unit
-somora server start            # starts the unit (auto-starts on login)
-somora tui                     # default agent is created on first run
-```
-
-First run creates `~/.somora/config.yaml` and a default agent. For
-the web client + provider configuration + Tailscale HTTPS setup, see
-[docs/setup.md](docs/setup.md) — full step-by-step.
-
-Want to hack on somora itself? See the [contributor section in docs/setup.md](docs/setup.md#develop-from-a-checkout-contributors).
 
 ## Managing skills — `somora skill`
 
@@ -319,6 +332,9 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 
 ## Documentation
 
+- [docs/index.md](docs/index.md) — **start here.** Short orientation page: what
+  somora is, which doc to read for which goal, and one-sentence glossary of
+  every concept that appears in the rest of the docs.
 - [docs/setup.md](docs/setup.md) — install, providers, first run, HTTPS via Tailscale
 - [docs/agents.md](docs/agents.md) — creating agents, persona files, model overrides
 - [docs/memory.md](docs/memory.md) — how the memory inbox works, vault integration, retrieval

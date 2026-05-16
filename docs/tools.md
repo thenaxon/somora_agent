@@ -15,7 +15,7 @@ in-process. The model never knows which path it's on.
 | `time` | `time_now` | Current date/time/timezone — model never hallucinates "today". |
 | `web` | `web_search`, `web_fetch` | Search via Brave + fetch web pages as Markdown (Mozilla Readability + SSRF guards). |
 | `file` | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or against any configured SSH resource via `target=...`. `analyze_file` is the multimodal companion: dispatches images/PDFs to a configured `vision.worker` and returns a text description (see `files.md`). |
-| `exec` | `exec`, `process` | One-shot shell commands (sync + background) on local or any SSH resource. Hard-blacklisted destructive patterns; background jobs disk-tracked with poll/log/kill via `process`. See `tools.md` body + `exec-design.md`. |
+| `exec` | `exec`, `process` | One-shot shell commands (sync + background) on local or any SSH resource. Hard-blacklisted destructive patterns; background jobs disk-tracked with poll/log/kill via `process`. |
 | `tmux` | `tmux` | Persistent multi-turn terminal sessions (claude/codex/vim/REPLs). One typed tool with `action: create | send | capture | list | kill` against `target: local | <ssh-resource>`. See `tmux.md` for shell-vs-TUI patterns, `wait_mode` choices, `multiline_safe`, `include_ansi`, and the auto-suggestion safety rule. |
 | `agents` | `spawn_subagent`, `spawn_subagents`, `subagent_status`, `subagent_result`, `subagent_list`, `agent_ask` | Agent-to-agent orchestration. `spawn_*` create sealed sub-sessions for delegated work; `subagent_*` poll/collect results; `agent_ask` posts a live question into another agent's existing session. See `agents.md`. |
 | `docs` | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation (this directory). |
@@ -73,5 +73,3 @@ identical across all three engines.
 - `skills.md` — Markdown skill system + per-agent allow-list
 - `files.md` — file_* tools + multimodal `analyze_file`
 - `tmux.md` — shell-vs-TUI session patterns + capture/send modes
-- `research/tool-architecture.md` — comparative study of OpenClaw and
-  hermes-agent that informed our design

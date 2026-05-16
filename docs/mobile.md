@@ -62,23 +62,21 @@ own app switcher entry.
 
 ## Scope: what's in vs what's not
 
-**Phase 1 (current):**
+**Currently shipped:**
 - One agent at a time, one main session per agent
 - Live streaming of agent responses with a typing-cursor indicator
 - Markdown rendering of agent replies
 - localStorage-persisted last-agent
-
-**Phase 2 (current):**
 - Voice input via STT (mic-button → record → transcript editable in
   input → send manually)
 - Camera / photo-roll attachments via the native picker
 - Typing-indicator while the agent is working
-- Smarter reconnect handling
 
-**Phase 3+ (planned):**
+**Planned next:**
 - Streaming-state dot on agent avatars when an agent is mid-reply
 - Per-agent unread badges
 - Maskable PNG icons, splash screens, theme polish
+- Smarter reconnect handling beyond the basic banner
 
 **Not planned for the mobile client (use `/web` from a real screen):**
 - tmux session attach / shell terminal

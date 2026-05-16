@@ -96,10 +96,19 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
   const env = buildSpawnEnv(opts.env);
 
   return new Promise<LocalSyncResult>((resolve) => {
+    // `detached: true` puts the child in its own process group so
+    // `process.kill(-pid, signal)` can take down the whole tree —
+    // shell + grandchildren. Without it a `shell: true` invocation
+    // leaves grandchildren (like a trapped `sleep`) holding the
+    // stdout pipe open, so the `close` event never fires and the
+    // promise stalls until the grandchild exits naturally. Audit
+    // 2026-05-16: `sh -c 'trap "" TERM; sleep 30'` with timeout=2s
+    // sat for the full 30s pre-fix.
     const child = spawn(opts.command, {
       shell: true,
       cwd: opts.cwd,
       env,
+      detached: true,
     });
 
     let stdoutBytes = 0;
@@ -132,9 +141,22 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
     });
 
     let timedOut = false;
+    const killGroup = (signal: NodeJS.Signals) => {
+      // Negative pid → process group (set up by `detached: true`).
+      // Falls back to the leader if the group kill rejects.
+      try {
+        if (child.pid) process.kill(-child.pid, signal);
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          /* already dead */
+        }
+      }
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGTERM');
+      killGroup('SIGTERM');
       // Give it 2s to clean up, then SIGKILL. `child.killed` flips true
       // as soon as the signal is *sent*, not when the process actually
       // dies — so checking it skips the escalation for any command that
@@ -142,11 +164,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
       // running) instead. Audit 2026-05-16.
       setTimeout(() => {
         if (child.exitCode === null) {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            /* already dead */
-          }
+          killGroup('SIGKILL');
         }
       }, 2000);
     }, timeoutMs);

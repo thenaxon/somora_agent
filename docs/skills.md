@@ -353,11 +353,16 @@ secret-passing.
 `~/Library/LaunchAgents/<somora>.plist`'s `EnvironmentVariables`
 dict, then `launchctl unload && load`.
 
-**Why we DON'T put credentials in `config.yaml`:** that file is
-designed to be readable / sharable / git-trackable for support
-purposes. Keeping it secret-free means you can paste it into a bug
-report without redacting. Service-level env-files separate the two
-concerns cleanly.
+**Why skill credentials go in env vars, not `config.yaml`:** skill
+subprocesses are spawned by the `exec` tool and they don't read
+`config.yaml` at all — they read environment variables the same way
+they would when you run them by hand in a shell. Service-level env-
+files (systemd `EnvironmentFile=`, launchd `EnvironmentVariables`)
+are the natural fit and let you rotate creds without restarting on a
+code change. (Provider API keys for openai-compatible LLMs are a
+separate story — those live in `config.yaml` because that's where
+somora's own engine reads them. See `config.example.yaml` for the
+posture.)
 
 `requires.env_vars` in the skill frontmatter documents WHAT the
 skill needs. The `EnvironmentFile` provides the actual values. The
@@ -401,8 +406,6 @@ overflow it hard-truncates alphabetically with a marker comment.
 
 ## Cross-references
 
-- `private/skills-design.md` — full design rationale + what's in
-  Phase X scaffold vs deferred
 - `tools.md` — tool registration architecture (single source via
   `registerAllTools()`)
 - `memory.md` — the layer that handles user-specific preferences

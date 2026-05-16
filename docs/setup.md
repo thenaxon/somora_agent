@@ -64,6 +64,9 @@ single-window-only; the TUI is unaffected.
 
 ## 4. Install somora
 
+somora is installed **from source** — there is no npm registry release.
+Clone the repo, pack a tarball, install the tarball globally:
+
 ```bash
 git clone https://github.com/thenaxon/somora_agent.git somora
 cd somora
