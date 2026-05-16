@@ -230,7 +230,17 @@ export const claudeCliEngine: AgentEngine = {
           model: resolvedModel.modelId,
           systemPrompt: systemPromptForTurn,
           settingSources: [],
-          tools: [],
+          // claude-code 2.1.142+ surfaces MCP tools to the model only
+          // when the meta-tool `ToolSearch` is among the enabled
+          // built-ins — the SDK uses ToolSearch as the discovery
+          // mechanism for any MCP server with > a few tools. With
+          // `tools: []` (which we used pre-2026-05-16) MCP tools
+          // register inside the SDK but never reach the API request,
+          // so the model sees nothing. Whitelisting just `ToolSearch`
+          // restores tool visibility without re-enabling the
+          // Bash/Edit/Read/etc built-ins that DECISION #23 keeps off.
+          // See https://github.com/anthropics/claude-code/issues/38245
+          tools: ['ToolSearch'],
           disallowedTools: KNOWN_ACCOUNT_TOOLS,
           mcpServers: {
             [MCP_SERVER_NAME]: somoraMemoryServerSpawn({
@@ -266,20 +276,27 @@ export const claudeCliEngine: AgentEngine = {
       let receivedTextViaStream = false;
 
       // Manual iteration with abort-race instead of `for await (... of
-      // stream)`. The SDK's iterator sits on top of an stdio pipe to the
-      // claude-cli child; if the child dies silently the pipe stays
-      // half-open and the SDK's internal `read()` await never resolves.
-      // Calling `sdkAbortController.abort()` from the watchdog does NOT
-      // unblock that read on every Node/SDK version — we have seen it
-      // hang on subscription-hosted claude-cli on linux. Symptom:
-      // watchdog fires, logs "aborting", but the for-await loop just
-      // sits there forever, the catch never runs, no error/turn_end is
-      // yielded, lock+queue stay held until server restart.
+      // stream)`. The SDK's iterator sits on top of an stdio pipe to
+      // the claude-cli child; if the child dies silently the pipe
+      // stays half-open and the SDK's internal `read()` await never
+      // resolves. Calling `sdkAbortController.abort()` from the
+      // watchdog does NOT unblock that read on every Node/SDK version
+      // — observed on subscription-hosted claude-cli on linux: watchdog
+      // fires, logs "aborting", but the for-await loop sits there
+      // forever, the catch never runs, no error/turn_end is yielded,
+      // lock+queue stay held until server restart. Reproduced on
+      // 2026-05-16 morning (naxon/lisa).
       //
       // Fix: race each iter.next() against the abort signal ourselves.
       // When the watchdog (or upstream user-abort) fires, the race
       // rejects synchronously and the catch below sees `watchdogFired`
       // or `signal.aborted` and emits proper terminal events.
+      //
+      // Verified independently on 2026-05-16 afternoon: when MCP-tools
+      // registration broke (Anthropic regression in 2.1.142+), we
+      // suspected this race was the cause. Reverted to plain for-await,
+      // bug remained. Re-added — confirmed innocent of the MCP issue
+      // (which was about `tools: []` missing ToolSearch).
       const iter = stream[Symbol.asyncIterator]();
       armIdleTimer();
       while (true) {
@@ -307,8 +324,8 @@ export const claudeCliEngine: AgentEngine = {
           });
         } catch (err) {
           // Best-effort: tell the SDK iterator we're done so it has a
-          // chance to clean up. It may or may not respond — that's why
-          // we escaped via the race in the first place.
+          // chance to clean up. It may or may not respond — that's
+          // why we escaped via the race in the first place.
           try { await iter.return?.(undefined); } catch { /* ignore */ }
           throw err;
         }
