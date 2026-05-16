@@ -387,6 +387,13 @@ wiki:
     intervalDays: 7
     model: opus
     requireApproval: true
+    maxCallsPerTurn: 3         # cap on wiki_* tool invocations during
+                               # an active Lucid review-loop, per user
+                               # turn. Forces per-page user confirmation
+                               # for bigger plans. Raise (e.g. 5-10) if
+                               # you regularly OK multi-page batches
+                               # and the default 3 cuts off legitimate
+                               # work. Resets on every user message.
 
   search:
     boostWiki: 1.4             # wiki hits rank above memory in retrieval

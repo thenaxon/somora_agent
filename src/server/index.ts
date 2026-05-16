@@ -75,7 +75,7 @@ import { runDream } from '../dream/rem-runner.ts';
 import { RemWorker } from '../dream/rem-worker.ts';
 import { DeepWorker } from '../dream/deep-worker.ts';
 import { LucidWorker } from '../dream/lucid-worker.ts';
-import { getLoopState } from '../dream/loop-state.ts';
+import { getLoopState, setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
@@ -2397,6 +2397,7 @@ const chatTurnDeps = {
 };
 configureSpawnTools({ chatTurnDeps });
 configureLongTaskTimeouts(config);
+setMaxWikiCallsPerTurn(config.wiki.lucid.maxCallsPerTurn);
 configureExecConcurrencyCaps(
   config.agentLoop.execMaxConcurrentPerAgent,
   config.agentLoop.execMaxConcurrentGlobal,

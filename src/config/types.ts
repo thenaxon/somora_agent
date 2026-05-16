@@ -620,11 +620,19 @@ export const WikiLucidConfigSchema = z
     /** Optional thinking-level for the Lucid LLM one-shot. Semantics
      *  identical to wiki.deep.thinking. */
     thinking: ThinkingLevelSchema.optional(),
+    /** Per-turn cap on `wiki_*` tool invocations from the Lucid loop
+     *  holder. Prevents the model from batch-editing many pages in
+     *  one turn without per-page user confirmation. The cap resets
+     *  on every user turn. Raise if you regularly OK multi-page
+     *  plans and find the default of 3 cuts off legitimate work;
+     *  lower if you want stricter check-in-with-user enforcement. */
+    maxCallsPerTurn: z.number().int().positive().default(3),
   })
   .default({
     enabled: true,
     intervalDays: 7,
     requireApproval: true,
+    maxCallsPerTurn: 3,
   });
 
 export const WikiSearchConfigSchema = z
@@ -680,6 +688,7 @@ export const WikiConfigSchema = z
       enabled: true,
       intervalDays: 7,
       requireApproval: true,
+      maxCallsPerTurn: 3,
     },
     search: {
       boostWiki: 1.0,

@@ -31,11 +31,32 @@ const IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 /** Per-turn cap on `wiki_*` tool invocations from the loop holder.
  *  Prevents the model from batch-editing multiple pages without
- *  user-by-user confirmation. Three is enough for a coherent
+ *  user-by-user confirmation. Default 3 — enough for a coherent
  *  multi-step plan ("create page + link from two existing pages")
- *  that the user explicitly OK'd, but small enough to force a check-
- *  in for anything bigger. The counter resets on every user turn. */
-export const MAX_WIKI_CALLS_PER_TURN = 3;
+ *  that the user explicitly OK'd, small enough to force a check-in
+ *  for anything bigger. The counter resets on every user turn.
+ *
+ *  Configurable via `wiki.lucid.maxCallsPerTurn` in config.yaml; the
+ *  server applies that value once at boot via `setMaxWikiCallsPerTurn`. */
+const DEFAULT_MAX_WIKI_CALLS_PER_TURN = 3;
+let maxWikiCallsPerTurn = DEFAULT_MAX_WIKI_CALLS_PER_TURN;
+
+export function setMaxWikiCallsPerTurn(cap: number): void {
+  if (!Number.isFinite(cap) || cap <= 0) {
+    logger.warn({
+      msg: 'dream.loop.invalid_max_calls',
+      cap,
+      fallback: DEFAULT_MAX_WIKI_CALLS_PER_TURN,
+    });
+    maxWikiCallsPerTurn = DEFAULT_MAX_WIKI_CALLS_PER_TURN;
+    return;
+  }
+  maxWikiCallsPerTurn = Math.floor(cap);
+}
+
+export function getMaxWikiCallsPerTurn(): number {
+  return maxWikiCallsPerTurn;
+}
 
 /** In-memory wiki-call counter for the active turn. Module-level by
  *  design — the lifetime is one user→agent turn, no need to persist. */
@@ -51,11 +72,12 @@ export function resetWikiCallCounter(): void {
  *  user before doing more. */
 export function noteWikiToolCall(): { ok: boolean; remaining: number; cap: number } {
   wikiCallsThisTurn++;
-  const remaining = Math.max(0, MAX_WIKI_CALLS_PER_TURN - wikiCallsThisTurn);
+  const cap = maxWikiCallsPerTurn;
+  const remaining = Math.max(0, cap - wikiCallsThisTurn);
   return {
-    ok: wikiCallsThisTurn <= MAX_WIKI_CALLS_PER_TURN,
+    ok: wikiCallsThisTurn <= cap,
     remaining,
-    cap: MAX_WIKI_CALLS_PER_TURN,
+    cap,
   };
 }
 
@@ -204,10 +226,11 @@ export async function buildReviewLoopBlock(agent: string): Promise<string | null
       `instruction like "fix Mac Studio everywhere" does NOT — instead, list the affected pages first ` +
       `and confirm scope before any edit.`,
   );
+  const cap = maxWikiCallsPerTurn;
   lines.push(
-    `3. NEVER batch edits across pages without per-page confirmation. The server caps you at ${MAX_WIKI_CALLS_PER_TURN} ` +
+    `3. NEVER batch edits across pages without per-page confirmation. The server caps you at ${cap} ` +
       `wiki_* calls per turn as a safety net; treat that as the ceiling, not the target. If the user ` +
-      `OKs a multi-step plan ("yes, edit those 3 pages now"), you may use up to ${MAX_WIKI_CALLS_PER_TURN} ` +
+      `OKs a multi-step plan ("yes, edit those ${cap} pages now"), you may use up to ${cap} ` +
       `calls in this turn and then summarize what you did in your reply.`,
   );
   lines.push(
