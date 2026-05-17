@@ -538,20 +538,29 @@ export async function startSentinel(): Promise<void> {
 }
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
-const TRIGGERS_PATH = join(SOMORA_HOME, 'sentinel', 'triggers.json');
+const SENTINEL_DIR = join(SOMORA_HOME, 'sentinel');
+const TRIGGERS_PATH = join(SENTINEL_DIR, 'triggers.json');
 
 function installStoreWatcher(): void {
   if (storeWatcher) return;
-  // ignoreInitial: we already loaded at boot. awaitWriteFinish handles
-  // the multi-write atomic-rename pattern in store.ts (write tmp →
-  // rename). 200ms debounce avoids reload bursts during a single
-  // batched mutation.
-  storeWatcher = chokidar.watch(TRIGGERS_PATH, {
+  // Watch the PARENT DIRECTORY, not the single file. store.ts writes
+  // via tmp-file + atomic rename — a chokidar watch on the concrete
+  // file path hangs on the old inode, which gets unlinked by the
+  // rename. Subsequent writes go to a NEW inode and produce no events
+  // on the dead watch. Watching the directory means every event in
+  // the dir (add/change/unlink for either the tmp file or the
+  // renamed-into-place real file) is reported; we filter to the
+  // triggers.json basename below. Confirmed 2026-05-17 live with a
+  // missed `every 3m` create after a previous one-shot fire had
+  // rewritten the file.
+  storeWatcher = chokidar.watch(SENTINEL_DIR, {
     ignoreInitial: true,
     awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
     persistent: true,
+    depth: 0,
   });
-  const onChange = (event: string) => {
+  const onChange = (event: string, eventPath: string) => {
+    if (eventPath !== TRIGGERS_PATH) return; // ignore history-dir + tmp files
     if (watcherReloadTimer) clearTimeout(watcherReloadTimer);
     watcherReloadTimer = setTimeout(async () => {
       watcherReloadTimer = null;
@@ -571,12 +580,13 @@ function installStoreWatcher(): void {
       }
     }, 200);
   };
-  storeWatcher.on('add', () => onChange('add'));
-  storeWatcher.on('change', () => onChange('change'));
-  storeWatcher.on('unlink', () => onChange('unlink'));
+  storeWatcher.on('add', (p) => onChange('add', p));
+  storeWatcher.on('change', (p) => onChange('change', p));
+  storeWatcher.on('unlink', (p) => onChange('unlink', p));
   logger.info({
     msg: 'sentinel.scheduler.watcher_installed',
-    path: TRIGGERS_PATH,
+    dir: SENTINEL_DIR,
+    file: TRIGGERS_PATH,
   });
 }
 
