@@ -98,6 +98,13 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
 export interface TmuxLocalCreateOptions {
   name: string;
   cwd?: string;
+  /** When false (default), the new session starts with somora-internal
+   *  env vars (CLAUDE_CONFIG_DIR, SOMORA_CLAUDE_BIN) stripped via a
+   *  shell wrapper, so a `claude` / `codex` invocation inside the pane
+   *  behaves like in the user's normal terminal. Set true to inherit
+   *  somora's full env — only useful when the agent intentionally
+   *  wants the isolated claude-cli tree visible inside the session. */
+  inheritAgentEnv?: boolean;
 }
 
 export interface TmuxResult {
@@ -107,8 +114,12 @@ export interface TmuxResult {
   stderr: string;
 }
 
-async function runTmux(command: string, timeoutMs: number = 10_000): Promise<TmuxResult> {
-  const r = await localExecSync({ command, timeoutMs });
+async function runTmux(
+  command: string,
+  timeoutMs: number = 10_000,
+  stripSomoraInternalEnv: boolean = false,
+): Promise<TmuxResult> {
+  const r = await localExecSync({ command, timeoutMs, stripSomoraInternalEnv });
   return {
     ok: r.exit_code === 0,
     exit_code: r.exit_code,
@@ -123,9 +134,46 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
   // the session is already there and can decide (use existing or pick
   // a different name).
   const cwdFlag = opts.cwd ? ` -c ${shQuote(opts.cwd)}` : '';
-  const cmd = `tmux new-session -d -s ${shQuote(opts.name)}${cwdFlag}`;
-  logger.info({ msg: 'tmux.local.create', name: opts.name, cwd: opts.cwd });
-  return runTmux(cmd);
+  let cmd: string;
+  if (opts.inheritAgentEnv) {
+    // Inherit somora-internal vars EXPLICITLY via `-e KEY=VALUE`. The
+    // tmux server's own env (which it captured at first-spawn time)
+    // may or may not still contain them; `-e` makes the result
+    // deterministic regardless of when the server was started. Only
+    // forward each var when the somora process has it — `-e KEY=` on
+    // an undefined value would set empty-string, which is worse than
+    // not setting it (still trips "is var set?" checks).
+    const explicit: string[] = [];
+    if (process.env.CLAUDE_CONFIG_DIR) {
+      explicit.push(`-e ${shQuote(`CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR}`)}`);
+    }
+    if (process.env.SOMORA_CLAUDE_BIN) {
+      explicit.push(`-e ${shQuote(`SOMORA_CLAUDE_BIN=${process.env.SOMORA_CLAUDE_BIN}`)}`);
+    }
+    const eFlags = explicit.length > 0 ? ' ' + explicit.join(' ') : '';
+    cmd = `tmux new-session -d -s ${shQuote(opts.name)}${cwdFlag}${eFlags}`;
+  } else {
+    // Default behavior: strip somora-internal claude-isolation env vars
+    // so a `claude` / `codex` started inside the pane sees the user's
+    // normal login state instead of somora's isolated tree. This needs
+    // a session-wrapper because tmux inherits env from the long-lived
+    // tmux server process, not from the `tmux new-session` caller —
+    // `-e VAR=` would set the var to empty-string (still "set"), so we
+    // use `unset` + `exec` to truly remove it before user's shell takes
+    // over. Confirmed via env-dump probe 2026-05-17.
+    const wrapper = `unset CLAUDE_CONFIG_DIR SOMORA_CLAUDE_BIN; exec "\${SHELL:-/bin/bash}"`;
+    cmd = `tmux new-session -d -s ${shQuote(opts.name)}${cwdFlag} ${shQuote(wrapper)}`;
+  }
+  // Also strip on the spawn-env path in case this call boots a fresh
+  // tmux server (whose subsequent sessions would otherwise inherit
+  // the dirty env too). Cheap belt-and-braces.
+  logger.info({
+    msg: 'tmux.local.create',
+    name: opts.name,
+    cwd: opts.cwd,
+    inheritAgentEnv: opts.inheritAgentEnv === true,
+  });
+  return runTmux(cmd, 10_000, !opts.inheritAgentEnv);
 }
 
 export async function tmuxLocalSend(

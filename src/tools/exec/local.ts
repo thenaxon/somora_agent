@@ -45,9 +45,28 @@ import {
  * a systemd user-service with the minimal default PATH. Caller-
  * supplied env entries override on conflict (incl. PATH if explicitly
  * provided).
+ *
+ * `stripSomoraInternal` removes somora-internal vars that the server
+ * sets on its own process.env for its own subsystems but which leak
+ * into user-facing tmux/exec children otherwise. Specifically:
+ *   - CLAUDE_CONFIG_DIR — redirects `claude` away from ~/.claude
+ *   - SOMORA_CLAUDE_BIN — forces a specific claude binary
+ * Both cause user-confusion when an agent opens a tmux shell or runs
+ * `exec` and the spawned `claude` then doesn't see the user's normal
+ * login state. Defaults to false to preserve backwards compatibility
+ * for internal callers (dream, engine spawn, MCP children). Tool
+ * dispatchers (exec, tmux) pass true unless the agent explicitly opts
+ * into env-inheritance.
  */
-function buildSpawnEnv(callerEnv?: Record<string, string>): NodeJS.ProcessEnv {
+function buildSpawnEnv(
+  callerEnv?: Record<string, string>,
+  opts?: { stripSomoraInternal?: boolean },
+): NodeJS.ProcessEnv {
   const base: NodeJS.ProcessEnv = { ...process.env, PATH: extendedPath() };
+  if (opts?.stripSomoraInternal) {
+    delete base.CLAUDE_CONFIG_DIR;
+    delete base.SOMORA_CLAUDE_BIN;
+  }
   if (callerEnv) Object.assign(base, callerEnv);
   return base;
 }
@@ -74,6 +93,11 @@ export interface LocalSyncOptions {
    *  on, stdout and stderr merge into a single stream (= same
    *  behavior as a real terminal). */
   pty?: boolean;
+  /** Strip somora-internal env vars (CLAUDE_CONFIG_DIR, SOMORA_CLAUDE_BIN)
+   *  before spawning. Tool dispatchers set this true so user-facing
+   *  `exec`/`tmux` children behave like a normal terminal would.
+   *  See buildSpawnEnv() for the rationale. Default false. */
+  stripSomoraInternalEnv?: boolean;
 }
 
 /**
@@ -93,7 +117,9 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
   }
   const start = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
-  const env = buildSpawnEnv(opts.env);
+  const env = buildSpawnEnv(opts.env, {
+    stripSomoraInternal: opts.stripSomoraInternalEnv === true,
+  });
 
   return new Promise<LocalSyncResult>((resolve) => {
     // `detached: true` puts the child in its own process group so
@@ -224,7 +250,9 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
 async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult> {
   const start = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
-  const env = buildSpawnEnv(opts.env);
+  const env = buildSpawnEnv(opts.env, {
+    stripSomoraInternal: opts.stripSomoraInternalEnv === true,
+  });
 
   return new Promise<LocalSyncResult>((resolve) => {
     let term;
@@ -316,6 +344,8 @@ export interface LocalBackgroundOptions {
    *  job ends (any path: clean exit, error, or kill) so the cap
    *  counter doesn't leak. */
   releaseSlot?: () => void;
+  /** Same semantics as LocalSyncOptions.stripSomoraInternalEnv. */
+  stripSomoraInternalEnv?: boolean;
 }
 
 export interface LocalBackgroundResult {
@@ -350,7 +380,9 @@ export async function localExecBackground(
   const stdoutPath = join(jobDir(opts.agent, job_id), 'stdout.log');
   const stderrPath = join(jobDir(opts.agent, job_id), 'stderr.log');
 
-  const env = buildSpawnEnv(opts.env);
+  const env = buildSpawnEnv(opts.env, {
+    stripSomoraInternal: opts.stripSomoraInternalEnv === true,
+  });
   const child = spawn(opts.command, {
     shell: true,
     cwd: opts.cwd,

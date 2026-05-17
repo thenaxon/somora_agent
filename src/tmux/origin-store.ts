@@ -20,6 +20,8 @@ import { SOMORA_HOME_DIR } from '../server/logger.ts';
 
 const STORE_PATH = join(SOMORA_HOME_DIR, 'tmux-origins.json');
 
+export type TmuxSessionKind = 'shell' | 'claude-code' | 'codex';
+
 export interface TmuxOrigin {
   /** Tmux session name (the key, redundant here for ergonomics). */
   name: string;
@@ -28,6 +30,10 @@ export interface TmuxOrigin {
   /** somora session-id of the chat from which the create was issued.
    *  Optional because MCP children don't always carry SOMORA_SESSION. */
   session?: string;
+  /** What runs inside the pane — drives TUI-aware capture/wait_idle.
+   *  Optional for backwards compat with origin records written before
+   *  this field existed; missing = "shell" (the safe default). */
+  kind?: TmuxSessionKind;
   /** ISO timestamp of when the origin was recorded. */
   createdAt: string;
 }
@@ -61,12 +67,14 @@ export function recordTmuxOrigin(args: {
   name: string;
   agent: string;
   session?: string;
+  kind?: TmuxSessionKind;
 }): void {
   const store = read();
   store[args.name] = {
     name: args.name,
     agent: args.agent,
     ...(args.session ? { session: args.session } : {}),
+    ...(args.kind ? { kind: args.kind } : {}),
     createdAt: new Date().toISOString(),
   };
   write(store);

@@ -556,6 +556,17 @@ agents never see the user's interactive-CLI state, and vice versa.
   starts from the same blank slate regardless of how the user's
   personal Claude Code is set up.
 
+**Scope**
+
+The isolation applies to the internal engine adapter that somora uses
+to talk to Claude. Tools the agent invokes for the user — `tmux create`,
+`exec`, the `process` family — strip `CLAUDE_CONFIG_DIR` and
+`SOMORA_CLAUDE_BIN` from the spawned shell by default, so a `claude` or
+`codex` you start inside a tmux pane sees your normal `~/.claude` login
+state, not somora's isolated tree. The `inherit_agent_env: true` flag
+opts back into inheritance when you specifically want it (see
+`docs/tmux.md`).
+
 **Overriding**
 
 Set `CLAUDE_CONFIG_DIR` in `~/.somora/somora.env` (or shell env) to

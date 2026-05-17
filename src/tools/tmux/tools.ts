@@ -30,7 +30,13 @@ import {
   tmuxRemoteSend,
   tmuxRemoteSendKey,
 } from './remote.ts';
-import { recordTmuxOrigin, removeTmuxOrigin } from '../../tmux/origin-store.ts';
+import {
+  getTmuxOrigin,
+  recordTmuxOrigin,
+  removeTmuxOrigin,
+  type TmuxSessionKind,
+} from '../../tmux/origin-store.ts';
+import { detectTuiState } from '../../tmux/tui-markers.ts';
 
 // One or more tmux key tokens separated by whitespace. Each token is
 // `[A-Za-z0-9_-]+` — covers tmux's full key-name vocabulary (Escape,
@@ -196,6 +202,33 @@ const TmuxInput = z
           '200 — covers a typical multi-step interaction without flooding. Bump higher if you ' +
           'need to see further back.',
       ),
+    inherit_agent_env: z
+      .boolean()
+      .default(false)
+      .describe(
+        'create only, local target only. When false (default), somora-internal env vars ' +
+          '(CLAUDE_CONFIG_DIR, SOMORA_CLAUDE_BIN) are stripped from the new session so a ' +
+          '`claude` / `codex` started inside the pane uses the user\'s normal login state. ' +
+          'This is what a user expects when they ask the agent to open a coding-TUI in tmux. ' +
+          'Set true only when you intentionally want somora\'s isolated claude tree inherited ' +
+          '— rare: e.g. when the agent itself wants to drive a nested claude-cli through tmux ' +
+          'against somora\'s shared auth/state tree.',
+      ),
+    kind: z
+      .enum(['shell', 'claude-code', 'codex'])
+      .default('shell')
+      .describe(
+        'create only — what runs inside the pane. Drives TUI-aware capture/wait_idle: when ' +
+          'set, capture+wait_idle return a `tui_state` block ({state:"ready"|"queued"|"running", ' +
+          'markers:[]}) AND wait_idle treats queued/running marker hits as "not idle" so it ' +
+          'doesn\'t return prematurely on a content-stable-but-not-actually-ready pane. ' +
+          'When to pick which: "shell" (default) for bash/zsh/build-tools/REPLs/vim/htop — no ' +
+          'TUI magic, pure content-stability (today\'s behavior). "claude-code" for ' +
+          '`claude --dangerously-skip-permissions` — detects "Press up to edit queued messages" ' +
+          'and "esc to interrupt" + Claude Code\'s spinner words. "codex" for codex CLI — ' +
+          'detects esc-to-interrupt running cue. Pick "shell" when unsure; the TUI flags are ' +
+          'additive and only help if the correct kind is declared.',
+      ),
   })
   .strict();
 
@@ -215,6 +248,17 @@ interface SendResult {
   ms: number;
   error?: string;
 }
+interface TuiStateField {
+  /** "ready" = TUI prompt available to accept input. "queued" = agent
+   *  typed something but the TUI hasn't submitted it yet (don't proceed,
+   *  the input is still in composer). "running" = TUI is actively
+   *  processing — wait or interrupt with key:"Escape". "idle_unknown" =
+   *  detection failed (e.g. unknown kind). */
+  state: 'ready' | 'queued' | 'running' | 'idle_unknown';
+  /** Substrings from the pane that matched the kind's marker table. */
+  markers: string[];
+}
+
 interface CaptureResult {
   action: 'capture';
   ok: boolean;
@@ -224,6 +268,8 @@ interface CaptureResult {
   matched_pattern: boolean;
   /** Only present when wait_pattern was provided. */
   wait_pattern?: string;
+  /** Only present when the session was created with kind != "shell". */
+  tui_state?: TuiStateField;
   ms: number;
   error?: string;
 }
@@ -234,8 +280,13 @@ interface WaitIdleResult {
   name: string;
   /** Final pane content snapshot (after stability was reached or timeout fired). */
   content: string;
-  /** True if the pane went stable for `idle_stable_ms` before max_wait_ms expired. */
+  /** True if the pane went stable for `idle_stable_ms` before max_wait_ms expired.
+   *  For TUI sessions (kind != "shell"), this is true only when the pane is BOTH
+   *  content-stable AND the marker-detected state is "ready" — a stable pane that
+   *  still shows queued-input or running markers reports became_idle=false. */
   became_idle: boolean;
+  /** Only present when the session was created with kind != "shell". */
+  tui_state?: TuiStateField;
   /** Total wall time the action waited, including the final stability window. */
   ms: number;
   error?: string;
@@ -331,6 +382,22 @@ async function runCapture(
     : { ok: false, content: r.stdout, error: r.stderr.trim() || `exit ${r.exit_code}` };
 }
 
+/**
+ * Look up the session's declared kind from origin-store. Only local
+ * sessions carry origin records (remote tmux runs on a different host
+ * and isn't tracked here yet) — remote always returns undefined,
+ * which downstream means "no TUI detection, behave like today".
+ */
+function lookupSessionKind(target: string, name: string): TmuxSessionKind | undefined {
+  if (target !== 'local') return undefined;
+  try {
+    const origin = getTmuxOrigin(name);
+    return origin?.kind;
+  } catch {
+    return undefined;
+  }
+}
+
 export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
   name: 'tmux',
   toolset: 'exec',
@@ -361,6 +428,13 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     'send `multiline_safe:true` keeps embedded \\n as soft-newlines (M-Enter) instead of ' +
     'submits; capture `include_ansi:true` returns raw bytes with ANSI escapes so dim/grayed-out ' +
     'text (= auto-suggestions) is distinguishable from real input. ' +
+    '\n\n' +
+    'When you create a session that will host a known coding-TUI, declare it at create-time ' +
+    'with `kind: "claude-code"` or `kind: "codex"` — capture and wait_idle then return a ' +
+    'structured `tui_state:{state, markers}` block and wait_idle correctly distinguishes ' +
+    '"content stable AND TUI ready" from "content stable but queued input not submitted / ' +
+    'still running". Default `kind: "shell"` keeps today\'s pure content-stability behavior ' +
+    'for plain shell jobs, builds, REPLs, vim/htop — anything that isn\'t one of the named TUIs. ' +
     '\n\n' +
     'send has two input forms (mutually exclusive): `keys` for text/printable input (with ' +
     '`multiline_safe` for TUI-aware newline handling), or `key` for control/function/modifier ' +
@@ -408,6 +482,15 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       },
       include_ansi: { type: 'boolean', default: false },
       lines: { type: 'integer', minimum: 1, maximum: 10_000, default: 200 },
+      inherit_agent_env: { type: 'boolean', default: false },
+      kind: {
+        type: 'string',
+        enum: ['shell', 'claude-code', 'codex'],
+        default: 'shell',
+        description:
+          'create only — what runs inside the pane, drives TUI-aware capture/wait_idle. ' +
+          'See the inputSchema for full per-kind semantics.',
+      },
     },
     required: ['action'],
     additionalProperties: false,
@@ -433,7 +516,11 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       const name = requireName(input, 'create');
       const r =
         target === 'local'
-          ? await tmuxLocalCreate({ name, ...(input.cwd ? { cwd: input.cwd } : {}) })
+          ? await tmuxLocalCreate({
+              name,
+              ...(input.cwd ? { cwd: input.cwd } : {}),
+              inheritAgentEnv: input.inherit_agent_env === true,
+            })
           : await tmuxRemoteCreate(ctx.agent, target, name, input.cwd);
       if (!r.ok) {
         return {
@@ -447,12 +534,14 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       // Track origin for the web tmux-list view (local sessions only;
       // remote sessions live on other hosts and aren't browse-able from
       // here yet). Failure to record never blocks the tool.
+      const kind: TmuxSessionKind = input.kind ?? 'shell';
       if (target === 'local') {
         try {
           recordTmuxOrigin({
             name,
             agent: ctx.agent,
             ...(ctx.session ? { session: ctx.session } : {}),
+            ...(kind !== 'shell' ? { kind } : {}),
           });
         } catch (err) {
           logger.warn({
@@ -462,6 +551,15 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           });
         }
       }
+      // Tailored hint depending on declared kind — points the agent at
+      // tui_state for the kinds that emit it.
+      const kindHint =
+        kind === 'shell'
+          ? ''
+          : ` This session is kind:"${kind}" — capture and wait_idle return a ` +
+            `tui_state:{state, markers} block. Before assuming an input was processed, ` +
+            `check tui_state.state — "queued" means it's not submitted yet, "running" ` +
+            `means the TUI is still working.`;
       return {
         action: 'create',
         ok: true,
@@ -471,7 +569,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           `Session ready. Use tmux({action:"send", target:"${target}", name:"${name}", ` +
           `keys:"<text>\\n"}) to type into it, or tmux({..., key:"Escape"}) for control ` +
           `keys (Escape, C-c, C-u, F1, …). tmux({action:"capture", ...}) to read, ` +
-          `tmux({action:"kill", ...}) when done.`,
+          `tmux({action:"kill", ...}) when done.${kindHint}`,
       };
     }
 
@@ -521,6 +619,8 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       // pane right now.
       if (!input.wait_pattern) {
         const cap = await runCapture(target, ctx.agent, name, lines, includeAnsi);
+        const kind = lookupSessionKind(target, name);
+        const tui = detectTuiState(cap.content, kind);
         return {
           action: 'capture',
           ok: cap.ok,
@@ -529,6 +629,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           content: cap.content,
           matched_pattern: false,
           ms: Date.now() - start,
+          ...(tui ? { tui_state: tui } : {}),
           ...(cap.error ? { error: cap.error } : {}),
         };
       }
@@ -635,6 +736,8 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         });
       }
 
+      const captureKind = lookupSessionKind(target, name);
+      const captureTui = detectTuiState(lastContent, captureKind);
       return {
         action: 'capture',
         ok: !lastError,
@@ -644,6 +747,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         matched_pattern: matched,
         wait_pattern: pattern,
         ms: Date.now() - start,
+        ...(captureTui ? { tui_state: captureTui } : {}),
         ...(lastError ? { error: lastError } : {}),
       };
     }
@@ -656,6 +760,10 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       const timeout = input.wait_timeout_ms ?? DEFAULT_WAIT_TIMEOUT_MS;
       const start = Date.now();
       const deadline = start + timeout;
+      // Look up the session's kind once — drives whether a stable but
+      // queued/running pane should count as idle. Undefined / "shell"
+      // = no detection, falls back to today's pure-stability behavior.
+      const sessionKind = lookupSessionKind(target, name);
 
       // Same pre-baseline race-dodge as capture's wait_pattern path:
       // if the model called `send` immediately before this wait, give
@@ -700,8 +808,22 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           continue;
         }
         if (Date.now() - lastChangeTs >= idleStableMs) {
-          becameIdle = true;
-          break;
+          // Content has been stable. For shell sessions that's enough;
+          // for TUI sessions, also require the TUI state to be "ready"
+          // — a pane sitting on "Press up to edit queued messages" or
+          // "esc to interrupt" is content-stable but the TUI is NOT
+          // actually done. Treating it as idle is the exact failure
+          // hans reported 2026-05-17 (queued-input feedback).
+          const tui = detectTuiState(lastContent, sessionKind);
+          if (!tui || tui.state === 'ready') {
+            becameIdle = true;
+            break;
+          }
+          // TUI state is queued or running. Reset the stability timer
+          // so the next "stable" decision is computed from now — that
+          // way a still-running TUI eventually times out via deadline
+          // (rather than spinning the inner branch every poll).
+          lastChangeTs = Date.now();
         }
       }
 
@@ -712,9 +834,11 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           name,
           waited_ms: Date.now() - start,
           idle_stable_ms: idleStableMs,
+          kind: sessionKind,
         });
       }
 
+      const tuiFinal = detectTuiState(lastContent, sessionKind);
       return {
         action: 'wait_idle',
         ok: !lastError,
@@ -723,6 +847,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         content: lastContent,
         became_idle: becameIdle,
         ms: Date.now() - start,
+        ...(tuiFinal ? { tui_state: tuiFinal } : {}),
         ...(lastError ? { error: lastError } : {}),
       };
     }

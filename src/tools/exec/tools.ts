@@ -101,6 +101,15 @@ const ExecInput = z
       .max(200)
       .optional()
       .describe('Short human-readable label for this command. Surfaces in process_list and logs.'),
+    inherit_agent_env: z
+      .boolean()
+      .default(false)
+      .describe(
+        'local target only. When false (default), somora-internal env vars ' +
+          '(CLAUDE_CONFIG_DIR, SOMORA_CLAUDE_BIN) are stripped before spawn so a `claude` / ' +
+          '`codex` invocation behaves like in the user\'s normal terminal. Set true only when ' +
+          'you intentionally want somora\'s isolated claude tree visible to the spawned process.',
+      ),
   })
   .strict();
 
@@ -182,6 +191,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       timeout_ms: { type: 'integer', minimum: 100, maximum: 3_600_000, default: 60_000 },
       pty: { type: 'boolean', default: false },
       description: { type: 'string', maxLength: 200 },
+      inherit_agent_env: { type: 'boolean', default: false },
     },
     required: ['command'],
     additionalProperties: false,
@@ -248,6 +258,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
             ...(input.env ? { env: input.env } : {}),
             ...(input.description ? { description: input.description } : {}),
             releaseSlot: slot.release,
+            stripSomoraInternalEnv: !input.inherit_agent_env,
           });
           return {
             ok: true,
@@ -306,6 +317,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         ...(input.env ? { env: input.env } : {}),
         timeoutMs: input.timeout_ms ?? 60_000,
         pty: input.pty,
+        stripSomoraInternalEnv: !input.inherit_agent_env,
       });
       return {
         ok: r.exit_code === 0,
