@@ -15,6 +15,7 @@ import { TmuxListWindow } from './TmuxListWindow';
 import { TmuxTerminalWindow } from './TmuxTerminalWindow';
 import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
+import { SentinelWindow } from './SentinelWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
 import { FileViewProvider } from './FileViewContext';
@@ -81,6 +82,7 @@ export function Desktop() {
                 wm.windows.flatMap((w) => {
                   if (w.kind === 'tmux-list') return ['tmux'];
                   if (w.kind === 'sessions-list') return ['sessions'];
+                  if (w.kind === 'sentinel') return ['sentinel'];
                   return [];
                 }),
               )
@@ -88,6 +90,7 @@ export function Desktop() {
             onTmuxClick={() => wm.openTmuxList()}
             onTerminalClick={() => wm.openShellTerm()}
             onSessionsClick={() => wm.openSessionsList()}
+            onSentinelClick={() => wm.openSentinelList()}
           />
         </div>
 
@@ -224,6 +227,22 @@ export function Desktop() {
                     });
                   }}
                 />
+              </Window>
+            );
+          }
+          if (win.kind === 'sentinel') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <SentinelWindow />
               </Window>
             );
           }

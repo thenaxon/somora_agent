@@ -55,6 +55,10 @@ import {
 import { validatePathRef } from '../projects/scheme.ts';
 import { PROJECT_SLUG_RE, ProjectFrontmatterSchema } from '../projects/types.ts';
 import { seedBuiltinSkills } from '../skills/bootstrap.ts';
+import * as sentinelStore from '../sentinel/store.ts';
+import * as sentinelSchedule from '../sentinel/schedule.ts';
+import * as sentinelScheduler from '../sentinel/scheduler.ts';
+import { configureSentinel, startSentinel } from '../sentinel/scheduler.ts';
 import {
   configureDreamRunTool,
   configureExecConcurrencyCaps,
@@ -499,6 +503,90 @@ app.get('/files/view', async (c) => {
 app.get('/tmux/sessions', async (c) => {
   const sessions = await listTmuxSessions();
   return c.json({ sessions });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Sentinel — proactive trigger management for the web-UI sentinel tab.
+// All actions reuse the in-process sentinel store + scheduler (no extra
+// HTTP roundtrip). The same surface is also exposed through the
+// `sentinel` tool that agents can call.
+// ─────────────────────────────────────────────────────────────────────
+
+app.get('/sentinel/triggers', async (c) => {
+  await sentinelStore.loadTriggers();
+  const owner = c.req.query('owner');
+  const status = c.req.query('status');
+  let triggers = sentinelStore.listTriggers();
+  if (owner) triggers = triggers.filter((t) => t.ownerAgent === owner);
+  if (status) triggers = triggers.filter((t) => t.status === status);
+  triggers.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return c.json({ count: triggers.length, triggers });
+});
+
+app.get('/sentinel/triggers/:id', async (c) => {
+  await sentinelStore.loadTriggers();
+  const t = sentinelStore.getTrigger(c.req.param('id'));
+  if (!t) return c.json({ error: `trigger '${c.req.param('id')}' not found` }, 404);
+  return c.json({ trigger: t });
+});
+
+app.get('/sentinel/triggers/:id/history', async (c) => {
+  const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+  const entries = await sentinelStore.getHistory(c.req.param('id'), limit);
+  return c.json({ count: entries.length, entries });
+});
+
+app.post('/sentinel/triggers/:id/pause', async (c) => {
+  await sentinelStore.loadTriggers();
+  const t = sentinelStore.getTrigger(c.req.param('id'));
+  if (!t) return c.json({ error: `trigger '${c.req.param('id')}' not found` }, 404);
+  await sentinelStore.saveTrigger({ ...t, status: 'paused', statusReason: 'paused via web-UI' });
+  sentinelScheduler.reschedule();
+  return c.json({ ok: true });
+});
+
+app.post('/sentinel/triggers/:id/resume', async (c) => {
+  await sentinelStore.loadTriggers();
+  const t = sentinelStore.getTrigger(c.req.param('id'));
+  if (!t) return c.json({ error: `trigger '${c.req.param('id')}' not found` }, 404);
+  // Recompute nextFireAt; old one may have drifted past while paused.
+  let nextFireAt: string | undefined;
+  if (t.source.type === 'time') {
+    try {
+      const next = sentinelSchedule.computeNextFire(t.source.spec);
+      if (next) nextFireAt = next.toISOString();
+    } catch (err) {
+      return c.json({ error: `cannot resume: ${(err as Error).message}` }, 400);
+    }
+  }
+  const updated = {
+    ...t,
+    status: 'active' as const,
+    errorStreak: 0,
+    ...(nextFireAt ? { nextFireAt } : {}),
+  };
+  delete updated.statusReason;
+  await sentinelStore.saveTrigger(updated);
+  sentinelScheduler.reschedule();
+  return c.json({ ok: true });
+});
+
+app.delete('/sentinel/triggers/:id', async (c) => {
+  const removed = await sentinelStore.deleteTrigger(c.req.param('id'));
+  if (removed) sentinelScheduler.reschedule();
+  return removed ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404);
+});
+
+app.post('/sentinel/triggers/:id/test', async (c) => {
+  await sentinelStore.loadTriggers();
+  const t = sentinelStore.getTrigger(c.req.param('id'));
+  if (!t) return c.json({ error: `trigger '${c.req.param('id')}' not found` }, 404);
+  await sentinelScheduler.fireTrigger(t, { catchUp: false, testMode: true });
+  return c.json({ ok: true, hint: `Test-fire dispatched. See history + the target agent's session '${t.dispatch.session}'.` });
+});
+
+app.get('/sentinel/status', (c) => {
+  return c.json(sentinelScheduler.schedulerStatus());
 });
 
 // Plain shell terminal: WebSocket bridge to a fresh `$SHELL` PTY
@@ -1984,14 +2072,63 @@ app.post('/spawn-async', async (c) => {
     max_rounds?: number;
   };
   const agent = body.agent;
-  const session = body.session;
+  const sessionRef = body.session;
   const text = body.text ?? '';
-  if (!agent || !session) {
+  if (!agent || !sessionRef) {
     return c.json({ error: 'agent + session required' }, 400);
   }
   if (!(await loadPersona(agent))) {
     return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   }
+
+  // Resolve the session ref through the same path the rest of the
+  // server uses. Pre-fix (2026-05-16 audit), this endpoint took the
+  // session string verbatim and wrote a JSONL with that as the
+  // filename — bypassing createSession's <YYYYMMDD-HHMMSS>_<slug>
+  // format. Result: sessions visible in `GET /agents/<a>/sessions`
+  // (filesystem scan) but invisible to resolveSessionId, so archive/
+  // delete/edit through the UI silently 404'd.
+  //
+  // Fix policy:
+  //   - existing session → use as-is
+  //   - exact-id shape (timestamped) but not existing → 404 (caller
+  //     asked for a SPECIFIC archived session that's gone — auto-
+  //     creating a new one with that name would be confusing)
+  //   - slug shape, not existing → auto-create via createSession()
+  //     so the JSONL gets the standard timestamped filename. This
+  //     covers the common case: a caller (sentinel, test scripts,
+  //     external integrations) supplies a logical name like
+  //     "morning-routine" and expects somora to manage the file id.
+  //   - invalid name → 400 with createSession's error message
+  let session = await resolveSessionId(agent, sessionRef);
+  if (!session) {
+    const isExactId = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/.test(sessionRef);
+    if (isExactId) {
+      return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+    }
+    if (sessionRef === 'main') {
+      // "main" should always have resolved above; defensive fallback.
+      session = 'main';
+    } else {
+      try {
+        session = await createSession(agent, sessionRef);
+        logger.info({
+          msg: 'spawn_async.session_autocreated',
+          agent,
+          ref: sessionRef,
+          session,
+        });
+      } catch (err) {
+        return c.json(
+          {
+            error: `session '${sessionRef}' not resolvable and not a valid slug: ${(err as Error).message}`,
+          },
+          400,
+        );
+      }
+    }
+  }
+
   const fromAgent =
     typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
   const subagentDepth =
@@ -2435,6 +2572,13 @@ const chatTurnDeps = {
   onActivity: (agent: string) => remWorker.resetActivity(agent),
 };
 configureSpawnTools({ chatTurnDeps });
+// Sentinel scheduler — wire deps + boot the trigger loop. Same pattern
+// as configureSpawnTools: server boot owns the deps, sentinel imports
+// the runtime via the injected reference.
+configureSentinel({ chatTurnDeps });
+void startSentinel().catch((err) => {
+  logger.error({ msg: 'sentinel.boot_failed', err: (err as Error).message });
+});
 configureLongTaskTimeouts(config);
 setMaxWikiCallsPerTurn(config.wiki.lucid.maxCallsPerTurn);
 configureExecConcurrencyCaps(

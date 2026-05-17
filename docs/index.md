@@ -122,4 +122,5 @@ high-value next steps in rough order:
 | [tmux.md](tmux.md) | Multi-turn shell sessions | Driving long-running CLIs from agents |
 | [web.md](web.md) | Browser client | Web-UI specifics + HTTPS notes |
 | [mobile.md](mobile.md) | Mobile PWA | iOS/Android install, scope |
+| [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
 | [security.md](security.md) | Trust model | Network posture, sandbox stance |

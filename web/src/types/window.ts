@@ -9,6 +9,7 @@ export type WindowKind =
   | 'tmux-term'
   | 'shell-term'
   | 'sessions-list'
+  | 'sentinel'
   | 'pin-note'
   | 'file-view';
 

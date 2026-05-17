@@ -16,6 +16,7 @@ import { tmuxTools } from './tmux/index.ts';
 import { skillTools } from './skill/index.ts';
 import { wikiTools } from './wiki/index.ts';
 import { projectTools } from './projects/index.ts';
+import { sentinelTools } from './sentinel/index.ts';
 
 export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
@@ -37,6 +38,7 @@ export { tmuxTools } from './tmux/index.ts';
 export { skillTools } from './skill/index.ts';
 export { wikiTools } from './wiki/index.ts';
 export { projectTools } from './projects/index.ts';
+export { sentinelTools } from './sentinel/index.ts';
 export { configureDreamRunTool } from './dream/index.ts';
 
 /**
@@ -74,4 +76,5 @@ export function registerAllTools(registry: ToolRegistry): void {
   // out of the model-facing list. So we always register; only the
   // visibility flips based on config. Same pattern as wikiTools.
   registry.registerMany(projectTools());
+  registry.registerMany(sentinelTools());
 }

@@ -114,6 +114,28 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the Sentinel trigger inspector. Singleton. */
+  const openSentinelList = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'sentinel');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(820, 520, zCounter + 1);
+    const id = `sentinel-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'sentinel',
+      title: 'Sentinel',
+      icon: '🔔',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   /** Open or focus the tmux-app list window. Singleton — only one
    *  list view exists at a time. Phase 1.5. */
   const openTmuxList = useCallback(() => {
@@ -386,6 +408,7 @@ export function useWindowManager() {
     openTmuxTerm,
     openShellTerm,
     openSessionsList,
+    openSentinelList,
     openPinNote,
     unpinMessage,
     pinnedMsgIds,

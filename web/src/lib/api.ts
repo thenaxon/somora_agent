@@ -449,7 +449,89 @@ export const api = {
       throw new Error(`clear-project ${res.status}: ${body.slice(0, 200)}`);
     }
   },
+  // ── Sentinel ────────────────────────────────────────────────────
+  sentinelList: (opts?: { owner?: string; status?: string }) => {
+    const q = new URLSearchParams();
+    if (opts?.owner) q.set('owner', opts.owner);
+    if (opts?.status) q.set('status', opts.status);
+    const suffix = q.toString() ? `?${q.toString()}` : '';
+    return getJson<{ count: number; triggers: SentinelTrigger[] }>(
+      `/sentinel/triggers${suffix}`,
+    );
+  },
+  sentinelGet: (id: string) =>
+    getJson<{ trigger: SentinelTrigger }>(
+      `/sentinel/triggers/${encodeURIComponent(id)}`,
+    ).then((r) => r.trigger),
+  sentinelHistory: (id: string, limit: number = 50) =>
+    getJson<{ count: number; entries: SentinelFireEntry[] }>(
+      `/sentinel/triggers/${encodeURIComponent(id)}/history?limit=${limit}`,
+    ).then((r) => r.entries),
+  sentinelPause: async (id: string): Promise<void> => {
+    const res = await fetch(`/sentinel/triggers/${encodeURIComponent(id)}/pause`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`sentinel pause ${res.status}`);
+  },
+  sentinelResume: async (id: string): Promise<void> => {
+    const res = await fetch(`/sentinel/triggers/${encodeURIComponent(id)}/resume`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`sentinel resume ${res.status}`);
+  },
+  sentinelDelete: async (id: string): Promise<void> => {
+    const res = await fetch(`/sentinel/triggers/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(`sentinel delete ${res.status}`);
+  },
+  sentinelTest: async (id: string): Promise<void> => {
+    const res = await fetch(`/sentinel/triggers/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`sentinel test ${res.status}`);
+  },
 } as const;
+
+// Sentinel types — kept in sync with src/sentinel/types.ts on the server.
+export interface SentinelTrigger {
+  id: string;
+  name: string;
+  intent?: string;
+  ownerAgent: string;
+  source: {
+    type: 'time';
+    spec:
+      | { type: 'at'; iso: string }
+      | { type: 'every'; interval: string }
+      | { type: 'daily'; time: string }
+      | { type: 'weekly'; day: string; time: string }
+      | { type: 'cron'; expression: string };
+  };
+  evaluator: { type: 'none' };
+  dispatch: { agent: string; session: string; prompt: string };
+  policy?: { cooldownMs?: number; maxFiresPerDay?: number };
+  createdAt: string;
+  status: 'active' | 'paused' | 'error' | 'completed';
+  statusReason?: string;
+  fireCount: number;
+  lastFireAt?: string;
+  lastSuccessAt?: string;
+  lastErrorAt?: string;
+  errorStreak: number;
+  nextFireAt?: string;
+}
+
+export interface SentinelFireEntry {
+  firedAt: string;
+  scheduledFor: string;
+  outcome: 'success' | 'error' | 'skipped';
+  skipReason?: string;
+  error?: string;
+  taskId?: string;
+  catchUp?: boolean;
+  testMode?: boolean;
+}
 
 /** Row shape returned by GET /sessions (cross-agent). The web Sessions
  *  tool consumes this directly; per-agent endpoints still return the
