@@ -358,6 +358,19 @@ providers:
 #   brave:
 #     apiKey: "BSAxxx..."
 
+# Sentinel — proactive trigger runtime (time-based fires that wake
+# agents on a schedule, see docs/sentinel.md). Only knob today is how
+# long completed `at`-triggers (one-shot fires that have already run)
+# linger in the registry before they're garbage-collected.
+#
+# completedRetentionDays:
+#   Days a `completed` trigger and its history are kept after the
+#   fire's lastFireAt timestamp. The scheduler sweeps at boot and on
+#   each daily re-arm tick; older entries get auto-deleted. Set to 0
+#   to disable GC entirely (manual cleanup only). Default 7.
+# sentinel:
+#   completedRetentionDays: 7
+
 # TUI display defaults for the Ink CLI. Render-only — the server still
 # injects memory and runs tools regardless. Live-toggle via /show and
 # /verbose slash commands.

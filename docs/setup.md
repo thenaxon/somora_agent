@@ -425,6 +425,24 @@ file — the bootstrap anchor is rewritten on the next start). If
 you want to **pause auto-firing** without disabling the worker,
 set `lastCompletedAt` to a future timestamp.
 
+### Sentinel — proactive triggers (optional)
+
+The trigger runtime that wakes agents on a schedule (see
+[sentinel.md](sentinel.md)). One configuration knob:
+
+```yaml
+sentinel:
+  completedRetentionDays: 7   # default; 0 disables auto-cleanup
+```
+
+`completedRetentionDays` controls how long one-shot `at`-triggers
+stay in the registry after they've fired. The scheduler sweeps at
+boot and on each daily re-arm tick; older `completed` entries get
+auto-deleted along with their history file. Set to 0 to disable
+auto-cleanup entirely (manual `sentinel delete` only). Recurring
+triggers don't auto-GC — they end up in `paused` or `error` and you
+choose when to remove them.
+
 ## HTTPS (Tailscale) — required for the web client at scale
 
 The web client opens **one persistent SSE connection per chat window**.

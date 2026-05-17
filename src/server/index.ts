@@ -2574,8 +2574,12 @@ const chatTurnDeps = {
 configureSpawnTools({ chatTurnDeps });
 // Sentinel scheduler — wire deps + boot the trigger loop. Same pattern
 // as configureSpawnTools: server boot owns the deps, sentinel imports
-// the runtime via the injected reference.
-configureSentinel({ chatTurnDeps });
+// the runtime via the injected reference. `completedRetentionDays`
+// controls GC of terminal-state triggers (0 = disabled).
+configureSentinel({
+  chatTurnDeps,
+  completedRetentionDays: config.sentinel.completedRetentionDays,
+});
 void startSentinel().catch((err) => {
   logger.error({ msg: 'sentinel.boot_failed', err: (err as Error).message });
 });

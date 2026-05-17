@@ -135,6 +135,32 @@ with a red status icon and the reason — fix the underlying cause
 (e.g. expired `gog login` for an exec-source in Phase 2), then click
 **resume**.
 
+## Completed-trigger retention (GC)
+
+One-shot `at`-triggers turn into status `completed` once they've
+fired. They sit there forever otherwise — useful for an audit trail,
+clutter on the long view. Sentinel auto-deletes `completed` triggers
+(and their history file) older than a configurable retention window.
+
+Configure in `config.yaml`:
+
+```yaml
+sentinel:
+  completedRetentionDays: 7   # default; 0 disables auto-cleanup
+```
+
+The sweep runs at server boot and on each daily re-arm tick, so a
+trigger that completed 8+ days ago will be gone within ~24 hours of
+the next boot or daily heartbeat. Manual deletion (`sentinel({
+action: "delete", id: "..." })` or the web-UI Delete button) works at
+any time and bypasses the retention window.
+
+Recurring triggers (`every` / `daily` / `weekly` / `cron`) never
+reach `completed` status under normal operation — they go to
+`paused` (manual or auto via daily-cap) or `error` (auto-paused after
+the 3-consecutive-fail streak). Those don't auto-GC; you choose
+when to remove them.
+
 ## Catch-up policy when somora was down
 
 Sentinel runs in-process with the somora server. If the server is

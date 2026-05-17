@@ -42,6 +42,7 @@ import { computeNextFire } from './schedule.ts';
 import { buildFirePrompt } from './dispatcher.ts';
 import {
   countFiresToday,
+  deleteTrigger,
   getTrigger,
   listTriggers,
   loadTriggers,
@@ -58,9 +59,48 @@ import {
 // Same pattern as configureSpawnTools({ chatTurnDeps }).
 type ChatTurnDeps = Parameters<typeof runChatTurn>[0]['deps'];
 let injectedChatTurnDeps: ChatTurnDeps | null = null;
+let completedRetentionDays = 7;
 
-export function configureSentinel(args: { chatTurnDeps: ChatTurnDeps }): void {
+export function configureSentinel(args: {
+  chatTurnDeps: ChatTurnDeps;
+  completedRetentionDays?: number;
+}): void {
   injectedChatTurnDeps = args.chatTurnDeps;
+  if (typeof args.completedRetentionDays === 'number') {
+    completedRetentionDays = args.completedRetentionDays;
+  }
+}
+
+/**
+ * Garbage-collect terminal-state triggers whose lastFireAt is older
+ * than `completedRetentionDays`. Setting that config to 0 disables GC
+ * entirely (user/agent must delete manually).
+ *
+ * Runs once at boot and then daily — most installations have a small
+ * trigger count so a daily sweep is fine. We don't keep a separate
+ * timer; we re-use the scheduler's daily re-arm tick as the natural
+ * cadence anchor (more frequent than necessary is harmless because
+ * the operation is cheap).
+ */
+async function gcStaleTriggers(): Promise<number> {
+  if (completedRetentionDays <= 0) return 0;
+  const cutoff = Date.now() - completedRetentionDays * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  for (const t of listTriggers()) {
+    if (t.status !== 'completed') continue;
+    const anchor = t.lastFireAt ? new Date(t.lastFireAt).getTime() : NaN;
+    if (Number.isNaN(anchor)) continue;
+    if (anchor < cutoff) {
+      await deleteTrigger(t.id);
+      removed++;
+      logger.info({
+        msg: 'sentinel.scheduler.gc_completed',
+        triggerId: t.id,
+        ageDays: Math.round((Date.now() - anchor) / (24 * 60 * 60 * 1000)),
+      });
+    }
+  }
+  return removed;
 }
 
 let started = false;
@@ -137,11 +177,15 @@ async function onTimer(): Promise<void> {
   // was due when we armed).
   const pick = pickNextDue();
   if (!pick) {
+    // Idle wake — opportunistic GC sweep so retention runs at least
+    // daily without a separate timer.
+    void gcStaleTriggers();
     reschedule();
     return;
   }
   if (pick.fireAt > Date.now() + 1000) {
-    // We woke up early (probably re-arm cap). Re-schedule.
+    // We woke up early (probably re-arm cap). Re-schedule + GC.
+    void gcStaleTriggers();
     reschedule();
     return;
   }
@@ -453,13 +497,16 @@ export async function startSentinel(): Promise<void> {
   if (started) return;
   await loadTriggers();
   const triggers = listTriggers();
+  const removed = await gcStaleTriggers();
   logger.info({
     msg: 'sentinel.scheduler.boot',
     triggersLoaded: triggers.length,
     active: triggers.filter((t) => t.status === 'active').length,
+    completedRetentionDays,
+    gcRemovedAtBoot: removed,
   });
   for (const t of triggers) {
-    await applyBootCatchUp(t);
+    if (t.status !== 'completed') await applyBootCatchUp(t);
   }
   started = true;
   installStoreWatcher();

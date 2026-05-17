@@ -563,6 +563,23 @@ export const ProjectsConfigSchema = z
   .optional();
 export type ProjectsConfig = z.infer<typeof ProjectsConfigSchema>;
 
+// Sentinel — proactive trigger runtime config. Phase 1 has a single
+// knob: how long to keep completed/error triggers around before the
+// scheduler garbage-collects them. Set to 0 to disable GC entirely
+// (triggers + history are never auto-removed; user/agent has to
+// delete manually). Default 7 days = balance between clean list and
+// usable history for debugging.
+export const SentinelConfigSchema = z
+  .object({
+    /** Days to retain `completed` triggers (one-shot `at` fires that
+     *  have already run, OR daily-cap auto-paused via `paused`/`error`
+     *  paths that haven't been resumed). Counted from `lastFireAt`.
+     *  Defaults to 7. Set to 0 to disable auto-GC. */
+    completedRetentionDays: z.number().int().min(0).max(3650).default(7),
+  })
+  .default({ completedRetentionDays: 7 });
+export type SentinelConfig = z.infer<typeof SentinelConfigSchema>;
+
 // Skills budget. Mirrors OpenClaw's defaults — they've shipped 53 real
 // skills against these limits for months, so we treat them as known-
 // good rather than re-deriving. Configurable via config.yaml per
@@ -800,6 +817,7 @@ export const ConfigSchema = z.object({
   vision: VisionConfigSchema,
   stt: SttConfigSchema,
   projects: ProjectsConfigSchema,
+  sentinel: SentinelConfigSchema,
   obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
   attachments: AttachmentsConfigSchema,
