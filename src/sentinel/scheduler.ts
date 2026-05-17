@@ -28,6 +28,9 @@
 // as the anchor, so a slow agent-turn doesn't cause drift across
 // later fires.
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import chokidar from 'chokidar';
 import { logger } from '../server/logger.ts';
 import { acquireSessionLock } from '../server/session-queue.ts';
 import { runChatTurn } from '../server/run-turn.ts';
@@ -63,6 +66,15 @@ export function configureSentinel(args: { chatTurnDeps: ChatTurnDeps }): void {
 let started = false;
 let nextTimer: NodeJS.Timeout | null = null;
 let nextFireAt: number | null = null;
+let storeWatcher: ReturnType<typeof chokidar.watch> | null = null;
+let watcherReloadTimer: NodeJS.Timeout | null = null;
+
+// Triggers currently in fire-and-forget dispatch. pickNextDue skips
+// these so a re-entry (via watcher self-trigger after saveTrigger, or
+// re-arm from advanceNextFire, etc.) can't double-fire while the
+// previous async IIFE is still in flight. Cleared in the IIFE's
+// finally block.
+const inflightFires = new Set<string>();
 
 /** Compute the next fire instant across ALL active triggers + a Trigger
  *  pointer. Returns null when no triggers are armed. */
@@ -71,6 +83,10 @@ function pickNextDue(now: number = Date.now()): { trigger: Trigger; fireAt: numb
   for (const t of listTriggers()) {
     if (t.status !== 'active') continue;
     if (!t.nextFireAt) continue;
+    // A trigger whose previous fire is still running must not be
+    // re-picked — its in-memory cache state (e.g. nextFireAt) hasn't
+    // been advanced yet, so we'd just fire it again immediately.
+    if (inflightFires.has(t.id)) continue;
     const fireAt = new Date(t.nextFireAt).getTime();
     if (Number.isNaN(fireAt)) continue;
     if (!pick || fireAt < pick.fireAt) {
@@ -254,6 +270,10 @@ export async function fireTrigger(
   }
 
   const deps = injectedChatTurnDeps;
+  // Mark in-flight BEFORE spawning the IIFE so pickNextDue can't re-
+  // pick this trigger via a watcher-driven reschedule loop during
+  // the fire. Cleared in the IIFE's finally.
+  inflightFires.add(trigger.id);
   void (async () => {
     const release = await acquireSessionLock(dispatch.agent, session, {
       priority: 'agent',
@@ -302,6 +322,7 @@ export async function fireTrigger(
     } finally {
       release();
       releaseSpawnSlot(dispatch.agent);
+      inflightFires.delete(trigger.id);
     }
   })();
 }
@@ -418,7 +439,16 @@ async function applyBootCatchUp(t: Trigger): Promise<void> {
   await saveTrigger(updated);
 }
 
-/** Boot the scheduler. Idempotent on multiple calls. */
+/** Boot the scheduler. Idempotent on multiple calls.
+ *
+ *  Also installs a filesystem watcher on the triggers.json file so the
+ *  main server picks up changes written by MCP-child-process tool
+ *  invocations. Why this matters: agents driven by claude-cli or
+ *  codex-cli engines execute the `sentinel` tool inside a per-turn
+ *  MCP child process — that child has its own module-instance of this
+ *  scheduler with `started===false`, so a `reschedule()` call there is
+ *  a no-op. The child still writes the trigger JSON to disk; this
+ *  watcher in the main process notices and re-loads + re-arms. */
 export async function startSentinel(): Promise<void> {
   if (started) return;
   await loadTriggers();
@@ -428,14 +458,55 @@ export async function startSentinel(): Promise<void> {
     triggersLoaded: triggers.length,
     active: triggers.filter((t) => t.status === 'active').length,
   });
-  // Apply catch-up to active triggers sequentially. firings here
-  // happen in fire-and-forget background; the await is just for the
-  // state update.
   for (const t of triggers) {
     await applyBootCatchUp(t);
   }
   started = true;
+  installStoreWatcher();
   reschedule();
+}
+
+const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
+const TRIGGERS_PATH = join(SOMORA_HOME, 'sentinel', 'triggers.json');
+
+function installStoreWatcher(): void {
+  if (storeWatcher) return;
+  // ignoreInitial: we already loaded at boot. awaitWriteFinish handles
+  // the multi-write atomic-rename pattern in store.ts (write tmp →
+  // rename). 200ms debounce avoids reload bursts during a single
+  // batched mutation.
+  storeWatcher = chokidar.watch(TRIGGERS_PATH, {
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 50 },
+    persistent: true,
+  });
+  const onChange = (event: string) => {
+    if (watcherReloadTimer) clearTimeout(watcherReloadTimer);
+    watcherReloadTimer = setTimeout(async () => {
+      watcherReloadTimer = null;
+      try {
+        await loadTriggers();
+        logger.info({
+          msg: 'sentinel.scheduler.store_reloaded',
+          event,
+          activeCount: listTriggers().filter((t) => t.status === 'active').length,
+        });
+        reschedule();
+      } catch (err) {
+        logger.warn({
+          msg: 'sentinel.scheduler.store_reload_failed',
+          err: (err as Error).message,
+        });
+      }
+    }, 200);
+  };
+  storeWatcher.on('add', () => onChange('add'));
+  storeWatcher.on('change', () => onChange('change'));
+  storeWatcher.on('unlink', () => onChange('unlink'));
+  logger.info({
+    msg: 'sentinel.scheduler.watcher_installed',
+    path: TRIGGERS_PATH,
+  });
 }
 
 /** Stop the scheduler — used in tests; production never stops it. */
@@ -444,6 +515,14 @@ export function stopSentinel(): void {
     clearTimeout(nextTimer);
     nextTimer = null;
     nextFireAt = null;
+  }
+  if (watcherReloadTimer) {
+    clearTimeout(watcherReloadTimer);
+    watcherReloadTimer = null;
+  }
+  if (storeWatcher) {
+    void storeWatcher.close();
+    storeWatcher = null;
   }
   started = false;
 }
