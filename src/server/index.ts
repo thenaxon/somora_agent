@@ -2579,6 +2579,12 @@ configureSpawnTools({ chatTurnDeps });
 configureSentinel({
   chatTurnDeps,
   completedRetentionDays: config.sentinel.completedRetentionDays,
+  // Wire SSE broadcast so sentinel-driven turns stream live to
+  // subscribed clients exactly like /chat/send turns do. Without
+  // this, the woken agent's reaction shows up in JSONL on disk but
+  // not in the live stream — users see nothing until they reload.
+  publishEvent: (agent, session, event) =>
+    publish(agent, session, event as Parameters<typeof publish>[2]),
 });
 void startSentinel().catch((err) => {
   logger.error({ msg: 'sentinel.boot_failed', err: (err as Error).message });

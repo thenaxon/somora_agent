@@ -58,18 +58,33 @@ import {
 // sentinel can run an agent-turn without a network round-trip.
 // Same pattern as configureSpawnTools({ chatTurnDeps }).
 type ChatTurnDeps = Parameters<typeof runChatTurn>[0]['deps'];
+// `publishSse` mirrors what /chat/send + A2A spawn-async pass to
+// runChatTurn — without it, the woken agent's user_message + all
+// downstream deltas/tool-calls/replies are appended to the JSONL but
+// not broadcast over SSE. Web/mobile clients only see them on the
+// next history-refetch (= page reload). Reported live by user
+// 2026-05-17: "muss reloaden um die nachricht zu sehen + agent's
+// reaktion ist gar nicht im stream". Sentinel must broadcast like
+// any other turn entry-point.
+type PublishFn = (event: unknown) => Promise<void> | void;
+type PublishEvent = (agent: string, session: string, event: unknown) => Promise<void> | void;
 let injectedChatTurnDeps: ChatTurnDeps | null = null;
+let injectedPublishEvent: PublishEvent | null = null;
 let completedRetentionDays = 7;
 
 export function configureSentinel(args: {
   chatTurnDeps: ChatTurnDeps;
+  publishEvent?: PublishEvent;
   completedRetentionDays?: number;
 }): void {
   injectedChatTurnDeps = args.chatTurnDeps;
+  if (args.publishEvent) injectedPublishEvent = args.publishEvent;
   if (typeof args.completedRetentionDays === 'number') {
     completedRetentionDays = args.completedRetentionDays;
   }
 }
+
+void ({} as PublishFn); // type kept for clarity; resolved per-fire below
 
 /**
  * Garbage-collect terminal-state triggers whose lastFireAt is older
@@ -314,6 +329,14 @@ export async function fireTrigger(
   }
 
   const deps = injectedChatTurnDeps;
+  // Bind a per-fire publishSse so the woken agent's user_message and
+  // every downstream agent event reach SSE-subscribed clients live —
+  // same as /chat/send and A2A spawn-async. Without this, the turn
+  // only lands in the JSONL and clients need a page-reload to see it.
+  const publishSse =
+    injectedPublishEvent !== null
+      ? (event: unknown) => injectedPublishEvent!(dispatch.agent, session, event)
+      : undefined;
   // Mark in-flight BEFORE spawning the IIFE so pickNextDue can't re-
   // pick this trigger via a watcher-driven reschedule loop during
   // the fire. Cleared in the IIFE's finally.
@@ -330,6 +353,7 @@ export async function fireTrigger(
         text: prompt,
         turnId: taskId,
         deps,
+        ...(publishSse ? { publishSse: publishSse as never } : {}),
       });
       completeTask(taskId, result);
       const fresh = getTrigger(trigger.id);
