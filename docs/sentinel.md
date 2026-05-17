@@ -164,20 +164,66 @@ when to remove them.
 ## Catch-up policy when somora was down
 
 Sentinel runs in-process with the somora server. If the server is
-down when a fire was due, the next-boot logic decides what to do:
+down when a fire was due, the next-boot logic decides what to do.
 
-- **One-shot `at` triggers** that missed their moment within 6 hours
-  → fire once with `catchUp: true` in the history. Beyond 6 hours →
-  mark `completed` with reason "stale: server was down past catch-up
-  grace" (we miss it cleanly rather than firing a day-late
-  "your 10am reminder").
-- **Recurring triggers** (`every` / `daily` / `weekly` / `cron`)
-  → don't backfill. Compute the next future fire from the spec.
-  Firing five "you have new mail" pings because somora was down for
-  an hour is worse than firing zero.
+### One-shot `at` triggers
 
-The 6-hour grace and recurring-skip rule keep agents from getting
-woken up with a confusing pile of stale work.
+A 6-hour grace window applies system-wide:
+
+- Missed by ≤ 6h → fire once with `catchUp: true` in the history.
+- Missed by > 6h → mark `completed` with reason "stale: server was
+  down past catch-up grace". We miss it cleanly rather than firing a
+  day-late "your 10am reminder".
+
+### Recurring triggers — configurable per trigger
+
+For `every` / `daily` / `weekly` / `cron`, the behavior is set via
+`policy.missedFiresPolicy` on the trigger:
+
+| Setting | Behavior | Use for |
+|---|---|---|
+| `skip` (default) | No backfill. Compute next future fire, arm normally. | "Daily inbox check" — stacked fires after an outage are spam. |
+| `catchUpOnce` | Fire ONE historical instance with `catchUp:true` in evidence. | "Monthly invoice summary" — you want to know it was missed but only get one fire. |
+| `catchUpAll` | Fire one per missed instant (capped at 24). | Log-style triggers where each instant carries unique context. |
+
+Example monthly trigger that survives multi-day outages:
+
+```jsonc
+{
+  "action": "create",
+  "name": "monthly-summary",
+  "source": { "type": "time", "spec": { "type": "cron", "expression": "0 9 1 * *" } },
+  "dispatch": { "agent": "naxon", "session": "main", "prompt": "Erstelle den monatsbericht." },
+  "policy": { "missedFiresPolicy": "catchUpOnce" }
+}
+```
+
+If somora was offline on the 1st at 9am, the next boot detects the
+missed fire and dispatches it with `catchUp:true` so naxon knows the
+fire is delayed.
+
+## Cron syntax (the escape hatch)
+
+90% of recurring use-cases fit `daily` / `weekly` / `every` —
+prefer those when they do; they read better. For the remaining 10%
+(monthly recurring, multi-time-per-day) use `cron`:
+
+```
+"0 8 * * *"      # daily 8:00
+"0 9 1 * *"      # 1st of each month, 9:00
+"*/15 * * * *"   # every 15 min
+"0 9,17 * * *"   # 9:00 AND 17:00 daily
+"0 0 * * 0"      # sundays midnight
+```
+
+Standard 5-field cron (minute hour day-of-month month day-of-week).
+Sentinel's parser is intentionally minimal:
+
+- Supports: `*`, `N`, `*/N`, `a,b,c` (comma-list)
+- Does NOT support: ranges `1-5` (use `1,2,3,4,5`), named months
+  `MON` / `JAN` (use numbers), `@daily` / `@hourly` macros
+
+Day-of-week is 0=Sun...6=Sat (Vixie convention).
 
 ## What the agent receives
 

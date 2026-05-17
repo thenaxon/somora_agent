@@ -76,6 +76,7 @@ const DispatchSchema = z.object({
 const PolicySchema = z.object({
   cooldownMs: z.number().int().min(0).optional(),
   maxFiresPerDay: z.number().int().min(1).max(SENTINEL_LIMITS.MAX_FIRES_PER_DAY).optional(),
+  missedFiresPolicy: z.enum(['skip', 'catchUpOnce', 'catchUpAll']).optional(),
 });
 
 const SentinelInput = z
@@ -214,7 +215,11 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
     '\n\n' +
     'Source variants (all under type:"time"): ' +
     '`at` (one-shot ISO timestamp), `every` (interval like "5m", min 60s), `daily` ("08:00"), ' +
-    '`weekly` (mon/tue/…/sun + "09:00"), `cron` (standard 5-field — escape hatch). ' +
+    '`weekly` (mon/tue/…/sun + "09:00"), `cron` (standard 5-field — escape hatch for things ' +
+    'like "1st of each month"). Cron examples: `"0 9 1 * *"` (monthly 1st 9:00), ' +
+    '`"0 8 * * *"` (daily 8:00), `"*/15 * * * *"` (every 15 min). Cron does NOT support ' +
+    'ranges (use `1,2,3,4,5` not `1-5`) or named months/weekdays. Prefer the named ' +
+    'primitives when they fit — they read better. ' +
     '\n\n' +
     'Safeguards: minimum interval 60s (no sub-minute polling), max 50 active triggers per agent, ' +
     'max 500 fires per trigger per day (auto-pause when hit), 3-strikes auto-pause on consecutive ' +
@@ -242,7 +247,7 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
               { type: 'object', properties: { type: { const: 'every' }, interval: { type: 'string', description: '30s / 5m / 1h. Minimum 60s.' } }, required: ['type', 'interval'] },
               { type: 'object', properties: { type: { const: 'daily' }, time: { type: 'string', description: 'HH:MM or HH:MM:SS.' } }, required: ['type', 'time'] },
               { type: 'object', properties: { type: { const: 'weekly' }, day: { type: 'string', enum: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] }, time: { type: 'string' } }, required: ['type', 'day', 'time'] },
-              { type: 'object', properties: { type: { const: 'cron' }, expression: { type: 'string', description: 'Standard 5-field: m h dom mon dow. Supports *, N, */N, a,b,c. No ranges or names.' } }, required: ['type', 'expression'] },
+              { type: 'object', properties: { type: { const: 'cron' }, expression: { type: 'string', description: 'Standard 5-field cron: m h dom mon dow. Supports *, N, */N, a,b,c. Does NOT support ranges (use 1,2,3,4,5 instead of 1-5) or named months/weekdays (use 1=Mon..7=Sun). Examples: "0 8 * * *" daily at 8:00 · "0 9 1 * *" 1st of each month 9:00 · "*/15 * * * *" every 15 min · "0 9,17 * * *" 9:00 AND 17:00 daily · "0 0 * * 0" sundays midnight. For simple cases prefer `daily`/`weekly`/`every` — they read better and cover 90% of recurring use-cases.' } }, required: ['type', 'expression'] },
             ],
           },
         },
@@ -263,6 +268,19 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
         properties: {
           cooldownMs: { type: 'integer', minimum: 0, description: 'Minimum ms between fires.' },
           maxFiresPerDay: { type: 'integer', minimum: 1, maximum: SENTINEL_LIMITS.MAX_FIRES_PER_DAY },
+          missedFiresPolicy: {
+            type: 'string',
+            enum: ['skip', 'catchUpOnce', 'catchUpAll'],
+            description:
+              'How to handle recurring fires that elapsed while somora was down. ' +
+              '`skip` (default): no backfill — best for "daily inbox check" where stacked ' +
+              'fires after an outage are spam. `catchUpOnce`: fire one historical instance ' +
+              'with catchUp:true in the evidence block — best for "monthly summary" where ' +
+              'you want to know it was missed but not get N separate fires. `catchUpAll`: ' +
+              'fire one per missed instant (capped at 24) — best for log-style triggers ' +
+              'where each instant carries unique context. One-shot `at`-triggers use a 6h ' +
+              'grace window separately, this flag only affects recurring sources.',
+          },
         },
       },
       // get / pause / resume / delete / test / history

@@ -187,6 +187,20 @@ export function reschedule(): void {
 }
 
 async function onTimer(): Promise<void> {
+  // Belt-and-suspenders against a hypothetically-dead watcher: every
+  // timer tick we re-read the store from disk before deciding what
+  // to do. Cheap (a few KB JSON parse), and if the watcher silently
+  // died (e.g. inotify limit hit, NFS hiccup, OS-level weirdness)
+  // we still resync state at least once per re-arm tick (daily cap
+  // = at most 24h drift).
+  try {
+    await loadTriggers();
+  } catch (err) {
+    logger.warn({
+      msg: 'sentinel.scheduler.timer_reload_failed',
+      err: (err as Error).message,
+    });
+  }
   // Re-pick at fire time — registry may have changed during sleep,
   // and we want the actually-due trigger (not a stale memory of which
   // was due when we armed).
@@ -499,12 +513,69 @@ async function applyBootCatchUp(t: Trigger): Promise<void> {
     return;
   }
 
-  // Recurring trigger: just refresh nextFireAt. Don't backfill —
-  // running "you have new mail" five times because somora was down
-  // for an hour is worse than not running it at all (memory note
-  // for the user: see history if needed).
+  // Recurring trigger. Did we miss one or more scheduled fires while
+  // somora was down? Decide based on `policy.missedFiresPolicy`:
+  //   skip (default) — just compute next future fire, no backfill
+  //   catchUpOnce    — one historical fire with catchUp:true, then
+  //                    arm for the regular next
+  //   catchUpAll     — fire ONCE per missed instant, capped at
+  //                    MAX_BACKFILL_FIRES (24)
+  const missedPolicy = t.policy?.missedFiresPolicy ?? 'skip';
+  const lastAnchor = t.lastSuccessAt
+    ? new Date(t.lastSuccessAt).getTime()
+    : new Date(t.createdAt).getTime();
+  const missed = enumerateMissedFires(t, lastAnchor, now);
+
+  if (missed.length > 0 && missedPolicy !== 'skip') {
+    const toFire = missedPolicy === 'catchUpOnce' ? 1 : missed.length;
+    const capped = Math.min(toFire, SENTINEL_LIMITS.MAX_BACKFILL_FIRES);
+    logger.info({
+      msg: 'sentinel.scheduler.boot_catchup_recurring',
+      triggerId: t.id,
+      missedCount: missed.length,
+      firing: capped,
+      policy: missedPolicy,
+    });
+    for (let i = 0; i < capped; i++) {
+      await fireTrigger(t, { catchUp: true, testMode: false });
+    }
+  } else if (missed.length > 0) {
+    logger.info({
+      msg: 'sentinel.scheduler.boot_skip_recurring',
+      triggerId: t.id,
+      missedCount: missed.length,
+      policy: missedPolicy,
+    });
+  }
+
+  // Refresh nextFireAt regardless.
   const updated: Trigger = { ...t, nextFireAt: next.toISOString() };
   await saveTrigger(updated);
+}
+
+/** Walk forward from `since` and collect every instant the trigger's
+ *  spec would have fired up to `until`. Used by boot-catch-up for
+ *  recurring triggers with non-skip missedFiresPolicy. Capped at
+ *  MAX_BACKFILL_FIRES + 1 so we don't iterate forever on a misconfigured
+ *  spec. */
+function enumerateMissedFires(t: Trigger, since: number, until: number): Date[] {
+  if (t.source.type !== 'time') return [];
+  const spec = t.source.spec;
+  // `at` triggers handled separately (single-instant); enumerate is
+  // only meaningful for recurring sources.
+  if (spec.type === 'at') return [];
+
+  const fires: Date[] = [];
+  let cursor = since;
+  while (fires.length <= SENTINEL_LIMITS.MAX_BACKFILL_FIRES) {
+    const next = computeNextFire(spec, new Date(cursor));
+    if (next === null) break;
+    const t = next.getTime();
+    if (t >= until) break;
+    fires.push(next);
+    cursor = t;
+  }
+  return fires;
 }
 
 /** Boot the scheduler. Idempotent on multiple calls.

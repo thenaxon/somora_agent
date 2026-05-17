@@ -84,8 +84,8 @@ export interface Dispatch {
 // ─────────────────────────────────────────────────────────────────────
 
 /** Cooldown / dedupe / rising-edge behavior. Phase 1 honors cooldownMs
- *  + maxFiresPerDay; the rising-edge flag is recorded but only acts on
- *  value-bearing sources (Phase 2+). */
+ *  + maxFiresPerDay + missedFiresPolicy; the rising-edge flag is
+ *  recorded but only acts on value-bearing sources (Phase 2+). */
 export interface Policy {
   /** Minimum ms between fires. Default 0 (= every event fires).
    *  Sentinel enforces a global floor of 60_000ms (1 min) so no agent
@@ -94,6 +94,22 @@ export interface Policy {
   /** Hard daily cap on fires per trigger. Default 500. Triggers that
    *  exceed this auto-pause with reason 'daily_cap'. */
   maxFiresPerDay?: number;
+  /** How to handle a recurring trigger whose fire-time(s) elapsed
+   *  while somora was down. Default `skip`. One-shot `at`-triggers
+   *  use the boot-grace window (CATCHUP_GRACE_MS) regardless of this
+   *  setting; this flag only changes behavior for recurring sources.
+   *    - `skip` (default): don't backfill. Recompute next future
+   *      fire and arm normally. Best for "check meine mails 8:00"
+   *      where you don't want 14 stacked emails after a 2-week
+   *      outage.
+   *    - `catchUpOnce`: fire ONCE with `catchUp:true` in the
+   *      evidence block, then proceed with the normal schedule. Best
+   *      for "monthly summary" where you want to know the period was
+   *      missed but not get N separate fires.
+   *    - `catchUpAll`: fire ONCE per missed scheduled instant (caps
+   *      at MAX_BACKFILL_FIRES = 24 to avoid runaway). Best for log-
+   *      style triggers where each instant carries unique context. */
+  missedFiresPolicy?: 'skip' | 'catchUpOnce' | 'catchUpAll';
   /** Phase 2+ — only fire on the value transition (false→true), not
    *  on every poll that sees true. Currently a no-op for time-source. */
   fireOn?: 'every' | 'rising_edge';
@@ -189,7 +205,12 @@ export const SENTINEL_LIMITS = {
   ERROR_STREAK_THRESHOLD: 3,
   /** Max history rows kept per trigger (older rotated out). */
   HISTORY_RING_SIZE: 200,
-  /** Catch-up grace: if a recurring trigger missed its fire by more
-   *  than this, skip with info rather than fire late. */
+  /** Catch-up grace: if a one-shot `at` trigger missed its fire by
+   *  more than this, mark completed without firing. */
   CATCHUP_GRACE_MS: 6 * 60 * 60 * 1000, // 6 hours
+  /** Hard ceiling on backfill fires per trigger at boot, even when
+   *  `missedFiresPolicy: 'catchUpAll'` is set. Protects against a
+   *  trigger that's been "every 5m" with somora down for a month
+   *  spawning 8000 fires on next boot. */
+  MAX_BACKFILL_FIRES: 24,
 } as const;

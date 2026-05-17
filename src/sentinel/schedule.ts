@@ -61,14 +61,18 @@ function nextWeeklyAfter(now: Date, day: WeekDay, t: { h: number; m: number; s: 
 
 interface CronField {
   match: (value: number) => boolean;
+  isWildcard: boolean;
 }
 
 function parseField(field: string, min: number, max: number): CronField {
-  if (field === '*') return { match: () => true };
+  if (field === '*') return { match: () => true, isWildcard: true };
   if (field.startsWith('*/')) {
     const step = parseInt(field.slice(2), 10);
     if (!Number.isInteger(step) || step <= 0) throw new Error(`bad step: ${field}`);
-    return { match: (v) => v >= min && v <= max && (v - min) % step === 0 };
+    return {
+      match: (v) => v >= min && v <= max && (v - min) % step === 0,
+      isWildcard: false,
+    };
   }
   const values = field.split(',').map((s) => {
     const n = parseInt(s, 10);
@@ -78,7 +82,7 @@ function parseField(field: string, min: number, max: number): CronField {
     return n;
   });
   const set = new Set(values);
-  return { match: (v) => set.has(v) };
+  return { match: (v) => set.has(v), isWildcard: false };
 }
 
 interface ParsedCron {
@@ -111,14 +115,31 @@ function nextCronAfter(now: Date, cron: ParsedCron): Date {
   start.setMinutes(start.getMinutes() + 1);
   const limit = new Date(start.getTime() + 366 * 24 * 60 * 60 * 1000);
   const t = new Date(start);
+  // Vixie day-matching semantics:
+  //   - dom=* AND dow=*    → every day matches
+  //   - dom=N AND dow=*    → only the constraining field acts
+  //   - dom=* AND dow=N    → only the constraining field acts
+  //   - dom=N AND dow=M    → OR (matches if either fits — typical
+  //                         use is "every monday OR 1st of month")
+  // The naive `dom.match() || dow.match()` is wrong because '*'
+  // always matches everything, so a wildcard in either field would
+  // collapse the OR to always-true and the constraint-field becomes
+  // a no-op. Hence the explicit isWildcard branches.
+  const domWild = cron.dayOfMonth.isWildcard;
+  const dowWild = cron.dayOfWeek.isWildcard;
   while (t.getTime() < limit.getTime()) {
+    const dayOk = domWild && dowWild
+      ? true
+      : domWild
+        ? cron.dayOfWeek.match(t.getDay())
+        : dowWild
+          ? cron.dayOfMonth.match(t.getDate())
+          : cron.dayOfMonth.match(t.getDate()) || cron.dayOfWeek.match(t.getDay());
     if (
       cron.minute.match(t.getMinutes()) &&
       cron.hour.match(t.getHours()) &&
       cron.month.match(t.getMonth() + 1) &&
-      // Vixie semantics: dom and dow are OR'd when both restricted.
-      // When one is '*' (matches all), the other acts as the constraint.
-      (cron.dayOfMonth.match(t.getDate()) || cron.dayOfWeek.match(t.getDay()))
+      dayOk
     ) {
       return t;
     }
