@@ -852,6 +852,145 @@ Fresh shell (no tmux session). Same binary/text frame protocol as
 
 ---
 
+## Sentinel — proactive triggers
+
+Sentinel installs time-based triggers that wake agents on a schedule.
+The agent does its work into its own chat session — same surface as
+when you interact with it directly. See [sentinel.md](sentinel.md) for
+the conceptual overview.
+
+The same operations are also exposed as the `sentinel` tool agents
+can call (`POST /agents/:agent/tools/sentinel`); the HTTP routes below
+are for the web-UI sentinel tab and for external clients.
+
+### `GET /sentinel/triggers`
+
+List all triggers. Optional query filters:
+
+- `?owner=<agent>` — only triggers whose `ownerAgent` matches
+- `?status=active|paused|error|completed`
+
+```bash
+curl https://<host>:18737/sentinel/triggers?status=active
+```
+
+```json
+{
+  "count": 2,
+  "triggers": [
+    {
+      "id": "morning-mail-summary-a7c3",
+      "name": "morning-mail-summary",
+      "ownerAgent": "jarvis",
+      "source": { "type": "time", "spec": { "type": "daily", "time": "08:00" } },
+      "evaluator": { "type": "none" },
+      "dispatch": { "agent": "jarvis", "session": "morning-routine",
+                    "prompt": "Check inbox via gog skill…" },
+      "createdAt": "2026-05-17T11:00:00.000Z",
+      "status": "active",
+      "fireCount": 5,
+      "lastSuccessAt": "2026-05-17T08:00:01.234Z",
+      "errorStreak": 0,
+      "nextFireAt": "2026-05-18T08:00:00.000Z"
+    }
+  ]
+}
+```
+
+### `GET /sentinel/triggers/:id`
+
+Full trigger document for a single id. 404 if missing.
+
+### `GET /sentinel/triggers/:id/history`
+
+Newest-first fire log. `?limit=N` capped at 200, default 50.
+
+```json
+{
+  "count": 5,
+  "entries": [
+    {
+      "firedAt": "2026-05-17T08:00:01.234Z",
+      "scheduledFor": "2026-05-17T08:00:00.000Z",
+      "outcome": "success",
+      "taskId": "task-..."
+    },
+    {
+      "firedAt": "2026-05-16T08:00:00.500Z",
+      "scheduledFor": "2026-05-16T08:00:00.000Z",
+      "outcome": "skipped",
+      "skipReason": "cooldown (1320s remaining)"
+    }
+  ]
+}
+```
+
+Outcomes: `success` / `error` (with `error: string`) / `skipped`
+(with `skipReason: string`). Plus optional `catchUp: true` (boot
+recovery fire) and `testMode: true` (fired via `/test`).
+
+### `POST /sentinel/triggers/:id/pause`
+
+Set status to `paused`. Trigger stops firing until explicitly resumed.
+Returns `{"ok": true}`. 404 if missing.
+
+### `POST /sentinel/triggers/:id/resume`
+
+Set status back to `active`, recompute `nextFireAt` from the spec.
+Idempotent for already-active triggers. 404 if missing.
+
+### `POST /sentinel/triggers/:id/test`
+
+Fire NOW, bypassing cooldown and daily-cap. The fire is recorded with
+`testMode: true` in history. The dispatched agent receives the same
+evidence-prefixed prompt as a real fire.
+
+```bash
+curl -X POST https://<host>:18737/sentinel/triggers/morning-mail-summary-a7c3/test
+```
+
+### `DELETE /sentinel/triggers/:id`
+
+Remove the trigger and its history file. Idempotent — already-deleted
+ids return 404.
+
+### `GET /sentinel/status`
+
+Scheduler diagnostic snapshot. Useful when sanity-checking that the
+scheduler is armed for the next due trigger.
+
+```json
+{ "started": true, "nextFireAt": 1779013800000 }
+```
+
+### Creating triggers
+
+Triggers are created through the agent-facing tool, not a dedicated
+HTTP route, so the safeguards (min-interval, per-agent cap, limit
+enforcement) all run through the same validation path:
+
+```bash
+curl -X POST https://<host>:18737/agents/hans/tools/sentinel \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "action": "create",
+    "name": "morning-mail-summary",
+    "intent": "Daily 8am inbox digest",
+    "source": { "type": "time", "spec": { "type": "daily", "time": "08:00" } },
+    "dispatch": {
+      "agent": "jarvis",
+      "session": "morning-routine",
+      "prompt": "Check inbox via the gog skill, group by topic, tell me what is important."
+    }
+  }'
+```
+
+The full `sentinel` tool surface (`create` / `list` / `get` /
+`pause` / `resume` / `delete` / `test` / `history`) is described in
+[sentinel.md](sentinel.md).
+
+---
+
 ## Web bundle
 
 ### `GET /web/`

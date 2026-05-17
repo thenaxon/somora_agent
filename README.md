@@ -48,6 +48,12 @@ What makes it different:
   that belong to this conversation. Opt-in, off by default — flip
   `projects.enabled: true` in `config.yaml` to use.
   See [docs/projects.md](docs/projects.md).
+- **Sentinel (proactive triggers).** Install time-based triggers
+  (`at` / `every` / `daily` / `weekly` / `cron`) that wake an agent on
+  a schedule. The agent does work into its own chat session — daily
+  mail digests, scheduled GitHub-check routines, reminders that
+  surface as agent messages, not toasts. Visible and manageable in the
+  web-UI Sentinel tab. See [docs/sentinel.md](docs/sentinel.md).
 
 ## Architecture at a glance
 
@@ -81,7 +87,11 @@ What makes it different:
    ├─ Tool registry
    │    memory_*, dream_*, file_*, exec, tmux, web_*,
    │    spawn_subagent, somora_docs_*, skill, resource_*,
-   │    time_now, analyze_file
+   │    sentinel, time_now, analyze_file
+   │
+   ├─ Sentinel (proactive triggers)
+   │    ~/.somora/sentinel/triggers.json
+   │    time-based fires → agent-turn dispatch with evidence
    │
    └─ Three-phase dream system
         REM   (per-agent, session → memory inbox)
@@ -324,6 +334,7 @@ and codex-cli) — same tool surface regardless of model.
 | agents | `spawn_subagent`, `subagent_*`, `agent_ask` | Sub-agent orchestration; ask another agent something. |
 | skills | `skill` | Activate a Markdown how-to from `~/.somora/skills/`. |
 | projects (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests linking a session to a real-world thing. Only registered when `projects.enabled: true`. |
+| sentinel | `sentinel` | Install + manage time-based triggers that wake agents on a schedule (single action-enum tool: create/list/get/pause/resume/delete/test/history). |
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
 | resources | `resource_list`, `resource_test` | Discover/probe configured SSH targets. |
 | time | `time_now` | Current date/time/timezone. |
@@ -348,6 +359,7 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 - [docs/mobile.md](docs/mobile.md) — mobile PWA install + usage, scope, troubleshooting
 - [docs/api.md](docs/api.md) — HTTP+SSE+WS API reference for building custom clients
 - [docs/tmux.md](docs/tmux.md) — long-lived terminal sessions for TUIs
+- [docs/sentinel.md](docs/sentinel.md) — proactive time-based triggers
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning-depth surface across engines
 - [docs/display.md](docs/display.md) — TUI display toggles
