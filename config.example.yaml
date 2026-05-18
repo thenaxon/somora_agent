@@ -161,6 +161,44 @@ providers:
 #   model: mlx-community/whisper-large-v3-turbo
 #   language: de                                # optional default lang hint
 
+# Text-to-Speech (TTS) — mirror of STT. Generates spoken audio from
+# assistant text and serves it back to clients. Same posture: somora
+# proxies to an OpenAI-compatible TTS upstream (oMLX, fish-audio, etc),
+# the model is NOT listed in `providers.<x>.models`.
+#
+# Two flows are wired:
+#   (1) Auto-TTS in normal chat: when you submit via mic AND the
+#       per-session auto-play toggle is on, somora generates audio
+#       for the assistant reply and the client auto-plays it. Pure
+#       text turns and toggle-off sessions stay silent.
+#   (2) /voice/turn HTTP endpoint: independent audio-in/audio-out
+#       endpoint for integrations (panels, voice satellites, etc).
+#       Always generates audio, regardless of toggles.
+#
+# Per-client policy seeds the localStorage toggle on first session
+# open; users can flip it per chat window if `allowUserOverride` is
+# true. Cache is content-addressed (sha256(text+voice+model+format)),
+# lives at ~/.somora/tts-cache/, auto-GC'd by retention + size cap.
+# tts:
+#   enabled: true
+#   provider: omlx                              # ← references providers.omlx
+#   model: fish-audio-s2-pro-8bit
+#   language: de                                # optional default lang hint
+#   # voice: <id>                               # optional speaker selector
+#   cache:
+#     retentionDays: 7                          # 0 disables GC
+#     maxSizeMB: 500
+#   reencode:
+#     enabled: true                             # use ffmpeg for opus/m4a when client Accept asks
+#     opusBitrateKbps: 24
+#   clients:
+#     web:
+#       autoPlayVoiceReplies: false             # default for new sessions
+#       allowUserOverride: true                 # show the 🔊/🔇 toggle in chat header
+#     mobile:
+#       autoPlayVoiceReplies: false
+#       allowUserOverride: true
+
 # Projects — pointer-file index over existing storage locations. Each
 # project lives as ~/.somora/projects/<slug>.md with YAML frontmatter
 # that lists Obsidian paths, local paths, URLs, and remote-resource

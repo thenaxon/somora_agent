@@ -188,8 +188,8 @@ Four first-party clients, all hitting the same local server:
 | Client | How to launch | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
-| **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
+| **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record) + optional spoken replies via TTS (per-agent toggle), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
 
 ### TUI — `somora tui`
@@ -360,6 +360,7 @@ See [docs/tools.md](docs/tools.md) for the full surface.
 - [docs/api.md](docs/api.md) — HTTP+SSE+WS API reference for building custom clients
 - [docs/tmux.md](docs/tmux.md) — long-lived terminal sessions for TUIs
 - [docs/sentinel.md](docs/sentinel.md) — proactive time-based triggers
+- [docs/voice.md](docs/voice.md) — STT + TTS, per-session auto-play toggle, /voice/turn endpoint
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning-depth surface across engines
 - [docs/display.md](docs/display.md) — TUI display toggles

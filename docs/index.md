@@ -85,6 +85,10 @@ is the HTTP+SSE contract — same surface the built-in clients use.
 - **tools** — the things an agent can call. Memory reads, wiki edits,
   file I/O, shell exec, tmux sessions, web search/fetch, sub-agent
   spawning, etc. See [tools.md](tools.md).
+- **voice** — optional STT for mic input on web/mobile and optional
+  TTS for spoken replies, plus a generic `/voice/turn` audio-in/audio-
+  out endpoint. Both reuse the OpenAI-compatible audio shape, no
+  extra credentials. See [voice.md](voice.md).
 
 ## Where to next
 
@@ -122,5 +126,6 @@ high-value next steps in rough order:
 | [tmux.md](tmux.md) | Multi-turn shell sessions | Driving long-running CLIs from agents |
 | [web.md](web.md) | Browser client | Web-UI specifics + HTTPS notes |
 | [mobile.md](mobile.md) | Mobile PWA | iOS/Android install, scope |
+| [voice.md](voice.md) | STT + TTS + /voice/turn | Voice in, spoken replies, audio-in/audio-out endpoint |
 | [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
 | [security.md](security.md) | Trust model | Network posture, sandbox stance |

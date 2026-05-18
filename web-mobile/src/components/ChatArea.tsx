@@ -3,7 +3,7 @@
 // alone). All chat-stream state is passed in from MobileApp — no
 // SSE-owning hook here, to keep the subscription single per active agent.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -77,6 +77,7 @@ export function ChatArea({ agent, messages, streaming, connectionError }: Props)
                 m.text
               )}
               {m.streaming && <span className="msg-streaming-cursor" />}
+              {m.role === 'agent' && m.audio && <PlayAudioButton url={m.audio.url} />}
             </div>
           </div>
         ))}
@@ -96,5 +97,57 @@ export function ChatArea({ agent, messages, streaming, connectionError }: Props)
         )}
       </div>
     </>
+  );
+}
+
+// Per-bubble Play-button for agent turns that have a server-generated
+// TTS audio artifact attached. Tappable to replay; tap again to stop.
+function PlayAudioButton({ url }: { url: string }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  function onClick() {
+    if (playing && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      setPlaying(false);
+      return;
+    }
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.onended = () => {
+      setPlaying(false);
+      audioRef.current = null;
+    };
+    audio.onerror = () => {
+      setPlaying(false);
+      audioRef.current = null;
+    };
+    audio.play().then(
+      () => setPlaying(true),
+      () => setPlaying(false),
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={playing ? 'Stop' : 'Play voice reply'}
+      style={{
+        marginTop: 6,
+        background: 'transparent',
+        border: '1px solid var(--border-2, #444)',
+        borderRadius: 4,
+        color: 'var(--text-2, #888)',
+        cursor: 'pointer',
+        fontSize: 12,
+        padding: '4px 10px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
+      <span aria-hidden="true">{playing ? '⏸' : '▶'}</span>
+      <span>{playing ? 'Stop' : 'Play'}</span>
+    </button>
   );
 }

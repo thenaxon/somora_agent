@@ -548,6 +548,88 @@ export const SttConfigSchema = z
   .optional();
 export type SttConfig = z.infer<typeof SttConfigSchema>;
 
+// Text-to-Speech config. Mirror-image of STT: somora proxies a
+// client-issued `text → audio` request to an OpenAI-compatible TTS
+// endpoint (oMLX, fish-audio, etc), caches the result, and serves
+// it back as audio bytes. Same as STT, the TTS model is NOT listed
+// in providers.X.models — it's a separate service surface, not "a
+// chat model to pick".
+//
+// Auto-TTS gating: the run-turn pipeline generates an
+// `assistant_audio` artifact only when ALL of (1) tts.enabled,
+// (2) the user message arrived via STT (input.modality === 'voice'),
+// (3) the client requested autoPlayRequested=true with that turn,
+// and (4) the assistant text passes the speech-sanitizer all hold.
+// Otherwise the chat behaves text-only.
+//
+// `/voice/turn` is independent of the auto-TTS gate: it's a
+// dedicated audio-in → audio-out endpoint that always generates TTS.
+export const TtsClientPolicySchema = z.object({
+  /** Default for the per-session "auto-play voice replies" toggle. */
+  autoPlayVoiceReplies: z.boolean().default(false),
+  /** If false, the per-session toggle is hidden in the UI and the
+   *  default is forced. Use for kiosk-style installs. */
+  allowUserOverride: z.boolean().default(true),
+});
+export type TtsClientPolicy = z.infer<typeof TtsClientPolicySchema>;
+
+export const TtsConfigSchema = z
+  .object({
+    /** Master toggle. When false (or block omitted), /tts/* returns
+     *  503 and play-buttons stay hidden client-side. */
+    enabled: z.boolean().default(false),
+    /** Name of an existing entry in `providers`. Reuses its baseUrl +
+     *  apiKey. Provider engine must be `openai-compatible`. */
+    provider: z.string().min(1),
+    /** Model id passed in the OpenAI-compatible /v1/audio/speech call.
+     *  Whatever string the upstream expects (e.g. `fish-audio-s2-pro-8bit`). */
+    model: z.string().min(1),
+    /** Optional voice/speaker selector. Forwarded to the upstream as
+     *  `voice`. Provider-specific; omit if your model uses one. */
+    voice: z.string().min(1).optional(),
+    /** Optional default language hint (ISO 639-1). Forwarded as `language`. */
+    language: z.string().min(2).max(8).optional(),
+    /** Cache settings for generated audio. */
+    cache: z
+      .object({
+        /** Days a cached audio file lingers after creation. 0 disables
+         *  GC entirely (manual cleanup only). */
+        retentionDays: z.number().int().min(0).max(3650).default(7),
+        /** Hard cap on the cache directory size. Older files evicted
+         *  first when exceeded. */
+        maxSizeMB: z.number().int().min(1).default(500),
+      })
+      .default({ retentionDays: 7, maxSizeMB: 500 }),
+    /** Optional re-encode pipeline. When enabled, somora can serve
+     *  opus/m4a on top of the upstream's native WAV via ffmpeg. */
+    reencode: z
+      .object({
+        enabled: z.boolean().default(true),
+        opusBitrateKbps: z.number().int().min(8).max(256).default(24),
+      })
+      .default({ enabled: true, opusBitrateKbps: 24 }),
+    /** Per-client defaults for the auto-play feature. The web + mobile
+     *  PWA clients read this on first session-open to seed their
+     *  per-session localStorage toggle. */
+    clients: z
+      .object({
+        web: TtsClientPolicySchema.default({
+          autoPlayVoiceReplies: false,
+          allowUserOverride: true,
+        }),
+        mobile: TtsClientPolicySchema.default({
+          autoPlayVoiceReplies: false,
+          allowUserOverride: true,
+        }),
+      })
+      .default({
+        web: { autoPlayVoiceReplies: false, allowUserOverride: true },
+        mobile: { autoPlayVoiceReplies: false, allowUserOverride: true },
+      }),
+  })
+  .optional();
+export type TtsConfig = z.infer<typeof TtsConfigSchema>;
+
 // Projects — pointer-file index over existing storage locations
 // (Obsidian, local paths, URLs, remote resources). Each project is a
 // Markdown+frontmatter file under ~/.somora/projects/<slug>.md; a
@@ -836,6 +918,7 @@ export const ConfigSchema = z.object({
   skills: SkillsConfigSchema,
   vision: VisionConfigSchema,
   stt: SttConfigSchema,
+  tts: TtsConfigSchema,
   projects: ProjectsConfigSchema,
   sentinel: SentinelConfigSchema,
   obsidian: ObsidianConfigSchema,

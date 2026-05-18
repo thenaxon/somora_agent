@@ -249,7 +249,24 @@ providers:
 Multiple OpenAI-compatible providers can coexist — give each one a unique
 name (`local`, `lmstudio`, `office`, …).
 
-## 7. Speech-to-Text (optional)
+## 7. Voice — STT + TTS (optional)
+
+Voice is two independent toggles:
+
+- **STT** (speech-to-text) — turns the mic button on for the web and
+  mobile-PWA chat. Tap, talk, tap again → transcript drops into the
+  draft.
+- **TTS** (text-to-speech) — when you submit via mic and the per-chat
+  auto-play toggle is on, somora generates spoken audio for the
+  assistant reply and plays it. A Play-button on the bubble lets you
+  replay.
+
+Both proxy through OpenAI-compatible endpoints on a provider you've
+already configured. See [voice.md](voice.md) for the full picture
+including the `/voice/turn` audio-in/audio-out endpoint for
+integrations.
+
+### Speech-to-Text
 
 When enabled, the web chat input grows a mic button next to send. Click
 → record, click again → transcribe → text lands in the textarea ready to
@@ -299,6 +316,51 @@ for f in preprocessor_config.json tokenizer.json special_tokens_map.json \
   curl -L -O "https://huggingface.co/openai/whisper-large-v3-turbo/resolve/main/$f"
 done
 ```
+
+### Text-to-Speech
+
+Mirror config for spoken replies. Same posture — proxies through an
+OpenAI-compatible TTS endpoint (`POST /v1/audio/speech`) on a provider
+you already have.
+
+```yaml
+tts:
+  enabled: true
+  provider: omlx                              # ← references providers.omlx
+  model: fish-audio-s2-pro-8bit               # whatever your upstream calls it
+  language: de
+  cache:
+    retentionDays: 7                          # 0 disables GC
+    maxSizeMB: 500
+  reencode:
+    enabled: true                             # needs ffmpeg on $PATH
+    opusBitrateKbps: 24
+  clients:
+    web:
+      autoPlayVoiceReplies: false             # initial toggle state for new sessions
+      allowUserOverride: true
+    mobile:
+      autoPlayVoiceReplies: false
+      allowUserOverride: true
+```
+
+Auto-TTS for the normal chat fires **only** when all four hold:
+`tts.enabled` is true, the user submitted via mic (`input_modality=voice`),
+the per-session 🔊 toggle is on, and the assistant text is speakable
+(no heavy code blocks / large tables). Otherwise the chat stays
+text-only. The `🔊`/`🔇` toggle in the chat header is sticky per
+session (`localStorage`).
+
+Two flows are wired:
+
+- **Normal chat auto-TTS** — voice input → spoken reply on web + mobile.
+- **`POST /voice/turn`** — independent audio-in/audio-out endpoint
+  for panel/satellite/bridge integrations; always generates audio
+  regardless of toggles. See [voice.md](voice.md#voiceturn-endpoint).
+
+System dependency: `ffmpeg` on `$PATH` if you want `tts.reencode.enabled`
+(opus/m4a output). Without ffmpeg, set `reencode.enabled: false` and
+clients receive plain WAV (larger, but works).
 
 ## Tunables
 

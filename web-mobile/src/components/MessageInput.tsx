@@ -10,14 +10,24 @@ import { MicButton } from './MicButton';
 
 interface Props {
   agent: string;
-  onSend: (text: string, attachments: AttachmentRef[]) => Promise<void>;
+  onSend: (
+    text: string,
+    attachments: AttachmentRef[],
+    voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean },
+  ) => Promise<void>;
+  /** When true and the current draft came from STT, the send call
+   *  flags input_modality=voice + auto_play_requested=true. */
+  autoPlayEnabled: boolean;
 }
 
-export function MessageInput({ agent, onSend }: Props) {
+export function MessageInput({ agent, onSend, autoPlayEnabled }: Props) {
   const [text, setText] = useState('');
   const [staged, setStaged] = useState<AttachmentRef[]>([]);
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Tracks whether the CURRENT draft was produced by STT. Reset on
+  // send (consumed) — fresh typing after that no longer flags voice.
+  const fromMicRef = useRef<boolean>(false);
 
   const trimmed = text.trim();
   // Allow attachment-only sends (e.g. a single photo with no text) —
@@ -30,13 +40,18 @@ export function MessageInput({ agent, onSend }: Props) {
     setSending(true);
     const payloadText = trimmed;
     const payloadAttachments = staged;
+    const voiceFlag = fromMicRef.current;
+    fromMicRef.current = false; // consume on send
     // Optimistically clear the input so the user sees the bubble has
     // gone out. If the send throws, we restore.
     setText('');
     setStaged([]);
     if (ref.current) ref.current.style.height = 'auto';
+    const voice = voiceFlag
+      ? { inputModality: 'voice' as const, autoPlayRequested: autoPlayEnabled }
+      : undefined;
     try {
-      await onSend(payloadText, payloadAttachments);
+      await onSend(payloadText, payloadAttachments, voice);
     } catch (err) {
       // Restore state so the user can retry.
       setText(payloadText);
@@ -68,6 +83,7 @@ export function MessageInput({ agent, onSend }: Props) {
   // acceptable, and it auto-resizes the textarea on next input.
   const onTranscript = (transcript: string) => {
     setText((prev) => (prev ? `${prev} ${transcript}`.trim() : transcript));
+    fromMicRef.current = true;
     // Trigger height-recalc by focusing + dispatching an input event
     // shape; cleaner than tracking scrollHeight from outside.
     setTimeout(() => {

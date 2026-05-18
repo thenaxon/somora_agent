@@ -59,6 +59,10 @@ import * as sentinelStore from '../sentinel/store.ts';
 import * as sentinelSchedule from '../sentinel/schedule.ts';
 import * as sentinelScheduler from '../sentinel/scheduler.ts';
 import { configureSentinel, startSentinel } from '../sentinel/scheduler.ts';
+import { cacheFileStat, negotiateFormat, synthesize } from '../tts/service.ts';
+import { installTtsCacheGc } from '../tts/cache-gc.ts';
+import { prepareForTts } from '../tts/prepare-for-tts.ts';
+import { appendEvent } from '../storage/sessions.ts';
 import {
   configureDreamRunTool,
   configureExecConcurrencyCaps,
@@ -1835,6 +1839,345 @@ function guessAudioFilename(mime: string): string {
   return 'recording.bin';
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// TTS — text → audio synthesis. Mirrors the /stt/* surface: proxy +
+// content-addressed cache. See docs/voice.md.
+// ─────────────────────────────────────────────────────────────────────
+
+app.get('/tts/config', (c) => {
+  const tts = config.tts;
+  if (!tts?.enabled) return c.json({ enabled: false });
+  const provider = config.providers[tts.provider];
+  const ok = provider?.engine === 'openai-compatible';
+  if (!ok) return c.json({ enabled: false });
+  // Match what /tts/synthesize will actually deliver. If reencode is
+  // off, only WAV is advertised; otherwise the negotiator can produce
+  // opus and mp4.
+  const formats = ['audio/wav'];
+  if (tts.reencode.enabled) {
+    formats.push('audio/opus', 'audio/mp4');
+  }
+  return c.json({
+    enabled: true,
+    formats,
+    language: tts.language ?? null,
+    voice: tts.voice ?? null,
+    clients: {
+      web: tts.clients.web,
+      mobile: tts.clients.mobile,
+    },
+  });
+});
+
+app.post('/tts/synthesize', async (c) => {
+  const tts = config.tts;
+  if (!tts?.enabled) {
+    return c.json({ error: 'tts not enabled in config.yaml' }, 503);
+  }
+  let body: { text?: string; voice?: string; language?: string };
+  try {
+    body = (await c.req.json()) as { text?: string; voice?: string; language?: string };
+  } catch {
+    return c.json({ error: 'expected JSON body with `text`' }, 400);
+  }
+  if (!body.text || typeof body.text !== 'string' || body.text.trim().length === 0) {
+    return c.json({ error: 'missing or empty `text`' }, 400);
+  }
+  if (body.text.length > 4000) {
+    return c.json({ error: 'text exceeds 4000-char hard cap' }, 400);
+  }
+
+  const accept = c.req.header('accept');
+  const spec = negotiateFormat(accept, tts.reencode.enabled);
+
+  try {
+    const result = await synthesize(
+      {
+        text: body.text,
+        ...(body.voice ? { voice: body.voice } : {}),
+        ...(body.language ? { language: body.language } : {}),
+        format: spec.fmt,
+      },
+      config,
+    );
+    return c.body(new Uint8Array(result.bytes), 200, {
+      'content-type': result.mime,
+      'content-length': String(result.bytes.length),
+      'x-tts-cache': result.cacheHit ? 'hit' : 'miss',
+      'x-tts-cache-key': result.cacheKey,
+      ...(result.durationMs !== undefined ? { 'x-tts-duration-ms': String(result.durationMs) } : {}),
+    });
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.warn({ msg: 'tts.synthesize_failed', err: msg, chars: body.text.length });
+    return c.json({ error: msg }, 502);
+  }
+});
+
+app.get('/tts/cache/:filename', async (c) => {
+  const filename = c.req.param('filename');
+  // Strict filename validation: must be `<64-hex>.<ext>` where ext is
+  // one of the known formats. Prevents `..` traversal + arbitrary
+  // path reads via the cache route.
+  const match = /^([0-9a-f]{64})\.(wav|opus|m4a)$/.exec(filename);
+  if (!match) {
+    return c.json({ error: 'invalid cache filename' }, 400);
+  }
+  const cacheKey = match[1]!;
+  const ext = match[2]!;
+  const fmt: 'wav' | 'opus' | 'mp4' = ext === 'm4a' ? 'mp4' : (ext as 'wav' | 'opus');
+  const stat = cacheFileStat(cacheKey, fmt);
+  if (!stat) {
+    return c.json({ error: 'cache miss' }, 404);
+  }
+  // Stream the file with the right content-type. Hono's c.body
+  // accepts a ReadableStream; node:fs createReadStream works.
+  const { createReadStream } = await import('node:fs');
+  const mime = fmt === 'wav' ? 'audio/wav' : fmt === 'opus' ? 'audio/opus' : 'audio/mp4';
+  // Range support — basic single-range parser for mobile <audio>
+  // seek/scrub. Returns full 200 when no Range header, 206 when
+  // valid range, 416 on parse error.
+  const range = c.req.header('range');
+  if (range && range.startsWith('bytes=')) {
+    const m = /^bytes=(\d+)-(\d+)?$/.exec(range);
+    if (m) {
+      const start = parseInt(m[1]!, 10);
+      const end = m[2] ? parseInt(m[2], 10) : stat.size - 1;
+      if (start <= end && end < stat.size) {
+        const stream = createReadStream(stat.path, { start, end });
+        return c.body(stream as unknown as ReadableStream, 206, {
+          'content-type': mime,
+          'content-length': String(end - start + 1),
+          'content-range': `bytes ${start}-${end}/${stat.size}`,
+          'accept-ranges': 'bytes',
+        });
+      }
+      return c.body(null, 416, { 'content-range': `bytes */${stat.size}` });
+    }
+  }
+  const stream = createReadStream(stat.path);
+  return c.body(stream as unknown as ReadableStream, 200, {
+    'content-type': mime,
+    'content-length': String(stat.size),
+    'accept-ranges': 'bytes',
+    'cache-control': 'private, max-age=3600',
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// /voice/turn — audio in → STT → run turn → TTS → audio out.
+// Independent of the chat-window auto-play toggle: this endpoint
+// always synthesizes audio for display-less / integration clients
+// (panels, voice satellites, bridges). See docs/voice.md.
+// ─────────────────────────────────────────────────────────────────────
+
+app.post('/voice/turn', async (c) => {
+  const stt = config.stt;
+  const tts = config.tts;
+  if (!stt?.enabled) {
+    return c.json({ error: 'stt not enabled in config.yaml' }, 503);
+  }
+  if (!tts?.enabled) {
+    return c.json({ error: 'tts not enabled in config.yaml' }, 503);
+  }
+
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ error: 'expected multipart/form-data' }, 400);
+  }
+
+  const agent = (form.get('agent') as string | null) ?? (await defaultAgentFallback());
+  if (!agent) {
+    return c.json({ error: 'agent required (and no fallback configured)' }, 400);
+  }
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+
+  const sessionRef = (form.get('session') as string | null) ?? 'main';
+  const audio = form.get('audio');
+  if (!(audio instanceof Blob)) {
+    return c.json({ error: 'missing or invalid `audio` field' }, 400);
+  }
+  const voice = (form.get('voice') as string | null) || tts.voice || undefined;
+  const language = (form.get('language') as string | null) || tts.language || undefined;
+  const acceptHeader = c.req.header('accept');
+
+  // ── Session resolver (same shape as /spawn-async fix) ──
+  let session = await resolveSessionId(agent, sessionRef);
+  if (!session) {
+    const isExactId = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/.test(sessionRef);
+    if (isExactId) {
+      return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+    }
+    if (sessionRef === 'main') {
+      session = 'main';
+    } else {
+      try {
+        session = await createSession(agent, sessionRef);
+      } catch (err) {
+        return c.json({ error: `session create failed: ${(err as Error).message}` }, 400);
+      }
+    }
+  }
+
+  const turnId = randomUUID();
+  const startedAt = Date.now();
+  logger.info({
+    msg: 'voice.turn.start',
+    turnId,
+    agent,
+    session,
+    audioBytes: audio.size,
+    audioType: audio.type,
+  });
+
+  // ── 1. STT via existing upstream ──
+  const sttProvider = config.providers[stt.provider];
+  if (!sttProvider || sttProvider.engine !== 'openai-compatible') {
+    return c.json({ error: 'stt provider misconfigured' }, 500);
+  }
+  const sttFwd = new FormData();
+  const sttName = audio instanceof File && audio.name ? audio.name : guessAudioFilename(audio.type);
+  sttFwd.append('file', audio, sttName);
+  sttFwd.append('model', stt.model);
+  if (stt.language) sttFwd.append('language', stt.language);
+  const sttUrl = sttProvider.baseUrl.replace(/\/+$/, '') + '/audio/transcriptions';
+  const sttHeaders: Record<string, string> = {};
+  if (sttProvider.apiKey) sttHeaders.Authorization = `Bearer ${sttProvider.apiKey}`;
+  let transcript: string;
+  try {
+    const r = await fetch(sttUrl, { method: 'POST', headers: sttHeaders, body: sttFwd });
+    if (!r.ok) {
+      const errBody = await r.text().catch(() => '');
+      logger.warn({ msg: 'voice.turn.stt_failed', status: r.status, body: errBody.slice(0, 300) });
+      return c.json({ error: `stt upstream returned ${r.status}` }, 502);
+    }
+    const j = (await r.json()) as { text?: string };
+    if (typeof j.text !== 'string' || j.text.trim().length === 0) {
+      return c.json({ error: 'stt produced empty transcript' }, 502);
+    }
+    transcript = j.text;
+  } catch (err) {
+    return c.json({ error: `stt unreachable: ${(err as Error).message}` }, 502);
+  }
+  logger.info({ msg: 'voice.turn.stt_done', turnId, chars: transcript.length });
+
+  // ── 2. Run normal agent turn (under the session lock) ──
+  let assistantText = '';
+  const release = await acquireSessionLock(agent, session, { priority: 'user', turnId });
+  const abort = registerChatAbort(agent, session);
+  try {
+    const collected: string[] = [];
+    await runChatTurn({
+      agent,
+      session,
+      text: transcript,
+      turnId,
+      signal: abort.signal,
+      inputModality: 'voice',
+      sttProvider: stt.provider,
+      // autoPlayRequested intentionally OFF — /voice/turn synthesizes
+      // synchronously below; we don't want the run-turn hook to fire
+      // a duplicate background TTS too.
+      publishSse: async (event) => {
+        if (event.event === 'chat' && event.data.state === 'final') {
+          collected.push(event.data.text);
+        }
+      },
+      deps: chatTurnDeps,
+    });
+    assistantText = collected.join('').trim();
+  } finally {
+    abort.release();
+    release();
+  }
+
+  if (!assistantText) {
+    return c.json({ error: 'agent produced empty reply' }, 502);
+  }
+
+  // ── 3. Sanitize + synthesize ──
+  const prepared = prepareForTts(assistantText);
+  if (prepared.skipped) {
+    // Voice clients still want SOMETHING. Fall back to a brief
+    // spoken summary marker so the panel/bridge knows it was
+    // intentional, not silence.
+    prepared.text =
+      'Die Antwort enthält strukturierte Inhalte und wird nicht vorgelesen. Bitte im Chat-Verlauf nachsehen.';
+    prepared.skipped = false;
+  }
+
+  const spec = negotiateFormat(acceptHeader, tts.reencode.enabled);
+  let synth;
+  try {
+    synth = await synthesize(
+      {
+        text: prepared.text,
+        ...(voice ? { voice } : {}),
+        ...(language ? { language } : {}),
+        format: spec.fmt,
+      },
+      config,
+    );
+  } catch (err) {
+    return c.json({ error: `tts failed: ${(err as Error).message}` }, 502);
+  }
+  const audioUrl = `/tts/cache/${synth.cacheKey}.${synth.ext}`;
+
+  // ── 4. Append assistant_audio + SSE broadcast (for live watchers) ──
+  await appendEvent(agent, session, {
+    kind: 'assistant_audio',
+    ts: Date.now(),
+    engine: 'voice-turn',
+    turnId,
+    audio: {
+      url: audioUrl,
+      mime: synth.mime,
+      ...(synth.durationMs !== undefined ? { durationMs: synth.durationMs } : {}),
+      cacheKey: synth.cacheKey,
+    },
+  });
+  await publish(agent, session, {
+    event: 'assistant_audio',
+    data: {
+      turnId,
+      url: audioUrl,
+      mime: synth.mime,
+      ...(synth.durationMs !== undefined ? { durationMs: synth.durationMs } : {}),
+      cacheKey: synth.cacheKey,
+    },
+  });
+
+  logger.info({
+    msg: 'voice.turn.done',
+    turnId,
+    agent,
+    session,
+    transcriptChars: transcript.length,
+    replyChars: assistantText.length,
+    audioBytes: synth.bytes.length,
+    cacheHit: synth.cacheHit,
+    totalMs: Date.now() - startedAt,
+  });
+
+  return c.json({
+    ok: true,
+    agent,
+    session,
+    transcript,
+    text: assistantText,
+    audio: {
+      url: audioUrl,
+      mime: synth.mime,
+      ...(synth.durationMs !== undefined ? { durationMs: synth.durationMs } : {}),
+      cacheKey: synth.cacheKey,
+    },
+  });
+});
+
 app.post('/chat/send', async (c) => {
   const body = (await c.req.json()) as {
     agent?: string;
@@ -1855,6 +2198,16 @@ app.post('/chat/send', async (c) => {
      *  the response shape returned by POST /attachments. Bytes are NOT
      *  inline; the server resolves hash → ~/.somora/attachments path. */
     attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
+    /** Voice — set when the client filled the input via STT (mic-button
+     *  on web/mobile). Persists on user_message.input.modality and
+     *  unlocks the auto-TTS hook (in concert with autoPlayRequested). */
+    input_modality?: 'text' | 'voice';
+    /** Voice — provider tag for the STT path used (e.g. "omlx"). */
+    stt_provider?: string;
+    /** Voice — does the client want a spoken reply for this turn?
+     *  Driven by the per-session "auto-play" toggle in the chat header.
+     *  Only honored together with `input_modality === 'voice'`. */
+    auto_play_requested?: boolean;
   };
   const agent = body.agent ?? (await defaultAgentFallback());
   if (!agent) {
@@ -1929,6 +2282,9 @@ app.post('/chat/send', async (c) => {
         ...(body.attachments && body.attachments.length > 0
           ? { attachments: body.attachments }
           : {}),
+        ...(body.input_modality === 'voice' ? { inputModality: 'voice' as const } : {}),
+        ...(body.stt_provider ? { sttProvider: body.stt_provider } : {}),
+        ...(body.auto_play_requested ? { autoPlayRequested: true } : {}),
         publishSse: (event) => publish(agent, session, event),
         deps: chatTurnDeps,
       });
@@ -2589,6 +2945,7 @@ configureSentinel({
 void startSentinel().catch((err) => {
   logger.error({ msg: 'sentinel.boot_failed', err: (err as Error).message });
 });
+installTtsCacheGc(config);
 configureLongTaskTimeouts(config);
 setMaxWikiCallsPerTurn(config.wiki.lucid.maxCallsPerTurn);
 configureExecConcurrencyCaps(

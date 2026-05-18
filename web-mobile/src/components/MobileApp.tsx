@@ -17,6 +17,76 @@ export function MobileApp() {
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const chat = useChatStream(activeAgent);
 
+  // Voice: TTS availability + per-agent (== per "main" session) auto-
+  // play toggle. Sticky in localStorage; seeded from /tts/config the
+  // first time the agent is opened.
+  const [ttsEnabled, setTtsEnabled] = useState<boolean>(false);
+  const [autoPlayAllowOverride, setAutoPlayAllowOverride] = useState<boolean>(true);
+  const [autoPlayDefault, setAutoPlayDefault] = useState<boolean>(false);
+  const [autoPlay, setAutoPlay] = useState<boolean>(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/tts/config')
+      .then((r) => (r.ok ? r.json() : { enabled: false }))
+      .then((d: {
+        enabled?: boolean;
+        clients?: {
+          mobile?: { autoPlayVoiceReplies?: boolean; allowUserOverride?: boolean };
+        };
+      }) => {
+        if (cancelled) return;
+        const enabled = Boolean(d.enabled);
+        setTtsEnabled(enabled);
+        if (!enabled) return;
+        const policy = d.clients?.mobile ?? {};
+        setAutoPlayAllowOverride(policy.allowUserOverride !== false);
+        setAutoPlayDefault(Boolean(policy.autoPlayVoiceReplies));
+      })
+      .catch(() => {
+        if (!cancelled) setTtsEnabled(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Per-agent sticky toggle: read whenever active agent changes.
+  useEffect(() => {
+    if (!ttsEnabled || !activeAgent) return;
+    const key = `somora.mobile.voice.autoPlay.${activeAgent}`;
+    try {
+      const stored = window.localStorage.getItem(key);
+      if (stored === '1' || stored === '0') setAutoPlay(stored === '1');
+      else setAutoPlay(autoPlayDefault);
+    } catch {
+      setAutoPlay(autoPlayDefault);
+    }
+  }, [activeAgent, ttsEnabled, autoPlayDefault]);
+  useEffect(() => {
+    if (!ttsEnabled || !activeAgent) return;
+    const key = `somora.mobile.voice.autoPlay.${activeAgent}`;
+    try {
+      window.localStorage.setItem(key, autoPlay ? '1' : '0');
+    } catch {
+      /* localStorage unavailable — drop silently */
+    }
+  }, [autoPlay, activeAgent, ttsEnabled]);
+
+  // Auto-play hook: assistant_audio arrives + toggle on ⇒ play.
+  useEffect(() => {
+    if (!ttsEnabled) return;
+    const unsub = chat.subscribeAudio((url) => {
+      if (!autoPlay) return;
+      try {
+        const audio = new Audio(url);
+        void audio.play();
+      } catch {
+        /* autoplay blocked / audio init fail — silent */
+      }
+    });
+    return unsub;
+  }, [ttsEnabled, autoPlay, chat]);
+
   useEffect(() => {
     if (activeAgent || agents.length === 0) return;
     const fromLast = lastAgent && agents.find((a) => a.name === lastAgent)
@@ -40,6 +110,32 @@ export function MobileApp() {
           {activeAgent ?? 'somora'}
         </span>
         <span className="mobile-header-meta">main</span>
+        {ttsEnabled && autoPlayAllowOverride && activeAgent && (
+          <button
+            type="button"
+            onClick={() => setAutoPlay((v) => !v)}
+            aria-label={autoPlay ? 'voice auto-play on' : 'voice auto-play off'}
+            title={
+              autoPlay
+                ? 'voice auto-play on (mic input ⇒ spoken reply)'
+                : 'voice auto-play off (mic input ⇒ text only)'
+            }
+            style={{
+              marginLeft: 'auto',
+              background: 'transparent',
+              border: '1px solid var(--border-2, #444)',
+              borderRadius: 6,
+              padding: '4px 8px',
+              color: autoPlay ? 'var(--accent, #6cf)' : 'var(--text-2, #888)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 12,
+            }}
+          >
+            <span aria-hidden="true">{autoPlay ? '🔊' : '🔇'}</span>
+          </button>
+        )}
       </header>
 
       {error && <div className="banner error">{error}</div>}
@@ -64,6 +160,7 @@ export function MobileApp() {
           <MessageInput
             agent={activeAgent}
             onSend={chat.send}
+            autoPlayEnabled={autoPlay}
           />
         </>
       ) : (

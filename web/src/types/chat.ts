@@ -39,6 +39,14 @@ export interface AttachmentDisplay {
   size: number;
 }
 
+export interface AssistantAudio {
+  /** Path served by GET /tts/cache/:hash.:ext on the somora server. */
+  url: string;
+  mime: string;
+  durationMs?: number;
+  cacheKey: string;
+}
+
 export type ChatMessage =
   | {
       id: string;
@@ -48,7 +56,20 @@ export type ChatMessage =
       fromAgent?: string;
       attachments?: AttachmentDisplay[];
     }
-  | { id: string; role: 'assistant'; ts: number; text: string; streaming?: boolean }
+  | {
+      id: string;
+      role: 'assistant';
+      ts: number;
+      text: string;
+      streaming?: boolean;
+      /** Voice: server-generated TTS audio for this turn. Set when an
+       *  assistant_audio SSE event with matching turnId arrived after
+       *  the assistant message. Drives the per-bubble Play-button. */
+      audio?: AssistantAudio;
+      /** The engine-emitted turnId for this message. Used to pair
+       *  late-arriving assistant_audio events to the right bubble. */
+      turnId?: string;
+    }
   | { id: string; role: 'tool_call'; ts: number; toolCall: ToolCallPayload }
   | { id: string; role: 'tool_result'; ts: number; toolResult: ToolResultPayload }
   | { id: string; role: 'memory_inject'; ts: number; memory: MemoryHitsSnapshot };
@@ -101,4 +122,8 @@ export type StreamEvent =
   | {
       event: 'user_message';
       data: { text: string; ts: number; from_agent?: string };
+    }
+  | {
+      event: 'assistant_audio';
+      data: { turnId: string; url: string; mime: string; durationMs?: number; cacheKey: string };
     };

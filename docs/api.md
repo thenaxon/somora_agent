@@ -991,6 +991,153 @@ The full `sentinel` tool surface (`create` / `list` / `get` /
 
 ---
 
+## Voice
+
+Two flows: STT for filling chat drafts, TTS for spoken replies. Plus
+`/voice/turn` as the audio-in/audio-out endpoint for integrations.
+All routes return 503 when the matching block is missing or disabled
+in `config.yaml`. See [voice.md](voice.md) for the full picture.
+
+### `GET /stt/config`
+
+Reports STT availability + the default language hint.
+
+```json
+{ "enabled": true, "language": "de" }
+```
+
+Returns `{ "enabled": false }` when STT is off in config — clients
+auto-hide their mic button.
+
+### `POST /stt/transcribe`
+
+Forwards a multipart audio recording to the configured upstream's
+`/v1/audio/transcriptions` and returns the transcript.
+
+```http
+POST /stt/transcribe
+Content-Type: multipart/form-data
+
+file=@recording.webm
+language=de              # optional, overrides config default
+```
+
+Response: `{ "text": "<transcript>" }`. 503 when disabled.
+
+### `GET /tts/config`
+
+Reports TTS availability + supported wire formats + per-client
+auto-play defaults.
+
+```json
+{
+  "enabled": true,
+  "formats": ["audio/wav", "audio/opus", "audio/mp4"],
+  "language": "de",
+  "voice": null,
+  "clients": {
+    "web": { "autoPlayVoiceReplies": false, "allowUserOverride": true },
+    "mobile": { "autoPlayVoiceReplies": false, "allowUserOverride": true }
+  }
+}
+```
+
+### `POST /tts/synthesize`
+
+Generate (or fetch from cache) spoken audio for a piece of text.
+Content-negotiates the wire format from `Accept`.
+
+```http
+POST /tts/synthesize
+Content-Type: application/json
+Accept: audio/opus, audio/wav;q=0.5
+
+{ "text": "Es ist 10:29 Uhr.", "voice": null, "language": "de" }
+```
+
+Response body is audio bytes. Useful response headers:
+
+- `Content-Type` — `audio/wav`, `audio/opus`, or `audio/mp4`.
+- `X-Tts-Cache` — `hit` or `miss`.
+- `X-Tts-Cache-Key` — sha256 hex used for caching.
+- `X-Tts-Duration-Ms` — set on WAV cache misses; omitted otherwise
+  (clients can compute on-play).
+
+400 on missing `text` or text > 4000 chars. 502 on upstream failure.
+503 when TTS disabled.
+
+### `GET /tts/cache/:filename`
+
+Stream a previously-generated audio file by its cache key. Filenames
+are `<64-hex>.<wav|opus|m4a>`; anything else returns 400. Supports
+single-range requests (`Range: bytes=N-`) so mobile `<audio>` can
+seek.
+
+This is the URL emitted as `assistant_audio.url` in SSE and JSONL —
+clients render it directly into `<audio src=…>` without ever calling
+`/tts/synthesize` for cached turns.
+
+### `POST /voice/turn`
+
+Independent audio-in → audio-out endpoint. STT-transcribes the
+recording, runs a normal agent turn (with `input_modality=voice`),
+sanitizes the assistant reply for speech, generates TTS, and returns
+JSON with the artifact URL. The session JSONL + SSE stream see the
+turn live, same as a `/chat/send` turn.
+
+```http
+POST /voice/turn
+Content-Type: multipart/form-data
+Accept: audio/opus, audio/wav;q=0.5
+
+agent=<name>             # required
+session=<name>           # required: "main" / exact id / new slug (creates)
+audio=@recording.webm    # required
+voice=<voice-id>         # optional, falls back to tts.voice
+language=<lang>          # optional, falls back to tts.language
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "agent": "naxon",
+  "session": "main",
+  "transcript": "Wie spät ist es?",
+  "text": "Es ist 10:29 Uhr.",
+  "audio": {
+    "url": "/tts/cache/abc123….opus",
+    "mime": "audio/opus",
+    "durationMs": 1800,
+    "cacheKey": "abc123…"
+  }
+}
+```
+
+- Session lock priority: `user` (treated as human input).
+- 60s default timeout — voice UX dies past that.
+- Always generates audio, regardless of any per-chat auto-play
+  toggle (those toggles only affect `/chat/send`).
+- 404 when `session=<exact-id>` doesn't exist; auto-creates for free-
+  form slug names. 503 if either `stt` or `tts` is disabled.
+
+### `assistant_audio` SSE event
+
+After a turn whose reply got TTS (auto or via `/voice/turn`), the
+session's SSE stream emits:
+
+```
+event: assistant_audio
+data: {"turnId":"…","url":"/tts/cache/…","mime":"audio/opus","durationMs":1800,"cacheKey":"…"}
+```
+
+Clients pair on `turnId` and render a Play-button on the matching
+assistant bubble. The event is also appended to the session JSONL,
+so `/chat/history` returns it on reload and Play-buttons survive.
+
+---
+
 ## Web bundle
 
 ### `GET /web/`

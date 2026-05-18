@@ -72,9 +72,60 @@ export type NormalizedEvent =
         mime: string;
         size: number;
       }>;
+      /**
+       * Input-channel metadata. Populated when the user message
+       * arrived through a non-text channel (currently: STT
+       * transcription from the mic button on web/mobile, or the
+       * `/voice/turn` audio-in endpoint). Drives the auto-TTS
+       * policy in run-turn: only voice-input turns are eligible
+       * for assistant_audio generation. Absent ⇒ treat as text
+       * (backwards-compatible with pre-voice JSONL).
+       */
+      input?: {
+        modality?: 'text' | 'voice';
+        /** True if the text was produced by an STT pass (not typed). */
+        transcribed?: boolean;
+        /** Free-form tag for the STT path used, e.g. provider name. */
+        sttProvider?: string;
+      };
+      /**
+       * Per-turn client request: did the client (web / mobile / voice
+       * endpoint) ask somora to also generate spoken audio for the
+       * assistant reply? The auto-TTS hook in run-turn only fires
+       * when this is true AND `input.modality === 'voice'`. Absent ⇒
+       * no audio generated (default-safe).
+       */
+      autoPlayRequested?: boolean;
     }
   | { kind: 'assistant_delta'; ts: number; engine: string; text: string }
   | { kind: 'assistant_message'; ts: number; engine: string; text: string }
+  | {
+      /**
+       * Audio artifact attached to an assistant_message. Emitted by
+       * the auto-TTS hook in run-turn after the assistant text
+       * finalizes and the speech-sanitizer accepts it, or by the
+       * `/voice/turn` endpoint as part of its synchronous response.
+       *
+       * Append-only — never mutates the original assistant_message
+       * event. Clients pair by `turnId`: when an assistant_audio
+       * with matching turnId arrives, render a Play-button on the
+       * corresponding assistant bubble.
+       */
+      kind: 'assistant_audio';
+      ts: number;
+      engine: string;
+      turnId: string;
+      audio: {
+        /** Absolute URL path served by GET /tts/cache/:hash.:ext. */
+        url: string;
+        /** Concrete MIME (`audio/wav`, `audio/opus`, `audio/mp4`). */
+        mime: string;
+        /** Approximate duration of the generated audio in ms. */
+        durationMs?: number;
+        /** sha256(text+voice+model+format) — debug/forensic only. */
+        cacheKey: string;
+      };
+    }
   | { kind: 'tool_call'; ts: number; engine: string; callId: string; tool: string; input: unknown }
   | { kind: 'tool_result'; ts: number; engine: string; callId: string; output: unknown; error?: string }
   | { kind: 'turn_start'; ts: number; engine: string; turnId: string }
@@ -183,6 +234,21 @@ export type SseEvent =
          *  (A2A). Self-typed user turns omit it. */
         from_agent?: string;
         agent_ask_call_id?: string;
+      };
+    }
+  | {
+      // Audio artifact ready for an assistant message. Sibling to
+      // `chat: final` — that event delivers the text, this one
+      // delivers a play-able URL for the same turn. Clients pair
+      // by `turnId` and render a Play-button on the corresponding
+      // assistant bubble.
+      event: 'assistant_audio';
+      data: {
+        turnId: string;
+        url: string;
+        mime: string;
+        durationMs?: number;
+        cacheKey: string;
       };
     }
   | {

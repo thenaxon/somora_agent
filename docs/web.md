@@ -251,7 +251,13 @@ archived copy at the next idle window.
   space. Hidden when the browser lacks `MediaRecorder` /
   `getUserMedia` (capability gate identical to the screenshot
   button), or when somora's `/stt/config` reports STT disabled.
-  Configuration in [setup.md §7](setup.md#7-speech-to-text-optional).
+  Configuration in [setup.md §7](setup.md#7-voice--stt--tts-optional).
+- **Voice replies** (when TTS is configured): the chat header shows a
+  `🔊`/`🔇` toggle. When on, mic-submitted turns trigger automatic
+  TTS playback of the assistant reply (text replies are unaffected).
+  Toggle is sticky per `<agent>:<session>`. A Play-button appears on
+  bubbles that have generated audio so you can replay any time. Full
+  details in [voice.md](voice.md).
 
 Markdown is rendered via `react-markdown` + `remark-gfm` +
 `rehype-highlight`. Code blocks scroll horizontally inside the

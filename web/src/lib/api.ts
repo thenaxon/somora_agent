@@ -169,6 +169,10 @@ export interface HistoryEvent {
   ephemeral?: string;
   from_agent?: string;
   attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
+  /** Set on `kind: 'assistant_audio'` history rows. Tracks the
+   *  generated TTS artifact so the client can re-render a Play-button
+   *  for past turns on history load. */
+  audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
 }
 
 export interface HistoryResponse {
@@ -281,6 +285,7 @@ export const api = {
     session: string,
     text: string,
     attachments?: AttachmentRef[],
+    voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
   ): Promise<void> => {
     const res = await fetch('/chat/send', {
       method: 'POST',
@@ -299,6 +304,9 @@ export const api = {
               })),
             }
           : {}),
+        ...(voice?.inputModality === 'voice' ? { input_modality: 'voice' as const } : {}),
+        ...(voice?.sttProvider ? { stt_provider: voice.sttProvider } : {}),
+        ...(voice?.autoPlayRequested ? { auto_play_requested: true } : {}),
       }),
     });
     if (!res.ok) {

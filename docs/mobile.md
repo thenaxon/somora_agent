@@ -46,6 +46,12 @@ own app switcher entry.
   supports `getUserMedia` + `MediaRecorder` (every modern phone
   browser does). The button is hidden when either prerequisite is
   missing.
+- **Spoken replies** (when TTS is configured in `tts.*`): the top-bar
+  shows a `🔊`/`🔇` toggle. When on AND you submit a turn via the
+  mic, the assistant's text reply is also played as audio. Toggle is
+  sticky per agent. A Play-button appears on bubbles that have audio
+  so you can replay any time. Full details in
+  [voice.md](voice.md).
 - **Attachments:** tap the paperclip to open the phone's native file
   picker — iOS / Android both let you choose Camera, Photo Library, or
   Files there. Pictures (`image/*`) and PDFs are accepted. Picked
@@ -69,6 +75,8 @@ own app switcher entry.
 - localStorage-persisted last-agent
 - Voice input via STT (mic-button → record → transcript editable in
   input → send manually)
+- Spoken replies via TTS (optional, gated by per-agent auto-play
+  toggle; replay button on past bubbles when audio is cached)
 - Camera / photo-roll attachments via the native picker
 - Typing-indicator while the agent is working
 

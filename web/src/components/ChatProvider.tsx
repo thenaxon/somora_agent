@@ -82,7 +82,13 @@ interface ChatContextValue {
     session: string,
     text: string,
     attachments?: AttachmentRef[],
+    voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
   ) => Promise<void>;
+  /** Voice: subscribe to assistant_audio arrivals for one session.
+   *  Returns the unsubscribe fn. The handler receives the audio URL;
+   *  caller decides whether to actually play it (typically gated by
+   *  the per-session auto-play toggle in localStorage). */
+  subscribeAudio: (agent: string, session: string, handler: (url: string) => void) => () => void;
   abort: (agent: string, session: string) => Promise<void>;
   /** Lazy-load older history. Returns true when more is available
    *  after this load (so the caller can keep paging), false when the
@@ -111,6 +117,7 @@ const ChatContext = createContext<ChatContextValue>({
   getStream: () => initialStreamState,
   streamingKeys: [],
   send: async () => {},
+  subscribeAudio: () => () => {},
   abort: async () => {},
   loadOlder: async () => false,
   getHasMore: () => false,
@@ -155,6 +162,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // Track the in-flight assistant message id per session — a delta
   // appends to that bubble, an agent.end finalizes it.
   const streamingIdRef = useRef<Map<string, string>>(new Map());
+  // Voice: per-session listeners that fire when an assistant_audio
+  // event arrives. ChatWindow registers one to optionally auto-play
+  // the audio (gated by its own localStorage toggle).
+  const audioListenersRef = useRef<Map<string, Set<(url: string) => void>>>(new Map());
   // Pending texts we just sent — used to dedupe the server's
   // user_message echo against our optimistic local-user message so
   // we don't render the same text twice.
@@ -232,7 +243,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           entry.loaded = true;
           setMessages((prev) => ({
             ...prev,
-            [key]: res.events.flatMap(historyEventToMessages),
+            [key]: historyEventsToMessages(res.events),
           }));
           if (typeof res.oldestTs === 'number') {
             paginationRef.current.set(key, {
@@ -482,6 +493,54 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       });
 
+      es.addEventListener('assistant_audio', (ev) => {
+        const d = parse<{
+          turnId: string;
+          url: string;
+          mime: string;
+          durationMs?: number;
+          cacheKey: string;
+        }>(ev as MessageEvent);
+        if (!d) return;
+        // Attach to the most recent assistant message in this session.
+        // turnId pairing would be more precise but ChatProvider's
+        // assistant rows don't yet carry the engine turnId — last
+        // assistant wins, which is correct for the single-turn case
+        // (the only one auto-TTS currently fires for).
+        setMessages((prev) => {
+          const list = prev[key];
+          if (!list || list.length === 0) return prev;
+          let targetIdx = -1;
+          for (let i = list.length - 1; i >= 0; i -= 1) {
+            const m = list[i];
+            if (m && m.role === 'assistant') {
+              targetIdx = i;
+              break;
+            }
+          }
+          if (targetIdx < 0) return prev;
+          const target = list[targetIdx];
+          if (!target || target.role !== 'assistant') return prev;
+          const next = list.slice();
+          next[targetIdx] = {
+            ...target,
+            audio: {
+              url: d.url,
+              mime: d.mime,
+              ...(d.durationMs !== undefined ? { durationMs: d.durationMs } : {}),
+              cacheKey: d.cacheKey,
+            },
+            turnId: d.turnId,
+          };
+          return { ...prev, [key]: next };
+        });
+        // Auto-play hook — listeners registered via subscribeAudio()
+        // get notified. Per-session toggle gate lives in the chat
+        // window (it has the localStorage state); we just notify.
+        const ls = audioListenersRef.current.get(key);
+        ls?.forEach((fn) => fn(d.url));
+      });
+
       es.addEventListener('user_message', (ev) => {
         const d = parse<{ text: string; ts: number; from_agent?: string }>(ev as MessageEvent);
         if (!d) return;
@@ -543,7 +602,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   const send = useCallback<ChatContextValue['send']>(
-    async (agent, session, text, attachments) => {
+    async (agent, session, text, attachments, voice) => {
       if (!text.trim() && (!attachments || attachments.length === 0)) return;
       const key = sessionKey(agent, session);
       // Track the text so we can dedupe the server's user_message
@@ -573,7 +632,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           : {}),
       });
       try {
-        await api.send(agent, session, text, attachments);
+        await api.send(agent, session, text, attachments, voice);
       } catch (err) {
         // Send failed — remove the pending dedupe entry so a future
         // identical text can still be echoed normally.
@@ -593,6 +652,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     await api.abort(agent, session);
   }, []);
 
+  const subscribeAudio = useCallback<ChatContextValue['subscribeAudio']>(
+    (agent, session, handler) => {
+      const key = sessionKey(agent, session);
+      let set = audioListenersRef.current.get(key);
+      if (!set) {
+        set = new Set();
+        audioListenersRef.current.set(key, set);
+      }
+      set.add(handler);
+      return () => {
+        const cur = audioListenersRef.current.get(key);
+        if (cur) {
+          cur.delete(handler);
+          if (cur.size === 0) audioListenersRef.current.delete(key);
+        }
+      };
+    },
+    [],
+  );
+
   const loadOlder = useCallback<ChatContextValue['loadOlder']>(
     async (agent, session) => {
       const key = sessionKey(agent, session);
@@ -609,7 +688,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           before: cur.oldestTs,
           ...(entry ? { signal: entry.ac.signal } : {}),
         });
-        const olderMessages = res.events.flatMap(historyEventToMessages);
+        const olderMessages = historyEventsToMessages(res.events);
         if (olderMessages.length > 0) {
           setMessages((prev) => ({
             ...prev,
@@ -714,6 +793,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       getStream,
       streamingKeys,
       send,
+      subscribeAudio,
       abort,
       loadOlder,
       getHasMore,
@@ -727,6 +807,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       getStream,
       streamingKeys,
       send,
+      subscribeAudio,
       abort,
       loadOlder,
       getHasMore,
@@ -751,15 +832,53 @@ export function useChatSessionFromContext(agent: string, session: string) {
   return {
     messages: ctx.getMessages(agent, session),
     ...ctx.getStream(agent, session),
-    send: (text: string, attachments?: AttachmentRef[]) =>
-      ctx.send(agent, session, text, attachments),
+    send: (
+      text: string,
+      attachments?: AttachmentRef[],
+      voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
+    ) => ctx.send(agent, session, text, attachments, voice),
     abort: () => ctx.abort(agent, session),
     loadOlder: () => ctx.loadOlder(agent, session),
     hasMore: ctx.getHasMore(agent, session),
     clearMessages: () => ctx.clearMessages(agent, session),
     refreshProject: () => ctx.refreshProject(agent, session),
+    subscribeAudio: (handler: (url: string) => void) =>
+      ctx.subscribeAudio(agent, session, handler),
     projectsEnabled: ctx.projectsEnabled,
   };
+}
+
+/**
+ * Convert a history-event list into chat messages, folding any
+ * assistant_audio events onto the most recent preceding assistant
+ * message. Used at session-open + load-older. Live SSE handles
+ * assistant_audio separately in the SSE listener.
+ */
+function historyEventsToMessages(events: HistoryEvent[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (const e of events) {
+    if (e.kind === 'assistant_audio' && e.audio) {
+      // Attach to most recent assistant message in the current accumulator.
+      for (let i = out.length - 1; i >= 0; i -= 1) {
+        const m = out[i];
+        if (m && m.role === 'assistant') {
+          out[i] = {
+            ...m,
+            audio: {
+              url: e.audio.url,
+              mime: e.audio.mime,
+              ...(e.audio.durationMs !== undefined ? { durationMs: e.audio.durationMs } : {}),
+              cacheKey: e.audio.cacheKey,
+            },
+          };
+          break;
+        }
+      }
+      continue;
+    }
+    out.push(...historyEventToMessages(e));
+  }
+  return out;
 }
 
 function historyEventToMessages(e: HistoryEvent): ChatMessage[] {

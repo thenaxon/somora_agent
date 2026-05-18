@@ -9,7 +9,7 @@
 //   tool_result    — collapsible tool-result block (full width)
 //   memory_inject  — inline `◇ memory · N hits · refs…` line (TUI-style)
 
-import { memo, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import {
   Brain,
   Check,
@@ -18,7 +18,9 @@ import {
   Copy,
   FileText,
   File as FileIcon,
+  Pause,
   Pin,
+  Play,
   User,
 } from 'lucide-react';
 import type { AttachmentDisplay, ChatMessage } from '../types/chat';
@@ -130,10 +132,67 @@ export const MessageItem = memo(function MessageItem({
             {...(onPinClick ? { onPinClick } : {})}
           />
         )}
+        {msg.role === 'assistant' && msg.audio && <PlayAudioButton url={msg.audio.url} />}
       </div>
     </div>
   );
 });
+
+// Per-bubble Play-button for assistant turns that have a pre-generated
+// TTS artifact. Rendered only when an `assistant_audio` event arrived
+// for this turn — never re-generates on click, just plays what's
+// already cached server-side.
+function PlayAudioButton({ url }: { url: string }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  function onClick() {
+    if (audioRef.current) {
+      if (playing) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        setPlaying(false);
+        return;
+      }
+    }
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    audio.onended = () => {
+      setPlaying(false);
+      audioRef.current = null;
+    };
+    audio.onerror = () => {
+      setPlaying(false);
+      audioRef.current = null;
+    };
+    audio.play().then(
+      () => setPlaying(true),
+      () => setPlaying(false),
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={playing ? 'Stop' : 'Play voice reply'}
+      style={{
+        marginTop: 6,
+        background: 'transparent',
+        border: '1px solid var(--border-2)',
+        borderRadius: 4,
+        color: 'var(--text-2)',
+        cursor: 'pointer',
+        fontSize: 12,
+        padding: '3px 8px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+      }}
+    >
+      {playing ? <Pause size={12} /> : <Play size={12} />}
+      <span>{playing ? 'Stop' : 'Play'}</span>
+    </button>
+  );
+}
 
 // Hover-revealed copy + pin buttons in the top-right corner of an
 // assistant bubble. When `isPinned` is true the pin icon is always

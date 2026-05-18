@@ -9,6 +9,8 @@ import {
   MoreHorizontal,
   Paperclip,
   Send,
+  Volume2,
+  VolumeX,
   Wrench,
   X as XIcon,
 } from 'lucide-react';
@@ -99,6 +101,64 @@ export function ChatWindow({
       /* storage unavailable — drop silently */
     }
   }, [showMemory, showMemoryKey]);
+  // Voice auto-play toggle — per (agent,session). When ON and the
+  // user submits a turn via mic (STT-transcribed draft), the server
+  // generates TTS for the assistant reply and we auto-play it as
+  // soon as the assistant_audio SSE event arrives. Per-fenster
+  // sticky via localStorage; default seeded from /tts/config the
+  // first time the chat is opened.
+  const autoPlayKey = `somora.voice.autoPlay.${agent.name}::${sessionId}`;
+  const [ttsAvailable, setTtsAvailable] = useState<boolean>(false);
+  const [autoPlayAllowOverride, setAutoPlayAllowOverride] = useState<boolean>(true);
+  const [autoPlay, setAutoPlay] = useState<boolean>(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/tts/config')
+      .then((r) => (r.ok ? r.json() : { enabled: false }))
+      .then((d: {
+        enabled?: boolean;
+        clients?: {
+          web?: { autoPlayVoiceReplies?: boolean; allowUserOverride?: boolean };
+        };
+      }) => {
+        if (cancelled) return;
+        const enabled = Boolean(d.enabled);
+        setTtsAvailable(enabled);
+        if (!enabled) return;
+        const policy = d.clients?.web ?? {};
+        setAutoPlayAllowOverride(policy.allowUserOverride !== false);
+        // Seed: localStorage first (sticky), else config default.
+        try {
+          const stored = window.localStorage.getItem(autoPlayKey);
+          if (stored === '1' || stored === '0') {
+            setAutoPlay(stored === '1');
+          } else {
+            setAutoPlay(Boolean(policy.autoPlayVoiceReplies));
+          }
+        } catch {
+          setAutoPlay(Boolean(policy.autoPlayVoiceReplies));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTtsAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoPlayKey]);
+  useEffect(() => {
+    if (!ttsAvailable) return;
+    try {
+      window.localStorage.setItem(autoPlayKey, autoPlay ? '1' : '0');
+    } catch {
+      /* storage unavailable — drop silently */
+    }
+  }, [autoPlay, autoPlayKey, ttsAvailable]);
+  // Tracks whether the CURRENT draft text was produced by an STT pass
+  // (mic button) rather than typed. Set in MicCapture's onTranscript;
+  // reset when the user types, sends, or otherwise clears the draft.
+  // Drives the voice flag in chat.send + the auto-TTS gate server-side.
+  const draftFromMicRef = useRef<boolean>(false);
   const [draft, setDraft] = useState('');
   // Slash-command popup state. `slashKey` is a one-shot key-event
   // signal handed to the popup; `slashKeyNonce` keeps it monotonic so
@@ -491,21 +551,48 @@ export function ChatWindow({
       // dispatches them directly. If the textarea still holds a
       // slash on Enter, treat it as a no-op.
       if (text.startsWith('/')) return;
+      const voiceFlag = draftFromMicRef.current;
+      draftFromMicRef.current = false; // consume on send
       setDraft('');
       // Clear staged attachments immediately — they're now in flight
       // via chat.send. Revoke any preview URLs we created.
       pendingAttachments.forEach((p) => p.previewUrl && URL.revokeObjectURL(p.previewUrl));
       setPendingAttachments([]);
+      const voice =
+        voiceFlag && ttsAvailable
+          ? {
+              inputModality: 'voice' as const,
+              autoPlayRequested: autoPlay,
+            }
+          : undefined;
       chat
-        .send(text, readyAttachments.length > 0 ? readyAttachments : undefined)
+        .send(text, readyAttachments.length > 0 ? readyAttachments : undefined, voice)
         .catch((err: Error) => {
           // eslint-disable-next-line no-console
           console.error('[somora-web] send failed', err.message);
           setSystemNotice({ text: `send failed: ${err.message}`, tone: 'error' });
         });
     },
-    [draft, chat, pendingAttachments],
+    [draft, chat, pendingAttachments, ttsAvailable, autoPlay],
   );
+
+  // Auto-play hook: when an assistant_audio event arrives AND the
+  // per-session toggle is on, immediately play the audio. Toggle off
+  // ⇒ the Play-button stays available in the bubble (user can play
+  // manually). Subscribe is idempotent per session.
+  useEffect(() => {
+    if (!ttsAvailable) return;
+    const unsub = chat.subscribeAudio((url) => {
+      if (!autoPlay) return;
+      try {
+        const audio = new Audio(url);
+        void audio.play();
+      } catch {
+        /* autoplay blocked or audio init failed — silent */
+      }
+    });
+    return unsub;
+  }, [ttsAvailable, autoPlay, chat]);
 
   const modelLabel = model?.alias ?? model?.modelId ?? '—';
   // Three-state thinking display: active (model supports reasoning + level set),
@@ -694,6 +781,32 @@ export function ChatWindow({
               <Brain size={10} />
               <span>memory</span>
             </button>
+            {ttsAvailable && autoPlayAllowOverride && (
+              <button
+                type="button"
+                onClick={() => setAutoPlay((v) => !v)}
+                title={
+                  autoPlay
+                    ? 'voice auto-play on (mic input ⇒ spoken reply)'
+                    : 'voice auto-play off (mic input ⇒ text only)'
+                }
+                style={{
+                  all: 'unset',
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  padding: '0 4px',
+                  borderRadius: 3,
+                  background: autoPlay ? `${color}25` : 'transparent',
+                  border: autoPlay ? `1px solid ${color}55` : '1px solid var(--line)',
+                  color: autoPlay ? color : 'var(--text-2)',
+                }}
+              >
+                {autoPlay ? <Volume2 size={10} /> : <VolumeX size={10} />}
+                <span>voice</span>
+              </button>
+            )}
             <Sep />
             <span style={{ color: 'var(--text-2)' }} title="prompt tokens (cached part dimmed)">
               ↑ {formatTokens(chat.usage?.tokens_in)}
@@ -995,6 +1108,7 @@ export function ChatWindow({
             // user can type a stem and dictate the rest, or vice versa.
             // Empty draft → just set the transcript.
             setDraft((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')} ${text}` : text));
+            draftFromMicRef.current = true;
             textareaRef.current?.focus();
           }}
         />

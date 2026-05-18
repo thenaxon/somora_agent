@@ -52,6 +52,17 @@ export function createTurnSerializer() {
       }
       case 'error':
         return { event: 'status', data: { msg: `error: ${ev.message}` } };
+      case 'assistant_audio':
+        return {
+          event: 'assistant_audio',
+          data: {
+            turnId: ev.turnId,
+            url: ev.audio.url,
+            mime: ev.audio.mime,
+            ...(ev.audio.durationMs !== undefined ? { durationMs: ev.audio.durationMs } : {}),
+            cacheKey: ev.audio.cacheKey,
+          },
+        };
       default:
         return null;
     }

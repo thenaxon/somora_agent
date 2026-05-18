@@ -29,12 +29,18 @@ export interface ChatMessage {
   ts: number;
   /** True while the agent's response is still streaming. */
   streaming?: boolean;
+  /** Voice: optional TTS audio URL produced for this turn. Set when an
+   *  `assistant_audio` SSE event arrived after the message; drives the
+   *  Play-button on the agent bubble. */
+  audio?: { url: string; mime: string; durationMs?: number };
 }
 
 interface HistoryEvent {
   kind: string;
   ts?: number;
   text?: string;
+  turnId?: string;
+  audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
 }
 
 export interface ChatStream {
@@ -46,7 +52,15 @@ export interface ChatStream {
    *  staged attachment refs (already uploaded to /attachments).
    *  Optimistically appends to local messages so the bubble shows
    *  up without waiting for the server. */
-  send: (text: string, attachments?: AttachmentRef[]) => Promise<void>;
+  send: (
+    text: string,
+    attachments?: AttachmentRef[],
+    voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean },
+  ) => Promise<void>;
+  /** Voice: callback invoked when an `assistant_audio` event arrives.
+   *  Caller decides whether to auto-play (typically gated by their
+   *  per-session toggle). Returns unsubscribe. */
+  subscribeAudio: (handler: (url: string) => void) => () => void;
   /** Last connection error if the SSE link dropped. Null when healthy. */
   connectionError: string | null;
 }
@@ -65,6 +79,8 @@ export function useChatStream(agent: string | null): ChatStream {
   // so successive deltas can find it without re-render races.
   const streamingIdRef = useRef<string | null>(null);
   const agentRef = useRef<string | null>(agent);
+  // Voice: subscribers waiting for assistant_audio events.
+  const audioListenersRef = useRef<Set<(url: string) => void>>(new Set());
 
   useEffect(() => {
     agentRef.current = agent;
@@ -84,10 +100,33 @@ export function useChatStream(agent: string | null): ChatStream {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = (await res.json()) as { events?: HistoryEvent[] };
         if (cancelled) return;
-        const hydrated = (body.events ?? [])
-          .map(eventToMessage)
-          .filter((m): m is ChatMessage => m !== null);
-        setMessages(hydrated);
+        const out: ChatMessage[] = [];
+        for (const ev of body.events ?? []) {
+          if (ev.kind === 'assistant_audio' && ev.audio) {
+            // Fold onto the most recent agent message so past turns
+            // still show a Play-button on history load.
+            for (let i = out.length - 1; i >= 0; i -= 1) {
+              const m = out[i];
+              if (m && m.role === 'agent') {
+                out[i] = {
+                  ...m,
+                  audio: {
+                    url: ev.audio.url,
+                    mime: ev.audio.mime,
+                    ...(typeof ev.audio.durationMs === 'number'
+                      ? { durationMs: ev.audio.durationMs }
+                      : {}),
+                  },
+                };
+                break;
+              }
+            }
+            continue;
+          }
+          const mapped = eventToMessage(ev);
+          if (mapped) out.push(mapped);
+        }
+        setMessages(out);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -163,11 +202,38 @@ export function useChatStream(agent: string | null): ChatStream {
       }
     };
 
+    const onAssistantAudio = (e: MessageEvent) => {
+      let d: { turnId?: string; url?: string; mime?: string; durationMs?: number } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.url !== 'string' || typeof d.mime !== 'string') return;
+      const audio = {
+        url: d.url,
+        mime: d.mime,
+        ...(typeof d.durationMs === 'number' ? { durationMs: d.durationMs } : {}),
+      };
+      setMessages((prev) => {
+        // Attach to the most recent agent message (single-session,
+        // single-turn-at-a-time on mobile, so last agent message is
+        // the right target).
+        for (let i = prev.length - 1; i >= 0; i -= 1) {
+          const m = prev[i];
+          if (m && m.role === 'agent') {
+            const next = prev.slice();
+            next[i] = { ...m, audio };
+            return next;
+          }
+        }
+        return prev;
+      });
+      audioListenersRef.current.forEach((fn) => fn(audio.url));
+    };
+
     es.addEventListener('open', onOpen);
     es.addEventListener('error', onError);
     es.addEventListener('chat', onChat);
     es.addEventListener('agent', onAgent);
     es.addEventListener('status', onStatus);
+    es.addEventListener('assistant_audio', onAssistantAudio);
 
     return () => {
       cancelled = true;
@@ -176,11 +242,12 @@ export function useChatStream(agent: string | null): ChatStream {
       es.removeEventListener('chat', onChat);
       es.removeEventListener('agent', onAgent);
       es.removeEventListener('status', onStatus);
+      es.removeEventListener('assistant_audio', onAssistantAudio);
       es.close();
     };
   }, [agent]);
 
-  const send = async (text: string, attachments?: AttachmentRef[]) => {
+  const send: ChatStream['send'] = async (text, attachments, voice) => {
     if (!agent) return;
     // Optimistically add the user's message so the bubble appears
     // instantly — the server doesn't broadcast user_message back to
@@ -208,6 +275,8 @@ export function useChatStream(agent: string | null): ChatStream {
           ...(attachments && attachments.length > 0
             ? { attachments: attachments.map((a) => ({ hash: a.hash, name: a.name, mime: a.mime })) }
             : {}),
+          ...(voice?.inputModality === 'voice' ? { input_modality: 'voice' as const } : {}),
+          ...(voice?.autoPlayRequested ? { auto_play_requested: true } : {}),
         }),
       });
     } catch (err) {
@@ -216,7 +285,14 @@ export function useChatStream(agent: string | null): ChatStream {
     }
   };
 
-  return { messages, streaming, send, connectionError };
+  const subscribeAudio: ChatStream['subscribeAudio'] = (handler) => {
+    audioListenersRef.current.add(handler);
+    return () => {
+      audioListenersRef.current.delete(handler);
+    };
+  };
+
+  return { messages, streaming, send, subscribeAudio, connectionError };
 }
 
 function eventToMessage(ev: HistoryEvent): ChatMessage | null {

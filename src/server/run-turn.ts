@@ -51,6 +51,8 @@ import { loadAvailableSkills } from '../skills/load.ts';
 import { buildSkillsRegistry } from '../skills/registry.ts';
 import { createTurnSerializer } from './sse-serializer.ts';
 import { sanitizeAssistantText } from './sanitize-assistant-text.ts';
+import { synthesize } from '../tts/service.ts';
+import { prepareForTts } from '../tts/prepare-for-tts.ts';
 import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { buildSelfPointer } from './workspace.ts';
@@ -180,8 +182,106 @@ export interface RunChatTurnArgs {
    *  the user_message event in JSONL; resolved to absolute paths +
    *  metadata before the engine runs. */
   attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
+  /** Voice: how the user produced this turn. `voice` ⇒ STT-transcribed
+   *  on web/mobile or via /voice/turn. `text` (or undefined) ⇒ typed.
+   *  Persists on user_message.input.modality and gates auto-TTS. */
+  inputModality?: 'text' | 'voice';
+  /** Voice: free-form tag for the STT path used (provider name). */
+  sttProvider?: string;
+  /** Voice: did the client request a spoken reply for this turn? The
+   *  auto-TTS hook fires only when (inputModality==='voice' AND
+   *  autoPlayRequested===true). Default-off keeps text-only sessions
+   *  silent. */
+  autoPlayRequested?: boolean;
   /** Wiring deps. Server boot constructs these once and reuses. */
   deps: ChatTurnResolveDeps;
+}
+
+/**
+ * Auto-TTS background task. Called fire-and-forget after a turn
+ * completes whose user_message arrived via voice + autoPlayRequested.
+ * Sanitizes the assistant text for speech, synthesizes audio (or
+ * grabs from cache), appends an `assistant_audio` event to JSONL, and
+ * broadcasts via SSE so live clients can render a Play-button and
+ * auto-play if their toggle is on.
+ */
+async function generateAutoTts(args: {
+  agent: string;
+  session: string;
+  turnId: string;
+  text: string;
+  engine: string;
+  config: Config;
+  publishSse?: (event: SseEvent) => Promise<void>;
+  parentTurnId: string;
+}): Promise<void> {
+  const { agent, session, turnId, text, engine, config, publishSse, parentTurnId } = args;
+  const ttsCfg = config.tts;
+  if (!ttsCfg?.enabled) return;
+
+  const prepared = prepareForTts(text);
+  if (prepared.skipped) {
+    logger.info({
+      msg: 'turn.auto_tts_skipped',
+      turnId: parentTurnId,
+      agent,
+      session,
+      reason: prepared.reason,
+    });
+    return;
+  }
+
+  const start = Date.now();
+  // Auto-TTS always serves opus when reencode is on — smallest
+  // payload for mobile auto-play. Falls back to wav otherwise.
+  const fmt: 'wav' | 'opus' = ttsCfg.reencode.enabled ? 'opus' : 'wav';
+  const synth = await synthesize(
+    {
+      text: prepared.text,
+      ...(ttsCfg.voice ? { voice: ttsCfg.voice } : {}),
+      ...(ttsCfg.language ? { language: ttsCfg.language } : {}),
+      format: fmt,
+    },
+    config,
+  );
+  const url = `/tts/cache/${synth.cacheKey}.${synth.ext}`;
+  logger.info({
+    msg: 'turn.auto_tts_ready',
+    turnId: parentTurnId,
+    agent,
+    session,
+    cacheHit: synth.cacheHit,
+    cacheKey: synth.cacheKey,
+    bytes: synth.bytes.length,
+    durationMs: synth.durationMs ?? null,
+    ms: Date.now() - start,
+  });
+
+  const evt = {
+    kind: 'assistant_audio' as const,
+    ts: Date.now(),
+    engine,
+    turnId,
+    audio: {
+      url,
+      mime: synth.mime,
+      ...(synth.durationMs !== undefined ? { durationMs: synth.durationMs } : {}),
+      cacheKey: synth.cacheKey,
+    },
+  };
+  await appendEvent(agent, session, evt);
+  if (publishSse) {
+    await publishSse({
+      event: 'assistant_audio',
+      data: {
+        turnId,
+        url,
+        mime: synth.mime,
+        ...(synth.durationMs !== undefined ? { durationMs: synth.durationMs } : {}),
+        cacheKey: synth.cacheKey,
+      },
+    });
+  }
 }
 
 export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult> {
@@ -198,6 +298,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     publishSse,
     signal,
     attachments,
+    inputModality,
+    sttProvider,
+    autoPlayRequested,
     deps,
   } = args;
   // Turn-lifecycle id — stable across every log line this turn produces,
@@ -385,6 +488,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     });
   }
 
+  const inputMeta =
+    inputModality === 'voice'
+      ? {
+          modality: 'voice' as const,
+          transcribed: true,
+          ...(sttProvider ? { sttProvider } : {}),
+        }
+      : undefined;
+
   await appendEvent(agent, session, {
     kind: 'user_message',
     ts: Date.now(),
@@ -394,6 +506,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
     ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
+    ...(inputMeta ? { input: inputMeta } : {}),
+    ...(autoPlayRequested ? { autoPlayRequested: true } : {}),
   });
 
   // Live broadcast user_message to ALL session subscribers — A2A
@@ -581,6 +695,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     let firstEventLogged = false;
     let sawTurnEnd = false;
     let lastSeenEngine: string = resolvedModel.provider.engine;
+    let streamTurnId: string | undefined;
     for await (const ev of stream) {
       if (!firstEventLogged) {
         firstEventLogged = true;
@@ -625,9 +740,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       if (ev.kind !== 'assistant_delta') {
         await appendEvent(agent, session, ev);
       }
+      if (ev.kind === 'turn_start' && typeof ev.turnId === 'string') {
+        streamTurnId = ev.turnId;
+      }
       if (ev.kind === 'turn_end') {
         sawTurnEnd = true;
         if (ev.usage) lastUsage = ev.usage;
+        if (typeof ev.turnId === 'string') streamTurnId = ev.turnId;
       }
       if (ev.kind === 'assistant_message') {
         finalText = ev.text;
@@ -664,6 +783,44 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ts: Date.now(),
         engine: lastSeenEngine,
         turnId: `t-${Date.now()}`,
+      });
+    }
+
+    // ── Auto-TTS hook ─────────────────────────────────────────────────
+    // Gates (all must hold):
+    //   (1) config.tts.enabled
+    //   (2) input modality was voice
+    //   (3) client requested auto-play for this turn
+    //   (4) finalText is present + sanitizer doesn't skip
+    // Fire-and-forget: TTS generation can take 1-3s, we don't block
+    // the turn return. The audio arrives over SSE as assistant_audio
+    // when ready (and is appended to JSONL).
+    const ttsCfg = deps.config.tts;
+    if (
+      ttsCfg?.enabled &&
+      inputModality === 'voice' &&
+      autoPlayRequested &&
+      finalText.length > 0 &&
+      streamTurnId
+    ) {
+      const capturedTurnId = streamTurnId;
+      void generateAutoTts({
+        agent,
+        session,
+        turnId: capturedTurnId,
+        text: finalText,
+        engine: lastSeenEngine,
+        config: deps.config,
+        publishSse,
+        parentTurnId: turnId,
+      }).catch((err) => {
+        logger.warn({
+          msg: 'turn.auto_tts_failed',
+          turnId,
+          agent,
+          session,
+          err: (err as Error).message,
+        });
       });
     }
   } catch (err) {
