@@ -585,10 +585,35 @@ export const TtsConfigSchema = z
      *  Whatever string the upstream expects (e.g. `fish-audio-s2-pro-8bit`). */
     model: z.string().min(1),
     /** Optional voice/speaker selector. Forwarded to the upstream as
-     *  `voice`. Provider-specific; omit if your model uses one. */
+     *  `voice`. Provider-specific; omit if your model uses one.
+     *  Note: many open-source TTS engines (incl. mlx-audio's fish-s2-pro
+     *  adapter) ignore this field — see `textPrefix` / `agentVoices`
+     *  for an inline-prefix mechanism that works with such engines. */
     voice: z.string().min(1).optional(),
     /** Optional default language hint (ISO 639-1). Forwarded as `language`. */
     language: z.string().min(2).max(8).optional(),
+    /** Optional text-prefix prepended to EVERY synthesize input. Used
+     *  to inline speaker / emotion / style tags that the engine reads
+     *  as part of the text. Example for Fish Audio S2 Pro on mlx-audio:
+     *    textPrefix: "<|speaker:0|>"
+     *  Acts as the fallback when an agent doesn't have its own override
+     *  in `agentVoices`. */
+    textPrefix: z.string().optional(),
+    /** Optional per-agent text-prefix overrides. Key = agent name (e.g.
+     *  "naxon", "hans"); value = the prefix string to prepend to the
+     *  synthesize input when somora is generating audio FOR that agent.
+     *  Lookup order at synth time:
+     *    1. agentVoices[<agent>]  →  use it
+     *    2. else textPrefix       →  use it
+     *    3. else no prefix
+     *  The prefix flows into the cache-key, so different speakers get
+     *  different cached audio files for the same reply text. */
+    agentVoices: z
+      .record(
+        z.string().regex(/^[A-Za-z0-9_-]+$/, 'agent name must match [A-Za-z0-9_-]+'),
+        z.string(),
+      )
+      .default({}),
     /** Cache settings for generated audio. */
     cache: z
       .object({

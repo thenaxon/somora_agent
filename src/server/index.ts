@@ -1874,9 +1874,14 @@ app.post('/tts/synthesize', async (c) => {
   if (!tts?.enabled) {
     return c.json({ error: 'tts not enabled in config.yaml' }, 503);
   }
-  let body: { text?: string; voice?: string; language?: string };
+  let body: { text?: string; voice?: string; language?: string; agent?: string };
   try {
-    body = (await c.req.json()) as { text?: string; voice?: string; language?: string };
+    body = (await c.req.json()) as {
+      text?: string;
+      voice?: string;
+      language?: string;
+      agent?: string;
+    };
   } catch {
     return c.json({ error: 'expected JSON body with `text`' }, 400);
   }
@@ -1896,6 +1901,7 @@ app.post('/tts/synthesize', async (c) => {
         text: body.text,
         ...(body.voice ? { voice: body.voice } : {}),
         ...(body.language ? { language: body.language } : {}),
+        ...(body.agent ? { agent: body.agent } : {}),
         format: spec.fmt,
       },
       config,
@@ -2086,6 +2092,10 @@ app.post('/voice/turn', async (c) => {
         if (event.event === 'chat' && event.data.state === 'final') {
           collected.push(event.data.text);
         }
+        // Live broadcast — without this, open web/mobile clients on
+        // the same session see the turn ONLY after a hard refresh.
+        // Same pattern as the sentinel-trigger SSE fix in .17.07.
+        await publish(agent, session, event);
       },
       deps: chatTurnDeps,
     });
@@ -2119,6 +2129,7 @@ app.post('/voice/turn', async (c) => {
         ...(voice ? { voice } : {}),
         ...(language ? { language } : {}),
         format: spec.fmt,
+        agent,
       },
       config,
     );

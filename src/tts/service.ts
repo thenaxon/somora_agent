@@ -128,6 +128,10 @@ export interface SynthesizeInput {
   voice?: string;
   language?: string;
   format: Format;
+  /** Agent name. Used to resolve a per-agent `textPrefix` from
+   *  config.tts.agentVoices. When omitted (e.g. /tts/synthesize
+   *  called without context), falls back to config.tts.textPrefix. */
+  agent?: string;
 }
 
 export interface SynthesizeOutput {
@@ -165,7 +169,14 @@ export async function synthesize(input: SynthesizeInput, config: Config): Promis
 
   ensureCacheDir();
   const voice = input.voice ?? tts.voice;
-  const cacheKey = computeCacheKey(input.text, voice, tts.model, input.format);
+  // Resolve text-prefix: per-agent override wins, then global default,
+  // then nothing. Prefix is prepended to the input BEFORE both the
+  // cache-key compute and the upstream call, so different speakers
+  // get different cached files for the same reply text.
+  const perAgentPrefix = input.agent ? tts.agentVoices?.[input.agent] : undefined;
+  const prefix = perAgentPrefix ?? tts.textPrefix ?? '';
+  const finalInput = prefix + input.text;
+  const cacheKey = computeCacheKey(finalInput, voice, tts.model, input.format);
   const outPath = cachePath(cacheKey, input.format);
   const spec = FORMATS[input.format];
 
@@ -182,11 +193,15 @@ export async function synthesize(input: SynthesizeInput, config: Config): Promis
   }
 
   // ── cache miss → upstream ──
-  const url = provider.baseUrl.replace(/\/+$/, '') + '/v1/audio/speech';
+  // STT path-convention: baseUrl already ends in /v1 (e.g.
+  // http://host:11434/v1), so we only append `/audio/speech`, mirroring
+  // src/server/index.ts:/stt/transcribe which does the same with
+  // `/audio/transcriptions`.
+  const url = provider.baseUrl.replace(/\/+$/, '') + '/audio/speech';
   const startedAt = Date.now();
   const body: Record<string, unknown> = {
     model: tts.model,
-    input: input.text,
+    input: finalInput,
   };
   if (voice) body.voice = voice;
   const language = input.language ?? tts.language;

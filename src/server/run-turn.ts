@@ -241,6 +241,7 @@ async function generateAutoTts(args: {
       ...(ttsCfg.voice ? { voice: ttsCfg.voice } : {}),
       ...(ttsCfg.language ? { language: ttsCfg.language } : {}),
       format: fmt,
+      agent,
     },
     config,
   );

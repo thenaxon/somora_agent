@@ -184,7 +184,30 @@ providers:
 #   provider: omlx                              # ← references providers.omlx
 #   model: fish-audio-s2-pro-8bit
 #   language: de                                # optional default lang hint
-#   # voice: <id>                               # optional speaker selector
+#   # voice: <id>                               # optional OpenAI-style speaker selector
+#                                               #  (ignored by mlx-audio's fish adapter — see textPrefix)
+#   #
+#   # textPrefix is an inline string prepended to EVERY synthesize input.
+#   # Used to push speaker / emotion / style tags into the text itself,
+#   # which is how Fish Audio S2 Pro (and similar OSS TTS) actually steer
+#   # voice — the `voice` JSON field is ignored. Example tags:
+#   #   "<|speaker:0|>"          — lock speaker (Fish S2 has many)
+#   #   "[deep male voice] "      — descriptive style tag
+#   #   "<|speaker:7|>[calm] "    — combine speaker + emotion
+#   # Acts as fallback when an agent has no entry in `agentVoices`.
+#   # textPrefix: "<|speaker:0|>"
+#   #
+#   # agentVoices is a per-agent override map. When somora synthesises
+#   # audio FOR agent X, the prefix from `agentVoices[X]` is used (and
+#   # `textPrefix` is ignored). Agent names match the directory under
+#   # ~/.somora/agents/<name>/. The prefix flows into the cache key so
+#   # different speakers get different cached audio files.
+#   # agentVoices:
+#   #   naxon:  "[deep male voice] "
+#   #   hans:   "<|speaker:7|>[male voice] "
+#   #   lisa:   "<|speaker:2|>"
+#   #   jarvis: "[deep male voice] "
+#   #
 #   cache:
 #     retentionDays: 7                          # 0 disables GC
 #     maxSizeMB: 500

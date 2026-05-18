@@ -48,7 +48,13 @@ tts:
   provider: omlx                              # references providers.omlx
   model: fish-audio-s2-pro-8bit               # whatever your upstream calls it
   language: de
-  # voice: <id>                               # optional speaker selector
+  # voice: <id>                               # optional OpenAI-style speaker selector
+  textPrefix: "<|speaker:0|>"                 # inline prefix prepended to every input
+  agentVoices:                                # optional per-agent override map
+    naxon:  "[deep male voice] "
+    hans:   "<|speaker:7|>[male voice] "
+    lisa:   "<|speaker:2|>"
+    jarvis: "[deep male voice] "
   cache:
     retentionDays: 7                          # 0 disables GC
     maxSizeMB: 500
@@ -67,6 +73,39 @@ tts:
 Required dependency for re-encoding: a system `ffmpeg` on the somora
 host's `$PATH`. WAV passthrough works without ffmpeg, but mobile
 clients usually prefer opus/m4a for bandwidth.
+
+### Voice steering — `textPrefix` and `agentVoices`
+
+Many open-source TTS engines (Fish Audio S2 Pro on mlx-audio is the
+canonical example) don't honor the OpenAI-compatible `voice` JSON field
+— they steer voice via inline tags in the **text itself**. To support
+that, somora prepends a configurable prefix to every TTS input.
+
+Lookup at synth time:
+
+1. `agentVoices[<agent>]` if the agent has an explicit override → use it.
+2. Otherwise `textPrefix` if set → use it.
+3. Otherwise no prefix.
+
+Examples of useful prefixes for Fish Audio S2 Pro:
+
+| Prefix | Effect |
+|---|---|
+| `"<\|speaker:0\|>"` | Lock to speaker ID 0 (the model has many) |
+| `"[deep male voice] "` | Style tag — pushes voice character |
+| `"[calm] "` | Emotion tag |
+| `"<\|speaker:7\|>[male voice] "` | Combined speaker + style |
+
+To find which IDs and tags work for your model, generate a few samples
+and listen — the wide-tag space means trial-and-error works well. Save
+to a scratch dir and play back to compare. The prefix flows into the
+cache-key, so different speakers get different cached audio files for
+the same reply text — no voice-collision in cache.
+
+This mechanism is engine-agnostic at the somora layer: an engine that
+ignores the tags will just speak them as text, which sounds odd but
+won't crash. Engines that use the OpenAI-compatible `voice` field can
+keep using `tts.voice` instead.
 
 ## Auto-play gating
 
