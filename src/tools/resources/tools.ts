@@ -22,6 +22,14 @@ interface ListedResource {
   user: string;
   description: string | null;
   workspace: string | null;
+  /**
+   * Number of privileged-command override entries configured on this
+   * resource (resources.<name>.allowBlocked in config.yaml). 0 means
+   * the global exec blacklist applies normally; >0 means there are
+   * specific commands allowed despite the blacklist — typically used
+   * on dedicated agent-workstations for system maintenance.
+   */
+  allowBlockedCount: number;
 }
 
 export const resourceList: ToolDefinition<z.infer<typeof ListInput>> = {
@@ -50,6 +58,7 @@ export const resourceList: ToolDefinition<z.infer<typeof ListInput>> = {
       user: resource.user,
       description: resource.description ?? null,
       workspace: resource.workspace ?? null,
+      allowBlockedCount: resource.type === 'ssh' ? resource.allowBlocked.length : 0,
     }));
     return { count: resources.length, resources };
   },

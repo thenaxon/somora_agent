@@ -20,6 +20,7 @@
 // of raw turns.
 
 import { pickLatestApplicable, type Compaction } from '../compaction/index.ts';
+import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 
 export interface ReplayPair {
@@ -103,7 +104,17 @@ export function renderReplayPrefix(delta: ReplayDelta): string {
       // confuse it with a human-user turn.
       const userLabel = p.fromAgent ? `User (from agent ${p.fromAgent})` : 'User';
       lines.push(`${userLabel}: ${p.user}`);
-      lines.push(`Assistant: ${p.assistant}`);
+      // Defensive XML-strip: if a prior engine's assistant_message
+      // text contains hallucinated <tool_call>…</tool_call> /
+      // <tool_response>…</tool_response> XML (see
+      // src/server/sanitize-assistant-text.ts), replace it before
+      // it gets re-injected into the NEXT engine's context — which
+      // would otherwise see thousands of tokens of XML noise. This
+      // is belt-and-suspenders: the run-turn chokepoint already
+      // normalises new messages, but legacy events already on disk
+      // never went through that filter.
+      const cleanAssistant = sanitizeAssistantText(p.assistant).text;
+      lines.push(`Assistant: ${cleanAssistant}`);
       lines.push('');
     }
     lines.push('</recent-pairs>');

@@ -13,6 +13,8 @@
 import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
 import type { ToolDefinition } from '../types.ts';
+import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
+import { auditPrivilegedExec, checkAllowBlocked } from './allowlist.ts';
 import { checkBlacklist } from './blacklist.ts';
 import { releaseRemoteSlot, tryAcquireExecSlot } from './concurrency.ts';
 import {
@@ -178,7 +180,12 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     'Hard-blocked: rm -rf / and other destructive system ops, sudo/doas, fork bombs, system ' +
     'shutdown, chmod world-writable on /etc /usr /bin /sbin /boot /root /var /opt, reading ' +
     'private SSH keys, curl|sh / wget|sh untrusted-remote-exec patterns. Match → blocked:true ' +
-    'in result with reason; the model should adapt the command rather than retry.',
+    'in result with reason; the model should adapt the command rather than retry. ' +
+    '\n\n' +
+    'Per-resource override: a configured SSH resource may have an `allowBlocked` list in ' +
+    'config.yaml that whitelists specific commands (e.g. `sudo ~/bin/update.sh`, `systemctl ' +
+    'reboot`) despite the global block. Check resource_list — entries with allowBlockedCount>0 ' +
+    'have privileged overrides. local target is never overridable.',
   inputSchema: ExecInput,
   jsonSchema: {
     type: 'object',
@@ -207,22 +214,62 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     // Hard-blacklist runs FIRST — never even reach a target if the
     // command is in the deny list.
     const block = checkBlacklist(input.command);
+    let privilegedMatch: { entry: string; resource: string } | null = null;
     if (block.matched) {
-      logger.warn({
-        msg: 'exec.blocked',
-        agent: ctx.agent,
-        target: input.target,
-        reason: block.reason,
-        pattern: block.pattern,
-        command_head: input.command.slice(0, 120),
-      });
-      return {
-        ok: false,
-        background: false,
-        blocked: true,
-        reason: block.reason,
-        pattern: block.pattern,
-      };
+      // Per-resource allowlist override: if the target is a configured
+      // SSH resource and its `allowBlocked` array has an entry that
+      // matches this command, we let it through. `local` target NEVER
+      // gets to override — the host where somora runs is not a
+      // dedicated-agent-workstation. See src/tools/exec/allowlist.ts.
+      if (input.target !== 'local') {
+        const resource = await resolveVisibleResourceFresh(ctx.agent, input.target);
+        if (resource && resource.type === 'ssh' && resource.allowBlocked.length > 0) {
+          const match = checkAllowBlocked(input.command, resource.allowBlocked);
+          if (match) {
+            privilegedMatch = { entry: match.entry, resource: input.target };
+            logger.info({
+              msg: 'exec.privileged_allowed',
+              agent: ctx.agent,
+              target: input.target,
+              matched_entry: match.entry,
+              blacklist_reason: block.reason,
+              command_head: input.command.slice(0, 120),
+            });
+            // Audit-trail JSONL — fire-and-forget. We deliberately log
+            // the AUTH event (matched + about-to-execute), not the
+            // completion: the rest of somora's exec logging captures
+            // exit codes, and one line per privileged-allow is the
+            // simplest after-the-fact review surface.
+            void auditPrivilegedExec({
+              ts: Date.now(),
+              agent: ctx.agent,
+              session: ctx.session ?? 'unknown',
+              resource: input.target,
+              command_head: input.command.slice(0, 200),
+              matched_entry: match.entry,
+              blacklist_reason: block.reason,
+              blacklist_pattern: block.pattern,
+            });
+          }
+        }
+      }
+      if (!privilegedMatch) {
+        logger.warn({
+          msg: 'exec.blocked',
+          agent: ctx.agent,
+          target: input.target,
+          reason: block.reason,
+          pattern: block.pattern,
+          command_head: input.command.slice(0, 120),
+        });
+        return {
+          ok: false,
+          background: false,
+          blocked: true,
+          reason: block.reason,
+          pattern: block.pattern,
+        };
+      }
     }
 
     if (input.background) {

@@ -50,6 +50,7 @@ import { loadPersona, type Persona } from '../persona/loader.ts';
 import { loadAvailableSkills } from '../skills/load.ts';
 import { buildSkillsRegistry } from '../skills/registry.ts';
 import { createTurnSerializer } from './sse-serializer.ts';
+import { sanitizeAssistantText } from './sanitize-assistant-text.ts';
 import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { buildSelfPointer } from './workspace.ts';
@@ -594,6 +595,32 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       }
       if ('engine' in ev && typeof ev.engine === 'string' && ev.engine.length > 0) {
         lastSeenEngine = ev.engine;
+      }
+      // Bug 2026-05-17 Rene: some engines/models hallucinate
+      // text-format `<tool_call>{…}</tool_call>` markup inside
+      // assistant text (instead of going through the engine's
+      // structured tool_use channel). That XML survives the wire and
+      // the JSON body lands in the chat bubble as a wall of text.
+      // Normalize on the final assistant_message; deltas pass through
+      // unchanged because XML boundaries can split across delta chunks
+      // (the bubble flips to the final-message text on turn_end so a
+      // brief streaming flicker is fine).
+      if (ev.kind === 'assistant_message') {
+        const sanitized = sanitizeAssistantText(ev.text);
+        if (sanitized.matches > 0) {
+          logger.warn({
+            msg: 'turn.hallucinated_tool_call_xml',
+            turnId,
+            agent,
+            session,
+            engine: lastSeenEngine,
+            model: resolvedModel.modelId,
+            matches: sanitized.matches,
+            originalLength: ev.text.length,
+            sanitizedLength: sanitized.text.length,
+          });
+          ev.text = sanitized.text;
+        }
       }
       if (ev.kind !== 'assistant_delta') {
         await appendEvent(agent, session, ev);

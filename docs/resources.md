@@ -77,11 +77,91 @@ Server shutdown drains the pool gracefully.
 ## Tools
 
 - `resource_list` — lists every resource visible to the calling agent
-  (after the deny-filter is applied).
+  (after the deny-filter is applied). Each entry includes
+  `allowBlockedCount` so the agent knows whether the resource has any
+  privileged-command overrides (see next section).
 - `resource_test` — connects (or reuses cached conn) and runs
   `whoami; hostname; uname -srm; uptime` for a fast reachability
   check. Surfaces auth/network errors with a clear message before
   workload tools fail later.
+
+## Privileged command allowlist (opt-in per resource)
+
+The `exec` tool has a global blacklist that refuses dangerous commands
+(`sudo`, `doas`, `reboot`, `shutdown`, `poweroff`, fork bombs, world-
+writable on system paths, etc.) regardless of target. That default is
+right for everyday use, but it blocks legitimate maintenance on
+dedicated agent-workstations — hosts that exist specifically so a
+Somora-agent can run system updates, reboot after a kernel bump,
+repair mounts, and so on.
+
+For those hosts, a resource can declare an `allowBlocked:` list. Each
+entry whitelists a command pattern that overrides the global block
+**for that resource only**. The `local` target (= the host where the
+Somora server runs) never gets an override — `local` keeps the strict
+default.
+
+```yaml
+resources:
+  spiderman:
+    type: ssh
+    host: 192.0.2.42
+    user: agent-user
+    keyPath: ~/.ssh/id_ed25519
+    description: |
+      Dedicated AI/GPU workstation. Somora-agents own routine
+      maintenance here: system updates, kernel reboots, mount fixes.
+    allowBlocked:
+      - sudo ~/bin/spiderman-system-update.sh
+      - sudo ~/bin/fix-naxon-mount-v2.sh
+      - systemctl reboot
+      - sudo                              # broad: any "sudo …" command
+```
+
+### Match rule
+
+Each entry `E` matches command `C` if, after trim + whitespace-
+collapse normalization:
+
+- `C === E`  (exact), **OR**
+- `C.startsWith(E + ' ')`  (prefix with a required space boundary)
+
+The space boundary is intentional. `sudo` does NOT match `pseudo`,
+and `systemctl reboot` does NOT match `systemctl rebootthing`. To
+whitelist a family of commands, list the common prefix. To whitelist
+exactly one form, list the full string.
+
+First match wins; entry order in YAML is irrelevant.
+
+### Audit trail
+
+Every privileged-allowed execution appends one line to
+`~/.somora/audit/exec-privileged.jsonl`:
+
+```json
+{"ts":1747500000000,"agent":"naxon","session":"…","resource":"spiderman","command_head":"sudo ~/bin/spiderman-system-update.sh","matched_entry":"sudo ~/bin/spiderman-system-update.sh","blacklist_reason":"sudo (privilege escalation)","blacklist_pattern":"…"}
+```
+
+Append-only. Rotate by hand or via logrotate if it grows; Somora does
+not GC it.
+
+### Security posture
+
+`allowBlocked` is an explicit opt-in trust grant: the operator of the
+Somora host is telling the system "on this remote, these specific
+admin commands are normal operation." A few practical guidelines:
+
+- Prefer prepared scripts with fixed paths over broad shell patterns.
+  `sudo ~/bin/spiderman-system-update.sh` is far safer than a blanket
+  `sudo` entry, because the script itself can be defensive
+  (`set -euo pipefail`, expected-path checks, logging).
+- Use a broad entry (`sudo` on its own) only when the resource is a
+  truly dedicated agent-workstation where you'd let the agent do
+  whatever an admin would.
+- Keep production-shared hosts free of `allowBlocked` entries
+  entirely; the global blacklist is the right default there.
+- The audit JSONL is the after-the-fact review surface; check it if
+  you ever wonder what your agents did with their elevated privileges.
 
 ## What's NOT here yet (FUTURE)
 

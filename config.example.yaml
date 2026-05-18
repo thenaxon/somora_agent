@@ -339,6 +339,16 @@ providers:
 # `target` parameter (default `local`, otherwise one of these names).
 # `keyPath` is the private key on the somora server itself. `hostKey`
 # (sha256:...) enforces strict mode instead of TOFU.
+#
+# `allowBlocked` (optional, per resource): a list of command patterns
+# that override the global exec blacklist FOR THIS RESOURCE ONLY. Use
+# it on dedicated agent-workstations where Somora-agents legitimately
+# run admin commands (system updates, kernel reboots, mount fixes).
+# Match rule: entry E matches command C if  normalize(C) === normalize(E)
+# OR  normalize(C).startsWith(normalize(E) + ' '). The space boundary
+# stops `sudo` from matching `pseudo`. The `local` target never gets
+# overrides. Every privileged-allowed execution appends a line to
+# ~/.somora/audit/exec-privileged.jsonl. See docs/resources.md.
 # resources:
 #   linuxserver-1:
 #     type: ssh
@@ -349,6 +359,19 @@ providers:
 #       Bastion in the workshop. Ubuntu 24.04, Docker installed.
 #     workspace: /home/alice/work
 #     # hostKey: 'sha256:abc...'      # optional; TOFU when omitted
+#   spiderman:
+#     type: ssh
+#     host: 192.0.2.42
+#     user: agent-user
+#     keyPath: ~/.ssh/id_ed25519
+#     description: |
+#       Dedicated AI/GPU workstation. Agents run routine maintenance
+#       here; reboot, system updates and mount fixes are normal ops.
+#     allowBlocked:
+#       - sudo ~/bin/spiderman-system-update.sh
+#       - sudo ~/bin/fix-naxon-mount-v2.sh
+#       - systemctl reboot
+#       - sudo                          # broad: any "sudo ..." command
 
 # Web-tools credentials. Per-provider keys — tools whose provider isn't
 # configured are hidden from the agent (the `available()` probe on the

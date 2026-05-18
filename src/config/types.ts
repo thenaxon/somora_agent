@@ -393,6 +393,26 @@ export const SshResourceSchema = z.object({
    * to ~/.somora/known_hosts; subsequent connections enforce the pin.
    */
   hostKey: z.string().optional(),
+  /**
+   * Privileged-command allowlist that overrides the global exec-tool
+   * blacklist (`sudo`, `reboot`, `shutdown`, etc.) FOR THIS RESOURCE
+   * ONLY. The global blacklist is the safe default; this is an opt-in
+   * escape valve for dedicated agent-workstations where Somora-agents
+   * legitimately maintain the host.
+   *
+   * Match semantics (intentionally simple): trim+collapse whitespace on
+   * both the incoming command and each entry, then entry `E` matches
+   * command `C` iff `C === E` OR `C.startsWith(E + ' ')`. No regex, no
+   * shell parsing — what you type is what's allowed, plus arguments
+   * after a space boundary. Example: `sudo` matches `sudo apt …` and
+   * bare `sudo`, but not `pseudo`. `systemctl reboot` matches itself
+   * and `systemctl reboot --now`, but not `systemctl rebootthing`.
+   *
+   * Each match → execute + write one line to
+   * `~/.somora/audit/exec-privileged.jsonl`. `local` target ignores
+   * this (host-policy is enforced on the resource side).
+   */
+  allowBlocked: z.array(z.string().min(1)).default([]),
 });
 export type SshResource = z.infer<typeof SshResourceSchema>;
 
