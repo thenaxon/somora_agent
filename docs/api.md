@@ -124,7 +124,10 @@ Returns:
       "userWaiting": 0,
       "agentWaiting": 0,
       "lastEngineEventAt": 1778757036900,
-      "lastEngineEventAgoMs": 571
+      "lastEngineEventAgoMs": 571,
+      "subscriberCount": 2,
+      "lastPublishOkAt": 1778757036900,
+      "lastPublishOkAgoMs": 571
     }
   ]
 }
@@ -136,6 +139,14 @@ silent — if it climbs past a few minutes on a chat turn (vs. a long
 local-LLM job), the turn is wedged and the engine watchdog will abort
 it. See [setup.md](setup.md#tunables) `engineWatchdog` to tune
 thresholds per engine.
+
+`subscriberCount` is the number of currently-connected SSE clients
+(web / mobile / TUI tail) watching this session. `lastPublishOkAt` only
+advances when a broadcast reached at least one subscriber within the
+`sse.publishTimeoutMs` budget; if `subscriberCount > 0` but
+`lastPublishOkAgoMs` grows without bound, at least one client is wedged
+— the next publish auto-evicts it (see `sse.publishTimeoutMs` in
+[setup.md](setup.md#tunables)).
 
 ### `GET /tools`
 

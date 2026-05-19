@@ -389,6 +389,22 @@ engineWatchdog:
                                   # raise if your backend regularly silences
                                   # for longer than 20 min mid-turn
 
+# Per-subscriber write budget for SSE broadcasts. A healthy writeSSE
+# finishes in microseconds; a wedged subscriber (mobile browser
+# backgrounded, TCP receive window stuck at 0, dead-but-not-closed
+# stream) can otherwise stall every following turn on that session
+# until server restart. This is NOT a per-turn timeout — long-running
+# tool calls and slow local LLMs are unaffected, because each
+# individual event-write is still microseconds.
+sse:
+  publishTimeoutMs: 10000         # 10 sec per single event-write; evict the
+                                  # subscriber on overrun and continue. Healthy
+                                  # writes never hit this; 2 orders of magnitude
+                                  # more than a normal write ever takes.
+  publishParallel: true           # broadcast in parallel — one slow client
+                                  # never blocks the others. Flip to false only
+                                  # if you need strict serial delivery order.
+
 memory:
   embedding:
     provider: local           # 'local' uses @huggingface/transformers (ONNX)

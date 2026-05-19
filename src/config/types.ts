@@ -205,6 +205,32 @@ export const EngineWatchdogConfigSchema = z.object({
 });
 export type EngineWatchdogConfig = z.infer<typeof EngineWatchdogConfigSchema>;
 
+// SSE broadcast tunables. A healthy writeSSE finishes in microseconds
+// (local TransformStream write). A wedged subscriber — mobile browser
+// backgrounded, TCP receive window stuck at 0, half-dead TLS handshake
+// — can backpressure forever without throwing. Without a budget, ONE
+// stuck subscriber freezes every turn on that (agent, session). Per-
+// sub timeout + parallel-write isolates clients from each other.
+export const SseConfigSchema = z.object({
+  /** Max wall-clock per single writeSSE before we evict the subscriber.
+   *  A healthy write is µs; legitimate slow paths (network jitter, slow
+   *  mobile link) finish well under 1s. Default 10 000 ms is two orders
+   *  of magnitude more than a healthy write needs but still self-heals
+   *  a wedged stream fast. Bug 2026-05-19 driver: iOS Safari background
+   *  freeze. */
+  publishTimeoutMs: z.number().int().positive().default(10_000),
+  /** When true (default), broadcast events to all subscribers in
+   *  parallel — one slow client never blocks the others. When false,
+   *  subscribers run sequentially in insertion order (legacy behaviour;
+   *  only flip this if you need strict per-subscriber send ordering for
+   *  some odd integration). */
+  publishParallel: z.boolean().default(true),
+}).default({
+  publishTimeoutMs: 10_000,
+  publishParallel: true,
+});
+export type SseConfig = z.infer<typeof SseConfigSchema>;
+
 // Agent-loop tunables for engines that run their own tool-call loop
 // (currently only openai-compatible — Phase 2-Stufe-C). claude-cli and
 // codex-cli have their own internal loops and ignore these values for
@@ -933,6 +959,7 @@ export const ConfigSchema = z.object({
   memory: MemoryConfigSchema,
   agentLoop: AgentLoopConfigSchema,
   engineWatchdog: EngineWatchdogConfigSchema,
+  sse: SseConfigSchema,
   claudeCli: ClaudeCliConfigSchema,
   codexCli: CodexCliConfigSchema,
   tui: TuiConfigSchema,

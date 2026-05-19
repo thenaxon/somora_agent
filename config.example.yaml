@@ -326,6 +326,24 @@ providers:
 #                                  # backend regularly silences for longer
 #                                  # than 20 min mid-turn.
 
+# SSE-broadcast tunables. Pro abonniertem Client (web/mobile/TUI) hat
+# somora ein write-budget pro EINZELNEM event-paket. Eine gesunde
+# writeSSE-write ist Mikrosekunden; ein wedged stream (Mobile-Browser
+# im Hintergrund, gefrorenes TCP-receive-window, halbtoter TLS-
+# handshake) backpressured sonst forever ohne zu throwen — und blockt
+# damit JEDEN folgenden turn auf dieser (agent, session). Greift NICHT
+# auf turn-Dauer / LLM-streaming-Zeit / langen tool-calls — die laufen
+# weiter, weil jedes einzelne event-paket eh nur µs zum schreiben braucht.
+# sse:
+#   publishTimeoutMs: 10000        # 10s pro event-write — self-heal-budget für
+#                                  # einen wedged subscriber. Greift faktisch nie
+#                                  # bei gesunden clients; 2 Größenordnungen mehr
+#                                  # als ein normaler write je dauert.
+#   publishParallel: true          # alle subscriber gleichzeitig beschicken statt
+#                                  # nacheinander — ein slow client blockt nie die
+#                                  # anderen. Auf false stellen nur wenn du strikt
+#                                  # serielle delivery-order brauchst.
+
 # claude-cli engine tunables. Surfaced from claude-agent-sdk env vars so
 # they're configurable here instead of hidden as undocumented env overrides.
 # Applied at server boot; an explicit env var (MCP_TOOL_TIMEOUT etc.) wins

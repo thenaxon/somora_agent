@@ -139,28 +139,104 @@ function subscribe(agent: string, session: string, sub: Subscriber): () => void 
 // an operator can tell at a glance whether a session is silently
 // wedged. Cheap: a single Map.set per published event.
 const lastEngineEventAt = new Map<string, number>();
+// Last successful publish (at least one subscriber acknowledged, OR no
+// subscribers at all). Distinct from lastEngineEventAt which fires on
+// every publish attempt; this one only advances when the broadcast
+// actually went through. Diagnostic surface for /health.
+const lastPublishOkAt = new Map<string, number>();
 
 async function publish(agent: string, session: string, event: SseEvent): Promise<void> {
   const key = streamKey(agent, session);
   lastEngineEventAt.set(key, Date.now());
   const subs = streams.get(key);
-  if (!subs) return;
-  // Snapshot — failed subscribers get evicted mid-iteration
+  if (!subs || subs.size === 0) {
+    lastPublishOkAt.set(key, Date.now());
+    return;
+  }
+  // Per-subscriber write budget. A healthy writeSSE finishes in
+  // microseconds; backpressure on a wedged HTTP/2 stream (mobile-
+  // backgrounded, dead TLS, lost-WiFi-without-RST) can otherwise stall
+  // every turn on this (agent, session). Bug 2026-05-19 driver.
+  const timeoutMs = config.sse.publishTimeoutMs;
+  const parallel = config.sse.publishParallel;
+  const snapshot = [...subs];
   const dead: Subscriber[] = [];
-  for (const sub of [...subs]) {
+  type Outcome = { sub: Subscriber; ok: boolean; reason?: 'timeout' | 'error'; err?: unknown };
+
+  const runOne = async (sub: Subscriber): Promise<Outcome> => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     try {
-      await sub(event);
+      const timeoutPromise = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), timeoutMs);
+      });
+      const result = await Promise.race([
+        sub(event).then(() => 'ok' as const),
+        timeoutPromise,
+      ]);
+      if (result === 'timeout') {
+        return { sub, ok: false, reason: 'timeout' };
+      }
+      return { sub, ok: true };
     } catch (err) {
-      logger.warn({ msg: 'sse.publish_fail', session, err: String(err) });
-      dead.push(sub);
+      return { sub, ok: false, reason: 'error', err };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  };
+
+  let outcomes: Outcome[];
+  if (parallel) {
+    outcomes = await Promise.all(snapshot.map(runOne));
+  } else {
+    outcomes = [];
+    for (const sub of snapshot) {
+      outcomes.push(await runOne(sub));
     }
   }
+
+  let okCount = 0;
+  for (const o of outcomes) {
+    if (o.ok) {
+      okCount += 1;
+      continue;
+    }
+    dead.push(o.sub);
+    if (o.reason === 'timeout') {
+      logger.warn({
+        msg: 'sse.publish_timeout',
+        agent,
+        session,
+        ageMs: timeoutMs,
+        eventKind: event.event,
+        hint: 'subscriber did not ack write within budget — evicting (likely backgrounded mobile / dead TCP)',
+      });
+    } else {
+      logger.warn({
+        msg: 'sse.publish_fail',
+        agent,
+        session,
+        eventKind: event.event,
+        err: String(o.err),
+      });
+    }
+  }
+
+  if (okCount > 0 || snapshot.length === 0) {
+    lastPublishOkAt.set(key, Date.now());
+  }
+
   if (dead.length > 0) {
     const set = streams.get(key);
     if (set) {
       for (const d of dead) set.delete(d);
       if (set.size === 0) streams.delete(key);
-      logger.info({ msg: 'sse.publish_evict_dead', agent, session, count: dead.length });
+      logger.info({
+        msg: 'sse.publish_evict_dead',
+        agent,
+        session,
+        count: dead.length,
+        remaining: set?.size ?? 0,
+      });
     }
   }
 }
@@ -380,7 +456,10 @@ app.get('/health', (c) => {
   const now = Date.now();
   const lockfile = readLockfile();
   const sessions = listAllSessionLockStates().map((s) => {
-    const lastEvent = lastEngineEventAt.get(streamKey(s.agent, s.session));
+    const key = streamKey(s.agent, s.session);
+    const lastEvent = lastEngineEventAt.get(key);
+    const lastOk = lastPublishOkAt.get(key);
+    const subCount = streams.get(key)?.size ?? 0;
     return {
       agent: s.agent,
       session: s.session,
@@ -395,6 +474,14 @@ app.get('/health', (c) => {
       agentWaiting: s.agentWaiting,
       lastEngineEventAt: lastEvent ?? null,
       lastEngineEventAgoMs: lastEvent ? now - lastEvent : null,
+      // SSE-broadcast diagnostics (added 2026-05-19). Helps spot a wedged
+      // subscriber pattern at a glance: subscriberCount > 0 but
+      // lastPublishOkAgoMs growing without bound = at least one stuck
+      // client. After the publish() timeout fix, this auto-heals; the
+      // counters are the canary that signals it's happening.
+      subscriberCount: subCount,
+      lastPublishOkAt: lastOk ?? null,
+      lastPublishOkAgoMs: lastOk ? now - lastOk : null,
     };
   });
   const busySessions = sessions.filter((s) => s.busy);
