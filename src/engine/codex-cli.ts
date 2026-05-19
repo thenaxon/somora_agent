@@ -517,10 +517,11 @@ export const codexCliEngine: AgentEngine = {
               // as engine_meta so it persists in JSONL for memory/REM-dream
               // and surfaces in the chat when the user has tools-visibility
               // on. Opaque payload — codex 0.131+ may ship new itemTypes
-              // without parser churn. Debug-log keeps the keys around for
-              // forensics; the user-visible label is mapped in
-              // CODEX_META_LABELS.
-              logger.debug({
+              // without parser churn. Info-log so the default config sees
+              // these breadcrumbs without needing SOMORA_LOG_LEVEL=debug —
+              // we want visibility into what codex is emitting, but not the
+              // "alert" framing of the old `engine.unknown_item` warn.
+              logger.info({
                 msg: 'engine.meta_item',
                 engine: ENGINE,
                 itemType,
