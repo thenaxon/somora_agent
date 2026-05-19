@@ -346,6 +346,41 @@ The `main` session cannot be archived directly — use `/reset` instead.
 
 Clears the `archived` flag.
 
+### `GET /agents/:agent/sessions/:session/export`
+
+Download the session as either raw JSONL (canonical, byte-identical to
+the source-of-truth file on disk) or a rendered Markdown transcript
+(human-readable, suitable for Obsidian / GitHub / blog posts).
+
+Query param `format`:
+- `json` — `Content-Type: application/x-ndjson`. The complete JSONL
+  with every event preserved (turn_start, tool_call, engine_meta, …).
+  Use this for backups and cross-host transfer.
+- `markdown` (default) — `Content-Type: text/markdown`. Renders
+  user/assistant turns as `##` sections, tool calls as collapsible
+  `<details>` blocks with their JSON args/results, and engine_meta
+  items (e.g. codex's plan/todo lists) as task-style bullet lists
+  with status glyphs. Skips bookkeeping events (turn_start, turn_end,
+  assistant_audio) — those don't add value in a transcript.
+
+Both responses set `Content-Disposition: attachment` so browsers
+trigger a file save.
+
+```bash
+# Markdown transcript
+curl https://<host>:18737/agents/hans/sessions/main/export?format=markdown \
+     -o hans-main.md
+
+# Raw JSONL (full fidelity)
+curl https://<host>:18737/agents/hans/sessions/main/export?format=json \
+     -o hans-main.jsonl
+```
+
+The web client surfaces this via per-row download icons in the
+Sessions tool (file-text icon = markdown, file-json icon = JSONL).
+The TUI has `/export [json|markdown] [path]` — see [tui.md](tui.md)
+for the slash-command reference.
+
 ### `POST /agents/:agent/sessions/:session/reset`
 
 Archive the current session content and start fresh. Triggers an
@@ -475,6 +510,13 @@ Event types:
   output
 - `tool` — `{phase: 'call'|'result'|'error', tool, summary?,
   details?, error?}` — tool-call events
+- `engine_meta` — `{engine, itemType, label, summary?, payload}` —
+  engine-internal side-channel state. The canonical case is codex's
+  `todo_list` (an internal plan/checklist the model updates mid-turn)
+  — somora persists these so memory / REM-dream can read them later
+  and clients can optionally render them. `label` is server-resolved
+  (e.g. `todo_list` → `"plan"`); unknown item-types fall back to the
+  raw `itemType`. `payload` is the engine's original event, opaque.
 - `memory_inject` — `{hits, block}` — memory recall for this turn
 - `status` — `{msg}` — connection events, error notices
 - `heartbeat` — current ms timestamp, fires every 20 s
@@ -508,8 +550,11 @@ Pagination: pass `?limit=200` to get the last 200 events plus a
 ```
 
 Event kinds: `user_message`, `assistant_message`, `tool_call`,
-`tool_result`, `memory_inject`. Each carries `kind`, `ts`, and kind-
-specific fields. Tool names are normalised here too.
+`tool_result`, `engine_meta`, `memory_inject`. Each carries `kind`,
+`ts`, and kind-specific fields. Tool names are normalised here too.
+`engine_meta` rows preserve the raw `itemType` + opaque `payload`;
+clients resolve the friendly label on render (see
+[setup.md](setup.md#engine-meta--codex-todo_list)).
 
 ### `POST /chat/abort`
 

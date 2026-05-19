@@ -513,20 +513,26 @@ export const codexCliEngine: AgentEngine = {
                 ...(isErr ? { error: 'tool error' } : {}),
               };
             } else {
-              // Unknown item type — surface as warn so future codex / Responses-API
-              // tool-surface additions don't go silent. Pre-2026-05-16 this was
-              // `debug`, which let `web.run` leak unnoticed for a day. Item-level
-              // events are concrete activities (agent_message, mcp_tool_call,
-              // tool_use, tool_result) so unknowns here almost always mean a new
-              // tool plane we need to react to. Keep `engine.unknown_event` (top
-              // level) at debug — those include reasoning-trace noise.
-              logger.warn({
-                msg: 'engine.unknown_item',
+              // Codex side-channel state (todo_list, hookPrompt, …) — emit
+              // as engine_meta so it persists in JSONL for memory/REM-dream
+              // and surfaces in the chat when the user has tools-visibility
+              // on. Opaque payload — codex 0.131+ may ship new itemTypes
+              // without parser churn. Debug-log keeps the keys around for
+              // forensics; the user-visible label is mapped in
+              // CODEX_META_LABELS.
+              logger.debug({
+                msg: 'engine.meta_item',
                 engine: ENGINE,
                 itemType,
                 itemKeys: Object.keys(item).slice(0, 16),
-                hint: 'codex emitted item type we do not handle — check for new built-in tool surface',
               });
+              yield {
+                kind: 'engine_meta',
+                ts: ts(),
+                engine: ENGINE,
+                itemType,
+                payload: item,
+              };
             }
           } else if (ev.type === 'turn.completed') {
             // codex `input_tokens` is the TOTAL prompt size for this turn

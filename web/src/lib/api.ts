@@ -173,6 +173,10 @@ export interface HistoryEvent {
    *  generated TTS artifact so the client can re-render a Play-button
    *  for past turns on history load. */
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
+  /** Set on `kind: 'engine_meta'` history rows. itemType is the raw
+   *  engine-emitted label (e.g. 'todo_list'); payload is opaque. */
+  itemType?: string;
+  payload?: unknown;
 }
 
 export interface HistoryResponse {
@@ -382,6 +386,11 @@ export const api = {
       throw new Error(`unarchive ${res.status}: ${body.slice(0, 200)}`);
     }
   },
+  /** Build the URL for /export with the chosen format. Used by
+   *  SessionsWindow's <a download> buttons — the browser triggers the
+   *  file save based on the server's Content-Disposition header. */
+  sessionExportUrl: (agent: string, session: string, format: 'json' | 'markdown'): string =>
+    `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/export?format=${format}`,
 
   // ─── Projects ──────────────────────────────────────────────────────
 

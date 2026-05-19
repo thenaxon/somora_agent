@@ -40,6 +40,16 @@ export function TurnView({
       return <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
     case 'tool':
       return <ToolEvent {...turn} verbose={verbose.tools} />;
+    case 'engine_meta':
+      return (
+        <EngineMetaEvent
+          engine={turn.engine}
+          label={turn.label}
+          {...(turn.summary ? { summary: turn.summary } : {})}
+          {...(turn.details ? { details: turn.details } : {})}
+          verbose={verbose.tools}
+        />
+      );
     case 'memory':
       return (
         <MemoryEvent
@@ -168,6 +178,39 @@ function ToolEvent({
           <Text color="gray">{summary}</Text>
         </Box>
       ) : null}
+      {verbose && details ? <DetailsBlock text={details} /> : null}
+    </Box>
+  );
+}
+
+// Engine-meta event — codex's internal todo_list and future side-
+// channel items. Visually dimmer + different prefix than ToolEvent so
+// the user reads "engine emitted this" not "we invoked a tool".
+function EngineMetaEvent({
+  engine,
+  label,
+  summary,
+  details,
+  verbose,
+}: {
+  engine: string;
+  label: string;
+  summary?: string;
+  details?: string;
+  verbose: boolean;
+}) {
+  const short = engine.replace('-cli', '');
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Box>
+        <Text color="gray" bold>
+          ◌{' '}
+        </Text>
+        <Text color="gray" bold>
+          {short} · {label}
+        </Text>
+        {summary ? <Text color="gray"> · {summary}</Text> : null}
+      </Box>
       {verbose && details ? <DetailsBlock text={details} /> : null}
     </Box>
   );

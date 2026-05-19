@@ -200,6 +200,8 @@ archived copy at the next idle window.
 
 **Archive / Unarchive:** the right-edge action button on each row archives (or unarchives in the Archived tab). Bulk-select with the checkboxes and the bulk-action bar archives multiple at once. The magic `main` session can't be archived directly — use `/reset` to spawn an archived copy.
 
+**Export:** two download icons sit next to the archive button on every row — a file-text icon downloads a **Markdown transcript** (readable, with `##` user/assistant headers, fenced code blocks for tool calls, and engine plan items as task lists), a file-json icon downloads the raw **JSONL** (byte-identical to the on-disk source, full fidelity). Markdown is great for sharing or saving into Obsidian; JSONL is the canonical backup you'd drop on another somora host. Both work for archived sessions too. Backend route: `GET /agents/:agent/sessions/:session/export?format=…` (see [api.md](api.md)).
+
 **Reload:** manual reload icon top-right, plus a 60-second auto-refresh toggle (default on). Stats are cached in each session's `<id>.meta.json` and invalidated by JSONL mtime, so reloads stay cheap.
 
 **Archive semantics (DECISION):** archive is **meta-flag based**, no file movement. `meta.archived = true` (with `archivedAt` + optional `archiveReason`) is the source of truth. The `<id>.jsonl` and `<id>.meta.json` files stay where they are. Default-filtering at `listSessions()` keeps archives out of the slash-popup, chat-window session picker, and the Active tab — they only surface in the Sessions tool. No hard-delete option, on purpose: archive is fully reversible, and you can always clean up `~/.somora/agents/<agent>/sessions/` by hand if you really want bytes gone.
@@ -231,12 +233,16 @@ archived copy at the next idle window.
   history; new messages won't yank you down. Scroll back to the
   bottom to re-pin.
 - **Tool-rendering toggle** (wrench in the meta line): show or hide
-  tool-call / tool-result blocks. Persists per `agent::session` in
-  `localStorage` — a reload restores your choice. Tools render
-  **above** the agent's answer for a given turn (TUI-style ordering)
-  — the assistant bubble is a single message that re-anchors to the
-  bottom of the transcript whenever a tool event lands, so cumulative
-  text never duplicates around tool boundaries.
+  tool-call / tool-result blocks AND `engine_meta` rows (codex's
+  internal plan/todo state — see [setup.md](setup.md#engine-meta--codex-todo_list)).
+  Persists per `agent::session` in `localStorage` — a reload restores
+  your choice. Tools render **above** the agent's answer for a given
+  turn (TUI-style ordering) — the assistant bubble is a single message
+  that re-anchors to the bottom of the transcript whenever a tool event
+  lands, so cumulative text never duplicates around tool boundaries.
+  Engine-meta blocks render dimmer than tool calls and prefix with
+  `◌ codex · plan` so it's visually clear they came from the engine,
+  not from somora's tool layer.
 - **Input**: auto-grow textarea up to 120px, then internal scroll.
   Enter sends, Shift+Enter newline. The disabled-during-streaming
   flag refocuses the field automatically when the response ends, so

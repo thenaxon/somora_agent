@@ -26,6 +26,7 @@ import {
 import type { AttachmentDisplay, ChatMessage } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
+import { EngineMetaBlock } from './EngineMetaBlock';
 
 interface Props {
   msg: ChatMessage;
@@ -50,6 +51,9 @@ export const MessageItem = memo(function MessageItem({
   }
   if (msg.role === 'tool_result') {
     return <ToolResultBlock toolResult={msg.toolResult} />;
+  }
+  if (msg.role === 'engine_meta') {
+    return <EngineMetaBlock meta={msg.meta} />;
   }
   if (msg.role === 'memory_inject') {
     return <MemoryInjectLine memory={msg.memory} />;

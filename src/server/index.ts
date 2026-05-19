@@ -103,6 +103,7 @@ import {
   waitForTaskCompletion,
 } from './async-tasks.ts';
 import { reserveSpawnSlot, releaseSpawnSlot } from '../tools/agents/spawn.ts';
+import { readSessionJsonlRaw, renderSessionMarkdown } from './session-export.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 const streams = new Map<string, Set<Subscriber>>();
@@ -1095,6 +1096,46 @@ app.post('/agents/:agent/sessions/:session/archive', async (c) => {
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }
+});
+
+// Session export. `?format=json` returns the raw JSONL byte-identical
+// from disk (canonical source, ideal for backups and cross-host
+// transfer). `?format=markdown` renders a human-readable transcript
+// with user/assistant turns, code-fenced tool calls, and engine_meta
+// items rendered as task lists. Default is markdown.
+// Content-Disposition prompts a download in the browser so the web
+// SessionsWindow can offer one-click "Download JSON / Markdown" links.
+app.get('/agents/:agent/sessions/:session/export', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  const format = (c.req.query('format') ?? 'markdown').toLowerCase();
+  if (format !== 'json' && format !== 'markdown') {
+    return c.json(
+      { error: `unknown format '${format}' — supported: json, markdown` },
+      400,
+    );
+  }
+  const raw = readSessionJsonlRaw(agent, session);
+  if (raw === null) {
+    return c.json({ error: `session file not found on disk` }, 404);
+  }
+  const safeSession = session.replace(/[^A-Za-z0-9._-]/g, '_');
+  if (format === 'json') {
+    return c.body(raw, 200, {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${agent}-${safeSession}.jsonl"`,
+    });
+  }
+  const md = renderSessionMarkdown(agent, session, raw);
+  return c.body(md, 200, {
+    'Content-Type': 'text/markdown; charset=utf-8',
+    'Content-Disposition': `attachment; filename="${agent}-${safeSession}.md"`,
+  });
 });
 
 app.post('/agents/:agent/sessions/:session/unarchive', async (c) => {

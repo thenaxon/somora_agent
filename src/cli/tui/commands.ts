@@ -44,6 +44,7 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
   { name: '/verbose', usage: '/verbose [tools|memory|system] [on|off]' },
   { name: '/thinking', usage: '/thinking [off|low|medium|high|default]' },
+  { name: '/export', usage: '/export [json|markdown] [path]' },
   { name: '/projekt', usage: '/projekt [<slug>|unlink]' },
   { name: '/project', usage: '/project [<slug>|unlink]' },
   { name: '/projects', usage: '/projects' },
@@ -103,6 +104,9 @@ const HELP_TEXT_BASE = `Available commands:
   /thinking                   — show effective thinking depth + source
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
+  /export                     — export current session as markdown to ./<agent>-<session>.md
+  /export json [path]         — export as raw JSONL (default path ./<agent>-<session>.jsonl)
+  /export markdown [path]     — export as Markdown transcript
   /quit, /exit                — leave somora`;
 
 function helpText(featureFlags: FeatureFlags | undefined): string {
@@ -588,6 +592,40 @@ export async function runCommand(
         lines.push(`  ${slug}  ${name}  ${entity}  ${paths}  ${tags}`);
       }
       out.push({ kind: 'notice', text: lines.join('\n'), tone: 'info' });
+      return out;
+    }
+
+    case '/export': {
+      // /export [json|markdown] [path]  — write the current session
+      // to a local file. Defaults: markdown, ./<agent>-<session>.<ext>.
+      // Server does the rendering — we just save bytes. Useful for
+      // backups, sharing transcripts, post-processing in Obsidian.
+      const format = (args[0] ?? 'markdown').toLowerCase();
+      if (format !== 'json' && format !== 'markdown') {
+        out.push({
+          kind: 'notice',
+          text: 'usage: /export [json|markdown] [path]',
+          tone: 'warn',
+        });
+        return out;
+      }
+      const ext = format === 'json' ? 'jsonl' : 'md';
+      const defaultPath = `./${ctx.agent}-${ctx.session}.${ext}`;
+      const targetPath = args[1] ?? defaultPath;
+      try {
+        const body = await ctx.api.exportSession(ctx.agent, ctx.session, format);
+        const fs = await import('node:fs/promises');
+        const path = await import('node:path');
+        const abs = path.resolve(targetPath);
+        await fs.writeFile(abs, body, 'utf8');
+        out.push({
+          kind: 'notice',
+          text: `exported ${ctx.agent}/${ctx.session} → ${abs} (${body.length} bytes, ${format})`,
+          tone: 'info',
+        });
+      } catch (err) {
+        out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+      }
       return out;
     }
 

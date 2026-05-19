@@ -444,6 +444,35 @@ memory:
 #     # add as many as you need — these are YOURS to curate
 ```
 
+### Engine-meta — codex todo_list
+
+`codex-cli` (GPT-5.x and codex models) tracks an internal
+plan/checklist while it works. Codex emits `item.completed` events with
+`itemType: "todo_list"` every time the model marks a task done or adds
+a new one. somora persists these to the session JSONL as `engine_meta`
+records — they're available to:
+
+- The chat UI when **show.tools** is enabled (web + TUI). Renders as
+  a dimmer block with a `◌ codex · plan` prefix to visually
+  differentiate from real tool calls. Expand to see the task list with
+  ✓ / → / ○ glyphs per status.
+- The REM dream-worker, which scans session history to extract
+  memories. Codex plans appear in that history, so the agent can
+  retain "what was on my list yesterday" implicitly.
+- The session export (`?format=markdown`), where plans render as
+  GitHub-style task lists.
+
+Mobile PWA hides engine_meta entirely (mobile is intentionally a
+text-only minimalist surface). Other engines (claude-cli, openai-
+compatible) don't currently emit engine_meta items; the mechanism is
+ready when they do.
+
+Friendly labels live in
+[`src/engine/engine-meta-labels.ts`](../src/engine/engine-meta-labels.ts)
+— a tiny `engine → itemType → label` map. Unknown itemTypes fall back
+to the raw string so future codex/SDK additions appear immediately,
+just with a less-pretty label. No configuration needed.
+
 ### Wiki + dream-system (optional but recommended)
 
 The wiki layer enables long-term shared knowledge across all agents.

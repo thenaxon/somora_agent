@@ -147,6 +147,18 @@ export type Turn =
       // Full inject text (for /verbose memory).
       fullText?: string;
     }
+  | {
+      // engine-internal side-channel (codex todo_list, future engines
+      // may add more). Visibility piggybacks on show.tools — same
+      // bucket conceptually. Detail line for /verbose tools.
+      kind: 'engine_meta';
+      id: string;
+      engine: string;
+      itemType: string;
+      label: string;
+      summary?: string;
+      details?: string;
+    }
   | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' };
 
 // Server-Sent Events from /chat/stream, normalized.
@@ -176,6 +188,18 @@ export type StreamEvent =
       summary?: string;
       error?: string;
       details?: string;
+    }
+  | {
+      // Engine internal side-channel (codex todo_list etc.). Rendered
+      // by the TUI when show.tools is on, with a slightly dimmer style
+      // and a distinct `engine ·` prefix so it's clear it didn't come
+      // from somora's tool layer.
+      kind: 'engine_meta';
+      engine: string;
+      itemType: string;
+      label: string;
+      summary?: string;
+      payload: unknown;
     }
   | {
       // Live A2A user_message: another agent wrote into the session

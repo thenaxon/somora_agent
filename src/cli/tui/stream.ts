@@ -194,6 +194,16 @@ export function openStream(
           error: typeof data.error === 'string' ? data.error : undefined,
           details: typeof data.details === 'string' ? data.details : undefined,
         };
+      case 'engine_meta':
+        if (typeof data.engine !== 'string' || typeof data.itemType !== 'string') return null;
+        return {
+          kind: 'engine_meta',
+          engine: data.engine,
+          itemType: data.itemType,
+          label: typeof data.label === 'string' ? data.label : data.itemType,
+          ...(typeof data.summary === 'string' ? { summary: data.summary } : {}),
+          payload: data.payload,
+        };
       case 'status':
         if (data.msg === 'connected') {
           reconnectMs = RECONNECT_INITIAL_MS;

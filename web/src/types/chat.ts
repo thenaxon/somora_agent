@@ -72,7 +72,21 @@ export type ChatMessage =
     }
   | { id: string; role: 'tool_call'; ts: number; toolCall: ToolCallPayload }
   | { id: string; role: 'tool_result'; ts: number; toolResult: ToolResultPayload }
-  | { id: string; role: 'memory_inject'; ts: number; memory: MemoryHitsSnapshot };
+  | { id: string; role: 'memory_inject'; ts: number; memory: MemoryHitsSnapshot }
+  | { id: string; role: 'engine_meta'; ts: number; meta: EngineMetaPayload };
+
+export interface EngineMetaPayload {
+  engine: string;
+  itemType: string;
+  /** Pretty label resolved server-side (e.g. todo_list → "plan"). Falls
+   *  back to itemType verbatim for unknown types. */
+  label: string;
+  /** Optional one-liner summary (e.g. "3 tasks · 2 done"). */
+  summary?: string;
+  /** Opaque structured payload — clients render known shapes nicely,
+   *  fall back to compact JSON for unknowns. */
+  payload: unknown;
+}
 
 export interface ChatUsage {
   tokens_in?: number;
@@ -126,4 +140,14 @@ export type StreamEvent =
   | {
       event: 'assistant_audio';
       data: { turnId: string; url: string; mime: string; durationMs?: number; cacheKey: string };
+    }
+  | {
+      event: 'engine_meta';
+      data: {
+        engine: string;
+        itemType: string;
+        label: string;
+        summary?: string;
+        payload: unknown;
+      };
     };

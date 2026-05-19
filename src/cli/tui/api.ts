@@ -270,6 +270,25 @@ export class Api {
     );
     if (!res.ok) throw new Error(await res.text());
   }
+
+  /**
+   * Fetch a session export as text. Server picks the renderer based on
+   * `format` and sends back the full document body (markdown or
+   * JSONL). The TUI persists this to a local file — there's no
+   * progress reporting; sessions are small (single-digit MBs at
+   * extreme), the HTTP response arrives in one go.
+   */
+  async exportSession(
+    agent: string,
+    session: string,
+    format: 'json' | 'markdown',
+  ): Promise<string> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/export?format=${format}`,
+    );
+    if (!res.ok) throw new Error(`export failed: ${res.status} ${await res.text()}`);
+    return await res.text();
+  }
 }
 
 /**
@@ -290,4 +309,8 @@ export interface HistoryEvent {
   input?: unknown;
   output?: unknown;
   error?: string;
+  // engine_meta
+  engine?: string;
+  itemType?: string;
+  payload?: unknown;
 }

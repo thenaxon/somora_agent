@@ -393,11 +393,13 @@ export function ChatWindow({
   }, []);
 
   // Filter messages by toggles. Tools-toggle hides tool_call +
-  // tool_result rows; memory-toggle hides memory_inject rows. State
-  // stays intact in either case — toggling on restores the rows.
+  // tool_result + engine_meta rows (engine_meta = codex internal
+  // plan/state side-channel, conceptually same bucket as tool calls);
+  // memory-toggle hides memory_inject rows. State stays intact in
+  // either case — toggling on restores the rows.
   const visibleMessages = useMemo(() => {
     return chat.messages.filter((m) => {
-      if (!showTools && (m.role === 'tool_call' || m.role === 'tool_result')) return false;
+      if (!showTools && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
       if (!showMemory && m.role === 'memory_inject') return false;
       return true;
     });

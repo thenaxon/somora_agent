@@ -172,6 +172,24 @@ spaces, no slashes. Lowercase is the convention.
 Use `/reset YES` to archive the current main and start fresh while keeping
 the old content as an archived session you can resume any time.
 
+## Exporting a session
+
+```
+/export                          — write current session as Markdown to ./<agent>-<session>.md
+/export markdown [path]          — same, optionally pick a target path
+/export json [path]              — write raw JSONL (full fidelity) to <path or default>
+```
+
+Markdown is the default — a readable transcript with user/assistant
+turns, fenced tool-call blocks, and engine plan/todo items rendered as
+GitHub task lists. JSON is the canonical source (byte-identical to the
+on-disk JSONL); use it for backups or moving a conversation to another
+somora host.
+
+In the web client the same export lives in the Sessions tool: each row
+has a file-text icon (Markdown) and a file-json icon (JSONL) that
+trigger a browser download.
+
 ## Per-session model overrides
 
 Each agent has a default model from `agent.yaml`. You can override per

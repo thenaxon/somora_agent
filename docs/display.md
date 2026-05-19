@@ -28,7 +28,8 @@ and uses them as initial values. Single config reader: server.
 ```
 /show                       — list current state
 /show memory on|off         — show/hide [memory · …] inject lines
-/show tools on|off          — show/hide [tool call · …] / [tool result · …] lines
+/show tools on|off          — show/hide [tool call · …] / [tool result · …]
+                              AND [◌ engine · …] meta lines
 ```
 
 When a flag is **off**, the corresponding SSE event still arrives at the
@@ -36,6 +37,14 @@ TUI but is dropped before the row is appended to the scrollback. New
 events are dropped going forward; rows that already rendered stay as-is.
 
 The header surfaces the current state with `mem ✓ tools ✗` badges.
+
+`/show tools` is also the gate for **engine_meta** rows — codex-cli
+emits internal plan/checklist items (`itemType: todo_list`) that we
+persist alongside tool calls. They render with a dimmer `◌ codex ·
+plan · 3 tasks · 2 done` prefix and expand to a task list when
+`/verbose tools on`. Conceptually they belong to the same "agent
+internals" bucket as tool calls, hence the shared toggle. See
+[setup.md](setup.md#engine-meta--codex-todo_list) for the mechanism.
 
 ## `/verbose` — detail level
 

@@ -21,6 +21,11 @@ import {
   type ReactNode,
 } from 'react';
 import { api, type AttachmentRef, type HistoryEvent, type ProjectInfo } from '../lib/api';
+import {
+  resolveEngineMetaLabel,
+  extractTodoListItems,
+  summariseTodoList,
+} from '../lib/engine-meta-labels';
 import type {
   ChatMessage,
   ChatUsage,
@@ -493,6 +498,29 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       });
 
+      es.addEventListener('engine_meta', (ev) => {
+        const d = parse<{
+          engine: string;
+          itemType: string;
+          label: string;
+          summary?: string;
+          payload: unknown;
+        }>(ev as MessageEvent);
+        if (!d) return;
+        appendMessage(key, {
+          id: newId('em'),
+          role: 'engine_meta',
+          ts: Date.now(),
+          meta: {
+            engine: d.engine,
+            itemType: d.itemType,
+            label: d.label,
+            ...(d.summary ? { summary: d.summary } : {}),
+            payload: d.payload,
+          },
+        });
+      });
+
       es.addEventListener('assistant_audio', (ev) => {
         const d = parse<{
           turnId: string;
@@ -931,6 +959,29 @@ function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
           tool: '?',
           callId: e.callId,
           ...(e.output !== undefined ? { output: e.output } : {}),
+        },
+      },
+    ];
+  }
+  if (e.kind === 'engine_meta' && typeof e.itemType === 'string') {
+    const engine = e.engine ?? 'unknown';
+    const label = resolveEngineMetaLabel(engine, e.itemType);
+    let summary: string | undefined;
+    if (engine === 'codex-cli' && e.itemType === 'todo_list') {
+      const items = extractTodoListItems(e.payload);
+      if (items) summary = summariseTodoList(items);
+    }
+    return [
+      {
+        id: newId('h-em'),
+        role: 'engine_meta',
+        ts: e.ts,
+        meta: {
+          engine,
+          itemType: e.itemType,
+          label,
+          ...(summary ? { summary } : {}),
+          payload: e.payload,
         },
       },
     ];

@@ -5,6 +5,10 @@
 // consumers thin.
 
 import { formatArgs, formatDetails, formatResult, shortToolName } from './tool-format.ts';
+import {
+  resolveEngineMetaLabel,
+  summariseEngineMeta,
+} from '../engine/engine-meta-labels.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 
 export function createTurnSerializer() {
@@ -63,6 +67,20 @@ export function createTurnSerializer() {
             cacheKey: ev.audio.cacheKey,
           },
         };
+      case 'engine_meta': {
+        const label = resolveEngineMetaLabel(ev.engine, ev.itemType);
+        const summary = summariseEngineMeta(ev.engine, ev.itemType, ev.payload);
+        return {
+          event: 'engine_meta',
+          data: {
+            engine: ev.engine,
+            itemType: ev.itemType,
+            label,
+            ...(summary ? { summary } : {}),
+            payload: ev.payload,
+          },
+        };
+      }
       default:
         return null;
     }

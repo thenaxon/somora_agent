@@ -286,6 +286,32 @@ export function App({
             summary: typeof ev.output === 'object' && ev.output ? safeStringify(ev.output, 60) : '',
           });
         }
+      } else if (
+        ev.kind === 'engine_meta' &&
+        typeof ev.engine === 'string' &&
+        typeof ev.itemType === 'string'
+      ) {
+        // Resolve label client-side from a tiny mapping. Keep in sync
+        // with src/engine/engine-meta-labels.ts — known item types get
+        // friendly names, unknowns fall back to the raw itemType.
+        const knownLabels: Record<string, Record<string, string>> = {
+          'codex-cli': { todo_list: 'plan' },
+        };
+        const label = knownLabels[ev.engine]?.[ev.itemType] ?? ev.itemType;
+        let details: string | undefined;
+        try {
+          details = JSON.stringify(ev.payload, null, 2);
+        } catch {
+          details = undefined;
+        }
+        out.push({
+          kind: 'engine_meta',
+          id: nid(),
+          engine: ev.engine,
+          itemType: ev.itemType,
+          label,
+          ...(details ? { details } : {}),
+        });
       }
       // turn_start, turn_end, assistant_delta, error: skipped
       // memory injects don't live in JSONL — they're SSE-only
@@ -410,6 +436,25 @@ export function App({
           // /verbose tools can show it.
           details: phase === 'error' ? undefined : ev.details,
           error: phase === 'error' ? summarize(ev.error, 200) : undefined,
+        });
+        return;
+      }
+      case 'engine_meta': {
+        if (!showToolsRef.current) return;
+        let details: string | undefined;
+        try {
+          details = JSON.stringify(ev.payload, null, 2);
+        } catch {
+          details = String(ev.payload);
+        }
+        appendTurn({
+          kind: 'engine_meta',
+          id: nextId(),
+          engine: ev.engine,
+          itemType: ev.itemType,
+          label: ev.label,
+          ...(ev.summary ? { summary: ev.summary } : {}),
+          ...(details ? { details } : {}),
         });
         return;
       }

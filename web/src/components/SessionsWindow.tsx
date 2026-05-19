@@ -10,7 +10,7 @@
 // private/sessions-tool-design.md for the full architecture.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Archive, ArchiveRestore, MessageSquare } from 'lucide-react';
+import { RefreshCw, Archive, ArchiveRestore, MessageSquare, FileJson, FileText } from 'lucide-react';
 import { api, type GlobalSessionRow, type ProjectInfo } from '../lib/api';
 import { DreamPhaseIcon } from './DreamPhaseIcon';
 import { useChatContext } from './ChatProvider';
@@ -449,6 +449,22 @@ export function SessionsWindow({ onOpenChat }: Props) {
                             {r.isArchived ? <ArchiveRestore size={12} /> : <Archive size={12} />}
                           </button>
                         )}
+                        <a
+                          className="chat-icon-btn"
+                          title="Export as Markdown"
+                          href={api.sessionExportUrl(r.agent, r.sessionId, 'markdown')}
+                          download={`${r.agent}-${r.slug}.md`}
+                        >
+                          <FileText size={12} />
+                        </a>
+                        <a
+                          className="chat-icon-btn"
+                          title="Export as JSONL"
+                          href={api.sessionExportUrl(r.agent, r.sessionId, 'json')}
+                          download={`${r.agent}-${r.slug}.jsonl`}
+                        >
+                          <FileJson size={12} />
+                        </a>
                       </div>
                     </td>
                   </tr>

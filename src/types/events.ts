@@ -128,6 +128,27 @@ export type NormalizedEvent =
     }
   | { kind: 'tool_call'; ts: number; engine: string; callId: string; tool: string; input: unknown }
   | { kind: 'tool_result'; ts: number; engine: string; callId: string; output: unknown; error?: string }
+  // Engine-internal metadata that the agent emits as a side-channel to
+  // the conversation. The canonical case is codex-cli's `todo_list`
+  // item — codex tracks an internal plan/checklist that the model
+  // updates mid-turn. We don't drive it ourselves; we observe + persist
+  // it so REM-dream/memory can read history later, and so the user can
+  // optionally see it when their `show.tools` toggle is on. Opaque
+  // payload — different engines / future codex versions can ship
+  // arbitrary itemType strings without parser churn.
+  | {
+      kind: 'engine_meta';
+      ts: number;
+      engine: string;
+      /** Raw item-type label as the engine produced it (e.g. 'todo_list',
+       *  'hookPrompt'). Clients map known ones to friendly labels (see
+       *  src/engine/codex-cli.ts CODEX_META_LABELS) and fall back to the
+       *  raw string for unknowns. */
+      itemType: string;
+      /** The original event payload, untouched. Schema depends on
+       *  engine + itemType — treat as opaque. */
+      payload: unknown;
+    }
   | { kind: 'turn_start'; ts: number; engine: string; turnId: string }
   | {
       kind: 'turn_end';
@@ -249,6 +270,26 @@ export type SseEvent =
         mime: string;
         durationMs?: number;
         cacheKey: string;
+      };
+    }
+  | {
+      // Engine-internal metadata (codex todo_list / future side-channel
+      // items). Persisted in JSONL by run-turn; clients only render when
+      // the `show.tools` toggle is on. Label mapping (raw itemType →
+      // friendly word) is shared via src/engine/engine-meta-labels.ts so
+      // server + clients stay in sync.
+      event: 'engine_meta';
+      data: {
+        engine: string;
+        itemType: string;
+        /** Pretty label resolved server-side (e.g. todo_list → "plan").
+         *  Falls back to itemType verbatim for unknown types. */
+        label: string;
+        /** Optional one-liner summary (e.g. "3 items, 2 completed"). */
+        summary?: string;
+        /** Opaque structured payload — clients render via known itemType
+         *  shapes or fall back to compact JSON dump for unknowns. */
+        payload: unknown;
       };
     }
   | {
