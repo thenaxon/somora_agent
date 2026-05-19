@@ -21,6 +21,9 @@ export interface TodoListItem {
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
 }
 
+// codex 0.130 emits items as { text: string, completed: boolean }; we
+// also tolerate the alternative { content, status } shape in case codex
+// ever flips. Mirrors src/engine/engine-meta-labels.ts on the server.
 export function extractTodoListItems(payload: unknown): TodoListItem[] | null {
   if (!payload || typeof payload !== 'object') return null;
   const raw = (payload as { items?: unknown }).items;
@@ -28,18 +31,23 @@ export function extractTodoListItems(payload: unknown): TodoListItem[] | null {
   const out: TodoListItem[] = [];
   for (const it of raw) {
     if (!it || typeof it !== 'object') continue;
-    const content = typeof (it as { content?: unknown }).content === 'string'
-      ? (it as { content: string }).content
-      : '';
-    const status = typeof (it as { status?: unknown }).status === 'string'
-      ? (it as { status: string }).status
-      : 'pending';
-    if (!content) continue;
-    const normalized: TodoListItem['status'] =
-      status === 'in_progress' || status === 'completed' || status === 'cancelled'
-        ? status
-        : 'pending';
-    out.push({ content, status: normalized });
+    const obj = it as Record<string, unknown>;
+    const text =
+      typeof obj.text === 'string'
+        ? obj.text
+        : typeof obj.content === 'string'
+          ? obj.content
+          : '';
+    if (!text) continue;
+    let status: TodoListItem['status'];
+    if (typeof obj.status === 'string' && (obj.status === 'in_progress' || obj.status === 'completed' || obj.status === 'cancelled' || obj.status === 'pending')) {
+      status = obj.status;
+    } else if (typeof obj.completed === 'boolean') {
+      status = obj.completed ? 'completed' : 'pending';
+    } else {
+      status = 'pending';
+    }
+    out.push({ content: text, status });
   }
   return out;
 }

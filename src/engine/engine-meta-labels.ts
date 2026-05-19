@@ -26,9 +26,15 @@ export function resolveEngineMetaLabel(engine: string, itemType: string): string
  * undefined for types we don't know how to summarise — clients fall
  * back to "(N keys)" or raw JSON in that case.
  *
- * codex todo_list payload shape (observed 2026-05-19):
- *   { id: string, type: "todo_list", items: [{id, content, status}, ...] }
- *   status ∈ {pending, in_progress, completed, cancelled}
+ * codex todo_list actual payload shape (verified 2026-05-19 against
+ * codex-cli 0.130 emitting from GPT-5.5 update_plan):
+ *   { id: string, type: "todo_list",
+ *     items: [{ text: string, completed: boolean }, ...] }
+ *
+ * The pre-.19.05 implementation guessed `content`/`status` strings (an
+ * earlier assumption that turned out wrong on the wire) — keep tolerant
+ * fallbacks for both shapes so a future codex protocol bump doesn't
+ * silently empty the panel.
  */
 export function summariseEngineMeta(
   engine: string,
@@ -36,7 +42,7 @@ export function summariseEngineMeta(
   payload: unknown,
 ): string | undefined {
   if (engine === 'codex-cli' && itemType === 'todo_list') {
-    const items = extractTodoItems(payload);
+    const items = extractTodoListItems(payload);
     if (!items) return undefined;
     const total = items.length;
     if (total === 0) return 'plan cleared';
@@ -54,36 +60,43 @@ export function summariseEngineMeta(
   return undefined;
 }
 
-interface TodoItem {
-  id?: string;
-  content?: string;
-  status?: string;
-}
-
-function extractTodoItems(payload: unknown): TodoItem[] | null {
-  if (!payload || typeof payload !== 'object') return null;
-  const raw = (payload as { items?: unknown }).items;
-  if (!Array.isArray(raw)) return null;
-  return raw.filter((x): x is TodoItem => !!x && typeof x === 'object');
-}
-
 /**
  * Extract the renderable task list from a codex todo_list payload.
- * Returns null for any payload that doesn't look like the known shape,
- * so callers can fall back to raw-json rendering for unknown engines /
- * future schema changes.
+ * Returns null for any payload that doesn't look like the known shape
+ * AT ALL, so callers can fall back to raw-json rendering. Otherwise
+ * returns the normalized `{content, status}` array — `completed: true`
+ * becomes `status: 'completed'`, `false` becomes `status: 'pending'`.
+ * Tolerant of legacy `content`/`status` field names as a fallback.
  */
 export function extractTodoListItems(
   payload: unknown,
 ): Array<{ content: string; status: string }> | null {
-  const items = extractTodoItems(payload);
-  if (!items) return null;
+  if (!payload || typeof payload !== 'object') return null;
+  const raw = (payload as { items?: unknown }).items;
+  if (!Array.isArray(raw)) return null;
   const out: Array<{ content: string; status: string }> = [];
-  for (const it of items) {
-    const content = typeof it.content === 'string' ? it.content : '';
-    const status = typeof it.status === 'string' ? it.status : 'pending';
-    if (!content) continue;
-    out.push({ content, status });
+  for (const it of raw) {
+    if (!it || typeof it !== 'object') continue;
+    const obj = it as Record<string, unknown>;
+    // Real codex 0.130 shape: { text, completed }.
+    // Tolerant fallback: { content, status } (in case codex's protocol
+    // ever flips to that — keeps the renderer alive across a bump).
+    const text =
+      typeof obj.text === 'string'
+        ? obj.text
+        : typeof obj.content === 'string'
+          ? obj.content
+          : '';
+    if (!text) continue;
+    let status: string;
+    if (typeof obj.status === 'string') {
+      status = obj.status;
+    } else if (typeof obj.completed === 'boolean') {
+      status = obj.completed ? 'completed' : 'pending';
+    } else {
+      status = 'pending';
+    }
+    out.push({ content: text, status });
   }
   return out;
 }
