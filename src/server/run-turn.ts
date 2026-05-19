@@ -875,6 +875,39 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     }
   }
 
+  // Project-focus diff broadcast. The HTTP routes (POST/DELETE /project)
+  // publish a 'project' SSE event immediately because they own the
+  // write. The tool path (agent calls project_focus via MCP child)
+  // can't publish — the child has no SSE access — so we'd otherwise
+  // rely on each client refetching after every chat:final. That
+  // refetch is fragile (timing, projectsEnabled flag, race against
+  // header re-render); reports from 2026-05-19 showed the TUI chip
+  // staying stale until agent/session switch. Compare turn-start vs
+  // turn-end projectSlug here and emit the SSE event ourselves when
+  // they differ — covers tool-path unpins/pins reliably for any
+  // engine (claude-cli, codex-cli, openai-compatible).
+  try {
+    const startSlug =
+      typeof sessionMeta.projectSlug === 'string' ? sessionMeta.projectSlug : null;
+    const freshMeta = await deps.sessionMetaStore.get(agent, session);
+    const endSlug =
+      typeof freshMeta.projectSlug === 'string' ? freshMeta.projectSlug : null;
+    if (startSlug !== endSlug && publishSse) {
+      await publishSse({
+        event: 'project',
+        data: { from: startSlug, to: endSlug, via: 'tool' },
+      });
+    }
+  } catch (err) {
+    logger.warn({
+      msg: 'turn.project_diff_publish_failed',
+      turnId,
+      agent,
+      session,
+      err: (err as Error).message,
+    });
+  }
+
   if (publishSse) {
     const thinkingPayload = effectiveThinking
       ? { level: effectiveThinking, active: modelSupportsReasoning }
