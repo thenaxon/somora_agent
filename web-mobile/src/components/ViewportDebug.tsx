@@ -49,21 +49,10 @@ function measure(): Vp {
 
 export function ViewportDebug() {
   const [vp, setVp] = useState<Vp>(() => measure());
-  const [history, setHistory] = useState<Vp[]>(() => [measure()]);
 
   useEffect(() => {
     const update = () => {
-      const m = measure();
-      setVp(m);
-      setHistory((prev) => {
-        // Only record meaningful changes (innerHeight diff > 4px) to
-        // avoid spam, but always keep latest.
-        const last = prev[prev.length - 1];
-        if (!last || Math.abs(m.innerH - last.innerH) > 4 || Math.abs(m.visualH - last.visualH) > 4) {
-          return [...prev.slice(-5), m];
-        }
-        return prev;
-      });
+      setVp(measure());
     };
     // Sample shortly after mount to catch the "settle" event the user
     // described ("passt für den bruchteil einer sekunde, dann springt").
@@ -85,25 +74,26 @@ export function ViewportDebug() {
   }, []);
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        top: 4,
-        right: 4,
-        zIndex: 99999,
-        background: 'rgba(220, 38, 38, 0.92)',
-        color: 'white',
-        fontSize: 9,
-        padding: '6px 8px',
-        fontFamily: 'JetBrains Mono, monospace',
-        pointerEvents: 'none',
-        lineHeight: 1.35,
-        borderRadius: 4,
-        whiteSpace: 'pre',
-        maxWidth: '46vw',
-      }}
-    >
-      {`v.20.05 | ${vp.ts}ms
+    <>
+      <div
+        style={{
+          position: 'fixed',
+          top: 4,
+          right: 4,
+          zIndex: 99999,
+          background: 'rgba(220, 38, 38, 0.92)',
+          color: 'white',
+          fontSize: 9,
+          padding: '6px 8px',
+          fontFamily: 'JetBrains Mono, monospace',
+          pointerEvents: 'none',
+          lineHeight: 1.35,
+          borderRadius: 4,
+          whiteSpace: 'pre',
+          maxWidth: '46vw',
+        }}
+      >
+        {`v.20.06 | ${vp.ts}ms
 inner   ${vp.innerW}×${vp.innerH}
 visual  ${vp.visualW}×${vp.visualH} off${vp.visualOffsetTop}
 doc.h   ${vp.docH}
@@ -112,8 +102,74 @@ safe-t  ${vp.safeT}
 safe-b  ${vp.safeB}
 shell.h ${vp.shellH}
 shell-y ${vp.shellTop}→${vp.shellBottom}
-─── changes (innerH) ───
-${history.map((h) => `${h.ts}ms i:${h.innerH} v:${h.visualH} s:${h.shellBottom}`).join('\n')}`}
-    </div>
+
+LINES (read from screenshot):
+red    = body bottom (#root)
+yellow = position:fixed bottom:0
+green  = bottom:env(safe-area-inset-bottom)
+cyan   = layout viewport via 100vh
+
+if any pair is far apart, that
+gap is where iOS hides UI`}
+      </div>
+
+      {/* RED: where the document body ends. */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 4,
+          background: 'red',
+          zIndex: 99998,
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* YELLOW: where position:fixed thinks "bottom:0" is. */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 4,
+          background: 'gold',
+          zIndex: 99998,
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* GREEN: where env(safe-area-inset-bottom) ends. */}
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 'env(safe-area-inset-bottom)',
+          left: 0,
+          right: 0,
+          height: 4,
+          background: 'limegreen',
+          zIndex: 99998,
+          pointerEvents: 'none',
+        }}
+      />
+
+      {/* CYAN: 100vh-based bottom — where vh units think the
+          viewport ends. Counter-intuitively this needs top + height
+          rather than bottom, because bottom is relative to parent. */}
+      <div
+        style={{
+          position: 'fixed',
+          top: 'calc(100vh - 4px)',
+          left: 0,
+          right: 0,
+          height: 4,
+          background: 'cyan',
+          zIndex: 99998,
+          pointerEvents: 'none',
+        }}
+      />
+    </>
   );
 }
