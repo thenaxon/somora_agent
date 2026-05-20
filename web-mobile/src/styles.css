@@ -57,23 +57,21 @@ button { cursor: pointer; }
 /* ── Layout ─────────────────────────────────────────────────────── */
 
 .mobile-shell {
-  /* position:fixed + inset:0 anchors the shell to the layout-viewport
-     edges. Children flex as normal (chat-scroll: flex 1, others
-     flex-shrink: 0). */
-  position: fixed;
-  inset: 0;
+  /* Research result (after .20.04–.20.07 misfires): on iOS PWA cold
+     start, ALL modern viewport units (dvh/svh/lvh) AND window.innerHeight
+     report the SHRUNK layout-viewport value (812 on iPhone 16 Pro), and
+     only self-correct after a rotation. Plain 100vh is the only height
+     reference that reflects the FULL physical layout viewport (874 on
+     the same device) at first paint. position:fixed inset:0 also
+     anchored to the shrunk value because it uses the layout viewport.
+     -webkit-fill-available kept as legacy iOS fallback. The safe-area
+     bottom padding is applied INSIDE .input-bar (not here) so its
+     gradient extends to the layout-viewport edge. */
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  min-height: -webkit-fill-available;
   padding-top: var(--safe-top);
-  /* IMPORTANT: no padding-bottom here. The .20.06 diagnostic confirmed
-     iOS PWA layout viewport is 812 on iPhone 16 Pro while the physical
-     screen is 874 — the 62 px below the viewport is iOS-reserved chrome
-     that WebView can't render into. If we ALSO pad the shell bottom by
-     34 px (safe-area-inset-bottom), the visual "strip" grows to ~96 px.
-     Instead we move that 34 px INSIDE the .input-bar so its background
-     gradient extends all the way to the viewport edge, leaving only the
-     unavoidable 62 px chrome region below — visually contiguous with
-     the input-bar's bottom colour so it reads as one block. */
 }
 
 .mobile-header {
