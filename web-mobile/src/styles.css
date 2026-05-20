@@ -57,21 +57,23 @@ button { cursor: pointer; }
 /* ── Layout ─────────────────────────────────────────────────────── */
 
 .mobile-shell {
-  /* position:fixed + inset:0 bypasses ALL viewport-unit measurement
-     issues. iOS standalone-PWA mis-measures dvh, svh, lvh, and even
-     window.innerHeight during the first paint — the user reported a
-     ~200 px dead strip with .20.03's 100svh + --vh approach. Anchoring
-     to the four edges of the layout viewport is the one technique
-     that can't be wrong: there's no length to measure, just "fill
-     between top:0 and bottom:0". Children use flex-shrink:0 + flex:1
-     as before so the chat-scroll still expands and the input-bar
-     stays at natural height. */
+  /* position:fixed + inset:0 anchors the shell to the layout-viewport
+     edges. Children flex as normal (chat-scroll: flex 1, others
+     flex-shrink: 0). */
   position: fixed;
   inset: 0;
   display: flex;
   flex-direction: column;
   padding-top: var(--safe-top);
-  padding-bottom: var(--safe-bottom);
+  /* IMPORTANT: no padding-bottom here. The .20.06 diagnostic confirmed
+     iOS PWA layout viewport is 812 on iPhone 16 Pro while the physical
+     screen is 874 — the 62 px below the viewport is iOS-reserved chrome
+     that WebView can't render into. If we ALSO pad the shell bottom by
+     34 px (safe-area-inset-bottom), the visual "strip" grows to ~96 px.
+     Instead we move that 34 px INSIDE the .input-bar so its background
+     gradient extends all the way to the viewport edge, leaving only the
+     unavoidable 62 px chrome region below — visually contiguous with
+     the input-bar's bottom colour so it reads as one block. */
 }
 
 .mobile-header {
@@ -338,7 +340,13 @@ button { cursor: pointer; }
 
 .input-bar {
   flex-shrink: 0;
-  padding: 8px 10px 10px;
+  /* Last value here is the visual padding-bottom for the buttons +
+     the iOS home-indicator safe area. The shell no longer pads its
+     own bottom, so the input-bar's gradient extends all the way to
+     the layout-viewport edge (= top of the iOS chrome zone). The
+     34 px safe-area-inset-bottom is added so the actual buttons /
+     textarea stay clear of the home-indicator pill. */
+  padding: 8px 10px calc(10px + var(--safe-bottom));
   border-top: 1px solid var(--line);
   background: linear-gradient(0deg, var(--bg-1), var(--bg-0));
   display: flex;

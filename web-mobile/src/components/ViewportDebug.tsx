@@ -93,7 +93,7 @@ export function ViewportDebug() {
           maxWidth: '46vw',
         }}
       >
-        {`v.20.06 | ${vp.ts}ms
+        {`v.20.07 | ${vp.ts}ms
 inner   ${vp.innerW}×${vp.innerH}
 visual  ${vp.visualW}×${vp.visualH} off${vp.visualOffsetTop}
 doc.h   ${vp.docH}
