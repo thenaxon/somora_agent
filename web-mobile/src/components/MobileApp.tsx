@@ -9,6 +9,7 @@ import { MessageInput } from './MessageInput';
 import { useAgents } from '../hooks/useAgents';
 import { useLastAgent } from '../hooks/useLastAgent';
 import { useChatStream } from '../hooks/useChatStream';
+import { useDreamStates } from '../hooks/useDreamStates';
 import { Koala } from './Koala';
 
 export function MobileApp() {
@@ -16,6 +17,9 @@ export function MobileApp() {
   const [lastAgent, setLastAgent] = useLastAgent();
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const chat = useChatStream(activeAgent);
+  // Poll /dream-states every 30s for the avatar-row pulse + REM badge.
+  // Empty defaults until the first response lands.
+  const dreamStates = useDreamStates();
 
   // Voice: TTS availability + per-agent (== per "main" session) auto-
   // play toggle. Sticky in localStorage; seeded from /tts/config the
@@ -147,6 +151,8 @@ export function MobileApp() {
         agents={agents}
         activeAgent={activeAgent}
         onSelect={switchAgent}
+        streamingAgent={chat.streaming ? activeAgent : null}
+        dreamStates={dreamStates}
       />
 
       {activeAgent ? (

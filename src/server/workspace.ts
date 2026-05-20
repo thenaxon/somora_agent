@@ -108,5 +108,6 @@ export function buildSelfPointer(persona: Persona, config: Config, somoraHome: s
     `- Global server config: ${join(somoraHome, 'config.yaml')}`,
     `- Read somora's own docs via \`somora_docs_list\` and \`somora_docs_read\` to learn how the system works.`,
     `- Configured remote resources: ${resourceLine}`,
+    `- Reference local files with markdown links carrying the bare absolute path: \`[label](/home/.../file.md)\`. The web client routes those to a FileView window. \`file://\` URLs, \`https://<host>/files/view?path=...\`, or any other wrapping bypass the FileView and break the link.`,
   ].join('\n');
 }

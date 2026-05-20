@@ -53,7 +53,16 @@ button { cursor: pointer; }
 .mobile-shell {
   display: flex;
   flex-direction: column;
+  /* iOS Safari standalone-PWA bug: the first paint after launch measures
+     the viewport before the home-indicator chrome has settled, leaving a
+     dead strip at the bottom until a rotation forces a reflow. The
+     JS-driven --vh custom property (App.tsx) is updated on resize /
+     orientationchange / visibilitychange and trumps 100dvh on iOS where
+     dvh is the buggy source. -webkit-fill-available is the older iOS
+     fallback for browsers that don't ship dvh yet. */
   height: 100dvh;
+  height: var(--vh, 100dvh);
+  min-height: -webkit-fill-available;
   padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
 }
@@ -116,6 +125,7 @@ button { cursor: pointer; }
   background: var(--accent-dim);
 }
 .avatar-tile-icon {
+  position: relative;
   width: 44px; height: 44px;
   border-radius: 11px;
   background: var(--bg-3);
@@ -127,6 +137,72 @@ button { cursor: pointer; }
 .avatar-tile.active .avatar-tile-icon {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* Dream-phase pulse around the avatar — mirrors the desktop AgentDock
+ * but with a smaller glow scaled for 44px tiles. Phase colors come from
+ * --pulse-color, set per-class below. The pulse is a soft halo so it
+ * coexists with the .active accent ring without fighting it. */
+:root {
+  --dream-rem: #4ade80;
+  --dream-rem-glow: rgba(74, 222, 128, 0.55);
+  --dream-deep: #6366f1;
+  --dream-deep-glow: rgba(99, 102, 241, 0.55);
+  --dream-lucid: #a855f7;
+  --dream-lucid-glow: rgba(168, 85, 247, 0.55);
+}
+@keyframes somora-mobile-dream-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50%      { box-shadow: 0 0 10px 2px var(--pulse-color, transparent); }
+}
+.avatar-tile-icon.dream-active {
+  animation: somora-mobile-dream-pulse 2.2s ease-in-out infinite;
+}
+.avatar-tile-icon.dream-rem   { --pulse-color: var(--dream-rem-glow); }
+.avatar-tile-icon.dream-deep  { --pulse-color: var(--dream-deep-glow); }
+.avatar-tile-icon.dream-lucid { --pulse-color: var(--dream-lucid-glow); }
+
+/* Streaming-dot — bottom-right of the avatar, accent-colored, pulses
+ * while the agent is producing a reply. Single-session mobile = at
+ * most one agent is the streaming one at any time. */
+.avatar-streaming-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 6px var(--accent-dim);
+  animation: somora-mobile-streaming-pulse 1.2s ease-in-out infinite;
+}
+@keyframes somora-mobile-streaming-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%      { opacity: 1.0; transform: scale(1.15); }
+}
+
+/* REM pending-review counter — top-right counter, mirrors the desktop
+ * dock's .rem-badge but sized for the 44px tile. Appears when the
+ * agent has finished REM extraction runs awaiting user review. */
+.avatar-rem-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--dream-rem);
+  color: #0a1010;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 6px var(--dream-rem-glow);
 }
 .avatar-tile-label {
   font-size: 11px;

@@ -65,12 +65,22 @@ own app switcher entry.
 - **Connection-lost banner** appears when the SSE stream drops (e.g.
   Tailscale wakes up, server briefly down). The browser auto-reconnects
   the EventSource; the banner clears once the stream is back.
+- **Background sleep recovery.** iOS Safari aggressively freezes TCP
+  sockets while the PWA is in the background — the stream looks alive
+  but no bytes flow, and no error fires. When you return to the app,
+  the client checks how long since the last server event (heartbeats
+  arrive every 20 s); if the gap is wider than 45 s it tears down the
+  EventSource and reopens it, re-hydrating from `/chat/history` so
+  anything broadcast while you were gone shows up without a reload.
 
 ## Scope: what's in vs what's not
 
 **Currently shipped:**
 - One agent at a time, one main session per agent
 - Live streaming of agent responses with a typing-cursor indicator
+- Streaming-state dot on the active agent's avatar while the reply
+  is in flight, plus a dream-phase pulse (REM / DEEP / LUCID) and a
+  REM pending-review counter mirroring the desktop dock
 - Markdown rendering of agent replies
 - localStorage-persisted last-agent
 - Voice input via STT (mic-button → record → transcript editable in
@@ -79,19 +89,21 @@ own app switcher entry.
   toggle; replay button on past bubbles when audio is cached)
 - Camera / photo-roll attachments via the native picker
 - Typing-indicator while the agent is working
+- Background sleep recovery — reconnects automatically when the PWA
+  returns from the home-screen after a long pause
 
 **Planned next:**
-- Streaming-state dot on agent avatars when an agent is mid-reply
 - Per-agent unread badges
 - Maskable PNG icons, splash screens, theme polish
-- Smarter reconnect handling beyond the basic banner
+- Web Push notifications for agent replies arriving while the PWA
+  is in the background
 
 **Not planned for the mobile client (use `/web` from a real screen):**
 - tmux session attach / shell terminal
 - File viewer windows
 - Pin-note windows
 - Multi-window layout, drag/resize
-- Dream-runner-controls UI, dream-state badges
+- Dream-runner-controls UI (manually triggering REM / DEEP / LUCID)
 - Project switcher (still works if you preset projects server-side)
 
 ## Configuration

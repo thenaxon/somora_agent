@@ -81,6 +81,16 @@ export function useChatStream(agent: string | null): ChatStream {
   const agentRef = useRef<string | null>(agent);
   // Voice: subscribers waiting for assistant_audio events.
   const audioListenersRef = useRef<Set<(url: string) => void>>(new Set());
+  // Sleep-recovery: timestamp of the last SSE event (heartbeat or data)
+  // for this subscription. Drives the staleness check below — when the
+  // tab regains visibility/focus after iOS Safari has frozen the TCP
+  // socket, we compare against this and force a reconnect if the gap
+  // exceeds two heartbeat intervals.
+  const lastEventAtRef = useRef<number>(0);
+  // Bumping this state-counter re-runs the main subscribe effect, which
+  // tears down the old EventSource and opens a fresh one. Used by the
+  // visibility / focus / online listeners below.
+  const [reopenTick, setReopenTick] = useState(0);
 
   useEffect(() => {
     agentRef.current = agent;
@@ -136,17 +146,24 @@ export function useChatStream(agent: string | null): ChatStream {
     // 2. Subscribe to SSE for live events.
     const url = `/chat/stream?agent=${encodeURIComponent(agent)}&session=main`;
     const es = new EventSource(url);
+    lastEventAtRef.current = Date.now();
+    const bump = () => { lastEventAtRef.current = Date.now(); };
 
     const onOpen = () => {
       if (cancelled) return;
+      bump();
       setConnectionError(null);
     };
     const onError = () => {
       if (cancelled) return;
       setConnectionError('Verbindung wackelt — versuche neu zu verbinden…');
     };
+    // Server emits `heartbeat` every 20s; its only job is keeping TCP
+    // alive and feeding the staleness watchdog. No UI payload.
+    const onHeartbeat = () => { bump(); };
 
     const onChat = (e: MessageEvent) => {
+      bump();
       let d: { state?: string; text?: string } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || typeof d.text !== 'string') return;
@@ -180,6 +197,7 @@ export function useChatStream(agent: string | null): ChatStream {
     };
 
     const onAgent = (e: MessageEvent) => {
+      bump();
       let d: { phase?: string } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d) return;
@@ -192,6 +210,7 @@ export function useChatStream(agent: string | null): ChatStream {
     };
 
     const onStatus = (e: MessageEvent) => {
+      bump();
       let d: { msg?: string } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || !d.msg) return;
@@ -203,6 +222,7 @@ export function useChatStream(agent: string | null): ChatStream {
     };
 
     const onAssistantAudio = (e: MessageEvent) => {
+      bump();
       let d: { turnId?: string; url?: string; mime?: string; durationMs?: number } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || typeof d.url !== 'string' || typeof d.mime !== 'string') return;
@@ -230,6 +250,7 @@ export function useChatStream(agent: string | null): ChatStream {
 
     es.addEventListener('open', onOpen);
     es.addEventListener('error', onError);
+    es.addEventListener('heartbeat', onHeartbeat);
     es.addEventListener('chat', onChat);
     es.addEventListener('agent', onAgent);
     es.addEventListener('status', onStatus);
@@ -239,11 +260,41 @@ export function useChatStream(agent: string | null): ChatStream {
       cancelled = true;
       es.removeEventListener('open', onOpen);
       es.removeEventListener('error', onError);
+      es.removeEventListener('heartbeat', onHeartbeat);
       es.removeEventListener('chat', onChat);
       es.removeEventListener('agent', onAgent);
       es.removeEventListener('status', onStatus);
       es.removeEventListener('assistant_audio', onAssistantAudio);
       es.close();
+    };
+  }, [agent, reopenTick]);
+
+  // Sleep-recovery: iOS Safari aggressively freezes TCP sockets when
+  // the PWA goes to the background — EventSource appears alive but no
+  // bytes flow, no error fires. On returning to the foreground, check
+  // when we last saw any event; if it's been longer than two heartbeat
+  // intervals, bump reopenTick to force the main effect to recreate
+  // the EventSource (which also re-hydrates from /chat/history so
+  // anything broadcast while we slept is recovered).
+  useEffect(() => {
+    if (!agent) return;
+    const STALE_MS = 45_000; // server heartbeat is 20s; allow 2 misses
+    const checkStale = () => {
+      const last = lastEventAtRef.current;
+      if (last === 0) return;
+      if (Date.now() - last <= STALE_MS) return;
+      setReopenTick((n) => n + 1);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkStale();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', checkStale);
+    window.addEventListener('online', checkStale);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', checkStale);
+      window.removeEventListener('online', checkStale);
     };
   }, [agent]);
 

@@ -116,8 +116,12 @@ file for each kind of change.
 
 Each agent gets a small self-pointer block prepended to its system prompt
 at every turn. It tells the agent its name, where its persona files
-live, the workspace path, the global config location, and which remote
-resources are configured. This means the agent can run e.g.:
+live, the workspace path, the global config location, which remote
+resources are configured, and the convention for referencing local
+files in chat replies (markdown links carrying the bare absolute path
+like `[label](/home/.../file.md)` — those route to a FileView window
+in the web client; wrapped URLs do not). This means the agent can run
+e.g.:
 
 ```
 file_write({ path: "~/.somora/agents/<your-agent>/USER.md", content: "...", mode: "overwrite" })
