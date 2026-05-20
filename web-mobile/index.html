@@ -18,6 +18,30 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <!-- iOS standalone-PWA viewport-height bootstrap. Runs BEFORE the
+         React bundle so the very first paint already has a sensible
+         --vh value, and re-measures after iOS finishes settling the
+         home-indicator strip (double-RAF + 100/300ms timeouts cover
+         the empirical settle window). Listeners stay registered for
+         the lifetime of the document so resize / rotation / coming
+         back from background all tick --vh. -->
+    <script>
+      (function () {
+        function setVh() {
+          document.documentElement.style.setProperty('--vh', window.innerHeight + 'px');
+        }
+        setVh();
+        requestAnimationFrame(function () {
+          requestAnimationFrame(setVh);
+        });
+        setTimeout(setVh, 100);
+        setTimeout(setVh, 300);
+        window.addEventListener('resize', setVh);
+        window.addEventListener('orientationchange', setVh);
+        document.addEventListener('visibilitychange', setVh);
+        window.addEventListener('pageshow', setVh);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

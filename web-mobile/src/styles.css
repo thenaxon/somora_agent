@@ -55,13 +55,20 @@ button { cursor: pointer; }
   flex-direction: column;
   /* iOS Safari standalone-PWA bug: the first paint after launch measures
      the viewport before the home-indicator chrome has settled, leaving a
-     dead strip at the bottom until a rotation forces a reflow. The
-     JS-driven --vh custom property (App.tsx) is updated on resize /
-     orientationchange / visibilitychange and trumps 100dvh on iOS where
-     dvh is the buggy source. -webkit-fill-available is the older iOS
-     fallback for browsers that don't ship dvh yet. */
-  height: 100dvh;
-  height: var(--vh, 100dvh);
+     dead strip at the bottom until a rotation forces a reflow. Three
+     layers of defence here:
+       1. 100svh = "small viewport height" — the stable minimum, unlike
+          100dvh which iOS PWA mis-measures on first paint. svh ignores
+          dynamic UI chrome so the value never grows/shrinks while we
+          watch.
+       2. --vh — JS-driven custom property set by an inline bootstrap in
+          index.html (runs before React loads) plus delayed re-measures
+          via double-RAF + setTimeout to catch iOS's settle window. If
+          the JS value is reliable, it wins over the svh fallback.
+       3. -webkit-fill-available — legacy iOS fallback for browsers that
+          ship neither svh nor dvh (older WebKit). */
+  height: 100svh;
+  height: var(--vh, 100svh);
   min-height: -webkit-fill-available;
   padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
