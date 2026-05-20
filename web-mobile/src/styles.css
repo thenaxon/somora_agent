@@ -51,25 +51,19 @@ button { cursor: pointer; }
 /* ── Layout ─────────────────────────────────────────────────────── */
 
 .mobile-shell {
+  /* position:fixed + inset:0 bypasses ALL viewport-unit measurement
+     issues. iOS standalone-PWA mis-measures dvh, svh, lvh, and even
+     window.innerHeight during the first paint — the user reported a
+     ~200 px dead strip with .20.03's 100svh + --vh approach. Anchoring
+     to the four edges of the layout viewport is the one technique
+     that can't be wrong: there's no length to measure, just "fill
+     between top:0 and bottom:0". Children use flex-shrink:0 + flex:1
+     as before so the chat-scroll still expands and the input-bar
+     stays at natural height. */
+  position: fixed;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  /* iOS Safari standalone-PWA bug: the first paint after launch measures
-     the viewport before the home-indicator chrome has settled, leaving a
-     dead strip at the bottom until a rotation forces a reflow. Three
-     layers of defence here:
-       1. 100svh = "small viewport height" — the stable minimum, unlike
-          100dvh which iOS PWA mis-measures on first paint. svh ignores
-          dynamic UI chrome so the value never grows/shrinks while we
-          watch.
-       2. --vh — JS-driven custom property set by an inline bootstrap in
-          index.html (runs before React loads) plus delayed re-measures
-          via double-RAF + setTimeout to catch iOS's settle window. If
-          the JS value is reliable, it wins over the svh fallback.
-       3. -webkit-fill-available — legacy iOS fallback for browsers that
-          ship neither svh nor dvh (older WebKit). */
-  height: 100svh;
-  height: var(--vh, 100svh);
-  min-height: -webkit-fill-available;
   padding-top: var(--safe-top);
   padding-bottom: var(--safe-bottom);
 }
