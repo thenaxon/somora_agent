@@ -35,6 +35,12 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
+  /* iOS auto-text-size after rotation: lock to 100% so text doesn't
+     balloon up when the device rotates landscape → portrait. The default
+     "auto" behavior re-runs Apple's text-autosizing heuristic per
+     orientation, which is wrong for a chat surface. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 button, input, textarea {
