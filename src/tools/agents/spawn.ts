@@ -160,7 +160,21 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
         description: 'Model alias or "provider/modelId" — omit to use the persona\'s default.',
       },
       task: { type: 'string', description: 'The task / question for the sub. Will become its first user message.' },
-      wait: { type: 'boolean', description: 'Block until sub returns. Default true.' },
+      maxRounds: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 100,
+        description:
+          'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) for ' +
+          'orchestrator subs that spawn further sub-subs and poll their results.',
+      },
+      wait: {
+        type: 'boolean',
+        description:
+          'When true: block this turn until the sub returns its final answer. When false ' +
+          '(default): fire-and-forget — returns a task_id immediately, sub runs in the ' +
+          'background. Check progress with subagent_status, fetch the answer with subagent_result.',
+      },
     },
     required: ['task'],
     additionalProperties: false,
@@ -230,10 +244,25 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
             persona: { type: 'string' },
             model: { type: 'string' },
             task: { type: 'string' },
+            maxRounds: {
+              type: 'integer',
+              minimum: 1,
+              maximum: 100,
+              description:
+                'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) ' +
+                'for orchestrator subs that spawn further sub-subs and poll their results.',
+            },
           },
           required: ['task'],
           additionalProperties: false,
         },
+      },
+      wait: {
+        type: 'boolean',
+        description:
+          'Default false (fire-and-forget): each task gets its own task_id, all run in ' +
+          'parallel in the background, your turn ends immediately. true blocks until all ' +
+          'complete and returns results inline.',
       },
     },
     required: ['tasks'],

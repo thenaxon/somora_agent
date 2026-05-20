@@ -164,6 +164,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const sourcesRef = useRef<
     Map<string, { es: EventSource; refs: number; loaded: boolean; ac: AbortController }>
   >(new Map());
+  // Last time we saw ANY event (data or heartbeat) per session. Drives
+  // sleep-recovery: when the tab regains visibility/focus we compare
+  // against this and force-reconnect if the gap exceeds the heartbeat
+  // window. Without this a wedged SSE after laptop-sleep stays silent
+  // until the user manually reloads.
+  const lastEventAtRef = useRef<Map<string, number>>(new Map());
   // Track the in-flight assistant message id per session — a delta
   // appends to that bubble, an agent.end finalizes it.
   const streamingIdRef = useRef<Map<string, string>>(new Map());
@@ -231,6 +237,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const es = new EventSource(api.streamUrl(agent, session));
       const ac = new AbortController();
       sourcesRef.current.set(key, { es, refs: 1, loaded: false, ac });
+      lastEventAtRef.current.set(key, Date.now());
+      const bump = () => lastEventAtRef.current.set(key, Date.now());
       patchStream(key, { connected: false, loading: true });
 
       // Load history once per session-key. Stream events that happen
@@ -298,10 +306,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      es.addEventListener('open', () => patchStream(key, { connected: true }));
+      es.addEventListener('open', () => {
+        bump();
+        patchStream(key, { connected: true });
+      });
       es.addEventListener('error', () => patchStream(key, { connected: false }));
+      // Heartbeat fires every 20s from the server (sse.publishTimeoutMs +
+      // a fixed setInterval) — it has no UI payload, its only job is to
+      // keep TCP alive and feed the staleness watchdog below.
+      es.addEventListener('heartbeat', () => bump());
 
       es.addEventListener('status', (ev) => {
+        bump();
         patchStream(key, { connected: true });
         const d = parse<{ msg?: string }>(ev as MessageEvent);
         if (d?.msg && d.msg !== 'connected') {
@@ -311,6 +327,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('chat', (ev) => {
+        bump();
         const d = parse<{ state: 'delta' | 'final'; text: string }>(ev as MessageEvent);
         if (!d) return;
         // Single assistant bubble per turn, always at the bottom of
@@ -375,6 +392,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('agent', (ev) => {
+        bump();
         const d = parse<{ phase: 'start' | 'end'; usage?: ChatUsage }>(ev as MessageEvent);
         if (!d) return;
         if (d.phase === 'start') {
@@ -419,6 +437,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('project', () => {
+        bump();
         // Broadcast carries from/to slugs, but the chip needs the
         // full ProjectInfo for name + color, so we re-GET regardless.
         void api
@@ -430,6 +449,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('memory', (ev) => {
+        bump();
         const d = parse<{
           count: number;
           topScore?: number;
@@ -458,6 +478,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('tool', (ev) => {
+        bump();
         const d = parse<{
           phase: 'call' | 'result' | 'error';
           tool: string;
@@ -499,6 +520,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('engine_meta', (ev) => {
+        bump();
         const d = parse<{
           engine: string;
           itemType: string;
@@ -522,6 +544,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('assistant_audio', (ev) => {
+        bump();
         const d = parse<{
           turnId: string;
           url: string;
@@ -570,6 +593,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
 
       es.addEventListener('user_message', (ev) => {
+        bump();
         const d = parse<{ text: string; ts: number; from_agent?: string }>(ev as MessageEvent);
         if (!d) return;
         // Dedupe self-send echo: if this exact text sits in our
@@ -607,9 +631,70 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     entry.es.close();
     entry.ac.abort();
     sourcesRef.current.delete(key);
+    lastEventAtRef.current.delete(key);
     streamingIdRef.current.delete(key);
     patchStream(key, { connected: false, streaming: false, thinking: false });
   }, [patchStream]);
+
+  // Tear down an open SSE for (agent, session) and reopen it, preserving
+  // the ref count. Used by the staleness watchdog after laptop-sleep /
+  // long network interruption: closing the EventSource forces the browser
+  // to redo the TCP handshake, and openStream re-fetches the history
+  // snapshot so any events that fired while we were offline (other agent
+  // talking to this session, sentinel turn, etc.) appear without F5.
+  const reopenStream = useCallback(
+    (agent: string, session: string) => {
+      const key = sessionKey(agent, session);
+      const old = sourcesRef.current.get(key);
+      if (!old) return;
+      const refs = old.refs;
+      old.es.close();
+      old.ac.abort();
+      sourcesRef.current.delete(key);
+      lastEventAtRef.current.delete(key);
+      // openStream installs a fresh entry with refs:1 — restore the
+      // caller-side ref count so closeStream() unsubscribes still match.
+      openStream(agent, session);
+      const fresh = sourcesRef.current.get(key);
+      if (fresh) fresh.refs = refs;
+    },
+    [openStream],
+  );
+
+  // Sleep / network-interruption recovery. After laptop sleep the TCP
+  // socket under EventSource often half-closes — the browser's auto-
+  // reconnect doesn't fire because no 'error' event comes through, and
+  // the next send appears to work but the response stream is dead.
+  // Watch visibility/focus/online and force a reconnect on any active
+  // session whose last event is older than two heartbeat intervals.
+  useEffect(() => {
+    const STALE_MS = 45_000; // server heartbeat is 20s; allow 2 misses
+    const checkAll = () => {
+      const now = Date.now();
+      for (const key of sourcesRef.current.keys()) {
+        const last = lastEventAtRef.current.get(key) ?? 0;
+        if (now - last <= STALE_MS) continue;
+        const sep = key.indexOf('::');
+        if (sep < 0) continue;
+        const agent = key.slice(0, sep);
+        const session = key.slice(sep + 2);
+        // eslint-disable-next-line no-console
+        console.info('[somora-web] sse stale, reconnecting', key, 'gap=', now - last, 'ms');
+        reopenStream(agent, session);
+      }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') checkAll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', checkAll);
+    window.addEventListener('online', checkAll);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', checkAll);
+      window.removeEventListener('online', checkAll);
+    };
+  }, [reopenStream]);
 
   const subscribe = useCallback<ChatContextValue['subscribe']>(
     (agent, session) => {
