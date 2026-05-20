@@ -9,13 +9,7 @@
 // in time.
 
 import { MobileApp } from './components/MobileApp';
-import { ViewportDebug } from './components/ViewportDebug';
 
 export default function App() {
-  return (
-    <>
-      <MobileApp />
-      <ViewportDebug />
-    </>
-  );
+  return <MobileApp />;
 }
