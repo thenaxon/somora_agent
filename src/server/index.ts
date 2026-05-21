@@ -2,10 +2,17 @@ import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { streamSSEH2Safe } from './sse-h2-safe.ts';
+import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createSecureServer as createHttp2SecureServer } from 'node:http2';
-import { homedir } from 'node:os';
+import {
+  homedir,
+  cpus as osCpus,
+  freemem as osFreemem,
+  loadavg as osLoadavg,
+  totalmem as osTotalmem,
+} from 'node:os';
 import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
@@ -885,6 +892,81 @@ app.get(
 app.get('/version', (c) => c.json({ version: SOMORA_VERSION }));
 
 app.get('/env', (c) => c.json(getEffectiveEnv()));
+
+// Host machine stats — CPU load + memory usage of the box somora is
+// running on. Surfaced to the web taskbar (`cpu` / `mem` widgets) and
+// useful for ad-hoc curl when somora lives on a VM you don't otherwise
+// have a metrics dashboard for.
+//
+// CPU: 1-minute load average from `os.loadavg()` divided by core count.
+//   `percent` > 100 means the box is overloaded (more runnable
+//   processes than CPUs), which is honest signal — we don't cap.
+//   On Windows `loadavg` returns zeros, but somora doesn't target
+//   Windows so we accept the degraded value.
+// Mem: platform-specific because `os.freemem()` is misleading on both
+//   Linux (excludes reclaimable page cache) and macOS (excludes
+//   inactive + speculative pages that the kernel hands back under
+//   pressure). We read each platform's "available memory" notion:
+//     - Linux:  /proc/meminfo:MemAvailable
+//     - macOS:  `vm_stat` pages: free + inactive + speculative
+//     - other:  os.freemem() fallback (degraded but non-erroring)
+function readLinuxMemAvailable(): number | null {
+  try {
+    const meminfo = readFileSync('/proc/meminfo', 'utf8');
+    const m = meminfo.match(/^MemAvailable:\s+(\d+)\s+kB/m);
+    return m ? Number(m[1]) * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+function readDarwinMemAvailable(): number | null {
+  try {
+    const out = execSync('vm_stat', { encoding: 'utf8', timeout: 1000 });
+    const pageSizeMatch = out.match(/page size of (\d+) bytes/);
+    const pageSize = pageSizeMatch ? Number(pageSizeMatch[1]) : 4096;
+    const pages = (label: string): number => {
+      const m = out.match(new RegExp(`${label}:\\s+(\\d+)\\.`));
+      return m ? Number(m[1]) : 0;
+    };
+    // Mirrors what macOS Activity Monitor calls "available": free
+    // pages plus inactive + speculative (file-backed pages the kernel
+    // can hand back under memory pressure without I/O).
+    const available = pages('Pages free') + pages('Pages inactive') + pages('Pages speculative');
+    return available * pageSize;
+  } catch {
+    return null;
+  }
+}
+function readPlatformMemAvailable(): number {
+  if (process.platform === 'linux') {
+    const v = readLinuxMemAvailable();
+    if (v !== null) return v;
+  } else if (process.platform === 'darwin') {
+    const v = readDarwinMemAvailable();
+    if (v !== null) return v;
+  }
+  return osFreemem();
+}
+app.get('/host-stats', (c) => {
+  const cores = osCpus().length || 1;
+  const load1 = osLoadavg()[0] ?? 0;
+  const totalBytes = osTotalmem();
+  const availableBytes = readPlatformMemAvailable();
+  const usedBytes = Math.max(0, totalBytes - availableBytes);
+  return c.json({
+    cpu: {
+      loadAvg1: load1,
+      cores,
+      percent: cores > 0 ? (load1 / cores) * 100 : 0,
+    },
+    mem: {
+      totalBytes,
+      availableBytes,
+      usedBytes,
+      percent: totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0,
+    },
+  });
+});
 
 // Display preferences for thin clients (TUI, future web). Server is the
 // single config reader — clients fetch this rather than parsing config.yaml

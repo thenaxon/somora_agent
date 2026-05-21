@@ -1,6 +1,6 @@
-// Bottom taskbar. Click-dummy layout: somora-logo + window-list
-// (one button per open window, color-tinted per agent) + tools
-// (auto-arrange / save / restore) + cpu/mem stub + clock.
+// Bottom taskbar. Layout: somora-logo + window-list (one button per
+// open window, color-tinted per agent) + tools (auto-arrange / save /
+// restore) + live host CPU/mem from `/host-stats` + clock.
 //
 // No logout button: somora is LAN-only, no auth, no session to
 // terminate.
@@ -34,6 +34,7 @@ export function Taskbar({
   const [clock, setClock] = useState(new Date());
   const [version, setVersion] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [hostStats, setHostStats] = useState<{ cpuPct: number; memPct: number } | null>(null);
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000 * 30);
@@ -47,6 +48,29 @@ export function Taskbar({
       .version()
       .then((r) => setVersion(r.version))
       .catch(() => setVersion(null));
+  }, []);
+
+  useEffect(() => {
+    // Poll host CPU/mem every 5s. Backend computes from os.loadavg() +
+    // /proc/meminfo, so updates are smooth at the 1-min loadavg cadence.
+    // Quiet on failure — empty values show as `—` and nothing else is
+    // affected.
+    let alive = true;
+    const refresh = () => {
+      api
+        .hostStats()
+        .then((r) => {
+          if (!alive) return;
+          setHostStats({ cpuPct: r.cpu.percent, memPct: r.mem.percent });
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const t = setInterval(refresh, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
   }, []);
 
   useEffect(() => {
@@ -189,11 +213,11 @@ export function Taskbar({
       </div>
 
       <div className="taskbar-stat">
-        <span>
-          <b>—</b> cpu
+        <span title="1-min CPU load average / cores. >100% = overloaded.">
+          <b>{hostStats ? `${Math.round(hostStats.cpuPct)}%` : '—'}</b> cpu
         </span>
-        <span>
-          <b>—</b> mem
+        <span title="Host memory in use (MemAvailable on Linux, freemem fallback).">
+          <b>{hostStats ? `${Math.round(hostStats.memPct)}%` : '—'}</b> mem
         </span>
       </div>
 

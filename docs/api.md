@@ -148,6 +148,55 @@ advances when a broadcast reached at least one subscriber within the
 — the next publish auto-evicts it (see `sse.publishTimeoutMs` in
 [setup.md](setup.md#tunables)).
 
+### `GET /host-stats`
+
+Host machine resource snapshot — CPU load and memory usage of the box
+somora is running on. Surfaced to the web taskbar's `cpu` / `mem`
+widgets and handy when somora lives on a VM you don't otherwise have a
+metrics view for.
+
+```bash
+curl https://<host>:18737/host-stats
+```
+
+Returns:
+
+```json
+{
+  "cpu": {
+    "loadAvg1": 0.42,
+    "cores": 6,
+    "percent": 7.0
+  },
+  "mem": {
+    "totalBytes": 25186074624,
+    "availableBytes": 23197777920,
+    "usedBytes": 1988296704,
+    "percent": 7.9
+  }
+}
+```
+
+`cpu.percent` is the 1-minute load average divided by core count and
+expressed as a percentage. Values over 100 mean the box has more
+runnable processes than CPUs — not capped, an overload signal is more
+useful than a clamped number.
+
+`mem.availableBytes` is "memory the kernel can hand back without I/O".
+The reading is platform-specific so it matches what the OS-native
+tools report:
+
+- **Linux:** `/proc/meminfo:MemAvailable` (includes reclaimable page
+  cache). Falls back to `os.freemem()` on kernels that don't expose
+  it.
+- **macOS:** `vm_stat` pages free + inactive + speculative, times
+  page size. Mirrors Activity Monitor's "Available" notion. Falls
+  back to `os.freemem()` if the `vm_stat` binary is unavailable.
+- **Other:** `os.freemem()` straight (degraded but non-erroring).
+
+`usedBytes` = `totalBytes − availableBytes`. Read-only, cheap (no disk
+I/O on Linux, a sub-millisecond `vm_stat` spawn on macOS).
+
 ### `GET /tools`
 
 List every tool registered on the server (the same tools agents see).

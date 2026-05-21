@@ -193,6 +193,11 @@ export interface HistoryResponse {
 
 export const api = {
   version: () => getJson<{ version: string }>('/version'),
+  hostStats: () =>
+    getJson<{
+      cpu: { loadAvg1: number; cores: number; percent: number };
+      mem: { totalBytes: number; availableBytes: number; usedBytes: number; percent: number };
+    }>('/host-stats'),
   agents: () => getJson<AgentInfo[]>('/agents'),
   tmuxSessions: () =>
     getJson<{ sessions: TmuxSessionInfo[] }>('/tmux/sessions').then((r) => r.sessions),
