@@ -47,7 +47,19 @@ export interface ChunkRow {
 
 export interface MemoryDb {
   db: DatabaseT;
+  /** True iff the sqlite-vec extension is loaded AND the chunks_vec
+   *  virtual table actually exists in this DB. Extension-only is not
+   *  enough — calling INSERT/DELETE on chunks_vec when the table
+   *  doesn't exist throws "no such table". Set at openMemoryDb based
+   *  on both conditions; flipped to true by ensureVecTable() after a
+   *  successful CREATE. Storage write paths check this single flag
+   *  before touching chunks_vec. */
   hasVec: boolean;
+  /** Internal: did the sqlite-vec extension load successfully? Needed
+   *  separately so ensureVecTable() can decide whether it's safe to
+   *  CREATE the vec0 table — `hasVec` is false until the table
+   *  exists, so we can't reuse it here. */
+  vecExtensionLoaded: boolean;
   vecDim: number | null;
   embeddingModel: string | null;
 }
@@ -65,10 +77,10 @@ export function openMemoryDb(dbPath: string): MemoryDb {
   db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
 
-  let hasVec = false;
+  let vecExtensionLoaded = false;
   try {
     sqliteVec.load(db);
-    hasVec = true;
+    vecExtensionLoaded = true;
   } catch (err) {
     logger.warn({
       msg: 'memory.sqlite_vec_unavailable',
@@ -137,7 +149,29 @@ export function openMemoryDb(dbPath: string): MemoryDb {
   const vecDim = getMetaInt(db, 'vec_dim');
   const embeddingModel = getMeta(db, 'embedding_model');
 
-  return { db, hasVec, vecDim, embeddingModel };
+  // `hasVec` requires both the extension AND the chunks_vec table.
+  // Without the table, INSERT INTO chunks_vec throws "no such table"
+  // and the whole replaceFileChunks transaction rolls back — leaving
+  // the files row in place but no chunks. Seen on a fresh agent
+  // (buffet) whose first boot caught the embedder down: ensureVecTable
+  // was never called, but subsequent reindexes happily set hasVec=true
+  // from the extension alone, so every chunk write since has been
+  // silently rolled back. Discovered 2026-05-21.
+  const vecTableExists = vecExtensionLoaded
+    ? Boolean(
+        db
+          .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks_vec' LIMIT 1`)
+          .get(),
+      )
+    : false;
+
+  return {
+    db,
+    hasVec: vecExtensionLoaded && vecTableExists,
+    vecExtensionLoaded,
+    vecDim,
+    embeddingModel,
+  };
 }
 
 /**
@@ -146,7 +180,12 @@ export function openMemoryDb(dbPath: string): MemoryDb {
  * detect mismatches on subsequent opens.
  */
 export function ensureVecTable(memDb: MemoryDb, dim: number, model: string): void {
-  if (!memDb.hasVec) return;
+  // Bail when the sqlite-vec EXTENSION isn't loaded — without it we
+  // can't create the vec0 virtual table at all. Note this checks
+  // `vecExtensionLoaded`, NOT `hasVec`: the latter is false until the
+  // table exists, so reusing it here would prevent the very create we
+  // need to perform on a fresh DB.
+  if (!memDb.vecExtensionLoaded) return;
   const existing = getMetaInt(memDb.db, 'vec_dim');
   const existingModel = getMeta(memDb.db, 'embedding_model');
   if (existing && existing !== dim) {
@@ -172,6 +211,9 @@ export function ensureVecTable(memDb: MemoryDb, dim: number, model: string): voi
   setMeta(memDb.db, 'embedding_model', model);
   memDb.vecDim = dim;
   memDb.embeddingModel = model;
+  // Table is now real on disk — flip the gate so subsequent writes
+  // include the vec0 insert path.
+  memDb.hasVec = true;
 }
 
 export function setMeta(db: DatabaseT, key: string, value: string): void {
