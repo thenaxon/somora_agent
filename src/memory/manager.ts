@@ -316,7 +316,20 @@ export class MemoryManager {
       mtime: stats.mtimeMs,
       size: stats.size,
     });
-    if (!changed) return 'skipped';
+    if (!changed) {
+      // Defensive self-heal: a file row may exist with the current hash
+      // while the chunks for it are missing — initial index crashed
+      // mid-walk, a schema migration dropped the chunks table without
+      // bumping mtimes, or someone manually wiped chunks. Returning
+      // 'skipped' on hash-match alone would leave that file stuck
+      // forever (next run keeps seeing the same hash). Verify a chunk
+      // actually exists; if not, fall through to rebuild. Discovered
+      // 2026-05-21 on buffet (238 files indexed, 0 chunks).
+      const hasChunks = memDb.db
+        .prepare(`SELECT 1 FROM chunks WHERE file_path = ? LIMIT 1`)
+        .get(path);
+      if (hasChunks) return 'skipped';
+    }
 
     const text = buf.toString('utf8');
     const chunks = chunkMarkdown(text, this.cfg.chunking);
