@@ -240,11 +240,12 @@ user setup. A sweep tool may land later.
 
 | Tool | Cap | Notes |
 |---|---|---|
-| `file_read` | 200 000 chars per call | Use `offset`+`limit` for larger files. Errors on binary, pointing at `analyze_file`. |
+| `file_read` | 200 000 chars per call | `offset`+`limit` are LINE counts (not bytes). When a result is truncated by line, the response includes `next_offset` — pass it as `offset` to continue. Byte-cap-truncated reads omit `next_offset` (the cut is mid-line). Missing files surface as `file_read: file_not_found at '<path>'`. Errors on binary, pointing at `analyze_file`. |
 | `file_write` | none on input; 100 000 char result envelope | Atomic via tmp+rename. |
 | `file_patch` | requires `old_string` to be unique unless `replace_all=true` | Match is byte-exact (no fuzzy). |
 | `file_search` | 50 hits default, 500 max; 200 000 char result envelope | Needs `rg` (ripgrep) on the target machine. |
-| `analyze_file` | 5 MB image / 32 MB PDF | Local files only in v1; worker on openai-compatible engine. |
+| `file_list` | 5000 entries per call (default 200) | Path resolution + read-policy identical to `file_read`. Missing dirs surface as `file_list: file_not_found at '<path>'`. |
+| `analyze_file` | 5 MB image / 32 MB PDF | Local files only in v1; worker on openai-compatible engine. **Hidden from the model entirely when `config.vision.worker` is unset** (the same path-resolution + read-policy as `file_read` applies). |
 
 `rg` not installed → clear error: "Install via brew/apt/dnf/pacman or
 set `$RG_BIN`." We deliberately don't ship a JS fallback walker —

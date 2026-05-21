@@ -34,6 +34,9 @@ export interface ReadResult {
   content: string;
   truncated: boolean;
   truncated_reason?: string;
+  /** When `truncated` is true and the cut was line-based (not byte-cap mid-line),
+   *  this is the line offset at which a follow-up read should resume. */
+  next_offset?: number;
 }
 
 export async function localRead(args: {
@@ -50,7 +53,19 @@ export async function localRead(args: {
   const policyReal = checkReadAllowed(real);
   if (!policyReal.ok) throw new Error(policyReal.reason);
 
-  const buf = await readFile(absolute);
+  let buf;
+  try {
+    buf = await readFile(absolute);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === 'ENOENT') {
+      throw new Error(`file_read: file_not_found at '${absolute}'`);
+    }
+    if (e.code === 'EISDIR') {
+      throw new Error(`file_read: '${absolute}' is a directory (use file_list for directories)`);
+    }
+    throw err;
+  }
   const all = buf.toString('utf8');
   const lines = all.split('\n');
   const offset = Math.max(0, args.offset ?? 0);
@@ -59,10 +74,14 @@ export async function localRead(args: {
   let content = slice.join('\n');
   let truncated = offset + slice.length < lines.length;
   let truncatedReason = truncated ? `more lines available (offset=${offset + slice.length})` : undefined;
+  let nextOffset: number | undefined = truncated ? offset + slice.length : undefined;
   if (content.length > READ_HARD_CAP) {
     content = content.slice(0, READ_HARD_CAP) + '\n[…content truncated at 200k chars]';
     truncated = true;
     truncatedReason = `byte cap (${READ_HARD_CAP} chars)`;
+    // Byte-cap truncation cuts mid-line, so a line-based next_offset
+    // would skip the cut-off content. Drop the hint rather than mislead.
+    nextOffset = undefined;
   }
   return {
     path: absolute,
@@ -72,6 +91,7 @@ export async function localRead(args: {
     content,
     truncated,
     ...(truncatedReason ? { truncated_reason: truncatedReason } : {}),
+    ...(nextOffset !== undefined ? { next_offset: nextOffset } : {}),
   };
 }
 
@@ -353,7 +373,16 @@ export async function localList(args: {
   const policyReal = checkReadAllowed(real);
   if (!policyReal.ok) throw new Error(policyReal.reason);
 
-  const rootStat = await stat(absolute);
+  let rootStat;
+  try {
+    rootStat = await stat(absolute);
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === 'ENOENT') {
+      throw new Error(`file_list: file_not_found at '${absolute}' — directory does not exist`);
+    }
+    throw err;
+  }
   if (!rootStat.isDirectory()) {
     throw new Error(`file_list: '${absolute}' is not a directory (use file_read for single files)`);
   }

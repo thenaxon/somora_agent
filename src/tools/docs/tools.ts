@@ -25,6 +25,41 @@ const HERE = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(HERE), '..', '..', '..');
 const DOCS_ROOT = join(REPO_ROOT, 'docs');
 
+// Snapshot the available topic names at module load so we can surface
+// them as a JSON-schema `enum` on `somora_docs_read.topic`. The model
+// sees the exact valid set in the tool schema and stops guessing names
+// like "config" that don't exist. Walks one level into subdirs so
+// `research/tool-architecture` etc. are included. Falls back to an
+// empty list (= no enum constraint) if the scan fails for any reason —
+// degrading gracefully is preferred to crashing the server boot.
+import { readdirSync } from 'node:fs';
+function snapshotDocsTopics(): string[] {
+  try {
+    const out: string[] = [];
+    const top = readdirSync(DOCS_ROOT, { withFileTypes: true });
+    for (const e of top) {
+      if (e.isFile() && e.name.endsWith('.md')) {
+        out.push(e.name.replace(/\.md$/, ''));
+      } else if (e.isDirectory()) {
+        try {
+          const sub = readdirSync(join(DOCS_ROOT, e.name), { withFileTypes: true });
+          for (const f of sub) {
+            if (f.isFile() && f.name.endsWith('.md')) {
+              out.push(`${e.name}/${f.name.replace(/\.md$/, '')}`);
+            }
+          }
+        } catch {
+          /* sub-scan failure: skip this dir, keep others */
+        }
+      }
+    }
+    return out.sort();
+  } catch {
+    return [];
+  }
+}
+const DOCS_TOPICS = snapshotDocsTopics();
+
 interface DocsListEntry {
   topic: string;
   path: string;
@@ -108,7 +143,13 @@ export const somoraDocsRead: ToolDefinition<z.infer<typeof ReadInput>> = {
   jsonSchema: {
     type: 'object',
     properties: {
-      topic: { type: 'string', description: 'Topic name (no .md extension). Sub-paths use `/`, e.g. "research/tool-architecture".' },
+      topic: {
+        type: 'string',
+        description: 'Topic name (no .md extension). Sub-paths use `/`, e.g. "research/tool-architecture".',
+        // Empty enum would invalidate every input — only attach when
+        // the scan found at least one topic.
+        ...(DOCS_TOPICS.length > 0 ? { enum: DOCS_TOPICS } : {}),
+      },
     },
     required: ['topic'],
     additionalProperties: false,
@@ -124,7 +165,12 @@ export const somoraDocsRead: ToolDefinition<z.infer<typeof ReadInput>> = {
     try {
       content = await readFile(fullPath, 'utf8');
     } catch (err) {
-      throw new Error(`somora_docs_read: topic '${input.topic}' not found (${(err as Error).message})`);
+      // Surface the valid topic list inline so the model can recover
+      // without an extra somora_docs_list round-trip.
+      const known = DOCS_TOPICS.length > 0 ? ` Known topics: ${DOCS_TOPICS.join(', ')}.` : '';
+      throw new Error(
+        `somora_docs_read: topic '${input.topic}' not found (${(err as Error).message}).${known}`,
+      );
     }
     return {
       topic: input.topic,

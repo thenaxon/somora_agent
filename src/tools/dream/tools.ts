@@ -4,12 +4,12 @@
 // equivalent memory_* action — no creative logic at apply-time, just
 // confirmation of the extractor's proposal.
 //
-//   dream_list                — overview of pending (non-processed) dreams
-//   dream_get(id)             — full content + per-finding state
-//   dream_apply(id, fid)      — execute a finding's action; auto-archive
-//                                when all findings resolved
-//   dream_dismiss(id, fid?)   — reject a single finding; without fid:
-//                                whole dream dismissed
+//   dream_list                            — overview of pending (non-processed) dreams
+//   dream_get(dream_id)                   — full content + per-finding state
+//   dream_apply(dream_id, finding_id)     — execute a finding's action; auto-archive
+//                                            when all findings resolved
+//   dream_dismiss(dream_id, finding_id?)  — reject a single finding; without finding_id:
+//                                            whole dream dismissed
 
 import { z } from 'zod';
 import {

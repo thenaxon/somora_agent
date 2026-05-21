@@ -169,9 +169,23 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     'job_id immediately, output streams to disk, interact via the process tool ' +
     '(list/poll/log/write/kill). Background only works on target:"local" in v1. ' +
     '\n\n' +
+    'IMPORTANT — to reach a remote host, ALWAYS use target:<resource-name> (from resource_list). ' +
+    'NEVER shell out to raw `ssh user@host …` from target:"local" — that bypasses the resource ' +
+    'config, hits hosts without keys, and produces "Permission denied (publickey,password)" errors. ' +
+    'If a host you need is not in resource_list, ask the user to add it to config.yaml first. ' +
+    '\n\n' +
+    'IMPORTANT — non-empty stderr does NOT mean failure. Many tools (ssh, git, build systems) write ' +
+    'progress / warnings to stderr while still exiting 0. Treat the call as failed ONLY when ' +
+    '`ok:false` OR `exit_code != 0`. Do not retry just because stderr has content — read it for ' +
+    'context but trust the exit status. ' +
+    '\n\n' +
     'IMPORTANT — for writing FILES on a remote target, ALWAYS use file_write with target:<name>. ' +
     'NEVER use exec with heredoc/echo to push file content over SSH — shell escaping breaks for ' +
     'large or complex content. file_write goes through SFTP, binary-clean, no escape pain. ' +
+    '\n\n' +
+    'Remote targets have NO assumed binaries beyond POSIX core (sh, ls, cat, cp, mv, find, …). ' +
+    'jq, python, node, rg etc. may be missing — probe first with `which <bin>` or `command -v` ' +
+    'before relying on them, or pipe a JSON post-processor through stdin on the local side. ' +
     '\n\n' +
     'Output cap: 256 KB per stream for sync results and process_log tail reads. If your command ' +
     'produces more output, write it to a file on the target (e.g. ./out.log) and use file_read ' +

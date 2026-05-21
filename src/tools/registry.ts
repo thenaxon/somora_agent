@@ -143,7 +143,13 @@ export class ToolRegistry {
   async invoke(name: string, rawInput: unknown, ctx: ToolContext): Promise<ToolResult> {
     const tool = this.tools.get(name);
     if (!tool) {
-      return { ok: false, error: `unknown tool '${name}'` };
+      // Surface up to 3 nearest registered names by edit distance so the
+      // model can recover from a hallucinated/misspelled tool name
+      // without a separate listing round-trip. Empty array (no tools
+      // registered yet) silently skips the suggestion.
+      const suggestions = nearestToolNames(name, [...this.tools.keys()], 3);
+      const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
+      return { ok: false, error: `unknown tool '${name}'.${hint}` };
     }
     if (tool.available) {
       try {
@@ -252,4 +258,49 @@ function enforceResultCap(value: unknown, cap: number): CapResult {
     truncated: true,
     originalChars: json.length,
   };
+}
+
+/** Levenshtein distance between two strings — small implementation, no deps. */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+  const m = a.length;
+  const n = b.length;
+  // Rolling 1-D buffer; we only need the previous row.
+  let prev = new Array<number>(n + 1);
+  let curr = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j]! + 1, // deletion
+        curr[j - 1]! + 1, // insertion
+        prev[j - 1]! + cost, // substitution
+      );
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n]!;
+}
+
+/**
+ * Top-N nearest names by edit distance. Filters out matches that are
+ * "too far" — for an unknown tool 'gog', returning 'memory_get' as a
+ * suggestion is worse than returning nothing.
+ */
+function nearestToolNames(query: string, candidates: string[], n: number): string[] {
+  const q = query.toLowerCase();
+  const scored = candidates.map((c) => ({ name: c, d: editDistance(q, c.toLowerCase()) }));
+  // Cap suggestions to edits ≤ half the query length (rounded up), but
+  // never less than 3 for very short queries. Keeps 'gog' from matching
+  // 'memory_get' (distance 7) while still allowing 'wb_fetch' → 'web_fetch'.
+  const cutoff = Math.max(3, Math.ceil(q.length / 2));
+  return scored
+    .filter((s) => s.d <= cutoff)
+    .sort((a, b) => a.d - b.d || a.name.localeCompare(b.name))
+    .slice(0, n)
+    .map((s) => s.name);
 }

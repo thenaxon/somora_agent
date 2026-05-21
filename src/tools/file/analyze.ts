@@ -19,6 +19,7 @@ import { resolveAnyRef, type ResolvedModel } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { loadAttachment } from '../../multimodal/load.ts';
 import { toOpenAiContent } from '../../multimodal/blocks.ts';
+import { checkReadAllowed, realpathSafeAncestor, resolveLocalPath } from './policy.ts';
 import type { ToolDefinition } from '../types.ts';
 
 const AnalyzeInput = z
@@ -98,9 +99,35 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
     required: ['path'],
     additionalProperties: false,
   },
+  // Self-gate: hide the tool entirely when no vision worker is
+  // configured. Otherwise the model sees `analyze_file` in its toolbox,
+  // burns a turn calling it, and gets a "no vision worker configured"
+  // error every single time. Same pattern as projects/wiki self-gating
+  // (see [[feedback_opt_in_features_three_gates]]).
+  available: (ctx) => Boolean(ctx.config.vision?.worker),
   defaultTimeoutMs: 120_000,
   async handler(input, ctx): Promise<AnalyzeOutput> {
-    const att = await loadAttachment(input.path);
+    // Resolve the path through the same pipeline file_read uses: expand
+    // `~/`, resolve workspace-relative against the agent's workspace,
+    // and apply the read-blacklist + realpath ancestor check. Without
+    // this, `analyze_file` was the lone file-touching tool that ignored
+    // the policy layer — it could see paths file_read would block.
+    const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config);
+    const policy = checkReadAllowed(absolute);
+    if (!policy.ok) throw new Error(policy.reason);
+    const real = await realpathSafeAncestor(absolute);
+    const policyReal = checkReadAllowed(real);
+    if (!policyReal.ok) throw new Error(policyReal.reason);
+    let att;
+    try {
+      att = await loadAttachment(absolute);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === 'ENOENT') {
+        throw new Error(`analyze_file: file_not_found at '${absolute}'`);
+      }
+      throw err;
+    }
     if (att.mime.kind !== 'image' && att.mime.kind !== 'pdf') {
       throw new Error(
         `analyze_file: '${input.path}' is ${att.mime.kind} (${att.mime.mimeType}); ` +

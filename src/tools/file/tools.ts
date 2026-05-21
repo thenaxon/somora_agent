@@ -148,7 +148,11 @@ const ReadInput = z
       .int()
       .min(1)
       .optional()
-      .describe('Max number of lines to return. Combine with offset for pagination.'),
+      .describe(
+        'Max number of LINES to return (not bytes). Omit to read the whole file up to ' +
+          'the 200k-char byte cap. When the result truncates, the response includes ' +
+          '`next_offset` — pass that as `offset` on the next call to continue paging.',
+      ),
   })
   .strict();
 
@@ -181,7 +185,12 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
       path: { type: 'string', description: 'File path (relative to workspace, or absolute).' },
       target: { type: 'string', description: 'local (default) or a resource name from resource_list.', default: 'local' },
       offset: { type: 'integer', minimum: 0, description: 'Skip the first N lines (0-indexed).' },
-      limit: { type: 'integer', minimum: 1, description: 'Max lines to return.' },
+      limit: {
+        type: 'integer',
+        minimum: 1,
+        description:
+          'Max LINES (not bytes). Omit for whole file up to 200k chars. When the response is truncated, use the returned `next_offset` to page.',
+      },
     },
     required: ['path'],
     additionalProperties: false,
