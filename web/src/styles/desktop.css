@@ -374,7 +374,14 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   color: var(--text-2);
   text-align: right;
 }
-.taskbar-stat b { color: var(--text-0); font-weight: 500; }
+.taskbar-stat b {
+  color: var(--text-0);
+  font-weight: 500;
+  display: inline-block;
+  min-width: 4ch; /* reserves room for "100%" so 1/2/3-digit values don't reflow the row */
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
 .taskbar-clock {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
