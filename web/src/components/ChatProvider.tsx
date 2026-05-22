@@ -594,14 +594,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       es.addEventListener('user_message', (ev) => {
         bump();
-        const d = parse<{ text: string; ts: number; from_agent?: string }>(ev as MessageEvent);
+        const d = parse<{
+          text: string;
+          ts: number;
+          from_agent?: string;
+          from_system?: 'sentinel';
+        }>(ev as MessageEvent);
         if (!d) return;
         // Dedupe self-send echo: if this exact text sits in our
         // pending-self-sends set for this session, the optimistic
         // local-user message already represents it. Drop the echo
         // and consume the pending entry so a real second send of
         // the same text down the line still echoes properly.
-        if (!d.from_agent) {
+        if (!d.from_agent && !d.from_system) {
           const pending = pendingSelfSendsRef.current.get(key) ?? [];
           const idx = pending.indexOf(d.text);
           if (idx >= 0) {
@@ -616,6 +621,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           ts: d.ts ?? Date.now(),
           text: d.text,
           ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
+          ...(d.from_system ? { fromSystem: d.from_system } : {}),
         });
       });
     },
@@ -1003,6 +1009,7 @@ function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
         ts: e.ts,
         text: e.text,
         ...(e.from_agent ? { fromAgent: e.from_agent } : {}),
+        ...(e.from_system ? { fromSystem: e.from_system } : {}),
         ...(e.attachments && e.attachments.length > 0
           ? {
               attachments: e.attachments.map((a) => ({

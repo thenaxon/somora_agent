@@ -3,20 +3,27 @@
 // alone). All chat-stream state is passed in from MobileApp — no
 // SSE-owning hook here, to keep the subscription single per active agent.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { ChatMessage } from '../hooks/useChatStream';
+import type { AgentInfo } from '../hooks/useAgents';
+import { resolveAgentColor } from '../hooks/agentColors';
 
 interface Props {
   agent: string;
   messages: ChatMessage[];
   streaming: boolean;
   connectionError: string | null;
+  /** Full agent registry — used to resolve sender color+icon for
+   *  A2A inbound (msg.fromAgent) AND the active agent's own color+
+   *  icon for outgoing/agent bubbles. Mobile mirrors web's per-
+   *  agent coloring instead of the older uniform `--bg-2`. */
+  agents: AgentInfo[];
 }
 
-export function ChatArea({ agent, messages, streaming, connectionError }: Props) {
+export function ChatArea({ agent, messages, streaming, connectionError, agents }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
 
@@ -42,6 +49,21 @@ export function ChatArea({ agent, messages, streaming, connectionError }: Props)
     });
   }, [messages]);
 
+  // Lookup table: agent name → resolved color + icon. Used for
+  // both the active agent's own bubbles AND A2A peer inbounds.
+  const agentLookup = useMemo(() => {
+    const m = new Map<string, { color: string; icon?: string }>();
+    for (const a of agents) {
+      m.set(a.name, {
+        color: resolveAgentColor(a),
+        ...(a.icon ? { icon: a.icon } : {}),
+      });
+    }
+    return m;
+  }, [agents]);
+
+  const activeAgentInfo = agentLookup.get(agent);
+
   return (
     <>
       {connectionError && <div className="banner info">{connectionError}</div>}
@@ -52,34 +74,13 @@ export function ChatArea({ agent, messages, streaming, connectionError }: Props)
           </div>
         )}
         {messages.map((m) => (
-          <div key={m.id} className={`msg-row ${m.role}`}>
-            <div className={`msg-bubble ${m.role}`}>
-              {m.role === 'agent' ? (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeHighlight]}
-                  components={{
-                    a: ({ href, children }) => (
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        draggable={false}
-                      >
-                        {children}
-                      </a>
-                    ),
-                  }}
-                >
-                  {m.text}
-                </ReactMarkdown>
-              ) : (
-                m.text
-              )}
-              {m.streaming && <span className="msg-streaming-cursor" />}
-              {m.role === 'agent' && m.audio && <PlayAudioButton url={m.audio.url} />}
-            </div>
-          </div>
+          <MobileMessage
+            key={m.id}
+            msg={m}
+            activeAgentColor={activeAgentInfo?.color}
+            {...(activeAgentInfo?.icon ? { activeAgentIcon: activeAgentInfo.icon } : {})}
+            agentLookup={agentLookup}
+          />
         ))}
         {/* Typing-indicator: shown when the server is working but the
             agent hasn't started emitting text yet (model thinking,
@@ -88,7 +89,17 @@ export function ChatArea({ agent, messages, streaming, connectionError }: Props)
             takes over. Three-dot animation lives in styles.css. */}
         {streaming && !messages.some((m) => m.role === 'agent' && m.streaming) && (
           <div className="msg-row agent" aria-live="polite">
-            <div className="msg-bubble agent typing-indicator">
+            <div
+              className="msg-bubble agent typing-indicator"
+              style={
+                activeAgentInfo?.color
+                  ? {
+                      background: `${activeAgentInfo.color}1f`,
+                      borderColor: `${activeAgentInfo.color}30`,
+                    }
+                  : undefined
+              }
+            >
               <span className="typing-dot" />
               <span className="typing-dot" />
               <span className="typing-dot" />
@@ -98,6 +109,139 @@ export function ChatArea({ agent, messages, streaming, connectionError }: Props)
       </div>
     </>
   );
+}
+
+interface MobileMessageProps {
+  msg: ChatMessage;
+  activeAgentColor?: string;
+  activeAgentIcon?: string;
+  agentLookup: ReadonlyMap<string, { color: string; icon?: string }>;
+}
+
+// One row in the chat scroll. Handles four visual variants:
+//   - sentinel divider (centered, system styling, Bell icon)
+//   - peer-agent inbound (right side, sender's color+icon)
+//   - user (right side, neutral — same look as before)
+//   - assistant (left side, active agent's color+icon)
+function MobileMessage({
+  msg,
+  activeAgentColor,
+  activeAgentIcon,
+  agentLookup,
+}: MobileMessageProps) {
+  if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
+    return <SentinelDivider text={msg.text} ts={msg.ts} />;
+  }
+  const isPeer = msg.role === 'user' && !!msg.fromAgent;
+  const peer = isPeer && msg.fromAgent ? agentLookup.get(msg.fromAgent) : undefined;
+  const isAgent = msg.role === 'agent';
+
+  const variant: string = isPeer ? 'peer-agent' : msg.role;
+  const bubbleStyle: React.CSSProperties = {};
+  if (isPeer && peer) {
+    bubbleStyle.background = `${peer.color}1f`;
+    bubbleStyle.borderColor = `${peer.color}30`;
+  } else if (isAgent && activeAgentColor) {
+    bubbleStyle.background = `${activeAgentColor}1f`;
+    bubbleStyle.borderColor = `${activeAgentColor}30`;
+  }
+
+  const avatarColor = isPeer ? peer?.color : activeAgentColor;
+  const avatarIcon = isPeer ? peer?.icon : activeAgentIcon;
+
+  return (
+    <div className={`msg-row ${variant}`}>
+      {(isPeer || isAgent) && (
+        <span
+          className="msg-avatar"
+          style={
+            avatarColor
+              ? { background: `linear-gradient(135deg, ${avatarColor}, ${avatarColor}88)` }
+              : undefined
+          }
+        >
+          {avatarIcon ?? '🤖'}
+        </span>
+      )}
+      <div className="msg-col">
+        <div className={`msg-bubble ${variant}`} style={bubbleStyle}>
+          {isAgent ? (
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={{
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    draggable={false}
+                  >
+                    {children}
+                  </a>
+                ),
+              }}
+            >
+              {msg.text}
+            </ReactMarkdown>
+          ) : (
+            msg.text
+          )}
+          {isAgent && msg.streaming && <span className="msg-streaming-cursor" />}
+          {isAgent && msg.audio && <PlayAudioButton url={msg.audio.url} />}
+        </div>
+        <span className="msg-time">{formatMobileTime(msg.ts)}</span>
+      </div>
+    </div>
+  );
+}
+
+// Centered system-trigger divider. Same visual language as the web's
+// SentinelDivider — a thin rule with the Bell glyph + trigger name +
+// time. No bubble, since this wasn't sent by a person or an agent.
+function SentinelDivider({ text, ts }: { text: string; ts: number }) {
+  const name = summarizeSentinelTriggerText(text);
+  const time = formatMobileTime(ts);
+  return (
+    <div className="sentinel-divider" aria-label="Sentinel trigger">
+      <span className="sentinel-rule" />
+      <span className="sentinel-body">
+        <span className="sentinel-icon" aria-hidden="true">🔔</span>
+        <span className="sentinel-label">Sentinel</span>
+        {name && (
+          <>
+            <span className="sentinel-sep">·</span>
+            <span className="sentinel-name">{name}</span>
+          </>
+        )}
+        <span className="sentinel-sep">·</span>
+        <span className="sentinel-time">{time}</span>
+      </span>
+      <span className="sentinel-rule" />
+    </div>
+  );
+}
+
+function summarizeSentinelTriggerText(text: string): string {
+  const match = text.match(/^name:\s*(.+)$/im);
+  if (match && match[1]) return match[1].trim();
+  return '';
+}
+
+function formatMobileTime(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (sameDay) return `${hh}:${mm}`;
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}.${mo}. ${hh}:${mm}`;
 }
 
 // Per-bubble Play-button for agent turns that have a server-generated

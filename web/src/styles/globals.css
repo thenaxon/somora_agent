@@ -173,20 +173,23 @@ body {
   --pin-accent-line: rgba(250, 204, 21, 0.3);
 }
 
-/* Bubble action buttons (copy + pin) — hover-revealed cluster in the
- * top-right corner of an assistant bubble. Position: absolute inside
- * .chat-msg-bubble (which is set to position: relative inline). */
+/* Bubble action buttons (copy + pin) — hover-revealed cluster ABOVE
+ * the bubble, right-aligned at the bubble's right edge. Lives as a
+ * sibling of the bubble inside `.chat-msg-meta-col` so it never
+ * overlaps the bubble's text content. The hover-zone is the whole
+ * `.chat-msg-row` so the cursor can travel from the bubble up to
+ * the buttons without the cluster flickering away. */
 .bubble-actions {
-  position: absolute;
-  top: 4px;
-  right: 4px;
   display: flex;
   gap: 2px;
+  height: 18px;
+  align-self: flex-end;
+  margin-bottom: 2px;
   opacity: 0;
   transition: opacity 0.15s;
   pointer-events: none;
 }
-.chat-msg-bubble:hover > .bubble-actions {
+.chat-msg-row:hover .bubble-actions {
   opacity: 1;
   pointer-events: auto;
 }

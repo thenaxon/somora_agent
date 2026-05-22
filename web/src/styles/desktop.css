@@ -636,6 +636,99 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   color: var(--text-0);
 }
 
+/* New per-message wrapper (.chat-msg-row) introduced with the A2A
+ * pass: column-layout container that holds the avatar+bubble row,
+ * the hover-only action cluster ABOVE the bubble, and the always-on
+ * timestamp BELOW. The bubble's own max-width: 75% moves up to the
+ * meta-col so the timestamp/actions naturally align to the bubble's
+ * right edge regardless of left/right alignment. */
+.chat-msg-row { display: block; }
+.chat-msg-row .chat-msg { display: flex; gap: 10px; align-items: flex-start; }
+.chat-msg-row.user .chat-msg,
+.chat-msg-row.peer-agent .chat-msg {
+  flex-direction: row-reverse;
+}
+.chat-msg-meta-col {
+  display: flex;
+  flex-direction: column;
+  max-width: 75%;
+  min-width: 0;
+  align-items: stretch;
+}
+/* Inside the new column the bubble doesn't enforce its own 75% cap
+ * anymore — the column does. Without this the bubble's own 75% rule
+ * compounds with the col's 75% and yields ~56% effective max. */
+.chat-msg-meta-col > .chat-msg-bubble {
+  max-width: 100%;
+}
+/* Variant tints that used to live on .chat-msg.{variant} — the
+ * variant class moved up to .chat-msg-row, so re-scope. */
+.chat-msg-row.agent .chat-msg-bubble {
+  background: var(--agent-tint-strong, var(--bg-2));
+  border-color: var(--agent-line, var(--line));
+}
+.chat-msg-row.user .chat-msg-bubble {
+  background: rgba(255,255,255,0.04);
+  border-color: var(--line-2);
+  color: var(--text-0);
+}
+/* Peer-agent (A2A inbound) bubble: base neutral; inline style on
+ * the element overrides with the SENDER agent's color tint —
+ * `${color}1f` background, `${color}30` border. Visual goal: looks
+ * like an assistant bubble (it IS an agent talking), but positioned
+ * on the right because it's INCOMING to this session. */
+.chat-msg-row.peer-agent .chat-msg-bubble {
+  background: var(--bg-2);
+  border-color: var(--line);
+  color: var(--text-0);
+}
+/* Always-on timestamp below the bubble, right-aligned at the
+ * bubble's right edge (= col's right edge). */
+.chat-msg-time {
+  align-self: flex-end;
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 3px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Sentinel system-trigger divider — centered horizontal rule with
+ * the Bell icon (same lucide glyph as AppDock's Sentinel app) so
+ * users recognize a sentinel-fired turn at a glance. Not a bubble:
+ * the inbound was synthesized by the trigger runtime, not typed by
+ * a person or sent by a peer agent. */
+.sentinel-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  margin: 6px 0;
+  user-select: text;
+}
+.sentinel-divider-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line-2);
+}
+.sentinel-divider-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 0 4px;
+}
+.sentinel-divider-label {
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+.sentinel-divider-name { color: var(--text-2); }
+.sentinel-divider-time { color: var(--text-3); }
+.sentinel-divider-sep { color: var(--line-2); }
+
 /* Tailwind preflight (@tailwind base in globals.css) strips browser
  * anchor styling (`a { color: inherit; text-decoration: inherit }`),
  * so without an explicit rule a Markdown link inside an assistant

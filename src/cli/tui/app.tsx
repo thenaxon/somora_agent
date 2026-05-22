@@ -257,6 +257,7 @@ export function App({
           id: nid(),
           text: ev.text,
           ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
+          ...(ev.from_system ? { fromSystem: ev.from_system } : {}),
         });
       } else if (ev.kind === 'assistant_message' && typeof ev.text === 'string') {
         out.push({ kind: 'agent', id: nid(), text: ev.text });
@@ -470,7 +471,7 @@ export function App({
         // Echoes from OTHER clients (a web tab on the same session)
         // pass through with no pending match and render as normal
         // user turns.
-        if (!ev.fromAgent) {
+        if (!ev.fromAgent && !ev.fromSystem) {
           const pending = pendingSelfSendsRef.current;
           const idx = pending.indexOf(ev.text);
           if (idx >= 0) {
@@ -483,6 +484,7 @@ export function App({
           id: nextId(),
           text: ev.text,
           ...(ev.fromAgent ? { fromAgent: ev.fromAgent } : {}),
+          ...(ev.fromSystem ? { fromSystem: ev.fromSystem } : {}),
         });
         return;
       }

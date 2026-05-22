@@ -35,7 +35,13 @@ export function TurnView({
 }) {
   switch (turn.kind) {
     case 'user':
-      return <UserTurn text={turn.text} fromAgent={turn.fromAgent} />;
+      return (
+        <UserTurn
+          text={turn.text}
+          {...(turn.fromAgent ? { fromAgent: turn.fromAgent } : {})}
+          {...(turn.fromSystem ? { fromSystem: turn.fromSystem } : {})}
+        />
+      );
     case 'agent':
       return <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
     case 'tool':
@@ -65,7 +71,35 @@ export function TurnView({
   }
 }
 
-function UserTurn({ text, fromAgent }: { text: string; fromAgent?: string }) {
+function UserTurn({
+  text,
+  fromAgent,
+  fromSystem,
+}: {
+  text: string;
+  fromAgent?: string;
+  fromSystem?: 'sentinel';
+}) {
+  // Sentinel inbound: synthesized system trigger, not a real user
+  // message. Render as a one-line system notice with the bell glyph
+  // + trigger name so it's clearly distinguishable from human and
+  // peer-agent turns in scrollback.
+  if (fromSystem === 'sentinel') {
+    const name = summarizeSentinelTriggerText(text);
+    return (
+      <Box marginTop={1}>
+        <Text color="gray" bold>
+          {'🔔 sentinel'}
+        </Text>
+        {name ? (
+          <>
+            <Text color="gray"> · </Text>
+            <Text color="gray">{name}</Text>
+          </>
+        ) : null}
+      </Box>
+    );
+  }
   // A2A inbound (fromAgent set) renders with the sender's name as a
   // cyan tag and a "↬" arrow so it's visually distinct from a turn the
   // local human just typed. Same line height, similar weight — keeps
@@ -90,6 +124,16 @@ function UserTurn({ text, fromAgent }: { text: string; fromAgent?: string }) {
       <Text>{text}</Text>
     </Box>
   );
+}
+
+// Pulls the trigger name out of the dispatcher's `buildFirePrompt`
+// header block so the TUI can show one-line context next to the
+// 🔔 marker instead of dumping the whole [Sentinel trigger fired]…
+// block into scrollback.
+function summarizeSentinelTriggerText(text: string): string {
+  const match = text.match(/^name:\s*(.+)$/im);
+  if (match && match[1]) return match[1].trim();
+  return '';
 }
 
 function AgentTurn({

@@ -24,6 +24,21 @@ export type NormalizedEvent =
        */
       from_agent?: string;
       /**
+       * Marks a user_message that was synthesized by an internal
+       * subsystem rather than typed by a human or sent by a peer
+       * agent. Today only `'sentinel'` (the trigger runtime) sets
+       * this — when a sentinel-trigger fires, the dispatcher injects
+       * a `[Sentinel trigger fired]…` prompt as the turn's text, and
+       * this marker lets clients render the inbound as a centered
+       * system divider instead of a regular user-bubble.
+       *
+       * Note: from_agent and from_system are mutually exclusive — an
+       * inbound is either A2A (from another agent) OR system
+       * (synthesized by an internal subsystem) OR neither (human
+       * user). The renderer picks the bubble class in that order.
+       */
+      from_system?: 'sentinel';
+      /**
        * Correlation UUID for an `agent_ask` round-trip. Persisted on
        * BOTH sides: on the caller's side as a tool_call → tool_result
        * pair (the call_id is in the tool_call payload), and on the
@@ -254,6 +269,10 @@ export type SseEvent =
         /** Set only when the message came from another agent
          *  (A2A). Self-typed user turns omit it. */
         from_agent?: string;
+        /** Set only when the inbound was synthesized by an internal
+         *  subsystem (today: 'sentinel'). Clients render the message
+         *  as a centered system divider. */
+        from_system?: 'sentinel';
         agent_ask_call_id?: string;
       };
     }

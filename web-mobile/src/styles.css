@@ -238,13 +238,51 @@ button { cursor: pointer; }
 
 .msg-row {
   display: flex;
-  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
 }
-.msg-row.user { align-items: flex-end; }
-.msg-row.agent { align-items: flex-start; }
+.msg-row.user { justify-content: flex-end; }
+.msg-row.peer-agent { flex-direction: row-reverse; justify-content: flex-start; }
+.msg-row.agent { justify-content: flex-start; }
+
+/* Per-agent avatar shown next to peer-agent + agent bubbles. User
+ * bubbles keep the avatar-less look from before (the uniform user-
+ * identity is implicit — the human is on the other side of the
+ * screen). */
+.msg-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  margin-top: 2px;
+}
+
+/* Column holding the bubble + timestamp, sized to bubble width so
+ * the timestamp aligns to the bubble's right edge regardless of
+ * left/right row direction. */
+.msg-col {
+  display: flex;
+  flex-direction: column;
+  max-width: 86%;
+  min-width: 0;
+}
+.msg-row.user .msg-col,
+.msg-row.peer-agent .msg-col {
+  align-items: flex-end;
+}
+.msg-row.agent .msg-col {
+  align-items: flex-start;
+}
 
 .msg-bubble {
-  max-width: 86%;
+  max-width: 100%;
   padding: 8px 12px;
   border-radius: 12px;
   line-height: 1.45;
@@ -259,11 +297,67 @@ button { cursor: pointer; }
   border: 1px solid var(--line-2);
   border-top-right-radius: 4px;
 }
+.msg-bubble.peer-agent {
+  /* Base; inline style on the element overrides with the SENDER
+   * agent's color tint — `${color}1f` background, `${color}30`
+   * border. Visual goal: looks like an agent bubble, positioned
+   * on the right because it's INCOMING from a peer agent. */
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-top-right-radius: 4px;
+}
 .msg-bubble.agent {
+  /* Base; inline style on the element overrides with the active
+   * agent's color tint so mobile gets the same per-agent coloring
+   * as the web (previously uniform `--bg-2`). */
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-top-left-radius: 4px;
 }
+
+/* Always-on timestamp below every bubble, aligned to the bubble's
+ * right edge (= the col's right edge via align-items above). */
+.msg-time {
+  font-size: 10px;
+  color: var(--text-3);
+  margin-top: 3px;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Sentinel system-trigger divider — centered horizontal rule with
+ * the bell glyph + trigger name + time. Same visual language as
+ * the web's SentinelDivider so users see one consistent system-
+ * event style across surfaces. */
+.sentinel-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 11px;
+  margin: 6px 0;
+}
+.sentinel-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--line-2);
+}
+.sentinel-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 0 4px;
+}
+.sentinel-label {
+  font-weight: 600;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+.sentinel-name { color: var(--text-2); }
+.sentinel-time { color: var(--text-3); }
+.sentinel-sep { color: var(--line-2); }
 .msg-bubble p { margin: 0 0 6px 0; }
 .msg-bubble p:last-child { margin-bottom: 0; }
 .msg-bubble pre {

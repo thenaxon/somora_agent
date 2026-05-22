@@ -150,6 +150,13 @@ export interface RunChatTurnArgs {
   /** A2A: when set, this turn was authored by another agent, not by the
    *  human user. Persists in user_message.from_agent. */
   fromAgent?: string;
+  /** Synthesized inbound marker: when set, this turn's text was
+   *  produced by an internal subsystem (today only 'sentinel' — the
+   *  trigger runtime injecting a `[Sentinel trigger fired]…` prompt).
+   *  Persists in user_message.from_system and on the SSE event, so
+   *  clients render the message as a centered system divider rather
+   *  than a normal user-bubble. Mutually exclusive with fromAgent. */
+  fromSystem?: 'sentinel';
   /** A2A correlation UUID. Persisted on user_message.agent_ask_call_id;
    *  surfaced in the SSE user_message event so a human watching the
    *  session sees the inbound message appear in real time. */
@@ -292,6 +299,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     session,
     text,
     fromAgent,
+    fromSystem,
     agentAskCallId,
     subagentDepth = 0,
     modelOverride,
@@ -504,6 +512,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     engine: engine.name,
     text,
     ...(fromAgent ? { from_agent: fromAgent } : {}),
+    ...(fromSystem ? { from_system: fromSystem } : {}),
     ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
     ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
@@ -525,6 +534,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         text,
         ts: Date.now(),
         ...(fromAgent ? { from_agent: fromAgent } : {}),
+        ...(fromSystem ? { from_system: fromSystem } : {}),
         ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
       },
     });

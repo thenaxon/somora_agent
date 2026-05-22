@@ -366,6 +366,7 @@ export async function fireTrigger(
         session,
         text: prompt,
         turnId: taskId,
+        fromSystem: 'sentinel',
         deps,
         ...(publishSse ? { publishSse: publishSse as never } : {}),
       });

@@ -17,6 +17,7 @@ import {
 import { api, type AgentInfo, type AttachmentRef } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
 import { useSessionInfo } from '../hooks/useSessionInfo';
+import { useAgents } from '../hooks/useAgents';
 import { useChatSessionFromContext } from './ChatProvider';
 import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
@@ -64,6 +65,20 @@ export function ChatWindow({
   const color = resolveAgentColor(agent);
   const { model, thinking, refresh: refreshSessionInfo } = useSessionInfo(agent.name, sessionId);
   const chat = useChatSessionFromContext(agent.name, sessionId);
+  // Agent registry — used to resolve sender color+icon for A2A
+  // inbound (user_message.from_agent). Single fetch shared with the
+  // dock; useAgents memoizes inside.
+  const { agents: allAgents } = useAgents();
+  const peerAgents = useMemo(() => {
+    const m = new Map<string, { color: string; icon?: string }>();
+    for (const a of allAgents) {
+      m.set(a.name, {
+        color: resolveAgentColor(a),
+        ...(a.icon ? { icon: a.icon } : {}),
+      });
+    }
+    return m;
+  }, [allAgents]);
   // Tools-toggle persists per agent::session — a reload restores
   // whatever state the user last clicked into. localStorage key is
   // scoped so each chat-window remembers its own preference.
@@ -975,6 +990,7 @@ export function ChatWindow({
                 msg={m}
                 agentColor={color}
                 agentIcon={agent.icon}
+                peerAgents={peerAgents}
                 isPinned={isPinned}
                 {...(onPinClick ? { onPinClick } : {})}
               />

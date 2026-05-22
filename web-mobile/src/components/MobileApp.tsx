@@ -159,6 +159,7 @@ export function MobileApp() {
         <>
           <ChatArea
             agent={activeAgent}
+            agents={agents}
             messages={chat.messages}
             connectionError={chat.connectionError}
             streaming={chat.streaming}

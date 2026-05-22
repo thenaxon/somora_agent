@@ -54,6 +54,10 @@ export type ChatMessage =
       ts: number;
       text: string;
       fromAgent?: string;
+      /** Marks an inbound that the server synthesized via an internal
+       *  subsystem (today: 'sentinel'). Renderer draws a centered
+       *  system divider instead of a user-bubble. */
+      fromSystem?: 'sentinel';
       attachments?: AttachmentDisplay[];
     }
   | {
@@ -135,7 +139,12 @@ export type StreamEvent =
     }
   | {
       event: 'user_message';
-      data: { text: string; ts: number; from_agent?: string };
+      data: {
+        text: string;
+        ts: number;
+        from_agent?: string;
+        from_system?: 'sentinel';
+      };
     }
   | {
       event: 'assistant_audio';

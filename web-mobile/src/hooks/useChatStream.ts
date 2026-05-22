@@ -29,6 +29,13 @@ export interface ChatMessage {
   ts: number;
   /** True while the agent's response is still streaming. */
   streaming?: boolean;
+  /** A2A: name of the peer agent that wrote this inbound. Renderer
+   *  swaps the user-bubble for a peer-agent bubble in the sender's
+   *  color/icon. */
+  fromAgent?: string;
+  /** Synthesized inbound marker. Today: 'sentinel'. Renderer draws a
+   *  centered system divider instead of a user-bubble. */
+  fromSystem?: 'sentinel';
   /** Voice: optional TTS audio URL produced for this turn. Set when an
    *  `assistant_audio` SSE event arrived after the message; drives the
    *  Play-button on the agent bubble. */
@@ -40,6 +47,8 @@ interface HistoryEvent {
   ts?: number;
   text?: string;
   turnId?: string;
+  from_agent?: string;
+  from_system?: 'sentinel';
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
 }
 
@@ -248,6 +257,31 @@ export function useChatStream(agent: string | null): ChatStream {
       audioListenersRef.current.forEach((fn) => fn(audio.url));
     };
 
+    const onUserMessage = (e: MessageEvent) => {
+      bump();
+      let d:
+        | { text?: string; ts?: number; from_agent?: string; from_system?: 'sentinel' }
+        | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.text !== 'string') return;
+      // Self-typed turns are optimistically appended at send-time
+      // (see `send` below) — drop the server echo to avoid dupes.
+      // A2A and sentinel inbounds carry from_agent / from_system; let
+      // those through.
+      if (!d.from_agent && !d.from_system) return;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: newId('um'),
+          role: 'user',
+          ts: d!.ts ?? Date.now(),
+          text: d!.text!,
+          ...(d!.from_agent ? { fromAgent: d!.from_agent } : {}),
+          ...(d!.from_system ? { fromSystem: d!.from_system } : {}),
+        },
+      ]);
+    };
+
     es.addEventListener('open', onOpen);
     es.addEventListener('error', onError);
     es.addEventListener('heartbeat', onHeartbeat);
@@ -255,6 +289,7 @@ export function useChatStream(agent: string | null): ChatStream {
     es.addEventListener('agent', onAgent);
     es.addEventListener('status', onStatus);
     es.addEventListener('assistant_audio', onAssistantAudio);
+    es.addEventListener('user_message', onUserMessage);
 
     return () => {
       cancelled = true;
@@ -353,6 +388,8 @@ function eventToMessage(ev: HistoryEvent): ChatMessage | null {
       role: 'user',
       text: ev.text ?? '',
       ts: ev.ts ?? 0,
+      ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
+      ...(ev.from_system ? { fromSystem: ev.from_system } : {}),
     };
   }
   if (ev.kind === 'assistant_message') {

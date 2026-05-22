@@ -2,15 +2,17 @@
 // re-renders only the streaming-tail when chat-delta events arrive
 // — older messages keep their identity, React skips them.
 //
-// Roles:
-//   user           — bubble right, plain text
-//   assistant      — bubble left, markdown content + streaming cursor
-//   tool_call      — collapsible tool-call block (full width)
-//   tool_result    — collapsible tool-result block (full width)
-//   memory_inject  — inline `◇ memory · N hits · refs…` line (TUI-style)
+// Variants (after the A2A/sentinel pass):
+//   user            — neutral bubble right, plain text
+//   peer-agent      — A2A inbound: bubble right, sender's color+icon
+//                     (looked up via `peerAgents` prop)
+//   sentinel        — system-trigger inbound: centered divider
+//   assistant       — bubble left, markdown content + streaming cursor
+//   tool_call/...   — block forms, no bubble
 
 import { memo, useRef, useState } from 'react';
 import {
+  Bell,
   Brain,
   Check,
   ChevronDown,
@@ -28,10 +30,20 @@ import { AssistantMarkdown } from './AssistantMarkdown';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
 import { EngineMetaBlock } from './EngineMetaBlock';
 
+interface PeerAgentInfo {
+  color: string;
+  icon?: string;
+}
+
 interface Props {
   msg: ChatMessage;
   agentColor?: string;
   agentIcon?: string;
+  /** Lookup for A2A inbound: when msg.fromAgent is set, this resolves
+   *  the sender's color+icon so the bubble carries the SENDER's
+   *  identity instead of the session-owner's. Provided by the
+   *  containing ChatWindow via the useAgents registry. */
+  peerAgents?: ReadonlyMap<string, PeerAgentInfo>;
   /** True when a pin-note window for this message is currently open. */
   isPinned?: boolean;
   /** Click handler for the pin button — toggles pin on/off. Omitted
@@ -43,6 +55,7 @@ export const MessageItem = memo(function MessageItem({
   msg,
   agentColor,
   agentIcon,
+  peerAgents,
   isPinned,
   onPinClick,
 }: Props) {
@@ -58,89 +71,196 @@ export const MessageItem = memo(function MessageItem({
   if (msg.role === 'memory_inject') {
     return <MemoryInjectLine memory={msg.memory} />;
   }
+  // Sentinel system-trigger: centered divider, not a bubble. Same
+  // `<Bell />` icon the AppDock uses for the Sentinel app so the
+  // visual language matches across the UI.
+  if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
+    return <SentinelDivider text={msg.text} ts={msg.ts} />;
+  }
+
+  const isPeer = msg.role === 'user' && !!msg.fromAgent;
+  const peer = isPeer && msg.fromAgent ? peerAgents?.get(msg.fromAgent) : undefined;
+
   if (msg.role === 'user') {
+    // User OR peer-agent inbound — both right-aligned. Distinction
+    // is purely visual: peer gets sender-color+icon and an
+    // assistant-style bubble background; plain user keeps the
+    // neutral look from before.
+    const peerColor = peer?.color;
+    const peerIcon = peer?.icon;
     return (
-      <div className="chat-msg user">
+      <div className={`chat-msg-row ${isPeer ? 'peer-agent' : 'user'}`}>
+        <div className="chat-msg">
+          <div
+            className="chat-msg-avatar"
+            style={
+              isPeer && peerColor
+                ? {
+                    background: `linear-gradient(135deg, ${peerColor}, ${peerColor}88)`,
+                    fontSize: 14,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }
+                : {
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }
+            }
+          >
+            {isPeer ? (peerIcon ?? '🤖') : <User size={12} />}
+          </div>
+          <div className="chat-msg-meta-col">
+            {msg.text && (
+              <BubbleActions text={msg.text} isPinned={false} />
+            )}
+            <div
+              className={`chat-msg-bubble ${isPeer ? 'peer-bubble' : ''}`}
+              style={
+                isPeer && peerColor
+                  ? {
+                      whiteSpace: 'pre-wrap',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: msg.attachments && msg.attachments.length > 0 ? 6 : 0,
+                      background: `${peerColor}1f`,
+                      borderColor: `${peerColor}30`,
+                    }
+                  : {
+                      whiteSpace: 'pre-wrap',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: msg.attachments && msg.attachments.length > 0 ? 6 : 0,
+                    }
+              }
+            >
+              {msg.attachments && msg.attachments.length > 0 && (
+                <UserAttachmentRow attachments={msg.attachments} />
+              )}
+              {msg.text && <span>{msg.text}</span>}
+            </div>
+            <BubbleTimestamp ts={msg.ts} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  // assistant — left-aligned bubble.
+  const showActions = !msg.streaming && !!msg.text;
+  return (
+    <div className="chat-msg-row agent">
+      <div className="chat-msg">
         <div
           className="chat-msg-avatar"
           style={{
+            background: agentColor
+              ? `linear-gradient(135deg, ${agentColor}, ${agentColor}88)`
+              : 'var(--bg-3)',
+            fontSize: 14,
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <User size={12} />
+          {agentIcon ?? '🤖'}
         </div>
-        <div
-          className="chat-msg-bubble"
-          style={{
-            whiteSpace: 'pre-wrap',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: msg.attachments && msg.attachments.length > 0 ? 6 : 0,
-          }}
-        >
-          {msg.attachments && msg.attachments.length > 0 && (
-            <UserAttachmentRow attachments={msg.attachments} />
+        <div className="chat-msg-meta-col">
+          {showActions && (
+            <BubbleActions
+              text={msg.text ?? ''}
+              isPinned={!!isPinned}
+              {...(onPinClick ? { onPinClick } : {})}
+            />
           )}
-          {msg.text && <span>{msg.text}</span>}
+          <div className="chat-msg-bubble agent-bubble" style={{ position: 'relative' }}>
+            {msg.text ? (
+              <AssistantMarkdown content={msg.text} />
+            ) : (
+              <span style={{ color: 'var(--text-3)' }}>…</span>
+            )}
+            {msg.streaming && (
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: 6,
+                  height: 12,
+                  marginLeft: 2,
+                  verticalAlign: 'middle',
+                  background: 'var(--text-2)',
+                  animation: 'somora-cursor-blink 1s steps(1) infinite',
+                }}
+              />
+            )}
+            {msg.role === 'assistant' && msg.audio && <PlayAudioButton url={msg.audio.url} />}
+          </div>
+          <BubbleTimestamp ts={msg.ts} />
         </div>
-      </div>
-    );
-  }
-  // assistant — bubble is the direct flex child (no wrapper div).
-  // Wrapping the bubble in another div let `min-width: 0` collapse
-  // it below content size, making the bubble's `max-width: 75%`
-  // resolve against a tiny container and break short text like
-  // "Danke" mid-word. Mirrors orbit's layout pattern.
-  const showActions = !msg.streaming && !!msg.text;
-  return (
-    <div className="chat-msg agent">
-      <div
-        className="chat-msg-avatar"
-        style={{
-          background: agentColor
-            ? `linear-gradient(135deg, ${agentColor}, ${agentColor}88)`
-            : 'var(--bg-3)',
-          fontSize: 14,
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {agentIcon ?? '🤖'}
-      </div>
-      <div className="chat-msg-bubble agent-bubble" style={{ position: 'relative' }}>
-        {msg.text ? (
-          <AssistantMarkdown content={msg.text} />
-        ) : (
-          <span style={{ color: 'var(--text-3)' }}>…</span>
-        )}
-        {msg.streaming && (
-          <span
-            style={{
-              display: 'inline-block',
-              width: 6,
-              height: 12,
-              marginLeft: 2,
-              verticalAlign: 'middle',
-              background: 'var(--text-2)',
-              animation: 'somora-cursor-blink 1s steps(1) infinite',
-            }}
-          />
-        )}
-        {showActions && (
-          <BubbleActions
-            text={msg.text ?? ''}
-            isPinned={!!isPinned}
-            {...(onPinClick ? { onPinClick } : {})}
-          />
-        )}
-        {msg.role === 'assistant' && msg.audio && <PlayAudioButton url={msg.audio.url} />}
       </div>
     </div>
   );
 });
+
+// Centered system-divider for sentinel-trigger inbounds. The
+// `text` is the synthesized trigger prompt (`[Sentinel trigger
+// fired]\ntrigger_id: …\nname: …`) — we surface the first non-
+// empty line after the leading marker as a one-liner; the rest
+// stays in JSONL for forensic recall but doesn't clutter the chat.
+function SentinelDivider({ text, ts }: { text: string; ts: number }) {
+  const summary = summarizeSentinelTriggerText(text);
+  const time = formatBubbleTime(ts);
+  return (
+    <div className="sentinel-divider" aria-label="Sentinel trigger">
+      <span className="sentinel-divider-rule" />
+      <span className="sentinel-divider-body">
+        <Bell size={12} />
+        <span className="sentinel-divider-label">Sentinel</span>
+        {summary && (
+          <>
+            <span className="sentinel-divider-sep">·</span>
+            <span className="sentinel-divider-name">{summary}</span>
+          </>
+        )}
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-time">{time}</span>
+      </span>
+      <span className="sentinel-divider-rule" />
+    </div>
+  );
+}
+
+function summarizeSentinelTriggerText(text: string): string {
+  // The dispatcher's buildFirePrompt emits a header block:
+  //   [Sentinel trigger fired]
+  //   trigger_id: <id>
+  //   name: <name>
+  //   …
+  // We surface just the name as the divider label.
+  const match = text.match(/^name:\s*(.+)$/im);
+  if (match && match[1]) return match[1].trim();
+  return '';
+}
+
+function BubbleTimestamp({ ts }: { ts: number }) {
+  if (!ts) return null;
+  return <span className="chat-msg-time">{formatBubbleTime(ts)}</span>;
+}
+
+function formatBubbleTime(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const today = new Date();
+  const sameDay =
+    d.getFullYear() === today.getFullYear() &&
+    d.getMonth() === today.getMonth() &&
+    d.getDate() === today.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (sameDay) return `${hh}:${mm}`;
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  return `${dd}.${mo}. ${hh}:${mm}`;
+}
 
 // Per-bubble Play-button for assistant turns that have a pre-generated
 // TTS artifact. Rendered only when an `assistant_audio` event arrived

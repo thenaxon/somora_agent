@@ -1,8 +1,27 @@
-import { Box, Text } from 'ink';
+import { Box, Text, useStdout } from 'ink';
 import Spinner from 'ink-spinner';
-import type { ReactElement } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import type { ProjectInfo, ThinkingState, TurnStats } from './types.ts';
 import { formatTokens } from './format.ts';
+
+/**
+ * Live terminal-column count. Default-export the hook so callers stay
+ * thin. We track resize via stdout.on('resize') so the constrained
+ * Header box always matches reality after the user drags the window.
+ */
+function useTerminalCols(): number {
+  const { stdout } = useStdout();
+  const [cols, setCols] = useState<number>(stdout?.columns ?? 80);
+  useEffect(() => {
+    if (!stdout) return undefined;
+    const onResize = (): void => setCols(stdout.columns ?? 80);
+    stdout.on('resize', onResize);
+    return () => {
+      stdout.off('resize', onResize);
+    };
+  }, [stdout]);
+  return cols;
+}
 
 interface Props {
   agent: string;
@@ -44,8 +63,22 @@ export function Header({
 }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
+  // Constrain to one terminal row. Background: Ink's internal
+  // string-width measurement disagrees with terminal renderers for
+  // ZWJ-composed emojis (🕵️‍♀️, 👨‍💻 etc — multi-codepoint glyphs joined
+  // with U+200D + variation selectors). Ink may under-count cells,
+  // computes more flex-filler than the terminal can fit, the line
+  // overflows by 1 column and wraps. The terminal then has a 2-row
+  // status panel while Ink still thinks it's 1 row — cursor-up math
+  // becomes off-by-one each render and content visibly scrolls
+  // upward per keystroke as the dynamic frame leaks one row of
+  // residue per cycle. width + overflowX="hidden" forces Ink to
+  // measure the row as exactly cols wide, 1 tall, regardless of
+  // content. Worst case: rightmost item gets truncated, but the
+  // panel stays stable.
+  const cols = useTerminalCols();
   return (
-    <Box>
+    <Box width={cols} overflowX="hidden">
       <Text color="yellow" bold>
         🐨 somora{' '}
       </Text>
@@ -89,28 +122,38 @@ export function Header({
           <ProjectChip project={project} />
         </>
       ) : null}
-      <Box flexGrow={1} justifyContent="flex-end">
-        {streaming ? (
-          streamingPhase === 'pre' && stats?.thinking?.active ? (
-            // Pre-content phase + reasoning model: signal the user is
-            // *thinking*, not stuck. As soon as content tokens land the
-            // spinner switches to "streaming".
-            <Text color="cyan" bold>
-              <Spinner type="dots" /> 🧠 thinking…
-            </Text>
-          ) : (
-            <Text color="yellow" bold>
-              <Spinner type="dots" /> streaming · ESC to abort
-            </Text>
-          )
-        ) : connected ? (
-          <Text color="green">● connected</Text>
-        ) : (
-          <Text color="red" bold>
-            ● disconnected
+      {/* Connection / streaming indicator. Kept short on purpose:
+       *  previously this was `● connected` / `● disconnected` inside a
+       *  flexGrow=1 / justifyContent=flex-end Box. That right-alignment
+       *  pushed the row to terminal-width every render, and any
+       *  cell-width disagreement between Ink (string-width) and the
+       *  terminal-renderer for ZWJ-composed emojis (🕵️‍♀️, 👨‍💻 — multi-
+       *  codepoint glyphs joined with U+200D + VS16) made the row
+       *  overflow by one column and wrap. Ink kept measuring it as
+       *  1 row while the terminal showed 2, the cursor-up-by-N math
+       *  was off-by-one each render, and content visibly drifted
+       *  upward per keystroke. Two changes together kill the
+       *  failure mode: drop the right-alignment (no full-width row
+       *  computation) and drop the trailing word (no wrap pressure
+       *  at any reasonable terminal width). */}
+      <Text color="gray">{'   '}</Text>
+      {streaming ? (
+        streamingPhase === 'pre' && stats?.thinking?.active ? (
+          <Text color="cyan" bold>
+            <Spinner type="dots" /> thinking
           </Text>
-        )}
-      </Box>
+        ) : (
+          <Text color="yellow" bold>
+            <Spinner type="dots" /> streaming
+          </Text>
+        )
+      ) : connected ? (
+        <Text color="green">●</Text>
+      ) : (
+        <Text color="red" bold>
+          ●
+        </Text>
+      )}
     </Box>
   );
 }
