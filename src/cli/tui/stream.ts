@@ -215,6 +215,10 @@ export function openStream(
         return {
           kind: 'user-message',
           text: data.text,
+          // turnId is the server-issued id echoed back so a consumer
+          // that buffered a pending-queued entry can pair it now and
+          // promote the entry into a real Static-flushed user turn.
+          ...(typeof data.turnId === 'string' ? { turnId: data.turnId } : {}),
           // from_agent is optional — server now echoes self-typed
           // turns too so other clients (web tab, TUI tail) see
           // them live. Self-echoes carry no from_agent; consumer
@@ -222,6 +226,13 @@ export function openStream(
           ...(typeof data.from_agent === 'string' ? { fromAgent: data.from_agent } : {}),
           ...(data.from_system === 'sentinel' ? { fromSystem: 'sentinel' as const } : {}),
           callId: typeof data.agent_ask_call_id === 'string' ? data.agent_ask_call_id : undefined,
+        };
+      case 'turn_queued':
+        if (typeof data.turnId !== 'string' || typeof data.ahead !== 'number') return null;
+        return {
+          kind: 'turn-queued',
+          turnId: data.turnId,
+          ahead: data.ahead,
         };
       case 'project':
         return {

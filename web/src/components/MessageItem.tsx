@@ -20,9 +20,11 @@ import {
   Copy,
   FileText,
   File as FileIcon,
+  Hourglass,
   Pause,
   Pin,
   Play,
+  Square,
   User,
 } from 'lucide-react';
 import type { AttachmentDisplay, ChatMessage } from '../types/chat';
@@ -49,6 +51,10 @@ interface Props {
   /** Click handler for the pin button — toggles pin on/off. Omitted
    *  when the parent isn't wired for pinning (e.g. read-only renders). */
   onPinClick?: () => void;
+  /** Aborts the in-flight turn for this session. Wired by ChatWindow
+   *  from ChatContext.abort. When set, a streaming assistant-bubble
+   *  shows a Stop button in place of pin/copy. */
+  onAbort?: () => void;
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -58,6 +64,7 @@ export const MessageItem = memo(function MessageItem({
   peerAgents,
   isPinned,
   onPinClick,
+  onAbort,
 }: Props) {
   if (msg.role === 'tool_call') {
     return <ToolCallBlock toolCall={msg.toolCall} />;
@@ -140,7 +147,7 @@ export const MessageItem = memo(function MessageItem({
               )}
               {msg.text && <span>{msg.text}</span>}
             </div>
-            <BubbleTimestamp ts={msg.ts} />
+            <BubbleTimestamp ts={msg.ts} queued={msg.queued} />
           </div>
         </div>
       </div>
@@ -148,6 +155,11 @@ export const MessageItem = memo(function MessageItem({
   }
   // assistant — left-aligned bubble.
   const showActions = !msg.streaming && !!msg.text;
+  // Streaming bubble gets a permanent Stop button in the action slot
+  // — replaces pin/copy entirely while the turn is in flight. Pattern
+  // matches ChatGPT/Claude.ai: abort sits ON the message that's being
+  // generated, not in the input bar.
+  const showStop = msg.streaming === true && !!onAbort;
   return (
     <div className="chat-msg-row agent">
       <div className="chat-msg">
@@ -166,6 +178,7 @@ export const MessageItem = memo(function MessageItem({
           {agentIcon ?? '🤖'}
         </div>
         <div className="chat-msg-meta-col">
+          {showStop && onAbort && <StopAction onAbort={onAbort} />}
           {showActions && (
             <BubbleActions
               text={msg.text ?? ''}
@@ -241,9 +254,31 @@ function summarizeSentinelTriggerText(text: string): string {
   return '';
 }
 
-function BubbleTimestamp({ ts }: { ts: number }) {
-  if (!ts) return null;
-  return <span className="chat-msg-time">{formatBubbleTime(ts)}</span>;
+function BubbleTimestamp({
+  ts,
+  queued,
+}: {
+  ts: number;
+  queued?: { ahead: number };
+}) {
+  if (!ts && !queued) return null;
+  // queued marker sits to the LEFT of the time, same row, dimmed.
+  // We surface "queued" alone when ahead<=1 (just the currently-
+  // running turn to wait for), and "queued · N ahead" when there
+  // are other waiters in front.
+  return (
+    <span className="chat-msg-time">
+      {queued && (
+        <span className="chat-msg-queued" title="Waiting for the previous turn to finish">
+          <Hourglass size={10} />
+          <span>queued</span>
+          {queued.ahead > 1 && <span>· {queued.ahead - 1} ahead</span>}
+          <span className="chat-msg-queued-sep">·</span>
+        </span>
+      )}
+      {ts ? formatBubbleTime(ts) : ''}
+    </span>
+  );
 }
 
 function formatBubbleTime(ts: number): string {
@@ -315,6 +350,29 @@ function PlayAudioButton({ url }: { url: string }) {
       {playing ? <Pause size={12} /> : <Play size={12} />}
       <span>{playing ? 'Stop' : 'Play'}</span>
     </button>
+  );
+}
+
+// Always-visible Stop button shown in place of pin/copy while a
+// turn is streaming. Unlike BubbleActions this is NOT hover-gated —
+// the `bubble-actions bubble-stop` class drops the opacity-on-hover
+// rule from desktop.css so the button stays in the visual hierarchy
+// the entire time the agent is talking. Click → abort the in-flight
+// turn for this (agent, session); the response from /chat/abort is
+// asynchronous, the actual close-out arrives as a chat:final + agent:end.
+function StopAction({ onAbort }: { onAbort: () => void }) {
+  return (
+    <div className="bubble-actions bubble-stop" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        className="bubble-action-btn bubble-stop-btn"
+        title="Stop generating"
+        onClick={onAbort}
+        aria-label="Stop generating"
+      >
+        <Square size={11} fill="currentColor" />
+      </button>
+    </div>
   );
 }
 

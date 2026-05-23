@@ -533,6 +533,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       data: {
         text,
         ts: Date.now(),
+        turnId,
         ...(fromAgent ? { from_agent: fromAgent } : {}),
         ...(fromSystem ? { from_system: fromSystem } : {}),
         ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),

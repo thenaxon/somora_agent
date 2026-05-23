@@ -12,7 +12,6 @@ import {
   Volume2,
   VolumeX,
   Wrench,
-  X as XIcon,
 } from 'lucide-react';
 import { api, type AgentInfo, type AttachmentRef } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
@@ -992,6 +991,7 @@ export function ChatWindow({
                 agentIcon={agent.icon}
                 peerAgents={peerAgents}
                 isPinned={isPinned}
+                onAbort={() => void chat.abort()}
                 {...(onPinClick ? { onPinClick } : {})}
               />
             );
@@ -1117,7 +1117,6 @@ export function ChatWindow({
               onSend();
             }
           }}
-          disabled={chat.streaming}
           style={{ overflowY: 'hidden' }}
         />
         <MicCapture
@@ -1130,26 +1129,14 @@ export function ChatWindow({
             textareaRef.current?.focus();
           }}
         />
-        {chat.streaming ? (
-          <button
-            type="button"
-            className="chat-send"
-            title="Abort streaming"
-            onClick={() => chat.abort()}
-            style={{ background: 'var(--danger)' }}
-          >
-            <XIcon size={14} />
-          </button>
-        ) : (
-          <button
-            type="submit"
-            className="chat-send"
-            title="Send"
-            disabled={!draft.trim()}
-          >
-            <Send size={14} />
-          </button>
-        )}
+        <button
+          type="submit"
+          className="chat-send"
+          title="Send"
+          disabled={!draft.trim()}
+        >
+          <Send size={14} />
+        </button>
       </form>
     </div>
   );

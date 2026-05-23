@@ -692,6 +692,48 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Queued marker — sits LEFT of the time, same line, dimmed. Only
+ * present on optimistic user bubbles whose turnId received a
+ * turn_queued SSE event before the matching user_message event.
+ * Inline Hourglass icon (lucide, line-art) keeps the same visual
+ * language as the Sentinel Bell in .sentinel-divider above. */
+.chat-msg-queued {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-3);
+  font-style: italic;
+}
+.chat-msg-queued > svg {
+  opacity: 0.7;
+}
+.chat-msg-queued-sep {
+  color: var(--line-2);
+  font-style: normal;
+}
+
+/* Stop button on the streaming assistant bubble. The base
+ * `.bubble-actions` rules below fade pin/copy in on hover only;
+ * `.bubble-stop` overrides that to keep the button permanently
+ * visible while the turn is in flight. Color leans danger-ish so
+ * it reads as "interrupt", not as another optional action.
+ * Mobile-parity comment: web's hover-revealed pin/copy stay hover-
+ * only; only the abort affordance goes always-on, because clicking
+ * the wrong thing is more costly than a slightly busier corner. */
+.bubble-actions.bubble-stop {
+  opacity: 1;
+  pointer-events: auto;
+}
+.bubble-stop-btn {
+  color: var(--danger, #ef4444);
+}
+.bubble-stop-btn:hover {
+  color: var(--danger, #ef4444);
+  background: rgba(239, 68, 68, 0.12);
 }
 
 /* Sentinel system-trigger divider — centered horizontal rule with

@@ -21,9 +21,20 @@ interface Props {
    *  icon for outgoing/agent bubbles. Mobile mirrors web's per-
    *  agent coloring instead of the older uniform `--bg-2`. */
   agents: AgentInfo[];
+  /** Aborts the in-flight turn. Wired to useChatStream.abort. Mobile
+   *  has no input-bar abort button — Stop lives on the streaming
+   *  agent-bubble itself (always-on, no hover affordance on touch). */
+  onAbort: () => void;
 }
 
-export function ChatArea({ agent, messages, streaming, connectionError, agents }: Props) {
+export function ChatArea({
+  agent,
+  messages,
+  streaming,
+  connectionError,
+  agents,
+  onAbort,
+}: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
 
@@ -80,6 +91,7 @@ export function ChatArea({ agent, messages, streaming, connectionError, agents }
             activeAgentColor={activeAgentInfo?.color}
             {...(activeAgentInfo?.icon ? { activeAgentIcon: activeAgentInfo.icon } : {})}
             agentLookup={agentLookup}
+            onAbort={onAbort}
           />
         ))}
         {/* Typing-indicator: shown when the server is working but the
@@ -116,6 +128,7 @@ interface MobileMessageProps {
   activeAgentColor?: string;
   activeAgentIcon?: string;
   agentLookup: ReadonlyMap<string, { color: string; icon?: string }>;
+  onAbort: () => void;
 }
 
 // One row in the chat scroll. Handles four visual variants:
@@ -128,6 +141,7 @@ function MobileMessage({
   activeAgentColor,
   activeAgentIcon,
   agentLookup,
+  onAbort,
 }: MobileMessageProps) {
   if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
     return <SentinelDivider text={msg.text} ts={msg.ts} />;
@@ -188,11 +202,74 @@ function MobileMessage({
             msg.text
           )}
           {isAgent && msg.streaming && <span className="msg-streaming-cursor" />}
+          {isAgent && msg.streaming && (
+            <button
+              type="button"
+              className="msg-stop-btn"
+              onClick={onAbort}
+              aria-label="Stop generating"
+              title="Stop generating"
+            >
+              <StopIcon />
+            </button>
+          )}
           {isAgent && msg.audio && <PlayAudioButton url={msg.audio.url} />}
         </div>
-        <span className="msg-time">{formatMobileTime(msg.ts)}</span>
+        <span className="msg-time">
+          {msg.role === 'user' && msg.queued && (
+            <span className="msg-queued" title="Waiting for the previous turn to finish">
+              <HourglassIcon />
+              <span>queued</span>
+              {msg.queued.ahead > 1 && <span>· {msg.queued.ahead - 1} ahead</span>}
+              <span className="msg-queued-sep">·</span>
+            </span>
+          )}
+          {formatMobileTime(msg.ts)}
+        </span>
       </div>
     </div>
+  );
+}
+
+// Inline line-art Hourglass — path copied from lucide-react so the
+// mobile bundle keeps the "no lucide-react" rule (see MicButton.tsx).
+// Same visual language as the Sentinel Bell on web; gray stroke,
+// no fill. 12×12 at the timestamp baseline.
+function HourglassIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M5 22h14" />
+      <path d="M5 2h14" />
+      <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
+      <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />
+    </svg>
+  );
+}
+
+// Inline line-art Stop (filled square). Used by the always-on Stop
+// button on a streaming agent bubble. Filled because "stop" needs a
+// solid visual hit-target on touch; outline would read as decorative.
+function StopIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
   );
 }
 

@@ -181,6 +181,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // user_message echo against our optimistic local-user message so
   // we don't render the same text twice.
   const pendingSelfSendsRef = useRef<Map<string, string[]>>(new Map());
+  // Per-session map of local-bubble id → turnId for self-sends whose
+  // HTTP /chat/send response hasn't returned yet by the time the
+  // server's turn_queued SSE arrives (rare but possible — both
+  // channels race). Stored as turnId → localId so a late turn_queued
+  // event can be buffered and applied once the HTTP response lands.
+  const pendingQueuedEventsRef = useRef<Map<string, Map<string, number>>>(new Map());
   // Pagination cursor per session: where the loaded slice begins
   // (oldestTs), whether older messages exist beyond, and a guard
   // against concurrent loadOlder calls.
@@ -597,6 +603,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const d = parse<{
           text: string;
           ts: number;
+          turnId?: string;
           from_agent?: string;
           from_system?: 'sentinel';
         }>(ev as MessageEvent);
@@ -606,12 +613,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         // local-user message already represents it. Drop the echo
         // and consume the pending entry so a real second send of
         // the same text down the line still echoes properly.
+        // BUT before returning, clear any queued-state on the matching
+        // optimistic bubble: the turn just transitioned from "waiting
+        // in queue" to "actually running", so the indicator should go.
         if (!d.from_agent && !d.from_system) {
           const pending = pendingSelfSendsRef.current.get(key) ?? [];
           const idx = pending.indexOf(d.text);
           if (idx >= 0) {
             pending.splice(idx, 1);
             pendingSelfSendsRef.current.set(key, pending);
+            if (d.turnId) {
+              setMessages((prev) => {
+                const list = prev[key];
+                if (!list) return prev;
+                let changed = false;
+                const next = list.map((m) => {
+                  if (m.role === 'user' && m.turnId === d.turnId && m.queued) {
+                    changed = true;
+                    const { queued: _q, ...rest } = m;
+                    return rest as ChatMessage;
+                  }
+                  return m;
+                });
+                if (!changed) return prev;
+                return { ...prev, [key]: next };
+              });
+            }
             return;
           }
         }
@@ -620,9 +647,44 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           role: 'user',
           ts: d.ts ?? Date.now(),
           text: d.text,
+          ...(d.turnId ? { turnId: d.turnId } : {}),
           ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
           ...(d.from_system ? { fromSystem: d.from_system } : {}),
         });
+      });
+
+      es.addEventListener('turn_queued', (ev) => {
+        bump();
+        const d = parse<{ turnId: string; ahead: number }>(ev as MessageEvent);
+        if (!d || !d.turnId) return;
+        // Find the optimistic bubble that owns this turnId and tag
+        // it with the queued indicator. If the bubble hasn't been
+        // tagged yet (HTTP response still in flight), stash the
+        // ahead-count so `send()` can apply it once it has the id.
+        let appliedToBubble = false;
+        setMessages((prev) => {
+          const list = prev[key];
+          if (!list) return prev;
+          let changed = false;
+          const next = list.map((m) => {
+            if (m.role === 'user' && m.turnId === d.turnId) {
+              appliedToBubble = true;
+              changed = true;
+              return { ...m, queued: { ahead: d.ahead } };
+            }
+            return m;
+          });
+          if (!changed) return prev;
+          return { ...prev, [key]: next };
+        });
+        if (!appliedToBubble) {
+          let perSession = pendingQueuedEventsRef.current.get(key);
+          if (!perSession) {
+            perSession = new Map();
+            pendingQueuedEventsRef.current.set(key, perSession);
+          }
+          perSession.set(d.turnId, d.ahead);
+        }
       });
     },
     [patchStream, appendMessage, updateAssistantText],
@@ -733,8 +795,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // the server round-trip. Attachments ride along in display state
       // so the bubble shows the same thumbnail row the user just
       // confirmed in the input.
+      const localId = newId('local-user');
       appendMessage(key, {
-        id: newId('local-user'),
+        id: localId,
         role: 'user',
         ts: Date.now(),
         text,
@@ -751,7 +814,33 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           : {}),
       });
       try {
-        await api.send(agent, session, text, attachments, voice);
+        const { turnId } = await api.send(agent, session, text, attachments, voice);
+        // Tag the optimistic bubble with the server-issued turnId so
+        // future SSE events (turn_queued, user_message) can find it.
+        // If turn_queued already arrived (race), drain the buffer and
+        // apply the ahead-count in the same setMessages pass.
+        if (turnId) {
+          const perSession = pendingQueuedEventsRef.current.get(key);
+          const bufferedAhead = perSession?.get(turnId);
+          if (perSession && bufferedAhead !== undefined) {
+            perSession.delete(turnId);
+            if (perSession.size === 0) pendingQueuedEventsRef.current.delete(key);
+          }
+          setMessages((prev) => {
+            const list = prev[key];
+            if (!list) return prev;
+            const next = list.map((m) => {
+              if (m.id !== localId) return m;
+              if (m.role !== 'user') return m;
+              return {
+                ...m,
+                turnId,
+                ...(bufferedAhead !== undefined ? { queued: { ahead: bufferedAhead } } : {}),
+              };
+            });
+            return { ...prev, [key]: next };
+          });
+        }
       } catch (err) {
         // Send failed — remove the pending dedupe entry so a future
         // identical text can still be echoed normally.

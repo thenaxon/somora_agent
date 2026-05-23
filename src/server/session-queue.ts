@@ -46,6 +46,13 @@ class SessionLock {
     callId?: string;
     signal?: AbortSignal;
     turnId?: string;
+    /** Called synchronously AFTER the waiter has been pushed to the queue.
+     *  `ahead` = number of turns this waiter must wait for, INCLUDING the
+     *  currently-running one (1 = next in line). Used by /chat/send to
+     *  emit a `turn_queued` SSE event so clients can render a queue
+     *  indicator on the optimistic user-bubble. Not called when the lock
+     *  is immediately granted. */
+    onQueued?: (ahead: number) => void;
   }): Promise<() => void> {
     if (!this.busy) {
       this.busy = true;
@@ -72,6 +79,11 @@ class SessionLock {
         else this.queue.splice(firstAgentIdx, 0, waiter);
       } else {
         this.queue.push(waiter);
+      }
+      if (opts.onQueued) {
+        const idx = this.queue.indexOf(waiter);
+        // ahead = waiters in front of us (idx) + the currently-running turn (1)
+        opts.onQueued(idx + 1);
       }
 
       if (opts.signal) {
@@ -155,7 +167,13 @@ function key(agent: string, session: string): string {
 export async function acquireSessionLock(
   agent: string,
   session: string,
-  opts: { priority: Priority; callId?: string; signal?: AbortSignal; turnId?: string },
+  opts: {
+    priority: Priority;
+    callId?: string;
+    signal?: AbortSignal;
+    turnId?: string;
+    onQueued?: (ahead: number) => void;
+  },
 ): Promise<() => void> {
   let lock = locks.get(key(agent, session));
   if (!lock) {

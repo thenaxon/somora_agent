@@ -40,6 +40,15 @@ export interface ChatMessage {
    *  `assistant_audio` SSE event arrived after the message; drives the
    *  Play-button on the agent bubble. */
   audio?: { url: string; mime: string; durationMs?: number };
+  /** Server-issued turnId for self-typed turns. Set after POST
+   *  /chat/send returns; used to pair this optimistic bubble with
+   *  later SSE events (turn_queued, user_message). */
+  turnId?: string;
+  /** Set when a turn_queued SSE event arrived for this bubble's
+   *  turnId. Cleared once the matching user_message event lands
+   *  (= the turn actually started). Drives the hourglass marker
+   *  next to the timestamp. */
+  queued?: { ahead: number };
 }
 
 interface HistoryEvent {
@@ -70,6 +79,11 @@ export interface ChatStream {
    *  Caller decides whether to auto-play (typically gated by their
    *  per-session toggle). Returns unsubscribe. */
   subscribeAudio: (handler: (url: string) => void) => () => void;
+  /** Abort the in-flight turn for this session. Fire-and-forget POST
+   *  /chat/abort — the actual close-out lands as chat:final +
+   *  agent:end. Used by the Stop button on the streaming bubble.
+   *  No-op when no turn is running (server returns aborted=false). */
+  abort: () => Promise<void>;
   /** Last connection error if the SSE link dropped. Null when healthy. */
   connectionError: string | null;
 }
@@ -90,6 +104,10 @@ export function useChatStream(agent: string | null): ChatStream {
   const agentRef = useRef<string | null>(agent);
   // Voice: subscribers waiting for assistant_audio events.
   const audioListenersRef = useRef<Set<(url: string) => void>>(new Set());
+  // Buffer of turn_queued events that arrived before the matching
+  // POST /chat/send response landed (HTTP and SSE channels can race).
+  // Keyed by turnId; consumed by send() when it gets its turnId back.
+  const pendingQueuedRef = useRef<Map<string, number>>(new Map());
   // Sleep-recovery: timestamp of the last SSE event (heartbeat or data)
   // for this subscription. Drives the staleness check below — when the
   // tab regains visibility/focus after iOS Safari has frozen the TCP
@@ -260,15 +278,41 @@ export function useChatStream(agent: string | null): ChatStream {
     const onUserMessage = (e: MessageEvent) => {
       bump();
       let d:
-        | { text?: string; ts?: number; from_agent?: string; from_system?: 'sentinel' }
+        | {
+            text?: string;
+            ts?: number;
+            turnId?: string;
+            from_agent?: string;
+            from_system?: 'sentinel';
+          }
         | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || typeof d.text !== 'string') return;
       // Self-typed turns are optimistically appended at send-time
       // (see `send` below) — drop the server echo to avoid dupes.
+      // BUT before returning, clear any queued-state on the matching
+      // optimistic bubble: the turn just transitioned from "waiting in
+      // queue" to "actually running", so the indicator should go.
       // A2A and sentinel inbounds carry from_agent / from_system; let
       // those through.
-      if (!d.from_agent && !d.from_system) return;
+      if (!d.from_agent && !d.from_system) {
+        const turnId = d.turnId;
+        if (turnId) {
+          setMessages((prev) => {
+            let changed = false;
+            const next = prev.map((m) => {
+              if (m.role === 'user' && m.turnId === turnId && m.queued) {
+                changed = true;
+                const { queued: _q, ...rest } = m;
+                return rest as ChatMessage;
+              }
+              return m;
+            });
+            return changed ? next : prev;
+          });
+        }
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -276,10 +320,37 @@ export function useChatStream(agent: string | null): ChatStream {
           role: 'user',
           ts: d!.ts ?? Date.now(),
           text: d!.text!,
+          ...(d!.turnId ? { turnId: d!.turnId } : {}),
           ...(d!.from_agent ? { fromAgent: d!.from_agent } : {}),
           ...(d!.from_system ? { fromSystem: d!.from_system } : {}),
         },
       ]);
+    };
+
+    const onTurnQueued = (e: MessageEvent) => {
+      bump();
+      let d: { turnId?: string; ahead?: number } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.turnId !== 'string' || typeof d.ahead !== 'number') return;
+      const turnId = d.turnId;
+      const ahead = d.ahead;
+      // Find the optimistic bubble carrying this turnId and tag it.
+      // If no bubble has it yet (HTTP /chat/send response in flight),
+      // buffer the ahead-count so send() can apply it once the id lands.
+      let applied = false;
+      setMessages((prev) => {
+        let changed = false;
+        const next = prev.map((m) => {
+          if (m.role === 'user' && m.turnId === turnId) {
+            applied = true;
+            changed = true;
+            return { ...m, queued: { ahead } };
+          }
+          return m;
+        });
+        return changed ? next : prev;
+      });
+      if (!applied) pendingQueuedRef.current.set(turnId, ahead);
     };
 
     es.addEventListener('open', onOpen);
@@ -290,6 +361,7 @@ export function useChatStream(agent: string | null): ChatStream {
     es.addEventListener('status', onStatus);
     es.addEventListener('assistant_audio', onAssistantAudio);
     es.addEventListener('user_message', onUserMessage);
+    es.addEventListener('turn_queued', onTurnQueued);
 
     return () => {
       cancelled = true;
@@ -300,6 +372,8 @@ export function useChatStream(agent: string | null): ChatStream {
       es.removeEventListener('agent', onAgent);
       es.removeEventListener('status', onStatus);
       es.removeEventListener('assistant_audio', onAssistantAudio);
+      es.removeEventListener('user_message', onUserMessage);
+      es.removeEventListener('turn_queued', onTurnQueued);
       es.close();
     };
   }, [agent, reopenTick]);
@@ -340,8 +414,9 @@ export function useChatStream(agent: string | null): ChatStream {
     // SSE subscribers, so without this the message would only show
     // up on the next history-reload. Attachment-thumbs in the user's
     // own bubble are a Phase-3 polish; v1 just shows the text.
+    const localId = newId('u');
     const userMsg: ChatMessage = {
-      id: newId('u'),
+      id: localId,
       role: 'user',
       ts: Date.now(),
       text: text || (attachments && attachments.length > 0
@@ -351,7 +426,7 @@ export function useChatStream(agent: string | null): ChatStream {
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
     try {
-      await fetch('/chat/send', {
+      const res = await fetch('/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -365,9 +440,42 @@ export function useChatStream(agent: string | null): ChatStream {
           ...(voice?.autoPlayRequested ? { auto_play_requested: true } : {}),
         }),
       });
+      if (res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { turnId?: string };
+        const turnId = typeof body.turnId === 'string' ? body.turnId : '';
+        if (turnId) {
+          // If turn_queued already arrived before we got the HTTP
+          // response back, drain its buffered ahead-count and apply
+          // it in the same setMessages pass that adds the turnId.
+          const bufferedAhead = pendingQueuedRef.current.get(turnId);
+          if (bufferedAhead !== undefined) pendingQueuedRef.current.delete(turnId);
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== localId) return m;
+              if (m.role !== 'user') return m;
+              return {
+                ...m,
+                turnId,
+                ...(bufferedAhead !== undefined ? { queued: { ahead: bufferedAhead } } : {}),
+              };
+            }),
+          );
+        }
+      }
     } catch (err) {
       console.warn('[somora-mobile] /chat/send failed:', err);
       setStreaming(false);
+    }
+  };
+
+  const abort: ChatStream['abort'] = async () => {
+    if (!agent) return;
+    try {
+      await fetch(`/chat/abort?agent=${encodeURIComponent(agent)}&session=main`, {
+        method: 'POST',
+      });
+    } catch (err) {
+      console.warn('[somora-mobile] /chat/abort failed:', err);
     }
   };
 
@@ -378,7 +486,7 @@ export function useChatStream(agent: string | null): ChatStream {
     };
   };
 
-  return { messages, streaming, send, subscribeAudio, connectionError };
+  return { messages, streaming, send, subscribeAudio, abort, connectionError };
 }
 
 function eventToMessage(ev: HistoryEvent): ChatMessage | null {

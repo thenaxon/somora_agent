@@ -121,6 +121,26 @@ export interface TuiConfig {
   };
 }
 
+// Per-session pending user-turn waiting for its lock. Lives in app
+// state (not in the Static-flushed `turns` array) because Static
+// items are committed once and can't mutate later — and a queued
+// turn needs to transition from "queued · N ahead" to "running" to
+// "done" over its lifetime. When the matching user_message SSE
+// event arrives the entry is removed from pendingQueued and a
+// normal `Turn { kind: 'user' }` is appended to the scrollback.
+export interface PendingQueuedTurn {
+  /** Local-only id; the Turn appended later gets a fresh id. */
+  localId: string;
+  /** Server-issued turnId, set after POST /chat/send returns. Used
+   *  to pair with turn_queued + user_message SSE events. */
+  turnId?: string;
+  text: string;
+  ts: number;
+  /** Set when a turn_queued SSE event arrived. `ahead` = number of
+   *  turns this one must wait for (>=1, including current). */
+  queued?: { ahead: number };
+}
+
 // All Turn-kinds that the scrollback can render. Kept flat (discriminated
 // union) so React reducers don't need a class hierarchy.
 export type Turn =
@@ -222,9 +242,21 @@ export type StreamEvent =
       // normal user turns.
       kind: 'user-message';
       text: string;
+      turnId?: string;
       fromAgent?: string;
       fromSystem?: 'sentinel';
       callId?: string;
+    }
+  | {
+      // POST /chat/send was accepted but the lock is busy — server
+      // pushed this turn into the queue. Carries the turnId that
+      // POST /chat/send returned (echoed back) plus how many turns
+      // we have to wait for. Driver state owns the per-turnId
+      // mapping; renderer just shows "queued · N ahead" until the
+      // matching user-message event arrives.
+      kind: 'turn-queued';
+      turnId: string;
+      ahead: number;
     }
   | {
       // Project focus change broadcast (HTTP-route initiated). MCP-routed

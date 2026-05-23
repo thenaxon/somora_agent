@@ -153,13 +153,20 @@ export class Api {
     if (!res.ok) throw new Error(await res.text());
   }
 
-  async send(agent: string, session: string, text: string): Promise<void> {
+  async send(agent: string, session: string, text: string): Promise<{ turnId: string }> {
     const res = await loopbackFetch(`${this.base}/chat/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent, session, text }),
     });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    // turnId is echoed by the server so the TUI can pair the
+    // pending-queued entry it just created with later SSE events
+    // (turn_queued, user_message). Older servers don't return it —
+    // empty string means no queue indicator possible (but the turn
+    // still runs fine).
+    const body = (await res.json().catch(() => ({}))) as { turnId?: string };
+    return { turnId: typeof body.turnId === 'string' ? body.turnId : '' };
   }
 
   streamUrl(agent: string, session: string): string {

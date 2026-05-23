@@ -2486,6 +2486,18 @@ app.post('/chat/send', async (c) => {
       priority,
       turnId,
       ...(agentAskCallId ? { callId: agentAskCallId } : {}),
+      // When the lock is busy and we have to wait, broadcast a
+      // turn_queued SSE so any client that already accepted this
+      // turn's optimistic user-bubble (matched by turnId from the
+      // HTTP response below) can tag the bubble with a "queued"
+      // marker until runChatTurn actually fires the user_message
+      // event a few seconds later.
+      onQueued: (ahead) => {
+        void publish(agent, session, {
+          event: 'turn_queued',
+          data: { turnId, ahead },
+        });
+      },
     });
     // Register the per-session AbortController. /chat/abort looks this
     // up to cancel the in-flight turn — typically from TUI ESC.
@@ -2530,7 +2542,12 @@ app.post('/chat/send', async (c) => {
   // the turn even starts processing.)
   remWorker.resetActivity(agent);
 
-  return c.json({ ok: true }, 202);
+  // turnId is echoed back so clients can pair the optimistic bubble
+  // they just rendered with future SSE events (turn_queued while
+  // waiting, user_message once the lock is acquired and the turn
+  // actually starts). Used by the queue-indicator UX added with
+  // 2026.05.23.x.
+  return c.json({ ok: true, turnId }, 202);
 });
 
 // /chat/abort — cancel an in-flight turn for (agent, session). Triggered

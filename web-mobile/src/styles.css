@@ -324,6 +324,59 @@ button { cursor: pointer; }
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+/* Queue-marker — sits left of the time on user bubbles whose turn
+ * is still waiting for the previous one to finish. Inline-SVG
+ * hourglass renders as line-art (`stroke=currentColor`), same
+ * visual idiom as the bell on .sentinel-divider above. */
+.msg-queued {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-3);
+  font-style: italic;
+}
+.msg-queued svg {
+  opacity: 0.75;
+}
+.msg-queued-sep {
+  color: var(--line-2);
+  font-style: normal;
+}
+/* Always-on Stop button on a streaming agent-bubble. Mobile has no
+ * hover affordance, so this lives at the bubble's bottom-right
+ * corner and stays visible the whole time the turn is in flight. */
+.msg-stop-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: var(--danger, #ef4444);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.msg-stop-btn:active {
+  background: rgba(239, 68, 68, 0.28);
+}
+/* The agent-bubble needs to be position:relative so the absolutely-
+ * positioned stop-button anchors to it. Plus extra bottom padding
+ * so the button doesn't overlap the last line of streaming text. */
+.msg-bubble.agent {
+  position: relative;
+}
+.msg-row.agent .msg-bubble:has(.msg-stop-btn) {
+  padding-bottom: 36px;
 }
 
 /* Sentinel system-trigger divider — centered horizontal rule with

@@ -163,6 +163,7 @@ export function MobileApp() {
             messages={chat.messages}
             connectionError={chat.connectionError}
             streaming={chat.streaming}
+            onAbort={() => void chat.abort()}
           />
           <MessageInput
             agent={activeAgent}

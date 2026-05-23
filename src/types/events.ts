@@ -266,6 +266,11 @@ export type SseEvent =
       data: {
         text: string;
         ts?: number;
+        /** Server-generated turn id. Echoed back so clients can match
+         *  this event to an optimistic bubble created from POST
+         *  /chat/send (whose response carries the same turnId), and to
+         *  clear any pending `turn_queued` indicator on that bubble. */
+        turnId?: string;
         /** Set only when the message came from another agent
          *  (A2A). Self-typed user turns omit it. */
         from_agent?: string;
@@ -274,6 +279,26 @@ export type SseEvent =
          *  as a centered system divider. */
         from_system?: 'sentinel';
         agent_ask_call_id?: string;
+      };
+    }
+  | {
+      // User-turn was enqueued behind a still-running turn on the same
+      // (agent, session). Fired by POST /chat/send right after pushing
+      // the waiter into the session lock's queue. Clients tag their
+      // optimistic user-bubble (matched by turnId from the HTTP
+      // response) with a "queued" indicator until the matching
+      // `user_message` event arrives — at which point the lock has
+      // been acquired and the turn is actually running.
+      //
+      // `ahead` = number of turns this one must wait for, INCLUDING
+      // the currently-running one (so ahead=1 means "next in line").
+      // Static snapshot at enqueue time: not updated as the queue
+      // drains. Clients show "queued" for ahead=1, "queued · N ahead"
+      // for ahead>1.
+      event: 'turn_queued';
+      data: {
+        turnId: string;
+        ahead: number;
       };
     }
   | {

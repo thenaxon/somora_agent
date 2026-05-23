@@ -12,7 +12,14 @@ import { SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
 import { nextId, summarize } from './format.ts';
 import { rememberAgent } from './state.ts';
-import type { AgentInfo, ProjectInfo, StreamEvent, Turn, TurnStats } from './types.ts';
+import type {
+  AgentInfo,
+  PendingQueuedTurn,
+  ProjectInfo,
+  StreamEvent,
+  Turn,
+  TurnStats,
+} from './types.ts';
 
 interface Props {
   base: string;
@@ -65,6 +72,18 @@ export function App({
   // turn already covers its own sends, so we drop matching echoes
   // by recent-text instead of double-rendering.
   const pendingSelfSendsRef = useRef<string[]>([]);
+  // Self-sent turns the user fired while another turn was already
+  // running. These DO NOT go straight into the Static-flushed
+  // scrollback because the entry needs to mutate (queued · 1 ahead
+  // → queued · 2 ahead → done) over its lifetime, and Static items
+  // are immutable after flush. Rendered in the dynamic frame above
+  // the input; promoted to a real Turn (appendTurn) when the
+  // server's user_message SSE event fires with the matching turnId.
+  const [pendingQueued, setPendingQueued] = useState<PendingQueuedTurn[]>([]);
+  // turn_queued SSE events that arrived before the matching POST
+  // /chat/send response returned the turnId. Keyed by turnId; drained
+  // by handleSubmit once the id is known.
+  const pendingQueuedBufferRef = useRef<Map<string, number>>(new Map());
   useEffect(() => {
     showMemoryRef.current = showMemory;
   }, [showMemory]);
@@ -184,6 +203,8 @@ export function App({
     let cancelled = false;
     setTurns([]);
     setStats(null);
+    setPendingQueued([]);
+    pendingQueuedBufferRef.current.clear();
 
     let handle: StreamHandle | null = null;
 
@@ -466,12 +487,34 @@ export function App({
         //
         // Self-typed echoes (server now broadcasts user_message for
         // every /chat/send so other clients can see them) arrive
-        // WITHOUT fromAgent. We dedupe against pendingSelfSendsRef
-        // — the entry was added when this TUI's own send() ran.
-        // Echoes from OTHER clients (a web tab on the same session)
-        // pass through with no pending match and render as normal
-        // user turns.
+        // WITHOUT fromAgent. Two cases to handle for those:
+        //   1. The text matches an entry in pendingSelfSendsRef →
+        //      this TUI fired a send while idle; the optimistic
+        //      Static append already represents it. Drop the echo.
+        //   2. The turnId matches an entry in pendingQueued → this
+        //      TUI fired a send while another turn was running.
+        //      The pending-queued render in the dynamic frame now
+        //      becomes a real Static turn — remove from pending,
+        //      append to Static so the message lands in scrollback.
+        // Self-typed echoes from OTHER clients (a web tab on the
+        // same session as the TUI tail) pass through both checks
+        // and render as normal user turns.
         if (!ev.fromAgent && !ev.fromSystem) {
+          // Case 2 first — promote pending-queued to Static.
+          if (ev.turnId) {
+            let promoted = false;
+            setPendingQueued((prev) => {
+              const idx = prev.findIndex((p) => p.turnId === ev.turnId);
+              if (idx < 0) return prev;
+              promoted = true;
+              return prev.slice(0, idx).concat(prev.slice(idx + 1));
+            });
+            if (promoted) {
+              appendTurn({ kind: 'user', id: nextId(), text: ev.text });
+              return;
+            }
+          }
+          // Case 1 — drop optimistic-already-rendered self-echo.
           const pending = pendingSelfSendsRef.current;
           const idx = pending.indexOf(ev.text);
           if (idx >= 0) {
@@ -486,6 +529,26 @@ export function App({
           ...(ev.fromAgent ? { fromAgent: ev.fromAgent } : {}),
           ...(ev.fromSystem ? { fromSystem: ev.fromSystem } : {}),
         });
+        return;
+      }
+      case 'turn-queued': {
+        // Find the matching pending-queued entry (if any) and tag
+        // it with the ahead-count. If the entry isn't there yet
+        // (HTTP /chat/send response still in flight), buffer the
+        // ahead-count so handleSubmit can apply it once the turnId
+        // lands.
+        let applied = false;
+        setPendingQueued((prev) => {
+          const idx = prev.findIndex((p) => p.turnId === ev.turnId);
+          if (idx < 0) return prev;
+          applied = true;
+          const next = prev.slice();
+          const existing = next[idx];
+          if (!existing) return prev;
+          next[idx] = { ...existing, queued: { ahead: ev.ahead } };
+          return next;
+        });
+        if (!applied) pendingQueuedBufferRef.current.set(ev.turnId, ev.ahead);
         return;
       }
       case 'project': {
@@ -596,7 +659,7 @@ export function App({
 
   async function handleSubmit(text: string): Promise<void> {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed) return;
     setInput('');
     pushHistory(trimmed);
     if (trimmed.startsWith('/')) {
@@ -653,24 +716,68 @@ export function App({
       }
       return;
     }
-    appendTurn({ kind: 'user', id: nextId(), text: trimmed });
-    pendingSelfSendsRef.current.push(trimmed);
-    setBusy(true);
+    // Two paths for self-typed turns:
+    //   A. busy=false → idle channel. Optimistically append to
+    //      Static so the user sees their message instantly;
+    //      pendingSelfSendsRef.push so the server's user_message
+    //      echo gets deduped. Same flow as before queueing existed.
+    //   B. busy=true → another turn is already running. Push the
+    //      text into pendingQueued (dynamic-frame, mutable). The
+    //      server queues the POST behind the lock and emits a
+    //      turn_queued SSE; we render "queued · N ahead" until
+    //      the user_message SSE arrives and promotes the entry
+    //      into a real Static turn.
+    const queuedPath = busy;
+    const localId = nextId();
+    if (queuedPath) {
+      setPendingQueued((prev) => [
+        ...prev,
+        { localId, text: trimmed, ts: Date.now() },
+      ]);
+    } else {
+      appendTurn({ kind: 'user', id: localId, text: trimmed });
+      pendingSelfSendsRef.current.push(trimmed);
+      setBusy(true);
+    }
     try {
-      await apiRef.current.send(agent, session, trimmed);
+      const { turnId } = await apiRef.current.send(agent, session, trimmed);
+      if (queuedPath && turnId) {
+        // Drain any turn_queued SSE that arrived before this POST
+        // returned so the ahead-count lands on the bubble in the
+        // same render as the turnId tag.
+        const bufferedAhead = pendingQueuedBufferRef.current.get(turnId);
+        if (bufferedAhead !== undefined) pendingQueuedBufferRef.current.delete(turnId);
+        setPendingQueued((prev) =>
+          prev.map((p) =>
+            p.localId === localId
+              ? {
+                  ...p,
+                  turnId,
+                  ...(bufferedAhead !== undefined ? { queued: { ahead: bufferedAhead } } : {}),
+                }
+              : p,
+          ),
+        );
+      }
     } catch (err) {
-      // Send failed — drop the pending dedupe entry so a future
-      // identical text echoes normally.
-      const cur = pendingSelfSendsRef.current;
-      const idx = cur.indexOf(trimmed);
-      if (idx >= 0) cur.splice(idx, 1);
+      if (queuedPath) {
+        // Remove the pending-queued entry so the user doesn't see
+        // a permanently-stuck "queued" row.
+        setPendingQueued((prev) => prev.filter((p) => p.localId !== localId));
+      } else {
+        // Drop the pending dedupe entry so a future identical
+        // text echoes normally.
+        const cur = pendingSelfSendsRef.current;
+        const idx = cur.indexOf(trimmed);
+        if (idx >= 0) cur.splice(idx, 1);
+        setBusy(false);
+      }
       appendTurn({
         kind: 'system',
         id: nextId(),
         text: `send failed: ${(err as Error).message}`,
         tone: 'error',
       });
-      setBusy(false);
     }
   }
 
@@ -702,6 +809,27 @@ export function App({
         </Box>
       ) : null}
 
+      {/* Pending-queued self-typed turns. Lives in the dynamic frame
+       *  (not in Static) because each row mutates as turn_queued SSE
+       *  events update the ahead-count, and disappears when the
+       *  matching user_message event promotes it into a real Static
+       *  turn. Visually distinct from a finalized user turn so the
+       *  user knows the message is in the queue, not yet running. */}
+      {pendingQueued.length > 0
+        ? pendingQueued.map((p) => (
+            <Box key={p.localId} marginTop={1}>
+              <Text color="green" bold>
+                {'user  '}
+              </Text>
+              <Text>{p.text} </Text>
+              <Text color="yellow" italic>
+                · queued
+                {p.queued && p.queued.ahead > 1 ? ` · ${p.queued.ahead - 1} ahead` : ''}
+              </Text>
+            </Box>
+          ))
+        : null}
+
       {/* Bottom panel: separator → status → autocomplete (if any) → input →
           hints. Stays anchored to the bottom of the visible terminal frame
           because nothing below it ever changes height except the
@@ -729,8 +857,7 @@ export function App({
           value={input}
           onChange={handleInputChange}
           onSubmit={handleSubmit}
-          placeholder={busy ? '(waiting for response…)' : ''}
-          showCursor={!busy}
+          placeholder={busy ? '(type to queue next message…)' : ''}
         />
       </Box>
       <Footer />

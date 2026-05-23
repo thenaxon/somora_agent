@@ -59,6 +59,16 @@ export type ChatMessage =
        *  system divider instead of a user-bubble. */
       fromSystem?: 'sentinel';
       attachments?: AttachmentDisplay[];
+      /** Server turnId returned by POST /chat/send. Used to pair this
+       *  optimistic bubble with later SSE events (turn_queued while
+       *  waiting in line, user_message once the lock is acquired). */
+      turnId?: string;
+      /** Queue state for the user-typed turn this bubble represents:
+       *   - undefined: not queued (lock was free; turn started right away)
+       *   - { ahead: N }: enqueued behind N other turns (>=1)
+       *   - cleared back to undefined when matching user_message arrives
+       *  Sentinel and A2A inbounds never carry this. */
+      queued?: { ahead: number };
     }
   | {
       id: string;
@@ -142,8 +152,16 @@ export type StreamEvent =
       data: {
         text: string;
         ts: number;
+        turnId?: string;
         from_agent?: string;
         from_system?: 'sentinel';
+      };
+    }
+  | {
+      event: 'turn_queued';
+      data: {
+        turnId: string;
+        ahead: number;
       };
     }
   | {

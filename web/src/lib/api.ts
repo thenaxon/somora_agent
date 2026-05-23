@@ -296,7 +296,7 @@ export const api = {
     text: string,
     attachments?: AttachmentRef[],
     voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
-  ): Promise<void> => {
+  ): Promise<{ turnId: string }> => {
     const res = await fetch('/chat/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -323,6 +323,12 @@ export const api = {
       const body = await res.text().catch(() => '');
       throw new Error(`chat/send ${res.status}: ${body.slice(0, 200)}`);
     }
+    // turnId is echoed by the server so the caller can tag its
+    // optimistic user-bubble for matching with future SSE events
+    // (turn_queued, user_message). Older servers don't return it —
+    // empty string is the safe fallback (no queue indicator possible).
+    const body = (await res.json().catch(() => ({}))) as { turnId?: string };
+    return { turnId: typeof body.turnId === 'string' ? body.turnId : '' };
   },
   uploadAttachment: async (file: File): Promise<AttachmentRef> => {
     // Stream raw bytes — multipart parsing on the server pulls
