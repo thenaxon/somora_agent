@@ -217,6 +217,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setMessages((prev) => ({ ...prev, [key]: [...(prev[key] ?? []), msg] }));
   }, []);
 
+  // Insert mid-stream side-channel events (tool calls, memory injects,
+  // engine_meta items) ABOVE the currently-streaming assistant bubble
+  // so they read as "happened during the turn, before the agent's
+  // continued text" — TUI-style ordering. When no bubble is streaming
+  // (no event in flight or the turn hasn't produced text yet), this
+  // degrades to a plain append at the bottom of the list.
+  const insertBeforeStreaming = useCallback((key: string, msg: ChatMessage) => {
+    const streamId = streamingIdRef.current.get(key);
+    setMessages((prev) => {
+      const list = prev[key] ?? [];
+      if (!streamId) return { ...prev, [key]: [...list, msg] };
+      const idx = list.findIndex((m) => m.id === streamId);
+      if (idx < 0) return { ...prev, [key]: [...list, msg] };
+      const next = list.slice();
+      next.splice(idx, 0, msg);
+      return { ...prev, [key]: next };
+    });
+  }, []);
+
   const updateAssistantText = useCallback(
     (key: string, msgId: string, patch: Partial<ChatMessage>) => {
       setMessages((prev) => {
@@ -336,13 +355,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         bump();
         const d = parse<{ state: 'delta' | 'final'; text: string }>(ev as MessageEvent);
         if (!d) return;
-        // Single assistant bubble per turn, always at the bottom of
-        // the list. Server emits cumulative text in each delta, so
-        // we replace the bubble's text in place. When a tool event
-        // arrives mid-stream the tool gets appended, and the next
-        // delta MOVES the bubble back to the end — ensuring tools
-        // always render ABOVE the agent's running text (TUI-style)
-        // and the cumulative prefix never duplicates.
+        // Single assistant bubble per turn. The bubble is created on
+        // the FIRST delta (appended at the current bottom of the
+        // list), and every subsequent delta + the final update the
+        // bubble's text IN PLACE — no reordering. Tool / memory /
+        // engine_meta events that fire mid-stream insert themselves
+        // BEFORE this bubble so they read as "happened during the
+        // turn, above the agent's continued text".
+        //
+        // Why not "always move to bottom" anymore: the old behavior
+        // left an optimistic queued-user-bubble (inserted AFTER the
+        // streaming bubble while a previous turn was running) stuck
+        // ABOVE the in-flight assistant text on the next delta —
+        // the bubble jumped over it. Order looked fine after a
+        // reload (JSONL is correctly ordered) but live it was off.
         //
         // Ref bookkeeping (assigning + clearing the streaming id)
         // happens OUTSIDE the setMessages updater. React StrictMode
@@ -353,6 +379,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (d.state === 'delta') {
           patchStream(key, { thinking: false });
           let trackedId = streamingIdRef.current.get(key);
+          const isFirstDelta = !trackedId;
           if (!trackedId) {
             trackedId = newId('msg');
             streamingIdRef.current.set(key, trackedId);
@@ -360,39 +387,83 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           const id = trackedId;
           setMessages((prev) => {
             const list = prev[key] ?? [];
-            const filtered = list.filter((m) => m.id !== id);
-            return {
-              ...prev,
-              [key]: [
-                ...filtered,
-                {
-                  id,
-                  role: 'assistant',
-                  ts: Date.now(),
-                  text: d.text,
-                  streaming: true,
-                },
-              ],
-            };
+            if (isFirstDelta) {
+              // First delta of a new turn — position the fresh
+              // assistant bubble BEFORE the first still-pending
+              // user-bubble (a queued message the user typed while
+              // waiting for this turn). Without this, the agent's
+              // reply would land BELOW any queued user-message
+              // already in the list, breaking the natural read
+              // order. If no pending user-bubbles exist, append at
+              // the bottom as before.
+              const insertIdx = list.findIndex(
+                (m) => m.role === 'user' && m.pending,
+              );
+              const newBubble: ChatMessage = {
+                id,
+                role: 'assistant',
+                ts: Date.now(),
+                text: d.text,
+                streaming: true,
+              };
+              if (insertIdx < 0) {
+                return { ...prev, [key]: [...list, newBubble] };
+              }
+              const next = list.slice();
+              next.splice(insertIdx, 0, newBubble);
+              return { ...prev, [key]: next };
+            }
+            // Subsequent deltas: update in place to preserve position
+            // relative to any user-messages or tool events inserted
+            // around the bubble.
+            const idx = list.findIndex((m) => m.id === id);
+            if (idx < 0) {
+              return {
+                ...prev,
+                [key]: [
+                  ...list,
+                  {
+                    id,
+                    role: 'assistant',
+                    ts: Date.now(),
+                    text: d.text,
+                    streaming: true,
+                  },
+                ],
+              };
+            }
+            const next = list.slice();
+            const existing = next[idx];
+            if (!existing || existing.role !== 'assistant') return prev;
+            next[idx] = { ...existing, text: d.text, streaming: true };
+            return { ...prev, [key]: next };
           });
         } else if (d.state === 'final') {
           const id = streamingIdRef.current.get(key) ?? newId('msg');
           streamingIdRef.current.delete(key);
           setMessages((prev) => {
             const list = prev[key] ?? [];
-            const filtered = list.filter((m) => m.id !== id);
-            return {
-              ...prev,
-              [key]: [
-                ...filtered,
-                {
-                  id,
-                  role: 'assistant',
-                  ts: Date.now(),
-                  text: d.text,
-                },
-              ],
-            };
+            const idx = list.findIndex((m) => m.id === id);
+            if (idx < 0) {
+              // No bubble in list (no deltas arrived) — append.
+              return {
+                ...prev,
+                [key]: [
+                  ...list,
+                  {
+                    id,
+                    role: 'assistant',
+                    ts: Date.now(),
+                    text: d.text,
+                  },
+                ],
+              };
+            }
+            const next = list.slice();
+            const existing = next[idx];
+            if (!existing || existing.role !== 'assistant') return prev;
+            next[idx] = { ...existing, text: d.text, streaming: false };
+            return { ...prev, [key]: next };
           });
         }
       });
@@ -475,7 +546,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         // each turn in scrollback — mirrors the TUI's `◇ memory · …`
         // line. Anchored before the turn's first chat:delta, so it
         // sits ABOVE the agent's reply for the turn it informed.
-        appendMessage(key, {
+        insertBeforeStreaming(key, {
           id: newId('mi'),
           role: 'memory_inject',
           ts: Date.now(),
@@ -494,7 +565,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }>(ev as MessageEvent);
         if (!d) return;
         if (d.phase === 'call') {
-          appendMessage(key, {
+          insertBeforeStreaming(key, {
             id: newId('tc'),
             role: 'tool_call',
             ts: Date.now(),
@@ -505,7 +576,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             },
           });
         } else if (d.phase === 'result') {
-          appendMessage(key, {
+          insertBeforeStreaming(key, {
             id: newId('tr'),
             role: 'tool_result',
             ts: Date.now(),
@@ -516,7 +587,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             },
           });
         } else if (d.phase === 'error') {
-          appendMessage(key, {
+          insertBeforeStreaming(key, {
             id: newId('tr'),
             role: 'tool_result',
             ts: Date.now(),
@@ -535,7 +606,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           payload: unknown;
         }>(ev as MessageEvent);
         if (!d) return;
-        appendMessage(key, {
+        insertBeforeStreaming(key, {
           id: newId('em'),
           role: 'engine_meta',
           ts: Date.now(),
@@ -608,49 +679,72 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           from_system?: 'sentinel';
         }>(ev as MessageEvent);
         if (!d) return;
-        // Dedupe self-send echo: if this exact text sits in our
-        // pending-self-sends set for this session, the optimistic
-        // local-user message already represents it. Drop the echo
-        // and consume the pending entry so a real second send of
-        // the same text down the line still echoes properly.
-        // BUT before returning, clear any queued-state on the matching
-        // optimistic bubble: the turn just transitioned from "waiting
-        // in queue" to "actually running", so the indicator should go.
+        // Dedupe + append in a SINGLE setMessages updater so the
+        // decision is atomic. An earlier version kept `cleared` in
+        // a closure outside the updater and then called appendMessage
+        // when `cleared` was still false — but setMessages updaters
+        // run asynchronously, so the flag wasn't set yet when the
+        // outer code checked it. Result: optimistic bubble + appended
+        // echo = duplicate user-message in the chat.
+        setMessages((prev) => {
+          const list = prev[key] ?? [];
+          if (!d.from_agent && !d.from_system) {
+            // Self-typed echo: look for the optimistic bubble that
+            // owns this turn and clear its pending/queued flags
+            // (the turn just transitioned from "waiting" to "running").
+            // turnId match is authoritative; text+pending fallback
+            // covers the race where the user_message SSE arrives
+            // BEFORE the POST /chat/send response — the optimistic
+            // bubble doesn't have its turnId tagged yet, so turnId
+            // match fails. m.pending acts as the guard against
+            // matching a finalized bubble with the same text.
+            let foundMatch = false;
+            const next = list.map((m) => {
+              if (m.role !== 'user') return m;
+              const turnIdMatch = d.turnId && m.turnId === d.turnId;
+              const textFallback =
+                !turnIdMatch && m.pending && m.text === d.text;
+              if (turnIdMatch || textFallback) {
+                foundMatch = true;
+                const { queued: _q, pending: _p, ...rest } = m;
+                return rest as ChatMessage;
+              }
+              return m;
+            });
+            if (foundMatch) {
+              return { ...prev, [key]: next };
+            }
+            // No match — this came from another client on the same
+            // session (e.g., mobile + desktop both watching). Fall
+            // through to append.
+          }
+          return {
+            ...prev,
+            [key]: [
+              ...list,
+              {
+                id: newId('um'),
+                role: 'user',
+                ts: d.ts ?? Date.now(),
+                text: d.text,
+                ...(d.turnId ? { turnId: d.turnId } : {}),
+                ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
+                ...(d.from_system ? { fromSystem: d.from_system } : {}),
+              },
+            ],
+          };
+        });
+        // Backward-compat: drain the text-based dedupe set so older
+        // servers (no turnId in user_message) still don't double-render.
+        // Safe to do unconditionally — splicing a missing entry is a no-op.
         if (!d.from_agent && !d.from_system) {
           const pending = pendingSelfSendsRef.current.get(key) ?? [];
-          const idx = pending.indexOf(d.text);
-          if (idx >= 0) {
-            pending.splice(idx, 1);
+          const textIdx = pending.indexOf(d.text);
+          if (textIdx >= 0) {
+            pending.splice(textIdx, 1);
             pendingSelfSendsRef.current.set(key, pending);
-            if (d.turnId) {
-              setMessages((prev) => {
-                const list = prev[key];
-                if (!list) return prev;
-                let changed = false;
-                const next = list.map((m) => {
-                  if (m.role === 'user' && m.turnId === d.turnId && m.queued) {
-                    changed = true;
-                    const { queued: _q, ...rest } = m;
-                    return rest as ChatMessage;
-                  }
-                  return m;
-                });
-                if (!changed) return prev;
-                return { ...prev, [key]: next };
-              });
-            }
-            return;
           }
         }
-        appendMessage(key, {
-          id: newId('um'),
-          role: 'user',
-          ts: d.ts ?? Date.now(),
-          text: d.text,
-          ...(d.turnId ? { turnId: d.turnId } : {}),
-          ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
-          ...(d.from_system ? { fromSystem: d.from_system } : {}),
-        });
       });
 
       es.addEventListener('turn_queued', (ev) => {
@@ -687,7 +781,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       });
     },
-    [patchStream, appendMessage, updateAssistantText],
+    [patchStream, appendMessage, insertBeforeStreaming, updateAssistantText],
   );
 
   const closeStream = useCallback((agent: string, session: string) => {
@@ -796,11 +890,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // so the bubble shows the same thumbnail row the user just
       // confirmed in the input.
       const localId = newId('local-user');
+      // pending: true marks this bubble as "awaiting server-side turn
+      // start". The chat:delta handler uses it as an anchor — a fresh
+      // assistant bubble inserts BEFORE the first pending user-bubble
+      // so the agent's reply for the CURRENT turn doesn't jump below
+      // a queued message the user typed while waiting. Cleared by the
+      // user_message SSE handler when the matching turnId arrives.
       appendMessage(key, {
         id: localId,
         role: 'user',
         ts: Date.now(),
         text,
+        pending: true,
         ...(attachments && attachments.length > 0
           ? {
               attachments: attachments.map((a) => ({

@@ -69,6 +69,16 @@ export type ChatMessage =
        *   - cleared back to undefined when matching user_message arrives
        *  Sentinel and A2A inbounds never carry this. */
       queued?: { ahead: number };
+      /** True from the moment the optimistic bubble is rendered until
+       *  the server's user_message SSE event for the matching turnId
+       *  arrives (which signals "this turn is now actually running").
+       *  Used by the chat:delta handler to position a freshly-spawned
+       *  assistant bubble BEFORE any still-pending user bubbles —
+       *  i.e., queued messages stay below the agent's reply for the
+       *  turn that's currently in flight, instead of being jumped
+       *  over by the first delta. Invisible to the user; queued
+       *  drives the visible "⌛ queued" marker. */
+      pending?: boolean;
     }
   | {
       id: string;

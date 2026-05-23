@@ -244,9 +244,16 @@ archived copy at the next idle window.
   `◌ codex · plan` so it's visually clear they came from the engine,
   not from somora's tool layer.
 - **Input**: auto-grow textarea up to 120px, then internal scroll.
-  Enter sends, Shift+Enter newline. The disabled-during-streaming
-  flag refocuses the field automatically when the response ends, so
-  you can keep typing without an extra click.
+  Enter sends, Shift+Enter newline. The textarea stays editable
+  while a turn is streaming — pressing Send during a running turn
+  enqueues the message rather than blocking it (see "Queueing &
+  Stop" below).
+- **Stop button** (overlaid on a streaming assistant bubble): always
+  visible while a turn is in flight, in the same slot where copy/pin
+  sit on finished bubbles. One click aborts the current turn server-
+  side via `POST /chat/abort`. Pattern matches ChatGPT / Claude.ai —
+  the abort affordance lives on the message being generated, not in
+  the input bar.
 - **Mic button** (next to send, when STT is configured): click-to-toggle
   voice input. Click once to start recording — the icon switches to a
   red stop-square and `MediaRecorder` captures from the default mic.
@@ -363,6 +370,32 @@ Closing a pin-note (`×` button on the window, or click the active
 pin button on the source bubble) just removes the note window — the
 original message stays in chat history.
 
+## Queueing & Stop
+
+You don't have to wait for a turn to finish before typing the next
+one. Submits during a running turn flow into the per-session queue
+on the server (see [api.md](api.md#queuing)) and execute in order
+once the lock frees.
+
+The optimistic user-bubble shows up immediately with a small
+hourglass marker next to its timestamp:
+
+```
+ ┌──────────────────────────────────────┐
+ │  next thing I want to ask            │
+ │                       ⌛ queued · 14:08 │
+ └──────────────────────────────────────┘
+```
+
+When other waiters sit in front, the marker reads
+`⌛ queued · N ahead`. The marker disappears as soon as the server
+starts the turn — at that point the bubble looks like any other
+finished user message, and the assistant's reply streams in below it.
+
+Aborting (Stop button on the streaming bubble) cancels the
+**currently-running** turn only. Queued waiters keep their slots and
+run in order.
+
 ## Cross-client echo
 
 When you type a message in a Web window, the somora server echoes a
@@ -383,12 +416,15 @@ The web client listens for these named events on `/chat/stream`:
 | Event | Payload | Meaning |
 |---|---|---|
 | `status` | `{msg}` | Connection state — initial `connected`, periodic keepalive |
-| `user_message` | `{text, ts, from_agent?}` | A user-typed message landed in the session (any client) |
+| `user_message` | `{text, ts, turnId?, from_agent?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system: 'sentinel'` marks a system-trigger inbound. |
+| `turn_queued` | `{turnId, ahead}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. Drives the `⌛ queued` marker. |
 | `agent` | `{phase: 'start'\|'end', usage?, model?, ...}` | Turn boundary |
 | `chat` | `{state: 'delta'\|'final', text}` | Cumulative assistant text (each delta carries the full running text, not just the new chunk) |
 | `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | Tool invocation lifecycle |
+| `engine_meta` | `{engine, itemType, label, summary?, payload}` | Engine-internal side-channel (e.g. codex `todo_list`). Renders under the tools toggle. |
 | `memory` | `{count, topScore, refs, fullText?}` | Memory auto-inject for this turn |
 | `project` | `{from, to, via}` | Project focus change — fired by `/projekt` slash + HTTP routes. MCP-routed agent tool calls don't emit this; clients re-GET `/…/project` on `agent:end` instead. Only fires when the projects feature is enabled. |
+| `assistant_audio` | `{turnId, url, mime, durationMs?, cacheKey}` | Server-generated TTS artifact for the matching turn. Pairs by `turnId`; drives the Play-button on the bubble. |
 
 The server pubsub key is `${agent}::${session}` — multiple agents can
 share a session id like `main` without leaking events across windows.

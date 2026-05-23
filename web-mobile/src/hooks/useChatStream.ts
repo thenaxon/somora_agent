@@ -49,6 +49,12 @@ export interface ChatMessage {
    *  (= the turn actually started). Drives the hourglass marker
    *  next to the timestamp. */
   queued?: { ahead: number };
+  /** True from optimistic send until the matching user_message
+   *  SSE arrives. Used by the chat:delta handler to anchor the
+   *  fresh assistant bubble BEFORE any queued user-bubbles so
+   *  the agent's reply for the CURRENT turn stays above messages
+   *  the user typed while waiting. */
+  pending?: boolean;
 }
 
 interface HistoryEvent {
@@ -196,29 +202,69 @@ export function useChatStream(agent: string | null): ChatStream {
       if (!d || typeof d.text !== 'string') return;
       const text = d.text;
 
+      // First delta appends a fresh bubble at the current bottom.
+      // Subsequent deltas + final update the SAME bubble in place
+      // so optimistic user-bubbles inserted while the previous turn
+      // was running stay below the agent's text instead of being
+      // jumped over on every render. See ChatProvider.tsx for the
+      // matching desktop logic.
       if (d.state === 'delta') {
         let id = streamingIdRef.current;
+        const isFirstDelta = !id;
         if (!id) {
           id = newId('a');
           streamingIdRef.current = id;
         }
         const trackedId = id;
         setMessages((prev) => {
-          const filtered = prev.filter((m) => m.id !== trackedId);
-          return [
-            ...filtered,
-            { id: trackedId, role: 'agent', ts: Date.now(), text, streaming: true },
-          ];
+          if (isFirstDelta) {
+            // Anchor the fresh agent bubble BEFORE any still-pending
+            // user-bubble — queued messages stay below the agent's
+            // reply for the current turn instead of being jumped
+            // over by the first delta. See ChatProvider.tsx for the
+            // matching desktop logic.
+            const insertIdx = prev.findIndex((m) => m.role === 'user' && m.pending);
+            const newBubble: ChatMessage = {
+              id: trackedId,
+              role: 'agent',
+              ts: Date.now(),
+              text,
+              streaming: true,
+            };
+            if (insertIdx < 0) return [...prev, newBubble];
+            const next = prev.slice();
+            next.splice(insertIdx, 0, newBubble);
+            return next;
+          }
+          const idx = prev.findIndex((m) => m.id === trackedId);
+          if (idx < 0) {
+            return [
+              ...prev,
+              { id: trackedId, role: 'agent', ts: Date.now(), text, streaming: true },
+            ];
+          }
+          const next = prev.slice();
+          const existing = next[idx];
+          if (!existing || existing.role !== 'agent') return prev;
+          next[idx] = { ...existing, text, streaming: true };
+          return next;
         });
       } else if (d.state === 'final') {
         const id = streamingIdRef.current ?? newId('a');
         streamingIdRef.current = null;
         setMessages((prev) => {
-          const filtered = prev.filter((m) => m.id !== id);
-          return [
-            ...filtered,
-            { id, role: 'agent', ts: Date.now(), text },
-          ];
+          const idx = prev.findIndex((m) => m.id === id);
+          if (idx < 0) {
+            return [
+              ...prev,
+              { id, role: 'agent', ts: Date.now(), text },
+            ];
+          }
+          const next = prev.slice();
+          const existing = next[idx];
+          if (!existing || existing.role !== 'agent') return prev;
+          next[idx] = { ...existing, text, streaming: false };
+          return next;
         });
       }
     };
@@ -288,43 +334,49 @@ export function useChatStream(agent: string | null): ChatStream {
         | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || typeof d.text !== 'string') return;
-      // Self-typed turns are optimistically appended at send-time
-      // (see `send` below) — drop the server echo to avoid dupes.
-      // BUT before returning, clear any queued-state on the matching
-      // optimistic bubble: the turn just transitioned from "waiting in
-      // queue" to "actually running", so the indicator should go.
-      // A2A and sentinel inbounds carry from_agent / from_system; let
-      // those through.
-      if (!d.from_agent && !d.from_system) {
-        const turnId = d.turnId;
-        if (turnId) {
-          setMessages((prev) => {
-            let changed = false;
-            const next = prev.map((m) => {
-              if (m.role === 'user' && m.turnId === turnId && m.queued) {
-                changed = true;
-                const { queued: _q, ...rest } = m;
-                return rest as ChatMessage;
-              }
-              return m;
-            });
-            return changed ? next : prev;
+      const dd = d;
+      // Dedupe + append in a SINGLE setMessages updater so the
+      // decision is atomic. Three cases:
+      //   1. Self-typed echo with matching pending bubble in OUR
+      //      list → clear pending/queued, drop the echo.
+      //   2. Self-typed echo with NO matching bubble (this client
+      //      didn't send it — it's coming from a sibling client on
+      //      the same session, e.g. mobile watching while desktop
+      //      sends) → append as a new user-message.
+      //   3. A2A (fromAgent) / sentinel inbound → append.
+      setMessages((prev) => {
+        if (!dd.from_agent && !dd.from_system) {
+          let foundMatch = false;
+          const next = prev.map((m) => {
+            if (m.role !== 'user') return m;
+            const turnIdMatch = dd.turnId && m.turnId === dd.turnId;
+            const textFallback =
+              !turnIdMatch && m.pending && m.text === dd.text;
+            if (turnIdMatch || textFallback) {
+              foundMatch = true;
+              const { queued: _q, pending: _p, ...rest } = m;
+              return rest as ChatMessage;
+            }
+            return m;
           });
+          if (foundMatch) return next;
+          // No optimistic bubble owns this message — it came from
+          // another client on the same session. Fall through to
+          // append so the user sees it live, not just after reload.
         }
-        return;
-      }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: newId('um'),
-          role: 'user',
-          ts: d!.ts ?? Date.now(),
-          text: d!.text!,
-          ...(d!.turnId ? { turnId: d!.turnId } : {}),
-          ...(d!.from_agent ? { fromAgent: d!.from_agent } : {}),
-          ...(d!.from_system ? { fromSystem: d!.from_system } : {}),
-        },
-      ]);
+        return [
+          ...prev,
+          {
+            id: newId('um'),
+            role: 'user',
+            ts: dd.ts ?? Date.now(),
+            text: dd.text!,
+            ...(dd.turnId ? { turnId: dd.turnId } : {}),
+            ...(dd.from_agent ? { fromAgent: dd.from_agent } : {}),
+            ...(dd.from_system ? { fromSystem: dd.from_system } : {}),
+          },
+        ];
+      });
     };
 
     const onTurnQueued = (e: MessageEvent) => {
@@ -422,6 +474,7 @@ export function useChatStream(agent: string | null): ChatStream {
       text: text || (attachments && attachments.length > 0
         ? `📎 ${attachments.map((a) => a.name).join(', ')}`
         : ''),
+      pending: true,
     };
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);

@@ -557,7 +557,6 @@ export function ChatWindow({
         .filter((p) => p.state === 'ready' && p.ref)
         .map((p) => p.ref as AttachmentRef);
       const stillUploading = pendingAttachments.some((p) => p.state === 'uploading');
-      if (chat.streaming) return;
       if (stillUploading) {
         setSystemNotice({ text: 'wait — attachment still uploading', tone: 'info' });
         return;

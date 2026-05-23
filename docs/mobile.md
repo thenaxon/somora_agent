@@ -38,7 +38,14 @@ own app switcher entry.
   Pinch-to-zoom is disabled; tap-to-zoom into a code block by scrolling
   the block horizontally.
 - **Input bar** at the bottom: paperclip (attachments), mic (voice),
-  textarea, send. Enter sends, Shift+Enter inserts a newline.
+  textarea, send. Enter sends, Shift+Enter inserts a newline. The
+  textarea stays editable while a turn is streaming — sending during
+  a running turn enqueues the message rather than blocking it (see
+  "Queueing & Stop" below).
+- **Stop button** on a streaming agent bubble: a small square icon
+  pinned to the bubble's bottom-right corner while the turn is in
+  flight. Tap to abort. Always visible (no hover state on touch).
+  This is the only way to cancel an in-flight turn from mobile.
 - **Voice input:** tap the mic — it goes red and pulses while
   recording. Tap again to stop; the transcript lands in the textarea
   ready for you to edit before sending. Never auto-sends. Requires
@@ -73,6 +80,19 @@ own app switcher entry.
   EventSource and reopens it, re-hydrating from `/chat/history` so
   anything broadcast while you were gone shows up without a reload.
 
+## Queueing & Stop
+
+Submits during a running turn don't block. The optimistic user-bubble
+appears immediately with a small hourglass next to its timestamp
+(`⌛ queued`, or `⌛ queued · N ahead` when other turns sit in front)
+and the marker clears as soon as the server starts that turn. The
+queue serialises on the server side — turns execute in order, no
+preemption. See [api.md](api.md#queuing) for the lock semantics.
+
+The Stop button on the streaming agent bubble cancels the
+**currently-running** turn only. Anything still queued behind it
+keeps its slot and executes when the lock frees.
+
 ## Scope: what's in vs what's not
 
 **Currently shipped:**
@@ -89,6 +109,8 @@ own app switcher entry.
   toggle; replay button on past bubbles when audio is cached)
 - Camera / photo-roll attachments via the native picker
 - Typing-indicator while the agent is working
+- Type-during-streaming with queued indicator + Stop on the streaming
+  bubble (parity with the web client)
 - Background sleep recovery — reconnects automatically when the PWA
   returns from the home-screen after a long pause
 

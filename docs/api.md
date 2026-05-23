@@ -530,8 +530,30 @@ Body fields:
   another agent (used by `agent_ask` tool)
 - `agent_ask_call_id` (optional, A2A) — correlation UUID
 
+Response: `{ ok: true, turnId }`. The `turnId` is the server-issued
+identifier for the queued/running turn — clients echo it through to
+match later SSE events (`turn_queued`, `user_message`) back to the
+optimistic bubble they rendered locally.
+
 Streaming responses arrive via `/chat/stream`; this endpoint just
 acknowledges receipt.
+
+#### Queuing
+
+Sends on a `(agent, session)` that already has a turn running are
+**enqueued**, not rejected. The server holds a per-session lock with
+a two-class priority queue:
+- `user` — direct human sends (no `from_agent`)
+- `agent` — A2A sends from `agent_ask` / sub-spawns
+
+User entries jump ahead of any waiting agent entries; FIFO within each
+class. The currently-running turn always finishes — preempting would
+corrupt JSONL — so a queued turn starts only after the lock holder
+releases.
+
+Clients can opt into rendering a queue indicator by listening for the
+`turn_queued` SSE event (see below). UIs without it still work; the
+turn runs eventually, just without a visible "waiting" hint.
 
 ### `POST /chat/send-sync`
 
@@ -557,6 +579,21 @@ curl -N "https://<host>:18737/chat/stream?agent=hans&session=main"
 Event types:
 - `chat` — `{state: 'delta'|'final', text}` — streaming assistant
   output
+- `agent` — `{phase: 'start'|'end', usage?, model?, ...}` — turn
+  lifecycle around the model call
+- `user_message` — `{text, ts, turnId?, from_agent?, from_system?,
+  agent_ask_call_id?}` — broadcast when a turn's user_message is
+  written to JSONL. Self-typed sends, A2A inbounds, and sentinel
+  triggers all flow through here. `turnId` lets a sending client
+  match this event to the optimistic bubble it rendered after
+  `POST /chat/send` (which echoes the same id).
+- `turn_queued` — `{turnId, ahead}` — fired when `POST /chat/send`
+  hit a busy lock and the turn had to wait. `ahead` is the number
+  of turns this one must wait for (≥1, includes the currently-
+  running one). Static snapshot at enqueue time, not updated as
+  the queue drains. Clients render `"queued · N ahead"` until the
+  matching `user_message` event arrives (= the turn is now actually
+  running, lock acquired).
 - `tool` — `{phase: 'call'|'result'|'error', tool, summary?,
   details?, error?}` — tool-call events
 - `engine_meta` — `{engine, itemType, label, summary?, payload}` —
@@ -607,13 +644,14 @@ clients resolve the friendly label on render (see
 
 ### `POST /chat/abort`
 
-Cancel an in-flight turn on a `(agent, session)`. Triggered by TUI
-ESC and by the web equivalent.
+Cancel an in-flight turn on a `(agent, session)`. The TUI fires it
+on ESC; web and mobile fire it from the Stop button overlaid on the
+streaming assistant bubble. Idempotent — returns `aborted: false`
+when no turn is running. Cancels the **currently-running** turn
+only; queued waiters keep their slots and still execute.
 
 ```bash
-curl -X POST https://<host>:18737/chat/abort \
-     -H 'Content-Type: application/json' \
-     -d '{"agent":"hans","session":"main"}'
+curl -X POST "https://<host>:18737/chat/abort?agent=hans&session=main"
 ```
 
 ---
