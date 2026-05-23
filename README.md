@@ -194,16 +194,16 @@ Four first-party clients, all hitting the same local server:
 
 ### TUI — `somora tui`
 
-![somora TUI screenshot — terminal multi-agent chat with memory injection and tool calls](docs/images/somora-tui.png)
+![somora TUI screenshot — terminal multi-agent chat with memory injection and tool calls](docs/images/somora-tui-2026-05-23.png)
 
 ### Web — browser desktop
 
-![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web.png)
+![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web-2026-05-23.png)
 
 ### Mobile — installable PWA on your phone
 
 <p align="center">
-  <img src="docs/images/somora-mobile.png" width="320" alt="somora mobile PWA screenshot — avatar row at the top, A2A reply from jarvis quoting both lisa and naxon, paperclip + camera + mic + send input bar at the bottom" />
+  <img src="docs/images/somora-mobile-2026-05-23.png" width="320" alt="somora mobile PWA screenshot — avatar row at the top, A2A reply from jarvis quoting both lisa and naxon, paperclip + camera + mic + send input bar at the bottom" />
 </p>
 
 Tailscale-only by design — same posture as `/web/`. Build pipeline ships
