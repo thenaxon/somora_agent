@@ -202,6 +202,10 @@ Four first-party clients, all hitting the same local server:
 
 ### Mobile — installable PWA on your phone
 
+<p align="center">
+  <img src="docs/images/somora-mobile.png" width="320" alt="somora mobile PWA screenshot — avatar row at the top, A2A reply from jarvis quoting both lisa and naxon, paperclip + camera + mic + send input bar at the bottom" />
+</p>
+
 Tailscale-only by design — same posture as `/web/`. Build pipeline ships
 `web/dist` and `web-mobile/dist` together; `somora update` picks up
 both with no operator intervention.
