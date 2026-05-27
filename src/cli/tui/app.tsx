@@ -4,6 +4,7 @@ import TextInput from 'ink-text-input';
 
 import { Api } from './api.ts';
 import { openStream, type StreamHandle } from './stream.ts';
+import { openActivityStream } from './activity-stream.ts';
 import { matchCommands, runCommand } from './commands.ts';
 import { Header } from './header.tsx';
 import { Footer } from './footer.tsx';
@@ -119,6 +120,15 @@ export function App({
     };
   }, []);
 
+  // Cross-agent activity tracking (mirrors web/mobile). Single SSE on
+  // /activity/stream feeds two derived Sets: `streamingKeysActivity`
+  // (any agent::session currently mid-turn server-wide) and
+  // `unreadMarks` (per-(agent,session) unreadAt + seenAt timestamps).
+  // The current (agent, session) the user is viewing is auto-marked
+  // seen on every (agent, session) change.
+  const [streamingKeysActivity, setStreamingKeysActivity] = useState<Set<string>>(() => new Set());
+  const [unreadMarks, setUnreadMarks] = useState<Record<string, { unreadAt: string | null; seenAt: string | null }>>({});
+
   // Slash-autocomplete: matched against the input prefix, only when the
   // input is a single token starting with `/`. Index is the highlighted
   // suggestion (Tab cycles).
@@ -192,6 +202,92 @@ export function App({
       cancelled = true;
     };
   }, [agent, session, projectsEnabled]);
+
+  // Activity-stream subscription. Single connection for the whole TUI
+  // process; updates unreadMarks + streamingKeysActivity as events
+  // arrive. Seeded via /sessions on connect (no separate refresh
+  // mechanism — events keep us live after that).
+  useEffect(() => {
+    let cancelled = false;
+    // Seed via /sessions global list. Cheap (one request) + gives us
+    // every agent's state at once.
+    void (async () => {
+      try {
+        const res = await fetch(`${base}/sessions`);
+        if (!res.ok) return;
+        const data = (await res.json()) as { sessions: Array<{ agent: string; sessionId: string; unreadAt?: string | null; seenAt?: string | null }> };
+        if (cancelled) return;
+        const seeded: typeof unreadMarks = {};
+        for (const s of data.sessions) {
+          seeded[`${s.agent}::${s.sessionId}`] = { unreadAt: s.unreadAt ?? null, seenAt: s.seenAt ?? null };
+        }
+        setUnreadMarks((prev) => ({ ...seeded, ...prev }));
+      } catch {
+        /* server unreachable — events will populate as they arrive */
+      }
+    })();
+    const h = openActivityStream(apiRef.current.activityStreamUrl(), (ev) => {
+      if (cancelled) return;
+      const k = `${ev.agent}::${ev.session}`;
+      if (ev.kind === 'streaming') {
+        setStreamingKeysActivity((prev) => {
+          const next = new Set(prev);
+          if (ev.phase === 'start') next.add(k);
+          else next.delete(k);
+          return next;
+        });
+        return;
+      }
+      if (ev.kind === 'turn') {
+        setUnreadMarks((prev) => ({
+          ...prev,
+          [k]: { ...(prev[k] ?? { unreadAt: null, seenAt: null }), unreadAt: ev.unreadAt },
+        }));
+        return;
+      }
+      if (ev.kind === 'seen') {
+        setUnreadMarks((prev) => ({
+          ...prev,
+          [k]: { ...(prev[k] ?? { unreadAt: null, seenAt: null }), seenAt: ev.seenAt },
+        }));
+        return;
+      }
+    });
+    return () => {
+      cancelled = true;
+      h.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base]);
+
+  // Auto-mark the current view as seen whenever (agent, session)
+  // changes. Optimistic local update first, then POST. Server clamps
+  // to max(currentSeenAt, ts) and broadcasts the canonical value to
+  // sibling clients (web + mobile + other TUIs).
+  useEffect(() => {
+    const now = new Date().toISOString();
+    const k = `${agent}::${session}`;
+    setUnreadMarks((prev) => ({
+      ...prev,
+      [k]: { ...(prev[k] ?? { unreadAt: null, seenAt: null }), seenAt: now },
+    }));
+    void apiRef.current.markSeen(agent, session);
+  }, [agent, session]);
+
+  // Derived: which OTHER agents (not the currently-viewed one) have
+  // unread activity. Used by Header to render the 📬 N badge.
+  const unreadOtherAgents = useMemo(() => {
+    const out = new Set<string>();
+    for (const [k, mark] of Object.entries(unreadMarks)) {
+      if (!mark.unreadAt) continue;
+      if (mark.seenAt && mark.unreadAt <= mark.seenAt) continue;
+      const idx = k.indexOf('::');
+      const a = k.slice(0, idx);
+      if (a === agent) continue;
+      out.add(a);
+    }
+    return out;
+  }, [unreadMarks, agent]);
 
   // SSE lifecycle + history replay: on (agent, session) change clear
   // the scrollback, fetch past events from /chat/history and replay
@@ -849,6 +945,7 @@ export function App({
         showTools={showTools}
         reviewLoop={reviewLoop}
         project={project}
+        unreadOtherAgents={unreadOtherAgents}
       />
       <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>

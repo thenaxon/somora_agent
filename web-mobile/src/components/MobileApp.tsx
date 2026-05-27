@@ -10,6 +10,7 @@ import { useAgents } from '../hooks/useAgents';
 import { useLastAgent } from '../hooks/useLastAgent';
 import { useChatStream } from '../hooks/useChatStream';
 import { useDreamStates } from '../hooks/useDreamStates';
+import { useActivityStream } from '../hooks/useActivityStream';
 import { Koala } from './Koala';
 
 export function MobileApp() {
@@ -20,6 +21,35 @@ export function MobileApp() {
   // Poll /dream-states every 30s for the avatar-row pulse + REM badge.
   // Empty defaults until the first response lands.
   const dreamStates = useDreamStates();
+  // Cross-agent activity: streaming dots on inactive agents + unread
+  // badges for any session with movement since the user last looked.
+  const activity = useActivityStream(agents);
+
+  // Auto-mark the active agent's main session as seen whenever the
+  // user switches to it. Other clients will clear their badge live
+  // via the broadcast. Dep is `postSeen` only (useCallback-stable),
+  // not the whole `activity` object — its `unreadAgents` / `marks`
+  // churn on every server tick.
+  const postSeen = activity.postSeen;
+  useEffect(() => {
+    if (!activeAgent) return;
+    postSeen(activeAgent, 'main');
+  }, [activeAgent, postSeen]);
+
+  // Foreground/visibility change: tapping back into the app counts as
+  // "looking" — re-fire seen on the active session so a desktop sibling
+  // that handled a turn while phone was backgrounded doesn't keep
+  // showing the badge on the mobile side.
+  useEffect(() => {
+    if (!activeAgent) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        postSeen(activeAgent, 'main');
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [activeAgent, postSeen]);
 
   // Voice: TTS availability + per-agent (== per "main" session) auto-
   // play toggle. Sticky in localStorage; seeded from /tts/config the
@@ -104,6 +134,18 @@ export function MobileApp() {
     setLastAgent(name);
   };
 
+  // Local-only union: activity SSE knows about turns started server-
+  // wide; the optimistic `chat.streaming` from the active session may
+  // toggle on a fraction of a millisecond before the activity event
+  // round-trips. Union ensures the active agent's dot lights instantly.
+  function mergeStreaming(serverSet: Set<string>, localActive: string | null): Set<string> {
+    if (!localActive) return serverSet;
+    if (serverSet.has(localActive)) return serverSet;
+    const out = new Set(serverSet);
+    out.add(localActive);
+    return out;
+  }
+
   return (
     <div className="mobile-shell">
       <header className="mobile-header">
@@ -151,7 +193,8 @@ export function MobileApp() {
         agents={agents}
         activeAgent={activeAgent}
         onSelect={switchAgent}
-        streamingAgent={chat.streaming ? activeAgent : null}
+        streamingAgents={mergeStreaming(activity.streamingAgents, chat.streaming ? activeAgent : null)}
+        unreadAgents={activity.unreadAgents}
         dreamStates={dreamStates}
       />
 

@@ -588,4 +588,10 @@ export interface GlobalSessionRow {
   archiveReason?: string;
   /** Currently-pinned project slug (Phase Projects v1). */
   projectSlug?: string;
+  /** ISO timestamp of the latest unread-candidate event (A2A in,
+   *  sentinel in, assistant final). Null if none. Compare with
+   *  `seenAt` to decide whether to show an unread badge. */
+  unreadAt?: string | null;
+  /** ISO timestamp when any client last opened this session. */
+  seenAt?: string | null;
 }

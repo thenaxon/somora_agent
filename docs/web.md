@@ -396,6 +396,30 @@ Aborting (Stop button on the streaming bubble) cancels the
 **currently-running** turn only. Queued waiters keep their slots and
 run in order.
 
+## Activity feed (multi-agent dots + unread)
+
+The agent dock and the Sessions tool both show two passive indicators
+that come from a single app-wide SSE on `/activity/stream`:
+
+- **Streaming dot** — fills on every agent whose any session is mid-
+  turn, not just agents whose chat window you currently have open.
+  When a sentinel job wakes a different agent in the background or a
+  peer-agent message kicks off an A2A reply, that agent's dock tile
+  goes busy even if its window is closed.
+- **Unread dot** — appears (different colour from streaming) when a
+  session has activity since you last viewed it. Counts: A2A
+  inbounds, sentinel-triggered messages, and assistant final replies.
+  Self-typed messages and tool/memory side-effects do not count.
+
+A session is "viewed" when its chat window is open and focused. The
+client POSTs `/sessions/:agent/:session/seen` on focus and the server
+broadcasts the cleared state — open the chat on the TUI or mobile and
+the badge here disappears too. Per-session badges also show in the
+Sessions tool's session list.
+
+State persists across server restarts: `unreadAt` and `seenAt` live in
+each session's meta. Endpoint docs: see [api.md](api.md#get-activitystream).
+
 ## Cross-client echo
 
 When you type a message in a Web window, the somora server echoes a

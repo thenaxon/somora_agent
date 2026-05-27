@@ -45,6 +45,11 @@ export interface SessionSummary {
   messageCount: number;
   /** Currently-pinned project, if any (Phase Projects v1). */
   projectSlug?: string;
+  /** ISO timestamp of the latest unread-candidate event (A2A in,
+   *  sentinel in, assistant final reply). Null if none. */
+  unreadAt?: string | null;
+  /** ISO timestamp of when any client last viewed this session. */
+  seenAt?: string | null;
 }
 
 // Project surface — mirror of the server's project frontmatter, kept lean

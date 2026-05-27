@@ -24,6 +24,8 @@ import { useAgents } from '../hooks/useAgents';
 import { useDreamStates } from '../hooks/useDreamStates';
 import { useLoopState } from '../hooks/useLoopState';
 import { useWindowManager } from '../hooks/useWindowManager';
+import { useActivityStream } from '../hooks/useActivityStream';
+import { ActivityProvider } from './ActivityProvider';
 import type { AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
 
@@ -34,14 +36,22 @@ export function Desktop() {
   const wm = useWindowManager();
   const chatCtx = useChatContext();
 
-  // Streaming agents — derive from the live session-key snapshot in
-  // ChatProvider. Each key is `agent::session`; we strip the session
-  // suffix so the dock's status-dot reflects "this agent has any
-  // session currently streaming".
-  const streamingAgents = useMemo(
-    () => new Set(chatCtx.streamingKeys.map((k) => k.split('::')[0]!)),
-    [chatCtx.streamingKeys],
-  );
+  // Cross-agent activity feed: covers streaming-dots for agents whose
+  // chat window the user has NOT opened (ChatProvider only knows about
+  // sessions with active subscribers), plus unread-state cross-client
+  // sync. See src/hooks/useActivityStream.ts.
+  const activity = useActivityStream(agents);
+
+  // Streaming agents — union of (a) ChatProvider's own session
+  // EventSources (windows the user has open) and (b) the cross-agent
+  // activity SSE (covers sentinel-fired turns on closed-window
+  // sessions). Either signal lights the dock dot.
+  const streamingAgents = useMemo(() => {
+    const own = chatCtx.streamingKeys.map((k) => k.split('::')[0]!);
+    const merged = new Set<string>(own);
+    for (const a of activity.streamingAgents) merged.add(a);
+    return merged;
+  }, [chatCtx.streamingKeys, activity.streamingAgents]);
 
   function handleAgentClick(agent: AgentInfo) {
     wm.openChat({
@@ -62,6 +72,7 @@ export function Desktop() {
   );
 
   return (
+    <ActivityProvider value={activity}>
     <FileViewProvider open={wm.openFileView}>
     <div className="desktop">
       <div className="desktop-area">
@@ -74,6 +85,7 @@ export function Desktop() {
             loopHolder={loopState.active ? loopState.agent : null}
             activeAgentIds={activeAgentIds}
             streamingAgents={streamingAgents}
+            unreadAgents={activity.unreadAgents}
             dreamStates={dreamStates}
           />
           <AppDock
@@ -260,5 +272,6 @@ export function Desktop() {
       />
     </div>
     </FileViewProvider>
+    </ActivityProvider>
   );
 }

@@ -14,6 +14,7 @@ import { RefreshCw, Archive, ArchiveRestore, MessageSquare, FileJson, FileText }
 import { api, type GlobalSessionRow, type ProjectInfo } from '../lib/api';
 import { DreamPhaseIcon } from './DreamPhaseIcon';
 import { useChatContext } from './ChatProvider';
+import { useActivity } from './ActivityProvider';
 
 type TabKey = 'active' | 'archived' | 'all';
 type SortKey = 'lastActivity' | 'messageCount' | 'byteSize' | 'agent';
@@ -103,8 +104,24 @@ export function SessionsWindow({ onOpenChat }: Props) {
     return [...set].sort();
   }, [rows]);
 
+  const activity = useActivity();
+  // Merge live activity-state (from /activity/stream) on top of the
+  // server-fetched rows so badges live-update without a page refresh.
+  const rowsLive = useMemo(() => {
+    if (!activity) return rows;
+    return rows.map((r) => {
+      const mark = activity.marks[`${r.agent}::${r.sessionId}`];
+      if (!mark) return r;
+      return {
+        ...r,
+        unreadAt: mark.unreadAt ?? r.unreadAt ?? null,
+        seenAt: mark.seenAt ?? r.seenAt ?? null,
+      };
+    });
+  }, [rows, activity]);
+
   const filtered = useMemo(() => {
-    let out = rows;
+    let out = rowsLive;
     if (tab === 'active') out = out.filter((r) => !r.isArchived);
     else if (tab === 'archived') out = out.filter((r) => r.isArchived);
     // tab === 'all' → no filter on archive state
@@ -134,7 +151,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
       }
     });
     return sorted;
-  }, [rows, tab, agentFilter, engineFilter, dreamFilter, search, sortKey, sortDir]);
+  }, [rowsLive, tab, agentFilter, engineFilter, dreamFilter, search, sortKey, sortDir]);
 
   const kpi = useMemo(() => {
     const all = rows.length;
@@ -404,7 +421,17 @@ export function SessionsWindow({ onOpenChat }: Props) {
                     <td style={{ ...cellBody, color: r.agentColor ?? 'var(--text-1)' }}>
                       {r.agentIcon ? `${r.agentIcon} ` : ''}{r.agent}
                     </td>
-                    <td style={cellBody}>{r.slug}{r.isMain ? ' ★' : ''}</td>
+                    <td style={cellBody}>
+                      {r.slug}{r.isMain ? ' ★' : ''}
+                      {hasUnread(r) && (
+                        <span
+                          className="session-unread-dot"
+                          aria-label="unread activity"
+                          title={`Neue Aktivität seit ${fmtRelTime(r.unreadAt ?? null)}`}
+                          style={{ marginLeft: 6 }}
+                        />
+                      )}
+                    </td>
                     {projectsEnabled && (
                       <td style={cellBody}>
                         <ProjectCell
@@ -495,6 +522,12 @@ function toggleSort(
     setKey(next);
     setDir('desc');
   }
+}
+
+function hasUnread(r: GlobalSessionRow): boolean {
+  if (!r.unreadAt) return false;
+  if (!r.seenAt) return true;
+  return r.unreadAt > r.seenAt;
 }
 
 function fmtBytes(n: number): string {

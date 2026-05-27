@@ -80,6 +80,28 @@ own app switcher entry.
   EventSource and reopens it, re-hydrating from `/chat/history` so
   anything broadcast while you were gone shows up without a reload.
 
+## Activity feed (multi-agent dots + unread)
+
+The avatar strip shows two passive markers per agent that come from a
+single app-wide SSE on `/activity/stream`:
+
+- **Streaming dot** — pulses on every agent whose any session is mid-
+  turn, not just the one you're chatting with. When a sentinel job
+  wakes lisa while you're on naxon, lisa's avatar lights up so you
+  notice the background activity.
+- **Unread dot** — a different-colour dot appears when an agent has
+  movement since you last looked. Counts: peer-to-peer A2A inbounds,
+  sentinel-triggered messages, and assistant final replies. Your own
+  typed messages don't trigger it (even from a different client).
+
+Tap an avatar to open that session; the badge clears the moment the
+session becomes active and the server broadcasts the cleared state so
+the web tab and TUI also drop their badge. When you return to the PWA
+from the background, the visibility change re-fires the "seen" ping
+on the current agent. State persists across server restarts.
+
+See [api.md](api.md#get-activitystream) for the underlying endpoint.
+
 ## Queueing & Stop
 
 Submits during a running turn don't block. The optimistic user-bubble
@@ -98,9 +120,12 @@ keeps its slot and executes when the lock frees.
 **Currently shipped:**
 - One agent at a time, one main session per agent
 - Live streaming of agent responses with a typing-cursor indicator
-- Streaming-state dot on the active agent's avatar while the reply
-  is in flight, plus a dream-phase pulse (REM / DEEP / LUCID) and a
-  REM pending-review counter mirroring the desktop dock
+- Streaming-state dot on **every** agent currently mid-turn (not just
+  the active one), plus a dream-phase pulse (REM / DEEP / LUCID) and
+  a REM pending-review counter mirroring the desktop dock
+- Per-agent unread dot — sentinel fires, A2A inbounds, and assistant
+  replies arriving on inactive agents leave a marker that clears
+  when you tap that agent (cross-client synced)
 - Markdown rendering of agent replies
 - localStorage-persisted last-agent
 - Voice input via STT (mic-button → record → transcript editable in
@@ -115,7 +140,6 @@ keeps its slot and executes when the lock frees.
   returns from the home-screen after a long pause
 
 **Planned next:**
-- Per-agent unread badges
 - Maskable PNG icons, splash screens, theme polish
 - Web Push notifications for agent replies arriving while the PWA
   is in the background

@@ -173,6 +173,28 @@ export class Api {
     return `${this.base}/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`;
   }
 
+  activityStreamUrl(): string {
+    return `${this.base}/activity/stream`;
+  }
+
+  /** Mark a session "seen" — the user is looking at this (agent,
+   *  session) right now. Server clamps to max(currentSeenAt, ts) and
+   *  broadcasts to sibling clients so their unread badges clear too. */
+  async markSeen(agent: string, session: string): Promise<void> {
+    try {
+      await loopbackFetch(
+        `${this.base}/sessions/${encodeURIComponent(agent)}/${encodeURIComponent(session)}/seen`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        },
+      );
+    } catch {
+      /* network blip — next focus will retry */
+    }
+  }
+
   /**
    * Pull historical events for a session — used to repopulate the
    * scrollback when the TUI opens or switches to a session that

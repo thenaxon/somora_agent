@@ -18,6 +18,7 @@ import { gradientFor, resolveAgentColor } from '../lib/colors';
 import { useSessionInfo } from '../hooks/useSessionInfo';
 import { useAgents } from '../hooks/useAgents';
 import { useChatSessionFromContext } from './ChatProvider';
+import { useActivity } from './ActivityProvider';
 import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
 import { AttachmentTray, type PendingAttachment } from './AttachmentTray';
@@ -64,6 +65,7 @@ export function ChatWindow({
   const color = resolveAgentColor(agent);
   const { model, thinking, refresh: refreshSessionInfo } = useSessionInfo(agent.name, sessionId);
   const chat = useChatSessionFromContext(agent.name, sessionId);
+  const activity = useActivity();
   // Agent registry — used to resolve sender color+icon for A2A
   // inbound (user_message.from_agent). Single fetch shared with the
   // dock; useAgents memoizes inside.
@@ -365,6 +367,28 @@ export function ChatWindow({
     if (sel && sel.toString().length > 0) return;
     textareaRef.current?.focus();
   }, [windowFocused]);
+
+  // Mark session as seen when the ChatWindow becomes focused. Mirrors
+  // the mobile activeAgent-change handler. Idempotent server-side
+  // (max() clamp), so re-firing on every focus cycle is harmless.
+  //
+  // Dep IS `postSeen` only (useCallback-stable), NOT the whole
+  // `activity` object — that one's `marks` field churns on every
+  // turn/seen event, which would otherwise re-fire this effect on
+  // every server-side activity tick.
+  const postSeen = activity?.postSeen;
+  useEffect(() => {
+    if (!windowFocused) return;
+    postSeen?.(agent.name, sessionId);
+  }, [windowFocused, agent.name, sessionId, postSeen]);
+
+  // First-time open: also mark seen even if focus jitter never fires
+  // the windowFocused effect (e.g. the click that opened the window
+  // landed on a child of the chat, not the titlebar).
+  useEffect(() => {
+    postSeen?.(agent.name, sessionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent.name, sessionId]);
 
   // After streaming ends, refocus the textarea so the user can
   // immediately type the next message — the `disabled={streaming}`

@@ -39,6 +39,10 @@ interface Props {
   reviewLoop?: { agent: string; dreamId: string } | null;
   /** Currently-pinned project for this (agent, session), or null. */
   project?: ProjectInfo | null;
+  /** Names of agents other than the current one that have unread
+   *  activity. Renders as `📬 N` chip in the header so the user
+   *  knows to /agent over to check. */
+  unreadOtherAgents?: Set<string>;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -60,6 +64,7 @@ export function Header({
   showTools,
   reviewLoop,
   project,
+  unreadOtherAgents,
 }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
@@ -120,6 +125,14 @@ export function Header({
         <>
           <Text color="gray">{'   '}</Text>
           <ProjectChip project={project} />
+        </>
+      ) : null}
+      {unreadOtherAgents && unreadOtherAgents.size > 0 ? (
+        <>
+          <Text color="gray">{'   '}</Text>
+          <Text color="yellowBright" bold>
+            📬 {unreadOtherAgents.size}
+          </Text>
         </>
       ) : null}
       {/* Connection / streaming indicator. Kept short on purpose:

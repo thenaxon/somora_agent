@@ -189,6 +189,24 @@ button { cursor: pointer; }
   50%      { opacity: 1.0; transform: scale(1.15); }
 }
 
+/* Unread-activity marker — bottom-right of the avatar, same slot as
+ * the streaming dot. They're mutually exclusive in render: streaming
+ * (live) takes priority so the user sees "this agent is working RIGHT
+ * NOW" first; unread (passive) only shows when the agent is idle but
+ * has new movement since the user last looked. Distinct color from
+ * the streaming dot so it doesn't look like a paused stream. */
+.avatar-unread-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--unread, #ffb454);
+  border: 2px solid var(--bg-0);
+  box-shadow: 0 0 5px rgba(255, 180, 84, 0.55);
+}
+
 /* REM pending-review counter — top-right counter, mirrors the desktop
  * dock's .rem-badge but sized for the 44px tile. Appears when the
  * agent has finished REM extraction runs awaiting user review. */

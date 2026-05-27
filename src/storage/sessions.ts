@@ -283,6 +283,13 @@ export interface SessionSummary {
    *  want full per-session project history derive it from JSONL
    *  `project_switched` events. */
   projectSlug?: string;
+  /** ISO timestamp of the latest unread-candidate event (A2A in,
+   *  sentinel in, assistant final reply). Null if none yet. Compared
+   *  against `seenAt` to compute the unread-badge state. */
+  unreadAt?: string | null;
+  /** ISO timestamp of when the user last opened this session in any
+   *  client. Updated by POST /sessions/:agent/:session/seen. */
+  seenAt?: string | null;
 }
 
 /** Returns true if the session is considered archived for filtering purposes:
@@ -419,6 +426,8 @@ export async function listSessions(
       archiveReason: typeof meta.archiveReason === 'string' ? meta.archiveReason : undefined,
       archivedAt: typeof meta.archivedAt === 'string' ? meta.archivedAt : undefined,
       projectSlug: typeof meta.projectSlug === 'string' ? meta.projectSlug : undefined,
+      unreadAt: typeof meta.unreadAt === 'string' ? meta.unreadAt : null,
+      seenAt: typeof meta.seenAt === 'string' ? meta.seenAt : null,
     });
   }
 

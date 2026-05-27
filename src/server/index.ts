@@ -71,6 +71,11 @@ import { installTtsCacheGc } from '../tts/cache-gc.ts';
 import { prepareForTts } from '../tts/prepare-for-tts.ts';
 import { appendEvent } from '../storage/sessions.ts';
 import {
+  markSeen,
+  subscribeActivity,
+  tapPublish,
+} from './activity-stream.ts';
+import {
   configureDreamRunTool,
   configureExecConcurrencyCaps,
   configureSpawnTools,
@@ -247,6 +252,13 @@ async function publish(agent: string, session: string, event: SseEvent): Promise
       });
     }
   }
+
+  // Side-channel: forward to the cross-agent activity hub so the mobile
+  // AvatarRow + web AgentDock + TUI status can render per-agent
+  // streaming dots and unread badges. Fire-and-forget — failures in
+  // the activity hub must not break the per-session broadcast that
+  // just succeeded above. See src/server/activity-stream.ts.
+  void tapPublish(agent, session, event);
 }
 
 // Resolve the effective model for a turn: a per-session override (set via
@@ -1156,6 +1168,8 @@ app.get('/sessions', async (c) => {
         ...(s.archivedAt !== undefined ? { archivedAt: s.archivedAt } : {}),
         ...(s.archiveReason !== undefined ? { archiveReason: s.archiveReason } : {}),
         ...(s.projectSlug !== undefined ? { projectSlug: s.projectSlug } : {}),
+        unreadAt: s.unreadAt ?? null,
+        seenAt: s.seenAt ?? null,
       });
     }
   }
@@ -1863,6 +1877,60 @@ app.get('/chat/stream', async (c) => {
       });
     });
   });
+});
+
+// Cross-agent activity feed. One subscription per client (TUI / web /
+// mobile) gives streaming dots for every busy agent + unread badges
+// for every session with movement since lastSeenAt. See
+// src/server/activity-stream.ts for the event vocabulary.
+app.get('/activity/stream', async (c) => {
+  return streamSSEH2Safe(c, async (stream) => {
+    logger.info({ msg: 'activity.connect' });
+    const unsub = subscribeActivity(async (event) => {
+      await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
+    });
+    await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected' }) });
+    const heartbeat = setInterval(() => {
+      stream
+        .writeSSE({ event: 'heartbeat', data: String(Date.now()) })
+        .catch((err) => logger.debug({ msg: 'activity.heartbeat_fail', err: String(err) }));
+    }, 20_000);
+    await new Promise<void>((resolve) => {
+      stream.onAbort(() => {
+        clearInterval(heartbeat);
+        unsub();
+        logger.info({ msg: 'activity.disconnect' });
+        resolve();
+      });
+    });
+  });
+});
+
+// "I am looking at this session right now" — clears the unread badge
+// across every other open client by broadcasting a `seen` event on
+// /activity/stream. Body is optional: `{ts?: ISO}` lets a client
+// state an older timestamp (e.g. "I scrolled away N seconds ago");
+// the default is now. Server clamps to `max(current, ts)` so a late
+// arrival can't regress the seen marker.
+app.post('/sessions/:agent/:session/seen', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  }
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) {
+    return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
+  }
+  let providedTs: string | undefined;
+  try {
+    const body = (await c.req.json().catch(() => null)) as { ts?: string } | null;
+    if (body && typeof body.ts === 'string') providedTs = body.ts;
+  } catch {
+    /* empty body fine */
+  }
+  const seenAt = await markSeen(agent, session, providedTs);
+  return c.json({ ok: true, agent, session, seenAt });
 });
 
 // Phase Y.B — User-attachment upload. Streams the body into a tmp

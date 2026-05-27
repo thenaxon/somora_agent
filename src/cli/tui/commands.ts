@@ -200,10 +200,17 @@ export async function runCommand(
       const lines = [`Sessions for ${ctx.agent}:`];
       for (const s of sessions) {
         const marker = s.id === ctx.session || s.slug === ctx.session ? '*' : ' ';
+        // Unread = unreadAt strictly greater than seenAt (or seenAt
+        // missing). Server-broadcast via /activity/stream keeps both
+        // in sync across clients.
+        const isUnread =
+          typeof s.unreadAt === 'string' &&
+          (typeof s.seenAt !== 'string' || s.unreadAt > s.seenAt);
+        const unreadGlyph = isUnread ? '📬' : '  ';
         const stamp = s.lastActivity ? s.lastActivity.slice(0, 16).replace('T', ' ') : 'empty';
         const project = s.projectSlug ? `  📁 ${s.projectSlug}` : '';
         lines.push(
-          `  ${marker} ${s.slug.padEnd(24)}  ${String(s.messageCount).padStart(3)} msgs  ${stamp}${project}`,
+          `  ${marker} ${unreadGlyph} ${s.slug.padEnd(24)}  ${String(s.messageCount).padStart(3)} msgs  ${stamp}${project}`,
         );
       }
       out.push({ kind: 'notice', text: lines.join('\n'), tone: 'info' });

@@ -154,6 +154,38 @@ body {
   box-shadow: none;
 }
 
+/* Unread-activity marker — separate slot from .status-dot so it can
+ * coexist with online/loop-holder without flickering. Positioned
+ * adjacent (top-left of glyph) so the status-dot keeps its corner.
+ * Hidden when the agent is currently `busy` (active streaming wins
+ * over the passive unread signal) — handled by AgentDock conditional
+ * render. */
+.agent-icon-glyph .agent-unread-dot {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--unread, #ffb454);
+  border: 2px solid rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 6px rgba(255, 180, 84, 0.6);
+  z-index: 2;
+}
+
+/* Inline per-session unread marker in the Sessions tool. Same color as
+ * the dock-tile unread-dot but smaller — sits next to the slug column
+ * cell text. */
+.session-unread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--unread, #ffb454);
+  box-shadow: 0 0 4px rgba(255, 180, 84, 0.65);
+  vertical-align: middle;
+}
+
 /* Dream-phase visual language. One color + glow per phase, used in
  * AgentDock pulse, SessionsWindow REM-cell, and future dream-runner
  * UIs. Stay in sync with src/cli/tui/dream-glyphs.ts (emoji+chalk

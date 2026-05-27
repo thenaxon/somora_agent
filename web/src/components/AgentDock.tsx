@@ -23,6 +23,9 @@ interface Props {
    *  Phase 1; Phase 1c populates from the per-session streaming
    *  registry once ChatWindow is in. */
   streamingAgents?: Set<string>;
+  /** Names of agents with unread activity (cross-agent: any session
+   *  has unreadAt > seenAt). Drives the unread-dot. */
+  unreadAgents?: Set<string>;
   /** Name of the agent currently holding the wiki review loop, if
    *  any. Comes from /dream/loop-state. */
   loopHolder?: string | null;
@@ -70,6 +73,7 @@ export function AgentDock({
   error,
   onAgentClick,
   streamingAgents,
+  unreadAgents,
   loopHolder,
   activeAgentIds,
   dreamStates,
@@ -141,6 +145,13 @@ export function AgentDock({
                   {agent.icon ?? '🤖'}
                 </span>
                 <span className={`status-dot ${status}`} />
+                {status !== 'busy' && unreadAgents?.has(agent.name) && (
+                  <span
+                    className="agent-unread-dot"
+                    aria-label="unread activity"
+                    title="Neue Aktivität in einer Session — Chat öffnen zum Lesen"
+                  />
+                )}
                 {pendingCount > 0 && (
                   <span
                     className="rem-badge"

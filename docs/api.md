@@ -348,10 +348,17 @@ Returns an array of `SessionSummary`:
     "byteSize": 18923,
     "engine": "claude-cli",
     "dreamCoverageTs": 1715520120000,
-    "dreamLagEvents": 4
+    "dreamLagEvents": 4,
+    "unreadAt": "2026-05-12T14:08:22.000Z",
+    "seenAt": "2026-05-12T13:55:00.000Z"
   }
 ]
 ```
+
+`unreadAt` and `seenAt` drive the unread badge UX: a session is unread
+when `unreadAt > seenAt` (or `seenAt` is null). See
+[`/activity/stream`](#get-activitystream) for the live feed that
+keeps these in sync across clients.
 
 ### `GET /sessions`
 
@@ -611,6 +618,68 @@ Tool names are normalised through the same path the wire serializer
 uses — clients receive `memory_search`, not
 `mcp__somora-memory__memory_search`. Tool input/output payloads ride
 in the `details` field as pretty-printed JSON.
+
+### `GET /activity/stream`
+
+App-wide activity feed. One subscription per client gives streaming
+markers for every busy `(agent, session)` plus unread state for
+sessions the user hasn't viewed since new movement arrived. Distinct
+from `/chat/stream`, which is per-session and per-window.
+
+```bash
+curl -N https://<host>:18737/activity/stream
+```
+
+Event types:
+
+- `streaming` — `{agent, session, phase: 'start'|'end'}` — emitted
+  when any turn begins or ends on any session. Drives multi-agent
+  streaming-dots in clients that aren't subscribed to every per-
+  session `/chat/stream`.
+- `turn` — `{agent, session, unreadAt}` — a new unread-candidate
+  event landed in the session's JSONL. Unread candidates are:
+  - `chat:final` (assistant answer)
+  - `user_message` with `from_agent` set (A2A peer wrote to us)
+  - `user_message` with `from_system` set (sentinel woke us)
+  Plain self-typed user messages, tool / memory / engine_meta events,
+  and lifecycle (`agent:start`, `agent:end`) are excluded.
+- `seen` — `{agent, session, seenAt}` — broadcast when any client
+  POSTs `/sessions/:agent/:session/seen`. Sibling clients clear
+  their unread badge for that session.
+- `status` — `{msg}` — connection lifecycle.
+- `heartbeat` — current ms timestamp, fires every 20 s.
+
+Unread state is persisted in the session's meta as `unreadAt` and
+`seenAt` (both ISO timestamps). A session is unread when
+`unreadAt > seenAt` (or `seenAt` is null). The persistence path is
+authoritative, so a server restart preserves the badge state.
+
+### `POST /sessions/:agent/:session/seen`
+
+Tell the server "I am looking at this session now". Updates `seenAt`
+in the session's meta and broadcasts a `seen` event on
+`/activity/stream` so other open clients clear their badge live.
+
+```bash
+curl -X POST https://<host>:18737/sessions/hans/main/seen
+```
+
+Optional body:
+
+```json
+{ "ts": "2026-05-27T14:00:00.000Z" }
+```
+
+`ts` lets a client claim an older "I last looked at this at …" time —
+useful for scrolling-into-view triggers where the wall-clock isn't
+exactly "now". The server clamps to `max(currentSeenAt, ts)`, so a
+later arrival can never regress the seen marker.
+
+Response:
+
+```json
+{ "ok": true, "agent": "hans", "session": "main", "seenAt": "2026-…" }
+```
 
 ### `GET /chat/history`
 

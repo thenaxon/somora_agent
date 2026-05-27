@@ -18,9 +18,12 @@ interface Props {
   agents: AgentInfo[];
   activeAgent: string | null;
   onSelect: (name: string) => void;
-  /** Name of the agent currently producing a reply, or null. Mobile is
-   *  single-session-at-a-time, so at most one agent streams. */
-  streamingAgent?: string | null;
+  /** Set of agents currently mid-turn on ANY session (own active stream
+   *  via useChatStream + cross-agent activity stream merged upstream). */
+  streamingAgents?: Set<string>;
+  /** Set of agents with unread activity (any session has
+   *  unreadAt > seenAt). Drives the unread dot. */
+  unreadAgents?: Set<string>;
   /** Per-agent REM + global DEEP/LUCID state. Optional — if undefined
    *  the row renders without any dream indicators. */
   dreamStates?: DreamStates;
@@ -30,7 +33,8 @@ export function AvatarRow({
   agents,
   activeAgent,
   onSelect,
-  streamingAgent,
+  streamingAgents,
+  unreadAgents,
   dreamStates,
 }: Props) {
   if (agents.length === 0) return null;
@@ -38,7 +42,8 @@ export function AvatarRow({
     <div className="avatar-row" role="tablist">
       {agents.map((a) => {
         const active = a.name === activeAgent;
-        const streaming = a.name === streamingAgent;
+        const streaming = streamingAgents?.has(a.name) ?? false;
+        const unread = unreadAgents?.has(a.name) ?? false;
         const pulse = computeDreamPulse(a.name, dreamStates);
         const pendingCount = dreamStates?.rem[a.name]?.pendingCount ?? 0;
         const iconClass =
@@ -58,6 +63,13 @@ export function AvatarRow({
             >
               {a.icon ?? '🤖'}
               {streaming && <span className="avatar-streaming-dot" aria-hidden="true" />}
+              {!streaming && unread && (
+                <span
+                  className="avatar-unread-dot"
+                  aria-label="unread activity"
+                  title="Neue Aktivität — Tap zum Ansehen"
+                />
+              )}
               {pendingCount > 0 && (
                 <span
                   className="avatar-rem-badge"
