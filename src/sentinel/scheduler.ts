@@ -32,6 +32,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import chokidar from 'chokidar';
 import { logger } from '../server/logger.ts';
+import { loopbackFetch } from '../server/loopback-fetch.ts';
 import { acquireSessionLock } from '../server/session-queue.ts';
 import { runChatTurn } from '../server/run-turn.ts';
 import { newTaskId, registerTask, completeTask, failTask } from '../server/async-tasks.ts';
@@ -408,6 +409,40 @@ export async function fireTrigger(
       inflightFires.delete(trigger.id);
     }
   })();
+}
+
+/** Dispatch a test fire from any process.
+ *
+ *  Why this exists: `fireTrigger` requires `injectedChatTurnDeps`, which
+ *  is set only in the main server boot (`configureSentinel({chatTurnDeps})`).
+ *  When the `sentinel` TOOL is invoked from claude-cli / codex-cli
+ *  engines, the tool handler runs in an MCP-child process that has its
+ *  own module instance with deps==null — calling fireTrigger directly
+ *  records `outcome:"error"` with `"sentinel not initialized (no
+ *  chatTurnDeps)"` and increments errorStreak.
+ *
+ *  Same pattern as `spawnAsyncViaHttp` in tools/agents/spawn.ts: when
+ *  not in-process, reach back to the main server's existing HTTP
+ *  endpoint (`POST /sentinel/triggers/:id/test`). SOMORA_PORT env is
+ *  set by main-server boot and propagated into the MCP-child env via
+ *  src/mcp/config.ts. */
+export async function dispatchTestFire(
+  trigger: Trigger,
+): Promise<{ via: 'in-process' | 'http' }> {
+  if (injectedChatTurnDeps) {
+    await fireTrigger(trigger, { catchUp: false, testMode: true });
+    return { via: 'in-process' };
+  }
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  const url = `${scheme}://${host}:${port}/sentinel/triggers/${encodeURIComponent(trigger.id)}/test`;
+  const res = await loopbackFetch(url, { method: 'POST' });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`sentinel test HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+  return { via: 'http' };
 }
 
 async function markError(

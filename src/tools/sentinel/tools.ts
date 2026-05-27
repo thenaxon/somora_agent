@@ -24,7 +24,7 @@ import {
   countTriggersByAgent,
 } from '../../sentinel/store.ts';
 import {
-  fireTrigger,
+  dispatchTestFire,
   reschedule,
 } from '../../sentinel/scheduler.ts';
 import {
@@ -447,8 +447,22 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
         if (!input.id) return { action: 'test', ok: false, id: '', error: 'test: id required' };
         const t = getTrigger(input.id);
         if (!t) return { action: 'test', ok: false, id: input.id, error: `trigger '${input.id}' not found` };
-        // Fire NOW, bypassing cooldown and daily-cap.
-        await fireTrigger(t, { catchUp: false, testMode: true });
+        // Fire NOW, bypassing cooldown and daily-cap. dispatchTestFire
+        // routes via the main server's HTTP endpoint when this tool
+        // runs inside an MCP-child (claude-cli / codex-cli engines) —
+        // those children have no chatTurnDeps and would otherwise
+        // record `"sentinel not initialized"` in history. Same fallback
+        // pattern as spawn.ts:spawnAsyncViaHttp.
+        try {
+          await dispatchTestFire(t);
+        } catch (err) {
+          return {
+            action: 'test',
+            ok: false,
+            id: input.id,
+            error: `test dispatch failed: ${(err as Error).message}`,
+          };
+        }
         return {
           action: 'test',
           ok: true,
