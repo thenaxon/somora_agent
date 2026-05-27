@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.05.27.02",
+  "version": "2026.05.27.03",
   "private": true,
   "type": "module",
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
@@ -34,7 +34,8 @@
     "prepack": "npm run build:all"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.128",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.152",
+    "@anthropic-ai/sdk": "^0.99.0",
     "@hono/node-server": "2.0.1",
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
@@ -50,7 +51,7 @@
     "js-yaml": "^4.1.1",
     "jsdom": "^29.1.1",
     "node-pty": "^1.1.0",
-    "openai": "^6.36.0",
+    "openai": "^6.39.0",
     "pdf-to-img": "^6.0.0",
     "pino": "^10.3.1",
     "pino-roll": "^4.0.0",
