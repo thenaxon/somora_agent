@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.05.27.03",
+  "version": "2026.05.27.04",
   "private": true,
   "type": "module",
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
@@ -36,7 +36,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.152",
     "@anthropic-ai/sdk": "^0.99.0",
-    "@hono/node-server": "2.0.1",
+    "@hono/node-server": "2.0.4",
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
