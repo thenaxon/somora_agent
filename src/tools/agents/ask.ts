@@ -119,7 +119,11 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'models routinely need minutes. On timeout: returns state:"pending" (NOT an error); the call ' +
     'may still complete on the target side and land in their JSONL. ' +
     'IMPORTANT: cannot ask yourself — use spawn_subagent for self-clone tasks. ' +
-    'Concurrent human user turns on the target\'s session take priority over your A2A call.',
+    'Concurrent human user turns on the target\'s session take priority over your A2A call. ' +
+    'agent_ask is REQUEST-RESPONSE, not a message bus: if YOU received a question via agent_ask ' +
+    '(a user_message with from_agent set), your answer is your normal turn output — the asking ' +
+    'agent receives it automatically as the result of their pending call. Never agent_ask your ' +
+    'caller back to deliver an answer; circular calls are rejected (deadlock guard).',
   inputSchema: AskInput,
   jsonSchema: {
     type: 'object',
@@ -201,6 +205,12 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           session: targetSession,
           text: input.message,
           from_agent: ctx.agent,
+          // waiter_* register this turn in the server's A2A wait-graph
+          // (circular-wait detection, src/server/ask-wait-graph.ts).
+          // Missing ctx.session (shouldn't happen — MCP children get
+          // SOMORA_SESSION per turn) just degrades to no detection for
+          // this call.
+          ...(ctx.session ? { waiter_agent: ctx.agent, waiter_session: ctx.session } : {}),
           agent_ask_call_id: callId,
         }),
         signal: ac.signal,
@@ -208,6 +218,29 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
 
       if (!res.ok) {
         const body = await res.text().catch(() => '');
+        // 409 circular_wait — the target's turn is (directly or via a
+        // chain) already blocked waiting on THIS turn. Teach the model
+        // the request-response pattern instead of surfacing a raw HTTP
+        // error; this is the self-healing path for the Gideon↔Donna
+        // deadlock (2026-06-01 feedback).
+        if (res.status === 409 && body.includes('"circular_wait":true')) {
+          let chain = '';
+          try {
+            const parsed = JSON.parse(body) as { chain?: string[] };
+            if (Array.isArray(parsed.chain)) chain = parsed.chain.join(' → ');
+          } catch {
+            /* keep chain empty */
+          }
+          throw new Error(
+            `agent_ask: rejected — ${targetAgent} is already blocked waiting on YOUR current ` +
+              `turn` +
+              (chain ? ` (wait chain: ${chain})` : '') +
+              `. Your turn's final output is exactly what unblocks that wait: an agent_ask ` +
+              `caller receives it as their tool result, a spawning parent receives it as the ` +
+              `sub's result. Do NOT open a new agent_ask toward an agent that is waiting on ` +
+              `you; just finish your current reply with the answer.`,
+          );
+        }
         throw new Error(
           `agent_ask: target ${targetAgent}/${targetSession} returned HTTP ${res.status}: ${body.slice(0, 300)}`,
         );
@@ -238,6 +271,12 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         ...(data.usage ? { usage: data.usage } : {}),
       };
     } catch (err) {
+      // Our own crafted errors (HTTP-status branch above, incl. the
+      // circular-wait teaching message) are already actionable — pass
+      // them through instead of re-wrapping via classifyFetchError.
+      if (err instanceof Error && err.message.startsWith('agent_ask:')) {
+        throw err;
+      }
       // AbortError when our timer fired — translate to pending. Real
       // network errors (target unreachable, malformed response) bubble,
       // but we classify them first so the agent gets actionable info

@@ -102,6 +102,7 @@ import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
 import { acquireSessionLock, listAllSessionLockStates } from './session-queue.ts';
+import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
@@ -2647,6 +2648,8 @@ app.post('/chat/send-sync', async (c) => {
     session?: string;
     text?: string;
     from_agent?: string;
+    waiter_agent?: string;
+    waiter_session?: string;
     agent_ask_call_id?: string;
     subagent_depth?: number;
     model?: string;
@@ -2660,6 +2663,21 @@ app.post('/chat/send-sync', async (c) => {
   const text = body.text ?? '';
   const fromAgent =
     typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
+  // waiter_* identify the CALLER TURN that blocks on this request, for
+  // circular-wait detection. Deliberately separate from from_agent:
+  // from_agent changes message semantics in the target's session (the
+  // user_message is labeled as A2A), while waiter_* is pure wait-graph
+  // bookkeeping. agent_ask sends both; spawn_subagent's wait:true HTTP
+  // fallback sends only waiter_* (a sub's task text must stay a plain
+  // user task, not an A2A message).
+  const waiterAgent =
+    typeof body.waiter_agent === 'string' && body.waiter_agent.length > 0
+      ? body.waiter_agent
+      : undefined;
+  const waiterSession =
+    typeof body.waiter_session === 'string' && body.waiter_session.length > 0
+      ? body.waiter_session
+      : undefined;
   const agentAskCallId =
     typeof body.agent_ask_call_id === 'string' && body.agent_ask_call_id.length > 0
       ? body.agent_ask_call_id
@@ -2686,34 +2704,73 @@ app.post('/chat/send-sync', async (c) => {
   //
   // Sub-spawn destinations are fresh sessions (sub-xxx-yyy), so the lock
   // is uncontended in that path; cost is one Map lookup + a Promise.
+  // Circular-wait (deadlock) guard for blocking A2A calls (agent_ask +
+  // spawn_subagent wait:true via HTTP fallback). Only callers that
+  // identify their own blocked turn (waiter_*) participate — check +
+  // register are synchronous back-to-back so concurrent calls can't
+  // both slip past. The edge must be registered BEFORE
+  // acquireSessionLock: the caller is already waiting while this
+  // request queues on the target's lock. See
+  // src/server/ask-wait-graph.ts for the full coverage map.
+  let releaseWait: (() => void) | undefined;
+  if (waiterAgent && waiterSession) {
+    const waitFrom = { agent: waiterAgent, session: waiterSession };
+    const waitTo = { agent, session };
+    const cycle = findWaitCycle(waitFrom, waitTo);
+    if (cycle) {
+      logger.warn({
+        msg: 'a2a.circular_wait_rejected',
+        from: `${waiterAgent}/${waiterSession}`,
+        to: `${agent}/${session}`,
+        chain: cycle,
+      });
+      return c.json(
+        {
+          error:
+            `circular A2A wait: ${agent}/${session} is already waiting on ` +
+            `${waiterAgent}/${waiterSession} (wait chain: ${cycle.join(' → ')}). ` +
+            `This call would deadlock both turns.`,
+          circular_wait: true,
+          chain: cycle,
+        },
+        409,
+      );
+    }
+    releaseWait = registerWait(waitFrom, waitTo);
+  }
+
   const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
-  const release = await acquireSessionLock(agent, session, {
-    priority,
-    ...(agentAskCallId ? { callId: agentAskCallId } : {}),
-  });
   try {
-    const result = await runChatTurn({
-      agent,
-      session,
-      text,
-      ...(fromAgent ? { fromAgent } : {}),
-      ...(agentAskCallId ? { agentAskCallId } : {}),
-      ...(subagentDepth > 0 ? { subagentDepth } : {}),
-      ...(modelOverride ? { modelOverride } : {}),
-      ...(maxRoundsOverride
-        ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
-        : {}),
-      // Publish to SSE subscribers too — a human watching this session
-      // sees A2A inbound user_messages and the assistant's reply appear
-      // live, not just on session refresh.
-      publishSse: (event) => publish(agent, session, event),
-      deps: chatTurnDeps,
+    const release = await acquireSessionLock(agent, session, {
+      priority,
+      ...(agentAskCallId ? { callId: agentAskCallId } : {}),
     });
-    return c.json(result);
+    try {
+      const result = await runChatTurn({
+        agent,
+        session,
+        text,
+        ...(fromAgent ? { fromAgent } : {}),
+        ...(agentAskCallId ? { agentAskCallId } : {}),
+        ...(subagentDepth > 0 ? { subagentDepth } : {}),
+        ...(modelOverride ? { modelOverride } : {}),
+        ...(maxRoundsOverride
+          ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
+          : {}),
+        // Publish to SSE subscribers too — a human watching this session
+        // sees A2A inbound user_messages and the assistant's reply appear
+        // live, not just on session refresh.
+        publishSse: (event) => publish(agent, session, event),
+        deps: chatTurnDeps,
+      });
+      return c.json(result);
+    } finally {
+      release();
+    }
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   } finally {
-    release();
+    releaseWait?.();
   }
 });
 
@@ -2897,10 +2954,50 @@ app.get('/spawn-result', async (c) => {
   let entry = getTask(task_id);
   if (!entry) return c.json({ error: `task '${task_id}' not found` }, 404);
   if (wantWait && entry.state === 'running') {
-    entry = (await waitForTaskCompletion(task_id, timeoutMs)) ?? entry;
+    // Circular-wait guard for the blocking wait (MCP-child callers of
+    // subagent_result wait_until_done land here; the in-process tool
+    // path has the identical guard in src/tools/agents/status.ts).
+    // waiter_* identify the caller's blocked turn. On a cycle we do NOT
+    // block — the sub is itself waiting on the caller, so blocking
+    // guarantees a dual-timeout hang; 409 + circular_wait lets the tool
+    // translate into a teaching pending-hint. Otherwise the wait is
+    // registered as an edge so OTHER calls see it.
+    const waiterAgent = c.req.query('waiter_agent') || undefined;
+    const waiterSession = c.req.query('waiter_session') || undefined;
+    const waiter =
+      waiterAgent && waiterSession ? { agent: waiterAgent, session: waiterSession } : undefined;
+    const target = { agent: entry.target_agent, session: entry.target_session };
+    if (waiter) {
+      const cycle = findWaitCycle(waiter, target);
+      if (cycle) {
+        logger.warn({
+          msg: 'a2a.circular_wait_rejected',
+          via: 'spawn-result',
+          from: `${waiter.agent}/${waiter.session}`,
+          to: `${target.agent}/${target.session}`,
+          chain: cycle,
+        });
+        return c.json(
+          {
+            task_id,
+            error: `task '${task_id}' still running and waiting on the caller`,
+            state: 'running',
+            circular_wait: true,
+            chain: cycle,
+          },
+          409,
+        );
+      }
+    }
+    const releaseWait = waiter ? registerWait(waiter, target) : undefined;
+    try {
+      entry = (await waitForTaskCompletion(task_id, timeoutMs)) ?? entry;
+    } finally {
+      releaseWait?.();
+    }
   }
   if (entry.state === 'running') {
-    return c.json({ error: `task '${task_id}' still running`, state: 'running' }, 409);
+    return c.json({ task_id, error: `task '${task_id}' still running`, state: 'running' }, 409);
   }
   return c.json({
     task_id: entry.task_id,

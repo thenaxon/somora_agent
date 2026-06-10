@@ -62,7 +62,11 @@ const ExecInput = z
       .string()
       .min(1)
       .optional()
-      .describe('Working directory on the target machine. Absolute or relative-to-target-home.'),
+      .describe(
+        'Working directory on the target machine. Absolute path, "~/..." or relative ' +
+          '(both resolved against the target user\'s home). Must be an existing directory — ' +
+          'exec fails with a cwd error otherwise.',
+      ),
     env: z
       .record(z.string(), z.string())
       .optional()
@@ -206,7 +210,11 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     properties: {
       command: { type: 'string', description: 'Shell command.' },
       target: { type: 'string', description: '"local" or resource name.', default: 'local' },
-      cwd: { type: 'string', description: 'Working directory.' },
+      cwd: {
+        type: 'string',
+        description:
+          'Working directory. Absolute, "~/..." or relative-to-target-home; must exist.',
+      },
       env: { type: 'object', additionalProperties: { type: 'string' } },
       background: { type: 'boolean', default: false },
       timeout_ms: { type: 'integer', minimum: 100, maximum: 3_600_000, default: 60_000 },

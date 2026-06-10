@@ -3,6 +3,7 @@
 // orchestrator agent to poll progress and pull final results out.
 
 import { z } from 'zod';
+import { findWaitCycle, registerWait } from '../../server/ask-wait-graph.ts';
 import { getTask, listTasksForAgent, waitForTaskCompletion, type AsyncTaskEntry } from '../../server/async-tasks.ts';
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResult } from '../../server/run-turn-types.ts';
@@ -30,18 +31,42 @@ async function fetchStatusViaHttp(task_id: string): Promise<AsyncTaskEntry | nul
 
 async function fetchResultViaHttp(
   task_id: string,
-  opts: { wait_until_done?: boolean; timeout_ms?: number } = {},
-): Promise<{ task_id: string; state: string; result?: ChatTurnResult; error?: string } | null> {
+  opts: {
+    wait_until_done?: boolean;
+    timeout_ms?: number;
+    /** Caller turn identity for the server-side circular-wait guard —
+     *  see /spawn-result in src/server/index.ts. */
+    waiter_agent?: string;
+    waiter_session?: string;
+  } = {},
+): Promise<{
+  task_id: string;
+  state: string;
+  result?: ChatTurnResult;
+  error?: string;
+  circular_wait?: boolean;
+  chain?: string[];
+} | null> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
   const params = new URLSearchParams({ task_id });
   if (opts.wait_until_done) params.set('wait_until_done', '1');
   if (opts.timeout_ms !== undefined) params.set('timeout_ms', String(opts.timeout_ms));
+  if (opts.waiter_agent && opts.waiter_session) {
+    params.set('waiter_agent', opts.waiter_agent);
+    params.set('waiter_session', opts.waiter_session);
+  }
   const res = await loopbackFetch(`${scheme}://${host}:${port}/spawn-result?${params.toString()}`);
   if (res.status === 404) return null;
   if (res.status === 409) {
-    return (await res.json()) as { task_id: string; state: string; error?: string };
+    return (await res.json()) as {
+      task_id: string;
+      state: string;
+      error?: string;
+      circular_wait?: boolean;
+      chain?: string[];
+    };
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -124,6 +149,26 @@ const ResultInput = z
 // inner+outer timing aligned without races at the boundary.
 const TIMEOUT_BUFFER_MS = 2_000;
 
+/**
+ * Hint returned instead of blocking when the sub is (directly or via a
+ * chain) waiting on the CALLER's own turn. Blocking here would deadlock
+ * until both timeouts fire: the caller holds its session lock while
+ * waiting, and the sub's pending agent_ask to the caller queues on
+ * exactly that lock. The teaching hint makes the situation self-healing
+ * — the caller finishes its turn, the sub's queued question runs and
+ * gets answered, the sub completes, and the result is fetchable on the
+ * caller's next turn. See src/server/ask-wait-graph.ts.
+ */
+function circularWaitHint(chain?: string[]): string {
+  return (
+    `deadlock guard: this sub is currently blocked waiting on YOUR turn` +
+    (chain && chain.length > 0 ? ` (wait chain: ${chain.join(' → ')})` : '') +
+    `. Blocking on its result now would hang both of you. Finish your current turn — ` +
+    `the sub's pending question to you will then be answered in your session ` +
+    `automatically — and fetch the result with subagent_result in a later turn.`
+  );
+}
+
 export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   name: 'subagent_result',
   toolset: 'agents',
@@ -137,7 +182,10 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
     'agentLoop.longTaskDefaultTimeoutMs); hard cap 30min (longTaskMaxTimeoutMs). ' +
     'IMPORTANT: state "pending" is NOT an error — the sub is still working. Do NOT immediately ' +
     'retry; either wait and call subagent_status later, or call this again with a higher ' +
-    'timeout_ms. Repeated pending returns mean the sub legitimately needs more time.',
+    'timeout_ms. Repeated pending returns mean the sub legitimately needs more time. ' +
+    'Deadlock guard: if the sub is itself blocked waiting on YOUR turn (e.g. it agent_asked ' +
+    'you and the call is queued behind your current turn), wait_until_done returns "pending" ' +
+    'immediately with an explanatory hint instead of blocking — finish your turn first.',
   inputSchema: ResultInput,
   jsonSchema: {
     type: 'object',
@@ -176,7 +224,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   // 2h + buffer comfortably accommodates any reasonable longTaskMaxMs
   // setting without re-evaluating per-call.
   maxTimeoutMs: 7_200_000 + TIMEOUT_BUFFER_MS,
-  async handler(input) {
+  async handler(input, ctx) {
     // Resolve effective timeout once per call; reused for the actual
     // wait below and surfaced in the pending hint so the caller knows
     // what value got applied (especially when their requested value was
@@ -186,8 +234,39 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
       : 0;
     let local = getTask(input.task_id);
     if (local) {
+      // getTask only hits in the MAIN SERVER process (the MCP child has
+      // its own empty task map and falls through to HTTP below), so the
+      // wait-graph here is the authoritative instance.
       if (local.state === 'running' && input.wait_until_done) {
-        local = (await waitForTaskCompletion(input.task_id, effectiveTimeoutMs)) ?? local;
+        // wait_until_done is a blocking A2A wait like agent_ask /
+        // spawn wait:true — it must be cycle-CHECKED (the sub may
+        // already be waiting on this caller) and edge-REGISTERED (so
+        // other calls see this wait). Unlike agent_ask we don't error
+        // on a cycle: the task is legitimately still running, so we
+        // return state:'pending' with a hint instead of blocking into
+        // a guaranteed dual-timeout hang.
+        const waiter = ctx.session
+          ? { agent: ctx.agent, session: ctx.session }
+          : undefined;
+        const target = { agent: local.target_agent, session: local.target_session };
+        if (waiter) {
+          const cycle = findWaitCycle(waiter, target);
+          if (cycle) {
+            return {
+              task_id: local.task_id,
+              state: 'pending' as const,
+              target_agent: local.target_agent,
+              target_session: local.target_session,
+              hint: circularWaitHint(cycle),
+            };
+          }
+        }
+        const releaseWait = waiter ? registerWait(waiter, target) : undefined;
+        try {
+          local = (await waitForTaskCompletion(input.task_id, effectiveTimeoutMs)) ?? local;
+        } finally {
+          releaseWait?.();
+        }
       }
       if (local.state === 'running') {
         return {
@@ -219,19 +298,25 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
         ms: local.result?.ms,
       };
     }
-    // HTTP fallback — pass the wait params through.
+    // HTTP fallback (MCP child) — pass the wait params through. The
+    // circular-wait guard runs server-side in /spawn-result (the child
+    // can't see the main server's wait-graph); waiter_* carry this
+    // turn's identity over.
     const remote = await fetchResultViaHttp(input.task_id, {
       wait_until_done: input.wait_until_done,
       timeout_ms: input.timeout_ms,
+      ...(ctx.session ? { waiter_agent: ctx.agent, waiter_session: ctx.session } : {}),
     });
     if (!remote) throw new Error(`subagent_result: task '${input.task_id}' not found`);
     if (remote.state === 'running') {
       return {
         task_id: remote.task_id,
         state: 'pending' as const,
-        hint: input.wait_until_done
-          ? 'sub still running after timeout_ms; call again with a higher timeout_ms or check subagent_status later'
-          : 'sub still running; pass wait_until_done:true to block, or call subagent_status to peek',
+        hint: remote.circular_wait
+          ? circularWaitHint(remote.chain)
+          : input.wait_until_done
+            ? 'sub still running after timeout_ms; call again with a higher timeout_ms or check subagent_status later'
+            : 'sub still running; pass wait_until_done:true to block, or call subagent_status to peek',
       };
     }
     if (remote.state === 'failed') {

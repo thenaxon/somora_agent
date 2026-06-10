@@ -20,8 +20,9 @@
 
 import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
-import { createWriteStream } from 'node:fs';
-import { join } from 'node:path';
+import { createWriteStream, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 import { logger } from '../../server/logger.ts';
 import { extendedPath } from '../../skills/path-helpers.ts';
 import {
@@ -74,6 +75,42 @@ function buildSpawnEnv(
 const DEFAULT_OUTPUT_CAP_BYTES = 256 * 1024;
 const DEFAULT_SYNC_TIMEOUT_MS = 60_000;
 
+/**
+ * Resolve a caller-supplied cwd for local spawn. Node's spawn does NOT
+ * expand `~` and resolves relative paths against the somora server's
+ * own process cwd — and a nonexistent cwd surfaces as the wildly
+ * misleading `spawn /bin/sh ENOENT` (the chdir fails, not the shell;
+ * 2026-06-10 hans feedback). The tool schema promises
+ * "relative-to-target-home", so make that true: expand `~`, resolve
+ * relative against the home dir, and verify the directory exists so
+ * the error names the actual problem.
+ */
+export function resolveLocalCwd(
+  cwd: string,
+): { ok: true; cwd: string } | { ok: false; error: string } {
+  let resolved = cwd;
+  if (cwd === '~') resolved = homedir();
+  else if (cwd.startsWith('~/')) resolved = join(homedir(), cwd.slice(2));
+  else if (!isAbsolute(cwd)) resolved = join(homedir(), cwd);
+  let isDir = false;
+  try {
+    isDir = statSync(resolved).isDirectory();
+  } catch {
+    /* missing → isDir stays false */
+  }
+  if (!isDir) {
+    return {
+      ok: false,
+      error:
+        `[somora] cwd error: '${cwd}'` +
+        (resolved !== cwd ? ` (resolved to '${resolved}')` : '') +
+        ` is not an existing directory on the somora server. Pass an absolute path, ` +
+        `'~/...', or a path relative to the server user's home.`,
+    };
+  }
+  return { ok: true, cwd: resolved };
+}
+
 export interface LocalSyncResult {
   exit_code: number | null;
   stdout: string;
@@ -112,6 +149,13 @@ export interface LocalSyncOptions {
  * separate stdout/stderr streams).
  */
 export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncResult> {
+  if (opts.cwd) {
+    const r = resolveLocalCwd(opts.cwd);
+    if (!r.ok) {
+      return { exit_code: null, stdout: '', stderr: r.error, truncated: false, ms: 0 };
+    }
+    opts = { ...opts, cwd: r.cwd };
+  }
   if (opts.pty) {
     return localExecSyncPty(opts);
   }
@@ -362,6 +406,11 @@ export interface LocalBackgroundResult {
 export async function localExecBackground(
   opts: LocalBackgroundOptions,
 ): Promise<LocalBackgroundResult> {
+  if (opts.cwd) {
+    const r = resolveLocalCwd(opts.cwd);
+    if (!r.ok) throw new Error(r.error);
+    opts = { ...opts, cwd: r.cwd };
+  }
   const job_id = newJobId();
   const meta: JobMeta = {
     job_id,

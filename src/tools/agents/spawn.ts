@@ -29,6 +29,7 @@ import {
   registerTask,
   type AsyncTaskEntry,
 } from '../../server/async-tasks.ts';
+import { registerWait } from '../../server/ask-wait-graph.ts';
 import { logger } from '../../server/logger.ts';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
@@ -436,6 +437,34 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   }
 
   // ─── sync path (wait: true) ───────────────────────────────────────
+  // The parent's turn now BLOCKS on the sub — that wait must be visible
+  // in the A2A wait-graph, or a cycle routed through this spawn
+  // (parent waits sub, sub asks X, X asks parent) is undetectable and
+  // deadlocks silently (see src/server/ask-wait-graph.ts).
+  //
+  // No cycle CHECK is needed here: the sub-session was created fresh a
+  // few lines up, so no edges into or out of it can exist yet — the
+  // registration can't close a cycle. Cycles only become possible once
+  // the sub itself starts waiting, and those later calls are checked at
+  // their own dispatch points.
+  //
+  // Two transports, two registration owners:
+  //   - in-process (injectedDeps set → we ARE the main server): register
+  //     directly. This module is also loaded by MCP children, but the
+  //     in-process branch never runs there, so the child's own (empty)
+  //     graph instance stays untouched.
+  //   - HTTP fallback (MCP child): the child process can't reach the
+  //     main server's graph; runChatTurnViaHttp sends waiter_* and the
+  //     /chat/send-sync route registers server-side.
+  // ctx.session missing (shouldn't happen) degrades to no edge — same
+  // graceful posture as agent_ask.
+  const releaseWait =
+    injectedDeps && ctx.session
+      ? registerWait(
+          { agent: ctx.agent, session: ctx.session },
+          { agent: targetPersona, session: sessionId },
+        )
+      : undefined;
   try {
     logger.info({
       msg: 'spawn_subagent.start_sync',
@@ -464,6 +493,9 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           session: sessionId,
           text: task.task,
           subagentDepth: parentDepth + 1,
+          ...(ctx.session
+            ? { waiterAgent: ctx.agent, waiterSession: ctx.session }
+            : {}),
           ...(task.model ? { modelOverride: task.model } : {}),
           ...(task.maxRounds ? { maxRounds: task.maxRounds } : {}),
         });
@@ -488,6 +520,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
       thinkingActive: result.thinkingActive,
     };
   } finally {
+    releaseWait?.();
     releaseSpawnSlot(targetPersona);
   }
 }
@@ -617,6 +650,12 @@ async function runChatTurnViaHttp(args: {
   session: string;
   text: string;
   subagentDepth: number;
+  /** Parent turn blocked on this call — registered in the server's A2A
+   *  wait-graph for circular-wait detection. Deliberately NOT sent as
+   *  from_agent: that would relabel the sub's task text as an A2A
+   *  message in its session. */
+  waiterAgent?: string;
+  waiterSession?: string;
   modelOverride?: string;
   maxRounds?: number;
 }): Promise<ChatTurnResult> {
@@ -639,6 +678,9 @@ async function runChatTurnViaHttp(args: {
         session: args.session,
         text: args.text,
         subagent_depth: args.subagentDepth,
+        ...(args.waiterAgent && args.waiterSession
+          ? { waiter_agent: args.waiterAgent, waiter_session: args.waiterSession }
+          : {}),
         ...(args.modelOverride ? { model: args.modelOverride } : {}),
         ...(args.maxRounds ? { max_rounds: args.maxRounds } : {}),
       }),

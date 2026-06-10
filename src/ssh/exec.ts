@@ -45,7 +45,7 @@ export async function remoteExec(
   const cap = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
   const start = Date.now();
   const wrapped = opts.cwd
-    ? `cd ${shellQuote(opts.cwd)} && ${command}`
+    ? `cd ${shellQuoteCwd(opts.cwd)} && ${command}`
     : command;
 
   // ssh2's exec accepts a second arg for stream config, including
@@ -126,4 +126,17 @@ export async function remoteExec(
 /** Single-quote a value for sh — escape any embedded single quotes. */
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Quote a cwd for a `cd` prefix while keeping `~` functional. Tilde
+ * expansion only happens when the word STARTS with an unquoted `~`,
+ * so `cd '~/x'` looks for a literal directory named `~` — the same
+ * trap as the local-spawn path (2026-06-10 hans feedback). Leave the
+ * leading `~`/`~/` bare and quote only the rest.
+ */
+export function shellQuoteCwd(s: string): string {
+  if (s === '~') return '~';
+  if (s.startsWith('~/')) return `~/${shellQuote(s.slice(2))}`;
+  return shellQuote(s);
 }

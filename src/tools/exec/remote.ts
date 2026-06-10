@@ -15,7 +15,7 @@
 //    to maintain — robust against network drops, cheap on resources.
 //    See private/exec-design.md for the full story and DECISION-trail.
 
-import { getConnection } from '../../ssh/index.ts';
+import { expandRemotePath, getConnection } from '../../ssh/index.ts';
 import { remoteExec } from '../../ssh/index.ts';
 import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
 import { logger } from '../../server/logger.ts';
@@ -58,8 +58,12 @@ export async function remoteExecSync(opts: RemoteSyncOptions): Promise<LocalSync
     throw new Error(`exec: resource '${opts.target}' has unsupported type '${resource.type}'`);
   }
   const conn = await getConnection(opts.target, resource);
+  // Expand `~`/relative cwd against the REMOTE home (same helper the
+  // file tools use). The cd-prefix in remoteExec single-quotes the
+  // path, which would defeat the remote shell's own tilde expansion.
+  const cwd = opts.cwd ? await expandRemotePath(opts.target, resource, opts.cwd) : undefined;
   const result = await remoteExec(conn, opts.command, {
-    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    ...(cwd ? { cwd } : {}),
     ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
     ...(opts.pty ? { pty: true } : {}),
   });
@@ -147,7 +151,10 @@ export async function remoteExecBackground(
   // We capture the inner PID via the second-to-last write — small
   // sleep gives the inner sh enough time to actually fork and write
   // its $$ before we read it.
-  const cwdPrefix = opts.cwd ? `cd ${shellQuote(opts.cwd)} && ` : '';
+  // Same `~`/relative-cwd expansion as the sync path — the single-
+  // quoted cd prefix below would otherwise look for a literal `~` dir.
+  const cwd = opts.cwd ? await expandRemotePath(opts.target, resource, opts.cwd) : undefined;
+  const cwdPrefix = cwd ? `cd ${shellQuote(cwd)} && ` : '';
   const innerScript =
     `${cwdPrefix}` +
     // Write our own PID first so the outer caller can grab it.
