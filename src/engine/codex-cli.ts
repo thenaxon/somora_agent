@@ -334,10 +334,19 @@ export const codexCliEngine: AgentEngine = {
     // The watchdog catches the harder case: child alive, stdout silent.
     // Threshold from config.engineWatchdog.codexCliIdleMs (default 300s).
     const IDLE_TIMEOUT_MS = input.idleTimeoutMs ?? 300_000;
+    // While a tool call is outstanding, codex's stdout legitimately goes
+    // quiet for the tool's whole duration (the MCP tool runs out-of-band),
+    // so relax the watchdog to the MCP tool timeout — a healthy long tool
+    // (agent_ask, subagent_result wait_until_done) isn't cut off, while a
+    // truly wedged subprocess is still caught at the tool-timeout horizon
+    // (Juni-Audit 2026-06). max() so it never shortens the normal window.
+    const TOOL_IDLE_TIMEOUT_MS = Math.max(input.toolIdleTimeoutMs ?? 0, IDLE_TIMEOUT_MS);
+    let pendingToolCalls = 0;
     let watchdogFired = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const armIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
+      const threshold = pendingToolCalls > 0 ? TOOL_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS;
       idleTimer = setTimeout(() => {
         if (child.exitCode !== null) return; // already exited cleanly
         watchdogFired = true;
@@ -346,7 +355,8 @@ export const codexCliEngine: AgentEngine = {
           engine: ENGINE,
           agent,
           session,
-          idleMs: IDLE_TIMEOUT_MS,
+          idleMs: threshold,
+          pendingToolCalls,
           hint: 'no codex events received — likely subprocess wedged; SIGTERM + force-close stdout',
         });
         // SIGTERM first — gives the child a chance to flush + exit cleanly.
@@ -377,7 +387,7 @@ export const codexCliEngine: AgentEngine = {
             }
           }
         }, 2_000).unref();
-      }, IDLE_TIMEOUT_MS);
+      }, threshold);
     };
     const disarmIdleTimer = () => {
       if (idleTimer) {
@@ -435,6 +445,10 @@ export const codexCliEngine: AgentEngine = {
             if (!item || typeof item !== 'object') continue;
             const itemType = typeof item.type === 'string' ? item.type : '';
             if (itemType === 'mcp_tool_call') {
+              // Tool now running out-of-band — relax the watchdog so a
+              // legit long tool isn't killed mid-run (Juni-Audit 2026-06).
+              pendingToolCalls++;
+              armIdleTimer();
               const itemId = typeof item.id === 'string' ? item.id : `item-${Date.now()}`;
               const server = typeof item.server === 'string' ? item.server : 'unknown';
               const tool = typeof item.tool === 'string' ? item.tool : 'unknown';
@@ -469,6 +483,9 @@ export const codexCliEngine: AgentEngine = {
                 yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
               }
             } else if (itemType === 'mcp_tool_call') {
+              // Tool finished — drop back toward the normal idle threshold
+              // once no tools are outstanding (re-armed at the next event).
+              if (pendingToolCalls > 0) pendingToolCalls--;
               // codex emits a single completion event for both success and
               // failure; status === "completed" → result, anything else
               // (failed, cancelled by safety monitor, …) → error path.

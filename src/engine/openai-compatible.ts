@@ -472,7 +472,13 @@ export const openAiCompatibleEngine: AgentEngine = {
               );
             });
           } catch (err) {
-            try { await chunkIter.return?.(undefined); } catch { /* ignore */ }
+            // Fire-and-forget cleanup — do NOT await. On a wedged native
+            // async generator, return() is queued behind the pending
+            // next() and never settles when that next() never settles, so
+            // awaiting it re-hangs the turn in exactly the stuck-stream
+            // case this race exists to escape (Juni-Audit 2026-06).
+            // Detach it and surface the error immediately.
+            void Promise.resolve(chunkIter.return?.(undefined)).catch(() => {});
             throw err;
           }
           if (next.done) break;
@@ -543,6 +549,14 @@ export const openAiCompatibleEngine: AgentEngine = {
               : u;
           }
         }
+
+        // Streaming for this round is done — disarm the idle watchdog so
+        // it doesn't count the upcoming tool-execution phase as "dead
+        // backend, no chunks" and abort a healthy turn (a single
+        // agent_ask / subagent_result wait_until_done can legitimately
+        // run past the idle threshold). The next round re-arms at
+        // round-top before the next create() call (Juni-Audit 2026-06).
+        disarmIdleTimer();
 
         // Merge the round's content into the cumulative (separator only when
         // there's previous content AND new content).

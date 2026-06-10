@@ -148,6 +148,20 @@ export interface TurnInput {
    */
   idleTimeoutMs?: number;
   /**
+   * Relaxed idle threshold (ms) to use WHILE a tool call is outstanding.
+   * For CLI engines (claude-cli, codex-cli) the tool runs inside the CLI
+   * subprocess / MCP child, so the SDK stream goes quiet for the tool's
+   * whole duration — a legitimate long tool (agent_ask, subagent_result
+   * wait_until_done) would otherwise trip the normal idleTimeoutMs and
+   * the turn would be killed mid-tool. While ≥1 tool_use is pending the
+   * engine arms the watchdog with THIS value instead (the MCP tool
+   * timeout: claudeCli.mcpToolTimeoutMs / codexCli.toolTimeoutSec), so a
+   * truly dead child is still caught at the tool-timeout horizon while a
+   * healthy long tool runs to completion. Resolved by the server; engines
+   * fall back to idleTimeoutMs when undefined (Juni-Audit 2026-06).
+   */
+  toolIdleTimeoutMs?: number;
+  /**
    * Effective thinking depth for this turn — server resolves persona
    * default + session override. Engine adapters apply only when the
    * active model has the 'reasoning' capability; otherwise this is

@@ -382,6 +382,13 @@ agentLoop:
 # turn is aborted so the per-session lock releases and the user
 # sees a clean error instead of all agents looking dead. Dream
 # workers (Deep/Lucid) bypass this — they run on their own path.
+#
+# While a tool call is in flight the threshold is automatically
+# relaxed to the MCP tool timeout (claudeCli.mcpToolTimeoutMs /
+# codexCli.toolTimeoutSec, 30 min by default), so a legitimately
+# long-blocking tool (agent_ask, subagent_result wait_until_done)
+# isn't cut off by the much shorter idle window — a genuinely dead
+# child is still caught at the tool-timeout horizon.
 engineWatchdog:
   claudeCliIdleMs: 300000        # 5 min — subscription, fast first event
   codexCliIdleMs: 300000         # 5 min — subscription, fast first event

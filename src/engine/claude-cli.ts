@@ -172,10 +172,20 @@ export const claudeCliEngine: AgentEngine = {
     // 300s). Subscription-hosted claude-cli is fast; any 5min silence is
     // a dead child, not slow thinking. Operator can raise via config.yaml.
     const IDLE_TIMEOUT_MS = input.idleTimeoutMs ?? 300_000;
+    // While a tool_use is outstanding the SDK stream legitimately goes
+    // quiet for the tool's whole duration (it runs in the MCP child), so
+    // relax the watchdog to the MCP tool timeout — a healthy long tool
+    // (agent_ask, subagent_result wait_until_done) isn't cut off, while a
+    // truly dead child is still caught at the tool-timeout horizon
+    // (Juni-Audit 2026-06). Falls back to the normal idle threshold when
+    // unset, or whichever is larger so it never shortens the window.
+    const TOOL_IDLE_TIMEOUT_MS = Math.max(input.toolIdleTimeoutMs ?? 0, IDLE_TIMEOUT_MS);
+    let pendingToolCalls = 0;
     let watchdogFired = false;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     const armIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
+      const threshold = pendingToolCalls > 0 ? TOOL_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS;
       idleTimer = setTimeout(() => {
         watchdogFired = true;
         logger.error({
@@ -183,11 +193,12 @@ export const claudeCliEngine: AgentEngine = {
           engine: ENGINE,
           agent,
           session,
-          idleMs: IDLE_TIMEOUT_MS,
+          idleMs: threshold,
+          pendingToolCalls,
           hint: 'no SDK events received — likely underlying claude-cli child died silently after tool_use; aborting to surface as error',
         });
         sdkAbortController.abort();
-      }, IDLE_TIMEOUT_MS);
+      }, threshold);
     };
     const disarmIdleTimer = () => {
       if (idleTimer) {
@@ -323,10 +334,13 @@ export const claudeCliEngine: AgentEngine = {
             );
           });
         } catch (err) {
-          // Best-effort: tell the SDK iterator we're done so it has a
-          // chance to clean up. It may or may not respond — that's
-          // why we escaped via the race in the first place.
-          try { await iter.return?.(undefined); } catch { /* ignore */ }
+          // Best-effort cleanup — fire-and-forget, do NOT await. On a
+          // wedged native async generator, return() queues behind the
+          // never-settling next() and never resolves, so awaiting it
+          // re-hangs the turn in exactly the stuck-pipe case this race
+          // exists to escape (Juni-Audit 2026-06). Detach it and surface
+          // the error immediately.
+          void Promise.resolve(iter.return?.(undefined)).catch(() => {});
           throw err;
         }
         if (next.done) break;
@@ -389,6 +403,11 @@ export const claudeCliEngine: AgentEngine = {
               cumulative += block.text;
               yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
             } else if (block.type === 'tool_use') {
+              // A tool is now running in the MCP child — relax the
+              // watchdog (re-arm with the tool threshold) so a legit
+              // long tool isn't killed mid-run (Juni-Audit 2026-06).
+              pendingToolCalls++;
+              armIdleTimer();
               yield {
                 kind: 'tool_call',
                 ts: ts(),
@@ -402,6 +421,9 @@ export const claudeCliEngine: AgentEngine = {
         } else if (msg.type === 'user') {
           for (const block of msg.message.content) {
             if (typeof block === 'object' && 'type' in block && block.type === 'tool_result') {
+              // Tool finished — drop back toward the normal idle threshold
+              // once no tools are outstanding (re-armed below at loop top).
+              if (pendingToolCalls > 0) pendingToolCalls--;
               yield {
                 kind: 'tool_result',
                 ts: ts(),

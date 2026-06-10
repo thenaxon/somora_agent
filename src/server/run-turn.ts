@@ -126,6 +126,27 @@ function pickIdleTimeoutForEngine(
   }
 }
 
+/**
+ * Relaxed idle threshold to use while a tool call is outstanding on a CLI
+ * engine — the MCP tool timeout, so a legit long tool isn't cut off by
+ * the much shorter normal idle watchdog (Juni-Audit 2026-06). Returns
+ * undefined for openai-compatible (it disarms the watchdog during its own
+ * in-process tool loop instead).
+ */
+function pickToolIdleTimeoutForEngine(
+  config: import('../config/types.ts').Config,
+  engine: import('../config/types.ts').EngineName,
+): number | undefined {
+  switch (engine) {
+    case 'claude-cli':
+      return config.claudeCli.mcpToolTimeoutMs;
+    case 'codex-cli':
+      return config.codexCli.toolTimeoutSec * 1000;
+    case 'openai-compatible':
+      return undefined;
+  }
+}
+
 function resolveEffectiveThinking(
   persona: Persona,
   sessionMeta: Record<string, unknown>,
@@ -697,6 +718,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           deps.config.engineWatchdog,
           resolvedModel.provider.engine,
         ),
+        ...(() => {
+          const t = pickToolIdleTimeoutForEngine(deps.config, resolvedModel.provider.engine);
+          return t !== undefined ? { toolIdleTimeoutMs: t } : {};
+        })(),
         ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
         ...(signal ? { signal } : {}),
         ...(resolvedAttachments.length > 0 ? { attachments: resolvedAttachments } : {}),
