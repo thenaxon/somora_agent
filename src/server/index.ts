@@ -1140,7 +1140,10 @@ app.get('/sessions', async (c) => {
           liveByKey.set(key, subs.size);
         }
       }
-      const liveKey = `${agentInfo.name}:${s.id}`;
+      // Must match streamKey()'s `::` separator — a single `:` here
+      // meant the lookup never hit and liveSubscribers was always 0
+      // (Juni-Audit 2026-06).
+      const liveKey = streamKey(agentInfo.name, s.id);
       const liveSubscribers = liveByKey.get(liveKey) ?? 0;
       const dreamStatus: 'dreamed' | 'partial' | 'never' = s.dreamCoverageTs === null
         ? 'never'
@@ -1315,8 +1318,7 @@ app.put('/agents/:agent/sessions/:session/model', async (c) => {
   if (!resolved) {
     return c.json({ error: `model '${body.model}' nicht gefunden in config.yaml` }, 400);
   }
-  const meta = await sessionMetaStore.get(agent, session);
-  await sessionMetaStore.set(agent, session, { ...meta, modelOverride: body.model });
+  await sessionMetaStore.update(agent, session, (current) => ({ ...current, modelOverride: body.model }));
   logger.info({ msg: 'session.model_set', agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
   return c.json({ agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
 });
@@ -1403,9 +1405,10 @@ app.delete('/agents/:agent/sessions/:session/model', async (c) => {
   if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
-  const meta = await sessionMetaStore.get(agent, session);
-  const { modelOverride: _drop, ...rest } = meta;
-  await sessionMetaStore.set(agent, session, rest);
+  await sessionMetaStore.update(agent, session, (current) => {
+    const { modelOverride: _drop, ...rest } = current;
+    return rest;
+  });
   logger.info({ msg: 'session.model_clear', agent, session });
   return c.json({ agent, session, cleared: true });
 });
@@ -1451,8 +1454,7 @@ app.put('/agents/:agent/sessions/:session/thinking', async (c) => {
   if (!body.level || !VALID_THINKING_LEVELS.has(body.level as ThinkingLevel)) {
     return c.json({ error: `body field "level" must be one of: off, low, medium, high` }, 400);
   }
-  const meta = await sessionMetaStore.get(agent, session);
-  await sessionMetaStore.set(agent, session, { ...meta, thinkingOverride: body.level });
+  await sessionMetaStore.update(agent, session, (current) => ({ ...current, thinkingOverride: body.level }));
   logger.info({ msg: 'session.thinking_set', agent, session, level: body.level });
   return c.json({ agent, session, level: body.level });
 });
@@ -1463,9 +1465,10 @@ app.delete('/agents/:agent/sessions/:session/thinking', async (c) => {
   if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
-  const meta = await sessionMetaStore.get(agent, session);
-  const { thinkingOverride: _drop, ...rest } = meta;
-  await sessionMetaStore.set(agent, session, rest);
+  await sessionMetaStore.update(agent, session, (current) => {
+    const { thinkingOverride: _drop, ...rest } = current;
+    return rest;
+  });
   logger.info({ msg: 'session.thinking_clear', agent, session });
   return c.json({ agent, session, cleared: true });
 });

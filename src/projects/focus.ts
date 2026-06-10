@@ -60,15 +60,22 @@ export async function focusProject(args: FocusArgs): Promise<FocusResult> {
   }
 
   const ts = Date.now();
-  const next: Record<string, unknown> = { ...meta };
-  if (slug === null) {
-    delete next.projectSlug;
-    delete next.projectLinkedAt;
-  } else {
-    next.projectSlug = slug;
-    next.projectLinkedAt = new Date(ts).toISOString();
-  }
-  await metaStore.set(agent, session, next);
+  // Atomic read-merge-write: project_focus runs mid-turn (it's a tool),
+  // so it can race the /sessions stats-cache writer or an activity mark.
+  // A plain set() of the turn-start snapshot would revert their fields —
+  // and projectSlug itself was the field lost in the 2026-05-13 incident.
+  // update() re-reads fresh under the per-session lock (Juni-Audit 2026-06).
+  await metaStore.update(agent, session, (current) => {
+    const next = { ...current } as Record<string, unknown>;
+    if (slug === null) {
+      delete next.projectSlug;
+      delete next.projectLinkedAt;
+    } else {
+      next.projectSlug = slug;
+      next.projectLinkedAt = new Date(ts).toISOString();
+    }
+    return next as typeof current;
+  });
 
   // Forensic marker. The engine field is `'somora'` as a sentinel —
   // not engine-emitted. See NormalizedEvent.project_switched.

@@ -47,6 +47,19 @@ export type SessionMeta = Record<string, unknown>;
 export interface SessionMetaStore {
   get(agent: string, session: string): Promise<SessionMeta>;
   set(agent: string, session: string, meta: SessionMeta): Promise<void>;
+  /**
+   * Atomic read-merge-write under an in-process per-session lock. `merge`
+   * receives the LATEST on-disk meta and returns the new meta to persist.
+   * Use this for any field-level update that runs concurrently with other
+   * writers (turn-end engine writes, activity marks, stats cache) — a plain
+   * get()+set() spreads a stale snapshot and silently reverts whatever
+   * another writer persisted in between (Juni-Audit 2026-06 clobber).
+   */
+  update(
+    agent: string,
+    session: string,
+    merge: (current: SessionMeta) => SessionMeta,
+  ): Promise<SessionMeta>;
 }
 
 export interface TurnInput {

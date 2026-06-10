@@ -509,13 +509,16 @@ export const claudeCliEngine: AgentEngine = {
         // from turn START and would clobber those mid-turn writes if
         // we spread it directly. Refs: naxon 2026-05-13 — project_focus
         // pin survived inside the turn, then vanished at turn end.
-        const freshMeta = await metaStore.get(agent, session);
-        await metaStore.set(agent, session, {
+        // Atomic read-merge-write — re-reads under the per-session lock
+        // so a concurrent /sessions stats-cache write (or activity mark)
+        // can't revert sdkSessionId, and our write can't revert theirs
+        // (Juni-Audit 2026-06).
+        await metaStore.update(agent, session, (freshMeta) => ({
           ...freshMeta,
           engine: ENGINE,
           sdkSessionId: lastSdkSessionId,
           engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
-        });
+        }));
       }
     } catch (err) {
       // User pressed ESC mid-turn — emit whatever we streamed so far +
@@ -557,11 +560,13 @@ export const claudeCliEngine: AgentEngine = {
         // the stale id from meta so the next attempt starts fresh.
         if (resume && /No conversation found/i.test(errMsg)) {
           try {
-            // Same fresh-read pattern as the success branch — preserve
-            // any mid-turn meta writes from tools (project_focus, ...).
-            const freshMeta = await metaStore.get(agent, session);
-            const { sdkSessionId: _drop, ...metaWithoutSession } = freshMeta;
-            await metaStore.set(agent, session, metaWithoutSession);
+            // Same atomic merge as the success branch — preserve any
+            // mid-turn meta writes from tools (project_focus, ...) while
+            // dropping only the stale sdkSessionId.
+            await metaStore.update(agent, session, (freshMeta) => {
+              const { sdkSessionId: _drop, ...rest } = freshMeta;
+              return rest;
+            });
             logger.info({
               msg: 'engine.session_resume_cleared',
               engine: ENGINE,

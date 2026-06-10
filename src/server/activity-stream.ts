@@ -122,12 +122,15 @@ export async function tapPublish(
   }
 }
 
-/** Race-safe update: only advance unreadAt, never regress. */
+/** Race-safe update: only advance unreadAt, never regress. Uses the
+ *  atomic read-merge-write so a turn-end engine write or stats-cache
+ *  write can't be reverted by this mark (Juni-Audit 2026-06). */
 async function persistUnreadAt(agent: string, session: string, ts: string): Promise<void> {
-  const meta = await sessionMetaStore.get(agent, session);
-  const current = typeof meta.unreadAt === 'string' ? meta.unreadAt : null;
-  if (current && current >= ts) return; // ISO strings compare lexicographically
-  await sessionMetaStore.set(agent, session, { ...meta, unreadAt: ts });
+  await sessionMetaStore.update(agent, session, (current) => {
+    const existing = typeof current.unreadAt === 'string' ? current.unreadAt : null;
+    if (existing && existing >= ts) return current; // ISO strings compare lexicographically — no regress
+    return { ...current, unreadAt: ts };
+  });
 }
 
 /** Race-safe update for the "user just opened this session" signal.
@@ -135,12 +138,12 @@ async function persistUnreadAt(agent: string, session: string, ts: string): Prom
  *  current and requested), so the caller can echo it on the broadcast. */
 export async function markSeen(agent: string, session: string, ts?: string): Promise<string> {
   const desired = ts ?? new Date().toISOString();
-  const meta = await sessionMetaStore.get(agent, session);
-  const current = typeof meta.seenAt === 'string' ? meta.seenAt : null;
-  const winning = current && current > desired ? current : desired;
-  if (winning !== current) {
-    await sessionMetaStore.set(agent, session, { ...meta, seenAt: winning });
-  }
+  const result = await sessionMetaStore.update(agent, session, (current) => {
+    const existing = typeof current.seenAt === 'string' ? current.seenAt : null;
+    const winning = existing && existing > desired ? existing : desired;
+    return winning === existing ? current : { ...current, seenAt: winning };
+  });
+  const winning = typeof result.seenAt === 'string' ? result.seenAt : desired;
   await broadcast({ event: 'seen', data: { agent, session, seenAt: winning } });
   return winning;
 }

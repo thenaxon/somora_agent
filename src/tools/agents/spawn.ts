@@ -387,27 +387,40 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   // same as "free this slot".
   if (!args.wait) {
     try {
-      const task_id = injectedDeps
-        ? await spawnAsyncInProcess({
-            targetPersona,
-            sessionId,
-            taskText: task.task,
-            parentAgent: ctx.agent,
-            parentSession: ctx.session ?? '?',
-            parentDepth,
-            modelOverride: task.model,
-            maxRoundsOverride: task.maxRounds,
-          })
-        : await spawnAsyncViaHttp({
-            targetAgent: targetPersona,
-            targetSession: sessionId,
-            taskText: task.task,
-            parentAgent: ctx.agent,
-            parentSession: ctx.session ?? '?',
-            parentDepth,
-            modelOverride: task.model,
-            maxRoundsOverride: task.maxRounds,
-          });
+      let task_id: string;
+      if (injectedDeps) {
+        // In-process: the background IIFE owns the slot for the task's
+        // whole lifetime and releases it in its own finally.
+        task_id = await spawnAsyncInProcess({
+          targetPersona,
+          sessionId,
+          taskText: task.task,
+          parentAgent: ctx.agent,
+          parentSession: ctx.session ?? '?',
+          parentDepth,
+          modelOverride: task.model,
+          maxRoundsOverride: task.maxRounds,
+        });
+      } else {
+        // MCP-child HTTP path: the SERVER process owns the task lifetime
+        // and releases ITS own slot when the task finishes. The slot we
+        // reserved lives in THIS per-turn child process and has no
+        // lifetime to track here — release it now, or it leaks for the
+        // rest of the child's life and caps the orchestrator at the
+        // per-agent/global limit forever within the turn (Juni-Audit
+        // 2026-06).
+        task_id = await spawnAsyncViaHttp({
+          targetAgent: targetPersona,
+          targetSession: sessionId,
+          taskText: task.task,
+          parentAgent: ctx.agent,
+          parentSession: ctx.session ?? '?',
+          parentDepth,
+          modelOverride: task.model,
+          maxRoundsOverride: task.maxRounds,
+        });
+        releaseSpawnSlot(targetPersona);
+      }
       logger.info({
         msg: 'spawn_subagent.async_started',
         task_id,

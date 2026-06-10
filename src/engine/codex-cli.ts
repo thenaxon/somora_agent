@@ -674,13 +674,15 @@ export const codexCliEngine: AgentEngine = {
         // from turn START and would clobber those mid-turn writes if
         // we spread it directly. Refs: naxon 2026-05-13 — project_focus
         // pin survived inside the turn, then vanished at turn end.
-        const freshMeta = await metaStore.get(agent, session);
-        await metaStore.set(agent, session, {
+        // Atomic read-merge-write under the per-session lock so a
+        // concurrent /sessions stats write or activity mark can't revert
+        // codexSessionId, nor ours theirs (Juni-Audit 2026-06).
+        await metaStore.update(agent, session, (freshMeta) => ({
           ...freshMeta,
           engine: ENGINE,
           codexSessionId: lastThreadId,
           engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
-        });
+        }));
       }
     } catch (err) {
       if (abortFired) {

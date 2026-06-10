@@ -80,6 +80,18 @@ export async function appendEvent(agent: string, session: string, ev: Normalized
   await appendFile(jsonlPath(agent, session), `${JSON.stringify(ev)}\n`);
 }
 
+// In-process per-session serialization for read-merge-write meta updates.
+// A plain get()+set() from two concurrent writers (turn-end engine write
+// vs /sessions stats-cache write vs activity unread/seen mark) loses
+// whichever read first — the second write spreads its stale snapshot over
+// the first's field. Chaining each session's update() onto a per-key
+// promise makes the read-merge-write atomic WITHIN the process (where all
+// these writers live — the engine loop, /sessions handler and activity
+// hub all run in the main server). Cross-process safety still rests on the
+// atomic tmp+rename in set(); the practical clobber was always same-process
+// (Juni-Audit 2026-06).
+const metaUpdateChains = new Map<string, Promise<unknown>>();
+
 export const sessionMetaStore: SessionMetaStore = {
   async get(agent, session) {
     try {
@@ -100,6 +112,33 @@ export const sessionMetaStore: SessionMetaStore = {
     const tmp = `${path}.tmp.${process.pid}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 8)}`;
     await writeFile(tmp, `${JSON.stringify(meta, null, 2)}\n`, 'utf8');
     await rename(tmp, path);
+  },
+  async update(agent, session, merge) {
+    const k = `${agent}/${session}`;
+    const prev = metaUpdateChains.get(k) ?? Promise.resolve();
+    // Read-merge-write runs only after any in-flight update for this key
+    // settles, so two updates can't interleave their read and write.
+    const run = prev.then(async () => {
+      const current = await this.get(agent, session);
+      const next = merge(current);
+      await this.set(agent, session, next);
+      return next;
+    });
+    // Store a non-rejecting tail so a thrown update doesn't poison the
+    // next link in the chain.
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    metaUpdateChains.set(k, tail);
+    try {
+      return (await run) as SessionMeta;
+    } finally {
+      // Drop the entry only if we're still the tail (no newer update
+      // queued behind us), so the map doesn't grow across short-lived
+      // sessions without discarding a pending chain.
+      if (metaUpdateChains.get(k) === tail) metaUpdateChains.delete(k);
+    }
   },
 };
 
@@ -366,11 +405,14 @@ async function readSessionStats(agent: string, id: string, meta: SessionMeta): P
   ).length;
   const lastEventTs = lastEv ? (lastEv.ts as number) : null;
   const stats: CachedStats = { jsonlMtime, messageCount, byteSize, lastEventTs };
-  // Write back the cache. Best-effort — if the meta write races a concurrent
-  // turn writing other fields, the LAST writer wins. Cache is regenerable
-  // so loss isn't a correctness issue.
+  // Write back the cache via the atomic read-merge-write. getHistory above
+  // can take seconds on a big session; a plain set({ ...meta, cache }) would
+  // spread the turn-START `meta` snapshot and silently revert any
+  // sdkSessionId/projectSlug/unreadAt a turn-end write landed in between
+  // (Juni-Audit 2026-06). update() re-reads fresh under the per-session lock
+  // and touches only `cache`. Best-effort — cache is regenerable.
   try {
-    await sessionMetaStore.set(agent, id, { ...meta, cache: stats });
+    await sessionMetaStore.update(agent, id, (current) => ({ ...current, cache: stats }));
   } catch {
     /* best-effort cache write */
   }
@@ -489,13 +531,12 @@ export async function archiveSession(
       "cannot archive the magic 'main' session directly — use /reset to spawn an archived copy",
     );
   }
-  const meta = await sessionMetaStore.get(agent, session);
-  await sessionMetaStore.set(agent, session, {
-    ...meta,
+  await sessionMetaStore.update(agent, session, (current) => ({
+    ...current,
     archived: true,
     archivedAt: new Date().toISOString(),
     ...(reason ? { archiveReason: reason } : {}),
-  });
+  }));
 }
 
 /** Clear the archived flag. The id-suffix detection (`-archive`) still
@@ -503,10 +544,11 @@ export async function archiveSession(
  *  for visibility purposes — the suffix check overrides the meta flag.
  *  We still clear the meta flag for consistency. */
 export async function unarchiveSession(agent: string, session: string): Promise<void> {
-  const meta = await sessionMetaStore.get(agent, session);
-  const next = { ...meta };
-  delete next.archived;
-  delete next.archivedAt;
-  delete next.archiveReason;
-  await sessionMetaStore.set(agent, session, next);
+  await sessionMetaStore.update(agent, session, (current) => {
+    const next = { ...current };
+    delete next.archived;
+    delete next.archivedAt;
+    delete next.archiveReason;
+    return next;
+  });
 }
