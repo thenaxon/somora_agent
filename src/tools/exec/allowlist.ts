@@ -35,13 +35,32 @@ export interface AllowBlockedMatch {
 }
 
 /**
+ * Shell control operators that can chain, substitute, or redirect into a
+ * NEW command. If any of these appears in the argument suffix after an
+ * allowBlocked prefix, the suffix is no longer "just arguments to the
+ * allowed command" — it can smuggle an arbitrary blacklisted command
+ * past the whitelist (`systemctl reboot ; rm -rf /etc`). Detected →
+ * prefix match is refused so the blacklist re-applies. (Juni-Audit
+ * 2026-06: prefix-match bypass.)
+ *
+ * This is conservative: a privileged command that legitimately needs a
+ * pipe/redirect/quoted operator should be whitelisted as a FULL exact
+ * entry (the exact-match branch ignores this check), not via a prefix.
+ */
+function hasShellControlOperator(s: string): boolean {
+  return /[;&|`\n\r<>]/.test(s) || s.includes('$(');
+}
+
+/**
  * Check whether the command matches any allowBlocked entry.
  *
- * Match rule (one rule, intentionally simple):
+ * Match rule:
  *   entry E matches command C iff
- *     normalize(C) === normalize(E)         (exact)
+ *     normalize(C) === normalize(E)                  (exact)
  *     OR
- *     normalize(C).startsWith(normalize(E) + ' ')   (prefix with space boundary)
+ *     normalize(C).startsWith(normalize(E) + ' ')    (prefix with space boundary)
+ *       AND the remainder after E contains no shell control operator
+ *       (so appended `; rm -rf /` / `&& curl … | sh` can't ride along).
  *
  * The space-boundary stops `sudo` from matching `pseudo` and
  * `systemctl reboot` from matching `systemctl rebootthing`.
@@ -58,7 +77,15 @@ export function checkAllowBlocked(
   for (const raw of entries) {
     const e = normalize(raw);
     if (e.length === 0) continue;
-    if (c === e || c.startsWith(e + ' ')) {
+    if (c === e) {
+      return { entry: e };
+    }
+    if (c.startsWith(e + ' ')) {
+      // Prefix hit — but only honor it if the trailing part is pure
+      // arguments. A chaining/redirect operator means the whitelisted
+      // prefix is being used to smuggle a separate command.
+      const suffix = c.slice(e.length);
+      if (hasShellControlOperator(suffix)) continue;
       return { entry: e };
     }
   }

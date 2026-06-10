@@ -1339,7 +1339,19 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
   }
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
-  const result = await resetSession(agent, session);
+  // Hold the session lock across the archive+recreate. Without it a
+  // /reset that lands mid-turn renames the JSONL out from under a
+  // streaming turn — the turn's tail events recreate the "fresh"
+  // session and the engine end-write stamps the old conversation's
+  // sdkSessionId into it. The lock makes reset wait for the in-flight
+  // turn (and serializes concurrent resets). (Juni-Audit 2026-06.)
+  const releaseReset = await acquireSessionLock(agent, session, { priority: 'user' });
+  let result: Awaited<ReturnType<typeof resetSession>>;
+  try {
+    result = await resetSession(agent, session);
+  } finally {
+    releaseReset();
+  }
   if (!result) {
     logger.info({ msg: 'session.reset_noop', agent, session, reason: 'no jsonl to archive' });
     return c.json({ agent, session, archivedId: null, reason: 'session has no content yet — nothing to archive' });

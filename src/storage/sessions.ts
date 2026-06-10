@@ -203,9 +203,27 @@ export async function resetSession(
   await ensureDir(agent);
   const srcJsonl = jsonlPath(agent, session);
   if (!(await fileExists(srcJsonl))) return null;
+  // No-op when there's nothing to archive. A prior reset leaves a fresh
+  // 0-byte jsonl behind (line ~270); without this guard a second reset
+  // would archive that empty file — and, in the same wall-clock second,
+  // rename it over the first archive and destroy the real history
+  // (Juni-Audit 2026-06). Empty source = nothing happened since reset.
+  try {
+    if ((await stat(srcJsonl)).size === 0) return null;
+  } catch {
+    return null;
+  }
 
   const ts = timestampForFilename();
-  const archivedId = `${ts}_${sanitize(session, 'session')}-archive`;
+  // Collision-safe archive id. The filename timestamp has 1-second
+  // resolution and rename() clobbers silently, so two archives landing
+  // in the same second (rapid double-reset, double-submitted request)
+  // would otherwise overwrite each other and lose a full conversation.
+  // Probe for a free suffix. (Juni-Audit 2026-06.)
+  let archivedId = `${ts}_${sanitize(session, 'session')}-archive`;
+  for (let n = 2; await fileExists(jsonlPath(agent, archivedId)); n++) {
+    archivedId = `${ts}_${sanitize(session, 'session')}-archive-${n}`;
+  }
   const dstJsonl = jsonlPath(agent, archivedId);
   const dstMeta = metaPath(agent, archivedId);
 

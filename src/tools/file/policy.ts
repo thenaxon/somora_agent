@@ -28,18 +28,28 @@ import { effectiveWorkspace } from '../../server/workspace.ts';
 const HOME = homedir();
 const SOMORA_HOME = process.env.SOMORA_HOME ?? `${HOME}/.somora`;
 
-// System paths and credential stores blocked for both read and write.
-const ABSOLUTE_BLOCK = [
+// System paths blocked regardless of which user/home — absolute on any
+// host, so they apply unchanged to local AND remote targets.
+const SYSTEM_BLOCK = [
   '/etc/shadow',
   '/etc/sudoers',
   '/etc/ssh',
   '/boot',
   '/sys',
   '/proc',
-  `${HOME}/.ssh`,
-  `${HOME}/.gnupg`,
-  `${HOME}/.aws/credentials`,
-  `${HOME}/.kube/config`,
+];
+
+// Credential stores blocked relative to a user's home dir. Kept as
+// home-relative suffixes so the same list resolves against the LOCAL
+// home (ABSOLUTE_BLOCK below) or a REMOTE host's home
+// (checkRemoteReadAllowed) — `~` differs per host.
+const HOME_RELATIVE_BLOCK = ['.ssh', '.gnupg', '.aws/credentials', '.kube/config'];
+
+// System paths and credential stores blocked for both read and write on
+// the LOCAL host (somora server's own home).
+const ABSOLUTE_BLOCK = [
+  ...SYSTEM_BLOCK,
+  ...HOME_RELATIVE_BLOCK.map((p) => `${HOME}/${p}`),
 ];
 
 // Additional write-only blocks: system dirs that are reasonable to
@@ -113,6 +123,35 @@ export function checkReadAllowed(absolute: string): PolicyResult {
   for (const blocked of ABSOLUTE_BLOCK) {
     if (isUnder(absolute, blocked)) {
       return { ok: false, reason: `read blocked: '${absolute}' is under '${blocked}'` };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Read-blacklist for a REMOTE host. Same protection as checkReadAllowed,
+ * but the home-relative credential stores resolve against the REMOTE
+ * user's home (passed in) since `~` differs per host; the system paths
+ * are absolute and apply unchanged.
+ *
+ * Before the Juni-Audit 2026-06 fix, remoteRead/remoteList/remoteSearch
+ * ran NO read policy at all — `file_read({path:"~/.ssh/id_ed25519",
+ * target:"<resource>"})` fed a remote private key straight into model
+ * context even though `exec cat ~/.ssh/...` is blacklisted. This closes
+ * the local-vs-remote asymmetry.
+ */
+export function checkRemoteReadAllowed(absolute: string, remoteHome: string): PolicyResult {
+  const home = remoteHome.replace(/\/+$/, '');
+  const blocks = [
+    ...SYSTEM_BLOCK,
+    ...(home ? HOME_RELATIVE_BLOCK.map((p) => `${home}/${p}`) : []),
+  ];
+  for (const blocked of blocks) {
+    if (isUnder(absolute, blocked)) {
+      return {
+        ok: false,
+        reason: `read blocked: '${absolute}' is under '${blocked}' on the remote host`,
+      };
     }
   }
   return { ok: true };

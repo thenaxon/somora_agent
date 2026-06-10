@@ -6,8 +6,9 @@ import { posix } from 'node:path';
 import type { Client, SFTPWrapper, Stats } from 'ssh2';
 import type { SshResource } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
-import { expandRemotePath, getConnection, remoteExec } from '../../ssh/index.ts';
+import { expandRemotePath, getConnection, getResourceHome, remoteExec } from '../../ssh/index.ts';
 import type { ListEntry, ListResult, ReadResult, SearchResult, SearchHit, WriteResult, PatchResult } from './local.ts';
+import { checkRemoteReadAllowed } from './policy.ts';
 
 const READ_HARD_CAP = 200_000;
 
@@ -125,6 +126,12 @@ export async function remoteRead(args: {
 }): Promise<ReadResult> {
   const client = await getConnection(args.resourceName, args.resource);
   const remotePath = await resolveRemotePath(args.path, args.resourceName, args.resource);
+  // Read-blacklist against the REMOTE home — same protection localRead
+  // applies, which the remote path skipped entirely before the
+  // Juni-Audit 2026-06 fix (see checkRemoteReadAllowed).
+  const remoteHome = await getResourceHome(args.resourceName, args.resource);
+  const policy = checkRemoteReadAllowed(remotePath, remoteHome);
+  if (!policy.ok) throw new Error(policy.reason);
   const buf = await withSftp(client, (sftp) => sftpReadFile(sftp, remotePath));
   const all = buf.toString('utf8');
   const lines = all.split('\n');
@@ -266,6 +273,16 @@ export async function remoteSearch(args: {
   const remotePath = args.path
     ? await resolveRemotePath(args.path, args.resourceName, args.resource)
     : (args.resource.workspace ?? '.');
+  // Block searching inside remote credential stores — file_search reads
+  // and returns file contents (match lines), so it's a read path. Only
+  // the model-supplied explicit path is checked; the workspace default
+  // is operator-configured. The path is already SFTP-resolved to an
+  // absolute when args.path is set. (Juni-Audit 2026-06.)
+  if (args.path) {
+    const remoteHome = await getResourceHome(args.resourceName, args.resource);
+    const policy = checkRemoteReadAllowed(remotePath, remoteHome);
+    if (!policy.ok) throw new Error(policy.reason);
+  }
   const cmd = `rg --json --max-count ${limit} --no-messages ${shQ(args.pattern)} ${shQ(remotePath)}`;
   const result = await remoteExec(client, cmd, { timeoutMs: 30_000 });
   if (result.code !== 0 && result.stdout === '') {
@@ -334,6 +351,12 @@ export async function remoteList(args: {
   glob?: string;
 }): Promise<ListResult> {
   const fullPath = await resolveRemotePath(args.path, args.resourceName, args.resource);
+  // Block listing inside remote credential stores — directory listings
+  // of ~/.ssh etc. leak key filenames; the local list path enforces the
+  // same. (Juni-Audit 2026-06.)
+  const remoteHome = await getResourceHome(args.resourceName, args.resource);
+  const listPolicy = checkRemoteReadAllowed(fullPath, remoteHome);
+  if (!listPolicy.ok) throw new Error(listPolicy.reason);
   const conn = await getConnection(args.resourceName, args.resource);
   const recursive = Boolean(args.recursive);
   const matchGlob = args.glob ? compileGlob(args.glob) : null;
