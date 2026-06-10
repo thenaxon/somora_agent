@@ -574,6 +574,27 @@ curl -X POST https://<host>:18737/chat/send-sync \
      -d '{"agent":"hans","session":"main","text":"…"}'
 ```
 
+Body fields: same as `/chat/send` (`agent`, `session`, `text`,
+`from_agent`, `agent_ask_call_id`), plus:
+
+- `waiter_agent` / `waiter_session` (optional, A2A) — identify the
+  caller turn that blocks on this request. Used by `agent_ask` and
+  `spawn_subagent` internally to register the wait in the server's
+  deadlock guard; set both or neither.
+
+When `waiter_*` are present and the request would close a wait cycle
+(the target is already — directly or through a chain of waits —
+blocked on the caller), the server responds `409` instead of
+deadlocking:
+
+```json
+{ "error": "circular A2A wait: …", "circular_wait": true,
+  "chain": ["donna/main", "gideon/main", "donna/main"] }
+```
+
+Response on success: the full turn result (`finalText`, `usage`,
+`model`, `ms`, …).
+
 ### `GET /chat/stream`
 
 Server-Sent Events stream for a single `(agent, session)`. Subscribe
