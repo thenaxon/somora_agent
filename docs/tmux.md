@@ -119,10 +119,16 @@ session at create-time. Set `kind: "claude-code"` or `kind: "codex"`
 and two things happen automatically on every `capture` and
 `wait_idle` against that session:
 
-1. A structured `tui_state: { state, markers }` block is added to the
-   result. `state` is one of `"ready" | "queued" | "running" |
-   "idle_unknown"`. `markers` is the list of substrings that matched
-   the kind's marker table.
+1. A structured `tui_state: { state, markers, suggestion_visible,
+   suggestion_text }` block is added to the result. `state` is one of
+   `"ready" | "queued" | "running" | "idle_unknown"`. `markers` is the
+   list of substrings that matched the kind's marker table.
+   `suggestion_visible` / `suggestion_text` report ghost text (the
+   TUI's dim auto-suggestion on its input line) — detected via an
+   automatic ANSI probe, so you don't need `include_ansi` for this.
+   A visible suggestion is a hint the TUI renders for a human; it is
+   NOT real typed input — ignore it (don't clear it, don't mention
+   it, don't submit it).
 2. `wait_idle` no longer returns prematurely on a content-stable-but-
    not-actually-ready pane. A `claude --dangerously-skip-permissions`
    session that's sitting on `Press up to edit queued messages` is
@@ -249,11 +255,13 @@ suggestion — ask before submitting, or capture with
 `include_ansi:true` first.
 
 If you declared `kind: "claude-code"` or `kind: "codex"` on the
-session, `tui_state.state === "queued"` is the structured form of
-"there's pending input that hasn't been submitted" — handle it as
-the equivalent of seeing the auto-suggestion warning. The
-typed-vs-suggestion distinction itself still needs `include_ansi`
-because both render as `❯`-prefixed lines in stripped output.
+session, you rarely need manual ANSI inspection for this anymore:
+`tui_state.suggestion_visible` / `suggestion_text` report ghost text
+on the input line directly (somora runs the ANSI probe for you), and
+`tui_state.state === "queued"` is the structured form of "there's
+pending input that hasn't been submitted". Manual `include_ansi`
+capture remains the fallback for undeclared sessions or when you
+want to inspect the raw styling yourself.
 
 ## Result shape
 
