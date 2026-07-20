@@ -1,8 +1,15 @@
 // Generic xterm.js + WebSocket bridge. Two callers today: the tmux
 // attach window and the plain-shell terminal window. The behaviour
 // is identical — server spawns a PTY, binary frames carry the
-// terminal stream both ways, JSON text frames carry resize messages.
-// The only difference is the WS URL.
+// terminal stream both ways, JSON text frames carry control messages
+// (resize, heartbeat ping/pong). The only difference is the WS URL.
+//
+// Liveness: an idle pane moves zero bytes, so a silently dead path
+// (Tailscale idle drop, laptop sleep, network switch) leaves the
+// browser socket looking open forever. The server pings every 25s;
+// we pong back, and when pings stop arriving (or the socket closes)
+// we reconnect automatically — tmux redraws on re-attach, a plain
+// shell comes back as a fresh shell.
 
 import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
@@ -20,7 +27,13 @@ interface Props {
   busyLabel?: string;
 }
 
-type Status = 'connecting' | 'open' | 'closed' | 'error';
+type Status = 'connecting' | 'open' | 'reconnecting' | 'closed' | 'error';
+
+// Server pings every 25s; two missed pings + slack = stale. Checked
+// on a 10s tick and immediately when the tab becomes visible again.
+const STALE_AFTER_MS = 60_000;
+const STALE_CHECK_MS = 10_000;
+const RECONNECT_MAX_DELAY_MS = 15_000;
 
 export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -52,11 +65,16 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
 
     const wsOrigin = window.location.origin.replace(/^http/, 'ws');
     const url = `${wsOrigin}${attachPath}`;
-    const ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
+
+    let ws: WebSocket | null = null;
+    let disposed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
+    let lastMsgAt = 0;
+    let announcedDrop = false;
 
     function sendResize(): void {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       try {
         ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
       } catch {
@@ -64,31 +82,122 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
       }
     }
 
-    ws.addEventListener('open', () => {
-      setStatus('open');
-      setStatusDetail(null);
-      sendResize();
-    });
-    ws.addEventListener('message', (ev) => {
-      const data = ev.data;
-      if (data instanceof ArrayBuffer) {
-        term.write(new Uint8Array(data));
-      } else if (typeof data === 'string') {
-        term.write(data);
+    function scheduleReconnect(): void {
+      if (disposed || reconnectTimer) return;
+      if (!announcedDrop) {
+        announcedDrop = true;
+        term.write(`\r\n\x1b[33m[somora] ${busyLabel} connection lost — reconnecting…\x1b[0m\r\n`);
       }
-    });
-    ws.addEventListener('close', (ev) => {
-      setStatus('closed');
-      setStatusDetail(ev.reason || `code ${ev.code}`);
-      term.write(`\r\n\x1b[33m[somora] ${busyLabel} closed: ${ev.reason || `code ${ev.code}`}\x1b[0m\r\n`);
-    });
-    ws.addEventListener('error', () => {
-      setStatus('error');
-      setStatusDetail('connection failed');
-    });
+      setStatus('reconnecting');
+      const delay = Math.min(1000 * 2 ** attempt, RECONNECT_MAX_DELAY_MS);
+      attempt += 1;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, delay);
+    }
+
+    /** Drop the current socket (without triggering its handlers) and
+     *  go through the reconnect path. Used by the staleness check —
+     *  a wedged socket may never fire `close` on its own. */
+    function forceReconnect(): void {
+      if (disposed) return;
+      const old = ws;
+      ws = null;
+      if (old) {
+        old.onopen = old.onmessage = old.onclose = old.onerror = null;
+        try {
+          old.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      scheduleReconnect();
+    }
+
+    function connect(): void {
+      if (disposed) return;
+      const sock = new WebSocket(url);
+      sock.binaryType = 'arraybuffer';
+      ws = sock;
+
+      sock.onopen = () => {
+        if (disposed || ws !== sock) return;
+        attempt = 0;
+        announcedDrop = false;
+        lastMsgAt = Date.now();
+        setStatus('open');
+        setStatusDetail(null);
+        sendResize();
+      };
+      sock.onmessage = (ev) => {
+        if (ws !== sock) return;
+        lastMsgAt = Date.now();
+        const data = ev.data;
+        if (data instanceof ArrayBuffer) {
+          term.write(new Uint8Array(data));
+        } else if (typeof data === 'string') {
+          // Text frame = control message (heartbeat). Answer pings so
+          // the server knows we're alive; never render control frames.
+          try {
+            const msg = JSON.parse(data) as { type?: string };
+            if (msg.type === 'ping') {
+              try {
+                sock.send('{"type":"pong"}');
+              } catch {
+                /* socket closed mid-write */
+              }
+            }
+            if (typeof msg.type === 'string') return;
+          } catch {
+            /* not JSON — fall through and render */
+          }
+          term.write(data);
+        }
+      };
+      sock.onclose = (ev) => {
+        if (disposed || ws !== sock) return;
+        ws = null;
+        // Deliberate server close (PTY exit, invalid session, spawn
+        // failure) → stay closed; anything else is a transport drop →
+        // reconnect.
+        if (ev.code === 1000 || ev.code === 1008 || ev.code === 1011) {
+          setStatus('closed');
+          setStatusDetail(ev.reason || `code ${ev.code}`);
+          term.write(`\r\n\x1b[33m[somora] ${busyLabel} closed: ${ev.reason || `code ${ev.code}`}\x1b[0m\r\n`);
+          return;
+        }
+        scheduleReconnect();
+      };
+      sock.onerror = () => {
+        if (disposed || ws !== sock) return;
+        setStatusDetail('connection failed');
+        // `close` follows and drives the reconnect.
+      };
+    }
+
+    const staleTimer = setInterval(() => {
+      if (disposed || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (Date.now() - lastMsgAt > STALE_AFTER_MS) forceReconnect();
+    }, STALE_CHECK_MS);
+
+    function onVisible(): void {
+      if (document.visibilityState !== 'visible' || disposed) return;
+      // Coming back from a background tab / sleep: reconnect a dead or
+      // stale socket immediately instead of waiting out the backoff.
+      if (ws && ws.readyState === WebSocket.OPEN && Date.now() - lastMsgAt <= STALE_AFTER_MS) return;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      forceReconnect();
+    }
+    document.addEventListener('visibilitychange', onVisible);
+
+    connect();
 
     const dataDisposable = term.onData((data: string) => {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       try {
         ws.send(new TextEncoder().encode(data));
       } catch {
@@ -109,10 +218,14 @@ export function XTermBridge({ attachPath, busyLabel = 'terminal' }: Props) {
     term.focus();
 
     return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(staleTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       ro.disconnect();
       dataDisposable.dispose();
       try {
-        ws.close();
+        ws?.close();
       } catch {
         /* ignore */
       }

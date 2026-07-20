@@ -17,9 +17,10 @@
 // are pruned next-write.
 
 import { existsSync, mkdirSync } from 'node:fs';
-import { readFile, writeFile, appendFile, readdir, unlink, rename } from 'node:fs/promises';
+import { readFile, writeFile, appendFile, readdir, unlink, rename, open } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { isPidAlive } from '../server/lockfile.ts';
 import { logger } from '../server/logger.ts';
 import type { Trigger, FireHistoryEntry } from './types.ts';
 import { SENTINEL_LIMITS } from './types.ts';
@@ -87,19 +88,100 @@ export function getTrigger(id: string): Trigger | null {
   return cache.triggers[id] ?? null;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Registry mutation — cross-process safe
+//
+// TWO processes write triggers.json: the main server (HTTP routes,
+// scheduler) and the MCP child (sentinel tool under claude-cli/codex-
+// cli). Mutating the in-memory cache and writing the WHOLE registry
+// from it was last-writer-wins at file granularity: a child with a
+// stale cache could delete a just-created trigger or resurrect a past
+// nextFireAt (double fire). The directory-watcher reload is debounced
+// and doesn't close that window.
+//
+// Every mutation therefore (1) takes a lockfile (atomic `wx` create,
+// stale-PID reclaim), (2) re-reads the registry from disk, (3) applies
+// the single-trigger change, (4) writes, (5) refreshes the cache.
+// ─────────────────────────────────────────────────────────────────────
+
+const REGISTRY_LOCK_PATH = `${TRIGGERS_PATH}.lock`;
+const LOCK_RETRY_MS = 25;
+const LOCK_TIMEOUT_MS = 5_000;
+
+// Serialize same-process mutations so they don't fight over the lockfile.
+let mutationChain: Promise<unknown> = Promise.resolve();
+
+async function acquireRegistryLock(): Promise<void> {
+  ensureDirs();
+  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      const fh = await open(REGISTRY_LOCK_PATH, 'wx');
+      await fh.writeFile(String(process.pid), 'utf8');
+      await fh.close();
+      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      // Reclaim if the holder died between create and unlink.
+      try {
+        const pid = Number((await readFile(REGISTRY_LOCK_PATH, 'utf8')).trim());
+        if (Number.isFinite(pid) && pid > 0 && !isPidAlive(pid)) {
+          await unlink(REGISTRY_LOCK_PATH);
+          continue;
+        }
+      } catch {
+        // Lock vanished while probing — retry immediately.
+        continue;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`sentinel registry lock busy for >${LOCK_TIMEOUT_MS}ms (${REGISTRY_LOCK_PATH})`);
+      }
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+}
+
+async function releaseRegistryLock(): Promise<void> {
+  try {
+    await unlink(REGISTRY_LOCK_PATH);
+  } catch {
+    // Already gone (stale-reclaimed by a peer) — fine.
+  }
+}
+
+async function mutateRegistry<T>(fn: (reg: Registry) => T): Promise<T> {
+  const run = async (): Promise<T> => {
+    await acquireRegistryLock();
+    try {
+      const reg = await readRegistryFromDisk();
+      const out = fn(reg);
+      await writeRegistryToDisk(reg);
+      cache = reg;
+      return out;
+    } finally {
+      await releaseRegistryLock();
+    }
+  };
+  const next = mutationChain.then(run, run);
+  mutationChain = next.catch(() => undefined);
+  return next;
+}
+
 /** Insert or replace a trigger. Persists to disk before returning. */
 export async function saveTrigger(t: Trigger): Promise<void> {
-  if (!cache) cache = { triggers: {} };
-  cache.triggers[t.id] = t;
-  await writeRegistryToDisk(cache);
+  await mutateRegistry((reg) => {
+    reg.triggers[t.id] = t;
+  });
 }
 
 /** Delete a trigger AND its history file. Idempotent. */
 export async function deleteTrigger(id: string): Promise<boolean> {
-  if (!cache) cache = { triggers: {} };
-  if (!cache.triggers[id]) return false;
-  delete cache.triggers[id];
-  await writeRegistryToDisk(cache);
+  const removed = await mutateRegistry((reg) => {
+    if (!reg.triggers[id]) return false;
+    delete reg.triggers[id];
+    return true;
+  });
+  if (!removed) return false;
   try {
     await unlink(join(HISTORY_DIR, `${id}.jsonl`));
   } catch {

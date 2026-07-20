@@ -610,6 +610,10 @@ export function ChatWindow({
           // eslint-disable-next-line no-console
           console.error('[somora-web] send failed', err.message);
           setSystemNotice({ text: `send failed: ${err.message}`, tone: 'error' });
+          // The provider dropped the optimistic bubble; put the text back
+          // into the input for a retry — unless the user typed something
+          // new in the meantime.
+          setDraft((cur) => cur || text);
         });
     },
     [draft, chat, pendingAttachments, ttsAvailable, autoPlay],

@@ -493,31 +493,37 @@ export function useChatStream(agent: string | null): ChatStream {
           ...(voice?.autoPlayRequested ? { auto_play_requested: true } : {}),
         }),
       });
-      if (res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { turnId?: string };
-        const turnId = typeof body.turnId === 'string' ? body.turnId : '';
-        if (turnId) {
-          // If turn_queued already arrived before we got the HTTP
-          // response back, drain its buffered ahead-count and apply
-          // it in the same setMessages pass that adds the turnId.
-          const bufferedAhead = pendingQueuedRef.current.get(turnId);
-          if (bufferedAhead !== undefined) pendingQueuedRef.current.delete(turnId);
-          setMessages((prev) =>
-            prev.map((m) => {
-              if (m.id !== localId) return m;
-              if (m.role !== 'user') return m;
-              return {
-                ...m,
-                turnId,
-                ...(bufferedAhead !== undefined ? { queued: { ahead: bufferedAhead } } : {}),
-              };
-            }),
-          );
-        }
+      if (!res.ok) throw new Error(`chat/send ${res.status}`);
+      const body = (await res.json().catch(() => ({}))) as { turnId?: string };
+      const turnId = typeof body.turnId === 'string' ? body.turnId : '';
+      if (turnId) {
+        // If turn_queued already arrived before we got the HTTP
+        // response back, drain its buffered ahead-count and apply
+        // it in the same setMessages pass that adds the turnId.
+        const bufferedAhead = pendingQueuedRef.current.get(turnId);
+        if (bufferedAhead !== undefined) pendingQueuedRef.current.delete(turnId);
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== localId) return m;
+            if (m.role !== 'user') return m;
+            return {
+              ...m,
+              turnId,
+              ...(bufferedAhead !== undefined ? { queued: { ahead: bufferedAhead } } : {}),
+            };
+          }),
+        );
       }
     } catch (err) {
       console.warn('[somora-mobile] /chat/send failed:', err);
       setStreaming(false);
+      // Drop the optimistic bubble — it never reached the server. Leaving
+      // it `pending` forever would anchor future assistant replies above
+      // it and make the message look sent. Rethrow so MessageInput's
+      // catch restores the draft for a retry (HTTP errors previously
+      // never threw, which left that restore path dead).
+      setMessages((prev) => prev.filter((m) => m.id !== localId));
+      throw err;
     }
   };
 

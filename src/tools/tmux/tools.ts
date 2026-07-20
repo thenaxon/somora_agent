@@ -36,7 +36,7 @@ import {
   removeTmuxOrigin,
   type TmuxSessionKind,
 } from '../../tmux/origin-store.ts';
-import { detectTuiState } from '../../tmux/tui-markers.ts';
+import { detectTuiState, detectSuggestion, type TuiDetectResult } from '../../tmux/tui-markers.ts';
 
 // One or more tmux key tokens separated by whitespace. Each token is
 // `[A-Za-z0-9_-]+` — covers tmux's full key-name vocabulary (Escape,
@@ -257,6 +257,13 @@ interface TuiStateField {
   state: 'ready' | 'queued' | 'running' | 'idle_unknown';
   /** Substrings from the pane that matched the kind's marker table. */
   markers: string[];
+  /** True when the TUI is rendering ghost-text (a dim auto-suggestion)
+   *  on its input line. This is the TUI predicting a next step for a
+   *  HUMAN — it is NOT real typed input. Ignore it: don't delete it,
+   *  don't narrate it, don't submit it. */
+  suggestion_visible?: boolean;
+  /** The ghost text, when suggestion_visible. Informational only. */
+  suggestion_text?: string;
 }
 
 interface CaptureResult {
@@ -382,6 +389,40 @@ async function runCapture(
     : { ok: false, content: r.stdout, error: r.stderr.trim() || `exit ${r.exit_code}` };
 }
 
+/** Bottom-of-pane window for the ghost-text probe — the input box
+ *  lives there; scanning full scrollback would only add stale hits. */
+const SUGGESTION_PROBE_LINES = 40;
+
+/**
+ * Enrich a detected tui_state with ghost-text (auto-suggestion) info.
+ * Reuses the caller's capture when it already includes ANSI; otherwise
+ * runs one extra small `capture-pane -e` probe. Best-effort — a failed
+ * probe returns the plain state unchanged.
+ */
+async function enrichTuiState(
+  tui: TuiDetectResult,
+  target: string,
+  agent: string,
+  name: string,
+  kind: TmuxSessionKind | undefined,
+  ansiContent: string | null,
+): Promise<TuiStateField> {
+  try {
+    const ansi =
+      ansiContent ??
+      (await runCapture(target, agent, name, SUGGESTION_PROBE_LINES, true)).content;
+    const s = detectSuggestion(ansi, kind);
+    if (!s) return tui;
+    return {
+      ...tui,
+      suggestion_visible: s.suggestion_visible,
+      ...(s.suggestion_text !== undefined ? { suggestion_text: s.suggestion_text } : {}),
+    };
+  } catch {
+    return tui;
+  }
+}
+
 /**
  * Look up the session's declared kind from origin-store. Only local
  * sessions carry origin records (remote tmux runs on a different host
@@ -431,7 +472,8 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     '\n\n' +
     'When you create a session that will host a known coding-TUI, declare it at create-time ' +
     'with `kind: "claude-code"` or `kind: "codex"` — capture and wait_idle then return a ' +
-    'structured `tui_state:{state, markers}` block and wait_idle correctly distinguishes ' +
+    'structured `tui_state:{state, markers, suggestion_visible, suggestion_text}` block and ' +
+    'wait_idle correctly distinguishes ' +
     '"content stable AND TUI ready" from "content stable but queued input not submitted / ' +
     'still running". Default `kind: "shell"` keeps today\'s pure content-stability behavior ' +
     'for plain shell jobs, builds, REPLs, vim/htop — anything that isn\'t one of the named TUIs. ' +
@@ -442,11 +484,19 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
     'task ("Escape" / "C-c") or to clear the input line ("C-u") — JSON-encoding raw control ' +
     'bytes in `keys` is unreliable. ' +
     '\n\n' +
+    'AUTO-SUGGESTIONS (ghost text): Claude Code and codex render a dim predicted-next-input ' +
+    'line in their input field — a hint for a human sitting in front of the app, NOT real ' +
+    'typed input. In stripped captures it looks identical to typed text. For kind-declared ' +
+    'sessions, `tui_state.suggestion_visible/suggestion_text` tell you explicitly what is ' +
+    'ghost text: IGNORE it — do not clear it, do not mention it, do not treat it as a stray ' +
+    'input line. It vanishes on its own when you type. ' +
+    '\n\n' +
     'SAFETY for TUI sessions: never blindly press Enter on a buffer that already shows pending ' +
-    'input you didn\'t type — modern coding TUIs (Claude Code, codex) display auto-suggestions ' +
-    'in the input field that look identical to real user-typed text in stripped output. ' +
-    'Submitting a suggestion you didn\'t type can trigger destructive actions ("delete project", ' +
-    '"clear all"). When in doubt, capture with include_ansi:true to see styling, or ask the user.',
+    'input you didn\'t type. If tui_state reports suggestion_visible for that text it\'s just a ' +
+    'suggestion (Enter may submit it in some TUIs — type your own input instead); if it\'s real ' +
+    'pending input you didn\'t author, submitting it can trigger destructive actions ("delete ' +
+    'project", "clear all"). When in doubt, capture with include_ansi:true to see styling, or ' +
+    'ask the user.',
   inputSchema: TmuxInput,
   jsonSchema: {
     type: 'object',
@@ -557,9 +607,11 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         kind === 'shell'
           ? ''
           : ` This session is kind:"${kind}" — capture and wait_idle return a ` +
-            `tui_state:{state, markers} block. Before assuming an input was processed, ` +
-            `check tui_state.state — "queued" means it's not submitted yet, "running" ` +
-            `means the TUI is still working.`;
+            `tui_state:{state, markers, suggestion_visible, suggestion_text} block. Before ` +
+            `assuming an input was processed, check tui_state.state — "queued" means it's ` +
+            `not submitted yet, "running" means the TUI is still working. If ` +
+            `suggestion_visible is true, the input line shows the TUI's dim ghost-text ` +
+            `prediction for a human — ignore it, it is not real input.`;
       return {
         action: 'create',
         ok: true,
@@ -621,6 +673,9 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         const cap = await runCapture(target, ctx.agent, name, lines, includeAnsi);
         const kind = lookupSessionKind(target, name);
         const tui = detectTuiState(cap.content, kind);
+        const tuiOut = tui
+          ? await enrichTuiState(tui, target, ctx.agent, name, kind, includeAnsi ? cap.content : null)
+          : null;
         return {
           action: 'capture',
           ok: cap.ok,
@@ -629,7 +684,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           content: cap.content,
           matched_pattern: false,
           ms: Date.now() - start,
-          ...(tui ? { tui_state: tui } : {}),
+          ...(tuiOut ? { tui_state: tuiOut } : {}),
           ...(cap.error ? { error: cap.error } : {}),
         };
       }
@@ -738,6 +793,9 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
 
       const captureKind = lookupSessionKind(target, name);
       const captureTui = detectTuiState(lastContent, captureKind);
+      const captureTuiOut = captureTui
+        ? await enrichTuiState(captureTui, target, ctx.agent, name, captureKind, includeAnsi ? lastContent : null)
+        : null;
       return {
         action: 'capture',
         ok: !lastError,
@@ -747,7 +805,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         matched_pattern: matched,
         wait_pattern: pattern,
         ms: Date.now() - start,
-        ...(captureTui ? { tui_state: captureTui } : {}),
+        ...(captureTuiOut ? { tui_state: captureTuiOut } : {}),
         ...(lastError ? { error: lastError } : {}),
       };
     }
@@ -839,6 +897,9 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       }
 
       const tuiFinal = detectTuiState(lastContent, sessionKind);
+      const tuiFinalOut = tuiFinal
+        ? await enrichTuiState(tuiFinal, target, ctx.agent, name, sessionKind, includeAnsi ? lastContent : null)
+        : null;
       return {
         action: 'wait_idle',
         ok: !lastError,
@@ -847,7 +908,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         content: lastContent,
         became_idle: becameIdle,
         ms: Date.now() - start,
-        ...(tuiFinal ? { tui_state: tuiFinal } : {}),
+        ...(tuiFinalOut ? { tui_state: tuiFinalOut } : {}),
         ...(lastError ? { error: lastError } : {}),
       };
     }

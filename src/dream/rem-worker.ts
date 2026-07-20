@@ -199,24 +199,30 @@ export class RemWorker {
     try {
       const mgr = await this.deps.getMemoryManager(state.agent);
       if (target.kind === 'fresh') {
+        // Capture the range end BEFORE the run and stamp exactly that on
+        // success. Stamping Date.now() after the run would mark events
+        // that landed mid-dream as dreamed without ever analyzing them.
+        const rangeThroughTs = Date.now();
         const result = await runDream({
           agent: state.agent,
           sourceSession: target.sourceSession,
           trigger: 'auto',
           rangeFromTs: target.rangeFromTs,
-          rangeThroughTs: Date.now(),
+          rangeThroughTs,
           rem: state.rem,
           config: this.deps.config,
           mgr,
           signal,
         });
         if (result.finalStatus === 'completed' || result.finalStatus === 'processed') {
-          await this.markSessionDreamed(state.agent, target.sourceSession);
+          await this.markSessionDreamed(state.agent, target.sourceSession, rangeThroughTs);
         }
       } else {
         // Resume path — runner.ts:resumeDream re-runs from scratch in v1
         // (DECISION #32: cleaner dedup story). We pass the same source
-        // session + the dream's id to clean up the paused file.
+        // session + the dream's id to clean up the paused file. The
+        // marker moves only to the dream's ORIGINAL range end — a resume
+        // days later must not swallow everything since.
         const { resumeDream } = await import('./rem-runner.ts');
         const result = await resumeDream({
           agent: state.agent,
@@ -227,7 +233,7 @@ export class RemWorker {
           signal,
         });
         if (result.finalStatus === 'completed' || result.finalStatus === 'processed') {
-          await this.markSessionDreamed(state.agent, target.sourceSession);
+          await this.markSessionDreamed(state.agent, target.sourceSession, result.rangeThroughTs);
         }
       }
     } catch (err) {
@@ -242,11 +248,19 @@ export class RemWorker {
     }
   }
 
-  private async markSessionDreamed(agent: string, session: string): Promise<void> {
+  private async markSessionDreamed(
+    agent: string,
+    session: string,
+    throughTs: number,
+  ): Promise<void> {
     try {
-      const meta = await sessionMetaStore.get(agent, session);
-      const next = { ...meta, [META_KEY]: Date.now() };
-      await sessionMetaStore.set(agent, session, next);
+      // max() so a late-completing resume of an old dream can't rewind a
+      // marker a newer fresh run already advanced (rewind = re-dream =
+      // duplicate findings).
+      await sessionMetaStore.update(agent, session, (current) => ({
+        ...current,
+        [META_KEY]: Math.max(throughTs, Number(current[META_KEY]) || 0),
+      }));
     } catch (err) {
       logger.warn({
         msg: 'dream.rem.marker_write_failed',

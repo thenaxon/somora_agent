@@ -951,6 +951,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           cur.splice(i, 1);
           pendingSelfSendsRef.current.set(key, cur);
         }
+        // Drop the optimistic bubble — it never reached the server. A
+        // forever-`pending` bubble would anchor every future assistant
+        // reply ABOVE it (see the chat:delta anchor logic) and make the
+        // message look sent. ChatWindow's catch surfaces the error and
+        // restores the draft.
+        setMessages((prev) => {
+          const list = prev[key];
+          if (!list) return prev;
+          return { ...prev, [key]: list.filter((m) => m.id !== localId) };
+        });
         throw err;
       }
     },

@@ -421,7 +421,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
                     <td style={{ ...cellBody, color: r.agentColor ?? 'var(--text-1)' }}>
                       {r.agentIcon ? `${r.agentIcon} ` : ''}{r.agent}
                     </td>
-                    <td style={cellBody}>
+                    <td style={cellBody} title={r.sessionId}>
                       {r.slug}{r.isMain ? ' ★' : ''}
                       {hasUnread(r) && (
                         <span
@@ -430,6 +430,23 @@ export function SessionsWindow({ onOpenChat }: Props) {
                           title={`Neue Aktivität seit ${fmtRelTime(r.unreadAt ?? null)}`}
                           style={{ marginLeft: 6 }}
                         />
+                      )}
+                      {/* Canonical stored id (date-prefixed) differs from the
+                          friendly slug for archived/auto-created sessions —
+                          show it so "blackcorner-ui" vs
+                          "20260516-210048_blackcorner-ui" isn't a guessing
+                          game (2026-07-08 feedback). */}
+                      {!r.isMain && r.sessionId !== r.slug && (
+                        <div
+                          style={{
+                            fontSize: 10,
+                            color: 'var(--text-2)',
+                            fontFamily: '"JetBrains Mono", monospace',
+                            opacity: 0.7,
+                          }}
+                        >
+                          {r.sessionId}
+                        </div>
                       )}
                     </td>
                     {projectsEnabled && (

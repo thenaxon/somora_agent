@@ -124,3 +124,103 @@ export function detectTuiState(
   }
   return { state: 'ready', markers: [] };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// Auto-suggestion (ghost text) detection
+//
+// Coding TUIs render a predicted next input as dim/faint text on the
+// input line — a hint for the human, NOT real typed input. In a
+// stripped capture that ghost text is indistinguishable from real
+// input, and agents driving the TUI kept "correcting" it (2026-07-14
+// tui-autosuggestion feedback). Detection: capture WITH ANSI, find the
+// input line by its per-kind prompt prefix, and report any dim-styled
+// (SGR 2) span on it as suggestion text.
+// ─────────────────────────────────────────────────────────────────────
+
+/** Input-line prompt prefix per kind, matched against the escape-
+ *  stripped line. Conservative: only lines that ARE the input line are
+ *  scanned for dim spans — footers/hints elsewhere are dim too and
+ *  must not read as suggestions. */
+// Live-verified 2026-07-20: current Claude Code renders `❯` followed by
+// a NO-BREAK SPACE (U+00A0) as its prompt; older builds used `> `. JS
+// `\s` matches U+00A0, so a plain \s after the char class covers both.
+const INPUT_LINE_PREFIX: Partial<Record<TmuxSessionKind, RegExp>> = {
+  'claude-code': /^\s*[>❯]\s/,
+  codex: /^\s*[›>❯]\s/,
+};
+
+const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
+// Non-SGR escapes that show up in `capture-pane -e` output (cursor
+// moves, charset switches) — stripped before prefix matching.
+const ANSI_OTHER_RE = /\x1b(?:\][^\x07]*\x07|[()][0-9A-B]|\[[0-9;?]*[A-Za-z])/g;
+
+function stripAnsi(line: string): string {
+  return line.replace(ANSI_SGR_RE, '').replace(ANSI_OTHER_RE, '');
+}
+
+/** Collect the visible text that is rendered dim (SGR 2) in a single
+ *  ANSI-styled line. Tracks dim state across SGR sequences: `2` sets
+ *  it, `22` clears it, `0` / empty resets everything. */
+function extractDimText(ansiLine: string): string {
+  let dim = false;
+  let out = '';
+  let i = 0;
+  while (i < ansiLine.length) {
+    const ch = ansiLine[i]!;
+    if (ch === '\x1b') {
+      const m = /^\x1b\[([0-9;]*)m/.exec(ansiLine.slice(i));
+      if (m) {
+        const params = m[1] === '' ? ['0'] : m[1]!.split(';');
+        for (const p of params) {
+          if (p === '0' || p === '' || p === '22') dim = false;
+          else if (p === '2') dim = true;
+        }
+        i += m[0].length;
+        continue;
+      }
+      // Non-SGR escape — skip the escape char, let the regex-stripped
+      // remainder fall through (cheap; capture lines are short).
+      i += 1;
+      continue;
+    }
+    if (dim) out += ch;
+    i += 1;
+  }
+  return out.trim();
+}
+
+export interface SuggestionDetectResult {
+  suggestion_visible: boolean;
+  suggestion_text?: string;
+}
+
+/**
+ * Scan an ANSI capture (`capture-pane -e`) for ghost-text suggestions
+ * on the TUI's input line. Pure function.
+ *
+ * Returns null for shell/unknown kinds (no input-line concept), else
+ * `{ suggestion_visible, suggestion_text? }`. A dim span shorter than
+ * 2 visible chars is ignored (cursor artifacts).
+ */
+export function detectSuggestion(
+  ansiContent: string,
+  kind: TmuxSessionKind | undefined,
+): SuggestionDetectResult | null {
+  if (!kind || kind === 'shell') return null;
+  const prefix = INPUT_LINE_PREFIX[kind];
+  if (!prefix) return null;
+  // Scan bottom-up: the input line lives at the bottom of the pane, and
+  // scrollback may contain old `>`-prefixed lines from previous turns.
+  const lines = ansiContent.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const raw = lines[i]!;
+    const plain = stripAnsi(raw);
+    if (!prefix.test(plain)) continue;
+    const dimText = extractDimText(raw);
+    if (dimText.length >= 2) {
+      return { suggestion_visible: true, suggestion_text: dimText };
+    }
+    return { suggestion_visible: false };
+  }
+  return { suggestion_visible: false };
+}

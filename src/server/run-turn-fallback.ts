@@ -1,8 +1,14 @@
 // Engine-fallback runner. Tries the primary engine first; if it fails
 // before producing any assistant content (delta or final message) AND
-// the persona has `fallback:` configured, transparently re-tries with
-// the fallback model. On partial-success-then-fail, on no-fallback,
-// or on success — behaves like a plain engine.runTurn() pass-through.
+// before invoking any tool AND the persona has `fallback:` configured,
+// transparently re-tries with the fallback model. On partial-success-
+// then-fail, on no-fallback, or on success — behaves like a plain
+// engine.runTurn() pass-through.
+//
+// Tool activity counts as content on purpose: a turn that ran a
+// side-effectful tool (file write, exec, spawn) and THEN died is not
+// safely re-runnable — the fallback would execute the tools a second
+// time. Better a visible error than a silent double-execution.
 
 import { resolveAnyRef, type Config, type ResolvedModel } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
@@ -36,7 +42,9 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
 
   try {
     for await (const ev of primaryEngine.runTurn({ ...baseInput, resolvedModel: primary })) {
-      if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message') hasContent = true;
+      if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message' || ev.kind === 'tool_call') {
+        hasContent = true;
+      }
       if (ev.kind === 'error' && !hasContent) {
         primaryError = ev.message;
         continue;

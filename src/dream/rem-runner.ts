@@ -413,7 +413,7 @@ export async function resumeDream(args: {
   config: Config;
   mgr: MemoryManager;
   signal?: AbortSignal;
-}): Promise<{ finalStatus: DreamMeta['status'] }> {
+}): Promise<{ finalStatus: DreamMeta['status']; rangeThroughTs: number }> {
   const file = await readDreamById(args.agent, args.id);
   if (!file) throw new Error(`dream '${args.id}' not found`);
   if (file.meta.status !== 'paused') {
@@ -465,5 +465,11 @@ export async function resumeDream(args: {
     config: args.config,
     mgr: args.mgr,
     signal: args.signal,
-  }).then((r) => ({ finalStatus: r.finalStatus }));
+  }).then((r) => ({
+    finalStatus: r.finalStatus,
+    // The caller stamps the session's dreamed-marker with the range that
+    // was ACTUALLY analyzed — for a resume that's the original range end,
+    // not "now" (everything after it still needs its own dream).
+    rangeThroughTs: file.meta.range_through_ts,
+  }));
 }

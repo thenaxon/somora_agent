@@ -309,14 +309,14 @@ export class MemoryManager {
     const buf = await readFile(path);
     const stats = await stat(path);
     const hash = createHash('sha256').update(buf).digest('hex').slice(0, 16);
-    const { changed } = upsertFile(memDb, {
-      path,
-      source,
-      hash,
-      mtime: stats.mtimeMs,
-      size: stats.size,
-    });
-    if (!changed) {
+    // Hash check WITHOUT committing — the file row (hash) is written only
+    // AFTER the chunks landed. Committing the hash first left a poisoned
+    // state on partial failure: hash new + chunks stale → hash-match skips
+    // the file forever and the stale chunks never heal.
+    const existing = memDb.db
+      .prepare(`SELECT hash FROM files WHERE path = ?`)
+      .get(path) as { hash: string } | undefined;
+    if (existing && existing.hash === hash) {
       // Defensive self-heal: a file row may exist with the current hash
       // while the chunks for it are missing — initial index crashed
       // mid-walk, a schema migration dropped the chunks table without
@@ -325,16 +325,36 @@ export class MemoryManager {
       // forever (next run keeps seeing the same hash). Verify a chunk
       // actually exists; if not, fall through to rebuild. Discovered
       // 2026-05-21 on buffet (238 files indexed, 0 chunks).
-      const hasChunks = memDb.db
-        .prepare(`SELECT 1 FROM chunks WHERE file_path = ? LIMIT 1`)
-        .get(path);
-      if (hasChunks) return 'skipped';
+      const firstChunk = memDb.db
+        .prepare(`SELECT id FROM chunks WHERE file_path = ? LIMIT 1`)
+        .get(path) as { id: number } | undefined;
+      if (firstChunk) {
+        // Second self-heal: chunks indexed while the embedder was down
+        // (or before one was configured) have no vec rows. Hash-match
+        // skipped them forever → hybrid search stayed silently BM25-only
+        // for those files. Embeddings are all-or-none per file, so
+        // point-probing the first chunk's rowid suffices (vec0 supports
+        // rowid point queries, same pattern as the delete path).
+        const wantsVec = Boolean(this.embedder && memDb.hasVec);
+        const hasVecRow = wantsVec
+          ? memDb.db
+              .prepare(`SELECT rowid FROM chunks_vec WHERE rowid = ?`)
+              .get(BigInt(firstChunk.id))
+          : null;
+        if (!wantsVec || hasVecRow) return 'skipped';
+        logger.info({ msg: 'memory.reembed_missing_vec', path });
+      }
     }
 
     const text = buf.toString('utf8');
     const chunks = chunkMarkdown(text, this.cfg.chunking);
     if (chunks.length === 0) {
-      replaceFileChunks(memDb, path, [], null);
+      // One transaction: file row (FK parent) + chunk wipe commit or roll
+      // back together — see the comment on the main path below.
+      memDb.db.transaction(() => {
+        upsertFile(memDb, { path, source, hash, mtime: stats.mtimeMs, size: stats.size });
+        replaceFileChunks(memDb, path, [], null);
+      })();
       return 'indexed';
     }
     // Slug is path relative to the source-root (memory: memoryRoot;
@@ -365,22 +385,33 @@ export class MemoryManager {
       }
     }
 
-    const modelName = this.embedder?.name ?? 'fts-only';
-    replaceFileChunks(
-      memDb,
-      path,
-      chunks.map((c) => ({
-        file_path: path,
-        source,
-        slug,
-        start_line: c.startLine,
-        end_line: c.endLine,
-        hash,
-        model: modelName,
-        text: c.text,
-      })),
-      embeddings,
-    );
+    // Record the embedder name only when embeddings were actually written —
+    // an embed failure falls back to FTS-only rows, and the model column
+    // should say so (the vec self-heal above re-embeds them next pass).
+    const modelName = embeddings ? this.embedder!.name : 'fts-only';
+    // File row + chunk replacement in ONE transaction (replaceFileChunks'
+    // inner transaction becomes a savepoint). The file row must come first
+    // — chunks.file_path has a FK on files(path) — and atomicity is what
+    // prevents the poisoned hash-new/chunks-stale state on crash: either
+    // both commit or the old hash stays and the next pass redoes the file.
+    memDb.db.transaction(() => {
+      upsertFile(memDb, { path, source, hash, mtime: stats.mtimeMs, size: stats.size });
+      replaceFileChunks(
+        memDb,
+        path,
+        chunks.map((c) => ({
+          file_path: path,
+          source,
+          slug,
+          start_line: c.startLine,
+          end_line: c.endLine,
+          hash,
+          model: modelName,
+          text: c.text,
+        })),
+        embeddings,
+      );
+    })();
     return 'indexed';
   }
 

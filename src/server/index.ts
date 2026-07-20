@@ -701,6 +701,58 @@ app.get('/sentinel/status', (c) => {
   return c.json(sentinelScheduler.schedulerStatus());
 });
 
+// Heartbeat for the PTY-bridge WebSockets (/terminal/attach +
+// /tmux/attach). An idle pane moves zero bytes in either direction, so
+// a silently dead path (Tailscale idle drop, laptop sleep, network
+// switch) leaves the browser-side socket looking open forever — the
+// pane just freezes. The server sends an app-level `{"type":"ping"}`
+// text frame every TERMINAL_WS_PING_MS; the web client (XTermBridge)
+// answers `{"type":"pong"}`, uses the ping as its own liveness signal,
+// and auto-reconnects when pings stop arriving. If the client stops
+// answering for TERMINAL_WS_DEAD_MS the server terminates the socket,
+// which kills the PTY via onClose — no zombie shells.
+const TERMINAL_WS_PING_MS = 25_000;
+const TERMINAL_WS_DEAD_MS = 80_000;
+
+interface PtyWsBag {
+  __pty?: { write(s: string): void; resize(cols: number, rows: number): void; kill(): void };
+  __hbTimer?: ReturnType<typeof setInterval>;
+  __lastSeenAt?: number;
+}
+
+function armTerminalHeartbeat(
+  ws: { send(d: string): void; close(code?: number, reason?: string): void; raw?: unknown },
+  bag: PtyWsBag,
+  label: string,
+): void {
+  bag.__lastSeenAt = Date.now();
+  bag.__hbTimer = setInterval(() => {
+    const idle = Date.now() - (bag.__lastSeenAt ?? 0);
+    if (idle > TERMINAL_WS_DEAD_MS) {
+      logger.info({ msg: `${label}.heartbeat_timeout`, idleMs: idle });
+      try {
+        ws.close(4000, 'heartbeat timeout');
+      } catch {
+        /* already closed */
+      }
+      // close() needs the peer to answer the closing handshake — a dead
+      // peer never does. terminate() drops the socket immediately and
+      // fires onClose locally (kills the PTY, clears this timer).
+      try {
+        (ws.raw as { terminate?: () => void } | undefined)?.terminate?.();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    try {
+      ws.send('{"type":"ping"}');
+    } catch {
+      /* socket closed */
+    }
+  }, TERMINAL_WS_PING_MS);
+}
+
 // Plain shell terminal: WebSocket bridge to a fresh `$SHELL` PTY
 // rooted in the configured workspace (`config.workspace.default`,
 // usually `~/somoraworkspace`). One terminal per WS connection —
@@ -740,8 +792,11 @@ app.get(
               /* ignore */
             }
           });
-          const raw = ws.raw as { __pty?: typeof term } | undefined;
-          if (raw) raw.__pty = term;
+          const raw = ws.raw as PtyWsBag | undefined;
+          if (raw) {
+            raw.__pty = term;
+            armTerminalHeartbeat(ws, raw, 'terminal.attach');
+          }
           logger.info({ msg: 'terminal.attach.open', shell, cwd });
         } catch (err) {
           logger.error({
@@ -752,11 +807,14 @@ app.get(
         }
       },
       onMessage(evt, ws) {
-        const raw = ws.raw as { __pty?: { write: (s: string) => void; resize: (cols: number, rows: number) => void } } | undefined;
+        const raw = ws.raw as PtyWsBag | undefined;
+        if (raw) raw.__lastSeenAt = Date.now();
         const term = raw?.__pty;
         if (!term) return;
         const data = evt.data;
         if (typeof data === 'string') {
+          // Text frame = control message (JSON): resize, or the pong
+          // reply to our heartbeat ping (liveness stamped above).
           try {
             const msg = JSON.parse(data) as { type?: string; cols?: number; rows?: number };
             if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
@@ -774,7 +832,8 @@ app.get(
         }
       },
       onClose(_evt, ws) {
-        const raw = ws.raw as { __pty?: { kill: () => void } } | undefined;
+        const raw = ws.raw as PtyWsBag | undefined;
+        if (raw?.__hbTimer) clearInterval(raw.__hbTimer);
         try {
           raw?.__pty?.kill();
         } catch {
@@ -848,8 +907,11 @@ app.get(
           // instance (via @hono/node-server). Hand-rolled property
           // bag because hono's WSContext doesn't expose its own
           // closure scope.
-          const raw = ws.raw as { __pty?: typeof term } | undefined;
-          if (raw) raw.__pty = term;
+          const raw = ws.raw as PtyWsBag | undefined;
+          if (raw) {
+            raw.__pty = term;
+            armTerminalHeartbeat(ws, raw, 'tmux.attach');
+          }
           logger.info({ msg: 'tmux.attach.open', session });
         } catch (err) {
           logger.error({
@@ -861,13 +923,14 @@ app.get(
         }
       },
       onMessage(evt, ws) {
-        const raw = ws.raw as { __pty?: { write: (s: string) => void; resize: (cols: number, rows: number) => void } } | undefined;
+        const raw = ws.raw as PtyWsBag | undefined;
+        if (raw) raw.__lastSeenAt = Date.now();
         const term = raw?.__pty;
         if (!term) return;
         const data = evt.data;
         if (typeof data === 'string') {
-          // Text frame = control message (JSON). Currently only
-          // resize.
+          // Text frame = control message (JSON): resize, or the pong
+          // reply to our heartbeat ping (liveness stamped above).
           try {
             const msg = JSON.parse(data) as { type?: string; cols?: number; rows?: number };
             if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
@@ -885,7 +948,8 @@ app.get(
         }
       },
       onClose(_evt, ws) {
-        const raw = ws.raw as { __pty?: { kill: () => void } } | undefined;
+        const raw = ws.raw as PtyWsBag | undefined;
+        if (raw?.__hbTimer) clearInterval(raw.__hbTimer);
         try {
           raw?.__pty?.kill();
         } catch {
