@@ -20,6 +20,7 @@ import {
 } from './storage.ts';
 import { extractFromSession, resolveDreamModel } from './rem-extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
+import { applyRemDedup } from './rem-dedup.ts';
 import { loadWikiContext } from './wiki-context.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import { join } from 'node:path';
@@ -115,8 +116,13 @@ function renderBody(
           : f.status === 'dismissed'
             ? '✗ dismissed'
             : '· pending';
-      lines.push(`### ${f.id}. \`${f.action}\` → \`${f.slug}\` (${statusBadge})`);
+      const dupBadge = f.likely_duplicate ? ' ⚠️ likely-duplicate' : '';
+      lines.push(`### ${f.id}. \`${f.action}\` → \`${f.slug}\` (${statusBadge})${dupBadge}`);
       lines.push('');
+      if (f.likely_duplicate && f.duplicate_of) {
+        lines.push(`> ⚠️ Near-duplicate of \`${f.duplicate_of}\` — review with dismissal in mind.`);
+        lines.push('');
+      }
       lines.push(f.reason);
       lines.push('');
       if (f.current_excerpt) {
@@ -330,7 +336,22 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       },
     });
 
-    meta.findings = result.findings;
+    // Mechanical dedup against already-persisted knowledge — the worker
+    // model gets the same context in its prompt but small models don't
+    // reliably act on it (buffet 2026-07-06: 26/27 findings were
+    // repeats). Exact slug collisions are dropped, near-duplicates are
+    // marked for batch-dismissal. See rem-dedup.ts.
+    const dedup = await applyRemDedup({
+      agent: args.agent,
+      dreamId: id,
+      findings: result.findings,
+      existingMemorySlugs: existingMemory.map((m) => m.slug),
+      loadedWikiSlugs: referencedWiki.map((w) => w.slug),
+      mgr: args.mgr,
+      config: args.config.rem.dedup,
+    });
+
+    meta.findings = dedup.findings;
     meta.chunks_done = result.chunksProcessed;
     meta.chunks_total = result.totalChunks;
 

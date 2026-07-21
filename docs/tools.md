@@ -20,7 +20,7 @@ in-process. The model never knows which path it's on.
 | `agents` | `spawn_subagent`, `spawn_subagents`, `subagent_status`, `subagent_result`, `subagent_list`, `agent_ask` | Agent-to-agent orchestration. `spawn_*` create sealed sub-sessions for delegated work; `subagent_*` poll/collect results; `agent_ask` posts a live question into another agent's existing session (request-response: the target's normal reply flows back as the tool result). Blocking A2A waits are deadlock-guarded — the server tracks who waits on whom and rejects any call that would close a wait cycle (even across chains of 3+ agents) with an instructive error instead of letting both sessions hang. See `agents.md`. |
 | `docs` | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation (this directory). |
 | `resources` | `resource_list`, `resource_test` | Discover and probe configured remote SSH targets. |
-| `skills` | `skill` | Activate a Markdown skill ("how to do task X with our tools"). Skills live at `~/.somora/skills/<slug>/SKILL.md` (agentskills.io format). The system prompt carries a name+description registry; the tool loads the full body on demand. See `skills.md`. |
+| `skills` | `skill`, `skill_list` | Activate a Markdown skill ("how to do task X with our tools"), or list all skills available to the agent. Skills live at `~/.somora/skills/<slug>/SKILL.md` (agentskills.io format). The system prompt carries a name+description registry; `skill` loads the full body on demand, `skill_list` re-fetches the registry fresh from disk (useful when an engine froze the system prompt at session start). See `skills.md`. |
 
 ## Definition shape
 

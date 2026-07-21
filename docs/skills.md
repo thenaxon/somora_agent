@@ -312,6 +312,20 @@ Errors with a clear message when:
 - The body file exceeds `config.skills.maxSkillFileBytes` (default 256
   KB) → size error
 
+## The `skill_list` tool
+
+Companion read-only tool: `skill_list({})` — no arguments. Returns the
+same catalogue as the `<available_skills>` prompt block (name,
+description, `when_to_use`, availability, tags), fetched fresh from disk
+and filtered by the calling agent's allow-list.
+
+Why it exists: not every engine re-reads the system prompt each turn.
+codex freezes it at session start, so a long-running codex session can
+lose the registry to engine-side context compaction — and skills added
+after session start never appear. `skill_list` is the on-demand answer:
+call it before concluding that no suitable skill exists, then activate
+with `skill({name})`.
+
 ## Providing credentials to skills
 
 Many skills wrap CLIs that expect credentials in env vars

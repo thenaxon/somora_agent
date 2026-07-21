@@ -18,6 +18,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { ZodObject, ZodRawShape } from 'zod';
 import { loadConfig } from '../config/loader.ts';
 import { resolveAnyRef } from '../config/types.ts';
+import { setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
@@ -43,6 +44,12 @@ async function main(): Promise<void> {
     config.agentLoop.execMaxConcurrentPerAgent,
     config.agentLoop.execMaxConcurrentGlobal,
   );
+  // Wiki-lucid per-turn cap: loop-state's counter lives per-process, and
+  // wiki_edit for the CLI engines is enforced HERE, not in the main
+  // server. Without this the child stays on the module default while the
+  // main server's <wiki-review-mode> prompt promises the config value —
+  // the 3-vs-10 contradiction from the 2026-07-20 lucid-loop report.
+  setMaxWikiCallsPerTurn(config.wiki.lucid.maxCallsPerTurn);
   const registry = new ToolRegistry();
   // Single source of truth in src/tools/index.ts so this can't drift
   // from the in-process registry in src/server/index.ts. Adding a new

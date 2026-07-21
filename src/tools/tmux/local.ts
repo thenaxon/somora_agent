@@ -4,6 +4,16 @@
 // whole point: spawn once with create, drive it via send/capture
 // over many tool calls, kill when done.
 //
+// All `-t` targets are `=name`-prefixed: tmux otherwise falls back to
+// PREFIX matching when the exact name doesn't exist, so a send/kill
+// aimed at a vanished `build` could silently hit its sibling
+// `build-deploy` (Juni-Audit 2026-06). `=` forces exact-match-or-error.
+// Nuance (verified on tmux 3.5a): send-keys/capture-pane take a
+// target-PANE — there `=name` alone fails to resolve; the session part
+// must be delimited, so pane targets use `=name:` (exact session,
+// default window.pane). kill-session takes a target-session where the
+// bare `=name` form is correct.
+//
 // Why tmux + not direct shell: the agent often wants to interact
 // with a long-running TUI tool (claude --dangerously-skip-permissions,
 // codex, vim, REPL) over many turns. tmux gives us a persistent
@@ -66,13 +76,13 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
       // (Markdown bullets `- Item`, command flags being typed) isn't
       // mistaken for a flag — the bug report 2026-05-06: `multiline_safe:true`
       // with `\n- Bullet A` failed with `command send-keys: invalid flag -`.
-      cmds.push(`tmux send-keys -t ${shQuote(name)} -l -- ${shQuote(part)}`);
+      cmds.push(`tmux send-keys -t ${shQuote(`=${name}:`)} -l -- ${shQuote(part)}`);
     }
     if (idx < parts.length - 1) {
       // Embedded newline (not the trailing one — that was stripped above).
       // multiline_safe → soft-newline (M-Enter).
       const keyName = multilineSafe ? 'M-Enter' : 'Enter';
-      cmds.push(`tmux send-keys -t ${shQuote(name)} ${keyName}`);
+      cmds.push(`tmux send-keys -t ${shQuote(`=${name}:`)} ${keyName}`);
     }
   });
   // Re-add the stripped trailing \n as a plain Enter so the message
@@ -90,7 +100,7 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
     if (cmds.length > 0) {
       cmds.push('sleep 0.1');
     }
-    cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
+    cmds.push(`tmux send-keys -t ${shQuote(`=${name}:`)} Enter`);
   }
   return cmds.join(' && ');
 }
@@ -200,7 +210,7 @@ export async function tmuxLocalSend(
  *  2026-05-07. */
 export async function tmuxLocalSendKey(name: string, key: string): Promise<TmuxResult> {
   const tokens = key.trim().split(/\s+/);
-  const cmd = `tmux send-keys -t ${shQuote(name)} ${tokens.join(' ')}`;
+  const cmd = `tmux send-keys -t ${shQuote(`=${name}:`)} ${tokens.join(' ')}`;
   logger.info({ msg: 'tmux.local.send_key', name, key });
   return runTmux(cmd);
 }
@@ -225,7 +235,7 @@ export async function tmuxLocalCapture(opts: TmuxLocalCaptureOptions): Promise<T
   // -p = print to stdout. -S -<N> = start N lines back. -E = stop at
   // current visible bottom (default). -e adds ANSI escape sequences.
   const ansiFlag = opts.includeAnsi ? ' -e' : '';
-  const cmd = `tmux capture-pane -t ${shQuote(opts.name)} -p${ansiFlag} -S -${lines}`;
+  const cmd = `tmux capture-pane -t ${shQuote(`=${opts.name}:`)} -p${ansiFlag} -S -${lines}`;
   return runTmux(cmd);
 }
 
@@ -259,7 +269,7 @@ export async function tmuxLocalList(): Promise<{
 }
 
 export async function tmuxLocalKill(name: string): Promise<TmuxResult> {
-  const cmd = `tmux kill-session -t ${shQuote(name)}`;
+  const cmd = `tmux kill-session -t ${shQuote(`=${name}`)}`;
   logger.info({ msg: 'tmux.local.kill', name });
   return runTmux(cmd);
 }

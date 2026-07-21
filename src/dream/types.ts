@@ -41,6 +41,15 @@ export interface Finding {
   status: FindingStatus;
   /** ISO timestamp set when status transitions to applied/dismissed. */
   resolved_at?: string;
+  /** Set by the post-extraction dedup pass (rem-dedup.ts): an existing
+   *  memory note / wiki page scored at or above the configured
+   *  similarity threshold. The finding stays reviewable — this is a
+   *  batch-dismiss hint, not a verdict. Exact slug collisions never get
+   *  here; those are dropped before the findings list is persisted. */
+  likely_duplicate?: boolean;
+  /** Where the near-duplicate lives, `memory:<slug>` or `wiki:<slug>`,
+   *  with the similarity score, e.g. `memory:us-tech-portfolio@0.87`. */
+  duplicate_of?: string;
 }
 
 export interface DreamMeta {

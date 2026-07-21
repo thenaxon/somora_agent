@@ -480,6 +480,14 @@ The `model` field accepts an alias (`claude-opus-4-7`), a
 `<provider>/<id>` tuple (`anthropic/claude-opus-4-20250514`), or
 anything else resolvable by `GET /models`.
 
+Switching models mid-session is safe on every engine. Codex pins its
+internal thread to the model it was recorded with — somora detects the
+mismatch before resume, starts a fresh codex thread seeded with the full
+session history, and drops a `model switch` marker into the
+conversation. The somora session (id, history, meta) is untouched;
+alias changes that resolve to the same underlying model don't trigger a
+re-thread.
+
 ### Thinking
 
 ```bash

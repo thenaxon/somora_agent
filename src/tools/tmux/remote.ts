@@ -3,6 +3,9 @@
 // ssh exec; the actual tmux session lives on the resource and
 // persists across our calls.
 //
+// All `-t` targets are `=name`-prefixed for exact-match-or-error —
+// see the rationale in local.ts (Juni-Audit 2026-06).
+//
 // Why this works robustly: tmux on the remote is a long-running
 // daemon (the tmux server) that owns the session. Our individual
 // `tmux send-keys` / `tmux capture-pane` calls just talk to that
@@ -29,18 +32,18 @@ function buildSendKeysScript(name: string, keys: string, multilineSafe: boolean)
   const cmds: string[] = [];
   parts.forEach((part, idx) => {
     if (part.length > 0) {
-      cmds.push(`tmux send-keys -t ${shQuote(name)} -l -- ${shQuote(part)}`);
+      cmds.push(`tmux send-keys -t ${shQuote(`=${name}:`)} -l -- ${shQuote(part)}`);
     }
     if (idx < parts.length - 1) {
       const keyName = multilineSafe ? 'M-Enter' : 'Enter';
-      cmds.push(`tmux send-keys -t ${shQuote(name)} ${keyName}`);
+      cmds.push(`tmux send-keys -t ${shQuote(`=${name}:`)} ${keyName}`);
     }
   });
   if (endsWithNewline) {
     if (cmds.length > 0) {
       cmds.push('sleep 0.1');
     }
-    cmds.push(`tmux send-keys -t ${shQuote(name)} Enter`);
+    cmds.push(`tmux send-keys -t ${shQuote(`=${name}:`)} Enter`);
   }
   return cmds.join(' && ');
 }
@@ -113,7 +116,7 @@ export async function tmuxRemoteSendKey(
   key: string,
 ): Promise<TmuxRemoteResult> {
   const tokens = key.trim().split(/\s+/);
-  const cmd = `tmux send-keys -t ${shQuote(name)} ${tokens.join(' ')}`;
+  const cmd = `tmux send-keys -t ${shQuote(`=${name}:`)} ${tokens.join(' ')}`;
   logger.info({ msg: 'tmux.remote.send_key', target, name, key });
   return runRemoteTmux(agent, target, cmd);
 }
@@ -126,7 +129,7 @@ export async function tmuxRemoteCapture(
   includeAnsi = false,
 ): Promise<TmuxRemoteResult> {
   const ansiFlag = includeAnsi ? ' -e' : '';
-  const cmd = `tmux capture-pane -t ${shQuote(name)} -p${ansiFlag} -S -${lines}`;
+  const cmd = `tmux capture-pane -t ${shQuote(`=${name}:`)} -p${ansiFlag} -S -${lines}`;
   return runRemoteTmux(agent, target, cmd);
 }
 
@@ -159,7 +162,7 @@ export async function tmuxRemoteKill(
   target: string,
   name: string,
 ): Promise<TmuxRemoteResult> {
-  const cmd = `tmux kill-session -t ${shQuote(name)}`;
+  const cmd = `tmux kill-session -t ${shQuote(`=${name}`)}`;
   logger.info({ msg: 'tmux.remote.kill', target, name });
   return runRemoteTmux(agent, target, cmd);
 }

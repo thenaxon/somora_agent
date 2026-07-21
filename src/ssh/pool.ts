@@ -46,6 +46,19 @@ interface PooledConnection {
 
 const pool = new Map<string, PooledConnection>();
 
+/** True when the fields that shape the actual TCP/auth session are
+ *  unchanged. Anything else (workspace, description, …) can change
+ *  without forcing a reconnect. */
+function sameConnectTarget(a: SshResource, b: SshResource): boolean {
+  return (
+    a.host === b.host &&
+    a.port === b.port &&
+    a.user === b.user &&
+    a.keyPath === b.keyPath &&
+    a.hostKey === b.hostKey
+  );
+}
+
 function expandHome(p: string): string {
   if (p === '~') return homedir();
   if (p.startsWith('~/')) return join(homedir(), p.slice(2));
@@ -68,8 +81,28 @@ export async function getConnection(
 ): Promise<Client> {
   const existing = pool.get(resourceName);
   if (existing && !existing.closed) {
-    bumpIdle(existing);
-    return existing.readyP;
+    if (sameConnectTarget(existing.resource, resource)) {
+      bumpIdle(existing);
+      return existing.readyP;
+    }
+    // Resource config changed under us (host/port/user/key edited in
+    // config.yaml). The pool used to keep serving the OLD host for up
+    // to 5 minutes until idle-close (Juni-Audit 2026-06) — drop the
+    // stale connection and dial the fresh target instead.
+    logger.info({
+      msg: 'ssh.config_changed_reconnect',
+      resource: resourceName,
+      oldHost: existing.resource.host,
+      newHost: resource.host,
+    });
+    existing.closed = true;
+    if (existing.idleTimer) clearTimeout(existing.idleTimer);
+    pool.delete(resourceName);
+    try {
+      existing.client.end();
+    } catch {
+      /* best-effort */
+    }
   }
 
   const client = new Client();
@@ -113,7 +146,12 @@ export async function getConnection(
   client.on('close', () => {
     entry.closed = true;
     if (entry.idleTimer) clearTimeout(entry.idleTimer);
-    pool.delete(resourceName);
+    // Only evict OUR entry — after a config-changed reconnect the name
+    // may already point at a fresh connection, and the old socket's
+    // late close must not tear that one down.
+    if (pool.get(resourceName) === entry) {
+      pool.delete(resourceName);
+    }
     logger.info({ msg: 'ssh.connect.closed', resource: resourceName });
   });
 

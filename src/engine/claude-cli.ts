@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { query, type CanUseTool, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, somoraMemoryServerSpawn } from '../mcp/config.ts';
+import { reconcileClaudeCredentials } from '../server/claude-config-dir.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import {
@@ -503,6 +504,25 @@ export const claudeCliEngine: AgentEngine = {
         }
       }
 
+      // Auth failures surface as a NORMAL result text from the SDK
+      // ("Failed to authenticate: OAuth session expired…"), not as a
+      // thrown error. Detect them, run the credential reconcile (heals
+      // the symlink-drift where a token refresh materialized
+      // .credentials.json into a stale copy — 2026-07-21 incident), and
+      // surface a proper error event with an actionable hint instead of
+      // a fake assistant message.
+      if (finalText && /^Failed to authenticate/i.test(finalText.trim())) {
+        const healed = reconcileClaudeCredentials();
+        logger.warn({ msg: 'engine.auth_failure', engine: ENGINE, agent, session, healed });
+        const hint =
+          healed === 'relinked' || healed === 'pushed'
+            ? 'Credential-Drift erkannt und automatisch repariert — bitte die Nachricht einfach erneut senden.'
+            : 'Bitte `claude login` im Terminal prüfen/ausführen und erneut senden.';
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: `${finalText.trim()} — ${hint}` };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+        return;
+      }
+
       if (finalText) {
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: finalText };
       }
@@ -584,10 +604,18 @@ export const claudeCliEngine: AgentEngine = {
           try {
             // Same atomic merge as the success branch — preserve any
             // mid-turn meta writes from tools (project_focus, ...) while
-            // dropping only the stale sdkSessionId.
+            // dropping only the stale sdkSessionId. Also drop this
+            // engine's lastSeen: the fresh SDK session knows nothing, so
+            // the next turn must replay the FULL compaction-aware
+            // history — keeping lastSeen would shrink the replay to the
+            // recent delta and silently lose the older context
+            // (2026-07-21, found while building the codex twin of this
+            // recovery).
             await metaStore.update(agent, session, (freshMeta) => {
               const { sdkSessionId: _drop, ...rest } = freshMeta;
-              return rest;
+              const lastSeen = { ...((rest as { engineLastSeen?: Record<string, number> }).engineLastSeen ?? {}) };
+              delete lastSeen[ENGINE];
+              return { ...rest, engineLastSeen: lastSeen };
             });
             logger.info({
               msg: 'engine.session_resume_cleared',

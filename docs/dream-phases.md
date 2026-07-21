@@ -140,6 +140,32 @@ A REM run produces `pending` findings, each with:
 Approve with `dream_apply`, reject with `dream_dismiss`. Memory file is
 written/edited/deleted only on approval.
 
+### Mechanical dedup
+
+Small worker models don't reliably act on the "propose only NEW facts"
+instruction — recurring sessions (weekly sentinels) can produce the same
+findings run after run. A code-level filter runs after extraction,
+before findings are stored:
+
+- **Exact slug collision** with an existing memory note or loaded wiki
+  page → the finding is dropped silently (logged as
+  `dream.rem.dedup_dropped`).
+- **High content similarity** (hybrid search against memory + wiki) →
+  the finding is kept but marked `likely_duplicate` with a
+  `duplicate_of` pointer, so the review can batch-dismiss confidently.
+
+Platform-wide tunables in `config.yaml` (defaults apply when the block
+is absent — existing configs keep working unchanged):
+
+```yaml
+rem:
+  dedup:
+    enabled: true             # default true
+    similarityThreshold: 0.8  # fused hybrid score in [0,1]; "related"
+                              # pages score ~0.4-0.6, only near-verbatim
+                              # content clears 0.8. Lower = mark more.
+```
+
 ## Phase Deep — Memory → Wiki
 
 Deep consolidates **all agents' memory inboxes** into the shared wiki.

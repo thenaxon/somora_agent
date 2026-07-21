@@ -14,6 +14,9 @@
 export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   'codex-cli': {
     todo_list: 'plan',
+    // somora-emitted (not from the codex wire): the adapter re-threaded
+    // the codex session because the selected model changed.
+    model_switch: 'model switch',
   },
 };
 
@@ -41,6 +44,14 @@ export function summariseEngineMeta(
   itemType: string,
   payload: unknown,
 ): string | undefined {
+  if (engine === 'codex-cli' && itemType === 'model_switch') {
+    const p = payload as { text?: unknown; from?: unknown; to?: unknown } | null | undefined;
+    if (p && typeof p.text === 'string') return p.text;
+    if (p && typeof p.from === 'string' && typeof p.to === 'string') {
+      return `codex thread restarted for model switch ${p.from} → ${p.to}`;
+    }
+    return undefined;
+  }
   if (engine === 'codex-cli' && itemType === 'todo_list') {
     const items = extractTodoListItems(payload);
     if (!items) return undefined;

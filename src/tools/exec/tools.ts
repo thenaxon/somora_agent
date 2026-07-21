@@ -532,8 +532,10 @@ interface ProcessKillResult {
   action: 'kill';
   job_id: string;
   ok: boolean;
-  signal_sent: string;
+  /** null when no signal was sent (job already ended). */
+  signal_sent: string | null;
   was_running: boolean;
+  note?: string;
 }
 
 type ProcessResult =
@@ -743,12 +745,20 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
 
     // kill
     if (meta.state !== 'running') {
+      // Honest no-op: nothing was signalled. Note for jobs from
+      // pre-group-kill somora versions: their workload may have
+      // survived a "successful" kill (only the wrapper sh died) —
+      // point the agent at a manual path instead of dead-ending.
       return {
         action: 'kill',
         job_id: input.job_id,
         ok: true,
-        signal_sent: input.signal ?? 'SIGTERM',
+        signal_sent: null,
         was_running: false,
+        note:
+          `job is already '${meta.state}' — no signal sent. If a stray workload from this job ` +
+          `is still alive (jobs killed before 2026-07-21 only stopped the wrapper shell), find and ` +
+          `kill it manually via exec (pgrep -f '<command>').`,
       };
     }
     const sig = (input.signal ?? 'SIGTERM') as NodeJS.Signals;

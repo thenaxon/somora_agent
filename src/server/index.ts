@@ -29,7 +29,11 @@ import {
   getMemoryManager,
   shutdownMemoryRegistry,
 } from '../memory/registry.ts';
-import { setupClaudeConfigDir } from './claude-config-dir.ts';
+import {
+  configureClaudeCredentialReconcile,
+  reconcileClaudeCredentials,
+  setupClaudeConfigDir,
+} from './claude-config-dir.ts';
 import { getEffectiveEnv } from './env.ts';
 import { loadSomoraEnvFile } from './env-file.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
@@ -356,6 +360,14 @@ logger.info({
   providers: Object.keys(config.providers).join(','),
   port: config.server.port,
 });
+
+// Credential-drift self-healing (claude-cli shared login). Config-gated,
+// so it runs AFTER loadConfig — setupClaudeConfigDir() above only did
+// the config-independent bootstrap. Boot-time heal covers drift that
+// happened while the server was down; the claude-cli adapter calls the
+// same reconcile again when a turn fails with an auth error.
+configureClaudeCredentialReconcile(config.claudeCli.sharedUserCredentials);
+reconcileClaudeCredentials();
 
 // Validate vision worker config — warn-and-degrade rather than hard-
 // fail so an image-only worker (e.g., a local omlx model) is still

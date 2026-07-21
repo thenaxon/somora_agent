@@ -11,6 +11,7 @@ import { Koala } from './Koala';
 import type { WindowState } from '../types/window';
 import { api, type AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
+import { sessionSlug } from '../lib/session-label';
 
 interface Props {
   windows: WindowState[];
@@ -126,7 +127,14 @@ export function Taskbar({
           // when the user runs `/session <slug>` — we'd display the
           // old session name forever. Falling back to title only when
           // the window isn't a chat (no sessionId to show).
+          // Label shows the human slug; the tooltip keeps the full
+          // technical id (user request 2026-07-21 — taskbar: slug only,
+          // chat header: both).
           const live =
+            w.kind === 'chat' && w.agentName
+              ? `${w.agentName} · ${sessionSlug(w.sessionId ?? 'main')}`
+              : w.title;
+          const tooltip =
             w.kind === 'chat' && w.agentName
               ? `${w.agentName} · ${w.sessionId ?? 'main'}`
               : w.title;
@@ -142,7 +150,7 @@ export function Taskbar({
                 .filter(Boolean)
                 .join(' ')}
               onClick={() => onFocus(w.id)}
-              title={live}
+              title={tooltip}
               style={color ? ({ '--row-color': color } as React.CSSProperties) : undefined}
             >
               <span

@@ -177,6 +177,37 @@ export const MemoryConfigSchema = z.object({
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 
+// Global REM tunables (server-wide). Per-agent REM settings (worker
+// model, idle trigger, chunking) stay in agent.yaml `rem:` — this block
+// is for behavior that should not vary per agent.
+//
+// dedup (2026-07-21, buffet's workspace-dedup report): mechanical
+// post-extraction filter against already-persisted knowledge. The
+// extractor prompt ALSO asks the worker model to dedupe, but small
+// worker models (gemma-class) demonstrably ignore that — 26/27 findings
+// in one review round were repeats. This filter is code, not a prompt:
+//   - exact slug collision with an existing memory note / loaded wiki
+//     page → finding is dropped before review (logged).
+//   - hybrid-search similarity (memory+wiki sources) at or above
+//     `similarityThreshold` → finding is KEPT but marked
+//     `likely_duplicate` so the review can batch-dismiss. Similarity is
+//     a judgment call, so no silent drop.
+// Threshold semantics: fused hybrid score in [0,1] (see
+// memory/retrieval.ts). Default 0.8 is deliberately conservative —
+// ordinary "related" pages score ~0.4-0.6; only near-verbatim content
+// clears 0.8. Tune down if buffet-style noise still gets through.
+export const RemDedupConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  similarityThreshold: z.number().min(0).max(1).default(0.8),
+}).default({ enabled: true, similarityThreshold: 0.8 });
+
+export type RemDedupConfig = z.infer<typeof RemDedupConfigSchema>;
+
+export const RemGlobalConfigSchema = z.object({
+  dedup: RemDedupConfigSchema,
+}).default({ dedup: { enabled: true, similarityThreshold: 0.8 } });
+export type RemGlobalConfig = z.infer<typeof RemGlobalConfigSchema>;
+
 // Engine watchdog tunables (Phase A2 — 2026-05-14). Idle-event timeout
 // per engine. If an engine produces no events for the configured
 // duration mid-turn we assume the underlying subprocess died (or the
@@ -332,8 +363,23 @@ export const ClaudeCliConfigSchema = z
      * Affects only server startup handshake, not running calls.
      */
     mcpConnectTimeoutMs: z.number().int().positive().default(60_000),
+    /**
+     * Shared-login self-healing. When true (default), somora treats
+     * `~/.claude/.credentials.json` and the isolated claude-home copy
+     * as ONE OAuth session and auto-repairs the symlink whenever the
+     * claude CLI's atomic token-refresh write materializes it into a
+     * drifting real file (boot-time + on auth-failure during a turn).
+     * Set false ONLY if somora deliberately runs on a separate claude
+     * account inside CLAUDE_CONFIG_DIR — then somora never touches
+     * either credentials file.
+     */
+    sharedUserCredentials: z.boolean().default(true),
   })
-  .default({ mcpToolTimeoutMs: 1_800_000, mcpConnectTimeoutMs: 60_000 });
+  .default({
+    mcpToolTimeoutMs: 1_800_000,
+    mcpConnectTimeoutMs: 60_000,
+    sharedUserCredentials: true,
+  });
 export type ClaudeCliConfig = z.infer<typeof ClaudeCliConfigSchema>;
 
 // codex-cli engine tunables. Same posture as claudeCli — surface
@@ -957,6 +1003,7 @@ export const ConfigSchema = z.object({
   providers: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/), ProviderSchema),
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,
+  rem: RemGlobalConfigSchema,
   agentLoop: AgentLoopConfigSchema,
   engineWatchdog: EngineWatchdogConfigSchema,
   sse: SseConfigSchema,

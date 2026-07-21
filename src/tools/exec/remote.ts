@@ -133,20 +133,26 @@ export async function remoteExecBackground(
   const remotePidFile = `/tmp/somora-exec-${job_id}.pid`;
   const remoteExitFile = `/tmp/somora-exec-${job_id}.exit`;
 
-  // Build the wrap-and-launch script. Portable POSIX-shell pattern
-  // (works on Linux + macOS — macOS doesn't have `setsid` as a
-  // command so we don't use it):
+  // Build the wrap-and-launch script:
   //
-  //   nohup sh -c '<inner>' </dev/null >/dev/null 2>&1 &
+  //   setsid nohup sh -c '<inner>' </dev/null >/dev/null 2>&1 &   (Linux)
+  //   nohup sh -c '<inner>' </dev/null >/dev/null 2>&1 &          (fallback)
   //   echo $! > pidfile
   //
-  // The OUTER `&` puts nohup in the background of the SSH-driven
-  // shell. nohup ignores SIGHUP so the wrapped sh keeps running
-  // when we close the SSH connection. The inner sh script writes
-  // its OWN PID to pidfile via $$ (= more reliable than $! which
-  // captures nohup's PID, not the long-lived sh's), redirects its
-  // stdio to the log files, runs the command, and writes the exit
-  // code to exitfile.
+  // The OUTER `&` puts the chain in the background of the SSH-driven
+  // shell. nohup ignores SIGHUP so the wrapped sh keeps running when
+  // we close the SSH connection. `setsid` (used when the remote has
+  // it — standard on Linux, absent on macOS) makes the inner sh a
+  // session/process-group LEADER, so killRemoteJob's `kill -SIG -pid`
+  // takes down the whole tree: sh + the (command) subshell +
+  // grandchildren. Without it (macOS fallback) only the inner sh is
+  // addressable and a kill leaves the workload running — the
+  // pre-2026-07-21 behavior on all targets (Juni-Audit 2026-06).
+  //
+  // The inner sh script writes its OWN PID to pidfile via $$ (= more
+  // reliable than $! which captures nohup's PID, not the long-lived
+  // sh's), redirects its stdio to the log files, runs the command,
+  // and writes the exit code to exitfile.
   //
   // We capture the inner PID via the second-to-last write — small
   // sleep gives the inner sh enough time to actually fork and write
@@ -154,7 +160,12 @@ export async function remoteExecBackground(
   // Same `~`/relative-cwd expansion as the sync path — the single-
   // quoted cd prefix below would otherwise look for a literal `~` dir.
   const cwd = opts.cwd ? await expandRemotePath(opts.target, resource, opts.cwd) : undefined;
-  const cwdPrefix = cwd ? `cd ${shellQuote(cwd)} && ` : '';
+  // `|| exit 97` — a failed cd must ABORT the inner script. The old
+  // `cd X && ` prefix only bound the cd to the pidfile-write; the
+  // script then carried on and ran the command in $HOME while the
+  // launcher reported failure — an untracked double-execution
+  // (Juni-Audit 2026-06).
+  const cwdPrefix = cwd ? `cd ${shellQuote(cwd)} || exit 97; ` : '';
   const innerScript =
     `${cwdPrefix}` +
     // Write our own PID first so the outer caller can grab it.
@@ -165,9 +176,10 @@ export async function remoteExecBackground(
     `exec > ${remoteOutFile} 2> ${remoteErrFile} < /dev/null; ` +
     `(${opts.command}); ` +
     `echo $? > ${remoteExitFile}`;
+  const quotedInner = `sh -c '${innerScript.replace(/'/g, `'\\''`)}' </dev/null >/dev/null 2>&1`;
   const launcher =
-    `nohup sh -c '${innerScript.replace(/'/g, `'\\''`)}' ` +
-    `</dev/null >/dev/null 2>&1 & ` +
+    `if command -v setsid >/dev/null 2>&1; then setsid nohup ${quotedInner} & ` +
+    `else nohup ${quotedInner} & fi; ` +
     // Tiny sleep so inner sh has time to write its $$ before we read
     // pidfile. 100ms is enough on any machine that's responsive
     // enough to run somora at all.
@@ -324,13 +336,19 @@ export async function tailRemoteJobLog(
   // Run both tails in parallel via a single shell so we save a
   // round-trip. Marker lines bracket each stream so we can split
   // the combined output even if one stream is empty.
+  // `printf '\n'` before each END marker: when the log doesn't end in
+  // a newline (live mid-line output, `printf` without \n), the marker
+  // would glue onto the last line and the split-regex below — which
+  // requires `\n---…END---` — silently matched nothing, so live
+  // output read as "no output" (Juni-Audit 2026-06). The extra \n is
+  // absorbed by the non-greedy capture when the log DID end cleanly.
   const cmd =
     `echo '---SOMORA_STDOUT_BEGIN---'; ` +
     `tail -c -${maxBytesPerStream} ${outFile} 2>/dev/null || true; ` +
-    `echo '---SOMORA_STDOUT_END---'; ` +
+    `printf '\\n---SOMORA_STDOUT_END---\\n'; ` +
     `echo '---SOMORA_STDERR_BEGIN---'; ` +
     `tail -c -${maxBytesPerStream} ${errFile} 2>/dev/null || true; ` +
-    `echo '---SOMORA_STDERR_END---'`;
+    `printf '\\n---SOMORA_STDERR_END---\\n'`;
   const r = await remoteExec(conn, cmd, {
     timeoutMs: 10_000,
     maxOutputBytes: maxBytesPerStream * 2 + 1024,
@@ -364,10 +382,13 @@ export async function killRemoteJob(
     return { delivered: false };
   }
   const conn = await getConnection(target, resource);
-  // Send the signal to the process group leader (we used setsid
-  // when launching, so the negative-PID trick targets the whole
-  // session — kills child processes too).
-  const r = await remoteExec(conn, `kill -${signal} -${remotePid} 2>/dev/null; kill -${signal} ${remotePid} 2>/dev/null; echo DONE`, {
+  // Group kill first: on hosts with `setsid` (Linux) the launcher made
+  // the inner sh a session/group leader, so `-PID` reaches the whole
+  // tree (sh + workload subshell + grandchildren). The plain-PID kill
+  // after it covers the no-setsid fallback (macOS) and pre-setsid
+  // jobs — there it only reaches the wrapper sh, which is the best a
+  // remote signal can do without a group.
+  const r = await remoteExec(conn, `kill -${signal} -- -${remotePid} 2>/dev/null; kill -${signal} ${remotePid} 2>/dev/null; echo DONE`, {
     timeoutMs: 5_000,
   });
   return { delivered: r.stdout.trim().endsWith('DONE') };

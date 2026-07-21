@@ -36,6 +36,7 @@ import { applyLucidFinding } from '../../dream/lucid-actions.ts';
 import {
   clearLoopState,
   getLoopState,
+  getMaxWikiCallsPerTurn,
   setLoopState,
 } from '../../dream/loop-state.ts';
 import { resolveObsidianSource } from '../../memory/registry.ts';
@@ -759,16 +760,23 @@ export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
         lastActivityAt: now,
       });
       const open = run.findings.filter((f) => f.status === 'pending');
+      // Surface the EFFECTIVE per-turn wiki cap of THIS process — the one
+      // that will actually be enforced on wiki_* calls. The prompt block
+      // interpolates the same value, but the loop-start response is the
+      // agent's plannable, quotable source (lucid-loop report 2026-07-20).
+      const cap = getMaxWikiCallsPerTurn();
       return {
         action: 'start',
         dream_id: input.dream_id,
         agent: ctx.agent,
         pending_findings: open.length,
         total_findings: run.findings.length,
+        wiki_calls_per_turn: cap,
         message:
           'Wiki review loop is now active for you. The findings are now in your system context ' +
           'every turn; wiki_edit/wiki_create/wiki_delete are exposed; file_*/exec_*/agents_*/' +
-          "skill_*/tmux_* are hidden until you call dream_review action='end'.",
+          "skill_*/tmux_* are hidden until you call dream_review action='end'. " +
+          `Hard limit: ${cap} wiki_* calls per user turn — plan batches accordingly.`,
       };
     }
     // action === 'end'

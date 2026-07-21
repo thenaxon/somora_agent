@@ -432,11 +432,18 @@ export async function localExecBackground(
   const env = buildSpawnEnv(opts.env, {
     stripSomoraInternal: opts.stripSomoraInternalEnv === true,
   });
+  // `detached: true` makes the wrapper shell a process-group leader —
+  // same rationale as the sync path above: process({action:"kill"})
+  // signals the GROUP (-pid), so shell + grandchildren die together.
+  // With detached:false the kill only ever reached the wrapper sh; the
+  // actual workload survived reparented to init and the job was
+  // falsely marked killed (Juni-Audit 2026-06). Pipes still connect
+  // normally with detached:true, so process_write/log keep working.
   const child = spawn(opts.command, {
     shell: true,
     cwd: opts.cwd,
     env,
-    detached: false,
+    detached: true,
     // stdin pipe so process_write can stream into it later.
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -495,17 +502,27 @@ export async function localExecBackground(
  * Send a signal to a running local job. Returns whether the signal
  * was actually delivered (process still alive) or the process was
  * already gone.
+ *
+ * Signals the process GROUP first (background jobs spawn detached:true,
+ * so the wrapper shell is the group leader and `-pid` reaches shell +
+ * grandchildren). Falls back to the single pid for jobs started by a
+ * pre-group somora version that survived a server restart.
  */
 export function killLocalJob(pid: number, signal: NodeJS.Signals): { delivered: boolean } {
   try {
-    process.kill(pid, signal);
+    process.kill(-pid, signal);
     return { delivered: true };
-  } catch (err) {
-    // ESRCH = no such process — already dead. Anything else is a
-    // real error.
-    if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
-      return { delivered: false };
+  } catch {
+    // No such group (ESRCH) or not permitted — try the single pid
+    // before declaring the job gone.
+    try {
+      process.kill(pid, signal);
+      return { delivered: true };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
+        return { delivered: false };
+      }
+      throw err;
     }
-    throw err;
   }
 }

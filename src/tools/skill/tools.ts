@@ -211,6 +211,75 @@ export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
   },
 };
 
+// `skill_list` — enumerate the skills available to the calling agent.
+//
+// The system-prompt <available_skills> registry is the primary surface,
+// but it is not always reachable: codex-cli freezes the system prompt at
+// session start, so long-running codex sessions lose the registry to
+// codex-side context compaction and never learn about skills added later
+// (hans 2026-07-20 report — the somora-feedback skill existed for two
+// months but was invisible to his May session). This tool is the
+// on-demand answer: same data as the registry, fetched fresh from disk,
+// filtered by the agent's allow-list.
+const SkillListInput = z.object({}).strict();
+
+interface SkillListEntry {
+  name: string;
+  description: string;
+  when_to_use?: string;
+  available: boolean;
+  unavailable_reason?: string;
+  tags?: string[];
+}
+
+interface SkillListOutput {
+  skills: SkillListEntry[];
+  count: number;
+}
+
+export const skillList: ToolDefinition<z.infer<typeof SkillListInput>, SkillListOutput> = {
+  name: 'skill_list',
+  toolset: 'skills',
+  description:
+    'List every skill available to you, with name, description, when_to_use and availability. ' +
+    'Same catalogue as the <available_skills> block in your system prompt, but fetched fresh ' +
+    'from disk — use this when you suspect your prompt copy is stale or missing (long-running ' +
+    'sessions, engine-side context compaction) or before concluding that no suitable skill ' +
+    'exists. To activate a skill from the list, call the `skill` tool with its `name`. ' +
+    'Read-only; takes no arguments.',
+  inputSchema: SkillListInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+  async handler(_input, ctx): Promise<SkillListOutput> {
+    // Fresh read on every call, same convention as `skill`: cheap
+    // filesystem scan, edits take effect without a server restart.
+    const persona = await loadPersona(ctx.agent);
+    if (!persona) {
+      throw new Error(`skill_list: agent '${ctx.agent}' not found`);
+    }
+    const all = await loadAvailableSkills(ctx.config);
+    const allowed = filterSkillsForAgent(all, persona.skillsAllowList);
+    const skills = allowed.map((s) => ({
+      name: s.name,
+      description: s.description,
+      ...(s.whenToUse ? { when_to_use: s.whenToUse } : {}),
+      available: s.available,
+      ...(s.unavailableReason ? { unavailable_reason: s.unavailableReason } : {}),
+      ...(s.tags.length > 0 ? { tags: s.tags } : {}),
+    }));
+    logger.info({
+      msg: 'skill.list',
+      agent: ctx.agent,
+      session: ctx.session,
+      count: skills.length,
+    });
+    return { skills, count: skills.length };
+  },
+};
+
 export function skillTools(): ToolDefinition[] {
-  return [skill] as ToolDefinition[];
+  return [skill, skillList] as ToolDefinition[];
 }

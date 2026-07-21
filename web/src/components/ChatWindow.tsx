@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api, type AgentInfo, type AttachmentRef } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
+import { hasTechnicalId, sessionSlug } from '../lib/session-label';
 import { useSessionInfo } from '../hooks/useSessionInfo';
 import { useAgents } from '../hooks/useAgents';
 import { useChatSessionFromContext } from './ChatProvider';
@@ -758,7 +759,14 @@ export function ChatWindow({
               fontSize: 10,
             }}
           >
-            <span>{sessionId}</span>
+            {/* Slug prominent, technical id dim next to it — same
+                convention as the sessions list (user request 2026-07-21). */}
+            <span>{sessionSlug(sessionId)}</span>
+            {hasTechnicalId(sessionId) && (
+              <span style={{ color: 'var(--text-3, var(--text-2))', opacity: 0.7 }} title="session id">
+                {sessionId}
+              </span>
+            )}
             <Sep />
             <span title={model?.modelId ?? 'no model resolved'} style={{ color: 'var(--text-1)' }}>
               {modelLabel}

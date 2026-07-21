@@ -54,7 +54,11 @@ const ENGINE = 'codex-cli';
 // deprecated / under-development) are silently no-ops and were pruned
 // 2026-05-16 — they cluttered without effect. Re-audit on every codex
 // upgrade: any new stable+default-true entry that exposes a tool surface
-// or host-config leak goes here.
+// or host-config leak goes here. Last audit: 2026-07-21 against
+// codex-cli 0.144.6 (added browser_use_full_cdp_access, mentions_v2,
+// plugin_sharing, remote_plugin, goals, code_mode_host; bundled-skills
+// suppression lives in the `-c skills.*` overrides in runTurn, not
+// here — skills are not part of the feature catalog).
 const CODEX_DISABLED_FEATURES = [
   // Direct system access
   'shell_tool',
@@ -63,18 +67,25 @@ const CODEX_DISABLED_FEATURES = [
   // External integrations
   'browser_use',
   'browser_use_external', // added 2026-05-16 — was leaking `web.run` to model
+  'browser_use_full_cdp_access', // 0.144 audit — sub-flag of browser_use, disabled for completeness
   'in_app_browser',
   'computer_use',
   'image_generation',
   'apps', // connector/apps surface
   // Sub-agent / multi-agent (somora has its own spawn_subagent)
   'multi_agent',
-  'collaboration_modes',
+  'collaboration_modes', // NB 0.144.6: flag "removed", behavior baked in — kept for older codex; inert without multi_agent
   // Context-leak vectors (pull host config into prompt)
   'personality', // <personality_spec> from ~/.codex migration files
+  'mentions_v2', // 0.144 audit — @-mention parsing could pull host files into the prompt
   // Codex-side hooks / plugins (could exec arbitrary scripts)
   'hooks',
   'plugins',
+  'plugin_sharing', // 0.144 audit — plugin-subsystem extension; plugins are off, disable explicitly
+  'remote_plugin', // 0.144 audit — same
+  // New 0.144 behavior toggles we don't use
+  'goals', // thread-goal tracking (sqlite state db + goal events)
+  'code_mode_host', // host side of the (still-experimental) code_mode surface
   // Misc behavior toggles we don't want flipping under us
   'fast_mode', // picks a different model — somora picks models
   'unavailable_dummy_tools',
@@ -98,9 +109,21 @@ import type { Compaction } from '../compaction/index.ts';
 interface CodexCliMeta {
   engine?: string;
   codexSessionId?: string;
+  /** Resolved modelId the codex thread was created/last continued with.
+   *  Codex refuses to silently resume a thread under a different model
+   *  (it emits a raw mismatch error item instead of answering — hans
+   *  2026-07-20 report). We persist the model next to the thread id so
+   *  a mismatch is detected BEFORE resume and handled as a deliberate
+   *  re-thread, not surfaced as a broken turn. */
+  codexRecordedModel?: string;
   engineLastSeen?: EngineLastSeen;
   compactions?: Compaction[];
 }
+
+/** codex `exec resume` stderr when the thread id has no local rollout
+ *  (cleaned up, expired, CODEX_HOME switch, …). Observed on codex-cli
+ *  0.144.6: `thread/resume failed: no rollout found for thread id <id>`. */
+const CODEX_STALE_THREAD_RE = /no rollout found for thread|thread\/resume failed/i;
 
 function resolveCodexBin(): string {
   if (process.env.SOMORA_CODEX_BIN) return process.env.SOMORA_CODEX_BIN;
@@ -146,8 +169,38 @@ export const codexCliEngine: AgentEngine = {
     // Always resume our own codex thread if one exists, regardless of
     // whether another engine ran in between. The thread internally knows
     // the codex-side turns; the gap is bridged via delta-replay below.
-    const resumeId = meta.codexSessionId;
-    const lastSeenTs = getLastSeenTs(meta, ENGINE);
+    //
+    // EXCEPT on a model switch: codex threads are pinned to the model
+    // they were recorded with — resuming under a different model makes
+    // codex emit a raw mismatch error item instead of answering. The
+    // somora session and the codex thread are separate things, so we
+    // handle the switch the same way as a lost thread: drop ONLY the
+    // codex-side thread and rebuild a fresh one seeded with the full
+    // (compaction-aware) history replay. The somora session — slug,
+    // JSONL, meta — is untouched; the user just sees an info marker.
+    let resumeId = meta.codexSessionId;
+    let modelSwitched: { from: string; to: string } | undefined;
+    if (
+      resumeId &&
+      meta.codexRecordedModel &&
+      meta.codexRecordedModel !== resolvedModel.modelId
+    ) {
+      modelSwitched = { from: meta.codexRecordedModel, to: resolvedModel.modelId };
+      resumeId = undefined;
+      logger.info({
+        msg: 'engine.model_switch_rethread',
+        engine: ENGINE,
+        agent,
+        session,
+        recordedModel: modelSwitched.from,
+        selectedModel: modelSwitched.to,
+        droppedThreadId: meta.codexSessionId,
+      });
+    }
+    // On a re-thread the fresh codex thread knows NOTHING — replay from
+    // ts 0 so the compaction-aware delta folds in the whole session
+    // ([summary] + pairs after), not just the gap since codex last ran.
+    const lastSeenTs = modelSwitched ? 0 : getLastSeenTs(meta, ENGINE);
     const replayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
     const replayPrefix = renderReplayPrefix(replayDelta);
 
@@ -155,6 +208,20 @@ export const codexCliEngine: AgentEngine = {
     const ts = () => Date.now();
 
     yield { kind: 'turn_start', ts: ts(), engine: ENGINE, turnId };
+    if (modelSwitched) {
+      // Friendly, persisted marker instead of codex's raw mismatch item.
+      yield {
+        kind: 'engine_meta',
+        ts: ts(),
+        engine: ENGINE,
+        itemType: 'model_switch',
+        payload: {
+          from: modelSwitched.from,
+          to: modelSwitched.to,
+          text: `Codex-Thread wurde für den Modellwechsel (${modelSwitched.from} → ${modelSwitched.to}) neu gestartet — der Sessionverlauf wurde übernommen.`,
+        },
+      };
+    }
 
     // codex exec has no separate system-prompt option. On the first turn
     // of a session we inline the persona systemPrompt; on resume codex
@@ -236,6 +303,22 @@ export const codexCliEngine: AgentEngine = {
     // somora-memory's web_search/file_patch/etc. are the intended path.
     args.push('-c', 'web_search="disabled"');
     args.push('-c', 'tools.view_image=false');
+    // codex 0.144 re-audit (2026-07-21, hans's skill-discovery report):
+    // codex 0.14x embeds "core skills" (imagegen, openai-docs,
+    // plugin-creator, skill-creator, skill-installer) in the binary,
+    // installs them into $CODEX_HOME/skills/.system and injects them
+    // into every prompt — a skill surface separate from the feature
+    // catalog above (hans saw the imagegen SKILL although the
+    // image_generation FEATURE is disabled). Verified via `codex debug
+    // prompt-input`: skills.bundled.enabled=false removes the whole
+    // bundled set. include_instructions=false additionally drops the
+    // skills-usage instruction block if anything is discovered anyway.
+    // NB: user skills under $CODEX_HOME/skills/<name> have no global
+    // off-switch (only per-skill [[skills.config]] entries) — somora
+    // agents get their skills from somora's own registry, so keep
+    // $CODEX_HOME/skills free of user skills on somora hosts.
+    args.push('-c', 'skills.bundled.enabled=false');
+    args.push('-c', 'skills.include_instructions=false');
     // Cross-engine thinking knob → codex's TOML override via shared helper.
     // Helper guards on 'reasoning' capability + maps 'off' → 'minimal'
     // (codex has no true off-switch for reasoning models).
@@ -613,6 +696,50 @@ export const codexCliEngine: AgentEngine = {
       }
 
       if (code !== 0 && !receivedAnyEvent) {
+        // Stale-thread recovery (Juni-Audit 2026-06): a dead
+        // codexSessionId (rollout cleaned up, expired, CODEX_HOME
+        // switch) used to brick the session — every turn retried the
+        // same dead id until a manual /reset. Mirror claude-cli's
+        // recovery: drop the stale thread pointer so the NEXT turn
+        // starts a fresh thread. Also drop this engine's lastSeen so
+        // that rebuild replays the full (compaction-aware) history —
+        // a fresh thread with only the delta since codex last ran
+        // would silently lose the older context.
+        if (resumeId && CODEX_STALE_THREAD_RE.test(stderrBuf)) {
+          try {
+            await metaStore.update(agent, session, (freshMeta) => {
+              const {
+                codexSessionId: _dropThread,
+                codexRecordedModel: _dropModel,
+                ...rest
+              } = freshMeta as CodexCliMeta;
+              const lastSeen = { ...(rest.engineLastSeen ?? {}) };
+              delete lastSeen[ENGINE];
+              return { ...rest, engineLastSeen: lastSeen };
+            });
+            logger.info({
+              msg: 'engine.session_resume_cleared',
+              engine: ENGINE,
+              agent,
+              session,
+              stale_id: resumeId,
+            });
+          } catch (clearErr) {
+            logger.warn({
+              msg: 'engine.session_resume_clear_failed',
+              engine: ENGINE,
+              agent,
+              session,
+              err: String(clearErr),
+            });
+          }
+          const message =
+            'Codex-Thread dieser Session ist nicht mehr vorhanden — er wurde verworfen. ' +
+            'Die nächste Nachricht startet einen frischen Thread mit übernommenem Sessionverlauf.';
+          yield { kind: 'error', ts: ts(), engine: ENGINE, message };
+          yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+          return;
+        }
         const message = `codex exec failed (exit ${code}): ${stderrBuf.slice(0, 500).trim()}`;
         logger.error({
           msg: 'engine.fail',
@@ -698,6 +825,10 @@ export const codexCliEngine: AgentEngine = {
           ...freshMeta,
           engine: ENGINE,
           codexSessionId: lastThreadId,
+          // This turn ran under resolvedModel — the thread is now pinned
+          // to it. Stamped every turn so the mismatch check above always
+          // compares against the thread's true current model.
+          codexRecordedModel: resolvedModel.modelId,
           engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
         }));
       }

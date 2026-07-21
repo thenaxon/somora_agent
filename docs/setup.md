@@ -714,35 +714,43 @@ yet, and the bootstrap logs a warning instead of failing. Run
 `claude login` once interactively (any session), then restart
 somora — the symlink picks up on the next boot.
 
-**Credentials migration (pre-2026-05-16 installs)**
+**Credential-drift self-healing**
 
-Early somora versions left a real *file* at
-`~/.somora/claude-home/.credentials.json` instead of a symlink. That
-silently drifts away from `~/.claude/.credentials.json` after a
-later `/login` in the regular `claude` CLI: somora keeps running on
-the old account without surfacing it. On every boot somora now
-detects this and applies a safety-ladder migration:
+The shared-login symlink has a structural enemy: the claude CLI
+refreshes OAuth tokens with an atomic write (tmp file + rename), and
+rename replaces the *symlink itself* — after the first somora-side
+token refresh the link silently materializes into a real file. From
+then on both trees rotate the same OAuth session independently, and
+whichever side refreshes later invalidates the other; the losing side
+eventually fails with `OAuth session expired and could not be
+refreshed`.
 
-- **Already a symlink** → no-op. Operator-pointed targets are honored.
-- **Real file with identical content** → backup as
-  `.credentials.json.somora-backup-<ts>` and replace with a symlink.
-  Risk-free because the content is what `~/.claude/.credentials.json`
-  already has. Logs `credentials_relinked`.
-- **Real file with divergent content** → don't touch. Log
-  `credentials_diverged` with the exact `mv` + `ln -sf` command to run
-  if the divergence was accidental (the common case: you `/login`-ed
-  into a new account in the regular `claude` CLI and somora is still
-  on the old one). If the divergence is intentional (somora
-  deliberately on a separate account), ignore the warning.
-- **No file at all + `~/.claude/.credentials.json` exists** → symlink
-  it (fresh-install path).
-- **Nothing on either side** → warn that `claude login` hasn't been
-  run yet.
+somora heals this automatically (default `claudeCli.
+sharedUserCredentials: true` in `config.yaml`), on every boot **and**
+whenever a claude-cli turn fails with an auth error:
 
-The migration never auto-overwrites a divergent file. If you see
-`credentials_diverged` in the boot log, decide explicitly: run the
-suggested `mv` + `ln -sf` to merge, or leave it for intentional
-isolation.
+- **Already a symlink** → healthy, no-op.
+- **Real file, identical content** → backup as
+  `.credentials.json.somora-backup-<ts>`, replace with a symlink.
+- **Real file, somora's copy is newer** → somora's token is the live
+  chain: push the content back into `~/.claude/.credentials.json`
+  (backup first), then re-symlink. Your interactive Claude Code picks
+  up the newest token.
+- **Real file, `~/.claude`'s copy is newer** → somora's copy is the
+  stale chain: back it up and re-symlink to the user file.
+- **Standalone install** (no `~/.claude/.credentials.json`) → the
+  local file is the single source of truth, no-op.
+
+If a turn errors with an auth failure, somora runs the reconcile
+inline and tells you whether re-sending the message is enough or a
+fresh `claude login` is needed.
+
+**Running somora on a separate Claude account**
+
+Set `claudeCli.sharedUserCredentials: false` in `config.yaml` — somora
+then never touches either credentials file, and you manage
+`~/.somora/claude-home/.credentials.json` yourself (e.g. via
+`CLAUDE_CONFIG_DIR=~/.somora/claude-home claude login`).
 
 ## Environment overrides
 
