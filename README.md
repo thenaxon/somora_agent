@@ -336,7 +336,7 @@ and codex-cli) — same tool surface regardless of model.
 | tmux | `tmux` | Persistent multi-turn terminal sessions for TUIs (claude/codex/vim/REPLs). |
 | web | `web_search`, `web_fetch` | Brave-API search + Mozilla-Readability fetch. |
 | agents | `spawn_subagent`, `subagent_*`, `agent_ask` | Sub-agent orchestration; ask another agent something. |
-| skills | `skill` | Activate a Markdown how-to from `~/.somora/skills/`. |
+| skills | `skill`, `skill_list` | Activate a Markdown how-to from `~/.somora/skills/`, or list all skills available to the agent fresh from disk. |
 | projects (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests linking a session to a real-world thing. Only registered when `projects.enabled: true`. |
 | sentinel | `sentinel` | Install + manage time-based triggers that wake agents on a schedule (single action-enum tool: create/list/get/pause/resume/delete/test/history). |
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
