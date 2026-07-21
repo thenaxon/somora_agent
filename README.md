@@ -86,8 +86,8 @@ What makes it different:
    │
    ├─ Tool registry
    │    memory_*, dream_*, file_*, exec, tmux, web_*,
-   │    spawn_subagent, somora_docs_*, skill, resource_*,
-   │    sentinel, time_now, analyze_file
+   │    spawn_subagent, somora_docs_*, skill, skill_list,
+   │    resource_*, sentinel, time_now, analyze_file
    │
    ├─ Sentinel (proactive triggers)
    │    ~/.somora/sentinel/triggers.json
