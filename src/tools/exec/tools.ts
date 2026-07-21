@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
 import type { ToolDefinition } from '../types.ts';
 import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
-import { auditPrivilegedExec, checkAllowBlocked } from './allowlist.ts';
+import { auditPrivilegedExec, evaluateExecPolicy } from './allowlist.ts';
 import { checkBlacklist } from './blacklist.ts';
 import { releaseRemoteSlot, tryAcquireExecSlot } from './concurrency.ts';
 import {
@@ -236,60 +236,62 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     // Hard-blacklist runs FIRST — never even reach a target if the
     // command is in the deny list.
     const block = checkBlacklist(input.command);
-    let privilegedMatch: { entry: string; resource: string } | null = null;
     if (block.matched) {
       // Per-resource allowlist override: if the target is a configured
-      // SSH resource and its `allowBlocked` array has an entry that
-      // matches this command, we let it through. `local` target NEVER
-      // gets to override — the host where somora runs is not a
-      // dedicated-agent-workstation. See src/tools/exec/allowlist.ts.
+      // SSH resource, evaluate the command against its `allowBlocked`
+      // list segment-by-segment. `local` target NEVER gets an override
+      // (the host where somora runs is not a dedicated-agent-workstation)
+      // — we pass an empty entry list so evaluateExecPolicy always
+      // blocks there. See src/tools/exec/allowlist.ts for the algorithm
+      // (each blacklisted sub-command needs its own override; hard-blocks
+      // like `rm -rf /etc` and cross-pipe `curl|sh` can't be overridden).
+      let entries: ReadonlyArray<string> = [];
       if (input.target !== 'local') {
         const resource = await resolveVisibleResourceFresh(ctx.agent, input.target);
-        if (resource && resource.type === 'ssh' && resource.allowBlocked.length > 0) {
-          const match = checkAllowBlocked(input.command, resource.allowBlocked);
-          if (match) {
-            privilegedMatch = { entry: match.entry, resource: input.target };
-            logger.info({
-              msg: 'exec.privileged_allowed',
-              agent: ctx.agent,
-              target: input.target,
-              matched_entry: match.entry,
-              blacklist_reason: block.reason,
-              command_head: input.command.slice(0, 120),
-            });
-            // Audit-trail JSONL — fire-and-forget. We deliberately log
-            // the AUTH event (matched + about-to-execute), not the
-            // completion: the rest of somora's exec logging captures
-            // exit codes, and one line per privileged-allow is the
-            // simplest after-the-fact review surface.
-            void auditPrivilegedExec({
-              ts: Date.now(),
-              agent: ctx.agent,
-              session: ctx.session ?? 'unknown',
-              resource: input.target,
-              command_head: input.command.slice(0, 200),
-              matched_entry: match.entry,
-              blacklist_reason: block.reason,
-              blacklist_pattern: block.pattern,
-            });
-          }
+        if (resource && resource.type === 'ssh') {
+          entries = resource.allowBlocked;
         }
       }
-      if (!privilegedMatch) {
+      const policy = evaluateExecPolicy(input.command, entries);
+      if (policy.allowed) {
+        logger.info({
+          msg: 'exec.privileged_allowed',
+          agent: ctx.agent,
+          target: input.target,
+          matched_entries: policy.overrides ?? [],
+          blacklist_reason: block.reason,
+          command_head: input.command.slice(0, 120),
+        });
+        // Audit-trail JSONL — fire-and-forget. We deliberately log
+        // the AUTH event (matched + about-to-execute), not the
+        // completion: the rest of somora's exec logging captures
+        // exit codes, and one line per privileged-allow is the
+        // simplest after-the-fact review surface.
+        void auditPrivilegedExec({
+          ts: Date.now(),
+          agent: ctx.agent,
+          session: ctx.session ?? 'unknown',
+          resource: input.target,
+          command_head: input.command.slice(0, 200),
+          matched_entry: (policy.overrides ?? []).join(', '),
+          blacklist_reason: block.reason,
+          blacklist_pattern: block.pattern,
+        });
+      } else {
         logger.warn({
           msg: 'exec.blocked',
           agent: ctx.agent,
           target: input.target,
-          reason: block.reason,
-          pattern: block.pattern,
+          reason: policy.reason ?? block.reason,
+          pattern: policy.pattern ?? block.pattern,
           command_head: input.command.slice(0, 120),
         });
         return {
           ok: false,
           background: false,
           blocked: true,
-          reason: block.reason,
-          pattern: block.pattern,
+          reason: policy.reason ?? block.reason,
+          pattern: policy.pattern ?? block.pattern,
         };
       }
     }

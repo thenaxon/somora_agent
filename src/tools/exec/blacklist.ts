@@ -126,6 +126,24 @@ export function checkBlacklist(command: string): BlacklistCheck {
 }
 
 /**
+ * Return the reasons of ALL blacklist patterns that match the command
+ * (not just the first, as `checkBlacklist` does). Needed by the
+ * segment-aware exec policy: a command can trip several patterns at
+ * once (e.g. `sudo … curl … | sh` matches both `sudo` and `curl|sh`),
+ * and the policy must know about every one to decide which are
+ * cross-segment (un-overridable) dangers. Same normalization as
+ * checkBlacklist.
+ */
+export function blacklistReasons(command: string): string[] {
+  const normalized = command.trim().replace(/\s+/g, ' ');
+  const out: string[] = [];
+  for (const entry of HARD_BLACKLIST) {
+    if (entry.pattern.test(normalized)) out.push(entry.reason);
+  }
+  return out;
+}
+
+/**
  * Surface the full blacklist for diagnostic / debugging tools (so a
  * developer can ask "what's currently blocked?" via a tool or log).
  * Read-only.
