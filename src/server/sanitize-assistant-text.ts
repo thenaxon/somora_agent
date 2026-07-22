@@ -32,6 +32,18 @@
 
 const TOOL_CALL_RE = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
 const TOOL_RESPONSE_RE = /<tool_response>[\s\S]*?<\/tool_response>/gi;
+// `<somora-tool-log>` is OUR marker for the tool-execution record that
+// history-rebuild injects (src/engine/tool-trace.ts). It belongs to the
+// system and only ever appears in user-role content. A model emitting it
+// in its own answer is fabricating tool work — 2026-07-22, first rollout
+// of the feature put the block in the assistant role and models promptly
+// started writing their own, complete with invented commands and
+// outputs, then reasoning on top of them. Same class as the two above:
+// anything the assistant channel contains, the model learns to reproduce.
+const SOMORA_TOOL_LOG_RE = /<somora-tool-log>[\s\S]*?<\/somora-tool-log>/gi;
+// Unclosed variant — a truncated/streamed fabrication leaves a dangling
+// opener that would otherwise sit in the bubble as raw text.
+const SOMORA_TOOL_LOG_OPEN_RE = /<somora-tool-log>[\s\S]*$/i;
 
 export interface SanitizeResult {
   text: string;
@@ -59,7 +71,11 @@ export function sanitizeAssistantText(input: string): SanitizeResult {
   }
   // Cheap pre-check — both regexes scan the whole string otherwise,
   // and assistant texts can be huge (tens of KB).
-  if (!input.includes('<tool_call>') && !input.includes('<tool_response>')) {
+  if (
+    !input.includes('<tool_call>') &&
+    !input.includes('<tool_response>') &&
+    !input.includes('<somora-tool-log>')
+  ) {
     return { text: input, matches: 0 };
   }
 
@@ -75,6 +91,20 @@ export function sanitizeAssistantText(input: string): SanitizeResult {
     matches += 1;
     return `[hallucinated tool-response: model emitted text-format XML instead of structured tool_result — content elided]`;
   });
+
+  out = out.replace(SOMORA_TOOL_LOG_RE, () => {
+    matches += 1;
+    return `[fabricated tool-log: model wrote somora's own tool-execution marker instead of calling tools — no tools actually ran, content elided]`;
+  });
+  // Whatever is left after closed-pair removal can only be a dangling
+  // opener; drop it and everything after it.
+  if (out.includes('<somora-tool-log>')) {
+    matches += 1;
+    out = out.replace(
+      SOMORA_TOOL_LOG_OPEN_RE,
+      `[fabricated tool-log (unterminated): model wrote somora's own tool-execution marker — no tools actually ran, content elided]`,
+    );
+  }
 
   return { text: out, matches };
 }

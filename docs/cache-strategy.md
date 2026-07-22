@@ -125,11 +125,11 @@ Acceptable cost for the cache win.
 #### Tool-execution evidence
 
 The rebuild also emits a compact record of the tool calls each past turn
-made, ahead of that turn's assistant text:
+made, prefixed onto the **following user message**:
 
 ```text
 <somora-tool-log>
-183 Aufrufe:
+183 calls:
 - file_write ×5 → ok (server.js, index.html, style.css)
 - exec ×173 → ok (npm install, curl -I http://localhost:3000, lsof -i :3000)
 - web_search → ok (tetris scoring rules)
@@ -142,13 +142,23 @@ weaker models then stop calling tools entirely, mid-session. Grouping is
 per tool, so even extreme turns stay small: a 183-call turn renders as
 five lines (~140 tokens, measured).
 
-The block rides in an assistant-role message (a per-turn `system`
-message would break the strict user/assistant alternation some local
-backends require), so the tag is load-bearing: without it a model reads
-the block as its own prose. The first live test of this feature had
-claude-haiku apologise for "inventing this notation and not actually
-calling a tool". What the tag means is stated once in the system prompt
-(`agentLoop.toolUsageReminder`) rather than repeated per block.
+**The block must never appear in an assistant-role message.** The first
+rollout put it there and models began writing their own
+`<somora-tool-log>` blocks — inventing commands, inventing outputs, then
+drawing conclusions from the invention. Anything the assistant channel
+contains is something the model learns to reproduce; this is the same
+failure class `src/server/sanitize-assistant-text.ts` already existed for
+(`<tool_call>` XML). The record therefore rides on the following user
+message, matching the long-standing `<context-from-other-engines>`
+replay-prefix placement, which has never been imitated.
+
+Two defences back that up:
+
+- `sanitizeAssistantText` strips `<somora-tool-log>` from assistant
+  output (closed and unterminated), so a fabrication never reaches the
+  chat or the JSONL, and sessions recorded before this heal on rebuild.
+- The system prompt (`agentLoop.toolUsageReminder`) states once what the
+  tag means and that the model must never emit it.
 
 This is cache-safe by construction. The record derives deterministically
 from immutable JSONL events, in event order, so every rebuild of the

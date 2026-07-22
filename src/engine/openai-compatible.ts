@@ -25,6 +25,7 @@ import {
   type Compaction,
 } from '../compaction/index.ts';
 import { logger } from '../server/logger.ts';
+import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { withFromAgentHeader } from './a2a.ts';
@@ -102,16 +103,30 @@ export async function buildMessages(
   // only prose, and the model — which has no memory beyond what we hand
   // it — concludes from its own transcript that its job here is writing
   // text. See the header of ./tool-trace.ts for the measured incident.
+  //
+  // CRITICAL: this block must NEVER be emitted in the assistant role.
+  // The first attempt did exactly that and models started *writing* the
+  // block themselves — fabricating tool calls, invented outputs and all,
+  // then reasoning on top of the fabrication. Same failure class the
+  // <tool_call> sanitizer already exists for. Anything we put in the
+  // assistant channel is something the model learns to reproduce.
+  // It therefore rides on the FOLLOWING user message, matching the
+  // long-standing <context-from-other-engines> replay-prefix pattern.
   const trace = createToolTraceCollector();
-  /** Emit whatever tool calls have accumulated, ahead of the assistant
-   *  text they belong to. */
-  const flushTrace = () => {
+  let pendingTraceBlock = '';
+  /** Park the accumulated calls; they attach to the next user message. */
+  const parkTrace = () => {
     if (trace.pending === 0) return;
     const block = renderToolTrace(trace.take());
     if (!block) return;
-    if (pendingRole !== 'assistant') flush();
-    pendingRole = 'assistant';
-    pendingText = pendingText ? `${pendingText}\n\n${block}` : block;
+    pendingTraceBlock = pendingTraceBlock ? `${pendingTraceBlock}\n${block}` : block;
+  };
+  /** Consume the parked block for prefixing onto a user message. */
+  const takeTrace = (): string => {
+    parkTrace();
+    const b = pendingTraceBlock;
+    pendingTraceBlock = '';
+    return b;
   };
 
   for (const ev of history) {
@@ -120,7 +135,12 @@ export async function buildMessages(
       // A2A attribution: prepend a header when this user-message was
       // written by another agent so the model sees the provenance
       // even after replay across engines.
-      const headed = withFromAgentHeader(ev.text, ev.from_agent);
+      // Tool evidence from the PRECEDING turn rides in front of this
+      // user message — never in the assistant role, see above.
+      const traceBlock = takeTrace();
+      const headed = traceBlock
+        ? `${traceBlock}\n\n${withFromAgentHeader(ev.text, ev.from_agent)}`
+        : withFromAgentHeader(ev.text, ev.from_agent);
       // Memory-recall block (if any) was persisted on the event when
       // this turn was originally sent; reconstruct it here so the
       // byte sequence matches what the backend already cached. This
@@ -177,26 +197,33 @@ export async function buildMessages(
       pendingRole = 'user';
       pendingText = pendingText ? `${pendingText}\n\n${composed}` : composed;
     } else if (ev.kind === 'assistant_message') {
-      // Tool evidence first — it happened before this text did.
-      flushTrace();
+      // Close out this turn's tool calls, but only PARK them — they
+      // attach to the next user message, never to assistant text.
+      parkTrace();
+      // Historical poison: sessions recorded while the trace block was
+      // (wrongly) emitted in the assistant role contain models' own
+      // fabricated <somora-tool-log> blocks. Strip them on the way back
+      // in so a poisoned session heals instead of compounding.
+      const cleaned = sanitizeAssistantText(ev.text).text;
       if (pendingRole !== 'assistant') flush();
       pendingRole = 'assistant';
-      pendingText = pendingText ? `${pendingText}\n\n${ev.text}` : ev.text;
+      pendingText = pendingText ? `${pendingText}\n\n${cleaned}` : cleaned;
     } else if (ev.kind === 'tool_call') {
       trace.call(ev.callId, ev.tool, ev.input);
     } else if (ev.kind === 'tool_result') {
       trace.result(ev.callId, ev.error);
     } else if (ev.kind === 'turn_start') {
       // A turn that ended without an assistant_message (crash, abort)
-      // leaves calls uncollected. Emit them here rather than letting
-      // them bleed into the next turn's assistant message.
-      flushTrace();
+      // leaves calls uncollected — park them so they still surface on
+      // the next user message.
+      parkTrace();
     }
     // deltas / turn_end → ignore for chat.completions
   }
-  // Trailing tools from a turn still in flight / never closed.
-  flushTrace();
   flush();
+  // Any trailing trace has no user message left to attach to. Dropping
+  // it is correct: the alternative is inventing an assistant-role
+  // block, which is the bug this design exists to avoid.
   return messages;
 }
 
