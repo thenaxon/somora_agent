@@ -1161,6 +1161,9 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
  */
 .wiki-root {
   display: flex;
+  /* .window-body is a column flex container, so fill it as a flex item
+   * rather than relying on height:100% resolving against it. */
+  flex: 1 1 auto;
   height: 100%;
   min-height: 0;
   background: var(--bg-1);
