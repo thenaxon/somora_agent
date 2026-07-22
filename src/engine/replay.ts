@@ -22,7 +22,6 @@
 import { pickLatestApplicable, type Compaction } from '../compaction/index.ts';
 import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { NormalizedEvent } from '../types/events.ts';
-import { createToolTraceCollector, renderToolTrace } from './tool-trace.ts';
 
 export interface ReplayPair {
   user: string;
@@ -30,11 +29,6 @@ export interface ReplayPair {
   /** A2A attribution of the user-side. Set when the user-message in
    *  this pair was written by another agent, not the human user. */
   fromAgent?: string;
-  /** Rendered tool-execution evidence for this pair's turn, if the
-   *  turn used any. Same reason as in openai-compatible's history
-   *  rebuild: a catch-up block made of pure prose teaches the incoming
-   *  engine that nobody here calls tools. See ./tool-trace.ts. */
-  toolTrace?: string;
 }
 
 export interface ReplayDelta {
@@ -64,22 +58,15 @@ export function computeReplayDelta(
   const effectiveSinceTs = applicable ? applicable.throughTs : sinceTs;
   const pairs: ReplayPair[] = [];
   let pendingUser: { text: string; fromAgent?: string } | undefined;
-  const trace = createToolTraceCollector();
   for (const ev of history) {
     if (ev.ts <= effectiveSinceTs) continue;
     if (ev.kind === 'user_message') {
       pendingUser = { text: ev.text, ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}) };
-    } else if (ev.kind === 'tool_call') {
-      trace.call(ev.callId, ev.tool, ev.input);
-    } else if (ev.kind === 'tool_result') {
-      trace.result(ev.callId, ev.error);
     } else if (ev.kind === 'assistant_message' && pendingUser !== undefined) {
-      const toolTrace = trace.pending > 0 ? renderToolTrace(trace.take()) : '';
       pairs.push({
         user: pendingUser.text,
         assistant: ev.text,
         ...(pendingUser.fromAgent ? { fromAgent: pendingUser.fromAgent } : {}),
-        ...(toolTrace ? { toolTrace } : {}),
       });
       pendingUser = undefined;
     }
@@ -127,10 +114,6 @@ export function renderReplayPrefix(delta: ReplayDelta): string {
       // normalises new messages, but legacy events already on disk
       // never went through that filter.
       const cleanAssistant = sanitizeAssistantText(p.assistant).text;
-      // Tool evidence goes ahead of the assistant text — that's the
-      // order it happened in, and it stops the catch-up block from
-      // reading like a conversation where tools are never used.
-      if (p.toolTrace) lines.push(p.toolTrace);
       lines.push(`Assistant: ${cleanAssistant}`);
       lines.push('');
     }

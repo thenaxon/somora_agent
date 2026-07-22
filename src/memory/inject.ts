@@ -118,13 +118,27 @@ function formatMemoryBlock(hits: Hit[], maxTokens: number, wikiOverview: string 
   //   [memory/<slug>] — this agent's own short-term memory file
   //   [wiki/<path>]   — server-global consolidated wiki page (shared across agents)
   //   [vault/<path>]  — read-only Obsidian vault content outside the wiki
+  // Wording matters more than it looks. The original header said the
+  // notes were retrieved "(no tool call required)" and called the wiki
+  // "authoritative" — measured 2026-07-22, that phrasing cut kimi-k3's
+  // tool-call rate from 85% to 55% (one run: 10%) on an identical
+  // request, because it reads as a general "you don't need tools here"
+  // and elevates recall above the actual state of the system. Rewording
+  // to "recollection, not observation" plus an explicit "recall never
+  // replaces a tool" restored it to 95%.
+  //
+  // Full numbers and method: private/toolcall-investigation.md.
   const header =
-    'The following notes from your memory may be relevant to this turn. ' +
-    'They were retrieved automatically by the runtime (no tool call required). ' +
+    'Background notes recalled from your memory for this turn. ' +
     'Source tags: [memory/...] = your own short-term notes; ' +
-    '[wiki/...] = shared long-term wiki (consolidated, authoritative); ' +
+    '[wiki/...] = shared long-term wiki; ' +
     '[vault/...] = read-only vault content. ' +
-    'If you need to look deeper, call `memory_search` or `memory_get`.';
+    'These notes are recollection, not observation: they can be outdated and ' +
+    'say nothing about the current state of the system. ' +
+    'Call `memory_search` or `memory_get` to recall more. ' +
+    'Having these notes never replaces using a tool: if the user asks you to ' +
+    'check, run, read or change something, do it with the appropriate tool ' +
+    'rather than answering from these notes.';
   const lines: string[] = ['<memory-context>', header, ''];
 
   // Conservative budget: header + closing tag eats some chars

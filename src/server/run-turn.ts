@@ -55,7 +55,6 @@ import { synthesize } from '../tts/service.ts';
 import { prepareForTts } from '../tts/prepare-for-tts.ts';
 import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
-import { TOOL_LOG_CLOSE_TAG, TOOL_LOG_OPEN_TAG } from '../engine/tool-trace.ts';
 import { buildSelfPointer } from './workspace.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 
@@ -76,16 +75,6 @@ const TOOL_USAGE_REMINDER = [
   'tool. A sentence like "I am creating the file now" without the',
   'matching tool call is a failure: nothing happens, and the user waits',
   'for a result that will never arrive.',
-  '',
-  `Some user messages in the history are preceded by ${TOOL_LOG_OPEN_TAG} …`,
-  `${TOOL_LOG_CLOSE_TAG} blocks. The system writes those, not you. They`,
-  'record which tools you actually executed in the preceding turn, and',
-  'are evidence that tools really do work here.',
-  '',
-  `Never write ${TOOL_LOG_OPEN_TAG} yourself. Producing such a block in`,
-  'your answer would be a fabrication: no tool would run, and every',
-  'conclusion you drew from it would be invented. If you want something',
-  'executed, call the tool.',
 ].join('\n');
 
 /**
@@ -706,7 +695,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     // volatile skills/project blocks and keeps the existing static →
     // volatile cache hierarchy intact. Gated on the agent actually
     // having tools; telling a tool-less agent to call tools is noise.
-    // Rationale for its existence: src/engine/tool-trace.ts header.
+    // Rationale + measurements: private/toolcall-investigation.md.
     const toolsBlock =
       deps.config.agentLoop.toolUsageReminder && availableTools.length > 0
         ? `\n\n---\n\n${TOOL_USAGE_REMINDER}`

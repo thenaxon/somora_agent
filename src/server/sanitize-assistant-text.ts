@@ -33,13 +33,15 @@
 const TOOL_CALL_RE = /<tool_call>([\s\S]*?)<\/tool_call>/gi;
 const TOOL_RESPONSE_RE = /<tool_response>[\s\S]*?<\/tool_response>/gi;
 // `<somora-tool-log>` is OUR marker for the tool-execution record that
-// history-rebuild injects (src/engine/tool-trace.ts). It belongs to the
-// system and only ever appears in user-role content. A model emitting it
-// in its own answer is fabricating tool work — 2026-07-22, first rollout
-// of the feature put the block in the assistant role and models promptly
-// started writing their own, complete with invented commands and
-// outputs, then reasoning on top of them. Same class as the two above:
-// anything the assistant channel contains, the model learns to reproduce.
+// history-rebuild briefly injected in July 2026. That approach is gone
+// (tool turns are now replayed in the native tool_calls shape), but the
+// marker is still stripped: while it existed it spent a window in the
+// ASSISTANT role, and models promptly started writing their own —
+// invented commands, invented outputs, conclusions drawn on top. Any
+// session recorded in that window carries fabricated blocks, and
+// stripping them here stops those from being replayed back in. Same
+// class as the two above: whatever the assistant channel contains, the
+// model learns to reproduce.
 const SOMORA_TOOL_LOG_RE = /<somora-tool-log>[\s\S]*?<\/somora-tool-log>/gi;
 // Unclosed variant — a truncated/streamed fabrication leaves a dangling
 // opener that would otherwise sit in the bubble as raw text.

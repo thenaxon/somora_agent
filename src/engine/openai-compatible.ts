@@ -29,7 +29,6 @@ import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { withFromAgentHeader } from './a2a.ts';
-import { createToolTraceCollector, renderToolTrace } from './tool-trace.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
@@ -56,8 +55,13 @@ interface OpenAiCompatibleMeta {
   compactions?: Compaction[];
 }
 
+/** Per-result cap when replaying tool output into rebuilt history.
+ *  Unbounded results are what bloat the context; the model can re-read
+ *  anything it genuinely needs by calling the tool again. */
+export const MAX_REPLAYED_TOOL_RESULT_CHARS = 800;
+
 // Exported for the history-rebuild regression tests
-// (./openai-history.test.mts) — the shape of what we hand a stateless
+// (./tool-trace.test.mts) — the shape of what we hand a stateless
 // backend is load-bearing enough to assert on directly.
 export async function buildMessages(
   systemPrompt: string,
@@ -99,34 +103,55 @@ export async function buildMessages(
     pendingText = '';
   };
 
-  // Tool-execution evidence. Without this the rebuilt history contains
-  // only prose, and the model — which has no memory beyond what we hand
-  // it — concludes from its own transcript that its job here is writing
-  // text. See the header of ./tool-trace.ts for the measured incident.
+  // Tool history. Turns that used tools are replayed in the NATIVE
+  // OpenAI shape — an assistant message carrying `tool_calls`, followed
+  // by one `role:'tool'` message per result — rather than as prose.
   //
-  // CRITICAL: this block must NEVER be emitted in the assistant role.
-  // The first attempt did exactly that and models started *writing* the
-  // block themselves — fabricating tool calls, invented outputs and all,
-  // then reasoning on top of the fabrication. Same failure class the
-  // <tool_call> sanitizer already exists for. Anything we put in the
-  // assistant channel is something the model learns to reproduce.
-  // It therefore rides on the FOLLOWING user message, matching the
-  // long-standing <context-from-other-engines> replay-prefix pattern.
-  const trace = createToolTraceCollector();
-  let pendingTraceBlock = '';
-  /** Park the accumulated calls; they attach to the next user message. */
-  const parkTrace = () => {
-    if (trace.pending === 0) return;
-    const block = renderToolTrace(trace.take());
-    if (!block) return;
-    pendingTraceBlock = pendingTraceBlock ? `${pendingTraceBlock}\n${block}` : block;
-  };
-  /** Consume the parked block for prefixing onto a user message. */
-  const takeTrace = (): string => {
-    parkTrace();
-    const b = pendingTraceBlock;
-    pendingTraceBlock = '';
-    return b;
+  // Why it matters (measured 2026-07-22, N=20 per cell): with tool turns
+  // flattened to text, deepseek-chat produced 0/20 tool calls on a real
+  // session history and deepseek-r1 1/20. Replaying the native shape
+  // lifted them to 14/20 and 10/20. The model has no memory beyond what
+  // we hand it, so a transcript in which the assistant never calls tools
+  // is a demonstration that here, one does not call tools.
+  //
+  // An earlier attempt used a prose `<somora-tool-log>` summary instead.
+  // It measured as useless (85%→90% on kimi, 0%→0% on deepseek) and,
+  // while it briefly sat in the assistant role, actively harmful: models
+  // began writing the block themselves with invented commands and
+  // outputs. The sanitizer still strips it (src/server/sanitize-assistant-text.ts)
+  // because sessions recorded during that window carry fabricated ones.
+  //
+  // Full investigation: private/toolcall-investigation.md.
+  const pendingCalls: Array<{ id: string; name: string; args: string }> = [];
+  const pendingResults = new Map<string, string>();
+
+  /** Emit the collected tool activity of one turn, ahead of that turn's
+   *  assistant text. Calls without a matching result are dropped: an
+   *  assistant `tool_calls` entry whose result never arrives is a hard
+   *  400 on most backends, and a crashed turn can leave exactly that. */
+  const flushToolTurn = () => {
+    if (pendingCalls.length === 0) return;
+    const paired = pendingCalls.filter((c) => pendingResults.has(c.id));
+    pendingCalls.length = 0;
+    if (paired.length === 0) { pendingResults.clear(); return; }
+    flush(); // close any open text message first — ordering is load-bearing
+    messages.push({
+      role: 'assistant',
+      content: null,
+      tool_calls: paired.map((c) => ({
+        id: c.id,
+        type: 'function' as const,
+        function: { name: c.name, arguments: c.args || '{}' },
+      })),
+    } as unknown as ChatMessage);
+    for (const c of paired) {
+      messages.push({
+        role: 'tool',
+        tool_call_id: c.id,
+        content: pendingResults.get(c.id)!,
+      } as unknown as ChatMessage);
+    }
+    pendingResults.clear();
   };
 
   for (const ev of history) {
@@ -135,12 +160,10 @@ export async function buildMessages(
       // A2A attribution: prepend a header when this user-message was
       // written by another agent so the model sees the provenance
       // even after replay across engines.
-      // Tool evidence from the PRECEDING turn rides in front of this
-      // user message — never in the assistant role, see above.
-      const traceBlock = takeTrace();
-      const headed = traceBlock
-        ? `${traceBlock}\n\n${withFromAgentHeader(ev.text, ev.from_agent)}`
-        : withFromAgentHeader(ev.text, ev.from_agent);
+      // A turn that never produced an assistant_message (crash, abort)
+      // still has its tool activity replayed, ahead of the next user turn.
+      flushToolTurn();
+      const headed = withFromAgentHeader(ev.text, ev.from_agent);
       // Memory-recall block (if any) was persisted on the event when
       // this turn was originally sent; reconstruct it here so the
       // byte sequence matches what the backend already cached. This
@@ -197,33 +220,45 @@ export async function buildMessages(
       pendingRole = 'user';
       pendingText = pendingText ? `${pendingText}\n\n${composed}` : composed;
     } else if (ev.kind === 'assistant_message') {
-      // Close out this turn's tool calls, but only PARK them — they
-      // attach to the next user message, never to assistant text.
-      parkTrace();
-      // Historical poison: sessions recorded while the trace block was
-      // (wrongly) emitted in the assistant role contain models' own
-      // fabricated <somora-tool-log> blocks. Strip them on the way back
-      // in so a poisoned session heals instead of compounding.
+      // This turn's tool activity happened BEFORE the model's closing
+      // text, so it goes out first.
+      flushToolTurn();
+      // Historical poison: sessions recorded while the prose tool-log
+      // block sat in the assistant role contain models' own fabricated
+      // <somora-tool-log> blocks. Strip them on the way back in so a
+      // poisoned session heals instead of compounding.
       const cleaned = sanitizeAssistantText(ev.text).text;
       if (pendingRole !== 'assistant') flush();
       pendingRole = 'assistant';
       pendingText = pendingText ? `${pendingText}\n\n${cleaned}` : cleaned;
     } else if (ev.kind === 'tool_call') {
-      trace.call(ev.callId, ev.tool, ev.input);
+      pendingCalls.push({
+        id: ev.callId,
+        name: ev.tool,
+        args: JSON.stringify(ev.input ?? {}),
+      });
     } else if (ev.kind === 'tool_result') {
-      trace.result(ev.callId, ev.error);
-    } else if (ev.kind === 'turn_start') {
-      // A turn that ended without an assistant_message (crash, abort)
-      // leaves calls uncollected — park them so they still surface on
-      // the next user message.
-      parkTrace();
+      const payload = ev.error !== undefined ? { error: ev.error } : (ev.output ?? null);
+      let text: string;
+      try {
+        text = JSON.stringify(payload) ?? 'null';
+      } catch {
+        text = '"[unserializable tool result]"';
+      }
+      // Cap per result. Full outputs are what blew the context in the
+      // first place; the model can re-read anything it actually needs.
+      pendingResults.set(
+        ev.callId,
+        text.length > MAX_REPLAYED_TOOL_RESULT_CHARS
+          ? `${text.slice(0, MAX_REPLAYED_TOOL_RESULT_CHARS)}… [truncated]`
+          : text,
+      );
     }
-    // deltas / turn_end → ignore for chat.completions
+    // deltas / turn_start / turn_end → ignore for chat.completions
   }
+  // Trailing tool activity from a turn still in flight.
+  flushToolTurn();
   flush();
-  // Any trailing trace has no user message left to attach to. Dropping
-  // it is correct: the alternative is inventing an assistant-role
-  // block, which is the bug this design exists to avoid.
   return messages;
 }
 

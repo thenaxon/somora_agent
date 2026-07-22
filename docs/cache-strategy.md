@@ -122,54 +122,41 @@ The trade-off is JSONL size: each user_message stores the recall
 block alongside the user-typed text (~500-2000 chars per turn).
 Acceptable cost for the cache win.
 
-#### Tool-execution evidence
+#### Tool history
 
-The rebuild also emits a compact record of the tool calls each past turn
-made, prefixed onto the **following user message**:
+Turns that used tools are replayed in the **native** OpenAI shape: an
+assistant message carrying `tool_calls`, followed by one `role:'tool'`
+message per result.
 
-```text
-<somora-tool-log>
-183 calls:
-- file_write ×5 → ok (server.js, index.html, style.css)
-- exec ×173 → ok (npm install, curl -I http://localhost:3000, lsof -i :3000)
-- web_search → ok (tetris scoring rules)
-</somora-tool-log>
+```jsonc
+{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function",
+  "function":{"name":"file_write","arguments":"{\"path\":\"tetris.js\"}"}}]}
+{"role":"tool","tool_call_id":"c1","content":"{\"ok\":true}"}
+{"role":"assistant","content":"Fertig, läuft auf Port 3020."}
 ```
 
-Without it the rebuilt conversation contains only prose, and a model
-reading its own transcript finds no evidence it ever called a tool —
-weaker models then stop calling tools entirely, mid-session. Grouping is
-per tool, so even extreme turns stay small: a 183-call turn renders as
-five lines (~140 tokens, measured).
+Flattening those turns to prose is not a neutral simplification. Measured
+2026-07-22 against a real session history, N=20 per cell: with tool turns
+flattened, deepseek-chat produced **0/20** tool calls and deepseek-r1
+**1/20**; replaying the native shape lifted them to **14/20** and
+**10/20**. A model has no memory beyond what the rebuild hands it, so a
+transcript in which the assistant never calls tools is a demonstration
+that here, one does not call tools.
 
-**The block must never appear in an assistant-role message.** The first
-rollout put it there and models began writing their own
-`<somora-tool-log>` blocks — inventing commands, inventing outputs, then
-drawing conclusions from the invention. Anything the assistant channel
-contains is something the model learns to reproduce; this is the same
-failure class `src/server/sanitize-assistant-text.ts` already existed for
-(`<tool_call>` XML). The record therefore rides on the following user
-message, matching the long-standing `<context-from-other-engines>`
-replay-prefix placement, which has never been imitated.
+Two rules keep providers from rejecting the request:
 
-Two defences back that up:
+- every `tool_calls` entry is immediately followed by its matching
+  `role:'tool'` message, in order;
+- calls with no recorded result are **dropped** — a crashed turn leaves
+  exactly that, and an unmatched call is a hard 400 on most backends.
 
-- `sanitizeAssistantText` strips `<somora-tool-log>` from assistant
-  output (closed and unterminated), so a fabrication never reaches the
-  chat or the JSONL, and sessions recorded before this heal on rebuild.
-- The system prompt (`agentLoop.toolUsageReminder`) states once what the
-  tag means and that the model must never emit it.
+Tool results are capped at `MAX_REPLAYED_TOOL_RESULT_CHARS` (800) each.
+Unbounded results are what bloated the context in the first place; the
+model can re-read anything it needs by calling the tool again.
 
-This is cache-safe by construction. The record derives deterministically
-from immutable JSONL events, in event order, so every rebuild of the
-same history produces the identical byte sequence — the prefix match
-holds exactly as it did before. The one-time cost is that histories
-recorded before this landed rebuild differently than they did on the
-previous turn, so the first turn after upgrading misses cache.
-
-The same record is attached to cross-engine replay pairs
-(`src/engine/replay.ts`), for the same reason: a catch-up block made of
-pure prose teaches the incoming engine that nobody here uses tools.
+This is cache-safe: the reconstruction is deterministic over immutable
+JSONL events, so repeated rebuilds of the same history are byte-identical
+and the prefix match holds.
 
 ### Why we tried "late-system" first and reverted
 

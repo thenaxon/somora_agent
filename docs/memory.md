@@ -62,9 +62,14 @@ them as a `<memory-context>` block to the system prompt.
 
 ```
 <memory-context>
-The following notes from your memory may be relevant to this turn.
-Source tags: [memory/...] = your own short-term notes; [wiki/...] = shared
-long-term wiki (consolidated, authoritative); [vault/...] = read-only vault.
+Background notes recalled from your memory for this turn. Source tags:
+[memory/...] = your own short-term notes; [wiki/...] = shared long-term
+wiki; [vault/...] = read-only vault content. These notes are recollection,
+not observation: they can be outdated and say nothing about the current
+state of the system. Call `memory_search` or `memory_get` to recall more.
+Having these notes never replaces using a tool: if the user asks you to
+check, run, read or change something, do it with the appropriate tool
+rather than answering from these notes.
 
 ## Wiki overview (shared long-term knowledge)
 # somora-Wiki Index
@@ -83,6 +88,16 @@ long-term wiki (consolidated, authoritative); [vault/...] = read-only vault.
 <chunk content>
 </memory-context>
 ```
+
+The wording of that header is deliberate and load-bearing. An earlier
+version said the notes were retrieved "(no tool call required)" and
+called the wiki "authoritative". Measured 2026-07-22 on an identical
+request, that phrasing cut kimi-k3's tool-call rate from 85% to 55%:
+it reads as a general "you do not need tools here", and it puts recall
+above the actual state of the system. Framing the notes as recollection
+rather than observation restored the rate to 95%. If you customise this
+block, keep that distinction.
+
 
 The agent sees relevant notes (from any source) without having to call
 a search tool. The wiki overview block at the top is the topology
