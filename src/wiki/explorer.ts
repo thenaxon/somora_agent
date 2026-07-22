@@ -106,7 +106,17 @@ const SKIP_DIRS = new Set(['.obsidian', '.trash', '.git', 'node_modules']);
  *  descriptions in index.md without respecting link boundaries, which
  *  leaves half-open `[[foo…` fragments behind; a newline-tolerant regex
  *  swallows the rest of the file into one bogus "target". */
-const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|([^\]\n]*))?\]\]/g;
+export const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|([^\]\n]*))?\]\]/g;
+
+/** Every `[[target]]` in a body, deduped, aliases and anchors stripped. */
+export function extractLinkTargets(markdown: string): string[] {
+  const out = new Set<string>();
+  for (const m of markdown.matchAll(WIKILINK_RE)) {
+    const t = m[1]?.trim();
+    if (t) out.add(t);
+  }
+  return [...out];
+}
 
 /** Machine-generated pages kept out of the graph. `index.md` links to
  *  every page by construction — including it turns the global graph
@@ -432,8 +442,24 @@ export function getPage(
   return { meta, backlinks };
 }
 
-export async function readPageMarkdown(meta: WikiPageMeta): Promise<string> {
-  return readFile(meta.file, 'utf8');
+/**
+ * Page content split into body and frontmatter.
+ *
+ * The body is returned without the YAML block: 258 of the reference
+ * wiki's 262 pages carry frontmatter, and handing it to a markdown
+ * renderer turns `---` into a horizontal rule with the YAML spilled
+ * underneath as prose. The parsed fields go back separately so the
+ * reader can show them as what they are — metadata.
+ */
+export async function readPageContent(
+  meta: WikiPageMeta,
+): Promise<{ markdown: string; frontmatter: Record<string, unknown> }> {
+  const raw = await readFile(meta.file, 'utf8');
+  const parsed = matter(raw);
+  return {
+    markdown: parsed.content.replace(/^\n+/, ''),
+    frontmatter: (parsed.data ?? {}) as Record<string, unknown>,
+  };
 }
 
 function degreeOf(index: WikiIndex, slug: string): number {

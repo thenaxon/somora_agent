@@ -831,7 +831,8 @@ Returns `markdown` plus resolved relationships:
 {
   "slug": "projekte/somora", "title": "somora", "folder": "projekte",
   "mtimeMs": 1784700000000,
-  "markdown": "# somora\n…",
+  "markdown": "## Aktueller Stand\n…",
+  "frontmatter": { "type": "project", "created": "2026-05-08" },
   "links":       [{ "slug": "personen/rene-siegl", "title": "Rene" }],
   "backlinks":   [{ "slug": "agenten/hans", "title": "Hans" }],
   "unresolved":  ["personen/familie-rene"],

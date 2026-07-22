@@ -1406,3 +1406,11 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   padding: 6px 14px;
   font-size: 12px;
 }
+.wiki-page-meta-right { display: flex; align-items: center; gap: 6px; }
+.wiki-chip {
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 5px;
+  color: var(--text-2);
+  font-size: 10px;
+}

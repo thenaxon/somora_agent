@@ -25,12 +25,13 @@ import { isAbsolute, normalize } from 'node:path';
 import { checkReadAllowed, expandHome, realpathSafeAncestor } from '../tools/file/policy.ts';
 import {
   buildTree,
+  extractLinkTargets,
   getPage,
   getWikiIndex,
   globalGraph,
   invalidateWikiIndex,
   localGraph,
-  readPageMarkdown,
+  readPageContent,
   resolveLinkTargets,
 } from '../wiki/explorer.ts';
 import { listTmuxSessions } from '../tmux/list.ts';
@@ -626,27 +627,27 @@ app.get('/wiki/page', async (c) => {
   const index = await getWikiIndex(root);
   const hit = getPage(index, slug);
   if (!hit) return c.json({ error: `no wiki page '${slug}'` }, 404);
-  let markdown: string;
+  let content: Awaited<ReturnType<typeof readPageContent>>;
   try {
-    markdown = await readPageMarkdown(hit.meta);
+    content = await readPageContent(hit.meta);
   } catch (err) {
     return c.json({ error: `read failed: ${(err as Error).message}` }, 500);
   }
+  const { markdown, frontmatter } = content;
   // Resolve every wikilink in the body so the reader can turn them into
   // in-window navigation without reimplementing Obsidian's matching.
-  const targets = [...markdown.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g)]
-    .map((m) => m[1]?.trim())
-    .filter((t): t is string => Boolean(t));
+  const targets = extractLinkTargets(markdown);
   return c.json({
     slug: hit.meta.slug,
     title: hit.meta.title,
     folder: hit.meta.folder,
     mtimeMs: hit.meta.mtimeMs,
     markdown,
+    frontmatter,
     links: hit.meta.links.map((s) => ({ slug: s, title: index.pages.get(s)?.title ?? s })),
     unresolved: hit.meta.unresolved,
     backlinks: hit.backlinks.map((p) => ({ slug: p.slug, title: p.title })),
-    linkTargets: resolveLinkTargets(index, [...new Set(targets)]),
+    linkTargets: resolveLinkTargets(index, targets),
   });
 });
 

@@ -259,8 +259,13 @@ function WikiWindowImpl({ slug, onSlugChange }: Props) {
           <>
             <div className="wiki-page-head">
               <span className="wiki-page-slug">{page.slug}</span>
-              <span className="wiki-page-date">
-                {new Date(page.mtimeMs).toLocaleDateString()}
+              <span className="wiki-page-meta-right">
+                {typeof page.frontmatter.type === 'string' && (
+                  <span className="wiki-chip">{page.frontmatter.type}</span>
+                )}
+                <span className="wiki-page-date">
+                  {new Date(page.mtimeMs).toLocaleDateString()}
+                </span>
               </span>
             </div>
             <div className="wiki-page-body">

@@ -574,7 +574,11 @@ export interface WikiPageResponse {
   title: string;
   folder: string;
   mtimeMs: number;
+  /** Body only — the YAML block is parsed off and returned separately,
+   *  or a markdown renderer turns `---` into a rule with YAML spilled
+   *  underneath as prose. */
   markdown: string;
+  frontmatter: Record<string, unknown>;
   links: WikiPageRef[];
   /** Link targets in the body that match no page. Rendered as broken. */
   unresolved: string[];

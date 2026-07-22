@@ -312,7 +312,7 @@ in the browser would race them mid-run.
 ```http
 GET  /wiki/status                            # { enabled, root? }
 GET  /wiki/tree                              # folder tree + page titles
-GET  /wiki/page?slug=konzepte/voice-tts      # markdown + links + backlinks
+GET  /wiki/page?slug=konzepte/voice-tts      # body + frontmatter + links
 GET  /wiki/graph?scope=local&slug=<slug>     # neighbourhood
 GET  /wiki/graph?scope=global                # whole wiki
 POST /wiki/refresh                           # drop the cache, re-scan
