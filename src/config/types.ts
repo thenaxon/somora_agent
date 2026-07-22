@@ -922,19 +922,23 @@ export const WikiSearchConfigSchema = z
     boostWiki: z.number().positive().default(1.4),
     boostMemory: z.number().positive().default(0.85),
     boostVault: z.number().positive().default(0.65),
-    /** Max chars of the auto-injected wiki-overview block (verkürzte
-     *  index.md). Larger overviews would invalidate prompt-cache too
-     *  often. */
-    overviewMaxChars: z.number().int().positive().default(1500),
-    /** Top-N most-referenced slugs to list in the overview when wiki
-     *  grows past overviewMaxChars. */
+    /** Char budget for the wiki-overview block. It is snapshotted once
+     *  per session into the system prompt (not re-injected per turn), so
+     *  this is paid once inside the cached prefix — 4000 keeps page names
+     *  visible for wikis up to roughly 120 pages before the overview
+     *  degrades to section names + counts. Raise it to keep page names on
+     *  a larger wiki; the cost is a bigger constant prefix. */
+    overviewMaxChars: z.number().int().positive().default(4000),
+    /** Cap on how many `## sections` survive in the last-resort overview
+     *  (section names + page counts) when even the bare page list exceeds
+     *  overviewMaxChars. The largest sections win. */
     overviewTopNSlugs: z.number().int().positive().default(30),
   })
   .default({
     boostWiki: 1.4,
     boostMemory: 0.85,
     boostVault: 0.65,
-    overviewMaxChars: 1500,
+    overviewMaxChars: 4000,
     overviewTopNSlugs: 30,
   });
 
@@ -972,7 +976,7 @@ export const WikiConfigSchema = z
       boostWiki: 1.0,
       boostMemory: 0.85,
       boostVault: 0.65,
-      overviewMaxChars: 1500,
+      overviewMaxChars: 4000,
       overviewTopNSlugs: 30,
     },
   });

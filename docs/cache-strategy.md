@@ -50,6 +50,38 @@ already saw.
 We rebuild the entire conversation array from JSONL and send it.
 Byte-identity across turns is on us.
 
+## What belongs in the prefix vs. the per-turn block
+
+Before asking *where* a block goes, ask whether it changes with the
+question:
+
+| | Example | Goes to |
+|---|---|---|
+| Changes per turn | memory hits for this query | `<memory-context>`, per turn |
+| Stable for the session | wiki topology overview, skills registry, persona | system prompt |
+
+Getting this wrong is expensive in a way that hides well. The wiki
+overview used to ride along in the per-turn memory block. It is
+byte-identical on every turn, so on `claude-cli`/`codex-cli` it was a
+duplicate per turn, and on `openai-compatible` — where `buildMessages`
+replays every past turn — it was re-sent once per turn *of history*:
+897 chars × 27 turns = 24 KB on every single request. Nothing about it
+had changed since turn 1.
+
+The system-prompt version is measurably free after the first turn.
+Measured 2026-07-22, `claude-cli`, fresh session:
+
+```
+turn 1   tokens_in 9081   cached  878
+turn 2   tokens_in 9696   cached 9079     ← 94% of the prefix
+```
+
+The corollary: a block in the prefix must not move. The wiki overview
+is snapshotted into `session.meta.json` on the first turn and reused
+verbatim afterwards, even after Deep rewrites `index.md`. Freshness
+there is worth less than the cache — and recall (`memory_search`,
+auto-injection) is live regardless.
+
 ## Where memory recall goes per engine
 
 The runtime injects a `<memory-context>...</memory-context>` block per
@@ -322,6 +354,13 @@ invalidated at that point and the fix isn't right yet.
    metric (`cached_tokens` from a single response). A 2-turn
    position-dump comparison caught it on the second iteration.
 
+7. **Not every backend has a cache to protect.** Same session, same
+   day, three consecutive turns: `claude-cli` reported 94% of the
+   prefix cached, while `deepseek-chat` via OpenRouter reported
+   `cached_tokens: 0` on every turn. Before trading anything away to
+   keep a prefix stable, check that the provider on that path is
+   actually caching it.
+
 ## Code pointers
 
 | Concern | File |
@@ -332,4 +371,6 @@ invalidated at that point and the fix isn't right yet.
 | Memory placement claude-cli | `src/engine/claude-cli.ts` (effectiveUserMessage) |
 | Memory placement codex-cli | `src/engine/codex-cli.ts` (promptPayload) |
 | Dream worker stable-prefix | `src/dream/extract.ts` (`buildUserMessage`) |
+| Wiki-overview snapshot | `src/server/run-turn.ts` (`buildWikiOverviewBlock`) |
+| Wiki-overview shortener | `src/memory/manager.ts` (`renderWikiOverview`) |
 | `memoryInjectMode` schema | `src/config/types.ts` (`OpenAiCompatibleProviderSchema`) |

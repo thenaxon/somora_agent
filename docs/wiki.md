@@ -224,16 +224,53 @@ Three paths feed a chat turn:
    memory chunks. Auto-injected wiki content shows up as
    `[wiki/<path> · score=N.NN]` in the `<memory-context>` block.
 
-2. **Wiki overview block** prepends the index.md (capped at 1500 chars)
-   to every turn — so the agent sees the wiki topology even when no
-   specific page matches. Lets the agent decide "is there a wiki page
-   I should explicitly fetch?"
+2. **Wiki overview block** puts a shortened `index.md` into the system
+   prompt — so the agent sees the wiki topology even when no specific
+   page matches, and can decide "is there a wiki page I should fetch?"
+   It is built once, on a session's first turn, and then frozen for the
+   life of that session (see [Overview block](#overview-block)).
 
 3. **Explicit tool calls** — `memory_search` or `memory_get` with a
    `wiki/<path>` reference. Agents fetch full pages on demand.
 
 Wiki paths in references look like `wiki/personen/familie-klein` — the
 `wiki/` prefix is the source-tag, the rest is the slug.
+
+### Overview block
+
+The overview answers one question: *what topics does the wiki hold?*
+Content comes from search and `memory_get`, never from here.
+
+It lives in the **system prompt**, not in the per-turn memory block. The
+content is identical on every turn, so putting it in the cached prefix
+costs it once per session instead of once per turn — and on the
+`openai-compatible` engine, which rebuilds the whole conversation from
+the transcript, once instead of once *per turn of history*.
+
+It is also **frozen for the session**. Deep rewrites `index.md` every
+~12 h; re-reading it mid-session would shift a block that sits in front
+of the entire conversation and invalidate the provider's prefix cache.
+A session therefore keeps the wiki map it started with. Recall stays
+current regardless — auto-injection and `memory_search` always hit the
+live index. To pick up a rewritten map, start a new session or `/reset`
+the current one; both re-read `index.md` on the next turn.
+
+`index.md` rarely fits the budget, so it degrades through four stages.
+Each one describes the **whole** wiki; they differ in resolution:
+
+| Stage | Content | Used when |
+|---|---|---|
+| 1 | `index.md` verbatim | fits `overviewMaxChars` |
+| 2 | sections + pages + clipped descriptions | small wiki |
+| 3 | sections + bare page links | medium wiki |
+| 4 | section names + page counts | large wiki |
+
+Stage 4 deliberately reports `- Projekte (60)` rather than listing 30 of
+the 258 pages. A partial page list reads as complete and stops the agent
+from searching; a section with a count tells it what to search *for*.
+
+Raise `overviewMaxChars` to keep page names visible on a larger wiki —
+the cost is a bigger constant prefix, paid once per session.
 
 ## Configuration
 
@@ -258,8 +295,8 @@ wiki:
     boostWiki: 1.4                       # search-rank multiplier per source
     boostMemory: 0.85
     boostVault: 0.65
-    overviewMaxChars: 1500               # auto-inject wiki-overview cap
-    overviewTopNSlugs: 30                # for very large wikis
+    overviewMaxChars: 4000               # overview-block budget (see above)
+    overviewTopNSlugs: 30                # max sections in the stage-4 view
 
 obsidian:
   vault: /path/to/your/vault

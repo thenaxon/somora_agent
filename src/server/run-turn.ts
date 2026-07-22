@@ -116,6 +116,80 @@ async function buildProjectBlock(
   }
 }
 
+/** Key under which the per-session wiki-overview snapshot is persisted. */
+const WIKI_OVERVIEW_META_KEY = 'wikiOverview';
+
+/**
+ * Wiki topology block for the system prompt — snapshotted once per
+ * session and then frozen.
+ *
+ * Two decisions worth keeping straight:
+ *
+ * 1. **System prompt, not ephemeral context.** The overview is the same
+ *    bytes on every turn. In the per-turn memory block it was repeated
+ *    once per turn, and on openai-compatible `buildMessages` replayed
+ *    every past copy on every request (measured 2026-07-22: 897 chars ×
+ *    27 turns = 24 KB re-sent per request). Here it is one copy in the
+ *    cached prefix.
+ *
+ * 2. **Frozen for the session.** Dream-B rewrites index.md every ~12 h.
+ *    Re-reading it would move a block that sits in front of the whole
+ *    conversation, breaking the provider's prefix cache mid-session for
+ *    a header that only exists to say "these topics exist". Rene's call
+ *    (2026-07-22): a stale overview is fine, cost is not — details come
+ *    from `memory_search` and auto-injected hits, which are live. A new
+ *    session picks up the new wiki.
+ *
+ * A `null` from getWikiOverview (no index.md yet) is snapshotted as '',
+ * so a session started before the wiki existed stays consistent too.
+ */
+async function buildWikiOverviewBlock(
+  agent: string,
+  session: string,
+  sessionMeta: Record<string, unknown>,
+  deps: ChatTurnResolveDeps,
+): Promise<string> {
+  if (!deps.config.wiki.enabled) return '';
+  const cached = sessionMeta[WIKI_OVERVIEW_META_KEY];
+  if (typeof cached === 'string') return renderWikiOverviewBlock(cached);
+  let text = '';
+  try {
+    const mgr = await getMemoryManager(agent, {
+      config: deps.config.memory,
+      wiki: deps.config.wiki,
+      obsidian: deps.config.obsidian,
+    });
+    text =
+      (await mgr.getWikiOverview({
+        maxChars: deps.config.wiki.search.overviewMaxChars,
+        topNSlugs: deps.config.wiki.search.overviewTopNSlugs,
+      })) ?? '';
+  } catch (err) {
+    // Soft-degrade: a missing overview costs discoverability, not the turn.
+    // Not snapshotted either, so the next turn retries.
+    logger.warn({ msg: 'wiki.overview_failed', agent, session, err: (err as Error).message });
+    return '';
+  }
+  await deps.sessionMetaStore.update(agent, session, (current) => ({
+    ...current,
+    [WIKI_OVERVIEW_META_KEY]: text,
+  }));
+  logger.info({ msg: 'wiki.overview_snapshotted', agent, session, chars: text.length });
+  return renderWikiOverviewBlock(text);
+}
+
+function renderWikiOverviewBlock(text: string): string {
+  if (text.length === 0) return '';
+  return (
+    `\n\n---\n\n## Wiki overview (shared long-term knowledge)\n\n` +
+    `A map of what the shared wiki holds, as it stood when this session ` +
+    `started — page names and topics only, no content, and it does not ` +
+    `list your own memory notes. Read a page with ` +
+    `\`memory_get('wiki/<path>')\` or search across memory, wiki and vault ` +
+    `with \`memory_search\`.\n\n${text}`
+  );
+}
+
 function resolveEffectiveModel(
   config: Config,
   persona: Persona,
@@ -439,14 +513,6 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       history: historyBeforeTurn,
       userMessage: text,
       cfg: deps.config.memory.autoInject,
-      ...(deps.config.wiki.enabled
-        ? {
-            wikiOverview: {
-              maxChars: deps.config.wiki.search.overviewMaxChars,
-              topNSlugs: deps.config.wiki.search.overviewTopNSlugs,
-            },
-          }
-        : {}),
     });
     ephemeralContext = inject.ephemeralContext;
     memoryInjectedCount = inject.injectedCount;
@@ -691,6 +757,11 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     // project is pinned. Project lookup uses freshly-read from disk so
     // a project_update on the same turn lands in the next turn.
     const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
+    // Wiki overview — session-static by construction (snapshotted on the
+    // first turn, then frozen), so it sits ABOVE skills and project in
+    // the cache hierarchy: those still change mid-session on a SKILL.md
+    // edit or a /projekt switch, this one never does.
+    const wikiBlock = await buildWikiOverviewBlock(agent, session, sessionMeta, deps);
     // Tool-usage reminder — constant text, so it sits BEFORE the more
     // volatile skills/project blocks and keeps the existing static →
     // volatile cache hierarchy intact. Gated on the agent actually
@@ -701,7 +772,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ? `\n\n---\n\n${TOOL_USAGE_REMINDER}`
         : '';
     const systemPromptForTurn =
-      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${toolsBlock}${skillsBlock}${projectBlock}`;
+      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${toolsBlock}${wikiBlock}${skillsBlock}${projectBlock}`;
 
     logger.info({
       msg: 'turn.engine_init',

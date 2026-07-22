@@ -523,8 +523,11 @@ wiki:
     boostWiki: 1.4             # wiki hits rank above memory in retrieval
     boostMemory: 0.85
     boostVault: 0.65
-    overviewMaxChars: 1500     # auto-inject wiki-overview block size cap
-    overviewTopNSlugs: 30
+    overviewMaxChars: 4000     # wiki-overview block in the system prompt;
+                               # snapshotted once per session, so this is
+                               # paid once inside the cached prefix
+    overviewTopNSlugs: 30      # max sections listed when even the bare
+                               # page list exceeds the budget
 ```
 
 Per-agent REM (session→memory extraction) is configured in each

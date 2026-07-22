@@ -71,14 +71,6 @@ Having these notes never replaces using a tool: if the user asks you to
 check, run, read or change something, do it with the appropriate tool
 rather than answering from these notes.
 
-## Wiki overview (shared long-term knowledge)
-# somora-Wiki Index
-## Personen
-- [[personen/familie-klein]] — Family around Sarah Klein …
-## Projekte
-- [[projekte/internal-cms]] — Internal CMS used by the team …
-…
-
 ## Relevant hits for this turn
 
 ### [wiki/orte/main-house · score=0.42]
@@ -100,9 +92,12 @@ block, keep that distinction.
 
 
 The agent sees relevant notes (from any source) without having to call
-a search tool. The wiki overview block at the top is the topology
-header — index.md content (capped at 1500 chars) so the agent always
-knows what's in the wiki even when no specific page hits.
+a search tool.
+
+Only query-dependent content goes in this block. The wiki topology
+header is not part of it — it is stable for a whole session, so it sits
+in the system prompt instead, where the provider's prefix cache holds
+it. See [wiki.md](wiki.md#overview-block).
 
 ### 2. Tools (agent-driven, on demand)
 

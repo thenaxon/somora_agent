@@ -12,6 +12,14 @@
 // Token cap is enforced by truncating chunks (best-effort) when the
 // joined block exceeds maxTokens. We approximate tokens via the project's
 // 4-chars/token heuristic.
+//
+// ONLY query-dependent content belongs here. The wiki-overview block used
+// to ride along in this block; being byte-identical every turn, it was
+// pure repetition — and on openai-compatible, where buildMessages replays
+// every past turn's block, it was repeated once per turn of history.
+// It now lives in the system prompt, snapshotted per session by run-turn
+// (buildWikiOverviewBlock). Rule of thumb: changes with the question →
+// here; stable for the session → system prompt.
 
 import type { NormalizedEvent } from '../types/events.ts';
 import type { MemoryManager } from './manager.ts';
@@ -24,13 +32,6 @@ type AutoInjectCfg = {
   maxResults: number;
   minScore: number;
   maxTokens: number;
-};
-
-/** Wiki-overview budget passed in from config.wiki.search when wiki is
- *  enabled. When undefined, no overview block is built. */
-type WikiOverviewCfg = {
-  maxChars: number;
-  topNSlugs: number;
 };
 
 export interface InjectResult {
@@ -50,8 +51,6 @@ export async function injectMemoryContext(args: {
   history: NormalizedEvent[];
   userMessage: string;
   cfg: AutoInjectCfg;
-  /** Optional Phase-4 wiki-overview header. Set when config.wiki.enabled. */
-  wikiOverview?: WikiOverviewCfg;
 }): Promise<InjectResult> {
   const query = buildRecallQuery(args.userMessage, args.history, args.cfg.queryTurns);
   if (!query.trim()) {
@@ -62,17 +61,10 @@ export async function injectMemoryContext(args: {
     minScore: args.cfg.minScore,
   });
 
-  // Wiki-overview is independent of hits — even when no hits matched,
-  // showing the agent the topology of available wiki pages helps it
-  // decide whether to call memory_get / memory_search explicitly.
-  const overview = args.wikiOverview
-    ? await args.mgr.getWikiOverview(args.wikiOverview)
-    : null;
-
-  if (hits.length === 0 && !overview) {
+  if (hits.length === 0) {
     return { ephemeralContext: undefined, injectedCount: 0, hits: [] };
   }
-  const block = formatMemoryBlock(hits, args.cfg.maxTokens, overview);
+  const block = formatMemoryBlock(hits, args.cfg.maxTokens);
   if (!block) {
     return { ephemeralContext: undefined, injectedCount: 0, hits };
   }
@@ -107,7 +99,7 @@ function buildRecallQuery(
   return parts.reverse().join('\n');
 }
 
-function formatMemoryBlock(hits: Hit[], maxTokens: number, wikiOverview: string | null): string {
+function formatMemoryBlock(hits: Hit[], maxTokens: number): string {
   // Heuristic: 4 chars per token (project-wide).
   const maxChars = maxTokens * 4;
   // English meta-instruction — the actual note content (German for this user)
@@ -144,20 +136,6 @@ function formatMemoryBlock(hits: Hit[], maxTokens: number, wikiOverview: string 
   // Conservative budget: header + closing tag eats some chars
   let used = lines.join('\n').length + '\n</memory-context>'.length;
 
-  // Wiki-overview block sits ABOVE the hits. Topology first (what
-  // exists?), specific hits second (what matched this turn?). This
-  // matches Karpathy's wiki pattern — agent sees what's available
-  // before diving into specifics.
-  if (wikiOverview && wikiOverview.length > 0) {
-    const overviewBlock = `## Wiki overview (shared long-term knowledge)\n${wikiOverview}`;
-    const overviewCost = overviewBlock.length + 2;
-    if (used + overviewCost <= maxChars) {
-      lines.push(overviewBlock);
-      lines.push('');
-      used += overviewCost;
-    }
-  }
-
   let kept = 0;
   if (hits.length > 0) {
     lines.push('## Relevant hits for this turn');
@@ -175,8 +153,8 @@ function formatMemoryBlock(hits: Hit[], maxTokens: number, wikiOverview: string 
       kept++;
     }
   }
-  // If neither overview nor hits ended up in the block, emit nothing.
-  if (kept === 0 && !wikiOverview) return '';
+  // Nothing survived the budget — emit nothing rather than an empty shell.
+  if (kept === 0) return '';
   lines.push('</memory-context>');
   return lines.join('\n');
 }

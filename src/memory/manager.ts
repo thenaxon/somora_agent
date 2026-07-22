@@ -37,6 +37,133 @@ const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 
 const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
+/** Per-entry description budget in the stage-2 wiki overview. */
+const WIKI_OVERVIEW_DESC_CHARS = 100;
+
+/** `## Heading` — starts a section of the wiki index. */
+const WIKI_INDEX_SECTION_RE = /^##\s+(.+?)\s*$/;
+
+/**
+ * A wiki-index list item: `- [[pfad/seite]] — description`.
+ *
+ * Anchored, and it captures only the FIRST wikilink of the line. Links
+ * further along are prose (`… gehört zu [[personen/xy|Renes]] Team`),
+ * not pages.
+ */
+const WIKI_INDEX_ENTRY_RE = /^[-*]\s*(\[\[[^\]|]+(?:\|[^\]]*)?\]\])\s*(?:[—–-]\s*)?(.*)$/;
+
+/** One `## Section` of the wiki index plus the pages listed under it. */
+interface WikiIndexSection {
+  title: string;
+  entries: Array<{ link: string; desc: string }>;
+}
+
+/**
+ * Parse a Dream-B `index.md` into sections and page entries.
+ *
+ * The shortener this replaced ran a global `/\[\[[^\]]+\]\]/g` over each
+ * line, which counted description prose as pages. On the reference wiki
+ * (2026-07-22, 258 pages in 25 sections) that turned a 30-slot budget
+ * into 22 distinct pages from 7 sections — `Projekte` (60 pages),
+ * `Wissen` (75) and `Infrastruktur` (26) never appeared at all, because
+ * the sections are emitted alphabetically and the budget ran out at "B".
+ * Matching only the leading link removes the duplicates by construction.
+ *
+ * Returns [] when the file isn't in this shape; the caller falls back to
+ * a plain truncation rather than inventing structure.
+ */
+function parseWikiIndex(raw: string): WikiIndexSection[] {
+  const sections: WikiIndexSection[] = [];
+  let current: WikiIndexSection | null = null;
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    const heading = WIKI_INDEX_SECTION_RE.exec(trimmed);
+    if (heading) {
+      current = { title: heading[1]!, entries: [] };
+      sections.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const entry = WIKI_INDEX_ENTRY_RE.exec(trimmed);
+    if (entry) current.entries.push({ link: entry[1]!, desc: entry[2]!.trim() });
+  }
+  return sections.filter((s) => s.entries.length > 0);
+}
+
+function clip(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max).trimEnd()}…`;
+}
+
+/**
+ * Shorten a wiki `index.md` to fit `maxChars`. Pure — exported so the
+ * stage ladder is testable without a MemoryManager instance.
+ *
+ * Four stages, each a strictly lower information density than the last,
+ * but every one of them covering the WHOLE wiki:
+ *
+ *   1. index.md verbatim                          (small wiki)
+ *   2. sections + pages + clipped descriptions
+ *   3. sections + bare page links
+ *   4. section names + page counts                (very large wiki)
+ *
+ * Stage 4 is a taxonomy, not a sample, and that is the point. Knowing
+ * "there is a Projekte section with 60 pages" is what makes an agent
+ * reach for `memory_search`; a partial list of page names implies the
+ * listed pages are all there is, which is worse than no overview.
+ */
+export function renderWikiOverview(
+  raw: string,
+  opts: { maxChars: number; topNSlugs: number },
+): string {
+  // Stage 1 — fits as-is.
+  if (raw.length <= opts.maxChars) return raw.trimEnd();
+
+  const sections = parseWikiIndex(raw);
+  if (sections.length === 0) {
+    // Index isn't in the conventional Dream-B shape. Hard-truncate
+    // instead of guessing: the head of the file is at least structured
+    // markdown, which is more use than a bag of extracted tokens.
+    return `${raw.slice(0, opts.maxChars).trimEnd()}\n…`;
+  }
+
+  // Stage 2 — everything, descriptions clipped.
+  const withDesc = sections
+    .map((s) =>
+      [
+        `## ${s.title}`,
+        ...s.entries.map(
+          (e) => `- ${e.link}${e.desc ? ` — ${clip(e.desc, WIKI_OVERVIEW_DESC_CHARS)}` : ''}`,
+        ),
+      ].join('\n'),
+    )
+    .join('\n\n');
+  if (withDesc.length <= opts.maxChars) return withDesc;
+
+  // Stage 3 — every page still named, descriptions dropped.
+  const bare = sections
+    .map((s) => `## ${s.title}\n${s.entries.map((e) => e.link).join(' ')}`)
+    .join('\n\n');
+  if (bare.length <= opts.maxChars) return bare;
+
+  // Stage 4 — taxonomy + counts. topNSlugs caps how many sections
+  // survive; the largest ones win, then they're re-sorted by name so the
+  // block reads like the index it stands in for.
+  const total = sections.reduce((n, s) => n + s.entries.length, 0);
+  const ranked = [...sections]
+    .sort((a, b) => b.entries.length - a.entries.length)
+    .slice(0, opts.topNSlugs)
+    .sort((a, b) => a.title.localeCompare(b.title));
+  const dropped = sections.length - ranked.length;
+  const taxonomy = [
+    `# Wiki sections (${total} pages)`,
+    ...ranked.map((s) => `- ${s.title} (${s.entries.length})`),
+    ...(dropped > 0 ? [`- … and ${dropped} smaller sections`] : []),
+  ].join('\n');
+  return taxonomy.length <= opts.maxChars
+    ? taxonomy
+    : `${taxonomy.slice(0, opts.maxChars).trimEnd()}\n…`;
+}
+
 export interface ObsidianSource {
   vaultPath: string;
 }
@@ -505,14 +632,11 @@ export class MemoryManager {
   }
 
   /**
-   * Read and shorten the wiki's index.md for the auto-inject overview
-   * block. Returns null if wiki is not enabled, has no index.md yet,
-   * or would not fit within the budget.
+   * Read and shorten the wiki's index.md into the topology overview that
+   * run-turn snapshots into the session's system prompt. Returns null if
+   * the wiki is disabled or has no index.md yet.
    *
-   * Shortening strategy: if raw index is ≤ maxChars, return verbatim.
-   * Otherwise drop snippet/description text after each `[[link]]`,
-   * keeping just the bare wikilink list per section. If still too
-   * long, truncate to topNSlugs across sections.
+   * Shortening ladder lives in `renderWikiOverview`.
    */
   async getWikiOverview(opts: {
     maxChars: number;
@@ -527,34 +651,7 @@ export class MemoryManager {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
     }
-    if (raw.length <= opts.maxChars) return raw.trimEnd();
-
-    // Strip everything except section headers (## ...) and bare
-    // [[wikilink]] tokens. This is a best-effort shortener — Dream-B's
-    // index.md format is conventionalised but we don't hard-couple here.
-    const lines = raw.split('\n');
-    const out: string[] = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      if (trimmed.startsWith('# ') || trimmed.startsWith('## ')) {
-        out.push(trimmed);
-        continue;
-      }
-      // Match all [[…]] tokens; keep the line if it has any
-      const links = trimmed.match(/\[\[[^\]]+\]\]/g);
-      if (links?.length) {
-        out.push(`- ${links.join(' ')}`);
-      }
-    }
-    let shortened = out.join('\n');
-    if (shortened.length > opts.maxChars) {
-      // Last resort: keep first N [[…]] tokens overall
-      const links = shortened.match(/\[\[[^\]]+\]\]/g) ?? [];
-      const kept = links.slice(0, opts.topNSlugs);
-      shortened = `# Wiki overview (truncated to top ${kept.length})\n\n${kept.join(' ')}`;
-    }
-    return shortened.trimEnd();
+    return renderWikiOverview(raw, opts);
   }
 
   async getNote(slug: string): Promise<{ path: string; markdown: string } | null> {
