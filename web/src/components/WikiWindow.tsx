@@ -20,6 +20,7 @@ import {
   type WikiTreeNode,
   type WikiTreeResponse,
 } from '../lib/api';
+import { linkifyWikilinks } from '../lib/wikilinks';
 import { WikiGraph } from './WikiGraph';
 
 interface Props {
@@ -34,22 +35,6 @@ interface Props {
 const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeHighlight];
 
-const WIKILINK_RE = /\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|([^\]\n]*))?\]\]/g;
-
-/** Rewrite `[[target|alias]]` into markdown links carrying a private
- *  scheme, so the anchor handler can tell wiki navigation from ordinary
- *  links without inspecting the text again. */
-function linkifyWikilinks(md: string, targets: Record<string, string | null>): string {
-  return md.replace(WIKILINK_RE, (_m, rawTarget: string, alias?: string) => {
-    const target = rawTarget.trim();
-    const label = (alias ?? target).trim() || target;
-    const slug = targets[target];
-    const safeLabel = label.replace(/[[\]]/g, '');
-    return slug
-      ? `[${safeLabel}](wiki:${encodeURIComponent(slug)})`
-      : `[${safeLabel}](wiki-broken:${encodeURIComponent(target)})`;
-  });
-}
 
 function WikiWindowImpl({ slug, onSlugChange }: Props) {
   const [tree, setTree] = useState<WikiTreeResponse | null>(null);
