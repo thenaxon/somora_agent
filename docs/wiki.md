@@ -272,6 +272,61 @@ from searching; a section with a count tells it what to search *for*.
 Raise `overviewMaxChars` to keep page names visible on a larger wiki —
 the cost is a bigger constant prefix, paid once per session.
 
+## Web explorer
+
+The web client has a read-only wiki browser behind the **wiki** tile in
+the app dock. Three columns:
+
+```
+┌──────────┬────────────────────────┬───────────────┐
+│ tree     │ # somora Voice/TTS     │   graph       │
+│ wissen/  │                        │      o        │
+│ konzepte/│ …                      │     / \       │
+│ projekte/│ [[somora]] [[voice]]   │    o   o      │
+│ personen/│                        │ backlinks:    │
+│ bugs/    │                        │ · projekte/x  │
+└──────────┴────────────────────────┴───────────────┘
+```
+
+`[[wikilinks]]` are clickable and navigate inside the window. Targets
+that resolve to no page render as **broken** instead of vanishing — a
+wiki with gaps should look like one. Resolution follows Obsidian's
+rules, in order: exact slug, case-insensitive slug, then a unique
+basename. A basename matching several pages stays unresolved rather
+than picking one; a wrong edge reads as a real relationship and is
+worse than a missing one.
+
+The graph toggles between **local** (the current page, what it links
+to, and what links to it — plus the edges among those neighbours) and
+**global** (the whole wiki, capped at the 400 most-connected pages).
+Clicking a node opens that page. `index.md` is excluded from both: it
+links to every page by construction, so including it turns the graph
+into a star around one node and adds hundreds of edges that say nothing
+about how the knowledge connects.
+
+Read-only is deliberate. Deep and Lucid own the wiki files; an editor
+in the browser would race them mid-run.
+
+### Endpoints
+
+```http
+GET  /wiki/status                            # { enabled, root? }
+GET  /wiki/tree                              # folder tree + page titles
+GET  /wiki/page?slug=konzepte/voice-tts      # markdown + links + backlinks
+GET  /wiki/graph?scope=local&slug=<slug>     # neighbourhood
+GET  /wiki/graph?scope=global                # whole wiki
+POST /wiki/refresh                           # drop the cache, re-scan
+```
+
+Pages are addressed by **slug, never by path**. A request can only name
+pages the index already found under the wiki root, so `../`, absolute
+paths and symlink escapes are rejected by construction rather than by a
+filter someone has to keep correct.
+
+The index caches for 10 seconds, then re-stats the tree and re-parses
+only files whose mtime or size moved. Edits made in Obsidian appear
+within that window; the refresh button skips it.
+
 ## Configuration
 
 ```yaml

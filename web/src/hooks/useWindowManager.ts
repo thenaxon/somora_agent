@@ -136,6 +136,34 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the Wiki Explorer. Singleton — the three-column
+   *  layout wants width, and two of them would just fight for it. */
+  const openWiki = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'wiki');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(1180, 700, zCounter + 1);
+    const id = `wiki-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'wiki',
+      title: 'Wiki',
+      icon: '📚',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
+  /** Remember which page a wiki window is on so a reload restores it. */
+  const setWikiSlug = useCallback((id: string, slug: string) => {
+    setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, wikiSlug: slug } : w)));
+  }, []);
+
   /** Open or focus the tmux-app list window. Singleton — only one
    *  list view exists at a time. Phase 1.5. */
   const openTmuxList = useCallback(() => {
@@ -409,6 +437,8 @@ export function useWindowManager() {
     openShellTerm,
     openSessionsList,
     openSentinelList,
+    openWiki,
+    setWikiSlug,
     openPinNote,
     unpinMessage,
     pinnedMsgIds,

@@ -3,13 +3,14 @@
 // shape as the agent dock for visual consistency, but the icons are
 // lucide glyphs in a flat tinted square instead of gradient avatars.
 
-import type { ReactNode } from 'react';
-import { Bell, MessagesSquare, Square, Terminal } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Bell, BookOpen, MessagesSquare, Square, Terminal } from 'lucide-react';
+import { api } from '../lib/api';
 
 interface Props {
   /** Names of apps whose window is currently open — drives the
    *  `.active` highlight on the dock tile. Today: 'tmux',
-   *  'sessions', 'sentinel'. Future apps register here. */
+   *  'sessions', 'sentinel', 'wiki'. Future apps register here. */
   activeApps?: Set<string>;
   onTmuxClick: () => void;
   /** Spawns a fresh shell terminal in the somora workspace.
@@ -20,6 +21,8 @@ interface Props {
   onSessionsClick: () => void;
   /** Open or focus the Sentinel trigger inspector. Singleton. */
   onSentinelClick: () => void;
+  /** Open or focus the read-only Wiki Explorer. Singleton. */
+  onWikiClick: () => void;
 }
 
 export function AppDock({
@@ -28,10 +31,30 @@ export function AppDock({
   onTerminalClick,
   onSessionsClick,
   onSentinelClick,
+  onWikiClick,
 }: Props) {
   const isTmuxActive = activeApps?.has('tmux') ?? false;
   const isSessionsActive = activeApps?.has('sessions') ?? false;
   const isSentinelActive = activeApps?.has('sentinel') ?? false;
+  const isWikiActive = activeApps?.has('wiki') ?? false;
+  // The wiki is opt-in (wiki.enabled + obsidian.vault). A tile that
+  // opens a window which can only say "not configured" is worse than no
+  // tile — so the UI gate matches the server's 503 gate.
+  const [wikiEnabled, setWikiEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .wikiStatus()
+      .then((s) => {
+        if (!cancelled) setWikiEnabled(s.enabled);
+      })
+      .catch(() => {
+        // Older server without the route — leave the tile hidden.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   return (
     <>
       <AppTile
@@ -58,6 +81,14 @@ export function AppDock({
         active={isSentinelActive}
         onClick={onSentinelClick}
       />
+      {wikiEnabled && (
+        <AppTile
+          label="wiki"
+          icon={<BookOpen size={26} />}
+          active={isWikiActive}
+          onClick={onWikiClick}
+        />
+      )}
     </>
   );
 }

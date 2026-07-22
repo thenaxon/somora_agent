@@ -11,7 +11,8 @@ export type WindowKind =
   | 'sessions-list'
   | 'sentinel'
   | 'pin-note'
-  | 'file-view';
+  | 'file-view'
+  | 'wiki';
 
 /** A snapshot of an agent message that the user pinned for working-
  *  memory. Stored on the WindowState.payload of `kind: 'pin-note'`
@@ -57,6 +58,9 @@ export interface WindowState {
   // window state stays small (resumable from localStorage after a
   // reload without keeping the full body around).
   filePath?: string;
+  // wiki specific — slug of the page the reader is on. Persisted so a
+  // browser reload lands back on the same page instead of the tree root.
+  wikiSlug?: string;
   // Geometry
   x: number;
   y: number;

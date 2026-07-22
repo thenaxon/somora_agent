@@ -787,6 +787,102 @@ available to your client.
 
 ---
 
+## Wiki explorer
+
+Read-only browse surface over the shared wiki, backing the web client's
+wiki window. All routes return **503** unless `wiki.enabled` and
+`obsidian.vault` are both configured.
+
+Pages are addressed by **slug, never by path** — a request can only name
+pages the index already found under the wiki root, so traversal attempts
+come back as a plain 404 rather than needing a filter to catch them.
+
+### `GET /wiki/status`
+
+`{ enabled: boolean, root?: string }`. Cheap enough to call on UI mount;
+clients use it to decide whether to show the wiki entry point at all.
+
+### `GET /wiki/tree`
+
+```json
+{
+  "root": "/path/to/vault/somora",
+  "pages": 262,
+  "builtAt": 1784750000000,
+  "nodes": [
+    { "type": "dir", "name": "personen", "path": "personen",
+      "children": [
+        { "type": "page", "slug": "personen/familie-klein",
+          "name": "familie-klein.md", "title": "Familie Klein",
+          "description": "…", "mtimeMs": 1784700000000 }
+      ] }
+  ]
+}
+```
+
+Titles come from the page's first `# H1`, falling back to frontmatter
+`title`, then the filename.
+
+### `GET /wiki/page?slug=<slug>`
+
+Returns `markdown` plus resolved relationships:
+
+```json
+{
+  "slug": "projekte/somora", "title": "somora", "folder": "projekte",
+  "mtimeMs": 1784700000000,
+  "markdown": "# somora\n…",
+  "links":       [{ "slug": "personen/rene-siegl", "title": "Rene" }],
+  "backlinks":   [{ "slug": "agenten/hans", "title": "Hans" }],
+  "unresolved":  ["personen/familie-rene"],
+  "linkTargets": { "personen/rene-siegl": "personen/rene-siegl",
+                   "familie-rene": null }
+}
+```
+
+`linkTargets` maps every raw `[[target]]` in the body to a slug, or
+`null` when nothing matches. Resolution — exact slug, case-insensitive
+slug, unique basename — lives here so clients don't reimplement
+Obsidian's matching. An ambiguous basename resolves to `null` on
+purpose: guessing one of several same-named pages fabricates a
+relationship.
+
+404 when the slug names no page.
+
+### `GET /wiki/graph?scope=local&slug=<slug>` · `?scope=global`
+
+```json
+{
+  "scope": "local",
+  "nodes": [{ "id": "projekte/somora", "label": "somora",
+              "folder": "projekte", "degree": 41 }],
+  "edges": [{ "from": "agenten/hans", "to": "projekte/somora",
+              "type": "wikilink" }],
+  "truncated": false
+}
+```
+
+`local` returns the page, everything it points at, everything pointing
+at it, and the edges among those neighbours. `global` returns the whole
+wiki, capped at the 400 most-connected pages — `truncated` says whether
+the cap bit. `degree` always counts the full wiki, so a node stays
+recognisable as a hub inside a local view.
+
+`index.md` is excluded from both scopes: it links to every page by
+construction, which makes it a table of contents rather than a
+relationship.
+
+Edge `type` is `wikilink` for inline `[[links]]` and `related` for
+frontmatter `related:` entries.
+
+### `POST /wiki/refresh`
+
+Drops the cache and re-scans. The index otherwise caches for 10 seconds
+and then re-parses only files whose mtime or size changed, so ordinary
+edits appear without this call.
+
+---
+
 ## Dream system
 
 The dream system runs in three phases (REM, Deep, Lucid) — see

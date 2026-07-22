@@ -63,7 +63,10 @@ const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'h
 // Injected into the system prompt when the agent has tools and
 // `agentLoop.toolUsageReminder` is on. Kept short and constant — it has
 // to earn its place in every single prompt.
-const TOOL_USAGE_REMINDER = [
+// Exported so prompt-effect probes can assemble the same system prompt
+// the runtime sends. Measuring a variant that omits it measures a prompt
+// nobody ever sees.
+export const TOOL_USAGE_REMINDER = [
   '## Tools',
   '',
   'You have tools available. They are passed to you through the API tool',

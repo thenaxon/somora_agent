@@ -514,6 +514,17 @@ share a session id like `main` without leaking events across windows.
   (no file movement, no hard delete) so archived sessions stay
   inspectable and can be restored. When the projects feature is on,
   the table also has a Project column with color-coded chips per row.
+- **Wiki explorer** (opt-in, read-only) — a dock tile that opens the
+  shared wiki in three columns: folder tree, rendered page, link graph
+  plus backlinks. Obsidian `[[wikilinks]]` are clickable and navigate
+  in place; targets that match no page render as broken rather than
+  silently disappearing, so gaps in the wiki stay visible. The graph
+  toggles between the current page's neighbourhood and the whole wiki,
+  and clicking a node opens that page. The tile only appears when
+  `wiki.enabled` and `obsidian.vault` are both set — the same gate the
+  server applies to the routes. Nothing here writes: the wiki is owned
+  by Deep/Lucid, and a viewer that could also edit would race them.
+  See [wiki.md](wiki.md#web-explorer).
 - **Project chip + switcher** (opt-in) — when `projects.enabled` is
   on, the chat-window header gains a chip next to the ••• action
   button. Color-pill with project name when pinned; ghost folder
@@ -535,6 +546,8 @@ web/
 │   │   ├── ChatWindow.tsx       ← header + body + input
 │   │   ├── MessageItem.tsx      ← per-message renderer (user/agent/tool)
 │   │   ├── AgentDock.tsx        ← left-edge agent tiles
+│   │   ├── WikiWindow.tsx       ← wiki explorer: tree + reader + links
+│   │   ├── WikiGraph.tsx        ← d3-force layout, plain-SVG rendering
 │   │   └── Taskbar.tsx          ← bottom bar + layout actions
 │   ├── hooks/
 │   │   ├── useAgents.ts         ← /agents poll

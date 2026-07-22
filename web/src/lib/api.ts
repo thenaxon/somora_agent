@@ -520,7 +520,90 @@ export const api = {
     });
     if (!res.ok) throw new Error(`sentinel test ${res.status}`);
   },
+
+  // ─── Wiki explorer (read-only) ─────────────────────────────────────
+  wikiStatus: () => getJson<{ enabled: boolean; root?: string }>('/wiki/status'),
+  wikiTree: () => getJson<WikiTreeResponse>('/wiki/tree'),
+  wikiPage: (slug: string) => getJson<WikiPageResponse>(`/wiki/page?slug=${encodeURIComponent(slug)}`),
+  wikiGraph: (scope: 'local' | 'global', slug?: string) =>
+    getJson<WikiGraphResponse>(
+      scope === 'global'
+        ? '/wiki/graph?scope=global'
+        : `/wiki/graph?scope=local&slug=${encodeURIComponent(slug ?? '')}`,
+    ),
+  wikiRefresh: async (): Promise<void> => {
+    const res = await fetch('/wiki/refresh', { method: 'POST' });
+    if (!res.ok) throw new Error(`wiki refresh ${res.status}`);
+  },
 } as const;
+
+// ─── Wiki types — mirror src/wiki/explorer.ts ────────────────────────
+
+export interface WikiTreeDir {
+  type: 'dir';
+  name: string;
+  path: string;
+  children: WikiTreeNode[];
+}
+
+export interface WikiTreePage {
+  type: 'page';
+  name: string;
+  slug: string;
+  title: string;
+  description: string;
+  mtimeMs: number;
+}
+
+export type WikiTreeNode = WikiTreeDir | WikiTreePage;
+
+export interface WikiTreeResponse {
+  root: string;
+  pages: number;
+  builtAt: number;
+  nodes: WikiTreeNode[];
+}
+
+export interface WikiPageRef {
+  slug: string;
+  title: string;
+}
+
+export interface WikiPageResponse {
+  slug: string;
+  title: string;
+  folder: string;
+  mtimeMs: number;
+  markdown: string;
+  links: WikiPageRef[];
+  /** Link targets in the body that match no page. Rendered as broken. */
+  unresolved: string[];
+  backlinks: WikiPageRef[];
+  /** Raw `[[target]]` string → resolved slug, or null when unresolvable.
+   *  Resolution lives on the server so Obsidian's matching rules exist
+   *  in exactly one place. */
+  linkTargets: Record<string, string | null>;
+}
+
+export interface WikiGraphNode {
+  id: string;
+  label: string;
+  folder: string;
+  degree: number;
+}
+
+export interface WikiGraphEdge {
+  from: string;
+  to: string;
+  type: 'wikilink' | 'related';
+}
+
+export interface WikiGraphResponse {
+  scope: 'local' | 'global';
+  nodes: WikiGraphNode[];
+  edges: WikiGraphEdge[];
+  truncated: boolean;
+}
 
 // Sentinel types — kept in sync with src/sentinel/types.ts on the server.
 export interface SentinelTrigger {

@@ -23,6 +23,16 @@ import { existsSync } from 'node:fs';
 import { readFile as fsReadFile, stat as statFs, readFile as readFileFs } from 'node:fs/promises';
 import { isAbsolute, normalize } from 'node:path';
 import { checkReadAllowed, expandHome, realpathSafeAncestor } from '../tools/file/policy.ts';
+import {
+  buildTree,
+  getPage,
+  getWikiIndex,
+  globalGraph,
+  invalidateWikiIndex,
+  localGraph,
+  readPageMarkdown,
+  resolveLinkTargets,
+} from '../wiki/explorer.ts';
 import { listTmuxSessions } from '../tmux/list.ts';
 import {
   ensureMemoryDirs,
@@ -553,6 +563,108 @@ const FILEVIEW_EXT_KIND: Record<string, 'markdown' | 'text' | 'code'> = {
   '.yml': 'code',
   '.toml': 'code',
 };
+// ─── Wiki explorer (read-only) ───────────────────────────────────────
+//
+// Slug-addressed, never path-addressed. A request can only name pages
+// the index already found under the configured wiki root, so `../`,
+// symlink escapes and non-markdown files are rejected by construction
+// rather than by a filter someone has to keep correct.
+//
+// All routes 503 when the wiki is off — the same gate the dock tile
+// uses to hide itself (opt-in features need every gate, not one).
+
+/** Absolute wiki root, or null when wiki/vault aren't both configured. */
+function wikiRootOrNull(): string | null {
+  if (!config.wiki.enabled) return null;
+  const vault = config.obsidian?.vault;
+  if (typeof vault !== 'string' || vault.length === 0) return null;
+  return resolvePath(expandHome(vault), config.wiki.vaultSubfolder);
+}
+
+function wikiDisabled(c: Context) {
+  return c.json(
+    {
+      error:
+        'wiki is not enabled — set wiki.enabled and obsidian.vault in ~/.somora/config.yaml',
+    },
+    503,
+  );
+}
+
+app.get('/wiki/status', (c) => {
+  const root = wikiRootOrNull();
+  return c.json({ enabled: root !== null, ...(root ? { root } : {}) });
+});
+
+app.get('/wiki/tree', async (c) => {
+  const root = wikiRootOrNull();
+  if (!root) return wikiDisabled(c);
+  const index = await getWikiIndex(root);
+  return c.json({
+    root,
+    pages: index.pages.size,
+    builtAt: index.builtAt,
+    nodes: buildTree(index),
+  });
+});
+
+app.post('/wiki/refresh', async (c) => {
+  const root = wikiRootOrNull();
+  if (!root) return wikiDisabled(c);
+  invalidateWikiIndex();
+  const index = await getWikiIndex(root);
+  return c.json({ pages: index.pages.size, builtAt: index.builtAt });
+});
+
+app.get('/wiki/page', async (c) => {
+  const root = wikiRootOrNull();
+  if (!root) return wikiDisabled(c);
+  const slug = c.req.query('slug');
+  if (typeof slug !== 'string' || slug.length === 0) {
+    return c.json({ error: 'missing slug query' }, 400);
+  }
+  const index = await getWikiIndex(root);
+  const hit = getPage(index, slug);
+  if (!hit) return c.json({ error: `no wiki page '${slug}'` }, 404);
+  let markdown: string;
+  try {
+    markdown = await readPageMarkdown(hit.meta);
+  } catch (err) {
+    return c.json({ error: `read failed: ${(err as Error).message}` }, 500);
+  }
+  // Resolve every wikilink in the body so the reader can turn them into
+  // in-window navigation without reimplementing Obsidian's matching.
+  const targets = [...markdown.matchAll(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]*))?\]\]/g)]
+    .map((m) => m[1]?.trim())
+    .filter((t): t is string => Boolean(t));
+  return c.json({
+    slug: hit.meta.slug,
+    title: hit.meta.title,
+    folder: hit.meta.folder,
+    mtimeMs: hit.meta.mtimeMs,
+    markdown,
+    links: hit.meta.links.map((s) => ({ slug: s, title: index.pages.get(s)?.title ?? s })),
+    unresolved: hit.meta.unresolved,
+    backlinks: hit.backlinks.map((p) => ({ slug: p.slug, title: p.title })),
+    linkTargets: resolveLinkTargets(index, [...new Set(targets)]),
+  });
+});
+
+app.get('/wiki/graph', async (c) => {
+  const root = wikiRootOrNull();
+  if (!root) return wikiDisabled(c);
+  const index = await getWikiIndex(root);
+  const scope = c.req.query('scope') === 'global' ? 'global' : 'local';
+  if (scope === 'global') return c.json({ scope, ...globalGraph(index) });
+  const slug = c.req.query('slug');
+  if (typeof slug !== 'string' || slug.length === 0) {
+    return c.json({ error: 'local scope needs a slug' }, 400);
+  }
+  const g = localGraph(index, slug);
+  if (!g) return c.json({ error: `no wiki page '${slug}'` }, 404);
+  return c.json({ scope, ...g });
+});
+
 app.get('/files/view', async (c) => {
   const raw = c.req.query('path');
   if (typeof raw !== 'string' || raw.length === 0) {

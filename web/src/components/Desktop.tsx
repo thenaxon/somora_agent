@@ -16,6 +16,7 @@ import { TmuxTerminalWindow } from './TmuxTerminalWindow';
 import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
 import { SentinelWindow } from './SentinelWindow';
+import { WikiWindow } from './WikiWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
 import { FileViewProvider } from './FileViewContext';
@@ -95,6 +96,7 @@ export function Desktop() {
                   if (w.kind === 'tmux-list') return ['tmux'];
                   if (w.kind === 'sessions-list') return ['sessions'];
                   if (w.kind === 'sentinel') return ['sentinel'];
+                  if (w.kind === 'wiki') return ['wiki'];
                   return [];
                 }),
               )
@@ -103,6 +105,7 @@ export function Desktop() {
             onTerminalClick={() => wm.openShellTerm()}
             onSessionsClick={() => wm.openSessionsList()}
             onSentinelClick={() => wm.openSentinelList()}
+            onWikiClick={() => wm.openWiki()}
           />
         </div>
 
@@ -255,6 +258,25 @@ export function Desktop() {
                 onResize={wm.resize}
               >
                 <SentinelWindow />
+              </Window>
+            );
+          }
+          if (win.kind === 'wiki') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <WikiWindow
+                  slug={win.wikiSlug}
+                  onSlugChange={(slug) => wm.setWikiSlug(win.id, slug)}
+                />
               </Window>
             );
           }
