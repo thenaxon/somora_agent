@@ -122,6 +122,45 @@ The trade-off is JSONL size: each user_message stores the recall
 block alongside the user-typed text (~500-2000 chars per turn).
 Acceptable cost for the cache win.
 
+#### Tool-execution evidence
+
+The rebuild also emits a compact record of the tool calls each past turn
+made, ahead of that turn's assistant text:
+
+```text
+<somora-tool-log>
+183 Aufrufe:
+- file_write ×5 → ok (server.js, index.html, style.css)
+- exec ×173 → ok (npm install, curl -I http://localhost:3000, lsof -i :3000)
+- web_search → ok (tetris scoring rules)
+</somora-tool-log>
+```
+
+Without it the rebuilt conversation contains only prose, and a model
+reading its own transcript finds no evidence it ever called a tool —
+weaker models then stop calling tools entirely, mid-session. Grouping is
+per tool, so even extreme turns stay small: a 183-call turn renders as
+five lines (~140 tokens, measured).
+
+The block rides in an assistant-role message (a per-turn `system`
+message would break the strict user/assistant alternation some local
+backends require), so the tag is load-bearing: without it a model reads
+the block as its own prose. The first live test of this feature had
+claude-haiku apologise for "inventing this notation and not actually
+calling a tool". What the tag means is stated once in the system prompt
+(`agentLoop.toolUsageReminder`) rather than repeated per block.
+
+This is cache-safe by construction. The record derives deterministically
+from immutable JSONL events, in event order, so every rebuild of the
+same history produces the identical byte sequence — the prefix match
+holds exactly as it did before. The one-time cost is that histories
+recorded before this landed rebuild differently than they did on the
+previous turn, so the first turn after upgrading misses cache.
+
+The same record is attached to cross-engine replay pairs
+(`src/engine/replay.ts`), for the same reason: a catch-up block made of
+pure prose teaches the incoming engine that nobody here uses tools.
+
 ### Why we tried "late-system" first and reverted
 
 A first-pass fix (commit `49c682a`) injected memory as a SECOND

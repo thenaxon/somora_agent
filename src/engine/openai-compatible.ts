@@ -28,6 +28,7 @@ import { logger } from '../server/logger.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { withFromAgentHeader } from './a2a.ts';
+import { createToolTraceCollector, renderToolTrace } from './tool-trace.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
@@ -54,7 +55,10 @@ interface OpenAiCompatibleMeta {
   compactions?: Compaction[];
 }
 
-async function buildMessages(
+// Exported for the history-rebuild regression tests
+// (./openai-history.test.mts) — the shape of what we hand a stateless
+// backend is load-bearing enough to assert on directly.
+export async function buildMessages(
   systemPrompt: string,
   history: NormalizedEvent[],
   compactions: Compaction[] | undefined,
@@ -92,6 +96,22 @@ async function buildMessages(
     }
     pendingRole = null;
     pendingText = '';
+  };
+
+  // Tool-execution evidence. Without this the rebuilt history contains
+  // only prose, and the model — which has no memory beyond what we hand
+  // it — concludes from its own transcript that its job here is writing
+  // text. See the header of ./tool-trace.ts for the measured incident.
+  const trace = createToolTraceCollector();
+  /** Emit whatever tool calls have accumulated, ahead of the assistant
+   *  text they belong to. */
+  const flushTrace = () => {
+    if (trace.pending === 0) return;
+    const block = renderToolTrace(trace.take());
+    if (!block) return;
+    if (pendingRole !== 'assistant') flush();
+    pendingRole = 'assistant';
+    pendingText = pendingText ? `${pendingText}\n\n${block}` : block;
   };
 
   for (const ev of history) {
@@ -157,12 +177,25 @@ async function buildMessages(
       pendingRole = 'user';
       pendingText = pendingText ? `${pendingText}\n\n${composed}` : composed;
     } else if (ev.kind === 'assistant_message') {
+      // Tool evidence first — it happened before this text did.
+      flushTrace();
       if (pendingRole !== 'assistant') flush();
       pendingRole = 'assistant';
       pendingText = pendingText ? `${pendingText}\n\n${ev.text}` : ev.text;
+    } else if (ev.kind === 'tool_call') {
+      trace.call(ev.callId, ev.tool, ev.input);
+    } else if (ev.kind === 'tool_result') {
+      trace.result(ev.callId, ev.error);
+    } else if (ev.kind === 'turn_start') {
+      // A turn that ended without an assistant_message (crash, abort)
+      // leaves calls uncollected. Emit them here rather than letting
+      // them bleed into the next turn's assistant message.
+      flushTrace();
     }
-    // tool_call / tool_result / deltas / turn_start / turn_end → ignore for chat.completions
+    // deltas / turn_end → ignore for chat.completions
   }
+  // Trailing tools from a turn still in flight / never closed.
+  flushTrace();
   flush();
   return messages;
 }

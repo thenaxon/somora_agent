@@ -376,6 +376,13 @@ compaction:
 agentLoop:
   maxRounds: 8                # tool-call rounds per turn (openai-compatible)
   toolCallTimeoutMs: 30000    # per-tool-call timeout
+  toolUsageReminder: true     # short "call tools, don't narrate" block in the
+                              # system prompt whenever the agent has tools.
+                              # Tools reach the model through a separate API
+                              # field, never through prompt text; smaller local
+                              # models benefit from being told so explicitly.
+                              # Constant text — one cache invalidation on
+                              # rollout, none afterwards.
 
 # Per-engine idle-event watchdog. If an engine produces no events
 # (assistant_delta, tool_call, …) for this duration mid-turn, the

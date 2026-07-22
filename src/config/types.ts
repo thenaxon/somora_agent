@@ -331,8 +331,22 @@ export const AgentLoopConfigSchema = z.object({
    * multi-agent operation while still preventing a runaway scenario.
    */
   execMaxConcurrentGlobal: z.number().int().positive().default(32),
+  /**
+   * Inject a short "you have tools — call them, don't narrate" block
+   * into the system prompt whenever the agent has at least one tool.
+   *
+   * Tools reach the model through a separate API field, never through
+   * the prompt text. Strong models treat that formal declaration as
+   * binding; weaker local models weigh the conversation more heavily
+   * and can talk themselves out of tool use (bug 2026-07-22 — see
+   * src/engine/tool-trace.ts for the measured case). This block is the
+   * cheap belt to that fix's braces. Constant text, so it costs one
+   * cache invalidation on rollout and nothing afterwards.
+   */
+  toolUsageReminder: z.boolean().default(true),
 }).default({
   maxRounds: 8,
+  toolUsageReminder: true,
   toolCallTimeoutMs: 30_000,
   longTaskDefaultTimeoutMs: 300_000,
   longTaskMaxTimeoutMs: 1_800_000,
@@ -821,6 +835,29 @@ export type ObsidianConfig = z.infer<typeof ObsidianConfigSchema>;
 //
 // `enabled: false` is the default so existing setups don't change
 // behavior until the operator opts in.
+// Anti-clobber guard for Deep's MERGE path. The Deep prompt asks the
+// worker model to return the FULL updated page body; on large pages a
+// model may silently summarize instead of integrating, and the caller
+// would write that shrunken body as the new page. Real incident
+// 2026-07-13 on an external instance: a 22 KB page came back as 2.7 KB
+// and the pre-existing content was lost (Deep auto-applies, so no human
+// saw it). The guard compares body sizes before writing and refuses the
+// merge when the result shrank past `minRatio`.
+//
+// `minExistingBytes` exempts small pages: on a 400-byte stub a rewrite
+// to 150 bytes is normal editing, not a catastrophe, and blocking it
+// would just stall consolidation.
+export const WikiMergeShrinkGuardSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** Refuse the merge when newBody < existingBody * minRatio. */
+    minRatio: z.number().positive().max(1).default(0.5),
+    /** Pages smaller than this (bytes of body) are never guarded. */
+    minExistingBytes: z.number().int().nonnegative().default(2000),
+  })
+  .default({ enabled: true, minRatio: 0.5, minExistingBytes: 2000 });
+export type WikiMergeShrinkGuard = z.infer<typeof WikiMergeShrinkGuardSchema>;
+
 export const WikiDeepConfigSchema = z
   .object({
     enabled: z.boolean().default(true),
@@ -836,11 +873,14 @@ export const WikiDeepConfigSchema = z
      *  forwards effort/reasoning_effort per engine. Unset = engine
      *  default (no thinking). */
     thinking: ThinkingLevelSchema.optional(),
+    /** Anti-clobber guard on the MERGE write path. */
+    mergeShrinkGuard: WikiMergeShrinkGuardSchema,
   })
   .default({
     enabled: true,
     intervalHours: 12,
     requireApproval: false,
+    mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
   });
 
 export const WikiLucidConfigSchema = z
@@ -920,6 +960,7 @@ export const WikiConfigSchema = z
       enabled: true,
       intervalHours: 12,
       requireApproval: false,
+      mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
     },
     lucid: {
       enabled: true,

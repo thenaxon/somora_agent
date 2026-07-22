@@ -112,7 +112,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   for (const [vaultPath, agentsInVault] of byVault) {
     if (args.signal?.aborted) break;
     const wikiAbs = join(vaultPath, wikiSubfolder);
-    const ctx: ActionContext = { wikiAbs };
+    const ctx: ActionContext = { wikiAbs, mergeShrinkGuard: args.config.wiki.deep.mergeShrinkGuard };
 
     for (const agent of agentsInVault) {
       if (args.signal?.aborted) break;

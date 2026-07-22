@@ -38,6 +38,7 @@ function stripLeadingFrontmatter(body: string): string {
   if (Object.keys(parsed.data).length === 0) return body;
   return parsed.content.startsWith('\n') ? parsed.content : `\n${parsed.content}`;
 }
+import type { WikiMergeShrinkGuard } from '../config/types.ts';
 import type {
   CandidateOutcome,
   MemoryFateDecision,
@@ -47,7 +48,20 @@ import type {
 export interface ActionContext {
   /** Absolute path to the wiki root (<vault>/<wiki-subfolder>). */
   wikiAbs: string;
+  /** Anti-clobber guard for the merge path. Optional so callers that
+   *  predate it still compile; when absent the built-in default below
+   *  applies — the guard must never be OFF just because a caller forgot
+   *  to thread config through. */
+  mergeShrinkGuard?: WikiMergeShrinkGuard;
 }
+
+/** Fallback when no config was threaded in. Mirrors the Zod defaults in
+ *  `config/types.ts` — deliberately guard-ON, see the note above. */
+const DEFAULT_MERGE_SHRINK_GUARD: WikiMergeShrinkGuard = {
+  enabled: true,
+  minRatio: 0.5,
+  minExistingBytes: 2000,
+};
 
 /**
  * Apply a "promote" decision: create the wiki page, then delete the
@@ -169,6 +183,48 @@ export async function applyMerge(args: {
     for (const r of decision.related) relatedSet.add(r);
   }
   const cleanBody = stripLeadingFrontmatter(decision.body);
+
+  // ── Anti-clobber guard ──────────────────────────────────────────
+  // The prompt asks for the FULL integrated body. When the model
+  // summarizes instead (realistic on large pages), writing the result
+  // destroys the page. Compare body sizes and refuse rather than write.
+  //
+  // On a trip we return BEFORE deleteSourceMemory — that is the whole
+  // point: the memory file survives, so the content still exists in two
+  // places (wiki page untouched + memory) instead of zero. `transient`
+  // keeps it out of the skip-cache so the next Deep run retries; a
+  // retry is a fresh LLM call and may well produce a proper merge.
+  const guard = ctx.mergeShrinkGuard ?? DEFAULT_MERGE_SHRINK_GUARD;
+  if (guard.enabled) {
+    const existingLen = parsed.body.trim().length;
+    const newLen = cleanBody.trim().length;
+    if (existingLen >= guard.minExistingBytes && newLen < existingLen * guard.minRatio) {
+      logger.warn({
+        msg: 'dream.deep.merge_shrink_blocked',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        wikiPath,
+        existingBodyChars: existingLen,
+        newBodyChars: newLen,
+        ratio: Number((newLen / existingLen).toFixed(3)),
+        minRatio: guard.minRatio,
+        hint:
+          'worker returned a much shorter body than the existing page — refusing the write to ' +
+          'prevent content loss. Wiki page and source memory are both untouched; next Deep run ' +
+          'retries. Tune via config.yaml wiki.deep.mergeShrinkGuard.',
+      });
+      return {
+        kind: 'skipped',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        reason:
+          `merge into ${wikiPath} refused: worker body ${newLen} chars vs existing ` +
+          `${existingLen} chars (below ${guard.minRatio}× guard) — would have destroyed content`,
+        transient: true,
+      };
+    }
+  }
+
   const newPage = buildWikiPage({
     frontmatter: {
       ...parsed.frontmatter,

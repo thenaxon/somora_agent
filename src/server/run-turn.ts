@@ -55,10 +55,35 @@ import { synthesize } from '../tts/service.ts';
 import { prepareForTts } from '../tts/prepare-for-tts.ts';
 import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
+import { TOOL_LOG_CLOSE_TAG, TOOL_LOG_OPEN_TAG } from '../engine/tool-trace.ts';
 import { buildSelfPointer } from './workspace.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 
 const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
+
+// Injected into the system prompt when the agent has tools and
+// `agentLoop.toolUsageReminder` is on. Kept short and constant — it has
+// to earn its place in every single prompt.
+const TOOL_USAGE_REMINDER = [
+  '## Werkzeuge',
+  '',
+  'Dir stehen Werkzeuge zur Verfügung. Sie werden dir über den',
+  'Werkzeug-Kanal der API übergeben, nicht in diesem Text aufgelistet —',
+  'sie sind auch dann vorhanden, wenn im bisherigen Gesprächsverlauf',
+  'gerade keine Aufrufe zu sehen sind.',
+  '',
+  'Beschreibe eine Ausführung niemals nur in Worten. Willst du eine',
+  'Datei schreiben, einen Befehl ausführen oder etwas nachschlagen,',
+  'dann rufe das passende Werkzeug auf. Ein Satz wie „ich lege die',
+  'Datei jetzt an" ohne den zugehörigen Aufruf ist ein Fehler: es',
+  'passiert dann nichts, und der Nutzer wartet vergeblich.',
+  '',
+  `Im Gesprächsverlauf findest du Blöcke der Form ${TOOL_LOG_OPEN_TAG} …`,
+  `${TOOL_LOG_CLOSE_TAG}. Das sind Protokolle des Systems über Werkzeuge,`,
+  'die du in dem jeweiligen Turn tatsächlich ausgeführt hast — kein von',
+  'dir geschriebener Text. Behandle sie als Beleg, nicht als etwas, das',
+  'du korrigieren oder dich dafür entschuldigen müsstest.',
+].join('\n');
 
 /**
  * Build the project-block portion of the system prompt. Returns the
@@ -674,8 +699,17 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     // project is pinned. Project lookup uses freshly-read from disk so
     // a project_update on the same turn lands in the next turn.
     const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
+    // Tool-usage reminder — constant text, so it sits BEFORE the more
+    // volatile skills/project blocks and keeps the existing static →
+    // volatile cache hierarchy intact. Gated on the agent actually
+    // having tools; telling a tool-less agent to call tools is noise.
+    // Rationale for its existence: src/engine/tool-trace.ts header.
+    const toolsBlock =
+      deps.config.agentLoop.toolUsageReminder && availableTools.length > 0
+        ? `\n\n---\n\n${TOOL_USAGE_REMINDER}`
+        : '';
     const systemPromptForTurn =
-      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${skillsBlock}${projectBlock}`;
+      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${toolsBlock}${skillsBlock}${projectBlock}`;
 
     logger.info({
       msg: 'turn.engine_init',

@@ -239,7 +239,41 @@ Returns a structured `MemoryFateDecision`:
   "logSummary": "familie-klein aktualisiert: ..." }
 ```
 
-Deep applies the decision verbatim. No second LLM call at apply-time.
+Deep applies the decision verbatim. No second LLM call at apply-time —
+with one exception, the merge guard below.
+
+### Merge guard (anti-clobber)
+
+The `merge` decision asks the worker for the **full** updated page body,
+and Deep writes that body as the new page. On large pages this is a real
+failure mode: instead of integrating the new fact, a model may return a
+*summary* of the page — and the page shrinks from 22 KB to 3 KB with the
+old content gone. Deep auto-applies, so nothing catches it in between.
+
+Before writing, Deep therefore compares body sizes. When the new body is
+shorter than `minRatio` × the existing body, the merge is refused:
+
+- the wiki page stays untouched,
+- the **source memory file is not deleted** — it survives for the next
+  run, so the content still exists in two places rather than none,
+- a `dream.deep.merge_shrink_blocked` warning is logged with both sizes,
+- the candidate is not written to the skip-cache, so the next Deep run
+  retries it with a fresh LLM call.
+
+```yaml
+wiki:
+  deep:
+    mergeShrinkGuard:
+      enabled: true            # default
+      minRatio: 0.5            # refuse when newBody < 0.5 × existingBody
+      minExistingBytes: 2000   # pages below this are never guarded
+```
+
+`minExistingBytes` exempts small pages: shrinking a 400-byte stub is
+normal editing, and guarding it would only stall consolidation.
+
+If a specific page trips the guard repeatedly, that is the signal that
+it has outgrown full-body merges — split it into sub-pages.
 
 ### Hash-cache
 
@@ -495,6 +529,10 @@ wiki:
     model: opus
     # thinking: medium                   # optional; reasoning_effort for the
                                          # Deep worker LLM. Off by default.
+    mergeShrinkGuard:
+      enabled: true                      # refuse merges that shrink a page
+      minRatio: 0.5                      # newBody < 0.5 × existingBody → skip
+      minExistingBytes: 2000             # smaller pages are never guarded
   lucid:
     enabled: true
     intervalDays: 7
