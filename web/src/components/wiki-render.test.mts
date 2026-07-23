@@ -19,7 +19,7 @@ const t = (name: string, fn: () => void) => {
 t('WikiWindow ohne Seite', () => {
   const html = renderToString(React.createElement(WikiWindow, { onSlugChange: () => {} }));
   if (!html.includes('wiki-root')) throw new Error('kein wiki-root im Markup');
-  if (!html.includes('Wähle links eine Seite')) throw new Error('Leerzustand fehlt');
+  if (!html.includes('Select a page on the left')) throw new Error('Leerzustand fehlt');
 });
 
 t('WikiWindow mit Slug', () => {
@@ -31,7 +31,7 @@ t('WikiGraph leer', () => {
     graph: { scope: 'local', nodes: [], edges: [], truncated: false },
     activeSlug: null, onOpen: () => {},
   }));
-  if (!html.includes('Keine Verbindungen')) throw new Error('Leerzustand fehlt');
+  if (!html.includes('No connections')) throw new Error('Leerzustand fehlt');
 });
 
 t('WikiGraph mit Knoten', () => {
@@ -55,7 +55,7 @@ t('WikiGraph gekuerzt zeigt Hinweis', () => {
     graph: { scope: 'global', nodes: [{ id: 'a', label: 'A', folder: '', degree: 0 }], edges: [], truncated: true },
     activeSlug: null, onOpen: () => {},
   }));
-  if (!html.includes('Gekürzt')) throw new Error('Kuerzungs-Hinweis fehlt');
+  if (!html.includes('most-connected')) throw new Error('Kuerzungs-Hinweis fehlt');
 });
 
 console.log(`\n${ok} ok, ${bad} fehlgeschlagen`);

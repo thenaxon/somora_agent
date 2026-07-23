@@ -45,6 +45,7 @@ function WikiWindowImpl({ slug, onSlugChange }: Props) {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState('');
+  const [graphExpanded, setGraphExpanded] = useState(false);
 
   const active = slug ?? null;
 
@@ -171,7 +172,7 @@ function WikiWindowImpl({ slug, onSlugChange }: Props) {
         if (typeof href === 'string' && href.startsWith('wiki-broken:')) {
           const target = decodeURIComponent(href.slice('wiki-broken:'.length));
           return (
-            <span className="wiki-link-broken" title={`Keine Seite '${target}'`}>
+            <span className="wiki-link-broken" title={`No such page '${target}'`}>
               {children}
             </span>
           );
@@ -210,13 +211,13 @@ function WikiWindowImpl({ slug, onSlugChange }: Props) {
         <div className="wiki-tree-head">
           <input
             className="wiki-filter"
-            placeholder="filtern…"
+            placeholder="filter…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
           <button
             className="wiki-icon-btn"
-            title="Neu einlesen"
+            title="Re-scan"
             disabled={busy}
             onClick={() => void refresh()}
           >
@@ -224,8 +225,8 @@ function WikiWindowImpl({ slug, onSlugChange }: Props) {
           </button>
         </div>
         <div className="wiki-tree">
-          {filtered === null && <div className="wiki-muted">lädt…</div>}
-          {filtered?.length === 0 && <div className="wiki-muted">nichts gefunden</div>}
+          {filtered === null && <div className="wiki-muted">Loading…</div>}
+          {filtered?.length === 0 && <div className="wiki-muted">no matches</div>}
           {filtered?.map((n) => (
             <TreeNode
               key={n.type === 'dir' ? `d:${n.path}` : `p:${n.slug}`}
@@ -247,14 +248,14 @@ function WikiWindowImpl({ slug, onSlugChange }: Props) {
         </div>
         {tree && (
           <div className="wiki-tree-foot">
-            {tree.pages} Seiten
+            {tree.pages} pages
           </div>
         )}
       </div>
 
       <div className="wiki-col wiki-col-reader">
         {error && <div className="wiki-error">{error}</div>}
-        {!page && !error && <div className="wiki-muted wiki-pad">Wähle links eine Seite.</div>}
+        {!page && !error && <div className="wiki-muted wiki-pad">Select a page on the left.</div>}
         {page && (
           <>
             <div className="wiki-page-head">
@@ -281,40 +282,48 @@ function WikiWindowImpl({ slug, onSlugChange }: Props) {
         )}
       </div>
 
-      <div className="wiki-col wiki-col-graph">
+      <div className={graphExpanded ? 'wiki-col wiki-col-graph expanded' : 'wiki-col wiki-col-graph'}>
         <div className="wiki-graph-head">
           <Network size={14} />
           <button
             className={scope === 'local' ? 'wiki-tab active' : 'wiki-tab'}
+            title="Just this page and its direct neighbours"
             onClick={() => setScope('local')}
           >
-            lokal
+            This page
           </button>
           <button
             className={scope === 'global' ? 'wiki-tab active' : 'wiki-tab'}
+            title="The whole wiki at once"
             onClick={() => setScope('global')}
           >
-            global
+            Whole wiki
           </button>
         </div>
         <div className="wiki-graph-wrap">
           {graph ? (
-            <WikiGraph graph={graph} activeSlug={active} onOpen={openSlug} />
+            <WikiGraph
+              graph={graph}
+              activeSlug={active}
+              onOpen={openSlug}
+              expanded={graphExpanded}
+              onToggleExpand={() => setGraphExpanded((v) => !v)}
+            />
           ) : (
             <div className="wiki-graph-empty">
-              {scope === 'local' ? 'Keine Seite gewählt.' : 'lädt…'}
+              {scope === 'local' ? 'Select a page on the left.' : 'Loading…'}
             </div>
           )}
         </div>
-        {page && (
+        {page && !graphExpanded && (
           <div className="wiki-links-panel">
-            <LinkList title="verlinkt" items={page.links} onOpen={openSlug} />
-            <LinkList title="Backlinks" items={page.backlinks} onOpen={openSlug} />
+            <LinkList title="links to" items={page.links} onOpen={openSlug} />
+            <LinkList title="backlinks" items={page.backlinks} onOpen={openSlug} />
             {page.unresolved.length > 0 && (
               <div className="wiki-link-group">
-                <div className="wiki-link-title">kaputt ({page.unresolved.length})</div>
+                <div className="wiki-link-title">broken ({page.unresolved.length})</div>
                 {page.unresolved.map((u) => (
-                  <div key={u} className="wiki-link-broken-row" title="Seite existiert nicht">
+                  <div key={u} className="wiki-link-broken-row" title="No such page">
                     {u}
                   </div>
                 ))}

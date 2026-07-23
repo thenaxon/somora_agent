@@ -296,13 +296,16 @@ basename. A basename matching several pages stays unresolved rather
 than picking one; a wrong edge reads as a real relationship and is
 worse than a missing one.
 
-The graph toggles between **local** (the current page, what it links
+The graph toggles between **This page** (the current page, what it links
 to, and what links to it — plus the edges among those neighbours) and
-**global** (the whole wiki, capped at the 400 most-connected pages).
-Clicking a node opens that page. `index.md` is excluded from both: it
-links to every page by construction, so including it turns the graph
-into a star around one node and adds hundreds of edges that say nothing
-about how the knowledge connects.
+**Whole wiki** (every page at once, capped at the 400 most-connected).
+Scroll to zoom, drag the background to pan, and the expand button gives
+the graph the full window — a dense whole-wiki view only becomes legible
+once you can zoom into a corner and read the labels. Clicking a node
+opens that page. `index.md` is excluded from both scopes: it links to
+every page by construction, so including it turns the graph into a star
+around one node and adds hundreds of edges that say nothing about how
+the knowledge connects.
 
 Read-only is deliberate. Deep and Lucid own the wiki files; an editor
 in the browser would race them mid-run.

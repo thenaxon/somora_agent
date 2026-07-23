@@ -1353,7 +1353,47 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   position: relative;
   border-bottom: 1px solid var(--line);
 }
-.wiki-graph { width: 100%; height: 100%; overflow: hidden; }
+.wiki-graph { width: 100%; height: 100%; overflow: hidden; position: relative; }
+
+/* Expanded: the graph column overlays the whole wiki window so a dense
+ * global graph gets the full canvas. The reader + tree stay mounted
+ * underneath (state preserved), just covered. */
+.wiki-col-graph.expanded {
+  position: absolute;
+  inset: 0;
+  width: auto;
+  flex: none;
+  z-index: 5;
+  border-left: none;
+  background: var(--bg-1);
+}
+.wiki-col-graph.expanded .wiki-graph-wrap {
+  flex: 1 1 auto;
+  height: auto;
+  border-bottom: none;
+}
+
+.wiki-graph-controls {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wiki-graph-ctl {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.wiki-graph-ctl:hover { color: var(--accent); border-color: var(--accent-dim); }
 .wiki-graph-empty {
   padding: 14px;
   color: var(--text-3);
