@@ -165,6 +165,11 @@ export interface Trigger {
   /** Computed next-fire time. Updated by the scheduler after each
    *  fire and at boot recovery. ISO timestamp. */
   nextFireAt?: string;
+  /** Set (UTC `YYYY-MM-DD`) when the scheduler auto-pauses this trigger
+   *  because it hit its daily fire cap. The daily-cap resume sweep flips
+   *  it back to `active` once the UTC day rolls over. Absent for
+   *  user-set pauses and error-pauses, which never auto-resume. */
+  autoPausedForDayUtc?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────

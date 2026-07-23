@@ -60,12 +60,27 @@ export function extractCompactionRange(
   for (const ev of history) {
     if (ev.ts <= sinceTs) continue;
     if (ev.kind === 'user_message') {
+      if (pendingUser !== undefined) {
+        // The previous user turn never got an assistant reply (e.g. the
+        // turn ended in an error before any text was produced). Without
+        // this flush the pending message would be overwritten here and
+        // vanish from the compacted context entirely. Preserve it as an
+        // unanswered pair so its content survives the summary.
+        pairs.push({
+          ts: pendingUser.ts,
+          user: pendingUser.text,
+          assistant: '[kein Assistant-Reply — Turn ohne Antwort beendet]',
+        });
+      }
       pendingUser = { ts: ev.ts, text: ev.text };
     } else if (ev.kind === 'assistant_message' && pendingUser !== undefined) {
       pairs.push({ ts: ev.ts, user: pendingUser.text, assistant: ev.text });
       pendingUser = undefined;
     }
   }
+  // A still-pending user at loop end is the newest (possibly in-flight)
+  // turn: it stays in live history (ts > throughTs) and is deliberately
+  // NOT flushed here, so it isn't double-counted into the compaction.
 
   const cushion = config.safetyCushionPairs;
   if (pairs.length <= cushion) {

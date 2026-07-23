@@ -79,12 +79,25 @@ export async function writeSchedulerState(
   await fs.rename(tmp, statePath(worker));
 }
 
-/** The reference timestamp used for `nextDueAt` computation. Prefer
- *  the last successful completion; fall back to the last start (so a
- *  worker that crashed mid-run still doesn't loop-fire on each
- *  restart) and finally to the last failure. */
+/** The reference timestamp used for `nextDueAt` computation: the most
+ *  recent run event (attempt or completion), whichever is latest.
+ *
+ *  This must be the MAX, not a completed-first priority chain. On a
+ *  failed run the worker records `lastFailedAt` (and `lastStartedAt`)
+ *  but keeps the older `lastCompletedAt`; a completed-first anchor would
+ *  resolve to that stale completion, `nextDelayMs` would read it as
+ *  "overdue", and the heavy-LLM run would re-fire after only
+ *  STARTUP_GRACE_MS — every ~60s, forever. Anchoring on the latest event
+ *  instead spaces the retry after a failure by a full interval, and a
+ *  worker that crashed mid-run (only `lastStartedAt`) still doesn't
+ *  loop-fire on restart (Juni-Audit 2026-06). */
 export function lastRelevantRunAt(state: SchedulerState): number | null {
-  return state.lastCompletedAt ?? state.lastStartedAt ?? state.lastFailedAt;
+  const candidates = [
+    state.lastCompletedAt,
+    state.lastStartedAt,
+    state.lastFailedAt,
+  ].filter((t): t is number => typeof t === 'number');
+  return candidates.length > 0 ? Math.max(...candidates) : null;
 }
 
 /** Pick the actual delay for the next scheduler firing.

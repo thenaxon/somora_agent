@@ -127,13 +127,15 @@ confirmation, but they cannot bypass these limits:
 |---|---|---|
 | **Minimum interval** | 60 s | No sub-minute polling possible |
 | **Max active triggers per agent** | 50 | Prevents accidental fan-out |
-| **Max fires per trigger per day (UTC)** | 500 | Auto-pauses with status `paused` + reason `daily_cap` |
+| **Max fires per trigger per day (UTC)** | 500 | Auto-pauses with status `paused` + reason `daily_cap`; auto-resumes when the UTC day rolls over |
 | **Auto-pause on consecutive errors** | 3 | Status → `error`, sticky until user resumes |
 
-When a trigger hits an auto-pause condition, it's visible in the web-UI
-with a red status icon and the reason — fix the underlying cause
-(e.g. expired `gog login` for an exec-source in Phase 2), then click
-**resume**.
+A **daily-cap** pause is temporary: the scheduler flips the trigger back
+to `active` automatically once the UTC day rolls over and its fire count
+resets — no manual action needed. An **error** pause is sticky: it stays
+paused until you fix the underlying cause (e.g. expired `gog login` for
+an exec-source in Phase 2) and click **resume**. Both are visible in the
+web-UI with a status icon and the reason.
 
 ## Completed-trigger retention (GC)
 
@@ -157,9 +159,9 @@ any time and bypasses the retention window.
 
 Recurring triggers (`every` / `daily` / `weekly` / `cron`) never
 reach `completed` status under normal operation — they go to
-`paused` (manual or auto via daily-cap) or `error` (auto-paused after
-the 3-consecutive-fail streak). Those don't auto-GC; you choose
-when to remove them.
+`paused` (manual, or auto via daily-cap which auto-resumes next UTC day)
+or `error` (auto-paused after the 3-consecutive-fail streak). Those
+don't auto-GC; you choose when to remove them.
 
 ## Catch-up policy when somora was down
 

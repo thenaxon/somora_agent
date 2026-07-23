@@ -39,7 +39,12 @@ import { newTaskId, registerTask, completeTask, failTask } from '../server/async
 import { resolveSessionId, createSession } from '../storage/sessions.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { reserveSpawnSlot, releaseSpawnSlot } from '../tools/agents/spawn.ts';
-import { computeNextFire } from './schedule.ts';
+import {
+  computeNextFire,
+  utcDayStr,
+  utcMidnightAfter,
+  isDailyCapResumeDue,
+} from './schedule.ts';
 import { buildFirePrompt } from './dispatcher.ts';
 import {
   countFiresToday,
@@ -119,6 +124,46 @@ async function gcStaleTriggers(): Promise<number> {
   return removed;
 }
 
+/** Flip daily-cap-paused triggers back to `active` once the UTC day has
+ *  rolled over (their fire count has reset, so they can run again).
+ *  Returns how many were revived. User-set and error pauses carry no
+ *  `autoPausedForDayUtc` marker and are left untouched. */
+async function resumeDailyCapPaused(now: Date = new Date()): Promise<number> {
+  let resumed = 0;
+  for (const t of listTriggers()) {
+    if (t.status !== 'paused' || !t.autoPausedForDayUtc) continue;
+    if (!isDailyCapResumeDue(t.autoPausedForDayUtc, now)) continue; // still the capped day
+    const revived: Trigger = { ...t, status: 'active' };
+    delete revived.autoPausedForDayUtc;
+    delete revived.statusReason;
+    await saveTrigger(revived);
+    await advanceNextFire(revived);
+    resumed++;
+    logger.info({
+      msg: 'sentinel.scheduler.daily_cap_resumed',
+      triggerId: t.id,
+      pausedForDay: t.autoPausedForDayUtc,
+    });
+  }
+  return resumed;
+}
+
+/** Earliest instant the scheduler must wake to run resumeDailyCapPaused,
+ *  or null if nothing is daily-cap-paused. Returns `now` when a paused
+ *  trigger is already past its resume day (overdue → wake immediately).
+ *  This keeps the scheduler from going fully idle while a cap-paused
+ *  trigger is waiting for the day to roll over. */
+function nextResumeWakeAt(now: number = Date.now()): number | null {
+  let earliest: number | null = null;
+  for (const t of listTriggers()) {
+    if (t.status !== 'paused' || !t.autoPausedForDayUtc) continue;
+    if (isDailyCapResumeDue(t.autoPausedForDayUtc, new Date(now))) return now; // overdue
+    const boundary = utcMidnightAfter(new Date(now));
+    if (earliest === null || boundary < earliest) earliest = boundary;
+  }
+  return earliest;
+}
+
 let started = false;
 let nextTimer: NodeJS.Timeout | null = null;
 let nextFireAt: number | null = null;
@@ -163,11 +208,20 @@ export function reschedule(): void {
     nextFireAt = null;
   }
   const pick = pickNextDue();
-  if (!pick) {
+  // Also wake for the daily-cap resume boundary so a scheduler with only
+  // cap-paused triggers doesn't go idle forever and strand them.
+  const resumeAt = nextResumeWakeAt();
+  let wakeAt: number | null = pick ? pick.fireAt : null;
+  let wakeReason: 'fire' | 'daily_cap_resume' = 'fire';
+  if (resumeAt !== null && (wakeAt === null || resumeAt < wakeAt)) {
+    wakeAt = resumeAt;
+    wakeReason = 'daily_cap_resume';
+  }
+  if (wakeAt === null) {
     logger.info({ msg: 'sentinel.scheduler.idle', reason: 'no active triggers with future fire' });
     return;
   }
-  const delay = Math.max(0, pick.fireAt - Date.now());
+  const delay = Math.max(0, wakeAt - Date.now());
   // Node 20 setTimeout caps at ~24.8 days. For longer-out 'at' triggers
   // we re-arm on the cap and re-evaluate; the next reschedule() call
   // (from any state change or this scheduled re-arm) picks up correctly.
@@ -180,8 +234,9 @@ export function reschedule(): void {
   }, safeDelay);
   logger.info({
     msg: 'sentinel.scheduler.armed',
-    triggerId: pick.trigger.id,
-    fireAt: new Date(pick.fireAt).toISOString(),
+    ...(pick && wakeReason === 'fire' ? { triggerId: pick.trigger.id } : {}),
+    wakeReason,
+    fireAt: new Date(wakeAt).toISOString(),
     delayMs: delay,
     armedMs: safeDelay,
   });
@@ -199,6 +254,16 @@ async function onTimer(): Promise<void> {
   } catch (err) {
     logger.warn({
       msg: 'sentinel.scheduler.timer_reload_failed',
+      err: (err as Error).message,
+    });
+  }
+  // Revive any daily-cap-paused triggers whose UTC day has rolled over
+  // before deciding what's due — a revived trigger becomes pickable here.
+  try {
+    await resumeDailyCapPaused();
+  } catch (err) {
+    logger.warn({
+      msg: 'sentinel.scheduler.daily_cap_resume_failed',
       err: (err as Error).message,
     });
   }
@@ -264,13 +329,18 @@ export async function fireTrigger(
         skipReason: `daily_cap (${todayCount} fires today)`,
         ...(opts.catchUp ? { catchUp: true } : {}),
       });
-      // Auto-pause until tomorrow
+      // Auto-pause until tomorrow. The UTC-day marker lets the resume
+      // sweep (resumeDailyCapPaused) flip this back to 'active' once the
+      // day rolls over — without it the pause was permanent and only a
+      // manual resume revived the trigger (Juni-Audit 2026-06).
       const updated: Trigger = {
         ...trigger,
         status: 'paused',
         statusReason: `auto-paused: daily cap (${todayCount}) reached`,
+        autoPausedForDayUtc: utcDayStr(now),
       };
       await saveTrigger(updated);
+      reschedule();
       return;
     }
   }
@@ -495,7 +565,13 @@ async function advanceNextFire(trigger: Trigger): Promise<void> {
     return;
   }
   if (trigger.source.type !== 'time') return; // Phase 2+ sources handled differently
-  const next = computeNextFire(trigger.source.spec);
+  const spec = trigger.source.spec;
+  // Anchor 'every' triggers on the fire that just ran (its scheduled
+  // nextFireAt) so the interval doesn't drift by the agent-turn duration
+  // — matches the anti-drift claim in this module's header.
+  const anchor =
+    spec.type === 'every' && trigger.nextFireAt ? new Date(trigger.nextFireAt) : undefined;
+  const next = computeNextFire(spec, new Date(), anchor);
   if (next === null) {
     // 'at' trigger one-shot completed.
     const updated: Trigger = {
@@ -627,14 +703,18 @@ function enumerateMissedFires(t: Trigger, since: number, until: number): Date[] 
 export async function startSentinel(): Promise<void> {
   if (started) return;
   await loadTriggers();
-  const triggers = listTriggers();
   const removed = await gcStaleTriggers();
+  // Revive triggers that were daily-cap-paused before a restart on a
+  // previous UTC day — list AFTER so the revived ones get boot catch-up.
+  const resumedAtBoot = await resumeDailyCapPaused();
+  const triggers = listTriggers();
   logger.info({
     msg: 'sentinel.scheduler.boot',
     triggersLoaded: triggers.length,
     active: triggers.filter((t) => t.status === 'active').length,
     completedRetentionDays,
     gcRemovedAtBoot: removed,
+    resumedAtBoot,
   });
   for (const t of triggers) {
     if (t.status !== 'completed') await applyBootCatchUp(t);

@@ -63,8 +63,8 @@ export function parseWikiPage(raw: string): WikiPage {
     frontmatter: {
       slug: typeof data.slug === 'string' ? data.slug : '',
       type: typeof data.type === 'string' ? data.type : '',
-      created: typeof data.created === 'string' ? data.created : '',
-      updated: typeof data.updated === 'string' ? data.updated : '',
+      created: coerceWikiDate(data.created),
+      updated: coerceWikiDate(data.updated),
       ...(Array.isArray(data.sources) ? { sources: data.sources as string[] } : {}),
       ...(Array.isArray(data.related) ? { related: data.related as string[] } : {}),
       ...stripStandardFields(data),
@@ -123,10 +123,30 @@ export function buildInitialWikiPage(args: {
 function isoDate(): string {
   // YYYY-MM-DD in UTC. Wiki dates are calendar-day granularity.
   const d = new Date();
+  return formatUtcDate(d);
+}
+
+function formatUtcDate(d: Date): string {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
   const day = String(d.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/** Coerce a frontmatter date field to a YYYY-MM-DD string.
+ *
+ *  Obsidian writes dates UNQUOTED (`created: 2026-05-01`), so js-yaml
+ *  parses them into a `Date` object rather than a string. The old code
+ *  only kept `typeof === 'string'` values and blanked everything else,
+ *  so a Date-valued `created` became '' — and the next `wiki_edit`
+ *  replaced the blank with today's date, silently destroying the real
+ *  creation date on every edit. Coercing the Date back to its calendar
+ *  day here makes the read path robust regardless of how the page was
+ *  authored (quoted, unquoted, or via somora's own writer). */
+export function coerceWikiDate(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return formatUtcDate(v);
+  return '';
 }
 
 function stripStandardFields(data: Record<string, unknown>): Record<string, unknown> {

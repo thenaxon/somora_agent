@@ -439,6 +439,33 @@ export const openAiCompatibleEngine: AgentEngine = {
     }
     const effectiveSignal = watchdogAbort.signal;
 
+    // Race iter.next() against the abort signal. Mirrors the main
+    // streaming loop's inline race (see its rationale ~line 652): some
+    // openai-compatible backends hold the connection open without
+    // emitting bytes and ignore the fetch-level abort, so a plain
+    // for-await wedges on the body reader and neither user-cancel nor the
+    // idle watchdog can escape. Used by the force-summary finish below.
+    async function nextOrAbort<T>(iter: AsyncIterator<T>): Promise<IteratorResult<T>> {
+      return await new Promise<IteratorResult<T>>((resolve, reject) => {
+        if (effectiveSignal.aborted) {
+          reject(new DOMException('Aborted', 'AbortError'));
+          return;
+        }
+        const onAbort = (): void => reject(new DOMException('Aborted', 'AbortError'));
+        effectiveSignal.addEventListener('abort', onAbort, { once: true });
+        iter.next().then(
+          (r) => {
+            effectiveSignal.removeEventListener('abort', onAbort);
+            resolve(r);
+          },
+          (err: unknown) => {
+            effectiveSignal.removeEventListener('abort', onAbort);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          },
+        );
+      });
+    }
+
     yield { kind: 'turn_start', ts: ts(), engine: ENGINE, turnId };
 
     let meta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
@@ -1035,6 +1062,14 @@ export const openAiCompatibleEngine: AgentEngine = {
               'have learned from the tool results so far, even partially. Do not call any tools.',
         } as ChatMessage);
         try {
+          // Re-arm the idle watchdog: it was disarmed at the end of the
+          // last streaming round (~line 785), and this forced finish is a
+          // fresh model call that can wedge like any other. Without the
+          // re-arm AND the abort-race below, a backend that holds the
+          // connection open without emitting bytes would hang the turn
+          // forever — a disarmed timer can't rescue it and some backends
+          // ignore the fetch-level abort (Juni-Audit 2026-06).
+          armIdleTimer();
           const summaryStream = await client.chat.completions.create(
             {
               model: resolvedModel.modelId,
@@ -1049,7 +1084,27 @@ export const openAiCompatibleEngine: AgentEngine = {
             },
             { signal: effectiveSignal },
           );
-          for await (const chunk of summaryStream) {
+          const summaryIter = (
+            summaryStream as AsyncIterable<
+              typeof summaryStream extends AsyncIterable<infer C> ? C : never
+            >
+          )[Symbol.asyncIterator]();
+          while (true) {
+            let next: IteratorResult<
+              typeof summaryStream extends AsyncIterable<infer C> ? C : never
+            >;
+            try {
+              next = await nextOrAbort(summaryIter);
+            } catch (raceErr) {
+              // Fire-and-forget cleanup (do NOT await — a wedged native
+              // generator never settles return() behind a pending next()).
+              void Promise.resolve(summaryIter.return?.(undefined)).catch(() => {});
+              throw raceErr;
+            }
+            if (next.done) break;
+            const chunk = next.value;
+            if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
+            armIdleTimer();
             const choice = chunk.choices[0];
             const delta = choice?.delta;
             if (delta?.content && typeof delta.content === 'string') {
@@ -1060,6 +1115,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               // the partial, and if nothing survives the honest fallback
               // message is emitted.
               if (containsScaffold(cumulative) || looksRepetitive(cumulative)) {
+                void Promise.resolve(summaryIter.return?.(undefined)).catch(() => {});
                 break;
               }
               yield {
@@ -1089,7 +1145,20 @@ export const openAiCompatibleEngine: AgentEngine = {
               };
             }
           }
+          disarmIdleTimer();
         } catch (err) {
+          disarmIdleTimer();
+          // A watchdog timeout or user-cancel during the forced finish
+          // must propagate to the turn-level handler (which emits the
+          // proper timeout/abort error + turn_end), exactly as an abort
+          // in the main loop does — NOT be swallowed into the synthetic
+          // "fallback also failed" message below.
+          if (
+            effectiveSignal.aborted ||
+            (err instanceof Error && err.name === 'AbortError')
+          ) {
+            throw err;
+          }
           logger.error({
             msg: 'engine.force_summary_failed',
             engine: ENGINE,

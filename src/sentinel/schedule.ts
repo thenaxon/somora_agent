@@ -160,8 +160,20 @@ function stringifyCron(_c: ParsedCron): string {
 
 /** Compute the next fire instant strictly after `now`. Returns null
  *  for `at`-triggers whose moment has already passed (one-shot
- *  completed). All other variants always return a future date. */
-export function computeNextFire(spec: TimeSpec, now: Date = new Date()): Date | null {
+ *  completed). All other variants always return a future date.
+ *
+ *  `anchor` (optional) only affects `'every'` triggers: it is the
+ *  PREVIOUS scheduled fire instant. Passing it makes the interval
+ *  anti-drift — the next fire is `anchor + interval`, not
+ *  `now + interval`. Without it, `now` (which the scheduler passes as
+ *  turn-END time) would add each agent-turn's duration to every cycle,
+ *  so "every 30m" slowly slides. Ignored for at/daily/weekly/cron,
+ *  whose instants are already absolute. */
+export function computeNextFire(
+  spec: TimeSpec,
+  now: Date = new Date(),
+  anchor?: Date,
+): Date | null {
   switch (spec.type) {
     case 'at': {
       const t = new Date(spec.iso);
@@ -170,7 +182,21 @@ export function computeNextFire(spec: TimeSpec, now: Date = new Date()): Date | 
     }
     case 'every': {
       const ms = parseInterval(spec.interval);
-      return new Date(now.getTime() + ms);
+      const base = anchor?.getTime();
+      if (base === undefined || Number.isNaN(base)) {
+        return new Date(now.getTime() + ms);
+      }
+      // Anti-drift: step from the previous scheduled fire. If the anchor
+      // is far in the past (a long turn or server downtime), skip whole
+      // intervals forward so we land on the next FUTURE slot instead of
+      // returning a past instant or burst-firing every tick.
+      let next = base + ms;
+      if (next <= now.getTime()) {
+        const missed = Math.ceil((now.getTime() - base) / ms);
+        next = base + missed * ms;
+        if (next <= now.getTime()) next += ms;
+      }
+      return new Date(next);
     }
     case 'daily':
       return nextDailyAfter(now, parseTimeOfDay(spec.time));
@@ -206,6 +232,30 @@ export function validateTimeSpec(spec: TimeSpec): void {
       parseCron(spec.expression);
       return;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// UTC-day helpers — used by the sentinel daily-cap pause/resume logic.
+// The daily fire count resets at UTC midnight (countFiresToday), so the
+// cap-pause marker and its resume boundary must use the same UTC day.
+// ─────────────────────────────────────────────────────────────────────
+
+/** UTC calendar day as `YYYY-MM-DD`. */
+export function utcDayStr(d: Date = new Date()): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Instant (ms) of the next UTC midnight strictly after `d`. */
+export function utcMidnightAfter(d: Date = new Date()): number {
+  const next = new Date(d);
+  next.setUTCHours(24, 0, 0, 0);
+  return next.getTime();
+}
+
+/** A daily-cap pause taken on `pausedDayUtc` is due to resume once the
+ *  UTC day has rolled over (the fire count has reset). */
+export function isDailyCapResumeDue(pausedDayUtc: string, now: Date = new Date()): boolean {
+  return pausedDayUtc !== utcDayStr(now);
 }
 
 /** Human-readable rendering for list/detail views. Doesn't lose info —
