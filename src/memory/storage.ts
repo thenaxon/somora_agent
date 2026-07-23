@@ -266,6 +266,36 @@ export function deleteFile(memDb: MemoryDb, path: string): void {
   memDb.db.prepare(`DELETE FROM files WHERE path = ?`).run(path);
 }
 
+/**
+ * Delete `chunks_vec` rows whose chunk no longer exists ("ghosts").
+ *
+ * Orphans accumulate when a process running WITHOUT the sqlite-vec
+ * extension deletes or reindexes chunks: it can't touch `chunks_vec`
+ * (the vec delete is gated on `hasVec`), so the old vector rows are left
+ * behind. A later vec-enabled process then surfaces them in KNN results
+ * — they occupy top-k slots before being filtered out downstream,
+ * degrading recall. The orphan-creating process never does vector search
+ * itself (it's FTS-only), so cleaning here — once, on the next vec-enabled
+ * pass — fully closes the loop. No-op unless `hasVec`. Returns count pruned.
+ */
+export function pruneOrphanVecRows(memDb: MemoryDb): number {
+  if (!memDb.hasVec) return 0;
+  const vecRowids = (
+    memDb.db.prepare(`SELECT rowid FROM chunks_vec`).all() as { rowid: number | bigint }[]
+  ).map((r) => Number(r.rowid));
+  if (vecRowids.length === 0) return 0;
+  const chunkIds = new Set(
+    (memDb.db.prepare(`SELECT id FROM chunks`).all() as { id: number }[]).map((r) => r.id),
+  );
+  const orphans = vecRowids.filter((id) => !chunkIds.has(id));
+  if (orphans.length === 0) return 0;
+  const del = memDb.db.prepare(`DELETE FROM chunks_vec WHERE rowid = ?`);
+  memDb.db.transaction(() => {
+    for (const id of orphans) del.run(BigInt(id));
+  })();
+  return orphans.length;
+}
+
 export interface ChunkInsert {
   file_path: string;
   source: string;

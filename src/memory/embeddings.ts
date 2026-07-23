@@ -12,11 +12,17 @@
 //     (e.g., embeddinggemma-300m), a local-llama-cpp provider drops in
 //     without touching consumers
 //
-// Models are cached under HF_HOME (default ~/.cache/huggingface). First
-// call downloads, subsequent calls are local-only.
+// Models are cached under a STABLE, install-independent directory
+// (`<SOMORA_HOME>/models/transformers/`) — NOT the transformers.js
+// default of a package-local `.cache/` inside node_modules, which every
+// `npm install -g` / `somora update` wipes (forcing a flaky re-download
+// after each deploy). See createLocalProvider. First call downloads once
+// per machine; every later call + every future update is local-only.
+
+import { join } from 'node:path';
 
 import type { MemoryConfig } from '../config/types.ts';
-import { logger } from '../server/logger.ts';
+import { logger, SOMORA_HOME_DIR } from '../server/logger.ts';
 
 export interface EmbeddingProvider {
   /** Human-readable model identifier — gets persisted in memory.db meta. */
@@ -85,6 +91,16 @@ async function createLocalProvider(modelName: string): Promise<EmbeddingProvider
   });
   env.fetch = ((input: string | URL, init?: unknown) =>
     undiciFetch(input as never, { ...(init as object), dispatcher: patientAgent } as never)) as typeof env.fetch;
+
+  // Pin the model cache to a stable, install-independent directory.
+  // transformers.js otherwise caches into a package-local `.cache/` inside
+  // node_modules, which `npm install -g` / `somora update` replace
+  // wholesale on every deploy — so the model re-downloads after each
+  // update and, when that download flakes, every agent's memory silently
+  // drops to FTS-only ("Unable to get model file path or buffer"). A path
+  // under SOMORA_HOME survives updates and is shared by every agent on the
+  // instance: one download per machine, not one per deploy.
+  env.cacheDir = join(SOMORA_HOME_DIR, 'models', 'transformers');
 
   const repoId = resolveModelRepoId(modelName);
   logger.info({ msg: 'memory.embedding_load_start', model: modelName, repoId });

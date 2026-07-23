@@ -27,6 +27,7 @@ import {
   ensureVecTable,
   listAllFiles,
   openMemoryDb,
+  pruneOrphanVecRows,
   replaceFileChunks,
   upsertFile,
   type MemoryDb,
@@ -425,6 +426,14 @@ export class MemoryManager {
         dbDeleteFile(memDb, f.path);
         logger.info({ msg: 'memory.unindex_stale', path: f.path });
       }
+    }
+
+    // Sweep leftover vector rows whose chunk is gone (ghosts left by a
+    // prior FTS-only process that deleted chunks it couldn't purge from
+    // chunks_vec). Safe no-op unless the vec extension is loaded.
+    const prunedVec = pruneOrphanVecRows(memDb);
+    if (prunedVec > 0) {
+      logger.info({ msg: 'memory.vec_orphans_pruned', agent: this.agent, pruned: prunedVec });
     }
 
     logger.info({ msg: 'memory.reindex_done', agent: this.agent, indexed, skipped });
