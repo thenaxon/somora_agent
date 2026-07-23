@@ -249,6 +249,49 @@ providers:
 Multiple OpenAI-compatible providers can coexist — give each one a unique
 name (`local`, `lmstudio`, `office`, …).
 
+#### Reliability with smaller / local models
+
+Smaller models (deepseek, kimi, and many local ones) drive the
+OpenAI-compatible tool loop less reliably than the big hosted models.
+Two well-documented failure modes show up: they re-issue the **same tool
+call over and over** without registering the result, and they sometimes
+**echo the provider's internal tool-result template** ("Use the results
+below to formulate an answer…") as their reply instead of answering.
+somora hardens this path so a weaker model degrades gracefully instead of
+flooding you:
+
+- **Duplicate tool calls in one round are collapsed** to a single
+  execution — the model still gets a result for every *distinct* call.
+- **A per-turn tool-call budget** (`agentLoop.maxToolCallsPerTurn`,
+  default 30) stops a runaway that the round cap can't see, and forces a
+  clean final answer.
+- **Output guards** detect a leaked template or a repeated-text loop in
+  the stream, cut it before it floods the window, and force one clean
+  no-tools answer.
+
+None of this touches the `claude-cli` / `codex-cli` engines — they run
+their own loop. It also stays out of the way of capable models, which
+never trip these guards.
+
+```yaml
+providers:
+  local:
+    engine: openai-compatible
+    models:
+      - id: some-strong-local-model
+        alias: big
+        contextWindow: 131072
+        capabilities: [text]
+        # Opt a trusted model back into parallel tool calls. Default is
+        # sequential (one call per round) because weak models fan out
+        # into large duplicate batches; a strong model doing independent
+        # reads can safely parallelise.
+        parallelToolCalls: true
+
+agentLoop:
+  maxToolCallsPerTurn: 30   # hard ceiling on tool calls per turn (openai-compatible)
+```
+
 ## 7. Voice — STT + TTS (optional)
 
 Voice is two independent toggles:

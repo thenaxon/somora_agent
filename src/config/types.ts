@@ -39,6 +39,17 @@ export const ModelSchema = z.object({
   contextWindow: z.number().int().positive(),
   capabilities: z.array(ModelCapabilitySchema).default(['text']),
   maxTokens: z.number().int().positive().optional(),
+  /**
+   * Only read by the `openai-compatible` engine. When unset (the common
+   * case), that engine sends `parallel_tool_calls: false` so the model
+   * emits ONE tool call per round — smaller/local models (deepseek, kimi)
+   * otherwise fan out into large parallel batches and lose track of what
+   * they've already run, which fuels runaway loops. Set `true` on a model
+   * you trust to parallelise (a strong local model doing independent
+   * reads) to restore the provider's default parallel behaviour. No effect
+   * on claude-cli / codex-cli. See docs/setup.md → Local OpenAI-compatible.
+   */
+  parallelToolCalls: z.boolean().optional(),
 });
 export type Model = z.infer<typeof ModelSchema>;
 
@@ -277,6 +288,18 @@ export const AgentLoopConfigSchema = z.object({
    */
   maxRounds: z.number().int().positive().max(100).default(8),
   /**
+   * Hard ceiling on the TOTAL number of tool calls executed in one turn,
+   * across all rounds. `maxRounds` counts rounds (model turns); it does
+   * NOT bound how many tool calls a single round contains. Weak/local
+   * models — deepseek via OpenRouter, which ignores `parallel_tool_calls`
+   * — fan out dozens of tool calls in ONE round (77 and 116 identical
+   * calls observed 2026-07-23), never touching the round cap. This budget
+   * catches that: once a turn has executed this many tool calls, somora
+   * stops and forces a final answer. Openai-compatible engine only.
+   * Well-behaved turns finish in a handful; 30 leaves generous headroom.
+   */
+  maxToolCallsPerTurn: z.number().int().positive().max(500).default(30),
+  /**
    * Per-tool-call timeout in milliseconds for FAST tools that don't
    * declare their own (memory_search, web_fetch, time_now, file_read,
    * obsidian_*). 30s is plenty for everything that hits a local DB,
@@ -346,6 +369,7 @@ export const AgentLoopConfigSchema = z.object({
   toolUsageReminder: z.boolean().default(true),
 }).default({
   maxRounds: 8,
+  maxToolCallsPerTurn: 30,
   toolUsageReminder: true,
   toolCallTimeoutMs: 30_000,
   longTaskDefaultTimeoutMs: 300_000,

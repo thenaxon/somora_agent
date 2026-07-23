@@ -40,6 +40,7 @@ const ENGINE = 'openai-compatible';
 // Should never fire in practice — `config.agentLoop` is non-optional in
 // the Zod schema and defaults itself.
 const DEFAULT_MAX_TOOL_ROUNDS = 8;
+const DEFAULT_MAX_TOOL_CALLS_PER_TURN = 30;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 30_000;
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -59,6 +60,92 @@ interface OpenAiCompatibleMeta {
  *  Unbounded results are what bloat the context; the model can re-read
  *  anything it genuinely needs by calling the tool again. */
 export const MAX_REPLAYED_TOOL_RESULT_CHARS = 800;
+
+interface ApiToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
+/**
+ * Collapse identical tool calls within one round to a single execution.
+ *
+ * Weak/local models — deepseek via OpenRouter, which ignores
+ * `parallel_tool_calls` — fan out the SAME call many times in one round
+ * (77 identical `df` calls, then 116, observed 2026-07-23). Two calls are
+ * "identical" when name AND arguments match byte-for-byte; the first is
+ * kept, later repeats dropped. The model still gets a result for every
+ * DISTINCT call it asked for, and since the assistant message we push
+ * lists only the kept calls, the assistant/tool pairing the OpenAI API
+ * requires stays intact. Order is preserved. Mirrors Hermes
+ * `_deduplicate_tool_calls`. Exported for the regression test.
+ */
+export function dedupeToolCalls(calls: ApiToolCall[]): ApiToolCall[] {
+  const seen = new Set<string>();
+  const out: ApiToolCall[] = [];
+  for (const c of calls) {
+    const sig = `${c.function.name} ${c.function.arguments}`;
+    if (seen.has(sig)) continue;
+    seen.add(sig);
+    out.push(c);
+  }
+  return out;
+}
+
+/**
+ * Provider tool-scaffold templates that weak models echo as their answer
+ * instead of following. The canonical one is DeepSeek-V3's tool chat
+ * template (shipped by SGLang/vLLM), which writes this sentence into the
+ * prompt right before the first tool result — a confused model reproduces
+ * it verbatim as its reply (observed live 2026-07-23). The phrasing is so
+ * specific that no genuine answer contains it, so a substring match is
+ * safe. Case-insensitive; the DeepSeek variant capitalises differently.
+ */
+const SCAFFOLD_MARKERS = [
+  'use the results below to formulate an answer',
+  'formulate an answer to the user question unless additional information',
+];
+
+/** True when the text carries a provider tool-scaffold template (see above). */
+export function containsScaffold(text: string): boolean {
+  const lower = text.toLowerCase();
+  return SCAFFOLD_MARKERS.some((m) => lower.includes(m));
+}
+
+/**
+ * True when the tail of the text is the same chunk repeated over and over
+ * — a degenerate loop, regardless of WHAT is repeating. Catches walls that
+ * aren't the known scaffold string (weak models loop on all sorts of
+ * phrases). Cheap and bounded: only looks once the text is long enough to
+ * be suspicious, and by then the stream is cut so `text` never grows huge.
+ */
+export function looksRepetitive(text: string): boolean {
+  if (text.length < 240) return false;
+  // A 60-char probe taken from near the end. If it recurs ≥4×, it's a loop.
+  const probe = text.slice(-80, -20);
+  if (probe.length < 40) return false;
+  let count = 0;
+  let idx = text.indexOf(probe);
+  while (idx !== -1 && count < 4) {
+    count++;
+    idx = text.indexOf(probe, idx + probe.length);
+  }
+  return count >= 4;
+}
+
+/**
+ * Remove scaffold sentences (and lines dominated by them) from an answer.
+ * Last-resort cleanup for when even a no-tools finalisation still leaks
+ * the template: strip the offending lines rather than show them.
+ */
+export function stripScaffold(text: string): string {
+  return text
+    .split('\n')
+    .filter((line) => !containsScaffold(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 // Exported for the history-rebuild regression tests
 // (./tool-trace.test.mts) — the shape of what we hand a stateless
@@ -488,6 +575,8 @@ export const openAiCompatibleEngine: AgentEngine = {
     const toolByName = new Map(toolList.map((t) => [t.name, t]));
     const loopMessages = [...messages]; // mutable copy; tool rounds append
     const maxRounds = input.agentLoopConfig?.maxRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
+    const maxToolCallsPerTurn =
+      input.agentLoopConfig?.maxToolCallsPerTurn ?? DEFAULT_MAX_TOOL_CALLS_PER_TURN;
     const globalToolTimeoutMs =
       input.agentLoopConfig?.toolCallTimeoutMs ?? DEFAULT_TOOL_CALL_TIMEOUT_MS;
 
@@ -511,6 +600,19 @@ export const openAiCompatibleEngine: AgentEngine = {
       const reasoningParam = openAiReasoningParam(thinking, resolvedModel.model);
 
       let round = 0;
+      // Did the LAST executed round still want tools? Distinguishes
+      // "model gave its final answer" (breaks below) from "hit the cap
+      // mid-runaway" — only the latter needs the forced no-tools finish.
+      let lastRoundHadTools = false;
+      // Set when the stream guard aborted a round mid-scaffold. The content
+      // is discarded, so the post-loop containsScaffold(cumulative) check
+      // wouldn't see it — this flag carries the signal to force a clean finish.
+      let sawScaffoldLeak = false;
+      // Total tool calls executed this turn, across all rounds. Bounds the
+      // within-round fan-out that maxRounds can't (a weak model emitting 77
+      // calls in one round). When it trips we force a clean final answer.
+      let totalToolCalls = 0;
+      let hitToolBudget = false;
       while (round < maxRounds) {
         round++;
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -521,7 +623,21 @@ export const openAiCompatibleEngine: AgentEngine = {
             messages: loopMessages,
             stream: true,
             stream_options: { include_usage: true },
-            ...(openAiTools ? { tools: openAiTools, tool_choice: 'auto' } : {}),
+            ...(openAiTools
+              ? {
+                  tools: openAiTools,
+                  tool_choice: 'auto',
+                  // Default to one tool call per round. Weak/local models
+                  // (deepseek, kimi) fan out into large parallel batches of
+                  // identical calls and lose track of what they've run — the
+                  // 123×-`df` runaway. Sequential = one call, one result,
+                  // clear state. A model set `parallelToolCalls: true` opts
+                  // back into the provider's parallel default.
+                  ...(resolvedModel.model.parallelToolCalls === true
+                    ? {}
+                    : { parallel_tool_calls: false }),
+                }
+              : {}),
             ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
             ...reasoningParam,
           },
@@ -588,6 +704,21 @@ export const openAiCompatibleEngine: AgentEngine = {
           const delta = choice?.delta;
           if (delta?.content && typeof delta.content === 'string') {
             roundContent += delta.content;
+            // Scaffold guard AT THE STREAM. A confused model emits the
+            // provider's tool-result template ("Use the results below to
+            // formulate an answer…") as content and repeats it hundreds of
+            // times. Cleaning only the final text (below) is too late — the
+            // deltas already streamed the wall into the user's window live.
+            // The moment the running content becomes scaffold, stop: discard
+            // it, close the upstream stream so the model stops generating,
+            // and let the forced no-tools finish (below) produce a clean
+            // answer. The user sees at most one partial sentence, not 100.
+            if (containsScaffold(roundContent) || looksRepetitive(roundContent)) {
+              sawScaffoldLeak = true;
+              roundContent = '';
+              void Promise.resolve(chunkIter.return?.(undefined)).catch(() => {});
+              break;
+            }
             // Stream the running cumulative (existing rounds + this round so far).
             const runningCumulative = cumulative
               ? `${cumulative}\n\n${roundContent}`
@@ -664,6 +795,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         // user-cancel / wedge.
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
+        lastRoundHadTools = roundToolCalls.size > 0;
         if (roundToolCalls.size === 0) {
           // No tools requested — model gave its final answer this round.
           break;
@@ -672,13 +804,29 @@ export const openAiCompatibleEngine: AgentEngine = {
         // Persist the assistant turn (with tool_calls) to the chat history.
         // The OpenAI API requires the tool_call message before the tool
         // results, so we add both before the next round.
-        const toolCallsForApi = [...roundToolCalls.entries()]
+        const rawToolCalls = [...roundToolCalls.entries()]
           .sort(([a], [b]) => a - b)
           .map(([, c]) => ({
             id: c.id || `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             type: 'function' as const,
             function: { name: c.name, arguments: c.argsJson || '{}' },
           }));
+
+        // Within-round dedup — see dedupeToolCalls at module top. Collapses
+        // the weak-model "same call 77×" fan-out to one execution per
+        // distinct call.
+        const toolCallsForApi = dedupeToolCalls(rawToolCalls);
+        if (toolCallsForApi.length < rawToolCalls.length) {
+          logger.warn({
+            msg: 'engine.tool_calls_deduped',
+            engine: ENGINE,
+            agent,
+            session,
+            round,
+            emitted: rawToolCalls.length,
+            executed: toolCallsForApi.length,
+          });
+        }
 
         loopMessages.push({
           role: 'assistant',
@@ -810,6 +958,26 @@ export const openAiCompatibleEngine: AgentEngine = {
           }
         }
 
+        // Total-tool-call budget. Bounds within-round fan-out that the
+        // round cap can't see: after dedup a runaway still emits many
+        // DISTINCT calls per round, and enough rounds of that runs up a
+        // three-digit total. Once the budget is spent, stop and force a
+        // clean final answer (below) instead of executing more.
+        totalToolCalls += toolCallsForApi.length;
+        if (totalToolCalls >= maxToolCallsPerTurn) {
+          hitToolBudget = true;
+          logger.warn({
+            msg: 'engine.tool_budget_cap',
+            engine: ENGINE,
+            agent,
+            session,
+            totalToolCalls,
+            maxToolCallsPerTurn,
+            hint: 'turn exceeded agentLoop.maxToolCallsPerTurn; forcing a final answer to stop a runaway.',
+          });
+          break;
+        }
+
         // Defensive: if we hit the round cap with tools still pending, log
         // and stop. The loop guard at the top will exit on the next check.
         if (round >= maxRounds) {
@@ -825,25 +993,46 @@ export const openAiCompatibleEngine: AgentEngine = {
         }
       }
 
-      // Force-summary fallback: if the loop exited at maxRounds with
-      // no accumulated assistant content (model spent all rounds on
-      // tool calls), make one final no-tools call to extract a summary.
-      // Without this, the caller gets `result: ""` silently and can't
-      // tell the sub bailed out — the user's bug report from 2026-05-03.
-      if (!cumulative && round >= maxRounds) {
+      // Force a clean final answer whenever the loop exited at the round
+      // cap while the model still wanted tools. One last call WITHOUT the
+      // `tools` param: a model that is offered no tools cannot keep calling
+      // them, and — crucially — cannot echo a provider's tool-scaffold
+      // template as its "answer" (DeepSeek's "Use the results below to
+      // formulate an answer…" leak, 2026-07-23). Any partial content from
+      // the capped round is discarded first: at a runaway cap it is
+      // unreliable (scaffold text / half-thoughts), and the model has every
+      // tool result in loopMessages to summarise from cleanly.
+      // Originally this only fired when cumulative was empty (2026-05-03
+      // silent-"" bug); broadened so garbage content at the cap is replaced
+      // too, and to also cover the tool-call-budget stop (2026-07-23).
+      // Scaffold leak: the model echoed a provider tool-result template
+      // (DeepSeek's "Use the results below to formulate an answer…") as its
+      // reply instead of answering. Surfaces on a normal (tool-less) final
+      // round, so the cap conditions above miss it — detect it on the
+      // accumulated text and force the same clean no-tools finish.
+      const scaffoldLeak =
+        sawScaffoldLeak || containsScaffold(cumulative) || looksRepetitive(cumulative);
+      const forcedByCap = (round >= maxRounds && lastRoundHadTools) || hitToolBudget;
+      if (forcedByCap || scaffoldLeak) {
+        cumulative = '';
         logger.warn({
-          msg: 'engine.force_summary_after_cap',
+          msg: 'engine.force_final_answer',
           engine: ENGINE,
           agent,
           session,
           rounds: round,
+          reason: scaffoldLeak ? 'scaffold_leak' : hitToolBudget ? 'tool_budget' : 'round_cap',
         });
         loopMessages.push({
           role: 'system',
-          content:
-            'You have reached the maximum number of tool-call rounds for this turn ' +
-            `(${maxRounds}). Respond NOW without further tool calls — summarize what you ` +
-            'have learned from the tool results so far, even partially. Do not call any tools.',
+          content: scaffoldLeak
+            ? 'Your previous draft repeated an internal tool-result instruction ' +
+              'instead of answering. Answer the user’s question directly NOW, ' +
+              'in your own words, using the tool results already gathered above. ' +
+              'Do not call any tools and do not repeat any instruction text.'
+            : 'You have reached the maximum number of tool-call rounds for this turn ' +
+              `(${maxRounds}). Respond NOW without further tool calls — summarize what you ` +
+              'have learned from the tool results so far, even partially. Do not call any tools.',
         } as ChatMessage);
         try {
           const summaryStream = await client.chat.completions.create(
@@ -865,6 +1054,14 @@ export const openAiCompatibleEngine: AgentEngine = {
             const delta = choice?.delta;
             if (delta?.content && typeof delta.content === 'string') {
               cumulative += delta.content;
+              // Same stream guard: a deeply-confused model can leak the
+              // scaffold — or loop on any phrase — even when offered no
+              // tools. Stop before it repeats; stripScaffold (below) cleans
+              // the partial, and if nothing survives the honest fallback
+              // message is emitted.
+              if (containsScaffold(cumulative) || looksRepetitive(cumulative)) {
+                break;
+              }
               yield {
                 kind: 'assistant_delta',
                 ts: ts(),
@@ -905,6 +1102,28 @@ export const openAiCompatibleEngine: AgentEngine = {
             'without producing a final answer, and the force-summary fallback also failed: ' +
             `${(err as Error).message}. Inspect the sub-session JSONL for the partial tool results.`;
         }
+      }
+
+      // Last-resort safety net: if the forced no-tools finish ITSELF still
+      // leaked the scaffold template (a deeply-confused model can), strip
+      // the offending lines rather than show them. If nothing meaningful
+      // survives, fall back to an honest marker instead of empty text.
+      if (cumulative && (containsScaffold(cumulative) || looksRepetitive(cumulative))) {
+        const cleaned = containsScaffold(cumulative) ? stripScaffold(cumulative) : '';
+        logger.warn({
+          msg: 'engine.scaffold_stripped',
+          engine: ENGINE,
+          agent,
+          session,
+          before: cumulative.length,
+          after: cleaned.length,
+        });
+        cumulative =
+          cleaned.length >= 20 && !looksRepetitive(cleaned)
+            ? cleaned
+            : '[somora] The model could not produce a clean answer for this turn ' +
+              '(it looped on repeated text). The tool results are in the session; ' +
+              'try rephrasing or a stronger model.';
       }
 
       if (cumulative) {
