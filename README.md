@@ -4,9 +4,9 @@
 
 # somora 🐨
 
-> A local-first runtime for personal AI agents — multiple personas with
-> persistent memory, a shared long-term wiki, and the ability to switch
-> between Claude, ChatGPT, and any OpenAI-compatible LLM mid-conversation.
+> Local-first AI agents that never forget. Multiple personas with private
+> memory, a shared long-term wiki they curate themselves while they sleep,
+> and one conversation that flows across Claude, ChatGPT, and any local model.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
@@ -188,7 +188,7 @@ Four first-party clients, all hitting the same local server:
 | Client | How to launch | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent, drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a read-only Wiki Explorer (folder tree + rendered pages + clickable `[[wikilinks]]` + a zoomable link graph), a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
 | **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record) + optional spoken replies via TTS (per-agent toggle), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
 

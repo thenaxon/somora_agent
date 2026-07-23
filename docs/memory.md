@@ -125,7 +125,13 @@ enough vs needing the whole page.
 ### Hybrid retrieval mechanics
 
 - **Vector** — local embeddings via ONNX (`Xenova/all-MiniLM-L6-v2`
-  by default, 384-dim). Configurable in `config.yaml`.
+  by default, 384-dim). Configurable in `config.yaml`. The model
+  downloads **once per machine** to `~/.somora/models/transformers/`
+  (a stable location that survives `somora update`) and is shared by
+  every agent. Until that first download finishes — or if it ever
+  fails — retrieval degrades gracefully to BM25-only; it upgrades to
+  hybrid automatically once the model is present, and the next reindex
+  backfills embeddings for anything indexed while it was unavailable.
 - **BM25** — SQLite FTS5 over chunk text. Tokenizer drops punctuation,
   lowercases everything (so `[[wiki-link]]` tokenizes to `wiki` and
   `link`).
