@@ -120,9 +120,15 @@ export function chunkMarkdown(
     if (paraTokens >= opts.targetTokens && current.length === 0) {
       current.push(para);
       pushChunk();
-      // Build next chunk's overlap from the tail of this one
-      current = buildOverlap(current, opts.overlapTokens);
-      currentTokens = current.reduce((s, p) => s + estimateTokens(p.text), 0);
+      // An oversized paragraph is already a complete standalone chunk.
+      // Do NOT carry it forward as overlap: buildOverlap would return the
+      // whole paragraph (it alone exceeds overlapTokens), leaving `current`
+      // at >= target — so the very next paragraph would immediately
+      // re-emit it as a byte-identical duplicate chunk AND glue the entire
+      // giant block onto the following chunk. Start fresh instead; normal
+      // (sub-target) paragraphs still get their tail overlap below.
+      current = [];
+      currentTokens = 0;
       continue;
     }
 

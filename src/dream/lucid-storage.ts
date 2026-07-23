@@ -65,10 +65,22 @@ export async function listLucidRuns(): Promise<LucidRun[]> {
   const out: LucidRun[] = [];
   for (const e of entries) {
     if (!e.isFile() || !e.name.endsWith('.json')) continue;
+    // loop-state.json is the review-loop CONTROL file, not a run. It
+    // shares this directory but has no `findings[]`, so reading it as a
+    // LucidRun made `dream_list` crash on `r.findings.length` for EVERY
+    // agent whenever any review loop was open (2026-07-23, Gideon report).
+    if (e.name === 'loop-state.json') continue;
     const path = join(LUCID_ROOT, e.name);
     try {
       const raw = await readFile(path, 'utf8');
-      out.push(JSON.parse(raw) as LucidRun);
+      const run = JSON.parse(raw) as LucidRun;
+      // Shape-guard: only real runs (with a findings array) belong in the
+      // result — defends against any future foreign JSON dropped here.
+      if (!run || !Array.isArray(run.findings)) {
+        logger.warn({ msg: 'lucid.run_skipped_no_findings', file: e.name });
+        continue;
+      }
+      out.push(run);
     } catch (err) {
       logger.warn({
         msg: 'lucid.run_load_failed',

@@ -339,7 +339,17 @@ export class MemoryManager {
   }
 
   private classifySource(path: string): ChunkSource | null {
-    if (path.startsWith(this.memoryRoot)) return 'memory';
+    if (path.startsWith(this.memoryRoot)) {
+      // Memory notes are FLAT by design: only files directly under
+      // memoryRoot are memory notes. A note in a subdirectory would get a
+      // `sub--note` slug the read/write/delete API can't address (it
+      // reconstructs a flat `sub--note.md` path), so a write would create
+      // a colliding second file. Ignore subdir files entirely — memory
+      // doesn't support folders. (Dot-dirs like `.dreams`/`.cache` are
+      // already skipped by the walker; this also covers any non-dot subdir,
+      // and — since it's in classifySource — the watcher path too.)
+      return isFlatMemoryFile(path, this.memoryRoot) ? 'memory' : null;
+    }
     // Wiki check goes BEFORE vault since the wiki subfolder lives
     // inside the vault. Order matters: vaultPath would also match.
     if (this.wiki && path.startsWith(this.wiki.absPath)) return 'wiki';
@@ -781,6 +791,17 @@ export class MemoryManager {
       throw err;
     }
   }
+}
+
+/** True iff `path` is a note directly under `memoryRoot` (flat), not in a
+ *  subdirectory. Memory notes are flat by design — a subdir note would get
+ *  a `sub--note` slug the read/write/delete API can't round-trip (it
+ *  reconstructs a flat path), so a write creates a colliding second file.
+ *  Exported for tests. */
+export function isFlatMemoryFile(path: string, memoryRoot: string): boolean {
+  const rel = relative(memoryRoot, path);
+  if (rel.length === 0 || rel.startsWith('..')) return false; // outside root
+  return !rel.includes('/') && !rel.includes('\\'); // no subdirectory
 }
 
 function slugFromPath(path: string, root: string, opts?: { keepSeparators?: boolean }): string {
