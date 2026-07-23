@@ -651,12 +651,22 @@ different acquisition.
 
    ```yaml
    server:
+     host: 0.0.0.0        # REQUIRED for remote clients (default 127.0.0.1 = loopback only)
      port: 18737
      tls:
        cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
        key:  ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
        publicHost: <your-host>.<your-tailnet>.ts.net
    ```
+
+   `host: 0.0.0.0` is what makes the server reachable from other machines
+   (LAN / Tailscale); the default `127.0.0.1` binds loopback-only. Keep
+   this in `config.yaml` (not as a `SOMORA_HOST` env in the systemd unit) —
+   config survives `somora update`, unit env does not (the update rebakes
+   the unit from a template). If you *do* need custom systemd env, put it in
+   a drop-in (`~/.config/systemd/user/somora.service.d/*.conf`) — drop-ins
+   survive the rebake; `somora init` also now carries forward existing
+   `Environment=`/`EnvironmentFile=` lines and prints what it preserved.
 
    `publicHost` MUST match the cert subject — strict TLS verification is
    on. Internal MCP-child callers (subagent fallback in
@@ -811,7 +821,7 @@ then never touches either credentials file, and you manage
 | -------------------------------- | ---------------------------- | ---------------------------------------- |
 | `SOMORA_HOME`                    | `~/.somora`                  | data root for config / agents / sessions |
 | `SOMORA_PORT`                    | `config.yaml:server.port`    | server bind port (override)              |
-| `SOMORA_HOST`                    | `127.0.0.1`                  | CLI connect host (auto-set to `tls.publicHost` when TLS is on) |
+| `SOMORA_HOST`                    | `config.yaml:server.host` (`127.0.0.1`) | server bind host override. Prefer `server.host` in config.yaml — it survives `somora update`; a `SOMORA_HOST` env in the systemd unit is dropped by the update rebake. Auto-set to `tls.publicHost` for MCP-child callers when TLS is on. |
 | `SOMORA_TLS`                     | `0`                          | set to `1` by parent when serving HTTPS — MCP-child callers use it to switch to https:// |
 | `SOMORA_LOG_LEVEL`               | `info`                       | Pino log level                           |
 | `SOMORA_CLAUDE_BIN`              | `~/.local/bin/claude`        | Claude Code binary path                  |

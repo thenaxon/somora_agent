@@ -21,6 +21,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { SOMORA_VERSION } from '../version.ts';
+import { buildSystemdUnit, extractCustomEnvLines } from './systemd-unit.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const LOCKFILE_PATH = join(SOMORA_HOME, 'locks', 'server.lock');
@@ -62,26 +63,6 @@ function run(cmd: string, args: string[], opts: { stdio?: 'inherit' | 'pipe' } =
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
   };
-}
-
-function buildSystemdUnit(): string {
-  // ExecStart uses the absolute path to the installed somora binary so
-  // systemd doesn't need the user's PATH. --foreground keeps the
-  // process attached to systemd (Type=simple).
-  return `[Unit]
-Description=somora — Local-first AI agent gateway
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=${BIN_PATH} server start --foreground
-Restart=on-failure
-RestartSec=5
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=default.target
-`;
 }
 
 function ensureDir(p: string): void {
@@ -135,21 +116,29 @@ function cmdInit(): number {
   }
 
   ensureDir(SYSTEMD_USER_DIR);
-  const unitContent = buildSystemdUnit();
+  // Preserve operator-added Environment= / EnvironmentFile= lines across
+  // the rebake — otherwise a `somora update` silently drops e.g.
+  // SOMORA_HOST=0.0.0.0 and the server falls back to loopback, locking
+  // out LAN/Tailscale clients (2026-07-23 report).
+  const existingUnit = existsSync(SYSTEMD_UNIT_PATH)
+    ? readFileSync(SYSTEMD_UNIT_PATH, 'utf8')
+    : null;
+  const preservedEnv = existingUnit ? extractCustomEnvLines(existingUnit) : [];
+  const unitContent = buildSystemdUnit(BIN_PATH, preservedEnv);
   let unitChanged = false;
-  if (!existsSync(SYSTEMD_UNIT_PATH)) {
+  if (existingUnit === null) {
     writeFileSync(SYSTEMD_UNIT_PATH, unitContent);
     created.push(SYSTEMD_UNIT_PATH);
     unitChanged = true;
+  } else if (existingUnit.trim() !== unitContent.trim()) {
+    writeFileSync(SYSTEMD_UNIT_PATH, unitContent);
+    kept.push(`${SYSTEMD_UNIT_PATH} (updated)`);
+    unitChanged = true;
   } else {
-    const existing = readFileSync(SYSTEMD_UNIT_PATH, 'utf8');
-    if (existing.trim() !== unitContent.trim()) {
-      writeFileSync(SYSTEMD_UNIT_PATH, unitContent);
-      kept.push(`${SYSTEMD_UNIT_PATH} (updated)`);
-      unitChanged = true;
-    } else {
-      kept.push(SYSTEMD_UNIT_PATH);
-    }
+    kept.push(SYSTEMD_UNIT_PATH);
+  }
+  if (preservedEnv.length) {
+    process.stdout.write(`  preserved custom systemd env: ${preservedEnv.join(', ')}\n`);
   }
 
   if (unitChanged && isSystemdAvailable()) {

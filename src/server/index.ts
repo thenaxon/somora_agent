@@ -3358,8 +3358,14 @@ const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 // fallback path back to /chat/send-sync. Same for the bind host so
 // localhost vs 127.0.0.1 stays consistent.
 process.env.SOMORA_PORT = String(port);
-process.env.SOMORA_HOST ??= '127.0.0.1';
-const bindHost = process.env.SOMORA_HOST ?? '127.0.0.1';
+// Bind-host precedence: SOMORA_HOST env override > config.server.host >
+// loopback default. config.server.host lives in config.yaml (like
+// server.port), so a LAN/Tailscale opt-in of `0.0.0.0` survives
+// `somora update` — a SOMORA_HOST env in the systemd unit does NOT (the
+// update rebakes the unit from a static template and drops custom env).
+const configHost = config.server.host ?? '127.0.0.1';
+process.env.SOMORA_HOST ??= configHost;
+const bindHost = process.env.SOMORA_HOST ?? configHost;
 // Child-process callers (MCP, openai-compat) need a routable host to
 // reach back to /chat/send-sync. When the server binds to 0.0.0.0
 // for LAN access, that's not a valid client target — substitute
@@ -3396,6 +3402,19 @@ if (tlsConf) {
   }
   process.env.SOMORA_TLS = '1';
   process.env.SOMORA_HOST = tlsConf.publicHost;
+}
+
+// Footgun guard: a TLS publicHost means the operator expects remote
+// clients, but binding to loopback makes that impossible — the classic
+// symptom of a SOMORA_HOST env dropped by a `somora update` unit rebake.
+// Warn loudly so a silent "server's up but unreachable" is diagnosable.
+if (tlsConf?.publicHost && bindHost === '127.0.0.1') {
+  logger.warn({
+    msg: 'server.bind_loopback_with_public_host',
+    bindHost,
+    publicHost: tlsConf.publicHost,
+    hint: 'server binds to loopback but tls.publicHost is set — remote (LAN/Tailscale) clients cannot connect. Set `server.host: 0.0.0.0` in ~/.somora/config.yaml.',
+  });
 }
 
 // Static mount for the web client. Built artifacts live at

@@ -21,6 +21,11 @@
 # unique across the whole config — server refuses to start otherwise.
 
 server:
+  # Bind address. Default 127.0.0.1 (loopback = private). Set 0.0.0.0 to
+  # accept LAN / Tailscale clients — an explicit opt-in that lives here in
+  # config.yaml so it survives `somora update` (a SOMORA_HOST env in the
+  # systemd unit does NOT — the update rebakes the unit and drops it).
+  host: 127.0.0.1
   port: 18737
 
 # capabilities (per model):

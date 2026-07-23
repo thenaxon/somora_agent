@@ -1065,10 +1065,17 @@ export type AttachmentsConfig = z.infer<typeof AttachmentsConfigSchema>;
 export const ConfigSchema = z.object({
   server: z
     .object({
+      // Bind address. Default loopback (private, anti-footgun). Set
+      // `0.0.0.0` to accept LAN/Tailscale clients — an explicit,
+      // auditable opt-in that lives in config.yaml so it survives
+      // `somora update` (unlike a SOMORA_HOST env var in the systemd
+      // unit, which the update rebake drops). Env `SOMORA_HOST` still
+      // overrides this at runtime if set.
+      host: z.string().min(1).default('127.0.0.1'),
       port: z.number().int().positive().default(18737),
       tls: TlsConfigSchema,
     })
-    .default({ port: 18737 }),
+    .default({ host: '127.0.0.1', port: 18737 }),
   providers: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/), ProviderSchema),
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,
