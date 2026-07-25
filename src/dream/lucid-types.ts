@@ -80,6 +80,8 @@ export interface LucidFinding {
   /** Structured fix. `kind: 'no_op'` for info-only findings. */
   fix: LucidFix;
   resolved_at?: string;
+  /** Optional free-text reason recorded at dismissal time. */
+  resolution_note?: string;
 }
 
 export type LucidRunStatus = 'running' | 'completed' | 'failed' | 'processed';

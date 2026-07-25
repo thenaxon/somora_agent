@@ -14,6 +14,7 @@ import { getHistory } from '../storage/sessions.ts';
 import {
   dreamFilePath,
   dreamIdFor,
+  pruneFailedDreams,
   readDreamById,
   transitionDreamStatus,
   writeDreamFile,
@@ -90,6 +91,9 @@ function renderBody(
     `Status: **${meta.status}**`,
     '',
   ];
+  if (meta.error) {
+    lines.push(`> ⚠️ ${meta.error}`, '');
+  }
   if (sources) {
     lines.push('## Sources analyzed', '');
     lines.push(
@@ -106,7 +110,15 @@ function renderBody(
     lines.push('');
   }
   if (meta.findings.length === 0) {
-    lines.push('No memory-worthy findings extracted from this range.', '');
+    if ((meta.chunks_failed ?? 0) > 0 || meta.status === 'failed') {
+      lines.push(
+        'Extraction did NOT complete cleanly — no findings is a failure artifact, ' +
+          'not an empty result. The range will be retried.',
+        '',
+      );
+    } else {
+      lines.push('No memory-worthy findings extracted from this range.', '');
+    }
   } else {
     lines.push('## Findings', '');
     for (const f of meta.findings) {
@@ -354,6 +366,43 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     meta.findings = dedup.findings;
     meta.chunks_done = result.chunksProcessed;
     meta.chunks_total = result.totalChunks;
+    if (result.failedChunks > 0) meta.chunks_failed = result.failedChunks;
+
+    // Failed ≠ empty (bug report 2026-07-24): a run with errored chunks
+    // must never take the completed/processed path — that would mask
+    // backend failures as "no findings" and (via the caller's watermark
+    // stamp) permanently mark the range as dreamed. Land as `failed`,
+    // stay in .dreams/ root (visible in dream_list), and because the
+    // caller only advances the watermark on completed/processed, the
+    // same range is retried on the next trigger.
+    if (result.completed && result.failedChunks > 0) {
+      meta.error =
+        `${result.failedChunks}/${result.totalChunks} extraction chunk(s) failed — ` +
+        'range NOT marked as dreamed; it will be retried on the next REM trigger. ' +
+        'Partial findings (if any) are preserved below for audit.';
+      await transitionDreamStatus(
+        args.agent,
+        // Body rendered from a status-patched copy so the human-readable
+        // status line matches the frontmatter; `meta` itself keeps the
+        // CURRENT status — transitionDreamStatus derives the old file
+        // path from it.
+        { meta, body: renderBody({ ...meta, status: 'failed' }, args.sourceSession, sources) },
+        'failed',
+        { error: meta.error, completed_at: new Date().toISOString() },
+      );
+      // Keep only this newest failure per session — retries would
+      // otherwise pile up one failed file per idle cycle.
+      await pruneFailedDreams(args.agent, args.sourceSession, { keepId: id });
+      logger.warn({
+        msg: 'dream.failed_chunks',
+        agent: args.agent,
+        id,
+        failedChunks: result.failedChunks,
+        totalChunks: result.totalChunks,
+        partialFindings: meta.findings.length,
+      });
+      return { id, finalStatus: 'failed' };
+    }
 
     if (result.completed) {
       meta.completed_at = new Date().toISOString();
@@ -369,6 +418,8 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
           'processed',
           { completed_at: meta.completed_at, processed_at: meta.processed_at },
         );
+        // A clean run supersedes any earlier failed attempts on this session.
+        await pruneFailedDreams(args.agent, args.sourceSession);
         logger.info({
           msg: 'dream.completed_empty',
           agent: args.agent,
@@ -383,6 +434,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
         'completed',
         { completed_at: meta.completed_at },
       );
+      await pruneFailedDreams(args.agent, args.sourceSession);
       logger.info({
         msg: 'dream.completed',
         agent: args.agent,
@@ -413,6 +465,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       'failed',
       { error: meta.error },
     );
+    await pruneFailedDreams(args.agent, args.sourceSession, { keepId: id });
     logger.error({
       msg: 'dream.failed',
       agent: args.agent,

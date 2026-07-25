@@ -98,6 +98,7 @@ export async function updateLucidFindingStatus(
   runId: string,
   findingId: number,
   status: LucidFindingStatus,
+  note?: string,
 ): Promise<{ run: LucidRun; finding: LucidFinding } | null> {
   const run = await readLucidRunById(runId);
   if (!run) return null;
@@ -107,6 +108,9 @@ export async function updateLucidFindingStatus(
   finding.status = status;
   if (status === 'applied' || status === 'dismissed') {
     finding.resolved_at = new Date().toISOString();
+  }
+  if (note && note.trim().length > 0) {
+    finding.resolution_note = note.trim();
   }
 
   // If all findings are resolved, transition run → processed and move file.
@@ -139,13 +143,15 @@ export async function updateLucidFindingStatus(
  *  one whose findings were all already resolved). Without this, failed
  *  runs become zombies that `dream_list` keeps surfacing forever
  *  (verified bug 2026-05-09: id 20260509-072036_manual_lucid). */
-export async function dismissEntireLucidRun(runId: string): Promise<LucidRun | null> {
+export async function dismissEntireLucidRun(runId: string, note?: string): Promise<LucidRun | null> {
   const run = await readLucidRunById(runId);
   if (!run) return null;
+  const trimmedNote = note?.trim();
   for (const f of run.findings) {
     if (f.status === 'pending') {
       f.status = 'dismissed';
       f.resolved_at = new Date().toISOString();
+      if (trimmedNote) f.resolution_note = trimmedNote;
     }
   }
   run.status = 'processed';

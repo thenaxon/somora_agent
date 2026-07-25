@@ -19,9 +19,12 @@
 //      finding STAYS in the review — similarity is a judgment call, the
 //      marker just lets the user batch-dismiss with confidence.
 //
-// Only `memory_write` findings are candidates. memory_edit /
+// Dedup stages (1+2) only apply to `memory_write` findings. memory_edit /
 // memory_delete address an existing slug by design (a "collision" is
-// the point), and vault_hint is a pointer, not new content.
+// the point), and vault_hint is a pointer, not new content. A Stage-0
+// referential check (below, always-on) additionally guards memory_edit /
+// memory_delete against slugs that DON'T exist — invented targets would
+// otherwise fail only at dream_apply time (2026-07-23 report).
 //
 // Scope note: workspace files (e.g. buffet's finance/monitoring/) are
 // NOT visible here — that would be the deferred `memory.sourceOfTruth`
@@ -50,19 +53,79 @@ export interface RemDedupResult {
   findings: Finding[];
   dropped: number;
   marked: number;
+  /** memory_edit findings whose slug doesn't exist as a memory note,
+   *  converted to memory_write (Stage 0 referential validation). */
+  downgraded: number;
 }
 
 export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult> {
-  if (!args.config.enabled) {
-    return { findings: args.findings, dropped: 0, marked: 0 };
-  }
   const memorySlugs = new Set(args.existingMemorySlugs);
   const wikiSlugs = new Set(args.loadedWikiSlugs);
+
+  // Stage 0 — referential validation. Runs ALWAYS, even with dedup
+  // disabled: it's a correctness gate, not a dedup heuristic.
+  //
+  // memory_edit / memory_delete address an existing memory note by
+  // design — but small worker models sometimes invent a slug instead
+  // (2026-07-23 report: a wanted wiki-page update surfaced as
+  // memory_edit against the synthetic slug
+  // `wiki-hardware-rene-llm-hardware-upgrade-2026`, which exists
+  // nowhere). Such findings explode only later at dream_apply time,
+  // which is exactly when agents start improvising. Catch them here:
+  //   - memory_edit with proposed_content → downgrade to memory_write
+  //     (the content is the point; a fresh note is the correct REM
+  //     shape, Deep merges it into the wiki later)
+  //   - memory_edit without content / memory_delete → drop with log
+  //     (nothing actionable — an edit needs content, deleting a
+  //     non-existent note is a no-op)
+  const validated: Finding[] = [];
+  let downgraded = 0;
+  let droppedInvalid = 0;
+  for (const f of args.findings) {
+    const needsExistingNote = f.action === 'memory_edit' || f.action === 'memory_delete';
+    if (needsExistingNote && !memorySlugs.has(f.slug)) {
+      if (f.action === 'memory_edit' && f.proposed_content) {
+        downgraded++;
+        logger.info({
+          msg: 'dream.rem.finding_downgraded',
+          agent: args.agent,
+          dreamId: args.dreamId,
+          findingId: f.id,
+          slug: f.slug,
+          from: 'memory_edit',
+          to: 'memory_write',
+          reason: 'target memory note does not exist',
+        });
+        validated.push({
+          ...f,
+          action: 'memory_write',
+          reason: `${f.reason} [auto-converted from memory_edit: note '${f.slug}' does not exist in memory]`,
+        });
+      } else {
+        droppedInvalid++;
+        logger.info({
+          msg: 'dream.rem.finding_dropped_invalid_ref',
+          agent: args.agent,
+          dreamId: args.dreamId,
+          findingId: f.id,
+          action: f.action,
+          slug: f.slug,
+          reason: 'target memory note does not exist and finding is not convertible',
+        });
+      }
+      continue;
+    }
+    validated.push(f);
+  }
+
+  if (!args.config.enabled) {
+    return { findings: validated, dropped: droppedInvalid, marked: 0, downgraded };
+  }
   const kept: Finding[] = [];
-  let dropped = 0;
+  let dropped = droppedInvalid;
   let marked = 0;
 
-  for (const f of args.findings) {
+  for (const f of validated) {
     if (f.action !== 'memory_write') {
       kept.push(f);
       continue;
@@ -126,7 +189,7 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
     kept.push(f);
   }
 
-  if (dropped > 0 || marked > 0) {
+  if (dropped > 0 || marked > 0 || downgraded > 0) {
     logger.info({
       msg: 'dream.rem.dedup_summary',
       agent: args.agent,
@@ -134,7 +197,8 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
       inputFindings: args.findings.length,
       dropped,
       marked,
+      downgraded,
     });
   }
-  return { findings: kept, dropped, marked };
+  return { findings: kept, dropped, marked, downgraded };
 }

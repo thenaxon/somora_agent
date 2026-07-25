@@ -3706,7 +3706,10 @@ tunable.keepAliveTimeout = 60_000;
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.
 async function shutdown(signal: string): Promise<void> {
   logger.info({ msg: 'server.shutdown', signal });
-  remWorker.shutdown();
+  // Await: aborts in-flight REM runs and waits (bounded, 5s) until the
+  // aborted dream lands as `paused` on disk — exiting earlier archived
+  // it as empty-processed instead (report 2026-07-25, restart-kills).
+  await remWorker.shutdown();
   deepWorker.shutdown();
   lucidWorker.shutdown();
   releaseLockfile();

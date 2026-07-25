@@ -41,6 +41,10 @@ export interface Finding {
   status: FindingStatus;
   /** ISO timestamp set when status transitions to applied/dismissed. */
   resolved_at?: string;
+  /** Optional free-text reason recorded at dismissal time (e.g. "manually
+   *  applied elsewhere", "outdated") so the audit trail distinguishes
+   *  "content rejected" from "resolved outside the dream flow". */
+  resolution_note?: string;
   /** Set by the post-extraction dedup pass (rem-dedup.ts): an existing
    *  memory note / wiki page scored at or above the configured
    *  similarity threshold. The finding stays reviewable — this is a
@@ -73,6 +77,10 @@ export interface DreamMeta {
   chunks_done: number;
   /** Total chunks planned (set after first range/chunk plan). */
   chunks_total: number;
+  /** Chunks whose LLM call failed (backend error, timeout). >0 means the
+   *  dream is incomplete — it lands as `failed` and the session range is
+   *  NOT marked as dreamed, so the next trigger retries it. */
+  chunks_failed?: number;
   /** Engine + model that ran the extraction (for diagnostics). */
   worker_model_ref: string;
   findings: Finding[];

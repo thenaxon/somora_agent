@@ -39,6 +39,9 @@ interface AgentState {
   activeAbort: AbortController | null;
   /** Set while fireIdle is in flight to prevent reentrancy. */
   isWorking: boolean;
+  /** In-flight run promise — shutdown() awaits these (bounded) so the
+   *  paused/failed dream file lands on disk before process.exit. */
+  activeRun: Promise<void> | null;
 }
 
 export interface RemWorkerDeps {
@@ -77,6 +80,7 @@ export class RemWorker {
       idleTimer: null,
       activeAbort: null,
       isWorking: false,
+      activeRun: null,
     };
     this.agents.set(agent, state);
     this.scheduleIdle(state);
@@ -110,16 +114,34 @@ export class RemWorker {
   }
 
   /**
-   * Stop all timers + abort in-flight work. Called at server shutdown.
+   * Stop all timers, abort in-flight work, and wait (bounded) for the
+   * aborted runs to persist their state. Called at server shutdown.
+   *
+   * The wait matters: before 2026-07-25, shutdown() fired the aborts and
+   * the server exited while runDream was still mid-flight — the abort
+   * surfaced as a transport error ("terminated"), got counted as a chunk
+   * failure, and the dream was archived as empty-processed (follow-up
+   * report 2026-07-25). With the signal now wired into the LLM request,
+   * an abort resolves within milliseconds into a clean `paused` dream —
+   * we just have to stay alive long enough for that file write.
    */
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     this.shuttingDown = true;
+    const inFlight: Promise<void>[] = [];
     for (const state of this.agents.values()) {
       if (state.idleTimer) clearTimeout(state.idleTimer);
       state.activeAbort?.abort();
+      if (state.activeRun) inFlight.push(state.activeRun.catch(() => {}));
+    }
+    if (inFlight.length > 0) {
+      // Bounded — a wedged run must not block process exit forever.
+      await Promise.race([
+        Promise.allSettled(inFlight),
+        new Promise((resolve) => setTimeout(resolve, 5_000)),
+      ]);
     }
     this.agents.clear();
-    logger.info({ msg: 'dream.rem.shutdown' });
+    logger.info({ msg: 'dream.rem.shutdown', awaited_runs: inFlight.length });
   }
 
   private scheduleIdle(state: AgentState): void {
@@ -156,11 +178,17 @@ export class RemWorker {
           source_session: paused.sourceSession,
           remaining_paused: paused.remaining,
         });
-        await this.runForAgent(state, {
+        const resumeRun = this.runForAgent(state, {
           kind: 'resume',
           dreamId: paused.id,
           sourceSession: paused.sourceSession,
         });
+        state.activeRun = resumeRun;
+        try {
+          await resumeRun;
+        } finally {
+          state.activeRun = null;
+        }
         return;
       }
       // 2. Otherwise pick a session with new delta to dream over.
@@ -169,11 +197,17 @@ export class RemWorker {
         logger.debug({ msg: 'dream.rem.no_work', agent });
         return;
       }
-      await this.runForAgent(state, {
+      const freshRun = this.runForAgent(state, {
         kind: 'fresh',
         sourceSession: session.id,
         rangeFromTs: session.dreamReadThroughTs,
       });
+      state.activeRun = freshRun;
+      try {
+        await freshRun;
+      } finally {
+        state.activeRun = null;
+      }
     } catch (err) {
       logger.error({
         msg: 'dream.rem.fire_failed',

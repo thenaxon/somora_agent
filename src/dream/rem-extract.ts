@@ -68,6 +68,11 @@ export interface ExtractResult {
   totalChunks: number;
   /** True if the run completed all chunks; false if cancelled mid-way. */
   completed: boolean;
+  /** Chunks whose LLM call errored (backend reject, timeout, transport).
+   *  The runner MUST NOT treat a run with failedChunks > 0 as a clean
+   *  empty result — that would silently lose the session range (bug
+   *  report 2026-07-24: 19 runs masked as "no findings" in 3 days). */
+  failedChunks: number;
 }
 
 const SYSTEM_PROMPT = `You are REM, the session→memory extraction worker for an AI agent in the somora system.
@@ -408,7 +413,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
   const chunks = chunkEvents(ctx.events, ctx.chunkTokens);
   const totalChunks = chunks.length;
   if (totalChunks === 0) {
-    return { findings: [], chunksProcessed: 0, totalChunks: 0, completed: true };
+    return { findings: [], chunksProcessed: 0, totalChunks: 0, completed: true, failedChunks: 0 };
   }
 
   const systemPrompt = SYSTEM_PROMPT;
@@ -416,6 +421,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
   const client = buildClient(ctx.workerModel);
   const accumulated: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
   const startAt = ctx.startChunk ?? 0;
+  let failedChunks = 0;
 
   for (let i = startAt; i < totalChunks; i++) {
     if (ctx.signal?.aborted) {
@@ -430,6 +436,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         chunksProcessed: i,
         totalChunks,
         completed: false,
+        failedChunks,
       };
     }
     const chunk = chunks[i]!;
@@ -458,15 +465,22 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
       });
       const reasoningParam = openAiReasoningParam(ctx.thinking, ctx.workerModel.model);
       const completion = await Promise.race([
-        client.chat.completions.create({
-          model: ctx.workerModel.modelId,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMsg },
-          ],
-          stream: false,
-          ...reasoningParam,
-        }),
+        client.chat.completions.create(
+          {
+            model: ctx.workerModel.modelId,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userMsg },
+            ],
+            stream: false,
+            ...reasoningParam,
+          },
+          // Pass the abort signal through to the HTTP layer so shutdown /
+          // user-activity aborts cancel the in-flight request cleanly
+          // instead of dying later with an opaque transport error
+          // ("terminated") when the process tears down its sockets.
+          ctx.signal ? { signal: ctx.signal } : undefined,
+        ),
         new Promise<never>((_, reject) =>
           setTimeout(
             () => reject(new Error(`chunk ${i + 1}/${totalChunks} timed out after ${ctx.chunkTimeoutMs}ms`)),
@@ -474,7 +488,17 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
           ),
         ),
       ]);
-      const text = completion.choices[0]?.message?.content ?? '';
+      // Defensive: backends can answer 200 with an error body that has no
+      // `choices` (omlx prefill-memory-guard rejections, 2026-07-24). A
+      // bare `completion.choices[0]` access would throw the useless
+      // "Cannot read properties of undefined (reading '0')" — surface the
+      // actual backend payload instead.
+      const choice = completion.choices?.[0];
+      if (!choice?.message) {
+        const bodyPreview = JSON.stringify(completion)?.slice(0, 500) ?? '(unserializable)';
+        throw new Error(`backend response has no choices — raw body: ${bodyPreview}`);
+      }
+      const text = choice.message.content ?? '';
       const chunkFindings = parseFindings(text);
       accumulated.push(...chunkFindings);
       logger.info({
@@ -496,6 +520,27 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         });
       }
     } catch (err) {
+      // An abort (shutdown or user activity) surfaces here as an SDK
+      // abort error once the signal is wired into the request. That is a
+      // cancellation, not a chunk failure — return the paused-shape
+      // result so the runner parks the dream for resume.
+      if (ctx.signal?.aborted) {
+        logger.info({
+          msg: 'dream.extract_cancelled',
+          agent: ctx.agent,
+          chunkIndex: i,
+          totalChunks,
+          during: 'in-flight chunk request',
+        });
+        return {
+          findings: dedupeAndAssignIds(accumulated),
+          chunksProcessed: i,
+          totalChunks,
+          completed: false,
+          failedChunks,
+        };
+      }
+      failedChunks++;
       logger.warn({
         msg: 'dream.chunk_failed',
         agent: ctx.agent,
@@ -503,7 +548,8 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         totalChunks,
         err: (err as Error).message,
       });
-      // continue to next chunk — single-chunk failure shouldn't sink the whole dream
+      // continue to next chunk — single-chunk failure shouldn't sink the
+      // whole dream; the runner decides what a non-zero failedChunks means
     }
   }
 
@@ -512,5 +558,6 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
     chunksProcessed: totalChunks,
     totalChunks,
     completed: true,
+    failedChunks,
   };
 }

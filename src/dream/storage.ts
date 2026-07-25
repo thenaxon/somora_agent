@@ -183,12 +183,17 @@ export async function transitionDreamStatus(
  * Update a single finding's status (applied / dismissed). Re-checks
  * whether all findings are now resolved; if so, transitions the dream
  * to 'processed' (moves to processed/ dir).
+ *
+ * `note` (optional) is a free-text reason recorded on the finding —
+ * used by dream_dismiss so "manually applied elsewhere" is
+ * distinguishable from "content rejected" in the audit trail.
  */
 export async function updateFindingStatus(
   agent: string,
   dreamId: string,
   findingId: number,
   newStatus: FindingStatus,
+  note?: string,
 ): Promise<{ dream: DreamFile; allResolved: boolean }> {
   const file = await readDreamById(agent, dreamId);
   if (!file) throw new Error(`dream '${dreamId}' not found`);
@@ -199,6 +204,9 @@ export async function updateFindingStatus(
   }
   finding.status = newStatus;
   finding.resolved_at = new Date().toISOString();
+  if (note && note.trim().length > 0) {
+    finding.resolution_note = note.trim();
+  }
 
   const allResolved = file.meta.findings.every((f) => f.status !== 'pending');
   if (allResolved && file.meta.status === 'completed') {
@@ -218,15 +226,18 @@ export async function updateFindingStatus(
 export async function dismissEntireDream(
   agent: string,
   dreamId: string,
+  note?: string,
 ): Promise<{ dream: DreamFile; dismissedCount: number }> {
   const file = await readDreamById(agent, dreamId);
   if (!file) throw new Error(`dream '${dreamId}' not found`);
   const now = new Date().toISOString();
+  const trimmedNote = note?.trim();
   let dismissedCount = 0;
   for (const f of file.meta.findings) {
     if (f.status === 'pending') {
       f.status = 'dismissed';
       f.resolved_at = now;
+      if (trimmedNote) f.resolution_note = trimmedNote;
       dismissedCount++;
     }
   }
@@ -354,6 +365,53 @@ export async function consolidateStalePausedDreams(agents: string[]): Promise<nu
   }
   if (removed > 0) {
     logger.info({ msg: 'dream.consolidate_done', removed_count: removed, agents });
+  }
+  return removed;
+}
+
+/**
+ * Remove failed dreams for a source-session, optionally keeping one id.
+ *
+ * Called by the runner (a) right after writing a NEW failed dream —
+ * keeping only the newest failure per session — and (b) after a
+ * successful run over the same session, which supersedes any earlier
+ * failures entirely. Without this, the failed-≠-empty handling
+ * (2026-07-24 report) would accumulate one .dream.failed.md per retry:
+ * the range is retried on every idle cycle until the backend recovers,
+ * so a multi-day outage would pile up dozens of files.
+ */
+export async function pruneFailedDreams(
+  agent: string,
+  sourceSession: string,
+  opts: { keepId?: string } = {},
+): Promise<number> {
+  let removed = 0;
+  const all = await listDreams(agent);
+  for (const d of all) {
+    if (d.meta.status !== 'failed') continue;
+    if (d.meta.source_session !== sourceSession) continue;
+    if (opts.keepId && d.meta.id === opts.keepId) continue;
+    const path = dreamFilePath(agent, d.meta.id, 'failed');
+    try {
+      await unlink(path);
+      removed++;
+      logger.info({
+        msg: 'dream.prune_failed',
+        agent,
+        id: d.meta.id,
+        source_session: sourceSession,
+        kept: opts.keepId ?? '(none — superseded by successful run)',
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn({
+          msg: 'dream.prune_failed_unlink_failed',
+          agent,
+          path,
+          err: (err as Error).message,
+        });
+      }
+    }
   }
   return removed;
 }

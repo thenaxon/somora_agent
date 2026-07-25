@@ -69,7 +69,10 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
     "wiki, same for every agent). Each entry has a `kind` field = 'memory' or 'wiki_lucid' so the " +
     'agent can describe them differently to the user. Pass include_processed=true to also see ' +
     'already-resolved entries. Use this first when the user asks "hast du was geträumt?" or ' +
-    '"gibt\'s was zum aufräumen?" — pick the oldest and walk through it with `dream_get`.',
+    '"gibt\'s was zum aufräumen?" — pick the oldest and walk through it with `dream_get`. ' +
+    "Entries with status='failed' are extraction runs that hit backend errors — the same session " +
+    'range retries automatically on the next trigger, so prefer waiting for the retried dream; ' +
+    'mention the failure (see `error` field) to the user instead of walking a failed dream.',
   inputSchema: ListInput,
   jsonSchema: {
     type: 'object',
@@ -97,6 +100,12 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
       findings_pending: d.meta.findings.filter((f) => f.status === 'pending').length,
       findings_applied: d.meta.findings.filter((f) => f.status === 'applied').length,
       findings_dismissed: d.meta.findings.filter((f) => f.status === 'dismissed').length,
+      // Failed extractions stay visible here (failed ≠ empty, report
+      // 2026-07-24) — surface why so the agent can tell the user.
+      ...(d.meta.error ? { error: d.meta.error } : {}),
+      ...(typeof d.meta.chunks_failed === 'number' && d.meta.chunks_failed > 0
+        ? { chunks_failed: d.meta.chunks_failed }
+        : {}),
     }));
     const lucidEntries = lucidRuns
       .filter((r) => includeProcessed || r.status !== 'processed')
@@ -159,6 +168,9 @@ export const dreamGet: ToolDefinition<z.infer<typeof GetInput>> = {
         processed_at: memFile.meta.processed_at,
         worker_model_ref: memFile.meta.worker_model_ref,
         ...(memFile.meta.error ? { error: memFile.meta.error } : {}),
+        ...(typeof memFile.meta.chunks_failed === 'number' && memFile.meta.chunks_failed > 0
+          ? { chunks_failed: memFile.meta.chunks_failed }
+          : {}),
         findings: memFile.meta.findings,
         pending_count: memFile.meta.findings.filter((f) => f.status === 'pending').length,
       };
@@ -225,20 +237,33 @@ export const dreamApply: ToolDefinition<z.infer<typeof ApplyInput>> = {
     if (lucidRun) {
       return await applyLucidFindingFromRun(lucidRun, input.dream_id, input.finding_id, ctx);
     }
-    // Neither store has it — provide both kinds of valid ids for self-correction.
-    const memDreams = await listDreams(ctx.agent);
-    const lucidRuns = await listLucidRuns();
-    const known = [
-      ...memDreams.map((d) => `'${d.meta.id}' (memory)`),
-      ...lucidRuns.map((r) => `'${r.id}' (wiki_lucid)`),
-    ];
-    throw new Error(
-      `dream '${input.dream_id}' not found. Valid ids: ${
-        known.length ? known.join(', ') : '(none — call dream_list first)'
-      }`,
-    );
+    // Neither store has it — return a structured, machine-readable error
+    // so the model self-corrects deterministically (2026-07-23 report:
+    // an agent guessed a dummy id and then improvised from the prose
+    // error). Returned (not thrown) on purpose: the shape is the API.
+    return await dreamNotFoundResponse(ctx.agent, input.dream_id);
   },
 };
+
+/** Shared structured not-found payload for dream_apply / dream_dismiss. */
+async function dreamNotFoundResponse(agent: string, requestedId: string): Promise<unknown> {
+  const memDreams = await listDreams(agent);
+  const lucidRuns = await listLucidRuns();
+  const validIds = [
+    ...memDreams.map((d) => ({ id: d.meta.id, kind: 'memory' as const })),
+    ...lucidRuns.map((r) => ({ id: r.id, kind: 'wiki_lucid' as const })),
+  ];
+  return {
+    error: 'dream_not_found',
+    requested_id: requestedId,
+    valid_ids: validIds,
+    recommended_next_tool: validIds.length > 0 ? 'dream_get' : 'dream_list',
+    message:
+      validIds.length > 0
+        ? 'No dream with that id. Use one of valid_ids EXACTLY as listed — fetch it with dream_get and confirm with the user before applying/dismissing.'
+        : 'No dream with that id and no pending dreams exist. Call dream_list to verify — do not invent ids.',
+  };
+}
 
 async function applyMemoryFinding(
   memFile: NonNullable<Awaited<ReturnType<typeof readDreamById>>>,
@@ -359,6 +384,7 @@ async function applyLucidFindingFromRun(
 const DismissInput = z.object({
   dream_id: DreamIdSchema,
   finding_id: z.number().int().positive().optional(),
+  reason: z.string().optional(),
 });
 
 export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
@@ -368,6 +394,9 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
     'Reject a finding (no memory action, just mark as dismissed). Pass finding_id to dismiss one; ' +
     'omit it to dismiss the whole dream (all still-pending findings → dismissed, dream auto-archives). ' +
     'Use the no-finding-id form for "this whole dream was off-base". ' +
+    'Pass `reason` whenever the dismissal is anything other than "content rejected" — e.g. ' +
+    '"manually applied elsewhere", "outdated", "duplicate of memory/foo" — it lands in the audit ' +
+    'trail so a dismissed-but-actually-handled finding is not misread later. ' +
     'IMPORTANT: pass `dream_id` and (if used) `finding_id` EXACTLY as returned by `dream_list` / ' +
     '`dream_get`. Finding ids start at 1.',
   inputSchema: DismissInput,
@@ -379,6 +408,13 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
         type: 'integer',
         minimum: 1,
         description: 'Optional. Without it, the entire dream is dismissed.',
+      },
+      reason: {
+        type: 'string',
+        description:
+          'Optional free-text reason recorded on the dismissed finding(s), e.g. ' +
+          '"manually applied elsewhere". Strongly recommended when the content was ' +
+          'NOT actually rejected.',
       },
     },
     required: ['dream_id'],
@@ -397,17 +433,24 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
             }. Note: finding ids start at 1, not 0.`,
           );
         }
-        const result = await updateFindingStatus(ctx.agent, input.dream_id, input.finding_id, 'dismissed');
+        const result = await updateFindingStatus(
+          ctx.agent,
+          input.dream_id,
+          input.finding_id,
+          'dismissed',
+          input.reason,
+        );
         const remaining = result.dream.meta.findings.filter((f) => f.status === 'pending').length;
         return {
           kind: 'memory',
           dismissed: true,
           finding_id: input.finding_id,
+          ...(input.reason ? { reason_recorded: true } : {}),
           remaining,
           dream_done: result.allResolved,
         };
       }
-      const result = await dismissEntireDream(ctx.agent, input.dream_id);
+      const result = await dismissEntireDream(ctx.agent, input.dream_id, input.reason);
       return {
         kind: 'memory',
         dismissed: true,
@@ -432,17 +475,19 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
           input.dream_id,
           input.finding_id,
           'dismissed',
+          input.reason,
         );
         const remaining = result?.run.findings.filter((f) => f.status === 'pending').length ?? 0;
         return {
           kind: 'wiki_lucid',
           dismissed: true,
           finding_id: input.finding_id,
+          ...(input.reason ? { reason_recorded: true } : {}),
           remaining,
           dream_done: remaining === 0,
         };
       }
-      const result = await dismissEntireLucidRun(input.dream_id);
+      const result = await dismissEntireLucidRun(input.dream_id, input.reason);
       const dismissedCount = result?.findings.filter((f) => f.status === 'dismissed').length ?? 0;
       return {
         kind: 'wiki_lucid',
@@ -452,18 +497,8 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
         dream_done: true,
       };
     }
-    // Neither — list valid ids
-    const memDreams = await listDreams(ctx.agent);
-    const lucidRuns = await listLucidRuns();
-    const known = [
-      ...memDreams.map((d) => `'${d.meta.id}' (memory)`),
-      ...lucidRuns.map((r) => `'${r.id}' (wiki_lucid)`),
-    ];
-    throw new Error(
-      `dream '${input.dream_id}' not found. Valid ids: ${
-        known.length ? known.join(', ') : '(none — call dream_list first)'
-      }`,
-    );
+    // Neither — structured not-found, same shape as dream_apply.
+    return await dreamNotFoundResponse(ctx.agent, input.dream_id);
   },
 };
 
