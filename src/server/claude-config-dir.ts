@@ -20,13 +20,16 @@
 //      privacy + predictability problem we never wanted.
 //
 // What this does
-//   Auto-creates `~/.somora/claude-home/` on server boot, symlinks the
-//   user's `.credentials.json` into it (so OAuth token refreshes stay
-//   in sync — one source of truth for auth), and sets
+//   Auto-creates `~/.somora/claude-home/` on server boot and sets
 //   `process.env.CLAUDE_CONFIG_DIR` so every claude-cli subprocess
 //   spawned by the SDK reads/writes its own state there.
 //
-//   Idempotent: re-runs on every boot are no-ops once the tree exists.
+//   Login sharing with the user's interactive CLI lives in
+//   `claude-credential-sync.ts` (content-sync + runtime watcher; the
+//   former symlink design could not survive the CLI's rename-based
+//   token-refresh writes). It runs config-gated after loadConfig —
+//   this bootstrap stays credential-agnostic apart from a visibility
+//   warning when no login exists anywhere.
 //
 // Operator escape hatch
 //   If the user sets `CLAUDE_CONFIG_DIR` externally (env or
@@ -34,129 +37,10 @@
 //   exists. Advanced setups (shared multi-host config, custom auth
 //   provider) can point this anywhere.
 
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { logger, SOMORA_HOME_DIR } from './logger.ts';
-
-// ---------------------------------------------------------------------------
-// Credential reconcile — the structural fix for symlink drift.
-//
-// The shared-login design symlinks claude-home/.credentials.json →
-// ~/.claude/.credentials.json. But the claude CLI refreshes OAuth tokens
-// with an ATOMIC WRITE (tmp file + rename), and rename replaces the
-// symlink itself — after the first somora-side token refresh the link
-// silently materializes into a real file. From then on both sides rotate
-// the same OAuth session independently, and whichever chain refreshes
-// later invalidates the other: the somora side eventually dies with
-// "OAuth session expired and could not be refreshed" (2026-07-21, all
-// claude-cli agents dead while the user's interactive claude worked).
-//
-// reconcileClaudeCredentials() restores the single source of truth,
-// direction-aware by mtime:
-//   - somora file NEWER  → its token is the live chain: push the content
-//     back into ~/.claude (backup first), then re-symlink. The user's
-//     interactive claude picks up the newest token.
-//   - user file NEWER    → somora's copy is the stale chain: back it up
-//     and re-symlink to the user file.
-//   - identical          → just re-symlink (zero risk).
-//
-// Called on every server boot (after config load) and from the
-// claude-cli engine adapter when a turn fails with an auth error — so a
-// mid-run drift heals on the next message instead of needing a restart.
-//
-// Escape hatch: operators who intentionally run somora on a SEPARATE
-// claude account set `claudeCli.sharedUserCredentials: false` — then
-// this function never touches anything.
-// ---------------------------------------------------------------------------
-
-let sharedUserCredentials = false;
-
-/** Called once at server boot with `config.claudeCli.sharedUserCredentials`. */
-export function configureClaudeCredentialReconcile(enabled: boolean): void {
-  sharedUserCredentials = enabled;
-}
-
-export type CredentialReconcileResult =
-  | 'noop' // healthy symlink, standalone install, or feature disabled
-  | 'relinked' // stale/identical somora copy replaced by symlink to user file
-  | 'pushed' // newer somora token pushed back into ~/.claude, then symlinked
-  | 'unavailable'; // reconcile attempted but failed (see warn log)
-
-export function reconcileClaudeCredentials(): CredentialReconcileResult {
-  if (!sharedUserCredentials) return 'noop';
-  const dir = process.env.CLAUDE_CONFIG_DIR;
-  if (!dir) return 'noop';
-  const credSrc = join(homedir(), '.claude', '.credentials.json');
-  const credDst = join(dir, '.credentials.json');
-  try {
-    let dstStat: ReturnType<typeof lstatSync> | null = null;
-    try {
-      dstStat = lstatSync(credDst);
-    } catch {
-      dstStat = null;
-    }
-    if (dstStat?.isSymbolicLink()) return 'noop'; // healthy
-    const srcExists = existsSync(credSrc);
-    if (!dstStat) {
-      if (!srcExists) return 'noop'; // nothing anywhere — setup already warned
-      symlinkSync(credSrc, credDst);
-      logger.info({ msg: 'claude_credentials.reconcile_linked', dst: credDst });
-      return 'relinked';
-    }
-    if (!srcExists) return 'noop'; // standalone install — local file is the truth
-    const dstContent = readFileSync(credDst, 'utf8');
-    const srcContent = readFileSync(credSrc, 'utf8');
-    let pushed = false;
-    if (dstContent !== srcContent) {
-      const dstNewer = statSync(credDst).mtimeMs > statSync(credSrc).mtimeMs;
-      if (dstNewer) {
-        pushed = true;
-        // somora's chain is the live one — push it back to ~/.claude so
-        // both sides share it again. Atomic write (tmp + rename in the
-        // same dir) mirrors the CLI's own update pattern.
-        const srcBackup = `${credSrc}.somora-backup-${Date.now()}`;
-        renameSync(credSrc, srcBackup);
-        const tmp = `${credSrc}.somora-tmp-${process.pid}`;
-        writeFileSync(tmp, dstContent, { mode: 0o600 });
-        renameSync(tmp, credSrc);
-        logger.warn({
-          msg: 'claude_credentials.reconcile_pushed',
-          hint: 'somora-side token was newer; pushed back into ~/.claude and re-symlinked. backup preserved.',
-          srcBackup,
-        });
-      }
-    }
-    // Either identical, or (after a push) src now holds the newest
-    // content, or src is newer anyway — replace the somora file with
-    // the symlink in all cases.
-    const dstBackup = `${credDst}.somora-backup-${Date.now()}`;
-    renameSync(credDst, dstBackup);
-    symlinkSync(credSrc, credDst);
-    logger.info({
-      msg: 'claude_credentials.reconcile_relinked',
-      dstBackup,
-      symlinkTo: credSrc,
-    });
-    return pushed ? 'pushed' : 'relinked';
-  } catch (err) {
-    logger.warn({
-      msg: 'claude_credentials.reconcile_failed',
-      err: String(err),
-      hint: 'credential drift could not be auto-healed; run `claude login` (or fix perms) and restart somora',
-    });
-    return 'unavailable';
-  }
-}
 
 export function setupClaudeConfigDir(): void {
   const claudeConfigDir =
@@ -164,119 +48,17 @@ export function setupClaudeConfigDir(): void {
       ? process.env.CLAUDE_CONFIG_DIR
       : join(SOMORA_HOME_DIR, 'claude-home');
   mkdirSync(claudeConfigDir, { recursive: true });
-  // Share auth credentials with the user's interactive Claude Code so
-  // login state is one source of truth. Symlink — not copy — so token
-  // refresh writes by either side propagate to the other automatically.
-  // If the user has never run `claude login`, the source file doesn't
-  // exist yet; log a hint and continue. The first claude-cli engine
-  // call will then fail with a clear auth error rather than this
-  // bootstrap blowing up.
-  //
-  // Migration:
-  //   Pre-2026-05-16 installs (and a few suspected claude-cli atomic-write
-  //   replacements) left a real *file* at credDst instead of a symlink.
-  //   Those silently drift away from `~/.claude/.credentials.json` after
-  //   the user does `/login`, so somora keeps using the old account
-  //   without surfacing it. We migrate-on-boot using a safety ladder:
-  //
-  //     symlink           → no-op (honors operator-configured target)
-  //     real file, same   → back up & convert to symlink (zero-risk fix)
-  //     real file, diff   → warn loudly with the manual fix command;
-  //                         don't touch (could be intentional isolation)
-  //     no dst, has src   → symlink (fresh-install bootstrap)
-  //     no dst, no src    → warn (user never ran `claude login`)
+
   const credSrc = join(homedir(), '.claude', '.credentials.json');
   const credDst = join(claudeConfigDir, '.credentials.json');
-  let credentialsLinked = false;
-  let credentialsMigrated = false;
-  let credentialsDiverged = false;
-
-  let dstStat: ReturnType<typeof lstatSync> | null = null;
-  try {
-    dstStat = lstatSync(credDst);
-  } catch {
-    dstStat = null;
-  }
-  const srcExists = existsSync(credSrc);
-
-  if (dstStat?.isSymbolicLink()) {
-    credentialsLinked = true;
-  } else if (dstStat?.isFile()) {
-    if (!srcExists) {
-      // Standalone install: no user-level `~/.claude/.credentials.json`
-      // to link to. Honor the local file as the single source of truth.
-      credentialsLinked = true;
-      logger.info({
-        msg: 'claude_config_dir.credentials_standalone',
-        path: credDst,
-        hint: 'no ~/.claude/.credentials.json present; somora running on local credentials',
-      });
-    } else {
-      let identical = false;
-      try {
-        identical = readFileSync(credDst, 'utf8') === readFileSync(credSrc, 'utf8');
-      } catch (err) {
-        logger.warn({
-          msg: 'claude_config_dir.credentials_compare_fail',
-          err: String(err),
-        });
-      }
-      if (identical) {
-        const backup = `${credDst}.somora-backup-${Date.now()}`;
-        try {
-          renameSync(credDst, backup);
-          symlinkSync(credSrc, credDst);
-          credentialsLinked = true;
-          credentialsMigrated = true;
-          logger.info({
-            msg: 'claude_config_dir.credentials_relinked',
-            backup,
-            symlinkTo: credSrc,
-            hint: 'replaced legacy real-file credentials with a symlink to ~/.claude/.credentials.json (content identical). future /login refreshes now propagate. backup preserved.',
-          });
-        } catch (err) {
-          credentialsLinked = true;
-          logger.warn({
-            msg: 'claude_config_dir.credentials_relink_fail',
-            err: String(err),
-            hint: 'tried to convert real-file credentials to symlink but rename/symlink failed; somora keeps using the existing file',
-          });
-        }
-      } else {
-        credentialsLinked = true;
-        credentialsDiverged = true;
-        logger.warn({
-          msg: 'claude_config_dir.credentials_diverged',
-          somoraFile: credDst,
-          userFile: credSrc,
-          hint:
-            'somora-home credentials differ from ~/.claude/.credentials.json. ' +
-            'Most common cause: you ran `/login` in the regular claude CLI but somora is still on the previous account (silent failure mode). ' +
-            `To make user-level /login propagate to somora, run: mv ${credDst} ${credDst}.backup-$(date +%s) && ln -sf ${credSrc} ${credDst} && (restart somora). ` +
-            'If the divergence is intentional (somora deliberately on a separate claude account), ignore this warning.',
-        });
-      }
-    }
-  } else if (srcExists) {
-    try {
-      symlinkSync(credSrc, credDst);
-      credentialsLinked = true;
-    } catch (err) {
-      logger.warn({
-        msg: 'claude_config_dir.credentials_symlink_fail',
-        src: credSrc,
-        dst: credDst,
-        err: String(err),
-        hint: 'claude-cli engine will likely fail with auth errors; run `claude login` and restart somora',
-      });
-    }
-  } else {
+  if (!existsSync(credSrc) && !existsSync(credDst)) {
     logger.warn({
       msg: 'claude_config_dir.credentials_missing',
       expected: credSrc,
-      hint: 'user has never run `claude login`; claude-cli engine will fail until they do',
+      hint: 'no claude login found anywhere; claude-cli engine will fail until the user runs `claude login`',
     });
   }
+
   // Propagate to the spawned children. The claude-agent-sdk reads
   // CLAUDE_CONFIG_DIR from its inherited env, so just setting it on
   // the somora server process is enough — every subprocess inherits.
@@ -284,9 +66,6 @@ export function setupClaudeConfigDir(): void {
   logger.info({
     msg: 'claude_config_dir.ready',
     path: claudeConfigDir,
-    credentialsLinked,
-    credentialsMigrated,
-    credentialsDiverged,
     hint: 'somora-spawned claude-cli subprocesses are isolated from ~/.claude',
   });
 }

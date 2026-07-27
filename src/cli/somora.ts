@@ -49,6 +49,8 @@ Usage:
   somora tui                         launch the TUI against the running server
   somora skill <subcommand>          list/check/add/update/remove skills
                                      (run \`somora skill\` for sub-help)
+  somora auth status|sync            shared claude-cli login: inspect / reconcile
+                                     the two credential stores
   somora update [<version>|--edge]   install + rebake systemd + restart
                                      (run \`somora update --help\` for options)
   somora --version                   show version
@@ -539,6 +541,10 @@ async function main(): Promise<number> {
     case 'skill': {
       const { runSkillCli } = await import('./skill.ts');
       return await runSkillCli(rest);
+    }
+    case 'auth': {
+      const { runAuthCli } = await import('./auth.ts');
+      return runAuthCli(rest);
     }
     case 'update':
       return await cmdUpdate(rest);

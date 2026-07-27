@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { query, type CanUseTool, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, somoraMemoryServerSpawn } from '../mcp/config.ts';
-import { reconcileClaudeCredentials } from '../server/claude-config-dir.ts';
+import { reconcileClaudeCredentials } from '../server/claude-credential-sync.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import {
@@ -145,6 +145,8 @@ export const claudeCliEngine: AgentEngine = {
 
     let cumulative = '';
     let finalText = '';
+    let sawToolUse = false;
+    let yieldedErrorEvent = false;
     let lastSdkSessionId: string | undefined;
     let usage: { tokens_in: number; tokens_out: number } | undefined;
     let tokensInCachedClaude: number | undefined;
@@ -235,6 +237,13 @@ export const claudeCliEngine: AgentEngine = {
         thinking,
         resolvedModel.model,
       );
+
+      // Pre-turn credential reconcile — the subprocess spawned below
+      // reads .credentials.json fresh, so syncing here guarantees every
+      // turn starts on the newest OAuth chain even if the watcher's
+      // debounce hasn't fired yet. Two ~500-byte reads when healthy;
+      // the sync module logs if it actually had to heal.
+      reconcileClaudeCredentials();
 
       const stream = query({
         prompt: userInputStream(userContent),
@@ -408,6 +417,7 @@ export const claudeCliEngine: AgentEngine = {
               // watchdog (re-arm with the tool threshold) so a legit
               // long tool isn't killed mid-run (Juni-Audit 2026-06).
               pendingToolCalls++;
+              sawToolUse = true;
               armIdleTimer();
               yield {
                 kind: 'tool_call',
@@ -494,6 +504,7 @@ export const claudeCliEngine: AgentEngine = {
               duration_ms: msg.duration_ms,
             });
           } else {
+            yieldedErrorEvent = true;
             yield {
               kind: 'error',
               ts: ts(),
@@ -515,10 +526,43 @@ export const claudeCliEngine: AgentEngine = {
         const healed = reconcileClaudeCredentials();
         logger.warn({ msg: 'engine.auth_failure', engine: ENGINE, agent, session, healed });
         const hint =
-          healed === 'relinked' || healed === 'pushed'
-            ? 'Credential-Drift erkannt und automatisch repariert — bitte die Nachricht einfach erneut senden.'
-            : 'Bitte `claude login` im Terminal prüfen/ausführen und erneut senden.';
+          healed === 'pulled' || healed === 'pushed'
+            ? 'Credential drift detected and auto-healed — just resend your message.'
+            : 'Please run `claude login` in your terminal and resend (`somora auth status` shows the credential state).';
         yield { kind: 'error', ts: ts(), engine: ENGINE, message: `${finalText.trim()} — ${hint}` };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+        return;
+      }
+
+      // Empty-turn defense. On 2026-07-24 an expired OAuth session
+      // produced turns that ended after ~4s with NO assistant text, NO
+      // tool_use, NO error event and nothing in the logs — the SDK
+      // swallowed the auth error entirely (it neither threw nor emitted
+      // the "Failed to authenticate" result text that the branch above
+      // catches). A turn that yields literally nothing is never a valid
+      // outcome, so surface it loudly, reconcile credentials (the most
+      // likely cause), and tell the user what to do — instead of the
+      // silent turn_start/turn_end pair that had them guessing.
+      if (!finalText && !cumulative && !sawToolUse && !yieldedErrorEvent) {
+        const healed = reconcileClaudeCredentials();
+        logger.warn({
+          msg: 'engine.empty_turn',
+          engine: ENGINE,
+          agent,
+          session,
+          healed,
+          hint: 'SDK stream ended without text/tools/error — likely a swallowed auth failure',
+        });
+        const hint =
+          healed === 'pulled' || healed === 'pushed'
+            ? 'Credential drift detected and auto-healed — just resend your message.'
+            : 'Most common cause: expired OAuth session. `somora auth status` shows the credential state; run `claude login` if needed and resend.';
+        yield {
+          kind: 'error',
+          ts: ts(),
+          engine: ENGINE,
+          message: `claude-cli returned an empty turn (no text, no tool call, no error event) — ${hint}`,
+        };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
         return;
       }

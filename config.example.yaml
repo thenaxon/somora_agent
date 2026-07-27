@@ -366,6 +366,15 @@ providers:
 #   mcpConnectTimeoutMs: 60000  # 60 sec — initial MCP server connect handshake
 #                               # timeout (ms); sets MCP_TIMEOUT. Only affects
 #                               # startup, not running calls.
+#   sharedUserCredentials: true # share the user's `claude login` with somora's
+#                               # isolated claude-home via continuous credential
+#                               # sync (fs-watcher + 60s poll + pre-turn check;
+#                               # newest OAuth chain wins on divergence). Set
+#                               # false to run somora on a SEPARATE Claude
+#                               # account — somora then never touches either
+#                               # credentials file. See docs/setup.md
+#                               # "Isolated Claude config dir". Inspect with
+#                               # `somora auth status`.
 
 # codex-cli engine tunables. Same posture as claudeCli — surface codex-
 # internal limits so they're configurable here. Applied via -c TOML

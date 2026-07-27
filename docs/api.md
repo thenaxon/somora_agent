@@ -110,6 +110,16 @@ Returns:
   "lockfileStartedAt": "2026-05-14T11:09:08.429Z",
   "activeSessions": 1,
   "totalKnownSessions": 3,
+  "claudeAuth": {
+    "enabled": true,
+    "userExists": true,
+    "somoraExists": true,
+    "identical": true,
+    "userExpiresAt": 1785503549000,
+    "somoraExpiresAt": 1785503549000,
+    "lastSyncResult": "noop",
+    "lastSyncAt": 1785496349000
+  },
   "sessions": [
     {
       "agent": "hans",
@@ -139,6 +149,14 @@ silent — if it climbs past a few minutes on a chat turn (vs. a long
 local-LLM job), the turn is wedged and the engine watchdog will abort
 it. See [setup.md](setup.md#tunables) `engineWatchdog` to tune
 thresholds per engine.
+
+`claudeAuth` reports the shared-login credential sync between
+`~/.claude` and somora's isolated claude-home (paths and mtimes
+elided above; never token material). `identical: false` with both
+sides present means the stores have diverged and the watcher hasn't
+caught up yet — if it persists, claude-cli auth is about to break;
+run `somora auth status` on the host. See
+[setup.md](setup.md#isolated-claude-config-dir).
 
 `subscriberCount` is the number of currently-connected SSE clients
 (web / mobile / TUI tail) watching this session. `lastPublishOkAt` only

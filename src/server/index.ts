@@ -40,11 +40,14 @@ import {
   getMemoryManager,
   shutdownMemoryRegistry,
 } from '../memory/registry.ts';
+import { setupClaudeConfigDir } from './claude-config-dir.ts';
 import {
-  configureClaudeCredentialReconcile,
+  configureClaudeCredentialSync,
+  credentialSyncStatus,
   reconcileClaudeCredentials,
-  setupClaudeConfigDir,
-} from './claude-config-dir.ts';
+  startClaudeCredentialSyncWatcher,
+  stopClaudeCredentialSyncWatcher,
+} from './claude-credential-sync.ts';
 import { getEffectiveEnv } from './env.ts';
 import { loadSomoraEnvFile } from './env-file.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
@@ -374,11 +377,21 @@ logger.info({
 
 // Credential-drift self-healing (claude-cli shared login). Config-gated,
 // so it runs AFTER loadConfig — setupClaudeConfigDir() above only did
-// the config-independent bootstrap. Boot-time heal covers drift that
-// happened while the server was down; the claude-cli adapter calls the
-// same reconcile again when a turn fails with an auth error.
-configureClaudeCredentialReconcile(config.claudeCli.sharedUserCredentials);
+// the config-independent bootstrap. Boot-time reconcile covers drift
+// that happened while the server was down; the runtime watcher (+60s
+// poll) covers drift while it's up — token refreshes happen mid-run and
+// killed the shared login daily before this existed (2026-07-24/25
+// reports). The claude-cli adapter additionally reconciles pre-turn and
+// on auth failures.
+configureClaudeCredentialSync({
+  enabled: config.claudeCli.sharedUserCredentials,
+  log: {
+    info: (data) => logger.info(data),
+    warn: (data) => logger.warn(data),
+  },
+});
 reconcileClaudeCredentials();
+startClaudeCredentialSyncWatcher();
 
 // Validate vision worker config — warn-and-degrade rather than hard-
 // fail so an image-only worker (e.g., a local omlx model) is still
@@ -538,6 +551,11 @@ app.get('/health', (c) => {
     lockfileStartedAt: lockfile?.startedAt ?? null,
     activeSessions: busySessions.length,
     totalKnownSessions: sessions.length,
+    // Shared-login credential sync (claude-cli). `identical: false` with
+    // both sides present means the stores have diverged and the watcher
+    // hasn't caught up — if that state persists, auth is about to break.
+    // Expiry values only, never token material.
+    claudeAuth: credentialSyncStatus(),
     sessions,
   });
 });
@@ -3713,6 +3731,7 @@ async function shutdown(signal: string): Promise<void> {
   deepWorker.shutdown();
   lucidWorker.shutdown();
   releaseLockfile();
+  stopClaudeCredentialSyncWatcher();
   await shutdownMemoryRegistry();
   await shutdownSshPool();
   process.exit(0);

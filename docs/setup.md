@@ -728,8 +728,9 @@ release tarball always contains both `web/dist` and `web-mobile/dist`.
 somora-spawned claude-cli subprocesses run with their own config tree
 under `~/.somora/claude-home/`, not the user's `~/.claude/`. On first
 server start the dir is auto-created and the user's
-`~/.claude/.credentials.json` is symlinked into it so OAuth token
-refreshes stay in sync between somora and the user's own Claude Code.
+`~/.claude/.credentials.json` is copied into it; a continuous sync
+(see below) keeps both credential stores on the same OAuth session so
+one `claude login` covers somora and the user's own Claude Code.
 
 Everything else (project history, sessions, plugin marketplace state,
 shell snapshots, MCP-needs-auth cache, …) lives separately. somora's
@@ -767,46 +768,60 @@ opts back into inheritance when you specifically want it (see
 Set `CLAUDE_CONFIG_DIR` in `~/.somora/somora.env` (or shell env) to
 point at any directory you prefer — useful for shared multi-host
 setups, or when you want somora to read a hand-curated config tree.
-The auto-create + credentials-symlink still runs on whichever path
+The auto-create + credential sync still runs on whichever path
 you supply.
 
 **If the user hasn't run `claude login`**
 
 The credentials file at `~/.claude/.credentials.json` won't exist
 yet, and the bootstrap logs a warning instead of failing. Run
-`claude login` once interactively (any session), then restart
-somora — the symlink picks up on the next boot.
+`claude login` once interactively (any session) — the running
+server's credential watcher picks it up within seconds, no restart
+needed.
 
-**Credential-drift self-healing**
+**Shared-login credential sync**
 
-The shared-login symlink has a structural enemy: the claude CLI
-refreshes OAuth tokens with an atomic write (tmp file + rename), and
-rename replaces the *symlink itself* — after the first somora-side
-token refresh the link silently materializes into a real file. From
-then on both trees rotate the same OAuth session independently, and
-whichever side refreshes later invalidates the other; the losing side
-eventually fails with `OAuth session expired and could not be
-refreshed`.
+Sharing one login between two config trees has a structural enemy:
+the claude CLI refreshes OAuth tokens with an atomic write (tmp file +
+rename). An earlier somora design symlinked the somora-side file to
+`~/.claude/.credentials.json`, but rename replaces the *symlink
+itself* — after the first token refresh the link silently materializes
+into a real file. From then on both trees rotate the same OAuth
+session independently, and whichever side refreshes later invalidates
+the other; the losing side eventually fails with `OAuth session
+expired and could not be refreshed` (in practice: forced re-logins
+almost daily).
 
-somora heals this automatically (default `claudeCli.
-sharedUserCredentials: true` in `config.yaml`), on every boot **and**
-whenever a claude-cli turn fails with an auth error:
+somora therefore maintains the sharing as a *continuously reconciled
+content sync* (default `claudeCli.sharedUserCredentials: true` in
+`config.yaml`) instead of a symlink:
 
-- **Already a symlink** → healthy, no-op.
-- **Real file, identical content** → backup as
-  `.credentials.json.somora-backup-<ts>`, replace with a symlink.
-- **Real file, somora's copy is newer** → somora's token is the live
-  chain: push the content back into `~/.claude/.credentials.json`
-  (backup first), then re-symlink. Your interactive Claude Code picks
-  up the newest token.
-- **Real file, `~/.claude`'s copy is newer** → somora's copy is the
-  stale chain: back it up and re-symlink to the user file.
-- **Standalone install** (no `~/.claude/.credentials.json`) → the
-  local file is the single source of truth, no-op.
+- **Filesystem watcher** on both parent directories plus a 60 s
+  fallback poll — a token refresh (or fresh `claude login`) on either
+  side propagates to the other within seconds, while the server runs.
+- **Boot reconcile** covers drift that happened while the server was
+  down.
+- **Pre-turn reconcile** in the claude-cli engine guarantees every
+  turn starts on the newest OAuth chain.
+- **Auth-failure reconcile** — if a turn still fails auth, somora
+  reconciles inline and tells you whether re-sending the message is
+  enough or a fresh `claude login` is needed.
 
-If a turn errors with an auth failure, somora runs the reconcile
-inline and tells you whether re-sending the message is enough or a
-fresh `claude login` is needed.
+On divergence the side with the *later OAuth expiry* wins (its refresh
+happened last, so its refresh-token chain is the live one) and is
+copied over the other — atomic write, mode `0600`, previous content
+kept once at `.credentials.json.somora-prev`. A corrupt/unparseable
+file always loses to a healthy one.
+
+Inspect or fix the state manually any time:
+
+```
+somora auth status   # both stores: mtime, OAuth expiry, in sync / diverged
+somora auth sync     # one-shot reconcile (what the watcher does continuously)
+```
+
+`GET /health` also reports the sync state under `claudeAuth`
+(existence, expiry, divergence — never token material).
 
 **Running somora on a separate Claude account**
 
