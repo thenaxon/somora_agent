@@ -229,31 +229,43 @@ needed.
 ### Importing a ClawHub skill
 
 [ClawHub](https://clawhub.ai) is OpenClaw's public skill registry.
-somora ships a dedicated resolver for it — pass any
-`clawhub.ai/<owner>/<slug>` URL straight to `--from-url`:
+somora ships a dedicated resolver for it — pass any ClawHub URL
+straight to `--from-url`. All of these shapes work:
+`clawhub.ai/<owner>/skills/<slug>` (canonical web URL),
+`clawhub.ai/<owner>/<slug>`, or the bare `clawhub.ai/<slug>` shortcut:
 
 ```
-somora skill add github --from-url https://clawhub.ai/steipete/github
+somora skill add gog --from-url https://clawhub.ai/steipete/skills/gog
 ```
+
+Prefer the owner-qualified URL: ClawHub slugs are not unique across
+owners, and for a contested slug the API answers a bare-slug lookup
+with `409 AMBIGUOUS_SKILL_SLUG`. The resolver carries the owner from
+the URL through both API calls; when you do hit the 409 (bare-slug URL
+of a contested skill), the error lists every candidate URL so you can
+re-run with the right one.
 
 What the resolver does end-to-end:
 
 1. Detects the ClawHub host and routes through the resolver instead
    of the plain fetch path.
-2. Hits `GET https://clawhub.ai/api/v1/skills/<slug>` for the
-   canonical slug + latest version + moderation status. Refuses the
-   install if ClawHub has the skill flagged as malware-blocked.
+2. Hits `GET https://clawhub.ai/api/v1/skills/<slug>[?owner=<owner>]`
+   for the canonical slug + latest version + moderation status.
+   Refuses the install if ClawHub has the skill flagged as
+   malware-blocked.
 3. Downloads the zipped bundle via
-   `GET https://clawhub.ai/api/v1/download?slug=<canonical>` (50MB
-   hard cap, 60s timeout).
+   `GET https://clawhub.ai/api/v1/download?slug=<canonical>[&owner=…]`
+   (50MB hard cap, 60s timeout).
 4. Unpacks the ZIP with path-sanitization (no `..`, no absolute
    paths, text-file allowlist), strips the common top-level folder,
    keeps `SKILL.md` plus any text sub-resources (BOOTSTRAP.md,
    scripts/, references/, etc.).
-5. Translates `metadata.openclaw.*` frontmatter to `metadata.somora.*`
-   so somora's loader picks up the `requires.bins` / `env_vars`
-   runtime checks. The original `metadata.openclaw` stays in place;
-   the file remains valid in both ecosystems.
+5. Translates ClawHub-shape frontmatter to `metadata.somora.*` so
+   somora's loader picks up the `requires.bins` / `env_vars` runtime
+   checks. All three namespaces found in the wild are recognized —
+   `metadata.openclaw.*` plus the legacy `metadata.clawdbot.*` and
+   `metadata.clawdis.*`. The original block stays in place; the file
+   remains valid in both ecosystems.
 6. Runs the normal pre-flight lint + atomic write + post-write
    loader verification.
 

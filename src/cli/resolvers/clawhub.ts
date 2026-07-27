@@ -74,18 +74,34 @@ export function isClawHubUrl(url: string): boolean {
   }
 }
 
-/** Extract the slug from a ClawHub web URL. Accepts `/<owner>/<slug>` (the
- *  canonical web URL) and `/<slug>` (the slug-shortcut). Trailing slashes
- *  and query strings are tolerated. Returns null on unrecognized shapes. */
-function extractSlugFromUrl(url: string): string | null {
-  const u = new URL(url);
+/** Parse slug + owner from a ClawHub web URL. Accepted shapes:
+ *    /<slug>                      (slug shortcut)
+ *    /<owner>/<slug>              (older canonical web URL)
+ *    /<owner>/skills/<slug>       (current canonical web URL)
+ *    /skills/<slug>               (owner-less skills path)
+ *  The owner is a REQUIRED disambiguator on the API side whenever a slug
+ *  is taken by multiple owners (409 AMBIGUOUS_SKILL_SLUG otherwise) —
+ *  dropping it from the URL made `somora skill install
+ *  https://clawhub.ai/steipete/skills/gog` fail on any contested slug
+ *  (Lucy case study 2026-07-24). Returns null on unrecognized shapes. */
+export function parseClawHubUrl(url: string): { slug: string; owner?: string } | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
   const parts = u.pathname.split('/').filter((p) => p.length > 0);
-  // Take the last segment — works for both `/<slug>` and `/<owner>/<slug>`.
   const last = parts[parts.length - 1];
   if (!last) return null;
   // ClawHub slugs: lowercase, URL-safe (`^[a-z0-9][a-z0-9-]*$`).
   if (!/^[a-z0-9][a-z0-9-]*$/.test(last)) return null;
-  return last;
+  let owner: string | undefined;
+  if (parts.length === 2 && parts[0] !== 'skills') owner = parts[0];
+  else if (parts.length === 3 && parts[1] === 'skills') owner = parts[0];
+  else if (parts.length > 1 && !(parts.length === 2 && parts[0] === 'skills')) return null;
+  if (owner !== undefined && !/^[a-z0-9][a-z0-9._-]*$/i.test(owner)) return null;
+  return { slug: last, ...(owner ? { owner } : {}) };
 }
 
 /** Run a fetch with an explicit AbortController-based timeout. We don't reuse
@@ -123,11 +139,42 @@ interface ClawHubMetaResponse {
   };
 }
 
-async function fetchMeta(slug: string): Promise<ClawHubMetaResponse> {
-  const url = `${CLAWHUB_API_BASE}/skills/${encodeURIComponent(slug)}`;
+/** Shape of ClawHub's 409 AMBIGUOUS_SKILL_SLUG body (verified live
+ *  2026-07-27): lists every owner holding the slug. */
+interface ClawHubAmbiguousResponse {
+  code?: string;
+  matches?: Array<{ ownerHandle?: string; slug?: string; url?: string }>;
+}
+
+async function ambiguousSlugError(slug: string, res: Response): Promise<Error> {
+  let candidates = '';
+  try {
+    const body = (await res.json()) as ClawHubAmbiguousResponse;
+    if (Array.isArray(body.matches) && body.matches.length > 0) {
+      candidates =
+        ' Candidates:\n' +
+        body.matches
+          .map((m) => `  - ${m.url ?? `https://clawhub.ai/${m.ownerHandle}/skills/${m.slug ?? slug}`}`)
+          .join('\n');
+    }
+  } catch {
+    /* non-JSON body — generic message below is still actionable */
+  }
+  return new Error(
+    `ClawHub: slug '${slug}' is taken by multiple owners (409). ` +
+      `Re-run with the owner-qualified URL (https://clawhub.ai/<owner>/skills/${slug}).${candidates}`,
+  );
+}
+
+async function fetchMeta(slug: string, owner?: string): Promise<ClawHubMetaResponse> {
+  const ownerQs = owner ? `?owner=${encodeURIComponent(owner)}` : '';
+  const url = `${CLAWHUB_API_BASE}/skills/${encodeURIComponent(slug)}${ownerQs}`;
   const res = await fetchWithTimeout(url, META_TIMEOUT_MS);
   if (res.status === 404) {
-    throw new Error(`ClawHub: skill '${slug}' not found (404)`);
+    throw new Error(`ClawHub: skill '${owner ? `${owner}/` : ''}${slug}' not found (404)`);
+  }
+  if (res.status === 409) {
+    throw await ambiguousSlugError(slug, res);
   }
   if (res.status === 429) {
     const retryAfter = res.headers.get('retry-after') ?? '?';
@@ -147,11 +194,15 @@ async function fetchMeta(slug: string): Promise<ClawHubMetaResponse> {
   return body;
 }
 
-async function fetchZip(slug: string): Promise<Buffer> {
-  const url = `${CLAWHUB_API_BASE}/download?slug=${encodeURIComponent(slug)}`;
+async function fetchZip(slug: string, owner?: string): Promise<Buffer> {
+  const ownerQs = owner ? `&owner=${encodeURIComponent(owner)}` : '';
+  const url = `${CLAWHUB_API_BASE}/download?slug=${encodeURIComponent(slug)}${ownerQs}`;
   const res = await fetchWithTimeout(url, DOWNLOAD_TIMEOUT_MS);
   if (res.status === 410) {
     throw new Error(`ClawHub: requested skill version is soft-deleted (410).`);
+  }
+  if (res.status === 409) {
+    throw await ambiguousSlugError(slug, res);
   }
   if (res.status === 429) {
     const retryAfter = res.headers.get('retry-after') ?? '?';
@@ -314,16 +365,18 @@ function translateFrontmatter(skillMdText: string, slug: string): string {
  *  flow. The caller still chooses the destination slug — usually it should
  *  match `canonicalSlug` returned here, but a `--force` rename is allowed. */
 export async function resolveClawHubUrl(url: string): Promise<ClawHubResolution> {
-  const slugFromUrl = extractSlugFromUrl(url);
-  if (!slugFromUrl) {
+  const ref = parseClawHubUrl(url);
+  if (!ref) {
     throw new Error(`Unrecognized ClawHub URL shape: ${url}`);
   }
   // Canonicalize via metadata fetch. Handles rename / merge / alias.
-  const meta = await fetchMeta(slugFromUrl);
-  const canonicalSlug = meta.skill?.slug ?? slugFromUrl;
+  // The owner from the URL rides along on BOTH calls — it's the only
+  // disambiguator the API accepts when a slug is contested.
+  const meta = await fetchMeta(ref.slug, ref.owner);
+  const canonicalSlug = meta.skill?.slug ?? ref.slug;
   const version = meta.latestVersion?.version ?? 'unknown';
   // Download the zipped bundle.
-  const zipBuf = await fetchZip(canonicalSlug);
+  const zipBuf = await fetchZip(canonicalSlug, ref.owner);
   const extracted = extractZip(zipBuf);
   const skillEntry = findSkillMd(extracted);
   if (!skillEntry) {
