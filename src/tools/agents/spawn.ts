@@ -625,7 +625,14 @@ async function spawnAsyncViaHttp(args: {
         agent: args.targetAgent,
         session: args.targetSession,
         text: args.taskText,
-        from_agent: args.parentAgent,
+        // Deliberately NO from_agent: a spawn task brief is not an A2A
+        // message. Labeling it would render a peer-agent bubble + fire
+        // unread badges in the sub's session, and the sub's engine
+        // would frame the brief as inbound mail from the parent —
+        // while the in-process async path and BOTH sync paths deliver
+        // the same brief unlabeled. Parent attribution for the task
+        // registry travels via parent_agent below (Juni-Audit 2026-07,
+        // decision: briefs are neutral).
         parent_agent: args.parentAgent,
         parent_session: args.parentSession,
         subagent_depth: args.parentDepth + 1,
