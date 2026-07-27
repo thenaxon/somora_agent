@@ -91,7 +91,7 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
       kind: 'error',
       ts: Date.now(),
       engine: primary.provider.engine,
-      message: `${primaryError}; fallback '${fallbackRef}' nicht aufgelöst`,
+      message: `${primaryError}; fallback '${fallbackRef}' could not be resolved`,
     };
     return;
   }

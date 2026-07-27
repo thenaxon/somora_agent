@@ -218,7 +218,7 @@ export const codexCliEngine: AgentEngine = {
         payload: {
           from: modelSwitched.from,
           to: modelSwitched.to,
-          text: `Codex-Thread wurde für den Modellwechsel (${modelSwitched.from} → ${modelSwitched.to}) neu gestartet — der Sessionverlauf wurde übernommen.`,
+          text: `Codex thread restarted for the model switch (${modelSwitched.from} → ${modelSwitched.to}) — session history carried over.`,
         },
       };
     }
@@ -734,8 +734,8 @@ export const codexCliEngine: AgentEngine = {
             });
           }
           const message =
-            'Codex-Thread dieser Session ist nicht mehr vorhanden — er wurde verworfen. ' +
-            'Die nächste Nachricht startet einen frischen Thread mit übernommenem Sessionverlauf.';
+            'The Codex thread for this session no longer exists — it was discarded. ' +
+            'The next message starts a fresh thread with the session history carried over.';
           yield { kind: 'error', ts: ts(), engine: ENGINE, message };
           yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
           return;

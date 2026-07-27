@@ -363,10 +363,10 @@ try {
 } catch (err) {
   // pino's worker transport can swallow the error during fast crash; print
   // directly to stderr so the operator sees what's wrong with their config.
-  console.error('\n\x1b[31m[!] somora konnte ~/.somora/config.yaml nicht laden:\x1b[0m\n');
+  console.error('\n\x1b[31m[!] somora could not load ~/.somora/config.yaml:\x1b[0m\n');
   console.error((err as Error).message);
-  console.error(`\nDatei: ${configPath()}`);
-  console.error('Bitte YAML / Schema fixen und Server neu starten.\n');
+  console.error(`\nFile: ${configPath()}`);
+  console.error('Fix the YAML / schema and restart the server.\n');
   process.exit(1);
 }
 logger.info({
@@ -1201,7 +1201,7 @@ app.get('/mobile-config', (c) => c.json(config.mobile));
 app.get('/agents/:agent/system-prompt', async (c) => {
   const agent = c.req.param('agent');
   const persona = await loadPersona(agent);
-  if (!persona) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
   return c.json({ agent, systemPrompt: persona.systemPrompt });
 });
 
@@ -1255,7 +1255,7 @@ app.post('/agents/:agent/tools/:name', async (c) => {
   const agent = c.req.param('agent');
   const name = c.req.param('name');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const input = await c.req.json().catch(() => ({}));
   const result = await tools.invoke(name, input, {
@@ -1277,7 +1277,7 @@ app.post('/agents/:agent/tools/:name', async (c) => {
 app.get('/agents/:agent/memory/notes', async (c) => {
   const agent = c.req.param('agent');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
   const notes = await mgr.listNotes();
@@ -1289,7 +1289,7 @@ app.get('/agents/:agent/memory/search', async (c) => {
   const q = c.req.query('q') ?? '';
   if (!q.trim()) return c.json({ error: 'query parameter "q" required' }, 400);
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const limit = Math.max(1, Math.min(50, Number(c.req.query('limit') ?? '5')));
   const minScoreRaw = Number(c.req.query('minScore') ?? '0');
@@ -1319,7 +1319,7 @@ app.get('/agents/:agent/memory/search', async (c) => {
 app.get('/agents/:agent/sessions', async (c) => {
   const agent = c.req.param('agent');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const includeArchived = c.req.query('include_archived') === 'true';
   return c.json(await listSessions(agent, { includeArchived }));
@@ -1391,10 +1391,10 @@ app.post('/agents/:agent/sessions/:session/archive', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const body = (await c.req.json().catch(() => ({}))) as { reason?: string };
   try {
     await archiveSession(agent, session, body.reason);
@@ -1416,10 +1416,10 @@ app.get('/agents/:agent/sessions/:session/export', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const format = (c.req.query('format') ?? 'markdown').toLowerCase();
   if (format !== 'json' && format !== 'markdown') {
     return c.json(
@@ -1449,13 +1449,13 @@ app.post('/agents/:agent/sessions/:session/unarchive', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   // Resolve against the include_archived view, otherwise an archived
   // session is not addressable by slug lookup. resolveSessionId works on
   // raw file existence so it's already include-archived-aware.
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   try {
     await unarchiveSession(agent, session);
     logger.info({ msg: 'session.unarchive', agent, session });
@@ -1468,7 +1468,7 @@ app.post('/agents/:agent/sessions/:session/unarchive', async (c) => {
 app.post('/agents/:agent/sessions', async (c) => {
   const agent = c.req.param('agent');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const body = (await c.req.json().catch(() => ({}))) as { slug?: string };
   if (!body.slug) {
@@ -1490,13 +1490,13 @@ app.get('/agents/:agent/sessions/:session/model', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
   const persona = await loadPersona(agent);
-  if (!persona) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const meta = await sessionMetaStore.get(agent, session);
   const resolved = resolveEffectiveModel(config, persona, meta);
   if (!resolved) {
-    return c.json({ error: `model für agent '${agent}' kann nicht aufgelöst werden` }, 500);
+    return c.json({ error: `model for agent '${agent}' cannot be resolved` }, 500);
   }
   const override = typeof meta.modelOverride === 'string' ? meta.modelOverride : null;
   return c.json({
@@ -1516,14 +1516,14 @@ app.get('/agents/:agent/sessions/:session/model', async (c) => {
 app.put('/agents/:agent/sessions/:session/model', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const body = (await c.req.json().catch(() => ({}))) as { model?: string };
   if (!body.model) return c.json({ error: 'body field "model" required' }, 400);
   const resolved = resolveAnyRef(config, body.model);
   if (!resolved) {
-    return c.json({ error: `model '${body.model}' nicht gefunden in config.yaml` }, 400);
+    return c.json({ error: `model '${body.model}' not found in config.yaml` }, 400);
   }
   await sessionMetaStore.update(agent, session, (current) => ({ ...current, modelOverride: body.model }));
   logger.info({ msg: 'session.model_set', agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
@@ -1544,10 +1544,10 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
   const sessionRef = c.req.param('session');
   const persona = await loadPersona(agent);
   if (!persona) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   // Hold the session lock across the archive+recreate. Without it a
   // /reset that lands mid-turn renames the JSONL out from under a
   // streaming turn — the turn's tail events recreate the "fresh"
@@ -1609,9 +1609,9 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
 app.delete('/agents/:agent/sessions/:session/model', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   await sessionMetaStore.update(agent, session, (current) => {
     const { modelOverride: _drop, ...rest } = current;
     return rest;
@@ -1627,9 +1627,9 @@ app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
   const persona = await loadPersona(agent);
-  if (!persona) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const meta = await sessionMetaStore.get(agent, session);
   const resolved = resolveEffectiveModel(config, persona, meta);
   const modelSupportsReasoning =
@@ -1654,9 +1654,9 @@ app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
 app.put('/agents/:agent/sessions/:session/thinking', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const body = (await c.req.json().catch(() => ({}))) as { level?: string };
   if (!body.level || !VALID_THINKING_LEVELS.has(body.level as ThinkingLevel)) {
     return c.json({ error: `body field "level" must be one of: off, low, medium, high` }, 400);
@@ -1669,9 +1669,9 @@ app.put('/agents/:agent/sessions/:session/thinking', async (c) => {
 app.delete('/agents/:agent/sessions/:session/thinking', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   await sessionMetaStore.update(agent, session, (current) => {
     const { thinkingOverride: _drop, ...rest } = current;
     return rest;
@@ -1928,9 +1928,9 @@ app.get('/agents/:agent/sessions/:session/project', async (c) => {
   if (gate) return gate;
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const meta = await sessionMetaStore.get(agent, session);
   const slug = typeof meta.projectSlug === 'string' ? meta.projectSlug : null;
   if (!slug) return c.json({ agent, session, slug: null, project: null });
@@ -1947,9 +1947,9 @@ app.post('/agents/:agent/sessions/:session/project', async (c) => {
   if (gate) return gate;
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const body = (await c.req.json().catch(() => ({}))) as { slug?: string | null };
   // We treat both `{slug:null}` and `{slug:""}` as "clear" so casual
   // clients don't have to be precise. Missing field is rejected — too
@@ -1987,9 +1987,9 @@ app.delete('/agents/:agent/sessions/:session/project', async (c) => {
   if (gate) return gate;
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
-  if (!session) return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   try {
     const result = await focusProject({
       agent,
@@ -2019,11 +2019,11 @@ app.get('/chat/history', async (c) => {
     return c.json({ error: 'query params "agent" and "session" required' }, 400);
   }
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const id = await resolveSessionId(agent, sessionRef);
   if (!id) {
-    return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
+    return c.json({ error: `session '${sessionRef}' not found for agent '${agent}'` }, 404);
   }
   // Pagination (Phase 1 web lazy-load): when `limit` is given the
   // server returns only the LAST `limit` events plus a `hasMore` +
@@ -2072,11 +2072,11 @@ app.get('/chat/stream', async (c) => {
     return c.json({ error: 'no agents configured — create one in ~/.somora/agents/' }, 400);
   }
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) {
-    return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
+    return c.json({ error: `session '${sessionRef}' not found for agent '${agent}'` }, 404);
   }
   return streamSSEH2Safe(c, async (stream) => {
     logger.info({ msg: 'sse.connect', agent, session });
@@ -2139,11 +2139,11 @@ app.post('/sessions/:agent/:session/seen', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) {
-    return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
+    return c.json({ error: `session '${sessionRef}' not found for agent '${agent}'` }, 404);
   }
   let providedTs: string | undefined;
   try {
@@ -2500,7 +2500,7 @@ app.post('/voice/turn', async (c) => {
     return c.json({ error: 'agent required (and no fallback configured)' }, 400);
   }
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
 
   const sessionRef = (form.get('session') as string | null) ?? 'main';
@@ -2517,7 +2517,7 @@ app.post('/voice/turn', async (c) => {
   if (!session) {
     const isExactId = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/.test(sessionRef);
     if (isExactId) {
-      return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+      return c.json({ error: `session '${sessionRef}' not found` }, 404);
     }
     if (sessionRef === 'main') {
       session = 'main';
@@ -2617,7 +2617,7 @@ app.post('/voice/turn', async (c) => {
     // spoken summary marker so the panel/bridge knows it was
     // intentional, not silence.
     prepared.text =
-      'Die Antwort enthält strukturierte Inhalte und wird nicht vorgelesen. Bitte im Chat-Verlauf nachsehen.';
+      'The reply contains structured content and will not be read aloud. Please check the chat history.';
     prepared.skipped = false;
   }
 
@@ -2738,14 +2738,14 @@ app.post('/chat/send', async (c) => {
 
   if (!(await loadPersona(agent))) {
     logger.warn({ msg: 'chat.send.unknown_agent', agent });
-    return c.json({ error: `agent '${agent}' nicht gefunden — lege ~/.somora/agents/${agent}/AGENTS.md an` }, 404);
+    return c.json({ error: `agent '${agent}' not found — create ~/.somora/agents/${agent}/AGENTS.md` }, 404);
   }
 
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) {
     return c.json(
       {
-        error: `session '${sessionRef}' nicht gefunden für agent '${agent}' — neue Session via POST /agents/${agent}/sessions { "slug": "${sessionRef}" }`,
+        error: `session '${sessionRef}' not found for agent '${agent}' — create one via POST /agents/${agent}/sessions { "slug": "${sessionRef}" }`,
       },
       404,
     );
@@ -2912,11 +2912,11 @@ app.post('/chat/send-sync', async (c) => {
     typeof body.max_rounds === 'number' && body.max_rounds > 0 ? body.max_rounds : undefined;
 
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) {
-    return c.json({ error: `session '${sessionRef}' nicht gefunden für agent '${agent}'` }, 404);
+    return c.json({ error: `session '${sessionRef}' not found for agent '${agent}'` }, 404);
   }
 
   // Acquire the session lock. A from_agent caller (agent_ask, sub-spawn)
@@ -3019,7 +3019,7 @@ app.post('/spawn-async', async (c) => {
     return c.json({ error: 'agent + session required' }, 400);
   }
   if (!(await loadPersona(agent))) {
-    return c.json({ error: `agent '${agent}' nicht gefunden` }, 404);
+    return c.json({ error: `agent '${agent}' not found` }, 404);
   }
 
   // Resolve the session ref through the same path the rest of the
@@ -3045,7 +3045,7 @@ app.post('/spawn-async', async (c) => {
   if (!session) {
     const isExactId = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/.test(sessionRef);
     if (isExactId) {
-      return c.json({ error: `session '${sessionRef}' nicht gefunden` }, 404);
+      return c.json({ error: `session '${sessionRef}' not found` }, 404);
     }
     if (sessionRef === 'main') {
       // "main" should always have resolved above; defensive fallback.

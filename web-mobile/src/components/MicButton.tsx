@@ -70,8 +70,8 @@ export function MicButton({ onTranscript }: Props) {
         type="button"
         className="input-btn"
         disabled
-        title={serverEnabled === false ? 'Speech-to-text ist am Server deaktiviert' : 'Stimme im Browser nicht verfügbar'}
-        aria-label="Stimme (nicht verfügbar)"
+        title={serverEnabled === false ? 'Speech-to-text is disabled on the server' : 'Voice not available in this browser'}
+        aria-label="Voice (unavailable)"
       >
         🎙️
       </button>

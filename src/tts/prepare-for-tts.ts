@@ -8,7 +8,7 @@
 //      markers, inline-code backticks, simple bullets, heading hashes).
 //   3. Replace structural blocks that have a brief spoken form:
 //      code fences → "[Codeblock]", URLs → "[Link]", tables →
-//      "[Tabelle gekürzt]".
+//      "[table omitted]".
 //   4. Hard-cap at MAX_CHARS so a runaway essay doesn't lock the
 //      TTS upstream for minutes.
 //
@@ -76,7 +76,7 @@ export function prepareForTts(input: string): SanitizeResult {
   // Tables: collapse the whole markdown table region. Simple
   // heuristic — consecutive lines starting with `|` get replaced
   // with one "[Tabelle]" line.
-  out = out.replace(/(?:^\s*\|.*\|.*$\n?)+/gm, ' [Tabelle gekürzt] ');
+  out = out.replace(/(?:^\s*\|.*\|.*$\n?)+/gm, ' [table omitted] ');
 
   // ── 3. Strip emphasis + headings + list markers ──
   out = out

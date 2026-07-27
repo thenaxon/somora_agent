@@ -427,7 +427,7 @@ export function SessionsWindow({ onOpenChat }: Props) {
                         <span
                           className="session-unread-dot"
                           aria-label="unread activity"
-                          title={`Neue Aktivität seit ${fmtRelTime(r.unreadAt ?? null)}`}
+                          title={`New activity since ${fmtRelTime(r.unreadAt ?? null)}`}
                           style={{ marginLeft: 6 }}
                         />
                       )}

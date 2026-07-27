@@ -167,7 +167,7 @@ export async function loadConfig(): Promise<Config> {
     const issues = result.error.issues
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
       .join('\n');
-    throw new Error(`config.yaml ist ungültig (${CONFIG_PATH}):\n${issues}`);
+    throw new Error(`config.yaml is invalid (${CONFIG_PATH}):\n${issues}`);
   }
   assertUniqueAliases(result.data);
   return result.data;

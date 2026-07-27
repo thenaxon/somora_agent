@@ -55,7 +55,7 @@ const somoraToolGate: CanUseTool = async (toolName, input) => {
   }
   return {
     behavior: 'deny',
-    message: `Tool '${toolName}' ist in dieser somora-Session nicht freigegeben.`,
+    message: `Tool '${toolName}' is not allowed in this somora session.`,
   };
 };
 

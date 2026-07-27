@@ -446,7 +446,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
 
   const persona = await loadPersona(agent);
   if (!persona) {
-    throw new Error(`agent '${agent}' nicht gefunden`);
+    throw new Error(`agent '${agent}' not found`);
   }
 
   const sessionMeta = await deps.sessionMetaStore.get(agent, session);
@@ -456,12 +456,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   const resolvedModel = resolveEffectiveModel(deps.config, persona, effectiveMetaForResolve);
   if (!resolvedModel) {
     throw new Error(
-      `model für agent '${agent}' lässt sich nicht aus config.yaml auflösen — Format: provider/modelId oder alias`,
+      `model for agent '${agent}' cannot be resolved from config.yaml — format: provider/modelId or alias`,
     );
   }
   const engine = engineRegistry[resolvedModel.provider.engine];
   if (!engine) {
-    throw new Error(`keine engine '${resolvedModel.provider.engine}' registriert`);
+    throw new Error(`no engine '${resolvedModel.provider.engine}' registered`);
   }
 
   // Compute the per-turn memory recall block FIRST so we can persist

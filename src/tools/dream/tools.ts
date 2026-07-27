@@ -68,8 +68,8 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
     '(Lucid phase: contradictions / stale claims / wanted-pages / outdated content in the shared ' +
     "wiki, same for every agent). Each entry has a `kind` field = 'memory' or 'wiki_lucid' so the " +
     'agent can describe them differently to the user. Pass include_processed=true to also see ' +
-    'already-resolved entries. Use this first when the user asks "hast du was geträumt?" or ' +
-    '"gibt\'s was zum aufräumen?" — pick the oldest and walk through it with `dream_get`. ' +
+    'already-resolved entries. Use this first when the user asks "did you dream anything?" or ' +
+    '"anything to clean up?" — pick the oldest and walk through it with `dream_get`. ' +
     "Entries with status='failed' are extraction runs that hit backend errors — the same session " +
     'range retries automatically on the next trigger, so prefer waiting for the retried dream; ' +
     'mention the failure (see `error` field) to the user instead of walking a failed dream.',

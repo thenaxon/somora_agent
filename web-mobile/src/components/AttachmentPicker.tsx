@@ -93,8 +93,8 @@ export function AttachmentPicker({ staged, onStage, onRemove, disabled }: Props)
       <label
         htmlFor="somora-attach-input"
         className={`input-btn attach-btn ${busy ? 'disabled' : ''}`}
-        aria-label="Datei anhängen"
-        title="Foto, Bild oder PDF anhängen"
+        aria-label="Attach file"
+        title="Attach photo, image, or PDF"
       >
         {uploading > 0 ? <span className="mic-spinner" /> : '📎'}
       </label>

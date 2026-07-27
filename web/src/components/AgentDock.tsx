@@ -149,7 +149,7 @@ export function AgentDock({
                   <span
                     className="agent-unread-dot"
                     aria-label="unread activity"
-                    title="Neue Aktivität in einer Session — Chat öffnen zum Lesen"
+                    title="New activity in a session — open the chat to read"
                   />
                 )}
                 {pendingCount > 0 && (

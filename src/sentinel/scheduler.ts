@@ -350,7 +350,7 @@ export async function fireTrigger(
 
   // Make sure the agent exists; never silently swallow this.
   if (!(await loadPersona(dispatch.agent))) {
-    await markError(trigger, `agent '${dispatch.agent}' nicht gefunden`, scheduledFor, now, opts.catchUp);
+    await markError(trigger, `agent '${dispatch.agent}' not found`, scheduledFor, now, opts.catchUp);
     return;
   }
 
@@ -362,7 +362,7 @@ export async function fireTrigger(
     let resolved = await resolveSessionId(dispatch.agent, dispatch.session);
     if (!resolved) {
       const isExactId = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/.test(dispatch.session);
-      if (isExactId) throw new Error(`session '${dispatch.session}' nicht gefunden`);
+      if (isExactId) throw new Error(`session '${dispatch.session}' not found`);
       if (dispatch.session === 'main') resolved = 'main';
       else resolved = await createSession(dispatch.agent, dispatch.session);
     }

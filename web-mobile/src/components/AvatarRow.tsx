@@ -67,7 +67,7 @@ export function AvatarRow({
                 <span
                   className="avatar-unread-dot"
                   aria-label="unread activity"
-                  title="Neue Aktivität — Tap zum Ansehen"
+                  title="New activity — tap to view"
                 />
               )}
               {pendingCount > 0 && (

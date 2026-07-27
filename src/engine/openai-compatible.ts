@@ -575,7 +575,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         estimatedTokens: estTokens,
         contextWindow: resolvedModel.model.contextWindow,
         ratio: Math.round(ctxRatio * 100) / 100,
-        hint: 'history nähert sich dem context-window-Limit auch nach Compaction. Mehr Polster via niedrigeren triggerRatio.',
+        hint: 'history is approaching the context-window limit even after compaction. Lower triggerRatio for more headroom.',
       });
     }
 

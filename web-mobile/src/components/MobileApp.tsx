@@ -218,7 +218,7 @@ export function MobileApp() {
         <div className="chat-empty">
           {agents.length === 0 && !loading
             ? 'Keine agents auf diesem somora konfiguriert.'
-            : 'Wähle einen agent oben.'}
+            : 'Pick an agent above.'}
         </div>
       )}
     </div>

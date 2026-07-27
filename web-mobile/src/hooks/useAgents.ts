@@ -37,7 +37,7 @@ export function useAgents() {
         setError(null);
       } catch (err) {
         if (cancelled) return;
-        setError(`Konnte agents nicht laden: ${(err as Error).message}`);
+        setError(`Failed to load agents: ${(err as Error).message}`);
       } finally {
         if (!cancelled) setLoading(false);
       }

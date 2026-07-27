@@ -161,7 +161,7 @@ export const memoryGet: ToolDefinition<z.infer<typeof GetInput>> = {
     const mgr = await ctx.getMemoryManager();
     const result = await mgr.getByReference(input.reference);
     if (!result) {
-      throw new Error(`reference '${input.reference}' nicht gefunden im Index`);
+      throw new Error(`reference '${input.reference}' not found in index`);
     }
     return result;
   },
