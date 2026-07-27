@@ -30,7 +30,9 @@ export type LucidFindingKind =
   | 'outdated'
   | 'inconsistent_xref';
 
-export type LucidFindingStatus = 'pending' | 'applied' | 'dismissed';
+// 'resolved_manually': content was right but handled outside the dream
+// flow — terminal like dismissed, reads as "done" instead of "wrong".
+export type LucidFindingStatus = 'pending' | 'applied' | 'dismissed' | 'resolved_manually';
 
 export type LucidFix =
   | {

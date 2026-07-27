@@ -227,6 +227,7 @@ export async function dismissEntireDream(
   agent: string,
   dreamId: string,
   note?: string,
+  finalStatus: FindingStatus = 'dismissed',
 ): Promise<{ dream: DreamFile; dismissedCount: number }> {
   const file = await readDreamById(agent, dreamId);
   if (!file) throw new Error(`dream '${dreamId}' not found`);
@@ -235,7 +236,7 @@ export async function dismissEntireDream(
   let dismissedCount = 0;
   for (const f of file.meta.findings) {
     if (f.status === 'pending') {
-      f.status = 'dismissed';
+      f.status = finalStatus;
       f.resolved_at = now;
       if (trimmedNote) f.resolution_note = trimmedNote;
       dismissedCount++;

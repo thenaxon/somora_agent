@@ -127,7 +127,9 @@ function renderBody(
           ? '✓ applied'
           : f.status === 'dismissed'
             ? '✗ dismissed'
-            : '· pending';
+            : f.status === 'resolved_manually'
+              ? '✔ resolved manually'
+              : '· pending';
       const dupBadge = f.likely_duplicate ? ' ⚠️ likely-duplicate' : '';
       lines.push(`### ${f.id}. \`${f.action}\` → \`${f.slug}\` (${statusBadge})${dupBadge}`);
       lines.push('');

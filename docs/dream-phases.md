@@ -138,7 +138,12 @@ A REM run produces `pending` findings, each with:
 - `reason` — why this finding (quotes user's statement)
 
 Approve with `dream_apply`, reject with `dream_dismiss`. Memory file is
-written/edited/deleted only on approval.
+written/edited/deleted only on approval. If a finding was correct but
+already handled outside the dream flow (you edited the wiki yourself,
+the agent documented it in chat), close it with
+`dream_dismiss({resolved_manually: true, reason})` — it is then recorded
+as `resolved_manually` instead of `dismissed`, so the history reads
+"done elsewhere" rather than "rejected".
 
 ### Mechanical dedup
 
@@ -448,7 +453,10 @@ Tools:
 dream_list                              List pending dreams (REM + Lucid)
 dream_get(dream_id)                     Show full content of a dream
 dream_apply(dream_id, finding_id)       Accept REM finding → applied
-dream_dismiss(dream_id, [finding_id])   Reject (one finding or whole run)
+dream_dismiss(dream_id, [finding_id],   Reject (one finding or whole run);
+              [reason],                 resolved_manually:true records
+              [resolved_manually])      "handled outside the dream flow"
+                                        instead of "rejected"
 dream_run({phase, [wait], [force]})     Trigger Deep or Lucid manually
 dream_review({dream_id, action, [summary]})
                                         Open/close the wiki review loop

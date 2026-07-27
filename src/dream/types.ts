@@ -15,7 +15,11 @@ export type DreamStatus =
 export type FindingStatus =
   | 'pending' // not yet reviewed by user
   | 'applied' // user approved + memory action executed
-  | 'dismissed'; // user rejected (or dream-as-whole dismissed)
+  | 'dismissed' // user rejected (or dream-as-whole dismissed)
+  | 'resolved_manually'; // content was correct but handled OUTSIDE the
+//   dream flow (user edited the wiki themselves, agent documented it in
+//   chat, …). Terminal like dismissed, but reads as "done", not "wrong" —
+//   keeps the audit trail + finding statistics honest.
 
 /**
  * A concrete change suggestion. Each finding maps 1:1 to a memory_*
@@ -39,7 +43,8 @@ export interface Finding {
   frontmatter_tags?: string[];
   reason: string;
   status: FindingStatus;
-  /** ISO timestamp set when status transitions to applied/dismissed. */
+  /** ISO timestamp set when status leaves 'pending' (applied, dismissed
+   *  or resolved_manually). */
   resolved_at?: string;
   /** Optional free-text reason recorded at dismissal time (e.g. "manually
    *  applied elsewhere", "outdated") so the audit trail distinguishes

@@ -68,6 +68,34 @@ for (const r of runs) {
 check('every returned run has an array findings (r.findings.length safe)', lenOk);
 check('valid run findings preserved', runs[0]?.findings.length === 2, `${runs[0]?.findings.length}`);
 
+// ── resolved_manually is terminal + still transitions run → processed ──
+// The allResolved check must treat ANY non-pending status as terminal;
+// enumerating 'applied'/'dismissed' would leave a run with a
+// resolved_manually finding stuck in the active dir forever (zombie in
+// dream_list).
+mkdirSync(join(LUCID, 'processed'), { recursive: true });
+writeFileSync(
+  join(LUCID, '20260727-140000_resman.json'),
+  JSON.stringify({
+    id: '20260727-140000_resman',
+    status: 'completed',
+    findings: [
+      { id: 1, status: 'pending' },
+      { id: 2, status: 'pending' },
+    ],
+  }),
+);
+const { updateLucidFindingStatus, readLucidRunById } = await import('./lucid-storage.ts');
+const first = await updateLucidFindingStatus('20260727-140000_resman', 1, 'resolved_manually', 'user fixed the page directly');
+check('lucid resolved_manually: status recorded', first?.finding.status === 'resolved_manually');
+check('lucid resolved_manually: resolved_at set', typeof first?.finding.resolved_at === 'string');
+check('lucid resolved_manually: note recorded', first?.finding.resolution_note === 'user fixed the page directly');
+check('lucid run stays active while one finding pending', first?.run.status !== 'processed');
+const second = await updateLucidFindingStatus('20260727-140000_resman', 2, 'resolved_manually');
+check('lucid run transitions to processed when last finding resolved_manually', second?.run.status === 'processed');
+const reread = await readLucidRunById('20260727-140000_resman');
+check('processed run still readable by id (moved, not lost)', reread?.status === 'processed');
+
 rmSync(HOME, { recursive: true, force: true });
 
 console.log(`\n${pass} passed, ${fail} failed`);

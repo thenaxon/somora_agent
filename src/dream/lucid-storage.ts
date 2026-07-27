@@ -106,7 +106,7 @@ export async function updateLucidFindingStatus(
   if (idx < 0) return null;
   const finding = run.findings[idx]!;
   finding.status = status;
-  if (status === 'applied' || status === 'dismissed') {
+  if (status !== 'pending') {
     finding.resolved_at = new Date().toISOString();
   }
   if (note && note.trim().length > 0) {
@@ -114,9 +114,12 @@ export async function updateLucidFindingStatus(
   }
 
   // If all findings are resolved, transition run → processed and move file.
+  // Any non-pending status is terminal (applied / dismissed /
+  // resolved_manually) — enumerating them here is a zombie-run trap:
+  // a status missing from the list keeps the run out of processed/
+  // forever and dream_list resurfaces it on every call.
   const allResolved =
-    run.findings.length > 0 &&
-    run.findings.every((f) => f.status === 'applied' || f.status === 'dismissed');
+    run.findings.length > 0 && run.findings.every((f) => f.status !== 'pending');
   if (allResolved) {
     run.status = 'processed';
     run.processed_at = new Date().toISOString();
@@ -143,13 +146,17 @@ export async function updateLucidFindingStatus(
  *  one whose findings were all already resolved). Without this, failed
  *  runs become zombies that `dream_list` keeps surfacing forever
  *  (verified bug 2026-05-09: id 20260509-072036_manual_lucid). */
-export async function dismissEntireLucidRun(runId: string, note?: string): Promise<LucidRun | null> {
+export async function dismissEntireLucidRun(
+  runId: string,
+  note?: string,
+  finalStatus: LucidFindingStatus = 'dismissed',
+): Promise<LucidRun | null> {
   const run = await readLucidRunById(runId);
   if (!run) return null;
   const trimmedNote = note?.trim();
   for (const f of run.findings) {
     if (f.status === 'pending') {
-      f.status = 'dismissed';
+      f.status = finalStatus;
       f.resolved_at = new Date().toISOString();
       if (trimmedNote) f.resolution_note = trimmedNote;
     }

@@ -258,6 +258,54 @@ function extractCtx(signal?: AbortSignal) {
   check('prune without keepId clears the session entirely', removedAll === 1 && !after2.some((x) => x.meta.id === 'f-new'));
 }
 
+// ── 5b. resolved_manually terminal status (memory dreams) ─────────────
+{
+  const agent = 'testagent';
+  const baseMeta = {
+    agent,
+    trigger: 'auto' as const,
+    range_from_ts: 0,
+    range_through_ts: 1000,
+    created_at: new Date().toISOString(),
+    chunks_done: 1,
+    chunks_total: 1,
+    worker_model_ref: 'fake/fake-model',
+  };
+  await writeDreamFile(agent, {
+    meta: {
+      ...baseMeta,
+      id: 'd-resman',
+      source_session: 'sess-r',
+      status: 'completed',
+      findings: [
+        { id: 1, action: 'memory_write', slug: 'r1', proposed_content: 'x', reason: 'r', status: 'pending' },
+        { id: 2, action: 'memory_write', slug: 'r2', proposed_content: 'y', reason: 'r', status: 'pending' },
+      ],
+    },
+    body: 'test',
+  });
+  const ctx = { agent } as never;
+  const single = (await dreamDismiss.handler(
+    { dream_id: 'd-resman', finding_id: 1, reason: 'user updated the wiki page directly', resolved_manually: true },
+    ctx,
+  )) as Record<string, unknown>;
+  check('dream_dismiss resolved_manually: result echoes status', single.status === 'resolved_manually');
+  let d = await readDreamById(agent, 'd-resman');
+  check('finding carries resolved_manually status', d?.meta.findings[0]?.status === 'resolved_manually');
+  check('resolved_manually sets resolved_at', typeof d?.meta.findings[0]?.resolved_at === 'string');
+  check('resolved_manually records note', d?.meta.findings[0]?.resolution_note === 'user updated the wiki page directly');
+  check('other finding untouched', d?.meta.findings[1]?.status === 'pending');
+
+  const whole = (await dreamDismiss.handler(
+    { dream_id: 'd-resman', resolved_manually: true, reason: 'handled in chat' },
+    ctx,
+  )) as Record<string, unknown>;
+  check('whole-dream resolved_manually: result status', whole.status === 'resolved_manually' && whole.dream_done === true);
+  d = await readDreamById(agent, 'd-resman');
+  check('whole-dream marks remaining finding resolved_manually', d?.meta.findings[1]?.status === 'resolved_manually');
+  check('dream with only resolved_manually/mixed findings transitions to processed', d?.meta.status === 'processed');
+}
+
 // ── 6. dream_apply / dream_dismiss structured not-found ───────────────
 {
   const ctx = { agent: 'testagent' } as never;

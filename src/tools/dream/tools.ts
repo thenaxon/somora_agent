@@ -100,6 +100,8 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
       findings_pending: d.meta.findings.filter((f) => f.status === 'pending').length,
       findings_applied: d.meta.findings.filter((f) => f.status === 'applied').length,
       findings_dismissed: d.meta.findings.filter((f) => f.status === 'dismissed').length,
+      findings_resolved_manually: d.meta.findings.filter((f) => f.status === 'resolved_manually')
+        .length,
       // Failed extractions stay visible here (failed ≠ empty, report
       // 2026-07-24) — surface why so the agent can tell the user.
       ...(d.meta.error ? { error: d.meta.error } : {}),
@@ -121,6 +123,8 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
         findings_pending: r.findings.filter((f) => f.status === 'pending').length,
         findings_applied: r.findings.filter((f) => f.status === 'applied').length,
         findings_dismissed: r.findings.filter((f) => f.status === 'dismissed').length,
+        findings_resolved_manually: r.findings.filter((f) => f.status === 'resolved_manually')
+          .length,
       }));
     return {
       count: memEntries.length + lucidEntries.length,
@@ -385,18 +389,22 @@ const DismissInput = z.object({
   dream_id: DreamIdSchema,
   finding_id: z.number().int().positive().optional(),
   reason: z.string().optional(),
+  resolved_manually: z.boolean().optional(),
 });
 
 export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
   name: 'dream_dismiss',
   toolset: 'dream',
   description:
-    'Reject a finding (no memory action, just mark as dismissed). Pass finding_id to dismiss one; ' +
-    'omit it to dismiss the whole dream (all still-pending findings → dismissed, dream auto-archives). ' +
+    'Close a finding without executing its memory action. Pass finding_id to close one; ' +
+    'omit it to close the whole dream (all still-pending findings, dream auto-archives). ' +
     'Use the no-finding-id form for "this whole dream was off-base". ' +
-    'Pass `reason` whenever the dismissal is anything other than "content rejected" — e.g. ' +
-    '"manually applied elsewhere", "outdated", "duplicate of memory/foo" — it lands in the audit ' +
-    'trail so a dismissed-but-actually-handled finding is not misread later. ' +
+    'Two terminal states: default marks the finding(s) `dismissed` (content rejected / wrong). ' +
+    'If the content was CORRECT but already handled outside the dream flow (user edited the wiki ' +
+    'themselves, it was documented in chat, fixed as part of other work), pass ' +
+    '`resolved_manually: true` — the finding is then marked `resolved_manually` instead, so the ' +
+    'history reads "done elsewhere", not "rejected". ' +
+    'Pass `reason` for anything other than plain content-rejection — it lands in the audit trail. ' +
     'IMPORTANT: pass `dream_id` and (if used) `finding_id` EXACTLY as returned by `dream_list` / ' +
     '`dream_get`. Finding ids start at 1.',
   inputSchema: DismissInput,
@@ -412,15 +420,25 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
       reason: {
         type: 'string',
         description:
-          'Optional free-text reason recorded on the dismissed finding(s), e.g. ' +
-          '"manually applied elsewhere". Strongly recommended when the content was ' +
-          'NOT actually rejected.',
+          'Optional free-text reason recorded on the closed finding(s), e.g. ' +
+          '"user updated the wiki page directly". Strongly recommended together ' +
+          'with resolved_manually.',
+      },
+      resolved_manually: {
+        type: 'boolean',
+        description:
+          'Optional. true = the finding content was correct but was handled outside ' +
+          'the dream flow — mark it `resolved_manually` instead of `dismissed`.',
       },
     },
     required: ['dream_id'],
     additionalProperties: false,
   },
   async handler(input, ctx) {
+    // Both terminal shapes share the whole flow; only the recorded
+    // status differs. `status` in the result echoes what was written
+    // so the model can phrase its confirmation correctly.
+    const finalStatus = input.resolved_manually ? ('resolved_manually' as const) : ('dismissed' as const);
     // Try memory dream first.
     const memFile = await readDreamById(ctx.agent, input.dream_id);
     if (memFile) {
@@ -437,25 +455,25 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
           ctx.agent,
           input.dream_id,
           input.finding_id,
-          'dismissed',
+          finalStatus,
           input.reason,
         );
         const remaining = result.dream.meta.findings.filter((f) => f.status === 'pending').length;
         return {
           kind: 'memory',
-          dismissed: true,
+          status: finalStatus,
           finding_id: input.finding_id,
           ...(input.reason ? { reason_recorded: true } : {}),
           remaining,
           dream_done: result.allResolved,
         };
       }
-      const result = await dismissEntireDream(ctx.agent, input.dream_id, input.reason);
+      const result = await dismissEntireDream(ctx.agent, input.dream_id, input.reason, finalStatus);
       return {
         kind: 'memory',
-        dismissed: true,
+        status: finalStatus,
         whole_dream: true,
-        dismissed_count: result.dismissedCount,
+        closed_count: result.dismissedCount,
         dream_done: true,
       };
     }
@@ -474,26 +492,26 @@ export const dreamDismiss: ToolDefinition<z.infer<typeof DismissInput>> = {
         const result = await updateLucidFindingStatus(
           input.dream_id,
           input.finding_id,
-          'dismissed',
+          finalStatus,
           input.reason,
         );
         const remaining = result?.run.findings.filter((f) => f.status === 'pending').length ?? 0;
         return {
           kind: 'wiki_lucid',
-          dismissed: true,
+          status: finalStatus,
           finding_id: input.finding_id,
           ...(input.reason ? { reason_recorded: true } : {}),
           remaining,
           dream_done: remaining === 0,
         };
       }
-      const result = await dismissEntireLucidRun(input.dream_id, input.reason);
-      const dismissedCount = result?.findings.filter((f) => f.status === 'dismissed').length ?? 0;
+      const result = await dismissEntireLucidRun(input.dream_id, input.reason, finalStatus);
+      const closedCount = result?.findings.filter((f) => f.status === finalStatus).length ?? 0;
       return {
         kind: 'wiki_lucid',
-        dismissed: true,
+        status: finalStatus,
         whole_dream: true,
-        dismissed_count: dismissedCount,
+        closed_count: closedCount,
         dream_done: true,
       };
     }
