@@ -319,7 +319,7 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
           return {
             action: 'create',
             ok: false,
-            error: `agent '${ownerAgent}' has ${activeCount} triggers (cap ${SENTINEL_LIMITS.MAX_TRIGGERS_PER_AGENT}). Delete or pause before adding more.`,
+            error: `agent '${ownerAgent}' has ${activeCount} active/paused triggers (cap ${SENTINEL_LIMITS.MAX_TRIGGERS_PER_AGENT}). Delete triggers you no longer need before adding more (completed/errored ones don't count).`,
           };
         }
 

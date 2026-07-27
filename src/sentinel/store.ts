@@ -190,10 +190,17 @@ export async function deleteTrigger(id: string): Promise<boolean> {
   return true;
 }
 
-/** Count active triggers owned by an agent. Used to enforce the per-
- *  agent cap before allowing a new create. */
+/** Count triggers owned by an agent that occupy cap budget: `active`
+ *  and `paused` (both are live configuration the user keeps around).
+ *  `completed` (one-shot fired) and `error` (auto-paused after strikes)
+ *  are dead weight and don't block new creates — the old count-
+ *  everything version made the cap effectively permanent once enough
+ *  one-shots had fired, and the "pause before adding more" hint did
+ *  nothing because paused still counted (Juni-Audit 2026-06). */
 export function countTriggersByAgent(agent: string): number {
-  return listTriggers().filter((t) => t.ownerAgent === agent).length;
+  return listTriggers().filter(
+    (t) => t.ownerAgent === agent && (t.status === 'active' || t.status === 'paused'),
+  ).length;
 }
 
 // ─────────────────────────────────────────────────────────────────────

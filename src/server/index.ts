@@ -41,6 +41,7 @@ import {
   shutdownMemoryRegistry,
 } from '../memory/registry.ts';
 import { setupClaudeConfigDir } from './claude-config-dir.ts';
+import { paginateHistory } from './history-page.ts';
 import {
   configureClaudeCredentialSync,
   credentialSyncStatus,
@@ -137,7 +138,18 @@ import { reserveSpawnSlot, releaseSpawnSlot } from '../tools/agents/spawn.ts';
 import { readSessionJsonlRaw, renderSessionMarkdown } from './session-export.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
-const streams = new Map<string, Set<Subscriber>>();
+interface StreamSub {
+  send: Subscriber;
+  /** Called when publish() evicts this subscriber (write timeout /
+   *  error). MUST tear the underlying HTTP stream down — before this
+   *  hook existed, eviction only removed the callback from the set
+   *  while the per-connection heartbeat kept flowing, so the client
+   *  looked healthy but silently received no more events until a
+   *  manual reload (Juni-Audit 2026-06). Closing the stream gives the
+   *  client a clean EOF and its auto-reconnect kicks in. */
+  evict: () => void;
+}
+const streams = new Map<string, Set<StreamSub>>();
 
 /**
  * Compose the pubsub key from (agent, session). Every persona has a
@@ -152,16 +164,22 @@ function streamKey(agent: string, session: string): string {
   return `${agent}::${session}`;
 }
 
-function subscribe(agent: string, session: string, sub: Subscriber): () => void {
+function subscribe(
+  agent: string,
+  session: string,
+  sub: Subscriber,
+  evict: () => void,
+): () => void {
   const key = streamKey(agent, session);
   let set = streams.get(key);
   if (!set) {
     set = new Set();
     streams.set(key, set);
   }
-  set.add(sub);
+  const entry: StreamSub = { send: sub, evict };
+  set.add(entry);
   return () => {
-    set?.delete(sub);
+    set?.delete(entry);
     if (set && set.size === 0) streams.delete(key);
   };
 }
@@ -192,17 +210,17 @@ async function publish(agent: string, session: string, event: SseEvent): Promise
   const timeoutMs = config.sse.publishTimeoutMs;
   const parallel = config.sse.publishParallel;
   const snapshot = [...subs];
-  const dead: Subscriber[] = [];
-  type Outcome = { sub: Subscriber; ok: boolean; reason?: 'timeout' | 'error'; err?: unknown };
+  const dead: StreamSub[] = [];
+  type Outcome = { sub: StreamSub; ok: boolean; reason?: 'timeout' | 'error'; err?: unknown };
 
-  const runOne = async (sub: Subscriber): Promise<Outcome> => {
+  const runOne = async (sub: StreamSub): Promise<Outcome> => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     try {
       const timeoutPromise = new Promise<'timeout'>((resolve) => {
         timer = setTimeout(() => resolve('timeout'), timeoutMs);
       });
       const result = await Promise.race([
-        sub(event).then(() => 'ok' as const),
+        sub.send(event).then(() => 'ok' as const),
         timeoutPromise,
       ]);
       if (result === 'timeout') {
@@ -269,6 +287,16 @@ async function publish(agent: string, session: string, event: SseEvent): Promise
         count: dead.length,
         remaining: set?.size ?? 0,
       });
+    }
+    // Tear the evicted connections down so the client sees EOF and
+    // reconnects instead of idling on a zombie stream that still
+    // heartbeats but never delivers events (Juni-Audit 2026-06).
+    for (const d of dead) {
+      try {
+        d.evict();
+      } catch (err) {
+        logger.debug({ msg: 'sse.evict_close_failed', agent, session, err: String(err) });
+      }
     }
   }
 
@@ -2052,16 +2080,16 @@ app.get('/chat/history', async (c) => {
   if (Number.isNaN(before)) {
     return c.json({ error: 'query param "before" must be a numeric timestamp (ms)' }, 400);
   }
-  const filtered = all.filter((e) => e.ts < before);
-  const slice = filtered.slice(-limit);
-  const hasMore = filtered.length > slice.length;
-  const oldestTs = slice.length > 0 ? slice[0]!.ts : null;
+  // Same-ts groups are never split across pages — a strict `ts <
+  // before` cursor otherwise loses the group remainder forever
+  // (Juni-Audit 2026-06; see history-page.ts).
+  const page = paginateHistory(all, limit, before);
   return c.json({
     agent,
     session: id,
-    events: slice,
-    hasMore,
-    ...(oldestTs !== null ? { oldestTs } : {}),
+    events: page.events,
+    hasMore: page.hasMore,
+    ...(page.oldestTs !== null ? { oldestTs: page.oldestTs } : {}),
   });
 });
 
@@ -2080,25 +2108,50 @@ app.get('/chat/stream', async (c) => {
   }
   return streamSSEH2Safe(c, async (stream) => {
     logger.info({ msg: 'sse.connect', agent, session });
-    const unsub = subscribe(agent, session, async (event) => {
-      await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
+    // Teardown runs from EITHER side — client abort (onAbort) or
+    // server-side eviction after a publish timeout (evict hook). Guard
+    // against double-execution; on eviction additionally close the
+    // stream so the client's EventSource sees EOF and auto-reconnects
+    // instead of idling on heartbeats that carry no events.
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    let done = false;
+    let resolveDone: () => void = () => {};
+    const donePromise = new Promise<void>((resolve) => {
+      resolveDone = resolve; // executor runs synchronously — safe before any await
     });
+    const finish = (reason: 'disconnect' | 'evicted'): void => {
+      if (done) return;
+      done = true;
+      if (heartbeat) clearInterval(heartbeat);
+      unsub();
+      logger.info({ msg: reason === 'evicted' ? 'sse.evicted_closed' : 'sse.disconnect', agent, session });
+      resolveDone();
+    };
+    const unsub = subscribe(
+      agent,
+      session,
+      async (event) => {
+        await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
+      },
+      () => {
+        finish('evicted');
+        try {
+          stream.close();
+        } catch {
+          /* already closed */
+        }
+      },
+    );
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected', session }) });
     // Heartbeat keeps TCP alive past Undici's idle-body timeout (~5 min default)
     // and gives the client a positive signal the link is still healthy.
-    const heartbeat = setInterval(() => {
+    heartbeat = setInterval(() => {
       stream
         .writeSSE({ event: 'heartbeat', data: String(Date.now()) })
         .catch((err) => logger.debug({ msg: 'sse.heartbeat_fail', session, err: String(err) }));
     }, 20_000);
-    await new Promise<void>((resolve) => {
-      stream.onAbort(() => {
-        clearInterval(heartbeat);
-        unsub();
-        logger.info({ msg: 'sse.disconnect', agent, session });
-        resolve();
-      });
-    });
+    stream.onAbort(() => finish('disconnect'));
+    await donePromise;
   });
 });
 

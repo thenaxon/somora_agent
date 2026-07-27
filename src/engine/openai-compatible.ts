@@ -771,7 +771,15 @@ export const openAiCompatibleEngine: AgentEngine = {
               prompt_tokens_details?: { cached_tokens?: number };
               completion_tokens_details?: { reasoning_tokens?: number };
             };
-            tokensInCached = rawUsage.prompt_tokens_details?.cached_tokens;
+            // Accumulate across rounds like tokens_in below — plain
+            // assignment kept only the LAST round's cached count while
+            // tokens_in summed all rounds, so the cached/uncached split
+            // shown to the user was inconsistent on multi-round tool
+            // turns (Juni-Audit 2026-06).
+            const roundCached = rawUsage.prompt_tokens_details?.cached_tokens;
+            if (roundCached !== undefined) {
+              tokensInCached = (tokensInCached ?? 0) + roundCached;
+            }
             // OpenAI returns reasoning_tokens inside completion_tokens_details
             // for reasoning models (gpt-5/o-series). It's already INCLUDED in
             // the top-level completion_tokens, so we surface it as a separate
@@ -1130,6 +1138,14 @@ export const openAiCompatibleEngine: AgentEngine = {
               const reasoningTokens = (
                 usage as { completion_tokens_details?: { reasoning_tokens?: number } }
               ).completion_tokens_details?.reasoning_tokens;
+              // Keep the cached counter consistent with the main loop's
+              // accumulation (Juni-Audit 2026-06).
+              const summaryCached = (
+                usage as { prompt_tokens_details?: { cached_tokens?: number } }
+              ).prompt_tokens_details?.cached_tokens;
+              if (summaryCached !== undefined) {
+                tokensInCached = (tokensInCached ?? 0) + summaryCached;
+              }
               const prevIn = totalUsage?.tokens_in ?? 0;
               const prevOut = totalUsage?.tokens_out ?? 0;
               const prevReasoning = totalUsage?.tokens_out_reasoning;

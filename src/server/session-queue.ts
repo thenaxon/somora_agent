@@ -28,6 +28,10 @@ interface Waiter {
   priority: Priority;
   enqueuedAt: number;
   callId: string | undefined;
+  /** Turn-lifecycle id — carried through the queue so /health's
+   *  activeTurnId is populated for queued-then-run turns too, not only
+   *  for immediately-granted ones (Juni-Audit 2026-06). */
+  turnId: string | undefined;
   resolve: (release: () => void) => void;
   reject: (err: Error) => void;
   cancelled: boolean;
@@ -67,6 +71,7 @@ class SessionLock {
         priority: opts.priority,
         enqueuedAt: Date.now(),
         callId: opts.callId,
+        turnId: opts.turnId,
         resolve: (release) => resolve(release),
         reject: (err) => reject(err),
         cancelled: false,
@@ -118,6 +123,7 @@ class SessionLock {
       this.activeSince = Date.now();
       this.activePriority = next.priority;
       this.activeCallId = next.callId;
+      this.activeTurnId = next.turnId;
       next.resolve(() => this.release());
       return;
     }
