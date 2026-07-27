@@ -105,6 +105,15 @@ export function App({
   // from autocomplete + /help and stops the chip-related effects from
   // firing useless GETs.
   const [projectsEnabled, setProjectsEnabled] = useState<boolean>(false);
+  // Mirrored into a ref for the SSE handler: the stream's for-await
+  // loop captures applyEvent from the render its effect ran in (deps
+  // are agent/session only), so reading the state value there would
+  // see the mount-time `false` forever in single-agent sessions —
+  // the agent-end project refetch would never fire.
+  const projectsEnabledRef = useRef(projectsEnabled);
+  useEffect(() => {
+    projectsEnabledRef.current = projectsEnabled;
+  }, [projectsEnabled]);
   useEffect(() => {
     let cancelled = false;
     apiRef.current
@@ -301,6 +310,10 @@ export function App({
     setStats(null);
     setPendingQueued([]);
     pendingQueuedBufferRef.current.clear();
+    // Drop stale self-send entries from the previous (agent, session)
+    // — a leftover text would silently swallow the SAME text sent by
+    // another client on the new session's stream.
+    pendingSelfSendsRef.current = [];
 
     let handle: StreamHandle | null = null;
 
@@ -500,8 +513,10 @@ export function App({
         });
         // Refetch project too — the just-finished turn might have
         // called project_focus via the MCP-tool path (no SSE broadcast
-        // for that route). Skip when feature is off.
-        if (projectsEnabled) {
+        // for that route). Skip when feature is off. Read via ref —
+        // this closure is captured at stream-open time, before the
+        // feature-flag probe resolves.
+        if (projectsEnabledRef.current) {
           apiRef.current.fetchSessionProject(agent, session).then((info) => {
             setProject(info.project);
           }).catch(() => {
@@ -596,8 +611,13 @@ export function App({
         // same session as the TUI tail) pass through both checks
         // and render as normal user turns.
         if (!ev.fromAgent && !ev.fromSystem) {
-          // Case 2 first — promote pending-queued to Static.
+          // Case 2 first — promote pending-queued to Static. The turn
+          // is starting, so any buffered turn_queued ahead-count for
+          // this turnId is moot — prune it (this also drops buffered
+          // entries for OTHER clients' queued turns, which nothing
+          // else would ever drain).
           if (ev.turnId) {
+            pendingQueuedBufferRef.current.delete(ev.turnId);
             let promoted = false;
             setPendingQueued((prev) => {
               const idx = prev.findIndex((p) => p.turnId === ev.turnId);
@@ -632,19 +652,24 @@ export function App({
         // it with the ahead-count. If the entry isn't there yet
         // (HTTP /chat/send response still in flight), buffer the
         // ahead-count so handleSubmit can apply it once the turnId
-        // lands.
-        let applied = false;
+        // lands. The buffering decision lives INSIDE the updater —
+        // an earlier version set a flag in the updater and read it
+        // right after setPendingQueued returned, but updaters run at
+        // flush time, so the flag was always stale-false and every
+        // event landed in the buffer (entries for other clients'
+        // turns then piled up forever). The ref mutation in here is
+        // idempotent, so a double-invoked updater is harmless.
         setPendingQueued((prev) => {
           const idx = prev.findIndex((p) => p.turnId === ev.turnId);
-          if (idx < 0) return prev;
-          applied = true;
+          const existing = idx >= 0 ? prev[idx] : undefined;
+          if (!existing) {
+            pendingQueuedBufferRef.current.set(ev.turnId, ev.ahead);
+            return prev;
+          }
           const next = prev.slice();
-          const existing = next[idx];
-          if (!existing) return prev;
           next[idx] = { ...existing, queued: { ahead: ev.ahead } };
           return next;
         });
-        if (!applied) pendingQueuedBufferRef.current.set(ev.turnId, ev.ahead);
         return;
       }
       case 'project': {
@@ -813,17 +838,22 @@ export function App({
       return;
     }
     // Two paths for self-typed turns:
-    //   A. busy=false → idle channel. Optimistically append to
+    //   A. no turn running → idle channel. Optimistically append to
     //      Static so the user sees their message instantly;
     //      pendingSelfSendsRef.push so the server's user_message
     //      echo gets deduped. Same flow as before queueing existed.
-    //   B. busy=true → another turn is already running. Push the
+    //   B. a turn is already running → queued channel. Push the
     //      text into pendingQueued (dynamic-frame, mutable). The
     //      server queues the POST behind the lock and emits a
     //      turn_queued SSE; we render "queued · N ahead" until
     //      the user_message SSE arrives and promotes the entry
     //      into a real Static turn.
-    const queuedPath = busy;
+    // `busy` only covers our OWN in-flight send; `streaming` covers
+    // turns started elsewhere (another client on this session, A2A,
+    // sentinel). Gating on busy alone let those take path A — the
+    // optimistic Static append is immutable, so the running turn's
+    // reply landed BELOW the queued message, permanently misordered.
+    const queuedPath = busy || streaming;
     const localId = nextId();
     if (queuedPath) {
       setPendingQueued((prev) => [
@@ -954,7 +984,7 @@ export function App({
           value={input}
           onChange={handleInputChange}
           onSubmit={handleSubmit}
-          placeholder={busy ? '(type to queue next message…)' : ''}
+          placeholder={busy || streaming ? '(type to queue next message…)' : ''}
         />
       </Box>
       <Footer />

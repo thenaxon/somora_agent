@@ -698,20 +698,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             // bubble doesn't have its turnId tagged yet, so turnId
             // match fails. m.pending acts as the guard against
             // matching a finalized bubble with the same text.
-            let foundMatch = false;
-            const next = list.map((m) => {
-              if (m.role !== 'user') return m;
-              const turnIdMatch = d.turnId && m.turnId === d.turnId;
-              const textFallback =
-                !turnIdMatch && m.pending && m.text === d.text;
-              if (turnIdMatch || textFallback) {
-                foundMatch = true;
-                const { queued: _q, pending: _p, ...rest } = m;
-                return rest as ChatMessage;
-              }
-              return m;
-            });
-            if (foundMatch) {
+            //
+            // Exactly ONE bubble is cleared per echo — each event
+            // represents one send. An earlier version mapped over the
+            // whole list and cleared every match at once, so sending
+            // the same text twice in quick succession stripped BOTH
+            // bubbles' queued indicator + pending anchor on the first
+            // echo. turnId is scanned first so the fallback can't
+            // steal a match that belongs to a different bubble.
+            let matchIdx = d.turnId
+              ? list.findIndex((m) => m.role === 'user' && m.turnId === d.turnId)
+              : -1;
+            if (matchIdx < 0) {
+              matchIdx = list.findIndex(
+                (m) => m.role === 'user' && m.pending && m.text === d.text,
+              );
+            }
+            const matched = matchIdx >= 0 ? list[matchIdx] : undefined;
+            if (matched && matched.role === 'user') {
+              const { queued: _q, pending: _p, ...rest } = matched;
+              const next = list.slice();
+              next[matchIdx] = rest as ChatMessage;
               return { ...prev, [key]: next };
             }
             // No match — this came from another client on the same
@@ -734,6 +741,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             ],
           };
         });
+        // The turn is starting — a buffered turn_queued ahead-count
+        // for this turnId is moot now. Pruning here also drops
+        // buffered entries for OTHER clients' queued turns, which
+        // nothing else would ever drain.
+        if (d.turnId) {
+          const perSession = pendingQueuedEventsRef.current.get(key);
+          if (perSession) {
+            perSession.delete(d.turnId);
+            if (perSession.size === 0) pendingQueuedEventsRef.current.delete(key);
+          }
+        }
         // Backward-compat: drain the text-based dedupe set so older
         // servers (no turnId in user_message) still don't double-render.
         // Safe to do unconditionally — splicing a missing entry is a no-op.
@@ -755,30 +773,31 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         // it with the queued indicator. If the bubble hasn't been
         // tagged yet (HTTP response still in flight), stash the
         // ahead-count so `send()` can apply it once it has the id.
-        let appliedToBubble = false;
+        // The tag-or-buffer decision lives INSIDE the updater — an
+        // earlier version set a flag in the updater and read it right
+        // after setMessages returned, but updaters run at flush time,
+        // so the flag was always stale-false and EVERY event landed
+        // in the buffer, growing it unboundedly (send() only drains
+        // the entry it races with). The ref mutation in here is
+        // idempotent, so StrictMode's double-invoked updater is
+        // harmless.
         setMessages((prev) => {
-          const list = prev[key];
-          if (!list) return prev;
-          let changed = false;
-          const next = list.map((m) => {
-            if (m.role === 'user' && m.turnId === d.turnId) {
-              appliedToBubble = true;
-              changed = true;
-              return { ...m, queued: { ahead: d.ahead } };
+          const list = prev[key] ?? [];
+          const idx = list.findIndex((m) => m.role === 'user' && m.turnId === d.turnId);
+          const target = idx >= 0 ? list[idx] : undefined;
+          if (!target || target.role !== 'user') {
+            let perSession = pendingQueuedEventsRef.current.get(key);
+            if (!perSession) {
+              perSession = new Map();
+              pendingQueuedEventsRef.current.set(key, perSession);
             }
-            return m;
-          });
-          if (!changed) return prev;
+            perSession.set(d.turnId, d.ahead);
+            return prev;
+          }
+          const next = list.slice();
+          next[idx] = { ...target, queued: { ahead: d.ahead } };
           return { ...prev, [key]: next };
         });
-        if (!appliedToBubble) {
-          let perSession = pendingQueuedEventsRef.current.get(key);
-          if (!perSession) {
-            perSession = new Map();
-            pendingQueuedEventsRef.current.set(key, perSession);
-          }
-          perSession.set(d.turnId, d.ahead);
-        }
       });
     },
     [patchStream, appendMessage, insertBeforeStreaming, updateAssistantText],
@@ -795,6 +814,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     sourcesRef.current.delete(key);
     lastEventAtRef.current.delete(key);
     streamingIdRef.current.delete(key);
+    // No window watches this session anymore — drop the per-session
+    // dedupe/queue bookkeeping so it can't leak or go stale.
+    pendingSelfSendsRef.current.delete(key);
+    pendingQueuedEventsRef.current.delete(key);
     patchStream(key, { connected: false, streaming: false, thinking: false });
   }, [patchStream]);
 
@@ -1053,6 +1076,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       // when the next chat:delta arrives.
       streamingIdRef.current.delete(key);
       pendingSelfSendsRef.current.delete(key);
+      pendingQueuedEventsRef.current.delete(key);
       // Stream state (usage, memory snapshot) clears too — fresh
       // session means none of those snapshots apply anymore.
       patchStream(key, {

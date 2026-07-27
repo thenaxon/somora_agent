@@ -134,6 +134,9 @@ export function useChatStream(agent: string | null): ChatStream {
     setStreaming(false);
     setConnectionError(null);
     streamingIdRef.current = null;
+    // Buffered ahead-counts belong to the previous agent's session —
+    // a stale entry must not be applied to a bubble on the new one.
+    pendingQueuedRef.current.clear();
 
     // 1. Hydrate from /chat/history (most-recent N events).
     void fetch(
@@ -344,22 +347,35 @@ export function useChatStream(agent: string | null): ChatStream {
       //      the same session, e.g. mobile watching while desktop
       //      sends) → append as a new user-message.
       //   3. A2A (fromAgent) / sentinel inbound → append.
+      // The turn is starting — a buffered turn_queued ahead-count for
+      // this turnId is moot now. Pruning here also drops buffered
+      // entries for OTHER clients' queued turns, which nothing else
+      // would ever drain.
+      if (dd.turnId) pendingQueuedRef.current.delete(dd.turnId);
       setMessages((prev) => {
         if (!dd.from_agent && !dd.from_system) {
-          let foundMatch = false;
-          const next = prev.map((m) => {
-            if (m.role !== 'user') return m;
-            const turnIdMatch = dd.turnId && m.turnId === dd.turnId;
-            const textFallback =
-              !turnIdMatch && m.pending && m.text === dd.text;
-            if (turnIdMatch || textFallback) {
-              foundMatch = true;
-              const { queued: _q, pending: _p, ...rest } = m;
-              return rest as ChatMessage;
-            }
-            return m;
-          });
-          if (foundMatch) return next;
+          // Exactly ONE bubble is cleared per echo — each event
+          // represents one send. An earlier version mapped over the
+          // whole list and cleared every match at once, so sending
+          // the same text twice in quick succession stripped BOTH
+          // bubbles' queued indicator + pending anchor on the first
+          // echo. turnId is scanned first so the text fallback can't
+          // steal a match that belongs to a different bubble.
+          let matchIdx = dd.turnId
+            ? prev.findIndex((m) => m.role === 'user' && m.turnId === dd.turnId)
+            : -1;
+          if (matchIdx < 0) {
+            matchIdx = prev.findIndex(
+              (m) => m.role === 'user' && m.pending && m.text === dd.text,
+            );
+          }
+          const matched = matchIdx >= 0 ? prev[matchIdx] : undefined;
+          if (matched) {
+            const { queued: _q, pending: _p, ...rest } = matched;
+            const next = prev.slice();
+            next[matchIdx] = rest as ChatMessage;
+            return next;
+          }
           // No optimistic bubble owns this message — it came from
           // another client on the same session. Fall through to
           // append so the user sees it live, not just after reload.
@@ -388,21 +404,24 @@ export function useChatStream(agent: string | null): ChatStream {
       const ahead = d.ahead;
       // Find the optimistic bubble carrying this turnId and tag it.
       // If no bubble has it yet (HTTP /chat/send response in flight),
-      // buffer the ahead-count so send() can apply it once the id lands.
-      let applied = false;
+      // buffer the ahead-count so send() can apply it once the id
+      // lands. The tag-or-buffer decision lives INSIDE the updater —
+      // an earlier version set a flag in the updater and read it right
+      // after setMessages returned, but updaters run at flush time, so
+      // the flag was always stale-false and EVERY event landed in the
+      // buffer, growing it unboundedly. The ref mutation in here is
+      // idempotent, so StrictMode's double-invoked updater is harmless.
       setMessages((prev) => {
-        let changed = false;
-        const next = prev.map((m) => {
-          if (m.role === 'user' && m.turnId === turnId) {
-            applied = true;
-            changed = true;
-            return { ...m, queued: { ahead } };
-          }
-          return m;
-        });
-        return changed ? next : prev;
+        const idx = prev.findIndex((m) => m.role === 'user' && m.turnId === turnId);
+        const target = idx >= 0 ? prev[idx] : undefined;
+        if (!target) {
+          pendingQueuedRef.current.set(turnId, ahead);
+          return prev;
+        }
+        const next = prev.slice();
+        next[idx] = { ...target, queued: { ahead } };
+        return next;
       });
-      if (!applied) pendingQueuedRef.current.set(turnId, ahead);
     };
 
     es.addEventListener('open', onOpen);
