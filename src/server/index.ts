@@ -2845,13 +2845,32 @@ app.post('/chat/send', async (c) => {
 // by TUI ESC while streaming. Idempotent: returns aborted=false when no
 // turn is running. Doesn't block — the engine adapter sees the signal
 // and bails out, then runChatTurn's finally releases the controller.
+//
+// The session ref MUST be resolved the same way /chat/send resolves it:
+// the abort registry is keyed by the canonical session id, so a raw
+// slug here silently missed the registry and the abort was a no-op
+// (aborted:false, no log — Rene's 2026-07-22 report, live-reproduced
+// 2026-07-27: slug → false while the turn ran, canonical id → clean
+// abort). Falls back to the raw ref when resolution fails so turns
+// registered under non-canonical ids (spawn-async bypass sessions)
+// stay abortable.
 app.post('/chat/abort', async (c) => {
   const agent = c.req.query('agent') ?? (await defaultAgentFallback());
   if (!agent) {
     return c.json({ error: 'no agents configured' }, 400);
   }
-  const session = c.req.query('session') ?? 'main';
+  const sessionRef = c.req.query('session') ?? 'main';
+  const session = (await resolveSessionId(agent, sessionRef)) ?? sessionRef;
   const result = triggerChatAbort(agent, session);
+  if (!result.aborted) {
+    logger.info({
+      msg: 'chat.abort.no_active_turn',
+      agent,
+      session,
+      ref: sessionRef,
+      hint: 'nothing registered under this session — turn already finished, or the ref does not match the running turn',
+    });
+  }
   return c.json({ agent, session, ...result });
 });
 
