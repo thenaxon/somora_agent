@@ -24,6 +24,7 @@ import { createWriteStream, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { logger } from '../../server/logger.ts';
+import type { SkillEnvScope } from '../../skills/env-scope.ts';
 import { extendedPath } from '../../skills/path-helpers.ts';
 import {
   clearLivePid,
@@ -61,12 +62,20 @@ import {
  */
 function buildSpawnEnv(
   callerEnv?: Record<string, string>,
-  opts?: { stripSomoraInternal?: boolean },
+  opts?: { stripSomoraInternal?: boolean; skillEnvScope?: SkillEnvScope },
 ): NodeJS.ProcessEnv {
   const base: NodeJS.ProcessEnv = { ...process.env, PATH: extendedPath() };
   if (opts?.stripSomoraInternal) {
     delete base.CLAUDE_CONFIG_DIR;
     delete base.SOMORA_CLAUDE_BIN;
+  }
+  // Skill-scoped secrets: strip every skill-declared var, then put back
+  // only the vars of skills whose bins the command invokes. Applied
+  // BEFORE callerEnv so an explicit `env:` from the agent always wins.
+  // See src/skills/env-scope.ts for the full design.
+  if (opts?.skillEnvScope) {
+    for (const name of opts.skillEnvScope.stripVars) delete base[name];
+    Object.assign(base, opts.skillEnvScope.injectEnv);
   }
   if (callerEnv) Object.assign(base, callerEnv);
   return base;
@@ -135,6 +144,10 @@ export interface LocalSyncOptions {
    *  `exec`/`tmux` children behave like a normal terminal would.
    *  See buildSpawnEnv() for the rationale. Default false. */
   stripSomoraInternalEnv?: boolean;
+  /** Skill-scoped env decision for this command (strip-all + selective
+   *  re-inject). Computed by the exec dispatcher via
+   *  skillEnvScopeForCommand(); absent = legacy full inheritance. */
+  skillEnvScope?: SkillEnvScope;
 }
 
 /**
@@ -163,6 +176,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
   const env = buildSpawnEnv(opts.env, {
     stripSomoraInternal: opts.stripSomoraInternalEnv === true,
+    ...(opts.skillEnvScope ? { skillEnvScope: opts.skillEnvScope } : {}),
   });
 
   return new Promise<LocalSyncResult>((resolve) => {
@@ -296,6 +310,7 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
   const timeoutMs = opts.timeoutMs ?? DEFAULT_SYNC_TIMEOUT_MS;
   const env = buildSpawnEnv(opts.env, {
     stripSomoraInternal: opts.stripSomoraInternalEnv === true,
+    ...(opts.skillEnvScope ? { skillEnvScope: opts.skillEnvScope } : {}),
   });
 
   return new Promise<LocalSyncResult>((resolve) => {
@@ -390,6 +405,10 @@ export interface LocalBackgroundOptions {
   releaseSlot?: () => void;
   /** Same semantics as LocalSyncOptions.stripSomoraInternalEnv. */
   stripSomoraInternalEnv?: boolean;
+  /** Skill-scoped env decision for this command (strip-all + selective
+   *  re-inject). Computed by the exec dispatcher via
+   *  skillEnvScopeForCommand(); absent = legacy full inheritance. */
+  skillEnvScope?: SkillEnvScope;
 }
 
 export interface LocalBackgroundResult {
@@ -431,6 +450,7 @@ export async function localExecBackground(
 
   const env = buildSpawnEnv(opts.env, {
     stripSomoraInternal: opts.stripSomoraInternalEnv === true,
+    ...(opts.skillEnvScope ? { skillEnvScope: opts.skillEnvScope } : {}),
   });
   // `detached: true` makes the wrapper shell a process-group leader —
   // same rationale as the sync path above: process({action:"kill"})

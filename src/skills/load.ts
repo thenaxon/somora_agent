@@ -14,7 +14,7 @@
 // persona/loader.ts. If perf becomes an issue later we can cache.
 
 import { execFile } from 'node:child_process';
-import { findBin } from './path-helpers.ts';
+import { checkBinRequirement } from './bin-checks.ts';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -39,10 +39,13 @@ const SomoraExtrasSchema = z
     when_to_use: z.string().max(2000).optional(),
     requires: z
       .object({
+        /** Binary names, optionally with a version constraint appended
+         *  ("gog>=0.30", also <=, ==, >, <). See bin-checks.ts. */
         bins: z.array(z.string().min(1)).optional(),
         config: z.array(z.string().min(1)).optional(),
-        /** Documentation list of env vars the skill needs at runtime.
-         *  somora does NOT auto-inject these (no secrets-store yet);
+        /** Env vars the skill needs at runtime. Availability-checked
+         *  against the server env AND auto-injected into local exec
+         *  commands that invoke one of the declared bins (env-scope.ts);
          *  the skill tool surfaces the list so the agent + user know
          *  what to export before invoking the skill's commands. */
         env_vars: z.array(z.string().min(1)).optional(),
@@ -94,9 +97,10 @@ export interface LoadedSkill {
   requiresBins: string[];
   /** Frontmatter `requires.config` — already checked. */
   requiresConfig: string[];
-  /** Frontmatter `requires.env_vars` — documentation only, not
-   *  auto-injected. The skill tool surfaces this so the agent/user
-   *  know what to set before invoking commands from the body. */
+  /** Frontmatter `requires.env_vars`. Availability-checked against the
+   *  server env AND (since 2026-07-27) auto-injected into local exec
+   *  commands that invoke one of this skill's `requires.bins` — see
+   *  src/skills/env-scope.ts. Values come from ~/.somora/somora.env. */
   requiresEnvVars: string[];
   /** Optional tags from `metadata.somora.tags`. */
   tags: string[];
@@ -108,6 +112,10 @@ export interface LoadedSkill {
   available: boolean;
   /** Human-readable reason when `available` is false (e.g. "missing bin: op"). */
   unavailableReason?: string;
+  /** Non-blocking bin findings: duplicate installs across PATH ∪ brew
+   *  dirs, unparseable `--version` under a constraint. Surfaced by
+   *  `somora skill check` and logged once per server lifetime. */
+  binWarnings: string[];
   /** Body-lint findings (anti-pattern detection). Errors mark the skill
    *  unavailable so the agent never sees a misleading body; warnings
    *  surface to the operator log without blocking. */
@@ -121,14 +129,6 @@ async function fileExists(p: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function isOnPath(bin: string): Promise<boolean> {
-  // Delegated to findBin so the hybrid which-then-stat strategy is
-  // shared with the exec tool's PATH enrichment. See path-helpers.ts
-  // for the full why (Hans bug 2026-05-09: brew/cargo/go binaries
-  // invisible to the systemd-service-default PATH).
-  return findBin(bin);
 }
 
 /** Resolve a dotted config key (e.g. `obsidian.vault_dir`) to a value
@@ -152,19 +152,25 @@ function isConfigKeySet(config: Config, key: string): boolean {
 async function checkAvailability(
   fm: SkillFrontmatter,
   config: Config,
-): Promise<{ available: boolean; reason?: string }> {
+): Promise<{ available: boolean; reason?: string; binWarnings: string[] }> {
   const requires = fm.metadata?.somora?.requires;
-  if (!requires) return { available: true };
+  if (!requires) return { available: true, binWarnings: [] };
   const bins = requires.bins ?? [];
-  for (const bin of bins) {
-    if (!(await isOnPath(bin))) {
-      return { available: false, reason: `missing bin: ${bin}` };
+  const binWarnings: string[] = [];
+  for (const entry of bins) {
+    // Full check: existence + optional version constraint
+    // (`gog>=0.30`) + duplicate-install warning. Cached inside
+    // bin-checks so the per-turn cost after warmup is a stat.
+    const result = await checkBinRequirement(entry);
+    binWarnings.push(...result.warnings);
+    if (!result.ok) {
+      return { available: false, reason: result.reason, binWarnings };
     }
   }
   const cfgKeys = requires.config ?? [];
   for (const key of cfgKeys) {
     if (!isConfigKeySet(config, key)) {
-      return { available: false, reason: `missing config: ${key}` };
+      return { available: false, reason: `missing config: ${key}`, binWarnings };
     }
   }
   // Verify declared env_vars are actually present in this server's
@@ -185,10 +191,12 @@ async function checkAvailability(
       reason:
         `missing env vars: ${missingEnv.join(', ')} — set them in ~/.somora/somora.env ` +
         `(loaded at server start) or in the agent's launch environment. Do NOT inject ` +
-        `them per-call from inside the agent.`,
+        `them per-call from inside the agent; somora injects declared vars into ` +
+        `matching exec commands automatically once they are set.`,
+      binWarnings,
     };
   }
-  return { available: true };
+  return { available: true, binWarnings };
 }
 
 async function loadOneSkill(slug: string, config: Config): Promise<LoadedSkill | null> {
@@ -305,6 +313,16 @@ async function loadOneSkill(slug: string, config: Config): Promise<LoadedSkill |
     available = false;
     unavailableReason = `body lint failed: ${lintSummary.shortReason}. Inspect with logs (msg=skills.lint_errors).`;
   }
+  // Duplicate-install / version findings: warn once per (skill, finding)
+  // per server lifetime — loadAvailableSkills runs every turn and would
+  // otherwise spam the log with identical lines.
+  for (const warning of avail.binWarnings) {
+    const key = `${slug}:${warning}`;
+    if (!warnedBinFindings.has(key)) {
+      warnedBinFindings.add(key);
+      logger.warn({ msg: 'skills.bin_warning', slug, warning });
+    }
+  }
 
   return {
     name: fm.name,
@@ -318,9 +336,12 @@ async function loadOneSkill(slug: string, config: Config): Promise<LoadedSkill |
     body,
     available,
     unavailableReason,
+    binWarnings: avail.binWarnings,
     lintFindings,
   };
 }
+
+const warnedBinFindings = new Set<string>();
 
 /**
  * Scan `~/.somora/skills/` and return all valid skills, sorted by name.

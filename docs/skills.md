@@ -75,13 +75,15 @@ metadata:
   somora:                          # somora-specific extras (free-form per spec)
     when_to_use: When user says "daily", "heute", or "log this"
     requires:
-      bins: [obsidian-cli]         # binaries that must be on PATH
+      bins: ["obsidian-cli>=1.4"]  # binaries that must be on PATH; an
+                                   # optional version constraint (>=, <=,
+                                   # ==, >, <) is enforced via `--version`
       config: [obsidian.vault_dir] # config keys that must be set
       env_vars:                    # env vars the skill needs at runtime —
-        - OBSIDIAN_API_TOKEN       # somora does NOT auto-inject these,
-                                   # the skill tool surfaces the list so
-                                   # the agent + you know what to set
-                                   # before invoking the skill's commands
+        - OBSIDIAN_API_TOKEN       # set the values in ~/.somora/somora.env;
+                                   # somora injects them automatically into
+                                   # exec commands that invoke one of the
+                                   # declared bins (and ONLY into those)
     tags: [obsidian, daily-routine]
 ---
 
@@ -96,20 +98,29 @@ Validation at scan time:
 
 - `name` matches `^[a-z0-9]+(-[a-z0-9]+)*$` and equals the parent dir
 - `description` ≤ 1024 chars
-- `requires.bins` checked at scan time. Hybrid lookup: a fast
-  `which` first, then a stat-based scan of well-known user-install
-  dirs (linuxbrew, homebrew, `~/.local/bin`, `~/go/bin`,
+- `requires.bins` checked at scan time against PATH plus well-known
+  user-install dirs (linuxbrew, homebrew, `~/.local/bin`, `~/go/bin`,
   `~/.cargo/bin`, `~/.npm-global/bin`, `~/bin`) so brew/cargo/go/npm
   binaries that aren't on the systemd-service PATH are still found.
   Missing → skill marked `unavailable` (still listed, with a reason).
+  An entry may carry a version constraint (`"gog>=0.30"`); somora
+  runs `<bin> --version` on the copy a spawned command would actually
+  use (cached per binary until it changes on disk) and marks the
+  skill `unavailable` with the found version + path when the
+  constraint fails. Finding the SAME binary at multiple paths raises
+  a warning naming every copy — two coexisting versions with
+  incompatible state is exactly how the 2026-07-24 gog v0.12/v0.34
+  keyring split-brain happened. Warnings show in `somora skill
+  list` / `skill check` and the server log (`skills.bin_warning`).
 - `requires.config` checked against the loaded config; missing →
   same `unavailable` treatment.
-- `requires.env_vars` is documentation only — somora does NOT
-  auto-inject these. The `skill` tool surfaces the list as
-  `requires_env_vars` so the agent knows what to ask the user for
-  (or look up in a personal secrets store) before running the
-  skill's commands. Equivalent of OpenClaw's MCP-server `env`
-  block, kept opt-in until somora has a first-class secrets store.
+- `requires.env_vars` — availability-checked AND operational: set the
+  values once in `~/.somora/somora.env` and somora injects them into
+  local `exec` commands that visibly invoke one of the skill's
+  declared bins. Commands that don't belong to the skill never see
+  them (all skill-declared vars are stripped from exec children by
+  default). Scoping details + limits below under "Secrets & env
+  vars"; disable with `skills.envScoping: false` in config.yaml.
 
 When a skill is `available: false`, the `skill` tool prepends a
 warning header to the body so the agent doesn't blindly run
@@ -390,10 +401,28 @@ separate story — those live in `config.yaml` because that's where
 somora's own engine reads them. See `config.example.yaml` for the
 posture.)
 
-`requires.env_vars` in the skill frontmatter documents WHAT the
-skill needs. The `EnvironmentFile` provides the actual values. The
+`requires.env_vars` in the skill frontmatter declares WHAT the skill
+needs. The `EnvironmentFile` / `~/.somora/somora.env` provides the
+actual values. From there, somora scopes them by program name:
+
+- Every env var declared by ANY skill is **stripped** from spawned
+  local `exec` children by default.
+- A command that visibly invokes one of a skill's `requires.bins`
+  gets exactly **that skill's** vars injected back. `gog drive sync`
+  sees `GOG_*`; `ls` and every other skill's commands don't.
+- Matching scans all command tokens, so compound commands
+  (`cd x && gog sync`) work. The log line `exec.skill_env_injected`
+  records every match.
+
+Known limits: a script that calls the bin only *indirectly* doesn't
+match — invoke the bin visibly or pass the var explicitly via the
+exec `env` parameter (an explicit `env` always wins). A skill that
+declares `env_vars` but no `bins` can never match — declare the
+bins. tmux panes (interactive, no command to match at create time)
+and remote exec (remote host's own env) are not covered. The
 `skill` tool surfaces the env-var names back to the agent so it can
-ask the user for any that aren't set.
+ask the user for any that aren't set. Opt out entirely with
+`skills.envScoping: false` (restores full-inheritance behavior).
 
 ## Layer separation — what is and isn't a skill
 
@@ -423,6 +452,9 @@ skills:
   maxSkillsInPrompt: 150     # registry caps before falling back to compact format
   maxPromptChars: 18000      # char budget for the rendered registry
   maxSkillFileBytes: 256000  # per-SKILL.md size cap on activation
+  envScoping: true           # skill-declared env vars only reach exec commands
+                             # that invoke the skill's bins (see "Secrets & env
+                             # vars"); false = legacy full inheritance
 ```
 
 Defaults mirror OpenClaw's battle-tested numbers. When the registry

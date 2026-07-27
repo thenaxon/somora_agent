@@ -126,6 +126,9 @@ async function cmdList(args: string[]): Promise<number> {
     if (!s.available && s.unavailableReason) {
       process.stdout.write(`${''.padStart(13)}  ${''.padStart(maxName)}  ${c.dim('reason: ' + s.unavailableReason)}\n`);
     }
+    for (const w of s.binWarnings) {
+      process.stdout.write(`${''.padStart(13)}  ${''.padStart(maxName)}  ${c.yellow('warning: ' + w)}\n`);
+    }
   }
   return 0;
 }
@@ -195,6 +198,9 @@ function printCheckReport(skill: LoadedSkill): number {
   }
   if (skill.requiresEnvVars.length > 0) {
     process.stdout.write(`  requires.env_vars: ${skill.requiresEnvVars.join(', ')}\n`);
+  }
+  for (const w of skill.binWarnings) {
+    process.stdout.write(`  ${c.yellow('!')} ${w}\n`);
   }
 
   if (ok) {

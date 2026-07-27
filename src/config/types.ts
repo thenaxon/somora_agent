@@ -833,11 +833,21 @@ export const SkillsConfigSchema = z
     /** Per-file size limit for SKILL.md when activated via the Skill
      *  tool. Skills with larger bodies fail to load with an error. */
     maxSkillFileBytes: z.number().int().positive().default(256_000),
+    /** Skill-scoped env injection for local exec. When true (default),
+     *  env vars declared by ANY skill (`requires.env_vars`) are stripped
+     *  from exec children and re-injected only into commands that invoke
+     *  one of that skill's `requires.bins`. False restores the legacy
+     *  behavior (full process-env inheritance incl. somora.env secrets
+     *  in every exec child). See src/skills/env-scope.ts. */
+    envScoping: z.boolean().default(true),
   })
   .default({
     maxSkillsInPrompt: 150,
     maxPromptChars: 18_000,
     maxSkillFileBytes: 256_000,
+    // Keep in lockstep with the field defaults above — this literal is
+    // what a config.yaml WITHOUT a `skills:` block gets.
+    envScoping: true,
   });
 
 // Obsidian Vault — server-global since 2026.05.08.8 (was per-agent

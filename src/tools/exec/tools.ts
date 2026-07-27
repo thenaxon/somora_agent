@@ -30,6 +30,7 @@ import {
   readMeta,
   type JobMeta,
 } from './job-store.ts';
+import { skillEnvScopeForCommand } from '../../skills/env-scope.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
 import {
   killRemoteJob,
@@ -322,6 +323,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       }
       try {
         if (input.target === 'local') {
+          const bgSkillScope = await skillEnvScopeForCommand(input.command, ctx.config);
           const result = await localExecBackground({
             agent: ctx.agent,
             command: input.command,
@@ -330,6 +332,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
             ...(input.description ? { description: input.description } : {}),
             releaseSlot: slot.release,
             stripSomoraInternalEnv: !input.inherit_agent_env,
+            ...(bgSkillScope ? { skillEnvScope: bgSkillScope } : {}),
           });
           return {
             ok: true,
@@ -382,6 +385,19 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
 
     // ── sync path ──
     if (input.target === 'local') {
+      // Skill-scoped env: strip all skill-declared secrets, re-inject
+      // only those whose skill's bins this command invokes. Logged when
+      // it actually matched — forensics for "why does/doesn't my skill
+      // command see its env var".
+      const skillScope = await skillEnvScopeForCommand(input.command, ctx.config);
+      if (skillScope && skillScope.matchedSkills.length > 0) {
+        logger.info({
+          msg: 'exec.skill_env_injected',
+          agent: ctx.agent,
+          skills: skillScope.matchedSkills,
+          vars: Object.keys(skillScope.injectEnv),
+        });
+      }
       const r = await localExecSync({
         command: input.command,
         ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -389,6 +405,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         timeoutMs: input.timeout_ms ?? 60_000,
         pty: input.pty,
         stripSomoraInternalEnv: !input.inherit_agent_env,
+        ...(skillScope ? { skillEnvScope: skillScope } : {}),
       });
       return {
         ok: r.exit_code === 0,
