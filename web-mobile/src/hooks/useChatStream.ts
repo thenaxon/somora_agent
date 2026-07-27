@@ -35,7 +35,7 @@ export interface ChatMessage {
   fromAgent?: string;
   /** Synthesized inbound marker. Today: 'sentinel'. Renderer draws a
    *  centered system divider instead of a user-bubble. */
-  fromSystem?: 'sentinel';
+  fromSystem?: 'sentinel' | 'tmux';
   /** Voice: optional TTS audio URL produced for this turn. Set when an
    *  `assistant_audio` SSE event arrived after the message; drives the
    *  Play-button on the agent bubble. */
@@ -63,7 +63,7 @@ interface HistoryEvent {
   text?: string;
   turnId?: string;
   from_agent?: string;
-  from_system?: 'sentinel';
+  from_system?: 'sentinel' | 'tmux';
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
 }
 
@@ -332,7 +332,7 @@ export function useChatStream(agent: string | null): ChatStream {
             ts?: number;
             turnId?: string;
             from_agent?: string;
-            from_system?: 'sentinel';
+            from_system?: 'sentinel' | 'tmux';
           }
         | null = null;
       try { d = JSON.parse(e.data); } catch { return; }

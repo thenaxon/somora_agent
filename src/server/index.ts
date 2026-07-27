@@ -85,6 +85,11 @@ import * as sentinelStore from '../sentinel/store.ts';
 import * as sentinelSchedule from '../sentinel/schedule.ts';
 import * as sentinelScheduler from '../sentinel/scheduler.ts';
 import { configureSentinel, startSentinel } from '../sentinel/scheduler.ts';
+import {
+  configureTmuxAttention,
+  startTmuxAttentionWatcher,
+} from '../tmux/attention-watcher.ts';
+import { writeAttentionMirror } from '../tmux/attention.ts';
 import { cacheFileStat, negotiateFormat, synthesize } from '../tts/service.ts';
 import { installTtsCacheGc } from '../tts/cache-gc.ts';
 import { prepareForTts } from '../tts/prepare-for-tts.ts';
@@ -3661,6 +3666,22 @@ configureSentinel({
 void startSentinel().catch((err) => {
   logger.error({ msg: 'sentinel.boot_failed', err: (err as Error).message });
 });
+// tmux attention watcher — wakes an agent when a coding-CLI it started
+// in tmux becomes ready and the agent missed it. Main-server-only
+// runtime; the tmux TOOL layer talks to it via the two ledger files
+// (design: private/tmux-hooks-design.md). When disabled, the mirror
+// file is cleared so tool responses carry zero attention traces
+// (three-gates rule).
+if (config.tmux.attention.enabled) {
+  configureTmuxAttention({
+    chatTurnDeps,
+    publishEvent: (agent, session, event) =>
+      publish(agent, session, event as Parameters<typeof publish>[2]),
+  });
+  startTmuxAttentionWatcher(config.tmux.attention);
+} else {
+  writeAttentionMirror({});
+}
 installTtsCacheGc(config);
 configureLongTaskTimeouts(config);
 setMaxWikiCallsPerTurn(config.wiki.lucid.maxCallsPerTurn);

@@ -57,7 +57,7 @@ export type ChatMessage =
       /** Marks an inbound that the server synthesized via an internal
        *  subsystem (today: 'sentinel'). Renderer draws a centered
        *  system divider instead of a user-bubble. */
-      fromSystem?: 'sentinel';
+      fromSystem?: 'sentinel' | 'tmux';
       attachments?: AttachmentDisplay[];
       /** Server turnId returned by POST /chat/send. Used to pair this
        *  optimistic bubble with later SSE events (turn_queued while
@@ -164,7 +164,7 @@ export type StreamEvent =
         ts: number;
         turnId?: string;
         from_agent?: string;
-        from_system?: 'sentinel';
+        from_system?: 'sentinel' | 'tmux';
       };
     }
   | {

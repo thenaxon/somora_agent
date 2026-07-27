@@ -37,6 +37,11 @@ import {
   type TmuxSessionKind,
 } from '../../tmux/origin-store.ts';
 import { detectTuiState, detectSuggestion, type TuiDetectResult } from '../../tmux/tui-markers.ts';
+import {
+  readAttentionMirror,
+  recordTmuxObservation,
+  type AttentionDisplay,
+} from '../../tmux/attention.ts';
 
 // One or more tmux key tokens separated by whitespace. Each token is
 // `[A-Za-z0-9_-]+` — covers tmux's full key-name vocabulary (Escape,
@@ -227,7 +232,17 @@ const TmuxInput = z
           '`claude --dangerously-skip-permissions` — detects "Press up to edit queued messages" ' +
           'and "esc to interrupt" + Claude Code\'s spinner words. "codex" for codex CLI — ' +
           'detects esc-to-interrupt running cue. Pick "shell" when unsure; the TUI flags are ' +
-          'additive and only help if the correct kind is declared.',
+          'additive and only help if the correct kind is declared. Sessions created with a ' +
+          'coding-CLI kind are watched by the attention watcher: if the CLI finishes while ' +
+          'you are no longer looking, somora wakes you with a [tmux attention] turn so you ' +
+          'can read the output and continue.',
+      ),
+    attention: z
+      .boolean()
+      .default(true)
+      .describe(
+        'create only, kind claude-code/codex only. false opts this session out of the ' +
+          'attention watcher (no needs_attention flag, no wake turns). Default true.',
       ),
   })
   .strict();
@@ -277,6 +292,9 @@ interface CaptureResult {
   wait_pattern?: string;
   /** Only present when the session was created with kind != "shell". */
   tui_state?: TuiStateField;
+  /** Attention-watcher metadata; only present for watched coding-CLI
+   *  sessions while the watcher is enabled. */
+  attention?: AttentionDisplay;
   ms: number;
   error?: string;
 }
@@ -294,6 +312,9 @@ interface WaitIdleResult {
   became_idle: boolean;
   /** Only present when the session was created with kind != "shell". */
   tui_state?: TuiStateField;
+  /** Attention-watcher metadata; only present for watched coding-CLI
+   *  sessions while the watcher is enabled. */
+  attention?: AttentionDisplay;
   /** Total wall time the action waited, including the final stability window. */
   ms: number;
   error?: string;
@@ -303,7 +324,12 @@ interface ListResult {
   ok: boolean;
   target: string;
   count: number;
-  sessions: Array<{ name: string; created_at: number; windows: number }>;
+  sessions: Array<{
+    name: string;
+    created_at: number;
+    windows: number;
+    attention?: AttentionDisplay;
+  }>;
 }
 interface KillResult {
   action: 'kill';
@@ -420,6 +446,46 @@ async function enrichTuiState(
     };
   } catch {
     return tui;
+  }
+}
+
+/**
+ * Observation ledger write for the attention watcher: when the ORIGIN
+ * (agent, session) looks at (capture / wait_idle) or drives (send) a
+ * watched coding-CLI session, note the timestamp so a completion the
+ * agent saw itself never triggers a wake (anti-double-trigger contract,
+ * design doc §3.2). Non-origin agents don't count — someone else
+ * peeking doesn't mean the origin agent is informed. Best-effort.
+ */
+function noteObservation(
+  target: string,
+  name: string,
+  ctx: { agent: string; session?: string },
+  sawState?: TuiDetectResult['state'],
+): void {
+  if (target !== 'local') return;
+  try {
+    const origin = getTmuxOrigin(name);
+    if (!origin || !origin.kind || origin.kind === 'shell') return;
+    if (origin.agent !== ctx.agent) return;
+    if (origin.session && ctx.session && origin.session !== ctx.session) return;
+    recordTmuxObservation(name, ctx.agent, ctx.session, sawState);
+  } catch {
+    /* ledger must never break the tool */
+  }
+}
+
+/** Attention metadata for one local session, read from the watcher's
+ *  mirror file. Empty when the watcher is off (boot clears the mirror)
+ *  or the session isn't watched — zero traces when the feature is
+ *  disabled (three-gates rule). */
+function attentionFor(target: string, name: string): { attention?: AttentionDisplay } {
+  if (target !== 'local') return {};
+  try {
+    const a = readAttentionMirror()[name];
+    return a ? { attention: a } : {};
+  } catch {
+    return {};
   }
 }
 
@@ -541,6 +607,13 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           'create only — what runs inside the pane, drives TUI-aware capture/wait_idle. ' +
           'See the inputSchema for full per-kind semantics.',
       },
+      attention: {
+        type: 'boolean',
+        default: true,
+        description:
+          'create only, kind claude-code/codex only. false opts this session out of the ' +
+          'attention watcher (no needs_attention flag, no wake turns).',
+      },
     },
     required: ['action'],
     additionalProperties: false,
@@ -592,6 +665,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
             agent: ctx.agent,
             ...(ctx.session ? { session: ctx.session } : {}),
             ...(kind !== 'shell' ? { kind } : {}),
+            ...(input.attention === false ? { attention: false } : {}),
           });
         } catch (err) {
           logger.warn({
@@ -651,6 +725,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
               input.keys as string,
               input.multiline_safe ?? false,
             );
+      if (r.ok) noteObservation(target, name, ctx);
       return {
         action: 'send',
         ok: r.ok,
@@ -676,6 +751,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         const tuiOut = tui
           ? await enrichTuiState(tui, target, ctx.agent, name, kind, includeAnsi ? cap.content : null)
           : null;
+        if (cap.ok) noteObservation(target, name, ctx, tui?.state);
         return {
           action: 'capture',
           ok: cap.ok,
@@ -685,6 +761,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           matched_pattern: false,
           ms: Date.now() - start,
           ...(tuiOut ? { tui_state: tuiOut } : {}),
+          ...attentionFor(target, name),
           ...(cap.error ? { error: cap.error } : {}),
         };
       }
@@ -796,6 +873,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       const captureTuiOut = captureTui
         ? await enrichTuiState(captureTui, target, ctx.agent, name, captureKind, includeAnsi ? lastContent : null)
         : null;
+      if (!lastError) noteObservation(target, name, ctx, captureTui?.state);
       return {
         action: 'capture',
         ok: !lastError,
@@ -806,6 +884,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         wait_pattern: pattern,
         ms: Date.now() - start,
         ...(captureTuiOut ? { tui_state: captureTuiOut } : {}),
+        ...attentionFor(target, name),
         ...(lastError ? { error: lastError } : {}),
       };
     }
@@ -900,6 +979,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       const tuiFinalOut = tuiFinal
         ? await enrichTuiState(tuiFinal, target, ctx.agent, name, sessionKind, includeAnsi ? lastContent : null)
         : null;
+      if (!lastError) noteObservation(target, name, ctx, tuiFinal?.state);
       return {
         action: 'wait_idle',
         ok: !lastError,
@@ -909,6 +989,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         became_idle: becameIdle,
         ms: Date.now() - start,
         ...(tuiFinalOut ? { tui_state: tuiFinalOut } : {}),
+        ...attentionFor(target, name),
         ...(lastError ? { error: lastError } : {}),
       };
     }
@@ -918,12 +999,18 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         target === 'local'
           ? await tmuxLocalList()
           : await tmuxRemoteList(ctx.agent, target);
+      // Annotate local sessions with attention metadata (watched
+      // coding-CLI sessions only; empty when the watcher is off).
+      const mirror = target === 'local' ? readAttentionMirror() : {};
+      const sessions = r.sessions.map((s) =>
+        mirror[s.name] ? { ...s, attention: mirror[s.name] } : s,
+      );
       return {
         action: 'list',
         ok: r.ok,
         target,
-        count: r.sessions.length,
-        sessions: r.sessions,
+        count: sessions.length,
+        sessions,
       };
     }
 

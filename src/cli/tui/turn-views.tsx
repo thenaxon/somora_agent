@@ -78,18 +78,22 @@ function UserTurn({
 }: {
   text: string;
   fromAgent?: string;
-  fromSystem?: 'sentinel';
+  fromSystem?: 'sentinel' | 'tmux';
 }) {
-  // Sentinel inbound: synthesized system trigger, not a real user
-  // message. Render as a one-line system notice with the bell glyph
-  // + trigger name so it's clearly distinguishable from human and
-  // peer-agent turns in scrollback.
-  if (fromSystem === 'sentinel') {
-    const name = summarizeSentinelTriggerText(text);
+  // System inbound (sentinel trigger / tmux attention wake):
+  // synthesized, not a real user message. Render as a one-line system
+  // notice with a glyph + context so it's clearly distinguishable from
+  // human and peer-agent turns in scrollback.
+  if (fromSystem === 'sentinel' || fromSystem === 'tmux') {
+    const name =
+      fromSystem === 'sentinel'
+        ? summarizeSentinelTriggerText(text)
+        : summarizeTmuxWakeText(text);
+    const label = fromSystem === 'sentinel' ? '🔔 sentinel' : '🖥  tmux';
     return (
       <Box marginTop={1}>
         <Text color="gray" bold>
-          {'🔔 sentinel'}
+          {label}
         </Text>
         {name ? (
           <>
@@ -133,6 +137,14 @@ function UserTurn({
 function summarizeSentinelTriggerText(text: string): string {
   const match = text.match(/^name:\s*(.+)$/im);
   if (match && match[1]) return match[1].trim();
+  return '';
+}
+
+// Pulls the tmux session name out of the attention-wake prompt
+// (`[tmux attention] Session '<name>' (…`).
+function summarizeTmuxWakeText(text: string): string {
+  const match = text.match(/Session '([^']+)'/);
+  if (match && match[1]) return match[1];
   return '';
 }
 

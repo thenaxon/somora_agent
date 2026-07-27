@@ -273,6 +273,54 @@ export const SseConfigSchema = z.object({
 });
 export type SseConfig = z.infer<typeof SseConfigSchema>;
 
+// tmux attention watcher — server-side polling of somora-created tmux
+// sessions with a known coding-CLI kind (claude-code / codex). Detects
+// the running→ready transition ("finished or waiting for input") and,
+// when the originating agent missed it, dispatches a wake turn so the
+// agent reads the output and continues. Design:
+// private/tmux-hooks-design.md (Phase 1, watcher-first — no CLI hooks).
+export const TmuxAttentionConfigSchema = z
+  .object({
+    /** Master switch for the watcher + attention metadata in tmux
+     *  tool responses / web badge. Off = zero polling, zero traces. */
+    enabled: z.boolean().default(true),
+    /** Agent-wakeup stage. Off = events only (needs_attention flag +
+     *  badge), no dispatched turns. */
+    wake: z.boolean().default(true),
+    /** Watcher poll interval. Also bounds how quickly a missed
+     *  completion turns into a wake (one extra tick worst-case). */
+    pollMs: z.number().int().min(500).default(3_000),
+    /** Minimum seconds between two wakes for the same tmux session —
+     *  flap protection for fast running/ready cycles. */
+    cooldownS: z.number().int().min(0).default(60),
+    /** Hard daily ceiling per tmux session (UTC day). Past the cap
+     *  only the needs_attention flag is set, no more turns. */
+    dailyCapPerSession: z.number().int().min(1).default(40),
+  })
+  .default({
+    enabled: true,
+    wake: true,
+    pollMs: 3_000,
+    cooldownS: 60,
+    dailyCapPerSession: 40,
+  });
+export type TmuxAttentionConfig = z.infer<typeof TmuxAttentionConfigSchema>;
+
+export const TmuxConfigSchema = z
+  .object({
+    attention: TmuxAttentionConfigSchema,
+  })
+  .default({
+    attention: {
+      enabled: true,
+      wake: true,
+      pollMs: 3_000,
+      cooldownS: 60,
+      dailyCapPerSession: 40,
+    },
+  });
+export type TmuxConfig = z.infer<typeof TmuxConfigSchema>;
+
 // Agent-loop tunables for engines that run their own tool-call loop
 // (currently only openai-compatible — Phase 2-Stufe-C). claude-cli and
 // codex-cli have their own internal loops and ignore these values for
@@ -1097,6 +1145,7 @@ export const ConfigSchema = z.object({
   agentLoop: AgentLoopConfigSchema,
   engineWatchdog: EngineWatchdogConfigSchema,
   sse: SseConfigSchema,
+  tmux: TmuxConfigSchema,
   claudeCli: ClaudeCliConfigSchema,
   codexCli: CodexCliConfigSchema,
   tui: TuiConfigSchema,

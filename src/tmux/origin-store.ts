@@ -34,6 +34,9 @@ export interface TmuxOrigin {
    *  Optional for backwards compat with origin records written before
    *  this field existed; missing = "shell" (the safe default). */
   kind?: TmuxSessionKind;
+  /** Per-create opt-out for the attention watcher (create with
+   *  `attention: false`). Missing = attention enabled (the default). */
+  attention?: boolean;
   /** ISO timestamp of when the origin was recorded. */
   createdAt: string;
 }
@@ -68,6 +71,7 @@ export function recordTmuxOrigin(args: {
   agent: string;
   session?: string;
   kind?: TmuxSessionKind;
+  attention?: boolean;
 }): void {
   const store = read();
   store[args.name] = {
@@ -75,6 +79,7 @@ export function recordTmuxOrigin(args: {
     agent: args.agent,
     ...(args.session ? { session: args.session } : {}),
     ...(args.kind ? { kind: args.kind } : {}),
+    ...(args.attention === false ? { attention: false } : {}),
     createdAt: new Date().toISOString(),
   };
   write(store);

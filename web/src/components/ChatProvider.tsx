@@ -676,7 +676,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           ts: number;
           turnId?: string;
           from_agent?: string;
-          from_system?: 'sentinel';
+          from_system?: 'sentinel' | 'tmux';
         }>(ev as MessageEvent);
         if (!d) return;
         // Dedupe + append in a SINGLE setMessages updater so the

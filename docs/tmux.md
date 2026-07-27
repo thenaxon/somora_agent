@@ -184,6 +184,59 @@ if (r.tui_state?.state === "running") {
 }
 ```
 
+## Attention watcher — wake me when the CLI is done
+
+Sessions created with `kind: "claude-code"` or `kind: "codex"` are
+watched server-side: somora polls the pane every few seconds and
+detects the moment the CLI goes from *running* to *ready* — which
+means "finished" or "waiting for input" (e.g. a permission prompt).
+
+What happens then depends on whether the agent that created the
+session saw it happen:
+
+- **The agent observed it itself** (its `wait_idle` returned the ready
+  state, or a later `capture` saw it) → nothing. No duplicate nudge.
+- **The agent missed it** (its `wait_idle` timed out and its turn
+  ended while the CLI kept working) → somora dispatches a wake turn to
+  the originating agent + session: *"tmux session X became ready —
+  read the output and continue."* The turn renders as a `tmux` system
+  divider in web/mobile/TUI, exactly like Sentinel triggers do.
+
+Rules that keep this calm:
+
+- One wake per completion. An ignored wake is never repeated — the
+  session re-arms only after the agent interacts with it again.
+- Configurable cooldown between wakes and a daily per-session cap
+  (see below). Past the cap only the `needs_attention` flag is set.
+- Only somora-created sessions with a coding-CLI `kind` are watched.
+  Manual `tmux new` sessions and `kind: "shell"` are never touched.
+- Opt out per session with `attention: false` on create.
+
+`capture`, `wait_idle` and `list` responses include an `attention`
+block for watched sessions:
+
+```jsonc
+"attention": {
+  "needs_attention": true,      // completion nobody has looked at yet
+  "last_event_at": 1785150000000,
+  "last_wake_at": null,
+  "wakes_today": 0,
+  "state": "ready"
+}
+```
+
+Config (`config.yaml`):
+
+```yaml
+tmux:
+  attention:
+    enabled: true            # watcher + metadata/badge
+    wake: true               # agent-wakeup stage (false = flag only)
+    pollMs: 3000
+    cooldownS: 60
+    dailyCapPerSession: 40
+```
+
 ## `inherit_agent_env` — Sharing somora's isolated Claude tree
 
 By default, sessions you create with `tmux({ action: "create" })` get

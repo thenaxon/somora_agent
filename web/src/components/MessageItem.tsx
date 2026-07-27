@@ -25,6 +25,7 @@ import {
   Pin,
   Play,
   Square,
+  SquareTerminal,
   User,
 } from 'lucide-react';
 import type { AttachmentDisplay, ChatMessage } from '../types/chat';
@@ -78,11 +79,14 @@ export const MessageItem = memo(function MessageItem({
   if (msg.role === 'memory_inject') {
     return <MemoryInjectLine memory={msg.memory} />;
   }
-  // Sentinel system-trigger: centered divider, not a bubble. Same
-  // `<Bell />` icon the AppDock uses for the Sentinel app so the
-  // visual language matches across the UI.
+  // System-triggered inbound (sentinel fire, tmux attention wake):
+  // centered divider, not a bubble. Sentinel keeps the `<Bell />` the
+  // AppDock uses; tmux wakes get a terminal glyph + session name.
   if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
     return <SentinelDivider text={msg.text} ts={msg.ts} />;
+  }
+  if (msg.role === 'user' && msg.fromSystem === 'tmux') {
+    return <TmuxDivider text={msg.text} ts={msg.ts} />;
   }
 
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
@@ -240,6 +244,39 @@ function SentinelDivider({ text, ts }: { text: string; ts: number }) {
       <span className="sentinel-divider-rule" />
     </div>
   );
+}
+
+// tmux attention wake — same divider chrome as Sentinel (shared CSS
+// classes), terminal glyph instead of the bell. `text` is the wake
+// prompt; we surface the quoted session name from its first line.
+function TmuxDivider({ text, ts }: { text: string; ts: number }) {
+  const summary = summarizeTmuxWakeText(text);
+  const time = formatBubbleTime(ts);
+  return (
+    <div className="sentinel-divider" aria-label="tmux attention wake">
+      <span className="sentinel-divider-rule" />
+      <span className="sentinel-divider-body">
+        <SquareTerminal size={12} />
+        <span className="sentinel-divider-label">tmux</span>
+        {summary && (
+          <>
+            <span className="sentinel-divider-sep">·</span>
+            <span className="sentinel-divider-name">{summary}</span>
+          </>
+        )}
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-time">{time}</span>
+      </span>
+      <span className="sentinel-divider-rule" />
+    </div>
+  );
+}
+
+function summarizeTmuxWakeText(text: string): string {
+  // Wake prompts start with: [tmux attention] Session '<name>' (…
+  const match = text.match(/Session '([^']+)'/);
+  if (match && match[1]) return match[1];
+  return '';
 }
 
 function summarizeSentinelTriggerText(text: string): string {

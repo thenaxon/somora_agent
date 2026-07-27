@@ -224,7 +224,9 @@ export function openStream(
           // them live. Self-echoes carry no from_agent; consumer
           // dedupes by recent-text against its own optimistic copy.
           ...(typeof data.from_agent === 'string' ? { fromAgent: data.from_agent } : {}),
-          ...(data.from_system === 'sentinel' ? { fromSystem: 'sentinel' as const } : {}),
+          ...(data.from_system === 'sentinel' || data.from_system === 'tmux'
+            ? { fromSystem: data.from_system as 'sentinel' | 'tmux' }
+            : {}),
           callId: typeof data.agent_ask_call_id === 'string' ? data.agent_ask_call_id : undefined,
         };
       case 'turn_queued':

@@ -146,6 +146,9 @@ function MobileMessage({
   if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
     return <SentinelDivider text={msg.text} ts={msg.ts} />;
   }
+  if (msg.role === 'user' && msg.fromSystem === 'tmux') {
+    return <TmuxDivider text={msg.text} ts={msg.ts} />;
+  }
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
   const peer = isPeer && msg.fromAgent ? agentLookup.get(msg.fromAgent) : undefined;
   const isAgent = msg.role === 'agent';
@@ -297,6 +300,37 @@ function SentinelDivider({ text, ts }: { text: string; ts: number }) {
       <span className="sentinel-rule" />
     </div>
   );
+}
+
+// tmux attention wake — same divider chrome as Sentinel (shared CSS
+// classes), terminal glyph instead of the bell.
+function TmuxDivider({ text, ts }: { text: string; ts: number }) {
+  const name = summarizeTmuxWakeText(text);
+  const time = formatMobileTime(ts);
+  return (
+    <div className="sentinel-divider" aria-label="tmux attention wake">
+      <span className="sentinel-rule" />
+      <span className="sentinel-body">
+        <span className="sentinel-icon" aria-hidden="true">🖥️</span>
+        <span className="sentinel-label">tmux</span>
+        {name && (
+          <>
+            <span className="sentinel-sep">·</span>
+            <span className="sentinel-name">{name}</span>
+          </>
+        )}
+        <span className="sentinel-sep">·</span>
+        <span className="sentinel-time">{time}</span>
+      </span>
+      <span className="sentinel-rule" />
+    </div>
+  );
+}
+
+function summarizeTmuxWakeText(text: string): string {
+  const match = text.match(/Session '([^']+)'/);
+  if (match && match[1]) return match[1];
+  return '';
 }
 
 function summarizeSentinelTriggerText(text: string): string {
