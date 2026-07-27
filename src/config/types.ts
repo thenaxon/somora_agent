@@ -997,7 +997,11 @@ export const WikiConfigSchema = z
       maxCallsPerTurn: 3,
     },
     search: {
-      boostWiki: 1.0,
+      // Keep in lockstep with WikiSearchConfigSchema's defaults above —
+      // this literal is what a config.yaml WITHOUT a `wiki:` block gets.
+      // (1.0 here was a typo that silently weakened wiki ranking for
+      // exactly those installs; found in the 2026-07-22 investigation.)
+      boostWiki: 1.4,
       boostMemory: 0.85,
       boostVault: 0.65,
       overviewMaxChars: 4000,
