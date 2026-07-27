@@ -259,7 +259,7 @@ the new engine just picks up the thread.
 
 | Engine | Auth | Use when |
 |---|---|---|
-| `claude-cli` | Claude Code binary in `~/.local/bin/claude` (subscription) | Best quality on Anthropic stack, no API key needed. |
+| `claude-cli` | Claude Code binary in `~/.local/bin/claude` (subscription) — shares your `claude login`, kept in sync automatically (`somora auth status` to inspect) | Best quality on Anthropic stack, no API key needed. |
 | `codex-cli` | `codex` binary on PATH (ChatGPT subscription) | Strong reasoning, ChatGPT subscription cost. |
 | `openai-compatible` | Any baseUrl + apiKey config | Local models, OpenRouter, any OpenAI-shaped endpoint. |
 
@@ -270,9 +270,15 @@ Skills (Markdown how-tos the agent can activate) are installed under `~/.somora/
 ```bash
 somora skill list                                       # what's installed
 somora skill add <slug> --template cli-wrapper          # scaffold from template
-somora skill add github --from-url https://clawhub.ai/steipete/github   # install from ClawHub
+somora skill add gog --from-url https://clawhub.ai/steipete/skills/gog  # install from ClawHub
 somora skill check <slug>                               # verify before reload
 ```
+
+Skills declare what they need (`requires.bins` with optional version
+constraints, `requires.env_vars`) and somora enforces it: binaries are
+version-checked, duplicate installs are flagged, and declared secrets
+are injected only into the exec commands that actually invoke that
+skill's CLI — nothing else ever sees them.
 
 See [docs/skills.md](docs/skills.md) for the full CLI reference, ClawHub-resolver internals, and the body-linter rules.
 
