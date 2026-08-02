@@ -205,13 +205,15 @@ export function MobileApp() {
             agents={agents}
             messages={chat.messages}
             connectionError={chat.connectionError}
+            statusNotice={chat.statusNotice}
             streaming={chat.streaming}
-            onAbort={() => void chat.abort()}
           />
           <MessageInput
             agent={activeAgent}
             onSend={chat.send}
             autoPlayEnabled={autoPlay}
+            streaming={chat.streaming}
+            onAbort={() => void chat.abort()}
           />
         </>
       ) : (

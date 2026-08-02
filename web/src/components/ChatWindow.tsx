@@ -9,6 +9,7 @@ import {
   MoreHorizontal,
   Paperclip,
   Send,
+  Square,
   Volume2,
   VolumeX,
   Wrench,
@@ -620,6 +621,31 @@ export function ChatWindow({
     [draft, chat, pendingAttachments, ttsAvailable, autoPlay],
   );
 
+  // Abort the in-flight turn. Lives on the composer primary button
+  // while streaming (Send ↔ Stop same slot). Enqueue-while-streaming
+  // remains available via Enter in the textarea — the button itself
+  // is Stop and does not send.
+  const onAbort = useCallback(() => {
+    void (async () => {
+      try {
+        const r = await chat.abort();
+        // Idempotent when nothing is running — still tell the user so
+        // Stop doesn't feel broken (s8 report).
+        if (!r.aborted) {
+          setSystemNotice({
+            text: 'Nothing to stop — no active turn',
+            tone: 'info',
+          });
+        }
+      } catch (err) {
+        setSystemNotice({
+          text: `Stop failed: ${(err as Error).message}`,
+          tone: 'error',
+        });
+      }
+    })();
+  }, [chat]);
+
   // Auto-play hook: when an assistant_audio event arrives AND the
   // per-session toggle is on, immediately play the audio. Toggle off
   // ⇒ the Play-button stays available in the bubble (user can play
@@ -1026,7 +1052,6 @@ export function ChatWindow({
                 agentIcon={agent.icon}
                 peerAgents={peerAgents}
                 isPinned={isPinned}
-                onAbort={() => void chat.abort()}
                 {...(onPinClick ? { onPinClick } : {})}
               />
             );
@@ -1164,14 +1189,27 @@ export function ChatWindow({
             textareaRef.current?.focus();
           }}
         />
-        <button
-          type="submit"
-          className="chat-send"
-          title="Send"
-          disabled={!draft.trim()}
-        >
-          <Send size={14} />
-        </button>
+        {chat.streaming ? (
+          <button
+            type="button"
+            className="chat-send chat-send-stop"
+            title="Stop generating"
+            aria-label="Stop generating"
+            onClick={onAbort}
+          >
+            <Square size={14} fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            className="chat-send"
+            title="Send"
+            aria-label="Send"
+            disabled={!draft.trim()}
+          >
+            <Send size={14} />
+          </button>
+        )}
       </form>
     </div>
   );

@@ -18,9 +18,19 @@ interface Props {
   /** When true and the current draft came from STT, the send call
    *  flags input_modality=voice + auto_play_requested=true. */
   autoPlayEnabled: boolean;
+  /** True while the agent is mid-turn. Primary button becomes Stop. */
+  streaming?: boolean;
+  /** Abort the in-flight turn. Wired while streaming. */
+  onAbort?: () => void;
 }
 
-export function MessageInput({ agent, onSend, autoPlayEnabled }: Props) {
+export function MessageInput({
+  agent,
+  onSend,
+  autoPlayEnabled,
+  streaming = false,
+  onAbort,
+}: Props) {
   const [text, setText] = useState('');
   const [staged, setStaged] = useState<AttachmentRef[]>([]);
   const [sending, setSending] = useState(false);
@@ -63,6 +73,8 @@ export function MessageInput({ agent, onSend, autoPlayEnabled }: Props) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // While streaming the primary button is Stop; Enter still enqueues
+    // a follow-up (server queue) so typing ahead stays possible.
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void submit();
@@ -120,16 +132,45 @@ export function MessageInput({ agent, onSend, autoPlayEnabled }: Props) {
           autoComplete="off"
           spellCheck
         />
-        <button
-          type="button"
-          className="input-btn primary"
-          disabled={!canSend}
-          onClick={submit}
-          aria-label="Senden"
-        >
-          ➤
-        </button>
+        {streaming ? (
+          <button
+            type="button"
+            className="input-btn primary stop"
+            onClick={() => onAbort?.()}
+            aria-label="Stop generating"
+            title="Stop generating"
+          >
+            <StopIcon />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="input-btn primary"
+            disabled={!canSend}
+            onClick={submit}
+            aria-label="Senden"
+            title="Senden"
+          >
+            ➤
+          </button>
+        )}
       </div>
     </>
+  );
+}
+
+// Filled stop square — same visual language as the former bubble Stop.
+// Inline SVG keeps the mobile "no lucide-react" rule.
+function StopIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
   );
 }

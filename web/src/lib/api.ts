@@ -356,13 +356,34 @@ export const api = {
     }
     return (await res.json()) as AttachmentRef;
   },
-  abort: async (agent: string, session: string): Promise<void> => {
-    await fetch(
-      `/chat/abort?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
-      { method: 'POST' },
-    ).catch(() => {
-      // best-effort — the UI shouldn't break on abort failure.
-    });
+  /** Cancel in-flight turn. Returns server body so the UI can surface
+   *  `aborted:false` (nothing running) instead of silently no-oping.
+   *  Throws on network / non-2xx so callers can toast the failure. */
+  abort: async (
+    agent: string,
+    session: string,
+  ): Promise<{ aborted: boolean; ms_running?: number; agent?: string; session?: string }> => {
+    let res: Response;
+    try {
+      res = await fetch(
+        `/chat/abort?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,
+        { method: 'POST' },
+      );
+    } catch (err) {
+      throw new Error(
+        `abort request failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`abort ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`);
+    }
+    return (await res.json()) as {
+      aborted: boolean;
+      ms_running?: number;
+      agent?: string;
+      session?: string;
+    };
   },
   streamUrl: (agent: string, session: string) =>
     `/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`,

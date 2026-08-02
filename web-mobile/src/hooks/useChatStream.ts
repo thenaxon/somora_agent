@@ -72,6 +72,9 @@ export interface ChatStream {
   /** True from the moment the user sends until the server emits
    *  agent.phase='end'. */
   streaming: boolean;
+  /** Transient status line (abort outcome, etc.). Cleared by the
+   *  next successful send or after a short timer in the consumer. */
+  statusNotice: string | null;
   /** Send a user message via POST /chat/send. Optionally includes
    *  staged attachment refs (already uploaded to /attachments).
    *  Optimistically appends to local messages so the bubble shows
@@ -85,10 +88,10 @@ export interface ChatStream {
    *  Caller decides whether to auto-play (typically gated by their
    *  per-session toggle). Returns unsubscribe. */
   subscribeAudio: (handler: (url: string) => void) => () => void;
-  /** Abort the in-flight turn for this session. Fire-and-forget POST
-   *  /chat/abort — the actual close-out lands as chat:final +
-   *  agent:end. Used by the Stop button on the streaming bubble.
-   *  No-op when no turn is running (server returns aborted=false). */
+  /** Abort the in-flight turn for this session. POST /chat/abort;
+   *  close-out still lands as chat:final + agent:end. Surfaces
+   *  aborted:false / HTTP failures via statusNotice so Stop never
+   *  silently no-ops. */
   abort: () => Promise<void>;
   /** Last connection error if the SSE link dropped. Null when healthy. */
   connectionError: string | null;
@@ -104,6 +107,7 @@ export function useChatStream(agent: string | null): ChatStream {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
   // Track the currently-streaming agent message id outside React state
   // so successive deltas can find it without re-render races.
   const streamingIdRef = useRef<string | null>(null);
@@ -478,8 +482,16 @@ export function useChatStream(agent: string | null): ChatStream {
     };
   }, [agent]);
 
+  // Auto-dismiss abort/status notices so they don't stick forever.
+  useEffect(() => {
+    if (!statusNotice) return;
+    const t = setTimeout(() => setStatusNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [statusNotice]);
+
   const send: ChatStream['send'] = async (text, attachments, voice) => {
     if (!agent) return;
+    setStatusNotice(null);
     // Optimistically add the user's message so the bubble appears
     // instantly — the server doesn't broadcast user_message back to
     // SSE subscribers, so without this the message would only show
@@ -549,11 +561,27 @@ export function useChatStream(agent: string | null): ChatStream {
   const abort: ChatStream['abort'] = async () => {
     if (!agent) return;
     try {
-      await fetch(`/chat/abort?agent=${encodeURIComponent(agent)}&session=main`, {
+      const res = await fetch(`/chat/abort?agent=${encodeURIComponent(agent)}&session=main`, {
         method: 'POST',
       });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        setStatusNotice(`Stop failed: ${res.status}${body ? ` ${body.slice(0, 120)}` : ''}`);
+        return;
+      }
+      const body = (await res.json()) as { aborted?: boolean };
+      // Idempotent when nothing is running — still tell the user so
+      // Stop doesn't feel broken during pre-lock / already-finished.
+      if (!body.aborted) {
+        setStatusNotice('Nothing to stop — no active turn');
+      } else {
+        setStatusNotice(null);
+      }
     } catch (err) {
       console.warn('[somora-mobile] /chat/abort failed:', err);
+      setStatusNotice(
+        `Stop failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   };
 
@@ -564,7 +592,7 @@ export function useChatStream(agent: string | null): ChatStream {
     };
   };
 
-  return { messages, streaming, send, subscribeAudio, abort, connectionError };
+  return { messages, streaming, send, subscribeAudio, abort, connectionError, statusNotice };
 }
 
 function eventToMessage(ev: HistoryEvent): ChatMessage | null {

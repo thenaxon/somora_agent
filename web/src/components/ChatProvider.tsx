@@ -94,7 +94,10 @@ interface ChatContextValue {
    *  caller decides whether to actually play it (typically gated by
    *  the per-session auto-play toggle in localStorage). */
   subscribeAudio: (agent: string, session: string, handler: (url: string) => void) => () => void;
-  abort: (agent: string, session: string) => Promise<void>;
+  abort: (
+    agent: string,
+    session: string,
+  ) => Promise<{ aborted: boolean; ms_running?: number }>;
   /** Lazy-load older history. Returns true when more is available
    *  after this load (so the caller can keep paging), false when the
    *  beginning of the session has been reached. No-op when there's
@@ -123,7 +126,7 @@ const ChatContext = createContext<ChatContextValue>({
   streamingKeys: [],
   send: async () => {},
   subscribeAudio: () => () => {},
-  abort: async () => {},
+  abort: async () => ({ aborted: false }),
   loadOlder: async () => false,
   getHasMore: () => false,
   clearMessages: () => {},
@@ -991,7 +994,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   const abort = useCallback<ChatContextValue['abort']>(async (agent, session) => {
-    await api.abort(agent, session);
+    return api.abort(agent, session);
   }, []);
 
   const subscribeAudio = useCallback<ChatContextValue['subscribeAudio']>(
