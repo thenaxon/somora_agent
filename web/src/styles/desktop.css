@@ -716,26 +716,6 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   font-style: normal;
 }
 
-/* Stop button on the streaming assistant bubble. The base
- * `.bubble-actions` rules below fade pin/copy in on hover only;
- * `.bubble-stop` overrides that to keep the button permanently
- * visible while the turn is in flight. Color leans danger-ish so
- * it reads as "interrupt", not as another optional action.
- * Mobile-parity comment: web's hover-revealed pin/copy stay hover-
- * only; only the abort affordance goes always-on, because clicking
- * the wrong thing is more costly than a slightly busier corner. */
-.bubble-actions.bubble-stop {
-  opacity: 1;
-  pointer-events: auto;
-}
-.bubble-stop-btn {
-  color: var(--danger, #ef4444);
-}
-.bubble-stop-btn:hover {
-  color: var(--danger, #ef4444);
-  background: rgba(239, 68, 68, 0.12);
-}
-
 /* Sentinel system-trigger divider — centered horizontal rule with
  * the Bell icon (same lucide glyph as AppDock's Sentinel app) so
  * users recognize a sentinel-fired turn at a glance. Not a bubble:
@@ -888,6 +868,17 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   background: var(--accent);
   color: #07090d;
   display: grid; place-items: center;
+}
+/* Composer primary button while streaming: same slot as Send, danger
+ * styled so Stop reads as interrupt (not a muted gray icon). */
+.chat-send.chat-send-stop {
+  background: var(--danger, #ef4444);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+}
+.chat-send.chat-send-stop:hover {
+  background: color-mix(in srgb, var(--danger, #ef4444) 85%, #000);
 }
 
 /* ===== Tmux tool ===== */

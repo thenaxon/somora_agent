@@ -93,6 +93,61 @@ export function dedupeToolCalls(calls: ApiToolCall[]): ApiToolCall[] {
 }
 
 /**
+ * Race a tool invocation against (a) a wall-clock timeout and (b) an
+ * optional user AbortSignal.
+ *
+ * - Timeout resolves with `timeoutResult` so the model sees a normal
+ *   tool error and can retry with a higher budget.
+ * - Abort rejects with AbortError so the engine's outer catch ends the
+ *   turn immediately (`[somora] aborted by user`) instead of waiting
+ *   for the tool's own timeout (often 30s–minutes for exec/agent_ask).
+ *
+ * Residual limit: the underlying `invoke` promise is not cancelled —
+ * ToolInvoker has no signal today, so long tools may keep running in
+ * the background until their internal timeout. The turn itself stops
+ * waiting and releases the session lock. Follow-up: plumb AbortSignal
+ * into ToolContext + exec kill if orphaned work becomes a problem.
+ *
+ * Exported for the stop-button regression test.
+ */
+export function raceToolInvoke<T>(
+  invoke: Promise<T>,
+  opts: {
+    timeoutMs: number;
+    signal?: AbortSignal;
+    timeoutResult: T;
+  },
+): Promise<T> {
+  const { timeoutMs, signal, timeoutResult } = opts;
+  return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    let settled = false;
+    const settle = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      fn();
+    };
+    const timer = setTimeout(() => {
+      settle(() => resolve(timeoutResult));
+    }, timeoutMs);
+    const onAbort = (): void => {
+      settle(() => reject(new DOMException('Aborted', 'AbortError')));
+    };
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    invoke.then(
+      (value) => settle(() => resolve(value)),
+      (err: unknown) =>
+        settle(() => reject(err instanceof Error ? err : new Error(String(err)))),
+    );
+  });
+}
+
+/**
  * Provider tool-scaffold templates that weak models echo as their answer
  * instead of following. The canonical one is DeepSeek-V3's tool chat
  * template (shipped by SGLang/vLLM), which writes this sentence into the
@@ -907,27 +962,22 @@ export const openAiCompatibleEngine: AgentEngine = {
           const hardCap = toolDef?.maxTimeoutMs;
           let toolTimeoutMs = dynamicTimeout ?? staticTimeout ?? globalToolTimeoutMs;
           if (hardCap !== undefined) toolTimeoutMs = Math.min(toolTimeoutMs, hardCap);
-          // Race the tool invocation against the resolved timeout. On
-          // timeout we feed an error back to the model — same shape as a
-          // regular tool error, but with a hint so the model knows it can
-          // retry with a higher timeout_ms instead of blind retry-storming.
-          const result = await Promise.race([
-            tools.invoke(call.function.name, parsedArgs),
-            new Promise<{ ok: false; error: string }>((resolve) =>
-              setTimeout(
-                () =>
-                  resolve({
-                    ok: false,
-                    error:
-                      `tool '${call.function.name}' timed out after ${toolTimeoutMs}ms` +
-                      (dynamicTimeout !== undefined
-                        ? ` — call again with a higher timeout_ms if more time is needed`
-                        : ''),
-                  }),
-                toolTimeoutMs,
-              ),
-            ),
-          ]);
+          // Race the tool invocation against timeout AND user abort.
+          // Timeout → error-shaped result the model can retry against.
+          // Abort → AbortError so the turn ends without waiting out the
+          // full tool budget (stop-button felt broken during long exec).
+          const result = await raceToolInvoke(tools.invoke(call.function.name, parsedArgs), {
+            timeoutMs: toolTimeoutMs,
+            signal: effectiveSignal,
+            timeoutResult: {
+              ok: false as const,
+              error:
+                `tool '${call.function.name}' timed out after ${toolTimeoutMs}ms` +
+                (dynamicTimeout !== undefined
+                  ? ` — call again with a higher timeout_ms if more time is needed`
+                  : ''),
+            },
+          });
           // Multimodal results (file_read polymorph on image/PDF) carry
           // contentBlocks instead of a JSON-able payload. OpenAI's API
           // accepts a content-array in tool messages with text and
