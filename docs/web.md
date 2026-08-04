@@ -124,7 +124,12 @@ without it.
 - **App dock (below the agent dock)**: non-agent surfaces — `tmux`
   (attach to an existing tmux session), `terminal` (fresh shell in
   the somora workspace), and `sessions` (cross-agent session browser
-  — see next section).
+  — see next section). The `wiki` tile carries a violet **Lucid
+  badge** when completed lucid runs are waiting for review — lucid is
+  platform-wide wiki cleanup, so its review backlog lives here rather
+  than on any single agent. The badge counts pending findings; the
+  tooltip names the oldest waiting run. Review with any agent via
+  `dream_review`.
 - **Window**: drag the title bar to move, drag the bottom-right
   corner to resize. Close button removes the window without
   unsubscribing other clients.
@@ -248,12 +253,15 @@ archived copy at the next idle window.
   while a turn is streaming — pressing Send during a running turn
   enqueues the message rather than blocking it (see "Queueing &
   Stop" below).
-- **Stop button** (overlaid on a streaming assistant bubble): always
-  visible while a turn is in flight, in the same slot where copy/pin
-  sit on finished bubbles. One click aborts the current turn server-
-  side via `POST /chat/abort`. Pattern matches ChatGPT / Claude.ai —
-  the abort affordance lives on the message being generated, not in
-  the input bar.
+- **Stop buttons** (two, same abort): while a turn is in flight a
+  red Stop appears **in the composer next to Send** and on the
+  **streaming assistant bubble** (in the slot where copy/pin sit on
+  finished bubbles). Send stays live the whole time, so queued sends
+  keep working from the button — Stop is additive, it never replaces
+  Send. One click aborts the current turn server-side via
+  `POST /chat/abort`; if there was nothing to stop (turn just
+  finished) or the abort fails, a notice says so instead of silently
+  doing nothing.
 - **Mic button** (next to send, when STT is configured): click-to-toggle
   voice input. Click once to start recording — the icon switches to a
   red stop-square and `MediaRecorder` captures from the default mic.

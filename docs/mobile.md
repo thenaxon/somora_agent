@@ -42,10 +42,12 @@ own app switcher entry.
   textarea stays editable while a turn is streaming — sending during
   a running turn enqueues the message rather than blocking it (see
   "Queueing & Stop" below).
-- **Stop button** on a streaming agent bubble: a small square icon
-  pinned to the bubble's bottom-right corner while the turn is in
-  flight. Tap to abort. Always visible (no hover state on touch).
-  This is the only way to cancel an in-flight turn from mobile.
+- **Stop buttons** (two, same abort) while a turn is in flight: a red
+  square **in the composer next to Send**, plus a small one pinned to
+  the streaming bubble's bottom-right corner. Both always visible (no
+  hover state on touch). Send stays tappable the whole time — Stop is
+  additive, so queued sends keep working mid-turn. A failed or no-op
+  abort shows a short notice instead of silently doing nothing.
 - **Voice input:** tap the mic — it goes red and pulses while
   recording. Tap again to stop; the transcript lands in the textarea
   ready for you to edit before sending. Never auto-sends. Requires
@@ -111,7 +113,7 @@ and the marker clears as soon as the server starts that turn. The
 queue serialises on the server side — turns execute in order, no
 preemption. See [api.md](api.md#queuing) for the lock semantics.
 
-The Stop button on the streaming agent bubble cancels the
+Stop (composer or bubble — same action) cancels the
 **currently-running** turn only. Anything still queued behind it
 keeps its slot and executes when the lock frees.
 
@@ -122,7 +124,10 @@ keeps its slot and executes when the lock frees.
 - Live streaming of agent responses with a typing-cursor indicator
 - Streaming-state dot on **every** agent currently mid-turn (not just
   the active one), plus a dream-phase pulse (REM / DEEP / LUCID) and
-  a REM pending-review counter mirroring the desktop dock
+  a REM pending-review counter mirroring the desktop dock; a trailing
+  violet **wiki chip** appears in the avatar row when lucid runs are
+  waiting for review (platform-wide, mirrors the desktop wiki-tile
+  badge)
 - Per-agent unread dot — sentinel fires, A2A inbounds, and assistant
   replies arriving on inactive agents leave a marker that clears
   when you tap that agent (cross-client synced)

@@ -161,6 +161,15 @@ Command substitution (`$(…)`, backticks) inside a blacklisted segment
 is never cleared — the nested command can't be seen by the splitter.
 Redirects (`>`, `<`, `2>&1`) stay within their segment and are fine.
 
+The splitter is deliberately quote-unaware and conservative: a string
+*argument* containing a blacklist word trips the pattern too
+(`echo "poweroff done"` blocks on `\bpoweroff\b`). To make such
+blocks self-explanatory, a blocked result names the exact
+`blocked_segment` that tripped and lists the resource's
+`allow_blocked_entries`, so an agent can see at a glance whether the
+problem is a missing entry or an unlucky string argument — and
+rephrase instead of guessing.
+
 ### Audit trail
 
 Every privileged-allowed execution appends one line to
