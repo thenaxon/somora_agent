@@ -157,7 +157,24 @@ before findings are stored:
   `dream.rem.dedup_dropped`).
 - **High content similarity** (hybrid search against memory + wiki) →
   the finding is kept but marked `likely_duplicate` with a
-  `duplicate_of` pointer, so the review can batch-dismiss confidently.
+  `duplicate_of` pointer plus a `matched_excerpt` showing the text the
+  similarity actually fired on. Wiki audit logs (`logs/…`, written by
+  Deep) are excluded from the comparison corpus — they record that
+  something was *processed*, not the knowledge itself.
+
+**The flag marks topic overlap, not fact identity.** Embedding
+similarity cannot tell "waiting for the GO" from "GO was given" — on a
+fast-moving project every finding scores high against the project's own
+wiki page, including genuinely new state. Two guardrails:
+
+- When the finding carries concrete tokens (numbers, dates, versions)
+  that appear nowhere in the matched text, it is additionally marked
+  `novel_details: true` and the review output says so explicitly —
+  **do not batch-dismiss those**; they are usually a new fact on a
+  known topic.
+- For everything else, glance at the `matched_excerpt` before
+  dismissing. Batch-dismissal is safe when the excerpt already states
+  the finding's fact, not merely its topic.
 
 Platform-wide tunables in `config.yaml` (defaults apply when the block
 is absent — existing configs keep working unchanged):
@@ -166,9 +183,12 @@ is absent — existing configs keep working unchanged):
 rem:
   dedup:
     enabled: true             # default true
-    similarityThreshold: 0.8  # fused hybrid score in [0,1]; "related"
-                              # pages score ~0.4-0.6, only near-verbatim
-                              # content clears 0.8. Lower = mark more.
+    similarityThreshold: 0.8  # fused hybrid score; the vec/bm25 fusion
+                              # lands in [0,1] but per-source boosts
+                              # (memory.search.boostWiki etc.) multiply
+                              # it, so boosted hits can score above 1.0.
+                              # "Related" pages ~0.4-0.6 unboosted.
+                              # Lower = mark more.
 ```
 
 ## Phase Deep — Memory → Wiki

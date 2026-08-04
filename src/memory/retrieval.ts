@@ -38,7 +38,11 @@ export interface Hit {
   text: string;
   startLine: number;
   endLine: number;
-  /** Final fused score in [0,1]. */
+  /** Final fused score. The weighted vec/bm25 fusion lands in [0,1],
+   *  but per-source boosts (sourceBoosts, e.g. wiki 1.4) MULTIPLY it
+   *  afterwards — boosted hits legitimately exceed 1.0. Thresholds
+   *  (autoInject.minScore, rem.dedup.similarityThreshold) compare
+   *  against this boosted value. */
   score: number;
   /** Per-modality components (debugging / logging). */
   vecScore: number;

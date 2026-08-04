@@ -134,7 +134,16 @@ function renderBody(
       lines.push(`### ${f.id}. \`${f.action}\` → \`${f.slug}\` (${statusBadge})${dupBadge}`);
       lines.push('');
       if (f.likely_duplicate && f.duplicate_of) {
-        lines.push(`> ⚠️ Near-duplicate of \`${f.duplicate_of}\` — review with dismissal in mind.`);
+        lines.push(
+          f.novel_details
+            ? `> ⚠️ Topic matches \`${f.duplicate_of}\` — but the finding carries concrete ` +
+                `details (numbers/dates) NOT found there. Likely a NEW fact on a known topic; ` +
+                `do not batch-dismiss.`
+            : `> ⚠️ Near-duplicate of \`${f.duplicate_of}\` — review with dismissal in mind.`,
+        );
+        if (f.matched_excerpt) {
+          lines.push(`> Matched text: "${f.matched_excerpt}"`);
+        }
         lines.push('');
       }
       lines.push(f.reason);

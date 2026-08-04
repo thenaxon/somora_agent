@@ -58,6 +58,23 @@ export interface RemDedupResult {
   downgraded: number;
 }
 
+/** Trim a matched chunk to a reviewable excerpt (~240 chars, single
+ *  whitespace, ellipsis when cut). */
+function excerptOf(chunkText: string, max = 240): string {
+  const flat = chunkText.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+/** Concrete "fact-bearing" tokens: number-ish sequences of ≥2 chars
+ *  (dates 2026-07-29, counts 1.419, versions 0.144, times 14:05).
+ *  Deliberately language-independent — status WORDS ("started",
+ *  "beschlossen") vary too much to enumerate; the numbers and dates
+ *  that accompany real state changes are the reliable signal. */
+export function hardTokens(text: string): string[] {
+  const matches = text.match(/\d[\d.,:\-/]*\d|\d{2,}/g) ?? [];
+  return [...new Set(matches)];
+}
+
 export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult> {
   const memorySlugs = new Set(args.existingMemorySlugs);
   const wikiSlugs = new Set(args.loadedWikiSlugs);
@@ -155,16 +172,41 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
     const text = (f.proposed_content ?? '').trim() || f.reason;
     if (text) {
       try {
-        const hits = await args.mgr.search(text, {
+        const rawHits = await args.mgr.search(text, {
           limit: 3,
           minScore: args.config.similarityThreshold,
           sources: ['memory', 'wiki'],
         });
+        // Wiki audit logs (logs/YYYY-MM, written by Deep) are META
+        // information — one-liners about promotes/merges — not a
+        // knowledge store. They matched as "duplicates" for findings
+        // whose content Deep had merely LOGGED processing, producing
+        // false batch-dismiss hints (2 of 6 false positives in the
+        // 2026-07-29 report). Exclude them from the dedup corpus.
+        const hits = rawHits.filter(
+          (h) => !(h.source === 'wiki' && (h.slug === 'logs' || h.slug.startsWith('logs/'))),
+        );
         const top = hits[0];
         if (top) {
           marked++;
           f.likely_duplicate = true;
           f.duplicate_of = `${top.source}:${top.slug}@${top.score.toFixed(2)}`;
+          // Show WHAT matched, not just how much — similarity flags
+          // topic-overlap, and for a project page every project fact
+          // scores high whether or not it's already written there.
+          f.matched_excerpt = excerptOf(top.text);
+          // Novelty: concrete tokens (numbers, dates, versions) in the
+          // finding that appear in NONE of the matched chunks of the
+          // duplicate target strongly suggest a NEW fact on a known
+          // topic ("waiting for GO" vs "GO given on 2026-07-29").
+          const corpus = hits
+            .filter((h) => h.source === top.source && h.slug === top.slug)
+            .map((h) => h.text)
+            .join('\n');
+          const novel = hardTokens(text).filter((t) => !corpus.includes(t));
+          if (novel.length > 0) {
+            f.novel_details = true;
+          }
           logger.info({
             msg: 'dream.rem.dedup_marked',
             agent: args.agent,
@@ -172,6 +214,7 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
             findingId: f.id,
             slug: f.slug,
             duplicateOf: f.duplicate_of,
+            ...(novel.length > 0 ? { novelTokens: novel.slice(0, 8) } : {}),
           });
         }
       } catch (err) {

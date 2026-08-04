@@ -59,6 +59,17 @@ export interface Finding {
   /** Where the near-duplicate lives, `memory:<slug>` or `wiki:<slug>`,
    *  with the similarity score, e.g. `memory:us-tech-portfolio@0.87`. */
   duplicate_of?: string;
+  /** First ~240 chars of the best-matching chunk on the duplicate_of
+   *  target — lets the reviewer SEE what the similarity fired on
+   *  instead of trusting the score (2026-07-29 feedback: topic-match
+   *  vs fact-match were indistinguishable without this). */
+  matched_excerpt?: string;
+  /** Set alongside likely_duplicate when the finding carries concrete
+   *  tokens (numbers, dates, versions) that do NOT appear in the
+   *  matched chunks — a strong hint the fact is NEW even though the
+   *  topic matches (status change, new count, new date). Findings
+   *  with novel_details should not be batch-dismissed. */
+  novel_details?: boolean;
 }
 
 export interface DreamMeta {
