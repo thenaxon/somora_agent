@@ -73,8 +73,8 @@ export function MessageInput({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // While streaming the primary button is Stop; Enter still enqueues
-    // a follow-up (server queue) so typing ahead stays possible.
+    // Send stays available while streaming (button AND Enter) — sends
+    // mid-turn enqueue via the server session queue.
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void submit();
@@ -123,7 +123,7 @@ export function MessageInput({
           ref={ref}
           className="input-textarea"
           rows={1}
-          placeholder={`Nachricht an ${agent}…`}
+          placeholder={`Message ${agent}…`}
           value={text}
           onChange={onInput}
           onKeyDown={onKeyDown}
@@ -132,7 +132,11 @@ export function MessageInput({
           autoComplete="off"
           spellCheck
         />
-        {streaming ? (
+        {/* Stop is ADDITIVE next to Send while streaming — touch has
+         *  no Enter key, so replacing Send would make queued sends
+         *  impossible mid-turn. Send stays live; taps enqueue via the
+         *  server session queue. */}
+        {streaming && (
           <button
             type="button"
             className="input-btn primary stop"
@@ -142,18 +146,17 @@ export function MessageInput({
           >
             <StopIcon />
           </button>
-        ) : (
-          <button
-            type="button"
-            className="input-btn primary"
-            disabled={!canSend}
-            onClick={submit}
-            aria-label="Senden"
-            title="Senden"
-          >
-            ➤
-          </button>
         )}
+        <button
+          type="button"
+          className="input-btn primary"
+          disabled={!canSend}
+          onClick={submit}
+          aria-label="Send"
+          title="Send"
+        >
+          ➤
+        </button>
       </div>
     </>
   );

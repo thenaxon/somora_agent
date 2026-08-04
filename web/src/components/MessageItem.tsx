@@ -24,6 +24,7 @@ import {
   Pause,
   Pin,
   Play,
+  Square,
   SquareTerminal,
   User,
 } from 'lucide-react';
@@ -51,6 +52,11 @@ interface Props {
   /** Click handler for the pin button — toggles pin on/off. Omitted
    *  when the parent isn't wired for pinning (e.g. read-only renders). */
   onPinClick?: () => void;
+  /** Aborts the in-flight turn for this session. Wired by ChatWindow
+   *  from ChatContext.abort. When set, a streaming assistant-bubble
+   *  shows a Stop button in place of pin/copy — in ADDITION to the
+   *  composer Stop (both affordances stay, user preference). */
+  onAbort?: () => void;
 }
 
 export const MessageItem = memo(function MessageItem({
@@ -60,6 +66,7 @@ export const MessageItem = memo(function MessageItem({
   peerAgents,
   isPinned,
   onPinClick,
+  onAbort,
 }: Props) {
   if (msg.role === 'tool_call') {
     return <ToolCallBlock toolCall={msg.toolCall} />;
@@ -152,9 +159,11 @@ export const MessageItem = memo(function MessageItem({
     );
   }
   // assistant — left-aligned bubble.
-  // Pin/copy stay hidden while streaming; Stop lives on the composer
-  // Send slot (same button toggles Send ↔ Stop), not on the bubble.
   const showActions = !msg.streaming && !!msg.text;
+  // Streaming bubble keeps a permanent Stop button in the action slot
+  // — replaces pin/copy while the turn is in flight. The composer
+  // additionally shows Stop next to Send; both trigger the same abort.
+  const showStop = msg.streaming === true && !!onAbort;
   return (
     <div className="chat-msg-row agent">
       <div className="chat-msg">
@@ -173,6 +182,7 @@ export const MessageItem = memo(function MessageItem({
           {agentIcon ?? '🤖'}
         </div>
         <div className="chat-msg-meta-col">
+          {showStop && onAbort && <StopAction onAbort={onAbort} />}
           {showActions && (
             <BubbleActions
               text={msg.text ?? ''}
@@ -377,6 +387,29 @@ function PlayAudioButton({ url }: { url: string }) {
       {playing ? <Pause size={12} /> : <Play size={12} />}
       <span>{playing ? 'Stop' : 'Play'}</span>
     </button>
+  );
+}
+
+// Always-visible Stop button shown in place of pin/copy while a
+// turn is streaming. Unlike BubbleActions this is NOT hover-gated —
+// the `bubble-actions bubble-stop` class drops the opacity-on-hover
+// rule from desktop.css so the button stays in the visual hierarchy
+// the entire time the agent is talking. Click → abort the in-flight
+// turn for this (agent, session); the response from /chat/abort is
+// asynchronous, the actual close-out arrives as a chat:final + agent:end.
+function StopAction({ onAbort }: { onAbort: () => void }) {
+  return (
+    <div className="bubble-actions bubble-stop" onMouseDown={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        className="bubble-action-btn bubble-stop-btn"
+        title="Stop generating"
+        onClick={onAbort}
+        aria-label="Stop generating"
+      >
+        <Square size={11} fill="currentColor" />
+      </button>
+    </div>
   );
 }
 

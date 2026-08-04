@@ -23,6 +23,11 @@ interface Props {
    *  icon for outgoing/agent bubbles. Mobile mirrors web's per-
    *  agent coloring instead of the older uniform `--bg-2`. */
   agents: AgentInfo[];
+  /** Aborts the in-flight turn. Wired to useChatStream.abort. The
+   *  streaming agent-bubble keeps its always-on Stop (no hover
+   *  affordance on touch) IN ADDITION to the composer Stop — both
+   *  trigger the same abort. */
+  onAbort: () => void;
 }
 
 export function ChatArea({
@@ -32,6 +37,7 @@ export function ChatArea({
   connectionError,
   statusNotice,
   agents,
+  onAbort,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -90,6 +96,7 @@ export function ChatArea({
             activeAgentColor={activeAgentInfo?.color}
             {...(activeAgentInfo?.icon ? { activeAgentIcon: activeAgentInfo.icon } : {})}
             agentLookup={agentLookup}
+            onAbort={onAbort}
           />
         ))}
         {/* Typing-indicator: shown when the server is working but the
@@ -126,6 +133,7 @@ interface MobileMessageProps {
   activeAgentColor?: string;
   activeAgentIcon?: string;
   agentLookup: ReadonlyMap<string, { color: string; icon?: string }>;
+  onAbort: () => void;
 }
 
 // One row in the chat scroll. Handles four visual variants:
@@ -133,12 +141,14 @@ interface MobileMessageProps {
 //   - peer-agent inbound (right side, sender's color+icon)
 //   - user (right side, neutral — same look as before)
 //   - assistant (left side, active agent's color+icon)
-// Stop lives on the composer Send slot while streaming (not on the bubble).
+// A streaming agent-bubble additionally carries an always-on Stop
+// (composer shows a second Stop next to Send — both abort).
 function MobileMessage({
   msg,
   activeAgentColor,
   activeAgentIcon,
   agentLookup,
+  onAbort,
 }: MobileMessageProps) {
   if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
     return <SentinelDivider text={msg.text} ts={msg.ts} />;
@@ -202,6 +212,17 @@ function MobileMessage({
             msg.text
           )}
           {isAgent && msg.streaming && <span className="msg-streaming-cursor" />}
+          {isAgent && msg.streaming && (
+            <button
+              type="button"
+              className="msg-stop-btn"
+              onClick={onAbort}
+              aria-label="Stop generating"
+              title="Stop generating"
+            >
+              <StopIcon />
+            </button>
+          )}
           {isAgent && msg.audio && <PlayAudioButton url={msg.audio.url} />}
         </div>
         <span className="msg-time">
@@ -241,6 +262,23 @@ function HourglassIcon() {
       <path d="M5 2h14" />
       <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
       <path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2" />
+    </svg>
+  );
+}
+
+// Inline line-art Stop (filled square). Used by the always-on Stop
+// button on a streaming agent bubble. Filled because "stop" needs a
+// solid visual hit-target on touch; outline would read as decorative.
+function StopIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <rect x="5" y="5" width="14" height="14" rx="2" />
     </svg>
   );
 }

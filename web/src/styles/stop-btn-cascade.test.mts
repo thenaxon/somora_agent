@@ -1,8 +1,10 @@
-// Regression: composer Stop (Send-slot while streaming) must be
+// Regression: composer Stop (next to Send while streaming) must be
 // clearly danger-styled — not a muted gray icon on dark chrome.
 //
-// Stop moved off the assistant bubble into `.chat-send.chat-send-stop`
-// (s11). This replaces the older bubble-corner cascade check from s9.
+// PR #1 originally moved Stop off the bubble into the composer;
+// somora keeps BOTH affordances — the always-visible bubble Stop
+// (`.bubble-stop`, s9 cascade) AND the additive composer Stop
+// (`.chat-send.chat-send-stop`). This guards both.
 //
 // Run: npx tsx web/src/styles/stop-btn-cascade.test.mts
 
@@ -39,13 +41,19 @@ check(
   stopColorIdx > stopIdx && stopColorIdx < stopIdx + 200,
   `stopColor=${stopColorIdx}`,
 );
-// Bubble-corner Stop must stay gone (s11 placement).
+// Bubble-corner Stop stays (both affordances live side by side).
+// The `.bubble-stop` override must force the action row visible —
+// the base `.bubble-actions` rule is hover-gated (opacity 0).
+const bubbleStopIdx = desktop.indexOf('.bubble-actions.bubble-stop');
+check('bubble-stop override exists in desktop.css', bubbleStopIdx >= 0);
 check(
-  'no bubble-stop-btn rule in desktop.css',
-  !desktop.includes('bubble-stop-btn'),
+  'bubble-stop forces visibility (opacity: 1)',
+  bubbleStopIdx >= 0 &&
+    desktop.slice(bubbleStopIdx, bubbleStopIdx + 120).includes('opacity: 1'),
 );
+check('bubble-stop-btn danger color exists', desktop.includes('.bubble-stop-btn'));
 check(
-  'no bubble-stop-btn rule in globals.css',
+  'globals.css does not duplicate bubble-stop rules',
   !globals.includes('bubble-stop-btn'),
 );
 

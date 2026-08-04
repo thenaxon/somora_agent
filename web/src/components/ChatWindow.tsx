@@ -1052,6 +1052,7 @@ export function ChatWindow({
                 agentIcon={agent.icon}
                 peerAgents={peerAgents}
                 isPinned={isPinned}
+                onAbort={onAbort}
                 {...(onPinClick ? { onPinClick } : {})}
               />
             );
@@ -1189,7 +1190,10 @@ export function ChatWindow({
             textareaRef.current?.focus();
           }}
         />
-        {chat.streaming ? (
+        {/* Stop is ADDITIVE next to Send while streaming — Send stays
+         *  live so queued sends (server session queue) keep working
+         *  from the button, not just via Enter. */}
+        {chat.streaming && (
           <button
             type="button"
             className="chat-send chat-send-stop"
@@ -1199,17 +1203,16 @@ export function ChatWindow({
           >
             <Square size={14} fill="currentColor" />
           </button>
-        ) : (
-          <button
-            type="submit"
-            className="chat-send"
-            title="Send"
-            aria-label="Send"
-            disabled={!draft.trim()}
-          >
-            <Send size={14} />
-          </button>
         )}
+        <button
+          type="submit"
+          className="chat-send"
+          title="Send"
+          aria-label="Send"
+          disabled={!draft.trim()}
+        >
+          <Send size={14} />
+        </button>
       </form>
     </div>
   );
