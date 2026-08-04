@@ -20,7 +20,7 @@
 
 import { spawn } from 'node:child_process';
 import * as pty from 'node-pty';
-import { createWriteStream, statSync } from 'node:fs';
+import { closeSync, openSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { logger } from '../../server/logger.ts';
@@ -457,55 +457,103 @@ export async function localExecBackground(
   // signals the GROUP (-pid), so shell + grandchildren die together.
   // With detached:false the kill only ever reached the wrapper sh; the
   // actual workload survived reparented to init and the job was
-  // falsely marked killed (Juni-Audit 2026-06). Pipes still connect
-  // normally with detached:true, so process_write/log keep working.
-  const child = spawn(opts.command, {
-    shell: true,
-    cwd: opts.cwd,
-    env,
-    detached: true,
-    // stdin pipe so process_write can stream into it later.
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  // falsely marked killed (Juni-Audit 2026-06).
+  //
+  // stdout/stderr go to the log files as RAW FDs, not through pipes in
+  // this process. Piping coupled the job to the lifetime of whoever
+  // spawned it: when the MCP child (claude-cli/codex-cli tool host)
+  // recycled between turns, the pipes closed and the job died on its
+  // next write with SIGPIPE — no traceback, no state update, and poll
+  // kept reporting 'running' (2026-07-27 feedback report). With file
+  // FDs the job only shares the filesystem with us and survives
+  // arbitrary somora/MCP restarts.
+  //
+  // The command is wrapped so the wrapper shell records its exit code
+  // in <jobdir>/exit — mirrors the remote nohup/setsid pattern. That
+  // file is what lets a DIFFERENT somora process (post-restart poll,
+  // boot recovery) resolve the job's real final state.
+  const exitPath = join(jobDir(opts.agent, job_id), 'exit');
+  const shq = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
+  const wrapped =
+    `(\n${opts.command}\n)\n` +
+    `__somora_ec=$?\n` +
+    `printf '%s' "$__somora_ec" > ${shq(exitPath)}\n` +
+    `exit "$__somora_ec"`;
+  const outFd = openSync(stdoutPath, 'a');
+  const errFd = openSync(stderrPath, 'a');
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(wrapped, {
+      shell: true,
+      cwd: opts.cwd,
+      env,
+      detached: true,
+      // stdin stays a pipe so process_write can stream into it while
+      // THIS process lives (a job adopted after a restart has no live
+      // stdin — process_write reports that explicitly).
+      stdio: ['pipe', outFd, errFd],
+    });
+  } finally {
+    // The child holds dups of the FDs; close the parent copies so we
+    // don't leak two descriptors per background job.
+    closeSync(outFd);
+    closeSync(errFd);
+  }
 
   if (!child.pid) {
     throw new Error('exec.local.background: spawn returned no pid');
   }
+
+  // Attach exit/error listeners SYNCHRONOUSLY, before any await — a
+  // fast command can exit during the registerJob disk write, and a
+  // listener attached after that await misses the event forever (the
+  // job then sticks at 'running' until a probe resolves it). Events
+  // that fire before registration is done are buffered and finalized
+  // right after.
+  const cleanup = (): void => {
+    clearLivePid(job_id);
+    clearLiveStdin(job_id);
+    opts.releaseSlot?.();
+  };
+  let registered = false;
+  let earlyExit: { code: number | null } | null = null;
+  let earlyError: Error | null = null;
+  const finalizeExit = (code: number | null): void => {
+    void completeJob(opts.agent, job_id, code).finally(cleanup);
+  };
+  const finalizeError = (err: Error): void => {
+    void failJob(opts.agent, job_id, `spawn error: ${err.message}`).finally(cleanup);
+  };
+  // 'exit' (not 'close') — there are no parent-side stdout/stderr
+  // streams anymore, and stdin's parent end must not delay the state
+  // update. The wrapper propagates the inner command's exit code.
+  child.on('exit', (code, _signal) => {
+    if (!registered) {
+      earlyExit = { code };
+      return;
+    }
+    finalizeExit(code);
+  });
+  child.on('error', (err) => {
+    if (!registered) {
+      earlyError = err;
+      return;
+    }
+    finalizeError(err);
+  });
+
   meta.pid = child.pid;
   await registerJob(meta);
   registerLivePid(job_id, child.pid);
   if (child.stdin) registerLiveStdin(job_id, child.stdin);
+  registered = true;
+  if (earlyError !== null) finalizeError(earlyError);
+  else if (earlyExit !== null) finalizeExit((earlyExit as { code: number | null }).code);
 
-  // Stream stdout / stderr to disk. Each line goes to disk
-  // immediately so the model can poll partial output via
-  // process_log without waiting for completion.
-  const outFile = createWriteStream(stdoutPath, { flags: 'a' });
-  const errFile = createWriteStream(stderrPath, { flags: 'a' });
-  child.stdout?.pipe(outFile);
-  child.stderr?.pipe(errFile);
-
-  child.on('close', (code, _signal) => {
-    outFile.end();
-    errFile.end();
-    void completeJob(opts.agent, job_id, code).finally(() => {
-      clearLivePid(job_id);
-      clearLiveStdin(job_id);
-      opts.releaseSlot?.();
-    });
-  });
-
-  child.on('error', (err) => {
-    void failJob(opts.agent, job_id, `spawn error: ${err.message}`).finally(() => {
-      clearLivePid(job_id);
-      clearLiveStdin(job_id);
-      opts.releaseSlot?.();
-    });
-  });
-
-  // Detach the child so the parent can exit without killing it.
-  // (We don't actually unref because we still listen for close to
-  // update job state; if the somora server exits the parent ref
-  // dies anyway and recoverOrphanedJobs takes over on next start.)
+  // Let this process exit without waiting for the job. The listeners
+  // above still fire while we live; if we die first, the next poll /
+  // list / boot recovery resolves the state via probeLocalJob.
+  child.unref();
 
   logger.info({
     msg: 'exec.local.background_started',

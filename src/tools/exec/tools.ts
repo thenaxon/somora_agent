@@ -26,6 +26,7 @@ import {
   getLiveStdin,
   listJobsForAgent,
   markJobKilled,
+  probeLocalJob,
   readJobLog,
   readMeta,
   type JobMeta,
@@ -172,7 +173,9 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     '(target:<resource-name> from resource_list). Default: synchronous, returns stdout/stderr/exit. ' +
     'Set background:true for long-running tasks (build, test-suite, dev server) — returns a ' +
     'job_id immediately, output streams to disk, interact via the process tool ' +
-    '(list/poll/log/write/kill). Background only works on target:"local" in v1. ' +
+    '(list/poll/log/write/kill). Background jobs are fully detached: they keep running across ' +
+    'turns and somora/MCP restarts until they finish or you kill them. Note: process write ' +
+    '(stdin) only works while the somora process that spawned the job is alive. ' +
     '\n\n' +
     'IMPORTANT — to reach a remote host, ALWAYS use target:<resource-name> (from resource_list). ' +
     'NEVER shell out to raw `ssh user@host …` from target:"local" — that bypasses the resource ' +
@@ -308,9 +311,23 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     if (input.background) {
       // Concurrency cap — protects the host from runaway-loop spawn.
       // Counted across both local AND remote BG jobs since the load
-      // matters regardless of where it lands. Slot is released in
-      // job-store completion paths (job-store handles the lifecycle).
-      const slot = tryAcquireExecSlot(ctx.agent);
+      // matters regardless of which machine the work lands on. Slot is
+      // released in job-store completion paths.
+      //
+      // Per-agent count comes from DISK (post-liveness-probe), not
+      // only the in-memory counter: detached jobs survive somora/MCP
+      // restarts, so a fresh process would otherwise under-count and
+      // over-spawn. The probe also clears stale 'running' states so a
+      // dead job can never wedge the cap.
+      const diskJobs = await listJobsForAgent(ctx.agent);
+      const diskRunning = (
+        await Promise.all(
+          diskJobs
+            .filter((j) => j.state === 'running')
+            .map((j) => probeLocalJob(ctx.agent, j)),
+        )
+      ).filter((j) => j.state === 'running').length;
+      const slot = tryAcquireExecSlot(ctx.agent, diskRunning);
       if (!slot.ok) {
         logger.warn({
           msg: 'exec.background.cap_denied',
@@ -607,7 +624,12 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
   },
   async handler(input, ctx): Promise<ProcessResult> {
     if (input.action === 'list') {
-      const jobs = await listJobsForAgent(ctx.agent);
+      const listed = await listJobsForAgent(ctx.agent);
+      // Resolve stale 'running' states for local jobs before rendering
+      // — a job spawned by a previous somora/MCP process has no exit
+      // listener in THIS process, so meta alone can lie (2026-07-27
+      // report). probeLocalJob is a no-op for terminal/remote jobs.
+      const jobs = await Promise.all(listed.map((j) => probeLocalJob(ctx.agent, j)));
       return {
         action: 'list',
         count: jobs.length,
@@ -635,11 +657,25 @@ export const processTool: ToolDefinition<z.infer<typeof ProcessInput>, ProcessRe
     }
 
     if (input.action === 'poll') {
+      // For LOCAL running jobs: probe PID + exit file. The exit
+      // listener lives in whichever process spawned the job — after a
+      // somora/MCP restart nobody is watching, and trusting meta.state
+      // reported 'running' for long-dead PIDs (2026-07-27 report).
+      if (meta.target === 'local' && meta.state === 'running') {
+        const fresh = await probeLocalJob(ctx.agent, meta);
+        return {
+          action: 'poll',
+          job_id: input.job_id,
+          state: fresh.state,
+          exit_code: fresh.exit_code,
+          pid: fresh.pid,
+          ms: (fresh.ended_at ?? Date.now()) - fresh.started_at,
+          ...(fresh.error ? { error: fresh.error } : {}),
+        };
+      }
       // For remote running jobs, do an active probe — kill -0 +
       // exit-file check on the remote host. Updates meta.state to
-      // done/failed when the remote process has finished. Local
-      // jobs already have accurate live state via the child-process
-      // close handler, so we trust meta as-is.
+      // done/failed when the remote process has finished.
       if (meta.target !== 'local' && meta.state === 'running' && meta.pid != null) {
         try {
           const probe = await pollRemoteJob(ctx.agent, meta.target, meta.pid, input.job_id);

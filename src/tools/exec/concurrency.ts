@@ -2,10 +2,12 @@
 // Counts both local AND remote background jobs — the cap protects
 // host resources regardless of which machine the work lands on.
 //
-// Server-process-scoped: counter resets on restart. Disk-tracked
-// jobs from before the restart are already marked failed by
-// recoverOrphanedJobs at boot, so they don't contribute to the
-// post-restart count.
+// Server-process-scoped: counter resets on restart, but background
+// jobs legitimately SURVIVE restarts since 2026-08 (fully detached).
+// Per-agent enforcement therefore takes a disk-derived running-count
+// (post-liveness-probe) via the diskRunning param at acquire time;
+// the in-memory counters remain the global-cap approximation and the
+// release bookkeeping for jobs spawned by THIS process.
 
 import { logger } from '../../server/logger.ts';
 
@@ -48,8 +50,14 @@ export interface AcquireDenied {
  * kill — all paths). On denial, returns the cap-hit reason for the
  * tool to surface back to the model.
  */
-export function tryAcquireExecSlot(agent: string): AcquireOk | AcquireDenied {
-  const perAgentNow = activeByAgent.get(agent) ?? 0;
+export function tryAcquireExecSlot(
+  agent: string,
+  /** Running jobs for this agent counted from DISK (after liveness
+   *  probe) — covers jobs adopted from a previous somora/MCP process
+   *  that this process's in-memory counter can't see. */
+  diskRunning = 0,
+): AcquireOk | AcquireDenied {
+  const perAgentNow = Math.max(activeByAgent.get(agent) ?? 0, diskRunning);
   if (perAgentNow >= capsConfig.perAgent) {
     return {
       ok: false,
@@ -96,9 +104,9 @@ export function tryAcquireExecSlot(agent: string): AcquireOk | AcquireDenied {
  * Map of in-flight remote-background job_id → releaseSlot. Used by
  * the process tool's poll/kill handlers to free the slot when a
  * remote job completes or is killed (remote jobs lack the
- * child.on('close') hook that local jobs use). On server-restart
- * the map resets but recoverOrphanedJobs marks all running jobs as
- * failed, so the cap counter starts fresh and consistent.
+ * child.on('exit') hook that local jobs use). On server-restart the
+ * map resets; surviving jobs hold no in-memory slot, which the
+ * disk-derived running-count at acquire time compensates for.
  */
 const remoteReleasers = new Map<string, () => void>();
 

@@ -6,10 +6,11 @@
 //   stderr.log    — full stderr, append-only
 //   exit          — integer exit code, written when process ends
 //
-// Survives server restart: recoverOrphanedJobs() runs at boot,
-// finds any meta.json with state=running, marks them as failed
-// with reason 'orphaned by server restart' (analogous to
-// recoverOrphanRunningDreams in the dream subsystem).
+// Survives server restart: jobs are fully detached (own process
+// group, log files as raw FDs, exit-code file) so a running job
+// legitimately outlives somora/MCP restarts. recoverOrphanedJobs()
+// at boot and probeLocalJob() on poll/list resolve the real state
+// cross-process (exit file → real code; PID probe → running/gone).
 //
 // Note: stdout.log / stderr.log are unbounded on disk — we never
 // truncate the source-of-truth. The 256 KB output cap applies only
@@ -257,39 +258,96 @@ export async function readJobLog(
 }
 
 /**
- * Server-start orphan recovery — analog to
- * recoverOrphanRunningDreams. Any job with state='running' was
- * orphaned by the previous server crash/shutdown; mark them failed
- * so the model sees them as terminal instead of "still running"
- * forever.
+ * Resolve the REAL state of a local background job whose meta says
+ * 'running'. Local jobs are fully detached (own process group, log
+ * files as raw FDs, exit-code file written by the wrapper shell), so
+ * they survive somora/MCP restarts — which also means the in-process
+ * 'exit' listener that normally updates meta may be long gone. This
+ * probe is the cross-process source of truth:
  *
- * Note about remote-background jobs: they use nohup/setsid so the
- * remote process MIGHT still be alive on the resource even after
- * somora restarted. We conservatively mark them as 'failed' here
- * anyway — somora has lost track of the in-process slot, the
- * stdin handle is gone, and re-attaching cleanly is fragile. The
- * remote process keeps running until completion and its log
- * files persist at /tmp/somora-exec-<job_id>.{out,err,exit} on
- * the resource for manual inspection. The model can probe state
- * via exec({command:"cat /tmp/somora-exec-<id>.exit", target:...})
- * if it cares. Local jobs are definitely dead since the parent
- * (somora) was killed.
+ *   1. <jobdir>/exit exists      → wrapper finished; complete with
+ *                                  that code (even if a recycled PID
+ *                                  happens to be alive).
+ *   2. no exit file, PID alive   → still running, meta untouched.
+ *   3. no exit file, PID gone    → died without a trace (SIGKILL,
+ *                                  OOM, host reboot); mark failed.
+ *
+ * Called from process poll/list and from boot recovery — NEVER trust
+ * a bare meta.state==='running' for a local job without this probe
+ * (2026-07-27 report: poll said running for a PID that was gone).
+ *
+ * Returns the fresh meta (re-read after any state change).
+ */
+export async function probeLocalJob(agent: string, meta: JobMeta): Promise<JobMeta> {
+  if (meta.state !== 'running' || meta.target !== 'local' || meta.pid == null) {
+    return meta;
+  }
+  let exitCode: number | null = null;
+  let hasExitFile = false;
+  try {
+    const raw = await readFile(join(jobDir(agent, meta.job_id), 'exit'), 'utf8');
+    const n = Number.parseInt(raw.trim(), 10);
+    if (Number.isFinite(n)) {
+      exitCode = n;
+      hasExitFile = true;
+    }
+  } catch {
+    // no exit file (yet) — fall through to the PID probe
+  }
+  if (!hasExitFile) {
+    let alive = false;
+    try {
+      process.kill(meta.pid, 0);
+      alive = true;
+    } catch {
+      // ESRCH/EPERM → treat as gone
+    }
+    if (alive) return meta;
+    await failJob(
+      agent,
+      meta.job_id,
+      'process gone without exit record (external kill, OOM, or host reboot)',
+    );
+  } else {
+    await completeJob(agent, meta.job_id, exitCode);
+  }
+  clearLivePid(meta.job_id);
+  clearLiveStdin(meta.job_id);
+  return (await readMeta(agent, meta.job_id)) ?? meta;
+}
+
+/**
+ * Server-start recovery — analog to recoverOrphanRunningDreams, but
+ * since 2026-08 background jobs are fully detached and legitimately
+ * SURVIVE restarts. So instead of blanket-failing every running job:
+ *
+ *   - local jobs: probeLocalJob resolves the truth (exit file →
+ *     done/failed with real code; PID alive → adopted, stays running
+ *     and killable via meta.pid; PID gone → failed). An adopted job
+ *     has no live stdin handle — process_write reports that.
+ *   - remote jobs: left as 'running'; they use nohup/setsid on the
+ *     resource and the next process poll actively probes them via
+ *     ssh (kill -0 + exit-file), which is too slow for boot.
+ *
+ * Concurrency note: in-memory slot counters reset on restart —
+ * per-agent cap enforcement therefore counts running jobs from DISK
+ * (post-probe) at spawn time, see tools.ts background path.
  */
 export async function recoverOrphanedJobs(agents: string[]): Promise<number> {
-  let recovered = 0;
+  let adopted = 0;
+  let resolved = 0;
   for (const agent of agents) {
     const jobs = await listJobsForAgent(agent);
     for (const meta of jobs) {
       if (meta.state !== 'running') continue;
-      meta.state = 'failed';
-      meta.error = 'orphaned by server restart';
-      meta.ended_at = Date.now();
+      if (meta.target !== 'local') continue;
       try {
-        await writeMeta(agent, meta);
-        recovered++;
+        const fresh = await probeLocalJob(agent, meta);
+        if (fresh.state === 'running') adopted++;
+        else resolved++;
       } catch (err) {
         logger.warn({
-          msg: 'exec.job.recovery_write_failed',
+          msg: 'exec.job.recovery_probe_failed',
           agent,
           job_id: meta.job_id,
           err: (err as Error).message,
@@ -297,10 +355,15 @@ export async function recoverOrphanedJobs(agents: string[]): Promise<number> {
       }
     }
   }
-  if (recovered > 0) {
-    logger.info({ msg: 'exec.jobs_orphans_recovered', count: recovered, agents });
+  if (adopted > 0 || resolved > 0) {
+    logger.info({
+      msg: 'exec.jobs_recovered_at_boot',
+      adopted_still_running: adopted,
+      resolved_terminal: resolved,
+      agents,
+    });
   }
-  return recovered;
+  return resolved;
 }
 
 /**
