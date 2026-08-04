@@ -271,7 +271,7 @@ export interface RunChatTurnArgs {
    *  Persists in user_message.from_system and on the SSE event, so
    *  clients render the message as a centered system divider rather
    *  than a normal user-bubble. Mutually exclusive with fromAgent. */
-  fromSystem?: 'sentinel' | 'tmux';
+  fromSystem?: 'sentinel' | 'tmux' | 'subagent';
   /** A2A correlation UUID. Persisted on user_message.agent_ask_call_id;
    *  surfaced in the SSE user_message event so a human watching the
    *  session sees the inbound message appear in real time. */

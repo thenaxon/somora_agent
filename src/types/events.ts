@@ -37,7 +37,7 @@ export type NormalizedEvent =
        * (synthesized by an internal subsystem) OR neither (human
        * user). The renderer picks the bubble class in that order.
        */
-      from_system?: 'sentinel' | 'tmux';
+      from_system?: 'sentinel' | 'tmux' | 'subagent';
       /**
        * Correlation UUID for an `agent_ask` round-trip. Persisted on
        * BOTH sides: on the caller's side as a tool_call → tool_result
@@ -277,7 +277,7 @@ export type SseEvent =
         /** Set only when the inbound was synthesized by an internal
          *  subsystem (today: 'sentinel'). Clients render the message
          *  as a centered system divider. */
-        from_system?: 'sentinel' | 'tmux';
+        from_system?: 'sentinel' | 'tmux' | 'subagent';
         agent_ask_call_id?: string;
       };
     }

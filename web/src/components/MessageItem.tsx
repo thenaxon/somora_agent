@@ -13,6 +13,7 @@
 import { memo, useRef, useState } from 'react';
 import {
   Bell,
+  Bot,
   Brain,
   Check,
   ChevronDown,
@@ -88,6 +89,9 @@ export const MessageItem = memo(function MessageItem({
   }
   if (msg.role === 'user' && msg.fromSystem === 'tmux') {
     return <TmuxDivider text={msg.text} ts={msg.ts} />;
+  }
+  if (msg.role === 'user' && msg.fromSystem === 'subagent') {
+    return <SubagentDivider text={msg.text} ts={msg.ts} />;
   }
 
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
@@ -270,6 +274,39 @@ function TmuxDivider({ text, ts }: { text: string; ts: number }) {
       <span className="sentinel-divider-rule" />
     </div>
   );
+}
+
+// Subagent attention wake — same centered-divider language as
+// sentinel/tmux. Shows the finished task_id so the user can correlate
+// with subagent_list output at a glance.
+function SubagentDivider({ text, ts }: { text: string; ts: number }) {
+  const taskId = summarizeSubagentWakeText(text);
+  const time = formatBubbleTime(ts);
+  return (
+    <div className="sentinel-divider" aria-label="subagent attention wake">
+      <span className="sentinel-divider-rule" />
+      <span className="sentinel-divider-body">
+        <Bot size={12} />
+        <span className="sentinel-divider-label">subagent</span>
+        {taskId && (
+          <>
+            <span className="sentinel-divider-sep">·</span>
+            <span className="sentinel-divider-name">{taskId}</span>
+          </>
+        )}
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-time">{time}</span>
+      </span>
+      <span className="sentinel-divider-rule" />
+    </div>
+  );
+}
+
+/** Pull the task id out of the `[subagent attention] Task 'task_x'…`
+ *  wake prompt; empty string when the shape ever changes. */
+function summarizeSubagentWakeText(text: string): string {
+  const m = text.match(/Task '([^']+)'/);
+  return m?.[1] ?? '';
 }
 
 function summarizeTmuxWakeText(text: string): string {

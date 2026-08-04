@@ -156,6 +156,9 @@ function MobileMessage({
   if (msg.role === 'user' && msg.fromSystem === 'tmux') {
     return <TmuxDivider text={msg.text} ts={msg.ts} />;
   }
+  if (msg.role === 'user' && msg.fromSystem === 'subagent') {
+    return <SubagentDivider text={msg.text} ts={msg.ts} />;
+  }
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
   const peer = isPeer && msg.fromAgent ? agentLookup.get(msg.fromAgent) : undefined;
   const isAgent = msg.role === 'agent';
@@ -324,6 +327,31 @@ function TmuxDivider({ text, ts }: { text: string; ts: number }) {
           <>
             <span className="sentinel-sep">·</span>
             <span className="sentinel-name">{name}</span>
+          </>
+        )}
+        <span className="sentinel-sep">·</span>
+        <span className="sentinel-time">{time}</span>
+      </span>
+      <span className="sentinel-rule" />
+    </div>
+  );
+}
+
+// Subagent attention wake — same centered-divider language as
+// sentinel/tmux. Shows the finished task_id for correlation.
+function SubagentDivider({ text, ts }: { text: string; ts: number }) {
+  const taskId = text.match(/Task '([^']+)'/)?.[1] ?? '';
+  const time = formatMobileTime(ts);
+  return (
+    <div className="sentinel-divider" aria-label="subagent attention wake">
+      <span className="sentinel-rule" />
+      <span className="sentinel-body">
+        <span className="sentinel-icon" aria-hidden="true">🤖</span>
+        <span className="sentinel-label">subagent</span>
+        {taskId && (
+          <>
+            <span className="sentinel-sep">·</span>
+            <span className="sentinel-name">{taskId}</span>
           </>
         )}
         <span className="sentinel-sep">·</span>

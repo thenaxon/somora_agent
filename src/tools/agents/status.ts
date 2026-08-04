@@ -4,7 +4,14 @@
 
 import { z } from 'zod';
 import { findWaitCycle, registerWait } from '../../server/ask-wait-graph.ts';
-import { getTask, listTasksForAgent, waitForTaskCompletion, type AsyncTaskEntry } from '../../server/async-tasks.ts';
+import {
+  cancelTaskCascade,
+  getTask,
+  listTasksForAgent,
+  markResultFetched,
+  waitForTaskCompletion,
+  type AsyncTaskEntry,
+} from '../../server/async-tasks.ts';
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResult } from '../../server/run-turn-types.ts';
 import type { ToolDefinition } from '../types.ts';
@@ -279,10 +286,13 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
             : 'sub still running; pass wait_until_done:true to block, or call subagent_status to peek',
         };
       }
-      if (local.state === 'failed') {
+      // Terminal state delivered → suppress the pending attention wake
+      // (the parent has the answer now, a wake would be noise).
+      markResultFetched(local.task_id);
+      if (local.state === 'failed' || local.state === 'cancelled') {
         return {
           task_id: local.task_id,
-          state: 'failed' as const,
+          state: local.state,
           target_agent: local.target_agent,
           target_session: local.target_session,
           error: local.error ?? 'unknown error',
@@ -319,10 +329,10 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
             : 'sub still running; pass wait_until_done:true to block, or call subagent_status to peek',
       };
     }
-    if (remote.state === 'failed') {
+    if (remote.state === 'failed' || remote.state === 'cancelled') {
       return {
         task_id: remote.task_id,
-        state: 'failed' as const,
+        state: remote.state,
         error: remote.error ?? 'unknown error',
       };
     }
@@ -358,12 +368,12 @@ async function fetchListViaHttp(parent_agent: string): Promise<AsyncTaskEntry[]>
 const ListInput = z
   .object({
     state: z
-      .enum(['running', 'done', 'failed', 'all'])
+      .enum(['running', 'done', 'failed', 'cancelled', 'all'])
       .default('all')
       .describe(
-        'Filter by task state. "running" shows only active subs, "done"/"failed" only finished, ' +
-          '"all" (default) returns everything still in the registry. Tasks are kept in memory for ' +
-          'the server\'s lifetime and lost on restart.',
+        'Filter by task state. "running" shows only active subs, "done"/"failed"/"cancelled" ' +
+          'only finished, "all" (default) returns everything still in the registry. Tasks are ' +
+          'kept in memory for the server\'s lifetime and lost on restart.',
       ),
     limit: z
       .number()
@@ -394,7 +404,7 @@ export const subagentList: ToolDefinition<z.infer<typeof ListInput>> = {
     properties: {
       state: {
         type: 'string',
-        enum: ['running', 'done', 'failed', 'all'],
+        enum: ['running', 'done', 'failed', 'cancelled', 'all'],
         default: 'all',
         description: 'Filter by task state.',
       },
@@ -437,6 +447,112 @@ export const subagentList: ToolDefinition<z.infer<typeof ListInput>> = {
       count: tasks.length,
       truncated,
       tasks,
+    };
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// subagent_cancel — abort a running spawn tree (2026-07-28 feedback)
+// ─────────────────────────────────────────────────────────────────────
+
+async function fetchCancelViaHttp(
+  task_id: string,
+  requesting_agent: string,
+  reason?: string,
+): Promise<{ cancelled: string[]; skipped: Array<{ task_id: string; state: string }> } | null> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  const res = await loopbackFetch(`${scheme}://${host}:${port}/spawn-cancel`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task_id, requesting_agent, ...(reason ? { reason } : {}) }),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`spawn-cancel HTTP ${res.status}: ${body.slice(0, 300)}`);
+  }
+  return (await res.json()) as {
+    cancelled: string[];
+    skipped: Array<{ task_id: string; state: string }>;
+  };
+}
+
+const CancelInput = z
+  .object({
+    task_id: z.string().min(1),
+    reason: z
+      .string()
+      .max(300)
+      .optional()
+      .describe('Optional short reason recorded on the cancelled task(s) for the audit trail.'),
+  })
+  .strict();
+
+export const subagentCancel: ToolDefinition<z.infer<typeof CancelInput>> = {
+  name: 'subagent_cancel',
+  toolset: 'agents',
+  description:
+    'Cancel a running sub-agent task spawned with wait:false — INCLUDING any child-subs it ' +
+    'spawned itself (cascade over the whole spawn tree). The in-flight LLM call is aborted ' +
+    'via the same signal the Stop button uses; files the sub already wrote to disk stay ' +
+    'untouched, and its session JSONL remains inspectable. Use this when a spawn turned out ' +
+    'wrong (bad instructions, wrong model, cost concerns) instead of waiting it out or ' +
+    'restarting the server. Only the agent that spawned the task can cancel it. ' +
+    'Already-finished tasks are reported as skipped — cancelling them is a no-op.',
+  inputSchema: CancelInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      task_id: {
+        type: 'string',
+        description: 'task_id from a wait:false spawn_subagent return value.',
+      },
+      reason: {
+        type: 'string',
+        maxLength: 300,
+        description: 'Optional short reason recorded on the cancelled task(s).',
+      },
+    },
+    required: ['task_id'],
+    additionalProperties: false,
+  },
+  async handler(input, ctx) {
+    const reason = input.reason?.trim()
+      ? `cancelled by ${ctx.agent}: ${input.reason.trim()}`
+      : `cancelled by ${ctx.agent}`;
+    // In-process first (main server); HTTP fallback for the MCP child.
+    const local = getTask(input.task_id);
+    if (local) {
+      if (local.parent_agent !== ctx.agent) {
+        throw new Error(
+          `subagent_cancel: task '${input.task_id}' was spawned by '${local.parent_agent}', ` +
+            `not by you — only the spawning agent can cancel it`,
+        );
+      }
+      const outcome = cancelTaskCascade(input.task_id, reason);
+      if (!outcome) throw new Error(`subagent_cancel: task '${input.task_id}' not found`);
+      return {
+        task_id: input.task_id,
+        cancelled: outcome.cancelled,
+        skipped: outcome.skipped,
+        hint:
+          outcome.cancelled.length > 0
+            ? 'Cancelled subs keep their session JSONL and any files they wrote — inspect via /sessions if needed.'
+            : 'Nothing was running — all tasks in the tree already finished.',
+      };
+    }
+    const remote = await fetchCancelViaHttp(input.task_id, ctx.agent, input.reason);
+    if (!remote) throw new Error(`subagent_cancel: task '${input.task_id}' not found`);
+    return {
+      task_id: input.task_id,
+      cancelled: remote.cancelled,
+      skipped: remote.skipped,
+      hint:
+        remote.cancelled.length > 0
+          ? 'Cancelled subs keep their session JSONL and any files they wrote — inspect via /sessions if needed.'
+          : 'Nothing was running — all tasks in the tree already finished.',
     };
   },
 };

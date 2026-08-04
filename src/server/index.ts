@@ -132,10 +132,13 @@ import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
 import {
+  cancelTaskCascade,
   completeTask,
+  configureSubagentAttention,
   failTask,
   getTask,
   listTasksForAgent,
+  markResultFetched,
   newTaskId,
   registerTask,
   waitForTaskCompletion,
@@ -3089,6 +3092,7 @@ app.post('/spawn-async', async (c) => {
     subagent_depth?: number;
     model?: string;
     max_rounds?: number;
+    attention?: boolean;
   };
   const agent = body.agent;
   const sessionRef = body.session;
@@ -3162,7 +3166,7 @@ app.post('/spawn-async', async (c) => {
   // Concurrency cap — same per-agent / global limits as the in-process
   // spawn tool. Pre-audit 2026-05-16 this endpoint accepted unlimited
   // parallel POSTs, letting an agent fan out way past 4 per-target.
-  const slotErr = reserveSpawnSlot(agent);
+  const slotErr = reserveSpawnSlot(agent, subagentDepth > 0 ? subagentDepth - 1 : 0);
   if (slotErr) {
     return c.json({ error: slotErr }, 429);
   }
@@ -3175,6 +3179,7 @@ app.post('/spawn-async', async (c) => {
     target_agent: agent,
     target_session: session,
     started_at: Date.now(),
+    ...(typeof body.attention === 'boolean' ? { attention: body.attention } : {}),
   });
 
   // Fire-and-forget. Errors land in the task entry, not the HTTP
@@ -3187,11 +3192,16 @@ app.post('/spawn-async', async (c) => {
       priority: 'agent',
       turnId: task_id,
     });
+    // Abort controller for subagent_cancel — registered under the
+    // sub's (agent, session) like a normal /chat/send turn, so the
+    // cancel cascade can cut the in-flight LLM call.
+    const abort = registerChatAbort(agent, session);
     try {
       const result = await runChatTurn({
         agent,
         session,
         text,
+        signal: abort.signal,
         ...(fromAgent ? { fromAgent } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
         ...(modelOverride ? { modelOverride } : {}),
@@ -3204,6 +3214,7 @@ app.post('/spawn-async', async (c) => {
     } catch (err) {
       failTask(task_id, (err as Error).message);
     } finally {
+      abort.release();
       release();
       releaseSpawnSlot(agent);
     }
@@ -3299,6 +3310,9 @@ app.get('/spawn-result', async (c) => {
   if (entry.state === 'running') {
     return c.json({ task_id, error: `task '${task_id}' still running`, state: 'running' }, 409);
   }
+  // Terminal state delivered to the parent (MCP-child subagent_result
+  // path) → suppress the pending attention wake.
+  markResultFetched(entry.task_id);
   return c.json({
     task_id: entry.task_id,
     state: entry.state,
@@ -3313,6 +3327,37 @@ app.get('/spawn-list', (c) => {
   const parent = c.req.query('parent_agent');
   if (!parent) return c.json({ error: 'parent_agent query required' }, 400);
   return c.json({ tasks: listTasksForAgent(parent) });
+});
+
+// /spawn-cancel — abort a running spawn tree (task + cascaded child
+// tasks). HTTP twin of the in-process subagent_cancel path so the MCP
+// child (claude-cli/codex-cli tool host) can cancel too. Only the
+// spawning agent may cancel its task — same guard as the tool.
+app.post('/spawn-cancel', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    task_id?: string;
+    requesting_agent?: string;
+    reason?: string;
+  };
+  if (!body.task_id) return c.json({ error: 'task_id required' }, 400);
+  const entry = getTask(body.task_id);
+  if (!entry) return c.json({ error: `task '${body.task_id}' not found` }, 404);
+  if (body.requesting_agent && entry.parent_agent !== body.requesting_agent) {
+    return c.json(
+      {
+        error:
+          `task '${body.task_id}' was spawned by '${entry.parent_agent}', ` +
+          `not by '${body.requesting_agent}' — only the spawning agent can cancel it`,
+      },
+      403,
+    );
+  }
+  const reason = body.reason?.trim()
+    ? `cancelled by ${body.requesting_agent ?? 'unknown'}: ${body.reason.trim()}`
+    : `cancelled by ${body.requesting_agent ?? 'unknown'}`;
+  const outcome = cancelTaskCascade(body.task_id, reason);
+  if (!outcome) return c.json({ error: `task '${body.task_id}' not found` }, 404);
+  return c.json(outcome);
 });
 
 // Wiki-Promotion manueller Trigger. Same handler the dream_run tool
@@ -3700,6 +3745,30 @@ if (config.tmux.attention.enabled) {
 } else {
   writeAttentionMirror({});
 }
+// Subagent attention wake (2026-07-28 feedback): a finished async sub
+// whose result nobody fetched wakes its parent — same mechanic as the
+// tmux watcher, incl. the SSE publish so open clients see the wake
+// turn live (feedback_publishsse_must_broadcast). The wake turn
+// queues on the parent's session lock, so it never interrupts an
+// active turn.
+configureSubagentAttention({
+  graceMs: 2_000,
+  dispatchWakeTurn: async ({ agent, session, text }) => {
+    const release = await acquireSessionLock(agent, session, { priority: 'agent' });
+    try {
+      await runChatTurn({
+        agent,
+        session,
+        text,
+        fromSystem: 'subagent',
+        deps: chatTurnDeps,
+        publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
+      });
+    } finally {
+      release();
+    }
+  },
+});
 installTtsCacheGc(config);
 configureLongTaskTimeouts(config);
 setMaxWikiCallsPerTurn(config.wiki.lucid.maxCallsPerTurn);

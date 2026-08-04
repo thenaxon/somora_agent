@@ -30,6 +30,7 @@ import {
   type AsyncTaskEntry,
 } from '../../server/async-tasks.ts';
 import { registerWait } from '../../server/ask-wait-graph.ts';
+import { registerChatAbort } from '../../server/chat-aborts.ts';
 import { logger } from '../../server/logger.ts';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
@@ -53,14 +54,24 @@ let activeGlobal = 0;
  *  releaseSpawnSlot() — release in a finally so a thrown background
  *  doesn't leak the counter. Same semantics for sync and async paths;
  *  the bug audit 2026-05-16 found the async path skipped accounting
- *  entirely, letting agents fan out way past the per-agent cap. */
-export function reserveSpawnSlot(targetPersona: string): string | null {
+ *  entirely, letting agents fan out way past the per-agent cap.
+ *
+ *  Cap fairness (2026-07-28 feedback): spawns issued BY a sub
+ *  (fromDepth ≥ 1) may fill the per-agent cap only up to cap-1 — the
+ *  last slot is reserved for top-level spawns, so an orchestrator sub
+ *  fanning out into children can never lock the main agent out of
+ *  spawning (e.g. a replacement or corrective sub). */
+export function reserveSpawnSlot(targetPersona: string, fromDepth = 0): string | null {
   if (activeGlobal >= MAX_CONCURRENT_GLOBAL) {
     return `spawn_subagent: global concurrent cap (${MAX_CONCURRENT_GLOBAL}) reached`;
   }
   const perAgent = activeByAgent.get(targetPersona) ?? 0;
-  if (perAgent >= MAX_CONCURRENT_PER_AGENT) {
-    return `spawn_subagent: per-agent concurrent cap for '${targetPersona}' (${MAX_CONCURRENT_PER_AGENT}) reached`;
+  const effectiveCap = fromDepth >= 1 ? MAX_CONCURRENT_PER_AGENT - 1 : MAX_CONCURRENT_PER_AGENT;
+  if (perAgent >= effectiveCap) {
+    return (
+      `spawn_subagent: per-agent concurrent cap for '${targetPersona}' ` +
+      `(${effectiveCap}${fromDepth >= 1 ? ` of ${MAX_CONCURRENT_PER_AGENT}; the last slot is reserved for top-level spawns` : ''}) reached`
+    );
   }
   activeByAgent.set(targetPersona, perAgent + 1);
   activeGlobal++;
@@ -116,6 +127,14 @@ const TaskSchema = z.object({
       'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) for ' +
         'orchestrator subs that spawn further sub-subs and poll their results.',
     ),
+  attention: z
+    .boolean()
+    .optional()
+    .describe(
+      'Async spawns only: when the sub finishes and you have not fetched its result, you get ' +
+        'an automatic [subagent attention] wake turn (default). Pass false to opt out for ' +
+        'subs whose results you will poll yourself or that need no follow-up.',
+    ),
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -142,11 +161,17 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
     'target persona (defaults to a clone of you), goes through normal memory+tool+thinking ' +
     'flow, and produces a final answer. ' +
     'Default is fire-and-forget (wait:false): you get a task_id back immediately and your ' +
-    'turn ends — the user can keep chatting with you while the sub runs. Use ' +
-    'subagent_status / subagent_result to check on it later. ' +
+    'turn ends — the user can keep chatting with you while the sub runs. When it finishes ' +
+    'you get a [subagent attention] wake turn automatically (opt out with attention:false); ' +
+    'use subagent_status / subagent_result to check earlier, subagent_cancel to abort a ' +
+    'running sub INCLUDING its child-spawns. ' +
     'Set wait:true for synchronous "I need the result NOW to write my reply" delegations. ' +
     'Depth cap: 3 (a sub itself can spawn further subs up to that limit). ' +
-    'Per-agent concurrent cap: 4. Cross-engine OK — <agent-a>-on-opus can spawn <agent-b>-on-gpt55. ' +
+    'Per-agent concurrent cap: 4 — NOTE: subs spawned by your subs count against YOUR cap ' +
+    'too (child spawns may only fill 3 of the 4 slots; the last is reserved for you), and a ' +
+    'self-clone sub inherits your persona default model unless you pass model explicitly — ' +
+    'an expensive orchestrator spawning expensive children multiplies cost fast. ' +
+    'Cross-engine OK — <agent-a>-on-opus can spawn <agent-b>-on-gpt55. ' +
     'Sub sessions stay visible in /sessions of the target persona with a "sub from X/Y" marker.',
   inputSchema: SingleInput,
   jsonSchema: {
@@ -168,6 +193,12 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
         description:
           'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) for ' +
           'orchestrator subs that spawn further sub-subs and poll their results.',
+      },
+      attention: {
+        type: 'boolean',
+        description:
+          'Async spawns only: automatic [subagent attention] wake turn when the sub finishes ' +
+          'unfetched (default true). Pass false to opt out.',
       },
       wait: {
         type: 'boolean',
@@ -195,7 +226,13 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
     const result = await runOneSpawn({
       ctx,
       wait: input.wait,
-      task: { task: input.task, ...(input.persona ? { persona: input.persona } : {}), ...(input.model ? { model: input.model } : {}) },
+      task: {
+        task: input.task,
+        ...(input.persona ? { persona: input.persona } : {}),
+        ...(input.model ? { model: input.model } : {}),
+        ...(input.maxRounds ? { maxRounds: input.maxRounds } : {}),
+        ...(input.attention !== undefined ? { attention: input.attention } : {}),
+      },
     });
     return result;
   },
@@ -253,6 +290,12 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
                 'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) ' +
                 'for orchestrator subs that spawn further sub-subs and poll their results.',
             },
+            attention: {
+              type: 'boolean',
+              description:
+                'Async spawns only: automatic [subagent attention] wake turn when the sub ' +
+                'finishes unfetched (default true). Pass false to opt out.',
+            },
           },
           required: ['task'],
           additionalProperties: false,
@@ -301,7 +344,14 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
 interface OneSpawnArgs {
   ctx: import('../types.ts').ToolContext;
   wait: boolean;
-  task: { persona?: string; model?: string; task: string; maxRounds?: number };
+  task: {
+    persona?: string;
+    model?: string;
+    task: string;
+    maxRounds?: number;
+    /** Attention-wake opt-out (async spawns). Default: wake. */
+    attention?: boolean;
+  };
 }
 
 interface OneSpawnSyncResult {
@@ -351,7 +401,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   // counters atomically; the matching releaseSpawnSlot lives in the
   // finally of each path (sync: line below; async: inside the
   // background IIFE in spawnAsyncInProcess + the HTTP route).
-  const slotErr = reserveSpawnSlot(targetPersona);
+  const slotErr = reserveSpawnSlot(targetPersona, parentDepth);
   if (slotErr) throw new Error(slotErr);
 
   // Slug carries ms + random suffix so parallel spawns in the same
@@ -400,6 +450,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           parentDepth,
           modelOverride: task.model,
           maxRoundsOverride: task.maxRounds,
+          attention: task.attention,
         });
       } else {
         // MCP-child HTTP path: the SERVER process owns the task lifetime
@@ -418,6 +469,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           parentDepth,
           modelOverride: task.model,
           maxRoundsOverride: task.maxRounds,
+          attention: task.attention,
         });
         releaseSpawnSlot(targetPersona);
       }
@@ -552,6 +604,7 @@ async function spawnAsyncInProcess(args: {
   parentDepth: number;
   modelOverride?: string;
   maxRoundsOverride?: number;
+  attention?: boolean;
 }): Promise<string> {
   if (!injectedDeps) throw new Error('spawnAsyncInProcess called without injectedDeps');
   const task_id = newTaskId();
@@ -562,6 +615,7 @@ async function spawnAsyncInProcess(args: {
     target_agent: args.targetPersona,
     target_session: args.sessionId,
     started_at: Date.now(),
+    ...(args.attention !== undefined ? { attention: args.attention } : {}),
   });
   void (async () => {
     // Hold the per-session lock so two parallel async-spawns on the
@@ -571,22 +625,31 @@ async function spawnAsyncInProcess(args: {
       priority: 'agent',
       turnId: task_id,
     });
+    // Abort controller for subagent_cancel: registered under the sub's
+    // (agent, session) like a normal /chat/send turn, so the cancel
+    // cascade can cut the in-flight LLM call via triggerChatAbort —
+    // the same signal path the Stop button uses.
+    const abort = registerChatAbort(args.targetPersona, args.sessionId);
     try {
       const result = await runChatTurn({
         agent: args.targetPersona,
         session: args.sessionId,
         text: args.taskText,
         subagentDepth: args.parentDepth + 1,
+        signal: abort.signal,
         ...(args.modelOverride ? { modelOverride: args.modelOverride } : {}),
         ...(args.maxRoundsOverride
           ? { agentLoopOverride: { maxRounds: args.maxRoundsOverride } }
           : {}),
         deps: injectedDeps!.chatTurnDeps,
       });
+      // completeTask/failTask are no-ops when the task was already
+      // cancelled — the registry state stays 'cancelled'.
       completeTask(task_id, result);
     } catch (err) {
       failTask(task_id, (err as Error).message);
     } finally {
+      abort.release();
       release();
       // Release the concurrency slot reserved by runOneSpawn — the
       // background promise's lifetime IS the slot lifetime.
@@ -610,6 +673,7 @@ async function spawnAsyncViaHttp(args: {
   parentDepth: number;
   modelOverride?: string;
   maxRoundsOverride?: number;
+  attention?: boolean;
 }): Promise<string> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
@@ -638,6 +702,7 @@ async function spawnAsyncViaHttp(args: {
         subagent_depth: args.parentDepth + 1,
         ...(args.modelOverride ? { model: args.modelOverride } : {}),
         ...(args.maxRoundsOverride ? { max_rounds: args.maxRoundsOverride } : {}),
+        ...(args.attention !== undefined ? { attention: args.attention } : {}),
       }),
     });
   } catch (err) {
