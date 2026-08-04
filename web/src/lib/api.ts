@@ -117,7 +117,18 @@ export interface LoopState {
 export interface DreamStates {
   rem: Record<string, { active: boolean; pendingCount: number }>;
   deep: { active: boolean };
-  lucid: { active: boolean; loopHolder?: string };
+  lucid: {
+    active: boolean;
+    loopHolder?: string;
+    /** Completed runs awaiting review (server-global, not per-agent).
+     *  Optional: absent on servers older than 2026-08. */
+    pendingRuns?: number;
+    /** Pending findings across those runs — what the badge shows
+     *  (findings are the actionable unit, mirrors dream_review). */
+    pendingFindings?: number;
+    /** created_at of the oldest pending run, for staleness hints. */
+    oldestPendingAt?: string;
+  };
 }
 
 export interface SessionModelInfo {

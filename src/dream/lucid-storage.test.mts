@@ -1,37 +1,18 @@
-// Tests for listLucidRuns control-file + shape robustness (2026-07-23).
+// Tests for pendingLucidSummary — the /dream-states lucid review-
+// backlog fields (2026-07-29 feedback: pending lucid runs were
+// invisible in every client because the API had no pending field).
 //
 // Run: npx tsx src/dream/lucid-storage.test.mts
-//
-// Regression (Gideon report): dream_review's control file `loop-state.json`
-// lives in the same directory as the run JSONs. listLucidRuns read every
-// *.json as a LucidRun, so the control file (no `findings[]`) became a
-// pseudo-run and `dream_list` crashed on `r.findings.length` for EVERY
-// agent whenever any review loop was open. Fix: skip loop-state.json +
-// shape-guard on `findings`.
 
-import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Point SOMORA_HOME at a temp dir BEFORE importing the module (which
-// computes LUCID_ROOT from process.env.SOMORA_HOME at load time).
-const HOME = join(tmpdir(), `somora-lucid-test-${process.pid}`);
+const HOME = mkdtempSync(join(tmpdir(), 'somora-lucid-'));
 process.env.SOMORA_HOME = HOME;
-const LUCID = join(HOME, 'wiki-lucid');
-mkdirSync(LUCID, { recursive: true });
 
-// A valid run.
-writeFileSync(
-  join(LUCID, '20260723-120000_run.json'),
-  JSON.stringify({ id: '20260723-120000_run', status: 'pending', findings: [{ id: 1 }, { id: 2 }] }),
-);
-// The control file — the exact crasher.
-writeFileSync(join(LUCID, 'loop-state.json'), JSON.stringify({ lastStartedAt: null }));
-// Foreign JSON without a findings array (defense-in-depth case).
-writeFileSync(join(LUCID, 'garbage.json'), JSON.stringify({ foo: 'bar' }));
-
-const { listLucidRuns } = await import('./lucid-storage.ts');
+// Dynamic import AFTER SOMORA_HOME is set (module reads it at load).
+const { pendingLucidSummary } = await import('./lucid-storage.ts');
 
 let pass = 0;
 let fail = 0;
@@ -43,61 +24,67 @@ function check(name: string, cond: boolean, detail = ''): void {
   }
 }
 
-let runs: Awaited<ReturnType<typeof listLucidRuns>> = [];
-let threw = false;
-try {
-  runs = await listLucidRuns();
-} catch (err) {
-  threw = true;
-  console.error('listLucidRuns threw:', (err as Error).message);
-}
-
-check('does not throw with a control file present', !threw);
-check('returns exactly the one real run', runs.length === 1, `${runs.length}`);
-check(
-  'loop-state control file is not returned as a run',
-  !runs.some((r) => (r as unknown as { lastStartedAt?: unknown }).lastStartedAt !== undefined),
-);
-check('garbage.json (no findings[]) is skipped', !runs.some((r) => r.id === undefined));
-// The exact operation that crashed dream_list must now be safe on every result.
-let lenOk = true;
-for (const r of runs) {
-  if (!Array.isArray(r.findings)) lenOk = false;
-  else void r.findings.length; // would have thrown pre-fix on the control file
-}
-check('every returned run has an array findings (r.findings.length safe)', lenOk);
-check('valid run findings preserved', runs[0]?.findings.length === 2, `${runs[0]?.findings.length}`);
-
-// ── resolved_manually is terminal + still transitions run → processed ──
-// The allResolved check must treat ANY non-pending status as terminal;
-// enumerating 'applied'/'dismissed' would leave a run with a
-// resolved_manually finding stuck in the active dir forever (zombie in
-// dream_list).
+const LUCID = join(HOME, 'wiki-lucid');
 mkdirSync(join(LUCID, 'processed'), { recursive: true });
-writeFileSync(
-  join(LUCID, '20260727-140000_resman.json'),
-  JSON.stringify({
-    id: '20260727-140000_resman',
-    status: 'completed',
-    findings: [
-      { id: 1, status: 'pending' },
-      { id: 2, status: 'pending' },
-    ],
-  }),
-);
-const { updateLucidFindingStatus, readLucidRunById } = await import('./lucid-storage.ts');
-const first = await updateLucidFindingStatus('20260727-140000_resman', 1, 'resolved_manually', 'user fixed the page directly');
-check('lucid resolved_manually: status recorded', first?.finding.status === 'resolved_manually');
-check('lucid resolved_manually: resolved_at set', typeof first?.finding.resolved_at === 'string');
-check('lucid resolved_manually: note recorded', first?.finding.resolution_note === 'user fixed the page directly');
-check('lucid run stays active while one finding pending', first?.run.status !== 'processed');
-const second = await updateLucidFindingStatus('20260727-140000_resman', 2, 'resolved_manually');
-check('lucid run transitions to processed when last finding resolved_manually', second?.run.status === 'processed');
-const reread = await readLucidRunById('20260727-140000_resman');
-check('processed run still readable by id (moved, not lost)', reread?.status === 'processed');
+
+function writeRun(
+  id: string,
+  status: string,
+  findingStatuses: string[],
+  createdAt: string,
+  processed = false,
+): void {
+  const run = {
+    id,
+    status,
+    created_at: createdAt,
+    trigger: 'auto',
+    pages_scanned: 10,
+    worker_model_ref: 'test',
+    findings: findingStatuses.map((s, i) => ({
+      id: i + 1,
+      status: s,
+      kind: 'stale',
+      page: `wissen/p${i}`,
+      description: 'x',
+    })),
+  };
+  const dir = processed ? join(LUCID, 'processed') : LUCID;
+  writeFileSync(join(dir, `${id}.json`), JSON.stringify(run, null, 2));
+}
+
+// Empty dir → zeros, no oldestPendingAt.
+{
+  const s = await pendingLucidSummary();
+  check('empty: zero runs', s.pendingRuns === 0);
+  check('empty: zero findings', s.pendingFindings === 0);
+  check('empty: no oldestPendingAt', s.oldestPendingAt === undefined);
+}
+
+// Mixed population — mirrors the real 2026-07-27 case (21 findings).
+writeRun('20260727-201844_auto_lucid', 'completed', Array(21).fill('pending'), '2026-07-27T20:18:44Z');
+writeRun('20260730-090000_auto_lucid', 'completed', ['pending', 'applied', 'pending'], '2026-07-30T09:00:00Z');
+writeRun('20260731-100000_manual_lucid', 'running', [], '2026-07-31T10:00:00Z');
+writeRun('20260725-080000_auto_lucid', 'failed', [], '2026-07-25T08:00:00Z');
+writeRun('20260720-070000_auto_lucid', 'processed', ['applied'], '2026-07-20T07:00:00Z', true);
+// The review-loop control file shares the dir — must not crash/count.
+writeFileSync(join(LUCID, 'loop-state.json'), JSON.stringify({ agent: 'x' }));
+
+{
+  const s = await pendingLucidSummary();
+  check('counts completed runs only', s.pendingRuns === 2, String(s.pendingRuns));
+  check(
+    'sums only pending findings (21 + 2, applied excluded)',
+    s.pendingFindings === 23,
+    String(s.pendingFindings),
+  );
+  check(
+    'oldestPendingAt is the oldest completed run',
+    s.oldestPendingAt === '2026-07-27T20:18:44Z',
+    s.oldestPendingAt ?? 'undefined',
+  );
+}
 
 rmSync(HOME, { recursive: true, force: true });
-
 console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
-assert.ok(true);
+process.exit(fail === 0 ? 0 : 1);

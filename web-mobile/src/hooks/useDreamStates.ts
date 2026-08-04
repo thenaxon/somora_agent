@@ -11,7 +11,17 @@ import { useEffect, useState } from 'react';
 export interface DreamStates {
   rem: Record<string, { active?: boolean; pendingCount?: number }>;
   deep: { active: boolean };
-  lucid: { active: boolean; loopHolder?: string };
+  lucid: {
+    active: boolean;
+    loopHolder?: string;
+    /** Completed runs awaiting review (server-global). Optional:
+     *  absent on servers older than 2026-08. */
+    pendingRuns?: number;
+    /** Pending findings across those runs — the badge count. */
+    pendingFindings?: number;
+    /** created_at of the oldest pending run (staleness hint). */
+    oldestPendingAt?: string;
+  };
 }
 
 const EMPTY: DreamStates = { rem: {}, deep: { active: false }, lucid: { active: false } };

@@ -23,6 +23,13 @@ interface Props {
   onSentinelClick: () => void;
   /** Open or focus the read-only Wiki Explorer. Singleton. */
   onWikiClick: () => void;
+  /** Pending lucid findings awaiting review (server-global) — badge
+   *  on the wiki tile. Lucid is platform-wide wiki cleanup, so the
+   *  badge lives HERE and not on any single agent (2026-07-29
+   *  feedback: pending lucid runs were invisible in the UI). */
+  lucidPendingFindings?: number;
+  /** created_at of the oldest pending run — tooltip staleness hint. */
+  lucidOldestPendingAt?: string;
 }
 
 export function AppDock({
@@ -32,6 +39,8 @@ export function AppDock({
   onSessionsClick,
   onSentinelClick,
   onWikiClick,
+  lucidPendingFindings = 0,
+  lucidOldestPendingAt,
 }: Props) {
   const isTmuxActive = activeApps?.has('tmux') ?? false;
   const isSessionsActive = activeApps?.has('sessions') ?? false;
@@ -87,6 +96,23 @@ export function AppDock({
           icon={<BookOpen size={26} />}
           active={isWikiActive}
           onClick={onWikiClick}
+          badge={
+            lucidPendingFindings > 0 ? (
+              <span
+                className="rem-badge lucid"
+                title={
+                  `${lucidPendingFindings} lucid finding${lucidPendingFindings === 1 ? '' : 's'} ` +
+                  `awaiting review${
+                    lucidOldestPendingAt
+                      ? ` (oldest run from ${lucidOldestPendingAt.slice(0, 10)})`
+                      : ''
+                  } — review with any agent via dream_review`
+                }
+              >
+                {lucidPendingFindings > 9 ? '9+' : lucidPendingFindings}
+              </span>
+            ) : undefined
+          }
         />
       )}
     </>
@@ -98,11 +124,15 @@ function AppTile({
   icon,
   active,
   onClick,
+  badge,
 }: {
   label: string;
   icon: ReactNode;
   active: boolean;
   onClick: () => void;
+  /** Optional count badge in the glyph corner (same slot as the
+   *  agent-dock REM badge). */
+  badge?: ReactNode;
 }) {
   return (
     <div
@@ -120,6 +150,7 @@ function AppTile({
         }}
       >
         {icon}
+        {badge}
       </div>
       <div
         style={{

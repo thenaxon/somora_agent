@@ -229,6 +229,23 @@ button { cursor: pointer; }
   border: 2px solid var(--bg-0);
   box-shadow: 0 0 6px var(--dream-rem-glow);
 }
+/* Lucid variant on the trailing wiki chip — purple accent so the
+ * platform-wide lucid backlog reads differently from per-agent REM. */
+.avatar-rem-badge.lucid {
+  background: var(--dream-lucid);
+  color: #f8f4ff;
+  box-shadow: 0 0 6px var(--dream-lucid-glow);
+}
+/* Trailing non-agent lucid chip: same tile skeleton as agents but a
+ * flat tinted glyph (no gradient avatar) and no pressed/active state
+ * — it is informational, not a tab. */
+.avatar-tile.lucid-chip {
+  cursor: default;
+}
+.avatar-tile-icon.lucid-chip-icon {
+  background: linear-gradient(135deg, #a855f766, #a855f722);
+  color: var(--dream-lucid);
+}
 .avatar-tile-label {
   font-size: 11px;
   color: var(--text-2);

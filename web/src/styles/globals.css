@@ -320,3 +320,12 @@ body {
   border: 2px solid var(--bg-0);
   box-shadow: 0 0 8px var(--dream-rem-glow);
 }
+
+/* Lucid variant — same badge slot, but on the AppDock wiki tile
+ * (lucid is platform-wide, not agent-bound) and in the lucid accent
+ * so REM-vs-lucid review backlogs are distinguishable at a glance. */
+.agent-icon-glyph .rem-badge.lucid {
+  background: var(--dream-lucid);
+  color: #f8f4ff;
+  box-shadow: 0 0 8px var(--dream-lucid-glow);
+}

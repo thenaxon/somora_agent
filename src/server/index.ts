@@ -120,6 +120,7 @@ import { RemWorker } from '../dream/rem-worker.ts';
 import { DeepWorker } from '../dream/deep-worker.ts';
 import { LucidWorker } from '../dream/lucid-worker.ts';
 import { getLoopState, setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
+import { pendingLucidSummary } from '../dream/lucid-storage.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
@@ -3357,12 +3358,29 @@ app.get('/dream-states', async (c) => {
     }),
   );
   const lucidLoop = getLoopState();
+  // Lucid review-backlog (additive fields, 2026-07-29 feedback): the
+  // only approval-gated phase besides REM was invisible in every
+  // client — a completed run with pending findings produced no UI
+  // trace at all. Unlike REM this is server-global, not per-agent.
+  let lucidPending = { pendingRuns: 0, pendingFindings: 0 } as Awaited<
+    ReturnType<typeof pendingLucidSummary>
+  >;
+  try {
+    lucidPending = await pendingLucidSummary();
+  } catch {
+    // dir unreadable → keep zeros; don't fail the whole snapshot
+  }
   return c.json({
     rem,
     deep: { active: deepWorker.isRunning() },
     lucid: {
       active: lucidWorker.isRunning(),
       ...(lucidLoop ? { loopHolder: lucidLoop.agent } : {}),
+      pendingRuns: lucidPending.pendingRuns,
+      pendingFindings: lucidPending.pendingFindings,
+      ...(lucidPending.oldestPendingAt !== undefined
+        ? { oldestPendingAt: lucidPending.oldestPendingAt }
+        : {}),
     },
   });
 });

@@ -83,6 +83,54 @@ export function AvatarRow({
           </button>
         );
       })}
+      {(dreamStates?.lucid.pendingFindings ?? 0) > 0 && (
+        <LucidChip
+          findings={dreamStates!.lucid.pendingFindings!}
+          oldestPendingAt={dreamStates!.lucid.oldestPendingAt}
+        />
+      )}
+    </div>
+  );
+}
+
+// Trailing non-agent tile: lucid review backlog. Lucid is platform-
+// wide wiki cleanup, so the badge can't live on any single agent —
+// it gets its own tile at the end of the row, mirroring the web's
+// wiki-tile badge (2026-07-29 feedback: pending lucid runs were
+// invisible in every client). Display-only on mobile — reviews run
+// through an agent via dream_review, so tapping selects nothing.
+function LucidChip({
+  findings,
+  oldestPendingAt,
+}: {
+  findings: number;
+  oldestPendingAt?: string;
+}) {
+  const title =
+    `${findings} lucid finding${findings === 1 ? '' : 's'} awaiting review` +
+    (oldestPendingAt ? ` (oldest run from ${oldestPendingAt.slice(0, 10)})` : '') +
+    ' — ask any agent to run dream_review';
+  return (
+    <div className="avatar-tile lucid-chip" role="note" aria-label={title} title={title}>
+      <span className="avatar-tile-icon lucid-chip-icon">
+        {/* Inline glyph (open book) — mobile keeps the no-lucide rule. */}
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z" />
+          <path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z" />
+        </svg>
+        <span className="avatar-rem-badge lucid">{findings > 9 ? '9+' : findings}</span>
+      </span>
+      <span className="avatar-tile-label">wiki</span>
     </div>
   );
 }

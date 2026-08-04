@@ -106,6 +106,10 @@ export function Desktop() {
             onSessionsClick={() => wm.openSessionsList()}
             onSentinelClick={() => wm.openSentinelList()}
             onWikiClick={() => wm.openWiki()}
+            lucidPendingFindings={dreamStates?.lucid.pendingFindings ?? 0}
+            {...(dreamStates?.lucid.oldestPendingAt
+              ? { lucidOldestPendingAt: dreamStates.lucid.oldestPendingAt }
+              : {})}
           />
         </div>
 

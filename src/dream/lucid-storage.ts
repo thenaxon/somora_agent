@@ -92,6 +92,44 @@ export async function listLucidRuns(): Promise<LucidRun[]> {
   return out.sort((a, b) => b.id.localeCompare(a.id));
 }
 
+export interface PendingLucidSummary {
+  /** Completed (approval-pending) runs still living outside processed/. */
+  pendingRuns: number;
+  /** Sum of findings with status 'pending' across those runs. */
+  pendingFindings: number;
+  /** created_at (ISO) of the OLDEST pending run — lucid runs are
+   *  weekly, so an old timestamp here means reviews are piling up. */
+  oldestPendingAt?: string;
+}
+
+/**
+ * Review-backlog summary for the UI. Counts what REM's pendingCount
+ * counts for dreams, but lucid-side: runs that finished their LLM
+ * pass (status 'completed') and now wait for a human/agent review via
+ * dream_review. Runs that are 'running'/'failed' don't count — they
+ * are not actionable approvals. Computed fresh from disk on every
+ * call; /dream-states polls this every 30s which is fine for a dir
+ * of single-digit JSON files (2026-07-29 feedback: pending lucid runs
+ * were invisible in every client).
+ */
+export async function pendingLucidSummary(): Promise<PendingLucidSummary> {
+  const runs = await listLucidRuns();
+  const pending = runs.filter((r) => r.status === 'completed');
+  const pendingFindings = pending.reduce(
+    (sum, r) => sum + r.findings.filter((f) => f.status === 'pending').length,
+    0,
+  );
+  const oldest = pending.reduce<string | undefined>(
+    (min, r) => (min === undefined || r.created_at < min ? r.created_at : min),
+    undefined,
+  );
+  return {
+    pendingRuns: pending.length,
+    pendingFindings,
+    ...(oldest !== undefined ? { oldestPendingAt: oldest } : {}),
+  };
+}
+
 /** Mutate a finding's status by id. Persists the run. Returns the
  *  updated run (or null if id-not-found). */
 export async function updateLucidFindingStatus(
