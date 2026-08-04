@@ -108,6 +108,12 @@ export interface ExecPolicyDecision {
   reason?: string;
   /** Blacklist pattern source (when blocked). */
   pattern?: string;
+  /** The exact shell segment that caused the block (when a single
+   *  segment is attributable). The splitter is quote-unaware, so a
+   *  harmless string argument can trip a pattern (`echo "poweroff
+   *  done"`) — naming the segment makes that self-explanatory
+   *  instead of looking like a matcher bug (2026-07-27 report). */
+  segment?: string;
   /** allowBlocked entries that cleared blacklisted segments (when allowed
    *  via override — for the audit trail). Empty when nothing was
    *  blacklisted in the first place. */
@@ -151,14 +157,23 @@ export function evaluateExecPolicy(
   for (const seg of segments) {
     const b = checkBlacklist(seg);
     if (!b.matched) continue;
-    segmentReasons.add(b.reason);
+    // Collect ALL reasons this segment trips, not just the first one
+    // checkBlacklist reports. A single segment can match several
+    // blacklist patterns at once (`sudo systemctl poweroff` trips both
+    // the sudo AND the halt/shutdown pattern) — with only the first
+    // reason recorded, the cross-segment guard below saw the second
+    // reason as "uncovered" and blocked the command even though an
+    // allowBlocked entry had cleared the segment (2026-07-27 spiderman
+    // poweroff report: blocked with reason/pattern from two DIFFERENT
+    // rules, which was the tell).
+    for (const r of blacklistReasons(seg)) segmentReasons.add(r);
     // This segment is dangerous on its own → it needs an override.
     if (hasCommandSubstitution(seg)) {
-      return { allowed: false, reason: b.reason, pattern: b.pattern };
+      return { allowed: false, reason: b.reason, pattern: b.pattern, segment: seg };
     }
     const m = matchAllowBlockedSegment(seg, entries);
     if (!m) {
-      return { allowed: false, reason: b.reason, pattern: b.pattern };
+      return { allowed: false, reason: b.reason, pattern: b.pattern, segment: seg };
     }
     overrides.push(m.entry);
   }

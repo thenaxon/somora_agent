@@ -107,6 +107,52 @@ check(
   evaluateExecPolicy('pseudo-cmd --flag', SUDO).allowed,
 );
 
+// ── Multi-pattern segment (2026-07-27 spiderman poweroff report) ──
+// One segment can trip SEVERAL blacklist patterns at once (`sudo
+// systemctl poweroff` → sudo pattern AND halt/shutdown pattern). The
+// pre-fix code recorded only the FIRST reason per segment, so the
+// cross-segment guard treated the second reason as uncovered and
+// blocked despite a matching allowBlocked entry.
+check(
+  'sudo systemctl poweroff allowed with sudo entry (the report)',
+  evaluateExecPolicy('sudo systemctl poweroff', SUDO_SYSCTL).allowed,
+  JSON.stringify(evaluateExecPolicy('sudo systemctl poweroff', SUDO_SYSCTL)),
+);
+check(
+  'sudo -n systemctl poweroff && echo allowed (report attempt 2, benign echo)',
+  evaluateExecPolicy('sudo -n systemctl poweroff && echo done', SUDO_SYSCTL).allowed,
+  JSON.stringify(evaluateExecPolicy('sudo -n systemctl poweroff && echo done', SUDO_SYSCTL)),
+);
+{
+  // Documented conservative behavior: the splitter is quote-unaware,
+  // so a string ARGUMENT containing a blacklist word trips the pattern
+  // (`echo "poweroff issued"` matches \bpoweroff\b). Stays blocked —
+  // but the decision must name the offending segment so the agent can
+  // see it's the echo string, not the sudo command.
+  const d = evaluateExecPolicy(
+    'sudo -n systemctl poweroff && echo "poweroff issued"',
+    SUDO_SYSCTL,
+  );
+  check('quoted blacklist word still blocks (conservative)', !d.allowed);
+  check(
+    'blocked decision names the offending segment',
+    d.segment === 'echo "poweroff issued"',
+    JSON.stringify(d),
+  );
+}
+check(
+  'sudo reboot allowed with sudo entry (multi-pattern, prefix covers)',
+  evaluateExecPolicy('sudo reboot', SUDO).allowed,
+);
+check(
+  'multi-pattern segment still blocked without any entry',
+  !evaluateExecPolicy('sudo systemctl poweroff', []).allowed,
+);
+check(
+  'multi-pattern segment still blocked when entries cover nothing',
+  !evaluateExecPolicy('sudo systemctl poweroff', ['apt-get']).allowed,
+);
+
 // ── splitCommandSegments unit checks ──
 check(
   'split keeps redirect within segment',

@@ -293,6 +293,14 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
           blocked: true,
           reason: policy.reason ?? block.reason,
           pattern: policy.pattern ?? block.pattern,
+          ...(policy.segment ? { blocked_segment: policy.segment } : {}),
+          // Surface the resource's allowBlocked entries (if any) so the
+          // agent can see why none of them cleared this command instead
+          // of having to reverse-engineer the matcher (2026-07-27
+          // feedback). Entries match a segment when it equals the entry
+          // or starts with `entry + ' '`, and command substitution
+          // ($(…)/backticks) always blocks.
+          ...(entries.length > 0 ? { allow_blocked_entries: [...entries] } : {}),
         };
       }
     }
