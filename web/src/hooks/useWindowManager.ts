@@ -159,6 +159,29 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the Tools matrix (per-agent tool visibility +
+   *  external MCP server status). Singleton. */
+  const openTools = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'tools');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(940, 640, zCounter + 1);
+    const id = `tools-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'tools',
+      title: 'Tools',
+      icon: '🧰',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   /** Remember which page a wiki window is on so a reload restores it. */
   const setWikiSlug = useCallback((id: string, slug: string) => {
     setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, wikiSlug: slug } : w)));
@@ -438,6 +461,7 @@ export function useWindowManager() {
     openSessionsList,
     openSentinelList,
     openWiki,
+    openTools,
     setWikiSlug,
     openPinNote,
     unpinMessage,

@@ -123,13 +123,14 @@ without it.
     `dream_apply` / `dream_dismiss`.
 - **App dock (below the agent dock)**: non-agent surfaces — `tmux`
   (attach to an existing tmux session), `terminal` (fresh shell in
-  the somora workspace), and `sessions` (cross-agent session browser
-  — see next section). The `wiki` tile carries a violet **Lucid
-  badge** when completed lucid runs are waiting for review — lucid is
-  platform-wide wiki cleanup, so its review backlog lives here rather
-  than on any single agent. The badge counts pending findings; the
-  tooltip names the oldest waiting run. Review with any agent via
-  `dream_review`.
+  the somora workspace), `sessions` (cross-agent session browser
+  — see next section), and `tools` (per-agent tool-visibility matrix
+  plus external MCP server health — see [mcp.md](mcp.md)). The `wiki`
+  tile carries a violet **Lucid badge** when completed lucid runs are
+  waiting for review — lucid is platform-wide wiki cleanup, so its
+  review backlog lives here rather than on any single agent. The
+  badge counts pending findings; the tooltip names the oldest waiting
+  run. Review with any agent via `dream_review`.
 - **Window**: drag the title bar to move, drag the bottom-right
   corner to resize. Close button removes the window without
   unsubscribing other clients.

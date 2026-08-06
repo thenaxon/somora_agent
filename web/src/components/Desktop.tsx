@@ -17,6 +17,7 @@ import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
 import { SentinelWindow } from './SentinelWindow';
 import { WikiWindow } from './WikiWindow';
+import { ToolsWindow } from './ToolsWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
 import { FileViewProvider } from './FileViewContext';
@@ -97,6 +98,7 @@ export function Desktop() {
                   if (w.kind === 'sessions-list') return ['sessions'];
                   if (w.kind === 'sentinel') return ['sentinel'];
                   if (w.kind === 'wiki') return ['wiki'];
+                  if (w.kind === 'tools') return ['tools'];
                   return [];
                 }),
               )
@@ -106,6 +108,7 @@ export function Desktop() {
             onSessionsClick={() => wm.openSessionsList()}
             onSentinelClick={() => wm.openSentinelList()}
             onWikiClick={() => wm.openWiki()}
+            onToolsClick={() => wm.openTools()}
             lucidPendingFindings={dreamStates?.lucid.pendingFindings ?? 0}
             {...(dreamStates?.lucid.oldestPendingAt
               ? { lucidOldestPendingAt: dreamStates.lucid.oldestPendingAt }
@@ -281,6 +284,22 @@ export function Desktop() {
                   slug={win.wikiSlug}
                   onSlugChange={(slug) => wm.setWikiSlug(win.id, slug)}
                 />
+              </Window>
+            );
+          }
+          if (win.kind === 'tools') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <ToolsWindow />
               </Window>
             );
           }

@@ -81,6 +81,21 @@ knob for overlapping tools — e.g. give your research agent an
 MCP-provided search tool while everyone else keeps the built-in
 `web_search`, and no agent ever sees both.
 
+### The Tools window
+
+The web client has a **tools** tile in the app dock that opens the same
+control as a point-and-click matrix: pick an agent on the left, toggle
+any tool's visibility in the middle (built-ins grouped by toolset,
+external tools grouped by MCP server), and watch external server health
+on the right — state, tool count, transport, last error, and a
+reconnect button per server.
+
+Toggles manage exact-name deny entries and are written server-side into
+the agent's `agent.yaml` (comments and the rest of the file stay
+untouched). If an agent's `agent.yaml` carries hand-written pattern
+rules (globs, `toolset:`, allow-lists), the matrix shows them and goes
+read-only — the UI never rewrites operator policy it can't represent.
+
 ## Server options
 
 ```yaml

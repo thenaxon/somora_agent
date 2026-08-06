@@ -4,7 +4,7 @@
 // lucide glyphs in a flat tinted square instead of gradient avatars.
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { Bell, BookOpen, MessagesSquare, Square, Terminal } from 'lucide-react';
+import { Bell, BookOpen, MessagesSquare, Square, Terminal, Wrench } from 'lucide-react';
 import { api } from '../lib/api';
 
 interface Props {
@@ -23,6 +23,8 @@ interface Props {
   onSentinelClick: () => void;
   /** Open or focus the read-only Wiki Explorer. Singleton. */
   onWikiClick: () => void;
+  /** Open or focus the per-agent Tools matrix (+ MCP status). Singleton. */
+  onToolsClick: () => void;
   /** Pending lucid findings awaiting review (server-global) — badge
    *  on the wiki tile. Lucid is platform-wide wiki cleanup, so the
    *  badge lives HERE and not on any single agent (2026-07-29
@@ -39,6 +41,7 @@ export function AppDock({
   onSessionsClick,
   onSentinelClick,
   onWikiClick,
+  onToolsClick,
   lucidPendingFindings = 0,
   lucidOldestPendingAt,
 }: Props) {
@@ -46,6 +49,7 @@ export function AppDock({
   const isSessionsActive = activeApps?.has('sessions') ?? false;
   const isSentinelActive = activeApps?.has('sentinel') ?? false;
   const isWikiActive = activeApps?.has('wiki') ?? false;
+  const isToolsActive = activeApps?.has('tools') ?? false;
   // The wiki is opt-in (wiki.enabled + obsidian.vault). A tile that
   // opens a window which can only say "not configured" is worse than no
   // tile — so the UI gate matches the server's 503 gate.
@@ -89,6 +93,12 @@ export function AppDock({
         icon={<Bell size={26} />}
         active={isSentinelActive}
         onClick={onSentinelClick}
+      />
+      <AppTile
+        label="tools"
+        icon={<Wrench size={26} />}
+        active={isToolsActive}
+        onClick={onToolsClick}
       />
       {wikiEnabled && (
         <AppTile

@@ -111,6 +111,9 @@ import {
   registerAllTools,
   ToolRegistry,
 } from '../tools/index.ts';
+import type { ToolContext } from '../tools/types.ts';
+import { isToolAllowed } from '../tools/gating.ts';
+import { writeAgentToolGating } from '../persona/tool-gating-store.ts';
 import { shutdownSshPool } from '../ssh/index.ts';
 import {
   archiveEmptyCompletedDreams,
@@ -956,6 +959,75 @@ app.post('/mcp/servers/:name/reconnect', async (c) => {
   try {
     const status = await mcpHub.reconnect(c.req.param('name'));
     return c.json({ ok: true, status });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+// --- Per-agent tool visibility (web UI Agents×Tools matrix — design
+// §4.6). GET reads registry + persona gating; PUT splices the tools:
+// block into agent.yaml server-side (thin-client rule: the UI never
+// touches files itself).
+
+app.get('/agents/:agent/tools', async (c) => {
+  const agent = c.req.param('agent');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const gating = persona.toolGating ?? null;
+  // Toggling in the matrix only manipulates exact-name denies. Pattern
+  // rules (globs, toolset:, allow-lists) are hand-written policy — the
+  // UI shows them read-only instead of guessing how to edit them.
+  const hasPatternRules =
+    gating !== null &&
+    (gating.allow.length > 0 ||
+      gating.deny.some((p) => p.includes('*') || p.startsWith('toolset:')));
+  const ctx: ToolContext = {
+    agent,
+    getMemoryManager: () =>
+      getMemoryManager(agent, {
+        config: config.memory,
+        obsidian: config.obsidian,
+        wiki: config.wiki,
+      }),
+    config,
+  };
+  const availableNow = new Set((await tools.listAvailable(ctx)).map((t) => t.name));
+  return c.json({
+    agent,
+    gating,
+    hasPatternRules,
+    tools: tools.list().map((t) => ({
+      name: t.name,
+      toolset: t.toolset,
+      ...(t.origin ? { mcpServer: t.origin.mcpServer } : {}),
+      description: t.description.slice(0, 140),
+      visible: isToolAllowed(t.name, t.toolset, gating ?? undefined),
+      availableNow: availableNow.has(t.name),
+    })),
+  });
+});
+
+app.put('/agents/:agent/tools', async (c) => {
+  const agent = c.req.param('agent');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' not found` }, 404);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    deny?: string[];
+    allow?: string[];
+  } | null;
+  if (!body || !Array.isArray(body.deny) || !Array.isArray(body.allow)) {
+    return c.json({ error: 'body must be { deny: string[], allow: string[] }' }, 400);
+  }
+  try {
+    await writeAgentToolGating(agent, { deny: body.deny, allow: body.allow });
+    logger.info({
+      msg: 'agents.tool_gating_updated',
+      agent,
+      deny: body.deny.length,
+      allow: body.allow.length,
+    });
+    return c.json({ ok: true });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }

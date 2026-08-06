@@ -567,7 +567,70 @@ export const api = {
     const res = await fetch('/wiki/refresh', { method: 'POST' });
     if (!res.ok) throw new Error(`wiki refresh ${res.status}`);
   },
+
+  // ─── Tool matrix + external MCP servers (docs/mcp.md) ──────────────
+  agentTools: (agent: string) =>
+    getJson<AgentToolsResponse>(`/agents/${encodeURIComponent(agent)}/tools`),
+  setAgentTools: async (agent: string, gating: { deny: string[]; allow: string[] }): Promise<void> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/tools`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(gating),
+    });
+    if (!res.ok) throw new Error(`set agent tools ${res.status}`);
+  },
+  /** 503 (no servers configured) → { enabled: false }. */
+  mcpStatus: async (): Promise<McpStatusResponse> => {
+    const res = await fetch('/mcp/status');
+    if (res.status === 503) return { enabled: false, servers: {} };
+    if (!res.ok) throw new Error(`mcp status ${res.status}`);
+    return (await res.json()) as McpStatusResponse;
+  },
+  mcpReconnect: async (server: string): Promise<void> => {
+    const res = await fetch(`/mcp/servers/${encodeURIComponent(server)}/reconnect`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(`mcp reconnect ${res.status}`);
+  },
 } as const;
+
+// ─── Tool matrix types — mirror GET /agents/:agent/tools ────────────
+
+export interface AgentToolInfo {
+  name: string;
+  toolset: string;
+  /** Present on tools imported from an external MCP server. */
+  mcpServer?: string;
+  description: string;
+  /** Effective visibility for this agent under its current gating. */
+  visible: boolean;
+  /** Whether the tool's runtime availability probe passes right now
+   *  (missing API key etc.). Informational — gating is separate. */
+  availableNow: boolean;
+}
+
+export interface AgentToolsResponse {
+  agent: string;
+  gating: { deny: string[]; allow: string[] } | null;
+  /** True when agent.yaml carries hand-written pattern rules (globs,
+   *  toolset:, allow-list) — the matrix goes read-only then. */
+  hasPatternRules: boolean;
+  tools: AgentToolInfo[];
+}
+
+export interface McpServerStatusInfo {
+  state: 'connected' | 'pending' | 'failed' | 'needs-auth' | 'disabled';
+  toolCount: number;
+  transport?: string;
+  lastError?: string;
+  lastConnectedAt?: number;
+  consecutiveFailures: number;
+}
+
+export interface McpStatusResponse {
+  enabled: boolean;
+  servers: Record<string, McpServerStatusInfo>;
+}
 
 // ─── Wiki types — mirror src/wiki/explorer.ts ────────────────────────
 

@@ -12,7 +12,8 @@ export type WindowKind =
   | 'sentinel'
   | 'pin-note'
   | 'file-view'
-  | 'wiki';
+  | 'wiki'
+  | 'tools';
 
 /** A snapshot of an agent message that the user pinned for working-
  *  memory. Stored on the WindowState.payload of `kind: 'pin-note'`
