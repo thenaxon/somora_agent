@@ -116,6 +116,7 @@ high-value next steps in rough order:
 | [setup.md](setup.md) | Operator runbook | First install; adding providers; HTTPS; mobile; ops |
 | [api.md](api.md) | HTTP/SSE contract | Building a third-party client; debugging streaming |
 | [tools.md](tools.md) | Tool catalog overview | Wondering what an agent can do |
+| [mcp.md](mcp.md) | External MCP servers | Plugging third-party MCP tools into your agents |
 | [files.md](files.md) | File-tool deep dive | Working with `file_read`/`file_write`/`analyze_file` |
 | [memory.md](memory.md) | Concept + mechanics | Tuning recall, writing notes by hand |
 | [wiki.md](wiki.md) | Concept + mechanics | Shared knowledge base, hand-curation |

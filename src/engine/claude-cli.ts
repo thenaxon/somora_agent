@@ -6,7 +6,13 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { query, type CanUseTool, type SDKMessage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, somoraMemoryServerSpawn } from '../mcp/config.ts';
+import {
+  MCP_SERVER_NAME,
+  MCP_TOOL_PREFIX,
+  somoraMcpProxyName,
+  somoraMcpProxySpawn,
+  somoraMemoryServerSpawn,
+} from '../mcp/config.ts';
 import { reconcileClaudeCredentials } from '../server/claude-credential-sync.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -50,7 +56,10 @@ const KNOWN_ACCOUNT_TOOLS = [
 // Account-MCPs and built-ins (Bash/Edit/etc.) should never be invoked
 // by a somora session — that's DECISION #23.
 const somoraToolGate: CanUseTool = async (toolName, input) => {
-  if (toolName.startsWith(MCP_TOOL_PREFIX)) {
+  // `mcp__somora-` covers somora-memory AND the somora-<server> proxy
+  // children for external MCP servers (design §4.4) — all of them are
+  // our own MCP entries with an already-gated tool surface.
+  if (toolName.startsWith(MCP_TOOL_PREFIX) || toolName.startsWith('mcp__somora-')) {
     return { behavior: 'allow', updatedInput: input };
   }
   return {
@@ -270,6 +279,15 @@ export const claudeCliEngine: AgentEngine = {
               subagentDepth: input.subagentDepth,
               activeModelRef: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
             }),
+            // One proxy child per external MCP server (design §4.4):
+            // serves the hub's catalog snapshot, forwards calls to the
+            // main server. Model-visible names: mcp__somora-<name>__*.
+            ...Object.fromEntries(
+              (input.externalMcpServers ?? []).map((srv) => [
+                somoraMcpProxyName(srv.name),
+                somoraMcpProxySpawn({ server: srv.name, agent }),
+              ]),
+            ),
           },
           canUseTool: somoraToolGate,
           abortController: sdkAbortController,
@@ -373,9 +391,11 @@ export const claudeCliEngine: AgentEngine = {
             mcpServers: msg.mcp_servers,
           });
           // Strip our own somora-memory tools/server before checking for
-          // leaks — they're expected and add intentional surface.
+          // leaks — they're expected and add intentional surface. Proxy
+          // children for external MCP servers register as
+          // somora-<name>, so `mcp__somora-` covers memory AND proxies.
           const unexpectedTools = msg.tools.filter(
-            (t: string) => !t.startsWith(MCP_TOOL_PREFIX),
+            (t: string) => !t.startsWith(MCP_TOOL_PREFIX) && !t.startsWith('mcp__somora-'),
           );
           if (unexpectedTools.length > 0 && !toolsLeakWarned) {
             logger.warn({
@@ -386,8 +406,12 @@ export const claudeCliEngine: AgentEngine = {
             });
             toolsLeakWarned = true;
           }
+          const expectedServers = new Set([
+            MCP_SERVER_NAME,
+            ...(input.externalMcpServers ?? []).map((srv) => somoraMcpProxyName(srv.name)),
+          ]);
           const unexpectedServers = msg.mcp_servers.filter(
-            (s) => s.name !== MCP_SERVER_NAME,
+            (s) => !expectedServers.has(s.name),
           );
           if (unexpectedServers.length > 0 && !mcpLeakWarned) {
             const summary = unexpectedServers.map((s) => `${s.name}(${s.status})`).join(', ');

@@ -75,6 +75,75 @@ function filterEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 /**
+ * External-MCP proxy children (design: private/mcp-hub-design.md §4.4).
+ * Same binary as somora-memory, switched into proxy mode by the
+ * SOMORA_MCP_PROXY_SERVER env var: it then serves ONE upstream server's
+ * tools from the catalog snapshot and forwards tools/call via HTTP to
+ * the main server's hub (the single real MCP client). CLI-side entry
+ * name is `somora-<server>`, so the model sees
+ * `mcp__somora-<server>__<tool>`.
+ */
+export function somoraMcpProxyName(server: string): string {
+  return `somora-${server}`;
+}
+
+export function somoraMcpProxySpawn(args: {
+  server: string;
+  agent: string;
+}): { command: string; args: string[]; env: Record<string, string> } {
+  const useLocalTsx = existsSync(TSX_BIN_REPO);
+  return {
+    command: useLocalTsx ? TSX_BIN_REPO : 'npx',
+    args: useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS],
+    env: {
+      // filterEnv carries SOMORA_HOME (catalog path) and SOMORA_HOST/
+      // PORT/TLS (HTTP-forward endpoint) from the parent server.
+      ...filterEnv(process.env),
+      SOMORA_AGENT: args.agent,
+      SOMORA_MCP_PROXY_SERVER: args.server,
+    },
+  };
+}
+
+/** codex-cli variant of the proxy entry — `-c` TOML flags, mirroring
+ *  somoraMemoryCodexFlags. `toolTimeoutSec` should cover the per-server
+ *  tools/call budget plus forward round-trip. */
+export function somoraMcpProxyCodexFlags(args: {
+  server: string;
+  agent: string;
+  toolTimeoutSec: number;
+}): string[] {
+  const useLocalTsx = existsSync(TSX_BIN_REPO);
+  const command = useLocalTsx ? TSX_BIN_REPO : 'npx';
+  const cmdArgs = useLocalTsx ? [MCP_SERVER_TS] : ['tsx', MCP_SERVER_TS];
+  const argsToml = `[${cmdArgs.map(tomlString).join(', ')}]`;
+  const name = somoraMcpProxyName(args.server);
+
+  const envMap = new Map<string, string>();
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v !== 'string') continue;
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
+    envMap.set(k, v);
+  }
+  envMap.set('SOMORA_AGENT', args.agent);
+  envMap.set('SOMORA_MCP_PROXY_SERVER', args.server);
+  const envToml = `{ ${[...envMap].map(([k, v]) => `${k} = ${tomlString(v)}`).join(', ')} }`;
+
+  return [
+    '-c',
+    `mcp_servers.${name}.command=${tomlString(command)}`,
+    '-c',
+    `mcp_servers.${name}.args=${argsToml}`,
+    '-c',
+    `mcp_servers.${name}.env=${envToml}`,
+    '-c',
+    `mcp_servers.${name}.default_tools_approval_mode="approve"`,
+    '-c',
+    `mcp_servers.${name}.tool_timeout_sec=${args.toolTimeoutSec}`,
+  ];
+}
+
+/**
  * codex-cli takes runtime config via `-c key=value` flags, where value
  * is parsed as TOML. Build the trio of flags that registers the
  * somora-memory MCP server for one `codex exec` invocation.

@@ -83,6 +83,13 @@ workspace:
 resources:
   deny: ['production-db']
 
+# Optional: per-agent tool visibility — uniform for built-in and
+# external MCP tools. Patterns: exact name, toolset:<tag>, trailing-*
+# glob. deny beats allow; no section = agent sees everything. See mcp.md.
+tools:
+  deny: ['toolset:exec', 'mcp__parallel__*']
+  allow: []
+
 # Optional: REM phase (per-agent session→memory extraction)
 rem:
   enabled: true

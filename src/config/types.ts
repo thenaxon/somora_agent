@@ -1124,6 +1124,64 @@ export const AttachmentsConfigSchema = z
   });
 export type AttachmentsConfig = z.infer<typeof AttachmentsConfigSchema>;
 
+// External MCP servers (design: private/mcp-hub-design.md). The main
+// server is the single MCP client ("hub"); discovered tools are bridged
+// into the ToolRegistry and proxied to claude-cli/codex-cli via the MCP
+// child. Phase 1: remote HTTP servers, tools-only.
+//
+// Server-name charset deliberately EXCLUDES underscore: the
+// `mcp__<server>__<tool>` convention parses/strips on `__`, and both
+// somora's shortToolName regex and the reverse-parse in other clients
+// break when the server segment itself contains `_`. Hyphens only.
+export const McpServerConfigSchema = z.object({
+  /** Phase 1 supports remote HTTP only (streamable-http with automatic
+   *  SSE-legacy fallback). `stdio` is Phase 2. */
+  transport: z.literal('http').default('http'),
+  url: z.string().url(),
+  /** Static request headers. Values support `${VAR}` / `${VAR:-default}`
+   *  env expansion at connect time — `Authorization: "Bearer ${TOKEN}"`
+   *  is the idiom for API-key auth. Missing vars fail the connect (state
+   *  `failed`), never the config load. */
+  headers: z.record(z.string(), z.string()).default({}),
+  enabled: z.boolean().default(true),
+  /** Which upstream tools to import. Empty include = all. Exclude wins. */
+  tools: z
+    .object({
+      include: z.array(z.string()).default([]),
+      exclude: z.array(z.string()).default([]),
+    })
+    .default({ include: [], exclude: [] }),
+  /** Per tools/call timeout. */
+  timeoutMs: z.number().int().positive().default(60_000),
+  connectTimeoutMs: z.number().int().positive().default(15_000),
+  /** Registry-side cap on the stringified result (DEFAULT_MAX_RESULT_SIZE_CHARS). */
+  maxResultChars: z.number().int().positive().optional(),
+  /** Servers are called serially by default — many MCP servers mishandle
+   *  concurrent requests. Opt in per server only when it's known-safe. */
+  supportsParallelToolCalls: z.boolean().default(false),
+});
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+
+export const McpConfigSchema = z
+  .object({
+    servers: z
+      .record(
+        z
+          .string()
+          .regex(
+            /^[a-z0-9][a-z0-9-]{0,29}$/,
+            'MCP server name must match [a-z0-9][a-z0-9-]{0,29} (no underscores)',
+          )
+          .refine((n) => n !== 'memory', {
+            message: 'MCP server name "memory" collides with somora-memory',
+          }),
+        McpServerConfigSchema,
+      )
+      .default({}),
+  })
+  .default({ servers: {} });
+export type McpConfig = z.infer<typeof McpConfigSchema>;
+
 export const ConfigSchema = z.object({
   server: z
     .object({
@@ -1162,6 +1220,7 @@ export const ConfigSchema = z.object({
   obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
   attachments: AttachmentsConfigSchema,
+  mcp: McpConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;
 

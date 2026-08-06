@@ -128,7 +128,8 @@ export type Toolset =
   | 'agents'
   | 'skills'
   | 'projects'
-  | 'sentinel';
+  | 'sentinel'
+  | 'mcp';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
   readonly name: string;
@@ -140,6 +141,12 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
    * tools always declare their family.
    */
   readonly toolset: Toolset;
+  /**
+   * Set on tools bridged from an external MCP server (toolset 'mcp').
+   * Carries the config-key of the upstream server for logging, UI
+   * grouping and per-agent gating.
+   */
+  readonly origin?: { mcpServer: string };
   /**
    * Cap on the JSON-stringified result. Registry truncates and replaces
    * the payload with a `{ truncated: true, ... }` marker if the handler

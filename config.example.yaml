@@ -503,6 +503,32 @@ providers:
 # sentinel:
 #   completedRetentionDays: 7
 
+# External MCP servers (docs/mcp.md). somora connects as MCP client,
+# imports the servers' tools and offers them to every engine next to the
+# built-in tools, namespaced `mcp__<server>__<tool>`. Phase 1 supports
+# remote HTTP servers (streamable-http, automatic SSE fallback) with
+# static header auth; header values expand `${VAR}` / `${VAR:-default}`
+# from the server process env at connect time.
+#
+# Server names: lowercase letters/digits/hyphens, max 30 chars, no
+# underscores (they'd break the `mcp__…__` name parsing).
+#
+# Per-agent visibility is controlled in each agent's agent.yaml
+# (`tools:` section) — see docs/mcp.md.
+# mcp:
+#   servers:
+#     parallel:
+#       url: https://mcp.parallel.ai/v1beta/search_mcp/
+#       headers:
+#         x-api-key: "${PARALLEL_API_KEY}"
+#       # enabled: true
+#       # tools:
+#       #   include: []            # empty = all tools the server offers
+#       #   exclude: []
+#       # timeoutMs: 60000         # per tool call
+#       # connectTimeoutMs: 15000
+#       # supportsParallelToolCalls: false   # keep serial unless known-safe
+
 # TUI display defaults for the Ink CLI. Render-only — the server still
 # injects memory and runs tools regardless. Live-toggle via /show and
 # /verbose slash commands.

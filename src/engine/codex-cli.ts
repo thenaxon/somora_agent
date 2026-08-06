@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { somoraMemoryCodexFlags } from '../mcp/config.ts';
+import { somoraMcpProxyCodexFlags, somoraMemoryCodexFlags } from '../mcp/config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import {
@@ -265,6 +265,19 @@ export const codexCliEngine: AgentEngine = {
         activeModelRef: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
       }),
     );
+    // One somora-<name> proxy entry per external MCP server (design
+    // §4.4) — same child binary in proxy mode, forwards to the hub.
+    // tool_timeout_sec covers the per-server call budget + 2s forward
+    // round-trip buffer.
+    for (const srv of input.externalMcpServers ?? []) {
+      args.push(
+        ...somoraMcpProxyCodexFlags({
+          server: srv.name,
+          agent,
+          toolTimeoutSec: Math.ceil(srv.timeoutMs / 1000) + 2,
+        }),
+      );
+    }
     // Disable all of codex's built-in tools (DECISION #23 — engine-agnostic
     // tool surface; only somora-defined tools should be available). codex's
     // default-on tools include shell, file-editing, browser, image-gen,

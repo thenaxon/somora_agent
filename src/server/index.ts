@@ -2,6 +2,9 @@ import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { streamSSEH2Safe } from './sse-h2-safe.ts';
+import { bridgeMcpTools } from '../mcp/hub/bridge.ts';
+import { writeCatalog } from '../mcp/hub/catalog.ts';
+import { McpHubManager } from '../mcp/hub/manager.ts';
 import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -521,6 +524,31 @@ logger.info({
   names: tools.list().map((t) => t.name).join(','),
 });
 
+// MCP hub — the SINGLE MCP client for external servers (design:
+// private/mcp-hub-design.md). Discovered tools bridge into the registry
+// above (openai-compat path); the per-turn MCP children in proxy mode
+// read the catalog snapshot and forward calls to POST /mcp/call.
+// Lazy: warmup() fires the connects in the background, boot never
+// blocks on an external server.
+const mcpHub = new McpHubManager(config.mcp);
+if (mcpHub.enabled) {
+  bridgeMcpTools(mcpHub, tools);
+  let snapshotTimer: NodeJS.Timeout | null = null;
+  mcpHub.addCatalogListener(() => {
+    // Debounce: a connect burst at warmup would otherwise write the
+    // snapshot once per server.
+    if (snapshotTimer) clearTimeout(snapshotTimer);
+    snapshotTimer = setTimeout(() => {
+      writeCatalog(mcpHub.status(), mcpHub.connectedTools()).catch((err) =>
+        logger.warn({ msg: 'mcp.hub.catalog_write_failed', err: (err as Error).message }),
+      );
+    }, 250);
+    snapshotTimer.unref();
+  });
+  mcpHub.warmup();
+  logger.info({ msg: 'mcp.hub.enabled', servers: mcpHub.serverNames() });
+}
+
 const app = new Hono();
 
 app.use('*', async (c, next) => {
@@ -879,6 +907,58 @@ app.post('/sentinel/triggers/:id/test', async (c) => {
 
 app.get('/sentinel/status', (c) => {
   return c.json(sentinelScheduler.schedulerStatus());
+});
+
+// --- External MCP servers (hub) — design private/mcp-hub-design.md §4.5.
+// Loopback-only posture like /tools (DECISION #31): no auth header, the
+// network boundary is the trust boundary.
+
+function mcpDisabled(c: Context) {
+  return c.json(
+    { error: 'no external MCP servers configured — add mcp.servers to ~/.somora/config.yaml' },
+    503,
+  );
+}
+
+app.get('/mcp/status', (c) => {
+  if (!mcpHub.enabled) return mcpDisabled(c);
+  return c.json({ enabled: true, servers: mcpHub.status() });
+});
+
+// Internal dispatch endpoint for the MCP-child proxy mode (and curl
+// debugging). Body: { server, tool (raw upstream name), args, timeoutMs? }.
+app.post('/mcp/call', async (c) => {
+  if (!mcpHub.enabled) return mcpDisabled(c);
+  const body = (await c.req.json().catch(() => null)) as {
+    server?: string;
+    tool?: string;
+    args?: Record<string, unknown>;
+    timeoutMs?: number;
+  } | null;
+  if (!body?.server || !body.tool) {
+    return c.json({ error: 'server and tool are required' }, 400);
+  }
+  try {
+    const result = await mcpHub.callTool(
+      body.server,
+      body.tool,
+      body.args ?? {},
+      typeof body.timeoutMs === 'number' ? body.timeoutMs : undefined,
+    );
+    return c.json(result);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 502);
+  }
+});
+
+app.post('/mcp/servers/:name/reconnect', async (c) => {
+  if (!mcpHub.enabled) return mcpDisabled(c);
+  try {
+    const status = await mcpHub.reconnect(c.req.param('name'));
+    return c.json({ ok: true, status });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
 });
 
 // Heartbeat for the PTY-bridge WebSockets (/terminal/attach +

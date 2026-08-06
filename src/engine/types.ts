@@ -133,6 +133,17 @@ export interface TurnInput {
    */
   tools?: ToolInvoker;
   /**
+   * External MCP servers (config.yaml `mcp.servers`, enabled entries
+   * only) — design private/mcp-hub-design.md §4.4. CLI engines add one
+   * proxy MCP-child entry `somora-<name>` per server next to
+   * somora-memory; the child serves the hub's catalog snapshot and
+   * forwards calls to the main server. The openai-compatible engine
+   * ignores this — its external tools arrive pre-bridged via `tools`.
+   * `timeoutMs` is the per-server tools/call budget (drives codex's
+   * tool_timeout_sec on the proxy entry).
+   */
+  externalMcpServers?: Array<{ name: string; timeoutMs: number }>;
+  /**
    * Agent-loop tunables (max rounds, per-tool timeout). Same scope as
    * `tools` — only consumed by engines with their own loop. Resolved
    * server-side from config.yaml `agentLoop:` section.

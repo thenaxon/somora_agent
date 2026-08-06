@@ -135,6 +135,20 @@ const AgentYamlSchema = z
      * deny-all, missing-key-means-allow-all).
      */
     skills: z.array(z.string().min(1)).optional(),
+    /**
+     * Per-agent tool visibility (design: private/mcp-hub-design.md
+     * §4.6). Applies uniformly to built-in AND external MCP tools.
+     * Patterns: exact name (`web_search`), toolset tag
+     * (`toolset:exec`), trailing-* glob (`mcp__parallel__*`).
+     * deny beats allow; empty/missing allow = everything not denied;
+     * section missing = no restriction.
+     */
+    tools: z
+      .object({
+        deny: z.array(z.string().min(1)).optional(),
+        allow: z.array(z.string().min(1)).optional(),
+      })
+      .optional(),
     rem: RemConfigSchema.optional(),
   })
   .passthrough();
@@ -176,6 +190,12 @@ export interface Persona {
    * of "empty"; see `private/skills-design.md`.
    */
   skillsAllowList: string[] | undefined;
+  /**
+   * Per-agent tool visibility from agent.yaml `tools:`. `undefined` =
+   * no restriction. Enforced at both list surfaces (in-process
+   * ToolInvoker and MCP-child tools/list) via src/tools/gating.ts.
+   */
+  toolGating: { deny: string[]; allow: string[] } | undefined;
   rem: RemConfig | undefined;
   systemPrompt: string;
 }
@@ -291,6 +311,9 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
     skillsAllowList: agentYaml.skills,
+    toolGating: agentYaml.tools
+      ? { deny: agentYaml.tools.deny ?? [], allow: agentYaml.tools.allow ?? [] }
+      : undefined,
     rem: agentYaml.rem,
     systemPrompt: sections.join('\n\n---\n\n'),
   };

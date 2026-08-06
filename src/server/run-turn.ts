@@ -47,6 +47,7 @@ import { injectMemoryContext } from '../memory/inject.ts';
 import { getMemoryManager } from '../memory/registry.ts';
 import { logger } from './logger.ts';
 import { loadPersona, type Persona } from '../persona/loader.ts';
+import { isToolAllowed } from '../tools/gating.ts';
 import { loadAvailableSkills } from '../skills/load.ts';
 import { buildSkillsRegistry } from '../skills/registry.ts';
 import { createTurnSerializer } from './sse-serializer.ts';
@@ -723,7 +724,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       // the same active model.
       activeModel: resolvedModel,
     };
-    const availableTools = await deps.tools.listAvailable(toolCtx);
+    // Per-agent gating (agent.yaml tools:) filters the LIST the model
+    // sees; invoke() stays unfiltered by design — a queued call for a
+    // just-denied tool failing mid-turn would be more confusing than
+    // letting it finish. The MCP child applies the same filter for the
+    // CLI engines (src/tools/gating.ts is the single matcher).
+    const availableTools = (await deps.tools.listAvailable(toolCtx)).filter((t) =>
+      isToolAllowed(t.name, t.toolset, persona.toolGating),
+    );
     const toolInvoker = {
       list: () => availableTools,
       invoke: (name: string, input: unknown) => deps.tools.invoke(name, input, toolCtx),
@@ -811,6 +819,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         availableModels: listAllModels(deps.config),
         compactionConfig: resolveCompactionConfig(deps.config),
         tools: toolInvoker,
+        // External MCP servers → CLI engines add one somora-<name>
+        // proxy child per entry (design §4.4). Per-agent gating happens
+        // inside the child (same matcher as the toolInvoker filter
+        // above), so the entry list itself is agent-independent.
+        externalMcpServers: Object.entries(deps.config.mcp.servers)
+          .filter(([, cfg]) => cfg.enabled)
+          .map(([name, cfg]) => ({ name, timeoutMs: cfg.timeoutMs })),
         agentLoopConfig: agentLoopOverride
           ? { ...deps.config.agentLoop, ...agentLoopOverride }
           : deps.config.agentLoop,
