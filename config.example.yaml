@@ -528,6 +528,18 @@ providers:
 #       # timeoutMs: 60000         # per tool call
 #       # connectTimeoutMs: 15000
 #       # supportsParallelToolCalls: false   # keep serial unless known-safe
+#     # Servers that authenticate via an interactive OAuth login (token
+#     # in a JSON file, self-refreshed by the hub). Claude Design ships
+#     # as a one-line preset — see docs/mcp.md for the one-time login:
+#     claude-design:
+#       preset: claude-design
+#     # Generic form for other such servers:
+#     # my-oauth-server:
+#     #   url: https://example.com/mcp
+#     #   auth:
+#     #     type: oauth-refresh
+#     #     credentialKey: myServiceOauth
+#     #     tokenEndpoint: https://example.com/oauth/token
 
 # TUI display defaults for the Ink CLI. Render-only — the server still
 # injects memory and runs tools regardless. Live-toggle via /show and

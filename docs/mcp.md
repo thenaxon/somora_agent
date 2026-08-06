@@ -118,6 +118,79 @@ untouched). If an agent's `agent.yaml` carries hand-written pattern
 rules (globs, `toolset:`, allow-lists), the matrix shows them and goes
 read-only — the UI never rewrites operator policy it can't represent.
 
+## Servers that need an interactive OAuth login
+
+Some MCP servers don't take an API key — they authenticate with an
+OAuth login that grants a short-lived token which must be refreshed.
+somora supports these when the login is performed by a tool that writes
+the credential to a JSON file (today: Claude Code's `/design-login`).
+The hub reads the token from that file, refreshes it against the token
+endpoint as it nears expiry, and rotates it back — so every engine gets
+the tools with no per-engine login.
+
+```yaml
+mcp:
+  servers:
+    my-oauth-server:
+      url: https://example.com/mcp
+      auth:
+        type: oauth-refresh
+        credentialKey: myServiceOauth          # top-level key in the credentials file
+        tokenEndpoint: https://example.com/oauth/token
+        # credentialFile defaults to ~/.somora/claude-home/.credentials.json
+      headers:                                 # optional extra static headers
+        X-Client: my-client
+```
+
+The credential file is **never** in config — it is provisioned by the
+interactive login. If the refresh token expires or is revoked, the
+server shows `needs-auth` and you re-run the login.
+
+### Claude Design
+
+[Claude Design](https://claude.ai/design) exposes an official MCP server
+(`https://api.anthropic.com/v1/design/mcp`), but it authenticates only
+against a claude.ai account via an interactive login — there is no API
+key. somora reaches it through a one-time login into somora's isolated
+Claude config directory, after which the hub reuses and refreshes the
+credential for all engines.
+
+> **Unsupported / may break.** This uses the same first-party login
+> Claude Code uses; Anthropic does not document third-party access and
+> could change it at any time. Treat it as experimental.
+
+**One-time setup:**
+
+1. Add the server with a single preset line:
+   ```yaml
+   mcp:
+     servers:
+       claude-design:
+         preset: claude-design   # fills url, auth, and the X-Anthropic-Client header
+   ```
+2. Register the connector in somora's Claude config dir (once):
+   ```
+   CLAUDE_CONFIG_DIR=~/.somora/claude-home claude mcp add --scope user \
+     --transport http claude-design https://api.anthropic.com/v1/design/mcp
+   ```
+3. Log in interactively — this is the only step that needs a browser and
+   a real terminal (not somora):
+   ```
+   CLAUDE_CONFIG_DIR=~/.somora/claude-home claude
+   ```
+   then inside that session run `/design-login` and complete the browser
+   flow. It writes a `designOauth` credential into
+   `~/.somora/claude-home/.credentials.json`.
+   - Tip: the login URL sits in a TUI that captures the mouse — hold
+     **Shift** while selecting to copy it.
+4. Restart somora (`systemctl --user restart somora`) and check
+   `curl -s localhost:18737/mcp/status` — `claude-design` should be
+   `connected` with its tool count.
+
+From then on the hub refreshes the token automatically (~8-hour
+lifetime, rotated on each refresh). When the refresh token itself
+eventually expires, re-run step 3.
+
 ## What works today — and what doesn't (yet)
 
 Before adding a server, classify it. Three questions decide everything:
@@ -131,10 +204,13 @@ Before adding a server, classify it. Three questions decide everything:
    package, use the URL.
 2. **How does it authenticate?** No auth or a **static API key/token
    header** works (`headers:` + `${VAR}` from `~/.somora/somora.env`).
-   **OAuth login flows** (server sends you to a browser to sign in)
-   are **not supported yet** — the server will sit at `needs-auth`/
-   `failed`. Check the service's docs for an API-key option; many
-   offer both.
+   An **OAuth login** whose credential is written to a JSON file by an
+   interactive login tool works via `auth: {type: oauth-refresh}` (see
+   "Servers that need an interactive OAuth login" above; Claude Design
+   is the worked example). A **browser OAuth flow with no file-based
+   credential** (dynamic client registration against the server itself)
+   is **not supported yet**. Check the service's docs for an API-key
+   option; many offer both.
 3. **What does it offer?** Only **tools** are imported. Servers whose
    value is MCP *resources*, *prompts*, or interactive *elicitation*
    only work for their tools; the rest is ignored. Tool results:
