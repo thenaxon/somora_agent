@@ -30,6 +30,13 @@ import type { McpConfig, McpServerConfig } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { argsHead, auditMcpCall } from './audit.ts';
 import {
+  applyMcpPreset,
+  assertHasUrl,
+  buildCredentialProvider,
+  type CredentialProvider,
+} from './credentials.ts';
+import { expandEnvString, MissingEnvVarError } from './env-expand.ts';
+import {
   buildToolNames,
   capDescription,
   normalizeInputSchema,
@@ -79,6 +86,10 @@ const BACKOFF_CAP_MS = 60_000;
 interface ServerRuntime {
   name: string;
   cfg: McpServerConfig;
+  /** Resolved endpoint URL (after preset expansion). */
+  url: string;
+  /** Auth/header provider (static or self-refreshing OAuth). */
+  credentials: CredentialProvider;
   state: McpServerState;
   client: Client | null;
   transportKind?: 'streamable-http' | 'sse';
@@ -97,23 +108,15 @@ interface ServerRuntime {
   callChain: Promise<unknown>;
 }
 
-/** `${VAR}` / `${VAR:-default}` expansion (claude-code idiom). Throws a
- *  PermanentConnectError on missing vars so the server parks instead of
- *  hot-retrying. */
-export function expandEnvString(input: string, env: NodeJS.ProcessEnv = process.env): string {
-  return input.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_m, name: string, def?: string) => {
-    const v = env[name];
-    if (v !== undefined && v !== '') return v;
-    if (def !== undefined) return def;
-    throw new PermanentConnectError(`missing env var \${${name}}`);
-  });
-}
-
-class PermanentConnectError extends Error {}
-
 function isPermanentError(err: unknown): boolean {
-  if (err instanceof PermanentConnectError) return true;
+  // A missing env var (static-header auth) or an unrecoverable oauth
+  // state (no refresh token, refresh rejected) can't get better on a
+  // hot retry — park.
+  if (err instanceof MissingEnvVarError) return true;
   const msg = String((err as Error)?.message ?? err);
+  if (/re-login required|no refresh_token|credential file not found|credential key/i.test(msg)) {
+    return true;
+  }
   return (
     /\b(401|403)\b/.test(msg) ||
     /unauthorized|forbidden/i.test(msg) ||
@@ -150,10 +153,21 @@ export class McpHubManager {
 
   constructor(mcpConfig: McpConfig, opts?: { onCatalogChange?: () => void }) {
     if (opts?.onCatalogChange) this.catalogListeners.add(opts.onCatalogChange);
-    for (const [name, cfg] of Object.entries(mcpConfig.servers)) {
+    for (const [name, rawCfg] of Object.entries(mcpConfig.servers)) {
+      // Expand known-service presets (claude-design → url/auth/headers).
+      const cfg = applyMcpPreset(name, rawCfg);
+      let url: string;
+      try {
+        url = assertHasUrl(name, cfg);
+      } catch (err) {
+        logger.warn({ msg: 'mcp.hub.config_invalid', server: name, error: (err as Error).message });
+        continue;
+      }
       this.servers.set(name, {
         name,
         cfg,
+        url,
+        credentials: buildCredentialProvider(cfg),
         state: cfg.enabled ? 'pending' : 'disabled',
         client: null,
         tools: [],
@@ -391,14 +405,12 @@ export class McpHubManager {
   private async connectInner(s: ServerRuntime): Promise<void> {
     s.state = 'pending';
     try {
-      const url = new URL(expandEnvString(s.cfg.url));
-      const headers: Record<string, string> = {};
-      for (const [k, v] of Object.entries(s.cfg.headers)) {
-        // Header names are case-insensitive but object spreads preserve
-        // case — lowercase to avoid duplicate Authorization on the wire
-        // (OpenClaw lesson).
-        headers[k.toLowerCase()] = expandEnvString(v);
-      }
+      const url = new URL(s.url);
+      // Provider resolves auth+static headers fresh — an oauth-refresh
+      // provider refreshes the token here if it's near expiry. Header
+      // names are already lowercased by the provider (avoids duplicate
+      // Authorization on the wire, OpenClaw lesson).
+      const headers = await s.credentials.resolveHeaders();
 
       const { client, kind } = await this.handshake(s, url, headers);
       s.client = client;

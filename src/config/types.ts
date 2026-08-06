@@ -1133,11 +1133,38 @@ export type AttachmentsConfig = z.infer<typeof AttachmentsConfigSchema>;
 // `mcp__<server>__<tool>` convention parses/strips on `__`, and both
 // somora's shortToolName regex and the reverse-parse in other clients
 // break when the server segment itself contains `_`. Hyphens only.
+// Auth for MCP servers whose credential is an OAuth login that expires
+// and must be refreshed (design: private/mcp-hub-design.md §4.8). The
+// credential is NOT in config.yaml — it lives in a JSON file written by
+// an interactive login (e.g. Claude Code's `/design-login`), keyed by a
+// top-level property. The hub reads the access token from there and
+// refreshes it against `tokenEndpoint` when it nears expiry, writing the
+// rotated token back. This is the generic mechanism; `preset` below
+// fills it in for known services.
+export const McpOAuthRefreshSchema = z.object({
+  type: z.literal('oauth-refresh'),
+  /** JSON file holding the credential. Default: somora's claude-home
+   *  `.credentials.json` (where `/design-login` writes). `~` expands. */
+  credentialFile: z.string().optional(),
+  /** Top-level key in that file, e.g. `designOauth`. */
+  credentialKey: z.string().min(1),
+  /** OAuth token endpoint for the refresh_token grant. */
+  tokenEndpoint: z.string().url(),
+});
+export type McpOAuthRefresh = z.infer<typeof McpOAuthRefreshSchema>;
+
 export const McpServerConfigSchema = z.object({
+  /** Known-service preset — fills url/auth/headers so the operator only
+   *  writes `preset: claude-design`. Explicit fields still override. */
+  preset: z.enum(['claude-design']).optional(),
   /** Phase 1 supports remote HTTP only (streamable-http with automatic
    *  SSE-legacy fallback). `stdio` is Phase 2. */
   transport: z.literal('http').default('http'),
-  url: z.string().url(),
+  // Optional when a preset supplies it; validated as URL post-expansion.
+  url: z.string().url().optional(),
+  /** Refreshable-OAuth auth (see McpOAuthRefreshSchema). Omit for
+   *  static-header / no-auth servers. */
+  auth: McpOAuthRefreshSchema.optional(),
   /** Static request headers. Values support `${VAR}` / `${VAR:-default}`
    *  env expansion at connect time — `Authorization: "Bearer ${TOKEN}"`
    *  is the idiom for API-key auth. Missing vars fail the connect (state
