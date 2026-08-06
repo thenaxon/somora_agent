@@ -348,7 +348,7 @@ and codex-cli) — same tool surface regardless of model.
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
 | resources | `resource_list`, `resource_test` | Discover/probe configured SSH targets. |
 | time | `time_now` | Current date/time/timezone. |
-| mcp | `mcp__<server>__*` | Tools from external [MCP servers](docs/mcp.md) — one config entry, all engines see them, gateable per agent. |
+| mcp | `mcp__<server>__*` | Tools from external [MCP servers](docs/mcp.md) — one config entry, all engines see them, gateable per agent. Remote HTTP with API-key or refreshable-OAuth login auth (e.g. [Claude Design](docs/mcp.md#claude-design)). |
 
 See [docs/tools.md](docs/tools.md) for the full surface, and
 [docs/mcp.md](docs/mcp.md) for plugging in external MCP servers.
