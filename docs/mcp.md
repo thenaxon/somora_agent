@@ -20,6 +20,28 @@ That's the whole setup for a hosted server. Header values expand
 `${VAR}` / `${VAR:-default}` from the server environment, so secrets
 stay out of the config file.
 
+## Adding a server, step by step
+
+Works the same whether a human or a somora agent (via its own tools)
+does it:
+
+1. **Add the entry** to `mcp.servers` in `~/.somora/config.yaml`
+   (agents: `file_patch`). Server name: lowercase letters, digits,
+   hyphens — max 30 chars, no underscores.
+2. **Put the secret in the environment**, not the config: append
+   `MY_KEY=...` to `~/.somora/somora.env` and reference it as
+   `${MY_KEY}` in the `headers:` block. The env file is read at server
+   start.
+3. **Restart somora** — the hub reads `mcp.servers` at boot, config
+   edits alone don't connect anything: `systemctl --user restart
+   somora`. Agents: be aware this cuts your own running turn; finish
+   your reply first or ask the user to restart.
+4. **Verify**: `curl -s localhost:18737/mcp/status` should show the
+   server `connected` with a tool count, and the new
+   `mcp__<server>__*` tools appear in the tool list (web UI: tools
+   tile). A `failed`/`needs-auth` state with `lastError` usually means
+   a wrong URL or missing/wrong API key.
+
 ## How it works
 
 somora runs a single MCP **client hub** in the server process. It holds
