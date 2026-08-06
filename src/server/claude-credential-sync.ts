@@ -171,6 +171,71 @@ export function credentialSyncStatus(): CredentialPairStatus {
   };
 }
 
+/** Expiry (ms epoch) of a specific top-level credential key, or null. */
+function keyExpiresAt(obj: Record<string, unknown>, key: string): number | null {
+  const entry = obj[key];
+  if (entry === null || typeof entry !== 'object') return null;
+  const v = (entry as { expiresAt?: unknown }).expiresAt;
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Merge two credential files preserving foreign top-level keys (anything
+ * other than `claudeAiOauth` — e.g. `designOauth`). Returns the merged
+ * JSON string, or NULL when neither side carries a foreign key (the
+ * common case → caller keeps the original whole-file-overwrite path with
+ * its tested behavior). Base is the claudeAiOauth winner; each foreign
+ * key resolves to the copy with the later `expiresAt` (present-side wins
+ * when only one has it, later-expiry wins when both do).
+ */
+export function mergeForeignCredentialKeys(
+  userContent: string,
+  somoraContent: string,
+  userWins: boolean,
+): string | null {
+  let user: Record<string, unknown>;
+  let somora: Record<string, unknown>;
+  try {
+    user = JSON.parse(userContent) as Record<string, unknown>;
+    somora = JSON.parse(somoraContent) as Record<string, unknown>;
+  } catch {
+    // A side doesn't parse → no safe merge; fall back to overwrite path.
+    return null;
+  }
+  const foreignKeys = new Set<string>();
+  for (const k of [...Object.keys(user), ...Object.keys(somora)]) {
+    if (k !== 'claudeAiOauth') foreignKeys.add(k);
+  }
+  if (foreignKeys.size === 0) return null;
+
+  const winner = userWins ? user : somora;
+  const merged: Record<string, unknown> = { ...winner };
+  for (const key of foreignKeys) {
+    const inUser = key in user;
+    const inSomora = key in somora;
+    if (inUser && inSomora) {
+      const ue = keyExpiresAt(user, key);
+      const se = keyExpiresAt(somora, key);
+      // Later expiry wins; if equal/unknown, keep the claudeAiOauth
+      // winner's copy (already in `merged` when winner has the key).
+      if (ue !== null && se !== null) {
+        merged[key] = ue >= se ? user[key] : somora[key];
+      } else if (se !== null && ue === null) {
+        merged[key] = somora[key];
+      } else if (ue !== null && se === null) {
+        merged[key] = user[key];
+      } else {
+        merged[key] = winner[key] ?? user[key] ?? somora[key];
+      }
+    } else if (inUser) {
+      merged[key] = user[key];
+    } else {
+      merged[key] = somora[key];
+    }
+  }
+  return `${JSON.stringify(merged, null, 2)}\n`;
+}
+
 /** Core reconcile with explicit paths — pure enough for unit tests.
  *  `user` is the interactive CLI's file (~/.claude), `somora` is the
  *  isolated-config-dir file. Returns what happened. */
@@ -214,6 +279,29 @@ export function reconcileCredentialPair(userPath: string, somoraPath: string): C
     userWins = false;
   } else {
     userWins = statSync(userPath).mtimeMs >= statSync(somoraPath).mtimeMs;
+  }
+
+  // Foreign top-level keys — anything other than the primary
+  // `claudeAiOauth` login, e.g. the `designOauth` credential written by
+  // `/design-login`, or `mcpOAuth` from per-server MCP auth. The
+  // whole-file overwrite below would silently drop a foreign key that
+  // exists on only ONE side (the classic case: user runs /design-login
+  // on the somora side, then a routine claudeAiOauth refresh on the
+  // ~/.claude side "wins" and clobbers designOauth). Merge them across
+  // both sides — newest-expiry-wins per key — and write the SAME merged
+  // content to both files so they converge and the next tick is a noop.
+  const merged = mergeForeignCredentialKeys(userContent, somoraContent, userWins);
+  if (merged !== null) {
+    overwriteWithBackup(somoraPath, merged);
+    overwriteWithBackup(userPath, merged);
+    log.info({
+      msg: 'claude_credentials.sync_merged',
+      reason: 'foreign_keys_preserved',
+      userExpiresAt: userExp,
+      somoraExpiresAt: somoraExp,
+      hint: 'designOauth / other non-primary credentials kept across the sync instead of being clobbered',
+    });
+    return userWins ? 'pulled' : 'pushed';
   }
 
   if (userWins) {

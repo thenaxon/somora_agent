@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { reconcileCredentialPair } from './claude-credential-sync.ts';
+import { mergeForeignCredentialKeys, reconcileCredentialPair } from './claude-credential-sync.ts';
 
 let pass = 0;
 let fail = 0;
@@ -37,6 +37,32 @@ function cred(expiresAt: number, marker: string): string {
       subscriptionType: 'max',
     },
   });
+}
+
+/** claudeAiOauth + an optional designOauth foreign key. */
+function credWithDesign(
+  primaryExp: number,
+  marker: string,
+  designExp: number | null,
+): string {
+  const obj: Record<string, unknown> = {
+    claudeAiOauth: {
+      accessToken: `at-${marker}`,
+      refreshToken: `rt-${marker}`,
+      expiresAt: primaryExp,
+      scopes: ['user:inference'],
+      subscriptionType: 'max',
+    },
+  };
+  if (designExp !== null) {
+    obj.designOauth = {
+      accessToken: `design-at-${marker}`,
+      refreshToken: `design-rt-${marker}`,
+      expiresAt: designExp,
+      scopes: ['user:design:read', 'user:design:write'],
+    };
+  }
+  return JSON.stringify(obj);
 }
 
 function freshDirs(): { user: string; somora: string } {
@@ -175,6 +201,43 @@ const cleanups: string[] = [];
   write(somora, cred(4000, 'stale'));
   check('idempotent first pulled', reconcileCredentialPair(user, somora) === 'pulled');
   check('idempotent second noop', reconcileCredentialPair(user, somora) === 'noop');
+}
+
+// ── designOauth survives a claudeAiOauth "user wins" overwrite ────────
+// The critical case: /design-login wrote designOauth on the somora side,
+// then a routine claudeAiOauth refresh on the user side has a later
+// expiry. Old behavior clobbered designOauth; new behavior keeps it.
+{
+  const { user, somora } = freshDirs();
+  cleanups.push(join(user, '..', '..'));
+  write(user, credWithDesign(9000, 'user-fresh', null)); // no design here
+  write(somora, credWithDesign(4000, 'somora-old', 7777)); // design only here
+  const res = reconcileCredentialPair(user, somora);
+  check('design-preserve: merged result', res === 'pulled' || res === 'pushed', res);
+  const s = JSON.parse(readFileSync(somora, 'utf8'));
+  const u = JSON.parse(readFileSync(user, 'utf8'));
+  check('design-preserve: somora keeps designOauth', s.designOauth?.expiresAt === 7777);
+  check('design-preserve: user gains designOauth', u.designOauth?.expiresAt === 7777);
+  check('design-preserve: primary is user-fresh winner', s.claudeAiOauth?.accessToken === 'at-user-fresh');
+  check('design-preserve: converged (second pass noop)', reconcileCredentialPair(user, somora) === 'noop');
+}
+
+// ── designOauth present both sides → later expiry wins ────────────────
+{
+  const { user, somora } = freshDirs();
+  cleanups.push(join(user, '..', '..'));
+  write(user, credWithDesign(9000, 'u', 5555)); // primary winner, older design
+  write(somora, credWithDesign(4000, 's', 8888)); // primary loser, newer design
+  reconcileCredentialPair(user, somora);
+  const s = JSON.parse(readFileSync(somora, 'utf8'));
+  check('design-both: newer design wins', s.designOauth?.expiresAt === 8888);
+  check('design-both: newer design token', s.designOauth?.accessToken === 'design-at-s');
+  check('design-both: primary still user winner', s.claudeAiOauth?.accessToken === 'at-u');
+}
+
+// ── no foreign keys → unchanged classic overwrite path (regression) ───
+{
+  check('no-foreign: mergeForeignCredentialKeys returns null', mergeForeignCredentialKeys(cred(5000, 'a'), cred(4000, 'b'), true) === null);
 }
 
 for (const dir of cleanups) rmSync(dir, { recursive: true, force: true });
