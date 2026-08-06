@@ -118,7 +118,32 @@ untouched). If an agent's `agent.yaml` carries hand-written pattern
 rules (globs, `toolset:`, allow-lists), the matrix shows them and goes
 read-only — the UI never rewrites operator policy it can't represent.
 
-## Server options
+## What works today — and what doesn't (yet)
+
+Before adding a server, classify it. Three questions decide everything:
+
+1. **How does it run?** A hosted **HTTP endpoint** (`https://…`) works.
+   A local **stdio package** (`npx @something/mcp-server`, `uvx …` —
+   anything you'd start as a command) is **not supported yet**.
+   **Never put `command:`/`args:` into `mcp.servers`** — the config
+   schema rejects it and somora will refuse to START until the entry
+   is removed. If the service offers both a hosted URL and an npm
+   package, use the URL.
+2. **How does it authenticate?** No auth or a **static API key/token
+   header** works (`headers:` + `${VAR}` from `~/.somora/somora.env`).
+   **OAuth login flows** (server sends you to a browser to sign in)
+   are **not supported yet** — the server will sit at `needs-auth`/
+   `failed`. Check the service's docs for an API-key option; many
+   offer both.
+3. **What does it offer?** Only **tools** are imported. Servers whose
+   value is MCP *resources*, *prompts*, or interactive *elicitation*
+   only work for their tools; the rest is ignored. Tool results:
+   text, JSON and images come through; audio/binary blobs are
+   dropped.
+
+If the answers are "HTTP + API key + tools", add it (see the
+step-by-step above) and check `/mcp/status`. Anything else: not yet —
+don't try to force it through the config.
 
 ```yaml
 mcp:
