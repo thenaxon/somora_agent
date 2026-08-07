@@ -23,7 +23,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { MCP_SERVER_NAME, somoraMemoryServerSpawn } from '../mcp/config.ts';
+import {
+  MCP_SERVER_NAME,
+  somoraMcpProxyName,
+  somoraMcpProxySpawn,
+  somoraMemoryServerSpawn,
+} from '../mcp/config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { withFromAgentHeader } from './a2a.ts';
@@ -112,27 +117,52 @@ interface AcpMcpServer {
  * (`somora-memory__time_now`), NOT with somora's own `mcp__` prefix.
  * See stripToolPrefix() for the normalisation applied before events
  * reach the rest of somora.
+ *
+ * Beyond somora-memory this also returns one `somora-<name>` proxy
+ * child per enabled external MCP server (hub design §4.4) — the same
+ * entries claude-cli and codex-cli add. grok-cli is a CLI engine, so
+ * it reaches external servers the CLI way: the child serves the hub's
+ * catalog snapshot and forwards tools/call to the main server, rather
+ * than receiving pre-bridged tools via `tools` like openai-compat.
+ * Per-agent gating happens inside the child (SOMORA_AGENT), so the
+ * entry list itself is agent-independent.
  */
 function buildMcpServers(args: {
   agent: string;
   session: string;
   subagentDepth?: number;
   activeModelRef?: string;
+  externalMcpServers?: Array<{ name: string; timeoutMs: number }>;
 }): AcpMcpServer[] {
+  const toAcpEnv = (env: Record<string, string>) =>
+    Object.entries(env).map(([name, value]) => ({ name, value }));
+
   const spawnCfg = somoraMemoryServerSpawn({
     agent: args.agent,
     session: args.session,
     subagentDepth: args.subagentDepth,
     activeModelRef: args.activeModelRef,
   });
-  return [
+  const servers: AcpMcpServer[] = [
     {
       name: MCP_SERVER_NAME,
       command: spawnCfg.command,
       args: spawnCfg.args,
-      env: Object.entries(spawnCfg.env).map(([name, value]) => ({ name, value })),
+      env: toAcpEnv(spawnCfg.env),
     },
   ];
+
+  for (const srv of args.externalMcpServers ?? []) {
+    const proxyCfg = somoraMcpProxySpawn({ server: srv.name, agent: args.agent });
+    servers.push({
+      name: somoraMcpProxyName(srv.name),
+      command: proxyCfg.command,
+      args: proxyCfg.args,
+      env: toAcpEnv(proxyCfg.env),
+    });
+  }
+
+  return servers;
 }
 
 /**
@@ -152,10 +182,20 @@ function buildMcpServers(args: {
  *   use_tool{tool_name:'somora-memory__time_now'}
  *                                → mcp__somora-memory__time_now
  *   somora-memory__memory_list   → mcp__somora-memory__memory_list
+ *   somora-parallel__web_search  → mcp__somora-parallel__web_search
  *   mcp__somora-memory__time_now → unchanged (already normalised)
  *   search_tool, read_file       → unchanged (grok's own built-ins)
+ *
+ * `serverNames` is the set of MCP entries actually handed to this
+ * session (somora-memory plus one somora-<name> per external server),
+ * so the prefix decision is an exact match against what we registered
+ * rather than a guess at what a `somora-`-shaped name might be.
  */
-function resolveToolName(rawTitle: string, rawInput: unknown): string {
+function resolveToolName(
+  rawTitle: string,
+  rawInput: unknown,
+  serverNames: ReadonlySet<string>,
+): string {
   let name = rawTitle;
 
   if (name === 'use_tool' && rawInput && typeof rawInput === 'object') {
@@ -165,8 +205,10 @@ function resolveToolName(rawTitle: string, rawInput: unknown): string {
     }
   }
 
-  if (name.startsWith(`${MCP_SERVER_NAME}__`)) {
-    return `mcp__${name}`;
+  for (const server of serverNames) {
+    if (name.startsWith(`${server}__`)) {
+      return `mcp__${name}`;
+    }
   }
   return name;
 }
@@ -487,7 +529,9 @@ export const grokCliEngine: AgentEngine = {
         session: input.session,
         subagentDepth: input.subagentDepth,
         activeModelRef: `${input.resolvedModel.providerName}/${input.resolvedModel.modelId}`,
+        externalMcpServers: input.externalMcpServers,
       });
+      const mcpServerNames = new Set(mcpServers.map((s) => s.name));
 
       let sessionId: string | null = null;
       if (priorSessionId) {
@@ -510,9 +554,13 @@ export const grokCliEngine: AgentEngine = {
           'session/new',
           { cwd, mcpServers },
           // MCP child startup (tsx + the somora server) adds a few
-          // seconds on top of the bare handshake — measured ~3.5s on
-          // 2026-07-20. Give session/new its own, longer budget.
-          HANDSHAKE_TIMEOUT_MS * 2,
+          // seconds on top of the bare handshake — measured ~3.5s for
+          // the single somora-memory child on 2026-07-20. External
+          // servers add one more child of the same binary each, so the
+          // budget scales per child instead of being a flat doubling.
+          // With no external servers configured this is exactly the
+          // previous `* 2`.
+          HANDSHAKE_TIMEOUT_MS * (1 + mcpServers.length),
         );
         const sid = (created.result as { sessionId?: string } | undefined)?.sessionId;
         if (created.error || !sid) {
@@ -728,7 +776,11 @@ export const grokCliEngine: AgentEngine = {
               ts: Date.now(),
               engine: ENGINE,
               callId: id,
-              tool: resolveToolName(upd.title ?? upd.kind ?? 'grok_tool', upd.rawInput),
+              tool: resolveToolName(
+                upd.title ?? upd.kind ?? 'grok_tool',
+                upd.rawInput,
+                mcpServerNames,
+              ),
               input: upd.rawInput ?? {},
             };
             break;
