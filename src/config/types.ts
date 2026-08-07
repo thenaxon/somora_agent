@@ -66,6 +66,22 @@ export const CodexCliProviderSchema = z.object({
   models: z.array(ModelSchema).min(1),
 });
 
+// grok-cli: xAI's Grok Build CLI driven over ACP (Agent Client
+// Protocol, JSON-RPC on stdio) via `grok agent stdio`. Auth is handled
+// by the binary itself — `grok login` writes a session to
+// ~/.grok/auth.json and the ACP handshake reports it as the
+// `cached_token` auth method. That session carries a SuperGrok/Premium
+// subscription, so no baseUrl / apiKey belong here; passing an
+// XAI_API_KEY env var instead switches the binary to pay-per-token API
+// billing (see docs/setup.md).
+//
+// Binary path override: SOMORA_GROK_BIN (default ~/.local/bin/grok),
+// mirroring SOMORA_CODEX_BIN / SOMORA_CLAUDE_BIN.
+export const GrokCliProviderSchema = z.object({
+  engine: z.literal('grok-cli'),
+  models: z.array(ModelSchema).min(1),
+});
+
 export const OpenAiCompatibleProviderSchema = z.object({
   engine: z.literal('openai-compatible'),
   baseUrl: z.string().url(),
@@ -125,6 +141,7 @@ export const OpenAiCompatibleProviderSchema = z.object({
 export const ProviderSchema = z.discriminatedUnion('engine', [
   ClaudeCliProviderSchema,
   CodexCliProviderSchema,
+  GrokCliProviderSchema,
   OpenAiCompatibleProviderSchema,
 ]);
 export type Provider = z.infer<typeof ProviderSchema>;
@@ -239,10 +256,12 @@ export type RemGlobalConfig = z.infer<typeof RemGlobalConfigSchema>;
 export const EngineWatchdogConfigSchema = z.object({
   claudeCliIdleMs: z.number().int().positive().default(300_000),
   codexCliIdleMs: z.number().int().positive().default(300_000),
+  grokCliIdleMs: z.number().int().positive().default(300_000),
   openaiCompatibleIdleMs: z.number().int().positive().default(1_200_000),
 }).default({
   claudeCliIdleMs: 300_000,
   codexCliIdleMs: 300_000,
+  grokCliIdleMs: 300_000,
   openaiCompatibleIdleMs: 1_200_000,
 });
 export type EngineWatchdogConfig = z.infer<typeof EngineWatchdogConfigSchema>;
