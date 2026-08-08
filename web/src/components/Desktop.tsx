@@ -6,8 +6,10 @@
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { useMemo } from 'react';
-import { AgentDock } from './AgentDock';
-import { AppDock } from './AppDock';
+import { Bell, BookOpen, MessagesSquare, Square, Terminal, Wrench } from 'lucide-react';
+import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
+import { AgentTile } from './AgentTile';
+import { AppTile } from './AppTile';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
 import { ChatWindow } from './ChatWindow';
@@ -27,6 +29,7 @@ import { useDreamStates } from '../hooks/useDreamStates';
 import { useLoopState } from '../hooks/useLoopState';
 import { useWindowManager } from '../hooks/useWindowManager';
 import { useActivityStream } from '../hooks/useActivityStream';
+import { useWikiEnabled } from '../hooks/useWikiEnabled';
 import { ActivityProvider } from './ActivityProvider';
 import type { AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
@@ -37,6 +40,7 @@ export function Desktop() {
   const dreamStates = useDreamStates();
   const wm = useWindowManager();
   const chatCtx = useChatContext();
+  const wikiEnabled = useWikiEnabled();
 
   // Cross-agent activity feed: covers streaming-dots for agents whose
   // chat window the user has NOT opened (ChatProvider only knows about
@@ -73,48 +77,144 @@ export function Desktop() {
       .map((w) => w.agentName as string),
   );
 
+  // Apps whose window is open — drives the .active highlight, same as
+  // activeAgentIds does for agents.
+  const activeApps = new Set(
+    wm.windows.flatMap((w) => {
+      if (w.kind === 'tmux-list') return ['tmux'];
+      if (w.kind === 'sessions-list') return ['sessions'];
+      if (w.kind === 'sentinel') return ['sentinel'];
+      if (w.kind === 'wiki') return ['wiki'];
+      if (w.kind === 'tools') return ['tools'];
+      return [];
+    }),
+  );
+
+  const lucidPending = dreamStates?.lucid.pendingFindings ?? 0;
+  const lucidOldestPendingAt = dreamStates?.lucid.oldestPendingAt;
+
+  // One flat icon list — agents first, then apps. That is only the
+  // DEFAULT placement (fills the left column top-down, i.e. the old
+  // dock); each icon keeps whatever cell the user drags it to, and
+  // agents/apps are freely interleavable (see DesktopIcons.tsx).
+  const desktopIcons: DesktopIcon[] = [
+    ...agents.map((agent) => ({
+      id: `agent:${agent.name}`,
+      node: (
+        <AgentTile
+          agent={agent}
+          onClick={handleAgentClick}
+          offline={!!error}
+          streaming={streamingAgents.has(agent.name)}
+          unread={activity.unreadAgents.has(agent.name)}
+          loopHolder={loopState.active ? loopState.agent : null}
+          active={activeAgentIds.has(agent.name)}
+          {...(dreamStates ? { dreamStates } : {})}
+        />
+      ),
+    })),
+    {
+      id: 'app:tmux',
+      node: (
+        <AppTile
+          label="tmux"
+          icon={<Terminal size={28} />}
+          active={activeApps.has('tmux')}
+          onClick={() => wm.openTmuxList()}
+        />
+      ),
+    },
+    {
+      id: 'app:terminal',
+      node: (
+        <AppTile
+          label="terminal"
+          icon={<Square size={26} strokeWidth={1.5} />}
+          // Non-singleton: every click spawns another independent
+          // terminal window, so the tile never shows an active state.
+          active={false}
+          onClick={() => wm.openShellTerm()}
+        />
+      ),
+    },
+    {
+      id: 'app:sessions',
+      node: (
+        <AppTile
+          label="sessions"
+          icon={<MessagesSquare size={26} />}
+          active={activeApps.has('sessions')}
+          onClick={() => wm.openSessionsList()}
+        />
+      ),
+    },
+    {
+      id: 'app:sentinel',
+      node: (
+        <AppTile
+          label="sentinel"
+          icon={<Bell size={26} />}
+          active={activeApps.has('sentinel')}
+          onClick={() => wm.openSentinelList()}
+        />
+      ),
+    },
+    {
+      id: 'app:tools',
+      node: (
+        <AppTile
+          label="tools"
+          icon={<Wrench size={26} />}
+          active={activeApps.has('tools')}
+          onClick={() => wm.openTools()}
+        />
+      ),
+    },
+    // Lucid is platform-wide wiki cleanup, so its pending-review badge
+    // lives on the wiki tile and not on any single agent (2026-07-29
+    // feedback: pending lucid runs were invisible in the UI).
+    ...(wikiEnabled
+      ? [
+          {
+            id: 'app:wiki',
+            node: (
+              <AppTile
+                label="wiki"
+                icon={<BookOpen size={26} />}
+                active={activeApps.has('wiki')}
+                onClick={() => wm.openWiki()}
+                {...(lucidPending > 0
+                  ? {
+                      badge: (
+                        <span
+                          className="rem-badge lucid"
+                          title={
+                            `${lucidPending} lucid finding${lucidPending === 1 ? '' : 's'} ` +
+                            `awaiting review${
+                              lucidOldestPendingAt
+                                ? ` (oldest run from ${lucidOldestPendingAt.slice(0, 10)})`
+                                : ''
+                            } — review with any agent via dream_review`
+                          }
+                        >
+                          {lucidPending > 9 ? '9+' : lucidPending}
+                        </span>
+                      ),
+                    }
+                  : {})}
+              />
+            ),
+          },
+        ]
+      : []),
+  ];
+
   return (
     <ActivityProvider value={activity}>
     <FileViewProvider open={wm.openFileView}>
     <div className="desktop">
       <div className="desktop-area">
-        <div className="agent-dock">
-          <AgentDock
-            agents={agents}
-            loading={loading}
-            error={error}
-            onAgentClick={handleAgentClick}
-            loopHolder={loopState.active ? loopState.agent : null}
-            activeAgentIds={activeAgentIds}
-            streamingAgents={streamingAgents}
-            unreadAgents={activity.unreadAgents}
-            dreamStates={dreamStates}
-          />
-          <AppDock
-            activeApps={
-              new Set(
-                wm.windows.flatMap((w) => {
-                  if (w.kind === 'tmux-list') return ['tmux'];
-                  if (w.kind === 'sessions-list') return ['sessions'];
-                  if (w.kind === 'sentinel') return ['sentinel'];
-                  if (w.kind === 'wiki') return ['wiki'];
-                  if (w.kind === 'tools') return ['tools'];
-                  return [];
-                }),
-              )
-            }
-            onTmuxClick={() => wm.openTmuxList()}
-            onTerminalClick={() => wm.openShellTerm()}
-            onSessionsClick={() => wm.openSessionsList()}
-            onSentinelClick={() => wm.openSentinelList()}
-            onWikiClick={() => wm.openWiki()}
-            onToolsClick={() => wm.openTools()}
-            lucidPendingFindings={dreamStates?.lucid.pendingFindings ?? 0}
-            {...(dreamStates?.lucid.oldestPendingAt
-              ? { lucidOldestPendingAt: dreamStates.lucid.oldestPendingAt }
-              : {})}
-          />
-        </div>
+        <DesktopIcons icons={desktopIcons} loading={loading} error={error} />
 
         {wm.windows.map((win) => {
           if (win.kind === 'chat') {

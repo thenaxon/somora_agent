@@ -76,25 +76,81 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   inset: 0 0 56px 0;
 }
 
-/* ===== Sidebar dock (left side icons — agents + apps) =====
- * Vertical column anchored top-left. Wraps to a new column when tiles
- * would otherwise extend past the taskbar — agents flow first, then
- * apps continue in the same column, and overflow spills right. The
- * max-height = viewport - taskbar(56) - top padding(24) - safety(8). */
-.agent-dock {
+/* ===== Desktop icons (agents + apps) =====
+ * Icons sit on a grid spanning the whole desktop surface, not a fixed
+ * left column — any cell is a valid home, left edge to right edge.
+ * Cell metrics are mirrored in hooks/useDesktopIcons.ts
+ * (CELL_W / CELL_H / GRID_PAD); change them together.
+ *
+ * The default layout fills the leftmost column top-to-bottom, so an
+ * untouched desktop looks exactly like the original dock.
+ *
+ * `overflow: auto` only ever engages in the pathological case of more
+ * icons than visible cells; it is what guarantees an icon stays
+ * reachable on a very small viewport instead of being clipped away. */
+.desktop-icons {
   position: absolute;
-  top: 24px;
-  left: 24px;
-  display: flex;
-  flex-direction: column;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  max-height: calc(100vh - 56px - 32px);
-  gap: 14px;
-  /* Column-gap kicks in when the flex line wraps to a second column. */
-  column-gap: 14px;
+  inset: 0;
   z-index: 5;
+  overflow: auto;
 }
+.desktop-icon {
+  position: absolute;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  /* Without this a touch drag scrolls the desktop instead of moving
+   * the icon, because the browser claims the gesture first. */
+  touch-action: none;
+  /* Icons glide to their new cell after a swap. */
+  transition: left 0.16s ease, top 0.16s ease;
+}
+/* The grabbed icon — lifted out of the grid and riding the cursor.
+ * Transition off: it has to track the pointer 1:1, not lag behind it. */
+.desktop-icon.in-hand {
+  z-index: 1000;
+  transition: none;
+  pointer-events: none;
+  transform: scale(1.1);
+  filter: drop-shadow(0 12px 20px rgba(0, 0, 0, 0.55));
+  cursor: grabbing;
+}
+/* The icon that a drop would trade places with — dimmed so the swap is
+ * obvious before releasing. */
+.desktop-icon.swap-partner {
+  opacity: 0.45;
+}
+.desktop-icons.dragging {
+  cursor: grabbing;
+  /* Stop the drag from smearing a text selection across icon labels. */
+  user-select: none;
+}
+/* Outline of the cell the icon would land in. */
+.desktop-drop-target {
+  position: absolute;
+  border-radius: 12px;
+  border: 1px dashed var(--accent-dim);
+  background: var(--accent-glow);
+  pointer-events: none;
+}
+/* Occupied cell: the drop swaps the two icons instead of just parking
+ * this one, so it reads differently. */
+.desktop-drop-target.swap {
+  border-style: solid;
+  border-color: var(--warn);
+  background: rgba(245, 185, 66, 0.12);
+}
+.desktop-icons-status {
+  position: absolute;
+  padding: 8px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-3);
+}
+.desktop-icons-status.error {
+  color: var(--danger);
+}
+
 .agent-icon {
   width: 88px;
   display: flex;
