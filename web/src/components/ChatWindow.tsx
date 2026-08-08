@@ -13,12 +13,15 @@ import {
   Volume2,
   VolumeX,
   Wrench,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 import { api, type AgentInfo, type AttachmentRef } from '../lib/api';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
 import { hasTechnicalId, sessionSlug } from '../lib/session-label';
 import { useSessionInfo } from '../hooks/useSessionInfo';
 import { useAgents } from '../hooks/useAgents';
+import { useChatZoom } from '../hooks/useChatZoom';
 import { useChatSessionFromContext } from './ChatProvider';
 import { useActivity } from './ActivityProvider';
 import { MessageItem } from './MessageItem';
@@ -196,6 +199,11 @@ export function ChatWindow({
   const [dragHover, setDragHover] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Text size for THIS agent's transcript, independent of every other
+  // window and of the desktop chrome.
+  const { zoom, zoomIn, zoomOut, resetZoom, canZoomIn, canZoomOut } = useChatZoom(agent.name);
+  const zoomPct = Math.round(zoom * 100);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomSentinelRef = useRef<HTMLDivElement>(null);
   // Pinned = "stick to latest". Only flipped to false by trusted user
@@ -318,7 +326,10 @@ export function ChatWindow({
       cancelAnimationFrame(raf1);
       if (raf2) cancelAnimationFrame(raf2);
     };
-  }, [chat.messages, chat.streaming, chat.thinking]);
+    // `zoom` is a dependency because changing it re-flows the whole
+    // transcript: without it, a pinned chat drifts off the latest
+    // message the moment the text size changes.
+  }, [chat.messages, chat.streaming, chat.thinking, zoom]);
 
   // Set userScrollGuardRef while the user is dragging the horizontal
   // scrollbar of a code block / table inside a bubble. Detection: a
@@ -915,6 +926,40 @@ export function ChatWindow({
           </div>
         </div>
         <div className="chat-header-actions">
+          <div className="chat-zoom" role="group" aria-label="Chat text size">
+            <button
+              type="button"
+              className="chat-icon-btn"
+              title={`Smaller chat text (${zoomPct}%)`}
+              aria-label="Smaller chat text"
+              disabled={!canZoomOut}
+              onClick={zoomOut}
+            >
+              <ZoomOut size={14} />
+            </button>
+            {/* Only shown off-default: it doubles as the way back to
+              * 100%, and at 100% there is nothing to go back to. */}
+            {zoom !== 1 && (
+              <button
+                type="button"
+                className="chat-zoom-level"
+                title="Reset chat text to 100%"
+                onClick={resetZoom}
+              >
+                {zoomPct}%
+              </button>
+            )}
+            <button
+              type="button"
+              className="chat-icon-btn"
+              title={`Larger chat text (${zoomPct}%)`}
+              aria-label="Larger chat text"
+              disabled={!canZoomIn}
+              onClick={zoomIn}
+            >
+              <ZoomIn size={14} />
+            </button>
+          </div>
           {chat.projectsEnabled && (
             <ProjectChip
               agent={agent.name}
@@ -954,6 +999,15 @@ export function ChatWindow({
 
       <div
         className="chat-body"
+        // CSS `zoom` rather than a font-size cascade: the transcript
+        // mixes stylesheet rules with ~10 inline px font sizes
+        // (MessageItem, ToolBlocks, EngineMetaBlock), and zoom scales
+        // both. It also keeps avatars, code blocks and images in
+        // proportion, which is what a magnifier implies. Confined to
+        // the scroll container, so header, composer and the rest of the
+        // desktop are untouched — and the only getBoundingClientRect in
+        // this window reads the header button, outside this element.
+        style={{ zoom }}
         ref={scrollRef}
         onScroll={handleScroll}
         onWheel={(e) => {

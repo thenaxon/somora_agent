@@ -626,6 +626,26 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   transition: background 0.15s, color 0.15s;
 }
 .chat-icon-btn:hover { background: rgba(255,255,255,0.05); color: var(--text-0); }
+.chat-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.chat-icon-btn:disabled:hover { background: none; color: var(--text-2); }
+
+/* Per-agent chat text size. The two magnifiers bracket a percentage
+ * readout that only appears off-default and doubles as the reset. */
+.chat-zoom { display: flex; align-items: center; gap: 2px; }
+.chat-zoom-level {
+  min-width: 34px;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-2);
+  transition: background 0.15s, color 0.15s;
+}
+.chat-zoom-level:hover { background: rgba(255,255,255,0.05); color: var(--text-0); }
 .chat-body {
   flex: 1;
   overflow-y: auto;
