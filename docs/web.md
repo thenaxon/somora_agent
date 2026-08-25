@@ -22,7 +22,7 @@ agent on your LAN. Same backend as the TUI, just a different head.
 
 Each chat window is a `ChatProvider`-managed React subtree subscribing
 to one SSE stream keyed by `agent::session`. Multiple windows for the
-same agent share state — open Hans's `main` session twice and both
+same agent share state — open an agent's `main` session twice and both
 windows render the same live transcript.
 
 ## Access
@@ -105,9 +105,16 @@ without it.
 
 ## Window manager
 
-- **Agent dock (left edge)**: one tile per agent from `/agents`. Click
-  opens a chat window; clicking again focuses the existing window.
-  Each tile carries up to three live signals:
+- **Desktop icons**: one tile per agent from `/agents` plus the app
+  tiles, laid out on a grid that spans the whole desktop. Fresh
+  install = the classic left column; from there **drag any icon to
+  any cell** (dropping on an occupied cell swaps the two), or move the
+  focused icon with `Alt+Arrow`. The arrangement is stored per browser
+  in `localStorage` (`somora-desktop-icons`); a narrower window
+  relocates icons that no longer fit, widening restores them. Icons sit
+  *below* windows like on a real desktop. Click an agent tile to open
+  its chat window; clicking again focuses the existing window.
+  Each agent tile carries up to three live signals:
   - **Status dot** (bottom-right of the icon): green = idle,
     amber = streaming, violet = holds the dream review loop, grey =
     offline.
@@ -121,7 +128,7 @@ without it.
     extractions waiting for review: a small green counter (`1`, `2`,
     `9+`). The badge clears as you work through findings via
     `dream_apply` / `dream_dismiss`.
-- **App dock (below the agent dock)**: non-agent surfaces — `tmux`
+- **App tiles**: non-agent surfaces — `tmux`
   (attach to an existing tmux session), `terminal` (fresh shell in
   the somora workspace), `sessions` (cross-agent session browser
   — see next section), and `tools` (per-agent tool-visibility matrix
@@ -151,12 +158,12 @@ hundreds of sessions somora accumulates over weeks.
  ┌───────────────────────────── Sessions ──────────────────────────────┐
  │ 172 total · 1 live · 28 archived · 94 dreamed · 50 partial   [⟳]   │
  │ [Active] [Archived] [All]                                            │
- │ search: ____   agent: hans lisa  engine: codex-cli  REM: partial    │
+ │ search: ____   agent: nova luna  engine: codex-cli  REM: partial    │
  │ ─────────────────────────────────────────────────────────────────── │
  │ ☐  Agent  Slug             Engine     Status  Last act.  Msgs  Size │
- │ ☐  hans   main ★           codex-cli  ●★      5 min ago  46    280k │
- │ ☐  lisa   debug-auth-x     claude-cli         3h ago     12    22k  │
- │ ☑  hans   sub-self-477…    openai-c.          yesterday  2     35k  │
+ │ ☐  nova   main ★           codex-cli  ●★      5 min ago  46    280k │
+ │ ☐  luna   debug-auth-x     claude-cli         3h ago     12    22k  │
+ │ ☑  nova   sub-self-477…    openai-c.          yesterday  2     35k  │
  │ ...                                                                  │
  │ [2 selected] [Archive selected] [Clear]                              │
  └─────────────────────────────────────────────────────────────────────┘
@@ -234,7 +241,21 @@ archived copy at the next idle window.
 
 - **Header**: agent name, role badge from `AGENTS.md`, streaming pill.
 - **Meta line (10px mono)**: session id, model, thinking level, tools
-  toggle, ↑/↓ token counts, connection dot.
+  toggle, ↑/↓ token counts, connection dot. When the last turn was
+  answered by the persona's `fallback:` model, a warn-coloured
+  `⇄ <backup-model>` marker sits next to the model (tooltip: why the
+  primary failed).
+- **Chat text zoom** (⊖ / ⊕ in the header, left of the project chip):
+  75–200 % in discrete steps, **per agent** — one conversation can be
+  enlarged without touching other agents, the window chrome or the
+  desktop. The percentage readout appears only off-default and doubles
+  as the reset. Persisted per browser (`somora-chat-zoom`).
+- **Fallback marker on bubbles**: an assistant turn produced by the
+  fallback model carries a `⇄ fallback · <model>` chip (hover for the
+  primary's failure reason). It survives reloads — the server persists
+  a `model_fallback` event in the session history. A short notice
+  appears once at the start of a fallback streak and once more when
+  the primary model answers again; turns in between get the chip only.
 - **Body**: pinned-to-bottom auto-scroll. Manually scroll up to read
   history; new messages won't yank you down. Scroll back to the
   bottom to re-pin.
@@ -341,9 +362,9 @@ Layout:
 
 ```
  ┌──────────────────────────────────────┐
- │ 📌 hans note                  × ─ ⤢ │ ← yellow titlebar tint
+ │ 📌 nova note                  × ─ ⤢ │ ← yellow titlebar tint
  ├──────────────────────────────────────┤
- │ 🤖 hans · main             14:08    │ ← agent + source + when said
+ │ 🤖 nova · main             14:08    │ ← agent + source + when said
  ├──────────────────────────────────────┤
  │                                      │
  │ rendered markdown body, scrollable,  │ ← same renderer as the chat
@@ -451,7 +472,8 @@ The web client listens for these named events on `/chat/stream`:
 | `status` | `{msg}` | Connection state — initial `connected`, periodic keepalive |
 | `user_message` | `{text, ts, turnId?, from_agent?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system: 'sentinel'` marks a system-trigger inbound. |
 | `turn_queued` | `{turnId, ahead}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. Drives the `⌛ queued` marker. |
-| `agent` | `{phase: 'start'\|'end', usage?, model?, ...}` | Turn boundary |
+| `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider`/`model` are the model that ACTUALLY answered; `fallback` `{requested, actual, reason}` is set when that was the persona's fallback. |
+| `model_fallback` | `{requested, actual, reason}` | The primary model failed before producing anything; the fallback model is answering this turn. Precedes its first `chat` delta. |
 | `chat` | `{state: 'delta'\|'final', text}` | Cumulative assistant text (each delta carries the full running text, not just the new chunk) |
 | `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | Tool invocation lifecycle |
 | `engine_meta` | `{engine, itemType, label, summary?, payload}` | Engine-internal side-channel (e.g. codex `todo_list`). Renders under the tools toggle. |
@@ -554,7 +576,9 @@ web/
 │   │   ├── Window.tsx           ← drag/resize chrome
 │   │   ├── ChatWindow.tsx       ← header + body + input
 │   │   ├── MessageItem.tsx      ← per-message renderer (user/agent/tool)
-│   │   ├── AgentDock.tsx        ← left-edge agent tiles
+│   │   ├── DesktopIcons.tsx     ← icon grid: drag/swap/keyboard placement
+│   │   ├── AgentTile.tsx        ← one agent tile (status dot, pulse, badge)
+│   │   ├── AppTile.tsx          ← one app tile
 │   │   ├── WikiWindow.tsx       ← wiki explorer: tree + reader + links
 │   │   ├── WikiGraph.tsx        ← d3-force layout, plain-SVG rendering
 │   │   └── Taskbar.tsx          ← bottom bar + layout actions

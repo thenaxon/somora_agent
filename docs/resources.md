@@ -113,7 +113,7 @@ resources:
       maintenance here: system updates, kernel reboots, mount fixes.
     allowBlocked:
       - sudo ~/bin/spiderman-system-update.sh
-      - sudo ~/bin/fix-naxon-mount-v2.sh
+      - sudo ~/bin/fix-nas-mount.sh
       - systemctl reboot
       - sudo                              # broad: any "sudo …" command
 ```
@@ -176,7 +176,7 @@ Every privileged-allowed execution appends one line to
 `~/.somora/audit/exec-privileged.jsonl`:
 
 ```json
-{"ts":1747500000000,"agent":"naxon","session":"…","resource":"spiderman","command_head":"sudo ~/bin/spiderman-system-update.sh","matched_entry":"sudo ~/bin/spiderman-system-update.sh","blacklist_reason":"sudo (privilege escalation)","blacklist_pattern":"…"}
+{"ts":1747500000000,"agent":"<your-agent>","session":"…","resource":"spiderman","command_head":"sudo ~/bin/spiderman-system-update.sh","matched_entry":"sudo ~/bin/spiderman-system-update.sh","blacklist_reason":"sudo (privilege escalation)","blacklist_pattern":"…"}
 ```
 
 Append-only. Rotate by hand or via logrotate if it grows; Somora does

@@ -51,10 +51,9 @@ tts:
   # voice: <id>                               # optional OpenAI-style speaker selector (sent as `alloy` when unset)
   textPrefix: "<|speaker:0|>"                 # inline prefix prepended to every input
   agentVoices:                                # optional per-agent override map
-    naxon:  "[deep male voice] "
-    hans:   "<|speaker:7|>[male voice] "
-    lisa:   "<|speaker:2|>"
-    jarvis: "[deep male voice] "
+    <agent-a>: "[deep male voice] "
+    <agent-b>: "<|speaker:7|>[male voice] "
+    <agent-c>: "<|speaker:2|>"
   cache:
     retentionDays: 7                          # 0 disables GC
     maxSizeMB: 500
@@ -210,7 +209,7 @@ Returns JSON:
 ```json
 {
   "ok": true,
-  "agent": "naxon",
+  "agent": "<your-agent>",
   "session": "main",
   "transcript": "Wie spät ist es?",
   "text": "Es ist 10:29 Uhr.",

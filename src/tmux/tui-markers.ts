@@ -86,7 +86,7 @@ const TUI_MARKERS: Partial<Record<TmuxSessionKind, MarkerSet>> = {
   },
   opencode: {
     // Live-verified 2026-08-25 against OpenCode 1.18.23 (sst/opencode)
-    // driving DeepSeek V4 Flash: a message submitted while a turn runs
+    // driving a local model: a message submitted while a turn runs
     // stays in the input box with a `QUEUED` label under it and is
     // auto-submitted when the turn ends — the pane keeps working, so
     // it must not read as ready.

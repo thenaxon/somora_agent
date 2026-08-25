@@ -55,7 +55,7 @@ const server = createServer((req, res) => {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
-          error: { message: `litellm.BadRequestError: OpenAIException - Prompt too long: 251709 tokens exceeds max context window of 131072 tokens`, type: 'invalid_request_error' },
+          error: { message: `BadRequestError: Prompt too long: 251709 tokens exceeds max context window of 131072 tokens`, type: 'invalid_request_error' },
         }),
       );
       return;

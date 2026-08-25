@@ -407,7 +407,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     throw new Error(`spawn_subagent: persona '${targetPersona}' not found`);
   }
   // Validate a model override BEFORE creating the session + reserving a
-  // slot: an invented name ("cerebro/deepseek-v4-768") otherwise fails
+  // slot: an invented name ("myprovider/model-that-does-not-exist") otherwise fails
   // deep inside the sub's first turn, leaving a dead session behind and
   // an error that doesn't say what WOULD have worked (2026-08-24 report).
   if (task.model && !resolveAnyRef(ctx.config, task.model)) {

@@ -8,7 +8,7 @@ time.
 
 This is not a notification system for you the user. If you want
 "BTC dropped below 50k" as a toast, every monitoring tool already does
-that. Sentinel is for "Hans saw BTC drop, looked at the news, and
+that. Sentinel is for "your agent saw BTC drop, looked at the news, and
 wrote me a brief note about why" — the agent does work, you read its
 output.
 
@@ -39,7 +39,7 @@ The agent has access to one tool: `sentinel`. Action `create` shape:
     "spec": { "type": "daily", "time": "08:00" }
   },
   "dispatch": {
-    "agent": "jarvis",
+    "agent": "<your-agent>",
     "session": "morning-routine",
     "prompt": "Check inbox via the gog skill, group by topic, tell me what's important today."
   },
@@ -47,7 +47,7 @@ The agent has access to one tool: `sentinel`. Action `create` shape:
 }
 ```
 
-When the trigger fires at 08:00, jarvis receives a user-message turn
+When the trigger fires at 08:00, the agent receives a user-message turn
 in session `morning-routine` (auto-created with timestamp prefix if
 not existing — see the Phase 0 `/spawn-async` fix). The body is the
 prompt above, prefixed with a structured **evidence block**:
@@ -56,7 +56,7 @@ prompt above, prefixed with a structured **evidence block**:
 [Sentinel trigger fired]
 trigger_id: morning-mail-summary-a7c3
 name: morning-mail-summary
-created_by: jarvis
+created_by: <your-agent>
 source: time (daily 08:00)
 fired_at: 2026-05-18T08:00:00.000Z
 user_intent: Check inbox and tell me what's important today
@@ -68,7 +68,7 @@ Check inbox via the gog skill, group by topic, tell me what's important today.
 
 The agent reads the header, understands it was woken (not user-asked),
 loads its skills, does the work, writes its summary as a normal chat
-message. You see it next time you open jarvis in the web/mobile UI.
+message. You see it next time you open that agent in the web/mobile UI.
 
 ## Listing, pausing, deleting
 
@@ -76,7 +76,7 @@ Same tool:
 
 ```jsonc
 sentinel({ action: "list" })                              // all triggers
-sentinel({ action: "list", owner: "jarvis" })             // filter by owner agent
+sentinel({ action: "list", owner: "<your-agent>" })             // filter by owner agent
 sentinel({ action: "list", status: "paused" })            // filter by status
 sentinel({ action: "get", id: "morning-mail-summary-a7c3" })
 sentinel({ action: "pause", id: "..." })
@@ -195,13 +195,13 @@ Example monthly trigger that survives multi-day outages:
   "action": "create",
   "name": "monthly-summary",
   "source": { "type": "time", "spec": { "type": "cron", "expression": "0 9 1 * *" } },
-  "dispatch": { "agent": "naxon", "session": "main", "prompt": "Erstelle den monatsbericht." },
+  "dispatch": { "agent": "<your-agent>", "session": "main", "prompt": "Erstelle den monatsbericht." },
   "policy": { "missedFiresPolicy": "catchUpOnce" }
 }
 ```
 
 If somora was offline on the 1st at 9am, the next boot detects the
-missed fire and dispatches it with `catchUp:true` so naxon knows the
+missed fire and dispatches it with `catchUp:true` so the agent knows the
 fire is delayed.
 
 ## Cron syntax (the escape hatch)

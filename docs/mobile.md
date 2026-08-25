@@ -89,7 +89,7 @@ single app-wide SSE on `/activity/stream`:
 
 - **Streaming dot** — pulses on every agent whose any session is mid-
   turn, not just the one you're chatting with. When a sentinel job
-  wakes lisa while you're on naxon, lisa's avatar lights up so you
+  wakes agent B while you're chatting with agent A, B's avatar lights up so you
   notice the background activity.
 - **Unread dot** — a different-colour dot appears when an agent has
   movement since you last looked. Counts: peer-to-peer A2A inbounds,

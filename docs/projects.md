@@ -155,7 +155,7 @@ Examples:
 ```yaml
 paths:
   - ref: ~/code/heimkino                  # local — file_list to drill in
-  - ref: /mnt/naxon/recordings/heimkino   # local
+  - ref: /mnt/media/recordings/homecinema   # local
   - ref: https://drive.google.com/...     # url
   - ref: mac-studio:/Users/me/foo.log     # resource — must match config.resources
   - ref: spiderman:/home/me/checkpoints   # resource

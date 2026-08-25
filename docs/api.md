@@ -122,7 +122,7 @@ Returns:
   },
   "sessions": [
     {
-      "agent": "hans",
+      "agent": "<your-agent>",
       "session": "main",
       "busy": true,
       "activePriority": "user",
@@ -233,7 +233,7 @@ turn). The body is the tool's input shape; the response is the tool's
 output. Same authorisation as everything else (LAN-trust).
 
 ```bash
-curl -X POST https://<host>:18737/agents/hans/tools/memory_search \
+curl -X POST https://<host>:18737/agents/<your-agent>/tools/memory_search \
      -H 'Content-Type: application/json' \
      -d '{"query":"voice satellites","limit":3}'
 ```
@@ -317,7 +317,7 @@ Returns an array of `AgentInfo`:
 ```json
 [
   {
-    "name": "hans",
+    "name": "<your-agent>",
     "description": "scribe and personal-assistant",
     "icon": "📝",
     "color": "#6366f1",
@@ -347,8 +347,8 @@ List sessions for one agent. Archived sessions are filtered out by
 default — pass `?include_archived=true` to surface them.
 
 ```bash
-curl https://<host>:18737/agents/hans/sessions
-curl https://<host>:18737/agents/hans/sessions?include_archived=true
+curl https://<host>:18737/agents/<your-agent>/sessions
+curl https://<host>:18737/agents/<your-agent>/sessions?include_archived=true
 ```
 
 Returns an array of `SessionSummary`:
@@ -394,7 +394,7 @@ curl https://<host>:18737/sessions?include_archived=true
 Create a new named session.
 
 ```bash
-curl -X POST https://<host>:18737/agents/hans/sessions \
+curl -X POST https://<host>:18737/agents/<your-agent>/sessions \
      -H 'Content-Type: application/json' \
      -d '{"slug":"research-notes"}'
 ```
@@ -409,7 +409,7 @@ and `<id>.meta.json` stay on disk; only the `archived: true` flag
 in meta is set. Reversible via unarchive.
 
 ```bash
-curl -X POST https://<host>:18737/agents/hans/sessions/<id>/archive \
+curl -X POST https://<host>:18737/agents/<your-agent>/sessions/<id>/archive \
      -H 'Content-Type: application/json' \
      -d '{"reason":"old smoke test"}'
 ```
@@ -442,12 +442,12 @@ trigger a file save.
 
 ```bash
 # Markdown transcript
-curl https://<host>:18737/agents/hans/sessions/main/export?format=markdown \
-     -o hans-main.md
+curl https://<host>:18737/agents/<your-agent>/sessions/main/export?format=markdown \
+     -o <your-agent>-main.md
 
 # Raw JSONL (full fidelity)
-curl https://<host>:18737/agents/hans/sessions/main/export?format=json \
-     -o hans-main.jsonl
+curl https://<host>:18737/agents/<your-agent>/sessions/main/export?format=json \
+     -o <your-agent>-main.jsonl
 ```
 
 The web client surfaces this via per-row download icons in the
@@ -462,8 +462,8 @@ asynchronous REM extraction over the archived content if REM is
 enabled for the agent.
 
 ```bash
-curl -X POST https://<host>:18737/agents/hans/sessions/main/reset
-# { "agent": "hans", "session": "main",
+curl -X POST https://<host>:18737/agents/<your-agent>/sessions/main/reset
+# { "agent": "<your-agent>", "session": "main",
 #   "archivedId": "20260512-140822_main-archive",
 #   "dreamSpawned": true }
 ```
@@ -483,15 +483,15 @@ level. Both fall back to the persona default when unset.
 
 ```bash
 # Read current
-curl https://<host>:18737/agents/hans/sessions/main/model
+curl https://<host>:18737/agents/<your-agent>/sessions/main/model
 
 # Set per-session override
-curl -X PUT https://<host>:18737/agents/hans/sessions/main/model \
+curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/model \
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-opus-4-7"}'
 
 # Clear override (back to persona default)
-curl -X DELETE https://<host>:18737/agents/hans/sessions/main/model
+curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/model
 ```
 
 The `model` field accepts an alias (`claude-opus-4-7`), a
@@ -510,15 +510,15 @@ re-thread.
 
 ```bash
 # Read
-curl https://<host>:18737/agents/hans/sessions/main/thinking
+curl https://<host>:18737/agents/<your-agent>/sessions/main/thinking
 
 # Set
-curl -X PUT https://<host>:18737/agents/hans/sessions/main/thinking \
+curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/thinking \
      -H 'Content-Type: application/json' \
      -d '{"level":"medium"}'
 
 # Clear override
-curl -X DELETE https://<host>:18737/agents/hans/sessions/main/thinking
+curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/thinking
 ```
 
 Levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. See
@@ -550,7 +550,7 @@ subscribers on the same `(agent, session)`.
 ```bash
 curl -X POST https://<host>:18737/chat/send \
      -H 'Content-Type: application/json' \
-     -d '{"agent":"hans","session":"main","text":"Was steht heute an?"}'
+     -d '{"agent":"<your-agent>","session":"main","text":"Was steht heute an?"}'
 ```
 
 Body fields:
@@ -597,7 +597,7 @@ that don't want to manage SSE.
 ```bash
 curl -X POST https://<host>:18737/chat/send-sync \
      -H 'Content-Type: application/json' \
-     -d '{"agent":"hans","session":"main","text":"…"}'
+     -d '{"agent":"<your-agent>","session":"main","text":"…"}'
 ```
 
 Body fields: same as `/chat/send` (`agent`, `session`, `text`,
@@ -627,7 +627,7 @@ Server-Sent Events stream for a single `(agent, session)`. Subscribe
 once per chat window you want to display.
 
 ```bash
-curl -N "https://<host>:18737/chat/stream?agent=hans&session=main"
+curl -N "https://<host>:18737/chat/stream?agent=<your-agent>&session=main"
 ```
 
 Event types:
@@ -715,7 +715,7 @@ in the session's meta and broadcasts a `seen` event on
 `/activity/stream` so other open clients clear their badge live.
 
 ```bash
-curl -X POST https://<host>:18737/sessions/hans/main/seen
+curl -X POST https://<host>:18737/sessions/<your-agent>/main/seen
 ```
 
 Optional body:
@@ -732,7 +732,7 @@ later arrival can never regress the seen marker.
 Response:
 
 ```json
-{ "ok": true, "agent": "hans", "session": "main", "seenAt": "2026-…" }
+{ "ok": true, "agent": "<your-agent>", "session": "main", "seenAt": "2026-…" }
 ```
 
 ### `GET /chat/history`
@@ -741,7 +741,7 @@ Snapshot of past events for a session. The TUI and web both
 hydrate this on open.
 
 ```bash
-curl "https://<host>:18737/chat/history?agent=hans&session=main"
+curl "https://<host>:18737/chat/history?agent=<your-agent>&session=main"
 ```
 
 Pagination: pass `?limit=200` to get the last 200 events plus a
@@ -750,7 +750,7 @@ Pagination: pass `?limit=200` to get the last 200 events plus a
 
 ```json
 {
-  "agent": "hans",
+  "agent": "<your-agent>",
   "session": "20260511-093251_research-notes",
   "events": [...],
   "hasMore": true,
@@ -775,7 +775,7 @@ when no turn is running. Cancels the **currently-running** turn
 only; queued waiters keep their slots and still execute.
 
 ```bash
-curl -X POST "https://<host>:18737/chat/abort?agent=hans&session=main"
+curl -X POST "https://<host>:18737/chat/abort?agent=<your-agent>&session=main"
 ```
 
 ---
@@ -797,7 +797,7 @@ to filter by source layer.
 Hybrid (BM25 + vector) search across the agent's memory.
 
 ```bash
-curl "https://<host>:18737/agents/hans/memory/search?q=voice+satellites&limit=5&minScore=0.3"
+curl "https://<host>:18737/agents/<your-agent>/memory/search?q=voice+satellites&limit=5&minScore=0.3"
 ```
 
 Query params: `q` (required), `limit` (default 5), `minScore`
@@ -860,7 +860,7 @@ Returns `markdown` plus resolved relationships:
   "markdown": "## Aktueller Stand\n…",
   "frontmatter": { "type": "project", "created": "2026-05-08" },
   "links":       [{ "slug": "personen/rene-siegl", "title": "Rene" }],
-  "backlinks":   [{ "slug": "agenten/hans", "title": "Hans" }],
+  "backlinks":   [{ "slug": "agenten/<your-agent>", "title": "Your Agent" }],
   "unresolved":  ["personen/familie-rene"],
   "linkTargets": { "personen/rene-siegl": "personen/rene-siegl",
                    "familie-rene": null }
@@ -883,7 +883,7 @@ relationship.
   "scope": "local",
   "nodes": [{ "id": "projekte/somora", "label": "somora",
               "folder": "projekte", "degree": 41 }],
-  "edges": [{ "from": "agenten/hans", "to": "projekte/somora",
+  "edges": [{ "from": "agenten/<your-agent>", "to": "projekte/somora",
               "type": "wikilink" }],
   "truncated": false
 }
@@ -922,7 +922,7 @@ manually.
 Read-only snapshot of the active Lucid review loop, if any.
 
 ```json
-{ "active": true, "agent": "hans", "dreamId": "lucid-...",
+{ "active": true, "agent": "<your-agent>", "dreamId": "lucid-...",
   "startedAt": "…", "lastActivityAt": "…" }
 ```
 
@@ -936,8 +936,8 @@ web AgentDock pulse indicators and REM badges.
 ```json
 {
   "rem": {
-    "hans":  { "active": false, "pendingCount": 3 },
-    "lisa":  { "active": true,  "pendingCount": 0 }
+    "<your-agent>":  { "active": false, "pendingCount": 3 },
+    "<agent-b>":  { "active": true,  "pendingCount": 0 }
   },
   "deep":  { "active": false },
   "lucid": { "active": false }
@@ -1118,7 +1118,7 @@ Current pinned project for a session. Always returns `200` (or
 
 ```json
 {
-  "agent": "naxon",
+  "agent": "<your-agent>",
   "session": "main",
   "slug": "heimkino",
   "project": { … full ProjectInfo … }
@@ -1134,7 +1134,7 @@ When the slug is set but the file is missing on disk:
 Pin a project to a session.
 
 ```bash
-curl -X POST https://<host>:18737/agents/naxon/sessions/main/project \
+curl -X POST https://<host>:18737/agents/<your-agent>/sessions/main/project \
      -H 'Content-Type: application/json' \
      -d '{"slug":"heimkino"}'
 ```
@@ -1245,10 +1245,10 @@ curl https://<host>:18737/sentinel/triggers?status=active
     {
       "id": "morning-mail-summary-a7c3",
       "name": "morning-mail-summary",
-      "ownerAgent": "jarvis",
+      "ownerAgent": "<other-agent>",
       "source": { "type": "time", "spec": { "type": "daily", "time": "08:00" } },
       "evaluator": { "type": "none" },
-      "dispatch": { "agent": "jarvis", "session": "morning-routine",
+      "dispatch": { "agent": "<other-agent>", "session": "morning-routine",
                     "prompt": "Check inbox via gog skill…" },
       "createdAt": "2026-05-17T11:00:00.000Z",
       "status": "active",
@@ -1334,7 +1334,7 @@ HTTP route, so the safeguards (min-interval, per-agent cap, limit
 enforcement) all run through the same validation path:
 
 ```bash
-curl -X POST https://<host>:18737/agents/hans/tools/sentinel \
+curl -X POST https://<host>:18737/agents/<your-agent>/tools/sentinel \
   -H 'Content-Type: application/json' \
   -d '{
     "action": "create",
@@ -1342,7 +1342,7 @@ curl -X POST https://<host>:18737/agents/hans/tools/sentinel \
     "intent": "Daily 8am inbox digest",
     "source": { "type": "time", "spec": { "type": "daily", "time": "08:00" } },
     "dispatch": {
-      "agent": "jarvis",
+      "agent": "<other-agent>",
       "session": "morning-routine",
       "prompt": "Check inbox via the gog skill, group by topic, tell me what is important."
     }
@@ -1466,7 +1466,7 @@ Response:
 ```json
 {
   "ok": true,
-  "agent": "naxon",
+  "agent": "<your-agent>",
   "session": "main",
   "transcript": "Wie spät ist es?",
   "text": "Es ist 10:29 Uhr.",
@@ -1521,17 +1521,17 @@ response back works like this:
 curl https://<host>:18737/agents
 
 # 2. Optionally set the model + thinking for this conversation
-curl -X PUT https://<host>:18737/agents/hans/sessions/main/model \
+curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/model \
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-opus-4-7"}'
 
 # 3. Subscribe to the stream (background)
-curl -N "https://<host>:18737/chat/stream?agent=hans&session=main" &
+curl -N "https://<host>:18737/chat/stream?agent=<your-agent>&session=main" &
 
 # 4. Send a message — server fires the turn, events arrive on the stream
 curl -X POST https://<host>:18737/chat/send \
      -H 'Content-Type: application/json' \
-     -d '{"agent":"hans","session":"main","text":"Was steht heute an?"}'
+     -d '{"agent":"<your-agent>","session":"main","text":"Was steht heute an?"}'
 ```
 
 For richer clients (a dashboard, a desktop app, a phone bridge), the
