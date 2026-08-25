@@ -227,6 +227,85 @@ Requires the Codex CLI binary on PATH (or `SOMORA_CODEX_BIN` env to its
 path). Auth via `codex login` (ChatGPT Plus/Pro/Business preferred,
 or `OPENAI_API_KEY` env).
 
+### xAI via Grok Build CLI subscription (no API key)
+
+```yaml
+providers:
+  xai:
+    engine: grok-cli
+    models:
+      - id: grok-4.5
+        alias: grok
+        contextWindow: 500000
+        capabilities: [text, reasoning]
+```
+
+Requires the Grok Build CLI (`grok`) on PATH — installed via
+`curl -fsSL https://x.ai/cli/install.sh | bash`, which drops the binary
+at `~/.local/bin/grok`. Override with `SOMORA_GROK_BIN` if it lives
+elsewhere.
+
+Auth is handled by the binary: run `grok login` once, which writes a
+session to `~/.grok/auth.json`. somora's adapter connects over ACP
+(Agent Client Protocol — JSON-RPC on stdio, `grok agent stdio`) and the
+handshake picks up that session as the `cached_token` auth method
+automatically. **A SuperGrok / Premium subscription authenticates the
+CLI, not the xAI API** — so this path uses your subscription, while
+pointing an `openai-compatible` provider at `https://api.x.ai/v1`
+would bill a separate pay-per-token API account instead.
+
+`grok-4.5` reports three reasoning efforts (low / medium / high,
+default high), so somora's `/thinking` knob maps straight through. Give
+the model the `reasoning` capability to activate it. Note there's no
+"disabled" state — `/thinking off` maps to `low`.
+
+**Tools.** somora's full MCP surface (memory, file_*, exec, wiki,
+subagents — 47 tools as of 2026-08) is handed to the ACP session via
+`session/new`'s `mcpServers` parameter, scoped to the current
+agent+session exactly like claude-cli and codex-cli. On top of that
+Grok Build brings its own file/shell tools, scoped to the working
+directory (`$HOME`).
+
+Grok reaches MCP tools through a `search_tool` / `use_tool`
+indirection rather than listing all of them up front, which keeps a
+large surface cheap context-wise. The adapter unwraps that: a
+`use_tool{tool_name:'somora-memory__memory_list'}` call is recorded as
+`mcp__somora-memory__memory_list`, so session logs and tool rows match
+what the other engines emit. The `search_tool` probes themselves
+surface as-is.
+
+Budget note: the tool catalogue is not free. A trivial two-tool turn
+measured ~76k input tokens on a fresh session, ~108k on the follow-up,
+with most of it served from cache (`tokens_in_cached`). Against
+grok-4.5's 500k window that's comfortable, and on a subscription it
+costs nothing extra — but it's worth knowing before pointing an
+API-billed provider at the same setup.
+
+Sessions resume across turns via `session/load` against the
+`grokSessionId` stashed in session-meta.
+
+**Attachments.** Grok Build exposes no attachment channel over ACP —
+the handshake reports `promptCapabilities.image: false`. Images and
+PDFs therefore never reach the engine: the capability gate in
+`run-turn.ts` refuses them first, since `grok-4.5` declares neither
+`image` nor `pdf`, and the user gets "does not support image inputs"
+before a process is spawned. Text attachments pass the gate and are
+inlined into the prompt, the same way codex-cli handles its non-image
+attachments. Anything else that somehow arrives is named to the model
+as undeliverable and recorded as an `engine_meta` item of type
+`attachments_unsupported` — never dropped silently.
+
+**API failures surface as errors.** xAI reports a spent balance or a
+blocked subscription on the proprietary `_x.ai/*` channel — a
+`retry_state{type:'failed'}` frame plus `turn_completed` with
+`stop_reason: 'error'` — not through the ACP error channel. The
+adapter reads both and emits a somora `error` event carrying the
+message (e.g. *"API error (status 402 Payment Required): Grok Build
+usage balance exhausted"*), so a configured `fallback:` model takes
+over. Replayed frames from `session/load` are ignored via
+`_meta.isReplay`, so a failure from an earlier turn cannot abort a
+resumed one.
+
 ### Local OpenAI-compatible LLM (Ollama, LM Studio, vLLM, oMLX, ...)
 
 ```yaml

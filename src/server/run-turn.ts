@@ -217,6 +217,8 @@ function pickIdleTimeoutForEngine(
       return cfg.claudeCliIdleMs;
     case 'codex-cli':
       return cfg.codexCliIdleMs;
+    case 'grok-cli':
+      return cfg.grokCliIdleMs;
     case 'openai-compatible':
       return cfg.openaiCompatibleIdleMs;
   }

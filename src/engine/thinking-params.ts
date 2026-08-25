@@ -79,3 +79,25 @@ export function codexCliReasoningArgs(
   const codexEffort = thinking === 'off' ? 'minimal' : thinking;
   return ['-c', `model_reasoning_effort=${codexEffort}`];
 }
+
+/**
+ * Grok Build spawn-args fragment. Append to the `grok agent … stdio`
+ * command-line:
+ *
+ *   args.push(...grokCliReasoningArgs(thinking, model));
+ *
+ * grok-4.5 advertises exactly three efforts in its ACP handshake
+ * (`_meta.modelState.availableModels[].reasoningEffort{,s}`):
+ * low | medium | high, default high. There is no "disabled" state —
+ * the model always reasons — so 'off' maps to 'low' rather than
+ * silently dropping the flag, which would leave the model at its
+ * default 'high' and make /thinking off look broken.
+ */
+export function grokCliReasoningArgs(
+  thinking: ThinkingLevel | undefined,
+  model: ModelLike,
+): string[] {
+  if (!thinking || !modelSupportsReasoning(model)) return [];
+  const effort = thinking === 'off' ? 'low' : thinking;
+  return ['--reasoning-effort', effort];
+}
