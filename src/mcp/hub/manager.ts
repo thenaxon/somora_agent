@@ -82,6 +82,9 @@ const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
 const PARKED_REPROBE_MS = 300_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_CAP_MS = 60_000;
+/** Retry window after a LIVE connection drops (keepalive fail / upstream
+ *  close). Short on purpose — the next 60s sweep picks it up. */
+const RECONNECT_DELAY_MS = 5_000;
 
 interface ServerRuntime {
   name: string;
@@ -395,7 +398,15 @@ export class McpHubManager {
     if (s.state === 'disabled') return Promise.resolve();
     if (s.connectPromise) return s.connectPromise;
     const now = Date.now();
-    if (now < s.retryNotBefore) return Promise.resolve();
+    if (now < s.retryNotBefore) {
+      logger.debug({
+        msg: 'mcp.hub.retry_skipped',
+        server: s.name,
+        state: s.state,
+        retryInMs: s.retryNotBefore - now,
+      });
+      return Promise.resolve();
+    }
     s.connectPromise = this.connectInner(s).finally(() => {
       s.connectPromise = null;
     });
@@ -436,8 +447,7 @@ export class McpHubManager {
       client.onclose = () => {
         if (s.state === 'connected') {
           logger.warn({ msg: 'mcp.hub.connection_closed', server: s.name });
-          s.state = 'pending';
-          s.client = null;
+          this.scheduleReconnect(s);
           this.emitCatalogChange();
         }
       };
@@ -596,12 +606,22 @@ export class McpHubManager {
   private async keepaliveSweep(): Promise<void> {
     const now = Date.now();
     for (const s of this.servers.values()) {
-      // Parked servers get a slow re-probe once their window elapses.
-      if (s.parked && s.state !== 'connected' && now >= s.retryNotBefore) {
-        void this.ensureConnected(s.name).catch(() => {});
+      // Every enabled-but-disconnected server gets a reconnect attempt
+      // once its backoff window elapses: parked ones on the slow
+      // PARKED_REPROBE_MS cadence, failed ones on the exponential
+      // backoff, and servers torn down by a failed keepalive / an
+      // upstream close on the short scheduleReconnect() window. Before
+      // 2026-08-25 only parked servers were re-probed here — a server
+      // that lost its connection mid-life sat in `pending` until a
+      // restart or a manual /mcp/servers/<name>/reconnect (parallel
+      // stranded 47 min, claude-design 84 min after an OAuth expiry).
+      if (s.state !== 'connected') {
+        if (s.state !== 'disabled' && now >= s.retryNotBefore) {
+          void this.ensureConnected(s.name).catch(() => {});
+        }
         continue;
       }
-      if (s.state !== 'connected' || !s.client) continue;
+      if (!s.client) continue;
       if (now - s.lastActivityAt < KEEPALIVE_INTERVAL_MS) continue;
       try {
         await s.client.ping();
@@ -613,10 +633,27 @@ export class McpHubManager {
           error: scrubCredentials(String((err as Error)?.message ?? err)),
         });
         await this.teardown(s, 'keepalive failed');
-        s.state = 'pending';
+        this.scheduleReconnect(s);
         this.emitCatalogChange();
       }
     }
+  }
+
+  /** A live connection went away (keepalive ping failed, upstream
+   *  closed the stream). Drop to `pending` and arm a SHORT retry window
+   *  so the next sweep reconnects — this is not a connect failure, so
+   *  the exponential backoff / park logic in connectInner doesn't apply
+   *  yet; if the reconnect itself fails, connectInner takes over. */
+  private scheduleReconnect(s: ServerRuntime): void {
+    s.client = null;
+    s.state = 'pending';
+    s.parked = false;
+    s.retryNotBefore = Date.now() + RECONNECT_DELAY_MS;
+    logger.info({
+      msg: 'mcp.hub.reconnect_scheduled',
+      server: s.name,
+      retryInMs: RECONNECT_DELAY_MS,
+    });
   }
 
   private async teardown(s: ServerRuntime, reason: string): Promise<void> {

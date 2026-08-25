@@ -20,6 +20,7 @@
 // worker picks them up like any other session.
 
 import { z } from 'zod';
+import { describeModelRefs, resolveAnyRef } from '../../config/types.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import {
   completeTask,
@@ -109,7 +110,10 @@ const TaskSchema = z.object({
     .string()
     .min(1)
     .optional()
-    .describe('Model alias or "provider/modelId" override. Omit to use the persona\'s default.'),
+    .describe(
+      'Model override — an alias or "provider/modelId" EXACTLY as configured in config.yaml; ' +
+        'invented names are rejected. Omit (recommended) to use the persona\'s default.',
+    ),
   task: z.string().min(1),
   /**
    * Optional per-spawn agent-loop override. Default global maxRounds=8
@@ -183,7 +187,9 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
       },
       model: {
         type: 'string',
-        description: 'Model alias or "provider/modelId" — omit to use the persona\'s default.',
+        description:
+          'Model override — an alias or "provider/modelId" EXACTLY as configured in config.yaml; ' +
+          'invented names are rejected. Omit (recommended) to use the persona\'s default.',
       },
       task: { type: 'string', description: 'The task / question for the sub. Will become its first user message.' },
       maxRounds: {
@@ -280,7 +286,11 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
           type: 'object',
           properties: {
             persona: { type: 'string' },
-            model: { type: 'string' },
+            model: {
+              type: 'string',
+              description:
+                'Model override — alias or "provider/modelId" exactly as configured; omit for the persona default.',
+            },
             task: { type: 'string' },
             maxRounds: {
               type: 'integer',
@@ -395,6 +405,18 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   const personaCheck = await loadPersona(targetPersona);
   if (!personaCheck) {
     throw new Error(`spawn_subagent: persona '${targetPersona}' not found`);
+  }
+  // Validate a model override BEFORE creating the session + reserving a
+  // slot: an invented name ("cerebro/deepseek-v4-768") otherwise fails
+  // deep inside the sub's first turn, leaving a dead session behind and
+  // an error that doesn't say what WOULD have worked (2026-08-24 report).
+  if (task.model && !resolveAnyRef(ctx.config, task.model)) {
+    throw new Error(
+      `spawn_subagent: model '${task.model}' is not configured — pass an alias or ` +
+        `provider/modelId exactly as listed in config.yaml, or omit \`model\` to use ` +
+        `${targetPersona}'s default (${personaCheck.model ?? 'unset'}). ` +
+        `Available: ${describeModelRefs(ctx.config)}`,
+    );
   }
   // Concurrency — slot must be held across the full lifetime of the
   // sub-turn (sync + async both). reserveSpawnSlot also increments the

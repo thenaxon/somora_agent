@@ -36,7 +36,7 @@ does it:
    edits alone don't connect anything: `systemctl --user restart
    somora`. Agents: be aware this cuts your own running turn; finish
    your reply first or ask the user to restart.
-4. **Verify**: `curl -s localhost:18737/mcp/status` should show the
+4. **Verify**: `curl -sk https://localhost:18737/mcp/status` should show the
    server `connected` with a tool count, and the new
    `mcp__<server>__*` tools appear in the tool list (web UI: tools
    tile). A `failed`/`needs-auth` state with `lastError` usually means
@@ -184,7 +184,7 @@ credential for all engines.
    - Tip: the login URL sits in a TUI that captures the mouse — hold
      **Shift** while selecting to copy it.
 4. Restart somora (`systemctl --user restart somora`) and check
-   `curl -s localhost:18737/mcp/status` — `claude-design` should be
+   `curl -sk https://localhost:18737/mcp/status` — `claude-design` should be
    `connected` with its tool count.
 
 From then on the hub refreshes the token automatically (~8-hour
@@ -240,10 +240,19 @@ mcp:
 ## Status & operations
 
 ```bash
-curl -s localhost:18737/mcp/status | jq          # per-server state + tool counts
-curl -s -X POST localhost:18737/mcp/servers/<name>/reconnect
+curl -sk https://localhost:18737/mcp/status | jq          # per-server state + tool counts
+curl -sk -X POST https://localhost:18737/mcp/servers/<name>/reconnect
 ```
 
+Port 18737 speaks **HTTPS** when `server.tls` is configured (the
+recommended setup) — plain `http://` gets an empty reply, and a
+self-signed cert needs `-k`. Drop both if you run without TLS.
+
 Server states: `connected`, `pending` (connecting/retrying), `failed`,
-`needs-auth`, `disabled`. `/mcp/call` exists as a loopback-only
+`needs-auth`, `disabled`. A connection that drops mid-life (keepalive
+ping fails, upstream closes the stream, an OAuth token expires) goes
+back to `pending` and is retried by the 60 s keepalive sweep — first
+after a few seconds, then with exponential backoff up to a minute, and
+every 5 min once the error looks permanent (`needs-auth`, missing env
+var). Manual `reconnect` resets the backoff and retries immediately. `/mcp/call` exists as a loopback-only
 dispatch endpoint for debugging a tool without an LLM in the loop.

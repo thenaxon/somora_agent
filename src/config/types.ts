@@ -1296,6 +1296,23 @@ export function resolveAnyRef(config: Config, ref: string): ResolvedModel | null
 }
 
 /**
+ * Human-readable list of every model ref the config accepts — for error
+ * messages when a ref doesn't resolve, so the caller (usually an agent
+ * that guessed a name) can self-correct without reading config.yaml.
+ * Format per model: `alias → provider/modelId` or bare `provider/modelId`.
+ */
+export function describeModelRefs(config: Config): string {
+  const out: string[] = [];
+  for (const [providerName, provider] of Object.entries(config.providers)) {
+    for (const model of provider.models) {
+      const ref = `${providerName}/${model.id}`;
+      out.push(model.alias ? `${model.alias} → ${ref}` : ref);
+    }
+  }
+  return out.join(', ');
+}
+
+/**
  * Enumerate every (provider, model) pair in the config as a ResolvedModel.
  * Used by compaction to pick a worker model with appropriate context
  * window (DECISION #21a) — independent of which model the current

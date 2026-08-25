@@ -20,7 +20,7 @@
 
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, normalize, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, normalize, resolve, sep } from 'node:path';
 import type { Config } from '../../config/types.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import { effectiveWorkspace } from '../../server/workspace.ts';
@@ -84,6 +84,10 @@ export interface ResolvedPath {
   workspace: string;
   /** True if the input path was relative (resolved against workspace). */
   wasRelative: boolean;
+  /** Advisory: the relative path began with the workspace's own folder
+   *  name, which almost always means the caller meant a workspace-
+   *  relative path and is now nesting a copy. */
+  warning?: string;
 }
 
 export async function resolveLocalPath(
@@ -102,7 +106,22 @@ export async function resolveLocalPath(
   const wasRelative = !isAbsolute(expanded);
   const absolute = wasRelative ? resolve(workspace, expanded) : normalize(expanded);
 
-  return { absolute, workspace, wasRelative };
+  // `somoraworkspace/research/x.md` handed to a tool whose relative
+  // root ALREADY IS ~/somoraworkspace lands in
+  // ~/somoraworkspace/somoraworkspace/research/x.md. Persona rules
+  // tend to spell paths home-relative, so flag it instead of silently
+  // nesting (2026-08-08 report). Not an error — a nested dir with the
+  // workspace's own name is legal, just almost never intended.
+  const firstSegment = wasRelative ? expanded.split(/[\\/]/)[0] : undefined;
+  const rest = firstSegment ? expanded.slice(firstSegment.length + 1) : '';
+  const warning =
+    firstSegment && firstSegment === basename(workspace)
+      ? `path starts with '${firstSegment}/' — relative paths already resolve against the workspace ` +
+        `(${workspace}), so this resolves to ${absolute}. Drop the prefix if you meant ` +
+        (rest ? `'${rest}'.` : 'the workspace root.')
+      : undefined;
+
+  return { absolute, workspace, wasRelative, ...(warning ? { warning } : {}) };
 }
 
 export function expandHome(p: string): string {

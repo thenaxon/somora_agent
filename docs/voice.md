@@ -48,7 +48,7 @@ tts:
   provider: omlx                              # references providers.omlx
   model: fish-audio-s2-pro-8bit               # whatever your upstream calls it
   language: de
-  # voice: <id>                               # optional OpenAI-style speaker selector
+  # voice: <id>                               # optional OpenAI-style speaker selector (sent as `alloy` when unset)
   textPrefix: "<|speaker:0|>"                 # inline prefix prepended to every input
   agentVoices:                                # optional per-agent override map
     naxon:  "[deep male voice] "
@@ -80,6 +80,12 @@ Many open-source TTS engines (Fish Audio S2 Pro on mlx-audio is the
 canonical example) don't honor the OpenAI-compatible `voice` JSON field
 — they steer voice via inline tags in the **text itself**. To support
 that, somora prepends a configurable prefix to every TTS input.
+
+The `voice` field is still always sent on the wire (`alloy` when
+`tts.voice` is unset): the OpenAI speech spec requires it, and routers
+such as LiteLLM reject requests without it (`Router.aspeech() missing
+1 required positional argument: 'voice'` → 500) even though the engine
+behind them would have ignored the value.
 
 Lookup at synth time:
 

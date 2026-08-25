@@ -69,6 +69,10 @@ export function negotiateFormat(acceptHeader: string | undefined | null, reencod
 
 // ── Cache key ─────────────────────────────────────────────────────────
 
+/** Sent as `voice` when `tts.voice` is not configured. `alloy` is the
+ *  OpenAI default every OpenAI-compatible backend recognises. */
+const DEFAULT_WIRE_VOICE = 'alloy';
+
 export function computeCacheKey(text: string, voice: string | undefined, model: string, fmt: Format): string {
   const h = createHash('sha256');
   h.update(text);
@@ -203,7 +207,14 @@ export async function synthesize(input: SynthesizeInput, config: Config): Promis
     model: tts.model,
     input: finalInput,
   };
-  if (voice) body.voice = voice;
+  // The OpenAI speech spec makes `voice` REQUIRED. Direct engines like
+  // omlx tolerate its absence, but any OpenAI-compatible router in
+  // between (LiteLLM: `Router.aspeech() missing 1 required positional
+  // argument: 'voice'` → 500) does not. Send a default when none is
+  // configured — engines that steer voice via textPrefix ignore it.
+  // The cache key above deliberately keeps the CONFIGURED voice
+  // (undefined → ''), so existing cached files stay valid.
+  body.voice = voice ?? DEFAULT_WIRE_VOICE;
   const language = input.language ?? tts.language;
   if (language) body.language = language;
 

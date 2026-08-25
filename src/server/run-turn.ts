@@ -30,6 +30,7 @@ import { resolveCompactionConfig } from '../compaction/index.ts';
 import { getFreshConfig } from '../config/loader.ts';
 import {
   type Config,
+  describeModelRefs,
   listAllModels,
   resolveAnyRef,
   type ThinkingLevel,
@@ -456,8 +457,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     : sessionMeta;
   const resolvedModel = resolveEffectiveModel(deps.config, persona, effectiveMetaForResolve);
   if (!resolvedModel) {
+    const ref = effectiveMetaForResolve.modelOverride ?? persona.model ?? '(none)';
     throw new Error(
-      `model for agent '${agent}' cannot be resolved from config.yaml — format: provider/modelId or alias`,
+      `model '${String(ref)}' for agent '${agent}' cannot be resolved from config.yaml — ` +
+        `use an alias or provider/modelId exactly as configured. Available: ${describeModelRefs(deps.config)}`,
     );
   }
   const engine = engineRegistry[resolvedModel.provider.engine];

@@ -65,6 +65,11 @@ function wakePrompt(name: string, kind: string): string {
   );
 }
 
+async function tmuxSessionExists(name: string): Promise<boolean> {
+  const list = await tmuxLocalList();
+  return list.ok && list.sessions.some((s) => s.name === name);
+}
+
 export class TmuxAttentionWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly states = new Map<string, AttentionSessionState>();
@@ -218,6 +223,20 @@ export class TmuxAttentionWatcher {
     void (async () => {
       const release = await acquireSessionLock(origin.agent, session, { priority: 'agent' });
       try {
+        // The lock wait can be long — the origin's own turn typically
+        // holds it, and that turn is often the one that `tmux kill`s the
+        // session once the work is done. Waking for a session that no
+        // longer exists burns a turn and confuses the agent ("became
+        // ready" → `tmux list` → 0). Re-check liveness AFTER the wait.
+        if (!(await tmuxSessionExists(origin.name))) {
+          logger.info({
+            msg: 'tmux.attention_wake_stale',
+            name: origin.name,
+            origin: { agent: origin.agent, session },
+            reason: 'session gone before wake turn could start',
+          });
+          return;
+        }
         await runChatTurn({
           agent: origin.agent,
           session,

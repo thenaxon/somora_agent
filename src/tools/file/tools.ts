@@ -259,7 +259,14 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
 
 const WriteInput = z
   .object({
-    path: z.string().min(1),
+    path: z
+      .string()
+      .min(1)
+      .describe(
+        'Destination path. Relative paths resolve against the workspace dir itself — do NOT ' +
+          'prefix them with the workspace folder name (that nests a copy inside the workspace). ' +
+          'Absolute paths pass through.',
+      ),
     content: z.string(),
     target: TargetField,
     mode: z.enum(['create', 'overwrite', 'append']).default('overwrite'),
@@ -283,7 +290,13 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
   jsonSchema: {
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Destination path (relative to workspace, or absolute).' },
+      path: {
+        type: 'string',
+        description:
+          'Destination path. Relative paths resolve against the workspace dir itself — do NOT ' +
+          'prefix them with the workspace folder name (that nests a copy inside the workspace). ' +
+          'Absolute paths pass through.',
+      },
       content: { type: 'string', description: 'Full file content.' },
       target: { type: 'string', description: 'local (default) or a resource name.', default: 'local' },
       mode: { type: 'string', enum: ['create', 'overwrite', 'append'], description: 'Default: overwrite.' },

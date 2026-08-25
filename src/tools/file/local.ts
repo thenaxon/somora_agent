@@ -100,6 +100,9 @@ export interface WriteResult {
   workspace_relative: string | null;
   mode: 'create' | 'overwrite' | 'append';
   bytes: number;
+  /** Set when the path looked like a home-relative spelling of a
+   *  workspace path (leading `<workspace-basename>/`). */
+  warning?: string;
 }
 
 export async function localWrite(args: {
@@ -109,9 +112,16 @@ export async function localWrite(args: {
   config: Config;
   mode: 'create' | 'overwrite' | 'append';
 }): Promise<WriteResult> {
-  const { absolute, workspace } = await resolveLocalPath(args.path, args.agent, args.config);
+  const { absolute, workspace, warning } = await resolveLocalPath(
+    args.path,
+    args.agent,
+    args.config,
+  );
   const policy = checkWriteAllowed(absolute, args.agent);
   if (!policy.ok) throw new Error(policy.reason);
+  if (warning) {
+    logger.warn({ msg: 'tool.file_write.path_prefix_doubled', agent: args.agent, path: absolute });
+  }
 
   await mkdir(dirname(absolute), { recursive: true });
 
@@ -149,6 +159,7 @@ export async function localWrite(args: {
     workspace_relative: relative(workspace, absolute) || '.',
     mode: args.mode,
     bytes: finalSize,
+    ...(warning ? { warning } : {}),
   };
 }
 
