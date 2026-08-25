@@ -80,6 +80,18 @@ providers:
         contextWindow: 400000
         capabilities: [text, reasoning]
 
+  # xAI via the Grok Build CLI (`grok`), driven over ACP — a SuperGrok /
+  # Premium subscription authenticates the binary (`grok login`), no API
+  # key. Text attachments only; no image/PDF input. Community-maintained
+  # engine — see docs/setup.md#xai-via-grok-build-cli-subscription-no-api-key.
+  # xai:
+  #   engine: grok-cli
+  #   models:
+  #     - id: grok-4.5
+  #       alias: grok
+  #       contextWindow: 500000
+  #       capabilities: [text, reasoning]
+
   # Local OpenAI-compatible server (Ollama, LM Studio, oMLX, vLLM, ...).
   # Multiple providers of the same engine are fine — just give each a unique key.
   omlx:
@@ -325,6 +337,7 @@ providers:
 # engineWatchdog:
 #   claudeCliIdleMs: 300000        # 5 min — subscription, fast first event
 #   codexCliIdleMs: 300000         # 5 min — subscription, fast first event
+#   grokCliIdleMs: 300000          # 5 min — same class as the other CLIs
 #   openaiCompatibleIdleMs: 1200000 # 20 min — local LLMs (oMLX, ollama, vLLM)
 #                                  # can legitimately stream slowly on
 #                                  # consumer hardware. Raise if your
@@ -528,9 +541,10 @@ providers:
 #       # timeoutMs: 60000         # per tool call
 #       # connectTimeoutMs: 15000
 #       # supportsParallelToolCalls: false   # keep serial unless known-safe
-#     # Servers that authenticate via an interactive OAuth login (token
-#     # in a JSON file, self-refreshed by the hub). Claude Design ships
-#     # as a one-line preset — see docs/mcp.md for the one-time login:
+#     # Servers that authenticate via an OAuth login (token in a JSON
+#     # file). Claude Design ships as a one-line preset and rides on the
+#     # regular Claude login somora already keeps in sync — no extra
+#     # login step (docs/mcp.md#claude-design):
 #     claude-design:
 #       preset: claude-design
 #     # Generic form for other such servers:
@@ -540,6 +554,9 @@ providers:
 #     #     type: oauth-refresh
 #     #     credentialKey: myServiceOauth
 #     #     tokenEndpoint: https://example.com/oauth/token
+#     #     # refresh: false   # read-only when another process owns the
+#     #     #                  # token's refresh chain (two refreshers on
+#     #     #                  # one rotating chain invalidate each other)
 
 # TUI display defaults for the Ink CLI. Render-only — the server still
 # injects memory and runs tools regardless. Live-toggle via /show and
