@@ -84,6 +84,22 @@ const TUI_MARKERS: Partial<Record<TmuxSessionKind, MarkerSet>> = {
       'esc to interrupt',
     ],
   },
+  opencode: {
+    // Live-verified 2026-08-25 against OpenCode 1.18.23 (sst/opencode)
+    // driving DeepSeek V4 Flash: a message submitted while a turn runs
+    // stays in the input box with a `QUEUED` label under it and is
+    // auto-submitted when the turn ends — the pane keeps working, so
+    // it must not read as ready.
+    queued: ['QUEUED'],
+    running: [
+      // Footer while a turn runs: `⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt` (spinner
+      // dots + cue). Ready footer is `tab agents  ctrl+p commands`
+      // without the cue; a `△ Permission required` dialog (Allow once /
+      // Allow always / Reject) also drops the cue, so it reads as ready
+      // — correct, it is waiting for a human/agent decision.
+      'esc interrupt',
+    ],
+  },
   // 'shell' intentionally has no entry — falls through to the
   // "no detection" path below, so the response shape matches today's
   // behavior for any session that didn't declare a kind.
@@ -147,6 +163,11 @@ export function detectTuiState(
 const INPUT_LINE_PREFIX: Partial<Record<TmuxSessionKind, RegExp>> = {
   'claude-code': /^\s*[>❯]\s/,
   codex: /^\s*[›>❯]\s/,
+  // opencode: intentionally absent. Its input is a multi-line box whose
+  // every line starts with `┃` (padding, the text, the model status
+  // line), so a prefix can't single out the text line — and the TUI
+  // shows no ghost-text suggestion to begin with (verified 2026-08-25).
+  // detectSuggestion() therefore returns null for it, like shell.
 };
 
 const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
@@ -171,7 +192,20 @@ function extractDimText(ansiLine: string): string {
       const m = /^\x1b\[([0-9;]*)m/.exec(ansiLine.slice(i));
       if (m) {
         const params = m[1] === '' ? ['0'] : m[1]!.split(';');
-        for (const p of params) {
+        // Walk the parameter list with the extended-colour forms in
+        // mind: `38;2;R;G;B` / `48;2;R;G;B` (truecolor) and `38;5;n` /
+        // `48;5;n` (256-colour) carry a literal `2` / `5` that is a
+        // colour-space selector, NOT SGR 2 (dim). Treating it as dim
+        // flagged every truecolor-rendered line as ghost text — which
+        // is every line of OpenCode's TUI (2026-08-25).
+        for (let k = 0; k < params.length; k++) {
+          const p = params[k]!;
+          if (p === '38' || p === '48' || p === '58') {
+            const mode = params[k + 1];
+            if (mode === '2') k += 4;
+            else if (mode === '5') k += 2;
+            continue;
+          }
           if (p === '0' || p === '' || p === '22') dim = false;
           else if (p === '2') dim = true;
         }

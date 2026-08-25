@@ -20,7 +20,7 @@ import { SOMORA_HOME_DIR } from '../server/logger.ts';
 
 const STORE_PATH = join(SOMORA_HOME_DIR, 'tmux-origins.json');
 
-export type TmuxSessionKind = 'shell' | 'claude-code' | 'codex';
+export type TmuxSessionKind = 'shell' | 'claude-code' | 'codex' | 'opencode';
 
 export interface TmuxOrigin {
   /** Tmux session name (the key, redundant here for ergonomics). */

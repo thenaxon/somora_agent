@@ -220,7 +220,7 @@ const TmuxInput = z
           'against somora\'s shared auth/state tree.',
       ),
     kind: z
-      .enum(['shell', 'claude-code', 'codex'])
+      .enum(['shell', 'claude-code', 'codex', 'opencode'])
       .default('shell')
       .describe(
         'create only — what runs inside the pane. Drives TUI-aware capture/wait_idle: when ' +
@@ -231,7 +231,10 @@ const TmuxInput = z
           'TUI magic, pure content-stability (today\'s behavior). "claude-code" for ' +
           '`claude --dangerously-skip-permissions` — detects "Press up to edit queued messages" ' +
           'and "esc to interrupt" + Claude Code\'s spinner words. "codex" for codex CLI — ' +
-          'detects esc-to-interrupt running cue. Pick "shell" when unsure; the TUI flags are ' +
+          'detects esc-to-interrupt running cue. "opencode" for the OpenCode TUI — detects its ' +
+          '"esc interrupt" running cue and the QUEUED label on a message submitted while a turn ' +
+          'runs; a "Permission required" dialog reads as ready (it waits for you: Enter = Allow ' +
+          'once). Pick "shell" when unsure; the TUI flags are ' +
           'additive and only help if the correct kind is declared. Sessions created with a ' +
           'coding-CLI kind are watched by the attention watcher: if the CLI finishes while ' +
           'you are no longer looking, somora wakes you with a [tmux attention] turn so you ' +
@@ -241,7 +244,7 @@ const TmuxInput = z
       .boolean()
       .default(true)
       .describe(
-        'create only, kind claude-code/codex only. false opts this session out of the ' +
+        'create only, coding-CLI kinds (claude-code/codex/opencode) only. false opts this session out of the ' +
           'attention watcher (no needs_attention flag, no wake turns). Default true.',
       ),
   })
@@ -601,7 +604,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
       inherit_agent_env: { type: 'boolean', default: false },
       kind: {
         type: 'string',
-        enum: ['shell', 'claude-code', 'codex'],
+        enum: ['shell', 'claude-code', 'codex', 'opencode'],
         default: 'shell',
         description:
           'create only — what runs inside the pane, drives TUI-aware capture/wait_idle. ' +
@@ -611,7 +614,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
         type: 'boolean',
         default: true,
         description:
-          'create only, kind claude-code/codex only. false opts this session out of the ' +
+          'create only, coding-CLI kinds (claude-code/codex/opencode) only. false opts this session out of the ' +
           'attention watcher (no needs_attention flag, no wake turns).',
       },
     },

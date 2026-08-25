@@ -115,7 +115,7 @@ export class TmuxAttentionWatcher {
   private watchedOrigins(liveNames: Set<string>): TmuxOrigin[] {
     return listTmuxOrigins().filter(
       (o) =>
-        (o.kind === 'claude-code' || o.kind === 'codex') &&
+        (o.kind === 'claude-code' || o.kind === 'codex' || o.kind === 'opencode') &&
         o.attention !== false &&
         liveNames.has(o.name),
     );

@@ -115,8 +115,8 @@ using `multiline_safe` against bash anyway).
 ## `kind` — Declaring what runs in the pane
 
 For known coding-TUIs you can tell somora what's running inside the
-session at create-time. Set `kind: "claude-code"` or `kind: "codex"`
-and two things happen automatically on every `capture` and
+session at create-time. Set `kind: "claude-code"`, `kind: "codex"` or
+`kind: "opencode"` and two things happen automatically on every `capture` and
 `wait_idle` against that session:
 
 1. A structured `tui_state: { state, markers, suggestion_visible,
@@ -145,6 +145,7 @@ The kinds and what they detect:
 | `shell` (default) | nothing — pure content-stability | bash/zsh/fish, build scripts, REPLs, vim/htop, anything not in the list below |
 | `claude-code` | `Press up to edit queued messages` (queued), `esc to interrupt` + spinner words like `Tempering…` / `Whisking…` (running) | `claude` / `claude --dangerously-skip-permissions` |
 | `codex` | `esc to interrupt` (running) | `codex` CLI |
+| `opencode` | `QUEUED` label under a message submitted mid-turn (queued), `esc interrupt` footer cue (running) | `opencode` TUI ([sst/opencode](https://github.com/sst/opencode)) |
 
 Pick `shell` (or omit the field) when unsure — the TUI flags are
 additive and only help if the correct kind is declared. A wrong
@@ -184,9 +185,34 @@ if (r.tui_state?.state === "running") {
 }
 ```
 
+```jsonc
+// OpenCode workflow — same shape. Two OpenCode specifics:
+//  - a "△ Permission required" dialog (Allow once / Allow always /
+//    Reject) reads as `ready`: it is waiting for you. `capture` shows
+//    the dialog; answer with key:"Enter" (Allow once is preselected)
+//    or arrow keys + Enter to pick another option.
+//  - a message sent while a turn runs is QUEUED and auto-submitted when
+//    the turn ends, so `queued` means "still going to work after this".
+tmux({ action: "create", name: "oc-1", kind: "opencode", cwd: "/path/to/project" })
+tmux({ action: "send",   name: "oc-1", keys: "opencode\n" })
+const r = await tmux({ action: "wait_idle", name: "oc-1", wait_timeout_ms: 600_000 })
+if (r.became_idle && r.tui_state?.state === "ready") {
+  const c = await tmux({ action: "capture", name: "oc-1" })
+  if (c.content.includes("Permission required")) {
+    tmux({ action: "send", name: "oc-1", key: "Enter" })   // Allow once
+  }
+}
+```
+
+OpenCode's model comes from `~/.config/opencode/opencode.json`; any
+OpenAI-compatible endpoint works (a local model behind LiteLLM/vLLM/
+sglang, for instance), so this is the natural kind for driving a
+self-hosted coding model.
+
 ## Attention watcher — wake me when the CLI is done
 
-Sessions created with `kind: "claude-code"` or `kind: "codex"` are
+Sessions created with `kind: "claude-code"`, `kind: "codex"` or
+`kind: "opencode"` are
 watched server-side: somora polls the pane every few seconds and
 detects the moment the CLI goes from *running* to *ready* — which
 means "finished" or "waiting for input" (e.g. a permission prompt).
