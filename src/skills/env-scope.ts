@@ -46,6 +46,41 @@ export interface SkillEnvScope {
   injectEnv: Record<string, string>;
   /** Names of the matched skills (log/diagnostics). */
   matchedSkills: string[];
+  /** For every declared var: the bins that would have injected it —
+   *  what the hint below names when a stripped var shows up in a
+   *  failed command's output. */
+  binsByVar?: Record<string, string[]>;
+}
+
+/**
+ * Explain a failure that smells like a stripped skill var. When a
+ * command exits non-zero and its output names a var that envScoping
+ * removed (declared by some skill, but no bin of that skill appeared as
+ * a visible token — typically `python3 - <<EOF … subprocess.run(["gog",
+ * …])`), the bin's own message ("set GOG_KEYRING_PASSWORD") reads like
+ * a broken bootstrap and agents escalate (2026-08-25 report). Returns
+ * the hint text, or undefined when nothing matches.
+ */
+export function skillEnvStripHint(
+  scope: SkillEnvScope | undefined,
+  exitCode: number | null,
+  output: string,
+): string | undefined {
+  if (!scope || exitCode === 0 || !output) return undefined;
+  const stripped = scope.stripVars.filter(
+    (name) => !(name in scope.injectEnv) && output.includes(name),
+  );
+  if (stripped.length === 0) return undefined;
+  const bins = [...new Set(stripped.flatMap((v) => scope.binsByVar?.[v] ?? []))];
+  const binList = bins.length > 0 ? bins.map((b) => `\`${b}\``).join(', ') : 'its skill\'s bins';
+  return (
+    `${stripped.join(', ')} ${stripped.length === 1 ? 'is' : 'are'} set on the server but was removed ` +
+    `from this command's environment by skills.envScoping: a skill-declared var is injected only ` +
+    `when one of the declaring skill's bins (${binList}) appears as a visible token in the exec ` +
+    `command. This command called it indirectly (wrapper script, python subprocess, quoted ` +
+    `literal). Not a broken bootstrap — call the bin directly in the command (e.g. \`${bins[0] ?? 'bin'} …\`, ` +
+    `or prefix \`command -v ${bins[0] ?? 'bin'} >/dev/null && …\`), or pass the value via exec \`env\`.`
+  );
 }
 
 type SkillEnvSource = Pick<LoadedSkill, 'name' | 'requiresBins' | 'requiresEnvVars'>;
@@ -80,6 +115,13 @@ export function computeSkillEnvScope(
     return { stripVars: [], injectEnv: {}, matchedSkills: [] };
   }
   const stripVars = [...new Set(declaring.flatMap((s) => s.requiresEnvVars))];
+  const binsByVar: Record<string, string[]> = {};
+  for (const skill of declaring) {
+    const bins = skill.requiresBins.map((entry) => parseBinRequirement(entry).bin);
+    for (const name of skill.requiresEnvVars) {
+      binsByVar[name] = [...new Set([...(binsByVar[name] ?? []), ...bins])];
+    }
+  }
   const tokens = extractCommandBins(command);
   const injectEnv: Record<string, string> = {};
   const matchedSkills: string[] = [];
@@ -93,7 +135,7 @@ export function computeSkillEnvScope(
       if (value !== undefined) injectEnv[name] = value;
     }
   }
-  return { stripVars, injectEnv, matchedSkills };
+  return { stripVars, injectEnv, matchedSkills, binsByVar };
 }
 
 // ---------------------------------------------------------------------------

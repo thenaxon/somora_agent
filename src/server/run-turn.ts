@@ -442,6 +442,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // Caller may pre-generate one (HTTP /chat/send does, so the trace
   // begins at request acceptance) — otherwise we mint here.
   const turnId = args.turnId ?? randomUUID();
+  /** Set when run-turn-fallback re-ran this turn on the fallback model —
+   *  the phase:'end' payload and the result report the ACTUAL model. */
+  let turnFallback: { requested: string; actual: string; reason: string } | undefined;
   logger.info({
     msg: 'turn.started',
     turnId,
@@ -857,6 +860,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     let firstEventLogged = false;
     let sawTurnEnd = false;
     let lastSeenEngine: string = resolvedModel.provider.engine;
+    let fallbackInfo: { requested: string; actual: string; reason: string } | undefined;
     let streamTurnId: string | undefined;
     for await (const ev of stream) {
       if (!firstEventLogged) {
@@ -904,6 +908,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       }
       if (ev.kind === 'turn_start' && typeof ev.turnId === 'string') {
         streamTurnId = ev.turnId;
+      }
+      if (ev.kind === 'model_fallback') {
+        fallbackInfo = { requested: ev.requested, actual: ev.actual, reason: ev.reason };
+        turnFallback = fallbackInfo;
       }
       if (ev.kind === 'turn_end') {
         sawTurnEnd = true;
@@ -1073,15 +1081,17 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     const thinkingPayload = effectiveThinking
       ? { level: effectiveThinking, active: modelSupportsReasoning }
       : undefined;
+    const actualRef = turnFallback ? splitModelRef(turnFallback.actual) : undefined;
     await publishSse({
       event: 'agent',
       data: {
         phase: 'end',
         ...(lastUsage ? { usage: lastUsage } : {}),
         contextWindow: resolvedModel.model.contextWindow,
-        provider: resolvedModel.providerName,
-        model: resolvedModel.modelId,
+        provider: actualRef?.provider ?? resolvedModel.providerName,
+        model: actualRef?.model ?? resolvedModel.modelId,
         ...(thinkingPayload ? { thinking: thinkingPayload } : {}),
+        ...(turnFallback ? { fallback: turnFallback } : {}),
       },
     });
   }
@@ -1098,17 +1108,25 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(errorMessage ? { err: errorMessage } : {}),
   });
 
+  const actualForResult = turnFallback ? splitModelRef(turnFallback.actual) : undefined;
   return {
     finalText,
     usage: lastUsage,
     contextWindow: resolvedModel.model.contextWindow,
-    provider: resolvedModel.providerName,
-    model: resolvedModel.modelId,
+    provider: actualForResult?.provider ?? resolvedModel.providerName,
+    model: actualForResult?.model ?? resolvedModel.modelId,
     thinkingActive: modelSupportsReasoning && Boolean(effectiveThinking),
     thinkingLevel: effectiveThinking,
     ms: Date.now() - start,
+    ...(turnFallback ? { fallback: turnFallback } : {}),
     ...(errorMessage ? { error: errorMessage } : {}),
   };
+}
+
+/** `provider/modelId` → parts (modelIds may themselves contain '/'). */
+function splitModelRef(ref: string): { provider: string; model: string } {
+  const slash = ref.indexOf('/');
+  return slash < 0 ? { provider: '', model: ref } : { provider: ref.slice(0, slash), model: ref.slice(slash + 1) };
 }
 
 export type { ChatTurnResult } from './run-turn-types.ts';

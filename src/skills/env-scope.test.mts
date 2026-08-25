@@ -114,5 +114,20 @@ const ENV = {
   check('inert without declarations', s.stripVars.length === 0 && Object.keys(s.injectEnv).length === 0);
 }
 
+
+// ── strip hint: indirect call names the var in stderr ────────────────
+{
+  const { skillEnvStripHint } = await import('./env-scope.ts');
+  const s = computeSkillEnvScope('python3 - <<EOF\nsubprocess.run(["gog","gmail","send"])\nEOF', SKILLS, ENV);
+  const h = skillEnvStripHint(s, 1, 'error: no TTY; set GOG_KEYRING_PASSWORD');
+  check('hint: names the stripped var', typeof h === 'string' && h.includes('GOG_KEYRING_PASSWORD'), String(h));
+  check('hint: names the declaring bin', typeof h === 'string' && h.includes('`gog`'), String(h));
+  check('hint: absent on exit 0', skillEnvStripHint(s, 0, 'set GOG_KEYRING_PASSWORD') === undefined);
+  check('hint: absent when output does not mention a var', skillEnvStripHint(s, 1, 'boom') === undefined);
+  const matched = computeSkillEnvScope('gog gmail send', SKILLS, ENV);
+  check('hint: absent when the var WAS injected', skillEnvStripHint(matched, 1, 'set GOG_KEYRING_PASSWORD') === undefined);
+  check('hint: absent without scoping', skillEnvStripHint(undefined, 1, 'set GOG_KEYRING_PASSWORD') === undefined);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 assert.equal(fail, 0);

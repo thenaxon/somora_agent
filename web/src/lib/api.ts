@@ -189,6 +189,11 @@ export interface HistoryEvent {
    *  engine-emitted label (e.g. 'todo_list'); payload is opaque. */
   itemType?: string;
   payload?: unknown;
+  /** Set on `kind: 'model_fallback'` rows — the persona's fallback model
+   *  answered the turn that follows. Refs are `provider/modelId`. */
+  requested?: string;
+  actual?: string;
+  reason?: string;
 }
 
 export interface HistoryResponse {

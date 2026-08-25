@@ -429,6 +429,27 @@ function toOpenAiTools(defs: ToolDefinition[]): ChatTool[] {
   }));
 }
 
+/**
+ * Backend refused the prompt because it doesn't fit the model. The
+ * pre-turn `shouldCompact` check works off somora's own token
+ * ESTIMATE, which can sit far below the backend's count (26k estimated
+ * vs 251k counted on 2026-08-22 — images, tool payloads, chars/4). So
+ * the estimate is a hint; the backend's 400 is the truth. Matches the
+ * wordings seen in the wild: LiteLLM/sglang "Prompt too long: N tokens
+ * exceeds max context window", OpenAI "maximum context length is N
+ * tokens", `context_length_exceeded`, and oMLX's "prefill memory guard
+ * rejected this prompt".
+ */
+export function isContextLengthError(err: unknown): boolean {
+  const msg = String((err as Error)?.message ?? err);
+  return /prompt too long|context[_ ]length|maximum context|max(imum)? context window|context window of|prefill memory guard|too many tokens|reduce the length of the messages|input is too long|exceeds the (model'?s? )?(context|token)/i.test(
+    msg,
+  );
+}
+
+/** Turns that already got one reactive compaction+retry — never loop. */
+const CONTEXT_RETRIED = new WeakSet<TurnInput>();
+
 export const openAiCompatibleEngine: AgentEngine = {
   name: ENGINE,
 
@@ -646,6 +667,9 @@ export const openAiCompatibleEngine: AgentEngine = {
     // monotonically — matches how claude-cli's SDK presents
     // tool-using turns to us (one final assistant_message at the end).
     let cumulative = '';
+    /** Rounds whose request was sent — the reactive context retry is only
+     *  safe before anything happened (round 1, nothing emitted). */
+    let roundsStarted = 0;
     let totalUsage:
       | { tokens_in: number; tokens_out: number; tokens_out_reasoning?: number }
       | undefined;
@@ -697,6 +721,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       let hitToolBudget = false;
       while (round < maxRounds) {
         round++;
+        roundsStarted = round;
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
         armIdleTimer();
         const stream = await client.chat.completions.create(
@@ -1327,6 +1352,113 @@ export const openAiCompatibleEngine: AgentEngine = {
           ? `${cumulative}\n\n[somora] aborted by user`
           : '[somora] aborted by user';
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
+        yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+      } else if (isContextLengthError(err) && roundsStarted <= 1 && !cumulative) {
+        // Reactive compaction: the backend says the prompt doesn't fit,
+        // whatever our estimate thought. Force a compaction down to one
+        // intact pair and retry the turn ONCE. Only before anything was
+        // streamed or any tool ran — a mid-turn retry would replay tool
+        // calls. Second failure → clear message instead of a raw 400.
+        const backendMessage = (err as Error).message;
+        const alreadyRetried = CONTEXT_RETRIED.has(input);
+        CONTEXT_RETRIED.add(input);
+        logger.warn({
+          msg: 'engine.context_overflow',
+          engine: ENGINE,
+          provider: resolvedModel.providerName,
+          model: resolvedModel.modelId,
+          agent,
+          session,
+          contextWindow: resolvedModel.model.contextWindow,
+          estimatedTokens: estTokens,
+          existingCompactions: compactions?.length ?? 0,
+          backend: backendMessage.slice(0, 200),
+          action: 'forcing compaction, retrying once',
+        });
+        let forced: Compaction | null = null;
+        let forceErr: string | undefined;
+        if (alreadyRetried) {
+          forceErr = 'the prompt still does not fit after a forced compaction';
+        } else {
+          try {
+            forced = await runCompaction({
+            systemPrompt,
+            history,
+            resolvedModel,
+            availableModels,
+            compactions,
+            config: {
+              ...compactionConfig,
+                safetyCushionPairs: Math.min(1, compactionConfig.safetyCushionPairs),
+              },
+            });
+          } catch (cErr) {
+            forceErr = String((cErr as Error)?.message ?? cErr);
+          }
+        }
+        if (forced) {
+          const freshMeta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
+          const nextCompactions = [...(freshMeta.compactions ?? []), forced];
+          await metaStore.set(agent, session, { ...freshMeta, compactions: nextCompactions });
+          logger.info({
+            msg: 'engine.compaction_done',
+            engine: ENGINE,
+            agent,
+            session,
+            reason: 'context_overflow',
+            throughTs: forced.throughTs,
+            tokensBefore: forced.tokensBefore,
+            tokensAfter: forced.tokensAfter,
+          });
+          yield {
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'context_compacted',
+            payload: {
+              text:
+                `history compacted for ${resolvedModel.modelId} (${resolvedModel.model.contextWindow.toLocaleString('en-US')}-token window) ` +
+                `after the backend rejected the prompt — retrying`,
+              reason: 'context_overflow',
+              backend: backendMessage.slice(0, 300),
+              tokensBefore: forced.tokensBefore,
+              tokensAfter: forced.tokensAfter,
+            },
+          };
+          disarmIdleTimer();
+          if (signal) signal.removeEventListener('abort', onUpstreamAbort);
+          // Re-run the whole turn against the compacted history. The
+          // retry re-reads meta (compactions), rebuilds messages and
+          // owns its own watchdog; its turn_start is dropped so the
+          // consumer sees exactly one turn.
+          for await (const ev of openAiCompatibleEngine.runTurn(input)) {
+            if (ev.kind === 'turn_start') continue;
+            yield ev;
+          }
+          return;
+        }
+        const why = alreadyRetried
+          ? forceErr
+          : forceErr
+            ? `compaction failed: ${forceErr}`
+            : 'nothing older could be compacted (the conversation is already down to its last exchange)';
+        logger.error({
+          msg: 'engine.fail',
+          engine: ENGINE,
+          agent,
+          session,
+          err: `context overflow, ${why}`,
+        });
+        yield {
+          kind: 'error',
+          ts: ts(),
+          engine: ENGINE,
+          message:
+            `The conversation no longer fits ${resolvedModel.modelId}'s context window ` +
+            `(${resolvedModel.model.contextWindow.toLocaleString('en-US')} tokens) and ${why}. ` +
+            `Switch to a model with a larger window (/model) or start a new session (/reset). ` +
+            `Backend: ${backendMessage.slice(0, 200)}`,
+        };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else {
         logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });

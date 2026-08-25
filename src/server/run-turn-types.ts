@@ -30,5 +30,8 @@ export interface ChatTurnResult {
   thinkingActive: boolean;
   thinkingLevel?: ThinkingLevel;
   ms: number;
+  /** Present when the persona's fallback model answered instead of the
+   *  primary. `provider`/`model` above already reflect the fallback. */
+  fallback?: { requested: string; actual: string; reason: string };
   error?: string;
 }

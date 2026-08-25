@@ -657,6 +657,13 @@ Event types:
   and clients can optionally render them. `label` is server-resolved
   (e.g. `todo_list` → `"plan"`); unknown item-types fall back to the
   raw `itemType`. `payload` is the engine's original event, opaque.
+- `model_fallback` — `{requested, actual, reason}` (refs are
+  `provider/modelId`) — the persona's primary model failed before
+  producing anything and the configured `fallback:` model is answering
+  this turn. Sent before the fallback's first delta; the following
+  `agent` phase:'end' also carries `fallback` and reports the ACTUAL
+  `provider`/`model`. Persisted to history as the same kind, so a
+  reload keeps the marker on that turn.
 - `memory_inject` — `{hits, block}` — memory recall for this turn
 - `status` — `{msg}` — connection events, error notices
 - `heartbeat` — current ms timestamp, fires every 20 s
@@ -752,7 +759,8 @@ Pagination: pass `?limit=200` to get the last 200 events plus a
 ```
 
 Event kinds: `user_message`, `assistant_message`, `tool_call`,
-`tool_result`, `engine_meta`, `memory_inject`. Each carries `kind`,
+`tool_result`, `engine_meta`, `memory_inject`, `model_fallback`
+(precedes the assistant message the fallback model produced). Each carries `kind`,
 `ts`, and kind-specific fields. Tool names are normalised here too.
 `engine_meta` rows preserve the raw `itemType` + opaque `payload`;
 clients resolve the friendly label on render (see

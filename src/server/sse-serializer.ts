@@ -81,6 +81,11 @@ export function createTurnSerializer() {
           },
         };
       }
+      case 'model_fallback':
+        return {
+          event: 'model_fallback',
+          data: { requested: ev.requested, actual: ev.actual, reason: ev.reason },
+        };
       default:
         return null;
     }

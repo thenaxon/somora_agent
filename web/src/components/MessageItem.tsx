@@ -60,6 +60,12 @@ interface Props {
   onAbort?: () => void;
 }
 
+/** `provider/modelId` → the id only, for compact chips. */
+function shortModelRef(ref: string): string {
+  const slash = ref.indexOf('/');
+  return slash < 0 ? ref : ref.slice(slash + 1);
+}
+
 export const MessageItem = memo(function MessageItem({
   msg,
   agentColor,
@@ -214,6 +220,17 @@ export const MessageItem = memo(function MessageItem({
               />
             )}
             {msg.role === 'assistant' && msg.audio && <PlayAudioButton url={msg.audio.url} />}
+            {msg.role === 'assistant' && msg.fallback && (
+              <span
+                className="fallback-chip"
+                title={
+                  `Answered by the fallback model ${msg.fallback.actual} — the primary ` +
+                  `${msg.fallback.requested} failed before producing anything: ${msg.fallback.reason}`
+                }
+              >
+                ⇄ fallback · {shortModelRef(msg.fallback.actual)}
+              </span>
+            )}
           </div>
           <BubbleTimestamp ts={msg.ts} />
         </div>

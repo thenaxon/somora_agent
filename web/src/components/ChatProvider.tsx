@@ -30,6 +30,7 @@ import type {
   ChatMessage,
   ChatUsage,
   MemoryHitsSnapshot,
+  ModelFallback,
 } from '../types/chat';
 
 let messageIdSeq = 0;
@@ -57,6 +58,13 @@ export interface SessionStreamState {
    *     that don't reach SSE because they happen in a child process)
    *  Phase Projects v1. */
   project: ProjectInfo | null;
+  /** The most recent finished turn was answered by the fallback model
+   *  (null when the primary answered). Drives the header marker and the
+   *  first-of-a-streak notice in ChatWindow. */
+  lastFallback: ModelFallback | null;
+  /** Set for exactly one turn-end when a turn on the primary follows a
+   *  fallback streak — carries the primary's ref for the "back" notice. */
+  primaryRestored: string | null;
 }
 
 const initialStreamState: SessionStreamState = {
@@ -67,6 +75,8 @@ const initialStreamState: SessionStreamState = {
   usage: null,
   memory: null,
   project: null,
+  lastFallback: null,
+  primaryRestored: null,
 };
 
 interface ChatContextValue {
@@ -199,6 +209,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // Bumped whenever pagination state changes — drives consumers'
   // re-renders since refs themselves don't trigger React updates.
   const [paginationTick, setPaginationTick] = useState(0);
+
+  // model_fallback arrives BEFORE the fallback engine's deltas; park it
+  // per session until the bubble exists, then stamp it on the bubble.
+  const pendingFallbackRef = useRef(new Map<string, ModelFallback>());
+  // Previous turn's fallback per session — to detect "primary is back".
+  const lastFallbackRef = useRef(new Map<string, ModelFallback | null>());
 
   const patchStream = useCallback((key: string, patch: Partial<SessionStreamState>) => {
     setStreams((prev) => {
@@ -447,6 +463,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           setMessages((prev) => {
             const list = prev[key] ?? [];
             const idx = list.findIndex((m) => m.id === id);
+            const fb = pendingFallbackRef.current.get(key);
             if (idx < 0) {
               // No bubble in list (no deltas arrived) — append.
               return {
@@ -458,6 +475,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                     role: 'assistant',
                     ts: Date.now(),
                     text: d.text,
+                    ...(fb ? { fallback: fb } : {}),
                   },
                 ],
               };
@@ -465,23 +483,52 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             const next = list.slice();
             const existing = next[idx];
             if (!existing || existing.role !== 'assistant') return prev;
-            next[idx] = { ...existing, text: d.text, streaming: false };
+            next[idx] = { ...existing, text: d.text, streaming: false, ...(fb ? { fallback: fb } : {}) };
             return { ...prev, [key]: next };
           });
         }
       });
 
+      es.addEventListener('model_fallback', (ev) => {
+        bump();
+        const d = parse<ModelFallback>(ev as MessageEvent);
+        if (!d || typeof d.actual !== 'string') return;
+        pendingFallbackRef.current.set(key, d);
+        // A bubble may already be streaming (engine yielded text before
+        // the marker is impossible today, but keep it robust).
+        const id = streamingIdRef.current.get(key);
+        if (!id) return;
+        setMessages((prev) => {
+          const list = prev[key];
+          if (!list) return prev;
+          const idx = list.findIndex((m) => m.id === id);
+          const existing = idx >= 0 ? list[idx] : undefined;
+          if (!existing || existing.role !== 'assistant') return prev;
+          const next = list.slice();
+          next[idx] = { ...existing, fallback: d };
+          return { ...prev, [key]: next };
+        });
+      });
+
       es.addEventListener('agent', (ev) => {
         bump();
-        const d = parse<{ phase: 'start' | 'end'; usage?: ChatUsage }>(ev as MessageEvent);
+        const d = parse<{ phase: 'start' | 'end'; usage?: ChatUsage; fallback?: ModelFallback }>(
+          ev as MessageEvent,
+        );
         if (!d) return;
         if (d.phase === 'start') {
-          patchStream(key, { streaming: true, thinking: true });
+          patchStream(key, { streaming: true, thinking: true, primaryRestored: null });
         } else if (d.phase === 'end') {
+          const fb = d.fallback ?? pendingFallbackRef.current.get(key) ?? null;
+          pendingFallbackRef.current.delete(key);
+          const prevFb = lastFallbackRef.current.get(key) ?? null;
+          lastFallbackRef.current.set(key, fb);
           patchStream(key, {
             streaming: false,
             thinking: false,
             ...(d.usage ? { usage: d.usage } : {}),
+            lastFallback: fb,
+            primaryRestored: !fb && prevFb ? prevFb.requested : null,
           });
           // Sweep any leftover streaming=true assistant bubbles —
           // multi-segment turns (tool intervened mid-stream) can
@@ -497,6 +544,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               }
               return m;
             });
+            // Belt and braces for the fallback chip: stamp the turn's
+            // last assistant bubble if it doesn't carry it yet (e.g. the
+            // marker event raced ahead of the bubble's creation).
+            if (fb) {
+              for (let i = next.length - 1; i >= 0; i -= 1) {
+                const m = next[i];
+                if (m && m.role === 'assistant') {
+                  if (!m.fallback) {
+                    next[i] = { ...m, fallback: fb };
+                    changed = true;
+                  }
+                  break;
+                }
+              }
+            }
             if (!changed) return prev;
             return { ...prev, [key]: next };
           });
@@ -1202,7 +1264,24 @@ export function useChatSessionFromContext(agent: string, session: string) {
  */
 function historyEventsToMessages(events: HistoryEvent[]): ChatMessage[] {
   const out: ChatMessage[] = [];
+  // model_fallback precedes the fallback engine's output: stamp the
+  // NEXT assistant message with it.
+  let pendingFallback: ModelFallback | null = null;
   for (const e of events) {
+    if (e.kind === 'model_fallback') {
+      if (typeof e.requested === 'string' && typeof e.actual === 'string') {
+        pendingFallback = { requested: e.requested, actual: e.actual, reason: e.reason ?? '' };
+      }
+      continue;
+    }
+    if (pendingFallback && e.kind === 'assistant_message') {
+      const msgs = historyEventToMessages(e);
+      out.push(
+        ...msgs.map((m) => (m.role === 'assistant' ? { ...m, fallback: pendingFallback as ModelFallback } : m)),
+      );
+      pendingFallback = null;
+      continue;
+    }
     if (e.kind === 'assistant_audio' && e.audio) {
       // Attach to most recent assistant message in the current accumulator.
       for (let i = out.length - 1; i >= 0; i -= 1) {

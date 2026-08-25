@@ -81,7 +81,10 @@ watches each agent's chat activity. After `idleMinutes` of no chat
 1. Resumes any previously-paused dream first (don't waste prior work).
 2. Otherwise picks the most-recently-active session whose last activity
    is past its `dreamReadThroughTs` marker.
-3. Runs an extraction over the delta range.
+3. Runs an extraction over the delta range — minus any Lucid review
+   loop inside it (`dream_review start` … `end`): facts the user
+   clarifies there are written to the wiki directly, so REM skips that
+   window instead of re-extracting them as duplicate findings.
 4. On success, bumps the marker so the next idle cycle sees a fresh delta.
 
 Manual REM runs do **not** pause when you start chatting again — they're

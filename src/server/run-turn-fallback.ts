@@ -112,6 +112,18 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
     fallback_provider: fallbackResolved.providerName,
     fallback_model: fallbackResolved.modelId,
   });
+  // Make the switch visible: persisted (history marks the turn) and
+  // broadcast (live clients show a chip + notice). Until 2026-08-25 the
+  // only trace was the log line above — the user saw a different
+  // model's answer with no indication (2026-08-22 report).
+  yield {
+    kind: 'model_fallback',
+    ts: Date.now(),
+    engine: 'somora',
+    requested: `${primary.providerName}/${primary.modelId}`,
+    actual: `${fallbackResolved.providerName}/${fallbackResolved.modelId}`,
+    reason: primaryError.slice(0, 300),
+  };
 
   // Recompute the watchdog timeout for the fallback engine — the
   // primary's value would otherwise stick (e.g. claude-cli 300s used

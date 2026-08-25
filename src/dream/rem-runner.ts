@@ -23,6 +23,7 @@ import { extractFromSession, resolveDreamModel } from './rem-extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
 import { applyRemDedup } from './rem-dedup.ts';
 import { loadWikiContext } from './wiki-context.ts';
+import { excludeReviewWindows } from './review-window.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import { join } from 'node:path';
 
@@ -216,7 +217,24 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
 
   // Pull source events.
   const events = await getHistory(args.agent, args.sourceSession);
-  const eventsInRange = events.filter(
+  // Review-loop windows are found on the FULL history, not the range:
+  // a loop that started before rangeFromTs and ends inside it must
+  // still be recognised as a window.
+  const review = excludeReviewWindows(events);
+  if (review.dropped > 0) {
+    logger.info({
+      msg: 'dream.rem.review_windows_skipped',
+      agent: args.agent,
+      session: args.sourceSession,
+      windows: review.windows.map((w) => ({
+        fromTs: w.fromTs,
+        throughTs: Number.isFinite(w.throughTs) ? w.throughTs : null,
+      })),
+      dropped: review.dropped,
+      hint: 'facts clarified inside a dream_review loop are written to the wiki directly; REM must not re-extract them',
+    });
+  }
+  const eventsInRange = review.events.filter(
     (e) => e.ts > args.rangeFromTs && e.ts <= args.rangeThroughTs,
   );
 

@@ -637,6 +637,20 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 /* Per-agent chat text size. The two magnifiers bracket a percentage
  * readout that only appears off-default and doubles as the reset. */
 .chat-zoom { display: flex; align-items: center; gap: 2px; }
+
+/* Assistant bubble: answered by the persona's fallback model. */
+.fallback-chip {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  line-height: 16px;
+  cursor: help;
+}
 .chat-zoom-level {
   min-width: 34px;
   height: 28px;

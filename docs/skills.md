@@ -416,7 +416,10 @@ actual values. From there, somora scopes them by program name:
 
 Known limits: a script that calls the bin only *indirectly* doesn't
 match — invoke the bin visibly or pass the var explicitly via the
-exec `env` parameter (an explicit `env` always wins). A skill that
+exec `env` parameter (an explicit `env` always wins). When such a
+command fails and its output names one of the stripped vars, the exec
+result carries a `hint` saying exactly that, so the bin's own "set
+VAR" message isn't mistaken for a broken bootstrap. A skill that
 declares `env_vars` but no `bins` can never match — declare the
 bins. tmux panes (interactive, no command to match at create time)
 and remote exec (remote host's own env) are not covered. The

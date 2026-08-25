@@ -10,6 +10,9 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   'codex-cli': {
     todo_list: 'plan',
   },
+  'openai-compatible': {
+    context_compacted: 'context compacted',
+  },
 };
 
 export function resolveEngineMetaLabel(engine: string, itemType: string): string {

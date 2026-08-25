@@ -86,6 +86,9 @@ export type ChatMessage =
       ts: number;
       text: string;
       streaming?: boolean;
+      /** The persona's fallback model answered this turn (primary failed
+       *  before producing content). Drives the ⇄ chip on the bubble. */
+      fallback?: ModelFallback;
       /** Voice: server-generated TTS audio for this turn. Set when an
        *  assistant_audio SSE event with matching turnId arrived after
        *  the assistant message. Drives the per-bubble Play-button. */
@@ -126,6 +129,13 @@ export interface MemoryHitsSnapshot {
   fullText?: string;
 }
 
+/** Primary → fallback switch for one turn. Refs are `provider/modelId`. */
+export interface ModelFallback {
+  requested: string;
+  actual: string;
+  reason: string;
+}
+
 /** Live SSE wire-format envelope. The `event:` line is the
  *  discriminator, `data:` is the JSON-encoded payload below. */
 export type StreamEvent =
@@ -144,8 +154,10 @@ export type StreamEvent =
         provider?: string;
         model?: string;
         thinking?: { level: 'off' | 'low' | 'medium' | 'high'; active: boolean };
+        fallback?: ModelFallback;
       };
     }
+  | { event: 'model_fallback'; data: ModelFallback }
   | {
       event: 'memory';
       data: { count: number; topScore?: number; refs: string[]; fullText?: string };

@@ -17,6 +17,7 @@ import {
   ZoomOut,
 } from 'lucide-react';
 import { api, type AgentInfo, type AttachmentRef } from '../lib/api';
+import type { ModelFallback } from '../types/chat';
 import { gradientFor, resolveAgentColor } from '../lib/colors';
 import { hasTechnicalId, sessionSlug } from '../lib/session-label';
 import { useSessionInfo } from '../hooks/useSessionInfo';
@@ -514,6 +515,27 @@ export function ChatWindow({
     return () => clearTimeout(t);
   }, [systemNotice]);
 
+  // Model fallback: notice ONCE at the start of a fallback streak (not
+  // on every turn that keeps using the backup — the ⇄ chip on each
+  // bubble and the header marker carry that), and once more when the
+  // primary answers again.
+  const prevFallbackRef = useRef<ModelFallback | null>(null);
+  useEffect(() => {
+    const cur = chat.lastFallback;
+    const prev = prevFallbackRef.current;
+    prevFallbackRef.current = cur;
+    if (cur && !prev) {
+      setSystemNotice({
+        text: `⇄ primary model ${cur.requested} unavailable — answering with ${cur.actual}`,
+        tone: 'info',
+      });
+    }
+  }, [chat.lastFallback]);
+  useEffect(() => {
+    if (!chat.primaryRestored) return;
+    setSystemNotice({ text: `✓ primary model ${chat.primaryRestored} is back`, tone: 'info' });
+  }, [chat.primaryRestored]);
+
   // Stage one or more files: drop, paste, or file-picker all flow
   // through here. Each file gets an immediate placeholder row, then
   // the upload kicks off in the background and flips the row to ready
@@ -808,6 +830,20 @@ export function ChatWindow({
             <span title={model?.modelId ?? 'no model resolved'} style={{ color: 'var(--text-1)' }}>
               {modelLabel}
             </span>
+            {chat.lastFallback && (
+              <>
+                <Sep />
+                <span
+                  style={{ color: 'var(--warn)' }}
+                  title={
+                    `Last turn was answered by the fallback model ${chat.lastFallback.actual}: ` +
+                    `${chat.lastFallback.reason}`
+                  }
+                >
+                  ⇄ {chat.lastFallback.actual.slice(chat.lastFallback.actual.indexOf('/') + 1)}
+                </span>
+              </>
+            )}
             {thinkingActive && (
               <>
                 <Sep />

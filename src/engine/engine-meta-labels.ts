@@ -18,6 +18,11 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // the codex session because the selected model changed.
     model_switch: 'model switch',
   },
+  'openai-compatible': {
+    // somora-emitted: the backend rejected the prompt as too long, the
+    // engine forced a compaction and retried the turn.
+    context_compacted: 'context compacted',
+  },
 };
 
 export function resolveEngineMetaLabel(engine: string, itemType: string): string {
@@ -51,6 +56,10 @@ export function summariseEngineMeta(
       return `codex thread restarted for model switch ${p.from} → ${p.to}`;
     }
     return undefined;
+  }
+  if (engine === 'openai-compatible' && itemType === 'context_compacted') {
+    const p = payload as { text?: unknown } | null | undefined;
+    return p && typeof p.text === 'string' ? p.text : 'history compacted after a context overflow';
   }
   if (engine === 'codex-cli' && itemType === 'todo_list') {
     const items = extractTodoListItems(payload);

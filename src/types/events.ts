@@ -194,7 +194,28 @@ export type NormalizedEvent =
       from: string | null;
       to: string | null;
       via: 'tool' | 'slash_command';
+    }
+  // Server-side marker: the persona's primary model failed before
+  // producing any content and run-turn-fallback re-ran the turn on the
+  // configured `fallback:` model. Persisted right before the fallback
+  // engine's events so history can mark the turn that follows; clients
+  // show a chip on that assistant bubble + a one-time notice. `engine`
+  // is the sentinel 'somora'. Refs are `provider/modelId`.
+  | {
+      kind: 'model_fallback';
+      ts: number;
+      engine: string;
+      requested: string;
+      actual: string;
+      /** Primary's failure message, trimmed — what the user sees on hover. */
+      reason: string;
     };
+
+export interface ModelFallbackInfo {
+  requested: string;
+  actual: string;
+  reason: string;
+}
 
 // Wire format over SSE — orbit-compatible. Deltas are cumulative.
 export type SseEvent =
@@ -210,6 +231,7 @@ export type SseEvent =
           tokens_out_reasoning?: number;
         };
         contextWindow?: number;
+        /** The model that ACTUALLY answered (the fallback when one ran). */
         provider?: string;
         model?: string;
         /**
@@ -218,8 +240,11 @@ export type SseEvent =
          * 'dormant' = setting present but model lacks 'reasoning' capability.
          */
         thinking?: { level: 'off' | 'low' | 'medium' | 'high'; active: boolean };
+        /** Set on phase:'end' when the turn was answered by the fallback model. */
+        fallback?: ModelFallbackInfo;
       };
     }
+  | { event: 'model_fallback'; data: ModelFallbackInfo }
   | {
       // Per-turn auto-inject summary — what the runtime pulled from memory
       // before the engine ran. Lets the CLI / orbit show users which notes

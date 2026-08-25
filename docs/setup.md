@@ -494,6 +494,15 @@ compaction:
   triggerRatio: 0.8           # fraction of context window
   safetyCushionPairs: 4       # most-recent turns kept uncompacted
   # modelOverride: opus       # force a specific compaction worker model
+  # The trigger works off somora's own token ESTIMATE. When the backend
+  # nevertheless rejects a prompt as too long (400 "Prompt too long",
+  # "maximum context length", oMLX's prefill memory guard — typical after
+  # switching a long session from a 1M-window model to a 131k one), the
+  # openai-compatible engine forces a compaction down to the last
+  # exchange and retries the turn once; a second refusal surfaces as a
+  # plain-language error (switch model or /reset) instead of the raw 400.
+  # Compaction workers are picked from models whose engine has a one-shot
+  # path (claude-cli, codex-cli, openai-compatible).
 
 agentLoop:
   maxRounds: 8                # tool-call rounds per turn (openai-compatible)

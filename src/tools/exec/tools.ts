@@ -31,7 +31,7 @@ import {
   readMeta,
   type JobMeta,
 } from './job-store.ts';
-import { skillEnvScopeForCommand } from '../../skills/env-scope.ts';
+import { skillEnvScopeForCommand, skillEnvStripHint } from '../../skills/env-scope.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
 import {
   killRemoteJob,
@@ -432,6 +432,22 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         stripSomoraInternalEnv: !input.inherit_agent_env,
         ...(skillScope ? { skillEnvScope: skillScope } : {}),
       });
+      // A stripped skill var named in a failed command's output is
+      // almost always an indirect bin call — say so, or the agent reads
+      // the bin's "set VAR" message as a broken bootstrap.
+      const stripHint = skillEnvStripHint(skillScope, r.exit_code, `${r.stdout}\n${r.stderr}`);
+      if (stripHint) {
+        logger.info({
+          msg: 'exec.skill_env_stripped_hint',
+          agent: ctx.agent,
+          vars: skillScope?.stripVars.filter((v) => !(v in (skillScope?.injectEnv ?? {}))),
+        });
+      }
+      const truncHint = r.truncated
+        ? 'Output truncated at 256 KB per stream. For full content, redirect the command\'s ' +
+          'output to a file on the target and use file_read with offset/limit.'
+        : undefined;
+      const hint = [stripHint, truncHint].filter(Boolean).join(' ');
       return {
         ok: r.exit_code === 0,
         background: false,
@@ -441,13 +457,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         stderr: r.stderr,
         truncated: r.truncated,
         ms: r.ms,
-        ...(r.truncated
-          ? {
-              hint:
-                'Output truncated at 256 KB per stream. For full content, redirect the command\'s ' +
-                'output to a file on the target and use file_read with offset/limit.',
-            }
-          : {}),
+        ...(hint ? { hint } : {}),
       };
     }
 

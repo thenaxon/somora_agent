@@ -67,6 +67,7 @@ icon: 🌼              # optional emoji shown in CLI prompts and listings
 # ~/.somora/agents/<your-agent>/agent.yaml
 model: opus           # alias OR provider/modelId
 fallback: gpt55       # used when primary fails before producing any output
+                      # (visible: ⇄ chip on that turn + notice in the web UI)
 
 # Optional: cross-engine thinking depth (off|low|medium|high)
 # Per-session override via /thinking <level>. Only applies to models with
