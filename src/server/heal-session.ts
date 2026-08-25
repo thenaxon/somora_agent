@@ -102,7 +102,7 @@ export async function healOrphanToolCalls(args: HealArgs): Promise<HealResult> {
     turnId: `t-recovered-${ts}`,
   });
 
-  // For stateful engines (claude-cli, codex-cli) the dead turn's SDK
+  // For stateful engines (claude-cli, codex-cli, grok-cli) the dead turn's SDK
   // session has its own internal log that likely also contains the
   // orphan tool_use. Resuming from there is gambling on the SDK's
   // resilience. Cheapest safe move: drop the stored session-id so the
@@ -118,6 +118,9 @@ export async function healOrphanToolCalls(args: HealArgs): Promise<HealResult> {
     } else if (deadEngine === 'codex-cli' && 'codexSessionId' in next) {
       delete next.codexSessionId;
       cleared = 'codexSessionId';
+    } else if (deadEngine === 'grok-cli' && 'grokSessionId' in next) {
+      delete next.grokSessionId;
+      cleared = 'grokSessionId';
     }
     if (cleared) {
       await metaStore.set(agent, session, next);

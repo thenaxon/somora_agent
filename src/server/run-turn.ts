@@ -240,6 +240,11 @@ function pickToolIdleTimeoutForEngine(
       return config.claudeCli.mcpToolTimeoutMs;
     case 'codex-cli':
       return config.codexCli.toolTimeoutSec * 1000;
+    case 'grok-cli':
+      // No grok-specific knob (the MCP-side timeout is grok's own); the
+      // question here is only "how long may a tool run before the
+      // engine counts as wedged", so borrow the larger sibling budget.
+      return Math.max(config.claudeCli.mcpToolTimeoutMs, config.codexCli.toolTimeoutSec * 1000);
     case 'openai-compatible':
       return undefined;
   }

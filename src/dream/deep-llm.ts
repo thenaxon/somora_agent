@@ -60,7 +60,12 @@ export async function callOneShotLLM(args: OneShotArgs): Promise<string> {
     case 'codex-cli':
       return callCodexCli(args);
     default:
-      throw new Error(`Dream-B LLM dispatcher: engine '${engine}' not supported`);
+      // grok-cli lands here until it grows a one-shot ACP path: the
+      // dream/REM worker refs are explicit config, so a clear message
+      // beats a silent fallback.
+      throw new Error(
+        `dream worker engine '${engine}' has no one-shot LLM path yet — configure the worker on claude-cli, codex-cli or openai-compatible`,
+      );
   }
 }
 

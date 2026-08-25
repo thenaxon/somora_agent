@@ -326,6 +326,17 @@ async function summarizeViaCodexCli(
   });
 }
 
+/** Engines with a one-shot summarization path. grok-cli is missing on
+ *  purpose: ACP has no non-interactive one-shot mode wired up yet, so a
+ *  grok model must never be picked as compaction worker (its 500k
+ *  window would otherwise win the auto-pick and every compaction would
+ *  throw). Drop the guard once summarizeViaGrokCli exists. */
+export const SUMMARIZE_ENGINES: ReadonlySet<string> = new Set([
+  'openai-compatible',
+  'claude-cli',
+  'codex-cli',
+]);
+
 async function summarizeViaEngine(
   engineName: string,
   input: SummarizeViaInput,
@@ -338,7 +349,9 @@ async function summarizeViaEngine(
     case 'codex-cli':
       return summarizeViaCodexCli(input);
     default:
-      throw new Error(`unknown engine for summarization: ${engineName}`);
+      throw new Error(
+        `engine '${engineName}' has no one-shot summarization path yet — pick a compaction worker on another engine`,
+      );
   }
 }
 
@@ -358,8 +371,19 @@ export interface RunCompactionInput {
 export async function runCompaction(
   input: RunCompactionInput,
 ): Promise<Compaction | null> {
-  const { systemPrompt, history, resolvedModel, availableModels, compactions, config } =
-    input;
+  const { systemPrompt, history, resolvedModel, compactions, config } = input;
+  const availableModels = input.availableModels.filter((m) =>
+    SUMMARIZE_ENGINES.has(m.provider.engine),
+  );
+  if (availableModels.length < input.availableModels.length) {
+    logger.debug({
+      msg: 'compaction.worker_candidates_filtered',
+      dropped: input.availableModels
+        .filter((m) => !SUMMARIZE_ENGINES.has(m.provider.engine))
+        .map((m) => `${m.providerName}/${m.modelId}`),
+      reason: 'engine has no one-shot summarization path',
+    });
+  }
   const range = extractCompactionRange(history, config, compactions);
   if (!range) return null;
 

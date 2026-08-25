@@ -70,6 +70,7 @@ What makes it different:
    ├─ Engine adapters
    │    ├─ claude-cli         (Claude subscription)
    │    ├─ codex-cli          (ChatGPT subscription)
+   │    ├─ grok-cli           (SuperGrok subscription, via ACP)
    │    └─ openai-compatible  (any /v1/chat/completions)
    │
    ├─ Memory layer (per-agent)
@@ -109,6 +110,7 @@ Hard:
 - **At least one LLM backend.** Pick what you have:
   - Claude Code binary (Claude subscription) — for `claude-cli` engine.
   - Codex CLI binary (ChatGPT subscription) — for `codex-cli` engine.
+  - Grok Build CLI binary (SuperGrok/Premium subscription) — for `grok-cli` engine.
   - Any OpenAI-compatible HTTP server — Ollama, LM Studio, vLLM, oMLX, OpenRouter, etc.
 
 Optional:
@@ -168,18 +170,21 @@ Want to hack on somora itself? See the [contributor section in docs/setup.md](do
 Active development. Open to early testers. Core surface (memory + wiki +
 dream-system + web + tmux + mobile) is feature-complete and used daily:
 
-| Capability | claude-cli | codex-cli | openai-compatible |
-|---|:-:|:-:|:-:|
-| Chat (streaming) | ✓ | ✓ | ✓ |
-| Memory auto-injection | ✓ | ✓ | ✓ |
-| Memory tools (read + write) | ✓ via MCP | ✓ via MCP | ✓ in-process |
-| Wiki layer (shared) | ✓ | ✓ | ✓ |
-| Three-phase dreams | ✓ | ✓ | ✓ |
-| Tool surface (40+ tools) | ✓ via MCP | ✓ via MCP | ✓ in-process |
-| Skills (markdown how-tos) | ✓ | ✓ | ✓ |
-| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | ✓ image; PDF native or rasterized per provider |
-| Sub-agent spawning | ✓ | ✓ | ✓ |
-| SSH-resource exec | ✓ | ✓ | ✓ |
+| Capability | claude-cli | codex-cli | grok-cli | openai-compatible |
+|---|:-:|:-:|:-:|:-:|
+| Chat (streaming) | ✓ | ✓ | ✓ | ✓ |
+| Memory auto-injection | ✓ | ✓ | ✓ | ✓ |
+| Memory tools (read + write) | ✓ via MCP | ✓ via MCP | ✓ via MCP | ✓ in-process |
+| Wiki layer (shared) | ✓ | ✓ | ✓ | ✓ |
+| Three-phase dreams | ✓ | ✓ | as chat model only¹ | ✓ |
+| Tool surface (40+ tools) | ✓ via MCP | ✓ via MCP | ✓ via MCP | ✓ in-process |
+| Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
+| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | text only | ✓ image; PDF native or rasterized per provider |
+| Sub-agent spawning | ✓ | ✓ | ✓ | ✓ |
+| SSH-resource exec | ✓ | ✓ | ✓ | ✓ |
+
+¹ grok-cli has no one-shot path yet, so it can't serve as a dream/REM or
+compaction *worker* — configure those on another engine.
 
 ## Clients
 
@@ -261,6 +266,7 @@ the new engine just picks up the thread.
 |---|---|---|
 | `claude-cli` | Claude Code binary in `~/.local/bin/claude` (subscription) — shares your `claude login`, kept in sync automatically (`somora auth status` to inspect) | Best quality on Anthropic stack, no API key needed. |
 | `codex-cli` | `codex` binary on PATH (ChatGPT subscription) | Strong reasoning, ChatGPT subscription cost. |
+| `grok-cli` | `grok` binary (Grok Build CLI, SuperGrok/Premium subscription), driven over ACP | xAI models on a subscription, no API key. Community-maintained, text attachments only. |
 | `openai-compatible` | Any baseUrl + apiKey config | Local models, OpenRouter, any OpenAI-shaped endpoint. |
 
 ## Managing skills — `somora skill`

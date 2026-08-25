@@ -668,12 +668,21 @@ export const grokCliEngine: AgentEngine = {
         if (note === null) {
           if (settled) break;
           if (client.isClosed) {
-            yield {
-              kind: 'error',
-              ts: Date.now(),
-              engine: ENGINE,
-              message: client.lastError ?? 'grok closed unexpectedly',
-            };
+            // A user abort kills the child on purpose (onAbort above), so
+            // the resulting "exited (signal=SIGTERM)" is not an engine
+            // failure. Yielding it as `error` before any content made
+            // run-turn-fallback swallow the turn_end and start the
+            // FALLBACK model after the user had just cancelled. The
+            // "[somora] aborted by user" assistant_message below covers
+            // the abort case; only a genuine crash is an error.
+            if (!input.signal?.aborted) {
+              yield {
+                kind: 'error',
+                ts: Date.now(),
+                engine: ENGINE,
+                message: client.lastError ?? 'grok closed unexpectedly',
+              };
+            }
             break;
           }
           yield {
