@@ -1150,6 +1150,13 @@ export const McpOAuthRefreshSchema = z.object({
   credentialKey: z.string().min(1),
   /** OAuth token endpoint for the refresh_token grant. */
   tokenEndpoint: z.string().url(),
+  /** Whether the hub may refresh the token ITSELF. Set false when the
+   *  credential is owned by another process that rotates it (the Claude
+   *  CLI's own `claudeAiOauth` login): two refreshers racing on one
+   *  rotating refresh-token chain invalidate each other. Read-only mode
+   *  just re-reads the file on every connect and relies on the owner
+   *  (plus somora's credential sync) to keep it fresh. */
+  refresh: z.boolean().default(true),
 });
 export type McpOAuthRefresh = z.infer<typeof McpOAuthRefreshSchema>;
 

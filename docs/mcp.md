@@ -149,47 +149,49 @@ server shows `needs-auth` and you re-run the login.
 ### Claude Design
 
 [Claude Design](https://claude.ai/design) exposes an official MCP server
-(`https://api.anthropic.com/v1/design/mcp`), but it authenticates only
-against a claude.ai account via an interactive login — there is no API
-key. somora reaches it through a one-time login into somora's isolated
-Claude config directory, after which the hub reuses and refreshes the
-credential for all engines.
+(`https://api.anthropic.com/v1/design/mcp`) that authenticates against a
+claude.ai account — there is no API key. somora reaches it with the
+**regular Claude login** it already keeps in sync for the claude-cli
+engine (`claudeAiOauth` in `~/.somora/claude-home/.credentials.json`),
+so there is nothing extra to log into.
 
 > **Unsupported / may break.** This uses the same first-party login
 > Claude Code uses; Anthropic does not document third-party access and
 > could change it at any time. Treat it as experimental.
 
-**One-time setup:**
+**Setup:**
 
-1. Add the server with a single preset line:
+1. Be logged into Claude Code on the machine (`claude` → `/login`, or
+   the somora-side `CLAUDE_CONFIG_DIR=~/.somora/claude-home claude`).
+   somora's credential sync keeps both copies aligned.
+2. Add the server with a single preset line:
    ```yaml
    mcp:
      servers:
        claude-design:
          preset: claude-design   # fills url, auth, and the X-Anthropic-Client header
    ```
-2. Register the connector in somora's Claude config dir (once):
-   ```
-   CLAUDE_CONFIG_DIR=~/.somora/claude-home claude mcp add --scope user \
-     --transport http claude-design https://api.anthropic.com/v1/design/mcp
-   ```
-3. Log in interactively — this is the only step that needs a browser and
-   a real terminal (not somora):
-   ```
-   CLAUDE_CONFIG_DIR=~/.somora/claude-home claude
-   ```
-   then inside that session run `/design-login` and complete the browser
-   flow. It writes a `designOauth` credential into
-   `~/.somora/claude-home/.credentials.json`.
-   - Tip: the login URL sits in a TUI that captures the mouse — hold
-     **Shift** while selecting to copy it.
-4. Restart somora (`systemctl --user restart somora`) and check
+3. Restart somora (`systemctl --user restart somora`) and check
    `curl -sk https://localhost:18737/mcp/status` — `claude-design` should be
    `connected` with its tool count.
 
-From then on the hub refreshes the token automatically (~8-hour
-lifetime, rotated on each refresh). When the refresh token itself
-eventually expires, re-run step 3.
+The hub never refreshes this token itself — the Claude CLI owns that
+refresh chain, and two refreshers on one rotating chain would
+invalidate each other. When the token expires and no Claude session has
+refreshed it yet, the server shows `needs-auth` until the next Claude
+use (yours or an agent's), then reconnects on its own within a few
+minutes. A `/login` in Claude Code replaces the token; the sync picks it
+up and the hub follows.
+
+**Legacy: the dedicated `/design-login` credential.** Older setups used a
+separate `designOauth` credential written by `/design-login`. It still
+works with an explicit `auth:` block (`credentialKey: designOauth`,
+`tokenEndpoint: https://platform.claude.com/v1/oauth/token`) — but be
+aware that the CLI's own `/login` revokes every refresh token in its
+credential file before logging in, `designOauth` included, and recent
+CLI versions fold the design scopes into the main login (the
+`/design-login` flow may fail with "Invalid client id"). Prefer the
+default.
 
 ## What works today — and what doesn't (yet)
 

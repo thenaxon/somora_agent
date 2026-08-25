@@ -188,11 +188,24 @@ function keyExpiresAt(obj: Record<string, unknown>, key: string): number | null 
  * key resolves to the copy with the later `expiresAt` (present-side wins
  * when only one has it, later-expiry wins when both do).
  */
+/**
+ * Returns the content each side should hold, or null when there are no
+ * foreign keys (classic overwrite path applies).
+ *
+ * - `somora`: the winning claudeAiOauth + EVERY foreign key, newest
+ *   expiry per key — somora's file is the superset.
+ * - `user`: the winning claudeAiOauth + only the foreign keys ~/.claude
+ *   ALREADY had (refreshed to the newest copy). Foreign keys are never
+ *   ADDED to the user's file: the Claude CLI's own `/login` runs a
+ *   logout first that revokes every refresh token it finds there —
+ *   including a `designOauth` that somora had leaked in (2026-08-25,
+ *   killed the Design grant 4 min after the user's `/login`).
+ */
 export function mergeForeignCredentialKeys(
   userContent: string,
   somoraContent: string,
   userWins: boolean,
-): string | null {
+): { somora: string; user: string } | null {
   let user: Record<string, unknown>;
   let somora: Record<string, unknown>;
   try {
@@ -233,7 +246,14 @@ export function mergeForeignCredentialKeys(
       merged[key] = somora[key];
     }
   }
-  return `${JSON.stringify(merged, null, 2)}\n`;
+  const userSide: Record<string, unknown> = { claudeAiOauth: merged.claudeAiOauth };
+  for (const key of foreignKeys) {
+    if (key in user) userSide[key] = merged[key];
+  }
+  return {
+    somora: `${JSON.stringify(merged, null, 2)}\n`,
+    user: `${JSON.stringify(userSide, null, 2)}\n`,
+  };
 }
 
 /** Core reconcile with explicit paths — pure enough for unit tests.
@@ -292,14 +312,22 @@ export function reconcileCredentialPair(userPath: string, somoraPath: string): C
   // content to both files so they converge and the next tick is a noop.
   const merged = mergeForeignCredentialKeys(userContent, somoraContent, userWins);
   if (merged !== null) {
-    overwriteWithBackup(somoraPath, merged);
-    overwriteWithBackup(userPath, merged);
+    // Each side gets its own target; write only what actually changed so
+    // the pair converges and the next tick is a noop even though the two
+    // files legitimately differ (somora carries keys ~/.claude must not).
+    const wroteSomora = merged.somora !== somoraContent;
+    const wroteUser = merged.user !== userContent;
+    if (wroteSomora) overwriteWithBackup(somoraPath, merged.somora);
+    if (wroteUser) overwriteWithBackup(userPath, merged.user);
+    if (!wroteSomora && !wroteUser) return 'noop';
     log.info({
       msg: 'claude_credentials.sync_merged',
       reason: 'foreign_keys_preserved',
       userExpiresAt: userExp,
       somoraExpiresAt: somoraExp,
-      hint: 'designOauth / other non-primary credentials kept across the sync instead of being clobbered',
+      wroteSomora,
+      wroteUser,
+      hint: 'designOauth / other non-primary credentials kept on the somora side; never added to ~/.claude',
     });
     return userWins ? 'pulled' : 'pushed';
   }

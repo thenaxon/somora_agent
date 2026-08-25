@@ -217,7 +217,8 @@ const cleanups: string[] = [];
   const s = JSON.parse(readFileSync(somora, 'utf8'));
   const u = JSON.parse(readFileSync(user, 'utf8'));
   check('design-preserve: somora keeps designOauth', s.designOauth?.expiresAt === 7777);
-  check('design-preserve: user gains designOauth', u.designOauth?.expiresAt === 7777);
+  check('design-preserve: user does NOT gain designOauth (CLI /login would revoke it)', u.designOauth === undefined);
+  check('design-preserve: user keeps its primary', u.claudeAiOauth?.accessToken === 'at-user-fresh');
   check('design-preserve: primary is user-fresh winner', s.claudeAiOauth?.accessToken === 'at-user-fresh');
   check('design-preserve: converged (second pass noop)', reconcileCredentialPair(user, somora) === 'noop');
 }
@@ -233,6 +234,23 @@ const cleanups: string[] = [];
   check('design-both: newer design wins', s.designOauth?.expiresAt === 8888);
   check('design-both: newer design token', s.designOauth?.accessToken === 'design-at-s');
   check('design-both: primary still user winner', s.claudeAiOauth?.accessToken === 'at-u');
+  const u = JSON.parse(readFileSync(user, 'utf8'));
+  check('design-both: user side (already had the key) is refreshed to newest', u.designOauth?.expiresAt === 8888);
+  check('design-both: converged (second pass noop)', reconcileCredentialPair(user, somora) === 'noop');
+}
+
+// ── somora-side-newer primary + somora-only foreign key: pushed primary
+//    must not carry the foreign key into ~/.claude ─────────────────────
+{
+  const { user, somora } = freshDirs();
+  cleanups.push(join(user, '..', '..'));
+  write(user, credWithDesign(4000, 'user-old', null));
+  write(somora, credWithDesign(9000, 'somora-fresh', 7777));
+  check('push-no-leak: pushed', reconcileCredentialPair(user, somora) === 'pushed');
+  const u = JSON.parse(readFileSync(user, 'utf8'));
+  check('push-no-leak: user got the fresh primary', u.claudeAiOauth?.accessToken === 'at-somora-fresh');
+  check('push-no-leak: user did not get designOauth', u.designOauth === undefined);
+  check('push-no-leak: converged', reconcileCredentialPair(user, somora) === 'noop');
 }
 
 // ── no foreign keys → unchanged classic overwrite path (regression) ───

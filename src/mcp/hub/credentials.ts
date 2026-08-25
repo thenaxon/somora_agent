@@ -81,7 +81,19 @@ export class OAuthRefreshProvider implements CredentialProvider {
     let cred = await this.read();
     const now = Date.now();
     if (cred.expiresAt !== undefined && cred.expiresAt - now < REFRESH_SKEW_MS) {
-      cred = await this.refreshLocked(cred);
+      if (this.auth.refresh) {
+        cred = await this.refreshLocked(cred);
+      } else {
+        // Read-only credential: another process owns the refresh chain.
+        // Use what's on disk; if upstream rejects it the server parks
+        // as needs-auth and re-reads the file on the next probe — by
+        // then the owner has usually refreshed it.
+        logger.debug({
+          msg: 'mcp.hub.oauth_near_expiry_readonly',
+          key: this.auth.credentialKey,
+          expiresInMs: cred.expiresAt - now,
+        });
+      }
     }
     const out: Record<string, string> = { authorization: `Bearer ${cred.accessToken}` };
     for (const [k, v] of Object.entries(this.staticHeaders)) {
@@ -230,12 +242,21 @@ export function applyMcpPreset(name: string, cfg: McpServerConfig): McpServerCon
     return {
       ...cfg,
       url: cfg.url ?? 'https://api.anthropic.com/v1/design/mcp',
+      // The regular claude.ai login (`claudeAiOauth`) authenticates the
+      // Design MCP — verified 2026-08-25 against the live endpoint. It is
+      // the credential somora already keeps in sync with the user's
+      // Claude CLI, so no separate `/design-login` is needed. The CLI
+      // owns that token's refresh chain → read-only here. (The legacy
+      // `designOauth` key still works via an explicit `auth:` block, but
+      // the CLI's own `/login` revokes it, and `/design-login` is being
+      // folded into the main login upstream.)
       auth:
         cfg.auth ??
         ({
           type: 'oauth-refresh',
-          credentialKey: 'designOauth',
+          credentialKey: 'claudeAiOauth',
           tokenEndpoint: 'https://platform.claude.com/v1/oauth/token',
+          refresh: false,
         } as McpOAuthRefresh),
       headers: {
         'X-Anthropic-Client': 'claude-cli-design-tool',

@@ -42,7 +42,8 @@ function base(overrides: Partial<McpServerConfig>): McpServerConfig {
   const out = applyMcpPreset('claude-design', base({ preset: 'claude-design' }));
   check('preset: url filled', out.url === 'https://api.anthropic.com/v1/design/mcp');
   check('preset: auth oauth-refresh', out.auth?.type === 'oauth-refresh');
-  check('preset: credentialKey designOauth', out.auth?.credentialKey === 'designOauth');
+  check('preset: credentialKey claudeAiOauth (regular login)', out.auth?.credentialKey === 'claudeAiOauth');
+  check('preset: read-only credential (CLI owns the refresh chain)', out.auth?.refresh === false);
   check('preset: tokenEndpoint', out.auth?.tokenEndpoint === 'https://platform.claude.com/v1/oauth/token');
   check('preset: X-Anthropic-Client header', out.headers['X-Anthropic-Client'] === 'claude-cli-design-tool');
 }
