@@ -106,9 +106,11 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   transition: left 0.16s ease, top 0.16s ease;
 }
 /* The grabbed icon — lifted out of the grid and riding the cursor.
+ * Rendered via portal on <body>, so this z-index competes with the
+ * windows (10+) and the taskbar, not with the z:5 icon layer.
  * Transition off: it has to track the pointer 1:1, not lag behind it. */
 .desktop-icon.in-hand {
-  z-index: 1000;
+  z-index: 5000;
   transition: none;
   pointer-events: none;
   transform: scale(1.1);

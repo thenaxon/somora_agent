@@ -18,6 +18,7 @@
 // dependency-free diff is easier to review.
 
 import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CELL_H,
   CELL_W,
@@ -74,6 +75,10 @@ export function DesktopIcons({ icons, loading, error }: Props) {
   const { layout, place } = useDesktopIcons(ids, cols, rows);
 
   const [drag, setDrag] = useState<DragState | null>(null);
+  // Cell after the last laid-out icon (column-major, matching the
+  // default fill order) — where the loading / error status goes.
+  const statusCell: Cell =
+    rows > 0 ? { col: Math.floor(icons.length / rows), row: icons.length % rows } : { col: 0, row: 0 };
   /** Set when a press turned into a drag, so the click browsers fire
    *  afterwards can be swallowed instead of opening a window. */
   const didDragRef = useRef(false);
@@ -193,18 +198,18 @@ export function DesktopIcons({ icons, loading, error }: Props) {
       className={drag ? 'desktop-icons dragging' : 'desktop-icons'}
       onClickCapture={onClickCapture}
     >
-      {loading && (
-        <div className="desktop-icons-status" style={{ left: GRID_PAD, top: GRID_PAD }}>
-          loading…
-        </div>
-      )}
-      {error && (
+      {/* Status text takes the first free cell in column-major order —
+        * i.e. the slot right after the last icon, the way the old dock
+        * stacked it above the app tiles in flow. Pinning it to the grid
+        * origin would put it on top of whatever icon sits in cell 0
+        * (the tmux tile while agents load or the server is down). */}
+      {(loading || error) && (
         <div
-          className="desktop-icons-status error"
-          style={{ left: GRID_PAD, top: GRID_PAD }}
-          title={error}
+          className={error ? 'desktop-icons-status error' : 'desktop-icons-status'}
+          style={{ left: cellLeft(statusCell.col), top: cellTop(statusCell.row) }}
+          {...(error ? { title: error } : {})}
         >
-          server unreachable
+          {error ? 'server unreachable' : 'loading…'}
         </div>
       )}
 
@@ -227,26 +232,37 @@ export function DesktopIcons({ icons, loading, error }: Props) {
         const isDragged = drag?.id === icon.id;
         const isSwapPartner = drag?.swapWith === icon.id;
         // The grabbed tile leaves the grid and rides the cursor in
-        // viewport coords; everything else stays on its cell.
-        const style: React.CSSProperties = isDragged
-          ? {
-              position: 'fixed',
-              left: drag.x - drag.grabX,
-              top: drag.y - drag.grabY,
-              width: CELL_W,
-              height: CELL_H,
-            }
-          : { left: cellLeft(cell.col), top: cellTop(cell.row), width: CELL_W, height: CELL_H };
+        // viewport coords. It is portaled to <body>: this layer sits at
+        // z-index 5 UNDER the windows (10+), and a z-index inside it
+        // can't escape that stacking context — without the portal the
+        // icon in hand vanishes the moment it crosses an open window.
+        // The cell it came from stays empty meanwhile.
+        if (isDragged) {
+          return createPortal(
+            <div
+              key={icon.id}
+              className="desktop-icon in-hand"
+              data-icon-id={icon.id}
+              style={{
+                position: 'fixed',
+                left: drag.x - drag.grabX,
+                top: drag.y - drag.grabY,
+                width: CELL_W,
+                height: CELL_H,
+              }}
+            >
+              {icon.node}
+            </div>,
+            document.body,
+            icon.id,
+          );
+        }
         return (
           <div
             key={icon.id}
-            className={
-              'desktop-icon' +
-              (isDragged ? ' in-hand' : '') +
-              (isSwapPartner ? ' swap-partner' : '')
-            }
+            className={'desktop-icon' + (isSwapPartner ? ' swap-partner' : '')}
             data-icon-id={icon.id}
-            style={style}
+            style={{ left: cellLeft(cell.col), top: cellTop(cell.row), width: CELL_W, height: CELL_H }}
             onPointerDown={(e) => startDrag(e, icon.id)}
             onKeyDown={(e) => onIconKeyDown(e, icon.id)}
           >

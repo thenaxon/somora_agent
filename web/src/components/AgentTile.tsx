@@ -1,9 +1,10 @@
-// A single agent tile in the sidebar dock. Replicates the click-dummy's
+// A single agent tile on the desktop. Replicates the click-dummy's
 // `.agent-icon` — 88-px wide tile with a glyph (emoji), label, and a
 // status-dot.
 //
-// Ordering, drag handling and the loading/error states live in Dock.tsx;
-// this file is purely one tile's presentation.
+// Placement, drag handling and the loading/error states live in
+// DesktopIcons.tsx (+ hooks/useDesktopIcons.ts); this file is purely one
+// tile's presentation.
 //
 // Status-dot semantics:
 //   online       — server reachable, agent listed, no special state

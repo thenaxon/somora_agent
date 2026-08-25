@@ -1,10 +1,10 @@
-// A single non-agent tile in the sidebar dock (tmux, terminal,
-// sessions, sentinel, tools, wiki). Same tile shape as an agent tile
-// for visual consistency, but the icon is a lucide glyph in a flat
-// tinted square instead of a gradient avatar.
+// A single non-agent tile on the desktop (tmux, terminal, sessions,
+// sentinel, tools, wiki). Same tile shape as an agent tile for visual
+// consistency, but the icon is a lucide glyph in a flat tinted square
+// instead of a gradient avatar.
 //
-// Which tiles exist and in what order is decided in Desktop.tsx; the
-// dock's ordering and drag handling live in Dock.tsx.
+// Which tiles exist and their default order is decided in Desktop.tsx;
+// placement and drag handling live in DesktopIcons.tsx.
 
 import type { ReactNode } from 'react';
 
