@@ -722,6 +722,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     const toolCtx = {
       agent,
       session,
+      turnId,
       subagentDepth,
       getMemoryManager: () =>
         getMemoryManager(agent, {

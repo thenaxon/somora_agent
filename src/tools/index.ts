@@ -17,6 +17,7 @@ import { skillTools } from './skill/index.ts';
 import { wikiTools } from './wiki/index.ts';
 import { projectTools } from './projects/index.ts';
 import { sentinelTools } from './sentinel/index.ts';
+import { imageTools } from './image/index.ts';
 
 export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
@@ -39,6 +40,7 @@ export { skillTools } from './skill/index.ts';
 export { wikiTools } from './wiki/index.ts';
 export { projectTools } from './projects/index.ts';
 export { sentinelTools } from './sentinel/index.ts';
+export { imageTools } from './image/index.ts';
 export { configureDreamRunTool } from './dream/index.ts';
 
 /**
@@ -77,4 +79,9 @@ export function registerAllTools(registry: ToolRegistry): void {
   // visibility flips based on config. Same pattern as wikiTools.
   registry.registerMany(projectTools());
   registry.registerMany(sentinelTools());
+  // Same self-gating pattern: registered unconditionally, hidden by
+  // their `available` probe unless imageGen is enabled AND has a
+  // model configured. A tool the agent can see but cannot run is
+  // worse than one that isn't offered.
+  registry.registerMany(imageTools());
 }
