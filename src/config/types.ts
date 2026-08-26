@@ -138,6 +138,11 @@ export const OpenAiCompatibleProviderSchema = z.object({
     .optional(),
 });
 
+/** The one provider variant that carries baseUrl + apiKey. Named so
+ *  service surfaces (stt, tts, imagegen) can require it in a signature
+ *  instead of re-narrowing the union at every call site. */
+export type OpenAiCompatibleProvider = z.infer<typeof OpenAiCompatibleProviderSchema>;
+
 export const ProviderSchema = z.discriminatedUnion('engine', [
   ClaudeCliProviderSchema,
   CodexCliProviderSchema,
