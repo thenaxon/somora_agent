@@ -2527,6 +2527,10 @@ app.get('/images/models/:name/capabilities', async (c) => {
     source: caps.source,
     known: caps.known,
     values: caps.values,
+    // null ⇒ unknown, and the client should offer every field as free
+    // input. A list ⇒ authoritative, and anything not in it is a field
+    // this model does not take.
+    supported: caps.supported ?? null,
     maxN: caps.maxN ?? null,
     maxReferences: caps.maxReferences ?? null,
     defaults: entry.defaults,

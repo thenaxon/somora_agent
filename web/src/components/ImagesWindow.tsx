@@ -127,6 +127,10 @@ export function ImagesWindow() {
         setSpecs((prev) => {
           const next: Partial<Record<ImageSpecField, string>> = {};
           for (const { key } of SPEC_FIELDS) {
+            // A model that doesn't take the field gets nothing carried
+            // over, or the request would be rejected for a value the
+            // form no longer even shows.
+            if (c.supported && !c.supported.includes(key)) continue;
             const allowed = c.values[key];
             const current = prev[key];
             if (current && (!allowed || allowed.includes(current))) next[key] = current;
@@ -145,6 +149,21 @@ export function ImagesWindow() {
 
   const maxN = caps?.maxN ?? 10;
 
+  /** Does the selected model take this parameter? A provider that
+   *  publishes its parameter list is authoritative — offering a field
+   *  the model ignores is worse than not offering it, because the
+   *  result silently disregards what was set. No list ⇒ show
+   *  everything and let the provider decide. */
+  const supports = useCallback(
+    (field: string) => (caps?.supported ? caps.supported.includes(field) : true),
+    [caps],
+  );
+
+  const visibleSpecFields = useMemo(
+    () => SPEC_FIELDS.filter((f) => supports(f.key)),
+    [supports],
+  );
+
   const generate = useCallback(async () => {
     if (!prompt.trim() || busy) return;
     setBusy(true);
@@ -154,8 +173,8 @@ export function ImagesWindow() {
         prompt: prompt.trim(),
         ...(model ? { model } : {}),
         ...specs,
-        ...(count > 1 ? { n: count } : {}),
-        ...(seed.trim() ? { seed: Number(seed.trim()) } : {}),
+        ...(count > 1 && maxN > 1 ? { n: count } : {}),
+        ...(seed.trim() && supports('seed') ? { seed: Number(seed.trim()) } : {}),
         ...(saveTo.trim() ? { save_to: saveTo.trim() } : {}),
       });
       // Put the new images at the head rather than refetching, so the
@@ -169,7 +188,7 @@ export function ImagesWindow() {
     } finally {
       setBusy(false);
     }
-  }, [prompt, busy, model, specs, count, seed, saveTo]);
+  }, [prompt, busy, model, specs, count, maxN, seed, supports, saveTo]);
 
   const forget = useCallback(async (id: string) => {
     try {
@@ -249,7 +268,7 @@ export function ImagesWindow() {
           />
         </label>
 
-        {SPEC_FIELDS.map(({ key, label, placeholder }) => {
+        {visibleSpecFields.map(({ key, label, placeholder }) => {
           const allowed = caps?.values[key];
           return (
             <label key={key} style={labelStyle}>
@@ -279,28 +298,41 @@ export function ImagesWindow() {
           );
         })}
 
-        <div style={{ display: 'flex', gap: 8 }}>
-          <label style={{ ...labelStyle, flex: 1 }}>
-            Count
-            <input
-              type="number"
-              min={1}
-              max={maxN}
-              value={count}
-              onChange={(e) => setCount(Math.max(1, Math.min(maxN, Number(e.target.value) || 1)))}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ ...labelStyle, flex: 1 }}>
-            Seed
-            <input
-              value={seed}
-              onChange={(e) => setSeed(e.target.value.replace(/[^0-9]/g, ''))}
-              placeholder="random"
-              style={inputStyle}
-            />
-          </label>
-        </div>
+        {/* Count is pointless at a ceiling of one, and seed only exists
+            on models that accept it — grok-imagine takes neither. */}
+        {(maxN > 1 || supports('seed')) && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            {maxN > 1 && (
+              <label style={{ ...labelStyle, flex: 1 }}>
+                Count
+                <input
+                  type="number"
+                  min={1}
+                  max={maxN}
+                  value={count}
+                  onChange={(e) =>
+                    setCount(Math.max(1, Math.min(maxN, Number(e.target.value) || 1)))
+                  }
+                  style={inputStyle}
+                />
+              </label>
+            )}
+            {supports('seed') && (
+              <label style={{ ...labelStyle, flex: 1 }}>
+                Seed
+                <input
+                  value={seed}
+                  onChange={(e) => setSeed(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="random"
+                  style={inputStyle}
+                />
+                <span style={hintStyle}>
+                  Same prompt and seed reproduce the same image.
+                </span>
+              </label>
+            )}
+          </div>
+        )}
 
         <label style={labelStyle}>
           Also save to

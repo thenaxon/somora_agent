@@ -29,6 +29,7 @@ import {
   type EnumerableSpecField,
   type ImageSpecs,
   type ModelCapabilities,
+  supportsField,
 } from './types.ts';
 
 /** Catalog responses are cached for the process lifetime, keyed by
@@ -255,6 +256,9 @@ export async function resolveCapabilities(
     known: true,
     source: 'catalog',
     values,
+    // Only when the catalog published a parameter list. A catalog entry
+    // without one tells us the model exists, not what it takes.
+    ...(params ? { supported: Object.keys(params) } : {}),
     maxN: rangeMax(params, 'n') ?? readNumber(row.raw, ['max_images', 'maxN', 'max_n']),
     maxReferences:
       rangeMax(params, 'input_references') ??
@@ -279,6 +283,20 @@ export function validateSpecs(
   modelLabel: string,
 ): string[] {
   const errors: string[] = [];
+
+  // A field the model doesn't take at all. Forwarding it would look
+  // like it worked — the provider ignores the parameter and returns an
+  // image that quietly disregards what was asked for, which is how you
+  // end up wondering why "transparent background" did nothing.
+  for (const [field, value] of Object.entries(specs)) {
+    if (value === undefined) continue;
+    if (!supportsField(caps, field)) {
+      errors.push(
+        `${modelLabel} does not accept '${field}'` +
+          (caps.supported ? ` — it takes: ${caps.supported.join(', ')}` : ''),
+      );
+    }
+  }
 
   for (const field of ENUMERABLE_SPEC_FIELDS) {
     const value = specs[field];
@@ -314,10 +332,19 @@ export function validateSpecs(
 /** Merge configured defaults under caller-supplied specs. Caller wins
  *  field by field, so a default aspect ratio survives a call that only
  *  overrides the resolution. */
-export function applyDefaults(specs: ImageSpecs, entry: ImageModel): ImageSpecs {
+export function applyDefaults(
+  specs: ImageSpecs,
+  entry: ImageModel,
+  caps?: ModelCapabilities,
+): ImageSpecs {
   const merged: ImageSpecs = { ...specs };
   for (const [key, value] of Object.entries(entry.defaults)) {
     if (value === undefined) continue;
+    // Silently skipped rather than applied-and-rejected: defaults are
+    // operator convenience, not intent for this particular call. One
+    // shared default block across several models shouldn't make every
+    // request to the odd one out fail.
+    if (caps && !supportsField(caps, key)) continue;
     if (merged[key as keyof ImageSpecs] === undefined) {
       (merged as Record<string, unknown>)[key] = value;
     }

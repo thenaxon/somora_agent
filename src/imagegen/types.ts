@@ -55,8 +55,27 @@ export interface ModelCapabilities {
    *  confusing rejection can be traced to its source. */
   source: 'catalog' | 'config' | 'unknown';
   values: Partial<Record<EnumerableSpecField, string[]>>;
+  /**
+   * The complete set of parameter names this model accepts, when the
+   * catalog publishes one. Distinct from `values`, which only covers
+   * fields with an enumerable set: grok-imagine accepts `n` without
+   * `n` having a value list, and does NOT accept `seed` at all.
+   *
+   * Present ⇒ authoritative: a field missing from this list is
+   * unsupported, and offering it in a form or silently forwarding it
+   * would be a lie. Absent ⇒ we simply don't know, and everything is
+   * allowed through. Keeping those two cases apart is the whole point
+   * of this field.
+   */
+  supported?: string[];
   maxN?: number;
   maxReferences?: number;
+}
+
+/** Does this model accept `field`? Unknown counts as yes — see the note
+ *  on `supported`. */
+export function supportsField(caps: ModelCapabilities, field: string): boolean {
+  return caps.supported ? caps.supported.includes(field) : true;
 }
 
 /** One generated image, as persisted and as handed back to callers. */

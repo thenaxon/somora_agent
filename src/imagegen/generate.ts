@@ -156,8 +156,8 @@ export async function generateImage(
     );
   }
 
-  const specs = applyDefaults(input.specs ?? {}, entry);
   const caps = await resolveCapabilities(providerName, provider, entry);
+  const specs = applyDefaults(input.specs ?? {}, entry, caps);
   const problems = validateSpecs(specs, caps, label);
 
   const references = input.references ?? [];

@@ -228,6 +228,35 @@ check(
   validateSpecs({ quality: 'high' }, real, 'Grok')[0]?.includes('low, medium') === true,
 );
 
+// The parameter list is exhaustive, so a field missing from it is
+// unsupported — NOT merely unconstrained. grok-imagine takes no
+// output_format, no background and no seed.
+check('openrouter: supported list captured', real.supported?.join() === 'resolution,aspect_ratio,quality,n,input_references', String(real.supported));
+check(
+  'openrouter: unsupported field rejected',
+  validateSpecs({ output_format: 'png' }, real, 'Grok').length === 1,
+);
+check(
+  'openrouter: rejection names what the model does take',
+  validateSpecs({ seed: 42 }, real, 'Grok')[0]?.includes('resolution, aspect_ratio') === true,
+  validateSpecs({ seed: 42 }, real, 'Grok')[0],
+);
+check(
+  'openrouter: supported field with no value list still passes',
+  validateSpecs({ n: 1 }, real, 'Grok').length === 0,
+);
+// A default written for another model must not break every call to
+// this one — it is skipped, not applied and then rejected.
+const withDefaults = applyDefaults({}, model({ defaults: { output_format: 'png', resolution: '2K' } }), real);
+check('defaults: unsupported default skipped', withDefaults.output_format === undefined);
+check('defaults: supported default still applied', withDefaults.resolution === '2K');
+check('defaults: skipping keeps the call valid', validateSpecs(withDefaults, real, 'Grok').length === 0);
+// Without a published list nothing is rejected — unknown is not "no".
+check(
+  'unknown caps: no field is considered unsupported',
+  validateSpecs({ output_format: 'png', seed: 1, background: 'transparent' }, unknownCaps, 'M').length === 0,
+);
+
 // Nested payloads — catalogs commonly group parameters one level down.
 clearCatalogCache();
 stubFetch({

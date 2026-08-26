@@ -242,6 +242,10 @@ export interface ImageCapabilities {
   /** A field absent here has no known constraint — the form offers free
    *  text rather than an empty dropdown. */
   values: Partial<Record<ImageSpecField, string[]>>;
+  /** Every parameter the model accepts, or null when the provider
+   *  doesn't say. A list is authoritative: a field missing from it is
+   *  not supported and must not be offered. */
+  supported: string[] | null;
   maxN: number | null;
   maxReferences: number | null;
   defaults: Partial<Record<ImageSpecField, string>>;
