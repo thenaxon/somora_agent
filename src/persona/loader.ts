@@ -149,6 +149,20 @@ const AgentYamlSchema = z
         allow: z.array(z.string().min(1)).optional(),
       })
       .optional(),
+    /**
+     * Whether this agent looks at images it generates. `never` (the
+     * default) returns path + metadata only; `always` additionally
+     * feeds the image back into the agent's context so it can judge
+     * the result and re-prompt on its own — roughly 2k tokens per
+     * image, hence opt-in.
+     *
+     * NOT a lock either way: the agent can still set `return_image` per
+     * call when the task demands it ("keep improving until it's good"
+     * is unanswerable without looking), and a human can always say
+     * "have a look at it" afterwards — the file is on disk, file_read
+     * reaches it like any other image.
+     */
+    imageReview: z.enum(['never', 'always']).optional(),
     rem: RemConfigSchema.optional(),
   })
   .passthrough();
@@ -197,6 +211,8 @@ export interface Persona {
    */
   toolGating: { deny: string[]; allow: string[] } | undefined;
   rem: RemConfig | undefined;
+  /** Image-review stance from agent.yaml. `undefined` = 'never'. */
+  imageReview: 'never' | 'always' | undefined;
   systemPrompt: string;
 }
 
@@ -315,6 +331,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
       ? { deny: agentYaml.tools.deny ?? [], allow: agentYaml.tools.allow ?? [] }
       : undefined,
     rem: agentYaml.rem,
+    imageReview: agentYaml.imageReview,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
 }
