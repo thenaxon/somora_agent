@@ -184,6 +184,50 @@ check('resolve: aspect ratios read', fromCatalog.values.aspect_ratio?.join() ===
 check('resolve: maxN read', fromCatalog.maxN === 4);
 check('resolve: other models not mixed in', fromCatalog.values.resolution?.includes('4K') !== true);
 
+// The real OpenRouter shape, copied verbatim from
+// GET /api/v1/images/models on 2026-08-26. `supported_parameters` maps
+// a field to {type:'enum', values} or {type:'range', min, max} — not to
+// a bare array, which is what the first pass at this parser assumed.
+const OPENROUTER_GROK = {
+  id: 'x-ai/grok-imagine-image-2.0',
+  name: 'xAI: Grok Imagine Image 2.0',
+  architecture: { input_modalities: ['text', 'image'], output_modalities: ['image'] },
+  supported_parameters: {
+    resolution: { type: 'enum', values: ['1K', '2K'] },
+    aspect_ratio: {
+      type: 'enum',
+      values: ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2', 'auto'],
+    },
+    quality: { type: 'enum', values: ['low', 'medium'] },
+    n: { type: 'range', min: 1, max: 1 },
+    input_references: { type: 'range', min: 0, max: 3 },
+  },
+  supports_streaming: false,
+};
+
+clearCatalogCache();
+stubFetch({ data: [OPENROUTER_GROK] });
+const real = await resolveCapabilities('p', provider, model({ model: 'x-ai/grok-imagine-image-2.0' }));
+check('openrouter: resolutions read', real.values.resolution?.join() === '1K,2K', JSON.stringify(real.values.resolution));
+check('openrouter: aspect ratios read', real.values.aspect_ratio?.length === 8, String(real.values.aspect_ratio?.length));
+check('openrouter: qualities read', real.values.quality?.join() === 'low,medium');
+check('openrouter: n range becomes maxN', real.maxN === 1, String(real.maxN));
+check('openrouter: reference range becomes maxReferences', real.maxReferences === 3, String(real.maxReferences));
+check(
+  'openrouter: unlisted spec stays unconstrained',
+  real.values.output_format === undefined,
+);
+// This model renders one image per call — asking for four has to fail
+// before the request goes out, not after it's billed.
+check('openrouter: n=4 rejected against a max of 1', validateSpecs({ n: 4 }, real, 'Grok').length === 1);
+check('openrouter: n=1 accepted', validateSpecs({ n: 1 }, real, 'Grok').length === 0);
+check('openrouter: 4K rejected', validateSpecs({ resolution: '4K' }, real, 'Grok').length === 1);
+check('openrouter: 2K accepted', validateSpecs({ resolution: '2K' }, real, 'Grok').length === 0);
+check(
+  'openrouter: high quality rejected with the list',
+  validateSpecs({ quality: 'high' }, real, 'Grok')[0]?.includes('low, medium') === true,
+);
+
 // Nested payloads — catalogs commonly group parameters one level down.
 clearCatalogCache();
 stubFetch({

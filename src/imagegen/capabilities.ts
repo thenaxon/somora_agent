@@ -41,8 +41,49 @@ interface CatalogEntry {
   raw: Record<string, unknown>;
 }
 
+/**
+ * The shape OpenRouter's image-model catalog actually uses, verified
+ * against `GET /api/v1/images/models` on 2026-08-26:
+ *
+ *   supported_parameters: {
+ *     resolution:       { type: 'enum',  values: ['1K', '2K'] },
+ *     aspect_ratio:     { type: 'enum',  values: ['1:1', '16:9', …] },
+ *     n:                { type: 'range', min: 1, max: 1 },
+ *     input_references: { type: 'range', min: 0, max: 3 },
+ *   }
+ *
+ * Read first, because it's the one shape we've seen from a real
+ * provider. The looser key-guessing below stays as a fallback for
+ * catalogs that publish something else.
+ */
+interface ParamSpec {
+  type?: string;
+  values?: unknown;
+  min?: unknown;
+  max?: unknown;
+}
+
+function supportedParameters(raw: Record<string, unknown>): Record<string, ParamSpec> | null {
+  const sp = raw.supported_parameters;
+  if (!sp || typeof sp !== 'object' || Array.isArray(sp)) return null;
+  return sp as Record<string, ParamSpec>;
+}
+
+function enumValues(params: Record<string, ParamSpec> | null, field: string): string[] | undefined {
+  const spec = params?.[field];
+  if (!spec || spec.type !== 'enum') return undefined;
+  return asStringArray(spec.values);
+}
+
+function rangeMax(params: Record<string, ParamSpec> | null, field: string): number | undefined {
+  const spec = params?.[field];
+  if (!spec || spec.type !== 'range') return undefined;
+  const max = spec.max;
+  return typeof max === 'number' && Number.isFinite(max) && max > 0 ? max : undefined;
+}
+
 /** Field names a catalog might use for each spec, most specific first.
- *  Extended as real payloads are observed — see the module comment. */
+ *  Fallback for providers that don't publish `supported_parameters`. */
 const CATALOG_KEYS: Record<EnumerableSpecField, string[]> = {
   resolution: ['resolutions', 'supported_resolutions', 'resolution'],
   aspect_ratio: ['aspect_ratios', 'supported_aspect_ratios', 'aspect_ratio'],
@@ -204,17 +245,20 @@ export async function resolveCapabilities(
 
   logger.debug({ msg: 'imagegen.catalog_entry', model: entry.model, raw: row.raw });
 
+  const params = supportedParameters(row.raw);
   const values: Partial<Record<EnumerableSpecField, string[]>> = {};
   for (const field of ENUMERABLE_SPEC_FIELDS) {
-    const hit = readValues(row.raw, field);
+    const hit = enumValues(params, field) ?? readValues(row.raw, field);
     if (hit) values[field] = hit;
   }
   return {
     known: true,
     source: 'catalog',
     values,
-    maxN: readNumber(row.raw, ['max_images', 'maxN', 'max_n']),
-    maxReferences: readNumber(row.raw, ['max_input_references', 'max_references']),
+    maxN: rangeMax(params, 'n') ?? readNumber(row.raw, ['max_images', 'maxN', 'max_n']),
+    maxReferences:
+      rangeMax(params, 'input_references') ??
+      readNumber(row.raw, ['max_input_references', 'max_references']),
   };
 }
 
