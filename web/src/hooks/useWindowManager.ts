@@ -182,6 +182,30 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the Images window (gallery + generation form).
+   *  Singleton — the gallery is one archive, and two windows onto it
+   *  would just compete for the same scroll position. */
+  const openImages = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'images');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(1000, 680, zCounter + 1);
+    const id = `images-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'images',
+      title: 'Images',
+      icon: '🖼',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   /** Remember which page a wiki window is on so a reload restores it. */
   const setWikiSlug = useCallback((id: string, slug: string) => {
     setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, wikiSlug: slug } : w)));
@@ -462,6 +486,7 @@ export function useWindowManager() {
     openSentinelList,
     openWiki,
     openTools,
+    openImages,
     setWikiSlug,
     openPinNote,
     unpinMessage,

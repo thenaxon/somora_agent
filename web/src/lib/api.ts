@@ -208,6 +208,98 @@ export interface HistoryResponse {
   oldestTs?: number;
 }
 
+/** Spec fields that carry a closed set of values. Mirrors
+ *  ENUMERABLE_SPEC_FIELDS on the server. */
+export type ImageSpecField =
+  | 'resolution'
+  | 'aspect_ratio'
+  | 'quality'
+  | 'output_format'
+  | 'background';
+
+export interface ImageModelOption {
+  name: string;
+  label: string;
+  model: string;
+  provider: string;
+  defaults: Partial<Record<ImageSpecField, string>>;
+}
+
+export interface ImagesStatus {
+  enabled: boolean;
+  outputDir?: string;
+  maxImagesPerTurn?: number;
+  models?: ImageModelOption[];
+}
+
+export interface ImageCapabilities {
+  model: string;
+  source: 'catalog' | 'config' | 'unknown';
+  known: boolean;
+  /** A field absent here has no known constraint — the form offers free
+   *  text rather than an empty dropdown. */
+  values: Partial<Record<ImageSpecField, string[]>>;
+  maxN: number | null;
+  maxReferences: number | null;
+  defaults: Partial<Record<ImageSpecField, string>>;
+}
+
+export interface ImageRecordDto {
+  id: string;
+  createdAt: string;
+  prompt: string;
+  modelName: string;
+  modelId: string;
+  provider: string;
+  specs: Record<string, string | number | undefined>;
+  path: string;
+  filename: string;
+  mime: string;
+  bytes: number;
+  linkedTo: string[];
+  costUsd?: number;
+  agent?: string;
+  session?: string;
+  references?: number;
+  batchId: string;
+  batchIndex: number;
+}
+
+export interface ImageListParams {
+  query?: string;
+  model?: string;
+  agent?: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ImageListResponse {
+  total: number;
+  offset: number;
+  images: ImageRecordDto[];
+  totalBytes: number;
+}
+
+export interface GenerateImageBody {
+  prompt: string;
+  model?: string;
+  resolution?: string;
+  aspect_ratio?: string;
+  quality?: string;
+  output_format?: string;
+  background?: string;
+  seed?: number;
+  n?: number;
+  save_to?: string;
+}
+
+export interface GenerateImageResponse {
+  images: ImageRecordDto[];
+  costUsd: number | null;
+}
+
 export const api = {
   version: () => getJson<{ version: string }>('/version'),
   hostStats: () =>
@@ -556,6 +648,43 @@ export const api = {
       method: 'POST',
     });
     if (!res.ok) throw new Error(`sentinel test ${res.status}`);
+  },
+
+  // ─── Image generation ──────────────────────────────────────────────
+  imagesStatus: () => getJson<ImagesStatus>('/images/status'),
+  imageCapabilities: (model: string) =>
+    getJson<ImageCapabilities>(`/images/models/${encodeURIComponent(model)}/capabilities`),
+  imageCatalog: (provider?: string) =>
+    getJson<{ provider: string; models: Array<{ id: string; name?: string }> }>(
+      provider ? `/images/catalog?provider=${encodeURIComponent(provider)}` : '/images/catalog',
+    ),
+  images: (params: ImageListParams = {}) => {
+    const q = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== '') q.set(key, String(value));
+    }
+    const suffix = q.toString();
+    return getJson<ImageListResponse>(`/images${suffix ? `?${suffix}` : ''}`);
+  },
+  generateImage: async (body: GenerateImageBody): Promise<GenerateImageResponse> => {
+    const res = await fetch('/images/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = (await res.json().catch(() => ({}))) as Partial<GenerateImageResponse> & {
+      error?: string;
+    };
+    if (!res.ok) {
+      // The server's message is written to be shown as-is — it names
+      // the offending field and the values that would have worked.
+      throw new Error(payload.error ?? `image generation failed (${res.status})`);
+    }
+    return payload as GenerateImageResponse;
+  },
+  forgetImage: async (id: string): Promise<void> => {
+    const res = await fetch(`/images/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`forget image ${res.status}`);
   },
 
   // ─── Wiki explorer (read-only) ─────────────────────────────────────
