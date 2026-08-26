@@ -67,6 +67,11 @@ export function createTurnSerializer() {
             cacheKey: ev.audio.cacheKey,
           },
         };
+      case 'assistant_images':
+        return {
+          event: 'assistant_images',
+          data: { turnId: ev.turnId, images: ev.images },
+        };
       case 'engine_meta': {
         const label = resolveEngineMetaLabel(ev.engine, ev.itemType);
         const summary = summariseEngineMeta(ev.engine, ev.itemType, ev.payload);

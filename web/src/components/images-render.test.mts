@@ -113,5 +113,5 @@ t('nennt den Ablageort im Formular', () => {
   assert(html.includes('Every image is kept in'), 'Hinweis zum Ablageort fehlt');
 });
 
-console.log(`\n${ok} ok, ${bad} failed`);
+console.log(`\n${ok} ok, ${bad} fehlgeschlagen`);
 if (bad > 0) process.exit(1);

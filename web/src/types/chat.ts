@@ -39,6 +39,17 @@ export interface AttachmentDisplay {
   size: number;
 }
 
+/** One image generated during an assistant turn. Refs only — bytes
+ *  are served by GET /images/:id/file. */
+export interface AssistantImage {
+  id: string;
+  prompt: string;
+  mime: string;
+  filename: string;
+  /** Path served by GET /images/:id/file on the somora server. */
+  url: string;
+}
+
 export interface AssistantAudio {
   /** Path served by GET /tts/cache/:hash.:ext on the somora server. */
   url: string;
@@ -93,6 +104,11 @@ export type ChatMessage =
        *  assistant_audio SSE event with matching turnId arrived after
        *  the assistant message. Drives the per-bubble Play-button. */
       audio?: AssistantAudio;
+      /** Images generated while this turn ran. Arrives after the text
+       *  as an assistant_images event and is rendered under the bubble,
+       *  so a person who asked for a picture gets the picture without
+       *  the agent having to remember to send it. */
+      images?: AssistantImage[];
       /** The engine-emitted turnId for this message. Used to pair
        *  late-arriving assistant_audio events to the right bubble. */
       turnId?: string;
@@ -189,6 +205,10 @@ export type StreamEvent =
   | {
       event: 'assistant_audio';
       data: { turnId: string; url: string; mime: string; durationMs?: number; cacheKey: string };
+    }
+  | {
+      event: 'assistant_images';
+      data: { turnId: string; images: AssistantImage[] };
     }
   | {
       event: 'engine_meta';

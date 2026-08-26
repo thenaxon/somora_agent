@@ -185,6 +185,9 @@ export interface HistoryEvent {
    *  generated TTS artifact so the client can re-render a Play-button
    *  for past turns on history load. */
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
+  /** Set on `kind: 'assistant_images'` history rows — images generated
+   *  during that turn, so a reloaded conversation still shows them. */
+  images?: Array<{ id: string; prompt: string; mime: string; filename: string; url: string }>;
   /** Set on `kind: 'engine_meta'` history rows. itemType is the raw
    *  engine-emitted label (e.g. 'todo_list'); payload is opaque. */
   itemType?: string;
