@@ -480,6 +480,7 @@ The web client listens for these named events on `/chat/stream`:
 | `memory` | `{count, topScore, refs, fullText?}` | Memory auto-inject for this turn |
 | `project` | `{from, to, via}` | Project focus change — fired by `/projekt` slash + HTTP routes. MCP-routed agent tool calls don't emit this; clients re-GET `/…/project` on `agent:end` instead. Only fires when the projects feature is enabled. |
 | `assistant_audio` | `{turnId, url, mime, durationMs?, cacheKey}` | Server-generated TTS artifact for the matching turn. Pairs by `turnId`; drives the Play-button on the bubble. |
+| `assistant_images` | `{turnId, images: [{id, prompt, mime, filename, url}]}` | Images generated while the turn ran. Pairs by `turnId` and renders under the bubble. Published by the server after the turn finalizes — the agent doesn't have to attach anything. See [imagegen.md](imagegen.md). |
 
 The server pubsub key is `${agent}::${session}` — multiple agents can
 share a session id like `main` without leaking events across windows.

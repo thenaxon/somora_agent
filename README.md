@@ -40,6 +40,11 @@ What makes it different:
   commands, web fetches, sub-agent spawning, multimodal attachments — is a
   typed tool the agent can call. The same registry feeds all three engines
   via either an in-process loop or per-turn MCP child processes.
+- **Images (optional).** Point somora at an image model and both you and
+  your agents can generate pictures — specs like aspect ratio and
+  resolution are real request fields, not hints buried in the prompt.
+  Results land in your workspace, show up in the chat, and stay
+  searchable in a gallery with the prompt and settings that made them.
 - **Projects (optional).** Bind a chat session to a real-world thing —
   a renovation, a research thread, a piece of code — via a curated
   manifest of pointers (Obsidian notes, local source dirs, GDrive URLs,
@@ -351,6 +356,7 @@ and codex-cli) — same tool surface regardless of model.
 | skills | `skill`, `skill_list` | Activate a Markdown how-to from `~/.somora/skills/`, or list all skills available to the agent fresh from disk. |
 | projects (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests linking a session to a real-world thing. Only registered when `projects.enabled: true`. |
 | sentinel | `sentinel` | Install + manage time-based triggers that wake agents on a schedule (single action-enum tool: create/list/get/pause/resume/delete/test/history). |
+| image (optional) | `image_generate`, `image_list` | Text-to-image via a configured image model, and an index over everything generated. Only registered when `imageGen.enabled: true`. |
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
 | resources | `resource_list`, `resource_test` | Discover/probe configured SSH targets. |
 | time | `time_now` | Current date/time/timezone. |
@@ -379,6 +385,7 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/tmux.md](docs/tmux.md) — long-lived terminal sessions for TUIs
 - [docs/sentinel.md](docs/sentinel.md) — proactive time-based triggers
 - [docs/voice.md](docs/voice.md) — STT + TTS, per-session auto-play toggle, /voice/turn endpoint
+- [docs/imagegen.md](docs/imagegen.md) — text-to-image, the Images window, per-agent review stance
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning-depth surface across engines
 - [docs/display.md](docs/display.md) — TUI display toggles
