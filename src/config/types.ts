@@ -138,6 +138,11 @@ export const OpenAiCompatibleProviderSchema = z.object({
     .optional(),
 });
 
+/** The one provider variant that carries baseUrl + apiKey. Named so
+ *  service surfaces (stt, tts, imagegen) can require it in a signature
+ *  instead of re-narrowing the union at every call site. */
+export type OpenAiCompatibleProvider = z.infer<typeof OpenAiCompatibleProviderSchema>;
+
 export const ProviderSchema = z.discriminatedUnion('engine', [
   ClaudeCliProviderSchema,
   CodexCliProviderSchema,
@@ -832,6 +837,129 @@ export const TtsConfigSchema = z
   .optional();
 export type TtsConfig = z.infer<typeof TtsConfigSchema>;
 
+// Image generation. Same standalone shape as stt/tts and for the same
+// reason: an image model is a separate service surface, not "another
+// chat model to pick". Listing them in providers.X.models would leak
+// them into model pickers, persona validation and /v1/models, where
+// they'd be selectable as a conversation model and fail on the first
+// turn.
+//
+// Wire target is the OpenAI-shaped image endpoint (`POST <baseUrl>/images`
+// — OpenRouter's /api/v1/images, OpenAI's /v1/images/generations). The
+// chat.completions + `modalities: ["image"]` route is deliberately NOT
+// supported: it has no structured spec fields, so aspect ratio and
+// resolution would degrade to prose inside the prompt.
+//
+// Spec validation is capability-driven, not hardcoded — see
+// src/imagegen/capabilities.ts. Allowed values differ per model (grok
+// renders 1K/2K only, others do 512/4K), so the truth comes from the
+// provider's model catalog at runtime, with `allow` below as the
+// offline override.
+export const ImageSpecDefaultsSchema = z
+  .object({
+    resolution: z.string().min(1).optional(),
+    aspect_ratio: z.string().min(1).optional(),
+    quality: z.string().min(1).optional(),
+    output_format: z.string().min(1).optional(),
+    background: z.string().min(1).optional(),
+  })
+  .strict()
+  .default({});
+export type ImageSpecDefaults = z.infer<typeof ImageSpecDefaultsSchema>;
+
+export const ImageModelSchema = z.object({
+  /** Short handle used by the tool's `model` arg and the UI picker.
+   *  Deliberately NOT the wire id — agents and humans shouldn't have to
+   *  type `x-ai/grok-imagine-image-2.0` to pick a model. */
+  name: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]+$/, 'image model name must match [A-Za-z0-9_-]+'),
+  /** Name of an existing entry in `providers`. Reuses its baseUrl +
+   *  apiKey. Provider engine must be `openai-compatible`. */
+  provider: z.string().min(1),
+  /** Model id sent in the request's `model` field. */
+  model: z.string().min(1),
+  /** Human-readable label for the UI picker. Falls back to `name`. */
+  label: z.string().min(1).optional(),
+  /** Path appended to the provider's baseUrl. Defaults to `/images`
+   *  (OpenRouter). OpenAI direct wants `/images/generations`, and a
+   *  local server may sit anywhere — hence configurable rather than
+   *  guessed from the hostname. */
+  endpoint: z.string().min(1).default('/images'),
+  /** Path for the model-capability catalog, appended to baseUrl.
+   *  Defaults to `/images/models` (OpenRouter). Set to null when the
+   *  provider has none — validation then falls back to `allow`, or to
+   *  permissive if that's unset too. */
+  capabilitiesEndpoint: z.string().min(1).nullable().default('/images/models'),
+  /** Specs applied when the caller omits them. Validated against the
+   *  model's real capabilities like any other spec — a stale default
+   *  surfaces as a startup-time warning, not a runtime surprise. */
+  defaults: ImageSpecDefaultsSchema,
+  /** Offline capability override. Set this when the provider has no
+   *  discoverable model catalog (a local image server) or when its
+   *  catalog is wrong. Takes precedence over discovery. */
+  allow: z
+    .object({
+      resolution: z.array(z.string().min(1)).optional(),
+      aspect_ratio: z.array(z.string().min(1)).optional(),
+      quality: z.array(z.string().min(1)).optional(),
+      output_format: z.array(z.string().min(1)).optional(),
+      maxN: z.number().int().min(1).max(10).optional(),
+      maxReferences: z.number().int().min(0).max(16).optional(),
+    })
+    .optional(),
+});
+export type ImageModel = z.infer<typeof ImageModelSchema>;
+
+export const ImageGenConfigSchema = z
+  .object({
+    /** Master toggle. When false (or block omitted), the image tools
+     *  stay unavailable, /images/* returns 503 and the desktop tile
+     *  auto-hides — same gate shape as wiki/tts. */
+    enabled: z.boolean().default(false),
+    /** Canonical destination for EVERY generated image, regardless of
+     *  which agent triggered it. Deliberately absolute rather than
+     *  workspace-relative: the gallery and the file-serving route index
+     *  one directory, and a per-agent workspace would scatter images
+     *  across several. A caller-supplied destination gets a hardlink on
+     *  top (see src/imagegen/store.ts), not a second copy. */
+    outputDir: z.string().min(1).default('~/somoraworkspace/images'),
+    /** Bucket files into `<outputDir>/YYYY-MM/`. Off by default —
+     *  nesting only starts paying off in the hundreds, and filenames
+     *  already sort chronologically. */
+    monthlyFolders: z.boolean().default(false),
+    /** Cost brake. Counts images (not calls) generated within one turn;
+     *  the tool refuses past this and tells the agent to ask its human.
+     *  Without it, an agent with imageReview: always that keeps
+     *  "improving" the result bills real money in a loop. */
+    maxImagesPerTurn: z.number().int().min(1).max(100).default(5),
+    /** Wall-clock cap for one upstream request. Image models are slow —
+     *  a 4K render legitimately takes minutes, so this sits far above
+     *  the usual HTTP timeouts. */
+    timeoutMs: z.number().int().min(5_000).max(1_800_000).default(300_000),
+    /** Configured image models. First entry is the default when a
+     *  caller omits `model`. */
+    models: z.array(ImageModelSchema).min(1),
+  })
+  .optional();
+export type ImageGenConfig = z.infer<typeof ImageGenConfigSchema>;
+
+/** Resolve an image-model handle to its config entry + provider.
+ *  Returns null for unknown handles so callers can produce an error
+ *  that lists what IS configured. */
+export function resolveImageModel(
+  config: Config,
+  name?: string,
+): { entry: ImageModel; provider: Provider; providerName: string } | null {
+  const models = config.imageGen?.models;
+  if (!models || models.length === 0) return null;
+  const entry = name ? models.find((m) => m.name === name) : models[0];
+  if (!entry) return null;
+  const provider = config.providers[entry.provider];
+  if (!provider) return null;
+  return { entry, provider, providerName: entry.provider };
+}
+
 // Projects — pointer-file index over existing storage locations
 // (Obsidian, local paths, URLs, remote resources). Each project is a
 // Markdown+frontmatter file under ~/.somora/projects/<slug>.md; a
@@ -1268,6 +1396,7 @@ export const ConfigSchema = z.object({
   vision: VisionConfigSchema,
   stt: SttConfigSchema,
   tts: TtsConfigSchema,
+  imageGen: ImageGenConfigSchema,
   projects: ProjectsConfigSchema,
   sentinel: SentinelConfigSchema,
   obsidian: ObsidianConfigSchema,

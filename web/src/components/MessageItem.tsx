@@ -29,7 +29,7 @@ import {
   SquareTerminal,
   User,
 } from 'lucide-react';
-import type { AttachmentDisplay, ChatMessage } from '../types/chat';
+import type { AssistantImage, AttachmentDisplay, ChatMessage } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
 import { EngineMetaBlock } from './EngineMetaBlock';
@@ -218,6 +218,9 @@ export const MessageItem = memo(function MessageItem({
                   animation: 'somora-cursor-blink 1s steps(1) infinite',
                 }}
               />
+            )}
+            {msg.role === 'assistant' && msg.images && msg.images.length > 0 && (
+              <GeneratedImageRow images={msg.images} />
             )}
             {msg.role === 'assistant' && msg.audio && <PlayAudioButton url={msg.audio.url} />}
             {msg.role === 'assistant' && msg.fallback && (
@@ -522,6 +525,48 @@ function BubbleActions({
           />
         </button>
       )}
+    </div>
+  );
+}
+
+// Images generated during an assistant turn, shown under the reply.
+//
+// Rendered large rather than as the small chips used for user
+// attachments: the user asked for a picture, and a 24px thumbnail of it
+// would be a worse answer than the file path. Clicking opens the full
+// image in a new tab — the window has no lightbox, and a broken
+// half-measure would be worse than the browser's own viewer.
+function GeneratedImageRow({ images }: { images: AssistantImage[] }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+      {images.map((img) => (
+        <a
+          key={img.id}
+          href={img.url}
+          target="_blank"
+          rel="noreferrer"
+          title={img.prompt}
+          style={{ display: 'block', lineHeight: 0 }}
+        >
+          <img
+            src={img.url}
+            alt={img.prompt}
+            loading="lazy"
+            style={{
+              maxWidth: images.length > 1 ? 168 : 320,
+              maxHeight: 320,
+              borderRadius: 6,
+              border: '1px solid var(--line)',
+              display: 'block',
+            }}
+            onError={(e) => {
+              // The file was moved or deleted outside somora. Drop the
+              // broken-image icon rather than leaving a grey box.
+              (e.currentTarget as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        </a>
+      ))}
     </div>
   );
 }

@@ -42,6 +42,11 @@ families. [files.md](files.md), [resources.md](resources.md), and
 [tmux.md](tmux.md) cover the heavy ones. [Skills](skills.md) are
 markdown how-tos you install to teach an agent multi-step recipes.
 
+**I want my agents to make images.** [imagegen.md](imagegen.md) —
+configure a model, then generate from the Images window or let an
+agent call `image_generate`. Results land in your workspace and show
+up in the chat.
+
 **I want long-term memory + a shared knowledge base.** Read
 [memory.md](memory.md) for the per-agent inbox, [wiki.md](wiki.md) for
 the shared layer, and [dream-phases.md](dream-phases.md) for how
@@ -128,5 +133,6 @@ high-value next steps in rough order:
 | [web.md](web.md) | Browser client | Web-UI specifics + HTTPS notes |
 | [mobile.md](mobile.md) | Mobile PWA | iOS/Android install, scope |
 | [voice.md](voice.md) | STT + TTS + /voice/turn | Voice in, spoken replies, audio-in/audio-out endpoint |
+| [imagegen.md](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
 | [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
 | [security.md](security.md) | Trust model | Network posture, sandbox stance |

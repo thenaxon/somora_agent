@@ -239,6 +239,62 @@ providers:
 #       autoPlayVoiceReplies: false
 #       allowUserOverride: true
 
+# Image generation — text-to-image via an OpenAI-shaped image endpoint
+# (OpenRouter's /api/v1/images, OpenAI's /v1/images/generations, or a
+# local server that speaks the same shape). Same standalone posture as
+# stt/tts: image models are NOT listed in `providers.<x>.models`, so
+# they never show up as selectable chat models.
+#
+# Both a human and an agent drive the same code path: the web app's
+# Images window POSTs to /images/generate, agents call the
+# `image_generate` tool. The prompt is passed through verbatim — specs
+# travel as separate request fields, never as prose inside the prompt.
+#
+# Allowed spec values differ per model (grok-imagine renders 1K/2K
+# only; other models do 512 or 4K). somora discovers them from the
+# provider's image-model catalog at runtime and validates against that,
+# so a newly configured model works without a code change. Use `allow`
+# below only when discovery isn't available (local server) or is wrong.
+#
+# Every image lands in `outputDir` regardless of which agent generated
+# it — that single directory is what the gallery and the file-serving
+# route index. A caller-supplied destination (`save_to` on the tool,
+# the target field in the UI) additionally gets a HARDLINK, so a second
+# location costs a name, not a second copy. Across filesystems somora
+# falls back to a real copy automatically.
+# imageGen:
+#   enabled: true
+#   outputDir: ~/somoraworkspace/images         # canonical home for every image
+#   monthlyFolders: false                       # true → <outputDir>/2026-08/
+#   maxImagesPerTurn: 5                         # cost brake per turn
+#   timeoutMs: 300000                           # image models are slow; 5 min
+#   models:
+#     - name: grok-imagine                      # handle used by tool + UI
+#       provider: openrouter                    # ← references providers.openrouter
+#       model: x-ai/grok-imagine-image-2.0      #   (baseUrl + apiKey come from there)
+#       label: "Grok Imagine 2.0"
+#       # endpoint: /images                     # default; OpenAI direct wants
+#       #                                       #  /images/generations
+#       # capabilitiesEndpoint: /images/models  # default; null when the provider
+#       #                                       #  has no catalog (local server)
+#       defaults:                               # applied when the caller omits them
+#         resolution: 1K
+#         aspect_ratio: "16:9"
+#         output_format: png
+#       # allow:                                # offline override — skip when the
+#       #   resolution: ["1K", "2K"]            #  provider catalog is reachable
+#       #   aspect_ratio: ["1:1", "16:9", "9:16", "4:3", "3:4", "2:3"]
+#       #   quality: ["low", "medium"]
+#       #   maxN: 4
+#       #   maxReferences: 3
+#
+# Per-agent, in ~/.somora/agents/<name>/agent.yaml:
+#   imageReview: never                          # never (default) | always
+# `always` feeds each generated image back into that agent's context so
+# it can judge and re-prompt on its own (~2k tokens per image). `never`
+# is not a lock — the agent can still request the image per call, and
+# the file stays readable via file_read afterwards.
+
 # Projects — pointer-file index over existing storage locations. Each
 # project lives as ~/.somora/projects/<slug>.md with YAML frontmatter
 # that lists Obsidian paths, local paths, URLs, and remote-resource

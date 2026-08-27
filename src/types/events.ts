@@ -141,6 +141,38 @@ export type NormalizedEvent =
         cacheKey: string;
       };
     }
+  | {
+      /**
+       * Images generated during an assistant turn. Emitted after the
+       * turn finalizes, once, listing everything `image_generate`
+       * produced while it ran.
+       *
+       * Append-only and paired by `turnId`, exactly like
+       * assistant_audio — the original assistant_message is never
+       * mutated. Clients render the images on the matching bubble.
+       *
+       * Why the server volunteers these instead of the agent sending
+       * them: a person who asked for a picture should get the picture.
+       * Leaving it to the agent to remember means the failure mode is
+       * "Done!" with nothing to look at.
+       *
+       * Refs only — bytes stay in the images directory and are served
+       * by GET /images/:id/file. JSONL keeps enough to render a
+       * placeholder if the file later disappears.
+       */
+      kind: 'assistant_images';
+      ts: number;
+      engine: string;
+      turnId: string;
+      images: Array<{
+        id: string;
+        prompt: string;
+        mime: string;
+        filename: string;
+        /** Absolute URL path: `/images/<id>/file`. */
+        url: string;
+      }>;
+    }
   | { kind: 'tool_call'; ts: number; engine: string; callId: string; tool: string; input: unknown }
   | { kind: 'tool_result'; ts: number; engine: string; callId: string; output: unknown; error?: string }
   // Engine-internal metadata that the agent emits as a side-channel to
@@ -339,6 +371,22 @@ export type SseEvent =
         mime: string;
         durationMs?: number;
         cacheKey: string;
+      };
+    }
+  | {
+      // Images generated during the turn. Same pairing mechanism as
+      // assistant_audio: arrives after the reply, clients attach it to
+      // the bubble with the matching turnId.
+      event: 'assistant_images';
+      data: {
+        turnId: string;
+        images: Array<{
+          id: string;
+          prompt: string;
+          mime: string;
+          filename: string;
+          url: string;
+        }>;
       };
     }
   | {

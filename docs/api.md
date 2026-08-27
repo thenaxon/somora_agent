@@ -240,6 +240,74 @@ curl -X POST https://<host>:18737/agents/<your-agent>/tools/memory_search \
 
 ---
 
+## Images
+
+Present only when `imageGen.enabled` is set and at least one model is
+configured; every route below answers `503` otherwise. See
+[imagegen.md](imagegen.md) for configuration.
+
+### `GET /images/status`
+
+`{enabled, outputDir, maxImagesPerTurn, models: [{name, label, model, provider, defaults}]}`,
+or `{enabled: false}`. Clients use this to decide whether to show an
+image-generation surface at all.
+
+### `GET /images`
+
+Gallery listing, newest first. Query: `query` (prompt substring, case-
+insensitive), `model`, `agent`, `since`/`until` (`YYYY-MM-DD`), `limit`
+(default 60, max 200), `offset`.
+
+Returns `{total, offset, images: [ImageRecord], totalBytes}`. `total`
+is the unpaged count.
+
+### `GET /images/:id`
+
+One `ImageRecord`: prompt, model, specs, path, mime, bytes, cost,
+agent, session, and any additional hardlinked locations.
+
+### `GET /images/:id/file`
+
+The image bytes, with the record's MIME. `410` when the record exists
+but the file was moved or deleted outside somora.
+
+Files are addressed **by record id, never by path** — the client cannot
+name a file, so a user-chosen images directory does not turn this into
+a way to read arbitrary files.
+
+### `GET /images/models/:name/capabilities`
+
+`{model, source: 'catalog'|'config'|'unknown', known, values, maxN, maxReferences, defaults}`.
+
+`values` maps a spec field to its allowed values. **A field absent from
+`values` has no known constraint** — clients should offer free input
+there rather than an empty dropdown.
+
+### `GET /images/catalog`
+
+`{provider, models: [{id, name?}]}` — what the provider currently
+offers. `?provider=<name>` selects the provider; defaults to the one
+behind the first configured model. Read-only discovery aid; config
+still decides what somora will call.
+
+### `POST /images/generate`
+
+Body: `prompt` (required), optional `model` (a configured handle) and
+any specs — `resolution`, `aspect_ratio`, `size`, `quality`,
+`output_format`, `background`, `output_compression`, `seed`, `n` — plus
+optional `save_to` and `reference_images` (base64).
+
+Returns `{images: [ImageRecord], costUsd}`.
+
+`400` for anything the caller can fix, with a message naming the field
+and the values that would have worked. `502` when the upstream itself
+failed.
+
+### `DELETE /images/:id`
+
+Forgets the record. **The file on disk is kept** — returns
+`{ok, path, fileKept: true}`.
+
 ## Files
 
 ### `GET /files/view`

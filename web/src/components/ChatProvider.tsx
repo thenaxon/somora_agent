@@ -27,6 +27,7 @@ import {
   summariseTodoList,
 } from '../lib/engine-meta-labels';
 import type {
+  AssistantImage,
   ChatMessage,
   ChatUsage,
   MemoryHitsSnapshot,
@@ -685,6 +686,34 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         });
       });
 
+      es.addEventListener('assistant_images', (ev) => {
+        bump();
+        const d = parse<{ turnId: string; images: AssistantImage[] }>(ev as MessageEvent);
+        if (!d || d.images.length === 0) return;
+        // Same pairing as assistant_audio: attach to the most recent
+        // assistant row in this session. Images are published once per
+        // turn, after the reply finalized, so the newest bubble is the
+        // one they belong to.
+        setMessages((prev) => {
+          const list = prev[key];
+          if (!list || list.length === 0) return prev;
+          let targetIdx = -1;
+          for (let i = list.length - 1; i >= 0; i -= 1) {
+            const m = list[i];
+            if (m && m.role === 'assistant') {
+              targetIdx = i;
+              break;
+            }
+          }
+          if (targetIdx < 0) return prev;
+          const target = list[targetIdx];
+          if (!target || target.role !== 'assistant') return prev;
+          const next = list.slice();
+          next[targetIdx] = { ...target, images: d.images };
+          return { ...prev, [key]: next };
+        });
+      });
+
       es.addEventListener('assistant_audio', (ev) => {
         bump();
         const d = parse<{
@@ -1280,6 +1309,16 @@ function historyEventsToMessages(events: HistoryEvent[]): ChatMessage[] {
         ...msgs.map((m) => (m.role === 'assistant' ? { ...m, fallback: pendingFallback as ModelFallback } : m)),
       );
       pendingFallback = null;
+      continue;
+    }
+    if (e.kind === 'assistant_images' && Array.isArray(e.images) && e.images.length > 0) {
+      for (let i = out.length - 1; i >= 0; i -= 1) {
+        const m = out[i];
+        if (m && m.role === 'assistant') {
+          out[i] = { ...m, images: e.images };
+          break;
+        }
+      }
       continue;
     }
     if (e.kind === 'assistant_audio' && e.audio) {

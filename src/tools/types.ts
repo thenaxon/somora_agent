@@ -33,6 +33,18 @@ export interface ToolContext {
    */
   session?: string;
   /**
+   * Id of the turn this invocation belongs to. Lets a tool scope
+   * per-turn state — today only the image budget, which counts
+   * generated images against `imageGen.maxImagesPerTurn`.
+   *
+   * Present for in-process engines (run-turn.ts owns the id). MCP-served
+   * calls from claude-cli/codex-cli don't carry one, and tools must
+   * degrade to per-call limits rather than inventing a turn boundary
+   * from the session id — a counter that never resets would lock the
+   * agent out permanently.
+   */
+  turnId?: string;
+  /**
    * Nesting depth of the current turn. 0 = top-level user turn.
    * Increments when spawn_subagent kicks off a sub. Used for the
    * recursion cap (default 3) and to skip self-pointer rewrites
@@ -129,6 +141,7 @@ export type Toolset =
   | 'skills'
   | 'projects'
   | 'sentinel'
+  | 'image'
   | 'mcp';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {

@@ -39,6 +39,7 @@ import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
+import { listRecords as listImageRecords } from '../imagegen/records.ts';
 import {
   buildReviewLoopBlock,
   refreshLoopActivity,
@@ -416,6 +417,62 @@ async function generateAutoTts(args: {
   }
 }
 
+/**
+ * Publish the images generated during a turn so they show up in the
+ * user's chat.
+ *
+ * Found by querying the image records for this agent+session created
+ * since the turn started, rather than by watching tool results go by.
+ * That's deliberate: with claude-cli / codex-cli the tool runs inside
+ * an MCP CHILD PROCESS, so an in-memory hook here would see nothing and
+ * images would appear in chat for some engines but not others. The
+ * records are on disk and the same for every engine.
+ *
+ * The window is [turnStartedAt, now]. A concurrent turn in the same
+ * session could in principle overlap, but turns in a session are
+ * serialized by the turn lock, so the only overlap available is a
+ * subagent — which carries its own session.
+ */
+async function publishTurnImages(args: {
+  agent: string;
+  session: string;
+  turnId: string;
+  engine: string;
+  startedAt: number;
+  publishSse?: (event: SseEvent) => Promise<void>;
+}): Promise<void> {
+  const { agent, session, turnId, engine, startedAt, publishSse } = args;
+  const { images } = await listImageRecords({
+    agent,
+    session,
+    since: new Date(startedAt).toISOString(),
+    limit: 50,
+  });
+  if (images.length === 0) return;
+
+  // listRecords returns newest first; chat should read in the order
+  // they were made.
+  const ordered = [...images].reverse();
+  const evt = {
+    kind: 'assistant_images' as const,
+    ts: Date.now(),
+    engine,
+    turnId,
+    images: ordered.map((img) => ({
+      id: img.id,
+      prompt: img.prompt,
+      mime: img.mime,
+      filename: img.filename,
+      url: `/images/${img.id}/file`,
+    })),
+  };
+  await appendEvent(agent, session, evt);
+  if (publishSse) {
+    await publishSse({ event: 'assistant_images', data: { turnId, images: evt.images } });
+  }
+  logger.info({ msg: 'turn.images_published', turnId, agent, session, count: evt.images.length });
+}
+
 export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult> {
   const start = Date.now();
   const {
@@ -442,6 +499,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // Caller may pre-generate one (HTTP /chat/send does, so the trace
   // begins at request acceptance) — otherwise we mint here.
   const turnId = args.turnId ?? randomUUID();
+  // Lower bound for the generated-images lookup at the end of the
+  // turn. Taken before any engine work so an image produced by the
+  // very first tool call is inside the window.
+  const turnStartedAt = Date.now();
   /** Set when run-turn-fallback re-ran this turn on the fallback model —
    *  the phase:'end' payload and the result report the ACTUAL model. */
   let turnFallback: { requested: string; actual: string; reason: string } | undefined;
@@ -722,6 +783,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     const toolCtx = {
       agent,
       session,
+      turnId,
       subagentDepth,
       getMemoryManager: () =>
         getMemoryManager(agent, {
@@ -953,6 +1015,37 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ts: Date.now(),
         engine: lastSeenEngine,
         turnId: `t-${Date.now()}`,
+      });
+    }
+
+    // ── Generated-images hook ─────────────────────────────────────────
+    // Anything image_generate produced during this turn goes to the
+    // client as an append-only event paired to the assistant bubble.
+    // Runs regardless of whether the agent mentioned the image in its
+    // reply: the user asked for a picture, so the picture belongs in
+    // the conversation, and depending on the agent to remember makes
+    // "Done!" with nothing to look at the failure mode.
+    //
+    // Fire-and-forget and non-fatal: a turn that produced a real image
+    // must not be reported as failed because the gallery index
+    // couldn't be read.
+    if (deps.config.imageGen?.enabled && streamTurnId) {
+      const capturedImagesTurnId = streamTurnId;
+      void publishTurnImages({
+        agent,
+        session,
+        turnId: capturedImagesTurnId,
+        engine: lastSeenEngine,
+        startedAt: turnStartedAt,
+        publishSse,
+      }).catch((err) => {
+        logger.warn({
+          msg: 'turn.images_publish_failed',
+          turnId,
+          agent,
+          session,
+          err: (err as Error).message,
+        });
       });
     }
 

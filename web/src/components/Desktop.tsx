@@ -6,7 +6,7 @@
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { useMemo } from 'react';
-import { Bell, BookOpen, MessagesSquare, Square, Terminal, Wrench } from 'lucide-react';
+import { Bell, BookOpen, ImagePlus, MessagesSquare, Square, Terminal, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
 import { AppTile } from './AppTile';
@@ -20,6 +20,7 @@ import { SessionsWindow } from './SessionsWindow';
 import { SentinelWindow } from './SentinelWindow';
 import { WikiWindow } from './WikiWindow';
 import { ToolsWindow } from './ToolsWindow';
+import { ImagesWindow } from './ImagesWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
 import { FileViewProvider } from './FileViewContext';
@@ -30,6 +31,7 @@ import { useLoopState } from '../hooks/useLoopState';
 import { useWindowManager } from '../hooks/useWindowManager';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { useWikiEnabled } from '../hooks/useWikiEnabled';
+import { useImagesEnabled } from '../hooks/useImagesEnabled';
 import { ActivityProvider } from './ActivityProvider';
 import type { AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
@@ -41,6 +43,7 @@ export function Desktop() {
   const wm = useWindowManager();
   const chatCtx = useChatContext();
   const wikiEnabled = useWikiEnabled();
+  const imagesEnabled = useImagesEnabled();
 
   // Cross-agent activity feed: covers streaming-dots for agents whose
   // chat window the user has NOT opened (ChatProvider only knows about
@@ -86,6 +89,7 @@ export function Desktop() {
       if (w.kind === 'sentinel') return ['sentinel'];
       if (w.kind === 'wiki') return ['wiki'];
       if (w.kind === 'tools') return ['tools'];
+      if (w.kind === 'images') return ['images'];
       return [];
     }),
   );
@@ -170,6 +174,23 @@ export function Desktop() {
         />
       ),
     },
+    // Hidden unless imageGen is configured — same probe-driven gate as
+    // the wiki tile below.
+    ...(imagesEnabled
+      ? [
+          {
+            id: 'app:images',
+            node: (
+              <AppTile
+                label="images"
+                icon={<ImagePlus size={26} />}
+                active={activeApps.has('images')}
+                onClick={() => wm.openImages()}
+              />
+            ),
+          },
+        ]
+      : []),
     // Lucid is platform-wide wiki cleanup, so its pending-review badge
     // lives on the wiki tile and not on any single agent (2026-07-29
     // feedback: pending lucid runs were invisible in the UI).
@@ -384,6 +405,22 @@ export function Desktop() {
                   slug={win.wikiSlug}
                   onSlugChange={(slug) => wm.setWikiSlug(win.id, slug)}
                 />
+              </Window>
+            );
+          }
+          if (win.kind === 'images') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <ImagesWindow />
               </Window>
             );
           }
