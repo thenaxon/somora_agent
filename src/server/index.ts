@@ -2778,6 +2778,9 @@ app.post('/images/generate', async (c) => {
     'output_compression',
     'seed',
     'n',
+    'steps',
+    'cfg',
+    'guidance',
   ]) {
     if (body[key] !== undefined && body[key] !== null && body[key] !== '') specs[key] = body[key];
   }
@@ -2809,6 +2812,7 @@ app.post('/images/generate', async (c) => {
     return c.json({
       images: result.images,
       costUsd: result.costUsd ?? null,
+      ...(result.warnings ? { warnings: result.warnings } : {}),
       ...(result.fellBackFrom ? { fellBackFrom: result.fellBackFrom } : {}),
     });
   } catch (err) {

@@ -31,6 +31,15 @@ export interface ImageSpecs {
   seed?: number;
   /** How many images to generate (1-10, provider-dependent). */
   n?: number;
+  /**
+   * Sampling knobs. Not part of OpenAI's image API, but the common
+   * vocabulary of every diffusion backend — and which of them a given
+   * model actually reads is answered by its capability list, not by
+   * anything hardcoded here.
+   */
+  steps?: number;
+  cfg?: number;
+  guidance?: number;
 }
 
 /** Spec field names that carry a closed set of allowed values. */
@@ -100,6 +109,12 @@ export interface ImageRecord {
   filename: string;
   mime: string;
   bytes: number;
+  /** Actual pixel dimensions, read from the returned bytes. Absent for
+   *  a format we can't measure. Recorded rather than assumed from the
+   *  request, because the two are not always the same — see the
+   *  size-mismatch warning in generate.ts. */
+  width?: number;
+  height?: number;
   /** Additional locations the caller asked for, as hardlinks (or
    *  copies, across filesystems). */
   linkedTo: string[];

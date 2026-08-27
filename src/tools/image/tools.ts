@@ -38,6 +38,9 @@ const GenerateInput = z
     output_compression: z.number().int().min(0).max(100).optional(),
     seed: z.number().int().optional(),
     n: z.number().int().min(1).max(10).optional(),
+    steps: z.number().int().positive().optional(),
+    cfg: z.number().optional(),
+    guidance: z.number().optional(),
     save_to: z.string().min(1).optional(),
     reference_images: z.array(z.string().min(1)).max(16).optional(),
     return_image: z.boolean().optional(),
@@ -76,6 +79,9 @@ function toSpecs(input: GenerateArgs): ImageSpecs {
   if (input.output_compression !== undefined) specs.output_compression = input.output_compression;
   if (input.seed !== undefined) specs.seed = input.seed;
   if (input.n !== undefined) specs.n = input.n;
+  if (input.steps !== undefined) specs.steps = input.steps;
+  if (input.cfg !== undefined) specs.cfg = input.cfg;
+  if (input.guidance !== undefined) specs.guidance = input.guidance;
   return specs;
 }
 
@@ -109,14 +115,15 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
     'NOT the image itself — set return_image: true if you need to SEE the result (costs ~2k ' +
     'tokens and requires a vision-capable model). The user sees every generated image in ' +
     'their chat automatically, so you do not need to send it to them. ' +
-    'Specs are real request fields, not prompt text: pass aspect_ratio ("16:9"), resolution ' +
-    '("1K", "2K"), quality, n (how many), output_format, seed. Do NOT write them into the ' +
-    'prompt. Allowed values differ per model; an invalid one is rejected with the list of ' +
-    'valid ones. Images always land in the configured images directory; save_to additionally ' +
-    'places a hardlink where you want it (relative paths resolve against your workspace). ' +
-    'reference_images takes FILE PATHS of images to work from (image-to-image), where the model \n' +
-    'supports it — the tool reads them itself, so never paste base64. Several are allowed: that ' +
-    'is how you combine multiple sources into one picture.',
+    'Specs are real request fields, not prompt text: size ("1024x1792"), aspect_ratio ("16:9"), ' +
+    'quality, n (how many), output_format, seed, and the sampling knobs steps/cfg/guidance. ' +
+    'Do NOT write them into the prompt. WHICH fields a model takes differs per model — ' +
+    'image_models tells you, and one it does not take is rejected before the request goes out, ' +
+    'naming what it does take. Images always land in the configured images directory; save_to ' +
+    'additionally places a hardlink where you want it (relative paths resolve against your ' +
+    'workspace). reference_images takes FILE PATHS of images to work from (image-to-image), ' +
+    'where the model supports it — the tool reads them itself, so never paste base64. Several ' +
+    'are allowed: that is how you combine multiple sources into one picture.',
   inputSchema: GenerateInput,
   jsonSchema: {
     type: 'object',
@@ -135,6 +142,21 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
       output_compression: { type: 'number', description: '0-100, webp/jpeg only.' },
       seed: { type: 'number', description: 'Repeat a previous result exactly.' },
       n: { type: 'number', description: 'How many images (1-10, model-dependent).' },
+      steps: {
+        type: 'number',
+        description:
+          'Sampling steps. More = slower, usually sharper. Leave unset for the model default.',
+      },
+      cfg: {
+        type: 'number',
+        description:
+          'Prompt adherence. Too high looks over-cooked, too low looks washed out. ' +
+          'Leave unset for the model default.',
+      },
+      guidance: {
+        type: 'number',
+        description: 'Guidance scale, where the model uses one instead of cfg.',
+      },
       save_to: {
         type: 'string',
         description: 'Extra destination — a directory or a full file path. Hardlinked.',
@@ -268,6 +290,12 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
 
     recordImagesInTurn(ctx.turnId, result.images.length);
 
+    if (result.warnings && result.warnings.length > 0) {
+      // Things the endpoint did differently than asked. Relayed
+      // verbatim: the caller is a model, and it cannot correct what it
+      // is not told.
+      notes.push(...result.warnings);
+    }
     if (result.fellBackFrom && result.fellBackFrom.length > 0) {
       // The caller asked for one model and got another. Saying so beats
       // letting it wonder why the style changed.

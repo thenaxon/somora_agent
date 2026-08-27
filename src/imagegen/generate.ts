@@ -19,6 +19,7 @@ import { resolveImageModel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { applyDefaults, resolveCapabilities, validateSpecs } from './capabilities.ts';
 import { linkImage, storeImage } from './store.ts';
+import { parseSizeSpec, readDimensions } from '../multimodal/dimensions.ts';
 import { newImageId, writeRecord } from './records.ts';
 import type { ImageRecord, ImageSpecs } from './types.ts';
 
@@ -55,6 +56,13 @@ export interface GenerateOutput {
   images: ImageRecord[];
   /** Sum over the batch, when the upstream reported it. */
   costUsd?: number;
+  /**
+   * Things the caller should know that did not stop the generation:
+   * a parameter the endpoint ignored, a size it substituted. Empty on a
+   * clean run. Surfaced rather than logged, because the caller is
+   * usually a model and it cannot fix what it is not told.
+   */
+  warnings?: string[];
   /** Models that were tried and were unavailable, in order, when a
    *  `fallback:` chain had to be walked. Absent on a first-try success.
    *  Surfaced to the caller because a chain that has quietly settled on
@@ -310,7 +318,9 @@ async function generateOnce(
   const references = input.references ?? [];
   if (caps.maxReferences !== undefined && references.length > caps.maxReferences) {
     problems.push(
-      `${references.length} reference images passed, but ${label} accepts at most ${caps.maxReferences}.`,
+      caps.maxReferences === 0
+        ? `${label} does not work from reference images — drop reference_images, or pick a model that does.`
+        : `${references.length} reference images passed, but ${label} accepts at most ${caps.maxReferences}.`,
     );
   }
   if (problems.length > 0) throw new ImageGenError(problems.join('\n'), 'input');
@@ -409,6 +419,13 @@ async function generateOnce(
     data?: RawImageRow[];
     images?: RawImageRow[];
     usage?: { cost?: number };
+    /** Non-standard, and worth reading where a provider offers it: the
+     *  parameters it accepted but did not use, and free-text notes
+     *  about anything it adjusted. Absent almost everywhere — a strict
+     *  OpenAI-shaped proxy in front of a backend will drop them, which
+     *  is exactly why the size check below does not depend on them. */
+    ignored_params?: unknown;
+    warnings?: unknown;
   };
   const rows = payload.data ?? payload.images ?? [];
   if (!Array.isArray(rows) || rows.length === 0) {
@@ -431,6 +448,43 @@ async function generateOnce(
   }
 
   const costUsd = typeof payload.usage?.cost === 'number' ? payload.usage.cost : undefined;
+
+  const warnings: string[] = [];
+  // Whatever the endpoint volunteered, relayed as-is.
+  if (Array.isArray(payload.ignored_params)) {
+    const names = payload.ignored_params.filter((x): x is string => typeof x === 'string');
+    if (names.length > 0) {
+      warnings.push(
+        `The endpoint ignored these parameters — they had no effect: ${names.join(', ')}.`,
+      );
+    }
+  }
+  if (Array.isArray(payload.warnings)) {
+    for (const w of payload.warnings) if (typeof w === 'string' && w) warnings.push(w);
+  }
+
+  // And the check that needs no cooperation: did we get the size we
+  // asked for? A cap, a rounding to a supported step, or a model that
+  // only renders squares all answer 200 with a perfectly good image of
+  // the wrong shape. Only comparable when the request named pixels —
+  // a tier like "2K" is a different vocabulary.
+  const requested = parseSizeSpec(specs.size);
+  const firstDims = readDimensions(decoded[0]!.bytes);
+  if (requested && firstDims &&
+      (requested.width !== firstDims.width || requested.height !== firstDims.height)) {
+    warnings.push(
+      `Requested ${requested.width}x${requested.height} but the image came back ` +
+        `${firstDims.width}x${firstDims.height}. The endpoint substituted a size — ` +
+        `it may cap dimensions or round to sizes it supports.`,
+    );
+    logger.info({
+      msg: 'imagegen.size_substituted',
+      model: entry.name,
+      requested: specs.size,
+      actual: `${firstDims.width}x${firstDims.height}`,
+    });
+  }
+
   const batchId = newImageId();
   const now = new Date();
   const records: ImageRecord[] = [];
@@ -461,6 +515,7 @@ async function generateOnce(
       }
     }
 
+    const dims = readDimensions(img.bytes);
     const record: ImageRecord = {
       id: newImageId(),
       createdAt: now.toISOString(),
@@ -473,6 +528,7 @@ async function generateOnce(
       filename: stored.filename,
       mime: stored.mime,
       bytes: stored.bytes,
+      ...(dims ? { width: dims.width, height: dims.height } : {}),
       linkedTo,
       // Upstreams bill per request, not per image; splitting evenly
       // keeps the gallery's per-image figure honest for n > 1.
@@ -496,5 +552,9 @@ async function generateOnce(
     agent: input.agent,
   });
 
-  return { images: records, ...(costUsd !== undefined ? { costUsd } : {}) };
+  return {
+    images: records,
+    ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+  };
 }

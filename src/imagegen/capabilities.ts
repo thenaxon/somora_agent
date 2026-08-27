@@ -76,11 +76,24 @@ function enumValues(params: Record<string, ParamSpec> | null, field: string): st
   return asStringArray(spec.values);
 }
 
-function rangeMax(params: Record<string, ParamSpec> | null, field: string): number | undefined {
+/**
+ * `allowZero` matters more than it looks. For `n`, a maximum of zero is
+ * meaningless and reads as a catalog glitch. For `input_references` it
+ * is a real statement — "this model takes no reference images at all" —
+ * and dropping it as "unknown" would let a caller send references to a
+ * model that cannot use them, which then fails at the endpoint or,
+ * worse, silently ignores them.
+ */
+function rangeMax(
+  params: Record<string, ParamSpec> | null,
+  field: string,
+  allowZero = false,
+): number | undefined {
   const spec = params?.[field];
   if (!spec || spec.type !== 'range') return undefined;
   const max = spec.max;
-  return typeof max === 'number' && Number.isFinite(max) && max > 0 ? max : undefined;
+  if (typeof max !== 'number' || !Number.isFinite(max)) return undefined;
+  return max > 0 || (allowZero && max === 0) ? max : undefined;
 }
 
 /** Field names a catalog might use for each spec, most specific first.
@@ -120,10 +133,15 @@ function readValues(raw: Record<string, unknown>, field: EnumerableSpecField): s
   return undefined;
 }
 
-function readNumber(raw: Record<string, unknown>, keys: string[]): number | undefined {
+function readNumber(
+  raw: Record<string, unknown>,
+  keys: string[],
+  allowZero = false,
+): number | undefined {
   for (const key of keys) {
     const v = raw[key];
-    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+    if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+    if (v > 0 || (allowZero && v === 0)) return v;
   }
   return undefined;
 }
@@ -223,6 +241,10 @@ export async function resolveCapabilities(
       known: true,
       source: 'config',
       values,
+      // Only when the operator actually declared one. Same rule as the
+      // catalog path: a list that exists is exhaustive, no list means
+      // we don't know and everything passes.
+      ...(entry.allow.supported ? { supported: entry.allow.supported } : {}),
       maxN: entry.allow.maxN,
       maxReferences: entry.allow.maxReferences,
     };
@@ -262,8 +284,8 @@ export async function resolveCapabilities(
     ...(params ? { supported: Object.keys(params) } : {}),
     maxN: rangeMax(params, 'n') ?? readNumber(row.raw, ['max_images', 'maxN', 'max_n']),
     maxReferences:
-      rangeMax(params, 'input_references') ??
-      readNumber(row.raw, ['max_input_references', 'max_references']),
+      rangeMax(params, 'input_references', true) ??
+      readNumber(row.raw, ['max_input_references', 'max_references'], true),
   };
 }
 

@@ -896,6 +896,12 @@ export const ImageSpecDefaultsSchema = z
      *  way and have no `resolution` tier at all, so it has to be
      *  settable as a default like any other spec. */
     size: z.string().min(1).optional(),
+    /** Sampling knobs, for backends that expose them. Defaults belong
+     *  to the model, so setting one here is for the rare case where an
+     *  operator wants a different house style than the model ships. */
+    steps: z.number().int().positive().optional(),
+    cfg: z.number().optional(),
+    guidance: z.number().optional(),
     quality: z.string().min(1).optional(),
     output_format: z.string().min(1).optional(),
     background: z.string().min(1).optional(),
@@ -982,6 +988,18 @@ export const ImageModelSchema = z.object({
       quality: z.array(z.string().min(1)).optional(),
       output_format: z.array(z.string().min(1)).optional(),
       background: z.array(z.string().min(1)).optional(),
+      /**
+       * The complete set of parameter names this model accepts. Same
+       * meaning as a catalog's published list: present ⇒ authoritative,
+       * and a field missing from it is rejected before a request goes
+       * out. Absent ⇒ unknown, and everything is let through.
+       *
+       * This is the only way to get that guarantee out of a provider
+       * with no model catalog. Without it, a field the endpoint doesn't
+       * read is simply ignored on the far side and the caller gets an
+       * image that quietly disregards what was asked for.
+       */
+      supported: z.array(z.string().min(1)).min(1).optional(),
       maxN: z.number().int().min(1).max(10).optional(),
       maxReferences: z.number().int().min(0).max(16).optional(),
     })
