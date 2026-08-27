@@ -12,7 +12,8 @@
 // perfectly valid model look broken.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Image as ImageIcon, Loader2, Search, Trash2, Wand2 } from 'lucide-react';
+import { AlertTriangle, Download, Image as ImageIcon, Loader2, Search, Trash2, Wand2 } from 'lucide-react';
+import { useFileViewOpener } from './FileViewContext';
 import {
   api,
   type ImageCapabilities,
@@ -26,6 +27,11 @@ import {
  *  shape first, then how big, then how good. */
 const SPEC_FIELDS: Array<{ key: ImageSpecField; label: string; placeholder: string }> = [
   { key: 'aspect_ratio', label: 'Aspect ratio', placeholder: 'e.g. 16:9' },
+  // Two vocabularies for the same thing, and which one a model speaks
+  // is its own business: some take a tier ("2K"), some explicit pixels,
+  // some both. Every field here is hidden unless the selected model
+  // actually accepts it, so offering all of them costs nothing.
+  { key: 'size', label: 'Size (pixels)', placeholder: 'e.g. 1024x1792' },
   { key: 'resolution', label: 'Resolution', placeholder: 'e.g. 2K' },
   { key: 'quality', label: 'Quality', placeholder: 'e.g. medium' },
   { key: 'output_format', label: 'Format', placeholder: 'e.g. png' },
@@ -75,6 +81,7 @@ export function ImagesWindow() {
   const [total, setTotal] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [query, setQuery] = useState('');
+  const openFileView = useFileViewOpener();
   const [selected, setSelected] = useState<ImageRecordDto | null>(null);
 
   const promptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -287,12 +294,25 @@ export function ImagesWindow() {
                   ))}
                 </select>
               ) : (
-                <input
-                  value={specs[key] ?? ''}
-                  onChange={(e) => setSpecs((s) => ({ ...s, [key]: e.target.value }))}
-                  placeholder={placeholder}
-                  style={inputStyle}
-                />
+                <>
+                  <input
+                    value={specs[key] ?? ''}
+                    onChange={(e) => setSpecs((s) => ({ ...s, [key]: e.target.value }))}
+                    placeholder={placeholder}
+                    // Suggestions where the model has a sweet spot but
+                    // no fixed list — a datalist offers them without
+                    // taking away the freedom to type something else.
+                    list={caps?.recommended?.[key] ? `img-rec-${key}` : undefined}
+                    style={inputStyle}
+                  />
+                  {caps?.recommended?.[key] && (
+                    <datalist id={`img-rec-${key}`}>
+                      {caps.recommended[key]!.map((v) => (
+                        <option key={v} value={v} />
+                      ))}
+                    </datalist>
+                  )}
+                </>
               )}
             </label>
           );
@@ -504,9 +524,14 @@ export function ImagesWindow() {
               background: 'var(--bg-1)',
             }}
           >
+            {/* Clicking opens the same FileView window an agent's link
+                would — one viewer for images wherever the path came
+                from, rather than a second half-built one in here. */}
             <img
               src={`/images/${selected.id}/file`}
               alt={selected.prompt}
+              onClick={() => openFileView?.(selected.path)}
+              title={openFileView ? 'Open in the file viewer' : selected.path}
               style={{
                 maxHeight: 196,
                 maxWidth: 260,
@@ -514,6 +539,7 @@ export function ImagesWindow() {
                 borderRadius: 4,
                 border: '1px solid var(--line)',
                 flex: 'none',
+                cursor: openFileView ? 'zoom-in' : 'default',
               }}
             />
             <div style={{ minWidth: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -545,6 +571,24 @@ export function ImagesWindow() {
                 <button type="button" onClick={() => reuseSpecs(selected)} style={smallBtnStyle}>
                   Use these settings
                 </button>
+                <a
+                  href={`/images/${selected.id}/file?download=1`}
+                  download={selected.filename}
+                  // An <a> drags by default, and a pixel of movement
+                  // between mousedown and mouseup swallows the click —
+                  // easy to hit inside a window you drag around.
+                  draggable={false}
+                  style={{
+                    ...smallBtnStyle,
+                    textDecoration: 'none',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                  }}
+                  title="Save this image"
+                >
+                  <Download size={11} /> Download
+                </a>
                 <button
                   type="button"
                   onClick={() => void forget(selected.id)}

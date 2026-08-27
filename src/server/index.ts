@@ -2676,6 +2676,10 @@ app.get('/images/models/:name/capabilities', async (c) => {
     source: caps.source,
     known: caps.known,
     values: caps.values,
+    // Suggestions for fields the model does NOT restrict, kept apart
+    // from `values` on purpose: the client renders these as a datalist,
+    // so they guide without forbidding anything else.
+    recommended: caps.recommended ?? null,
     // null ⇒ unknown, and the client should offer every field as free
     // input. A list ⇒ authoritative, and anything not in it is a field
     // this model does not take.
@@ -2742,10 +2746,14 @@ app.get('/images/:id/file', async (c) => {
     return c.json({ error: 'file missing on disk', path: record.path }, 410);
   }
   const bytes = await fsReadFile(record.path);
+  // `?download=1` for the gallery's download button. Same route, same
+  // record lookup — only the disposition differs, so there is no second
+  // way to reach a file and no second place to keep the policy right.
+  const asAttachment = c.req.query('download') === '1';
   return new Response(new Uint8Array(bytes), {
     headers: {
       'Content-Type': record.mime,
-      'Content-Disposition': `inline; filename="${encodeURIComponent(record.filename)}"`,
+      'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${encodeURIComponent(record.filename)}"`,
       // Records are immutable once written; a re-generation gets a new
       // id, so the bytes behind an id never change.
       'Cache-Control': 'private, max-age=31536000, immutable',

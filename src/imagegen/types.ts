@@ -81,6 +81,14 @@ export interface ModelCapabilities {
    * of this field.
    */
   supported?: string[];
+  /**
+   * Values a provider suggests for a field without restricting it —
+   * a catalog's `recommended` list. Distinct from `values`, which is
+   * binding: these are offered as hints and anything else still
+   * passes. That distinction is the whole point for a field like
+   * `size`, where an endpoint has a sweet spot but takes any WxH.
+   */
+  recommended?: Partial<Record<EnumerableSpecField, string[]>>;
   maxN?: number;
   maxReferences?: number;
 }

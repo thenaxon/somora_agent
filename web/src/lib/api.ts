@@ -223,6 +223,7 @@ export interface HistoryResponse {
 export type ImageSpecField =
   | 'resolution'
   | 'aspect_ratio'
+  | 'size'
   | 'quality'
   | 'output_format'
   | 'background';
@@ -249,6 +250,9 @@ export interface ImageCapabilities {
   /** A field absent here has no known constraint — the form offers free
    *  text rather than an empty dropdown. */
   values: Partial<Record<ImageSpecField, string[]>>;
+  /** Suggestions for a field the model does NOT restrict — rendered as
+   *  a datalist so the value stays free to type. */
+  recommended?: Partial<Record<ImageSpecField, string[]>>;
   /** Every parameter the model accepts, or null when the provider
    *  doesn't say. A list is authoritative: a field missing from it is
    *  not supported and must not be offered. */

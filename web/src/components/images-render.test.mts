@@ -83,9 +83,17 @@ t('zeigt das Formular', () => {
   assert(html.includes('Generate'), 'Generate-Knopf fehlt');
 });
 
+// Die Feldliste ist die Vereinigungsmenge ueber alle Anbieter; welche
+// davon sichtbar sind, entscheidet spaeter die Capability-Abfrage. Ohne
+// geladene Capabilities muessen also ALLE erscheinen — fehlt eines hier,
+// ist es bei keinem Modell erreichbar, egal was dessen Katalog sagt.
+// 'Size (pixels)' hat genau so gefehlt: Modelle, die in Pixeln statt in
+// Stufen denken, waren im Formular nicht bedienbar (2026-08-27).
 t('zeigt alle Spec-Felder', () => {
   const html = renderToString(React.createElement(ImagesWindow));
-  for (const label of ['Aspect ratio', 'Resolution', 'Quality', 'Format', 'Background']) {
+  for (const label of [
+    'Aspect ratio', 'Size (pixels)', 'Resolution', 'Quality', 'Format', 'Background',
+  ]) {
     assert(html.includes(label), `${label} fehlt`);
   }
 });

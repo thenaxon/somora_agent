@@ -60,6 +60,8 @@ interface CatalogEntry {
 interface ParamSpec {
   type?: string;
   values?: unknown;
+  /** Suggestions, not a restriction — see ModelCapabilities.recommended. */
+  recommended?: unknown;
   min?: unknown;
   max?: unknown;
 }
@@ -271,14 +273,18 @@ export async function resolveCapabilities(
 
   const params = supportedParameters(row.raw);
   const values: Partial<Record<EnumerableSpecField, string[]>> = {};
+  const recommended: Partial<Record<EnumerableSpecField, string[]>> = {};
   for (const field of ENUMERABLE_SPEC_FIELDS) {
     const hit = enumValues(params, field) ?? readValues(row.raw, field);
     if (hit) values[field] = hit;
+    const hint = asStringArray(params?.[field]?.recommended);
+    if (hint) recommended[field] = hint;
   }
   return {
     known: true,
     source: 'catalog',
     values,
+    ...(Object.keys(recommended).length > 0 ? { recommended } : {}),
     // Only when the catalog published a parameter list. A catalog entry
     // without one tells us the model exists, not what it takes.
     ...(params ? { supported: Object.keys(params) } : {}),
