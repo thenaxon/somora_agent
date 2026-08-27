@@ -154,6 +154,31 @@ are skipped rather than fatal — the point of a chain is surviving one
 entry being unusable. The tool result names the worker that answered,
 and lists the ones passed over when it wasn't the first.
 
+### Switching to a model that can't see images
+
+History is packed for the model that will read it. A session that once
+carried an image replays that image on every later turn, so switching to
+a text-only model used to make the session permanently unusable: the
+endpoint rejects the content type, somora falls back, and the model you
+picked never actually answers.
+
+Attachments the active model cannot process are now replayed as a text
+marker naming the file, its type and its size, so the conversation keeps
+working and the model can still refer to what it cannot see
+(`[Image attachment "shot.png" (image/png, 1.2 MB) — not shown: …]`).
+The text of those turns is untouched. Sending a *new* attachment to such
+a model is still refused outright — that is a mistake worth stopping,
+not something to paper over.
+
+### What can be attached
+
+Images (PNG/JPEG/GIF/WebP), PDFs and text. Video and audio are
+recognised by the file-type sniffer — that is what lets the web FileView
+serve them with an honest content type — but they are deliberately not
+attachable to a chat turn: no engine can put a video in a prompt, and
+accepting one would mean an attachment that vanishes silently while the
+turn is packed.
+
 Worker model **must be on `openai-compatible` engine** in v1 (use
 openrouter or another openai-compatible proxy if you want a Claude or
 GPT model). Same constraint as Dream-Mode. At server startup, somora

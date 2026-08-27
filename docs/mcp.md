@@ -103,12 +103,25 @@ knob for overlapping tools — e.g. give your research agent an
 MCP-provided search tool while everyone else keeps the built-in
 `web_search`, and no agent ever sees both.
 
+Denying a tool is real context saved, not just tidiness: the full
+built-in surface is roughly 13k tokens of schema in **every** turn, and
+a denied tool is absent from the model's list on all four engines — the
+same matcher runs in-process for `openai-compatible` and inside the MCP
+child that serves `claude-cli`, `codex-cli` and `grok-cli`.
+
+Tools whose configuration doesn't exist are never offered at all, on any
+engine. A tool that cannot run is worse than one that isn't there: the
+model spends a call finding out.
+
 ### The Tools window
 
 The web client has a **tools** tile in the app dock that opens the same
 control as a point-and-click matrix: pick an agent on the left, toggle
 any tool's visibility in the middle (built-ins grouped by toolset,
-external tools grouped by MCP server), and watch external server health
+only tools this agent could actually use — a tool whose config is
+missing has nothing to configure, and a switch that changes nothing is
+worse than no switch), external tools grouped by MCP server, and watch
+external server health
 on the right — state, tool count, transport, last error, and a
 reconnect button per server.
 

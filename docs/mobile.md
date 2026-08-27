@@ -138,6 +138,10 @@ keeps its slot and executes when the lock frees.
 - Spoken replies via TTS (optional, gated by per-agent auto-play
   toggle; replay button on past bubbles when audio is cached)
 - Camera / photo-roll attachments via the native picker
+- A marker on any reply that produced media (a generated image, say):
+  one line naming what exists, pointing at the web app. The PWA renders
+  no images or video itself — but staying silent would make a turn that
+  produced a picture read as an empty-handed answer
 - Typing-indicator while the agent is working
 - Type-during-streaming with queued indicator + Stop on the streaming
   bubble (parity with the web client)

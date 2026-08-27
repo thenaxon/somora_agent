@@ -295,9 +295,22 @@ still decides what somora will call.
 Body: `prompt` (required), optional `model` (a configured handle) and
 any specs — `resolution`, `aspect_ratio`, `size`, `quality`,
 `output_format`, `background`, `output_compression`, `seed`, `n` — plus
-optional `save_to` and `reference_images` (base64).
+optional `save_to` and `reference_images`.
 
-Returns `{images: [ImageRecord], costUsd}`.
+`reference_images` is **base64 on this route** — a browser has the bytes
+of a file the user picked and no server-side path for it. The
+`image_generate` tool takes file paths instead, for the mirror-image
+reason: an agent works on the same machine, and base64 in a tool
+argument would mean loading a file into its context just to send it
+straight back out.
+
+Returns `{images: [ImageRecord], costUsd, fellBackFrom?}`.
+`fellBackFrom` is present only when a `fallback:` chain had to be
+walked, and names the models that were unavailable.
+
+`503` when the model is configured but not loaded right now (an image
+backend commonly shares a GPU box that runs one profile at a time and
+says so) — distinct from `502`, which means the endpoint misbehaved.
 
 `400` for anything the caller can fix, with a message naming the field
 and the values that would have worked. `502` when the upstream itself

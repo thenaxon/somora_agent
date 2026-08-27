@@ -87,6 +87,11 @@ resources:
 # Optional: per-agent tool visibility — uniform for built-in and
 # external MCP tools. Patterns: exact name, toolset:<tag>, trailing-*
 # glob. deny beats allow; no section = agent sees everything. See mcp.md.
+# Denying a tool removes it from the model's tool list, which is real
+# context saved: the full built-in surface costs roughly 13k tokens per
+# turn. Only tools whose configuration exists are offered in the first
+# place — the web Tools window lists exactly those, so a switch there
+# always changes something.
 tools:
   deny: ['toolset:exec', 'mcp__parallel__*']
   allow: []

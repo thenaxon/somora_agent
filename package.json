@@ -16,6 +16,7 @@
     "src",
     "docs",
     "templates",
+    "config.example.yaml",
     "web/dist",
     "web-mobile/dist",
     "tsconfig.json",

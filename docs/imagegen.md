@@ -208,9 +208,17 @@ automatically. The server publishes them after the turn finalizes —
 the agent doesn't have to remember to send anything, because the
 failure mode of relying on that is "Done!" with nothing to look at.
 
-Mechanically it's an append-only `assistant_images` event paired to the
+Mechanically it's an append-only `assistant_media` event paired to the
 bubble by `turnId`, exactly like `assistant_audio`, persisted to JSONL
-so a reloaded conversation still shows them.
+so a reloaded conversation still shows them. Each entry carries its own
+`type` (`image` today) rather than the event naming one medium: the
+kind string lives in session files forever, and a second, nearly
+identical event kind for the next medium would have to be understood by
+every reader from then on.
+
+`/mobile` deliberately renders no media — it marks the bubble with a
+one-liner naming what exists and points at the web app, so a turn that
+produced a picture doesn't read as an empty-handed answer on a phone.
 
 ## HTTP
 

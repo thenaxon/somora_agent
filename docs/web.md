@@ -480,10 +480,45 @@ The web client listens for these named events on `/chat/stream`:
 | `memory` | `{count, topScore, refs, fullText?}` | Memory auto-inject for this turn |
 | `project` | `{from, to, via}` | Project focus change — fired by `/projekt` slash + HTTP routes. MCP-routed agent tool calls don't emit this; clients re-GET `/…/project` on `agent:end` instead. Only fires when the projects feature is enabled. |
 | `assistant_audio` | `{turnId, url, mime, durationMs?, cacheKey}` | Server-generated TTS artifact for the matching turn. Pairs by `turnId`; drives the Play-button on the bubble. |
-| `assistant_images` | `{turnId, images: [{id, prompt, mime, filename, url}]}` | Images generated while the turn ran. Pairs by `turnId` and renders under the bubble. Published by the server after the turn finalizes — the agent doesn't have to attach anything. See [imagegen.md](imagegen.md). |
+| `assistant_media` | `{turnId, media: [{type, id, prompt, mime, filename, url}]}` | Media produced while the turn ran. Pairs by `turnId` and renders under the bubble. Published by the server after the turn finalizes — the agent doesn't have to attach anything. Each entry's `type` decides the renderer; an unknown type is skipped rather than guessed at. See [imagegen.md](imagegen.md). |
 
 The server pubsub key is `${agent}::${session}` — multiple agents can
 share a session id like `main` without leaking events across windows.
+
+## FileView
+
+Agents reference files by absolute path in chat (`[report.md](/home/…)`),
+and the web client's Markdown renderer turns those into links that open
+a FileView window. Nothing is refused for being the wrong type any more:
+what the viewer cannot render, it describes.
+
+| The file is | You get |
+|---|---|
+| Markdown | full render, same plugins as chat |
+| Text / code | monospace, syntax highlighting for the known extensions |
+| Image | inline, click for full size |
+| Video | `<video controls>`, seeking served by Range requests |
+| Audio | `<audio controls>` |
+| PDF | the browser's own viewer |
+| anything else | name, type, size — and a download |
+
+**A download button is present for every file type**, including the ones
+that render inline.
+
+The classification comes from the file's magic bytes, not its
+extension: a `.dat` holding PNG bytes is shown as the image it is, and a
+`.png` that is really a JPEG is served with the type it really has.
+`.svg` is the deliberate exception — it is markup that can carry script,
+so it is shown as its own source rather than rendered.
+
+Bytes come from `GET /files/raw`, which streams and honours `Range`;
+without that, scrubbing a video would re-fetch the whole file. Inline
+display is limited to image/video/audio/PDF, because anything else shown
+inline would run on somora's own origin.
+
+The boundary is the read policy, not the workspace: a file under
+`/tmp/` is viewable, a file under a blocked root is not — the same
+answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
 
 ## Features
 
@@ -504,7 +539,11 @@ share a session id like `main` without leaking events across windows.
   Server side; the client surface is paperclip + Cmd/Ctrl+V paste
   + drag&drop overlay + a per-bubble thumbnail row. Capability
   gate refuses uploads for models without `image`/`pdf` capability
-  with a clear nudge to `/model`.
+  with a clear nudge to `/model`. Switching an existing session to a
+  text-only model afterwards keeps working: the history is packed for
+  the model that will read it, so past attachments it cannot process
+  are replayed as a text marker naming the file instead of being
+  re-sent and rejected. See `files.md`.
 - **Older-messages lazy-load**. Initial history load is paginated
   to the last 100 events; scrolling near the top auto-fetches the
   next 100, anchoring the visible position so you stay where you
