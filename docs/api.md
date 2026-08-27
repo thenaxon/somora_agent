@@ -304,7 +304,11 @@ reason: an agent works on the same machine, and base64 in a tool
 argument would mean loading a file into its context just to send it
 straight back out.
 
-Returns `{images: [ImageRecord], costUsd, fellBackFrom?}`.
+Returns `{images: [ImageRecord], costUsd, warnings?, fellBackFrom?}`.
+`warnings` carries anything the endpoint did differently than asked — a
+size it substituted (detected by measuring the returned image, not by
+trusting the endpoint to report it), plus any `ignored_params` or
+`warnings` the provider itself sent.
 `fellBackFrom` is present only when a `fallback:` chain had to be
 walked, and names the models that were unavailable.
 

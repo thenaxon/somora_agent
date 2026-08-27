@@ -293,13 +293,19 @@ providers:
 #       #                                       #  openrouter → base64 in JSON
 #       #                                       #  openai     → multipart image[]
 #       # endpoint: /images                     # default; OpenRouter's path
-#       # capabilitiesEndpoint: /images/models  # default; null when the provider
-#       #                                       #  has no catalog (local server)
+#       # capabilitiesEndpoint: /images/models  # default. A provider that
+#       #                                       #  publishes a catalog needs NO
+#       #                                       #  `allow` block — somora asks it
+#       #                                       #  what each model takes. Read
+#       #                                       #  once per process: restart after
+#       #                                       #  adding a model there.
+#       #                                       #  null = no catalog (local server)
 #       defaults:                               # applied when the caller omits them
 #         resolution: 1K
 #         aspect_ratio: "16:9"
 #         output_format: png
 #       # allow:                                # offline override — skip when the
+#       #   supported: [resolution, aspect_ratio, seed, n]   # complete field set
 #       #   resolution: ["1K", "2K"]            #  provider catalog is reachable
 #       #   aspect_ratio: ["1:1", "16:9", "9:16", "4:3", "3:4", "2:3"]
 #       #   quality: ["low", "medium"]
@@ -322,6 +328,11 @@ providers:
 #                                               #  / timeout). Caller mistakes are
 #                                               #  never retried elsewhere.
 #       allow:
+#         # The COMPLETE set of fields this model takes. Without it, a
+#         # field the endpoint doesn't read is forwarded, ignored on the
+#         # far side, and you get an image that quietly disregards it —
+#         # no error anywhere. Unnecessary when a catalog exists.
+#         supported: [size, aspect_ratio, seed, steps, guidance, n]
 #         aspect_ratio: ["1:1", "16:9", "9:16"]
 #         maxReferences: 4
 #

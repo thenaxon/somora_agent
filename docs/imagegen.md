@@ -96,6 +96,29 @@ real message would be buried. When a fallback did happen, the tool
 result and the HTTP response say so — a chain that has quietly settled
 on its last resort is a cost and quality change worth noticing.
 
+**Sampling knobs.** `steps`, `cfg` and `guidance` are passed through
+when set and omitted when not, so a model's own defaults stand unless
+someone deliberately overrides them. They are not part of OpenAI's image
+API but are the common vocabulary of diffusion backends; which of them a
+given model actually reads is answered by its capability list, not by
+anything hardcoded. Useful in a loop: generate, judge the result with
+`analyze_file`, adjust, regenerate.
+
+**A substituted size is noticed here, not upstream.** Endpoints cap
+dimensions, round to sizes they support, or only render squares — and
+they answer `200` with a perfectly good image of the wrong shape. somora
+reads the returned image's real pixel dimensions and compares them to
+what was asked for; a mismatch becomes a note on the result naming both
+numbers. This deliberately does not depend on the endpoint reporting it,
+because a strict OpenAI-shaped proxy in front of a backend drops any
+non-standard response field — measured against exactly such a router on
+2026-08-27. Dimensions are kept on the image record.
+
+Where a provider *does* report what it did differently, `ignored_params`
+(names it accepted but did not use) and `warnings` (free text) are read
+and relayed to the caller verbatim. Both are optional and absent almost
+everywhere.
+
 ## How specs are validated
 
 Allowed values differ per model — grok-imagine renders 1K and 2K,
