@@ -153,9 +153,25 @@ providers:
 # file_read polymorph (the workspace-drop UX) does NOT depend on this
 # — it uses the active main model's `image` capability directly. The
 # vision worker is only for the `analyze_file` route.
+#
+# `worker` takes a single model OR an ordered list. A list is tried
+# front to back and the first one that answers wins — put a locally
+# hosted worker first and something always-available last. This matters
+# when the local worker sits on a GPU box that runs one profile at a
+# time: without a chain, a profile switch takes analyze_file down for
+# every agent at once, and quietly.
 # vision:
-#   worker: openrouter/anthropic/claude-haiku-4-5    # default for image + PDF
+#   worker: openrouter/anthropic/claude-haiku-4-5    # single model, still valid
 #   pdfWorker: openrouter/anthropic/claude-sonnet-4-6  # optional override for PDFs
+#
+# vision:                                   # ...or local-first with a safety net
+#   worker:
+#     - local/qwen-vision                   # preferred, free, stays in-house
+#     - local/other-vision                  # a different local profile
+#     - openrouter/anthropic/claude-haiku-4-5  # always there, costs money
+#   pdfWorker: openrouter/anthropic/claude-sonnet-4-6
+#   timeoutMs: 60000                        # per attempt, then the chain moves on
+#   healthCacheMs: 60000                    # skip a just-failed worker this long
 
 # Speech-to-Text (Phase voice). Optional. When `enabled: true`, the
 # web chat input grows a mic button next to send: click → record, click
@@ -273,8 +289,10 @@ providers:
 #       provider: openrouter                    # ← references providers.openrouter
 #       model: x-ai/grok-imagine-image-2.0      #   (baseUrl + apiKey come from there)
 #       label: "Grok Imagine 2.0"
-#       # endpoint: /images                     # default; OpenAI direct wants
-#       #                                       #  /images/generations
+#       # wire: openrouter                      # dialect for REFERENCE images:
+#       #                                       #  openrouter → base64 in JSON
+#       #                                       #  openai     → multipart image[]
+#       # endpoint: /images                     # default; OpenRouter's path
 #       # capabilitiesEndpoint: /images/models  # default; null when the provider
 #       #                                       #  has no catalog (local server)
 #       defaults:                               # applied when the caller omits them
@@ -287,6 +305,25 @@ providers:
 #       #   quality: ["low", "medium"]
 #       #   maxN: 4
 #       #   maxReferences: 3
+#
+#     # An OpenAI-shaped endpoint: OpenAI itself, or a router such as
+#     # LiteLLM in front of a local image backend. The difference that
+#     # matters is `wire` — reference images go out as multipart to
+#     # editEndpoint instead of base64 in JSON.
+#     - name: local-flux
+#       provider: local-images                  # ← another providers.<name>
+#       model: flux-dev
+#       wire: openai
+#       endpoint: /images/generations
+#       editEndpoint: /images/edits             # wire: openai only
+#       capabilitiesEndpoint: null              # no catalog → `allow` is the truth
+#       fallback: grok-imagine                  # tried when THIS one is
+#                                               #  unavailable (503 / unreachable
+#                                               #  / timeout). Caller mistakes are
+#                                               #  never retried elsewhere.
+#       allow:
+#         aspect_ratio: ["1:1", "16:9", "9:16"]
+#         maxReferences: 4
 #
 # Per-agent, in ~/.somora/agents/<name>/agent.yaml:
 #   imageReview: never                          # never (default) | always

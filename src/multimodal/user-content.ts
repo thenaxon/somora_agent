@@ -15,6 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { renderPdfToPngs } from './pdf-render.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
+import type { ModelCapability } from '../config/types.ts';
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages/messages.js';
 import { logger } from '../server/logger.ts';
 
@@ -70,6 +71,33 @@ export type OpenAiContentPart =
   | { type: 'image_url'; image_url: { url: string } }
   | { type: 'file'; file: { file_data: string; filename?: string } };
 
+/** Size for the not-shown markers. Rounded — this is orientation for a
+ *  language model, not an accounting figure. */
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Stand-in for an attachment the active model cannot be shown. Names
+ * the file, its type and its size so the model can talk about what it
+ * is missing ("the screenshot you sent earlier") instead of behaving as
+ * though the turn never had an attachment at all.
+ *
+ * English on purpose — every model-facing and user-facing string in
+ * somora is.
+ */
+function notShownMarker(a: ResolvedAttachment, kind: 'image' | 'pdf'): string {
+  const needed = kind === 'image' ? "'image'" : "'pdf' or 'image'";
+  const what = kind === 'image' ? 'Image' : 'PDF';
+  return (
+    `[${what} attachment "${a.name}" (${a.mime.mimeType}, ${humanSize(a.size)}) ` +
+    `— not shown: the active model has no ${needed} capability. ` +
+    `It can be described with analyze_file({path:"${a.path}"}).]`
+  );
+}
+
 /**
  * openai-compatible. PDF behaviour depends on the provider config:
  *   - 'native': PDF → file content block (Anthropic via OpenRouter,
@@ -78,17 +106,35 @@ export type OpenAiContentPart =
  *     image_url per page. Works against omlx, ollama, anything
  *     image-capable.
  * Text attachments inline via a header text part.
+ *
+ * `caps` are the ACTIVE model's capabilities. Attachments it cannot
+ * process degrade to a text marker rather than being sent and
+ * rejected — see the note in the image branch.
  */
 export async function buildOpenAiUserContent(
   text: string,
   attachments: ResolvedAttachment[],
   pdfMode: 'native' | 'rasterize',
+  caps: readonly ModelCapability[],
 ): Promise<string | OpenAiContentPart[]> {
   if (attachments.length === 0) return text;
   const parts: OpenAiContentPart[] = [];
+  const canSeeImages = caps.includes('image');
+  const canReadPdf = caps.includes('pdf');
   for (const a of attachments) {
-    const bytes = readFileSync(a.path);
     if (a.mime.kind === 'image') {
+      // Capability-aware: a model without vision must not be handed an
+      // image_url block. run-turn refuses a NEW image attachment for
+      // such a model, but history is replayed on every turn — once a
+      // session has gone multimodal, every later turn re-sends those
+      // blocks and a text-only model 400s on all of them. Degrade to a
+      // marker so the session stays usable instead: the model is told
+      // what was there and that it cannot see it.
+      if (!canSeeImages) {
+        parts.push({ type: 'text', text: notShownMarker(a, 'image') });
+        continue;
+      }
+      const bytes = readFileSync(a.path);
       parts.push({
         type: 'image_url',
         image_url: {
@@ -96,7 +142,17 @@ export async function buildOpenAiUserContent(
         },
       });
     } else if (a.mime.kind === 'pdf') {
-      if (pdfMode === 'native') {
+      // A PDF rides either as a native document block (needs 'pdf') or
+      // as rasterised page-PNGs (needs 'image'). Neither ⇒ marker.
+      if (!canReadPdf && !canSeeImages) {
+        parts.push({ type: 'text', text: notShownMarker(a, 'pdf') });
+        continue;
+      }
+      // `native` on a model that has 'image' but not 'pdf' would send a
+      // file block the backend rejects for the same reason as above.
+      // Rasterise instead of failing — the pages are readable either way.
+      if (pdfMode === 'native' && canReadPdf) {
+        const bytes = readFileSync(a.path);
         parts.push({
           type: 'file',
           file: {
@@ -116,6 +172,7 @@ export async function buildOpenAiUserContent(
         }
       }
     } else if (a.mime.kind === 'text') {
+      const bytes = readFileSync(a.path);
       parts.push({
         type: 'text',
         text: `[Attached ${a.name}]\n\n${bytes.toString('utf8')}\n[/Attached]`,
@@ -123,6 +180,13 @@ export async function buildOpenAiUserContent(
     }
   }
   parts.push({ type: 'text', text });
+  // Everything degraded to text ⇒ hand back a plain string. A text-only
+  // backend then sees exactly the message shape it saw before the
+  // session ever went multimodal, rather than a content array it may
+  // handle differently (some local servers are picky about those).
+  if (parts.every((p) => p.type === 'text')) {
+    return parts.map((p) => (p as { text: string }).text).join('\n\n');
+  }
   return parts;
 }
 

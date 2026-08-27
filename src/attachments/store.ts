@@ -113,7 +113,13 @@ export async function storeAttachment(args: {
     rmSync(tmpPath);
     throw new Error(`mime sniff failed: ${(err as Error).message}`);
   }
-  if (mime.kind === 'unknown') {
+  // An explicit allow-list, not "anything we could identify". The mime
+  // sniffer also recognises video and audio so the web FileView can
+  // serve them honestly — but no engine can put a video in a prompt,
+  // and letting one through here would mean an attachment that vanishes
+  // silently while packing the turn.
+  const ATTACHABLE: ReadonlyArray<DetectedMime['kind']> = ['image', 'pdf', 'text'];
+  if (!ATTACHABLE.includes(mime.kind)) {
     rmSync(tmpPath);
     throw new Error(
       `unsupported file type — supported: image (PNG/JPEG/GIF/WebP), PDF, text. Got: ${mime.mimeType}`,

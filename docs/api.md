@@ -322,9 +322,8 @@ Policy is reused 1:1 from the `file_read` tool — the same allowlist
 credential stores, system dirs, …). Symlink-resolution prevents path
 escapes via realpath check on the closest existing ancestor.
 
-Read-only, no writes. Bytes are returned as UTF-8 in the JSON body
-and capped at 200 000 characters; oversize files come back with
-`truncated: true`.
+Read-only, no writes. This route answers *what a file is*; the bytes of
+anything it cannot inline come from `GET /files/raw`.
 
 **Query parameters**
 
@@ -332,16 +331,32 @@ and capped at 200 000 characters; oversize files come back with
 |---|---|---|
 | `path` | yes | Absolute filesystem path. `~`-prefix is expanded server-side. Relative paths are rejected (no agent-context cwd here). |
 
-**Supported file kinds** — only types the FileView renderer knows
-what to do with are accepted; everything else returns `415`.
+**File kinds.** A known text extension decides how the text is
+highlighted; everything else is classified from the file's magic bytes,
+because an extension is a claim and not evidence — a `.dat` holding PNG
+bytes is reported as an image. Nothing is refused for being the wrong
+type: an unrecognised file still comes back described, with a download
+link, which beats an error for a file the user can see referenced in
+chat.
 
-| Extension | `kind` | Renderer hint |
+| | `kind` | Response carries |
 |---|---|---|
-| `.md`, `.markdown` | `markdown` | full Markdown render (same plugins as chat) |
-| `.txt`, `.log` | `text` | monospace preformatted, no highlighting |
-| `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml` | `code` | monospace + syntax highlighting via rehype-highlight |
+| `.md`, `.markdown` | `markdown` | `content`, full Markdown render |
+| `.txt`, `.log`, other text | `text` | `content`, monospace |
+| `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.svg` | `code` | `content`, syntax highlighting |
+| PNG / JPEG / GIF / WebP bytes | `image` | `url`, `mime` |
+| MP4 / MOV / WebM bytes | `video` | `url`, `mime` |
+| WAV / MP3 / OGG / FLAC / M4A bytes | `audio` | `url`, `mime` |
+| PDF bytes | `pdf` | `url`, `mime` |
+| anything else | `binary` | `mime` and a download link only |
 
-**Success response (200)**
+`.svg` is listed as `code`, not as an image: it is markup that can carry
+script, so it is shown as its own source rather than rendered.
+
+Text responses are capped at 200 000 characters and set
+`truncated: true` past that. Every response carries `downloadUrl`.
+
+**Success response (200), text**
 
 ```json
 {
@@ -350,7 +365,22 @@ what to do with are accepted; everything else returns `415`.
   "ext": ".md",
   "bytes": 4321,
   "content": "# Report\n…",
-  "truncated": false
+  "truncated": false,
+  "downloadUrl": "/files/raw?download=1&path=…"
+}
+```
+
+**Success response (200), media**
+
+```json
+{
+  "path": "/home/user/somoraworkspace/shots/run-12.png",
+  "kind": "image",
+  "ext": ".png",
+  "bytes": 184320,
+  "mime": "image/png",
+  "url": "/files/raw?path=…",
+  "downloadUrl": "/files/raw?download=1&path=…"
 }
 ```
 
@@ -361,11 +391,48 @@ what to do with are accepted; everything else returns `415`.
 | `400` | Missing `path` query, relative path, path is a directory or non-regular file |
 | `403` | Policy blocked (path resolves under a blacklisted root or a denied somora-internal location) |
 | `404` | File does not exist |
-| `415` | File extension not in the supported set |
 
 ```bash
 curl -G "https://<host>:18737/files/view" \
      --data-urlencode "path=/home/user/somoraworkspace/somora_feedback/example.md"
+```
+
+---
+
+### `GET /files/raw`
+
+The bytes behind a `/files/view` result: media the viewer displays
+inline, and a download for every other type. Same path policy, applied
+in the same two passes — the byte route is not a way around what the
+metadata route refuses.
+
+**Query parameters**
+
+| Name | Required | Description |
+|---|---|---|
+| `path` | yes | Absolute filesystem path, as for `/files/view`. |
+| `download` | no | `1` forces `Content-Disposition: attachment`, whatever the type. |
+
+**Range requests are supported** (`Accept-Ranges: bytes`, `206` with
+`Content-Range`, `416` past the end, and `bytes=-N` for a suffix). A
+browser seeking inside a video depends on it; without Range, scrubbing
+re-fetches the whole file. There is therefore no size cap.
+
+`Content-Type` is taken from the magic bytes, never the extension, and
+`X-Content-Type-Options: nosniff` is set so a browser cannot re-guess
+it. `Content-Disposition: inline` is limited to image, video, audio and
+PDF — anything else is served as an attachment, because a file
+displayed inline runs on somora's own origin.
+
+The path policy is the only boundary: files outside the workspace
+(`/tmp/...` screenshots, for instance) are viewable as long as they are
+not under a blocked root, which matches what `file_read` allows an
+agent to see.
+
+```bash
+curl -G "https://<host>:18737/files/raw" \
+     --data-urlencode "path=/home/user/somoraworkspace/shots/run-12.png" \
+     -o run-12.png
 ```
 
 ---

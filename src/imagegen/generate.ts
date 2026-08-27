@@ -22,6 +22,16 @@ import { linkImage, storeImage } from './store.ts';
 import { newImageId, writeRecord } from './records.ts';
 import type { ImageRecord, ImageSpecs } from './types.ts';
 
+/** One reference image, as handed to the generator. */
+export interface ReferenceImage {
+  bytes: Buffer;
+  /** Concrete MIME, sniffed from the bytes by the caller. */
+  mime: string;
+  /** Filename sent in the multipart part — some backends key format
+   *  detection off the extension. */
+  filename: string;
+}
+
 export interface GenerateInput {
   prompt: string;
   /** Config handle. Omitted → first configured model. */
@@ -29,9 +39,12 @@ export interface GenerateInput {
   specs?: ImageSpecs;
   /** Extra destination for the finished file(s). Hardlinked. */
   saveTo?: string;
-  /** Base64 image data (with or without data-URI prefix) for
-   *  image-to-image. */
-  references?: string[];
+  /** Reference images for image-to-image, already read from disk by
+   *  the caller. Bytes rather than paths: the read policy that decides
+   *  WHICH files an agent may open belongs in the tool layer, where the
+   *  agent identity is known — this module only knows how to talk to an
+   *  endpoint. */
+  references?: ReferenceImage[];
   /** Provider-specific fields passed through untouched. */
   extra?: Record<string, unknown>;
   agent?: string;
@@ -42,6 +55,12 @@ export interface GenerateOutput {
   images: ImageRecord[];
   /** Sum over the batch, when the upstream reported it. */
   costUsd?: number;
+  /** Models that were tried and were unavailable, in order, when a
+   *  `fallback:` chain had to be walked. Absent on a first-try success.
+   *  Surfaced to the caller because a chain that has quietly settled on
+   *  its last resort is a cost and quality change nobody would notice
+   *  otherwise. */
+  fellBackFrom?: string[];
 }
 
 /** Thrown for anything the caller can fix by changing its input. The
@@ -50,7 +69,15 @@ export interface GenerateOutput {
 export class ImageGenError extends Error {
   constructor(
     message: string,
-    readonly kind: 'config' | 'input' | 'upstream' = 'input',
+    /**
+     * `unavailable` is deliberately separate from `upstream`: an image
+     * backend commonly shares a GPU box that runs one profile at a
+     * time and answers 503 when its own isn't active. That is a
+     * temporary state of the world, not a broken endpoint and not the
+     * caller's mistake — it deserves a message that says "come back
+     * later", and an HTTP status that says the same to the web app.
+     */
+    readonly kind: 'config' | 'input' | 'upstream' | 'unavailable' = 'input',
   ) {
     super(message);
     this.name = 'ImageGenError';
@@ -105,39 +132,159 @@ interface UpstreamImage {
 
 interface RawImageRow {
   b64_json?: string;
-  url?: string;
-  image_url?: { url?: string };
+  /** Some routers return the field explicitly nulled (LiteLLM does this
+   *  when it has already inlined the bytes as b64_json). Typed as
+   *  nullable so that shape is handled rather than tripped over. */
+  url?: string | null;
+  image_url?: { url?: string | null };
   media_type?: string;
   mime_type?: string;
 }
 
-/** Turn one response row into bytes, following a URL if that's what we
- *  got. Providers differ here and the difference is not worth exposing
- *  to callers. */
-async function rowToBytes(row: RawImageRow, timeoutMs: number): Promise<UpstreamImage | null> {
+/**
+ * Turn one response row into bytes, following a URL if that's what we
+ * got. Providers differ here and the difference is not worth exposing
+ * to callers — every path ends in a local file either way.
+ *
+ * Three shapes are in the wild and all three occur against endpoints we
+ * target:
+ *   - `b64_json` — what a public endpoint hands out when it does not
+ *     want to serve files itself. Nothing to fetch.
+ *   - an absolute URL — OpenAI direct does this, on a different host
+ *     with the credentials baked into the link.
+ *   - a RELATIVE path — an image server addressed directly tends to
+ *     answer with a path into its own output tree ("/output/x.png"),
+ *     because from its point of view the client already knows the host.
+ *
+ * The relative case is why `baseUrl` is a parameter: without it such a
+ * row is undecodable and the whole generation is thrown away after it
+ * was already paid for.
+ */
+async function rowToBytes(
+  row: RawImageRow,
+  timeoutMs: number,
+  baseUrl: string,
+  apiKey?: string,
+): Promise<UpstreamImage | null> {
   const mime = row.media_type ?? row.mime_type;
   if (typeof row.b64_json === 'string' && row.b64_json.length > 0) {
     return { bytes: Buffer.from(bareBase64(row.b64_json), 'base64'), mime };
   }
   const url = row.url ?? row.image_url?.url;
-  if (typeof url === 'string' && url.startsWith('data:')) {
+  if (typeof url !== 'string' || url.length === 0) return null;
+  if (url.startsWith('data:')) {
     return { bytes: Buffer.from(bareBase64(url), 'base64'), mime };
   }
-  if (typeof url === 'string' && /^https?:\/\//.test(url)) {
-    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) {
-      throw new ImageGenError(
-        `Upstream returned an image URL that could not be fetched (${res.status}).`,
-        'upstream',
-      );
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    return { bytes: buf, mime: res.headers.get('content-type') ?? mime };
+
+  // Absolute stays absolute; anything else is resolved against the
+  // endpoint we just talked to.
+  let resolved: URL;
+  try {
+    resolved = new URL(url, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`);
+  } catch {
+    return null;
   }
-  return null;
+  if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return null;
+
+  // The key travels ONLY back to the host we already authenticated
+  // against. A provider that answers with a pre-signed link on someone
+  // else's host does not need it, and sending it there would hand our
+  // credential to a third party.
+  const headers: Record<string, string> = {};
+  if (apiKey && resolved.origin === new URL(baseUrl).origin) {
+    headers.authorization = `Bearer ${apiKey}`;
+  }
+
+  const res = await fetch(resolved, { headers, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) {
+    // 401/403 on the follow-up fetch has one likely cause, and guessing
+    // it here saves an hour of confusion: the key is only sent back to
+    // the origin we authenticated against, so a link served from a
+    // DIFFERENT internal host arrives unauthenticated.
+    const authHint =
+      res.status === 401 || res.status === 403
+        ? ` The image link is on a different origin than the provider's baseUrl, so no API key was` +
+          ` sent with it (by design — a key is never handed to another host). Configure the model's` +
+          ` provider baseUrl to match the host that serves the images, or have the endpoint return` +
+          ` b64_json instead of a link.`
+        : '';
+    throw new ImageGenError(
+      `Upstream returned an image URL that could not be fetched (${res.status}): ${resolved.href}.${authHint}`,
+      'upstream',
+    );
+  }
+  const buf = Buffer.from(await res.arrayBuffer());
+  return { bytes: buf, mime: res.headers.get('content-type') ?? mime };
 }
 
+/**
+ * Build the ordered list of model handles to try, following each
+ * entry's `fallback:`. A cycle in the config (a → b → a) would
+ * otherwise spin forever, so a handle already in the chain ends it.
+ */
+function fallbackChain(config: Config, first: string): string[] {
+  const chain: string[] = [];
+  const seen = new Set<string>();
+  let name: string | undefined = first;
+  while (name && !seen.has(name)) {
+    seen.add(name);
+    chain.push(name);
+    name = config.imageGen?.models.find((m) => m.name === name)?.fallback;
+  }
+  return chain;
+}
+
+/**
+ * Generate, walking the `fallback:` chain when a model turns out to be
+ * unavailable. Everything except availability is fatal on the first
+ * attempt: a bad spec value or an unknown handle is the caller's to
+ * fix, and trying the next model would only bury the real message.
+ */
 export async function generateImage(
+  input: GenerateInput,
+  config: Config,
+): Promise<GenerateOutput> {
+  ensureEnabled(config);
+  const first = input.model ?? config.imageGen?.models[0]?.name;
+  if (!first) {
+    throw new ImageGenError('No image models configured under imageGen.models.', 'config');
+  }
+  const chain = fallbackChain(config, first);
+  const fellBackFrom: string[] = [];
+
+  for (const [i, name] of chain.entries()) {
+    const last = i === chain.length - 1;
+    try {
+      const out = await generateOnce({ ...input, model: name }, config);
+      if (fellBackFrom.length > 0) {
+        logger.warn({
+          msg: 'imagegen.fell_back',
+          requested: first,
+          used: name,
+          skipped: fellBackFrom,
+          agent: input.agent,
+        });
+        return { ...out, fellBackFrom };
+      }
+      return out;
+    } catch (err) {
+      const unavailable =
+        err instanceof ImageGenError && (err.kind === 'upstream' || err.kind === 'unavailable');
+      if (!unavailable || last) throw err;
+      fellBackFrom.push(`${name}: ${(err as Error).message}`);
+      logger.warn({
+        msg: 'imagegen.model_unavailable',
+        model: name,
+        next: chain[i + 1],
+        err: (err as Error).message,
+      });
+    }
+  }
+  // Unreachable: the loop either returns or throws on the last entry.
+  throw new ImageGenError(`No image model in the chain from '${first}' produced an image.`, 'upstream');
+}
+
+async function generateOnce(
   input: GenerateInput,
   config: Config,
 ): Promise<GenerateOutput> {
@@ -169,20 +316,53 @@ export async function generateImage(
   if (problems.length > 0) throw new ImageGenError(problems.join('\n'), 'input');
 
   const timeoutMs = config.imageGen?.timeoutMs ?? 300_000;
-  const url = provider.baseUrl.replace(/\/+$/, '') + entry.endpoint;
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const base = provider.baseUrl.replace(/\/+$/, '');
+  const headers: Record<string, string> = {};
   if (provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
 
-  const body: Record<string, unknown> = {
-    ...(input.extra ?? {}),
-    model: entry.model,
-    prompt,
-  };
-  for (const [key, value] of Object.entries(specs)) {
-    if (value !== undefined) body[key] = value;
-  }
-  if (references.length > 0) {
-    body.input_references = references.map((r) => bareBase64(r));
+  // The two dialects differ ONLY once reference images are involved;
+  // plain generation is the same JSON POST everywhere. See
+  // ImageModelSchema.wire for why this is configured, not sniffed.
+  const useMultipart = references.length > 0 && entry.wire === 'openai';
+  const url = base + (useMultipart ? entry.editEndpoint : entry.endpoint);
+
+  let requestBody: BodyInit;
+  if (useMultipart) {
+    // OpenAI's edit endpoint (and LiteLLM's passthrough to a local
+    // backend) takes files, not base64: one `image[]` part per
+    // reference. Sending several is the entire point of multi-reference
+    // work, so the array form is used even for a single image.
+    const form = new FormData();
+    form.append('model', entry.model);
+    form.append('prompt', prompt);
+    for (const [key, value] of Object.entries(specs)) {
+      if (value !== undefined) form.append(key, String(value));
+    }
+    for (const [key, value] of Object.entries(input.extra ?? {})) {
+      if (value !== undefined) {
+        form.append(key, typeof value === 'string' ? value : JSON.stringify(value));
+      }
+    }
+    for (const ref of references) {
+      form.append('image[]', new Blob([new Uint8Array(ref.bytes)], { type: ref.mime }), ref.filename);
+    }
+    // No content-type header on purpose — fetch has to set it itself so
+    // the multipart boundary matches the body it generates.
+    requestBody = form;
+  } else {
+    headers['content-type'] = 'application/json';
+    const body: Record<string, unknown> = {
+      ...(input.extra ?? {}),
+      model: entry.model,
+      prompt,
+    };
+    for (const [key, value] of Object.entries(specs)) {
+      if (value !== undefined) body[key] = value;
+    }
+    if (references.length > 0) {
+      body.input_references = references.map((r) => r.bytes.toString('base64'));
+    }
+    requestBody = JSON.stringify(body);
   }
 
   const startedAt = Date.now();
@@ -191,7 +371,7 @@ export async function generateImage(
     res = await fetch(url, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: requestBody,
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
@@ -209,6 +389,16 @@ export async function generateImage(
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     logger.warn({ msg: 'imagegen.upstream_error', status: res.status, body: text.slice(0, 500) });
+    // 503/504 means "not right now". The upstream body typically names
+    // WHY — the active GPU profile, for instance — so it is relayed
+    // verbatim rather than summarised away.
+    if (res.status === 503 || res.status === 504) {
+      throw new ImageGenError(
+        `Image model '${entry.name}' is not available right now (upstream ${res.status}). ` +
+          `This is usually temporary. Upstream says: ${text.slice(0, 300)}`,
+        'unavailable',
+      );
+    }
     throw new ImageGenError(
       `Image upstream returned ${res.status}: ${text.slice(0, 300)}`,
       'upstream',
@@ -230,7 +420,7 @@ export async function generateImage(
 
   const decoded: UpstreamImage[] = [];
   for (const row of rows) {
-    const img = await rowToBytes(row, timeoutMs);
+    const img = await rowToBytes(row, timeoutMs, provider.baseUrl, provider.apiKey);
     if (img && img.bytes.length > 0) decoded.push(img);
   }
   if (decoded.length === 0) {

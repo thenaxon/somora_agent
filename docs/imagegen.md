@@ -55,6 +55,47 @@ OpenRouter's; OpenAI direct wants `/images/generations`. Set
 `endpoint:` per model when it differs, and `capabilitiesEndpoint: null`
 when the provider has no model catalog at all (a local image server).
 
+**Reference images are where providers really diverge.** Plain
+generation is the same JSON POST everywhere, but working *from* an
+existing image is a different request depending on the endpoint, so
+each model declares which dialect it speaks:
+
+| `wire:` | Reference images travel as | Sent to |
+|---|---|---|
+| `openrouter` (default) | base64 in an `input_references` array | `endpoint` |
+| `openai` | multipart, one `image[]` part per file | `editEndpoint` |
+
+`openai` is the setting for OpenAI itself and for an OpenAI-compatible
+router such as LiteLLM in front of a local image backend. There is no
+autodetection: a wrong guess would only surface after the user already
+waited for a render, and whoever configures the model knows the answer.
+
+**Responses come in three shapes, and all three end as a local file.**
+An endpoint that does not want to serve files itself returns the image
+inline as `data[].b64_json`; OpenAI direct returns an absolute URL on a
+different host; an image server addressed directly tends to return a
+*relative* path into its own output tree, because from its side the
+client already knows the host. Relative paths are resolved against the
+provider's `baseUrl`.
+
+The provider's API key is sent when fetching such a URL **only if the
+URL is on the same origin as `baseUrl`**. A pre-signed link on someone
+else's host does not need it, and sending it there would hand the
+credential to a third party.
+
+**When a model is unavailable.** An image model can be configured and
+still not be loaded right now — image backends commonly share a GPU box
+that runs one profile at a time, and answer `503` when theirs isn't
+active. `fallback:` on a model names another handle to try; that one may
+name a fallback of its own.
+
+Only *availability* walks the chain: unreachable, timing out, or a
+server error. A rejected spec value or an empty prompt fails on the
+first model instead, because the next one would reject it too and the
+real message would be buried. When a fallback did happen, the tool
+result and the HTTP response say so — a chain that has quietly settled
+on its last resort is a cost and quality change worth noticing.
+
 ## How specs are validated
 
 Allowed values differ per model — grok-imagine renders 1K and 2K,
@@ -108,6 +149,7 @@ out, and provenance shouldn't vanish with a file you dragged elsewhere.
 |---|---|
 | `image_generate` | Generate and save. Returns path + metadata, not the bytes. |
 | `image_list` | Find earlier images by prompt substring, model, agent, or date. |
+| `image_models` | List configured handles, and what one model accepts. |
 
 Specs travel as real request fields (`aspect_ratio: "16:9"`), never as
 text inside the prompt. The prompt is passed through verbatim.
@@ -120,6 +162,19 @@ which dispatches to the configured `vision.worker`.
 
 `image_list` exists because a path in a tool result doesn't survive
 context compaction. "The koala one" has to stay findable.
+
+`image_models` exists because the `model` argument is a free string:
+with more than one model configured, nothing else tells the caller
+which handles are available, and a wrong guess costs a round trip.
+Listing handles is free; passing `model:` for one of them also reports
+the values that model accepts per spec field, which is the other thing
+that is otherwise learned only by being rejected.
+
+**`reference_images` takes file paths**, not base64 — the tool reads
+them itself, through the same read policy as `file_read`. Passing
+several is how sources get combined into one picture. Whether a model
+accepts more than one is its own business; `image_models` reports the
+limit when the provider publishes it.
 
 `save_to` runs through the same write gate as `file_write`
 (`checkWriteAllowed`), so generating an image is not a way around it.
@@ -183,7 +238,7 @@ somora couldn't reliably reach every name for the file anyway.
 
 - **Reference images** (image-to-image) work through the tool's
   `reference_images` argument, but the Images window has no picker for
-  them yet.
+  them yet — the browser path accepts base64 only.
 - **No progress streaming.** The endpoint can stream partial renders;
   somora waits for the finished image and shows a busy state.
 - **No automatic cleanup.** Generated images are work product, not a

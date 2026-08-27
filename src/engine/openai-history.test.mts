@@ -23,6 +23,14 @@ import { buildMessages, MAX_REPLAYED_TOOL_RESULT_CHARS } from './openai-compatib
 import { computeReplayDelta, renderReplayPrefix } from './replay.ts';
 import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import type { ModelCapability } from '../config/types.ts';
+
+/** These tests are about tool-turn shape, not about media. Pack for a
+ *  fully capable model so attachment handling stays out of the way —
+ *  the capability-aware path has its own suites
+ *  (../multimodal/user-content.test.mts,
+ *  ./openai-history-attachments.test.mts). */
+const CAPS: ModelCapability[] = ['text', 'image', 'pdf'];
 
 let pass = 0;
 let fail = 0;
@@ -81,7 +89,7 @@ async function run(): Promise<void> {
       asstMsg('Fertig, läuft auf Port 3020.'),
       userMsg('und jetzt?'),
     ];
-    const msgs = (await buildMessages('SYS', history, undefined, 'native')) as unknown as Msg[];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
 
     const withCalls = msgs.find((m) => m.role === 'assistant' && m.tool_calls);
     check('assistant message carries tool_calls', withCalls !== undefined);
@@ -117,7 +125,7 @@ async function run(): Promise<void> {
       userMsg('und jetzt?'),
       asstMsg('Neuer Versuch.'),
     ];
-    const msgs = (await buildMessages('SYS', history, undefined, 'native')) as unknown as Msg[];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
     check('unpaired call dropped', !msgs.some((m) => m.role === 'assistant' && m.tool_calls));
     check('no orphan tool message', !msgs.some((m) => m.role === 'tool'));
     check('pairing valid after drop', pairingIsValid(msgs) === null, pairingIsValid(msgs) ?? '');
@@ -133,7 +141,7 @@ async function run(): Promise<void> {
       asstMsg('Eins hat geklappt.'),
       userMsg('ok'),
     ];
-    const msgs = (await buildMessages('SYS', history, undefined, 'native')) as unknown as Msg[];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
     const withCalls = msgs.find((m) => m.role === 'assistant' && m.tool_calls);
     check('only the paired call survives', withCalls?.tool_calls?.length === 1, JSON.stringify(withCalls));
     check('pairing valid with partial', pairingIsValid(msgs) === null, pairingIsValid(msgs) ?? '');
@@ -148,7 +156,7 @@ async function run(): Promise<void> {
       asstMsg('Datei fehlt.'),
       userMsg('ok'),
     ];
-    const msgs = (await buildMessages('SYS', history, undefined, 'native')) as unknown as Msg[];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
     const toolMsg = msgs.find((m) => m.role === 'tool');
     check('failed call still replayed', toolMsg !== undefined);
     check('error text carried', String(toolMsg?.content).includes('ENOENT'), String(toolMsg?.content));
@@ -164,7 +172,7 @@ async function run(): Promise<void> {
       asstMsg('gelesen'),
       userMsg('ok'),
     ];
-    const msgs = (await buildMessages('SYS', history, undefined, 'native')) as unknown as Msg[];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
     const toolMsg = msgs.find((m) => m.role === 'tool')!;
     const len = String(toolMsg.content).length;
     check('result truncated', len <= MAX_REPLAYED_TOOL_RESULT_CHARS + 32, `${len} chars`);
@@ -174,7 +182,7 @@ async function run(): Promise<void> {
   // ── 6. Tool-less history is untouched ────────────────────────────
   {
     const history: NormalizedEvent[] = [userMsg('hi'), asstMsg('hallo')];
-    const msgs = (await buildMessages('SYS', history, undefined, 'native')) as unknown as Msg[];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
     check('plain history has 3 messages', msgs.length === 3, String(msgs.length));
     check('no tool_calls invented', !msgs.some((m) => m.tool_calls));
   }
@@ -186,7 +194,7 @@ async function run(): Promise<void> {
       asstMsg('<somora-tool-log>\n5 calls:\n- exec ×3 → ok\n</somora-tool-log>\n\nPort 3020 ist frei.'),
       userMsg('und jetzt?'),
     ];
-    const msgs = (await buildMessages('SYS', history, undefined, 'native')) as unknown as Msg[];
+    const msgs = (await buildMessages('SYS', history, undefined, 'native', CAPS)) as unknown as Msg[];
     const asst = msgs.find((m) => m.role === 'assistant')!;
     check('fabricated block scrubbed', !String(asst.content).includes('<somora-tool-log>'), String(asst.content));
     check('surrounding prose kept', String(asst.content).includes('Port 3020 ist frei'));

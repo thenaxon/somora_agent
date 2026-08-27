@@ -381,6 +381,18 @@ button { cursor: pointer; }
   color: var(--line-2);
   font-style: normal;
 }
+/* Media marker on an agent bubble. The PWA renders no media itself;
+ * this line exists so a turn that produced a picture doesn't read as
+ * an empty-handed answer. Quiet on purpose — it is a pointer, not
+ * content. */
+.msg-media-note {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-2);
+  color: var(--text-3);
+  font-size: 12px;
+  font-style: italic;
+}
 /* Always-on Stop button on a streaming agent-bubble. Mobile has no
  * hover affordance, so this lives at the bubble's bottom-right
  * corner and stays visible the whole time the turn is in flight.

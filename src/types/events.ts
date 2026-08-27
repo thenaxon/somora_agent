@@ -143,13 +143,21 @@ export type NormalizedEvent =
     }
   | {
       /**
-       * Images generated during an assistant turn. Emitted after the
-       * turn finalizes, once, listing everything `image_generate`
-       * produced while it ran.
+       * Media produced during an assistant turn. Emitted after the turn
+       * finalizes, once, listing everything the turn's generation tools
+       * made while it ran.
+       *
+       * Deliberately NOT called `assistant_images`: this string is
+       * written into session JSONL and stays there for the life of the
+       * session. A video endpoint would otherwise need a second,
+       * near-identical event kind, and every reader would have to
+       * understand both forever. Instead each entry carries its own
+       * `type`, and a reader that meets a type it doesn't know skips
+       * that entry.
        *
        * Append-only and paired by `turnId`, exactly like
        * assistant_audio — the original assistant_message is never
-       * mutated. Clients render the images on the matching bubble.
+       * mutated. Clients render the media on the matching bubble.
        *
        * Why the server volunteers these instead of the agent sending
        * them: a person who asked for a picture should get the picture.
@@ -158,13 +166,18 @@ export type NormalizedEvent =
        *
        * Refs only — bytes stay in the images directory and are served
        * by GET /images/:id/file. JSONL keeps enough to render a
-       * placeholder if the file later disappears.
+       * placeholder if the file later disappears. Note that `url` is
+       * itself part of the persisted payload: that route has to keep
+       * resolving even if a later generalisation adds a /media/ path.
        */
-      kind: 'assistant_images';
+      kind: 'assistant_media';
       ts: number;
       engine: string;
       turnId: string;
-      images: Array<{
+      media: Array<{
+        /** What this entry is. Video joins here as a second value —
+         *  that is the whole point of the field. */
+        type: 'image';
         id: string;
         prompt: string;
         mime: string;
@@ -374,13 +387,16 @@ export type SseEvent =
       };
     }
   | {
-      // Images generated during the turn. Same pairing mechanism as
+      // Media produced during the turn. Same pairing mechanism as
       // assistant_audio: arrives after the reply, clients attach it to
-      // the bubble with the matching turnId.
-      event: 'assistant_images';
+      // the bubble with the matching turnId. Mirrors the persisted
+      // `assistant_media` event — see the note there on why entries
+      // carry a `type` instead of the kind naming one medium.
+      event: 'assistant_media';
       data: {
         turnId: string;
-        images: Array<{
+        media: Array<{
+          type: 'image';
           id: string;
           prompt: string;
           mime: string;

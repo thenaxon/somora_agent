@@ -107,25 +107,49 @@ export class ToolRegistry {
           continue;
         }
       }
-      if (!tool.available) {
-        out.push(tool);
-        continue;
-      }
-      try {
-        const ok = await tool.available(ctx);
-        if (ok) out.push(tool);
-        else logger.debug({ msg: 'tool.unavailable', name: tool.name, agent: ctx.agent });
-      } catch (err) {
-        logger.warn({
-          msg: 'tool.available_threw',
-          name: tool.name,
-          agent: ctx.agent,
-          err: (err as Error).message,
-        });
-        // Fail-closed: if the availability probe itself errored, hide
-        // the tool. Better the model doesn't see it than that it tries
-        // and gets an obscure error.
-      }
+      if (await this.probe(tool, ctx)) out.push(tool);
+    }
+    return out;
+  }
+
+  /**
+   * Run one tool's own availability probe. No `available` means always
+   * available.
+   *
+   * Fail-closed: a probe that throws hides the tool. Better the model
+   * doesn't see it than that it tries and gets an obscure error.
+   */
+  private async probe(tool: ToolDefinition, ctx: ToolContext): Promise<boolean> {
+    if (!tool.available) return true;
+    try {
+      const ok = await tool.available(ctx);
+      if (!ok) logger.debug({ msg: 'tool.unavailable', name: tool.name, agent: ctx.agent });
+      return Boolean(ok);
+    } catch (err) {
+      logger.warn({
+        msg: 'tool.available_threw',
+        name: tool.name,
+        agent: ctx.agent,
+        err: (err as Error).message,
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Tools this agent could use given the CONFIGURATION — the probes
+   * only, without the loop-holder narrowing that listAvailable applies.
+   *
+   * The difference matters for the per-agent tool screen. That screen
+   * is about a persistent setting, so a tool must not disappear from it
+   * because the agent happens to be inside a wiki loop this minute;
+   * equally, a tool whose config does not exist has nothing to
+   * configure and shouldn't be offered a switch that changes nothing.
+   */
+  async listConfigured(ctx: ToolContext): Promise<ToolDefinition[]> {
+    const out: ToolDefinition[] = [];
+    for (const tool of this.tools.values()) {
+      if (await this.probe(tool, ctx)) out.push(tool);
     }
     return out;
   }

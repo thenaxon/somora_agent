@@ -1,3 +1,4 @@
+import type { DetectedKind } from './mime.ts';
 // Content-block construction. Produces engine-agnostic descriptors
 // that the various adapters and tools translate to their own SDK
 // shapes (Anthropic content blocks, OpenAI tool_result image_url,
@@ -93,7 +94,7 @@ export function toOpenAiContent(att: LoadedAttachment, prompt?: string) {
   return [{ type: 'text' as const, text: userText }];
 }
 
-function defaultPromptFor(kind: 'image' | 'pdf' | 'text' | 'unknown'): string {
+function defaultPromptFor(kind: DetectedKind): string {
   if (kind === 'image') return 'Describe this image in detail.';
   if (kind === 'pdf') return 'Summarize this document in detail.';
   return 'Describe the attached content.';

@@ -40,6 +40,11 @@ export interface ChatMessage {
    *  `assistant_audio` SSE event arrived after the message; drives the
    *  Play-button on the agent bubble. */
   audio?: { url: string; mime: string; durationMs?: number };
+  /** Media the agent produced during this turn. The PWA deliberately
+   *  does NOT display it — this is a marker so the reply doesn't look
+   *  like the agent delivered nothing, with the desktop app as the
+   *  place to actually look at it. */
+  mediaNote?: { count: number };
   /** Server-issued turnId for self-typed turns. Set after POST
    *  /chat/send returns; used to pair this optimistic bubble with
    *  later SSE events (turn_queued, user_message). */
@@ -65,6 +70,7 @@ interface HistoryEvent {
   from_agent?: string;
   from_system?: 'sentinel' | 'tmux' | 'subagent';
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
+  media?: Array<{ type: string; id: string; filename: string; mime: string; url: string }>;
 }
 
 export interface ChatStream {
@@ -168,6 +174,16 @@ export function useChatStream(agent: string | null): ChatStream {
                       : {}),
                   },
                 };
+                break;
+              }
+            }
+            continue;
+          }
+          if (ev.kind === 'assistant_media' && Array.isArray(ev.media) && ev.media.length > 0) {
+            for (let i = out.length - 1; i >= 0; i -= 1) {
+              const m = out[i];
+              if (m && m.role === 'agent') {
+                out[i] = { ...m, mediaNote: { count: ev.media.length } };
                 break;
               }
             }
@@ -328,6 +344,25 @@ export function useChatStream(agent: string | null): ChatStream {
       audioListenersRef.current.forEach((fn) => fn(audio.url));
     };
 
+    const onAssistantMedia = (e: MessageEvent) => {
+      bump();
+      let d: { turnId?: string; media?: unknown[] } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || !Array.isArray(d.media) || d.media.length === 0) return;
+      const note = { count: d.media.length };
+      setMessages((prev) => {
+        for (let i = prev.length - 1; i >= 0; i -= 1) {
+          const m = prev[i];
+          if (m && m.role === 'agent') {
+            const next = prev.slice();
+            next[i] = { ...m, mediaNote: note };
+            return next;
+          }
+        }
+        return prev;
+      });
+    };
+
     const onUserMessage = (e: MessageEvent) => {
       bump();
       let d:
@@ -435,6 +470,7 @@ export function useChatStream(agent: string | null): ChatStream {
     es.addEventListener('agent', onAgent);
     es.addEventListener('status', onStatus);
     es.addEventListener('assistant_audio', onAssistantAudio);
+    es.addEventListener('assistant_media', onAssistantMedia);
     es.addEventListener('user_message', onUserMessage);
     es.addEventListener('turn_queued', onTurnQueued);
 
@@ -447,6 +483,7 @@ export function useChatStream(agent: string | null): ChatStream {
       es.removeEventListener('agent', onAgent);
       es.removeEventListener('status', onStatus);
       es.removeEventListener('assistant_audio', onAssistantAudio);
+      es.removeEventListener('assistant_media', onAssistantMedia);
       es.removeEventListener('user_message', onUserMessage);
       es.removeEventListener('turn_queued', onTurnQueued);
       es.close();

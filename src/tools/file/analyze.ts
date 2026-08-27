@@ -15,7 +15,7 @@
 import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../../server/openai-client.ts';
 import { z } from 'zod';
-import { resolveAnyRef, type ResolvedModel } from '../../config/types.ts';
+import { workerChain, resolveAnyRef, type ResolvedModel } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { loadAttachment } from '../../multimodal/load.ts';
 import { toOpenAiContent } from '../../multimodal/blocks.ts';
@@ -69,6 +69,14 @@ function buildClient(model: ResolvedModel): OpenAI {
     apiKey: model.provider.apiKey,
   });
 }
+
+/**
+ * Workers that just failed, and until when they stay skipped. Module
+ * scope on purpose: this is per somora process, shared across agents,
+ * because a GPU box being in the wrong profile is not an agent-specific
+ * fact. Without it, every call pays the full timeout again.
+ */
+const failedUntil = new Map<string, number>();
 
 export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOutput> = {
   name: 'analyze_file',
@@ -135,70 +143,118 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
       );
     }
 
-    // Pick worker: pdf-specific override if set & PDF, else default.
+    // Pick the chain: the pdf-specific one if set and this is a PDF,
+    // otherwise the general one.
     const visionConfig = ctx.config.vision;
-    const ref =
-      att.mime.kind === 'pdf' ? (visionConfig.pdfWorker ?? visionConfig.worker) : visionConfig.worker;
-    if (!ref) {
+    const chain = workerChain(
+      att.mime.kind === 'pdf' ? (visionConfig.pdfWorker ?? visionConfig.worker) : visionConfig.worker,
+    );
+    if (chain.length === 0) {
       throw new Error(
         `analyze_file: no vision worker configured. Set config.vision.worker ` +
           `(and optionally config.vision.pdfWorker) to a '<provider>/<modelId>' on an ` +
           `openai-compatible engine.`,
       );
     }
-
-    const worker = resolveAnyRef(ctx.config, ref);
-    if (!worker) {
-      throw new Error(
-        `analyze_file: configured vision worker '${ref}' does not resolve to a known model — ` +
-          `fix config.yaml.`,
-      );
-    }
     const requiredCap = att.mime.kind === 'pdf' ? 'pdf' : 'image';
-    if (!worker.model.capabilities.includes(requiredCap)) {
-      throw new Error(
-        `analyze_file: vision worker '${ref}' lacks '${requiredCap}' capability. ` +
-          `Either configure a different worker (e.g. config.vision.pdfWorker for PDFs) ` +
-          `or add the capability to the model definition if it actually supports it.`,
-      );
-    }
-
-    const client = buildClient(worker);
     const content = toOpenAiContent(att, input.prompt);
-
     const start = Date.now();
-    logger.info({
-      msg: 'analyze_file.dispatch',
-      agent: ctx.agent,
-      session: ctx.session,
-      worker: `${worker.providerName}/${worker.modelId}`,
-      path: input.path,
-      kind: att.mime.kind,
-      size: att.size,
-    });
 
-    const completion = await client.chat.completions.create({
-      model: worker.modelId,
-      messages: [
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        { role: 'user', content: content as any },
-      ],
-    });
+    // Try in order; the first worker that answers wins. Availability
+    // only — a worker that replies with nonsense has still answered,
+    // and which model is good enough is the operator's decision, not
+    // something this tool should second-guess.
+    const skipped: string[] = [];
+    let attempts = 0;
+    for (const ref of chain) {
+      const worker = resolveAnyRef(ctx.config, ref);
+      if (!worker) {
+        skipped.push(`${ref}: not a known model in config.yaml`);
+        continue;
+      }
+      if (!worker.model.capabilities.includes(requiredCap)) {
+        skipped.push(`${ref}: lacks '${requiredCap}' capability`);
+        continue;
+      }
+      const cooling = failedUntil.get(ref);
+      if (cooling !== undefined && cooling > Date.now()) {
+        skipped.push(`${ref}: failed recently, still cooling down`);
+        continue;
+      }
 
-    const text = completion.choices[0]?.message?.content;
-    if (typeof text !== 'string' || text.length === 0) {
-      throw new Error(
-        `analyze_file: worker '${ref}' returned an empty response. Check provider logs.`,
-      );
+      attempts += 1;
+      const label = `${worker.providerName}/${worker.modelId}`;
+      logger.info({
+        msg: 'analyze_file.dispatch',
+        agent: ctx.agent,
+        session: ctx.session,
+        worker: label,
+        ref,
+        attempt: attempts,
+        chainLength: chain.length,
+        path: input.path,
+        kind: att.mime.kind,
+        size: att.size,
+      });
+
+      try {
+        const completion = await buildClient(worker).chat.completions.create(
+          {
+            model: worker.modelId,
+            messages: [
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              { role: 'user', content: content as any },
+            ],
+          },
+          { signal: AbortSignal.timeout(visionConfig.timeoutMs) },
+        );
+        const text = completion.choices[0]?.message?.content;
+        if (typeof text !== 'string' || text.length === 0) {
+          throw new Error('worker returned an empty response');
+        }
+        failedUntil.delete(ref);
+        if (attempts > 1 || skipped.length > 0) {
+          // Worth a line of its own: a chain that has quietly settled
+          // on its external last resort is a running cost nobody
+          // notices otherwise.
+          logger.warn({
+            msg: 'analyze_file.fell_back',
+            agent: ctx.agent,
+            worker: label,
+            skipped,
+          });
+        }
+        return {
+          analysis: text,
+          worker: label,
+          ...(skipped.length > 0 ? { fellBackFrom: skipped } : {}),
+          mimeType: att.mime.mimeType,
+          size: att.size,
+          ms: Date.now() - start,
+        };
+      } catch (err) {
+        const reason = (err as Error).message;
+        if (visionConfig.healthCacheMs > 0) {
+          failedUntil.set(ref, Date.now() + visionConfig.healthCacheMs);
+        }
+        logger.warn({
+          msg: 'analyze_file.worker_failed',
+          agent: ctx.agent,
+          worker: label,
+          ref,
+          err: reason,
+        });
+        skipped.push(`${ref}: ${reason}`);
+      }
     }
 
-    return {
-      analysis: text,
-      worker: `${worker.providerName}/${worker.modelId}`,
-      mimeType: att.mime.mimeType,
-      size: att.size,
-      ms: Date.now() - start,
-    };
+    // Nothing in the chain worked. Name every entry and why it was
+    // passed over — "no vision worker available" alone would send the
+    // operator hunting through logs for something this already knows.
+    throw new Error(
+      `analyze_file: no vision worker could handle this ${att.mime.kind}. Tried:\n` +
+        skipped.map((s2) => `  - ${s2}`).join('\n'),
+    );
   },
 };
 

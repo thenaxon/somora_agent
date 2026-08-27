@@ -688,18 +688,51 @@ export type MobileConfig = z.infer<typeof MobileConfigSchema>;
 // openrouter etc. for Claude). Direct Anthropic SDK as worker is
 // future work — same constraint as Dream-Mode. See
 // `private/skills-design.md` and the dream-mode docs for the rationale.
+/**
+ * One worker, or an ordered list of them. A list is tried front to
+ * back and the first one that answers wins.
+ *
+ * Why a list at all: a locally hosted worker is the cheap and private
+ * choice, but a GPU box runs one profile at a time — switch the profile
+ * and that model is simply not loaded any more. With a single value,
+ * `analyze_file` is then broken for every agent at once, and quietly:
+ * the agent finds out by failing. The last entry is meant to be
+ * something externally hosted that is always there.
+ *
+ * A plain string stays valid and means a one-element list.
+ */
+const WorkerRefSchema = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
+
 export const VisionConfigSchema = z
   .object({
-    /** Default worker for image + PDF analysis. Format `<provider>/<modelId>`.
-     *  Worker model MUST have `image` capability; PDF use also requires
-     *  `pdf` capability (or set `pdfWorker` to a separate model that has it). */
-    worker: z.string().min(1).optional(),
-    /** Optional override for PDF dispatch only. Format `<provider>/<modelId>`.
-     *  When unset, PDF falls back to `worker`. Use case: cheap image-only
-     *  worker + a separate PDF-capable worker for cost control. */
-    pdfWorker: z.string().min(1).optional(),
+    /** Worker(s) for image + PDF analysis, `<provider>/<modelId>` each.
+     *  A worker MUST have `image` capability; PDF use also requires
+     *  `pdf` (or set `pdfWorker` to a model that has it). Entries that
+     *  lack the needed capability are skipped, not fatal — the point of
+     *  a chain is that it survives one entry being unusable. */
+    worker: WorkerRefSchema.optional(),
+    /** Override for PDF dispatch only. When unset, PDF uses `worker`.
+     *  Use case: a cheap image-only worker plus a separate PDF-capable
+     *  one for cost control. */
+    pdfWorker: WorkerRefSchema.optional(),
+    /** Per-attempt budget. A worker that hasn't answered by then counts
+     *  as down and the chain moves on. Generous by default because a
+     *  local vision model describing a large image legitimately takes
+     *  tens of seconds. */
+    timeoutMs: z.number().int().positive().default(60_000),
+    /** How long a failed worker is skipped before being tried again.
+     *  Without this, every single call pays the full timeout of a
+     *  worker that is down for the rest of the afternoon. 0 disables
+     *  the memory. */
+    healthCacheMs: z.number().int().min(0).default(60_000),
   })
-  .default({});
+  .default({ timeoutMs: 60_000, healthCacheMs: 60_000 });
+
+/** Normalise either accepted shape into the list the runtime walks. */
+export function workerChain(ref: string | string[] | undefined): string[] {
+  if (!ref) return [];
+  return Array.isArray(ref) ? ref : [ref];
+}
 export type VisionConfig = z.infer<typeof VisionConfigSchema>;
 
 // Speech-to-Text config. Standalone (not in providers.X.models) so the
@@ -859,6 +892,10 @@ export const ImageSpecDefaultsSchema = z
   .object({
     resolution: z.string().min(1).optional(),
     aspect_ratio: z.string().min(1).optional(),
+    /** Explicit pixels (`1024x1024`). Some endpoints size images this
+     *  way and have no `resolution` tier at all, so it has to be
+     *  settable as a default like any other spec. */
+    size: z.string().min(1).optional(),
     quality: z.string().min(1).optional(),
     output_format: z.string().min(1).optional(),
     background: z.string().min(1).optional(),
@@ -886,6 +923,41 @@ export const ImageModelSchema = z.object({
    *  local server may sit anywhere — hence configurable rather than
    *  guessed from the hostname. */
   endpoint: z.string().min(1).default('/images'),
+  /**
+   * Which request dialect this endpoint speaks. Only matters once
+   * reference images are involved — plain generation is the same JSON
+   * POST everywhere:
+   *
+   *   openrouter — references ride as base64 in an `input_references`
+   *                array on the same JSON body.
+   *   openai     — references make it a DIFFERENT request: multipart
+   *                to the edit endpoint, one `image[]` part per file.
+   *                This is what OpenAI itself accepts and what LiteLLM
+   *                passes through to a local image backend.
+   *
+   * There is no autodetection. A wrong guess here fails at the worst
+   * possible moment (after the user waited for a render), and the
+   * operator configuring the model knows the answer.
+   */
+  wire: z.enum(['openrouter', 'openai']).default('openrouter'),
+  /** Path for the reference-image (edit) request, appended to baseUrl.
+   *  `wire: openai` only. Defaults to the OpenAI/LiteLLM path. */
+  editEndpoint: z.string().min(1).default('/images/edits'),
+  /**
+   * Handle of another image model to try when this one is UNAVAILABLE.
+   * Chains: the fallback may name a fallback of its own.
+   *
+   * Availability only — a rejected spec value or an empty prompt is the
+   * caller's mistake and the next model would reject it too (or worse,
+   * quietly accept and ignore it). Only an unreachable, timing-out or
+   * server-erroring endpoint moves the request along.
+   *
+   * The case this exists for: image models live on a GPU box that runs
+   * one profile at a time, so "the model is configured" and "the model
+   * is loaded right now" are different questions, and the endpoint
+   * answers the second one with a 503.
+   */
+  fallback: z.string().min(1).optional(),
   /** Path for the model-capability catalog, appended to baseUrl.
    *  Defaults to `/images/models` (OpenRouter). Set to null when the
    *  provider has none — validation then falls back to `allow`, or to
@@ -900,13 +972,23 @@ export const ImageModelSchema = z.object({
    *  catalog is wrong. Takes precedence over discovery. */
   allow: z
     .object({
+      // One entry per ENUMERABLE_SPEC_FIELDS (src/imagegen/types.ts).
+      // The two lists have to be kept in step by hand; `background`
+      // was missing here and silently ignored, which is the whole
+      // reason this block is `.strict()` below.
       resolution: z.array(z.string().min(1)).optional(),
       aspect_ratio: z.array(z.string().min(1)).optional(),
+      size: z.array(z.string().min(1)).optional(),
       quality: z.array(z.string().min(1)).optional(),
       output_format: z.array(z.string().min(1)).optional(),
+      background: z.array(z.string().min(1)).optional(),
       maxN: z.number().int().min(1).max(10).optional(),
       maxReferences: z.number().int().min(0).max(16).optional(),
     })
+    // Strict on purpose: a stray or misspelled key here would be
+    // dropped without a word, and the operator would be looking at a
+    // restriction that does nothing.
+    .strict()
     .optional(),
 });
 export type ImageModel = z.infer<typeof ImageModelSchema>;

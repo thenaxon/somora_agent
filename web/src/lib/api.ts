@@ -185,9 +185,16 @@ export interface HistoryEvent {
    *  generated TTS artifact so the client can re-render a Play-button
    *  for past turns on history load. */
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
-  /** Set on `kind: 'assistant_images'` history rows — images generated
-   *  during that turn, so a reloaded conversation still shows them. */
-  images?: Array<{ id: string; prompt: string; mime: string; filename: string; url: string }>;
+  /** Set on `kind: 'assistant_media'` history rows — media produced
+   *  during that turn, so a reloaded conversation still shows it. */
+  media?: Array<{
+    type: 'image';
+    id: string;
+    prompt: string;
+    mime: string;
+    filename: string;
+    url: string;
+  }>;
   /** Set on `kind: 'engine_meta'` history rows. itemType is the raw
    *  engine-emitted label (e.g. 'todo_list'); payload is opaque. */
   itemType?: string;
@@ -745,8 +752,9 @@ export interface AgentToolInfo {
   description: string;
   /** Effective visibility for this agent under its current gating. */
   visible: boolean;
-  /** Whether the tool's runtime availability probe passes right now
-   *  (missing API key etc.). Informational — gating is separate. */
+  /** Always true: the server only lists tools whose configuration
+   *  exists, so an entry here is always something worth switching.
+   *  Kept on the wire for older clients that still read it. */
   availableNow: boolean;
 }
 

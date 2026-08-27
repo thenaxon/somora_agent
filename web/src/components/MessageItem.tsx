@@ -29,7 +29,7 @@ import {
   SquareTerminal,
   User,
 } from 'lucide-react';
-import type { AssistantImage, AttachmentDisplay, ChatMessage } from '../types/chat';
+import type { AssistantMedia, AttachmentDisplay, ChatMessage } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
 import { EngineMetaBlock } from './EngineMetaBlock';
@@ -219,8 +219,8 @@ export const MessageItem = memo(function MessageItem({
                 }}
               />
             )}
-            {msg.role === 'assistant' && msg.images && msg.images.length > 0 && (
-              <GeneratedImageRow images={msg.images} />
+            {msg.role === 'assistant' && msg.media && msg.media.length > 0 && (
+              <GeneratedMediaRow media={msg.media} />
             )}
             {msg.role === 'assistant' && msg.audio && <PlayAudioButton url={msg.audio.url} />}
             {msg.role === 'assistant' && msg.fallback && (
@@ -536,7 +536,12 @@ function BubbleActions({
 // would be a worse answer than the file path. Clicking opens the full
 // image in a new tab — the window has no lightbox, and a broken
 // half-measure would be worse than the browser's own viewer.
-function GeneratedImageRow({ images }: { images: AssistantImage[] }) {
+function GeneratedMediaRow({ media }: { media: AssistantMedia[] }) {
+  // Entries whose type this client doesn't render are dropped, not
+  // guessed at — that is what lets the server add a type without
+  // breaking a client that predates it.
+  const images = media.filter((m) => m.type === 'image');
+  if (images.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
       {images.map((img) => (

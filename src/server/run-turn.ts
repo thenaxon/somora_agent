@@ -454,11 +454,12 @@ async function publishTurnImages(args: {
   // they were made.
   const ordered = [...images].reverse();
   const evt = {
-    kind: 'assistant_images' as const,
+    kind: 'assistant_media' as const,
     ts: Date.now(),
     engine,
     turnId,
-    images: ordered.map((img) => ({
+    media: ordered.map((img) => ({
+      type: 'image' as const,
       id: img.id,
       prompt: img.prompt,
       mime: img.mime,
@@ -468,9 +469,9 @@ async function publishTurnImages(args: {
   };
   await appendEvent(agent, session, evt);
   if (publishSse) {
-    await publishSse({ event: 'assistant_images', data: { turnId, images: evt.images } });
+    await publishSse({ event: 'assistant_media', data: { turnId, media: evt.media } });
   }
-  logger.info({ msg: 'turn.images_published', turnId, agent, session, count: evt.images.length });
+  logger.info({ msg: 'turn.media_published', turnId, agent, session, count: evt.media.length });
 }
 
 export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult> {

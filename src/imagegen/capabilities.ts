@@ -88,6 +88,7 @@ function rangeMax(params: Record<string, ParamSpec> | null, field: string): numb
 const CATALOG_KEYS: Record<EnumerableSpecField, string[]> = {
   resolution: ['resolutions', 'supported_resolutions', 'resolution'],
   aspect_ratio: ['aspect_ratios', 'supported_aspect_ratios', 'aspect_ratio'],
+  size: ['sizes', 'supported_sizes', 'size'],
   quality: ['qualities', 'supported_qualities', 'quality'],
   output_format: ['output_formats', 'supported_output_formats', 'output_format'],
   background: ['backgrounds', 'supported_backgrounds', 'background'],

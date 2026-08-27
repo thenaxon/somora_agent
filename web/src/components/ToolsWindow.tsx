@@ -172,7 +172,7 @@ export function ToolsWindow() {
                   borderRadius: 4,
                   opacity: t.visible ? 1 : 0.45,
                 }}
-                title={t.description + (t.availableNow ? '' : '\n(currently unavailable — missing config/API key)')}
+                title={t.description}
               >
                 <span
                   data-testid={`tools-toggle-${t.name}`}
@@ -193,9 +193,7 @@ export function ToolsWindow() {
                 >
                   {t.name}
                 </span>
-                {!t.availableNow && (
-                  <span style={{ fontSize: 10, color: 'var(--text-2)' }}>(unavailable)</span>
-                )}
+
               </div>
             ))}
           </div>

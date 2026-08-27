@@ -67,10 +67,10 @@ export function createTurnSerializer() {
             cacheKey: ev.audio.cacheKey,
           },
         };
-      case 'assistant_images':
+      case 'assistant_media':
         return {
-          event: 'assistant_images',
-          data: { turnId: ev.turnId, images: ev.images },
+          event: 'assistant_media',
+          data: { turnId: ev.turnId, media: ev.media },
         };
       case 'engine_meta': {
         const label = resolveEngineMetaLabel(ev.engine, ev.itemType);

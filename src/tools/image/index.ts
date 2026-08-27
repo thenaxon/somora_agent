@@ -1,4 +1,4 @@
-export { imageGenerate, imageList, imageTools } from './tools.ts';
+export { imageGenerate, imageList, imageModels, imageTools } from './tools.ts';
 export {
   checkImageBudget,
   imagesSpentInTurn,

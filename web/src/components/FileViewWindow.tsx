@@ -7,6 +7,17 @@
 //   markdown → rendered with the same react-markdown setup as chat
 //   text     → monospace pre, no highlighting (logs, plain .txt)
 //   code     → monospace pre + rehype-highlight (json / yaml / toml)
+//   image    → <img>, click for full size
+//   video    → <video controls>, seeking served by Range on /files/raw
+//   audio    → <audio controls>
+//   pdf      → the browser's own viewer in an <iframe>
+//   binary   → name, type, size and a download button
+//
+// Bytes for the media kinds come from /files/raw rather than through
+// this JSON — that route streams and honours Range, which is what makes
+// scrubbing a video work. Every kind, binary included, offers a
+// download: a file the user can see referenced in chat should never be
+// a dead end.
 //
 // Designed to coexist with chat in parallel windows — open from a
 // Markdown link, leave it alongside the conversation.
@@ -17,14 +28,21 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { AssistantMarkdown } from './AssistantMarkdown';
 
-interface FileViewResponse {
+export type FileKind = 'markdown' | 'text' | 'code' | 'image' | 'video' | 'audio' | 'pdf' | 'binary';
+
+export interface FileViewResponse {
   path: string;
-  kind: 'markdown' | 'text' | 'code';
+  kind: FileKind;
   ext: string;
   bytes: number;
-  content: string;
-  truncated: boolean;
+  /** Text kinds only. */
+  content?: string;
+  truncated?: boolean;
   truncated_reason?: string;
+  /** Non-text kinds: where the bytes live. */
+  url?: string;
+  mime?: string;
+  downloadUrl?: string;
 }
 
 interface Props {
@@ -134,17 +152,95 @@ function FileViewHeader({
       <span style={{ color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
         {path}
       </span>
+      {state.status === 'ok' && state.data.mime && (
+        <span style={{ flexShrink: 0 }}>{state.data.mime}</span>
+      )}
       {size && <span style={{ flexShrink: 0 }}>{size}</span>}
       {state.status === 'ok' && state.data.truncated && (
         <span style={{ flexShrink: 0, color: 'var(--warn)' }} title={state.data.truncated_reason}>
           truncated
         </span>
       )}
+      {state.status === 'ok' && state.data.downloadUrl && (
+        <a
+          href={state.data.downloadUrl}
+          download
+          // An <a> is draggable by default, and a pixel of movement
+          // between mousedown and mouseup silently swallows the click —
+          // easy to hit inside a window the user drags around.
+          draggable={false}
+          style={{
+            flexShrink: 0,
+            color: 'var(--text-2)',
+            textDecoration: 'none',
+            border: '1px solid var(--line-2)',
+            borderRadius: 4,
+            padding: '1px 6px',
+          }}
+          title="Download this file"
+        >
+          download
+        </a>
+      )}
     </div>
   );
 }
 
-function Body({ data }: { data: FileViewResponse }) {
+/** Exported for the render test — it is the part with a branch per
+ *  file kind, and that is what regresses. */
+export function Body({ data }: { data: FileViewResponse }) {
+  if (data.kind === 'image' && data.url) {
+    return (
+      <a href={data.url} target="_blank" rel="noreferrer" draggable={false}
+         style={{ display: 'block', lineHeight: 0 }} title="Open at full size">
+        <img
+          src={data.url}
+          alt={data.path}
+          style={{ maxWidth: '100%', height: 'auto', borderRadius: 4, display: 'block' }}
+        />
+      </a>
+    );
+  }
+  if (data.kind === 'video' && data.url) {
+    return (
+      // `preload="metadata"` so opening the window doesn't pull a 50 MB
+      // file the user may not play; seeking then works off Range.
+      <video
+        controls
+        preload="metadata"
+        src={data.url}
+        style={{ maxWidth: '100%', borderRadius: 4, display: 'block' }}
+      />
+    );
+  }
+  if (data.kind === 'audio' && data.url) {
+    return <audio controls preload="metadata" src={data.url} style={{ width: '100%' }} />;
+  }
+  if (data.kind === 'pdf' && data.url) {
+    return (
+      <iframe
+        src={data.url}
+        title={data.path}
+        style={{ width: '100%', height: '100%', minHeight: 480, border: 0, borderRadius: 4 }}
+      />
+    );
+  }
+  if (data.kind === 'binary' || data.content === undefined) {
+    // Nothing to render, but the file is real and reachable — say what
+    // it is instead of showing an error.
+    return (
+      <div style={{ color: 'var(--text-2)', fontSize: 12 }}>
+        <div style={{ marginBottom: 6 }}>
+          No preview for this file type{data.mime ? ` (${data.mime})` : ''}.
+        </div>
+        {data.downloadUrl && (
+          <a href={data.downloadUrl} download draggable={false} style={{ color: 'var(--accent)' }}>
+            Download {data.path.slice(data.path.lastIndexOf('/') + 1)}
+          </a>
+        )}
+      </div>
+    );
+  }
   if (data.kind === 'markdown') {
     return <AssistantMarkdown content={data.content} />;
   }
@@ -180,7 +276,6 @@ function ErrorBody({ message, httpStatus }: { message: string; httpStatus: numbe
   const label = useMemo(() => {
     if (httpStatus === 403) return 'Access denied';
     if (httpStatus === 404) return 'File not found';
-    if (httpStatus === 415) return 'Unsupported file type';
     if (httpStatus === 400) return 'Bad request';
     if (httpStatus === 0) return 'Network error';
     return `Error ${httpStatus}`;

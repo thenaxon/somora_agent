@@ -241,7 +241,20 @@ async function main(): Promise<void> {
   const persona = await loadPersona(agent);
   const toolGating = persona?.toolGating;
 
-  for (const tool of registry.list()) {
+  // ...and the same availability probe, for the same reason. run-turn
+  // builds the model's list from listAvailable(ctx); this used to walk
+  // registry.list(), so the three MCP-served engines (claude-cli,
+  // codex-cli, grok-cli) were offered every config-gated tool whether
+  // or not its config existed — measured 2026-08-27 as 8 dead tools
+  // (~2k tokens of schema) on an instance with no wiki/memory config,
+  // each of which invoke() then refuses with "not available in this
+  // context". Offering a tool that cannot run is worse than not
+  // offering it: the model spends a call finding out.
+  //
+  // Evaluated once per child, which is once per turn — the launcher
+  // passes SOMORA_ACTIVE_MODEL per turn — so this tracks config
+  // changes at the same rate the openai-compatible path does.
+  for (const tool of await registry.listAvailable(ctx)) {
     if (!isToolAllowed(tool.name, tool.toolset, toolGating)) {
       logger.debug({ msg: 'mcp.tool_gated', agent, tool: tool.name });
       continue;

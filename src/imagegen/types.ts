@@ -37,6 +37,10 @@ export interface ImageSpecs {
 export const ENUMERABLE_SPEC_FIELDS = [
   'resolution',
   'aspect_ratio',
+  // Endpoints that size images in explicit pixels have a closed set of
+  // them ("1024x1024" | "1792x1024" | "1024x1792") and no resolution
+  // tier at all, so this belongs with the other enumerable fields.
+  'size',
   'quality',
   'output_format',
   'background',

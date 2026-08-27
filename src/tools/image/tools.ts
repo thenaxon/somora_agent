@@ -10,10 +10,14 @@
 import { z } from 'zod';
 import { generateImage, ImageGenError } from '../../imagegen/generate.ts';
 import { listRecords } from '../../imagegen/records.ts';
+import { resolveCapabilities } from '../../imagegen/capabilities.ts';
+import { resolveImageModel } from '../../config/types.ts';
 import type { ImageRecord, ImageSpecs } from '../../imagegen/types.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import { logger } from '../../server/logger.ts';
-import { checkWriteAllowed, resolveLocalPath } from '../file/policy.ts';
+import { checkReadAllowed, checkWriteAllowed, realpathSafeAncestor, resolveLocalPath } from '../file/policy.ts';
+import { referenceFromBytes } from '../../imagegen/references.ts';
+import { readFile } from 'node:fs/promises';
 import type { MultimodalToolResult, ToolContext, ToolDefinition } from '../types.ts';
 import { checkImageBudget, recordImagesInTurn } from './budget.ts';
 
@@ -99,7 +103,9 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
   name: 'image_generate',
   toolset: 'image',
   description:
-    'Generate an image from a text prompt and save it. Returns the file path and metadata, ' +
+    'Generate an image from a text prompt and save it. Call image_models first if you need a '  +
+    'model other than the default, or to see which spec values a model accepts. '  +
+    'Returns the file path and metadata, ' +
     'NOT the image itself — set return_image: true if you need to SEE the result (costs ~2k ' +
     'tokens and requires a vision-capable model). The user sees every generated image in ' +
     'their chat automatically, so you do not need to send it to them. ' +
@@ -108,7 +114,9 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
     'prompt. Allowed values differ per model; an invalid one is rejected with the list of ' +
     'valid ones. Images always land in the configured images directory; save_to additionally ' +
     'places a hardlink where you want it (relative paths resolve against your workspace). ' +
-    'reference_images takes base64 images for image-to-image, where the model supports it.',
+    'reference_images takes FILE PATHS of images to work from (image-to-image), where the model \n' +
+    'supports it — the tool reads them itself, so never paste base64. Several are allowed: that ' +
+    'is how you combine multiple sources into one picture.',
   inputSchema: GenerateInput,
   jsonSchema: {
     type: 'object',
@@ -134,7 +142,9 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
       reference_images: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Base64 images to guide generation (image-to-image).',
+        description:
+          'Paths of existing images to work from (image-to-image). Relative paths resolve ' +
+          'against your workspace. Pass several to combine them.',
       },
       return_image: {
         type: 'boolean',
@@ -201,6 +211,39 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
       );
     }
 
+    // Reference images arrive as paths and are read HERE, through the
+    // same two-pass policy file_read uses (raw path, then realpath of
+    // the nearest existing ancestor, so a symlink can't step outside a
+    // blocked root). Doing it in the tool rather than in the generator
+    // is what keeps base64 out of the agent's context entirely.
+    const references = [];
+    for (const ref of input.reference_images ?? []) {
+      const { absolute } = await resolveLocalPath(ref, ctx.agent, ctx.config);
+      const verdict = checkReadAllowed(absolute);
+      if (!verdict.ok) {
+        throw new Error(`image_generate: reference_images ${verdict.reason}`);
+      }
+      const real = await realpathSafeAncestor(absolute);
+      const verdictReal = checkReadAllowed(real);
+      if (!verdictReal.ok) {
+        throw new Error(`image_generate: reference_images ${verdictReal.reason}`);
+      }
+      let bytes;
+      try {
+        bytes = await readFile(absolute);
+      } catch (err) {
+        throw new Error(
+          `image_generate: could not read reference image '${ref}': ${(err as Error).message}`,
+        );
+      }
+      try {
+        references.push(referenceFromBytes(bytes, ref));
+      } catch (err) {
+        if (err instanceof ImageGenError) throw new Error(`image_generate: ${err.message}`);
+        throw err;
+      }
+    }
+
     let result;
     try {
       result = await generateImage(
@@ -209,7 +252,7 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
           ...(input.model ? { model: input.model } : {}),
           specs: toSpecs(input),
           ...(saveTo ? { saveTo } : {}),
-          ...(input.reference_images ? { references: input.reference_images } : {}),
+          ...(references.length > 0 ? { references } : {}),
           ...(input.extra ? { extra: input.extra } : {}),
           agent: ctx.agent,
           ...(ctx.session ? { session: ctx.session } : {}),
@@ -225,6 +268,13 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
 
     recordImagesInTurn(ctx.turnId, result.images.length);
 
+    if (result.fellBackFrom && result.fellBackFrom.length > 0) {
+      // The caller asked for one model and got another. Saying so beats
+      // letting it wonder why the style changed.
+      notes.push(
+        `Used a fallback model — the requested one was unavailable: ${result.fellBackFrom.join('; ')}`,
+      );
+    }
     if (input.save_to && result.images.some((img) => img.linkedTo.length === 0)) {
       notes.push(
         `Could not place a copy at '${input.save_to}' — the image is saved in the images directory.`,
@@ -258,7 +308,6 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
       return payload;
     }
 
-    const { readFile } = await import('node:fs/promises');
     const blocks: MultimodalToolResult['contentBlocks'] = [
       { type: 'text', text: JSON.stringify(payload) },
     ];
@@ -368,6 +417,140 @@ export const imageList: ToolDefinition<ListArgs, ListOutput> = {
   },
 };
 
+const ModelsInput = z
+  .object({
+    model: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Handle to describe in detail. Omit to just list what is configured.'),
+  })
+  .strict();
+
+type ModelsArgs = z.infer<typeof ModelsInput>;
+
+interface ModelRow {
+  name: string;
+  label?: string;
+  model: string;
+  provider: string;
+  is_default: boolean;
+  defaults?: Record<string, string>;
+  /** Only filled in when a specific model was asked about. */
+  accepts?: Record<string, string[] | string>;
+  max_references?: number;
+  max_n?: number;
+  capability_source?: string;
+  note?: string;
+}
+
+/**
+ * Without this, a second configured model is a guessing game: the
+ * `model` argument on image_generate is a free string and nothing tells
+ * the caller which handles exist. The generate tool rejects an unknown
+ * one with the list, so it is recoverable — but only after a wasted
+ * call, and a wrong SPEC value costs a wasted call too.
+ *
+ * Deliberately two-speed: listing handles is free (it reads config),
+ * while the per-model detail hits the provider's catalog, so that only
+ * happens when a caller asks for one model by name.
+ */
+export const imageModels: ToolDefinition<ModelsArgs, { models: ModelRow[] }> = {
+  name: 'image_models',
+  toolset: 'image',
+  description:
+    'List the configured image models for image_generate. Call this before generating when you ' +
+    'need a model other than the default, or when you want to know which values a model accepts ' +
+    'for aspect_ratio, resolution, quality and the rest — those differ per model, and an ' +
+    'unsupported one is rejected. Pass model: "<handle>" for the detail of one model.',
+  inputSchema: ModelsInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      model: {
+        type: 'string',
+        description: 'Handle to describe in detail. Omit to list all configured models.',
+      },
+    },
+    additionalProperties: false,
+  },
+  available: (ctx) => imageGenEnabled(ctx),
+  async handler(input, ctx): Promise<{ models: ModelRow[] }> {
+    const configured = ctx.config.imageGen?.models ?? [];
+    if (configured.length === 0) {
+      throw new Error('image_models: no image models configured under imageGen.models.');
+    }
+    if (input.model && !configured.some((m) => m.name === input.model)) {
+      throw new Error(
+        `image_models: unknown image model '${input.model}'. Configured: ` +
+          configured.map((m) => m.name).join(', '),
+      );
+    }
+
+    const wanted = input.model ? configured.filter((m) => m.name === input.model) : configured;
+    const rows: ModelRow[] = [];
+    for (const entry of wanted) {
+      const row: ModelRow = {
+        name: entry.name,
+        ...(entry.label ? { label: entry.label } : {}),
+        model: entry.model,
+        provider: entry.provider,
+        is_default: entry.name === configured[0]?.name,
+        ...(Object.keys(entry.defaults).length > 0
+          ? { defaults: entry.defaults as Record<string, string> }
+          : {}),
+      };
+
+      // Detail only for a named model — this is the part that can reach
+      // out to the provider.
+      if (input.model) {
+        const resolved = resolveImageModel(ctx.config, entry.name);
+        if (!resolved || resolved.provider.engine !== 'openai-compatible') {
+          row.note =
+            `provider '${entry.provider}' is not an openai-compatible provider — ` +
+            'image_generate will refuse this model.';
+        } else {
+          try {
+            const caps = await resolveCapabilities(resolved.providerName, resolved.provider, entry);
+            const accepts: Record<string, string[] | string> = {};
+            for (const [field, values] of Object.entries(caps.values)) {
+              if (Array.isArray(values) && values.length > 0) accepts[field] = values;
+            }
+            // A field the catalog publishes without a value list takes
+            // free text; one missing from an exhaustive list is not
+            // supported at all. Saying so beats letting the caller find
+            // out by having the setting silently ignored.
+            if (caps.supported) {
+              for (const field of caps.supported) {
+                if (!(field in accepts)) accepts[field] = 'any value';
+              }
+              row.note =
+                'Fields not listed here are not supported by this model — passing them is an error.';
+            } else {
+              row.note = 'No published parameter list for this model; unlisted fields are passed through untouched.';
+            }
+            row.accepts = accepts;
+            if (caps.maxReferences !== undefined) row.max_references = caps.maxReferences;
+            if (caps.maxN !== undefined) row.max_n = caps.maxN;
+            row.capability_source = caps.source;
+          } catch (err) {
+            // A catalog outage must not make this tool useless — the
+            // handle list is the part that always works.
+            row.note = `could not load capabilities: ${(err as Error).message}`;
+            logger.debug({ msg: 'imagegen.capabilities_lookup_failed', model: entry.name });
+          }
+        }
+      }
+      rows.push(row);
+    }
+    return { models: rows };
+  },
+};
+
 export function imageTools(): ToolDefinition[] {
-  return [imageGenerate as ToolDefinition, imageList as ToolDefinition];
+  return [
+    imageGenerate as ToolDefinition,
+    imageList as ToolDefinition,
+    imageModels as ToolDefinition,
+  ];
 }

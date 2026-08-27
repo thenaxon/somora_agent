@@ -19,9 +19,10 @@ import {
 import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
-import { type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
+import { workerChain, type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
 import { storeAttachment } from '../attachments/store.ts';
 import { generateImage, ImageGenError } from '../imagegen/generate.ts';
+import { referenceFromBase64 } from '../imagegen/references.ts';
 import {
   listCatalogModels as listImageCatalogModels,
   resolveCapabilities as resolveImageCapabilities,
@@ -489,8 +490,15 @@ startClaudeCredentialSyncWatcher();
     }
   };
   try {
-    checkWorker('worker', config.vision.worker, !config.vision.pdfWorker);
-    checkWorker('pdfWorker', config.vision.pdfWorker, true);
+    // Every entry of a chain is validated, not just the first — a
+    // typo in the fallback would otherwise only surface on the day the
+    // primary is down, which is the worst possible moment to find it.
+    for (const ref of workerChain(config.vision.worker)) {
+      checkWorker('worker', ref, !config.vision.pdfWorker);
+    }
+    for (const ref of workerChain(config.vision.pdfWorker)) {
+      checkWorker('pdfWorker', ref, true);
+    }
   } catch (err) {
     console.error('\n\x1b[31m[!] somora vision config invalid:\x1b[0m\n');
     console.error((err as Error).message);
@@ -650,7 +658,13 @@ app.get('/health', (c) => {
 // `cat`/`less` directly; the link rewrite that opens this endpoint
 // lives in the web client's Markdown renderer.
 const FILEVIEW_HARD_CAP = 200_000; // chars, mirrors file_read
+// Media and everything else are classified from the BYTES (see
+// FILEVIEW media branch below); this table only decides how a TEXT file
+// is highlighted. `.svg` is deliberately listed as code rather than as
+// an image: it is markup that can carry script, and the safe way to
+// show it is as its own source plus a download button.
 const FILEVIEW_EXT_KIND: Record<string, 'markdown' | 'text' | 'code'> = {
+  '.svg': 'code',
   '.md': 'markdown',
   '.markdown': 'markdown',
   '.txt': 'text',
@@ -807,9 +821,32 @@ app.get('/files/view', async (c) => {
     return c.json({ error: 'path is not a regular file' }, 400);
   }
   const ext = absolute.slice(absolute.lastIndexOf('.')).toLowerCase();
-  const kind = FILEVIEW_EXT_KIND[ext] ?? null;
+  let kind = FILEVIEW_EXT_KIND[ext] ?? null;
   if (!kind) {
-    return c.json({ error: `unsupported file type for FileView (${ext || 'no extension'})` }, 415);
+    // Not a known text extension — ask the bytes what this is. Anything
+    // that isn't text gets described rather than returned: the client
+    // renders it from /files/raw, which can stream and seek. Nothing is
+    // refused outright any more, because "here is the name, the size
+    // and a download button" beats a 415 for a file the user can see
+    // sitting in their workspace.
+    const detected = await detectMimeFromPath(absolute);
+    if (detected.kind !== 'text') {
+      const mediaKind =
+        detected.kind === 'image' || detected.kind === 'video' ||
+        detected.kind === 'audio' || detected.kind === 'pdf'
+          ? detected.kind
+          : 'binary';
+      return c.json({
+        path: absolute,
+        kind: mediaKind,
+        ext,
+        bytes: st.size,
+        mime: detected.mimeType,
+        url: `/files/raw?path=${encodeURIComponent(absolute)}`,
+        downloadUrl: `/files/raw?download=1&path=${encodeURIComponent(absolute)}`,
+      });
+    }
+    kind = 'text';
   }
   const buf = await readFileFs(absolute);
   let content = buf.toString('utf8');
@@ -827,7 +864,110 @@ app.get('/files/view', async (c) => {
     bytes: st.size,
     content,
     truncated,
+    downloadUrl: `/files/raw?download=1&path=${encodeURIComponent(absolute)}`,
     ...(truncatedReason ? { truncated_reason: truncatedReason } : {}),
+  });
+});
+
+// Raw bytes for the FileView. Split from /files/view because the two
+// answer different questions: that route says WHAT a file is, this one
+// hands over the bytes. Same policy, same two passes — what an agent
+// may read, the user may view.
+//
+// Range requests are not optional here. A browser seeking inside a
+// video issues them, and an endpoint that ignores Range makes seeking
+// either fail or re-download the whole file per scrub.
+//
+// Every file type is downloadable, including the ones the viewer cannot
+// render: `?download=1` forces the attachment disposition. Inline
+// display is limited to media types — anything else would let a crafted
+// file execute on somora's own origin.
+const FILEVIEW_INLINE_KINDS = new Set(['image', 'video', 'audio', 'pdf']);
+
+app.get('/files/raw', async (c) => {
+  const raw = c.req.query('path');
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return c.json({ error: 'missing path query' }, 400);
+  }
+  const expanded = expandHome(raw);
+  if (!isAbsolute(expanded)) {
+    return c.json({ error: 'path must be absolute' }, 400);
+  }
+  const absolute = normalize(expanded);
+  const policy = checkReadAllowed(absolute);
+  if (!policy.ok) return c.json({ error: policy.reason }, 403);
+  const real = await realpathSafeAncestor(absolute);
+  const policyReal = checkReadAllowed(real);
+  if (!policyReal.ok) return c.json({ error: policyReal.reason }, 403);
+
+  let st: Awaited<ReturnType<typeof statFs>>;
+  try {
+    st = await statFs(absolute);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return c.json({ error: 'file not found' }, 404);
+    }
+    throw err;
+  }
+  if (!st.isFile()) return c.json({ error: 'path is not a regular file' }, 400);
+
+  const detected = await detectMimeFromPath(absolute);
+  const download = c.req.query('download') === '1';
+  const inline = !download && FILEVIEW_INLINE_KINDS.has(detected.kind);
+  const filename = absolute.slice(absolute.lastIndexOf('/') + 1);
+  const headers: Record<string, string> = {
+    'content-type': detected.mimeType,
+    // The type is declared from the bytes; never let a browser second-
+    // guess it into something executable.
+    'x-content-type-options': 'nosniff',
+    'accept-ranges': 'bytes',
+    'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${filename.replace(/"/g, '')}"`,
+    'cache-control': 'private, max-age=60',
+  };
+
+  const { createReadStream } = await import('node:fs');
+  const { Readable } = await import('node:stream');
+
+  const rangeHeader = c.req.header('range');
+  const match = rangeHeader ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null;
+  if (match && st.size > 0) {
+    const startRaw = match[1];
+    const endRaw = match[2];
+    let start: number;
+    let end: number;
+    if (startRaw) {
+      start = Number(startRaw);
+      end = endRaw ? Number(endRaw) : st.size - 1;
+    } else if (endRaw) {
+      // `bytes=-500` means the LAST 500 bytes, not "up to 500".
+      start = Math.max(0, st.size - Number(endRaw));
+      end = st.size - 1;
+    } else {
+      start = 0;
+      end = st.size - 1;
+    }
+    end = Math.min(end, st.size - 1);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= st.size) {
+      return new Response(null, {
+        status: 416,
+        headers: { 'content-range': `bytes */${st.size}`, 'accept-ranges': 'bytes' },
+      });
+    }
+    const stream = Readable.toWeb(createReadStream(absolute, { start, end })) as ReadableStream;
+    return new Response(stream, {
+      status: 206,
+      headers: {
+        ...headers,
+        'content-range': `bytes ${start}-${end}/${st.size}`,
+        'content-length': String(end - start + 1),
+      },
+    });
+  }
+
+  const stream = Readable.toWeb(createReadStream(absolute)) as ReadableStream;
+  return new Response(stream, {
+    status: 200,
+    headers: { ...headers, 'content-length': String(st.size) },
   });
 });
 
@@ -1002,18 +1142,27 @@ app.get('/agents/:agent/tools', async (c) => {
       }),
     config,
   };
-  const availableNow = new Set((await tools.listAvailable(ctx)).map((t) => t.name));
+  // Only tools this agent could actually use are listed. A tool whose
+  // config doesn't exist has nothing to configure, and offering a
+  // switch that changes nothing is worse than offering none: flipping
+  // it looks like it did something.
+  //
+  // `listConfigured`, not `listAvailable` — this screen is a persistent
+  // setting, and the loop-holder narrowing that listAvailable applies
+  // is a state of this minute. Tools must not vanish from the settings
+  // because the agent is mid-wiki-loop.
+  const configured = await tools.listConfigured(ctx);
   return c.json({
     agent,
     gating,
     hasPatternRules,
-    tools: tools.list().map((t) => ({
+    tools: configured.map((t) => ({
       name: t.name,
       toolset: t.toolset,
       ...(t.origin ? { mcpServer: t.origin.mcpServer } : {}),
       description: t.description.slice(0, 140),
       visible: isToolAllowed(t.name, t.toolset, gating ?? undefined),
-      availableNow: availableNow.has(t.name),
+      availableNow: true,
     })),
   });
 });
@@ -2644,20 +2793,32 @@ app.post('/images/generate', async (c) => {
         ...(typeof body.model === 'string' ? { model: body.model } : {}),
         specs: specs as Parameters<typeof generateImage>[0]['specs'],
         ...(saveTo ? { saveTo } : {}),
+        // The browser has bytes, not a server path — see
+        // src/imagegen/references.ts on why the two entrances differ.
         ...(Array.isArray(body.reference_images)
-          ? { references: body.reference_images.filter((r): r is string => typeof r === 'string') }
+          ? {
+              references: body.reference_images
+                .filter((r): r is string => typeof r === 'string')
+                .map((r, i) => referenceFromBase64(r, i)),
+            }
           : {}),
         ...(typeof body.session === 'string' ? { session: body.session } : {}),
       },
       config,
     );
-    return c.json({ images: result.images, costUsd: result.costUsd ?? null });
+    return c.json({
+      images: result.images,
+      costUsd: result.costUsd ?? null,
+      ...(result.fellBackFrom ? { fellBackFrom: result.fellBackFrom } : {}),
+    });
   } catch (err) {
     if (err instanceof ImageGenError) {
       // 400 for anything the caller can fix, 502 for an upstream that
       // misbehaved — the UI shows the message either way, but the
       // status tells it whether to blame the form or the provider.
-      return c.json({ error: err.message, kind: err.kind }, err.kind === 'upstream' ? 502 : 400);
+      const status =
+        err.kind === 'unavailable' ? 503 : err.kind === 'upstream' ? 502 : 400;
+      return c.json({ error: err.message, kind: err.kind }, status);
     }
     logger.error({ msg: 'images.generate_failed', err: (err as Error).message });
     return c.json({ error: (err as Error).message }, 500);

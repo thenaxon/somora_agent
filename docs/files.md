@@ -134,6 +134,26 @@ vision:
   pdfWorker: openrouter/claude-sonnet-4-6  # optional override for PDFs
 ```
 
+`worker` also takes an **ordered list**, tried front to back until one
+answers:
+
+```yaml
+vision:
+  worker:
+    - local/qwen-vision                    # preferred: free, stays in-house
+    - openrouter/claude-haiku-4-5          # always available, costs money
+  timeoutMs: 60000                         # per attempt, then move on
+  healthCacheMs: 60000                     # skip a just-failed worker this long
+```
+
+This exists because a locally hosted worker is only loaded while its GPU
+profile is active; with a single configured value, switching profiles
+takes `analyze_file` down for every agent at once and does so silently.
+Entries that don't resolve, or that lack the capability the file needs,
+are skipped rather than fatal — the point of a chain is surviving one
+entry being unusable. The tool result names the worker that answered,
+and lists the ones passed over when it wasn't the first.
+
 Worker model **must be on `openai-compatible` engine** in v1 (use
 openrouter or another openai-compatible proxy if you want a Claude or
 GPT model). Same constraint as Dream-Mode. At server startup, somora

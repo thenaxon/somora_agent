@@ -41,7 +41,12 @@ export interface AttachmentDisplay {
 
 /** One image generated during an assistant turn. Refs only — bytes
  *  are served by GET /images/:id/file. */
-export interface AssistantImage {
+/** One item from an `assistant_media` event. `type` decides how it is
+ *  rendered; an entry whose type this client doesn't know is skipped
+ *  rather than guessed at, which is what lets a future video type land
+ *  without breaking older clients. */
+export interface AssistantMedia {
+  type: 'image';
   id: string;
   prompt: string;
   mime: string;
@@ -104,11 +109,11 @@ export type ChatMessage =
        *  assistant_audio SSE event with matching turnId arrived after
        *  the assistant message. Drives the per-bubble Play-button. */
       audio?: AssistantAudio;
-      /** Images generated while this turn ran. Arrives after the text
-       *  as an assistant_images event and is rendered under the bubble,
-       *  so a person who asked for a picture gets the picture without
-       *  the agent having to remember to send it. */
-      images?: AssistantImage[];
+      /** Media produced while this turn ran. Arrives after the text as
+       *  an assistant_media event and is rendered under the bubble, so
+       *  a person who asked for a picture gets the picture without the
+       *  agent having to remember to send it. */
+      media?: AssistantMedia[];
       /** The engine-emitted turnId for this message. Used to pair
        *  late-arriving assistant_audio events to the right bubble. */
       turnId?: string;
@@ -207,8 +212,8 @@ export type StreamEvent =
       data: { turnId: string; url: string; mime: string; durationMs?: number; cacheKey: string };
     }
   | {
-      event: 'assistant_images';
-      data: { turnId: string; images: AssistantImage[] };
+      event: 'assistant_media';
+      data: { turnId: string; media: AssistantMedia[] };
     }
   | {
       event: 'engine_meta';

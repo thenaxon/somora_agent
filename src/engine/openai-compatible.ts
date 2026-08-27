@@ -28,6 +28,7 @@ import { logger } from '../server/logger.ts';
 import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import type { ModelCapability } from '../config/types.ts';
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
@@ -210,6 +211,11 @@ export async function buildMessages(
   history: NormalizedEvent[],
   compactions: Compaction[] | undefined,
   pdfMode: 'native' | 'rasterize',
+  /** Capabilities of the model this history is being packed FOR.
+   *  Required, not optional: a caller that forgets it would silently
+   *  reintroduce the bug this parameter exists to prevent — replaying
+   *  image blocks at a model that cannot accept them. */
+  caps: readonly ModelCapability[],
 ): Promise<ChatMessage[]> {
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
 
@@ -350,7 +356,22 @@ export async function buildMessages(
             content: `[Attachments lost from disk: ${lostNames}]\n\n${composed}`,
           });
         } else {
-          const content = await buildOpenAiUserContent(composed, resolved, pdfMode);
+          const notShown = resolved.filter(
+            (r) =>
+              (r.mime.kind === 'image' && !caps.includes('image')) ||
+              (r.mime.kind === 'pdf' && !caps.includes('pdf') && !caps.includes('image')),
+          );
+          if (notShown.length > 0) {
+            logger.info({
+              msg: 'engine.history.attachments_not_shown',
+              count: notShown.length,
+              kinds: notShown.map((r) => r.mime.kind),
+              names: notShown.map((r) => r.name),
+              capabilities: [...caps],
+              hint: 'active model lacks the capability — replayed as text markers so the turn still packs',
+            });
+          }
+          const content = await buildOpenAiUserContent(composed, resolved, pdfMode, caps);
           messages.push({
             role: 'user',
             content: content as OpenAI.Chat.Completions.ChatCompletionUserMessageParam['content'],
@@ -637,7 +658,13 @@ export const openAiCompatibleEngine: AgentEngine = {
         : systemPrompt;
     const pdfMode =
       (resolvedModel.provider as { pdfMode?: 'native' | 'rasterize' }).pdfMode ?? 'rasterize';
-    const messages = await buildMessages(effectiveSystemPrompt, history, compactions, pdfMode);
+    const messages = await buildMessages(
+      effectiveSystemPrompt,
+      history,
+      compactions,
+      pdfMode,
+      resolvedModel.model.capabilities,
+    );
     const estTokens = estimateTokens(messages);
     const ctxRatio = estTokens / resolvedModel.model.contextWindow;
     if (ctxRatio > 0.7) {

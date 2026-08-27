@@ -227,6 +227,7 @@ function MobileMessage({
             </button>
           )}
           {isAgent && msg.audio && <PlayAudioButton url={msg.audio.url} />}
+          {isAgent && msg.mediaNote && <MediaNote count={msg.mediaNote.count} />}
         </div>
         <span className="msg-time">
           {msg.role === 'user' && msg.queued && (
@@ -240,6 +241,19 @@ function MobileMessage({
           {formatMobileTime(msg.ts)}
         </span>
       </div>
+    </div>
+  );
+}
+
+// The PWA deliberately shows no images or video: it is a phone client
+// for reading and replying, and the desktop app is where media gets
+// looked at. But saying NOTHING would make a turn that produced a
+// picture read as "the agent answered without delivering" — so the
+// bubble carries one line naming what exists and where to see it.
+function MediaNote({ count }: { count: number }) {
+  return (
+    <div className="msg-media-note">
+      {count === 1 ? '1 image' : `${count} images`} · open in the web app
     </div>
   );
 }
