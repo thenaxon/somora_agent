@@ -336,6 +336,53 @@ providers:
 #         aspect_ratio: ["1:1", "16:9", "9:16"]
 #         maxReferences: 4
 #
+# Video generation. Job-based, unlike images: a render takes MINUTES, so
+# somora starts the job, lets the agent's turn end, and wakes the agent
+# when its video is ready. Nobody waits.
+#
+# videoGen:
+#   enabled: true
+#   outputDir: ~/somoraworkspace/videos
+#   monthlyFolders: true
+#   maxConcurrent: 4                        # across ALL agents, not per
+#                                           #  agent: a GPU is shared, and
+#                                           #  a per-agent budget lets four
+#                                           #  agents take twelve slots.
+#                                           #  The caller that finds it full
+#                                           #  is refused, not queued.
+#   pollIntervalMs: 8000
+#   jobTimeoutMs: 2700000                   # 45 min; 14s of video ≈ 8 min
+#   models:
+#     - name: h3
+#       provider: local-video               # ← reuses providers.<name>
+#       model: h3
+#       wire: passthrough                   # job id in the QUERY — the shape
+#                                           #  that survives a proxy which
+#                                           #  forwards exact paths only
+#       capabilitiesEndpoint: /video/models  # catalog: what each model takes
+#
+#     - name: sora                          # OpenAI: job id in the PATH
+#       provider: openai
+#       model: sora-2
+#       wire: openai
+#       capabilitiesEndpoint: null          # OpenAI publishes no video
+#       allow:                              #  catalog, so declare it here
+#         supported: [seconds, size, input_reference]
+#         variants: [video, thumbnail]      # thumbnail → gallery preview,
+#         maxReferences: 1                  #  and analyze_file can read it
+#
+#     # ⚠ NOT YET VERIFIED against a live endpoint — somora has had no
+#     # Vertex access to test with. The dialect is written from Google's
+#     # published shape (operation name instead of a job id, POST to poll,
+#     # result inside the poll response) so that adding Veo is a config
+#     # entry rather than a refactor. Do not assume it works until someone
+#     # has run it once.
+#     - name: veo
+#       provider: vertex
+#       model: veo-3
+#       wire: veo
+#       capabilitiesEndpoint: null
+
 # Per-agent, in ~/.somora/agents/<name>/agent.yaml:
 #   imageReview: never                          # never (default) | always
 # `always` feeds each generated image back into that agent's context so

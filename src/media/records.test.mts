@@ -4,7 +4,7 @@
 //
 // SOMORA_HOME is redirected to a temp dir BEFORE importing the module —
 // the records directory is resolved at import time, so a static import
-// would write into the developer's real ~/.somora/images.
+// would write into the developer's real ~/.somora/media.
 
 import assert from 'node:assert/strict';
 import { mkdtemp, writeFile, readdir } from 'node:fs/promises';
@@ -14,10 +14,10 @@ import { join } from 'node:path';
 const home = await mkdtemp(join(tmpdir(), 'somora-records-'));
 process.env.SOMORA_HOME = home;
 
-const { deleteRecord, listRecords, newImageId, readRecord, totalBytes, writeRecord } = await import(
+const { deleteRecord, listRecords, newMediaId, readRecord, totalBytes, writeRecord } = await import(
   './records.ts'
 );
-const recordsDir = join(home, 'images');
+const recordsDir = join(home, 'media');
 
 let pass = 0;
 let fail = 0;
@@ -33,7 +33,7 @@ type Rec = Parameters<typeof writeRecord>[0];
 
 function rec(overrides: Partial<Rec> = {}): Rec {
   return {
-    id: newImageId(),
+    id: newMediaId(),
     createdAt: '2026-08-26T14:30:12.000Z',
     prompt: 'ein Koala im Weltraum',
     modelName: 'grok-imagine',
@@ -53,9 +53,9 @@ function rec(overrides: Partial<Rec> = {}): Rec {
 
 // ── ids ─────────────────────────────────────────────────────────────
 
-check('id: url-safe', /^[a-z0-9]+$/.test(newImageId()));
-check('id: stable length', newImageId().length === 12);
-check('id: unique across calls', new Set(Array.from({ length: 500 }, newImageId)).size === 500);
+check('id: url-safe', /^[a-z0-9]+$/.test(newMediaId()));
+check('id: stable length', newMediaId().length === 12);
+check('id: unique across calls', new Set(Array.from({ length: 500 }, newMediaId)).size === 500);
 
 // ── round trip ──────────────────────────────────────────────────────
 
@@ -65,7 +65,7 @@ const readBack = await readRecord(a.id);
 check('roundtrip: record found', readBack !== null);
 check('roundtrip: prompt preserved', readBack?.prompt === 'Koala im Weltraum');
 check('roundtrip: specs preserved', readBack?.specs.aspect_ratio === '16:9');
-check('roundtrip: unknown id returns null', (await readRecord(newImageId())) === null);
+check('roundtrip: unknown id returns null', (await readRecord(newMediaId())) === null);
 
 // Write leaves no .tmp file behind.
 const leftovers = (await readdir(recordsDir)).filter((f) => f.endsWith('.tmp'));
@@ -105,8 +105,8 @@ const all = await listRecords();
 check('list: returns everything by default', all.total === 3, String(all.total));
 check(
   'list: newest first',
-  all.images[0]?.createdAt === '2026-08-26T14:30:12.000Z',
-  all.images[0]?.createdAt,
+  all.items[0]?.createdAt === '2026-08-26T14:30:12.000Z',
+  all.items[0]?.createdAt,
 );
 
 const koalas = await listRecords({ query: 'koala' });
@@ -126,13 +126,13 @@ check('filter: no match returns empty', (await listRecords({ query: 'nichtsdergl
 
 // Paging reports the unpaged total, so a UI can show "3 of 12".
 const paged = await listRecords({ limit: 2 });
-check('paging: limit applied', paged.images.length === 2);
+check('paging: limit applied', paged.items.length === 2);
 check('paging: total is unpaged', paged.total === 3);
 const page2 = await listRecords({ limit: 2, offset: 2 });
-check('paging: offset advances', page2.images.length === 1);
+check('paging: offset advances', page2.items.length === 1);
 check(
   'paging: pages do not overlap',
-  page2.images[0]?.id !== paged.images[0]?.id && page2.images[0]?.id !== paged.images[1]?.id,
+  page2.items[0]?.id !== paged.items[0]?.id && page2.items[0]?.id !== paged.items[1]?.id,
 );
 
 check('size: bytes summed across records', (await totalBytes()) === 4000, String(await totalBytes()));
@@ -152,6 +152,22 @@ check('delete: existing record removed', (await deleteRecord(a.id)) === true);
 check('delete: gone afterwards', (await readRecord(a.id)) === null);
 check('delete: already-gone returns false', (await deleteRecord(a.id)) === false);
 check('delete: list shrinks', (await listRecords()).total === 2);
+
+// ── kind-Filter mit echtem Video ───────────────────────────────────
+{
+  await writeRecord({
+    id: 'vid000000001', kind: 'video', createdAt: '2026-08-28T10:00:00.000Z',
+    prompt: 'ein drehender apfel', modelName: 'ltx', modelId: 'ltx', provider: 'cerebro',
+    specs: {}, path: '/tmp/v.mp4', filename: 'v.mp4', mime: 'video/mp4', bytes: 999,
+    durationSec: 5.04, width: 1280, height: 704, linkedTo: [], batchId: 'b2', batchIndex: 0,
+  });
+  const vids = await listRecords({ kind: 'video' });
+  check('Video wird als Video gelistet', vids.items.some((r) => r.id === 'vid000000001'));
+  const imgs = await listRecords({ kind: 'image' });
+  check('und nicht als Bild', !imgs.items.some((r) => r.id === 'vid000000001'));
+  const both = await listRecords({});
+  check('ohne Filter kommen beide', both.items.length >= 2);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 assert.equal(fail, 0, `${fail} records test(s) failed`);

@@ -46,13 +46,19 @@ export interface AttachmentDisplay {
  *  rather than guessed at, which is what lets a future video type land
  *  without breaking older clients. */
 export interface AssistantMedia {
-  type: 'image';
+  type: 'image' | 'video';
   id: string;
   prompt: string;
   mime: string;
   filename: string;
-  /** Path served by GET /images/:id/file on the somora server. */
+  /** Path served by the somora server. Rows written on 2026-08-27
+   *  carry `/images/<id>/file`; newer ones `/media/<id>/file`. Both
+   *  stay served — the string is in session files. */
   url: string;
+  /** Video: a still to show before playback starts. */
+  thumbUrl?: string;
+  /** Video: playing time in seconds. */
+  durationSec?: number;
 }
 
 export interface AssistantAudio {
@@ -73,7 +79,7 @@ export type ChatMessage =
       /** Marks an inbound that the server synthesized via an internal
        *  subsystem (today: 'sentinel'). Renderer draws a centered
        *  system divider instead of a user-bubble. */
-      fromSystem?: 'sentinel' | 'tmux' | 'subagent';
+      fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job';
       attachments?: AttachmentDisplay[];
       /** Server turnId returned by POST /chat/send. Used to pair this
        *  optimistic bubble with later SSE events (turn_queued while
@@ -197,7 +203,7 @@ export type StreamEvent =
         ts: number;
         turnId?: string;
         from_agent?: string;
-        from_system?: 'sentinel' | 'tmux' | 'subagent';
+        from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
       };
     }
   | {

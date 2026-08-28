@@ -18,6 +18,7 @@ import { wikiTools } from './wiki/index.ts';
 import { projectTools } from './projects/index.ts';
 import { sentinelTools } from './sentinel/index.ts';
 import { imageTools } from './image/index.ts';
+import { videoTools } from './video/index.ts';
 
 export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
@@ -41,6 +42,7 @@ export { wikiTools } from './wiki/index.ts';
 export { projectTools } from './projects/index.ts';
 export { sentinelTools } from './sentinel/index.ts';
 export { imageTools } from './image/index.ts';
+export { videoTools } from './video/index.ts';
 export { configureDreamRunTool } from './dream/index.ts';
 
 /**
@@ -84,4 +86,5 @@ export function registerAllTools(registry: ToolRegistry): void {
   // model configured. A tool the agent can see but cannot run is
   // worse than one that isn't offered.
   registry.registerMany(imageTools());
+  registry.registerMany(videoTools());
 }

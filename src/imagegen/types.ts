@@ -91,6 +91,13 @@ export interface ModelCapabilities {
   recommended?: Partial<Record<EnumerableSpecField, string[]>>;
   maxN?: number;
   maxReferences?: number;
+  /**
+   * Content flavours the provider serves for a finished item, from the
+   * catalog's `supported_variants`. Video only in practice: `video`
+   * plus, where offered, `thumbnail` — the still that gives a gallery
+   * something to show and `analyze_file` something to read.
+   */
+  variants?: string[];
 }
 
 /** Does this model accept `field`? Unknown counts as yes — see the note

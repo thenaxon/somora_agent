@@ -23,16 +23,20 @@ import { workerChain, type Config, resolveAnyRef, type ThinkingLevel } from '../
 import { storeAttachment } from '../attachments/store.ts';
 import { generateImage, ImageGenError } from '../imagegen/generate.ts';
 import { referenceFromBase64 } from '../imagegen/references.ts';
+import { startVideoJob, VideoGenError } from '../videogen/generate.ts';
+import { checkSlot as checkVideoSlot, listJobs as listVideoJobs } from '../videogen/jobs.ts';
+import { configureVideoNotifier, startVideoRunner } from '../videogen/runner.ts';
+import { configureVideoWake, wakeForJob } from '../videogen/wake.ts';
 import {
   listCatalogModels as listImageCatalogModels,
   resolveCapabilities as resolveImageCapabilities,
-} from '../imagegen/capabilities.ts';
+} from '../media/capabilities.ts';
 import {
-  deleteRecord as deleteImageRecord,
-  listRecords as listImageRecords,
-  readRecord as readImageRecord,
+  deleteRecord as deleteMediaRecord,
+  listRecords as listMediaRecords,
+  readRecord as readMediaRecord,
   totalBytes as imageTotalBytes,
-} from '../imagegen/records.ts';
+} from '../media/records.ts';
 import { detectMimeFromPath } from '../multimodal/mime.ts';
 import { existsSync } from 'node:fs';
 import { readFile as fsReadFile, stat as statFs, readFile as readFileFs } from 'node:fs/promises';
@@ -2714,7 +2718,7 @@ app.get('/images', async (c) => {
   const q = c.req.query();
   const limit = Math.min(Number(q.limit) || 60, 200);
   const offset = Math.max(Number(q.offset) || 0, 0);
-  const result = await listImageRecords({
+  const result = await listMediaRecords({
     ...(q.query ? { query: q.query } : {}),
     ...(q.model ? { model: q.model } : {}),
     ...(q.agent ? { agent: q.agent } : {}),
@@ -2726,19 +2730,19 @@ app.get('/images', async (c) => {
   return c.json({
     total: result.total,
     offset,
-    images: result.images,
+    items: result.items,
     totalBytes: await imageTotalBytes(),
   });
 });
 
 app.get('/images/:id', async (c) => {
-  const record = await readImageRecord(c.req.param('id'));
+  const record = await readMediaRecord(c.req.param('id'));
   if (!record) return c.json({ error: 'not found' }, 404);
   return c.json(record);
 });
 
 app.get('/images/:id/file', async (c) => {
-  const record = await readImageRecord(c.req.param('id'));
+  const record = await readMediaRecord(c.req.param('id'));
   if (!record) return c.json({ error: 'not found' }, 404);
   if (!existsSync(record.path)) {
     // The file was moved or deleted outside somora. Say so plainly —
@@ -2839,13 +2843,204 @@ app.post('/images/generate', async (c) => {
 
 app.delete('/images/:id', async (c) => {
   const id = c.req.param('id');
-  const record = await readImageRecord(id);
+  const record = await readMediaRecord(id);
   if (!record) return c.json({ error: 'not found' }, 404);
   // Only the metadata goes; the file stays. Deleting user files from a
   // gallery button is not something to do on one click, and hardlinks
   // mean somora couldn't reliably reach every name for it anyway.
-  const ok = await deleteImageRecord(id);
+  const ok = await deleteMediaRecord(id);
   return c.json({ ok, path: record.path, fileKept: true });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Media — one surface over generated images and video.
+//
+// `/images/:id/file` above stays mounted for good: that exact string is
+// written into session files by assistant_media events, and a URL
+// already on disk cannot be rewritten. Everything new speaks /media.
+// ─────────────────────────────────────────────────────────────────────
+
+app.get('/media', async (c) => {
+  const kindParam = c.req.query('kind');
+  const kind = kindParam === 'image' || kindParam === 'video' ? kindParam : undefined;
+  const limit = Math.min(Number(c.req.query('limit') ?? 60) || 60, 200);
+  const offset = Math.max(Number(c.req.query('offset') ?? 0) || 0, 0);
+  const result = await listMediaRecords({
+    ...(kind ? { kind } : {}),
+    ...(c.req.query('agent') ? { agent: c.req.query('agent')! } : {}),
+    ...(c.req.query('query') ? { query: c.req.query('query')! } : {}),
+    limit,
+    offset,
+  });
+  return c.json({
+    total: result.total,
+    offset,
+    items: result.items,
+    totalBytes: await imageTotalBytes(),
+  });
+});
+
+app.get('/media/:id', async (c) => {
+  const record = await readMediaRecord(c.req.param('id'));
+  if (!record) return c.json({ error: 'not found' }, 404);
+  return c.json(record);
+});
+
+/** The bytes. `?download=1` forces a save dialog for any type. */
+app.get('/media/:id/file', async (c) => serveMediaFile(c, 'file'));
+/** A video's still. 404 when the provider served none. */
+app.get('/media/:id/thumb', async (c) => serveMediaFile(c, 'thumb'));
+
+async function serveMediaFile(c: Context, which: 'file' | 'thumb'): Promise<Response> {
+  const id = c.req.param('id');
+  if (!id) return c.json({ error: 'missing id' }, 400);
+  const record = await readMediaRecord(id);
+  if (!record) return c.json({ error: 'not found' }, 404);
+  const path = which === 'thumb' ? record.thumbPath : record.path;
+  const mime = which === 'thumb' ? (record.thumbMime ?? 'image/webp') : record.mime;
+  if (!path) return c.json({ error: 'no thumbnail for this item' }, 404);
+  if (!existsSync(path)) {
+    return c.json({ error: 'file missing on disk', path }, 410);
+  }
+  const st = await statFs(path);
+  const asAttachment = c.req.query('download') === '1';
+  const filename = which === 'thumb' ? `${record.filename}.thumb` : record.filename;
+  const headers: Record<string, string> = {
+    'Content-Type': mime,
+    'Content-Disposition': `${asAttachment ? 'attachment' : 'inline'}; filename="${encodeURIComponent(filename)}"`,
+    'Accept-Ranges': 'bytes',
+    'X-Content-Type-Options': 'nosniff',
+    // Records are immutable once written; a re-render gets a new id.
+    'Cache-Control': 'private, max-age=31536000, immutable',
+  };
+
+  // Range matters here in a way it never did for images: a browser
+  // seeking inside a video sends it, and without support every scrub
+  // re-downloads the file.
+  const { createReadStream } = await import('node:fs');
+  const { Readable } = await import('node:stream');
+  const rangeHeader = c.req.header('range');
+  const match = rangeHeader ? /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim()) : null;
+  if (match && st.size > 0) {
+    const startRaw = match[1];
+    const endRaw = match[2];
+    let start: number;
+    let end: number;
+    if (startRaw) {
+      start = Number(startRaw);
+      end = endRaw ? Number(endRaw) : st.size - 1;
+    } else if (endRaw) {
+      start = Math.max(0, st.size - Number(endRaw));
+      end = st.size - 1;
+    } else {
+      start = 0;
+      end = st.size - 1;
+    }
+    end = Math.min(end, st.size - 1);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= st.size) {
+      return new Response(null, {
+        status: 416,
+        headers: { 'content-range': `bytes */${st.size}`, 'accept-ranges': 'bytes' },
+      });
+    }
+    const stream = Readable.toWeb(createReadStream(path, { start, end })) as ReadableStream;
+    return new Response(stream, {
+      status: 206,
+      headers: {
+        ...headers,
+        'Content-Range': `bytes ${start}-${end}/${st.size}`,
+        'Content-Length': String(end - start + 1),
+      },
+    });
+  }
+  const stream = Readable.toWeb(createReadStream(path)) as ReadableStream;
+  return new Response(stream, {
+    status: 200,
+    headers: { ...headers, 'Content-Length': String(st.size) },
+  });
+}
+
+app.delete('/media/:id', async (c) => {
+  const ok = await deleteMediaRecord(c.req.param('id'));
+  return ok ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+// Video jobs. The loop lives here in the main server, so an MCP child
+// reaches it over HTTP rather than starting a loop that would die with
+// the child.
+// ─────────────────────────────────────────────────────────────────────
+
+function videoGenReady(): { ok: boolean; reason?: string } {
+  if (!config.videoGen?.enabled) return { ok: false, reason: 'video generation is not enabled' };
+  if ((config.videoGen.models?.length ?? 0) === 0) {
+    return { ok: false, reason: 'no video models configured' };
+  }
+  return { ok: true };
+}
+
+app.get('/video/status', async (c) => {
+  const ready = videoGenReady();
+  if (!ready.ok) return c.json({ enabled: false, reason: ready.reason });
+  const agent = c.req.query('agent');
+  const jobs = await listVideoJobs(agent ? { agent } : {});
+  const slot = await checkVideoSlot(config);
+  return c.json({
+    enabled: true,
+    active: slot.active,
+    limit: slot.limit,
+    models: config.videoGen!.models.map((m) => ({
+      name: m.name,
+      label: m.label ?? m.name,
+      model: m.model,
+      provider: m.provider,
+      wire: m.wire,
+    })),
+    jobs,
+  });
+});
+
+app.post('/video/generate', async (c) => {
+  const ready = videoGenReady();
+  if (!ready.ok) return c.json({ error: ready.reason }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+  if (!prompt) return c.json({ error: 'prompt is required' }, 400);
+
+  const specs: Record<string, unknown> = {};
+  for (const key of ['seconds', 'size', 'aspect_ratio', 'audio', 'quality', 'seed']) {
+    if (body[key] !== undefined && body[key] !== null && body[key] !== '') specs[key] = body[key];
+  }
+  // References arrive as base64 here: the browser has bytes and no
+  // server path, and the MCP child hands its already-read files over
+  // the same way.
+  const references = Array.isArray(body.reference_images)
+    ? body.reference_images
+        .filter((r): r is string => typeof r === 'string')
+        .map((r, i) => referenceFromBase64(r, i))
+    : [];
+
+  try {
+    const { job } = await startVideoJob(
+      {
+        prompt,
+        ...(typeof body.model === 'string' ? { model: body.model } : {}),
+        specs,
+        ...(references.length > 0 ? { references } : {}),
+        ...(typeof body.agent === 'string' ? { agent: body.agent } : {}),
+        ...(typeof body.session === 'string' ? { session: body.session } : {}),
+      },
+      config,
+    );
+    return c.json({ job });
+  } catch (err) {
+    if (err instanceof VideoGenError) {
+      const status =
+        err.kind === 'busy' ? 429 : err.kind === 'unavailable' ? 503 : err.kind === 'upstream' ? 502 : 400;
+      return c.json({ error: err.message, kind: err.kind }, status);
+    }
+    throw err;
+  }
 });
 
 // Speech-to-Text. Web mic button POSTs multipart with `file` (audio
@@ -4290,6 +4485,24 @@ if (config.tmux.attention.enabled) {
 } else {
   writeAttentionMirror({});
 }
+// Video renders run for minutes on a shared GPU, so the turn that asks
+// for one is released immediately and the agent is brought back when
+// its video is ready — one wake per finished render, so four renders
+// don't all wait for the slowest. The loop resumes jobs left in flight
+// by a restart: the provider keeps rendering, and keeps the file, so
+// picking the poll back up is all it takes.
+if (config.videoGen?.enabled) {
+  configureVideoWake({
+    chatTurnDeps,
+    publishEvent: (agent, session, event) =>
+      publish(agent, session, event as Parameters<typeof publish>[2]),
+  });
+  configureVideoNotifier(async (job) => {
+    await wakeForJob(job);
+  });
+  startVideoRunner(() => config);
+}
+
 // Subagent attention wake (2026-07-28 feedback): a finished async sub
 // whose result nobody fetched wakes its parent — same mechanic as the
 // tmux watcher, incl. the SSE publish so open clients see the wake

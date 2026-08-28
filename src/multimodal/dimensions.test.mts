@@ -12,7 +12,7 @@
 // unparseable must come back null rather than a guess.
 
 import { Buffer } from 'node:buffer';
-import { readDimensions, parseSizeSpec } from './dimensions.ts';
+import { readDimensions, parseSizeSpec, readVideoMeta } from './dimensions.ts';
 
 let pass = 0;
 let fail = 0;
@@ -132,6 +132,82 @@ check('parse unicode ×', parseSizeSpec('1024×1792')?.height === 1792);
 check('tier name is not a size', parseSizeSpec('2K') === null);
 check('undefined is not a size', parseSizeSpec(undefined) === null);
 check('garbage is not a size', parseSizeSpec('big please') === null);
+
+// ── MP4 header atoms ───────────────────────────────────────────────
+// Length and shape live in nested atoms, and `mdat` — the actual video,
+// often the whole file — has to be stepped over by its length field
+// rather than scanned. The fixtures below therefore put a fat mdat
+// BEFORE moov in one case, which is a real layout (streaming-optimised
+// files put moov first, plain encodes put it last).
+
+function atom(type: string, payload: Buffer): Buffer {
+  const b = Buffer.alloc(8 + payload.length);
+  b.writeUInt32BE(8 + payload.length, 0);
+  b.write(type, 4, 'latin1');
+  payload.copy(b, 8);
+  return b;
+}
+function mvhd(timescale: number, duration: number, version = 0): Buffer {
+  if (version === 1) {
+    const p = Buffer.alloc(108);
+    p.writeUInt8(1, 0);
+    p.writeUInt32BE(timescale, 20);
+    p.writeUInt32BE(0, 24);          // duration high word
+    p.writeUInt32BE(duration, 28);
+    return atom('mvhd', p);
+  }
+  const p = Buffer.alloc(100);
+  p.writeUInt32BE(timescale, 12);
+  p.writeUInt32BE(duration, 16);
+  return atom('mvhd', p);
+}
+function tkhd(w: number, h: number, version = 0): Buffer {
+  const size = version === 1 ? 96 : 84;
+  const p = Buffer.alloc(size);
+  p.writeUInt8(version, 0);
+  p.writeUInt32BE(Math.round(w * 65536), size - 8);
+  p.writeUInt32BE(Math.round(h * 65536), size - 4);
+  return atom('tkhd', p);
+}
+const ftyp = atom('ftyp', Buffer.from('isomiso2avc1'));
+
+function mp4(opts: { w: number; h: number; timescale: number; duration: number;
+                     version?: number; mdatFirst?: boolean; extraTrack?: boolean }): Buffer {
+  const traks: Buffer[] = [];
+  // An audio track has no display size and must not be believed.
+  if (opts.extraTrack) traks.push(atom('trak', tkhd(0, 0, opts.version)));
+  traks.push(atom('trak', tkhd(opts.w, opts.h, opts.version)));
+  const moov = atom('moov', Buffer.concat([mvhd(opts.timescale, opts.duration, opts.version), ...traks]));
+  const mdat = atom('mdat', Buffer.alloc(5000, 0x11));
+  return Buffer.concat(opts.mdatFirst ? [ftyp, mdat, moov] : [ftyp, moov, mdat]);
+}
+
+{
+  const m = readVideoMeta(mp4({ w: 1280, h: 704, timescale: 600, duration: 3025 }));
+  check('mp4: dimensions', m?.width === 1280 && m?.height === 704, JSON.stringify(m));
+  check('mp4: duration', Math.abs((m?.durationSec ?? 0) - 5.0417) < 0.01, String(m?.durationSec));
+}
+{
+  const m = readVideoMeta(mp4({ w: 1920, h: 1080, timescale: 1000, duration: 14400, mdatFirst: true }));
+  check('mp4: moov after a fat mdat is still found', m?.width === 1920, JSON.stringify(m));
+  check('mp4: 14.4s parsed', Math.abs((m?.durationSec ?? 0) - 14.4) < 0.001, String(m?.durationSec));
+}
+{
+  const m = readVideoMeta(mp4({ w: 768, h: 1344, timescale: 90000, duration: 450000, version: 1 }));
+  check('mp4: version-1 atoms', m?.width === 768 && m?.height === 1344, JSON.stringify(m));
+  check('mp4: version-1 duration', Math.abs((m?.durationSec ?? 0) - 5) < 0.001, String(m?.durationSec));
+}
+{
+  // The 0x0 track comes FIRST; believing it would report a broken size.
+  const m = readVideoMeta(mp4({ w: 640, h: 360, timescale: 600, duration: 600, extraTrack: true }));
+  check('mp4: a sizeless track is skipped', m?.width === 640 && m?.height === 360, JSON.stringify(m));
+}
+check('mp4: a PNG is not an mp4', readVideoMeta(png(10, 10)) === null);
+check('mp4: truncated header → null', readVideoMeta(ftyp) === null);
+check('mp4: empty → null', readVideoMeta(Buffer.alloc(0)) === null);
+// readDimensions is for stills; it must not start guessing at videos.
+check('readDimensions leaves mp4 alone',
+  readDimensions(mp4({ w: 100, h: 100, timescale: 1, duration: 1 })) === null);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

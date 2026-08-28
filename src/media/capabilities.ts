@@ -30,7 +30,7 @@ import {
   type ImageSpecs,
   type ModelCapabilities,
   supportsField,
-} from './types.ts';
+} from '../imagegen/types.ts';
 
 /** Catalog responses are cached for the process lifetime, keyed by
  *  provider+endpoint. Restart to re-read — same posture as the rest of
@@ -292,6 +292,11 @@ export async function resolveCapabilities(
     maxReferences:
       rangeMax(params, 'input_references', true) ??
       readNumber(row.raw, ['max_input_references', 'max_references'], true),
+    // Not a request parameter, so it lives beside supported_parameters
+    // rather than inside it: variants are options on the CONTENT call.
+    ...(asStringArray(row.raw.supported_variants)
+      ? { variants: asStringArray(row.raw.supported_variants) }
+      : {}),
   };
 }
 

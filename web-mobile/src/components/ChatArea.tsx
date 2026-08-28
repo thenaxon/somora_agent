@@ -227,7 +227,9 @@ function MobileMessage({
             </button>
           )}
           {isAgent && msg.audio && <PlayAudioButton url={msg.audio.url} />}
-          {isAgent && msg.mediaNote && <MediaNote count={msg.mediaNote.count} />}
+          {isAgent && msg.mediaNote && (
+            <MediaNote images={msg.mediaNote.images} videos={msg.mediaNote.videos} />
+          )}
         </div>
         <span className="msg-time">
           {msg.role === 'user' && msg.queued && (
@@ -250,12 +252,12 @@ function MobileMessage({
 // looked at. But saying NOTHING would make a turn that produced a
 // picture read as "the agent answered without delivering" — so the
 // bubble carries one line naming what exists and where to see it.
-function MediaNote({ count }: { count: number }) {
-  return (
-    <div className="msg-media-note">
-      {count === 1 ? '1 image' : `${count} images`} · open in the web app
-    </div>
-  );
+function MediaNote({ images, videos }: { images: number; videos: number }) {
+  const parts: string[] = [];
+  if (images > 0) parts.push(images === 1 ? '1 image' : `${images} images`);
+  if (videos > 0) parts.push(videos === 1 ? '1 video' : `${videos} videos`);
+  if (parts.length === 0) return null;
+  return <div className="msg-media-note">{parts.join(' · ')} · open in the web app</div>;
 }
 
 // Inline line-art Hourglass — path copied from lucide-react so the

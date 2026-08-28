@@ -1044,6 +1044,129 @@ export const ImageGenConfigSchema = z
   .optional();
 export type ImageGenConfig = z.infer<typeof ImageGenConfigSchema>;
 
+// Video generation. Same standalone shape as imageGen and for the same
+// reason, plus one that is specific to video: a render takes minutes on
+// a GPU, so these models must never be reachable as a conversation
+// model by accident.
+//
+// The lifecycle is what separates video from images: create a job, poll
+// it, then download the result. That is three requests instead of one,
+// and every provider spells them differently — hence `wire`.
+export const VideoWireSchema = z.enum(['openai', 'passthrough', 'veo']);
+export type VideoWire = z.infer<typeof VideoWireSchema>;
+
+export const VideoModelSchema = z.object({
+  /** Short handle used by the tool's `model` arg and the UI picker. */
+  name: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]+$/, 'video model name must match [A-Za-z0-9_-]+'),
+  /** Name of an existing entry in `providers`. Reuses its baseUrl +
+   *  apiKey. Provider engine must be `openai-compatible`. */
+  provider: z.string().min(1),
+  /** Model id sent in the request's `model` field. */
+  model: z.string().min(1),
+  label: z.string().min(1).optional(),
+  /**
+   * Which lifecycle dialect this endpoint speaks. All three do the same
+   * three things; they differ in where the job id lives and what the
+   * status field is called.
+   *
+   *   openai      — POST /videos, GET /videos/{id},
+   *                 GET /videos/{id}/content?variant=…   (id in the PATH)
+   *   passthrough — POST /vid/create, GET /vid/status?id=,
+   *                 GET /vid/content?id=&variant=…       (id in the QUERY)
+   *                 The shape a proxy can forward without rewriting
+   *                 paths, which is why a router in front of a local
+   *                 backend ends up here.
+   *   veo         — Google Vertex AI: predictLongRunning returns an
+   *                 OPERATION NAME rather than a job id, polling asks
+   *                 whether the operation is `done`, and the result
+   *                 arrives as a GCS URI or inline bytes rather than
+   *                 from a content endpoint.
+   *
+   * NOTE ON `veo`: implemented against Google's published shape but NOT
+   * yet verified against a live endpoint — somora has had no Vertex
+   * access to test with. Treat it as a prepared seam: the structure is
+   * here so adding Veo is a config entry rather than a refactor, but do
+   * not assume it works until someone has run it once. Every other
+   * dialect in this file was measured against a real endpoint before
+   * being called done.
+   */
+  wire: VideoWireSchema.default('openai'),
+  /** Path that creates a job, appended to the provider's baseUrl. */
+  createEndpoint: z.string().min(1).optional(),
+  /** Path that reports job state. */
+  statusEndpoint: z.string().min(1).optional(),
+  /** Path that yields the finished bytes. */
+  contentEndpoint: z.string().min(1).optional(),
+  /** Model catalog, appended to baseUrl. Null when the provider has
+   *  none — OpenAI publishes no video catalog, so `allow` is the truth
+   *  there. */
+  capabilitiesEndpoint: z.string().min(1).nullable().default(null),
+  /** Specs applied when the caller omits them. */
+  defaults: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({}),
+  /** Offline capability override — same meaning as imageGen's. */
+  allow: z
+    .object({
+      supported: z.array(z.string().min(1)).min(1).optional(),
+      /** Content variants this provider serves. `thumbnail` is what
+       *  lets a gallery show a frame and an agent judge its own output
+       *  through analyze_file. */
+      variants: z.array(z.string().min(1)).min(1).optional(),
+      aspect_ratio: z.array(z.string().min(1)).optional(),
+      size: z.array(z.string().min(1)).optional(),
+      maxSeconds: z.number().positive().optional(),
+      maxReferences: z.number().int().min(0).max(4).optional(),
+    })
+    .strict()
+    .optional(),
+  /** Handle of another video model to try when this one is unavailable.
+   *  Availability only, exactly as for images. */
+  fallback: z.string().min(1).optional(),
+});
+export type VideoModel = z.infer<typeof VideoModelSchema>;
+
+export const VideoGenConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    outputDir: z.string().min(1).default('~/somoraworkspace/videos'),
+    monthlyFolders: z.boolean().default(false),
+    /**
+     * How many renders somora keeps in flight across ALL agents.
+     * Global on purpose: a GPU is a shared resource and a per-agent
+     * budget would let four agents occupy twelve slots. When the cap is
+     * reached the next caller is turned away with a clear message
+     * rather than queued — waiting silently for an unknown number of
+     * minutes is worse than being told to come back.
+     */
+    maxConcurrent: z.number().int().min(1).max(32).default(4),
+    /** How often a running job is polled. */
+    pollIntervalMs: z.number().int().min(1000).default(8000),
+    /** A job that hasn't finished by then is given up on. Renders run
+     *  minutes, and a stuck job would otherwise hold a slot forever. */
+    jobTimeoutMs: z.number().int().positive().default(45 * 60_000),
+    /** Per-request budget for create/status/content calls themselves —
+     *  not for the render, which is what the job timeout covers. */
+    requestTimeoutMs: z.number().int().positive().default(120_000),
+    models: z.array(VideoModelSchema).min(1),
+  })
+  .optional();
+export type VideoGenConfig = z.infer<typeof VideoGenConfigSchema>;
+
+/** Resolve a video-model handle to its config entry + provider. */
+export function resolveVideoModel(
+  config: Config,
+  name?: string,
+): { entry: VideoModel; provider: Provider; providerName: string } | null {
+  const models = config.videoGen?.models;
+  if (!models || models.length === 0) return null;
+  const entry = name ? models.find((m) => m.name === name) : models[0];
+  if (!entry) return null;
+  const provider = config.providers[entry.provider];
+  if (!provider) return null;
+  return { entry, provider, providerName: entry.provider };
+}
+
 /** Resolve an image-model handle to its config entry + provider.
  *  Returns null for unknown handles so callers can produce an error
  *  that lists what IS configured. */
@@ -1497,6 +1620,7 @@ export const ConfigSchema = z.object({
   stt: SttConfigSchema,
   tts: TtsConfigSchema,
   imageGen: ImageGenConfigSchema,
+  videoGen: VideoGenConfigSchema,
   projects: ProjectsConfigSchema,
   sentinel: SentinelConfigSchema,
   obsidian: ObsidianConfigSchema,

@@ -9,8 +9,8 @@
 
 import { z } from 'zod';
 import { generateImage, ImageGenError } from '../../imagegen/generate.ts';
-import { listRecords } from '../../imagegen/records.ts';
-import { resolveCapabilities } from '../../imagegen/capabilities.ts';
+import { listRecords } from '../../media/records.ts';
+import { resolveCapabilities } from '../../media/capabilities.ts';
 import { resolveImageModel } from '../../config/types.ts';
 import type { ImageRecord, ImageSpecs } from '../../imagegen/types.ts';
 import { loadPersona } from '../../persona/loader.ts';
@@ -432,7 +432,7 @@ export const imageList: ToolDefinition<ListArgs, ListOutput> = {
   available: (ctx) => imageGenEnabled(ctx),
   async handler(input, ctx): Promise<ListOutput> {
     const agent = input.mine_only ? ctx.agent : input.agent;
-    const { total, images } = await listRecords({
+    const { total, items } = await listRecords({
       ...(input.query ? { query: input.query } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(agent ? { agent } : {}),
@@ -441,7 +441,7 @@ export const imageList: ToolDefinition<ListArgs, ListOutput> = {
       limit: input.limit ?? 20,
       offset: input.offset ?? 0,
     });
-    return { total, returned: images.length, images: images.map(toRow) };
+    return { total, returned: items.length, images: items.map(toRow) };
   },
 };
 

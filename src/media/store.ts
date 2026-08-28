@@ -19,9 +19,16 @@ import type { Config } from '../config/types.ts';
 import { detectMimeFromBuffer } from '../multimodal/mime.ts';
 import { expandHome } from '../tools/file/policy.ts';
 import { logger } from '../server/logger.ts';
+import type { MediaKind } from './types.ts';
 
-/** Fallback when the operator left `imageGen` out entirely. */
-const DEFAULT_OUTPUT_DIR = '~/somoraworkspace/images';
+/** Fallbacks when the operator left the block out entirely. Images and
+ *  video get separate directories on purpose: these are folders a
+ *  person browses, and mixing a 600 KB still with a 60 MB render makes
+ *  both harder to find. */
+const DEFAULT_OUTPUT_DIR: Record<MediaKind, string> = {
+  image: '~/somoraworkspace/images',
+  video: '~/somoraworkspace/videos',
+};
 
 const EXT_BY_MIME: Record<string, string> = {
   'image/png': 'png',
@@ -29,12 +36,16 @@ const EXT_BY_MIME: Record<string, string> = {
   'image/webp': 'webp',
   'image/gif': 'gif',
   'image/svg+xml': 'svg',
+  'video/mp4': 'mp4',
+  'video/webm': 'webm',
+  'video/quicktime': 'mov',
 };
 
-/** Canonical images directory, ~ expanded, month bucket applied. */
-export function imagesDir(config: Config, now = new Date()): string {
-  const cfg = config.imageGen;
-  const base = expandHome(cfg?.outputDir ?? DEFAULT_OUTPUT_DIR);
+/** Canonical directory for one medium, ~ expanded, month bucket
+ *  applied. */
+export function mediaDir(config: Config, kind: MediaKind, now = new Date()): string {
+  const cfg = kind === 'video' ? config.videoGen : config.imageGen;
+  const base = expandHome(cfg?.outputDir ?? DEFAULT_OUTPUT_DIR[kind]);
   if (!cfg?.monthlyFolders) return base;
   const bucket = `${now.getFullYear()}-${two(now.getMonth() + 1)}`;
   return join(base, bucket);
@@ -111,7 +122,7 @@ export async function freePath(dir: string, filename: string): Promise<string> {
   return candidate;
 }
 
-export interface StoredImage {
+export interface StoredMedia {
   path: string;
   filename: string;
   mime: string;
@@ -119,43 +130,57 @@ export interface StoredImage {
 }
 
 /**
- * Write image bytes into the canonical directory. MIME comes from the
+ * Write media bytes into the canonical directory. MIME comes from the
  * bytes themselves, not from what the upstream claimed — a provider
  * that mislabels its output would otherwise leave us with a `.png` that
  * no viewer opens.
  */
-export async function storeImage(args: {
+export async function storeMedia(args: {
   bytes: Buffer;
   prompt: string;
   config: Config;
+  kind: MediaKind;
   declaredMime?: string;
   outputFormat?: string;
+  /** Overrides the prompt-derived name — used for a video's thumbnail,
+   *  which belongs beside its video rather than under a name of its
+   *  own. */
+  filenameStem?: string;
   now?: Date;
-}): Promise<StoredImage> {
+}): Promise<StoredMedia> {
   const now = args.now ?? new Date();
   const detected = detectMimeFromBuffer(args.bytes);
   // SVG is text, so magic-byte detection can't see it; trust the
   // declared type in that one case.
+  const wanted = args.kind === 'video' ? 'video' : 'image';
   const mime =
-    detected.kind === 'image'
+    detected.kind === wanted
       ? detected.mimeType
-      : (args.declaredMime ?? (args.outputFormat === 'svg' ? 'image/svg+xml' : 'image/png'));
-  const dir = imagesDir(args.config, now);
+      : (args.declaredMime ??
+        (args.kind === 'video'
+          ? 'video/mp4'
+          : args.outputFormat === 'svg'
+            ? 'image/svg+xml'
+            : 'image/png'));
+  const dir = mediaDir(args.config, args.kind, now);
   await mkdir(dir, { recursive: true });
-  const filename = buildFilename(args.prompt, extForMime(mime, args.outputFormat), now);
+  const ext = extForMime(mime, args.outputFormat);
+  const filename = args.filenameStem
+    ? `${args.filenameStem}.${ext}`
+    : buildFilename(args.prompt, ext, now);
   const path = await freePath(dir, filename);
   await writeFile(path, args.bytes);
   return { path, filename: path.slice(dir.length + 1), mime, bytes: args.bytes.length };
 }
 
 /**
- * Give the stored image a second name at `dest`. A destination ending
+ * Give the stored file a second name at `dest`. A destination ending
  * in `/`, or naming an existing directory, keeps the canonical
  * filename; anything else is treated as the full target path.
  *
  * Returns the path actually created.
  */
-export async function linkImage(canonicalPath: string, dest: string): Promise<string> {
+export async function linkMedia(canonicalPath: string, dest: string): Promise<string> {
   const expanded = expandHome(dest);
   const looksLikeDir = expanded.endsWith('/') || (await isDir(expanded));
   const target = looksLikeDir
@@ -174,7 +199,7 @@ export async function linkImage(canonicalPath: string, dest: string): Promise<st
     // unavoidable. EPERM: some filesystems (exFAT, many network mounts)
     // reject hardlinks outright.
     if (code === 'EXDEV' || code === 'EPERM' || code === 'ENOTSUP' || code === 'EOPNOTSUPP') {
-      logger.debug({ msg: 'imagegen.link_fallback_copy', code, target: finalTarget });
+      logger.debug({ msg: 'media.link_fallback_copy', code, target: finalTarget });
       await copyFile(canonicalPath, finalTarget);
       return finalTarget;
     }

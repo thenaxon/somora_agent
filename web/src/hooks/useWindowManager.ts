@@ -182,9 +182,13 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
-  /** Open or focus the Images window (gallery + generation form).
-   *  Singleton — the gallery is one archive, and two windows onto it
-   *  would just compete for the same scroll position. */
+  /** Open or focus the Media window (gallery + generation form for
+   *  images and video). Singleton — the gallery is one archive, and two
+   *  windows onto it would just compete for the same scroll position.
+   *
+   *  The window KIND stays `images`: it is persisted in the saved
+   *  desktop layout, and renaming it would drop everyone's window
+   *  position on the next release for a label nobody sees. */
   const openImages = useCallback(() => {
     const existing = windows.find((w) => w.kind === 'images');
     if (existing) {
@@ -196,7 +200,7 @@ export function useWindowManager() {
     const next: WindowState = {
       id,
       kind: 'images',
-      title: 'Images',
+      title: 'Media',
       icon: '🖼',
       ...pos,
       minimized: false,

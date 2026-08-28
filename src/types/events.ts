@@ -37,7 +37,13 @@ export type NormalizedEvent =
        * (synthesized by an internal subsystem) OR neither (human
        * user). The renderer picks the bubble class in that order.
        */
-      from_system?: 'sentinel' | 'tmux' | 'subagent';
+      /**
+       * `job` means a background job the agent started has finished and
+       * brought it back — video renders today. Deliberately not named
+       * after the medium: the distinguishing fact is "something you
+       * kicked off is done", and video is only the first of those.
+       */
+      from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
       /**
        * Correlation UUID for an `agent_ask` round-trip. Persisted on
        * BOTH sides: on the caller's side as a tool_call → tool_result
@@ -175,15 +181,25 @@ export type NormalizedEvent =
       engine: string;
       turnId: string;
       media: Array<{
-        /** What this entry is. Video joins here as a second value —
-         *  that is the whole point of the field. */
-        type: 'image';
+        /** What this entry is. Adding `video` here — rather than a
+         *  second event kind — is exactly what this field was for. */
+        type: 'image' | 'video';
         id: string;
         prompt: string;
         mime: string;
         filename: string;
-        /** Absolute URL path: `/images/<id>/file`. */
+        /**
+         * Absolute URL path: `/media/<id>/file`.
+         *
+         * Rows written on 2026-08-27 carry `/images/<id>/file`. That
+         * route stays mounted for good — the string is in session files
+         * and cannot be rewritten.
+         */
         url: string;
+        /** Video: a still, where the provider serves one. */
+        thumbUrl?: string;
+        /** Video: playing time in seconds. */
+        durationSec?: number;
       }>;
     }
   | { kind: 'tool_call'; ts: number; engine: string; callId: string; tool: string; input: unknown }
@@ -347,7 +363,7 @@ export type SseEvent =
         /** Set only when the inbound was synthesized by an internal
          *  subsystem (today: 'sentinel'). Clients render the message
          *  as a centered system divider. */
-        from_system?: 'sentinel' | 'tmux' | 'subagent';
+        from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
         agent_ask_call_id?: string;
       };
     }
@@ -396,12 +412,14 @@ export type SseEvent =
       data: {
         turnId: string;
         media: Array<{
-          type: 'image';
+          type: 'image' | 'video';
           id: string;
           prompt: string;
           mime: string;
           filename: string;
           url: string;
+          thumbUrl?: string;
+          durationSec?: number;
         }>;
       };
     }

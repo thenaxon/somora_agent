@@ -17,7 +17,7 @@ import {
   resolveCapabilities,
   validateSpecs,
 } from './capabilities.ts';
-import type { ModelCapabilities } from './types.ts';
+import type { ModelCapabilities } from '../imagegen/types.ts';
 
 let pass = 0;
 let fail = 0;

@@ -39,7 +39,7 @@ import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
-import { listRecords as listImageRecords } from '../imagegen/records.ts';
+import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
 import {
   buildReviewLoopBlock,
   refreshLoopActivity,
@@ -281,7 +281,10 @@ export interface RunChatTurnArgs {
    *  Persists in user_message.from_system and on the SSE event, so
    *  clients render the message as a centered system divider rather
    *  than a normal user-bubble. Mutually exclusive with fromAgent. */
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent';
+  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job';
+  /** Media made before this turn that nevertheless belongs to it —
+   *  a finished video announced by a wake-up. See publishTurnMedia. */
+  attachMediaIds?: string[];
   /** A2A correlation UUID. Persisted on user_message.agent_ask_call_id;
    *  surfaced in the SSE user_message event so a human watching the
    *  session sees the inbound message appear in real time. */
@@ -433,38 +436,58 @@ async function generateAutoTts(args: {
  * serialized by the turn lock, so the only overlap available is a
  * subagent — which carries its own session.
  */
-async function publishTurnImages(args: {
+async function publishTurnMedia(args: {
   agent: string;
   session: string;
   turnId: string;
   engine: string;
   startedAt: number;
+  /**
+   * Media that belongs to this turn but was NOT made during it. A video
+   * render finishes minutes after the turn that ordered it, and the
+   * turn that reports it is a wake-up started afterwards — so the file
+   * predates its own announcement and the time window below would miss
+   * it. Naming it explicitly is the honest fix; widening the window
+   * would sweep in whatever else happened to be lying around.
+   */
+  attachMediaIds?: string[];
   publishSse?: (event: SseEvent) => Promise<void>;
 }): Promise<void> {
   const { agent, session, turnId, engine, startedAt, publishSse } = args;
-  const { images } = await listImageRecords({
+  const { items } = await listMediaRecords({
     agent,
     session,
     since: new Date(startedAt).toISOString(),
     limit: 50,
   });
-  if (images.length === 0) return;
+  const seen = new Set(items.map((i) => i.id));
+  for (const id of args.attachMediaIds ?? []) {
+    if (seen.has(id)) continue;
+    const extra = await readMediaRecord(id);
+    if (extra) {
+      items.push(extra);
+      seen.add(id);
+    }
+  }
+  if (items.length === 0) return;
 
   // listRecords returns newest first; chat should read in the order
   // they were made.
-  const ordered = [...images].reverse();
+  const ordered = [...items].reverse();
   const evt = {
     kind: 'assistant_media' as const,
     ts: Date.now(),
     engine,
     turnId,
-    media: ordered.map((img) => ({
-      type: 'image' as const,
-      id: img.id,
-      prompt: img.prompt,
-      mime: img.mime,
-      filename: img.filename,
-      url: `/images/${img.id}/file`,
+    media: ordered.map((m) => ({
+      type: (m.kind ?? 'image') as 'image' | 'video',
+      id: m.id,
+      prompt: m.prompt,
+      mime: m.mime,
+      filename: m.filename,
+      url: `/media/${m.id}/file`,
+      ...(m.thumbPath ? { thumbUrl: `/media/${m.id}/thumb` } : {}),
+      ...(m.durationSec !== undefined ? { durationSec: m.durationSec } : {}),
     })),
   };
   await appendEvent(agent, session, evt);
@@ -482,6 +505,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     text,
     fromAgent,
     fromSystem,
+    attachMediaIds,
     agentAskCallId,
     subagentDepth = 0,
     modelOverride,
@@ -1019,9 +1043,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       });
     }
 
-    // ── Generated-images hook ─────────────────────────────────────────
-    // Anything image_generate produced during this turn goes to the
-    // client as an append-only event paired to the assistant bubble.
+    // ── Generated-media hook ──────────────────────────────────────────
+    // Anything produced during this turn — an image made in it, or a
+    // video whose render finished and brought us back here — goes to
+    // the client as an append-only event paired to the bubble.
     // Runs regardless of whether the agent mentioned the image in its
     // reply: the user asked for a picture, so the picture belongs in
     // the conversation, and depending on the agent to remember makes
@@ -1030,18 +1055,22 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     // Fire-and-forget and non-fatal: a turn that produced a real image
     // must not be reported as failed because the gallery index
     // couldn't be read.
-    if (deps.config.imageGen?.enabled && streamTurnId) {
-      const capturedImagesTurnId = streamTurnId;
-      void publishTurnImages({
+    // Gated on EITHER surface: a setup with video but no images still
+    // has media to publish, and gating on images alone meant a
+    // finished video never reached the chat at all.
+    if ((deps.config.imageGen?.enabled || deps.config.videoGen?.enabled) && streamTurnId) {
+      const capturedMediaTurnId = streamTurnId;
+      void publishTurnMedia({
         agent,
         session,
-        turnId: capturedImagesTurnId,
+        turnId: capturedMediaTurnId,
         engine: lastSeenEngine,
         startedAt: turnStartedAt,
+        ...(attachMediaIds ? { attachMediaIds } : {}),
         publishSse,
       }).catch((err) => {
         logger.warn({
-          msg: 'turn.images_publish_failed',
+          msg: 'turn.media_publish_failed',
           turnId,
           agent,
           session,

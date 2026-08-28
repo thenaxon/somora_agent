@@ -17,11 +17,12 @@ import { Buffer } from 'node:buffer';
 import type { Config, ImageModel, Provider } from '../config/types.ts';
 import { resolveImageModel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { applyDefaults, resolveCapabilities, validateSpecs } from './capabilities.ts';
-import { linkImage, storeImage } from './store.ts';
+import { applyDefaults, resolveCapabilities, validateSpecs } from '../media/capabilities.ts';
+import { linkMedia, storeMedia } from '../media/store.ts';
 import { parseSizeSpec, readDimensions } from '../multimodal/dimensions.ts';
-import { newImageId, writeRecord } from './records.ts';
-import type { ImageRecord, ImageSpecs } from './types.ts';
+import { newMediaId, writeRecord } from '../media/records.ts';
+import type { ImageSpecs } from './types.ts';
+import type { MediaRecord } from '../media/types.ts';
 
 /** One reference image, as handed to the generator. */
 export interface ReferenceImage {
@@ -53,7 +54,7 @@ export interface GenerateInput {
 }
 
 export interface GenerateOutput {
-  images: ImageRecord[];
+  images: MediaRecord[];
   /** Sum over the batch, when the upstream reported it. */
   costUsd?: number;
   /**
@@ -485,13 +486,14 @@ async function generateOnce(
     });
   }
 
-  const batchId = newImageId();
+  const batchId = newMediaId();
   const now = new Date();
-  const records: ImageRecord[] = [];
+  const records: MediaRecord[] = [];
 
   for (const [i, img] of decoded.entries()) {
-    const stored = await storeImage({
+    const stored = await storeMedia({
       bytes: img.bytes,
+      kind: 'image',
       prompt,
       config,
       declaredMime: img.mime,
@@ -502,7 +504,7 @@ async function generateOnce(
     const linkedTo: string[] = [];
     if (input.saveTo) {
       try {
-        linkedTo.push(await linkImage(stored.path, input.saveTo));
+        linkedTo.push(await linkMedia(stored.path, input.saveTo));
       } catch (err) {
         // The image exists and is safe in its canonical home; failing
         // the whole call over a second name would throw away a paid
@@ -516,14 +518,15 @@ async function generateOnce(
     }
 
     const dims = readDimensions(img.bytes);
-    const record: ImageRecord = {
-      id: newImageId(),
+    const record: MediaRecord = {
+      id: newMediaId(),
+      kind: 'image',
       createdAt: now.toISOString(),
       prompt,
       modelName: entry.name,
       modelId: entry.model,
       provider: providerName,
-      specs,
+      specs: { ...specs },
       path: stored.path,
       filename: stored.filename,
       mime: stored.mime,

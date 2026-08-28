@@ -1,6 +1,6 @@
-// Render-Smoke fuer das Images-Fenster.
+// Render-Smoke fuer das Media-Fenster (Bilder + Video).
 //
-// Lauf: cd web && npx tsx src/components/images-render.test.mts
+// Lauf: cd web && npx tsx src/components/media-render.test.mts
 //
 // Kein Browser hier — renderToString fuehrt keine Effects aus, es
 // werden also weder Status noch Galerie geladen. Was das hier abdeckt:
@@ -13,9 +13,9 @@ import {
   formatBytes,
   formatCost,
   formatWhen,
-  ImagesWindow,
+  MediaWindow,
   specSummary,
-} from './ImagesWindow';
+} from './MediaWindow';
 
 let ok = 0;
 let bad = 0;
@@ -73,12 +73,12 @@ t('specSummary: unbekannte Felder tauchen nicht auf', () =>
 // ── Rendering ───────────────────────────────────────────────────────
 
 t('rendert ohne Daten', () => {
-  const html = renderToString(React.createElement(ImagesWindow));
+  const html = renderToString(React.createElement(MediaWindow));
   assert(html.length > 0, 'leeres Markup');
 });
 
 t('zeigt das Formular', () => {
-  const html = renderToString(React.createElement(ImagesWindow));
+  const html = renderToString(React.createElement(MediaWindow));
   assert(html.includes('Prompt'), 'Prompt-Feld fehlt');
   assert(html.includes('Generate'), 'Generate-Knopf fehlt');
 });
@@ -90,7 +90,7 @@ t('zeigt das Formular', () => {
 // 'Size (pixels)' hat genau so gefehlt: Modelle, die in Pixeln statt in
 // Stufen denken, waren im Formular nicht bedienbar (2026-08-27).
 t('zeigt alle Spec-Felder', () => {
-  const html = renderToString(React.createElement(ImagesWindow));
+  const html = renderToString(React.createElement(MediaWindow));
   for (const label of [
     'Aspect ratio', 'Size (pixels)', 'Resolution', 'Quality', 'Format', 'Background',
   ]) {
@@ -98,13 +98,34 @@ t('zeigt alle Spec-Felder', () => {
   }
 });
 
+// Ohne geladenen Video-Status darf das Fenster nicht so tun, als
+// gaebe es Video: der Umschalter erscheint erst, wenn der Server
+// welches meldet. Ein Formular fuer etwas Unkonfiguriertes ist genau
+// die Falle, die wir bei den Bild-Tools schon zugemacht haben.
+t('ohne Video-Konfiguration kein Video-Umschalter', () => {
+  const html = renderToString(React.createElement(MediaWindow));
+  assert(!html.includes('media-mode-switch'), 'Modus-Umschalter faelschlich sichtbar');
+});
+
+// Der Medien-Filter haengt an derselben Bedingung: mit nur Bildern im
+// System waeren zwei der drei Knoepfe tot.
+t('ohne Video-Konfiguration auch kein Medien-Filter', () => {
+  const html = renderToString(React.createElement(MediaWindow));
+  assert(!html.includes('>Images<'), 'Filter faelschlich sichtbar');
+});
+
+t('Reload-Knopf ist immer da', () => {
+  const html = renderToString(React.createElement(MediaWindow));
+  assert(html.includes('Reload the gallery'), 'Reload fehlt');
+});
+
 t('leere Galerie sagt das auch', () => {
-  const html = renderToString(React.createElement(ImagesWindow));
+  const html = renderToString(React.createElement(MediaWindow));
   assert(html.includes('No images yet'), 'Leer-Hinweis fehlt');
 });
 
 t('Generate ist ohne Prompt deaktiviert', () => {
-  const html = renderToString(React.createElement(ImagesWindow));
+  const html = renderToString(React.createElement(MediaWindow));
   assert(html.includes('disabled'), 'Knopf nicht deaktiviert');
 });
 
@@ -112,12 +133,12 @@ t('Generate ist ohne Prompt deaktiviert', () => {
 // Ein leeres Dropdown wuerde "nichts erlaubt" bedeuten und ein
 // voellig brauchbares Modell kaputt aussehen lassen.
 t('ohne Katalog sind die Spec-Felder Freitext', () => {
-  const html = renderToString(React.createElement(ImagesWindow));
+  const html = renderToString(React.createElement(MediaWindow));
   assert(html.includes('e.g. 16:9'), 'Freitext-Platzhalter fehlt');
 });
 
 t('nennt den Ablageort im Formular', () => {
-  const html = renderToString(React.createElement(ImagesWindow));
+  const html = renderToString(React.createElement(MediaWindow));
   assert(html.includes('Every image is kept in'), 'Hinweis zum Ablageort fehlt');
 });
 

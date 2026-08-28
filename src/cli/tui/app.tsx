@@ -537,6 +537,9 @@ export function App({
         }
         return;
       }
+      case 'assistant-media':
+        appendTurn({ kind: 'media', id: nextId(), items: ev.items });
+        return;
       case 'memory':
         // Display-only suppression. The injection itself already happened
         // server-side; we just don't render the [memory · …] line.

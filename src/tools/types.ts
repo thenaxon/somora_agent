@@ -142,6 +142,7 @@ export type Toolset =
   | 'projects'
   | 'sentinel'
   | 'image'
+  | 'video'
   | 'mcp';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {

@@ -15,10 +15,10 @@ import {
   buildFilename,
   extForMime,
   freePath,
-  imagesDir,
-  linkImage,
+  mediaDir,
+  linkMedia,
   slugFromPrompt,
-  storeImage,
+  storeMedia,
 } from './store.ts';
 
 let pass = 0;
@@ -99,12 +99,12 @@ check('ext: svg', extForMime('image/svg+xml') === 'svg');
 check('ext: unknown falls back to declared format', extForMime('application/x-weird', 'webp') === 'webp');
 check('ext: unknown with no hint → png', extForMime('application/x-weird') === 'png');
 
-// ── imagesDir ───────────────────────────────────────────────────────
+// ── mediaDir ───────────────────────────────────────────────────────
 
-check('dir: plain', imagesDir(configWith('/tmp/img')) === '/tmp/img');
+check('dir: plain', mediaDir(configWith('/tmp/img'), 'image') === '/tmp/img');
 check(
   'dir: monthly bucket',
-  imagesDir(configWith('/tmp/img', true), fixedDate) === '/tmp/img/2026-08',
+  mediaDir(configWith('/tmp/img', true), 'image', fixedDate) === '/tmp/img/2026-08',
 );
 
 // ── filesystem cases ────────────────────────────────────────────────
@@ -126,14 +126,15 @@ check(
   (await freePath(outDir, 'fresh.png')) === join(outDir, 'fresh.png'),
 );
 
-// storeImage: bytes decide the MIME, not the caller's claim.
-const storedPng = await storeImage({ bytes: PNG, prompt: 'ein Koala', config, now: fixedDate });
+// storeMedia: bytes decide the MIME, not the caller's claim.
+const storedPng = await storeMedia({ kind: 'image', bytes: PNG, prompt: 'ein Koala', config, now: fixedDate });
 check('store: mime sniffed from bytes', storedPng.mime === 'image/png', storedPng.mime);
 check('store: filename from prompt', storedPng.filename === '2026-08-26_143012_ein-koala.png', storedPng.filename);
 check('store: byte count reported', storedPng.bytes === PNG.length);
 check('store: file actually written', (await readFile(storedPng.path)).equals(PNG));
 
-const storedLie = await storeImage({
+const storedLie = await storeMedia({
+  kind: 'image',
   bytes: JPEG,
   prompt: 'test',
   config,
@@ -144,14 +145,15 @@ check('store: declared mime does not override sniffed', storedLie.mime === 'imag
 check('store: extension follows sniffed mime', storedLie.filename.endsWith('.jpg'), storedLie.filename);
 
 // Two images from one prompt in the same second must not collide.
-const twinA = await storeImage({ bytes: PNG, prompt: 'zwilling', config, now: fixedDate });
-const twinB = await storeImage({ bytes: PNG, prompt: 'zwilling', config, now: fixedDate });
+const twinA = await storeMedia({ kind: 'image', bytes: PNG, prompt: 'zwilling', config, now: fixedDate });
+const twinB = await storeMedia({ kind: 'image', bytes: PNG, prompt: 'zwilling', config, now: fixedDate });
 check('store: same-second twins get distinct paths', twinA.path !== twinB.path);
 check('store: twin is suffixed', twinB.filename.includes('_2.'), twinB.filename);
 
 // SVG is text, so magic bytes can't see it — the declared type carries.
 const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
-const storedSvg = await storeImage({
+const storedSvg = await storeMedia({
+  kind: 'image',
   bytes: svg,
   prompt: 'vektor',
   config,
@@ -162,10 +164,10 @@ const storedSvg = await storeImage({
 check('store: svg keeps declared type', storedSvg.mime === 'image/svg+xml', storedSvg.mime);
 check('store: svg extension', storedSvg.filename.endsWith('.svg'), storedSvg.filename);
 
-// ── linkImage ───────────────────────────────────────────────────────
+// ── linkMedia ───────────────────────────────────────────────────────
 
 const projectDir = join(root, 'projekt');
-const linked = await linkImage(storedPng.path, projectDir + '/');
+const linked = await linkMedia(storedPng.path, projectDir + '/');
 check('link: lands in the requested dir', linked.startsWith(projectDir), linked);
 check('link: keeps the canonical filename', linked.endsWith(storedPng.filename), linked);
 
@@ -176,16 +178,16 @@ check('link: link count is 2', canonStat.nlink >= 2, String(canonStat.nlink));
 
 // A destination naming a file, not a directory.
 const explicit = join(root, 'ziel', 'mein-bild.png');
-const linked2 = await linkImage(storedPng.path, explicit);
+const linked2 = await linkMedia(storedPng.path, explicit);
 check('link: explicit target path honored', linked2 === explicit, linked2);
 check('link: parent dir created', (await stat(explicit)).ino === canonStat.ino);
 
 // Linking twice into the same place must not clobber.
-const linked3 = await linkImage(storedPng.path, explicit);
+const linked3 = await linkMedia(storedPng.path, explicit);
 check('link: collision suffixed', linked3 !== explicit && linked3.includes('mein-bild_2'), linked3);
 
 // An existing directory (no trailing slash) is still treated as one.
-const linked4 = await linkImage(twinA.path, projectDir);
+const linked4 = await linkMedia(twinA.path, projectDir);
 check('link: existing dir without trailing slash', linked4.startsWith(projectDir + '/'), linked4);
 
 console.log(`\n${pass} passed, ${fail} failed`);

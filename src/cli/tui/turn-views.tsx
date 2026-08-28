@@ -66,6 +66,8 @@ export function TurnView({
           verbose={verbose.memory}
         />
       );
+    case 'media':
+      return <MediaNotice items={turn.items} />;
     case 'system':
       return <SystemNotice text={turn.text} tone={turn.tone} />;
   }
@@ -340,6 +342,32 @@ function SystemNotice({
         <Text key={i} color={color} bold={bold}>
           {i === 0 ? `${prefix} ` : '  '}
           {line}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+/**
+ * What an agent produced, as a line you can act on.
+ *
+ * A terminal cannot show the picture, so it gets the filename — the
+ * half that is actually useful here, since it can be copied and opened.
+ * No emoji: composed ones measure differently in Ink than in the
+ * terminal, and the resulting off-by-one shifts the whole scrollback
+ * upward on every keystroke (2026-05 ZWJ finding).
+ */
+function MediaNotice({
+  items,
+}: {
+  items: Array<{ type: 'image' | 'video'; filename: string; durationSec?: number }>;
+}) {
+  return (
+    <Box flexDirection="column">
+      {items.map((m, i) => (
+        <Text key={`${m.filename}-${i}`} color="gray">
+          {`  [${m.type}] ${m.filename}`}
+          {m.durationSec !== undefined ? ` (${m.durationSec.toFixed(1)}s)` : ''}
         </Text>
       ))}
     </Box>

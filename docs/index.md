@@ -42,6 +42,10 @@ families. [files.md](files.md), [resources.md](resources.md), and
 [tmux.md](tmux.md) cover the heavy ones. [Skills](skills.md) are
 markdown how-tos you install to teach an agent multi-step recipes.
 
+**I want my agents to make video.** [videogen.md](videogen.md) — a
+render takes minutes, so the agent starts one and is woken when it is
+ready rather than holding its turn open.
+
 **I want my agents to make images.** [imagegen.md](imagegen.md) —
 configure a model, then generate from the Images window or let an
 agent call `image_generate`. Results land in your workspace and show
@@ -134,5 +138,6 @@ high-value next steps in rough order:
 | [mobile.md](mobile.md) | Mobile PWA | iOS/Android install, scope |
 | [voice.md](voice.md) | STT + TTS + /voice/turn | Voice in, spoken replies, audio-in/audio-out endpoint |
 | [imagegen.md](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
+| [videogen.md](videogen.md) | Text-to-video | Job-based renders, and how an agent gets its result without waiting |
 | [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
 | [security.md](security.md) | Trust model | Network posture, sandbox stance |

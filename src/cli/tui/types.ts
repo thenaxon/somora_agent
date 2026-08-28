@@ -193,7 +193,19 @@ export type Turn =
       summary?: string;
       details?: string;
     }
-  | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' };
+  | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' }
+  /**
+   * Media an agent produced during the turn. A terminal can't show a
+   * picture, so this is the PATH — which is the more useful half here
+   * anyway: it can be copied, opened, piped. Deliberately not an
+   * inline-image escape sequence: only some terminals speak one, and
+   * Ink measures such output wrongly enough to shift the cursor.
+   */
+  | {
+      kind: 'media';
+      id: string;
+      items: Array<{ type: 'image' | 'video'; filename: string; durationSec?: number }>;
+    };
 
 // Server-Sent Events from /chat/stream, normalized.
 export type StreamEvent =
@@ -213,6 +225,10 @@ export type StreamEvent =
       thinking?: ThinkingState;
     }
   | { kind: 'chat-delta'; text: string }
+  | {
+      kind: 'assistant-media';
+      items: Array<{ type: 'image' | 'video'; filename: string; durationSec?: number }>;
+    }
   | { kind: 'chat-final'; text: string }
   | { kind: 'memory'; count: number; topScore: number | null; refs: string[]; fullText?: string }
   | {

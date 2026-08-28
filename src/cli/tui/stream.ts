@@ -185,6 +185,20 @@ export function openStream(
           refs: Array.isArray(data.refs) ? data.refs : [],
           fullText: typeof data.fullText === 'string' ? data.fullText : undefined,
         };
+      case 'assistant_media': {
+        const raw = Array.isArray((data as { media?: unknown }).media)
+          ? ((data as { media: unknown[] }).media)
+          : [];
+        const items = raw
+          .map((m) => m as Record<string, unknown>)
+          .filter((m) => m.type === 'image' || m.type === 'video')
+          .map((m) => ({
+            type: m.type as 'image' | 'video',
+            filename: typeof m.filename === 'string' ? m.filename : 'file',
+            ...(typeof m.durationSec === 'number' ? { durationSec: m.durationSec } : {}),
+          }));
+        return items.length > 0 ? { kind: 'assistant-media', items } : null;
+      }
       case 'tool':
         return {
           kind: 'tool',

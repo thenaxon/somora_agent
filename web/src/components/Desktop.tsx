@@ -20,7 +20,7 @@ import { SessionsWindow } from './SessionsWindow';
 import { SentinelWindow } from './SentinelWindow';
 import { WikiWindow } from './WikiWindow';
 import { ToolsWindow } from './ToolsWindow';
-import { ImagesWindow } from './ImagesWindow';
+import { MediaWindow } from './MediaWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
 import { FileViewProvider } from './FileViewContext';
@@ -31,7 +31,7 @@ import { useLoopState } from '../hooks/useLoopState';
 import { useWindowManager } from '../hooks/useWindowManager';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { useWikiEnabled } from '../hooks/useWikiEnabled';
-import { useImagesEnabled } from '../hooks/useImagesEnabled';
+import { useMediaEnabled } from '../hooks/useMediaEnabled';
 import { ActivityProvider } from './ActivityProvider';
 import type { AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
@@ -43,7 +43,7 @@ export function Desktop() {
   const wm = useWindowManager();
   const chatCtx = useChatContext();
   const wikiEnabled = useWikiEnabled();
-  const imagesEnabled = useImagesEnabled();
+  const media = useMediaEnabled();
 
   // Cross-agent activity feed: covers streaming-dots for agents whose
   // chat window the user has NOT opened (ChatProvider only knows about
@@ -176,13 +176,13 @@ export function Desktop() {
     },
     // Hidden unless imageGen is configured — same probe-driven gate as
     // the wiki tile below.
-    ...(imagesEnabled
+    ...(media.any
       ? [
           {
             id: 'app:images',
             node: (
               <AppTile
-                label="images"
+                label="media"
                 icon={<ImagePlus size={26} />}
                 active={activeApps.has('images')}
                 onClick={() => wm.openImages()}
@@ -420,7 +420,7 @@ export function Desktop() {
                 onMove={wm.move}
                 onResize={wm.resize}
               >
-                <ImagesWindow />
+                <MediaWindow />
               </Window>
             );
           }

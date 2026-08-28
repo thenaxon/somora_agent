@@ -541,7 +541,8 @@ function GeneratedMediaRow({ media }: { media: AssistantMedia[] }) {
   // guessed at — that is what lets the server add a type without
   // breaking a client that predates it.
   const images = media.filter((m) => m.type === 'image');
-  if (images.length === 0) return null;
+  const videos = media.filter((m) => m.type === 'video');
+  if (images.length === 0 && videos.length === 0) return null;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
       {images.map((img) => (
@@ -571,6 +572,26 @@ function GeneratedMediaRow({ media }: { media: AssistantMedia[] }) {
             }}
           />
         </a>
+      ))}
+      {videos.map((vid) => (
+        <video
+          key={vid.id}
+          controls
+          // Metadata only: a bubble should not pull megabytes of video
+          // just by scrolling past it.
+          preload="metadata"
+          {...(vid.thumbUrl ? { poster: vid.thumbUrl } : {})}
+          src={vid.url}
+          title={vid.prompt}
+          style={{
+            maxWidth: videos.length > 1 ? 260 : 380,
+            maxHeight: 320,
+            borderRadius: 6,
+            border: '1px solid var(--line)',
+            display: 'block',
+            background: '#000',
+          }}
+        />
       ))}
     </div>
   );

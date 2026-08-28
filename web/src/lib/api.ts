@@ -220,6 +220,66 @@ export interface HistoryResponse {
 
 /** Spec fields that carry a closed set of values. Mirrors
  *  ENUMERABLE_SPEC_FIELDS on the server. */
+export interface MediaListParams {
+  kind?: 'image' | 'video';
+  query?: string;
+  agent?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface MediaRecordDto extends ImageRecordDto {
+  /** Absent on records written before video existed — those are all
+   *  images. */
+  kind?: 'image' | 'video';
+  width?: number;
+  height?: number;
+  durationSec?: number;
+  thumbPath?: string;
+  thumbMime?: string;
+}
+
+export interface MediaListResponse {
+  total: number;
+  offset: number;
+  items: MediaRecordDto[];
+  totalBytes: number;
+}
+
+export interface VideoJobDto {
+  id: string;
+  status: 'queued' | 'in_progress' | 'completed' | 'failed';
+  modelName: string;
+  prompt: string;
+  progress?: number;
+  queuePosition?: number;
+  error?: string;
+  mediaId?: string;
+  path?: string;
+  createdAt: string;
+  agent?: string;
+}
+
+export interface VideoStatusResponse {
+  enabled: boolean;
+  reason?: string;
+  active?: number;
+  limit?: number;
+  models?: Array<{ name: string; label: string; model: string; provider: string; wire: string }>;
+  jobs?: VideoJobDto[];
+}
+
+export interface GenerateVideoBody {
+  prompt: string;
+  model?: string;
+  seconds?: number;
+  size?: string;
+  aspect_ratio?: string;
+  audio?: boolean;
+  quality?: boolean;
+  seed?: number;
+}
+
 export type ImageSpecField =
   | 'resolution'
   | 'aspect_ratio'
@@ -701,8 +761,33 @@ export const api = {
     return payload as GenerateImageResponse;
   },
   forgetImage: async (id: string): Promise<void> => {
-    const res = await fetch(`/images/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error(`forget image ${res.status}`);
+    const res = await fetch(`/media/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error(`forget item ${res.status}`);
+  },
+
+  // ─── Media (images + video, one gallery) ───────────────────────────
+  media: (params: MediaListParams = {}) => {
+    const q = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== '') q.set(key, String(value));
+    }
+    const suffix = q.toString();
+    return getJson<MediaListResponse>(`/media${suffix ? `?${suffix}` : ''}`);
+  },
+
+  // ─── Video generation (job-based) ──────────────────────────────────
+  videoStatus: () => getJson<VideoStatusResponse>('/video/status'),
+  generateVideo: async (body: GenerateVideoBody): Promise<{ job: VideoJobDto }> => {
+    const res = await fetch('/video/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = (await res.json().catch(() => ({}))) as { job?: VideoJobDto; error?: string };
+    if (!res.ok || !payload.job) {
+      throw new Error(payload.error ?? `video generation failed (${res.status})`);
+    }
+    return { job: payload.job };
   },
 
   // ─── Wiki explorer (read-only) ─────────────────────────────────────
