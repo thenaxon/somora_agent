@@ -182,7 +182,19 @@ check('input: list accepts an ISO date', imageList.inputSchema.safeParse({ since
 
 // ── declared metadata ───────────────────────────────────────────────
 
-check('meta: toolset tagged', imageGenerate.toolset === 'image' && imageList.toolset === 'image');
+check('meta: generate is tagged image', imageGenerate.toolset === 'image');
+// The listing sits in its own toolset on purpose: it covers both media,
+// and hanging it off `image` left a video-only install unable to list
+// what it had made. `tools: deny: [toolset:image]` must not take it.
+check('meta: the listing is tagged media, not image', imageList.toolset === 'media');
+check('meta: the listing is named for the question, not one medium',
+  imageList.name === 'media_list');
+// It used to return videos while called image_list. Either it filters
+// or it is named for both — it is now named for both AND can filter.
+check('input: the listing takes a type filter',
+  imageList.inputSchema.safeParse({ type: 'video' }).success);
+check('input: an invented type is rejected',
+  !imageList.inputSchema.safeParse({ type: 'audio' }).success);
 check(
   'meta: generate gets a timeout above the 30s default',
   (imageGenerate.defaultTimeoutMs ?? 0) >= 120_000,
