@@ -44,10 +44,12 @@ markdown how-tos you install to teach an agent multi-step recipes.
 
 **I want my agents to make video.** [videogen.md](videogen.md) — a
 render takes minutes, so the agent starts one and is woken when it is
-ready rather than holding its turn open.
+ready rather than holding its turn open. Off until `videoGen` is
+configured; verified against a self-hosted endpoint, the hosted
+providers not yet.
 
 **I want my agents to make images.** [imagegen.md](imagegen.md) —
-configure a model, then generate from the Images window or let an
+configure a model, then generate from the Media window or let an
 agent call `image_generate`. Results land in your workspace and show
 up in the chat.
 

@@ -40,11 +40,31 @@ What makes it different:
   commands, web fetches, sub-agent spawning, multimodal attachments — is a
   typed tool the agent can call. The same registry feeds all three engines
   via either an in-process loop or per-turn MCP child processes.
-- **Images (optional).** Point somora at an image model and both you and
-  your agents can generate pictures — specs like aspect ratio and
-  resolution are real request fields, not hints buried in the prompt.
-  Results land in your workspace, show up in the chat, and stay
-  searchable in a gallery with the prompt and settings that made them.
+- **Media generation (optional, off until configured).** Point somora at
+  an image or video endpoint and both you and your agents can make
+  pictures and film. Specs like aspect ratio, size and length are real
+  request fields, not hints buried in the prompt, and which ones a model
+  accepts is read from the provider's own catalog — so an unsupported
+  setting is refused with the list of valid ones instead of silently
+  ignored. Results land in your workspace, appear in the chat, and stay
+  searchable in one gallery.
+
+  Video is job-based, because a render takes minutes and backends
+  usually do one at a time: the tool starts the job and returns, and the
+  agent is **woken when its video is ready** rather than holding a turn
+  open for eight minutes. Nothing appears until an `imageGen` or
+  `videoGen` block exists — no tool is offered to a model, the HTTP
+  routes answer 503, and the desktop tile stays hidden.
+
+  **What has been tested, and what hasn't:** everything above runs daily
+  against a self-hosted, OpenAI-shaped endpoint — both wire dialects,
+  reference images, catalogs, thumbnails, the full job lifecycle. The
+  provider-agnostic paths are built to published API shapes but have
+  **not** been exercised against OpenAI's or Google's hosted APIs yet.
+  Treat those as untested rather than broken, and see
+  [docs/imagegen.md](docs/imagegen.md) and
+  [docs/videogen.md](docs/videogen.md) for exactly which parts are
+  which.
 - **Projects (optional).** Bind a chat session to a real-world thing —
   a renovation, a research thread, a piece of code — via a curated
   manifest of pointers (Obsidian notes, local source dirs, GDrive URLs,
@@ -185,11 +205,17 @@ dream-system + web + tmux + mobile) is feature-complete and used daily:
 | Tool surface (40+ tools) | ✓ via MCP | ✓ via MCP | ✓ via MCP | ✓ in-process |
 | Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
 | Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | text only | ✓ image; PDF native or rasterized per provider |
+| Image + video generation² | ✓ via MCP | ✓ via MCP | ✓ via MCP | ✓ in-process |
 | Sub-agent spawning | ✓ | ✓ | ✓ | ✓ |
 | SSH-resource exec | ✓ | ✓ | ✓ | ✓ |
 
 ¹ grok-cli has no one-shot path yet, so it can't serve as a dream/REM or
 compaction *worker* — configure those on another engine.
+
+² Off until an `imageGen` / `videoGen` block exists. Verified end-to-end
+against a self-hosted OpenAI-shaped endpoint; the hosted providers
+(OpenAI images/video, Google Veo) are implemented to their published
+shapes but **not yet tested against a live account**.
 
 ## Clients
 
@@ -198,7 +224,7 @@ Four first-party clients, all hitting the same local server:
 | Client | How to launch | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent (freely arrangeable desktop icons, per-agent text zoom, visible model-fallback marker), drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a read-only Wiki Explorer (folder tree + rendered pages + clickable `[[wikilinks]]` + a zoomable link graph), a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent (freely arrangeable desktop icons, per-agent text zoom, visible model-fallback marker), drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a read-only Wiki Explorer (folder tree + rendered pages + clickable `[[wikilinks]]` + a zoomable link graph), a Media app for generated images and video (gallery, generation form, running renders), a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
 | **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record) + optional spoken replies via TTS (per-agent toggle), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
 
@@ -356,7 +382,8 @@ and codex-cli) — same tool surface regardless of model.
 | skills | `skill`, `skill_list` | Activate a Markdown how-to from `~/.somora/skills/`, or list all skills available to the agent fresh from disk. |
 | projects (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests linking a session to a real-world thing. Only registered when `projects.enabled: true`. |
 | sentinel | `sentinel` | Install + manage time-based triggers that wake agents on a schedule (single action-enum tool: create/list/get/pause/resume/delete/test/history). |
-| image (optional) | `image_generate`, `image_list` | Text-to-image via a configured image model, and an index over everything generated. Only registered when `imageGen.enabled: true`. |
+| image (optional) | `image_generate`, `image_list`, `image_models` | Text-to-image, an index over everything generated, and what each configured model accepts. Only registered when `imageGen.enabled: true`. |
+| video (optional) | `video_generate`, `video_status`, `video_models` | Text-to-video. Starts a render and returns immediately — the agent is woken when it lands, never left waiting. Only registered when `videoGen.enabled: true`. |
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
 | resources | `resource_list`, `resource_test` | Discover/probe configured SSH targets. |
 | time | `time_now` | Current date/time/timezone. |
@@ -385,7 +412,8 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/tmux.md](docs/tmux.md) — long-lived terminal sessions for TUIs
 - [docs/sentinel.md](docs/sentinel.md) — proactive time-based triggers
 - [docs/voice.md](docs/voice.md) — STT + TTS, per-session auto-play toggle, /voice/turn endpoint
-- [docs/imagegen.md](docs/imagegen.md) — text-to-image, the Images window, per-agent review stance
+- [docs/imagegen.md](docs/imagegen.md) — text-to-image, the Media window, per-agent review stance
+- [docs/videogen.md](docs/videogen.md) — text-to-video: job lifecycle, being woken instead of waiting, what is verified and what isn't
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning-depth surface across engines
 - [docs/display.md](docs/display.md) — TUI display toggles

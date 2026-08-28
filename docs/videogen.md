@@ -14,6 +14,41 @@ why an agent can ask for four videos and carry on working.
 Off by default: no tool is exposed and no video controls appear until a
 `videoGen` block is configured.
 
+## Nothing appears until it is configured
+
+No video surface exists until a `videoGen` block with at least one model
+does. Three independent gates, all checked:
+
+- **the model's tool list** — `video_generate`, `video_status` and
+  `video_models` are not offered;
+- **HTTP** — `/video/*` answers `503`;
+- **the desktop** — the Media tile appears if *either* images or video
+  is configured, and the window shows only the surfaces that exist. A
+  video-only install gets a video form, not an empty image one.
+
+Per agent, `tools: deny: [toolset:video]` removes it for that agent —
+worth doing for agents with no business spending GPU minutes.
+
+## What is verified, and what is not
+
+The whole lifecycle — create, poll, download, thumbnail, store, wake —
+is verified end to end against a **self-hosted, OpenAI-shaped endpoint**
+using the `passthrough` dialect, with real renders.
+
+Two things are **not** proven:
+
+- **`openai`.** Written to OpenAI's published video API — job id in the
+  path, `variant=thumbnail`, the same four status values — and exercised
+  against a faithful local stand-in, but never against a live account.
+- **`veo`.** Written from Google's published shape and never run at all;
+  it differs more than the others (an operation name instead of a job
+  id, polling by POST, the result arriving inside the poll response), so
+  treat it as a prepared seam rather than a road. See the dialect table
+  below.
+
+Neither is expected to be far off. Neither should be described as
+working until someone has watched it work.
+
 ## Configuration
 
 ```yaml

@@ -1,12 +1,43 @@
 # Image generation
 
 Text-to-image against an OpenAI-shaped image endpoint. Both a human and
-an agent drive the **same code path** — the web app's Images window
+an agent drive the **same code path** — the web app's Media window
 POSTs to `/images/generate`, agents call the `image_generate` tool —
 so the two can't end up able to do different things.
 
 Off by default. Nothing appears in the UI and no tool is exposed until
 `imageGen` is configured.
+
+## Nothing appears until it is configured
+
+There is no image surface at all until an `imageGen` block with at least
+one model exists. That holds in three independent places, and all three
+are checked:
+
+- **the model's tool list** — `image_generate` and friends are not
+  offered, so they cost no context and cannot be called;
+- **HTTP** — `/images/*` answers `503`;
+- **the desktop** — the Media tile stays hidden, and the window says so
+  rather than opening an empty form.
+
+The same applies per agent: `tools: deny: [toolset:image]` in an
+agent.yaml removes the tools for that agent on every engine.
+
+## What is verified, and what is not
+
+Everything in this document runs daily against a **self-hosted,
+OpenAI-shaped endpoint** — a LiteLLM router in front of local models.
+Verified there end to end: both wire dialects, reference images as
+multipart, catalog-driven capabilities, the `503`-means-busy path, and
+the fallback chain.
+
+**Not yet tested against a live hosted account.** The `openai` dialect
+is written to OpenAI's published API and its shape has been exercised
+against a faithful local stand-in, but nobody has run it against
+`api.openai.com` yet. It is expected to work; it is not proven to. If
+you try it, the interesting bits are the response shapes — that is where
+providers differ most.
+
 
 ## Configure
 
@@ -47,7 +78,7 @@ same `baseUrl` and a different key, and point `provider:` at that.
 **Adding a model** needs three things: a handle, the provider it goes
 through, and the wire id. `GET /images/catalog` lists what the provider
 currently offers, so you don't have to hunt for the exact id — the
-Images window surfaces it too. Config stays the source of truth for
+Media window surfaces it too. Config stays the source of truth for
 what somora will actually call.
 
 **Endpoint paths differ by provider.** The default `/images` is
@@ -268,7 +299,7 @@ somora couldn't reliably reach every name for the file anyway.
 ## Known gaps
 
 - **Reference images** (image-to-image) work through the tool's
-  `reference_images` argument, but the Images window has no picker for
+  `reference_images` argument, but the Media window has no picker for
   them yet — the browser path accepts base64 only.
 - **No progress streaming.** The endpoint can stream partial renders;
   somora waits for the finished image and shows a busy state.
