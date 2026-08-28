@@ -163,48 +163,56 @@ server shows `needs-auth` and you re-run the login.
 
 [Claude Design](https://claude.ai/design) exposes an official MCP server
 (`https://api.anthropic.com/v1/design/mcp`) that authenticates against a
-claude.ai account — there is no API key. somora reaches it with the
-**regular Claude login** it already keeps in sync for the claude-cli
-engine (`claudeAiOauth` in `~/.somora/claude-home/.credentials.json`),
-so there is nothing extra to log into.
+claude.ai account — there is no API key. It needs the **separate
+`/design-login` credential**: Anthropic put Claude Design behind its own
+`user:design:read` / `user:design:write` scope, which the ordinary
+Claude login does not carry.
 
 > **Unsupported / may break.** This uses the same first-party login
 > Claude Code uses; Anthropic does not document third-party access and
-> could change it at any time. Treat it as experimental.
+> could change it at any time — it has already changed twice. Treat it
+> as experimental.
 
 **Setup:**
 
-1. Be logged into Claude Code on the machine (`claude` → `/login`, or
-   the somora-side `CLAUDE_CONFIG_DIR=~/.somora/claude-home claude`).
-   somora's credential sync keeps both copies aligned.
-2. Add the server with a single preset line:
+1. Be logged into Claude Code on the machine (`claude` → `/login`).
+2. Run **`/design-login`** once in a Claude Code session. It writes a
+   `designOauth` entry beside the ordinary one in
+   `~/.somora/claude-home/.credentials.json`.
+3. Add the server with a single preset line:
    ```yaml
    mcp:
      servers:
        claude-design:
          preset: claude-design   # fills url, auth, and the X-Anthropic-Client header
    ```
-3. Restart somora (`systemctl --user restart somora`) and check
-   `curl -sk https://localhost:18737/mcp/status` — `claude-design` should be
-   `connected` with its tool count.
+4. Restart somora and check `curl -sk https://localhost:18737/mcp/status`
+   — `claude-design` should be `connected` with its tool count.
 
-The hub never refreshes this token itself — the Claude CLI owns that
-refresh chain, and two refreshers on one rotating chain would
-invalidate each other. When the token expires and no Claude session has
-refreshed it yet, the server shows `needs-auth` until the next Claude
-use (yours or an agent's), then reconnects on its own within a few
-minutes. A `/login` in Claude Code replaces the token; the sync picks it
-up and the hub follows.
+**Which credential, and why the preset names two.** The preset asks for
+`designOauth` first and falls back to the ordinary `claudeAiOauth`,
+taking whichever key is actually in the file. That is not indecision —
+this has moved twice in four days:
 
-**Legacy: the dedicated `/design-login` credential.** Older setups used a
-separate `designOauth` credential written by `/design-login`. It still
-works with an explicit `auth:` block (`credentialKey: designOauth`,
-`tokenEndpoint: https://platform.claude.com/v1/oauth/token`) — but be
-aware that the CLI's own `/login` revokes every refresh token in its
-credential file before logging in, `designOauth` included, and recent
-CLI versions fold the design scopes into the main login (the
-`/design-login` flow may fail with "Invalid client id"). Prefer the
-default.
+| | |
+|---|---|
+| until 2026-08-25 | the separate `/design-login` credential; then that flow broke on recent CLI versions |
+| 2026-08-25 | the ordinary login worked, verified against the live endpoint |
+| 2026-08-28 | Anthropic split out `user:design:*`; the ordinary token is refused and `/design-login` is required again |
+
+A list survives the next move in either direction without anyone editing
+config. The same applies to any server: `credentialKey` accepts an
+ordered list.
+
+**If it says `needs-auth`,** run `/design-login` again. A token that
+authenticates for everything else but lacks the design scope is refused
+by this endpoint alone — the endpoint says so in its response body, and
+somora surfaces that rather than parking on a generic failure.
+
+The hub never refreshes these tokens itself — the Claude CLI owns those
+rotating chains, and two refreshers on one chain invalidate each other.
+That is not hypothetical: it is how a Design credential got revoked on
+2026-08-25.
 
 ## What works today — and what doesn't (yet)
 

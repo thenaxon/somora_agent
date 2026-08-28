@@ -1516,8 +1516,18 @@ export const McpOAuthRefreshSchema = z.object({
   /** JSON file holding the credential. Default: somora's claude-home
    *  `.credentials.json` (where `/design-login` writes). `~` expands. */
   credentialFile: z.string().optional(),
-  /** Top-level key in that file, e.g. `designOauth`. */
-  credentialKey: z.string().min(1),
+  /**
+   * Top-level key in that file, e.g. `designOauth`. An ordered LIST is
+   * also accepted, and the first key actually present in the file wins.
+   *
+   * That exists because a provider can move the goalposts: Claude
+   * Design authenticated off the ordinary login until Anthropic split
+   * out a `user:design:*` scope, after which only the separate
+   * `/design-login` credential works. A list survives the change in
+   * either direction without an operator editing config — and without
+   * somora pinning a constant that upstream then invalidates.
+   */
+  credentialKey: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
   /** OAuth token endpoint for the refresh_token grant. */
   tokenEndpoint: z.string().url(),
   /** Whether the hub may refresh the token ITSELF. Set false when the

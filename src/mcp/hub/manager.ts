@@ -111,6 +111,19 @@ interface ServerRuntime {
   callChain: Promise<unknown>;
 }
 
+/**
+ * Refusals a server states in the RESPONSE BODY rather than in a status
+ * line. The MCP SDK folds the body into its error message and drops the
+ * code, so an endpoint that answers 403 with
+ * `{"error":"needs_design_scopes",…}` reaches us as prose with no
+ * number in it — and used to read as a transient failure worth retrying
+ * on the other transport, which then reported ITS error (a 405 on the
+ * SSE probe) and buried the real one. Measured against the live Claude
+ * Design endpoint, 2026-08-28.
+ */
+const BODY_AUTH_MARKERS =
+  /needs_design_scopes|needs_consent|insufficient_scope|invalid_token|token.{0,20}expired/i;
+
 function isPermanentError(err: unknown): boolean {
   // A missing env var (static-header auth) or an unrecoverable oauth
   // state (no refresh token, refresh rejected) can't get better on a
@@ -123,14 +136,28 @@ function isPermanentError(err: unknown): boolean {
   return (
     /\b(401|403)\b/.test(msg) ||
     /unauthorized|forbidden/i.test(msg) ||
+    BODY_AUTH_MARKERS.test(msg) ||
     /ENOTFOUND|ERR_INVALID_URL/i.test(msg)
   );
 }
 
+/** Worth telling the operator to log in again, as opposed to a server
+ *  that is merely down. 403 counts: a credential that authenticates but
+ *  lacks a scope is an auth problem, and parking it as a generic
+ *  failure sends someone hunting for an outage that isn't there. */
 function isAuthError(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err);
-  return /\b401\b/.test(msg) || /unauthorized/i.test(msg);
+  return (
+    /\b(401|403)\b/.test(msg) ||
+    /unauthorized|forbidden/i.test(msg) ||
+    BODY_AUTH_MARKERS.test(msg)
+  );
 }
+
+/** Exported for the classifier tests: these two decide whether a server
+ *  parks as `needs-auth` with an actionable message or thrashes against
+ *  a wall, and both got that wrong for a body-only refusal. */
+export const __classifiers = { isPermanentError, isAuthError };
 
 function isSessionExpired(err: unknown): boolean {
   const msg = String((err as Error)?.message ?? err);

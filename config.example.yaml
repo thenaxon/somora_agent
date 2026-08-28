@@ -693,9 +693,12 @@ providers:
 #       # connectTimeoutMs: 15000
 #       # supportsParallelToolCalls: false   # keep serial unless known-safe
 #     # Servers that authenticate via an OAuth login (token in a JSON
-#     # file). Claude Design ships as a one-line preset and rides on the
-#     # regular Claude login somora already keeps in sync — no extra
-#     # login step (docs/mcp.md#claude-design):
+#     # file). Claude Design ships as a one-line preset. It needs the
+#     # separate `/design-login` credential: Anthropic split Claude
+#     # Design onto its own `user:design:*` scope, which the ordinary
+#     # Claude login does not carry. Run /design-login once in a Claude
+#     # Code session; the preset picks the credential up by itself
+#     # (docs/mcp.md#claude-design):
 #     claude-design:
 #       preset: claude-design
 #     # Generic form for other such servers:
@@ -704,6 +707,10 @@ providers:
 #     #   auth:
 #     #     type: oauth-refresh
 #     #     credentialKey: myServiceOauth
+#     #     # …or an ordered list, first key PRESENT in the file wins.
+#     #     # Useful when a provider moves its auth and you want one
+#     #     # config to work before and after:
+#     #     # credentialKey: [newServiceOauth, myServiceOauth]
 #     #     tokenEndpoint: https://example.com/oauth/token
 #     #     # refresh: false   # read-only when another process owns the
 #     #     #                  # token's refresh chain (two refreshers on

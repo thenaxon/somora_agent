@@ -74,7 +74,15 @@ export class OAuthRefreshProvider implements CredentialProvider {
     this.file = expandHome(
       auth.credentialFile ?? join(homedir(), '.somora', 'claude-home', '.credentials.json'),
     );
-    this.lockPath = `${this.file}.${auth.credentialKey}.refresh.lock`;
+    // The lock is per FILE, not per key: two keys in one file are
+    // rewritten through the same read-modify-write.
+    this.lockPath = `${this.file}.${this.keys()[0]}.refresh.lock`;
+  }
+
+  /** Candidate keys, in preference order. */
+  private keys(): string[] {
+    const k = this.auth.credentialKey;
+    return Array.isArray(k) ? k : [k];
   }
 
   async resolveHeaders(): Promise<Record<string, string>> {
@@ -90,7 +98,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
         // then the owner has usually refreshed it.
         logger.debug({
           msg: 'mcp.hub.oauth_near_expiry_readonly',
-          key: this.auth.credentialKey,
+          key: this.activeKeyLabel(),
           expiresInMs: cred.expiresAt - now,
         });
       }
@@ -113,13 +121,41 @@ export class OAuthRefreshProvider implements CredentialProvider {
       );
     }
     const doc = JSON.parse(raw) as Record<string, unknown>;
-    const entry = doc[this.auth.credentialKey] as OAuthCredential | undefined;
-    if (!entry?.accessToken) {
-      throw new Error(
-        `MCP oauth credential key "${this.auth.credentialKey}" missing/empty in ${this.file} — run the interactive login`,
-      );
+    // First key that is actually there wins. Presence, not preference
+    // on paper: the preferred credential only exists once its login has
+    // been run, and falling through to the next one is what lets the
+    // same config work before and after that.
+    for (const key of this.keys()) {
+      const entry = doc[key] as OAuthCredential | undefined;
+      if (entry?.accessToken) {
+        if (key !== this.usedKey) {
+          logger.debug({ msg: 'mcp.hub.oauth_key_selected', key, file: this.file });
+          this.usedKey = key;
+        }
+        return entry;
+      }
     }
-    return entry;
+    const tried = this.keys().join(', ');
+    throw new Error(
+      `MCP oauth credential key${this.keys().length > 1 ? 's' : ''} "${tried}" missing/empty in ` +
+        `${this.file} — run the service's interactive login`,
+    );
+  }
+
+  /** The key actually in use, or the configured list when nothing has
+   *  been read yet — so a message never claims a credential it didn't
+   *  touch. */
+  private activeKeyLabel(): string {
+    return this.usedKey ?? this.keys().join(' | ');
+  }
+
+  /** Which key the last read resolved to. Reported in errors so a
+   *  rejection can be traced to the credential it used. */
+  private usedKey: string | null = null;
+
+  /** The credential this provider is currently speaking with. */
+  activeKey(): string | null {
+    return this.usedKey;
   }
 
   /** Refresh under a cross-process lockfile. If another process already
@@ -141,7 +177,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
 
   private async doRefresh(cred: OAuthCredential): Promise<OAuthCredential> {
     if (!cred.refreshToken) {
-      throw new Error(`MCP oauth key "${this.auth.credentialKey}" has no refresh_token — re-login required`);
+      throw new Error(`MCP oauth key "${this.activeKeyLabel()}" has no refresh_token — re-login required`);
     }
     const body = JSON.stringify({
       grant_type: 'refresh_token',
@@ -156,7 +192,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
     if (!res.ok) {
       const status = res.status;
       throw new Error(
-        `MCP oauth refresh failed (HTTP ${status}) for "${this.auth.credentialKey}"${
+        `MCP oauth refresh failed (HTTP ${status}) for "${this.activeKeyLabel()}"${
           status === 400 || status === 401 ? ' — refresh token expired/revoked, re-login required' : ''
         }`,
       );
@@ -168,7 +204,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
       scope?: string;
     };
     if (!data.access_token) {
-      throw new Error(`MCP oauth refresh returned no access_token for "${this.auth.credentialKey}"`);
+      throw new Error(`MCP oauth refresh returned no access_token for "${this.activeKeyLabel()}"`);
     }
     const updated: OAuthCredential = {
       accessToken: data.access_token,
@@ -182,7 +218,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
     await this.writeBack(updated);
     logger.info({
       msg: 'mcp.hub.oauth_refreshed',
-      key: this.auth.credentialKey,
+      key: this.activeKeyLabel(),
       expiresInSec: data.expires_in,
     });
     return updated;
@@ -197,7 +233,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
     } catch {
       // File vanished — recreate with just this key.
     }
-    doc[this.auth.credentialKey] = updated;
+    doc[this.usedKey ?? this.keys()[0]!] = updated;
     const tmp = `${this.file}.hubtmp.${process.pid}`;
     await writeFile(tmp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
     await rename(tmp, this.file);
@@ -221,7 +257,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
         if (Date.now() > deadline) {
           // Stale lock: reclaim and proceed (best effort).
-          logger.warn({ msg: 'mcp.hub.oauth_lock_stale', key: this.auth.credentialKey });
+          logger.warn({ msg: 'mcp.hub.oauth_lock_stale', key: this.activeKeyLabel() });
           try {
             await (await import('node:fs/promises')).unlink(this.lockPath);
           } catch {
@@ -242,19 +278,34 @@ export function applyMcpPreset(name: string, cfg: McpServerConfig): McpServerCon
     return {
       ...cfg,
       url: cfg.url ?? 'https://api.anthropic.com/v1/design/mcp',
-      // The regular claude.ai login (`claudeAiOauth`) authenticates the
-      // Design MCP — verified 2026-08-25 against the live endpoint. It is
-      // the credential somora already keeps in sync with the user's
-      // Claude CLI, so no separate `/design-login` is needed. The CLI
-      // owns that token's refresh chain → read-only here. (The legacy
-      // `designOauth` key still works via an explicit `auth:` block, but
-      // the CLI's own `/login` revokes it, and `/design-login` is being
-      // folded into the main login upstream.)
+      // Which credential authenticates this has now changed twice, so
+      // the preset names BOTH and takes whichever exists.
+      //
+      //   until 2026-08-25  a separate `/design-login` credential
+      //                     (`designOauth`) — then that flow broke on
+      //                     recent CLI versions
+      //   2026-08-25        the ordinary `claudeAiOauth` login worked,
+      //                     verified against the live endpoint
+      //   2026-08-28        Anthropic split out a `user:design:*` scope.
+      //                     The ordinary token does not carry it and the
+      //                     endpoint answers 403 `needs_design_scopes`;
+      //                     `/design-login` is back and required.
+      //                     Measured both ways on the day: designOauth
+      //                     → 200 with tools, claudeAiOauth → 403.
+      //
+      // Listing both rather than flipping the constant means the next
+      // move in either direction costs nobody a config edit. `read()`
+      // takes the first key present in the file, and `designOauth` only
+      // exists once its login has been run.
+      //
+      // Refresh stays OFF for both: the Claude CLI owns these rotating
+      // chains, and two refreshers on one chain invalidate each other —
+      // that is how a Design credential got revoked on 2026-08-25.
       auth:
         cfg.auth ??
         ({
           type: 'oauth-refresh',
-          credentialKey: 'claudeAiOauth',
+          credentialKey: ['designOauth', 'claudeAiOauth'],
           tokenEndpoint: 'https://platform.claude.com/v1/oauth/token',
           refresh: false,
         } as McpOAuthRefresh),

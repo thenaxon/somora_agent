@@ -42,7 +42,20 @@ function base(overrides: Partial<McpServerConfig>): McpServerConfig {
   const out = applyMcpPreset('claude-design', base({ preset: 'claude-design' }));
   check('preset: url filled', out.url === 'https://api.anthropic.com/v1/design/mcp');
   check('preset: auth oauth-refresh', out.auth?.type === 'oauth-refresh');
-  check('preset: credentialKey claudeAiOauth (regular login)', out.auth?.credentialKey === 'claudeAiOauth');
+// Which credential authenticates Claude Design changed twice in four
+// days: the separate /design-login token, then the ordinary login, then
+// back again once Anthropic split out a user:design:* scope. The preset
+// names both in preference order so the next move costs no config edit,
+// and the provider takes whichever key is actually in the file.
+check(
+  'preset: prefers designOauth, falls back to the regular login',
+  JSON.stringify(out.auth?.credentialKey) === JSON.stringify(['designOauth', 'claudeAiOauth']),
+  JSON.stringify(out.auth?.credentialKey),
+);
+check(
+  'preset: refresh stays off — the CLI owns both rotating chains',
+  out.auth?.refresh === false,
+);
   check('preset: read-only credential (CLI owns the refresh chain)', out.auth?.refresh === false);
   check('preset: tokenEndpoint', out.auth?.tokenEndpoint === 'https://platform.claude.com/v1/oauth/token');
   check('preset: X-Anthropic-Client header', out.headers['X-Anthropic-Client'] === 'claude-cli-design-tool');
@@ -91,6 +104,77 @@ check('assertHasUrl: throws without url', (() => {
   }
 })());
 check('assertHasUrl: returns url', assertHasUrl('x', base({ url: 'https://x/mcp' })) === 'https://x/mcp');
+
+// ── credential selection: first key PRESENT wins ──────────────────
+// The preferred credential only exists after its own interactive login
+// has been run, so "prefer designOauth" has to mean "use it if it is
+// there", not "fail without it". Both directions are asserted, because
+// getting this backwards fails in the least visible way: a token that
+// authenticates for everything else, and a 403 only from one endpoint.
+{
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join: pjoin } = await import('node:path');
+  const dir = mkdtempSync(pjoin(tmpdir(), 'somora-cred-'));
+  const file = pjoin(dir, 'creds.json');
+
+  const providerFor = (keys: string[]) =>
+    new OAuthRefreshProvider(
+      {
+        type: 'oauth-refresh',
+        credentialFile: file,
+        credentialKey: keys,
+        tokenEndpoint: 'https://example.invalid/token',
+        refresh: false,
+      },
+      {},
+    );
+
+  const far = Date.now() + 60 * 60 * 1000;
+
+  writeFileSync(file, JSON.stringify({
+    claudeAiOauth: { accessToken: 'general-token', expiresAt: far },
+  }));
+  let headers = await providerFor(['designOauth', 'claudeAiOauth']).resolveHeaders();
+  check('falls back when the preferred key is absent',
+    headers.authorization === 'Bearer general-token', headers.authorization);
+
+  writeFileSync(file, JSON.stringify({
+    claudeAiOauth: { accessToken: 'general-token', expiresAt: far },
+    designOauth: { accessToken: 'design-token', expiresAt: far },
+  }));
+  headers = await providerFor(['designOauth', 'claudeAiOauth']).resolveHeaders();
+  check('prefers the design credential once it exists',
+    headers.authorization === 'Bearer design-token', headers.authorization);
+
+  // A plain string must keep working — every other server config uses one.
+  const single = new OAuthRefreshProvider(
+    {
+      type: 'oauth-refresh',
+      credentialFile: file,
+      credentialKey: 'claudeAiOauth',
+      tokenEndpoint: 'https://example.invalid/token',
+      refresh: false,
+    },
+    {},
+  );
+  headers = await single.resolveHeaders();
+  check('a single key string still works',
+    headers.authorization === 'Bearer general-token', headers.authorization);
+
+  // Neither present: the message must name what was looked for, or the
+  // operator is left guessing which login to run.
+  writeFileSync(file, JSON.stringify({ somethingElse: { accessToken: 'x' } }));
+  let msg = '';
+  try {
+    await providerFor(['designOauth', 'claudeAiOauth']).resolveHeaders();
+  } catch (err) {
+    msg = (err as Error).message;
+  }
+  check('with none present it names every key it tried',
+    msg.includes('designOauth') && msg.includes('claudeAiOauth'), msg);
+  check('and points at the interactive login', msg.includes('login'), msg);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
