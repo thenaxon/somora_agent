@@ -143,6 +143,7 @@ export type Toolset =
   | 'sentinel'
   | 'image'
   | 'video'
+  | 'media'
   | 'mcp';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {

@@ -117,6 +117,9 @@ OpenAI's API offers exactly that (`variant=thumbnail`).
 | `video_status` | Look in on renders without waiting for one. |
 | `video_models` | Which models exist, and what each one accepts. |
 
+Finding an older render is `media_list` (with `type: video`) — the same
+tool that finds an older image, because it is the same question.
+
 `video_models` matters more here than its image counterpart does.
 Video models differ sharply — one takes length, aspect ratio and an
 audio toggle, the next takes a seed and little else — and a parameter a

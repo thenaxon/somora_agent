@@ -202,7 +202,7 @@ out, and provenance shouldn't vanish with a file you dragged elsewhere.
 | Tool | Purpose |
 |---|---|
 | `image_generate` | Generate and save. Returns path + metadata, not the bytes. |
-| `image_list` | Find earlier images by prompt substring, model, agent, or date. |
+| `media_list` | Find earlier images **and video** by prompt substring, type, model, agent, or date. |
 | `image_models` | List configured handles, and what one model accepts. |
 
 Specs travel as real request fields (`aspect_ratio: "16:9"`), never as
@@ -214,8 +214,10 @@ context. `return_image: true` opts into it (~2k tokens) and requires a
 vision-capable model; without one, the error points at `analyze_file`,
 which dispatches to the configured `vision.worker`.
 
-`image_list` exists because a path in a tool result doesn't survive
-context compaction. "The koala one" has to stay findable.
+`media_list` exists because a path in a tool result doesn't survive
+context compaction. "The koala one" has to stay findable. It was
+`image_list` until video arrived — and then returned videos, which a
+tool with that name has no business doing.
 
 `image_models` exists because the `model` argument is a free string:
 with more than one model configured, nothing else tells the caller
