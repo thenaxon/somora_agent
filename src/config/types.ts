@@ -225,20 +225,28 @@ export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 //     `similarityThreshold` → finding is KEPT but marked
 //     `likely_duplicate` so the review can batch-dismiss. Similarity is
 //     a judgment call, so no silent drop.
-// Threshold semantics: fused hybrid score in [0,1] (see
-// memory/retrieval.ts). Default 0.8 is deliberately conservative —
-// ordinary "related" pages score ~0.4-0.6; only near-verbatim content
-// clears 0.8. Tune down if buffet-style noise still gets through.
+// Threshold semantics: COSINE similarity of the finding's embedding to
+// the best existing chunk, in [0,1] (memory/retrieval.ts
+// cosineFromVecScore). Not the fused hybrid `score` — that is a rank
+// within one query's candidates (the top hit is always 1.0 before
+// source boosts), which is why the old 0.8 flagged ~70 % of findings
+// against unrelated pages (2026-08-26). Default 0.85, measured on real
+// notes with the bundled embedding model (2026-08-31): verbatim 1.00,
+// paraphrase of the same fact 0.85-0.90, same topic but a different or
+// contradicting fact 0.73-0.84, unrelated 0.3-0.5. A long German note
+// vs a one-line paraphrase can drop to ~0.6 — that finding then simply
+// shows up unmarked, the conservative failure. Tune down if repeats
+// still get through, up if contradicting facts get flagged.
 export const RemDedupConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  similarityThreshold: z.number().min(0).max(1).default(0.8),
-}).default({ enabled: true, similarityThreshold: 0.8 });
+  similarityThreshold: z.number().min(0).max(1).default(0.85),
+}).default({ enabled: true, similarityThreshold: 0.85 });
 
 export type RemDedupConfig = z.infer<typeof RemDedupConfigSchema>;
 
 export const RemGlobalConfigSchema = z.object({
   dedup: RemDedupConfigSchema,
-}).default({ dedup: { enabled: true, similarityThreshold: 0.8 } });
+}).default({ dedup: { enabled: true, similarityThreshold: 0.85 } });
 export type RemGlobalConfig = z.infer<typeof RemGlobalConfigSchema>;
 
 // Engine watchdog tunables (Phase A2 — 2026-05-14). Idle-event timeout

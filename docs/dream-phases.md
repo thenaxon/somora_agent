@@ -186,12 +186,14 @@ is absent — existing configs keep working unchanged):
 rem:
   dedup:
     enabled: true             # default true
-    similarityThreshold: 0.8  # fused hybrid score; the vec/bm25 fusion
-                              # lands in [0,1] but per-source boosts
-                              # (memory.search.boostWiki etc.) multiply
-                              # it, so boosted hits can score above 1.0.
-                              # "Related" pages ~0.4-0.6 unboosted.
-                              # Lower = mark more.
+    similarityThreshold: 0.85 # cosine similarity of the finding's
+                              # embedding to the closest existing
+                              # memory/wiki chunk, 0..1. NOT the fused
+                              # search score (that is a rank within one
+                              # query — the top hit is always 1.0 before
+                              # boosts). Paraphrases of the same fact
+                              # ~0.85-0.95, same topic / different fact
+                              # ~0.6-0.8. Lower = mark more.
 ```
 
 ## Phase Deep — Memory → Wiki

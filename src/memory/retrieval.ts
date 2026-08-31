@@ -40,11 +40,14 @@ export interface Hit {
   endLine: number;
   /** Final fused score. The weighted vec/bm25 fusion lands in [0,1],
    *  but per-source boosts (sourceBoosts, e.g. wiki 1.4) MULTIPLY it
-   *  afterwards — boosted hits legitimately exceed 1.0. Thresholds
-   *  (autoInject.minScore, rem.dedup.similarityThreshold) compare
-   *  against this boosted value. */
+   *  afterwards — boosted hits legitimately exceed 1.0. It is a RANK
+   *  within this query's candidates (min-max normalised), so
+   *  `autoInject.minScore` compares against it, but a similarity
+   *  judgment (rem.dedup.similarityThreshold) must not — see
+   *  cosineFromVecScore(). */
   score: number;
-  /** Per-modality components (debugging / logging). */
+  /** Raw per-modality components. `vecScore` is 1/(1+distance),
+   *  un-normalised — the only absolute signal in here. */
   vecScore: number;
   bm25Score: number;
 }
@@ -201,6 +204,37 @@ function runVectorSearch(
     )
     .all(embedding, k) as Array<{ rowid: number | bigint; distance: number }>;
   return rows.map((r) => ({ chunkId: Number(r.rowid), score: 1 / (1 + r.distance) }));
+}
+
+/**
+ * Absolute cosine similarity behind a hit's raw `vecScore`.
+ *
+ * `vecScore` is `1 / (1 + d)` with `d` the vec0 distance — L2 (the
+ * table is created without `distance_metric`, so sqlite-vec's default)
+ * over unit-length embeddings (embeddings.ts normalizes). For unit
+ * vectors `d² = 2 − 2·cos`, hence `cos = 1 − d²/2`. Identical text →
+ * 1.0, unrelated → ~0, opposite → −1.
+ *
+ * Why this exists: the fused `score` is min-max normalised WITHIN one
+ * query's candidate set, so the best vector hit is always 1.0 no matter
+ * how far away it is, and the source boost then makes it 0.98 (wiki)
+ * or 0.85 (memory) — constants, not similarities. Anything that needs
+ * "how alike is this really" (REM dedup) must use this, not `score`.
+ */
+export function cosineFromVecScore(vecScore: number): number {
+  if (!(vecScore > 0)) return 0;
+  const d = 1 / vecScore - 1;
+  const cos = 1 - (d * d) / 2;
+  return Math.max(-1, Math.min(1, cos));
+}
+
+/** Inverse of cosineFromVecScore — what runVectorSearch would have
+ *  produced for a chunk at that cosine similarity. Tests use it to
+ *  build hits with an explicit similarity. */
+export function vecScoreFromCosine(cos: number): number {
+  const c = Math.max(-1, Math.min(1, cos));
+  const d = Math.sqrt(Math.max(0, 2 - 2 * c));
+  return 1 / (1 + d);
 }
 
 function loadSourcesForIds(memDb: MemoryDb, ids: number[]): Map<number, string> {

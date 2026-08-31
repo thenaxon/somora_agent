@@ -14,10 +14,14 @@
 //      → the finding is DROPPED and logged. Nothing ambiguous about a
 //      byte-identical slug.
 //   2. Content similarity: hybrid search (memory+wiki sources) over the
-//      proposed content; a hit at/above `rem.dedup.similarityThreshold`
-//      marks the finding `likely_duplicate` + `duplicate_of`. The
-//      finding STAYS in the review — similarity is a judgment call, the
-//      marker just lets the user batch-dismiss with confidence.
+//      proposed content; the candidate whose EMBEDDING COSINE
+//      similarity is at/above `rem.dedup.similarityThreshold` marks
+//      the finding `likely_duplicate` + `duplicate_of`. Not the fused
+//      `score` — that one is a rank inside the candidate set (top hit
+//      always 1.0 before boosts) and flagged ~70 % of findings against
+//      unrelated pages (2026-08-26 report). The finding STAYS in the
+//      review — similarity is a judgment call, the marker just lets
+//      the user batch-dismiss with confidence.
 //
 // Dedup stages (1+2) only apply to `memory_write` findings. memory_edit /
 // memory_delete address an existing slug by design (a "collision" is
@@ -32,6 +36,7 @@
 
 import type { RemDedupConfig } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
+import { cosineFromVecScore } from '../memory/retrieval.ts';
 import { logger } from '../server/logger.ts';
 import type { Finding } from './types.ts';
 
@@ -141,6 +146,7 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
   const kept: Finding[] = [];
   let dropped = droppedInvalid;
   let marked = 0;
+  let warnedNoVector = false;
 
   for (const f of validated) {
     if (f.action !== 'memory_write') {
@@ -172,9 +178,17 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
     const text = (f.proposed_content ?? '').trim() || f.reason;
     if (text) {
       try {
+        // Candidates come back ranked by the fused score, which is a
+        // RANK within this query, not a similarity: min-max normalised
+        // per candidate set, then × source boost, so the top wiki hit
+        // is 0.98 and the top memory hit 0.85 for ANY query — "Star
+        // Wars Tetris" duplicated "urlaubsplaner" at 0.98 (2026-08-26
+        // report, ~70 % of findings flagged). The decision below uses
+        // the absolute cosine similarity of the embedding instead;
+        // minScore is 0 here only to get the candidates.
         const rawHits = await args.mgr.search(text, {
-          limit: 3,
-          minScore: args.config.similarityThreshold,
+          limit: 5,
+          minScore: 0,
           sources: ['memory', 'wiki'],
         });
         // Wiki audit logs (logs/YYYY-MM, written by Deep) are META
@@ -183,14 +197,34 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
         // whose content Deep had merely LOGGED processing, producing
         // false batch-dismiss hints (2 of 6 false positives in the
         // 2026-07-29 report). Exclude them from the dedup corpus.
-        const hits = rawHits.filter(
+        const candidates = rawHits.filter(
           (h) => !(h.source === 'wiki' && (h.slug === 'logs' || h.slug.startsWith('logs/'))),
         );
-        const top = hits[0];
-        if (top) {
+        // BM25-only hits carry vecScore 0 — no embedding, no similarity
+        // judgment. They are never flagged; if NOTHING has a vector the
+        // run says so once instead of silently flagging nothing.
+        // Rounded to 4 places so a threshold set to what a user reads
+        // in duplicate_of (2 places) compares the way they expect.
+        const withVec = candidates
+          .map((h) => ({ hit: h, similarity: Math.round(cosineFromVecScore(h.vecScore) * 1e4) / 1e4 }))
+          .filter((c) => c.hit.vecScore > 0)
+          .sort((a, b) => b.similarity - a.similarity);
+        if (candidates.length > 0 && withVec.length === 0 && !warnedNoVector) {
+          warnedNoVector = true;
+          logger.warn({
+            msg: 'dream.rem.dedup_no_vector_scores',
+            agent: args.agent,
+            dreamId: args.dreamId,
+            hint: 'hybrid search returned BM25-only hits (no embeddings?) — content dedup cannot judge similarity, nothing flagged',
+          });
+        }
+        const best = withVec[0];
+        const hits = withVec.map((c) => c.hit);
+        const top = best && best.similarity >= args.config.similarityThreshold ? best.hit : undefined;
+        if (top && best) {
           marked++;
           f.likely_duplicate = true;
-          f.duplicate_of = `${top.source}:${top.slug}@${top.score.toFixed(2)}`;
+          f.duplicate_of = `${top.source}:${top.slug}@${best.similarity.toFixed(2)}`;
           // Show WHAT matched, not just how much — similarity flags
           // topic-overlap, and for a project page every project fact
           // scores high whether or not it's already written there.
