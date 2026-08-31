@@ -4320,6 +4320,13 @@ if (tlsConf?.publicHost && bindHost === '127.0.0.1') {
 // `/web/*` makes the same-origin path work in production. Dev still
 // uses vite at :5173 with a proxy to this server.
 const webDistDir = new URL('../../web/dist/', import.meta.url).pathname;
+// Must be registered BEFORE the static mount: `/web/*` also matches the
+// bare `/web`, and the rewrite's optional slash turns it into `/` — so a
+// mount-first order serves index.html at `/web` with 200 and the redirect
+// below is never reached. The browser then resolves the document's
+// relative asset links (e.g. `./favicon.svg`) against `/` instead of
+// `/web/`, and they 404.
+app.get('/web', (c) => c.redirect('/web/'));
 app.use(
   '/web/*',
   serveStatic({
@@ -4327,7 +4334,6 @@ app.use(
     rewriteRequestPath: (path) => path.replace(/^\/web\/?/, '/'),
   }),
 );
-app.get('/web', (c) => c.redirect('/web/'));
 
 // Static mount for the mobile PWA client. Same pattern as /web/ —
 // vite-built artifacts live at `web-mobile/dist/` with base `/mobile/`,
@@ -4339,6 +4345,8 @@ app.get('/web', (c) => c.redirect('/web/'));
 // is `/mobile/` — both match this mount, so "add to home screen"
 // from a phone parks the user at the right entry point.
 const mobileDistDir = new URL('../../web-mobile/dist/', import.meta.url).pathname;
+// Same ordering requirement as `/web` above.
+app.get('/mobile', (c) => c.redirect('/mobile/'));
 app.use(
   '/mobile/*',
   serveStatic({
@@ -4346,7 +4354,6 @@ app.use(
     rewriteRequestPath: (path) => path.replace(/^\/mobile\/?/, '/'),
   }),
 );
-app.get('/mobile', (c) => c.redirect('/mobile/'));
 
 // Acquire single-active-server lockfile. Refuses to start if another
 // somora process is alive (live PID match). Stale locks (process gone)
