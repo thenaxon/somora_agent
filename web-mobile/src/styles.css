@@ -381,6 +381,43 @@ button { cursor: pointer; }
   color: var(--line-2);
   font-style: normal;
 }
+/* "↩ edit" on a queued bubble: take the message back into the
+ * composer while the server still holds it in line (2026-08-26 ask).
+ * Same dim-italic family as the queued marker; padding gives a real
+ * tap target without growing the timestamp row visually. */
+.msg-recall-btn {
+  background: none;
+  border: none;
+  padding: 6px 6px;
+  margin: -6px 0 -6px 2px;
+  min-height: 28px;
+  color: var(--text-3);
+  font: inherit;
+  font-size: inherit;
+  font-style: italic;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.msg-recall-btn:active {
+  text-decoration: underline;
+  color: var(--text-2, var(--text-3));
+}
+/* Errored turn: the engine/backend failed instead of (or after)
+ * answering. A compact danger block INSIDE the turn — so pictures the
+ * turn made before failing hang here, not under the previous answer,
+ * and following turns don't shift (2026-08-28 report). */
+.msg-row.error { justify-content: flex-start; }
+.msg-row.error .msg-col { align-items: flex-start; }
+.msg-bubble.error {
+  color: var(--danger, #ef4444);
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-top-left-radius: 4px;
+  font-size: 13px;
+}
+.msg-error-glyph {
+  margin-right: 2px;
+}
 /* Media marker on an agent bubble. The PWA renders no media itself;
  * this line exists so a turn that produced a picture doesn't read as
  * an empty-handed answer. Quiet on purpose — it is a pointer, not

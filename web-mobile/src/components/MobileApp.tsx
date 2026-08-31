@@ -18,6 +18,10 @@ export function MobileApp() {
   const [lastAgent, setLastAgent] = useLastAgent();
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
   const chat = useChatStream(activeAgent);
+  // A recalled queued message travels ChatArea → recall() → here → the
+  // composer. MessageInput owns its draft state, so the hand-over is a
+  // nonce'd prop rather than lifting the whole draft up.
+  const [draftInject, setDraftInject] = useState<{ text: string; nonce: number } | null>(null);
   // Poll /dream-states every 30s for the avatar-row pulse + REM badge.
   // Empty defaults until the first response lands.
   const dreamStates = useDreamStates();
@@ -208,6 +212,11 @@ export function MobileApp() {
             statusNotice={chat.statusNotice}
             streaming={chat.streaming}
             onAbort={() => void chat.abort()}
+            onRecall={(id) => {
+              void chat.recall(id).then((r) => {
+                if (r) setDraftInject({ text: r.text, nonce: Date.now() });
+              });
+            }}
           />
           <MessageInput
             agent={activeAgent}
@@ -215,6 +224,7 @@ export function MobileApp() {
             autoPlayEnabled={autoPlay}
             streaming={chat.streaming}
             onAbort={() => void chat.abort()}
+            draftInject={draftInject}
           />
         </>
       ) : (

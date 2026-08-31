@@ -124,6 +124,19 @@ export type ChatMessage =
        *  late-arriving assistant_audio events to the right bubble. */
       turnId?: string;
     }
+  | {
+      /** The turn ended with an error (engine 5xx, abort, watchdog)
+       *  instead of — or after — an assistant message. Rendered as a
+       *  block inside the turn, so a failure is visible where it
+       *  happened and media the turn produced before failing hangs
+       *  under it, not under the previous answer (2026-08-28 report). */
+      id: string;
+      role: 'error';
+      ts: number;
+      text: string;
+      turnId?: string;
+      media?: AssistantMedia[];
+    }
   | { id: string; role: 'tool_call'; ts: number; toolCall: ToolCallPayload }
   | { id: string; role: 'tool_result'; ts: number; toolResult: ToolResultPayload }
   | { id: string; role: 'memory_inject'; ts: number; memory: MemoryHitsSnapshot }
@@ -213,6 +226,9 @@ export type StreamEvent =
         ahead: number;
       };
     }
+  | { event: 'turn_dequeued'; data: { turnId: string } }
+  | { event: 'turn_started'; data: { turnId: string } }
+  | { event: 'turn_error'; data: { turnId?: string; message: string; engine: string } }
   | {
       event: 'assistant_audio';
       data: { turnId: string; url: string; mime: string; durationMs?: number; cacheKey: string };

@@ -422,9 +422,26 @@ When other waiters sit in front, the marker reads
 starts the turn — at that point the bubble looks like any other
 finished user message, and the assistant's reply streams in below it.
 
+While the marker is showing, the message is still yours: the small
+**↩ edit** next to it takes the message back out of the queue and
+into the composer (`DELETE /chat/queue/:turnId`), attachments
+included, so you can add the thing you forgot and send again. The
+re-sent message joins the end of the queue. If the turn started in
+the meantime the bubble just loses its marker and a notice says so —
+Stop is the handle from then on.
+
 Aborting (Stop button on the streaming bubble) cancels the
 **currently-running** turn only. Queued waiters keep their slots and
 run in order.
+
+## Failed turns
+
+A turn that ends in an error (engine 5xx, watchdog, abort) renders as
+a red **Turn failed** block inside the turn, right where it happened.
+Media the turn produced before failing (a generated picture, say)
+hangs under that block — not under the previous answer. The block
+comes from the `turn_error` SSE event live and from the session
+file's `error` rows on reload.
 
 ## Activity feed (multi-agent dots + unread)
 
@@ -471,7 +488,10 @@ The web client listens for these named events on `/chat/stream`:
 |---|---|---|
 | `status` | `{msg}` | Connection state — initial `connected`, periodic keepalive |
 | `user_message` | `{text, ts, turnId?, from_agent?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system: 'sentinel'` marks a system-trigger inbound. |
-| `turn_queued` | `{turnId, ahead}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. Drives the `⌛ queued` marker. |
+| `turn_queued` | `{turnId, ahead}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. Drives the `⌛ queued` marker. Re-emitted for the waiters that move up after a dequeue. |
+| `turn_dequeued` | `{turnId}` | A queued message was taken back (↩ edit, from any client). The bubble is dropped. |
+| `turn_started` | `{turnId}` | The engine's own turn id — stamped on the assistant bubble so `assistant_media` / `turn_error` pair to this turn. |
+| `turn_error` | `{turnId?, message, engine}` | The turn failed. Rendered as the **Turn failed** block inside the turn. |
 | `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider`/`model` are the model that ACTUALLY answered; `fallback` `{requested, actual, reason}` is set when that was the persona's fallback. |
 | `model_fallback` | `{requested, actual, reason}` | The primary model failed before producing anything; the fallback model is answering this turn. Precedes its first `chat` delta. |
 | `chat` | `{state: 'delta'\|'final', text}` | Cumulative assistant text (each delta carries the full running text, not just the new chunk) |

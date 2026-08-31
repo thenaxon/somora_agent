@@ -740,6 +740,26 @@ Clients can opt into rendering a queue indicator by listening for the
 `turn_queued` SSE event (see below). UIs without it still work; the
 turn runs eventually, just without a visible "waiting" hint.
 
+### `DELETE /chat/queue/:turnId`
+
+Take a queued **user** turn back before it starts. `:turnId` is the id
+`POST /chat/send` returned. Nothing is written to the session — the
+message never became a turn.
+
+- `200 {ok: true, turnId, agent, session, text, attachments: [{hash,
+  name, mime, size}]}` — the waiter is gone; the payload is handed
+  back so the client can put it into its composer (attachment refs
+  are still valid, no re-upload needed).
+- `409 {ok: false, reason: "already_started"}` — the lock went to this
+  turn meanwhile; it is running. `POST /chat/abort` is the tool now.
+- `404 {ok: false, reason: "unknown"}` — nothing queued under that id
+  (finished, never queued here, or an A2A/sentinel turn — those are
+  not the human's to take back).
+
+Side effects on success: a `turn_dequeued` SSE event for every open
+client on the session, followed by fresh `turn_queued` events for the
+waiters that moved up (their `ahead` shrank).
+
 ### `POST /chat/send-sync`
 
 Synchronous variant. Waits for the turn to finish and returns the
@@ -797,9 +817,24 @@ Event types:
   hit a busy lock and the turn had to wait. `ahead` is the number
   of turns this one must wait for (≥1, includes the currently-
   running one). Static snapshot at enqueue time, not updated as
-  the queue drains. Clients render `"queued · N ahead"` until the
-  matching `user_message` event arrives (= the turn is now actually
-  running, lock acquired).
+  the queue drains — except after a `DELETE /chat/queue/:turnId`,
+  which re-emits it for the waiters that moved up. Clients render
+  `"queued · N ahead"` until the matching `user_message` event
+  arrives (= the turn is now actually running, lock acquired).
+- `turn_dequeued` — `{turnId}` — a queued user turn was taken back
+  via `DELETE /chat/queue/:turnId`. Clients drop the optimistic
+  bubble for that id.
+- `turn_started` — `{turnId}` — the engine opened the turn; this is
+  the engine's own id (`t-…`), the one `assistant_media`,
+  `assistant_audio`, `turn_error` and the session file's `turn_end`
+  carry. Clients stamp the assistant bubble they are about to build
+  with it, so artifacts that arrive after the turn closed pair to
+  THIS turn instead of "the most recent bubble".
+- `turn_error` — `{turnId?, message, engine}` — the turn ended with an
+  error instead of (or after) an assistant message. The `status`
+  event still carries the same text (`error: …` / `turn failed: …`)
+  for older clients; this one adds the turn id so the failure can be
+  rendered as a block inside the right turn.
 - `tool` — `{phase: 'call'|'result'|'error', tool, summary?,
   details?, error?}` — tool-call events
 - `engine_meta` — `{engine, itemType, label, summary?, payload}` —

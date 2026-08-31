@@ -658,6 +658,55 @@ export function ChatWindow({
   // while streaming (Send ↔ Stop same slot). Enqueue-while-streaming
   // remains available via Enter in the textarea — the button itself
   // is Stop and does not send.
+  // Take a queued message back into the composer (its ⌛ "edit"
+  // affordance). The server hands the text + attachment refs back;
+  // attachments re-enter the tray as ready items (already uploaded,
+  // same hashes), so a re-send carries them again without a re-upload.
+  const onRecall = useCallback(
+    (messageId: string) => {
+      void (async () => {
+        try {
+          const r = await chat.recall(messageId);
+          if (!r) {
+            setSystemNotice({
+              text: 'That message already started — use Stop to interrupt it',
+              tone: 'info',
+            });
+            return;
+          }
+          setDraft((cur) => (cur.trim() ? `${cur.replace(/\s+$/, '')}\n${r.text}` : r.text));
+          if (r.attachments.length > 0) {
+            const kindOf = (mime: string): 'image' | 'pdf' | 'text' =>
+              mime.startsWith('image/') ? 'image' : mime === 'application/pdf' ? 'pdf' : 'text';
+            setPendingAttachments((prev) => [
+              ...prev,
+              ...r.attachments.map((a) => ({
+                id: `recall-${a.hash}-${Date.now()}`,
+                state: 'ready' as const,
+                name: a.name,
+                size: a.size,
+                mimeHint: a.mime,
+                ref: { hash: a.hash, name: a.name, mime: a.mime, size: a.size, kind: kindOf(a.mime) },
+              })),
+            ]);
+          }
+          requestAnimationFrame(() => {
+            const el = textareaRef.current;
+            if (!el) return;
+            el.focus();
+            el.setSelectionRange(el.value.length, el.value.length);
+          });
+        } catch (err) {
+          setSystemNotice({
+            text: `Could not take the message back: ${(err as Error).message}`,
+            tone: 'error',
+          });
+        }
+      })();
+    },
+    [chat],
+  );
+
   const onAbort = useCallback(() => {
     void (async () => {
       try {
@@ -1143,6 +1192,7 @@ export function ChatWindow({
                 peerAgents={peerAgents}
                 isPinned={isPinned}
                 onAbort={onAbort}
+                onRecall={onRecall}
                 {...(onPinClick ? { onPinClick } : {})}
               />
             );

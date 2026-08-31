@@ -388,6 +388,36 @@ export type SseEvent =
       };
     }
   | {
+      // A queued user turn was taken back before it started
+      // (DELETE /chat/queue/:turnId). `turnId` is the same server-
+      // issued id the client got from POST /chat/send. Clients drop
+      // the optimistic bubble; the initiating client already has the
+      // text back in its composer. Followed by fresh `turn_queued`
+      // events for the waiters that moved up.
+      event: 'turn_dequeued';
+      data: { turnId: string };
+    }
+  | {
+      // The engine opened a turn: its own turn id (`t-…`, the one
+      // that `assistant_media` / `turn_end` carry in the session
+      // file). Clients stamp the assistant bubble they are about to
+      // build with it, so late-arriving media and errors can be
+      // paired to THIS turn instead of "the most recent bubble" —
+      // which, when a turn errors without an assistant message, is
+      // the previous turn's (2026-08-28 report: pictures landed a
+      // few lines up).
+      event: 'turn_started';
+      data: { turnId: string };
+    }
+  | {
+      // The turn ended with an error instead of (or after) an
+      // assistant message. `status` still carries the same text for
+      // older clients; this event adds the engine turn id so the
+      // failure renders as a block inside the right turn.
+      event: 'turn_error';
+      data: { turnId?: string; message: string; engine: string };
+    }
+  | {
       // Audio artifact ready for an assistant message. Sibling to
       // `chat: final` — that event delivers the text, this one
       // delivers a play-able URL for the same turn. Clients pair

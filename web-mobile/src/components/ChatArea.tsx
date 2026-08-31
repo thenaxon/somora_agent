@@ -28,6 +28,10 @@ interface Props {
    *  affordance on touch) IN ADDITION to the composer Stop — both
    *  trigger the same abort. */
   onAbort: () => void;
+  /** Take a queued (not yet started) message back into the composer.
+   *  Wired to useChatStream.recall by MobileApp; the "↩ edit" button
+   *  on a queued bubble calls it with the bubble's id. */
+  onRecall?: (messageId: string) => void;
 }
 
 export function ChatArea({
@@ -38,6 +42,7 @@ export function ChatArea({
   statusNotice,
   agents,
   onAbort,
+  onRecall,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const userScrolledUpRef = useRef(false);
@@ -97,6 +102,7 @@ export function ChatArea({
             {...(activeAgentInfo?.icon ? { activeAgentIcon: activeAgentInfo.icon } : {})}
             agentLookup={agentLookup}
             onAbort={onAbort}
+            {...(onRecall ? { onRecall } : {})}
           />
         ))}
         {/* Typing-indicator: shown when the server is working but the
@@ -134,13 +140,16 @@ interface MobileMessageProps {
   activeAgentIcon?: string;
   agentLookup: ReadonlyMap<string, { color: string; icon?: string }>;
   onAbort: () => void;
+  onRecall?: (messageId: string) => void;
 }
 
-// One row in the chat scroll. Handles four visual variants:
+// One row in the chat scroll. Handles five visual variants:
 //   - sentinel divider (centered, system styling, Bell icon)
 //   - peer-agent inbound (right side, sender's color+icon)
 //   - user (right side, neutral — same look as before)
 //   - assistant (left side, active agent's color+icon)
+//   - error (left side, compact danger block — the turn failed;
+//     rendered IN the turn so later turns don't shift, 2026-08-28)
 // A streaming agent-bubble additionally carries an always-on Stop
 // (composer shows a second Stop next to Send — both abort).
 function MobileMessage({
@@ -149,7 +158,23 @@ function MobileMessage({
   activeAgentIcon,
   agentLookup,
   onAbort,
+  onRecall,
 }: MobileMessageProps) {
+  if (msg.role === 'error') {
+    return (
+      <div className="msg-row error" role="alert">
+        <div className="msg-col">
+          <div className="msg-bubble error">
+            <span className="msg-error-glyph" aria-hidden="true">⚠</span> {msg.text}
+            {msg.mediaNote && (
+              <MediaNote images={msg.mediaNote.images} videos={msg.mediaNote.videos} />
+            )}
+          </div>
+          <span className="msg-time">{formatMobileTime(msg.ts)}</span>
+        </div>
+      </div>
+    );
+  }
   if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
     return <SentinelDivider text={msg.text} ts={msg.ts} />;
   }
@@ -192,7 +217,7 @@ function MobileMessage({
       )}
       <div className="msg-col">
         <div className={`msg-bubble ${variant}`} style={bubbleStyle}>
-          {isAgent ? (
+          {isAgent && !msg.text && msg.mediaNote ? null : isAgent ? (
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
@@ -239,6 +264,20 @@ function MobileMessage({
               {msg.queued.ahead > 1 && <span>· {msg.queued.ahead - 1} ahead</span>}
               <span className="msg-queued-sep">·</span>
             </span>
+          )}
+          {/* Recall: while the server still holds the message in line it
+           *  can be taken back into the composer, edited and re-sent —
+           *  Stop only interrupts the RUNNING turn (2026-08-26 ask). */}
+          {msg.role === 'user' && msg.queued && !msg.fromAgent && !msg.fromSystem && onRecall && (
+            <button
+              type="button"
+              className="msg-recall-btn"
+              onClick={() => onRecall(msg.id)}
+              aria-label="Edit queued message"
+              title="Take back and edit"
+            >
+              ↩ edit
+            </button>
           )}
           {formatMobileTime(msg.ts)}
         </span>

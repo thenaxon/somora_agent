@@ -24,6 +24,21 @@ import { logger } from './logger.ts';
 
 type Priority = 'user' | 'agent';
 
+/** Thrown to a waiter that was taken out of the queue by
+ *  `dequeueSessionTurn` (DELETE /chat/queue/:turnId) — the turn never
+ *  ran, and the caller must not treat it as a failure of the turn. */
+export class DequeuedError extends Error {
+  constructor(readonly turnId: string) {
+    super(`turn ${turnId} was dequeued before it started`);
+    this.name = 'DequeuedError';
+  }
+}
+
+export type DequeueOutcome =
+  | { status: 'removed'; remaining: Array<{ turnId: string; ahead: number }> }
+  | { status: 'running' }
+  | { status: 'unknown' };
+
 interface Waiter {
   priority: Priority;
   enqueuedAt: number;
@@ -108,6 +123,34 @@ class SessionLock {
         opts.signal.addEventListener('abort', onAbort, { once: true });
       }
     }).then((release) => release);
+  }
+
+  /** Take a still-waiting USER turn out of the queue. Only user
+   *  turns: A2A / sentinel waiters are not the human's to edit. The
+   *  waiter's acquire() promise rejects with DequeuedError so the
+   *  /chat/send continuation skips the turn. Atomic with respect to
+   *  release(): both run on the event loop, and a waiter that release()
+   *  already promoted is `activeTurnId`, not in `queue`. */
+  dequeue(turnId: string): DequeueOutcome {
+    const idx = this.queue.findIndex((w) => w.turnId === turnId && w.priority === 'user');
+    if (idx >= 0) {
+      const [waiter] = this.queue.splice(idx, 1);
+      waiter!.cancelled = true;
+      waiter!.reject(new DequeuedError(turnId));
+      return { status: 'removed', remaining: this.waitingUserTurns() };
+    }
+    if (this.activeTurnId === turnId) return { status: 'running' };
+    return { status: 'unknown' };
+  }
+
+  /** User turns still waiting, with their current `ahead` (same
+   *  semantics as onQueued: waiters in front + the running turn). */
+  waitingUserTurns(): Array<{ turnId: string; ahead: number }> {
+    const out: Array<{ turnId: string; ahead: number }> = [];
+    this.queue.forEach((w, idx) => {
+      if (w.priority === 'user' && w.turnId && !w.cancelled) out.push({ turnId: w.turnId, ahead: idx + 1 });
+    });
+    return out;
   }
 
   private release(): void {
@@ -200,6 +243,28 @@ export async function acquireSessionLock(
     });
   }
   return lock.acquire(opts);
+}
+
+/**
+ * Take a queued user turn back out before it starts. `removed` means
+ * the waiter is gone and its acquire() rejected with DequeuedError;
+ * `running` means the lock already went to it (too late — the turn is
+ * in flight, /chat/abort is the tool for that); `unknown` means no such
+ * waiter on this session (finished, or never queued here).
+ */
+export function dequeueSessionTurn(agent: string, session: string, turnId: string): DequeueOutcome {
+  const lock = locks.get(key(agent, session));
+  if (!lock) return { status: 'unknown' };
+  const outcome = lock.dequeue(turnId);
+  logger.info({
+    msg: 'session_queue.dequeue',
+    agent,
+    session,
+    turnId,
+    status: outcome.status,
+    ...(outcome.status === 'removed' ? { remaining: outcome.remaining.length } : {}),
+  });
+  return outcome;
 }
 
 export function getSessionLockStatus(agent: string, session: string): ReturnType<SessionLock['status']> {

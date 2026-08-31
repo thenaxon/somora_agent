@@ -148,7 +148,12 @@ import type { SseEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
-import { acquireSessionLock, listAllSessionLockStates } from './session-queue.ts';
+import {
+  acquireSessionLock,
+  DequeuedError,
+  dequeueSessionTurn,
+  listAllSessionLockStates,
+} from './session-queue.ts';
 import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
@@ -3492,6 +3497,79 @@ app.post('/voice/turn', async (c) => {
   });
 });
 
+// Human turns waiting for a busy session lock, by server turnId. Lets
+// DELETE /chat/queue/:turnId hand the message back to the composer —
+// Rene's 2026-08-26 ask: "solange queued praktisch nochmal zurücknehmen
+// und umschreiben". Entries live only between POST /chat/send and the
+// moment the lock is granted; A2A and sentinel turns are never listed.
+const queuedUserTurns = new Map<
+  string,
+  {
+    agent: string;
+    session: string;
+    text: string;
+    attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
+    enqueuedAt: number;
+    /** Set once the lock was granted. The entry stays until the turn
+     *  finishes so a late DELETE answers 409 (it is running) instead
+     *  of 404 (never heard of it) — the client shows different things
+     *  for those. */
+    startedAt?: number;
+  }
+>();
+
+// DELETE /chat/queue/:turnId — take a queued user turn back before it
+// starts. 200 with the original text (+ attachment refs) when it was
+// still waiting; 409 when the lock already went to it (use /chat/abort
+// for that); 404 when nothing is queued under that id. Nothing is
+// written to the session file — the message never became a turn.
+// Other open clients get `turn_dequeued`, and fresh `turn_queued`
+// counts for the waiters that moved up.
+app.delete('/chat/queue/:turnId', (c) => {
+  const turnId = c.req.param('turnId');
+  const entry = queuedUserTurns.get(turnId);
+  if (!entry) {
+    return c.json(
+      {
+        ok: false,
+        reason: 'unknown',
+        error: `no queued user turn '${turnId}' — it already started, finished, or was never queued`,
+      },
+      404,
+    );
+  }
+  const outcome = dequeueSessionTurn(entry.agent, entry.session, turnId);
+  if (outcome.status === 'removed') {
+    queuedUserTurns.delete(turnId);
+    void publish(entry.agent, entry.session, { event: 'turn_dequeued', data: { turnId } });
+    for (const w of outcome.remaining) {
+      void publish(entry.agent, entry.session, { event: 'turn_queued', data: w });
+    }
+    logger.info({
+      msg: 'chat.queue.dequeued',
+      turnId,
+      agent: entry.agent,
+      session: entry.session,
+      waitedMs: Date.now() - entry.enqueuedAt,
+      remaining: outcome.remaining.length,
+    });
+    return c.json({
+      ok: true,
+      turnId,
+      agent: entry.agent,
+      session: entry.session,
+      text: entry.text,
+      attachments: entry.attachments ?? [],
+    });
+  }
+  if (outcome.status === 'running' || entry.startedAt !== undefined) {
+    // Entry lives until the turn's finally — no delete here.
+    return c.json({ ok: false, reason: 'already_started', turnId }, 409);
+  }
+  queuedUserTurns.delete(turnId);
+  return c.json({ ok: false, reason: 'unknown', turnId }, 404);
+});
+
 app.post('/chat/send', async (c) => {
   const body = (await c.req.json()) as {
     agent?: string;
@@ -3573,25 +3651,60 @@ app.post('/chat/send', async (c) => {
   // call is acting as A2A and yields to actual user turns). Release in
   // the finally block — forgetting deadlocks future turns on the session.
   const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
+  // Keep the payload of a human turn reachable while it waits in line,
+  // so DELETE /chat/queue/:turnId can hand the text back. Removed the
+  // moment the lock is granted (or the waiter is dequeued).
+  if (priority === 'user') {
+    queuedUserTurns.set(turnId, {
+      agent,
+      session,
+      text,
+      ...(body.attachments && body.attachments.length > 0 ? { attachments: body.attachments } : {}),
+      enqueuedAt: Date.now(),
+    });
+  }
   void (async () => {
     logger.info({ msg: 'turn.queued', turnId, agent, session, priority });
-    const release = await acquireSessionLock(agent, session, {
-      priority,
-      turnId,
-      ...(agentAskCallId ? { callId: agentAskCallId } : {}),
-      // When the lock is busy and we have to wait, broadcast a
-      // turn_queued SSE so any client that already accepted this
-      // turn's optimistic user-bubble (matched by turnId from the
-      // HTTP response below) can tag the bubble with a "queued"
-      // marker until runChatTurn actually fires the user_message
-      // event a few seconds later.
-      onQueued: (ahead) => {
-        void publish(agent, session, {
-          event: 'turn_queued',
-          data: { turnId, ahead },
-        });
-      },
-    });
+    let release: () => void;
+    try {
+      release = await acquireSessionLock(agent, session, {
+        priority,
+        turnId,
+        ...(agentAskCallId ? { callId: agentAskCallId } : {}),
+        // When the lock is busy and we have to wait, broadcast a
+        // turn_queued SSE so any client that already accepted this
+        // turn's optimistic user-bubble (matched by turnId from the
+        // HTTP response below) can tag the bubble with a "queued"
+        // marker until runChatTurn actually fires the user_message
+        // event a few seconds later.
+        onQueued: (ahead) => {
+          void publish(agent, session, {
+            event: 'turn_queued',
+            data: { turnId, ahead },
+          });
+        },
+      });
+    } catch (err) {
+      queuedUserTurns.delete(turnId);
+      if (err instanceof DequeuedError) {
+        // Taken back by the user before it started — nothing ran,
+        // nothing to persist. The route that dequeued it already
+        // broadcast turn_dequeued.
+        logger.info({ msg: 'chat.dequeued', turnId, agent, session });
+        return;
+      }
+      logger.error({
+        msg: 'chat.send.lock_failed',
+        turnId,
+        agent,
+        session,
+        err: (err as Error).message,
+      });
+      void publish(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
+      return;
+    }
+    const queuedEntry = queuedUserTurns.get(turnId);
+    if (queuedEntry) queuedEntry.startedAt = Date.now();
     // Register the per-session AbortController. /chat/abort looks this
     // up to cancel the in-flight turn — typically from TUI ESC.
     const abort = registerChatAbort(agent, session);
@@ -3624,6 +3737,7 @@ app.post('/chat/send', async (c) => {
       });
       void publish(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     } finally {
+      queuedUserTurns.delete(turnId);
       abort.release();
       release();
     }

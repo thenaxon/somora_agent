@@ -20,12 +20,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api, type AttachmentRef, type HistoryEvent, type ProjectInfo } from '../lib/api';
-import {
-  resolveEngineMetaLabel,
-  extractTodoListItems,
-  summariseTodoList,
-} from '../lib/engine-meta-labels';
+import { api, type AttachmentRef, type ProjectInfo } from '../lib/api';
+import { attachMedia, historyEventsToMessages } from '../lib/history';
 import type {
   AssistantMedia,
   ChatMessage,
@@ -109,6 +105,18 @@ interface ChatContextValue {
     agent: string,
     session: string,
   ) => Promise<{ aborted: boolean; ms_running?: number }>;
+  /** Take a still-queued user message (by local row id) back out of the
+   *  server queue. Resolves with its text + attachment refs for the
+   *  composer, or null when it already started / is unknown — the row
+   *  loses its queued marker in that case and stays. */
+  recall: (
+    agent: string,
+    session: string,
+    messageId: string,
+  ) => Promise<{
+    text: string;
+    attachments: Array<{ hash: string; name: string; mime: string; size: number }>;
+  } | null>;
   /** Lazy-load older history. Returns true when more is available
    *  after this load (so the caller can keep paging), false when the
    *  beginning of the session has been reached. No-op when there's
@@ -138,6 +146,7 @@ const ChatContext = createContext<ChatContextValue>({
   send: async () => {},
   subscribeAudio: () => () => {},
   abort: async () => ({ aborted: false }),
+  recall: async () => null,
   loadOlder: async () => false,
   getHasMore: () => false,
   clearMessages: () => {},
@@ -153,6 +162,10 @@ export function useChatContext(): ChatContextValue {
 
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
+  // Mirror for callbacks that need the current list synchronously
+  // (recall() looks up a row's turnId before its HTTP call).
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [streams, setStreams] = useState<Record<string, SessionStreamState>>({});
   // Feature-flag for projects — one boot-time probe, then all UI
   // surfaces (chip in ChatWindow, column in SessionsWindow, slash
@@ -187,6 +200,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // Track the in-flight assistant message id per session — a delta
   // appends to that bubble, an agent.end finalizes it.
   const streamingIdRef = useRef<Map<string, string>>(new Map());
+  // Per-session engine turn id (`t-…`) from the `turn_started` SSE
+  // event. Every assistant/error row built while it is current gets
+  // stamped with it, so `assistant_media` / `turn_error` — which name
+  // that id — land on THIS turn's row and not on "the most recent
+  // assistant bubble" (2026-08-28: a failed turn's pictures showed up
+  // under the previous answer). Kept after agent:end because media is
+  // published after the turn closes.
+  const currentTurnIdRef = useRef<Map<string, string>>(new Map());
   // Voice: per-session listeners that fire when an assistant_audio
   // event arrives. ChatWindow registers one to optionally auto-play
   // the audio (gated by its own localStorage toggle).
@@ -419,12 +440,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               const insertIdx = list.findIndex(
                 (m) => m.role === 'user' && m.pending,
               );
+              const turnId = currentTurnIdRef.current.get(key);
               const newBubble: ChatMessage = {
                 id,
                 role: 'assistant',
                 ts: Date.now(),
                 text: d.text,
                 streaming: true,
+                ...(turnId ? { turnId } : {}),
               };
               if (insertIdx < 0) {
                 return { ...prev, [key]: [...list, newBubble] };
@@ -448,6 +471,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                     ts: Date.now(),
                     text: d.text,
                     streaming: true,
+                    ...(currentTurnIdRef.current.has(key)
+                      ? { turnId: currentTurnIdRef.current.get(key) }
+                      : {}),
                   },
                 ],
               };
@@ -477,6 +503,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                     ts: Date.now(),
                     text: d.text,
                     ...(fb ? { fallback: fb } : {}),
+                    ...(currentTurnIdRef.current.has(key)
+                      ? { turnId: currentTurnIdRef.current.get(key) }
+                      : {}),
                   },
                 ],
               };
@@ -690,26 +719,91 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         bump();
         const d = parse<{ turnId: string; media: AssistantMedia[] }>(ev as MessageEvent);
         if (!d || !Array.isArray(d.media) || d.media.length === 0) return;
-        // Same pairing as assistant_audio: attach to the most recent
-        // assistant row in this session. Media is published once per
-        // turn, after the reply finalized, so the newest bubble is the
-        // one it belongs to.
+        // Pair by the engine turn id: the row (assistant OR error)
+        // stamped with d.turnId owns the media. A turn that errored
+        // before answering has only an error row — the media hangs
+        // under that, never under the previous turn's answer. No row
+        // at all → a media-only assistant row (see lib/history.ts).
+        setMessages((prev) => {
+          const list = prev[key] ?? [];
+          const next = attachMedia(list, d.turnId, d.media, Date.now());
+          if (next.length > list.length) {
+            // attachMedia appended a fresh row; keep it above any
+            // still-pending user bubbles like the first delta would.
+            const row = next[next.length - 1]!;
+            const trimmed = next.slice(0, -1);
+            const insertIdx = trimmed.findIndex((m) => m.role === 'user' && m.pending);
+            if (insertIdx >= 0) trimmed.splice(insertIdx, 0, row);
+            else trimmed.push(row);
+            return { ...prev, [key]: trimmed };
+          }
+          return { ...prev, [key]: next };
+        });
+      });
+
+      es.addEventListener('turn_started', (ev) => {
+        bump();
+        const d = parse<{ turnId: string }>(ev as MessageEvent);
+        if (!d || typeof d.turnId !== 'string') return;
+        currentTurnIdRef.current.set(key, d.turnId);
+        // A bubble that started streaming before this arrived (it
+        // shouldn't — turn_start is the engine's first event — but a
+        // reconnect can reorder) gets stamped retroactively.
+        const streamId = streamingIdRef.current.get(key);
+        if (!streamId) return;
         setMessages((prev) => {
           const list = prev[key];
-          if (!list || list.length === 0) return prev;
-          let targetIdx = -1;
-          for (let i = list.length - 1; i >= 0; i -= 1) {
-            const m = list[i];
-            if (m && m.role === 'assistant') {
-              targetIdx = i;
-              break;
-            }
-          }
-          if (targetIdx < 0) return prev;
-          const target = list[targetIdx];
-          if (!target || target.role !== 'assistant') return prev;
+          if (!list) return prev;
+          const idx = list.findIndex((m) => m.id === streamId);
+          const m = idx >= 0 ? list[idx] : undefined;
+          if (!m || m.role !== 'assistant' || m.turnId === d.turnId) return prev;
           const next = list.slice();
-          next[targetIdx] = { ...target, media: d.media };
+          next[idx] = { ...m, turnId: d.turnId };
+          return { ...prev, [key]: next };
+        });
+      });
+
+      es.addEventListener('turn_error', (ev) => {
+        bump();
+        const d = parse<{ turnId?: string; message: string; engine: string }>(ev as MessageEvent);
+        if (!d || typeof d.message !== 'string') return;
+        const turnId = d.turnId ?? currentTurnIdRef.current.get(key);
+        // The failed turn is over as far as text goes; a streaming
+        // bubble (partial output before the failure) stays as-is and
+        // the error block lands right after it — before any queued
+        // user bubbles, same anchor rule as the first delta.
+        const row: ChatMessage = {
+          id: newId('err'),
+          role: 'error',
+          ts: Date.now(),
+          text: d.message,
+          ...(turnId ? { turnId } : {}),
+        };
+        setMessages((prev) => {
+          const list = prev[key] ?? [];
+          const insertIdx = list.findIndex((m) => m.role === 'user' && m.pending);
+          if (insertIdx < 0) return { ...prev, [key]: [...list, row] };
+          const next = list.slice();
+          next.splice(insertIdx, 0, row);
+          return { ...prev, [key]: next };
+        });
+      });
+
+      es.addEventListener('turn_dequeued', (ev) => {
+        bump();
+        const d = parse<{ turnId: string }>(ev as MessageEvent);
+        if (!d || typeof d.turnId !== 'string') return;
+        // Another client (or this one, already handled in recall())
+        // took a queued message back. Drop its bubble; the fresh
+        // turn_queued events that follow fix the other waiters' counts.
+        pendingQueuedEventsRef.current.get(key)?.delete(d.turnId);
+        setMessages((prev) => {
+          const list = prev[key];
+          if (!list) return prev;
+          const idx = list.findIndex((m) => m.role === 'user' && m.turnId === d.turnId);
+          if (idx < 0) return prev;
+          const next = list.slice();
+          next.splice(idx, 1);
           return { ...prev, [key]: next };
         });
       });
@@ -1088,6 +1182,47 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     return api.abort(agent, session);
   }, []);
 
+  // Take a queued message back into the composer. Only rows that still
+  // carry `queued` are offered this (MessageItem gates the button); the
+  // server is the authority — 409 means the lock went to it meanwhile,
+  // in which case the bubble just loses its marker and the caller gets
+  // null (Stop is the tool from here on).
+  const recall = useCallback<ChatContextValue['recall']>(async (agent, session, messageId) => {
+    const key = sessionKey(agent, session);
+    const list = messagesRef.current[key] ?? [];
+    const row = list.find((m) => m.id === messageId);
+    if (!row || row.role !== 'user' || !row.turnId) return null;
+    const turnId = row.turnId;
+    const res = await api.dequeue(turnId);
+    if (res.ok) {
+      pendingQueuedEventsRef.current.get(key)?.delete(turnId);
+      setMessages((prev) => {
+        const cur = prev[key];
+        if (!cur) return prev;
+        const idx = cur.findIndex((m) => m.id === messageId);
+        if (idx < 0) return prev;
+        const next = cur.slice();
+        next.splice(idx, 1);
+        return { ...prev, [key]: next };
+      });
+      return { text: res.text, attachments: res.attachments };
+    }
+    if (res.reason === 'already_started') {
+      setMessages((prev) => {
+        const cur = prev[key];
+        if (!cur) return prev;
+        const idx = cur.findIndex((m) => m.id === messageId);
+        const m = idx >= 0 ? cur[idx] : undefined;
+        if (!m || m.role !== 'user') return prev;
+        const { queued: _q, ...rest } = m;
+        const next = cur.slice();
+        next[idx] = rest as ChatMessage;
+        return { ...prev, [key]: next };
+      });
+    }
+    return null;
+  }, []);
+
   const subscribeAudio = useCallback<ChatContextValue['subscribeAudio']>(
     (agent, session, handler) => {
       const key = sessionKey(agent, session);
@@ -1232,6 +1367,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       send,
       subscribeAudio,
       abort,
+      recall,
       loadOlder,
       getHasMore,
       clearMessages,
@@ -1246,6 +1382,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       send,
       subscribeAudio,
       abort,
+      recall,
       loadOlder,
       getHasMore,
       clearMessages,
@@ -1275,6 +1412,7 @@ export function useChatSessionFromContext(agent: string, session: string) {
       voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
     ) => ctx.send(agent, session, text, attachments, voice),
     abort: () => ctx.abort(agent, session),
+    recall: (messageId: string) => ctx.recall(agent, session, messageId),
     loadOlder: () => ctx.loadOlder(agent, session),
     hasMore: ctx.getHasMore(agent, session),
     clearMessages: () => ctx.clearMessages(agent, session),
@@ -1285,149 +1423,3 @@ export function useChatSessionFromContext(agent: string, session: string) {
   };
 }
 
-/**
- * Convert a history-event list into chat messages, folding any
- * assistant_audio events onto the most recent preceding assistant
- * message. Used at session-open + load-older. Live SSE handles
- * assistant_audio separately in the SSE listener.
- */
-function historyEventsToMessages(events: HistoryEvent[]): ChatMessage[] {
-  const out: ChatMessage[] = [];
-  // model_fallback precedes the fallback engine's output: stamp the
-  // NEXT assistant message with it.
-  let pendingFallback: ModelFallback | null = null;
-  for (const e of events) {
-    if (e.kind === 'model_fallback') {
-      if (typeof e.requested === 'string' && typeof e.actual === 'string') {
-        pendingFallback = { requested: e.requested, actual: e.actual, reason: e.reason ?? '' };
-      }
-      continue;
-    }
-    if (pendingFallback && e.kind === 'assistant_message') {
-      const msgs = historyEventToMessages(e);
-      out.push(
-        ...msgs.map((m) => (m.role === 'assistant' ? { ...m, fallback: pendingFallback as ModelFallback } : m)),
-      );
-      pendingFallback = null;
-      continue;
-    }
-    if (e.kind === 'assistant_media' && Array.isArray(e.media) && e.media.length > 0) {
-      for (let i = out.length - 1; i >= 0; i -= 1) {
-        const m = out[i];
-        if (m && m.role === 'assistant') {
-          out[i] = { ...m, media: e.media };
-          break;
-        }
-      }
-      continue;
-    }
-    if (e.kind === 'assistant_audio' && e.audio) {
-      // Attach to most recent assistant message in the current accumulator.
-      for (let i = out.length - 1; i >= 0; i -= 1) {
-        const m = out[i];
-        if (m && m.role === 'assistant') {
-          out[i] = {
-            ...m,
-            audio: {
-              url: e.audio.url,
-              mime: e.audio.mime,
-              ...(e.audio.durationMs !== undefined ? { durationMs: e.audio.durationMs } : {}),
-              cacheKey: e.audio.cacheKey,
-            },
-          };
-          break;
-        }
-      }
-      continue;
-    }
-    out.push(...historyEventToMessages(e));
-  }
-  return out;
-}
-
-function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
-  if (e.kind === 'user_message' && typeof e.text === 'string') {
-    return [
-      {
-        id: newId('h-um'),
-        role: 'user',
-        ts: e.ts,
-        text: e.text,
-        ...(e.from_agent ? { fromAgent: e.from_agent } : {}),
-        ...(e.from_system ? { fromSystem: e.from_system } : {}),
-        ...(e.attachments && e.attachments.length > 0
-          ? {
-              attachments: e.attachments.map((a) => ({
-                hash: a.hash,
-                name: a.name,
-                mime: a.mime,
-                size: a.size,
-                kind: kindFromMime(a.mime),
-              })),
-            }
-          : {}),
-      },
-    ];
-  }
-  if (e.kind === 'assistant_message' && typeof e.text === 'string') {
-    return [{ id: newId('h-am'), role: 'assistant', ts: e.ts, text: e.text }];
-  }
-  if (e.kind === 'tool_call' && e.tool) {
-    return [
-      {
-        id: newId('h-tc'),
-        role: 'tool_call',
-        ts: e.ts,
-        toolCall: {
-          tool: e.tool,
-          ...(e.callId ? { callId: e.callId } : {}),
-          ...(e.input ? { input: e.input } : {}),
-        },
-      },
-    ];
-  }
-  if (e.kind === 'tool_result' && e.callId) {
-    return [
-      {
-        id: newId('h-tr'),
-        role: 'tool_result',
-        ts: e.ts,
-        toolResult: {
-          tool: '?',
-          callId: e.callId,
-          ...(e.output !== undefined ? { output: e.output } : {}),
-        },
-      },
-    ];
-  }
-  if (e.kind === 'engine_meta' && typeof e.itemType === 'string') {
-    const engine = e.engine ?? 'unknown';
-    const label = resolveEngineMetaLabel(engine, e.itemType);
-    let summary: string | undefined;
-    if (engine === 'codex-cli' && e.itemType === 'todo_list') {
-      const items = extractTodoListItems(e.payload);
-      if (items) summary = summariseTodoList(items);
-    }
-    return [
-      {
-        id: newId('h-em'),
-        role: 'engine_meta',
-        ts: e.ts,
-        meta: {
-          engine,
-          itemType: e.itemType,
-          label,
-          ...(summary ? { summary } : {}),
-          payload: e.payload,
-        },
-      },
-    ];
-  }
-  return [];
-}
-
-function kindFromMime(mime: string): 'image' | 'pdf' | 'text' {
-  if (mime.startsWith('image/')) return 'image';
-  if (mime === 'application/pdf') return 'pdf';
-  return 'text';
-}

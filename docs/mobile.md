@@ -113,9 +113,20 @@ and the marker clears as soon as the server starts that turn. The
 queue serialises on the server side — turns execute in order, no
 preemption. See [api.md](api.md#queuing) for the lock semantics.
 
+While a bubble still shows the marker, **↩ edit** next to it takes the
+message back into the composer (`DELETE /chat/queue/:turnId`) so you
+can change it and send again; it then joins the end of the queue. If
+the turn started meanwhile, the marker just clears and a notice says
+so.
+
 Stop (composer or bubble — same action) cancels the
 **currently-running** turn only. Anything still queued behind it
 keeps its slot and executes when the lock frees.
+
+A turn that ends in an error shows a compact **⚠** block inside the
+turn (from the `turn_error` SSE event, and from `error` rows on
+reload), with the media marker under it when the turn produced a
+picture before failing.
 
 ## Scope: what's in vs what's not
 

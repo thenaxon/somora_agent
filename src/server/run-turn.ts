@@ -795,6 +795,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     | undefined;
   let finalText = '';
   let errorMessage: string | undefined;
+  // The engine's own turn id (`t-…`), learned from its turn_start. Kept
+  // outside the try so the failure path can stamp its turn_error with
+  // it — the client pairs the error block to the right turn by this.
+  let streamTurnId: string | undefined;
 
   try {
     // Re-read history NOW (after we just appended the user_message
@@ -948,7 +952,6 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     let sawTurnEnd = false;
     let lastSeenEngine: string = resolvedModel.provider.engine;
     let fallbackInfo: { requested: string; actual: string; reason: string } | undefined;
-    let streamTurnId: string | undefined;
     for await (const ev of stream) {
       if (!firstEventLogged) {
         firstEventLogged = true;
@@ -995,6 +998,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       }
       if (ev.kind === 'turn_start' && typeof ev.turnId === 'string') {
         streamTurnId = ev.turnId;
+        if (publishSse) {
+          await publishSse({ event: 'turn_started', data: { turnId: ev.turnId } });
+        }
       }
       if (ev.kind === 'model_fallback') {
         fallbackInfo = { requested: ev.requested, actual: ev.actual, reason: ev.reason };
@@ -1014,6 +1020,18 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       if (serialize && publishSse) {
         const sse = serialize(ev);
         if (sse) await publishSse(sse);
+        if (ev.kind === 'error') {
+          // The serializer keeps the `status` line for older clients;
+          // this adds the turn id so the failure lands in its turn.
+          await publishSse({
+            event: 'turn_error',
+            data: {
+              ...(streamTurnId ? { turnId: streamTurnId } : {}),
+              message: ev.message,
+              engine: ev.engine,
+            },
+          });
+        }
       }
     }
     // Defense in depth: if the stream ended cleanly but no turn_end was
@@ -1163,6 +1181,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       await publishSse({
         event: 'status',
         data: { msg: `turn failed: ${errorMessage}` },
+      });
+      await publishSse({
+        event: 'turn_error',
+        data: {
+          ...(streamTurnId ? { turnId: streamTurnId } : {}),
+          message: `turn aborted: ${errorMessage}`,
+          engine: resolvedModel.provider.engine,
+        },
       });
     }
   }

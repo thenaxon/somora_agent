@@ -20,58 +20,22 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 // User-message events are NOT broadcast over SSE — the user knows what
 // they sent (we add it optimistically client-side on send() success).
 
+//   - 'turn_started' { turnId }        — engine turn id; stamps the agent bubble
+//   - 'turn_error' { turnId?, message } — turn failed; error block in that turn
+//   - 'turn_dequeued' { turnId }       — a queued user turn was taken back
+//   - 'assistant_media' { turnId, media } — paired to the row of THAT turn
+
 import { useEffect, useRef, useState } from 'react';
+import {
+  countMedia,
+  findTurnRow,
+  historyEventsToMessages,
+  newId,
+  type ChatMessage,
+  type HistoryEvent,
+} from './history';
 
-export interface ChatMessage {
-  id: string;
-  role: 'user' | 'agent';
-  text: string;
-  ts: number;
-  /** True while the agent's response is still streaming. */
-  streaming?: boolean;
-  /** A2A: name of the peer agent that wrote this inbound. Renderer
-   *  swaps the user-bubble for a peer-agent bubble in the sender's
-   *  color/icon. */
-  fromAgent?: string;
-  /** Synthesized inbound marker. Today: 'sentinel'. Renderer draws a
-   *  centered system divider instead of a user-bubble. */
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job';
-  /** Voice: optional TTS audio URL produced for this turn. Set when an
-   *  `assistant_audio` SSE event arrived after the message; drives the
-   *  Play-button on the agent bubble. */
-  audio?: { url: string; mime: string; durationMs?: number };
-  /** Media the agent produced during this turn. The PWA deliberately
-   *  does NOT display it — this is a marker so the reply doesn't look
-   *  like the agent delivered nothing, with the desktop app as the
-   *  place to actually look at it. */
-  mediaNote?: { images: number; videos: number };
-  /** Server-issued turnId for self-typed turns. Set after POST
-   *  /chat/send returns; used to pair this optimistic bubble with
-   *  later SSE events (turn_queued, user_message). */
-  turnId?: string;
-  /** Set when a turn_queued SSE event arrived for this bubble's
-   *  turnId. Cleared once the matching user_message event lands
-   *  (= the turn actually started). Drives the hourglass marker
-   *  next to the timestamp. */
-  queued?: { ahead: number };
-  /** True from optimistic send until the matching user_message
-   *  SSE arrives. Used by the chat:delta handler to anchor the
-   *  fresh assistant bubble BEFORE any queued user-bubbles so
-   *  the agent's reply for the CURRENT turn stays above messages
-   *  the user typed while waiting. */
-  pending?: boolean;
-}
-
-interface HistoryEvent {
-  kind: string;
-  ts?: number;
-  text?: string;
-  turnId?: string;
-  from_agent?: string;
-  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
-  audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
-  media?: Array<{ type: string; id: string; filename: string; mime: string; url: string }>;
-}
+export type { ChatMessage } from './history';
 
 export interface ChatStream {
   messages: ChatMessage[];
@@ -99,27 +63,14 @@ export interface ChatStream {
    *  aborted:false / HTTP failures via statusNotice so Stop never
    *  silently no-ops. */
   abort: () => Promise<void>;
+  /** Take a still-queued message back (DELETE /chat/queue/:turnId) so
+   *  it can be edited and re-sent — Rene's 2026-08-26 ask. Resolves
+   *  with the original text when the server still had it waiting;
+   *  null (with a statusNotice) when it already started or failed.
+   *  The bubble is removed from the list on success. */
+  recall: (messageId: string) => Promise<{ text: string } | null>;
   /** Last connection error if the SSE link dropped. Null when healthy. */
   connectionError: string | null;
-}
-
-/** Split a media list by type. An entry whose type this client doesn't
- *  know is ignored rather than counted as something it isn't. */
-function countMedia(media: unknown[]): { images: number; videos: number } {
-  let images = 0;
-  let videos = 0;
-  for (const m of media) {
-    const t = (m as { type?: unknown }).type;
-    if (t === 'video') videos += 1;
-    else if (t === 'image') images += 1;
-  }
-  return { images, videos };
-}
-
-let msgIdCounter = 0;
-function newId(prefix: string): string {
-  msgIdCounter++;
-  return `${prefix}-${Date.now()}-${msgIdCounter}`;
 }
 
 export function useChatStream(agent: string | null): ChatStream {
@@ -137,6 +88,16 @@ export function useChatStream(agent: string | null): ChatStream {
   // POST /chat/send response landed (HTTP and SSE channels can race).
   // Keyed by turnId; consumed by send() when it gets its turnId back.
   const pendingQueuedRef = useRef<Map<string, number>>(new Map());
+  // The engine's id for the turn in flight (from `turn_started`).
+  // Agent bubbles and error blocks are stamped with it so a late
+  // `assistant_media` pairs to THIS turn — not to whichever agent row
+  // happens to be last (2026-08-28: an errored turn had no agent row,
+  // so its pictures were hung under the previous answer).
+  const currentTurnIdRef = useRef<string | null>(null);
+  // Latest rendered list, for callbacks (recall) that need to read a
+  // row synchronously without going through a setState updater.
+  const messagesRef = useRef<ChatMessage[]>([]);
+  messagesRef.current = messages;
   // Sleep-recovery: timestamp of the last SSE event (heartbeat or data)
   // for this subscription. Drives the staleness check below — when the
   // tab regains visibility/focus after iOS Safari has frozen the TCP
@@ -157,11 +118,13 @@ export function useChatStream(agent: string | null): ChatStream {
     setStreaming(false);
     setConnectionError(null);
     streamingIdRef.current = null;
+    currentTurnIdRef.current = null;
     // Buffered ahead-counts belong to the previous agent's session —
     // a stale entry must not be applied to a bubble on the new one.
     pendingQueuedRef.current.clear();
 
-    // 1. Hydrate from /chat/history (most-recent N events).
+    // 1. Hydrate from /chat/history (most-recent N events). The
+    //    turnId-aware conversion lives in history.ts (unit-tested).
     void fetch(
       `/chat/history?agent=${encodeURIComponent(agent)}&session=main`,
     )
@@ -169,43 +132,7 @@ export function useChatStream(agent: string | null): ChatStream {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = (await res.json()) as { events?: HistoryEvent[] };
         if (cancelled) return;
-        const out: ChatMessage[] = [];
-        for (const ev of body.events ?? []) {
-          if (ev.kind === 'assistant_audio' && ev.audio) {
-            // Fold onto the most recent agent message so past turns
-            // still show a Play-button on history load.
-            for (let i = out.length - 1; i >= 0; i -= 1) {
-              const m = out[i];
-              if (m && m.role === 'agent') {
-                out[i] = {
-                  ...m,
-                  audio: {
-                    url: ev.audio.url,
-                    mime: ev.audio.mime,
-                    ...(typeof ev.audio.durationMs === 'number'
-                      ? { durationMs: ev.audio.durationMs }
-                      : {}),
-                  },
-                };
-                break;
-              }
-            }
-            continue;
-          }
-          if (ev.kind === 'assistant_media' && Array.isArray(ev.media) && ev.media.length > 0) {
-            for (let i = out.length - 1; i >= 0; i -= 1) {
-              const m = out[i];
-              if (m && m.role === 'agent') {
-                out[i] = { ...m, mediaNote: countMedia(ev.media) };
-                break;
-              }
-            }
-            continue;
-          }
-          const mapped = eventToMessage(ev);
-          if (mapped) out.push(mapped);
-        }
-        setMessages(out);
+        setMessages(historyEventsToMessages(body.events ?? []));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -266,6 +193,7 @@ export function useChatStream(agent: string | null): ChatStream {
               ts: Date.now(),
               text,
               streaming: true,
+              ...(currentTurnIdRef.current ? { turnId: currentTurnIdRef.current } : {}),
             };
             if (insertIdx < 0) return [...prev, newBubble];
             const next = prev.slice();
@@ -276,7 +204,14 @@ export function useChatStream(agent: string | null): ChatStream {
           if (idx < 0) {
             return [
               ...prev,
-              { id: trackedId, role: 'agent', ts: Date.now(), text, streaming: true },
+              {
+                id: trackedId,
+                role: 'agent',
+                ts: Date.now(),
+                text,
+                streaming: true,
+                ...(currentTurnIdRef.current ? { turnId: currentTurnIdRef.current } : {}),
+              },
             ];
           }
           const next = prev.slice();
@@ -293,7 +228,13 @@ export function useChatStream(agent: string | null): ChatStream {
           if (idx < 0) {
             return [
               ...prev,
-              { id, role: 'agent', ts: Date.now(), text },
+              {
+                id,
+                role: 'agent',
+                ts: Date.now(),
+                text,
+                ...(currentTurnIdRef.current ? { turnId: currentTurnIdRef.current } : {}),
+              },
             ];
           }
           const next = prev.slice();
@@ -363,16 +304,94 @@ export function useChatStream(agent: string | null): ChatStream {
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || !Array.isArray(d.media) || d.media.length === 0) return;
       const note = countMedia(d.media);
+      const turnId = typeof d.turnId === 'string' ? d.turnId : undefined;
       setMessages((prev) => {
-        for (let i = prev.length - 1; i >= 0; i -= 1) {
-          const m = prev[i];
-          if (m && m.role === 'agent') {
-            const next = prev.slice();
-            next[i] = { ...m, mediaNote: note };
-            return next;
-          }
+        // Pair by turnId only. A row of another turn is never the
+        // right home — that is how pictures ended up "a few lines up"
+        // when the producing turn errored (2026-08-28 report).
+        const idx = findTurnRow(prev, turnId);
+        if (idx >= 0) {
+          const next = prev.slice();
+          next[idx] = { ...prev[idx]!, mediaNote: note };
+          return next;
         }
-        return prev;
+        const row: ChatMessage = {
+          id: newId('m'),
+          role: 'agent',
+          ts: Date.now(),
+          text: '',
+          ...(turnId ? { turnId } : {}),
+          mediaNote: note,
+        };
+        const insertIdx = prev.findIndex((m) => m.role === 'user' && m.pending);
+        if (insertIdx < 0) return [...prev, row];
+        const next = prev.slice();
+        next.splice(insertIdx, 0, row);
+        return next;
+      });
+    };
+
+    const onTurnStarted = (e: MessageEvent) => {
+      bump();
+      let d: { turnId?: string } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.turnId !== 'string') return;
+      const turnId = d.turnId;
+      currentTurnIdRef.current = turnId;
+      // A bubble that started streaming before this arrived (engines
+      // that emit text before turn_start) gets stamped retroactively.
+      const streamId = streamingIdRef.current;
+      if (!streamId) return;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === streamId);
+        const target = idx >= 0 ? prev[idx] : undefined;
+        if (!target || target.turnId === turnId) return prev;
+        const next = prev.slice();
+        next[idx] = { ...target, turnId };
+        return next;
+      });
+    };
+
+    const onTurnError = (e: MessageEvent) => {
+      bump();
+      let d: { turnId?: string; message?: string; engine?: string } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.message !== 'string') return;
+      const turnId = typeof d.turnId === 'string' ? d.turnId : currentTurnIdRef.current ?? undefined;
+      const row: ChatMessage = {
+        id: newId('e'),
+        role: 'error',
+        ts: Date.now(),
+        text: d.message,
+        ...(turnId ? { turnId } : {}),
+      };
+      // Same anchor rule as the first delta: the block belongs to the
+      // turn in flight, above any message queued behind it. Streaming
+      // state is left to agent:end, which still follows.
+      setMessages((prev) => {
+        const insertIdx = prev.findIndex((m) => m.role === 'user' && m.pending);
+        if (insertIdx < 0) return [...prev, row];
+        const next = prev.slice();
+        next.splice(insertIdx, 0, row);
+        return next;
+      });
+    };
+
+    const onTurnDequeued = (e: MessageEvent) => {
+      bump();
+      let d: { turnId?: string } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.turnId !== 'string') return;
+      const turnId = d.turnId;
+      pendingQueuedRef.current.delete(turnId);
+      // Another client (or this one, already handled in recall()) took
+      // the message back — it never became a turn, so the bubble goes.
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.role === 'user' && m.turnId === turnId);
+        if (idx < 0) return prev;
+        const next = prev.slice();
+        next.splice(idx, 1);
+        return next;
       });
     };
 
@@ -486,6 +505,9 @@ export function useChatStream(agent: string | null): ChatStream {
     es.addEventListener('assistant_media', onAssistantMedia);
     es.addEventListener('user_message', onUserMessage);
     es.addEventListener('turn_queued', onTurnQueued);
+    es.addEventListener('turn_started', onTurnStarted);
+    es.addEventListener('turn_error', onTurnError);
+    es.addEventListener('turn_dequeued', onTurnDequeued);
 
     return () => {
       cancelled = true;
@@ -499,6 +521,9 @@ export function useChatStream(agent: string | null): ChatStream {
       es.removeEventListener('assistant_media', onAssistantMedia);
       es.removeEventListener('user_message', onUserMessage);
       es.removeEventListener('turn_queued', onTurnQueued);
+      es.removeEventListener('turn_started', onTurnStarted);
+      es.removeEventListener('turn_error', onTurnError);
+      es.removeEventListener('turn_dequeued', onTurnDequeued);
       es.close();
     };
   }, [agent, reopenTick]);
@@ -642,27 +667,55 @@ export function useChatStream(agent: string | null): ChatStream {
     };
   };
 
-  return { messages, streaming, send, subscribeAudio, abort, connectionError, statusNotice };
-}
+  // Take a queued message back before it starts. Only a bubble that
+  // already has its server turnId can be recalled — the id is what the
+  // server keys the waiting payload by. A 409 means the lock went to it
+  // in the meantime: the bubble becomes an ordinary sent message and
+  // Stop is the tool from here on.
+  const recall: ChatStream['recall'] = async (messageId) => {
+    if (!agent) return null;
+    // Read the id off the latest rendered list — a setMessages updater
+    // runs at flush time, so a flag set inside one would still be stale
+    // here (see the turn_queued buffer note above).
+    const turnId = messagesRef.current.find((x) => x.id === messageId)?.turnId;
+    if (!turnId) {
+      setStatusNotice('Message has no turn id yet — try again in a second');
+      return null;
+    }
+    const tid = turnId;
+    try {
+      const res = await fetch(`/chat/queue/${encodeURIComponent(tid)}`, { method: 'DELETE' });
+      if (res.status === 409) {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== messageId) return m;
+            const { queued: _q, pending: _p, ...rest } = m;
+            return rest as ChatMessage;
+          }),
+        );
+        setStatusNotice('That message just started — use Stop to interrupt it');
+        return null;
+      }
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        setStatusNotice(`Edit failed: ${res.status}${body ? ` ${body.slice(0, 120)}` : ''}`);
+        return null;
+      }
+      const body = (await res.json()) as { ok?: boolean; text?: string };
+      if (!body.ok || typeof body.text !== 'string') {
+        setStatusNotice('Edit failed: unexpected server reply');
+        return null;
+      }
+      pendingQueuedRef.current.delete(tid);
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      setStatusNotice(null);
+      return { text: body.text };
+    } catch (err) {
+      console.warn('[somora-mobile] /chat/queue delete failed:', err);
+      setStatusNotice(`Edit failed: ${err instanceof Error ? err.message : String(err)}`);
+      return null;
+    }
+  };
 
-function eventToMessage(ev: HistoryEvent): ChatMessage | null {
-  if (ev.kind === 'user_message') {
-    return {
-      id: `u-${ev.ts ?? 0}-${msgIdCounter++}`,
-      role: 'user',
-      text: ev.text ?? '',
-      ts: ev.ts ?? 0,
-      ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
-      ...(ev.from_system ? { fromSystem: ev.from_system } : {}),
-    };
-  }
-  if (ev.kind === 'assistant_message') {
-    return {
-      id: `a-${ev.ts ?? 0}-${msgIdCounter++}`,
-      role: 'agent',
-      text: ev.text ?? '',
-      ts: ev.ts ?? 0,
-    };
-  }
-  return null;
+  return { messages, streaming, send, subscribeAudio, abort, recall, connectionError, statusNotice };
 }

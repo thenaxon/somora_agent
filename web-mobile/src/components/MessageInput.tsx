@@ -4,7 +4,7 @@
 // lands in the textarea for the user to review/edit before send (no
 // auto-send — explicit UX decision).
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AttachmentPicker, type AttachmentRef } from './AttachmentPicker';
 import { MicButton } from './MicButton';
 
@@ -22,6 +22,11 @@ interface Props {
   streaming?: boolean;
   /** Abort the in-flight turn. Wired while streaming. */
   onAbort?: () => void;
+  /** Text handed back from a recalled (dequeued) message. `nonce`
+   *  changes per recall so the same text can be injected twice; the
+   *  draft is REPLACED, not appended — the user is editing that
+   *  message, not adding to another. */
+  draftInject?: { text: string; nonce: number } | null;
 }
 
 export function MessageInput({
@@ -30,8 +35,22 @@ export function MessageInput({
   autoPlayEnabled,
   streaming = false,
   onAbort,
+  draftInject,
 }: Props) {
   const [text, setText] = useState('');
+  useEffect(() => {
+    if (!draftInject) return;
+    setText(draftInject.text);
+    setTimeout(() => {
+      const el = ref.current;
+      if (!el) return;
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftInject?.nonce]);
   const [staged, setStaged] = useState<AttachmentRef[]>([]);
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);

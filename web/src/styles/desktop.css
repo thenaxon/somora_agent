@@ -807,6 +807,54 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   color: var(--line-2);
   font-style: normal;
 }
+/* "edit" next to the queued marker — takes the message back into the
+ * composer while it is still waiting in line. Same dim italic family
+ * as the marker; underline on hover so it reads as an action. */
+.chat-msg-recall {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--accent, var(--text-2));
+  font: inherit;
+  font-style: italic;
+  cursor: pointer;
+}
+.chat-msg-recall:hover {
+  text-decoration: underline;
+}
+
+/* A turn that ended in an error — rendered inside the turn, not as a
+ * status line nobody sees. Danger-tinted, compact, pre-wrapped so
+ * multi-line engine messages stay readable. */
+.chat-msg-row.error .chat-msg-avatar-error {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(220, 53, 69, 0.18);
+  color: #dc3545;
+}
+.chat-msg-bubble.error-bubble {
+  background: rgba(220, 53, 69, 0.08);
+  border-color: rgba(220, 53, 69, 0.3);
+  color: var(--text-1);
+}
+.chat-msg-error-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #dc3545;
+  margin-bottom: 2px;
+}
+.chat-msg-error-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
 
 /* Stop button on the streaming assistant bubble. The base
  * `.bubble-actions` rules below fade pin/copy in on hover only;

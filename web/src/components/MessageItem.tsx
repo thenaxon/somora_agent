@@ -12,6 +12,7 @@
 
 import { memo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Bell,
   Bot,
   Brain,
@@ -27,6 +28,7 @@ import {
   Play,
   Square,
   SquareTerminal,
+  Undo2,
   User,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage } from '../types/chat';
@@ -58,6 +60,11 @@ interface Props {
    *  shows a Stop button in place of pin/copy — in ADDITION to the
    *  composer Stop (both affordances stay, user preference). */
   onAbort?: () => void;
+  /** Take a still-queued user message back into the composer. Shown
+   *  next to the ⌛ marker only while the row carries `queued` — once
+   *  the turn starts the server owns the message and Stop is the only
+   *  handle left. Rene, 2026-08-26. */
+  onRecall?: (messageId: string) => void;
 }
 
 /** `provider/modelId` → the id only, for compact chips. */
@@ -74,9 +81,13 @@ export const MessageItem = memo(function MessageItem({
   isPinned,
   onPinClick,
   onAbort,
+  onRecall,
 }: Props) {
   if (msg.role === 'tool_call') {
     return <ToolCallBlock toolCall={msg.toolCall} />;
+  }
+  if (msg.role === 'error') {
+    return <TurnErrorBlock text={msg.text} ts={msg.ts} media={msg.media} />;
   }
   if (msg.role === 'tool_result') {
     return <ToolResultBlock toolResult={msg.toolResult} />;
@@ -162,7 +173,13 @@ export const MessageItem = memo(function MessageItem({
               )}
               {msg.text && <span>{msg.text}</span>}
             </div>
-            <BubbleTimestamp ts={msg.ts} queued={msg.queued} />
+            <BubbleTimestamp
+              ts={msg.ts}
+              queued={msg.queued}
+              {...(msg.queued && !isPeer && onRecall
+                ? { onRecall: () => onRecall(msg.id) }
+                : {})}
+            />
           </div>
         </div>
       </div>
@@ -351,9 +368,13 @@ function summarizeSentinelTriggerText(text: string): string {
 function BubbleTimestamp({
   ts,
   queued,
+  onRecall,
 }: {
   ts: number;
   queued?: { ahead: number };
+  /** Present only while queued: takes the message back into the
+   *  composer for another edit before it starts. */
+  onRecall?: () => void;
 }) {
   if (!ts && !queued) return null;
   // queued marker sits to the LEFT of the time, same row, dimmed.
@@ -367,11 +388,56 @@ function BubbleTimestamp({
           <Hourglass size={10} />
           <span>queued</span>
           {queued.ahead > 1 && <span>· {queued.ahead - 1} ahead</span>}
+          {onRecall && (
+            <button
+              type="button"
+              className="chat-msg-recall"
+              onClick={onRecall}
+              title="Take this message back into the composer to edit it"
+              aria-label="Edit queued message"
+            >
+              <Undo2 size={10} />
+              <span>edit</span>
+            </button>
+          )}
           <span className="chat-msg-queued-sep">·</span>
         </span>
       )}
       {ts ? formatBubbleTime(ts) : ''}
     </span>
+  );
+}
+
+// A turn that ended in an error. Sits inside the turn (after any
+// partial assistant text, before the next user message) so the failure
+// is visible where it happened, and carries media the turn produced
+// before failing — a picture generated right before the model call
+// 500'd used to hang under the PREVIOUS answer (2026-08-28 report).
+function TurnErrorBlock({
+  text,
+  ts,
+  media,
+}: {
+  text: string;
+  ts: number;
+  media?: AssistantMedia[];
+}) {
+  return (
+    <div className="chat-msg-row error" role="alert">
+      <div className="chat-msg">
+        <div className="chat-msg-avatar chat-msg-avatar-error">
+          <AlertTriangle size={12} />
+        </div>
+        <div className="chat-msg-meta-col">
+          <div className="chat-msg-bubble error-bubble">
+            <div className="chat-msg-error-label">Turn failed</div>
+            <div className="chat-msg-error-text">{text}</div>
+            {media && media.length > 0 && <GeneratedMediaRow media={media} />}
+          </div>
+          <BubbleTimestamp ts={ts} />
+        </div>
+      </div>
+    </div>
   );
 }
 

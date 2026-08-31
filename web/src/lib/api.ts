@@ -178,6 +178,8 @@ export interface HistoryEvent {
     tokens_out_reasoning?: number;
   };
   ephemeral?: string;
+  /** Set on `kind: 'error'` rows — the engine's failure text. */
+  message?: string;
   from_agent?: string;
   from_system?: 'sentinel' | 'tmux';
   attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
@@ -188,7 +190,7 @@ export interface HistoryEvent {
   /** Set on `kind: 'assistant_media'` history rows — media produced
    *  during that turn, so a reloaded conversation still shows it. */
   media?: Array<{
-    type: 'image';
+    type: 'image' | 'video';
     id: string;
     prompt: string;
     mime: string;
@@ -475,6 +477,28 @@ export const api = {
       `/chat/history?${params.toString()}`,
       opts?.signal ? { signal: opts.signal } : undefined,
     );
+  },
+  /** Take a still-queued user turn back before it starts. 200 hands the
+   *  original text (+ attachment refs) back so the composer can be
+   *  refilled; `already_started` means the lock just went to it (Stop
+   *  is the tool for that now); `unknown` means nothing is queued
+   *  under that id. Never throws on those three — only on transport
+   *  failure. */
+  dequeue: async (
+    turnId: string,
+  ): Promise<
+    | { ok: true; text: string; attachments: Array<{ hash: string; name: string; mime: string; size: number }> }
+    | { ok: false; reason: 'already_started' | 'unknown' }
+  > => {
+    const res = await fetch(`/chat/queue/${encodeURIComponent(turnId)}`, { method: 'DELETE' });
+    if (res.status === 409) return { ok: false, reason: 'already_started' };
+    if (res.status === 404) return { ok: false, reason: 'unknown' };
+    if (!res.ok) throw new Error(`dequeue failed: HTTP ${res.status}`);
+    const body = (await res.json()) as {
+      text: string;
+      attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
+    };
+    return { ok: true, text: body.text, attachments: body.attachments ?? [] };
   },
   send: async (
     agent: string,
