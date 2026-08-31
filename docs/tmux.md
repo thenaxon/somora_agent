@@ -266,12 +266,20 @@ tmux:
 ## `inherit_agent_env` — Sharing somora's isolated Claude tree
 
 By default, sessions you create with `tmux({ action: "create" })` get
-somora's internal isolation env vars (`CLAUDE_CONFIG_DIR`,
-`SOMORA_CLAUDE_BIN`) **stripped** before the user's shell starts.
-That's almost always what you want: a tmux session in a project
-directory should behave like a normal terminal — a `claude` or
-`codex` started inside the pane should see the user's normal
-`~/.claude` login state, not somora's isolated tree.
+somora's internal env vars **stripped** before the user's shell
+starts: the claude isolation pair (`CLAUDE_CONFIG_DIR`,
+`SOMORA_CLAUDE_BIN`), the engine-binary overrides (`SOMORA_CODEX_BIN`,
+`SOMORA_GROK_BIN`, `SOMORA_BIN_PATH`), the runtime's own
+`TSX_TSCONFIG_PATH` and `NODE_ENV`, and the markers Claude Code puts
+on its MCP children (`CLAUDECODE`, `CLAUDE_PROJECT_DIR`,
+`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_ID`,
+`CLAUDE_CODE_MESSAGING_*`). That's almost always what you want: a tmux
+session in a project directory should behave like a normal terminal —
+a `claude` or `codex` started inside the pane should see the user's
+normal `~/.claude` login state, and a project's own `tsx` should
+resolve its path aliases against the project's tsconfig, not somora's.
+The agent's identity (`SOMORA_AGENT`, `SOMORA_SESSION`) and the server
+address vars stay, so skill scripts can still call back into somora.
 
 The rare opt-in is `inherit_agent_env: true` on `create` — somora's
 internal env carries through. Use this when:

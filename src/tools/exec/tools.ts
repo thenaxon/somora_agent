@@ -32,6 +32,7 @@ import {
   type JobMeta,
 } from './job-store.ts';
 import { skillEnvScopeForCommand, skillEnvStripHint } from '../../skills/env-scope.ts';
+import { SOMORA_INTERNAL_ENV_SUMMARY } from './internal-env.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
 import {
   killRemoteJob,
@@ -113,10 +114,12 @@ const ExecInput = z
       .boolean()
       .default(false)
       .describe(
-        'local target only. When false (default), somora-internal env vars ' +
-          '(CLAUDE_CONFIG_DIR, SOMORA_CLAUDE_BIN) are stripped before spawn so a `claude` / ' +
-          '`codex` invocation behaves like in the user\'s normal terminal. Set true only when ' +
-          'you intentionally want somora\'s isolated claude tree visible to the spawned process.',
+        'local target only. When false (default), the shell gets a curated env: somora-internal ' +
+          `vars (${SOMORA_INTERNAL_ENV_SUMMARY}) are stripped before spawn, so a \`claude\` / ` +
+          '`codex` invocation behaves like in the user\'s normal terminal and a project\'s own ' +
+          'tsx/next/dotenv see their own config, not somora\'s. Set true only when you ' +
+          'intentionally want somora\'s isolated claude tree and runtime vars visible to the ' +
+          'spawned process.',
       ),
   })
   .strict();

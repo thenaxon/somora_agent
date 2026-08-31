@@ -26,6 +26,7 @@ import { isAbsolute, join } from 'node:path';
 import { logger } from '../../server/logger.ts';
 import type { SkillEnvScope } from '../../skills/env-scope.ts';
 import { extendedPath } from '../../skills/path-helpers.ts';
+import { stripSomoraInternalEnv } from './internal-env.ts';
 import {
   clearLivePid,
   clearLiveStdin,
@@ -49,26 +50,22 @@ import {
  * provided).
  *
  * `stripSomoraInternal` removes somora-internal vars that the server
- * sets on its own process.env for its own subsystems but which leak
- * into user-facing tmux/exec children otherwise. Specifically:
- *   - CLAUDE_CONFIG_DIR — redirects `claude` away from ~/.claude
- *   - SOMORA_CLAUDE_BIN — forces a specific claude binary
- * Both cause user-confusion when an agent opens a tmux shell or runs
- * `exec` and the spawned `claude` then doesn't see the user's normal
- * login state. Defaults to false to preserve backwards compatibility
- * for internal callers (dream, engine spawn, MCP children). Tool
- * dispatchers (exec, tmux) pass true unless the agent explicitly opts
- * into env-inheritance.
+ * (or the MCP tool child) carries on its own process.env for its own
+ * subsystems but which leak into user-facing tmux/exec children
+ * otherwise — the list lives in ./internal-env.ts. The original two
+ * (CLAUDE_CONFIG_DIR, SOMORA_CLAUDE_BIN) made a spawned `claude` miss
+ * the user's login state; TSX_TSCONFIG_PATH and NODE_ENV (2026-08-26)
+ * broke a user project's own tsx/next in an exec shell. Defaults to
+ * false to preserve backwards compatibility for internal callers
+ * (dream, engine spawn, MCP children). Tool dispatchers (exec, tmux)
+ * pass true unless the agent explicitly opts into env-inheritance.
  */
 function buildSpawnEnv(
   callerEnv?: Record<string, string>,
   opts?: { stripSomoraInternal?: boolean; skillEnvScope?: SkillEnvScope },
 ): NodeJS.ProcessEnv {
   const base: NodeJS.ProcessEnv = { ...process.env, PATH: extendedPath() };
-  if (opts?.stripSomoraInternal) {
-    delete base.CLAUDE_CONFIG_DIR;
-    delete base.SOMORA_CLAUDE_BIN;
-  }
+  if (opts?.stripSomoraInternal) stripSomoraInternalEnv(base);
   // Skill-scoped secrets: strip every skill-declared var, then put back
   // only the vars of skills whose bins the command invokes. Applied
   // BEFORE callerEnv so an explicit `env:` from the agent always wins.

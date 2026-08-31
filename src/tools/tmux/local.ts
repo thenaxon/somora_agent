@@ -22,6 +22,7 @@
 // re-attach which is exactly what tmux already solves.
 
 import { localExecSync } from '../exec/local.ts';
+import { SOMORA_INTERNAL_ENV_NAMES, somoraInternalEnvPresent } from '../exec/internal-env.ts';
 import { logger } from '../../server/logger.ts';
 
 const DEFAULT_CAPTURE_LINES = 200;
@@ -154,11 +155,8 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
     // an undefined value would set empty-string, which is worse than
     // not setting it (still trips "is var set?" checks).
     const explicit: string[] = [];
-    if (process.env.CLAUDE_CONFIG_DIR) {
-      explicit.push(`-e ${shQuote(`CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR}`)}`);
-    }
-    if (process.env.SOMORA_CLAUDE_BIN) {
-      explicit.push(`-e ${shQuote(`SOMORA_CLAUDE_BIN=${process.env.SOMORA_CLAUDE_BIN}`)}`);
+    for (const [name, value] of somoraInternalEnvPresent()) {
+      explicit.push(`-e ${shQuote(`${name}=${value}`)}`);
     }
     const eFlags = explicit.length > 0 ? ' ' + explicit.join(' ') : '';
     cmd = `tmux new-session -d -s ${shQuote(opts.name)}${cwdFlag}${eFlags}`;
@@ -170,8 +168,12 @@ export async function tmuxLocalCreate(opts: TmuxLocalCreateOptions): Promise<Tmu
     // tmux server process, not from the `tmux new-session` caller —
     // `-e VAR=` would set the var to empty-string (still "set"), so we
     // use `unset` + `exec` to truly remove it before user's shell takes
-    // over. Confirmed via env-dump probe 2026-05-17.
-    const wrapper = `unset CLAUDE_CONFIG_DIR SOMORA_CLAUDE_BIN; exec "\${SHELL:-/bin/bash}"`;
+    // over. Confirmed via env-dump probe 2026-05-17. The list is the
+    // shared one from exec/internal-env.ts, plus whatever prefix-
+    // matched vars this process actually carries right now.
+    const unsetNames = new Set<string>(SOMORA_INTERNAL_ENV_NAMES);
+    for (const [name] of somoraInternalEnvPresent()) unsetNames.add(name);
+    const wrapper = `unset ${[...unsetNames].join(' ')}; exec "\${SHELL:-/bin/bash}"`;
     cmd = `tmux new-session -d -s ${shQuote(opts.name)}${cwdFlag} ${shQuote(wrapper)}`;
   }
   // Also strip on the spawn-env path in case this call boots a fresh

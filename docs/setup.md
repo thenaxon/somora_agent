@@ -844,12 +844,14 @@ agents never see the user's interactive-CLI state, and vice versa.
 
 The isolation applies to the internal engine adapter that somora uses
 to talk to Claude. Tools the agent invokes for the user — `tmux create`,
-`exec`, the `process` family — strip `CLAUDE_CONFIG_DIR` and
-`SOMORA_CLAUDE_BIN` from the spawned shell by default, so a `claude` or
-`codex` you start inside a tmux pane sees your normal `~/.claude` login
-state, not somora's isolated tree. The `inherit_agent_env: true` flag
-opts back into inheritance when you specifically want it (see
-`docs/tmux.md`).
+`exec`, the `process` family — strip somora-internal vars from the
+spawned shell by default (`CLAUDE_CONFIG_DIR`, `SOMORA_CLAUDE_BIN`, the
+other engine-binary overrides, `TSX_TSCONFIG_PATH`, `NODE_ENV`, and
+Claude Code's MCP-child markers), so a `claude` or `codex` you start
+inside a tmux pane sees your normal `~/.claude` login state, and a
+project's own `tsx`/`next`/dotenv see the project's config rather than
+somora's. The `inherit_agent_env: true` flag opts back into inheritance
+when you specifically want it (see `docs/tmux.md`).
 
 **Overriding**
 
