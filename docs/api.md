@@ -806,7 +806,7 @@ deadlocking:
 
 ```json
 { "error": "circular A2A wait: …", "circular_wait": true,
-  "chain": ["donna/main", "gideon/main", "donna/main"] }
+  "chain": ["scribe/main", "coach/main", "scribe/main"] }
 ```
 
 Response on success: the full turn result (`finalText`, `usage`,
@@ -1065,11 +1065,11 @@ Returns `markdown` plus resolved relationships:
   "mtimeMs": 1784700000000,
   "markdown": "## Aktueller Stand\n…",
   "frontmatter": { "type": "project", "created": "2026-05-08" },
-  "links":       [{ "slug": "personen/rene-siegl", "title": "Rene" }],
+  "links":       [{ "slug": "personen/jane-doe", "title": "Jane" }],
   "backlinks":   [{ "slug": "agenten/<your-agent>", "title": "Your Agent" }],
-  "unresolved":  ["personen/familie-rene"],
-  "linkTargets": { "personen/rene-siegl": "personen/rene-siegl",
-                   "familie-rene": null }
+  "unresolved":  ["personen/familie-doe"],
+  "linkTargets": { "personen/jane-doe": "personen/jane-doe",
+                   "familie-doe": null }
 }
 ```
 

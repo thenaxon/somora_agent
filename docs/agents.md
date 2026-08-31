@@ -90,11 +90,18 @@ resources:
 # Denying a tool removes it from the model's tool list, which is real
 # context saved: the full built-in surface costs roughly 13k tokens per
 # turn. Only tools whose configuration exists are offered in the first
-# place — the web Tools window lists exactly those, so a switch there
+# place — the web Abilities window lists exactly those, so a switch there
 # always changes something.
 tools:
   deny: ['toolset:exec', 'mcp__parallel__*']
   allow: []
+
+# Optional: per-agent skill visibility, same shape and semantics as
+# tools: (deny beats allow, empty allow = all). The Abilities window
+# writes exact-name denies here; a plain list (`skills: [a, b]`) is the
+# older allow-list form and still works. See skills.md.
+skills:
+  deny: ['instagram-downloader']
 
 # Optional: REM phase (per-agent session→memory extraction)
 rem:

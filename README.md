@@ -224,7 +224,7 @@ Four first-party clients, all hitting the same local server:
 | Client | How to launch | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent (freely arrangeable desktop icons, per-agent text zoom, visible model-fallback marker), drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a read-only Wiki Explorer (folder tree + rendered pages + clickable `[[wikilinks]]` + a zoomable link graph), a Media app for generated images and video (gallery, generation form, running renders), a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent (freely arrangeable desktop icons, per-agent text zoom, visible model-fallback marker), drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a read-only Wiki Explorer (folder tree + rendered pages + clickable `[[wikilinks]]` + a zoomable link graph), a Media app for generated images and video (gallery, generation form, running renders), a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), an Abilities matrix (which tools and skills each agent may use, per click), right-click on an agent tile for its sessions (open main, recent ones, start a named new one), queued messages you can take back and edit before they run, failed turns shown in place, windows that never leave the desktop when the browser shrinks, per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
 | **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record) + optional spoken replies via TTS (per-agent toggle), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
 
@@ -326,7 +326,7 @@ Three files matter, all optional except `config.yaml`:
 | File | Scope | What it controls |
 |---|---|---|
 | `~/.somora/config.yaml` | Server-global | LLM providers, models, compaction, memory tuning, wiki settings, dream-phase Deep/Lucid models + cadence, agent-loop limits, SSH resources, web API keys, TUI display, TLS, attachments caps |
-| `~/.somora/agents/<name>/agent.yaml` | Per-agent | model + fallback, REM phase config (worker model, idle minutes, chunk sizes), workspace override, resource deny-list, skills allow-list |
+| `~/.somora/agents/<name>/agent.yaml` | Per-agent | model + fallback, REM phase config (worker model, idle minutes, chunk sizes), workspace override, resource deny-list, per-agent tool + skill visibility (also editable in the web Abilities window) |
 | `~/.somora/agents/<name>/{AGENTS,SOUL,USER}.md` | Per-agent | Persona — behavioural rules (`AGENTS.md`), voice (`SOUL.md`), what the agent knows about you (`USER.md`) |
 
 See [docs/setup.md](docs/setup.md) for `config.yaml` reference and
@@ -405,7 +405,8 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/projects.md](docs/projects.md) — opt-in pointer-file manifests for binding sessions to real-world projects
 - [docs/dream-phases.md](docs/dream-phases.md) — REM / Deep / Lucid in detail, the approval loop
 - [docs/tools.md](docs/tools.md) — full tool reference with descriptions
-- [docs/skills.md](docs/skills.md) — markdown how-tos the agent can activate
+- [docs/skills.md](docs/skills.md) — markdown how-tos the agent can activate, per-agent visibility
+- [docs/mcp.md](docs/mcp.md) — external MCP servers, per-agent tool + skill control (the Abilities window), OAuth-login servers such as Claude Design
 - [docs/files.md](docs/files.md) — file_* tools, multimodal `analyze_file`, user attachments
 - [docs/web.md](docs/web.md) — web client architecture, slash commands, tmux app, screenshot
 - [docs/mobile.md](docs/mobile.md) — mobile PWA install + usage, scope, troubleshooting

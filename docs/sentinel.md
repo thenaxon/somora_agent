@@ -19,7 +19,7 @@ command output) follow in Phase 2.
 
 | Source variant | Example use |
 |---|---|
-| `at` — single absolute moment | "remind me tomorrow 10:00 to call Luca" |
+| `at` — single absolute moment | "remind me tomorrow 10:00 to call the dentist" |
 | `every` — fixed interval (≥ 60s) | "every 15 minutes check open github runs" |
 | `daily` — same time each day | "every morning 08:00 summarize my mails" |
 | `weekly` — same day-of-week + time each week | "every monday 09:00 review the backlog" |

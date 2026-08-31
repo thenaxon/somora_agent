@@ -260,8 +260,8 @@ Returns a structured `MemoryFateDecision`:
 ```json
 { "kind": "skip", "reason": "..." }
 
-{ "kind": "promote", "subfolder": "personen", "slug": "personen/luca",
-  "type": "person", "title": "Luca",
+{ "kind": "promote", "subfolder": "personen", "slug": "personen/jane-doe",
+  "type": "person", "title": "Jane Doe",
   "body": "## Aktueller Stand\n…", "related": [...] }
 
 { "kind": "merge", "wikiPath": "personen/familie-klein",
@@ -369,7 +369,7 @@ from current runs but still parse for archived runs in `processed/`.
 
 Lucid walks the wiki by subfolder, one LLM call per subfolder. Then a
 final cross-subfolder pass with page-headers only catches issues that
-span subfolders (a contradiction between `personen/luca` and
+span subfolders (a contradiction between `personen/jane-doe` and
 `projekte/familie-luca-podcast`, for example).
 
 This isn't just for scale — claude-cli's stdin-stream parser fails on

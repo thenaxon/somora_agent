@@ -565,6 +565,20 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   cross-client echo (multiple windows on the same session stay in
   sync), window manager with persistence (positions/sizes survive
   reload).
+- **Windows never leave the desktop** — shrinking the browser pushes
+  every window back inside and shrinks only what no longer fits; the
+  taskbar (with Arrange, Save/Restore layout) always stays on top. See
+  the window-manager section above.
+- **Agent context menu** — right-click an agent tile: open main, jump
+  to one of its recent sessions, start a named new session in its own
+  window, or open the Sessions tool.
+- **Queued messages are editable** — a message waiting behind a running
+  turn shows ⌛ and an *edit* link that takes it back into the composer;
+  a turn that fails renders as a *Turn failed* block inside the turn,
+  with any media it produced under it.
+- **Abilities window** — per-agent matrix for tools *and* skills, plus
+  external MCP server health. See [mcp.md](mcp.md#the-abilities-window)
+  and [skills.md](skills.md#per-agent-visibility).
 - **Drag & drop / paste / paperclip attachments.**
   Per-turn user-attachments end-to-end through all three engines:
   claude-cli inlines as native ImageBlock / DocumentBlock;

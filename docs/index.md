@@ -42,6 +42,12 @@ families. [files.md](files.md), [resources.md](resources.md), and
 [tmux.md](tmux.md) cover the heavy ones. [Skills](skills.md) are
 markdown how-tos you install to teach an agent multi-step recipes.
 
+**I want to decide what each agent may use.** Tools and skills are
+shared by all agents; the web client's **Abilities** window (or
+`agent.yaml`) hides any of them for a given agent. [mcp.md → Per-agent
+tool control](mcp.md#per-agent-tool-control) and [skills.md → Per-agent
+visibility](skills.md#per-agent-visibility).
+
 **I want my agents to make video.** [videogen.md](videogen.md) — a
 render takes minutes, so the agent starts one and is woken when it is
 ready rather than holding its turn open. Off until `videoGen` is
@@ -125,6 +131,7 @@ high-value next steps in rough order:
 | Doc | Reads like | When to open it |
 |---|---|---|
 | [setup.md](setup.md) | Operator runbook | First install; adding providers; HTTPS; mobile; ops |
+| [agents.md](agents.md) | Persona + agent.yaml reference | Creating an agent; per-agent model, REM, tool/skill visibility |
 | [api.md](api.md) | HTTP/SSE contract | Building a third-party client; debugging streaming |
 | [tools.md](tools.md) | Tool catalog overview | Wondering what an agent can do |
 | [mcp.md](mcp.md) | External MCP servers | Plugging third-party MCP tools into your agents |
@@ -142,4 +149,7 @@ high-value next steps in rough order:
 | [imagegen.md](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
 | [videogen.md](videogen.md) | Text-to-video | Job-based renders, and how an agent gets its result without waiting |
 | [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
+| [thinking.md](thinking.md) | Reasoning depth | Per-engine thinking levels, session overrides |
+| [display.md](display.md) | TUI toggles | What the terminal client shows |
+| [cache-strategy.md](cache-strategy.md) | Prompt-cache mechanics | Why the system prompt is ordered the way it is |
 | [security.md](security.md) | Trust model | Network posture, sandbox stance |

@@ -38,8 +38,8 @@ does it:
    your reply first or ask the user to restart.
 4. **Verify**: `curl -sk https://localhost:18737/mcp/status` should show the
    server `connected` with a tool count, and the new
-   `mcp__<server>__*` tools appear in the tool list (web UI: tools
-   tile). A `failed`/`needs-auth` state with `lastError` usually means
+   `mcp__<server>__*` tools appear in the tool list (web UI: the
+   **abilities** tile). A `failed`/`needs-auth` state with `lastError` usually means
    a wrong URL or missing/wrong API key.
 
 ## How it works
@@ -113,17 +113,18 @@ Tools whose configuration doesn't exist are never offered at all, on any
 engine. A tool that cannot run is worse than one that isn't there: the
 model spends a call finding out.
 
-### The Tools window
+### The Abilities window
 
-The web client has a **tools** tile in the app dock that opens the same
-control as a point-and-click matrix: pick an agent on the left, toggle
-any tool's visibility in the middle (built-ins grouped by toolset,
-only tools this agent could actually use — a tool whose config is
-missing has nothing to configure, and a switch that changes nothing is
-worse than no switch), external tools grouped by MCP server, and watch
-external server health
-on the right — state, tool count, transport, last error, and a
-reconnect button per server.
+The web client has an **abilities** tile in the app dock that opens the
+same control as a point-and-click matrix: pick an agent on the left,
+toggle any tool's visibility in the middle (built-ins grouped by
+toolset, only tools this agent could actually use — a tool whose config
+is missing has nothing to configure, and a switch that changes nothing
+is worse than no switch), external tools grouped by MCP server, and
+watch external server health on the right — state, tool count,
+transport, last error, and a reconnect button per server. Below the
+tools sits the same matrix for **skills** — which markdown how-tos this
+agent may see and activate; see [skills.md](skills.md#per-agent-visibility).
 
 Toggles manage exact-name deny entries and are written server-side into
 the agent's `agent.yaml` (comments and the rest of the file stay
@@ -151,6 +152,9 @@ mcp:
         credentialKey: myServiceOauth          # top-level key in the credentials file
         tokenEndpoint: https://example.com/oauth/token
         # credentialFile defaults to ~/.somora/claude-home/.credentials.json
+        # refresh: true            # may the hub rotate the token itself? true (default),
+                                   # false (another process owns the chain), or a list of
+                                   # the credential keys it owns — see Claude Design below
       headers:                                 # optional extra static headers
         X-Client: my-client
 ```

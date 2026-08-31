@@ -74,6 +74,6 @@ identical across all three engines.
 - `wiki.md` — shared long-term wiki layer
 - `dream-phases.md` — REM/Deep/Lucid background consolidation
 - `resources.md` — SSH targets that file_* / exec / tmux dispatch to
-- `skills.md` — Markdown skill system + per-agent allow-list
+- `skills.md` — Markdown skill system + per-agent visibility (deny/allow, Abilities window)
 - `files.md` — file_* tools + multimodal `analyze_file`
 - `tmux.md` — shell-vs-TUI session patterns + capture/send modes
