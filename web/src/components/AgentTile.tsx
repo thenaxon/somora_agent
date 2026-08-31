@@ -21,6 +21,9 @@ type DreamPulse = 'rem' | 'deep' | 'lucid' | null;
 interface Props {
   agent: AgentInfo;
   onClick: (agent: AgentInfo) => void;
+  /** Right-click → the agent context menu (Open main / recent sessions
+   *  / New session… / All sessions…). Desktop owns the menu state. */
+  onContextMenu?: (agent: AgentInfo, e: React.MouseEvent) => void;
   /** True when the server is unreachable — forces the offline dot. */
   offline?: boolean;
   /** This agent's chat is currently streaming. */
@@ -71,6 +74,7 @@ function computeDreamPulse(
 export function AgentTile({
   agent,
   onClick,
+  onContextMenu,
   offline,
   streaming,
   unread,
@@ -93,6 +97,7 @@ export function AgentTile({
       tabIndex={0}
       className={`agent-icon ${active ? 'active' : ''}`}
       onClick={() => onClick(agent)}
+      {...(onContextMenu ? { onContextMenu: (e: React.MouseEvent) => onContextMenu(agent, e) } : {})}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();

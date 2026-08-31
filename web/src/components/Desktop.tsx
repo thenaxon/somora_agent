@@ -5,10 +5,11 @@
 // taskbar (bottom). Window manager state is owned here so dock
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Bell, BookOpen, ImagePlus, MessagesSquare, Square, Terminal, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
+import { AgentContextMenu } from './AgentContextMenu';
 import { AppTile } from './AppTile';
 import { Taskbar } from './Taskbar';
 import { Window } from './Window';
@@ -62,14 +63,28 @@ export function Desktop() {
     return merged;
   }, [chatCtx.streamingKeys, activity.streamingAgents]);
 
-  function handleAgentClick(agent: AgentInfo) {
+  function openAgentSession(agent: AgentInfo, sessionId: string, label: string) {
     wm.openChat({
       agentName: agent.name,
-      sessionId: 'main',
-      agentLabel: `${agent.name} · main`,
+      sessionId,
+      agentLabel: `${agent.name} · ${label}`,
       ...(agent.role ? { agentMeta: agent.role.toLowerCase() } : {}),
       ...(agent.icon ? { agentIcon: agent.icon } : {}),
     });
+  }
+
+  function handleAgentClick(agent: AgentInfo) {
+    openAgentSession(agent, 'main', 'main');
+  }
+
+  // Right-click on an agent tile → its context menu (Open main / recent
+  // sessions / New session… / All sessions…). One menu at a time; the
+  // menu closes itself on outside press, Esc, resize.
+  const [agentMenu, setAgentMenu] = useState<{ agent: AgentInfo; x: number; y: number } | null>(null);
+  function handleAgentContextMenu(agent: AgentInfo, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setAgentMenu({ agent, x: e.clientX, y: e.clientY });
   }
 
   // Names of agents whose chat is currently open as a window —
@@ -108,6 +123,7 @@ export function Desktop() {
         <AgentTile
           agent={agent}
           onClick={handleAgentClick}
+          onContextMenu={handleAgentContextMenu}
           offline={!!error}
           streaming={streamingAgents.has(agent.name)}
           unread={activity.unreadAgents.has(agent.name)}
@@ -443,6 +459,16 @@ export function Desktop() {
           return null;
         })}
       </div>
+      {agentMenu && (
+        <AgentContextMenu
+          agent={agentMenu.agent}
+          x={agentMenu.x}
+          y={agentMenu.y}
+          onClose={() => setAgentMenu(null)}
+          onOpenSession={openAgentSession}
+          onOpenSessionsTool={() => wm.openSessionsList()}
+        />
+      )}
       <Taskbar
         windows={wm.windows}
         focusedId={wm.focusedId}

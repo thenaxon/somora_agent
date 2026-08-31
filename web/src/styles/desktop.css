@@ -875,6 +875,15 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   color: var(--text-2);
 }
 
+/* Agent context menu (right-click on an agent tile). Hover/focus
+ * feedback only — layout and colors are inline in the component,
+ * mirroring ChatMenuPopover. */
+.agent-context-menu-item:hover,
+.agent-context-menu-item:focus-visible {
+  background: var(--bg-3);
+  outline: none;
+}
+
 /* Stop button on the streaming assistant bubble. The base
  * `.bubble-actions` rules below fade pin/copy in on hover only;
  * `.bubble-stop` overrides that to keep the button permanently

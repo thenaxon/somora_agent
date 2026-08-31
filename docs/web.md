@@ -114,6 +114,13 @@ without it.
   relocates icons that no longer fit, widening restores them. Icons sit
   *below* windows like on a real desktop. Click an agent tile to open
   its chat window; clicking again focuses the existing window.
+  **Right-click** an agent tile for its menu: *Open main*, the three
+  most recently active other sessions (click one to open it in its
+  own window), *New session…* (type a name — letters, digits, `-`,
+  `_`; the field tells you what's wrong while you type — Enter creates
+  it and opens a new window, Esc cancels), and *All sessions…* (the
+  Sessions tool). This is the place agent-wide actions will collect;
+  per-chat settings stay in the chat's `•••` menu.
   Each agent tile carries up to three live signals:
   - **Status dot** (bottom-right of the icon): green = idle,
     amber = streaming, violet = holds the dream review loop, grey =
