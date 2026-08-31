@@ -142,8 +142,18 @@ without it.
 - **Window**: drag the title bar to move, drag the bottom-right
   corner to resize. Close button removes the window without
   unsubscribing other clients.
-- **Taskbar (bottom)**: lists open windows. Auto-arrange tiles them
-  across the desktop; save/restore persists positions in
+- **Windows never leave the desktop.** Dragging and resizing stop at
+  the edges (a window may hang off the right edge while you drag it,
+  but its title bar and body never go under the taskbar). When the
+  *browser* gets smaller — you move it from an external display to
+  the laptop screen, or a saved layout comes back on a smaller
+  screen — every window that no longer fits is pushed back inside
+  and, only if it is bigger than the desktop itself, shrunk to fit.
+  Nothing is rearranged and nothing grows back when the browser gets
+  bigger again: use **Save/Restore layout** in the taskbar for that.
+- **Taskbar (bottom)**: lists open windows and always stays on top —
+  no window can cover it, so **Arrange** (tile all windows across the
+  desktop) is always reachable. Save/restore persists positions in
   `localStorage`.
 
 Layout state is per-browser-profile. There's no server-side window

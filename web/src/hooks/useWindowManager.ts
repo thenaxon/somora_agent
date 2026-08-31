@@ -4,10 +4,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PersistedLayout, PinNote, WindowState } from '../types/window';
+import { currentViewport, fitAllToDesktop, TASKBAR_HEIGHT } from '../lib/window-geometry';
 
 const STORAGE_KEY = 'somora-web-layout';
 const STORAGE_KEY_SAVED = 'somora-web-layout-saved';
-const TASKBAR_HEIGHT = 56;
+/** Viewport-resize events arrive in bursts while a window is being
+ *  dragged between displays; one fit per pause is plenty. */
+const VIEWPORT_FIT_DEBOUNCE_MS = 120;
 
 export interface OpenChatArgs {
   agentName: string;
@@ -40,6 +43,33 @@ export function useWindowManager() {
     }
     setHydrated(true);
   }, []);
+
+  // A window never leaves the desktop. The drag and corner-resize
+  // handlers clamp as the user moves them; this covers the case they
+  // can't — the VIEWPORT changing under a layout that was fine a
+  // moment ago (browser dragged from a 27" display to the MacBook
+  // screen, or a layout restored from localStorage on a smaller
+  // screen). Every window is shifted back inside and shrunk only if
+  // it no longer fits at all; the taskbar's Arrange button stays
+  // reachable no matter what. Runs once after hydration and on every
+  // (debounced) resize. Nothing moves when everything already fits —
+  // fitAllToDesktop returns the same array, so no re-render and no
+  // localStorage write (2026-08-31, Rene's report).
+  useEffect(() => {
+    if (!hydrated) return;
+    const fit = () => setWindows((ws) => fitAllToDesktop(ws, currentViewport()));
+    fit();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onResize = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(fit, VIEWPORT_FIT_DEBOUNCE_MS);
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (timer) clearTimeout(timer);
+    };
+  }, [hydrated]);
 
   // Persist on every change, but only after initial hydration so we
   // don't immediately wipe the saved layout with the empty-default.

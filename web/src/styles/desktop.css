@@ -46,7 +46,15 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
     radial-gradient(1200px 800px at 20% 10%, rgba(92,242,214,0.06), transparent 60%),
     radial-gradient(1000px 700px at 85% 90%, rgba(92,140,242,0.05), transparent 60%),
     linear-gradient(180deg, #07090d 0%, #0a0e15 100%);
-  overflow: hidden;
+  /* `clip`, not `hidden`: hidden still makes this a scroll container,
+   * and any scrollIntoView()/focus() inside a window that hangs off
+   * the edge (chat autoscroll on every new message!) scrolled the
+   * WHOLE desktop sideways — every window shifted, none of them
+   * "moved" in state, and the layout looked broken until a reload.
+   * Measured 2026-08-31: a drag to x=2300 landed at 2057 and the two
+   * untouched windows moved by the same 243px. clip forbids scrolling
+   * entirely. */
+  overflow: clip;
 }
 .desktop::before {
   content: "";
@@ -74,6 +82,15 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .desktop-area {
   position: absolute;
   inset: 0 0 56px 0;
+  /* Own stacking context: every window's z-index (10, 11, … as they
+   * get focused) competes only with its siblings in here. The taskbar
+   * below is a sibling of THIS layer with z-index 2, so no window can
+   * ever paint over it — before 2026-08-31 a focused window that had
+   * slid under the taskbar covered the Arrange button that would have
+   * fixed the layout. */
+  z-index: 1;
+  /* Never a scroll container either — see .desktop. */
+  overflow: clip;
 }
 
 /* ===== Desktop icons (agents + apps) =====
@@ -328,6 +345,8 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   right: 0;
   bottom: 0;
   height: 56px;
+  /* Always above the window layer (.desktop-area, z-index 1). */
+  z-index: 2;
   background: rgba(7,9,13,0.85);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);

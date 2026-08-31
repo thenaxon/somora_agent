@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import type { WindowState } from '../types/window';
+import { clampDragPosition, clampResizeSize, currentViewport } from '../lib/window-geometry';
 
 interface Props {
   win: WindowState;
@@ -39,9 +40,10 @@ type DragState =
     }
   | null;
 
-const TASKBAR_HEIGHT = 56;
-const MIN_WIDTH = 320;
-const MIN_HEIGHT = 200;
+// Clamp numbers (taskbar height, minimum size) live in
+// lib/window-geometry.ts — the same rule the window manager applies on
+// a browser-viewport resize, so the three ways a window can move never
+// disagree about where the desktop ends.
 
 export function Window({
   win,
@@ -108,30 +110,25 @@ export function Window({
       const ds = dragStateRef.current;
       if (!ds) return;
       if (ds.type === 'drag') {
-        const x = Math.max(0, Math.min(window.innerWidth - 100, e.clientX - ds.offsetX));
-        // Clamp so the WHOLE window stays above the taskbar — title
-        // bar AND body. Was previously only clamping the title bar
-        // 40px above the taskbar, which let the lower portion of the
-        // window slide underneath and overlap the taskbar.
-        const maxY = Math.max(0, window.innerHeight - TASKBAR_HEIGHT - win.h);
-        const y = Math.max(0, Math.min(maxY, e.clientY - ds.offsetY));
+        // The WHOLE window stays above the taskbar — title bar AND
+        // body — and never leaves the desktop on the top/left; up to
+        // all but 100px may hang off the right edge on purpose.
+        const { x, y } = clampDragPosition(
+          e.clientX - ds.offsetX,
+          e.clientY - ds.offsetY,
+          win.h,
+          currentViewport(),
+        );
         onMove(win.id, x, y);
       } else if (ds.type === 'resize') {
-        // Clamp the bottom-right corner so the resize handle never
-        // pushes the window past the taskbar — once the title bar
-        // goes under the taskbar the user can't drag it back up.
-        const maxW = Math.max(MIN_WIDTH, window.innerWidth - ds.startWinX);
-        const maxH = Math.max(
-          MIN_HEIGHT,
-          window.innerHeight - ds.startWinY - TASKBAR_HEIGHT,
-        );
-        const w = Math.min(
-          maxW,
-          Math.max(MIN_WIDTH, ds.startW + (e.clientX - ds.startX)),
-        );
-        const h = Math.min(
-          maxH,
-          Math.max(MIN_HEIGHT, ds.startH + (e.clientY - ds.startY)),
+        // The bottom-right corner never pushes past the taskbar —
+        // once the handle goes under it the user can't grab it back.
+        const { w, h } = clampResizeSize(
+          ds.startWinX,
+          ds.startWinY,
+          ds.startW + (e.clientX - ds.startX),
+          ds.startH + (e.clientY - ds.startY),
+          currentViewport(),
         );
         onResize(win.id, w, h);
       }
