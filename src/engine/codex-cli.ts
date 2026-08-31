@@ -30,6 +30,7 @@ import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
 import { codexCliReasoningArgs } from './thinking-params.ts';
+import { CodexFailureDetail } from './codex-events.ts';
 
 const ENGINE = 'codex-cli';
 
@@ -412,6 +413,10 @@ export const codexCliEngine: AgentEngine = {
     }
 
     let stderrBuf = '';
+    // codex reports failures as JSON events on stdout, not on stderr —
+    // see codex-events.ts. Without this, a 400 from the model endpoint
+    // surfaced as "exit 1: " with nothing after the colon.
+    const failure = new CodexFailureDetail();
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
       stderrBuf += chunk;
@@ -526,6 +531,7 @@ export const codexCliEngine: AgentEngine = {
           }
           receivedAnyEvent = true;
           armIdleTimer();
+          failure.observe(ev);
 
           if (ev.type === 'thread.started') {
             const id = ev.thread_id;
@@ -674,7 +680,7 @@ export const codexCliEngine: AgentEngine = {
       disarmIdleTimer();
 
       if (watchdogFired) {
-        const message = `codex exec timed out (${IDLE_TIMEOUT_MS / 1000}s idle, exit ${code}): ${stderrBuf.slice(0, 300).trim()}`;
+        const message = `codex exec timed out (${IDLE_TIMEOUT_MS / 1000}s idle, exit ${code}): ${failure.render(stderrBuf, 300)}`;
         logger.error({
           msg: 'engine.fail',
           engine: ENGINE,
@@ -682,6 +688,7 @@ export const codexCliEngine: AgentEngine = {
           session,
           exitCode: code,
           stderr: stderrBuf.slice(0, 1000),
+          streamErrors: failure.errors,
           err: 'idle watchdog timeout',
         });
         yield { kind: 'error', ts: ts(), engine: ENGINE, message };
@@ -753,14 +760,16 @@ export const codexCliEngine: AgentEngine = {
           yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
           return;
         }
-        const message = `codex exec failed (exit ${code}): ${stderrBuf.slice(0, 500).trim()}`;
+        const message = `codex exec failed (exit ${code}): ${failure.render(stderrBuf)}`;
         logger.error({
           msg: 'engine.fail',
           engine: ENGINE,
           agent,
           session,
+          model: resolvedModel.modelId,
           exitCode: code,
           stderr: stderrBuf.slice(0, 1000),
+          streamErrors: failure.errors,
         });
         yield { kind: 'error', ts: ts(), engine: ENGINE, message };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
@@ -780,6 +789,7 @@ export const codexCliEngine: AgentEngine = {
           session,
           exitCode: code,
           stderr: stderrBuf.slice(0, 1000),
+          streamErrors: failure.errors,
           hint: 'codex exited non-zero after partial events; turn surfaced what streamed before the exit',
         });
       }

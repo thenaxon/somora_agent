@@ -27,6 +27,7 @@ import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../server/openai-client.ts';
 import type { ResolvedModel } from '../config/types.ts';
 import type { ReplayPair } from '../engine/replay.ts';
+import { CodexFailureDetail } from '../engine/codex-events.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { buildSummaryPrompt } from './template.ts';
@@ -280,6 +281,11 @@ async function summarizeViaCodexCli(
     let resultText = '';
     let tokensIn: number | undefined;
     let tokensOut: number | undefined;
+    // codex puts the failure reason on stdout as JSON events; stderr is
+    // empty on e.g. an unsupported model (HTTP 400). Keep them, or the
+    // worker crash is "exit 1" and nothing else (2026-08-29 report).
+    const failure = new CodexFailureDetail();
+    let lastStdoutLine = '';
 
     child.on('error', (err) => reject(err));
     child.stderr.setEncoding('utf8');
@@ -294,8 +300,10 @@ async function summarizeViaCodexCli(
         const line = stdoutBuf.slice(0, nl).trim();
         stdoutBuf = stdoutBuf.slice(nl + 1);
         if (!line) continue;
+        lastStdoutLine = line;
         try {
           const ev = JSON.parse(line) as { type?: string; [k: string]: unknown };
+          failure.observe(ev);
           if (ev.type === 'item.completed') {
             const item = ev.item as { type?: string; text?: string } | undefined;
             if (item?.type === 'agent_message' && typeof item.text === 'string') {
@@ -313,9 +321,21 @@ async function summarizeViaCodexCli(
     });
     child.on('exit', (code) => {
       if (code !== 0 || !resultText) {
+        const detail = failure.render(stderrBuf);
+        logger.error({
+          msg: 'compaction.worker_fail',
+          engine: 'codex-cli',
+          model: resolvedModel.modelId,
+          exitCode: code,
+          promptChars: promptPayload.length,
+          streamErrors: failure.errors,
+          stderr: stderrBuf.slice(0, 1000),
+          lastStdoutLine: lastStdoutLine.slice(0, 300),
+          hadResult: Boolean(resultText),
+        });
         reject(
           new Error(
-            `codex-cli summary failed (exit ${code}): ${stderrBuf.slice(0, 500).trim()}`,
+            `codex-cli summary failed (exit ${code}, model ${resolvedModel.modelId}): ${detail}`,
           ),
         );
         return;
