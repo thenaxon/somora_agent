@@ -52,11 +52,14 @@ check(
   JSON.stringify(out.auth?.credentialKey) === JSON.stringify(['designOauth', 'claudeAiOauth']),
   JSON.stringify(out.auth?.credentialKey),
 );
-check(
-  'preset: refresh stays off — the CLI owns both rotating chains',
-  out.auth?.refresh === false,
-);
-  check('preset: read-only credential (CLI owns the refresh chain)', out.auth?.refresh === false);
+  // Refresh ownership is per key: designOauth is somora's (nothing
+  // else kept it alive — daily manual /design-login, 2026-08-31),
+  // claudeAiOauth stays the CLI's.
+  check(
+    'preset: refresh owned for designOauth only',
+    JSON.stringify(out.auth?.refresh) === JSON.stringify(['designOauth']),
+    JSON.stringify(out.auth?.refresh),
+  );
   check('preset: tokenEndpoint', out.auth?.tokenEndpoint === 'https://platform.claude.com/v1/oauth/token');
   check('preset: X-Anthropic-Client header', out.headers['X-Anthropic-Client'] === 'claude-cli-design-tool');
 }

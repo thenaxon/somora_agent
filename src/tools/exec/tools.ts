@@ -227,7 +227,14 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       timeout_ms: { type: 'integer', minimum: 100, maximum: 3_600_000, default: 60_000 },
       pty: { type: 'boolean', default: false },
       description: { type: 'string', maxLength: 200 },
-      inherit_agent_env: { type: 'boolean', default: false },
+      inherit_agent_env: {
+        type: 'boolean',
+        default: false,
+        description:
+          `local only. Default false: somora-internal env (${SOMORA_INTERNAL_ENV_SUMMARY}) is stripped ` +
+          'so a project\'s own tsx/next/dotenv and a nested claude/codex behave like in a normal terminal. ' +
+          'true = inherit everything.',
+      },
     },
     required: ['command'],
     additionalProperties: false,

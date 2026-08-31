@@ -649,6 +649,20 @@ export class McpHubManager {
         continue;
       }
       if (!s.client) continue;
+      // Proactive token rotation: a live streamable-http session keeps
+      // sending the bearer it connected with, so when that token is
+      // about to expire we reconnect NOW — the provider refreshes on
+      // the way back in — instead of waiting for the upstream to start
+      // answering 401 and parking the server for a 5-min re-probe.
+      if (s.credentials.refreshDue?.()) {
+        logger.info({ msg: 'mcp.hub.token_rotation', server: s.name });
+        await this.teardown(s, 'token near expiry — reconnecting to rotate');
+        this.scheduleReconnect(s);
+        s.retryNotBefore = 0;
+        void this.ensureConnected(s.name).catch(() => {});
+        this.emitCatalogChange();
+        continue;
+      }
       if (now - s.lastActivityAt < KEEPALIVE_INTERVAL_MS) continue;
       try {
         await s.client.ping();

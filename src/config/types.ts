@@ -1538,13 +1538,20 @@ export const McpOAuthRefreshSchema = z.object({
   credentialKey: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]),
   /** OAuth token endpoint for the refresh_token grant. */
   tokenEndpoint: z.string().url(),
-  /** Whether the hub may refresh the token ITSELF. Set false when the
-   *  credential is owned by another process that rotates it (the Claude
-   *  CLI's own `claudeAiOauth` login): two refreshers racing on one
-   *  rotating refresh-token chain invalidate each other. Read-only mode
-   *  just re-reads the file on every connect and relies on the owner
-   *  (plus somora's credential sync) to keep it fresh. */
-  refresh: z.boolean().default(true),
+  /** Whether the hub may refresh the token ITSELF — `true` for every
+   *  key, `false` for none, or a LIST of the keys it owns. Set false /
+   *  leave a key out when the credential is owned by another process
+   *  that rotates it (the Claude CLI's own `claudeAiOauth` login): two
+   *  refreshers racing on one rotating refresh-token chain invalidate
+   *  each other. Read-only mode just re-reads the file on every connect
+   *  and relies on the owner (plus somora's credential sync) to keep it
+   *  fresh.
+   *
+   *  The list form is what the claude-design preset uses: `designOauth`
+   *  is somora's to refresh (nothing else keeps it alive — it expired
+   *  daily and needed a manual `/design-login`, 2026-08-31 report),
+   *  `claudeAiOauth` stays the CLI's. */
+  refresh: z.union([z.boolean(), z.array(z.string().min(1))]).default(true),
 });
 export type McpOAuthRefresh = z.infer<typeof McpOAuthRefreshSchema>;
 

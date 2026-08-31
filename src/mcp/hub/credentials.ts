@@ -25,6 +25,12 @@ export interface CredentialProvider {
    *  an OAuth token if it's near expiry). Throws on unrecoverable auth
    *  failure (missing file/key, refresh rejected). */
   resolveHeaders(): Promise<Record<string, string>>;
+  /** True when the token handed out last is about to expire AND this
+   *  provider is allowed to rotate it — the hub then reconnects early
+   *  so the rotation happens before the upstream starts refusing the
+   *  old bearer (a live streamable-http session keeps sending the
+   *  token it connected with). Optional: static providers never rotate. */
+  refreshDue?(): boolean;
 }
 
 function expandHome(p: string): string {
@@ -85,11 +91,31 @@ export class OAuthRefreshProvider implements CredentialProvider {
     return Array.isArray(k) ? k : [k];
   }
 
+  /** Whether this provider owns the refresh chain of the key in use.
+   *  `refresh: true` owns every key, a list owns exactly those keys,
+   *  `false` owns none. */
+  private refreshAllowed(): boolean {
+    const r = this.auth.refresh;
+    if (typeof r === 'boolean') return r;
+    const key = this.usedKey ?? this.keys()[0]!;
+    return r.includes(key);
+  }
+
+  /** Expiry of the credential handed out last (ms epoch), for the
+   *  hub's proactive rotation. Undefined until the first read. */
+  private lastExpiresAt: number | undefined;
+
+  refreshDue(): boolean {
+    if (!this.refreshAllowed()) return false;
+    if (this.lastExpiresAt === undefined) return false;
+    return this.lastExpiresAt - Date.now() < REFRESH_SKEW_MS;
+  }
+
   async resolveHeaders(): Promise<Record<string, string>> {
     let cred = await this.read();
     const now = Date.now();
     if (cred.expiresAt !== undefined && cred.expiresAt - now < REFRESH_SKEW_MS) {
-      if (this.auth.refresh) {
+      if (this.refreshAllowed()) {
         cred = await this.refreshLocked(cred);
       } else {
         // Read-only credential: another process owns the refresh chain.
@@ -103,6 +129,7 @@ export class OAuthRefreshProvider implements CredentialProvider {
         });
       }
     }
+    this.lastExpiresAt = cred.expiresAt;
     const out: Record<string, string> = { authorization: `Bearer ${cred.accessToken}` };
     for (const [k, v] of Object.entries(this.staticHeaders)) {
       // Static headers win only if they're not the auth header.
@@ -191,11 +218,22 @@ export class OAuthRefreshProvider implements CredentialProvider {
     });
     if (!res.ok) {
       const status = res.status;
-      throw new Error(
-        `MCP oauth refresh failed (HTTP ${status}) for "${this.activeKeyLabel()}"${
-          status === 400 || status === 401 ? ' — refresh token expired/revoked, re-login required' : ''
-        }`,
-      );
+      if (status === 400 || status === 401) {
+        // The chain is dead: nothing will make this refresh_token work
+        // again. Move the entry aside so the interactive login can
+        // write a fresh one — Claude Code's `/design-login` refuses with
+        // "A design credential is already stored" while the dead key
+        // sits in the file, and nobody should have to hand-edit
+        // .credentials.json to get out of that (2026-08-31 report).
+        const retiredAs = await this.retireCredential();
+        throw new Error(
+          `MCP oauth refresh rejected (HTTP ${status}) for "${this.activeKeyLabel()}" — refresh token ` +
+            `expired/revoked. The stale entry was moved to "${retiredAs}" in ${this.file}; ` +
+            `run the service's interactive login again (Claude Design: ` +
+            `CLAUDE_CONFIG_DIR=~/.somora/claude-home claude → /design-login), then reconnect the server.`,
+        );
+      }
+      throw new Error(`MCP oauth refresh failed (HTTP ${status}) for "${this.activeKeyLabel()}"`);
     }
     const data = (await res.json()) as {
       access_token?: string;
@@ -227,13 +265,37 @@ export class OAuthRefreshProvider implements CredentialProvider {
   /** Merge the refreshed credential back into the file, preserving every
    *  other top-level key (claudeAiOauth etc.). Atomic tmp+rename. */
   private async writeBack(updated: OAuthCredential): Promise<void> {
+    await this.rewriteFile((doc) => {
+      doc[this.usedKey ?? this.keys()[0]!] = updated;
+    });
+  }
+
+  /** Rename the dead credential's key to `<key>_stale_<timestamp>` —
+   *  kept for forensics, out of the login's way. Returns the new key.
+   *  Called under the refresh lock. */
+  private async retireCredential(): Promise<string> {
+    const key = this.usedKey ?? this.keys()[0]!;
+    const retiredAs = `${key}_stale_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    await this.rewriteFile((doc) => {
+      if (doc[key] !== undefined) {
+        doc[retiredAs] = doc[key];
+        delete doc[key];
+      }
+    });
+    logger.warn({ msg: 'mcp.hub.oauth_credential_retired', key, retiredAs, file: this.file });
+    this.usedKey = null;
+    this.lastExpiresAt = undefined;
+    return retiredAs;
+  }
+
+  private async rewriteFile(mutate: (doc: Record<string, unknown>) => void): Promise<void> {
     let doc: Record<string, unknown> = {};
     try {
       doc = JSON.parse(await readFile(this.file, 'utf8')) as Record<string, unknown>;
     } catch {
-      // File vanished — recreate with just this key.
+      // File vanished — recreate with just what mutate() adds.
     }
-    doc[this.usedKey ?? this.keys()[0]!] = updated;
+    mutate(doc);
     const tmp = `${this.file}.hubtmp.${process.pid}`;
     await writeFile(tmp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
     await rename(tmp, this.file);
@@ -298,16 +360,27 @@ export function applyMcpPreset(name: string, cfg: McpServerConfig): McpServerCon
       // takes the first key present in the file, and `designOauth` only
       // exists once its login has been run.
       //
-      // Refresh stays OFF for both: the Claude CLI owns these rotating
-      // chains, and two refreshers on one chain invalidate each other —
-      // that is how a Design credential got revoked on 2026-08-25.
+      // Refresh ownership, per key:
+      //   claudeAiOauth  — the CLI's. Two refreshers on one rotating
+      //                    chain invalidate each other; that is how a
+      //                    Design credential got revoked on 2026-08-25.
+      //   designOauth    — somora's, since 2026-08-31. Nothing else
+      //                    keeps it alive: the CLI only touches it when
+      //                    an interactive session in this config dir
+      //                    uses the Design MCP, so with somora as the
+      //                    only steady consumer the token simply expired
+      //                    every ~8 h and needed a manual /design-login
+      //                    (plus a hand-edit to get past "already
+      //                    stored"). The refresh runs under the file
+      //                    lock with a re-read, and the rotated token is
+      //                    written back for the CLI to pick up.
       auth:
         cfg.auth ??
         ({
           type: 'oauth-refresh',
           credentialKey: ['designOauth', 'claudeAiOauth'],
           tokenEndpoint: 'https://platform.claude.com/v1/oauth/token',
-          refresh: false,
+          refresh: ['designOauth'],
         } as McpOAuthRefresh),
       headers: {
         'X-Anthropic-Client': 'claude-cli-design-tool',

@@ -209,10 +209,27 @@ authenticates for everything else but lacks the design scope is refused
 by this endpoint alone — the endpoint says so in its response body, and
 somora surfaces that rather than parking on a generic failure.
 
-The hub never refreshes these tokens itself — the Claude CLI owns those
-rotating chains, and two refreshers on one chain invalidate each other.
-That is not hypothetical: it is how a Design credential got revoked on
-2026-08-25.
+**Who keeps the token alive.** The `designOauth` access token lives
+only a few hours. Somora refreshes it itself: the preset marks that
+one key as somora-owned (`refresh: ['designOauth']`), the hub rotates
+it shortly before expiry — reconnecting the server so the live session
+carries the new bearer — and writes the rotated token back to the file
+for the CLI to pick up. The refresh runs under a lockfile with a
+re-read, so an interactive Claude Code session that happens to rotate
+the same chain does not collide with it. `claudeAiOauth` stays the
+CLI's: somora never refreshes it (two refreshers on one rotating chain
+invalidate each other — that is how a Design credential got revoked on
+2026-08-25).
+
+When a refresh is *rejected* (the refresh token itself expired or was
+revoked), the hub moves the dead entry aside as
+`designOauth_stale_<timestamp>` and parks the server as `needs-auth`
+with that in the message. Claude Code's `/design-login` refuses to run
+while a `designOauth` entry exists ("A design credential is already
+stored"), so the move is what makes the re-login possible without
+editing `.credentials.json` by hand. After the login:
+`POST /mcp/servers/claude-design/reconnect`, or wait for the next
+re-probe.
 
 ## What works today — and what doesn't (yet)
 
