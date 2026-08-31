@@ -840,6 +840,17 @@ export const api = {
     });
     if (!res.ok) throw new Error(`set agent tools ${res.status}`);
   },
+  // Skills half of the Abilities matrix (docs/skills.md).
+  agentSkills: (agent: string) =>
+    getJson<AgentSkillsResponse>(`/agents/${encodeURIComponent(agent)}/skills`),
+  setAgentSkills: async (agent: string, gating: { deny: string[]; allow: string[] }): Promise<void> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/skills`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(gating),
+    });
+    if (!res.ok) throw new Error(`set agent skills ${res.status}`);
+  },
   /** 503 (no servers configured) → { enabled: false }. */
   mcpStatus: async (): Promise<McpStatusResponse> => {
     const res = await fetch('/mcp/status');
@@ -869,6 +880,22 @@ export interface AgentToolInfo {
    *  exists, so an entry here is always something worth switching.
    *  Kept on the wire for older clients that still read it. */
   availableNow: boolean;
+}
+
+export interface AgentSkillsResponse {
+  agent: string;
+  gating: { deny: string[]; allow: string[] } | null;
+  /** True when agent.yaml carries a hand-written allow-list — the
+   *  matrix goes read-only then (same rule as tools). */
+  hasPatternRules: boolean;
+  skills: Array<{
+    name: string;
+    description: string;
+    /** Requirements (bins/config/env) met on this host. */
+    available: boolean;
+    unavailableReason?: string;
+    visible: boolean;
+  }>;
 }
 
 export interface AgentToolsResponse {

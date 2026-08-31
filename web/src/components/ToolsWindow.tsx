@@ -1,19 +1,24 @@
-// Tools window — per-agent tool visibility matrix + external MCP
-// server status (design: private/mcp-hub-design.md §4.6).
+// Abilities window — per-agent visibility matrix for tools AND skills,
+// plus external MCP server status (design: private/mcp-hub-design.md
+// §4.6; skills half added 2026-08-31 on Rene's request — the same
+// matrix for "which agent may use which skill").
 //
 // Left: agent picker. Main: every tool on this instance (built-in
-// grouped by toolset, external grouped by MCP server) with a
-// visibility toggle for the selected agent. Toggles manage EXACT-name
-// deny entries only; hand-written pattern rules (globs, toolset:,
-// allow-lists) flip the matrix read-only rather than guessing how to
-// rewrite operator policy. All writes go through the server
-// (PUT /agents/:name/tools) — the UI never touches agent.yaml itself.
+// grouped by toolset, external grouped by MCP server) and, below, every
+// skill, each with a visibility toggle for the selected agent. Toggles
+// manage EXACT-name deny entries only; hand-written pattern rules
+// (globs, toolset:, allow-lists) flip that matrix read-only rather
+// than guessing how to rewrite operator policy. All writes go through
+// the server (PUT /agents/:name/tools, PUT /agents/:name/skills) — the
+// UI never touches agent.yaml itself. The window's internal kind stays
+// `tools` so saved window layouts keep working.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Eye, EyeOff, Plug, RefreshCw } from 'lucide-react';
+import { AlertTriangle, Eye, EyeOff, Plug, RefreshCw, Sparkles } from 'lucide-react';
 import {
   api,
   type AgentInfo,
+  type AgentSkillsResponse,
   type AgentToolsResponse,
   type McpStatusResponse,
 } from '../lib/api';
@@ -22,6 +27,7 @@ export function ToolsWindow() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [agent, setAgent] = useState<string | null>(null);
   const [data, setData] = useState<AgentToolsResponse | null>(null);
+  const [skills, setSkills] = useState<AgentSkillsResponse | null>(null);
   const [mcp, setMcp] = useState<McpStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -39,12 +45,33 @@ export function ToolsWindow() {
 
   const refresh = useCallback(async (name: string) => {
     try {
-      setData(await api.agentTools(name));
+      const [t, s] = await Promise.all([api.agentTools(name), api.agentSkills(name)]);
+      setData(t);
+      setSkills(s);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
     }
   }, []);
+
+  const toggleSkill = useCallback(
+    async (skillName: string, currentlyVisible: boolean) => {
+      if (!agent || !skills || skills.hasPatternRules || saving) return;
+      const deny = new Set(skills.gating?.deny ?? []);
+      if (currentlyVisible) deny.add(skillName);
+      else deny.delete(skillName);
+      setSaving(true);
+      try {
+        await api.setAgentSkills(agent, { deny: [...deny], allow: skills.gating?.allow ?? [] });
+        await refresh(agent);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [agent, skills, saving, refresh],
+  );
 
   useEffect(() => {
     if (agent) void refresh(agent);
@@ -198,6 +225,84 @@ export function ToolsWindow() {
             ))}
           </div>
         ))}
+
+        {/* Skills — same matrix, same rules, one section. */}
+        {skills && (
+          <div style={{ marginTop: 18, borderTop: '1px solid var(--bg-3)', paddingTop: 12 }}>
+            <div
+              style={{
+                fontFamily: '"JetBrains Mono", monospace',
+                fontSize: 11,
+                textTransform: 'uppercase',
+                letterSpacing: 1,
+                color: 'var(--text-2)',
+                marginBottom: 4,
+              }}
+            >
+              <Sparkles size={12} style={{ verticalAlign: -1 }} /> skills
+            </div>
+            {skills.hasPatternRules && (
+              <div
+                style={{
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--bg-3)',
+                  borderRadius: 6,
+                  padding: '8px 10px',
+                  marginBottom: 8,
+                  color: 'var(--text-2)',
+                }}
+              >
+                <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> This agent's{' '}
+                <code>agent.yaml</code> carries a hand-written skill allow-list (
+                {(skills.gating?.allow ?? []).join(', ')}) — the skill matrix is read-only. Edit the
+                file to change it.
+              </div>
+            )}
+            {skills.skills.length === 0 && (
+              <div style={{ color: 'var(--text-2)' }}>
+                No skills installed — see <code>docs/skills.md</code>.
+              </div>
+            )}
+            {skills.skills.map((s) => (
+              <div
+                key={s.name}
+                data-testid={`skills-row-${s.name}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '4px 6px',
+                  borderRadius: 4,
+                  opacity: s.visible ? 1 : 0.45,
+                }}
+                title={s.available ? s.description : `${s.description}\n\nunavailable on this host: ${s.unavailableReason ?? 'requirements not met'}`}
+              >
+                <span
+                  data-testid={`skills-toggle-${s.name}`}
+                  onClick={() => void toggleSkill(s.name, s.visible)}
+                  style={{
+                    cursor: skills.hasPatternRules || saving ? 'not-allowed' : 'pointer',
+                    color: s.visible ? 'var(--accent)' : 'var(--text-2)',
+                    display: 'inline-flex',
+                  }}
+                >
+                  {s.visible ? <Eye size={15} /> : <EyeOff size={15} />}
+                </span>
+                <span
+                  style={{
+                    fontFamily: '"JetBrains Mono", monospace',
+                    color: s.visible ? 'var(--text-1)' : 'var(--text-2)',
+                  }}
+                >
+                  {s.name}
+                </span>
+                {!s.available && (
+                  <span style={{ fontSize: 11, color: 'var(--warn, #d29922)' }}>unavailable</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* MCP server status */}

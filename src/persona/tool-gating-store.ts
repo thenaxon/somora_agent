@@ -49,21 +49,44 @@ export function renderToolsBlock(gating: ToolGating): string {
  * agent.yaml roots at column 0 (unlike the operator's config.yaml).
  */
 export function spliceToolsBlock(yamlText: string, gating: ToolGating): string {
-  const block = renderToolsBlock(gating);
+  return spliceTopLevelBlock(
+    yamlText,
+    'tools',
+    renderToolsBlock(gating),
+    '# Per-agent tool visibility (managed via web UI — docs/mcp.md)',
+  );
+}
+
+/**
+ * The generic splice behind spliceToolsBlock — `key` is the top-level
+ * YAML key to replace, `block` its full rendered replacement ('' =
+ * remove), `appendComment` the comment line written above a block that
+ * is being added for the first time. skill-gating-store.ts uses it for
+ * `skills:`; anything else that becomes web-managed can too.
+ */
+export function spliceTopLevelBlock(
+  yamlText: string,
+  key: string,
+  block: string,
+  appendComment: string,
+): string {
   const lines = yamlText.split('\n');
-  const start = lines.findIndex((l) => /^tools:\s*(#.*)?$/.test(l));
+  const keyRe = new RegExp(`^${key}:\\s*(#.*)?$`);
+  const start = lines.findIndex((l) => keyRe.test(l));
   if (start === -1) {
     if (block === '') return yamlText;
     const sep = yamlText.length === 0 || yamlText.endsWith('\n') ? '' : '\n';
-    return `${yamlText}${sep}\n# Per-agent tool visibility (managed via web UI — docs/mcp.md)\n${block}`;
+    return `${yamlText}${sep}\n${appendComment}\n${block}`;
   }
-  // Find the end of the block: next line that is a top-level key or a
-  // top-level comment directly preceding one. Indented lines and blank
-  // lines inside the block belong to it.
+  // Find the end of the block: the next column-0 line — a top-level
+  // key OR a top-level comment. Indented lines and blank lines inside
+  // the block belong to it; a `# …` at column 0 is the operator's note
+  // on whatever follows and must survive (the skills-store test caught
+  // the old key-only rule eating such a comment, 2026-08-31).
   let end = lines.length;
   for (let i = start + 1; i < lines.length; i++) {
     const l = lines[i]!;
-    if (/^[A-Za-z_]/.test(l)) {
+    if (/^\S/.test(l)) {
       end = i;
       break;
     }

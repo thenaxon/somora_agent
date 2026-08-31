@@ -19,6 +19,7 @@ import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
 import { ThinkingLevelSchema, type ThinkingLevel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
+import { normalizeSkillGating, type SkillGating } from '../skills/gating.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const AGENTS_DIR = join(SOMORA_HOME, 'agents');
@@ -128,13 +129,22 @@ const AgentYamlSchema = z
       })
       .optional(),
     /**
-     * Optional skills allow-list. When set (even to []), the agent only
-     * sees the listed skills in its <available_skills> registry. When
-     * unset, the agent sees ALL skills under ~/.somora/skills/. See
-     * `private/skills-design.md` for the rationale (empty-list-means-
-     * deny-all, missing-key-means-allow-all).
+     * Per-agent skill visibility (src/skills/gating.ts). Two forms:
+     *   skills: [a, b]                       — legacy allow-list: only these
+     *   skills: { deny: [x], allow: [a, b] } — tools-style; deny beats
+     *                                          allow, empty allow = all
+     * Unset = the agent sees ALL skills under ~/.somora/skills/. The
+     * web Abilities matrix writes the object form (exact-name denies).
      */
-    skills: z.array(z.string().min(1)).optional(),
+    skills: z
+      .union([
+        z.array(z.string().min(1)),
+        z.object({
+          deny: z.array(z.string().min(1)).optional(),
+          allow: z.array(z.string().min(1)).optional(),
+        }),
+      ])
+      .optional(),
     /**
      * Per-agent tool visibility (design: private/mcp-hub-design.md
      * §4.6). Applies uniformly to built-in AND external MCP tools.
@@ -198,12 +208,12 @@ export interface Persona {
   /** Resource names this agent should NOT see in resource_list. */
   resourceDeny: string[];
   /**
-   * Skill allow-list from agent.yaml. `undefined` or `[]` = no
-   * restriction (agent sees all skills under ~/.somora/skills/);
-   * `[name1, name2, ...]` = only those skills. Lenient interpretation
-   * of "empty"; see `private/skills-design.md`.
+   * Per-agent skill visibility from agent.yaml `skills:`, normalized
+   * from either the legacy list or the deny/allow object. `undefined`
+   * = no restriction. Enforced at the prompt registry, `skill_list`
+   * and `skill` activation via src/skills/gating.ts.
    */
-  skillsAllowList: string[] | undefined;
+  skillGating: SkillGating | undefined;
   /**
    * Per-agent tool visibility from agent.yaml `tools:`. `undefined` =
    * no restriction. Enforced at both list surfaces (in-process
@@ -326,7 +336,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     thinking: agentYaml.thinking,
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
-    skillsAllowList: agentYaml.skills,
+    skillGating: normalizeSkillGating(agentYaml.skills),
     toolGating: agentYaml.tools
       ? { deny: agentYaml.tools.deny ?? [], allow: agentYaml.tools.allow ?? [] }
       : undefined,

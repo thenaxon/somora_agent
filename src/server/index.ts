@@ -130,6 +130,9 @@ import {
 import type { ToolContext } from '../tools/types.ts';
 import { isToolAllowed } from '../tools/gating.ts';
 import { writeAgentToolGating } from '../persona/tool-gating-store.ts';
+import { writeAgentSkillGating } from '../persona/skill-gating-store.ts';
+import { isSkillAllowed } from '../skills/gating.ts';
+import { loadAvailableSkills } from '../skills/load.ts';
 import { shutdownSshPool } from '../ssh/index.ts';
 import {
   archiveEmptyCompletedDreams,
@@ -1192,6 +1195,63 @@ app.put('/agents/:agent/tools', async (c) => {
     await writeAgentToolGating(agent, { deny: body.deny, allow: body.allow });
     logger.info({
       msg: 'agents.tool_gating_updated',
+      agent,
+      deny: body.deny.length,
+      allow: body.allow.length,
+    });
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+});
+
+// Per-agent skill visibility — the Abilities matrix's second half.
+// Same contract as /agents/:agent/tools: GET lists every skill on this
+// instance with the agent's `visible` flag, PUT writes exact-name
+// deny/allow into agent.yaml `skills:`. A legacy allow-list
+// (`skills: [a, b]`) shows up as `allow` and flips the matrix
+// read-only, like hand-written tool patterns do — the operator wrote
+// a policy, the UI doesn't second-guess it. Takes effect on the next
+// turn (the registry is rebuilt per turn), no restart.
+app.get('/agents/:agent/skills', async (c) => {
+  const agent = c.req.param('agent');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const gating = persona.skillGating ?? null;
+  const hasPatternRules = gating !== null && gating.allow.length > 0;
+  const skills = await loadAvailableSkills(config);
+  return c.json({
+    agent,
+    gating,
+    hasPatternRules,
+    skills: skills
+      .map((s) => ({
+        name: s.name,
+        description: s.description.slice(0, 140),
+        available: s.available,
+        ...(s.unavailableReason ? { unavailableReason: s.unavailableReason } : {}),
+        visible: isSkillAllowed(s.name, gating ?? undefined),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  });
+});
+
+app.put('/agents/:agent/skills', async (c) => {
+  const agent = c.req.param('agent');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' not found` }, 404);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    deny?: string[];
+    allow?: string[];
+  } | null;
+  if (!body || !Array.isArray(body.deny) || !Array.isArray(body.allow)) {
+    return c.json({ error: 'body must be { deny: string[], allow: string[] }' }, 400);
+  }
+  try {
+    await writeAgentSkillGating(agent, { deny: body.deny, allow: body.allow });
+    logger.info({
+      msg: 'agents.skill_gating_updated',
       agent,
       deny: body.deny.length,
       allow: body.allow.length,

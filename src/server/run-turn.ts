@@ -862,7 +862,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     // ephemeral and goes elsewhere), so they're ideal for prefix-cache.
     // Empty registry = empty section, no separator added.
     const allSkills = await loadAvailableSkills(freshConfig);
-    const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillsAllowList, freshConfig);
+    const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillGating, freshConfig);
     const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
     // Project block — sits AFTER skills in the cache hierarchy because
     // it's more volatile (changes on /projekt switch — rare but more

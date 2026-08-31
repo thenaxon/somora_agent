@@ -167,7 +167,7 @@ export function Desktop() {
       id: 'app:tools',
       node: (
         <AppTile
-          label="tools"
+          label="abilities"
           icon={<Wrench size={26} />}
           active={activeApps.has('tools')}
           onClick={() => wm.openTools()}

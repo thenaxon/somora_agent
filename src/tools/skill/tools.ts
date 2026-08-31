@@ -109,7 +109,7 @@ export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
       throw new Error(`skill: agent '${ctx.agent}' not found`);
     }
     const all = await loadAvailableSkills(ctx.config);
-    const allowed = filterSkillsForAgent(all, persona.skillsAllowList);
+    const allowed = filterSkillsForAgent(all, persona.skillGating);
     const skill = allowed.find((s) => s.name === input.name);
     if (!skill) {
       const knownNames = allowed.map((s) => s.name);
@@ -261,7 +261,7 @@ export const skillList: ToolDefinition<z.infer<typeof SkillListInput>, SkillList
       throw new Error(`skill_list: agent '${ctx.agent}' not found`);
     }
     const all = await loadAvailableSkills(ctx.config);
-    const allowed = filterSkillsForAgent(all, persona.skillsAllowList);
+    const allowed = filterSkillsForAgent(all, persona.skillGating);
     const skills = allowed.map((s) => ({
       name: s.name,
       description: s.description,

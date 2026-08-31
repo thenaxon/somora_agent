@@ -226,6 +226,25 @@ curl https://<host>:18737/tools
 
 Returns an array of `{ name, toolset, description, jsonSchema }`.
 
+### `GET /agents/:agent/skills` · `PUT /agents/:agent/skills`
+
+Per-agent skill visibility — the skills half of the web client's
+Abilities matrix (the tools half is `GET/PUT /agents/:agent/tools`,
+documented in [mcp.md](mcp.md)).
+
+`GET` returns `{ agent, gating, hasPatternRules, skills: [{ name,
+description, available, unavailableReason?, visible }] }` — every skill
+installed on the instance, with `visible` telling whether this agent
+sees it. `gating` is the agent's `skills:` section (`{deny, allow}`)
+or `null`; `hasPatternRules` is true when it carries a hand-written
+allow-list, which the UI shows read-only.
+
+`PUT` takes `{ deny: string[], allow: string[] }` and rewrites only the
+`skills:` block of the agent's `agent.yaml` (comments and the rest of
+the file untouched; empty deny+allow removes the block). Names must
+be skill names (`[a-z0-9-]`). Takes effect on the agent's next turn.
+See [skills.md](skills.md#per-agent-visibility).
+
 ### `POST /agents/:agent/tools/:name`
 
 Invoke a tool directly as an agent (without going through a chat

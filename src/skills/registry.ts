@@ -12,30 +12,27 @@
 
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
+import { isSkillAllowed, type SkillGating } from './gating.ts';
 import type { LoadedSkill } from './load.ts';
 
-/** Apply the agent's allow-list to the loaded skill set. */
+/** Apply the agent's skill gating (deny/allow, see ./gating.ts) to the
+ *  loaded skill set. No gating = agent gets all skills. */
 export function filterSkillsForAgent(
   skills: LoadedSkill[],
-  allowList: string[] | undefined,
+  gating: SkillGating | undefined,
 ): LoadedSkill[] {
-  if (!allowList || allowList.length === 0) {
-    // No allow-list = agent gets all skills. Convention from
-    // skills-design.md.
-    return skills;
-  }
-  const allowed = new Set(allowList);
+  if (!gating) return skills;
   const known = new Set(skills.map((s) => s.name));
-  for (const name of allowList) {
+  for (const name of [...gating.allow, ...gating.deny]) {
     if (!known.has(name)) {
       logger.warn({
-        msg: 'skills.allowlist_unknown',
+        msg: 'skills.gating_unknown',
         name,
-        hint: 'agent.yaml lists a skill that is not present in ~/.somora/skills/',
+        hint: 'agent.yaml names a skill that is not present in ~/.somora/skills/',
       });
     }
   }
-  return skills.filter((s) => allowed.has(s.name));
+  return skills.filter((s) => isSkillAllowed(s.name, gating));
 }
 
 function escapeXml(s: string): string {
@@ -170,10 +167,10 @@ export function renderSkillsRegistry(
  */
 export function buildSkillsRegistry(
   skills: LoadedSkill[],
-  allowList: string[] | undefined,
+  gating: SkillGating | undefined,
   config: Config,
 ): RenderedRegistry {
-  const filtered = filterSkillsForAgent(skills, allowList);
+  const filtered = filterSkillsForAgent(skills, gating);
   return renderSkillsRegistry(filtered, {
     maxSkillsInPrompt: config.skills.maxSkillsInPrompt,
     maxPromptChars: config.skills.maxPromptChars,

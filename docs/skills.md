@@ -160,29 +160,54 @@ The bundled `gog` skill is the clean reference — `SKILL.md` is
 usage-only, `BOOTSTRAP.md` next to it carries the one-time setup
 notes (read on demand via `file_read`, not as ambient context).
 
-## Per-agent allow-list
+## Per-agent visibility
 
-`agent.yaml`:
+Skills are shared by every agent on the instance, but an individual
+agent can be limited to a subset. Two ways to do that:
+
+**The Abilities window in the web client** — the same matrix that
+manages per-agent tools has a *skills* section below it: pick the
+agent, click the eye on a skill to hide or show it. That writes an
+exact-name `deny` list into the agent's `agent.yaml`, so a skill you
+install next week is visible to that agent by default — hiding is the
+exception, not a snapshot. Takes effect on the agent's next turn; no
+restart.
+
+**`agent.yaml` by hand** — same shape as `tools:`:
 
 ```yaml
-# Variant 1 — no list = agent sees all skills
-agent:
-  name: <your-agent>
+# no section = agent sees all skills
 
-# Variant 2 — explicit allow-list = only these
-agent:
-  name: <your-agent>
-  skills:
-    - obsidian-daily-note
-    - payment-comparison
+# everything except these (what the web matrix writes)
+skills:
+  deny:
+    - instagram-downloader
+
+# only these — a hand-written policy; the web matrix shows it read-only
+skills:
+  allow:
+    - github
+    - skill-author
+
+# the older list form still works and means the same as `allow:`
+skills:
+  - github
+  - skill-author
 ```
 
-An empty `skills: []` is treated the same as no list (lenient): the
-agent gets all skills. To deny ALL skills, omit them from disk
-entirely or use a list with one harmless name and remove it.
+`deny` beats `allow`; an empty `allow` (or the older empty `skills: []`)
+means no restriction. Names that don't match any skill on disk are
+warn-logged and ignored — typos don't break the agent.
 
-Allow-list entries that don't match any skill on disk are warn-logged
-and ignored — typos don't break the agent.
+Hidden is hidden everywhere: the skill is missing from the agent's
+`<available_skills>` registry, from `skill_list`, and `skill` refuses
+to activate it ("exists but is not allowed for agent …") — also when
+another agent delegates work to it via `agent_ask`. Delegate to an
+agent that has the skill instead.
+
+HTTP: `GET /agents/:agent/skills` lists every skill with the agent's
+`visible` flag; `PUT /agents/:agent/skills {deny, allow}` writes the
+section (see [api.md](api.md)).
 
 ## Creating a skill — the `somora skill` CLI
 

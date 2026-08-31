@@ -172,7 +172,7 @@ export function useWindowManager() {
     const next: WindowState = {
       id,
       kind: 'tools',
-      title: 'Tools',
+      title: 'Abilities',
       icon: '🧰',
       ...pos,
       minimized: false,
