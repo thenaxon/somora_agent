@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Download, Film, Image as ImageIcon, Loader2, RefreshCw, Search, Trash2, Wand2,
+  ZoomIn,
 } from 'lucide-react';
 import { useFileViewOpener } from './FileViewContext';
 import {
@@ -828,20 +829,53 @@ export function MediaWindow() {
                 would — one viewer for images wherever the path came
                 from, rather than a second half-built one in here. */}
             {selected.kind === 'video' ? (
-              <video
-                controls
-                preload="metadata"
-                poster={`/media/${selected.id}/thumb`}
-                src={`/media/${selected.id}/file`}
-                style={{
-                  maxHeight: 196,
-                  maxWidth: 320,
-                  borderRadius: 4,
-                  border: '1px solid var(--line)',
-                  flex: 'none',
-                  background: '#000',
-                }}
-              />
+              // A click on the <video> itself is play/pause, so the
+              // "open large" affordance the image gets via its cursor
+              // lives on a button in the corner here — same viewer,
+              // same target as the image (2026-08-31, Rene).
+              <div style={{ position: 'relative', flex: 'none' }}>
+                <video
+                  controls
+                  preload="metadata"
+                  poster={`/media/${selected.id}/thumb`}
+                  src={`/media/${selected.id}/file`}
+                  style={{
+                    maxHeight: 196,
+                    maxWidth: 320,
+                    borderRadius: 4,
+                    border: '1px solid var(--line)',
+                    display: 'block',
+                    background: '#000',
+                  }}
+                />
+                {openFileView && (
+                  <button
+                    type="button"
+                    data-testid="media-video-open-viewer"
+                    onClick={() => openFileView(selected.path)}
+                    title="Open in the file viewer"
+                    aria-label="Open video in the file viewer"
+                    style={{
+                      position: 'absolute',
+                      top: 6,
+                      right: 6,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 7px',
+                      border: '1px solid rgba(255,255,255,0.25)',
+                      borderRadius: 4,
+                      background: 'rgba(0,0,0,0.62)',
+                      color: '#fff',
+                      fontSize: 11,
+                      fontFamily: 'inherit',
+                      cursor: 'zoom-in',
+                    }}
+                  >
+                    <ZoomIn size={12} /> open
+                  </button>
+                )}
+              </div>
             ) : (
             <img
               src={`/media/${selected.id}/file`}

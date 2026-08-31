@@ -81,6 +81,14 @@ currently offers, so you don't have to hunt for the exact id — the
 Media window surfaces it too. Config stays the source of truth for
 what somora will actually call.
 
+**Looking at what was made.** Picking a tile in the Media window shows
+it below the gallery with its prompt, specs and cost. An image opens
+large in the file viewer with a click (zoom cursor); a video plays
+inline and has an **open** button in its corner for the same viewer —
+a click on the video itself is play/pause, so it can't double as the
+"open large" gesture. Both land in the same FileView window an agent's
+link to the file would open.
+
 **Endpoint paths differ by provider.** The default `/images` is
 OpenRouter's; OpenAI direct wants `/images/generations`. Set
 `endpoint:` per model when it differs, and `capabilitiesEndpoint: null`
