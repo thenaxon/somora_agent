@@ -696,6 +696,8 @@ export const openAiCompatibleEngine: AgentEngine = {
     // monotonically — matches how claude-cli's SDK presents
     // tool-using turns to us (one final assistant_message at the end).
     let cumulative = '';
+    // Reasoning text across rounds of this turn — see roundThinking.
+    let turnThinking = '';
     /** Rounds whose request was sent — the reactive context retry is only
      *  safe before anything happened (round 1, nothing emitted). */
     let roundsStarted = 0;
@@ -857,6 +859,11 @@ export const openAiCompatibleEngine: AgentEngine = {
         // (SGLang/vLLM builds vary) — then the 🧠 counter is estimated
         // from the streamed text at 4 chars/token and flagged as such.
         let roundReasoningChars = 0;
+        // Reasoning TEXT of this round (reasoning_content / reasoning
+        // deltas). Streamed as cumulative thinking_delta (turn-wide),
+        // folded into turnThinking at round end, emitted once as
+        // thinking_message before the final assistant_message.
+        let roundThinking = '';
         const roundToolCalls = new Map<number, StreamingToolCall>();
         let finishReason: string | null = null;
 
@@ -921,7 +928,16 @@ export const openAiCompatibleEngine: AgentEngine = {
                 : typeof r?.reasoning === 'string'
                   ? r.reasoning
                   : '';
-            if (rtext) roundReasoningChars += rtext.length;
+            if (rtext) {
+              roundReasoningChars += rtext.length;
+              roundThinking += rtext;
+              yield {
+                kind: 'thinking_delta',
+                ts: ts(),
+                engine: ENGINE,
+                text: turnThinking ? `${turnThinking}\n\n${roundThinking}` : roundThinking,
+              };
+            }
           }
           if (delta?.content && typeof delta.content === 'string') {
             roundContent += delta.content;
@@ -1025,6 +1041,10 @@ export const openAiCompatibleEngine: AgentEngine = {
         // there's previous content AND new content).
         if (roundContent) {
           cumulative = cumulative ? `${cumulative}\n\n${roundContent}` : roundContent;
+        }
+        if (roundThinking) {
+          turnThinking = turnThinking ? `${turnThinking}\n\n${roundThinking}` : roundThinking;
+          roundThinking = '';
         }
 
         // Also catch silent abort-close: if the stream ended without a
@@ -1405,6 +1425,10 @@ export const openAiCompatibleEngine: AgentEngine = {
       }
 
       if (cumulative) {
+        if (turnThinking) {
+          yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: turnThinking };
+          turnThinking = '';
+        }
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: cumulative };
       } else if (round >= maxRounds) {
         // Loop ended at the cap and the force-summary path didn't
@@ -1414,6 +1438,10 @@ export const openAiCompatibleEngine: AgentEngine = {
           `[somora] Sub-agent reached the agent-loop cap of ${maxRounds} tool-call rounds ` +
           'and produced no final message. Increase agentLoop.maxRounds in config.yaml or ' +
           'pass agentLoop.maxRounds in spawn_subagent input if more rounds are needed.';
+        if (turnThinking) {
+          yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: turnThinking };
+          turnThinking = '';
+        }
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: cumulative };
       }
 

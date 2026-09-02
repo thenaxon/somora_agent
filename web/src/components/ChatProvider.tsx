@@ -519,6 +519,63 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       });
 
+      // Model reasoning for the in-flight turn. Same cumulative-text
+      // convention and the same bubble as `chat`: the FIRST thinking
+      // delta usually arrives before the first chat delta, so it is
+      // what creates the turn's assistant bubble (empty text, thinking
+      // block on top) — positioned before any still-pending user
+      // bubble exactly like the first chat delta would be. Later chat
+      // deltas find the id in streamingIdRef and fill the text in
+      // place, and their `{ ...existing, text }` spread keeps the
+      // thinking field. Ref bookkeeping stays OUTSIDE the updater for
+      // the StrictMode reason documented on the chat handler.
+      es.addEventListener('thinking', (ev) => {
+        bump();
+        const d = parse<{ state: 'delta' | 'final'; text: string; truncated?: boolean }>(
+          ev as MessageEvent,
+        );
+        if (!d || typeof d.text !== 'string') return;
+        const thinking =
+          d.state === 'final'
+            ? { text: d.text, streaming: false, ...(d.truncated ? { truncated: true } : {}) }
+            : { text: d.text, streaming: true };
+        let trackedId = streamingIdRef.current.get(key);
+        const isFirst = !trackedId;
+        if (!trackedId) {
+          trackedId = newId('msg');
+          streamingIdRef.current.set(key, trackedId);
+        }
+        const id = trackedId;
+        setMessages((prev) => {
+          const list = prev[key] ?? [];
+          const idx = list.findIndex((m) => m.id === id);
+          if (idx < 0) {
+            const turnId = currentTurnIdRef.current.get(key);
+            const newBubble: ChatMessage = {
+              id,
+              role: 'assistant',
+              ts: Date.now(),
+              text: '',
+              streaming: true,
+              thinking,
+              ...(turnId ? { turnId } : {}),
+            };
+            const insertIdx = isFirst
+              ? list.findIndex((m) => m.role === 'user' && m.pending)
+              : -1;
+            if (insertIdx < 0) return { ...prev, [key]: [...list, newBubble] };
+            const next = list.slice();
+            next.splice(insertIdx, 0, newBubble);
+            return { ...prev, [key]: next };
+          }
+          const existing = list[idx];
+          if (!existing || existing.role !== 'assistant') return prev;
+          const next = list.slice();
+          next[idx] = { ...existing, thinking };
+          return { ...prev, [key]: next };
+        });
+      });
+
       es.addEventListener('model_fallback', (ev) => {
         bump();
         const d = parse<ModelFallback>(ev as MessageEvent);
@@ -568,9 +625,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             if (!list) return prev;
             let changed = false;
             const next = list.map((m) => {
-              if (m.role === 'assistant' && m.streaming) {
+              if (m.role === 'assistant' && (m.streaming || m.thinking?.streaming)) {
                 changed = true;
-                return { ...m, streaming: false };
+                // An aborted turn may never send the thinking final —
+                // stop the block's pulse together with the cursor.
+                return {
+                  ...m,
+                  streaming: false,
+                  ...(m.thinking?.streaming ? { thinking: { ...m.thinking, streaming: false } } : {}),
+                };
               }
               return m;
             });

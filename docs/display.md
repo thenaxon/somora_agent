@@ -18,6 +18,7 @@ tui:
     tools: false            # full input/output payloads expanded
     memory: false           # full memory inject text expanded
     system: false           # /verbose system on flag at boot
+    thinking: false         # model thinking text above each reply
 ```
 
 The TUI fetches these from the server at startup (`GET /tui-config`)
@@ -54,6 +55,7 @@ internals" bucket as tool calls, hence the shared toggle. See
 /verbose memory on|off      — full memory inject text below each [memory · …] line
 /verbose system on          — print the agent's persona system prompt as a one-shot block
 /verbose system off         — clear the system flag (no effect on previously printed blocks)
+/verbose thinking on|off    — show the model's thinking text above each reply
 ```
 
 Verbose data is always on the wire — server pre-formats and includes it
@@ -63,6 +65,7 @@ in every relevant SSE event:
 |----------|-------------------------|------------------------------------------|
 | `tool`   | `tool`, `summary`       | `details` (pretty-printed JSON payload)  |
 | `memory` | `count`, `topScore`, `refs` | `fullText` (the inject block as it landed in the model's context) |
+| `thinking` | `text` (cumulative), `truncated` | the whole event — nothing renders unless `/verbose thinking on` |
 | —        | —                       | `/verbose system on` fetches `GET /agents/:agent/system-prompt` once and prints it |
 
 This means toggling `/verbose tools on` is instant for the next tool
@@ -89,10 +92,19 @@ A natural alternative is "client requests verbose payloads". We chose
 shown at all, there's no place to attach the verbose details. Same for
 tools. Treat `/show` as the master switch, `/verbose` as the zoom level.
 
-## What's not covered yet
+## `/verbose thinking` — the model's reasoning text
 
-**Thinking-block content** is not part of `/verbose tools` or any other
-existing topic. Surfacing the model's reasoning text inline (collapsible,
-dimmed) would land as `/verbose thinking on` once the engine adapters
-emit thinking deltas as a separate SSE event (see `docs/thinking.md` for
-the deferred work).
+Off by default. When on, the model's thinking content lands in the
+scrollback as a gray, indented `🧠 thinking` block directly above the
+reply it produced (`(truncated)` is appended to the label when the
+server cut the text at its cap). While the model is still thinking and
+no reply text has arrived yet, the last six lines of the thinking text
+show live where the reply will appear; the first reply token replaces
+them. A finalized block renders at most 40 lines and ends with
+`… (+N lines)` for the rest, so a long reasoning dump cannot flood the
+terminal. Switching to a session replays stored thinking rows only
+when the toggle is on at that moment. The block only appears for
+engines and models that surface thinking at all — see
+[thinking.md](thinking.md) for the engine matrix. The `🧠 thinking…`
+header badge and the reasoning token counter work regardless of this
+toggle.

@@ -1021,7 +1021,21 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           ev.text = sanitized.text;
         }
       }
-      if (ev.kind !== 'assistant_delta') {
+      // Thinking content: one server-side gate for SSE + JSONL (three
+      // gates rule — clients need no switch of their own), and a cap on
+      // what is persisted. Deltas are never persisted, like assistant
+      // deltas.
+      if (ev.kind === 'thinking_delta' || ev.kind === 'thinking_message') {
+        if (!deps.config.thinkingContent.capture) continue;
+        if (ev.kind === 'thinking_message') {
+          const cap = deps.config.thinkingContent.maxChars;
+          if (ev.text.length > cap) {
+            ev.text = ev.text.slice(0, cap).trimEnd() + '…';
+            ev.truncated = true;
+          }
+        }
+      }
+      if (ev.kind !== 'assistant_delta' && ev.kind !== 'thinking_delta') {
         await appendEvent(agent, session, ev);
       }
       if (ev.kind === 'turn_start' && typeof ev.turnId === 'string') {

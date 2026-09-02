@@ -31,7 +31,7 @@ import {
   Undo2,
   User,
 } from 'lucide-react';
-import type { AssistantMedia, AttachmentDisplay, ChatMessage } from '../types/chat';
+import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
 import { EngineMetaBlock } from './EngineMetaBlock';
@@ -218,10 +218,11 @@ export const MessageItem = memo(function MessageItem({
             />
           )}
           <div className="chat-msg-bubble agent-bubble" style={{ position: 'relative' }}>
+            {msg.thinking && <ThinkingBlock thinking={msg.thinking} hasText={!!msg.text} />}
             {msg.text ? (
               <AssistantMarkdown content={msg.text} />
             ) : (
-              <span style={{ color: 'var(--text-3)' }}>…</span>
+              !msg.thinking?.streaming && <span style={{ color: 'var(--text-3)' }}>…</span>
             )}
             {msg.streaming && (
               <span
@@ -258,6 +259,68 @@ export const MessageItem = memo(function MessageItem({
     </div>
   );
 });
+
+// Collapsible reasoning block at the top of an assistant bubble.
+//
+// Three states:
+//   streaming, no reply text yet — open by default, shows the LAST
+//     few lines of the thinking text (tail slice, clamped box, newest
+//     at the bottom) so the user sees the model working;
+//   streaming, reply text arrived — collapsed by default, header
+//     keeps pulsing until the thinking final lands;
+//   final — collapsed by default; expanded view is the full text in a
+//     scrollable box.
+// A manual toggle wins for the life of the row: `userOpen` starts as
+// null ("no opinion") and is never reset by prop updates.
+//
+// The text is rendered as plain text on purpose — half-formed markdown
+// mid-stream would render badly, and routing it through the markdown
+// component tree is a remount hazard. `white-space: pre-wrap` keeps
+// the model's own line breaks.
+const THINKING_TAIL_LINES = 6;
+
+function ThinkingBlock({ thinking, hasText }: { thinking: ThinkingContent; hasText: boolean }) {
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const streaming = thinking.streaming === true;
+  const defaultOpen = streaming && !hasText;
+  const open = userOpen ?? defaultOpen;
+  let body: string = thinking.text;
+  if (streaming) {
+    const lines = thinking.text.split('\n');
+    body = lines.slice(-THINKING_TAIL_LINES).join('\n');
+  }
+  return (
+    <div className={`thinking-block ${open ? 'open' : ''} ${streaming ? 'streaming' : ''}`}>
+      <button
+        type="button"
+        className="thinking-head"
+        onClick={() => setUserOpen(!open)}
+        title={open ? 'Hide thinking' : 'Show thinking'}
+        aria-expanded={open}
+      >
+        <span className="thinking-label">🧠 thinking</span>
+        {streaming && (
+          <span className="thinking-pulse" aria-label="thinking in progress">
+            …
+          </span>
+        )}
+        <span className="thinking-chevron">
+          {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </span>
+      </button>
+      {open && (
+        <div className={`thinking-body ${streaming ? 'tail' : 'full'}`}>
+          <div className="thinking-text">
+            {body}
+            {!streaming && thinking.truncated && (
+              <span className="thinking-truncated"> (truncated by the server)</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Centered system-divider for sentinel-trigger inbounds. The
 // `text` is the synthesized trigger prompt (`[Sentinel trigger

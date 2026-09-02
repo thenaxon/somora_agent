@@ -41,6 +41,7 @@ let initialShowTools = true;
 let initialVerboseTools = false;
 let initialVerboseMemory = false;
 let initialVerboseSystem = false;
+let initialVerboseThinking = false;
 try {
   const tuiConfig = await new Api(base).fetchTuiConfig();
   initialShowMemory = tuiConfig.show.memory;
@@ -48,6 +49,8 @@ try {
   initialVerboseTools = tuiConfig.verbose.tools;
   initialVerboseMemory = tuiConfig.verbose.memory;
   initialVerboseSystem = tuiConfig.verbose.system;
+  // Older servers don't know the key yet — default off.
+  initialVerboseThinking = tuiConfig.verbose.thinking === true;
 } catch {
   // server not up yet — defaults stand
 }
@@ -109,6 +112,7 @@ render(
     initialVerboseTools={initialVerboseTools}
     initialVerboseMemory={initialVerboseMemory}
     initialVerboseSystem={initialVerboseSystem}
+    initialVerboseThinking={initialVerboseThinking}
   />,
   {
     exitOnCtrlC: false,

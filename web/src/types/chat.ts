@@ -61,6 +61,18 @@ export interface AssistantMedia {
   durationSec?: number;
 }
 
+/** The model's reasoning text for one assistant turn. Arrives via the
+ *  `thinking` SSE event (cumulative deltas, then a final) and, on
+ *  history load, from the `thinking_message` JSONL row that precedes
+ *  the turn's assistant_message. Plain text — never markdown-rendered. */
+export interface ThinkingContent {
+  text: string;
+  /** The server cut the text at its configured cap (ends with `…`). */
+  truncated?: boolean;
+  /** True while thinking deltas are still arriving for this turn. */
+  streaming?: boolean;
+}
+
 export interface AssistantAudio {
   /** Path served by GET /tts/cache/:hash.:ext on the somora server. */
   url: string;
@@ -123,6 +135,10 @@ export type ChatMessage =
       /** The engine-emitted turnId for this message. Used to pair
        *  late-arriving assistant_audio events to the right bubble. */
       turnId?: string;
+      /** Reasoning the model produced before/while writing this reply.
+       *  Rendered as a collapsible block above the text. Absent when
+       *  the engine does not surface thinking or capture is off. */
+      thinking?: ThinkingContent;
     }
   | {
       /** The turn ended with an error (engine 5xx, abort, watchdog)
@@ -186,6 +202,12 @@ export type StreamEvent =
   | {
       event: 'chat';
       data: { state: 'delta' | 'final'; text: string };
+    }
+  | {
+      /** Model reasoning for the in-flight turn. `text` is cumulative
+       *  like `chat`; `final` arrives before the `chat` final. */
+      event: 'thinking';
+      data: { state: 'delta' | 'final'; text: string; truncated?: true };
     }
   | {
       event: 'agent';

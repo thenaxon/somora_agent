@@ -120,6 +120,22 @@ export type NormalizedEvent =
     }
   | { kind: 'assistant_delta'; ts: number; engine: string; text: string }
   | { kind: 'assistant_message'; ts: number; engine: string; text: string }
+  /**
+   * The model's reasoning text, separate from the reply. `thinking_delta`
+   * is CUMULATIVE for the turn (like assistant_delta) and never persisted;
+   * `thinking_message` is the final text, persisted to JSONL before the
+   * turn's assistant_message. Engines that surface no thinking emit
+   * neither. Never replayed to a model and never fed to REM.
+   */
+  | { kind: 'thinking_delta'; ts: number; engine: string; text: string }
+  | {
+      kind: 'thinking_message';
+      ts: number;
+      engine: string;
+      text: string;
+      /** Set by the server when the text was cut at thinkingContent.maxChars. */
+      truncated?: true;
+    }
   | {
       /**
        * Audio artifact attached to an assistant_message. Emitted by
@@ -283,6 +299,8 @@ export interface ModelFallbackInfo {
 // Wire format over SSE — orbit-compatible. Deltas are cumulative.
 export type SseEvent =
   | { event: 'chat'; data: { state: 'delta' | 'final'; text: string } }
+  /** Reasoning text; deltas cumulative like `chat`. `final` precedes the chat final of the same turn. */
+  | { event: 'thinking'; data: { state: 'delta' | 'final'; text: string; truncated?: true } }
   | {
       event: 'agent';
       data: {

@@ -13,7 +13,7 @@
 // walk also dropped entirely (2026-08-28 report).
 
 import type { HistoryEvent } from './api';
-import type { AssistantMedia, ChatMessage, ModelFallback } from '../types/chat';
+import type { AssistantMedia, ChatMessage, ModelFallback, ThinkingContent } from '../types/chat';
 import { extractTodoListItems, resolveEngineMetaLabel, summariseTodoList } from './engine-meta-labels';
 
 let historyIdSeq = 0;
@@ -78,15 +78,27 @@ export function historyEventsToMessages(events: HistoryEvent[]): ChatMessage[] {
   let pendingFallback: ModelFallback | null = null;
   // The turn we are currently inside of (turn_start … turn_end).
   let currentTurnId: string | undefined;
+  // thinking_message precedes its turn's assistant_message (after the
+  // tool rows): fold it onto the NEXT assistant row. A turn that ends
+  // without an assistant row (error, abort) drops it.
+  let pendingThinking: ThinkingContent | null = null;
   for (const e of events) {
     if (e.kind === 'turn_start') {
       currentTurnId = typeof e.turnId === 'string' ? e.turnId : undefined;
+      pendingThinking = null;
       continue;
     }
     if (e.kind === 'turn_end') {
       // Keep the id: media/audio for this turn are appended AFTER
       // turn_end and still name it. The next turn_start replaces it.
       if (typeof e.turnId === 'string') currentTurnId = e.turnId;
+      pendingThinking = null;
+      continue;
+    }
+    if (e.kind === 'thinking_message') {
+      if (typeof e.text === 'string' && e.text.length > 0) {
+        pendingThinking = { text: e.text, ...(e.truncated ? { truncated: true } : {}) };
+      }
       continue;
     }
     if (e.kind === 'model_fallback') {
@@ -113,8 +125,10 @@ export function historyEventsToMessages(events: HistoryEvent[]): ChatMessage[] {
         text: e.text,
         ...(currentTurnId ? { turnId: currentTurnId } : {}),
         ...(pendingFallback ? { fallback: pendingFallback } : {}),
+        ...(pendingThinking ? { thinking: pendingThinking } : {}),
       });
       pendingFallback = null;
+      pendingThinking = null;
       continue;
     }
     if (e.kind === 'assistant_media' && Array.isArray(e.media) && e.media.length > 0) {

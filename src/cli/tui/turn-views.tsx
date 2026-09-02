@@ -9,6 +9,7 @@
 //                     near-invisible on dark backgrounds)
 //   tool error:       red bold
 //   memory ◇:         magenta bold (no dim)
+//   thinking 🧠:      gray, indented (same tone as tool results)
 //   system info:      gray
 //   system warn:      yellow
 //   system error:     red bold
@@ -16,6 +17,7 @@
 import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
 import { renderInline } from './markdown.tsx';
+import { THINKING_MAX_LINES, capLines, hiddenLinesMarker } from './thinking-text.ts';
 
 export interface VerboseFlags {
   tools: boolean;
@@ -44,6 +46,8 @@ export function TurnView({
       );
     case 'agent':
       return <AgentTurn text={turn.text} agentName={agentName} agentIcon={agentIcon} />;
+    case 'thinking':
+      return <ThinkingTurn text={turn.text} truncated={turn.truncated === true} />;
     case 'tool':
       return <ToolEvent {...turn} verbose={verbose.tools} />;
     case 'engine_meta':
@@ -183,6 +187,31 @@ export function AgentBody({ text }: { text: string }) {
       {lines.map((line, i) => (
         <Text key={i}>{line.length > 0 ? renderInline(line) : ' '}</Text>
       ))}
+    </Box>
+  );
+}
+
+// The model's thinking content for the turn that follows (only
+// appended when /verbose thinking is on). Gray + indented like a tool
+// result so it reads as "internals", not as the reply. Capped at
+// THINKING_MAX_LINES with a `… (+N lines)` marker so a multi-thousand-
+// line reasoning dump cannot flood the scrollback. Ink wraps each
+// line to the terminal width; no horizontal overflow.
+export function ThinkingTurn({ text, truncated }: { text: string; truncated: boolean }) {
+  const { lines, hidden } = capLines(text, THINKING_MAX_LINES);
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <Text color="gray" bold>
+        🧠 thinking{truncated ? ' (truncated)' : ''}
+      </Text>
+      <Box paddingLeft={2} flexDirection="column">
+        {lines.map((line, i) => (
+          <Text key={i} color="gray">
+            {line.length > 0 ? line : ' '}
+          </Text>
+        ))}
+        {hidden > 0 ? <Text color="gray">{hiddenLinesMarker(hidden)}</Text> : null}
+      </Box>
     </Box>
   );
 }

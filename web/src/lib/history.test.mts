@@ -118,5 +118,65 @@ const ev = (e: Partial<HistoryEvent> & { kind: string }): HistoryEvent => ({ ts:
   check('fallback chip preserved', rows[0]?.role === 'assistant' && rows[0].fallback?.actual === 'b/y');
 }
 
+// ── thinking_message folds onto the NEXT assistant row of its turn ─
+{
+  const events: HistoryEvent[] = [
+    ev({ kind: 'user_message', ts: 1, text: 'q' }),
+    ev({ kind: 'turn_start', ts: 2, turnId: 't-1' }),
+    ev({ kind: 'tool_call', ts: 3, tool: 'x', callId: 'c1', input: {} }),
+    ev({ kind: 'tool_result', ts: 4, callId: 'c1', output: 1 }),
+    ev({ kind: 'thinking_message', ts: 5, text: 'let me think', truncated: true }),
+    ev({ kind: 'assistant_message', ts: 6, text: 'answer' }),
+    ev({ kind: 'turn_end', ts: 7, turnId: 't-1' }),
+  ];
+  const rows = historyEventsToMessages(events);
+  const roles = rows.map((r) => r.role).join(',');
+  check('thinking: no extra row', roles === 'user,tool_call,tool_result,assistant', roles);
+  const a = rows[3];
+  check(
+    'thinking: attached to the answer with truncated flag',
+    a?.role === 'assistant' && a.thinking?.text === 'let me think' && a.thinking.truncated === true && !a.thinking.streaming,
+    JSON.stringify(a),
+  );
+}
+
+// ── thinking without a following assistant row is dropped ──────────
+{
+  const events: HistoryEvent[] = [
+    ev({ kind: 'turn_start', ts: 1, turnId: 't-1' }),
+    ev({ kind: 'thinking_message', ts: 2, text: 'hmm' }),
+    ev({ kind: 'error', ts: 3, message: 'boom' }),
+    ev({ kind: 'turn_end', ts: 4, turnId: 't-1' }),
+    ev({ kind: 'turn_start', ts: 5, turnId: 't-2' }),
+    ev({ kind: 'assistant_message', ts: 6, text: 'next turn' }),
+    ev({ kind: 'turn_end', ts: 7, turnId: 't-2' }),
+  ];
+  const rows = historyEventsToMessages(events);
+  check('dropped: error row kept', rows[0]?.role === 'error');
+  const a = rows[1];
+  check('dropped: next turn answer carries NO thinking', a?.role === 'assistant' && a.thinking === undefined, JSON.stringify(a));
+}
+
+// ── two turns, each with its own thinking ──────────────────────────
+{
+  const events: HistoryEvent[] = [
+    ev({ kind: 'turn_start', ts: 1, turnId: 't-1' }),
+    ev({ kind: 'thinking_message', ts: 2, text: 'one' }),
+    ev({ kind: 'assistant_message', ts: 3, text: 'A' }),
+    ev({ kind: 'turn_end', ts: 4, turnId: 't-1' }),
+    ev({ kind: 'user_message', ts: 5, text: 'again' }),
+    ev({ kind: 'turn_start', ts: 6, turnId: 't-2' }),
+    ev({ kind: 'thinking_message', ts: 7, text: 'two' }),
+    ev({ kind: 'assistant_message', ts: 8, text: 'B' }),
+    ev({ kind: 'turn_end', ts: 9, turnId: 't-2' }),
+  ];
+  const rows = historyEventsToMessages(events);
+  const a = rows[0];
+  const b = rows[2];
+  check('two turns: first answer has "one"', a?.role === 'assistant' && a.thinking?.text === 'one' && a.turnId === 't-1');
+  check('two turns: second answer has "two"', b?.role === 'assistant' && b.thinking?.text === 'two' && b.turnId === 't-2');
+  check('two turns: no truncated flag when absent', a?.role === 'assistant' && a.thinking?.truncated === undefined);
+}
+
 console.log(`history: ${pass} passed, ${fail} failed`);
 assert.equal(fail, 0);

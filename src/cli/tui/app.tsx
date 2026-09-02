@@ -11,6 +11,7 @@ import { Footer } from './footer.tsx';
 import { Separator } from './separator.tsx';
 import { SlashAutocomplete } from './autocomplete.tsx';
 import { AgentBody, TurnView } from './turn-views.tsx';
+import { THINKING_TAIL_LINES, tailLines } from './thinking-text.ts';
 import { nextId, summarize } from './format.ts';
 import { rememberAgent } from './state.ts';
 import type {
@@ -31,6 +32,7 @@ interface Props {
   initialVerboseTools: boolean;
   initialVerboseMemory: boolean;
   initialVerboseSystem: boolean;
+  initialVerboseThinking: boolean;
 }
 
 const HISTORY_MAX = 100;
@@ -44,6 +46,7 @@ export function App({
   initialVerboseTools,
   initialVerboseMemory,
   initialVerboseSystem,
+  initialVerboseThinking,
 }: Props) {
   const { exit } = useApp();
   const apiRef = useRef(new Api(base));
@@ -52,6 +55,17 @@ export function App({
   const [session, setSession] = useState(initialSession);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [streamingText, setStreamingText] = useState<string>('');
+  // Cumulative thinking text of the in-flight turn (SSE `thinking`
+  // deltas). Rendered as a gray tail while the reply text is still
+  // empty; folded into a `thinking` Turn at agent-end when /verbose
+  // thinking is on, discarded otherwise. The ref is the source of
+  // truth for agent-end (reads synchronously, no updater ordering
+  // games); the state only drives the streaming view.
+  const [streamingThinking, setStreamingThinking] = useState<string>('');
+  const streamingThinkingRef = useRef<{ text: string; truncated: boolean }>({
+    text: '',
+    truncated: false,
+  });
   const [streaming, setStreaming] = useState(false);
   const [connected, setConnected] = useState(false);
   const [stats, setStats] = useState<TurnStats | null>(null);
@@ -63,10 +77,12 @@ export function App({
   const [verboseTools, setVerboseTools] = useState(initialVerboseTools);
   const [verboseMemory, setVerboseMemory] = useState(initialVerboseMemory);
   const [verboseSystem, setVerboseSystem] = useState(initialVerboseSystem);
+  const [verboseThinking, setVerboseThinking] = useState(initialVerboseThinking);
   // Refs so the SSE handler always sees the current toggle without
   // re-subscribing the stream on every flip.
   const showMemoryRef = useRef(showMemory);
   const showToolsRef = useRef(showTools);
+  const verboseThinkingRef = useRef(verboseThinking);
   // Pending self-sent texts. Server now echoes user_message events
   // for every /chat/send so other clients (a web tab on the same
   // session) see them live. The TUI's own optimistic local-user
@@ -91,6 +107,9 @@ export function App({
   useEffect(() => {
     showToolsRef.current = showTools;
   }, [showTools]);
+  useEffect(() => {
+    verboseThinkingRef.current = verboseThinking;
+  }, [verboseThinking]);
 
   // Submit-history (newest at the end). Up/Down step through it.
   const [history, setHistory] = useState<string[]>([]);
@@ -391,6 +410,19 @@ export function App({
         });
       } else if (ev.kind === 'assistant_message' && typeof ev.text === 'string') {
         out.push({ kind: 'agent', id: nid(), text: ev.text });
+      } else if (ev.kind === 'thinking_message' && typeof ev.text === 'string') {
+        // JSONL places the row before the turn's assistant_message, so
+        // pushing in sequence keeps it above the reply. Only hydrated
+        // when /verbose thinking is on at load time — off means the
+        // user never asked to see reasoning, so don't backfill it.
+        if (verboseThinkingRef.current && ev.text.length > 0) {
+          out.push({
+            kind: 'thinking',
+            id: nid(),
+            text: ev.text,
+            ...(ev.truncated === true ? { truncated: true } : {}),
+          });
+        }
       } else if (ev.kind === 'tool_call' && typeof ev.tool === 'string') {
         out.push({
           kind: 'tool',
@@ -471,6 +503,8 @@ export function App({
       case 'agent-start':
         setStreaming(true);
         setStreamingText('');
+        setStreamingThinking('');
+        streamingThinkingRef.current = { text: '', truncated: false };
         // If the server tells us the upcoming turn has a thinking level,
         // pre-set it on stats so the header can show the "🧠 thinking…"
         // pre-content badge before any tokens arrive.
@@ -494,8 +528,34 @@ export function App({
       case 'chat-final':
         setStreamingText(ev.text);
         return;
+      case 'thinking-delta':
+        // Cumulative text, same convention as chat-delta.
+        streamingThinkingRef.current = { text: ev.text, truncated: false };
+        setStreamingThinking(ev.text);
+        return;
+      case 'thinking-final':
+        streamingThinkingRef.current = { text: ev.text, truncated: ev.truncated === true };
+        setStreamingThinking(ev.text);
+        return;
       case 'agent-end': {
+        // Snapshot + clear the thinking buffer synchronously so the
+        // updater below (which runs later, during render) sees the
+        // turn's value, not the next turn's.
+        const thinking = streamingThinkingRef.current;
+        streamingThinkingRef.current = { text: '', truncated: false };
+        setStreamingThinking('');
+        const showThinking = verboseThinkingRef.current && thinking.text.trim().length > 0;
         setStreamingText((current) => {
+          // Thinking turn goes BEFORE the reply it produced — mirrors
+          // the JSONL order (thinking_message, then assistant_message).
+          if (showThinking) {
+            appendTurn({
+              kind: 'thinking',
+              id: nextId(),
+              text: thinking.text,
+              ...(thinking.truncated ? { truncated: true } : {}),
+            });
+          }
           if (current.length > 0) {
             appendTurn({ kind: 'agent', id: nextId(), text: current });
           }
@@ -799,6 +859,7 @@ export function App({
           verboseTools,
           verboseMemory,
           verboseSystem,
+          verboseThinking,
           featureFlags: { projects: projectsEnabled },
         });
         for (const a of actions) {
@@ -809,6 +870,8 @@ export function App({
           } else if (a.kind === 'switchTo') {
             setStats(null);
             setStreamingText('');
+            setStreamingThinking('');
+            streamingThinkingRef.current = { text: '', truncated: false };
             setStreaming(false);
             setAgent(a.agent);
             setSession(a.session);
@@ -821,6 +884,7 @@ export function App({
           } else if (a.kind === 'setVerbose') {
             if (a.target === 'tools') setVerboseTools(a.value);
             else if (a.target === 'memory') setVerboseMemory(a.value);
+            else if (a.target === 'thinking') setVerboseThinking(a.value);
             else setVerboseSystem(a.value);
           } else if (a.kind === 'projectFocusRefresh') {
             // Refetch project after a successful /projekt pin/unlink so
@@ -937,6 +1001,23 @@ export function App({
             {agentTag}
           </Text>
           <AgentBody text={streamingText} />
+        </Box>
+      ) : verboseThinking && streaming && streamingThinking.trim().length > 0 ? (
+        // Model is still thinking, no reply text yet: show the tail of
+        // the thinking text where the reply will appear. Replaced by
+        // the reply as soon as the first chat delta lands; the full
+        // (capped) text lands in the scrollback at agent-end.
+        <Box marginTop={1} flexDirection="column">
+          <Text color="gray" bold>
+            🧠 thinking
+          </Text>
+          <Box paddingLeft={2} flexDirection="column">
+            {tailLines(streamingThinking, THINKING_TAIL_LINES).map((line, i) => (
+              <Text key={i} color="gray">
+                {line.length > 0 ? line : ' '}
+              </Text>
+            ))}
+          </Box>
         </Box>
       ) : null}
 

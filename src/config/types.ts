@@ -1676,7 +1676,22 @@ export const McpConfigSchema = z
   .default({ servers: {} });
 export type McpConfig = z.infer<typeof McpConfigSchema>;
 
+/**
+ * Thinking content — the model's reasoning text shown in the clients
+ * (web bubble block, TUI `/verbose thinking`). `capture: false` drops
+ * it at the server: no SSE event, no JSONL row, nothing for any client
+ * to show. `maxChars` caps what is persisted per turn (a Qwen turn at
+ * xhigh can think for tens of thousands of tokens). See docs/thinking.md.
+ */
+export const ThinkingContentSchema = z
+  .object({
+    capture: z.boolean().default(true),
+    maxChars: z.number().int().positive().default(65_536),
+  })
+  .default({ capture: true, maxChars: 65_536 });
+
 export const ConfigSchema = z.object({
+  thinkingContent: ThinkingContentSchema,
   server: z
     .object({
       // Bind address. Default loopback (private, anti-footgun). Set

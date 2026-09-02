@@ -35,6 +35,86 @@ body {
   51%, 100% { opacity: 0; }
 }
 
+/* Collapsible model-reasoning block at the top of an assistant bubble
+ * (MessageItem → ThinkingBlock). Muted on purpose: it is context, not
+ * the answer. Tokens only, so any theme override carries through. */
+.thinking-block {
+  margin: -2px 0 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.thinking-head {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 18px;
+  user-select: none;
+  -webkit-user-select: none;
+  border-radius: 4px;
+  padding: 0 4px 0 2px;
+  margin-left: -2px;
+}
+.thinking-head:hover {
+  color: var(--text-1);
+  background: rgba(127, 127, 127, 0.1);
+}
+.thinking-head:focus-visible {
+  outline: 1px solid var(--accent);
+}
+.thinking-chevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-3);
+}
+.thinking-pulse {
+  color: var(--text-3);
+  letter-spacing: 1px;
+  animation: somora-thinking-pulse 1.4s ease-in-out infinite;
+}
+@keyframes somora-thinking-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+.thinking-body {
+  margin: 2px 0 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--line-2);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.thinking-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+/* Streaming tail: the LAST few lines, clamped. The flex-end trick
+ * makes overflow spill out the TOP of the clipped box, so the newest
+ * line is always the visible bottom one — no scroll container and no
+ * scrollIntoView (see the window-geometry note on overflow: clip). */
+.thinking-body.tail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: calc(1.45em * 9);
+  overflow: clip;
+  mask-image: linear-gradient(to bottom, transparent 0, #000 1.6em);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.6em);
+}
+/* Final view: full text, scrolls inside itself past ~40vh. */
+.thinking-body.full {
+  max-height: 40vh;
+  overflow: auto;
+}
+.thinking-truncated {
+  color: var(--text-3);
+  font-style: italic;
+}
+
 /* Hide the textarea scrollbar entirely — we auto-grow the height
  * to match content (up to 120 px). The browser's default still
  * shows a faint mini-scrollbar even when the content fits, which

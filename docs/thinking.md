@@ -333,31 +333,64 @@ GET response example:
 `wire` is the word the engine sends for `effective` when it differs
 (`null` otherwise; `"off"` = parameter omitted).
 
-## What's not built (and why)
+## Thinking content — seeing what the model thought
 
-**Thinking-block content is not surfaced live.** claude-agent-sdk emits
-thinking blocks as separate `thinking_delta` content blocks during the
-stream — somora currently flattens everything to plain text. Showing
-the *contents* of the model's reasoning (collapsible, dimmed)
-would require:
+Since v2026.09.03.01 the reasoning text itself is available, not only
+the badge and the token count. It travels as its own event, separate
+from the reply, and is never sent back to a model or into memory.
 
-- claude-cli adapter: split thinking blocks from text blocks
-- New `NormalizedEvent` kind: `thinking_delta` / `thinking_message`
-- New SSE event: `kind: 'thinking'`
-- TUI rendering: collapsed-by-default block, expand on hotkey
-- openai-compatible: detect inline `<think>...</think>` for DeepSeek-R1
-  / QwQ-style models OR consume the `reasoning_content` delta field
-  some endpoints emit
+**Web:** every assistant bubble that carries thinking gets a collapsed
+`🧠 thinking` block above the reply text. While the model is still
+thinking and has not written a word yet, the block is open and shows
+the tail of the reasoning live; the moment the reply starts it folds
+away, and a click opens it again. **TUI:** off by default — `/verbose
+thinking on` shows the text dimmed and indented above the reply,
+capped at 40 lines (`… (+N lines)`), and the live tail while the model
+thinks. See [display.md](display.md).
 
-This is real adapter work, not a switch — a separate phase. Until then,
-the user sees that the model is thinking (badge + token count) but not
-*what* it's thinking.
+### Engine matrix
 
-**Local inline-reasoning models (DeepSeek-R1, QwQ).** These models
-emit `<think>...</think>` blocks in the regular content stream and
-ignore any `reasoning_effort` API parameter — they always reason at
-their own internal depth. Marking such a model with `reasoning` in
-config would be slightly misleading: the badge would show "active" but
-the depth knob doesn't actually move anything (the model decides). A
-distinct `reasoning-inline` capability would be the honest way to
-support these — out of scope until you actually run one.
+| Engine | Thinking content | What you get | Status |
+|---|---|---|---|
+| `openai-compatible` | yes, when the backend streams `reasoning_content` (or `reasoning`) deltas | the full reasoning text as the model wrote it | verified on DeepSeek V4 (SGLang) and Qwen 3.x (vLLM) through a LiteLLM router, 2026-09-03 |
+| `openai-compatible`, inline `<think>` models (DeepSeek-R1, QwQ) | no | the reasoning stays inside the reply text as the model emits it | not supported — needs tag detection and its own capability, see below |
+| `claude-cli` | yes | Anthropic's thinking blocks; on adaptive-thinking models (Opus 4.6+, Sonnet 4.6+, Fable) the provider may return a **summary** instead of the raw trace, and some blocks arrive **redacted** — shown as one placeholder line | verified on the Claude models in this setup, 2026-09-03 |
+| `codex-cli` | yes, summaries | codex never streams the raw chain of thought; it emits one `reasoning` item per reasoning phase carrying the provider's summary | verified on gpt-5.5, 2026-09-03 |
+| `grok-cli` | wired, unverified | ACP `agent_thought_chunk` frames, cumulative like message chunks | nobody here has a Grok account — the mapping follows the ACP schema only |
+
+The token counter and the badge are unchanged and work on every engine
+that reports reasoning at all; the content layer sits on top and is
+simply absent where an engine has nothing to show.
+
+### Configuration
+
+```yaml
+# config.yaml — server-global
+thinkingContent:
+  capture: true        # false = no SSE event, no JSONL row, nothing in any client
+  maxChars: 65536      # per-turn cap on what is persisted; longer text is cut and marked
+```
+
+`capture` is the one switch: turning it off drops the content at the
+server before it reaches any client. The cap keeps a Qwen turn at
+`xhigh` from writing tens of thousands of tokens into the session file
+per turn; the clients show "(truncated by the server)" on a cut block.
+
+### Wire and storage
+
+- SSE: `event: thinking` with `{ state: 'delta' | 'final', text,
+  truncated? }`, deltas cumulative like `chat`. The `final` arrives
+  before the `chat` final of the same turn.
+- JSONL / `/chat/history`: one `thinking_message` row per turn, placed
+  before the turn's `assistant_message`. Deltas are not persisted.
+- Never replayed: history rebuilds for the model, compaction summaries
+  and REM extraction read user, assistant and tool rows only.
+
+### Not built: inline `<think>` models
+
+Models that print their reasoning as `<think>…</think>` inside the
+normal text stream (DeepSeek-R1, QwQ) ignore `reasoning_effort` and
+would need stream-side tag detection plus a `reasoning-inline`
+capability so the badge does not claim a depth knob that does nothing.
+Nobody here runs one; it stays out until someone does. Until then, do
+not give such a model the `reasoning` capability.

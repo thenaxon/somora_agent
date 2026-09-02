@@ -502,6 +502,10 @@ export const codexCliEngine: AgentEngine = {
     child.stdout.setEncoding('utf8');
 
     let cumulative = '';
+
+    // Reasoning summaries from codex `reasoning` items (see item.completed).
+
+    let thinkingCumulative = '';
     let finalText = '';
     let lastThreadId: string | undefined = resumeId;
     let usage: { tokens_in: number; tokens_out: number } | undefined;
@@ -571,7 +575,17 @@ export const codexCliEngine: AgentEngine = {
             if (!item || typeof item !== 'object') continue;
             const itemId = typeof item.id === 'string' ? item.id : `item-${Date.now()}`;
             const itemType = typeof item.type === 'string' ? item.type : 'unknown';
-            if (itemType === 'agent_message') {
+            if (itemType === 'reasoning') {
+              // codex exec --json emits the model's reasoning summary as
+              // its own item ({type:"reasoning", text}). Codex never
+              // streams raw chain-of-thought; this is the provider's
+              // summary, one item per reasoning phase.
+              const text = item.text;
+              if (typeof text === 'string' && text.length > 0) {
+                thinkingCumulative = thinkingCumulative ? `${thinkingCumulative}\n\n${text}` : text;
+                yield { kind: 'thinking_delta', ts: ts(), engine: ENGINE, text: thinkingCumulative };
+              }
+            } else if (itemType === 'agent_message') {
               const text = item.text;
               if (typeof text === 'string') {
                 // Concatenate, don't overwrite. Multi-block turns
@@ -795,6 +809,10 @@ export const codexCliEngine: AgentEngine = {
       }
 
       if (finalText) {
+        if (thinkingCumulative) {
+          yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: thinkingCumulative };
+          thinkingCumulative = '';
+        }
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: finalText };
       }
 

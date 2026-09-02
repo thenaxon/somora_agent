@@ -888,6 +888,11 @@ Event types:
   rendered as a block inside the right turn.
 - `tool` — `{phase: 'call'|'result'|'error', tool, summary?,
   details?, error?}` — tool-call events
+- `thinking` — `{state: 'delta'|'final', text, truncated?}` — the
+  model's reasoning text, cumulative deltas like `chat`; the `final`
+  precedes the `chat` final of the same turn. Only engines that surface
+  thinking send it; `thinkingContent.capture: false` in config.yaml
+  suppresses it entirely. See [thinking.md](thinking.md).
 - `engine_meta` — `{engine, itemType, label, summary?, payload}` —
   engine-internal side-channel state. The canonical case is codex's
   `todo_list` (an internal plan/checklist the model updates mid-turn)
@@ -980,6 +985,14 @@ hydrate this on open.
 
 ```bash
 curl "https://<host>:18737/chat/history?agent=<your-agent>&session=main"
+```
+
+Rows are the session's JSONL events in order. A turn with thinking
+carries one `thinking_message` row (`{kind, ts, engine, text,
+truncated?}`) directly before its `assistant_message`; clients fold it
+onto that bubble.
+
+```bash
 ```
 
 Pagination: pass `?limit=200` to get the last 200 events plus a

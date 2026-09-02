@@ -389,4 +389,6 @@ export interface HistoryEvent {
   engine?: string;
   itemType?: string;
   payload?: unknown;
+  // thinking_message
+  truncated?: boolean;
 }

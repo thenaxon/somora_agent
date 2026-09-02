@@ -202,6 +202,9 @@ export interface HistoryEvent {
   ephemeral?: string;
   /** Set on `kind: 'error'` rows — the engine's failure text. */
   message?: string;
+  /** Set on `kind: 'thinking_message'` rows when the server cut the
+   *  text at its configured cap. */
+  truncated?: boolean;
   from_agent?: string;
   from_system?: 'sentinel' | 'tmux';
   attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;

@@ -313,6 +313,14 @@ export const claudeCliEngine: AgentEngine = {
       // double-emitting. Tool-use blocks still come from the assistant
       // message because they're not streamed as deltas.
       let receivedTextViaStream = false;
+      // Reasoning text. Streams as thinking_delta (content_block_delta
+      // type thinking_delta), falls back to the assistant message's
+      // thinking blocks when nothing streamed. Adaptive-thinking models
+      // may return summarised or redacted thinking — redacted blocks
+      // carry no text and are shown as a placeholder once.
+      let thinkingCumulative = '';
+      let receivedThinkingViaStream = false;
+      let sawRedactedThinking = false;
 
       // Manual iteration with abort-race instead of `for await (... of
       // stream)`. The SDK's iterator sits on top of an stdio pipe to
@@ -430,10 +438,25 @@ export const claudeCliEngine: AgentEngine = {
             cumulative += ev.delta.text;
             receivedTextViaStream = true;
             yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
+          } else if (ev.type === 'content_block_delta' && ev.delta.type === 'thinking_delta') {
+            const t = (ev.delta as { thinking?: unknown }).thinking;
+            if (typeof t === 'string' && t.length > 0) {
+              thinkingCumulative += t;
+              receivedThinkingViaStream = true;
+              yield { kind: 'thinking_delta', ts: ts(), engine: ENGINE, text: thinkingCumulative };
+            }
           }
         } else if (msg.type === 'assistant') {
           for (const block of msg.message.content) {
-            if (block.type === 'text' && !receivedTextViaStream) {
+            if (block.type === 'thinking' && !receivedThinkingViaStream) {
+              const t = (block as { thinking?: unknown }).thinking;
+              if (typeof t === 'string' && t.length > 0) {
+                thinkingCumulative += (thinkingCumulative ? '\n\n' : '') + t;
+                yield { kind: 'thinking_delta', ts: ts(), engine: ENGINE, text: thinkingCumulative };
+              }
+            } else if (block.type === 'redacted_thinking') {
+              sawRedactedThinking = true;
+            } else if (block.type === 'text' && !receivedTextViaStream) {
               cumulative += block.text;
               yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: cumulative };
             } else if (block.type === 'tool_use') {
@@ -484,6 +507,13 @@ export const claudeCliEngine: AgentEngine = {
             // of truth, and fall back to `msg.result` only when no
             // streaming happened (defensive — shouldn't trigger in
             // practice since claude-agent-sdk always streams).
+            if (sawRedactedThinking && !thinkingCumulative) {
+              thinkingCumulative = '(thinking redacted by the provider)';
+            }
+            if (thinkingCumulative) {
+              yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: thinkingCumulative };
+              thinkingCumulative = '';
+            }
             finalText = cumulative || msg.result;
             // Anthropic returns input_tokens (uncached new) separate from
             // cache_read_input_tokens and cache_creation_input_tokens.

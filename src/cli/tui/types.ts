@@ -146,6 +146,8 @@ export interface TuiConfig {
     tools: boolean;
     memory: boolean;
     system: boolean;
+    /** Show the model's thinking content (/verbose thinking). Default off. */
+    thinking: boolean;
   };
 }
 
@@ -183,6 +185,17 @@ export type Turn =
       fromSystem?: 'sentinel' | 'tmux' | 'subagent';
     }
   | { kind: 'agent'; id: string; text: string }
+  | {
+      // The model's thinking content for the turn that follows. Only
+      // appended when /verbose thinking is on — otherwise the text is
+      // discarded at agent-end (the 🧠 header badge and the reasoning
+      // token counter are unaffected either way).
+      kind: 'thinking';
+      id: string;
+      text: string;
+      /** Server cut the text at its configured cap (ends with …). */
+      truncated?: boolean;
+    }
   | {
       kind: 'tool';
       id: string;
@@ -254,6 +267,11 @@ export type StreamEvent =
       items: Array<{ type: 'image' | 'video'; filename: string; durationSec?: number }>;
     }
   | { kind: 'chat-final'; text: string }
+  // Thinking content (SSE `event: thinking`). Deltas are CUMULATIVE,
+  // same convention as chat-delta. `final` arrives before the chat
+  // final of the same turn. Engines without thinking never send it.
+  | { kind: 'thinking-delta'; text: string }
+  | { kind: 'thinking-final'; text: string; truncated?: boolean }
   | { kind: 'memory'; count: number; topScore: number | null; refs: string[]; fullText?: string }
   | {
       kind: 'tool';

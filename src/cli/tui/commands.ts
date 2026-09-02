@@ -18,7 +18,7 @@ import {
 import type { SamplingPatch, SessionSamplingInfo } from './types.ts';
 
 export type ShowTarget = 'memory' | 'tools';
-export type VerboseTarget = 'tools' | 'memory' | 'system';
+export type VerboseTarget = 'tools' | 'memory' | 'system' | 'thinking';
 
 export type CommandAction =
   | { kind: 'notice'; text: string; tone: 'info' | 'warn' | 'error' }
@@ -50,7 +50,7 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/models', usage: '/models' },
   { name: '/model', usage: '/model [<alias>|default]' },
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
-  { name: '/verbose', usage: '/verbose [tools|memory|system] [on|off]' },
+  { name: '/verbose', usage: '/verbose [tools|memory|system|thinking] [on|off]' },
   { name: '/thinking', usage: '/thinking [off|low|medium|high|default]' },
   { name: '/reload', usage: '/reload' },
   { name: '/restart', usage: '/restart [YES]' },
@@ -113,6 +113,7 @@ const HELP_TEXT_BASE = `Available commands:
   /verbose memory on|off      — full memory inject text under each [memory · …] line
   /verbose system on          — print persona system prompt as a one-shot block
   /verbose system off         — clear the verbose-system flag (no effect on past blocks)
+  /verbose thinking on|off    — show the model's thinking text above each reply (gray, capped at 40 lines)
   /thinking                   — show effective thinking depth + source
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
@@ -149,6 +150,7 @@ export interface CommandContext {
   verboseTools: boolean;
   verboseMemory: boolean;
   verboseSystem: boolean;
+  verboseThinking: boolean;
   /** Live feature flags fetched once at App mount. Optional features
    *  filter their commands out of /help and matchCommands when off; the
    *  handlers below still reject defensively if reached anyway. */
@@ -575,18 +577,24 @@ export async function runCommand(
           kind: 'notice',
           text:
             `Verbose toggles (TUI render only — server already streams full payloads):\n` +
-            `  tools:  ${ctx.verboseTools ? 'on' : 'off'}  — full input/output under each call\n` +
-            `  memory: ${ctx.verboseMemory ? 'on' : 'off'}  — full inject text under [memory · …]\n` +
-            `  system: ${ctx.verboseSystem ? 'on' : 'off'}  — last /verbose system on flag\n` +
-            `Toggle: /verbose <tools|memory|system> on|off`,
+            `  tools:    ${ctx.verboseTools ? 'on' : 'off'}  — full input/output under each call\n` +
+            `  memory:   ${ctx.verboseMemory ? 'on' : 'off'}  — full inject text under [memory · …]\n` +
+            `  system:   ${ctx.verboseSystem ? 'on' : 'off'}  — last /verbose system on flag\n` +
+            `  thinking: ${ctx.verboseThinking ? 'on' : 'off'}  — model thinking text above each reply (engines that surface it)\n` +
+            `Toggle: /verbose <tools|memory|system|thinking> on|off`,
           tone: 'info',
         });
         return out;
       }
-      if (target !== 'tools' && target !== 'memory' && target !== 'system') {
+      if (
+        target !== 'tools' &&
+        target !== 'memory' &&
+        target !== 'system' &&
+        target !== 'thinking'
+      ) {
         out.push({
           kind: 'notice',
-          text: 'usage: /verbose [tools|memory|system] [on|off]',
+          text: 'usage: /verbose [tools|memory|system|thinking] [on|off]',
           tone: 'warn',
         });
         return out;

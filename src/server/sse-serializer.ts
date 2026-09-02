@@ -19,6 +19,13 @@ export function createTurnSerializer() {
         return { event: 'chat', data: { state: 'delta', text: ev.text } };
       case 'assistant_message':
         return { event: 'chat', data: { state: 'final', text: ev.text } };
+      case 'thinking_delta':
+        return { event: 'thinking', data: { state: 'delta', text: ev.text } };
+      case 'thinking_message':
+        return {
+          event: 'thinking',
+          data: { state: 'final', text: ev.text, ...(ev.truncated ? { truncated: true } : {}) },
+        };
       case 'tool_call': {
         const tool = shortToolName(ev.tool);
         callIdToTool.set(ev.callId, tool);

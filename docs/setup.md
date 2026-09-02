@@ -390,6 +390,10 @@ providers:
 
 agentLoop:
   maxToolCallsPerTurn: 30   # hard ceiling on tool calls per turn (openai-compatible)
+
+thinkingContent:            # the model's reasoning text in the clients — docs/thinking.md
+  capture: true             # false drops it at the server (no SSE, no JSONL)
+  maxChars: 65536           # per-turn cap on what is persisted
 ```
 
 ## 7. Voice — STT + TTS (optional)

@@ -99,6 +99,16 @@ export function renderSessionMarkdown(
         }
         break;
       }
+      case 'thinking_message': {
+        // Reasoning text — quoted and labelled so a transcript reader can
+        // tell it from the reply. One row per turn, before the reply.
+        const truncated = (ev as { truncated?: unknown }).truncated === true;
+        out.push(`> 🧠 **thinking**${truncated ? ' _(truncated)_' : ''}`);
+        out.push('>');
+        for (const line of (ev.text ?? '').toString().split('\n')) out.push(`> ${line}`);
+        out.push('');
+        break;
+      }
       case 'assistant_message': {
         const engine = ev.engine ? ` _(${ev.engine})_` : '';
         out.push(`## 🤖 assistant${engine}${tsLine}`);

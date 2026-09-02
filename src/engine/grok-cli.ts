@@ -493,6 +493,10 @@ export const grokCliEngine: AgentEngine = {
     input.signal?.addEventListener('abort', onAbort, { once: true });
 
     let assistantText = '';
+
+    // Reasoning trace from agent_thought_chunk (untested live).
+
+    let thinkingText = '';
     let emittedAny = false;
     const openTools = new Set<string>();
 
@@ -773,10 +777,17 @@ export const grokCliEngine: AgentEngine = {
             }
             break;
           }
-          case 'agent_thought_chunk':
-            // Reasoning trace. somora has no first-class thinking event;
-            // reasoning token counts surface via turn_end usage instead.
+          case 'agent_thought_chunk': {
+            // Reasoning trace (ACP). Cumulative like agent_message_chunk.
+            // UNTESTED live — no Grok account here; wired by the ACP
+            // schema only (content.text like message chunks).
+            const t = upd.content?.text ?? '';
+            if (t) {
+              thinkingText += t;
+              yield { kind: 'thinking_delta', ts: Date.now(), engine: ENGINE, text: thinkingText };
+            }
             break;
+          }
           case 'tool_call': {
             const id = upd.toolCallId ?? randomUUID();
             openTools.add(id);
@@ -857,7 +868,11 @@ export const grokCliEngine: AgentEngine = {
           message: `grok: ${apiError}`,
         };
       } else if (finalText || !emittedAny) {
-        yield {
+                if (thinkingText) {
+          yield { kind: 'thinking_message', ts: Date.now(), engine: ENGINE, text: thinkingText };
+          thinkingText = '';
+        }
+yield {
           kind: 'assistant_message',
           ts: Date.now(),
           engine: ENGINE,

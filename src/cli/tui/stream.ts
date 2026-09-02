@@ -147,6 +147,18 @@ export function openStream(
         if (data.state === 'delta') return { kind: 'chat-delta', text: data.text };
         if (data.state === 'final') return { kind: 'chat-final', text: data.text };
         return null;
+      case 'thinking': {
+        if (typeof data.text !== 'string') return null;
+        if (data.state === 'delta') return { kind: 'thinking-delta', text: data.text };
+        if (data.state === 'final') {
+          return {
+            kind: 'thinking-final',
+            text: data.text,
+            ...(data.truncated === true ? { truncated: true } : {}),
+          };
+        }
+        return null;
+      }
       case 'agent':
         if (data.phase === 'start') {
           return {
