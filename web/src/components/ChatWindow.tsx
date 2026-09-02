@@ -896,8 +896,16 @@ export function ChatWindow({
             {thinkingActive && (
               <>
                 <Sep />
-                <span style={{ color: 'var(--accent)' }} title={`thinking: ${thinking?.effective}`}>
+                <span
+                  style={{ color: 'var(--accent)' }}
+                  title={
+                    thinking?.wire
+                      ? `thinking: ${thinking.effective} — this model receives '${thinking.wire}' (reasoning.levels in config)`
+                      : `thinking: ${thinking?.effective}`
+                  }
+                >
                   🧠 {thinking?.effective}
+                  {thinking?.wire ? <span style={{ color: 'var(--text-2)' }}>→{thinking.wire}</span> : null}
                 </span>
               </>
             )}

@@ -11,6 +11,7 @@ import {
   realpathSafeAncestor,
   resolveLocalPath,
 } from './policy.ts';
+import { applyTextBudget, windowMatchLine, type RgSubmatch } from './search-window.ts';
 import type { Config } from '../../config/types.ts';
 
 const READ_HARD_CAP = 200_000; // chars
@@ -220,7 +221,13 @@ export async function localPatch(args: {
 export interface SearchHit {
   path: string;
   line: number;
+  /** Window around the match (see search-window.ts), not necessarily
+   *  the full line. */
   text: string;
+  /** 1-based column of the match start in the original line. */
+  col?: number;
+  /** Only present (true) when `text` was windowed. */
+  truncated?: boolean;
 }
 
 export interface SearchResult {
@@ -312,13 +319,17 @@ function tryRipgrep(
                 path?: { text?: string };
                 line_number?: number;
                 lines?: { text?: string };
+                submatches?: RgSubmatch[];
               };
             };
             if (ev.type === 'match' && ev.data) {
+              const win = windowMatchLine(ev.data.lines?.text ?? '', ev.data.submatches);
               hits.push({
                 path: ev.data.path?.text ?? '',
                 line: ev.data.line_number ?? 0,
-                text: (ev.data.lines?.text ?? '').replace(/\n$/, ''),
+                text: win.text,
+                col: win.col,
+                ...(win.truncated ? { truncated: true } : {}),
               });
               if (hits.length >= limit) {
                 truncated = true;
@@ -329,7 +340,12 @@ function tryRipgrep(
             // malformed JSON line — skip
           }
         }
-        resolve({ count: hits.length, truncated, hits });
+        const budgeted = applyTextBudget(hits);
+        resolve({
+          count: budgeted.hits.length,
+          truncated: truncated || budgeted.truncated,
+          hits: budgeted.hits,
+        });
       } catch {
         resolve(null);
       }

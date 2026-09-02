@@ -24,6 +24,35 @@ export type ModelCapability = z.infer<typeof ModelCapabilitySchema>;
 export const ThinkingLevelSchema = z.enum(['off', 'low', 'medium', 'high']);
 export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
 
+/**
+ * Per-model reasoning vocabulary for the `openai-compatible` engine.
+ * Real models disagree on the words (OpenAI none…xhigh, Qwen only
+ * xhigh|medium|low, DeepSeek low|high|max) and some reject unknown
+ * values with HTTP 400 instead of ignoring them. This block maps
+ * somora's neutral levels onto what the model actually accepts, and
+ * says where the value goes in the request body. Unset = legacy
+ * behaviour (`off` omits the param, the other levels go verbatim as
+ * `reasoning_effort`). See docs/thinking.md → Per-model vocabulary.
+ */
+export const ModelReasoningSchema = z.object({
+  /** Body shape. `reasoning_effort` (top-level, default), `reasoning`
+   *  (OpenRouter's nested `{ reasoning: { effort } }`), or
+   *  `chat_template_kwargs` (vLLM templates that only read kwargs). */
+  param: z.enum(['reasoning_effort', 'reasoning', 'chat_template_kwargs']).optional(),
+  /** somora level → model value. A string is sent as-is; `null` omits
+   *  the param for that level (model default). Missing levels keep the
+   *  legacy mapping. */
+  levels: z
+    .object({
+      off: z.string().min(1).nullable().optional(),
+      low: z.string().min(1).nullable().optional(),
+      medium: z.string().min(1).nullable().optional(),
+      high: z.string().min(1).nullable().optional(),
+    })
+    .optional(),
+});
+export type ModelReasoningConfig = z.infer<typeof ModelReasoningSchema>;
+
 export const ModelSchema = z.object({
   id: z.string().min(1),
   /**
@@ -38,7 +67,17 @@ export const ModelSchema = z.object({
     .optional(),
   contextWindow: z.number().int().positive(),
   capabilities: z.array(ModelCapabilitySchema).default(['text']),
+  /**
+   * Output cap sent as `max_tokens` (openai-compatible only). Unset =
+   * not sent, the backend decides (vLLM: the rest of the context). Worth
+   * setting on reasoning models, where thinking and answer share one
+   * budget and nothing else stops a runaway thinking phase. Not to be
+   * confused with `memory.autoInject.maxTokens` (input-side cap on the
+   * injected memory block).
+   */
   maxTokens: z.number().int().positive().optional(),
+  /** Reasoning vocabulary + wire shape for this model (openai-compatible only). */
+  reasoning: ModelReasoningSchema.optional(),
   /**
    * Only read by the `openai-compatible` engine. When unset (the common
    * case), that engine sends `parallel_tool_calls: false` so the model

@@ -33,7 +33,13 @@ import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
-import { openAiReasoningParam } from './thinking-params.ts';
+import {
+  isReasoningEffortError,
+  openAiReasoningBody,
+  parseSupportedEfforts,
+  pickFallbackEffort,
+  resolveOpenAiReasoning,
+} from './thinking-params.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -730,7 +736,55 @@ export const openAiCompatibleEngine: AgentEngine = {
       // 'reasoning' capability — for opaque local endpoints (Gemma etc.)
       // it returns {} so the request stays clean and the user sees the
       // dormant state in the header.
-      const reasoningParam = openAiReasoningParam(thinking, resolvedModel.model);
+      const reasoningResolved = resolveOpenAiReasoning(thinking, resolvedModel.model);
+      let reasoningParam: Record<string, unknown> = reasoningResolved.body;
+      let reasoningSent = reasoningResolved.value;
+      // Set when the backend rejected the effort value and the request
+      // went out again with a neighbour (or without the param). Yielded
+      // once as engine_meta so the user sees what was actually sent.
+      let reasoningAdjustment: { requested: string; sent: string | null; backend: string } | null =
+        null;
+      type CreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
+      // Vocabularies differ per model (Qwen: xhigh|medium|low, DeepSeek:
+      // low|high|max, OpenAI: none…xhigh) and some backends answer an
+      // unknown value with HTTP 400 instead of ignoring it — Qwen's chat
+      // template raises (verified 2026-09-01). Rather than failing the
+      // turn over a thinking knob: read the backend's own supported list
+      // from the error, pick the nearest neighbour, retry ONCE, and keep
+      // the adjusted value for the remaining rounds of this turn.
+      const createChatStream = async (params: CreateParams) => {
+        try {
+          return await client.chat.completions.create(
+            { ...params, ...reasoningParam } as CreateParams,
+            { signal: effectiveSignal },
+          );
+        } catch (err) {
+          if (reasoningSent === null || !isReasoningEffortError(err)) throw err;
+          const backend = String((err as Error).message ?? err);
+          const supported = parseSupportedEfforts(backend);
+          const fallback = supported ? pickFallbackEffort(reasoningSent, supported) : null;
+          if (fallback === reasoningSent) throw err; // backend lists it yet rejects — not ours to fix
+          logger.warn({
+            msg: 'engine.reasoning_effort_rejected',
+            engine: ENGINE,
+            provider: resolvedModel.providerName,
+            model: resolvedModel.modelId,
+            agent,
+            session,
+            requested: reasoningSent,
+            supported,
+            fallback,
+            backend: backend.slice(0, 300),
+          });
+          reasoningAdjustment = { requested: reasoningSent, sent: fallback, backend: backend.slice(0, 300) };
+          reasoningSent = fallback;
+          reasoningParam = openAiReasoningBody(reasoningResolved.param, fallback);
+          return await client.chat.completions.create(
+            { ...params, ...reasoningParam } as CreateParams,
+            { signal: effectiveSignal },
+          );
+        }
+      };
 
       let round = 0;
       // Did the LAST executed round still want tools? Distinguishes
@@ -751,13 +805,12 @@ export const openAiCompatibleEngine: AgentEngine = {
         roundsStarted = round;
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
         armIdleTimer();
-        const stream = await client.chat.completions.create(
-          {
-            model: resolvedModel.modelId,
-            messages: loopMessages,
-            stream: true,
-            stream_options: { include_usage: true },
-            ...(openAiTools
+        const stream = await createChatStream({
+          model: resolvedModel.modelId,
+          messages: loopMessages,
+          stream: true,
+          stream_options: { include_usage: true },
+          ...(openAiTools
               ? {
                   tools: openAiTools,
                   tool_choice: 'auto',
@@ -772,11 +825,27 @@ export const openAiCompatibleEngine: AgentEngine = {
                     : { parallel_tool_calls: false }),
                 }
               : {}),
-            ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
-            ...reasoningParam,
-          },
-          { signal: effectiveSignal },
-        );
+          ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
+        });
+        if (reasoningAdjustment) {
+          const adj: { requested: string; sent: string | null; backend: string } = reasoningAdjustment;
+          reasoningAdjustment = null;
+          yield {
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'reasoning_effort_adjusted',
+            payload: {
+              text:
+                `${resolvedModel.modelId} rejected reasoning effort '${adj.requested}' — ` +
+                (adj.sent ? `sent '${adj.sent}' instead` : 'sent without the parameter (model default)') +
+                '. Map the level in the model\'s `reasoning.levels` config to make this permanent.',
+              requested: adj.requested,
+              sent: adj.sent,
+              backend: adj.backend,
+            },
+          };
+        }
 
         // Per-round accumulators
         let roundContent = '';
@@ -1180,20 +1249,16 @@ export const openAiCompatibleEngine: AgentEngine = {
           // forever — a disarmed timer can't rescue it and some backends
           // ignore the fetch-level abort (Juni-Audit 2026-06).
           armIdleTimer();
-          const summaryStream = await client.chat.completions.create(
-            {
-              model: resolvedModel.modelId,
-              messages: loopMessages,
-              stream: true,
-              stream_options: { include_usage: true },
-              ...(resolvedModel.model.maxTokens
-                ? { max_tokens: resolvedModel.model.maxTokens }
-                : {}),
-              ...reasoningParam,
-              // No tools, no tool_choice — pure text response.
-            },
-            { signal: effectiveSignal },
-          );
+          const summaryStream = await createChatStream({
+            model: resolvedModel.modelId,
+            messages: loopMessages,
+            stream: true,
+            stream_options: { include_usage: true },
+            ...(resolvedModel.model.maxTokens
+              ? { max_tokens: resolvedModel.model.maxTokens }
+              : {}),
+            // No tools, no tool_choice — pure text response.
+          });
           const summaryIter = (
             summaryStream as AsyncIterable<
               typeof summaryStream extends AsyncIterable<infer C> ? C : never

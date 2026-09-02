@@ -366,6 +366,20 @@ providers:
         # into large duplicate batches; a strong model doing independent
         # reads can safely parallelise.
         parallelToolCalls: true
+      - id: some-local-reasoning-model
+        alias: thinker
+        contextWindow: 262144
+        capabilities: [text, reasoning]
+        # Output cap sent as `max_tokens`. Unset = not sent, and vLLM then
+        # allows the whole remaining context — on a reasoning model, where
+        # thinking and answer share that budget, nothing else stops a
+        # runaway thinking phase. (Not the memory block's
+        # `memory.autoInject.maxTokens`, which caps injected input.)
+        maxTokens: 16384
+        # Which words this model accepts for somora's thinking levels and
+        # where they go in the request — see docs/thinking.md.
+        reasoning:
+          levels: { high: xhigh }
 
 agentLoop:
   maxToolCallsPerTurn: 30   # hard ceiling on tool calls per turn (openai-compatible)

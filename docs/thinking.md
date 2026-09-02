@@ -51,6 +51,9 @@ The TUI header surfaces the effective state (chat turns only — dream
 runs are background workers and don't render in the TUI):
 
 - `🧠 medium` (cyan) — active and being applied
+- `🧠 high→xhigh` (cyan, grey arrow) — active, and the model receives a
+  different word for this level than somora's own (see *Per-model
+  vocabulary* below)
 - `🧠 thinking…` (cyan, during streaming, before first content token) —
   visual cue that the model is in its reasoning pass
 - `thinking=medium (dormant)` (yellow) — setting is stored but the active
@@ -119,12 +122,83 @@ The mapping is intentionally lossy because the underlying APIs disagree:
   high`. Set per-invocation; not persistent in the codex thread.
 
 - **OpenAI-compatible chat.completions** accepts the body field
-  `reasoning_effort` with values `none | minimal | low | medium | high
-  | xhigh`. Models that don't recognize it ignore it.
+  `reasoning_effort`. OpenAI's own vocabulary is `none | minimal | low |
+  medium | high | xhigh` — but every model family has its own words,
+  and some backends reject a word they don't know with HTTP 400 instead
+  of ignoring it. That is what the per-model block below is for.
 
 Adopting one engine's vocabulary as somora's would have leaked detail.
 The neutral `off | low | medium | high` enum maps cleanly to all three
 and is the smallest set users actually distinguish in practice.
+
+## Per-model vocabulary (`openai-compatible`)
+
+Three models, three vocabularies:
+
+| Model family | Accepted values | Unknown value → |
+|---|---|---|
+| OpenAI o-series / gpt-5 | `none minimal low medium high xhigh` | 400 |
+| Qwen 3.x reasoning (vLLM chat template) | `low medium xhigh` — no `high`, no `none` | **400** — the template raises |
+| DeepSeek V4 | `low high max` | ignored |
+
+somora's neutral `off | low | medium | high` fits none of them fully.
+Two things keep a thinking knob from killing a turn:
+
+**1. Per-model mapping in `config.yaml`.** Each model on an
+`openai-compatible` provider may carry a `reasoning:` block that says
+which word somora sends for each level, and where in the request body
+it goes:
+
+```yaml
+providers:
+  local:
+    engine: openai-compatible
+    models:
+      - id: some-qwen-reasoning-model
+        alias: qwen
+        contextWindow: 262144
+        capabilities: [text, reasoning]
+        maxTokens: 16384              # output cap; see setup.md
+        reasoning:
+          param: reasoning_effort     # reasoning_effort (default) | reasoning | chat_template_kwargs
+          levels:                     # somora level → model value
+            off: null                 # null = omit the param (model default)
+            low: low
+            medium: medium
+            high: xhigh               # this model's real maximum
+      - id: some-deepseek-model
+        capabilities: [text, reasoning]
+        reasoning:
+          levels: { medium: high, high: max }
+```
+
+- A string is sent verbatim; `null` omits the parameter for that level.
+- Levels you leave out keep the default mapping (`off` omits, the rest
+  go through unchanged), so a block with a single line is fine.
+- `param` picks the body shape: `reasoning_effort` top-level (OpenAI,
+  vLLM, LiteLLM), `reasoning` for OpenRouter's nested
+  `{ "reasoning": { "effort": … } }`, or `chat_template_kwargs` for
+  vLLM templates that only read `{ "chat_template_kwargs": {
+  "reasoning_effort": … } }`.
+- `off` means "somora does not ask for a depth". On a model that cannot
+  stop reasoning that is the model's default — which for Qwen is its
+  *maximum*. If you want `off` to mean "as little as possible" on such a
+  model, map it: `off: low`. somora does not guess this for you.
+
+**2. Retry on rejection.** With or without a block, when the backend
+answers a request with an error about the effort value, somora reads the
+backend's own list of accepted values out of the message ("Supported:
+xhigh, medium, low"), picks the nearest weaker one (then the nearest
+stronger; never `none`), and sends the request again once. If the
+message names no values, the retry goes out without the parameter. The
+adjusted value stays for the rest of that turn. The turn gets an
+`engine_meta` line ("reasoning effort adjusted") saying what was sent,
+and the server log carries `engine.reasoning_effort_rejected` with the
+backend's text — the cue to add the mapping to the model's block so it
+stops costing a round-trip.
+
+The badge shows the mapped word whenever it differs from the level:
+`🧠 high→xhigh`, or `🧠 high→off` when the level maps to "omit".
 
 ## Reasoning-token visibility
 
@@ -177,12 +251,14 @@ data: {
   "contextWindow": 1000000,
   "provider": "anthropic",
   "model": "claude-opus-4-7",
-  "thinking": { "level": "high", "active": true }
+  "thinking": { "level": "high", "active": true, "wire": "xhigh" }
 }
 ```
 
 `thinking.active = false` means a level is set but the active model
-lacks the `reasoning` capability — the knob is dormant.
+lacks the `reasoning` capability — the knob is dormant. `thinking.wire`
+is present only when the value the engine sends differs from `level`
+(per-model vocabulary); `"off"` there means the parameter is omitted.
 
 ## HTTP API for clients
 
@@ -204,11 +280,14 @@ GET response example:
   "override": "high",
   "personaDefault": "medium",
   "source": "session-override",
-  "modelSupportsReasoning": true
+  "modelSupportsReasoning": true,
+  "wire": "xhigh"
 }
 ```
 
 `source` is one of `session-override | persona-default | engine-default`.
+`wire` is the word the engine sends for `effective` when it differs
+(`null` otherwise; `"off"` = parameter omitted).
 
 ## What's not built (and why)
 

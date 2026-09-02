@@ -371,7 +371,21 @@ async function generateOnce(
       if (value !== undefined) body[key] = value;
     }
     if (references.length > 0) {
-      body.input_references = references.map((r) => r.bytes.toString('base64'));
+      // OpenRouter's Image API (`POST /api/v1/images`) rejects bare base64
+      // strings with a ZodError ("expected object, received string") —
+      // verified live 2026-09-01. It wants chat-completions-style objects
+      // carrying a data URL. Bound to the openrouter dialect on purpose:
+      // a future JSON dialect that wants bare strings must not inherit
+      // the object form silently. `wire: openai` never reaches this branch
+      // with references (multipart above).
+      // https://openrouter.ai/docs/guides/overview/multimodal/image-generation
+      body.input_references =
+        entry.wire === 'openrouter'
+          ? references.map((r) => ({
+              type: 'image_url',
+              image_url: { url: `data:${r.mime};base64,${r.bytes.toString('base64')}` },
+            }))
+          : references.map((r) => r.bytes.toString('base64'));
     }
     requestBody = JSON.stringify(body);
   }

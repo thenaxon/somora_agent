@@ -175,6 +175,7 @@ import {
 } from './async-tasks.ts';
 import { reserveSpawnSlot, releaseSpawnSlot } from '../tools/agents/spawn.ts';
 import { readSessionJsonlRaw, renderSessionMarkdown } from './session-export.ts';
+import { resolveOpenAiReasoning } from '../engine/thinking-params.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 interface StreamSub {
@@ -2058,6 +2059,12 @@ app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
       ? (meta.thinkingOverride as ThinkingLevel)
       : null;
   const effective = resolveEffectiveThinking(persona, meta) ?? null;
+  // Wire value the openai-compatible engine sends for this level (per-model
+  // `reasoning.levels`); null when identical to the level or not applicable.
+  const wireValue =
+    effective && modelSupportsReasoning && resolved?.provider.engine === 'openai-compatible'
+      ? (resolveOpenAiReasoning(effective, resolved.model).value ?? 'off')
+      : null;
   return c.json({
     agent,
     session,
@@ -2066,6 +2073,7 @@ app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
     personaDefault: persona.thinking ?? null,
     source: override ? 'session-override' : effective ? 'persona-default' : 'engine-default',
     modelSupportsReasoning,
+    wire: wireValue !== null && wireValue !== effective ? wireValue : null,
   });
 });
 

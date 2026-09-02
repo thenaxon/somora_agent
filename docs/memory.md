@@ -120,7 +120,11 @@ search hits).
 
 Search snippets are chunks (~400 tokens, with overlap). Full files
 go through `memory_get` — the agent decides when a snippet is
-enough vs needing the whole page.
+enough vs needing the whole page. Adjacent chunks share one paragraph
+of overlap on purpose and may both match; a chunk whose lines lie
+entirely inside another hit from the same file is folded into the
+wider one before results are ranked, so the same section never lands
+twice in the injected block.
 
 ### Hybrid retrieval mechanics
 

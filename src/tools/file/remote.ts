@@ -9,6 +9,7 @@ import { logger } from '../../server/logger.ts';
 import { expandRemotePath, getConnection, getResourceHome, remoteExec } from '../../ssh/index.ts';
 import type { ListEntry, ListResult, ReadResult, SearchResult, SearchHit, WriteResult, PatchResult } from './local.ts';
 import { checkRemoteReadAllowed } from './policy.ts';
+import { applyTextBudget, windowMatchLine, type RgSubmatch } from './search-window.ts';
 
 const READ_HARD_CAP = 200_000;
 
@@ -83,10 +84,180 @@ function sftpWriteFile(sftp: SFTPWrapper, path: string, data: string | Buffer): 
   });
 }
 
-function sftpRename(sftp: SFTPWrapper, from: string, to: string): Promise<void> {
+/** The subset of ssh2's SFTPWrapper that renameOverwrite needs — kept
+ *  minimal so a unit test can pass a recording stub. */
+export interface SftpRenameOps {
+  rename(from: string, to: string, cb: (err?: Error | null) => void): void;
+  unlink(path: string, cb: (err?: Error | null) => void): void;
+  /** OpenSSH `posix-rename@openssh.com`. Optional: older ssh2 builds
+   *  lack the method; ssh2 also throws SYNCHRONOUSLY ("Server does not
+   *  support this extended request") when the server did not advertise
+   *  the extension. */
+  ext_openssh_rename?(from: string, to: string, cb: (err?: Error | null) => void): void;
+}
+
+export interface RenameContext {
+  /** Tool name for the error message, e.g. 'file_write'. */
+  op: string;
+  /** Resource name for the error message. */
+  resource: string;
+}
+
+/** ssh2 maps SSH_FX_FAILURE to the bare message 'Failure' (and code 4).
+ *  OpenSSH's sftp-server answers that for SSH_FXP_RENAME when the target
+ *  already exists. */
+function isSftpFailure(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  return e?.code === 4 || /^Failure\b/.test(String(e?.message ?? err));
+}
+
+/** SSH_FX_NO_SUCH_FILE — ssh2 message 'No such file or directory', code 2. */
+function isSftpNoSuchFile(err: unknown): boolean {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  return e?.code === 2 || /No such file/i.test(String(e?.message ?? err));
+}
+
+function isExtensionUnsupported(err: unknown): boolean {
+  return /does not support|unsupported|not supported/i.test(String((err as Error)?.message ?? err));
+}
+
+function cbToPromise(run: (cb: (err?: Error | null) => void) => void): Promise<void> {
   return new Promise((resolve, reject) => {
-    sftp.rename(from, to, (err) => (err ? reject(err) : resolve()));
+    try {
+      run((err) => (err ? reject(err) : resolve()));
+    } catch (err) {
+      // ssh2's ext_* methods throw synchronously when unsupported.
+      reject(err);
+    }
   });
+}
+
+/**
+ * Rename `from` onto `to`, replacing `to` if it exists.
+ *
+ * Plain SSH_FXP_RENAME (SFTP v3, what ssh2 speaks) is *not* allowed to
+ * overwrite: OpenSSH's sftp-server replies SSH_FX_FAILURE when the
+ * target exists, which ssh2 surfaces as a bare `Error: Failure`. That
+ * meant every tmp-file → rename write path here could create files on
+ * an SSH resource but never modify them (verified live 2026-09-01).
+ *
+ * Strategy:
+ *   1. `posix-rename@openssh.com` (ssh2: `ext_openssh_rename`) — atomic
+ *      replace with POSIX semantics. Preferred whenever available.
+ *   2. Extension missing / server does not support it / it answers
+ *      Failure → `unlink(to)` (ENOENT ignored) then plain `rename`.
+ *      Non-atomic for an instant, but correct.
+ *   3. Plain rename answering Failure with no extension → same fallback.
+ *
+ * On final failure the error is rewritten to name the op, resource, both
+ * paths and a hint — never a bare 'Failure'. `from` (the tmp file) is
+ * removed best-effort, EXCEPT when we already unlinked the target: then
+ * the tmp file is the only remaining copy of the content and is kept,
+ * and the message says so.
+ */
+export async function renameOverwrite(
+  sftp: SftpRenameOps,
+  from: string,
+  to: string,
+  ctx: RenameContext = { op: 'sftp', resource: 'remote' },
+): Promise<void> {
+  const plainRename = () => cbToPromise((cb) => sftp.rename(from, to, cb));
+  const unlinkTarget = async (): Promise<boolean> => {
+    try {
+      await cbToPromise((cb) => sftp.unlink(to, cb));
+      return true;
+    } catch (err) {
+      if (isSftpNoSuchFile(err)) return false;
+      throw err;
+    }
+  };
+
+  let lastErr: unknown;
+  let hint: string;
+  let targetUnlinked = false;
+
+  // Step 1: OpenSSH posix-rename extension.
+  if (typeof sftp.ext_openssh_rename === 'function') {
+    try {
+      await cbToPromise((cb) => sftp.ext_openssh_rename!(from, to, cb));
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isExtensionUnsupported(err) && !isSftpFailure(err)) {
+        // A real error (permission denied, no such directory …) — the
+        // fallback would not fare better and might unlink the target
+        // for nothing.
+        hint = 'posix-rename@openssh.com failed';
+        await cleanupTmp(sftp, from);
+        throw enrich(ctx, from, to, err, hint);
+      }
+      logger.debug({
+        msg: 'tool.file.sftp_rename.ext_fallback',
+        resource: ctx.resource,
+        to,
+        err: String((err as Error)?.message ?? err),
+      });
+    }
+  } else {
+    // Step 3: plain rename first — it works when the target is absent.
+    try {
+      await plainRename();
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isSftpFailure(err)) {
+        await cleanupTmp(sftp, from);
+        throw enrich(ctx, from, to, err, 'rename failed');
+      }
+    }
+  }
+
+  // Step 2: unlink target, then plain rename.
+  try {
+    targetUnlinked = await unlinkTarget();
+    await plainRename();
+    return;
+  } catch (err) {
+    lastErr = err;
+  }
+
+  if (targetUnlinked) {
+    hint =
+      `target was removed but the rename still failed — the new content is left in '${from}' ` +
+      `and the server lacks posix-rename@openssh.com`;
+    throw enrich(ctx, from, to, lastErr, hint);
+  }
+  hint = isSftpFailure(lastErr)
+    ? 'target may exist and the server lacks posix-rename@openssh.com'
+    : 'target could not be replaced and the server lacks posix-rename@openssh.com';
+  await cleanupTmp(sftp, from);
+  throw enrich(ctx, from, to, lastErr, hint);
+}
+
+function enrich(ctx: RenameContext, from: string, to: string, err: unknown, hint: string): Error {
+  const reason = String((err as Error)?.message ?? err).trim() || 'unknown error';
+  const out = new Error(
+    `${ctx.op} on '${ctx.resource}': SFTP rename of '${from}' onto '${to}' refused (${reason}) — ${hint}`,
+  );
+  (out as Error & { cause?: unknown }).cause = err;
+  return out;
+}
+
+async function cleanupTmp(sftp: SftpRenameOps, tmp: string): Promise<void> {
+  try {
+    await cbToPromise((cb) => sftp.unlink(tmp, cb));
+  } catch {
+    // best-effort — a stray .somora-tmp file is better than masking the real error
+  }
+}
+
+function sftpRename(
+  sftp: SFTPWrapper,
+  from: string,
+  to: string,
+  ctx: RenameContext,
+): Promise<void> {
+  return renameOverwrite(sftp as unknown as SftpRenameOps, from, to, ctx);
 }
 
 function sftpStat(sftp: SFTPWrapper, path: string): Promise<Stats | null> {
@@ -185,11 +356,11 @@ export async function remoteWrite(args: {
       // Audit 2026-05-16.
       const tmp = uniqueRemoteTmp(remotePath);
       await sftpWriteFile(sftp, tmp, existing + sep + args.content);
-      await sftpRename(sftp, tmp, remotePath);
+      await sftpRename(sftp, tmp, remotePath, { op: 'file_write', resource: args.resourceName });
     } else {
       const tmp = uniqueRemoteTmp(remotePath);
       await sftpWriteFile(sftp, tmp, args.content);
-      await sftpRename(sftp, tmp, remotePath);
+      await sftpRename(sftp, tmp, remotePath, { op: 'file_write', resource: args.resourceName });
     }
   });
 
@@ -245,7 +416,7 @@ export async function remotePatch(args: {
     }
     const tmp = uniqueRemoteTmp(remotePath);
     await sftpWriteFile(sftp, tmp, updated);
-    await sftpRename(sftp, tmp, remotePath);
+    await sftpRename(sftp, tmp, remotePath, { op: 'file_patch', resource: args.resourceName });
     const newStats = await sftpStat(sftp, remotePath);
     return { path: remotePath, replacements: count, bytes: newStats?.size ?? 0 };
   });
@@ -313,13 +484,17 @@ export async function remoteSearch(args: {
           path?: { text?: string };
           line_number?: number;
           lines?: { text?: string };
+          submatches?: RgSubmatch[];
         };
       };
       if (ev.type === 'match' && ev.data) {
+        const win = windowMatchLine(ev.data.lines?.text ?? '', ev.data.submatches);
         hits.push({
           path: ev.data.path?.text ?? '',
           line: ev.data.line_number ?? 0,
-          text: (ev.data.lines?.text ?? '').replace(/\n$/, ''),
+          text: win.text,
+          col: win.col,
+          ...(win.truncated ? { truncated: true } : {}),
         });
         if (hits.length >= limit) break;
       }
@@ -327,7 +502,12 @@ export async function remoteSearch(args: {
       // skip malformed
     }
   }
-  return { count: hits.length, truncated: result.truncated || hits.length >= limit, hits };
+  const budgeted = applyTextBudget(hits);
+  return {
+    count: budgeted.hits.length,
+    truncated: result.truncated || hits.length >= limit || budgeted.truncated,
+    hits: budgeted.hits,
+  };
 }
 
 /** Single-quote a value for sh — escape any embedded single quotes. */

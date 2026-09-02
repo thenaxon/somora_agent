@@ -13,10 +13,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AlertTriangle, Download, Film, Image as ImageIcon, Loader2, RefreshCw, Search, Trash2, Wand2,
-  ZoomIn,
+  AlertTriangle, Check, Copy, Download, Film, Image as ImageIcon, Loader2, RefreshCw, Search,
+  Trash2, Wand2, ZoomIn,
 } from 'lucide-react';
 import { useFileViewOpener } from './FileViewContext';
+import { copyTextOrSelect, type CopyOutcome } from '../lib/copy-to-clipboard';
 import {
   api,
   type ImageCapabilities,
@@ -903,21 +904,20 @@ export function MediaWindow() {
                 {formatCost(selected.costUsd) ? ` · ${formatCost(selected.costUsd)}` : ''}
                 {selected.agent ? ` · by ${selected.agent}` : ''}
               </div>
-              <code
-                style={{
-                  fontSize: 10.5,
-                  color: 'var(--text-2)',
-                  wordBreak: 'break-all',
-                  lineHeight: 1.4,
-                }}
-              >
-                {selected.path}
-              </code>
-              {selected.linkedTo.length > 0 && (
-                <code style={{ fontSize: 10.5, color: 'var(--text-3)', wordBreak: 'break-all' }}>
-                  also at {selected.linkedTo.join(', ')}
-                </code>
-              )}
+              {/* The absolute path is what a user pastes into a prompt
+                  ("use <path> as reference") or a script, so it gets its
+                  own copy button. Keyed on the record so the "Copied"
+                  state does not carry over to the next selection. */}
+              <PathRow key={`p-${selected.id}`} path={selected.path} testId="media-copy-path" />
+              {selected.linkedTo.map((p) => (
+                <PathRow
+                  key={`l-${selected.id}-${p}`}
+                  path={p}
+                  prefix="also at"
+                  dim
+                  testId="media-copy-linked-path"
+                />
+              ))}
               <div style={{ display: 'flex', gap: 7, marginTop: 3, flexWrap: 'wrap' }}>
                 <button type="button" onClick={() => reuseSpecs(selected)} style={smallBtnStyle}>
                   Use these settings
@@ -947,6 +947,84 @@ export function MediaWindow() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// One path line in the detail view: selectable monospace text plus a
+// small copy button. The text stays selectable on purpose — when the
+// clipboard is unavailable the button selects it instead, and the
+// label tells the user to press Ctrl+C.
+function PathRow({
+  path,
+  prefix,
+  dim,
+  testId,
+}: {
+  path: string;
+  prefix?: string;
+  dim?: boolean;
+  testId?: string;
+}) {
+  const codeRef = useRef<HTMLElement | null>(null);
+  const [outcome, setOutcome] = useState<CopyOutcome | null>(null);
+
+  useEffect(() => {
+    if (outcome !== 'copied') return;
+    const t = setTimeout(() => setOutcome(null), 1500);
+    return () => clearTimeout(t);
+  }, [outcome]);
+
+  const label =
+    outcome === 'copied' ? 'Copied' : outcome === 'selected' ? 'Select and copy' : 'Copy path';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, minWidth: 0 }}>
+      {/* The prefix lives outside the <code> so the selection fallback
+          grabs the bare path and nothing else. */}
+      {prefix && (
+        <span style={{ fontSize: 10.5, color: 'var(--text-3)', flex: 'none', lineHeight: 1.4 }}>
+          {prefix}
+        </span>
+      )}
+      <code
+        ref={codeRef}
+        style={{
+          fontSize: 10.5,
+          color: dim ? 'var(--text-3)' : 'var(--text-2)',
+          wordBreak: 'break-all',
+          lineHeight: 1.4,
+          userSelect: 'text',
+          cursor: 'text',
+          flex: 1,
+          minWidth: 0,
+        }}
+        title={path}
+      >
+        {path}
+      </code>
+      <button
+        type="button"
+        data-testid={testId}
+        onClick={() => {
+          void copyTextOrSelect(path, codeRef.current).then(setOutcome);
+        }}
+        style={{
+          ...smallBtnStyle,
+          padding: '1px 6px',
+          fontSize: 10.5,
+          flex: 'none',
+          color: outcome === 'copied' ? 'var(--ok)' : smallBtnStyle.color,
+        }}
+        title={
+          outcome === 'selected'
+            ? 'Clipboard unavailable — the path is selected, press Ctrl+C'
+            : 'Copy the absolute path'
+        }
+        aria-label={`${label}: ${path}`}
+      >
+        {outcome === 'copied' ? <Check size={11} /> : <Copy size={11} />} {label}
+      </button>
     </div>
   );
 }

@@ -212,6 +212,7 @@ function ThinkingBadge({ state }: { state: ThinkingState }) {
   return (
     <Text color="cyan">
       🧠 {state.level}
+      {state.wire ? <Text color="gray">→{state.wire}</Text> : null}
     </Text>
   );
 }

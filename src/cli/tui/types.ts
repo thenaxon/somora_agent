@@ -9,6 +9,9 @@ export interface ThinkingState {
   // True if the active model has the 'reasoning' capability — i.e.
   // the setting is actually being applied. False = dormant.
   active: boolean;
+  // Value the engine actually sends when it differs from `level`
+  // (per-model reasoning vocabulary, e.g. high → xhigh). 'off' = omitted.
+  wire?: string;
 }
 
 export interface TurnStats {
@@ -28,6 +31,7 @@ export interface SessionThinkingInfo {
   personaDefault: ThinkingLevel | null;
   source: 'session-override' | 'persona-default' | 'engine-default';
   modelSupportsReasoning: boolean;
+  wire?: string | null;
 }
 
 export interface AgentInfo {

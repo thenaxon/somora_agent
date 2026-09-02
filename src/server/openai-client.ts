@@ -38,12 +38,46 @@ function getDispatcher(): Agent {
   return dispatcher;
 }
 
-const patientFetch: ClientOptions['fetch'] = (input, init) => {
+const patientFetch: ClientOptions['fetch'] = async (input, init) => {
   const withDispatcher = { ...(init ?? {}), dispatcher: getDispatcher() } as Parameters<
     typeof undiciFetch
   >[1];
-  return undiciFetch(input as Parameters<typeof undiciFetch>[0], withDispatcher) as unknown as Promise<Response>;
+  const res = (await undiciFetch(
+    input as Parameters<typeof undiciFetch>[0],
+    withDispatcher,
+  )) as unknown as Response;
+  return normalizeErrorBody(res);
 };
+
+/**
+ * vLLM (and other bare servers) answer errors as a TOP-LEVEL
+ * `{ "object": "error", "message": "…" }`. The OpenAI SDK only reads
+ * `body.error.message`, so through it such a 400 surfaces as
+ * "400 status code (no body)" and every message-based classifier
+ * downstream (context overflow, reasoning-effort rejection) goes blind.
+ * LiteLLM and OpenAI wrap as `{ "error": { "message" } }` and are left
+ * alone. Re-wrapping at the fetch layer keeps the SDK untouched.
+ */
+async function normalizeErrorBody(res: Response): Promise<Response> {
+  if (res.ok || !(res.headers.get('content-type') ?? '').includes('application/json')) return res;
+  let text: string;
+  try {
+    text = await res.text();
+  } catch {
+    return res;
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
+  }
+  const wrapped =
+    body && typeof body === 'object' && !('error' in body) && 'message' in body
+      ? JSON.stringify({ error: body })
+      : text;
+  return new Response(wrapped, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
 
 /**
  * Build an OpenAI client with somora's patient dispatcher applied.

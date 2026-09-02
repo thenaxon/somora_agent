@@ -145,11 +145,11 @@ export function hybridSearch(
   }
   fused.sort((a, b) => b.score - a.score);
 
-  // Materialize chunk metadata for the survivors only.
-  const ids = fused
-    .filter((f) => f.score >= cfg.minScore)
-    .slice(0, cfg.maxResults)
-    .map((f) => f.id);
+  // Materialize chunk metadata for the survivors only. Over-fetch a few
+  // candidates beyond maxResults so dedupeNestedHits() below can drop a
+  // nested chunk and still hand back a full page.
+  const survivors = fused.filter((f) => f.score >= cfg.minScore);
+  const ids = survivors.slice(0, cfg.maxResults * NESTED_OVERFETCH).map((f) => f.id);
   if (ids.length === 0) return [];
 
   const placeholders = ids.map(() => '?').join(',');
@@ -169,9 +169,8 @@ export function hybridSearch(
   }>;
   const byId = new Map(rows.map((r) => [r.id, r]));
 
-  return fused
-    .filter((f) => f.score >= cfg.minScore)
-    .slice(0, cfg.maxResults)
+  const hits = survivors
+    .slice(0, cfg.maxResults * NESTED_OVERFETCH)
     .filter((f) => byId.has(f.id))
     .map((f) => {
       const r = byId.get(f.id)!;
@@ -188,6 +187,49 @@ export function hybridSearch(
         bm25Score: f.bm25,
       };
     });
+  return dedupeNestedHits(hits).slice(0, cfg.maxResults);
+}
+
+/** How many candidates beyond maxResults hybridSearch materializes so
+ *  dedupeNestedHits() has something to backfill from. */
+const NESTED_OVERFETCH = 3;
+
+/**
+ * Collapse hits whose line range lies INSIDE another hit's range from
+ * the same file. Adjacent chunks share a deliberate paragraph of overlap
+ * (chunking.overlapTokens) and both may legitimately match — those are
+ * kept. What is dropped is full containment: an index built before the
+ * 2026-09-01 chunker fix holds pairs like 17-18 ⊂ 17-33 and 35-60 ⊂ 35-68
+ * for one file, and both halves of a pair scored above minScore for the
+ * same query, so the memory block carried the same section twice.
+ *
+ * Rule: among nested hits keep the WIDER range (more of the section for
+ * the same tokens) and give it the better of the two scores, so a wide
+ * chunk that ranked just below its narrow twin does not lose its place.
+ * Input is expected in descending-score order; output preserves that
+ * order, re-sorted only where a score was lifted.
+ */
+export function dedupeNestedHits(hits: Hit[]): Hit[] {
+  const kept: Hit[] = [];
+  for (const h of hits) {
+    let absorbed = false;
+    for (let i = 0; i < kept.length; i++) {
+      const k = kept[i]!;
+      if (k.filePath !== h.filePath) continue;
+      const hInsideK = h.startLine >= k.startLine && h.endLine <= k.endLine;
+      const kInsideH = k.startLine >= h.startLine && k.endLine <= h.endLine;
+      if (!hInsideK && !kInsideH) continue;
+      absorbed = true;
+      if (kInsideH && !hInsideK) {
+        // h is the wider one — it replaces k, inheriting k's better score.
+        kept[i] = { ...h, score: Math.max(h.score, k.score) };
+      }
+      // else: h lies inside k (or ranges are identical) → drop h.
+      break;
+    }
+    if (!absorbed) kept.push(h);
+  }
+  return kept.sort((a, b) => b.score - a.score);
 }
 
 function runVectorSearch(

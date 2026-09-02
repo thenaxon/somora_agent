@@ -59,6 +59,7 @@ import { prepareForTts } from '../tts/prepare-for-tts.ts';
 import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { buildSelfPointer } from './workspace.ts';
+import { resolveOpenAiReasoning } from '../engine/thinking-params.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 
 const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
@@ -753,9 +754,18 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
 
   const modelSupportsReasoning = resolvedModel.model.capabilities.includes('reasoning');
   const effectiveThinking = resolveEffectiveThinking(persona, sessionMeta);
+  // What the openai-compatible engine will actually put on the wire for
+  // this level (per-model `reasoning.levels`). Only sent to clients when
+  // it differs from the level itself, so the badge can read `high→xhigh`.
+  const thinkingWire =
+    effectiveThinking && modelSupportsReasoning && resolvedModel.provider.engine === 'openai-compatible'
+      ? (resolveOpenAiReasoning(effectiveThinking, resolvedModel.model).value ?? 'off')
+      : undefined;
+  const thinkingWireField =
+    thinkingWire !== undefined && thinkingWire !== effectiveThinking ? { wire: thinkingWire } : {};
   if (publishSse) {
     const startThinkingPayload = effectiveThinking
-      ? { level: effectiveThinking, active: modelSupportsReasoning }
+      ? { level: effectiveThinking, active: modelSupportsReasoning, ...thinkingWireField }
       : undefined;
     await publishSse({
       event: 'agent',
@@ -1228,7 +1238,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
 
   if (publishSse) {
     const thinkingPayload = effectiveThinking
-      ? { level: effectiveThinking, active: modelSupportsReasoning }
+      ? { level: effectiveThinking, active: modelSupportsReasoning, ...thinkingWireField }
       : undefined;
     const actualRef = turnFallback ? splitModelRef(turnFallback.actual) : undefined;
     await publishSse({

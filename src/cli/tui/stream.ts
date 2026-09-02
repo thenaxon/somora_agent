@@ -156,6 +156,7 @@ export function openStream(
                 ? {
                     level: data.thinking.level,
                     active: Boolean(data.thinking.active),
+                    ...(typeof data.thinking.wire === 'string' ? { wire: data.thinking.wire } : {}),
                   }
                 : undefined,
           };
@@ -172,6 +173,7 @@ export function openStream(
                 ? {
                     level: data.thinking.level,
                     active: Boolean(data.thinking.active),
+                    ...(typeof data.thinking.wire === 'string' ? { wire: data.thinking.wire } : {}),
                   }
                 : undefined,
           };

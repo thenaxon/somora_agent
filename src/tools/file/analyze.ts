@@ -128,7 +128,16 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
     if (!policyReal.ok) throw new Error(policyReal.reason);
     let att;
     try {
-      att = await loadAttachment(absolute);
+      // Honour config.attachments caps. Without them the loader falls back
+      // to its built-in 5 MB image default (Anthropic's ceiling), so an
+      // operator who raised maxImageBytes for their own 2K/4K imageGen
+      // output still got refused here — analyze_file was the one path
+      // that ignored the setting (feedback 2026-09-01).
+      att = await loadAttachment(absolute, {
+        maxImageBytes: ctx.config.attachments.maxImageBytes,
+        maxPdfBytes: ctx.config.attachments.maxPdfBytes,
+        maxTextBytes: ctx.config.attachments.maxTextBytes,
+      });
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
       if (e.code === 'ENOENT') {

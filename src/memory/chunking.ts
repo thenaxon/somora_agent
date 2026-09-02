@@ -154,5 +154,15 @@ function buildOverlap(prev: Paragraph[], overlapTokens: number): Paragraph[] {
     acc += estimateTokens(p.text);
     if (acc >= overlapTokens) break;
   }
+  // The overlap must be a STRICT suffix of the previous chunk. When the
+  // previous chunk is shorter than overlapTokens (a lone heading, a short
+  // paragraph before a big one), the loop above hands back the whole
+  // chunk — and the next chunk then starts at the same line and CONTAINS
+  // the previous one. Observed live 2026-09-01: a 96-line wiki page
+  // indexed as 17-18 ⊂ 17-33 and 35-60 ⊂ 35-68, and both halves of each
+  // pair matched the same query, so the same text went into the prompt
+  // twice. Dropping the first paragraph keeps the next chunk's start
+  // strictly later; a single-paragraph chunk carries no overlap at all.
+  if (out.length === prev.length) out.shift();
   return out;
 }

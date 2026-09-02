@@ -67,7 +67,9 @@ export async function loadAttachment(
   // because the absolute-max ceiling is bigger.
   if (mime.kind === 'image' && s.size > maxImage) {
     throw new Error(
-      `multimodal: image '${path}' is ${s.size} bytes, exceeds image cap ${maxImage}`,
+      `multimodal: image '${path}' is ${s.size} bytes, exceeds image cap ${maxImage} ` +
+        `(raise config.attachments.maxImageBytes, or downscale first — ` +
+        `e.g. ffmpeg -i in.png -vf scale=1024:-1 out.jpg)`,
     );
   }
   if (mime.kind === 'pdf' && s.size > maxPdf) {

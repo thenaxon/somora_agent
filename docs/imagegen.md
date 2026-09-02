@@ -31,6 +31,9 @@ Verified there end to end: both wire dialects, reference images as
 multipart, catalog-driven capabilities, the `503`-means-busy path, and
 the fallback chain.
 
+**OpenRouter verified live** (2026-09-01): catalog read, text-to-image
+and edits from reference images all work against `openrouter.ai`.
+
 **Not yet tested against a live hosted account.** The `openai` dialect
 is written to OpenAI's published API and its shape has been exercised
 against a faithful local stand-in, but nobody has run it against
@@ -101,7 +104,7 @@ each model declares which dialect it speaks:
 
 | `wire:` | Reference images travel as | Sent to |
 |---|---|---|
-| `openrouter` (default) | base64 in an `input_references` array | `endpoint` |
+| `openrouter` (default) | `input_references`: one `{ "type": "image_url", "image_url": { "url": "data:<mime>;base64,…" } }` object per file | `endpoint` |
 | `openai` | multipart, one `image[]` part per file | `editEndpoint` |
 
 `openai` is the setting for OpenAI itself and for an OpenAI-compatible

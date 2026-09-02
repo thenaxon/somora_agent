@@ -75,6 +75,40 @@ const small = 'this is a short trailing paragraph';
   check('short content → single chunk', chunks.length === 1, `${chunks.length}`);
 }
 
+// ── nested chunks (2026-09-01): a short chunk must not be swallowed whole
+//    by the next chunk's overlap ────────────────────────────────────────
+{
+  // A lone heading (tiny), then a paragraph that overflows the target.
+  // Before the fix: [heading] then [heading + big] — the second chunk
+  // starts at the same line and contains the first.
+  const heading = '## Aktueller Stand';
+  const chunks = chunkMarkdown(`${heading}\n\n${big}\n\n${small}`, { targetTokens: 400, overlapTokens: 80 });
+  for (let i = 0; i < chunks.length; i++) {
+    for (let j = 0; j < chunks.length; j++) {
+      if (i === j) continue;
+      const a = chunks[i]!;
+      const b = chunks[j]!;
+      const nested = a.startLine >= b.startLine && a.endLine <= b.endLine;
+      check(`chunk ${i} (${a.startLine}-${a.endLine}) not nested in chunk ${j} (${b.startLine}-${b.endLine})`, !nested);
+    }
+  }
+  const starts = chunks.map((c) => c.startLine);
+  check('chunk start lines strictly increase', starts.every((s, i) => i === 0 || s > starts[i - 1]!), JSON.stringify(starts));
+}
+
+// ── a run of short paragraphs under overlapTokens: overlap is a strict
+//    suffix, never the whole previous chunk ──────────────────────────────
+{
+  // 6 paragraphs of ~60 tokens (240 chars). Target 400 → ~6 per chunk?
+  // No: 6×60=360 fits. Use target 150 so 2 per chunk, overlap 500 (bigger
+  // than any chunk) to force the "whole chunk as overlap" path.
+  const paras = Array.from({ length: 6 }, (_, i) => `p${i} ` + 'q'.repeat(236));
+  const chunks = chunkMarkdown(paras.join('\n\n'), { targetTokens: 150, overlapTokens: 500 });
+  const starts = chunks.map((c) => c.startLine);
+  check('oversized overlap: start lines strictly increase', starts.every((s, i) => i === 0 || s > starts[i - 1]!), JSON.stringify(starts));
+  check('oversized overlap: no chunk equals another', new Set(chunks.map((c) => c.text)).size === chunks.length);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
 assert.ok(true);

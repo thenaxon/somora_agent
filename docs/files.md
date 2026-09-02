@@ -243,7 +243,11 @@ attachments:
 
 Defaults match the strictest engine in the supported set so a config
 that accepts any of them is safe everywhere. Operators with a
-single-engine fleet can raise these.
+single-engine fleet can raise these. `analyze_file` honours the same
+caps: its vision worker runs on an `openai-compatible` provider, so the
+Anthropic ceiling does not apply there — raise `maxImageBytes` when the
+agent should inspect large images, e.g. somora's own 2K/4K `imageGen`
+output (a 2048×2048 PNG is routinely 6–9 MB).
 
 ### `pdfMode` — only on `openai-compatible` providers
 
@@ -286,11 +290,11 @@ user setup. A sweep tool may land later.
 | Tool | Cap | Notes |
 |---|---|---|
 | `file_read` | 200 000 chars per call | `offset`+`limit` are LINE counts (not bytes). When a result is truncated by line, the response includes `next_offset` — pass it as `offset` to continue. Byte-cap-truncated reads omit `next_offset` (the cut is mid-line). Missing files surface as `file_read: file_not_found at '<path>'`. Errors on binary, pointing at `analyze_file`. |
-| `file_write` | none on input; 100 000 char result envelope | Atomic via tmp+rename. |
+| `file_write` | none on input; 100 000 char result envelope | Atomic via tmp+rename. Over SSH the rename uses `posix-rename@openssh.com` so an existing target is replaced; servers without the extension get unlink+rename. |
 | `file_patch` | requires `old_string` to be unique unless `replace_all=true` | Match is byte-exact (no fuzzy). |
-| `file_search` | 50 hits default, 500 max; 200 000 char result envelope | Needs `rg` (ripgrep) on the target machine. |
+| `file_search` | 50 hits default, 500 max; hit text is a ±200-char window around the first match (`col` = column, `truncated` marks a cut line); 100 000 chars of hit text per call, then `truncated: true` | Needs `rg` (ripgrep) on the target machine. Long lines (JSONL logs, minified bundles) no longer blow the result envelope. |
 | `file_list` | 5000 entries per call (default 200) | Path resolution + read-policy identical to `file_read`. Missing dirs surface as `file_list: file_not_found at '<path>'`. |
-| `analyze_file` | 5 MB image / 32 MB PDF | Local files only in v1; worker on openai-compatible engine. **Hidden from the model entirely when `config.vision.worker` is unset** (the same path-resolution + read-policy as `file_read` applies). |
+| `analyze_file` | `attachments.maxImageBytes` (5 MB default) / `attachments.maxPdfBytes` (32 MB) | Local files only in v1; worker on openai-compatible engine. **Hidden from the model entirely when `config.vision.worker` is unset** (the same path-resolution + read-policy as `file_read` applies). |
 
 `rg` not installed → clear error: "Install via brew/apt/dnf/pacman or
 set `$RG_BIN`." We deliberately don't ship a JS fallback walker —

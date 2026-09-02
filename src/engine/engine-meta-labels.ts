@@ -22,6 +22,9 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // somora-emitted: the backend rejected the prompt as too long, the
     // engine forced a compaction and retried the turn.
     context_compacted: 'context compacted',
+    // somora-emitted: the backend rejected the reasoning-effort value,
+    // the engine retried with a neighbour (or without the param).
+    reasoning_effort_adjusted: 'reasoning effort adjusted',
   },
 };
 
@@ -54,6 +57,14 @@ export function summariseEngineMeta(
     if (p && typeof p.text === 'string') return p.text;
     if (p && typeof p.from === 'string' && typeof p.to === 'string') {
       return `codex thread restarted for model switch ${p.from} → ${p.to}`;
+    }
+    return undefined;
+  }
+  if (engine === 'openai-compatible' && itemType === 'reasoning_effort_adjusted') {
+    const p = payload as { text?: unknown; requested?: unknown; sent?: unknown } | null | undefined;
+    if (p && typeof p.text === 'string') return p.text;
+    if (p && typeof p.requested === 'string') {
+      return `reasoning effort '${p.requested}' rejected by the backend — sent ${typeof p.sent === 'string' ? `'${p.sent}'` : 'without the parameter'} instead`;
     }
     return undefined;
   }

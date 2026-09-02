@@ -408,7 +408,11 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   toolset: 'file',
   description:
     'Search file contents recursively for a regex pattern. Powered by ripgrep — fast, ' +
-    'respects .gitignore by default. Returns hits with path/line/text. ' +
+    'respects .gitignore by default. Returns hits with path/line/col/text. `text` is a window ' +
+    'of ~200 chars around the first match on that line (`…` marks the cut edges, `col` is the ' +
+    '1-based column of the match), NOT necessarily the full line — use file_read with ' +
+    'offset/limit to see the whole line. Long results are truncated (hit count via `limit`, ' +
+    'plus an overall text budget); `truncated: true` tells you there was more. ' +
     'Use this INSTEAD of `grep -r`, `find ... -exec grep`, or piping through exec — file_search ' +
     'gives structured results, caps output safely, and works the same locally and over SSH. ' +
     'Requires `rg` on the target machine (install via brew/apt/dnf if missing).',
@@ -419,7 +423,15 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
       pattern: { type: 'string', description: 'Regex pattern.' },
       target: { type: 'string', description: 'local (default) or resource name.', default: 'local' },
       path: { type: 'string', description: 'Search root (default: workspace).' },
-      limit: { type: 'integer', minimum: 1, maximum: 500, description: 'Max hits (default 50).' },
+      limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 500,
+        description:
+          'Max hits (default 50). Each hit\'s `text` is a ~200-char window around the match ' +
+          '(`col` = column), and the total text across hits is budgeted — the result carries ' +
+          '`truncated: true` when either cap was hit.',
+      },
     },
     required: ['pattern'],
     additionalProperties: false,

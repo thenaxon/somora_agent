@@ -150,6 +150,9 @@ export interface SessionThinkingInfo {
   personaDefault: ThinkingLevel | null;
   source: 'session-override' | 'persona-default' | 'engine-default';
   modelSupportsReasoning: boolean;
+  /** Value the engine actually sends when it differs from `effective`
+   *  (per-model reasoning vocabulary, e.g. high → xhigh); 'off' = omitted. */
+  wire?: string | null;
 }
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
