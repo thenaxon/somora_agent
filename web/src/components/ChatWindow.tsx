@@ -1063,7 +1063,8 @@ export function ChatWindow({
               {chat.usage?.tokens_out_reasoning ? (
                 <span style={{ color: 'var(--accent)' }}>
                   {' '}
-                  ({formatTokens(chat.usage.tokens_out_reasoning)}🧠)
+                  ({chat.usage.tokens_out_reasoning_estimated ? '~' : ''}
+                  {formatTokens(chat.usage.tokens_out_reasoning)}🧠)
                 </span>
               ) : null}
             </span>

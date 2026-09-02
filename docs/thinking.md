@@ -71,7 +71,10 @@ intentional — both clients hit the same `/agents/<a>/sessions/<s>/thinking`
 endpoint and consume the same SSE events.
 
 The output-token segment additionally shows the reasoning tokens spent
-when the engine reports them: `↓ 412 (1.2k 🧠)`.
+when the engine reports them: `↓ 412 (1.2k 🧠)`. Backends that stream
+their thinking as `reasoning_content` deltas but report no
+`reasoning_tokens` in `usage` get an estimate from the streamed text
+(4 chars per token), marked with a tilde: `(~1.2k 🧠)`.
 
 ## The `reasoning` capability
 
@@ -227,6 +230,13 @@ before the backend saw it. Two consequences for router-fronted models:
 YAML note: somora parses config with a YAML 1.2 reader, so an unquoted
 `off:` key is the string `off`. Quoting it (`"off": low`) is equally
 fine and safer for tooling that reads the file with a YAML 1.1 parser.
+
+One more vendor quirk worth knowing: DeepSeek V4 served by SGLang
+reasons **only when the request carries a `reasoning_effort`** — with
+the parameter omitted it answers without a thinking phase at all
+(measured 2026-09-02: `reasoning_tokens: 0`, the "thinking" lands in
+the visible text instead). On that model `off` really is off, and any
+level switches thinking on.
 
 The badge shows the mapped word whenever it differs from the level:
 `🧠 high→xhigh`, or `🧠 high→off` when the level maps to "omit".

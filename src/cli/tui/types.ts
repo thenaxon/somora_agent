@@ -19,6 +19,8 @@ export interface TurnStats {
   tokensInCached: number | null;
   tokensOut: number;
   tokensOutReasoning: number | null;
+  /** True when the reasoning count is an estimate from streamed text. */
+  tokensOutReasoningEstimated: boolean;
   contextWindow: number | null;
   provider: string | null;
   model: string | null;
@@ -239,6 +241,7 @@ export type StreamEvent =
         tokens_in_cached?: number;
         tokens_out?: number;
         tokens_out_reasoning?: number;
+        tokens_out_reasoning_estimated?: boolean;
       };
       contextWindow?: number;
       provider?: string;

@@ -700,7 +700,12 @@ export const openAiCompatibleEngine: AgentEngine = {
      *  safe before anything happened (round 1, nothing emitted). */
     let roundsStarted = 0;
     let totalUsage:
-      | { tokens_in: number; tokens_out: number; tokens_out_reasoning?: number }
+      | {
+          tokens_in: number;
+          tokens_out: number;
+          tokens_out_reasoning?: number;
+          tokens_out_reasoning_estimated?: boolean;
+        }
       | undefined;
     let tokensInCached: number | undefined;
 
@@ -847,6 +852,11 @@ export const openAiCompatibleEngine: AgentEngine = {
 
         // Per-round accumulators
         let roundContent = '';
+        // Chars of `reasoning_content` / `reasoning` deltas seen this round.
+        // Only used when the backend's usage reports no reasoning_tokens
+        // (SGLang/vLLM builds vary) — then the 🧠 counter is estimated
+        // from the streamed text at 4 chars/token and flagged as such.
+        let roundReasoningChars = 0;
         const roundToolCalls = new Map<number, StreamingToolCall>();
         let finishReason: string | null = null;
 
@@ -903,6 +913,16 @@ export const openAiCompatibleEngine: AgentEngine = {
           armIdleTimer();
           const choice = chunk.choices[0];
           const delta = choice?.delta;
+          {
+            const r = delta as { reasoning_content?: unknown; reasoning?: unknown } | undefined;
+            const rtext =
+              typeof r?.reasoning_content === 'string'
+                ? r.reasoning_content
+                : typeof r?.reasoning === 'string'
+                  ? r.reasoning
+                  : '';
+            if (rtext) roundReasoningChars += rtext.length;
+          }
           if (delta?.content && typeof delta.content === 'string') {
             roundContent += delta.content;
             // Scaffold guard AT THE STREAM. A confused model emits the
@@ -959,13 +979,18 @@ export const openAiCompatibleEngine: AgentEngine = {
             // the top-level completion_tokens, so we surface it as a separate
             // counter for the UI's (N🧠) display without double-counting in
             // tokens_out.
-            const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens;
+            const reportedReasoning = rawUsage.completion_tokens_details?.reasoning_tokens;
+            const reasoningEstimated = reportedReasoning == null && roundReasoningChars > 0;
+            const reasoningTokens = reasoningEstimated
+              ? Math.ceil(roundReasoningChars / 4)
+              : (reportedReasoning ?? undefined);
             const u = {
               tokens_in: chunk.usage.prompt_tokens ?? 0,
               tokens_out: chunk.usage.completion_tokens ?? 0,
               ...(reasoningTokens !== undefined
                 ? { tokens_out_reasoning: reasoningTokens }
                 : {}),
+              ...(reasoningEstimated ? { tokens_out_reasoning_estimated: true } : {}),
             };
             // Accumulate across rounds for the final turn_end usage.
             totalUsage = totalUsage
@@ -979,6 +1004,9 @@ export const openAiCompatibleEngine: AgentEngine = {
                           (totalUsage.tokens_out_reasoning ?? 0) +
                           (u.tokens_out_reasoning ?? 0),
                       }
+                    : {}),
+                  ...(u.tokens_out_reasoning_estimated || totalUsage.tokens_out_reasoning_estimated
+                    ? { tokens_out_reasoning_estimated: true }
                     : {}),
                 }
               : u;

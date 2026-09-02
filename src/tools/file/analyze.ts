@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { workerChain, resolveAnyRef, type ResolvedModel } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { loadAttachment } from '../../multimodal/load.ts';
+import { samplingBody } from '../../engine/sampling.ts';
 import { toOpenAiContent } from '../../multimodal/blocks.ts';
 import { checkReadAllowed, realpathSafeAncestor, resolveLocalPath } from './policy.ts';
 import type { ToolDefinition } from '../types.ts';
@@ -214,6 +215,12 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               { role: 'user', content: content as any },
             ],
+            // Same per-model knobs as every other openai-compatible call:
+            // the output cap bounds a reasoning worker's thinking phase,
+            // the model's sampling defaults apply. No thinking level —
+            // vision Q&A wants the model's default depth.
+            ...(worker.model.maxTokens ? { max_tokens: worker.model.maxTokens } : {}),
+            ...samplingBody(worker.model.sampling),
           },
           { signal: AbortSignal.timeout(visionConfig.timeoutMs) },
         );

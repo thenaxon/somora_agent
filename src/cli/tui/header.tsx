@@ -238,7 +238,7 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
   const reasoning = stats.tokensOutReasoning;
   const reasoningSegment =
     reasoning !== null && reasoning > 0 ? (
-      <Text color="cyan"> ({formatTokens(reasoning)} 🧠)</Text>
+      <Text color="cyan"> ({stats.tokensOutReasoningEstimated ? '~' : ''}{formatTokens(reasoning)} 🧠)</Text>
     ) : null;
   return (
     <Text>

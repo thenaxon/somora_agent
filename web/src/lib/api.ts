@@ -196,6 +196,8 @@ export interface HistoryEvent {
     tokens_in_cached?: number;
     tokens_out?: number;
     tokens_out_reasoning?: number;
+    /** True when the reasoning count is an estimate from streamed text. */
+    tokens_out_reasoning_estimated?: boolean;
   };
   ephemeral?: string;
   /** Set on `kind: 'error'` rows — the engine's failure text. */

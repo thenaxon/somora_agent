@@ -238,6 +238,8 @@ export type NormalizedEvent =
         tokens_in_cached?: number;
         /** Reasoning/thinking tokens (subset of tokens_out). Optional — only reasoning-capable models surface it. */
         tokens_out_reasoning?: number;
+        /** True when tokens_out_reasoning was estimated from streamed reasoning text (backend reported none). */
+        tokens_out_reasoning_estimated?: boolean;
       };
     }
   | { kind: 'error'; ts: number; engine: string; message: string }
@@ -290,6 +292,7 @@ export type SseEvent =
           tokens_out: number;
           tokens_in_cached?: number;
           tokens_out_reasoning?: number;
+          tokens_out_reasoning_estimated?: boolean;
         };
         contextWindow?: number;
         /** The model that ACTUALLY answered (the fallback when one ran). */
