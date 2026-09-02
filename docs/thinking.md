@@ -203,6 +203,31 @@ and the server log carries `engine.reasoning_effort_rejected` with the
 backend's text — the cue to add the mapping to the model's block so it
 stops costing a round-trip.
 
+**Behind a router or proxy the retry never fires.** The retry needs the
+backend's 400 to reach somora. A parameter-normalising gateway in
+between — LiteLLM with `drop_params: true`, most OpenAI-compatible
+routers — typically swallows it: measured 2026-09-02 against a Qwen
+route through LiteLLM, every value (`low`, `high`, `xhigh`, `none`,
+unset) returned 200 with a completion, and the reasoning volume did not
+move with the value either — the router had dropped the parameter
+before the backend saw it. Two consequences for router-fronted models:
+
+- Neither the retry nor the `levels` mapping can help when the router
+  drops the parameter; the model runs at its own default depth whatever
+  somora sends, and the badge shows a word that never arrives. The fix
+  is on the router (LiteLLM: let `reasoning_effort` through for that
+  route, e.g. via `allowed_openai_params`), not in somora. Verify with
+  a direct probe: send two efforts with a prompt that needs thinking
+  and compare `usage.completion_tokens_details.reasoning_tokens`.
+- Once the router passes the parameter through, the 400 for an unknown
+  word may still be masked. Map the model explicitly in `levels` and do
+  not rely on the retry; there is no `engine.reasoning_effort_rejected`
+  cue on that path.
+
+YAML note: somora parses config with a YAML 1.2 reader, so an unquoted
+`off:` key is the string `off`. Quoting it (`"off": low`) is equally
+fine and safer for tooling that reads the file with a YAML 1.1 parser.
+
 The badge shows the mapped word whenever it differs from the level:
 `🧠 high→xhigh`, or `🧠 high→off` when the level maps to "omit".
 
