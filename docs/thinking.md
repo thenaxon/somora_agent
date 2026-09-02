@@ -352,15 +352,18 @@ thinks. See [display.md](display.md).
 
 | Engine | Thinking content | What you get | Status |
 |---|---|---|---|
-| `openai-compatible` | yes, when the backend streams `reasoning_content` (or `reasoning`) deltas | the full reasoning text as the model wrote it | verified on DeepSeek V4 (SGLang) and Qwen 3.x (vLLM) through a LiteLLM router, 2026-09-03 |
+| `openai-compatible` | yes, when the backend streams `reasoning_content` (or `reasoning`) deltas | the full reasoning text as the model wrote it | verified end to end (SSE + history row) on DeepSeek V4 (SGLang, 893 chars) and Qwen 3.8 (vLLM, 440 chars) through a LiteLLM router, 2026-09-03 |
 | `openai-compatible`, inline `<think>` models (DeepSeek-R1, QwQ) | no | the reasoning stays inside the reply text as the model emits it | not supported — needs tag detection and its own capability, see below |
-| `claude-cli` | yes | Anthropic's thinking blocks; on adaptive-thinking models (Opus 4.6+, Sonnet 4.6+, Fable) the provider may return a **summary** instead of the raw trace, and some blocks arrive **redacted** — shown as one placeholder line | verified on the Claude models in this setup, 2026-09-03 |
-| `codex-cli` | yes, summaries | codex never streams the raw chain of thought; it emits one `reasoning` item per reasoning phase carrying the provider's summary | verified on gpt-5.5, 2026-09-03 |
+| `claude-cli` | placeholder only with the current SDK | The Claude Agent SDK carries thinking as its own blocks, but what those blocks contain depends on the SDK version, not on somora: with `@anthropic-ai/claude-agent-sdk` 0.3.258 every model measured (Fable, Opus 4.7, Sonnet 4.6) runs the thinking phase and delivers an **empty** block — somora shows one placeholder line. With SDK 0.3.215 Sonnet 4.6 streamed the text (280 chars on a short problem) while Fable and Opus 4.7 stayed empty. Explicitly redacted blocks get their own placeholder. | measured 2026-09-03 on both SDK versions |
+| `codex-cli` | summaries, first turn of a session only | codex never streams the raw chain of thought; with `model_reasoning_summary=auto` (somora sets it while `thinkingContent.capture` is on) it emits one `reasoning` item per thinking phase carrying the provider's summary — a heading-like sentence. On a **resumed** thread (every turn after the first in a session) codex 0.151 emits no reasoning item at all, flag or not. | verified on gpt-5.5, 2026-09-03 |
 | `grok-cli` | wired, unverified | ACP `agent_thought_chunk` frames, cumulative like message chunks | nobody here has a Grok account — the mapping follows the ACP schema only |
 
 The token counter and the badge are unchanged and work on every engine
 that reports reasoning at all; the content layer sits on top and is
-simply absent where an engine has nothing to show.
+simply absent where an engine has nothing to show. In practice this
+means: the full text comes from the local and routed models on
+`openai-compatible`; Claude and Codex give a placeholder or a one-line
+summary, because their providers do not disclose the trace.
 
 ### Configuration
 

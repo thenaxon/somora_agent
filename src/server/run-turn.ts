@@ -970,6 +970,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         })(),
         ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
         ...(effectiveSampling ? { sampling: effectiveSampling } : {}),
+        captureThinking: deps.config.thinkingContent.capture,
         ...(signal ? { signal } : {}),
         ...(resolvedAttachments.length > 0 ? { attachments: resolvedAttachments } : {}),
       },

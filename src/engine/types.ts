@@ -187,6 +187,13 @@ export interface TurnInput {
    */
   sampling?: SamplingConfig;
   /**
+   * config.thinkingContent.capture — engines that must ASK their
+   * provider for reasoning content (codex-cli: model_reasoning_summary)
+   * only do so when this is true. run-turn drops thinking events when
+   * it is false regardless, this just avoids requesting them.
+   */
+  captureThinking?: boolean;
+  /**
    * Agent-to-agent (A2A) sender attribution. When set, the
    * `userMessage` for this turn was written by another agent, not by
    * the human user. Engines prepend a `[Message from agent <name>]`

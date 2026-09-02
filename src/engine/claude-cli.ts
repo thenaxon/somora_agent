@@ -321,6 +321,11 @@ export const claudeCliEngine: AgentEngine = {
       let thinkingCumulative = '';
       let receivedThinkingViaStream = false;
       let sawRedactedThinking = false;
+      // A thinking block that carried no text at all: on adaptive-thinking
+      // models (Fable, Opus 4.7) the API streams only pings for the
+      // thinking phase and the block arrives empty — the model did think,
+      // the provider just does not disclose it. Shown as a placeholder.
+      let sawEmptyThinkingBlock = false;
 
       // Manual iteration with abort-race instead of `for await (... of
       // stream)`. The SDK's iterator sits on top of an stdio pipe to
@@ -453,6 +458,8 @@ export const claudeCliEngine: AgentEngine = {
               if (typeof t === 'string' && t.length > 0) {
                 thinkingCumulative += (thinkingCumulative ? '\n\n' : '') + t;
                 yield { kind: 'thinking_delta', ts: ts(), engine: ENGINE, text: thinkingCumulative };
+              } else {
+                sawEmptyThinkingBlock = true;
               }
             } else if (block.type === 'redacted_thinking') {
               sawRedactedThinking = true;
@@ -507,8 +514,10 @@ export const claudeCliEngine: AgentEngine = {
             // of truth, and fall back to `msg.result` only when no
             // streaming happened (defensive — shouldn't trigger in
             // practice since claude-agent-sdk always streams).
-            if (sawRedactedThinking && !thinkingCumulative) {
-              thinkingCumulative = '(thinking redacted by the provider)';
+            if (!thinkingCumulative && (sawRedactedThinking || sawEmptyThinkingBlock)) {
+              thinkingCumulative = sawRedactedThinking
+                ? '(thinking redacted by the provider)'
+                : '(the model thought, but the provider does not disclose the thinking text for this model)';
             }
             if (thinkingCumulative) {
               yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: thinkingCumulative };

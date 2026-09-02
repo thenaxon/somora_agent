@@ -337,6 +337,14 @@ export const codexCliEngine: AgentEngine = {
     // Helper guards on 'reasoning' capability + maps 'off' → 'minimal'
     // (codex has no true off-switch for reasoning models).
     args.push(...codexCliReasoningArgs(thinking, resolvedModel.model));
+    // Reasoning CONTENT: codex emits `reasoning` items (the provider's
+    // summary of each thinking phase) only when a summary mode is set —
+    // `codex exec` defaults to none (probed 2026-09-03: none → no items,
+    // auto → one item per phase). Requested only when the server wants
+    // thinking content at all.
+    if (input.captureThinking && resolvedModel.model.capabilities.includes('reasoning')) {
+      args.push('-c', 'model_reasoning_summary=auto');
+    }
     args.push('--json', '--skip-git-repo-check');
     // Sandbox policy: `--dangerously-bypass-approvals-and-sandbox` instead
     // of `--sandbox danger-full-access`. The scary name is the accurate one
