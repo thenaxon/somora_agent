@@ -34,6 +34,7 @@ import {
   listAllModels,
   resolveAnyRef,
   type ThinkingLevel,
+  type SamplingConfig,
 } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
@@ -60,6 +61,7 @@ import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { buildSelfPointer } from './workspace.ts';
 import { resolveOpenAiReasoning } from '../engine/thinking-params.ts';
+import { mergeSampling } from '../engine/sampling.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 
 const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'high']);
@@ -261,6 +263,20 @@ function resolveEffectiveThinking(
     return override as ThinkingLevel;
   }
   return persona.thinking;
+}
+
+/** Sampling: model default < agent.yaml < session override, per key. */
+export function resolveEffectiveSampling(
+  model: { sampling?: SamplingConfig },
+  persona: Persona,
+  sessionMeta: Record<string, unknown>,
+): SamplingConfig | undefined {
+  const override = sessionMeta.samplingOverride;
+  return mergeSampling(
+    model.sampling,
+    persona.sampling,
+    override && typeof override === 'object' ? (override as Record<string, unknown>) : undefined,
+  );
 }
 
 export interface RunChatTurnArgs {
@@ -754,6 +770,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
 
   const modelSupportsReasoning = resolvedModel.model.capabilities.includes('reasoning');
   const effectiveThinking = resolveEffectiveThinking(persona, sessionMeta);
+  const effectiveSampling = resolveEffectiveSampling(resolvedModel.model, persona, sessionMeta);
   // What the openai-compatible engine will actually put on the wire for
   // this level (per-model `reasoning.levels`). Only sent to clients when
   // it differs from the level itself, so the badge can read `high→xhigh`.
@@ -952,6 +969,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           return t !== undefined ? { toolIdleTimeoutMs: t } : {};
         })(),
         ...(effectiveThinking ? { thinking: effectiveThinking } : {}),
+        ...(effectiveSampling ? { sampling: effectiveSampling } : {}),
         ...(signal ? { signal } : {}),
         ...(resolvedAttachments.length > 0 ? { attachments: resolvedAttachments } : {}),
       },

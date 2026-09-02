@@ -15,6 +15,16 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, type ModelOption, type ProjectInfo, type SessionSummary } from '../lib/api';
+import {
+  SAMPLING_KEYS,
+  SAMPLING_KEY_HINTS,
+  SAMPLING_USAGE,
+  TEMP_USAGE,
+  formatSamplingParams,
+  parseSamplingArgs,
+  parseSamplingValue,
+  type SamplingPatch,
+} from '../lib/sampling';
 import { useChatContext } from './ChatProvider';
 
 export type SlashCommand =
@@ -22,6 +32,11 @@ export type SlashCommand =
   | { kind: 'session'; slug: string }
   | { kind: 'new'; slug: string }
   | { kind: 'thinking'; level: 'off' | 'low' | 'medium' | 'high' | 'default' }
+  // Sampling: `set` PUTs a merge-patch (null removes a key), `clear`
+  // DELETEs the whole override, `show` only reports the effective params.
+  | { kind: 'sampling'; params: SamplingPatch }
+  | { kind: 'sampling-clear' }
+  | { kind: 'sampling-show' }
   | { kind: 'reset' }
   | { kind: 'projekt'; slug: string }
   | { kind: 'projekt-unlink' };
@@ -37,6 +52,12 @@ const COMMANDS: CommandSpec[] = [
   { name: '/session', usage: '/session <slug>', hint: 'switch to another session of this agent' },
   { name: '/new', usage: '/new <slug>', hint: 'create a new session and switch to it' },
   { name: '/thinking', usage: '/thinking <level>', hint: 'off | low | medium | high | default' },
+  {
+    name: '/sampling',
+    usage: '/sampling [key=value …|default]',
+    hint: 'temperature, top_p, top_k, … for this session (openai-compatible engine only)',
+  },
+  { name: '/temp', usage: '/temp <0–2>|default', hint: 'shorthand for /sampling temperature=<n>' },
   { name: '/projekt', usage: '/projekt <slug>', hint: 'pin a project to this session (or "unlink" to clear)' },
   { name: '/project', usage: '/project <slug>', hint: 'alias of /projekt' },
   {
@@ -244,6 +265,125 @@ export function SlashCommandPopup({
                 : `effort: ${l}`,
           resolved: { kind: 'thinking', level: l } as SlashCommand,
         }));
+    }
+
+    if (cmd === '/sampling') {
+      // Three phases, all client-side (no fetch):
+      //   `/sampling `            → show-current row + key completions + default
+      //   `/sampling temp`        → key completions filtered by prefix
+      //   `/sampling temperature=1 [top_p=…]` → one confirm row that
+      //                             resolves to a PUT, or a usage row
+      //                             when a pair doesn't parse.
+      // Free-form like `/new`: the popup never executes, it hands the
+      // parsed patch to ChatWindow.dispatchSlash.
+      const arg = argPrefix.replace(/^\s+/, '');
+      const tokens = arg.split(/\s+/).filter((t) => t.length > 0);
+      const trailingSpace = /\s$/.test(arg);
+      const last = trailingSpace ? '' : (tokens[tokens.length - 1] ?? '');
+      const head = trailingSpace ? tokens : tokens.slice(0, -1);
+      const headText = head.length ? `${head.join(' ')} ` : '';
+      const out: PickerRow[] = [];
+
+      if (tokens.length === 0) {
+        out.push({
+          commit: '/sampling',
+          label: 'show current sampling params',
+          detail: 'effective values + where they come from',
+          resolved: { kind: 'sampling-show' } as SlashCommand,
+        });
+      }
+      if (head.length === 0 && (last === '' || 'default'.startsWith(last.toLowerCase()) || last === '-')) {
+        out.push({
+          commit: '/sampling default',
+          label: 'default',
+          detail: 'clear the session override, fall back to persona / model default',
+          resolved: { kind: 'sampling-clear' } as SlashCommand,
+        });
+      }
+      if (last.includes('=')) {
+        // Completed (or in-progress) pair: validate everything typed so far.
+        const parsed = parseSamplingArgs(tokens);
+        if (parsed.ok) {
+          out.push({
+            commit: `/sampling ${tokens.join(' ')}`,
+            label: `set ${formatSamplingParams(parsed.params)}`,
+            detail: 'merges into the session override · "-" removes a key',
+            resolved: { kind: 'sampling', params: parsed.params } as SlashCommand,
+          });
+        } else {
+          out.push({ commit: draft, label: parsed.error, detail: SAMPLING_USAGE });
+        }
+        return out;
+      }
+      // Key completions — commit ends in `=` so the user types the value next.
+      const lower = last.toLowerCase();
+      for (const key of SAMPLING_KEYS) {
+        if (!key.startsWith(lower)) continue;
+        out.push({
+          commit: `/sampling ${headText}${key}=`,
+          label: `${key}=`,
+          detail: SAMPLING_KEY_HINTS[key],
+        });
+      }
+      if (head.length > 0 && last === '') {
+        // `/sampling temperature=1 ` — pairs so far are complete; offer
+        // to send them as-is above the next-key completions.
+        const parsed = parseSamplingArgs(head);
+        out.unshift(
+          parsed.ok
+            ? {
+                commit: `/sampling ${head.join(' ')}`,
+                label: `set ${formatSamplingParams(parsed.params)}`,
+                detail: 'merges into the session override · "-" removes a key',
+                resolved: { kind: 'sampling', params: parsed.params } as SlashCommand,
+              }
+            : { commit: draft, label: parsed.error, detail: SAMPLING_USAGE },
+        );
+      }
+      if (out.length === 0) out.push({ commit: draft, label: `unknown key "${last}"`, detail: SAMPLING_USAGE });
+      return out;
+    }
+
+    if (cmd === '/temp') {
+      const arg = argPrefix.trim();
+      const presets: Array<{ v: string; hint: string }> = [
+        { v: '0.2', hint: 'focused · near-deterministic' },
+        { v: '0.7', hint: 'balanced' },
+        { v: '1.0', hint: 'model default · creative' },
+      ];
+      const lower = arg.toLowerCase();
+      const out: PickerRow[] = [];
+      for (const p of presets) {
+        if (!p.v.startsWith(lower)) continue;
+        out.push({
+          commit: `/temp ${p.v}`,
+          label: p.v,
+          detail: p.hint,
+          resolved: { kind: 'sampling', params: { temperature: Number(p.v) } } as SlashCommand,
+        });
+      }
+      if (!arg || 'default'.startsWith(lower) || arg === '-') {
+        out.push({
+          commit: '/temp default',
+          label: 'default',
+          detail: 'remove only the temperature override (other sampling keys stay)',
+          resolved: { kind: 'sampling', params: { temperature: null } } as SlashCommand,
+        });
+      }
+      if (arg && !presets.some((p) => p.v === arg) && arg !== 'default' && arg !== '-') {
+        const v = parseSamplingValue('temperature', arg);
+        out.unshift(
+          v.ok
+            ? {
+                commit: `/temp ${arg}`,
+                label: `temperature=${arg}`,
+                detail: 'PUT { temperature } into the session override',
+                resolved: { kind: 'sampling', params: { temperature: v.value as number } } as SlashCommand,
+              }
+            : { commit: draft, label: v.error, detail: TEMP_USAGE },
+        );
+      }
+      return out;
     }
 
     if (cmd === '/projekt' || cmd === '/project') {

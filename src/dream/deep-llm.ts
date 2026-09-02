@@ -27,6 +27,7 @@ import type { ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { claudeCliThinkingOptions, codexCliReasoningArgs } from '../engine/thinking-params.ts';
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
+import { samplingBody } from '../engine/sampling.ts';
 
 export interface OneShotArgs {
   workerModel: ResolvedModel;
@@ -101,6 +102,7 @@ async function callOpenAICompat(args: OneShotArgs): Promise<string> {
             ...(args.workerModel.model.maxTokens
               ? { max_tokens: args.workerModel.model.maxTokens }
               : {}),
+            ...samplingBody(args.workerModel.model.sampling),
             ...reasoningBody,
           },
           args.signal ? { signal: args.signal } : undefined,

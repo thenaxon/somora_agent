@@ -27,6 +27,7 @@ import { useChatSessionFromContext } from './ChatProvider';
 import { useActivity } from './ActivityProvider';
 import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
+import { formatSamplingParams, hasSamplingParams } from '../lib/sampling';
 import { AttachmentTray, type PendingAttachment } from './AttachmentTray';
 import { ScreenshotCapture } from './ScreenshotCapture';
 import { MicCapture } from './MicCapture';
@@ -69,7 +70,10 @@ export function ChatWindow({
   onUnpin,
 }: Props) {
   const color = resolveAgentColor(agent);
-  const { model, thinking, refresh: refreshSessionInfo } = useSessionInfo(agent.name, sessionId);
+  const { model, thinking, sampling, refresh: refreshSessionInfo } = useSessionInfo(
+    agent.name,
+    sessionId,
+  );
   const chat = useChatSessionFromContext(agent.name, sessionId);
   const activity = useActivity();
   // Agent registry — used to resolve sender color+icon for A2A
@@ -471,6 +475,36 @@ export function ChatWindow({
           await api.setSessionThinking(agent.name, sessionId, cmd.level);
           refreshSessionInfo();
           setSystemNotice({ text: `thinking → ${cmd.level}`, tone: 'info' });
+        } else if (cmd.kind === 'sampling') {
+          await api.setSessionSampling(agent.name, sessionId, cmd.params);
+          refreshSessionInfo();
+          // Re-read so the notice shows the MERGED result (PUT merges
+          // into the existing override) and can flag a dormant engine.
+          const info = await api.sessionSampling(agent.name, sessionId).catch(() => null);
+          const dormant = info && !info.engineSupportsSampling ? ' (dormant — engine ignores sampling)' : '';
+          setSystemNotice({
+            text: `sampling → ${formatSamplingParams(info ? info.effective : cmd.params)}${dormant}`,
+            tone: 'info',
+          });
+        } else if (cmd.kind === 'sampling-clear') {
+          await api.clearSessionSampling(agent.name, sessionId);
+          refreshSessionInfo();
+          setSystemNotice({ text: 'sampling override cleared', tone: 'info' });
+        } else if (cmd.kind === 'sampling-show') {
+          const info = await api.sessionSampling(agent.name, sessionId);
+          const source =
+            info.source === 'session-override'
+              ? 'session override'
+              : info.source === 'persona-default'
+                ? 'persona default'
+                : info.source === 'model-default'
+                  ? 'model default'
+                  : 'engine default';
+          const dormant = !info.engineSupportsSampling ? ' · dormant: engine ignores sampling' : '';
+          setSystemNotice({
+            text: `sampling: ${formatSamplingParams(info.effective)} · ${source}${dormant}`,
+            tone: 'info',
+          });
         } else if (cmd.kind === 'session') {
           onSwitchSession?.(cmd.slug);
           setSystemNotice({ text: `switched to session "${cmd.slug}"`, tone: 'info' });
@@ -753,6 +787,13 @@ export function ChatWindow({
   const thinkingLevelSet = thinking?.effective && thinking.effective !== 'off';
   const thinkingActive = thinkingLevelSet && thinking?.modelSupportsReasoning;
   const thinkingDormant = thinkingLevelSet && !thinking?.modelSupportsReasoning;
+  // Sampling badge mirrors the thinking one: 🌡 <temperature> when the
+  // engine honours sampling, a muted "(dormant)" marker when params are
+  // set but the active engine ignores them, nothing when unset.
+  const samplingSet = hasSamplingParams(sampling?.effective);
+  const samplingActive = samplingSet && sampling?.engineSupportsSampling;
+  const samplingDormant = samplingSet && !sampling?.engineSupportsSampling;
+  const samplingTitle = `sampling: ${formatSamplingParams(sampling?.effective)}`;
 
   return (
     <div
@@ -918,6 +959,25 @@ export function ChatWindow({
                 >
                   thinking={thinking?.effective}{' '}
                   <span style={{ color: 'var(--warn)' }}>(dormant)</span>
+                </span>
+              </>
+            )}
+            {samplingActive && sampling?.effective?.temperature !== undefined && (
+              <>
+                <Sep />
+                <span style={{ color: 'var(--accent)' }} title={samplingTitle}>
+                  🌡 {sampling.effective.temperature}
+                </span>
+              </>
+            )}
+            {samplingDormant && (
+              <>
+                <Sep />
+                <span
+                  style={{ color: 'var(--text-2)' }}
+                  title={`${samplingTitle} — only the openai-compatible engine applies sampling params; switch model, or run /sampling default`}
+                >
+                  sampling <span style={{ color: 'var(--warn)' }}>(dormant)</span>
                 </span>
               </>
             )}

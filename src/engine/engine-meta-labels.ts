@@ -25,6 +25,9 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // somora-emitted: the backend rejected the reasoning-effort value,
     // the engine retried with a neighbour (or without the param).
     reasoning_effort_adjusted: 'reasoning effort adjusted',
+    // somora-emitted: the backend rejected a sampling key (temperature,
+    // top_p, …), the engine retried without sampling.
+    sampling_dropped: 'sampling dropped',
   },
 };
 
@@ -59,6 +62,10 @@ export function summariseEngineMeta(
       return `codex thread restarted for model switch ${p.from} → ${p.to}`;
     }
     return undefined;
+  }
+  if (engine === 'openai-compatible' && itemType === 'sampling_dropped') {
+    const p = payload as { text?: unknown } | null | undefined;
+    return p && typeof p.text === 'string' ? p.text : 'sampling parameters rejected by the backend — sent without them';
   }
   if (engine === 'openai-compatible' && itemType === 'reasoning_effort_adjusted') {
     const p = payload as { text?: unknown; requested?: unknown; sent?: unknown } | null | undefined;

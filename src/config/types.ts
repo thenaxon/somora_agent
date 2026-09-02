@@ -53,6 +53,29 @@ export const ModelReasoningSchema = z.object({
 });
 export type ModelReasoningConfig = z.infer<typeof ModelReasoningSchema>;
 
+/**
+ * Sampling parameters for the `openai-compatible` engine. Set as a model
+ * default here, as an agent default in agent.yaml (`sampling:`), or per
+ * session via `/sampling` / `/temp`; later layers win per key. Every key
+ * goes on the wire under its own name — a backend that rejects one
+ * answers 400 and the engine retries once without sampling. See
+ * docs/sampling.md.
+ */
+export const SamplingSchema = z
+  .object({
+    temperature: z.number().min(0).max(2).optional(),
+    top_p: z.number().min(0).max(1).optional(),
+    top_k: z.number().int().min(1).optional(),
+    min_p: z.number().min(0).max(1).optional(),
+    frequency_penalty: z.number().min(-2).max(2).optional(),
+    presence_penalty: z.number().min(-2).max(2).optional(),
+    repetition_penalty: z.number().positive().optional(),
+    seed: z.number().int().optional(),
+    stop: z.union([z.string().min(1), z.array(z.string().min(1)).max(4)]).optional(),
+  })
+  .strict();
+export type SamplingConfig = z.infer<typeof SamplingSchema>;
+
 export const ModelSchema = z.object({
   id: z.string().min(1),
   /**
@@ -78,6 +101,9 @@ export const ModelSchema = z.object({
   maxTokens: z.number().int().positive().optional(),
   /** Reasoning vocabulary + wire shape for this model (openai-compatible only). */
   reasoning: ModelReasoningSchema.optional(),
+  /** Vendor-recommended sampling defaults for this model (openai-compatible
+   *  only). agent.yaml `sampling:` and the session override win per key. */
+  sampling: SamplingSchema.optional(),
   /**
    * Only read by the `openai-compatible` engine. When unset (the common
    * case), that engine sends `parallel_tool_calls: false` so the model

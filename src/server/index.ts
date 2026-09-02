@@ -19,7 +19,8 @@ import {
 import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
-import { workerChain, type Config, resolveAnyRef, type ThinkingLevel } from '../config/types.ts';
+import { workerChain, type Config, resolveAnyRef, type ThinkingLevel, SamplingSchema } from '../config/types.ts';
+import { mergeSampling, SAMPLING_KEYS } from '../engine/sampling.ts';
 import { storeAttachment } from '../attachments/store.ts';
 import { generateImage, ImageGenError } from '../imagegen/generate.ts';
 import { referenceFromBase64 } from '../imagegen/references.ts';
@@ -2103,6 +2104,99 @@ app.delete('/agents/:agent/sessions/:session/thinking', async (c) => {
     return rest;
   });
   logger.info({ msg: 'session.thinking_clear', agent, session });
+  return c.json({ agent, session, cleared: true });
+});
+
+// Sampling endpoints — mirror /thinking. Effective = model default <
+// agent.yaml `sampling:` < session override, merged per key. PUT merges
+// into the override (a null value drops that key); DELETE clears it.
+app.get('/agents/:agent/sessions/:session/sampling', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  const meta = await sessionMetaStore.get(agent, session);
+  const resolved = resolveEffectiveModel(config, persona, meta);
+  const override =
+    meta.samplingOverride && typeof meta.samplingOverride === 'object'
+      ? (mergeSampling(meta.samplingOverride as Record<string, unknown>) ?? null)
+      : null;
+  const modelDefault = resolved?.model.sampling ?? null;
+  const personaDefault = persona.sampling ?? null;
+  const effective = mergeSampling(modelDefault, personaDefault, override) ?? null;
+  return c.json({
+    agent,
+    session,
+    effective,
+    override,
+    personaDefault,
+    modelDefault,
+    source: override
+      ? 'session-override'
+      : personaDefault
+        ? 'persona-default'
+        : modelDefault
+          ? 'model-default'
+          : 'engine-default',
+    engineSupportsSampling: resolved?.provider.engine === 'openai-compatible',
+  });
+});
+
+app.put('/agents/:agent/sessions/:session/sampling', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length === 0) {
+    return c.json({ error: 'body must be an object of sampling keys (temperature, top_p, …)' }, 400);
+  }
+  // Validate the non-null part against the schema; nulls are deletions.
+  const toSet: Record<string, unknown> = {};
+  const toDrop: string[] = [];
+  for (const [k, v] of Object.entries(body)) {
+    if (!(SAMPLING_KEYS as readonly string[]).includes(k)) {
+      return c.json({ error: `unknown sampling key '${k}' — allowed: ${SAMPLING_KEYS.join(', ')}` }, 400);
+    }
+    if (v === null) toDrop.push(k);
+    else toSet[k] = v;
+  }
+  const parsed = SamplingSchema.safeParse(toSet);
+  if (!parsed.success) {
+    return c.json({ error: `invalid sampling value: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}` }, 400);
+  }
+  let next: Record<string, unknown> = {};
+  await sessionMetaStore.update(agent, session, (current) => {
+    const existing =
+      current.samplingOverride && typeof current.samplingOverride === 'object'
+        ? (current.samplingOverride as Record<string, unknown>)
+        : {};
+    next = { ...existing, ...parsed.data };
+    for (const k of toDrop) delete next[k];
+    if (Object.keys(next).length === 0) {
+      const { samplingOverride: _drop, ...rest } = current;
+      return rest;
+    }
+    return { ...current, samplingOverride: next };
+  });
+  logger.info({ msg: 'session.sampling_set', agent, session, override: next });
+  return c.json({ agent, session, override: Object.keys(next).length > 0 ? next : null });
+});
+
+app.delete('/agents/:agent/sessions/:session/sampling', async (c) => {
+  const agent = c.req.param('agent');
+  const sessionRef = c.req.param('session');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  await sessionMetaStore.update(agent, session, (current) => {
+    const { samplingOverride: _drop, ...rest } = current;
+    return rest;
+  });
+  logger.info({ msg: 'session.sampling_clear', agent, session });
   return c.json({ agent, session, cleared: true });
 });
 

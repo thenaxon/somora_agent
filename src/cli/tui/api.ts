@@ -15,8 +15,10 @@ import type {
   ProjectEntityInfo,
   ProjectInfo,
   ResetResult,
+  SamplingPatch,
   SessionModelInfo,
   SessionProjectInfo,
+  SessionSamplingInfo,
   SessionSummary,
   SessionThinkingInfo,
   ThinkingLevel,
@@ -148,6 +150,36 @@ export class Api {
   async clearSessionThinking(agent: string, session: string): Promise<void> {
     const res = await loopbackFetch(
       `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/thinking`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) throw new Error(await res.text());
+  }
+
+  async fetchSessionSampling(agent: string, session: string): Promise<SessionSamplingInfo | null> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/sampling`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as SessionSamplingInfo;
+  }
+
+  /** PUT merges into the existing override; a key set to null removes it. */
+  async setSessionSampling(agent: string, session: string, patch: SamplingPatch): Promise<void> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/sampling`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+    );
+    if (!res.ok) throw new Error(await res.text());
+  }
+
+  /** DELETE clears the whole session override. */
+  async clearSessionSampling(agent: string, session: string): Promise<void> {
+    const res = await loopbackFetch(
+      `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/sampling`,
       { method: 'DELETE' },
     );
     if (!res.ok) throw new Error(await res.text());

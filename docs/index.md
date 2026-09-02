@@ -150,6 +150,7 @@ high-value next steps in rough order:
 | [videogen.md](videogen.md) | Text-to-video | Job-based renders, and how an agent gets its result without waiting |
 | [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
 | [thinking.md](thinking.md) | Reasoning depth | Per-engine thinking levels, session overrides |
+| [sampling.md](sampling.md) | Sampling parameters | temperature, top_p and friends per model, agent and session |
 | [display.md](display.md) | TUI toggles | What the terminal client shows |
 | [cache-strategy.md](cache-strategy.md) | Prompt-cache mechanics | Why the system prompt is ordered the way it is |
 | [security.md](security.md) | Trust model | Network posture, sandbox stance |

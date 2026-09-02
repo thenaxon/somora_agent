@@ -23,6 +23,7 @@ import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { Finding, FindingAction } from './types.ts';
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
+import { samplingBody } from '../engine/sampling.ts';
 
 export interface ExtractContext {
   agent: string;
@@ -483,6 +484,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
                 ...(ctx.workerModel.model.maxTokens
                   ? { max_tokens: ctx.workerModel.model.maxTokens }
                   : {}),
+                ...samplingBody(ctx.workerModel.model.sampling),
                 ...reasoningBody,
               },
               // Pass the abort signal through to the HTTP layer so shutdown /

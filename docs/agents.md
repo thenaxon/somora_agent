@@ -74,6 +74,13 @@ fallback: gpt55       # used when primary fails before producing any output
 # the `reasoning` capability — see thinking.md.
 thinking: medium
 
+# Optional: sampling defaults for openai-compatible models (temperature,
+# top_p, top_k, …). Override the model's own defaults per key; per-session
+# via /sampling and /temp. Dormant on claude-cli / codex-cli — see sampling.md.
+sampling:
+  temperature: 1.0
+  top_p: 0.95
+
 # Optional: per-agent workspace override. Default cwd for the file_* tools.
 # Falls back to config.workspace.default (~/somoraworkspace) when unset.
 workspace:

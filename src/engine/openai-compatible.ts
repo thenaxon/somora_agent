@@ -34,6 +34,7 @@ import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
 import { openAiReasoningState, withReasoningRetry } from './reasoning-retry.ts';
+import { formatSampling, isSamplingParamError, samplingBody } from './sampling.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -485,6 +486,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       resolvedModel,
       availableModels,
       thinking,
+      sampling,
       signal,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
@@ -736,15 +738,34 @@ export const openAiCompatibleEngine: AgentEngine = {
       // src/engine/reasoning-retry.ts. The adjusted value sticks for the
       // remaining rounds of this turn; `reasoning.adjustment` is yielded
       // once as engine_meta below so the user sees what was sent.
-      const createChatStream = (params: CreateParams) =>
-        withReasoningRetry(
-          reasoning,
-          (body) =>
-            client.chat.completions.create({ ...params, ...body } as CreateParams, {
-              signal: effectiveSignal,
-            }),
-          { engine: ENGINE, provider: resolvedModel.providerName, model: resolvedModel.modelId, agent, session },
-        );
+      // Sampling (temperature, top_p, …): model default < agent.yaml <
+      // session override, merged by run-turn. A backend that rejects a
+      // key answers 400 → retry ONCE without any sampling and say so via
+      // engine_meta; the drop sticks for the rest of the turn.
+      let samplingParam: Record<string, unknown> = samplingBody(sampling);
+      let samplingDropped: { sent: Record<string, unknown>; backend: string } | null = null;
+      const logCtx = { engine: ENGINE, provider: resolvedModel.providerName, model: resolvedModel.modelId, agent, session };
+      const createChatStream = async (params: CreateParams) => {
+        const send = () =>
+          withReasoningRetry(
+            reasoning,
+            (body) =>
+              client.chat.completions.create({ ...params, ...samplingParam, ...body } as CreateParams, {
+                signal: effectiveSignal,
+              }),
+            logCtx,
+          );
+        try {
+          return await send();
+        } catch (err) {
+          if (Object.keys(samplingParam).length === 0 || !isSamplingParamError(err)) throw err;
+          const backend = String((err as Error).message ?? err).slice(0, 300);
+          logger.warn({ msg: 'engine.sampling_rejected', ...logCtx, sent: samplingParam, backend });
+          samplingDropped = { sent: samplingParam, backend };
+          samplingParam = {};
+          return await send();
+        }
+      };
 
       let round = 0;
       // Did the LAST executed round still want tools? Distinguishes
@@ -787,6 +808,23 @@ export const openAiCompatibleEngine: AgentEngine = {
               : {}),
           ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
         });
+        if (samplingDropped) {
+          const dropped: { sent: Record<string, unknown>; backend: string } = samplingDropped;
+          samplingDropped = null;
+          yield {
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'sampling_dropped',
+            payload: {
+              text:
+                `${resolvedModel.modelId} rejected the sampling parameters (${formatSampling(dropped.sent as never)}) — ` +
+                'sent without them for this turn. Remove the offending key from the model, agent or session sampling to make this permanent.',
+              sent: dropped.sent,
+              backend: dropped.backend,
+            },
+          };
+        }
         if (reasoning.adjustment) {
           const adj = reasoning.adjustment;
           reasoning.adjustment = null;

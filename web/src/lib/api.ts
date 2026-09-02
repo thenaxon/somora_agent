@@ -5,6 +5,9 @@
 // All calls go to relative paths so they work both in dev (Vite
 // proxy → :18737) and in production (same-origin under :18737/web).
 
+import type { SamplingParams, SamplingPatch } from './sampling';
+export type { SamplingParams, SamplingPatch } from './sampling';
+
 export interface AgentInfo {
   name: string;
   description: string;
@@ -153,6 +156,20 @@ export interface SessionThinkingInfo {
   /** Value the engine actually sends when it differs from `effective`
    *  (per-model reasoning vocabulary, e.g. high → xhigh); 'off' = omitted. */
   wire?: string | null;
+}
+
+export interface SessionSamplingInfo {
+  agent: string;
+  session: string;
+  /** Merged view: model default < agent.yaml < session override. */
+  effective: SamplingParams | null;
+  override: SamplingParams | null;
+  personaDefault: SamplingParams | null;
+  modelDefault: SamplingParams | null;
+  source: 'session-override' | 'persona-default' | 'model-default' | 'engine-default';
+  /** Only the openai-compatible engine honours sampling params;
+   *  false = the values are stored but dormant on the active engine. */
+  engineSupportsSampling: boolean;
 }
 
 async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -466,6 +483,32 @@ export const api = {
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`set-thinking ${res.status}: ${body.slice(0, 200)}`);
+    }
+  },
+  sessionSampling: (agent: string, session: string) =>
+    getJson<SessionSamplingInfo>(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/sampling`,
+    ),
+  /** PUT merges into the existing override; a key set to null removes it. */
+  setSessionSampling: async (agent: string, session: string, patch: SamplingPatch): Promise<void> => {
+    const url = `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/sampling`;
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`set-sampling ${res.status}: ${body.slice(0, 200)}`);
+    }
+  },
+  /** DELETE clears the whole session override. */
+  clearSessionSampling: async (agent: string, session: string): Promise<void> => {
+    const url = `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/sampling`;
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`clear-sampling ${res.status}: ${body.slice(0, 200)}`);
     }
   },
   history: (

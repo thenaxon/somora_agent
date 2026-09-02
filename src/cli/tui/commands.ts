@@ -8,6 +8,14 @@
 // touch React state. The App turns the actions into setState calls.
 
 import type { Api } from './api.ts';
+import {
+  SAMPLING_USAGE,
+  TEMP_USAGE,
+  formatSamplingParams,
+  parseSamplingArgs,
+  parseSamplingValue,
+} from './sampling.ts';
+import type { SamplingPatch, SessionSamplingInfo } from './types.ts';
 
 export type ShowTarget = 'memory' | 'tools';
 export type VerboseTarget = 'tools' | 'memory' | 'system';
@@ -44,6 +52,8 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
   { name: '/verbose', usage: '/verbose [tools|memory|system] [on|off]' },
   { name: '/thinking', usage: '/thinking [off|low|medium|high|default]' },
+  { name: '/sampling', usage: '/sampling [key=value …|default]' },
+  { name: '/temp', usage: '/temp <0–2>|default' },
   { name: '/export', usage: '/export [json|markdown] [path]' },
   { name: '/projekt', usage: '/projekt [<slug>|unlink]' },
   { name: '/project', usage: '/project [<slug>|unlink]' },
@@ -104,6 +114,13 @@ const HELP_TEXT_BASE = `Available commands:
   /thinking                   — show effective thinking depth + source
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
+  /sampling                   — show effective sampling params + source
+  /sampling key=value …       — set sampling params for this session (temperature, top_p, top_k,
+                                min_p, frequency_penalty, presence_penalty, repetition_penalty,
+                                seed, stop); value "-" removes a key; openai-compatible engine only
+  /sampling default           — clear the session sampling override
+  /temp <0–2>                 — shorthand for /sampling temperature=<n>
+  /temp default               — remove only the temperature override
   /export                     — export current session as markdown to ./<agent>-<session>.md
   /export json [path]         — export as raw JSONL (default path ./<agent>-<session>.jsonl)
   /export markdown [path]     — export as Markdown transcript
@@ -132,6 +149,32 @@ export interface CommandContext {
    *  filter their commands out of /help and matchCommands when off; the
    *  handlers below still reject defensively if reached anyway. */
   featureFlags?: FeatureFlags;
+}
+
+// PUT a sampling merge-patch, then re-read so the notice shows the
+// MERGED effective params (the server merges into the existing
+// override) and can flag a dormant engine. Shared by /sampling and /temp.
+async function applySamplingPatch(
+  ctx: CommandContext,
+  patch: SamplingPatch,
+): Promise<CommandAction[]> {
+  try {
+    await ctx.api.setSessionSampling(ctx.agent, ctx.session, patch);
+    const info: SessionSamplingInfo | null = await ctx.api.fetchSessionSampling(ctx.agent, ctx.session);
+    const dormant = !!info && !info.engineSupportsSampling;
+    const dormantPart = dormant
+      ? ' (dormant — only the openai-compatible engine applies sampling params)'
+      : '';
+    return [
+      {
+        kind: 'notice',
+        text: `sampling → ${formatSamplingParams(info ? info.effective : patch)}${dormantPart}`,
+        tone: dormant ? 'warn' : 'info',
+      },
+    ];
+  } catch (err) {
+    return [{ kind: 'notice', text: (err as Error).message, tone: 'error' }];
+  }
 }
 
 export async function runCommand(
@@ -424,6 +467,71 @@ export async function runCommand(
       } catch (err) {
         out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
       }
+      return out;
+    }
+
+    case '/sampling': {
+      const arg = args[0];
+      if (!arg) {
+        const info = await ctx.api.fetchSessionSampling(ctx.agent, ctx.session);
+        if (!info) {
+          out.push({ kind: 'notice', text: 'could not fetch sampling state', tone: 'error' });
+          return out;
+        }
+        const eff = formatSamplingParams(info.effective);
+        const sourcePart =
+          info.source === 'session-override'
+            ? ` — session-override (persona default: ${formatSamplingParams(info.personaDefault)})`
+            : info.source === 'persona-default'
+              ? ' — persona default'
+              : info.source === 'model-default'
+                ? ' — model default'
+                : ' — no setting, engine default';
+        const dormant = info.effective !== null && !info.engineSupportsSampling;
+        const dormantPart = dormant
+          ? `\n  warning: only the openai-compatible engine applies sampling params — setting is dormant`
+          : '';
+        out.push({
+          kind: 'notice',
+          text: `Sampling: ${eff}${sourcePart}${dormantPart}`,
+          tone: dormant ? 'warn' : 'info',
+        });
+        return out;
+      }
+      if (arg === 'default' || arg === '-') {
+        try {
+          await ctx.api.clearSessionSampling(ctx.agent, ctx.session);
+          out.push({ kind: 'notice', text: 'sampling override cleared', tone: 'info' });
+        } catch (err) {
+          out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
+        }
+        return out;
+      }
+      const parsed = parseSamplingArgs(args);
+      if (!parsed.ok) {
+        out.push({ kind: 'notice', text: `${parsed.error}\n${SAMPLING_USAGE}`, tone: 'warn' });
+        return out;
+      }
+      out.push(...(await applySamplingPatch(ctx, parsed.params)));
+      return out;
+    }
+
+    case '/temp': {
+      const arg = args[0];
+      if (!arg) {
+        out.push({ kind: 'notice', text: TEMP_USAGE, tone: 'warn' });
+        return out;
+      }
+      if (arg === 'default' || arg === '-') {
+        out.push(...(await applySamplingPatch(ctx, { temperature: null })));
+        return out;
+      }
+      const v = parseSamplingValue('temperature', arg);
+      if (!v.ok) {
+        out.push({ kind: 'notice', text: `${v.error}\n${TEMP_USAGE}`, tone: 'warn' });
+        return out;
+      }
+      out.push(...(await applySamplingPatch(ctx, { temperature: v.value as number })));
       return out;
     }
 

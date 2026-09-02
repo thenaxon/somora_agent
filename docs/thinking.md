@@ -231,6 +231,9 @@ fine and safer for tooling that reads the file with a YAML 1.1 parser.
 The badge shows the mapped word whenever it differs from the level:
 `🧠 high→xhigh`, or `🧠 high→off` when the level maps to "omit".
 
+Sampling parameters (`temperature`, `top_p`, …) follow the same
+three-layer pattern and are described in [sampling.md](sampling.md).
+
 ## Reasoning-token visibility
 
 When the engine reports reasoning tokens in the turn's usage, somora

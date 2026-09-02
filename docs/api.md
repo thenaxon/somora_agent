@@ -710,6 +710,23 @@ model-set endpoints.
 
 ---
 
+
+## Sampling
+
+Per-session sampling override (`temperature`, `top_p`, …), merged over
+the agent's and the model's defaults. Only the `openai-compatible`
+engine applies it — `engineSupportsSampling` tells clients whether the
+setting is live or dormant. Full description in [sampling.md](sampling.md).
+
+```bash
+curl https://<host>:18737/agents/<your-agent>/sessions/main/sampling
+
+curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/sampling \
+  -H 'Content-Type: application/json' -d '{"temperature":0.7}'      # merges; null drops a key
+
+curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/sampling
+```
+
 ## Chat
 
 ### `POST /chat/send`

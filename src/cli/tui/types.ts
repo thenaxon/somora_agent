@@ -34,6 +34,23 @@ export interface SessionThinkingInfo {
   wire?: string | null;
 }
 
+import type { SamplingParams } from './sampling.ts';
+export type { SamplingParams, SamplingPatch } from './sampling.ts';
+
+export interface SessionSamplingInfo {
+  agent: string;
+  session: string;
+  /** Merged view: model default < agent.yaml < session override. */
+  effective: SamplingParams | null;
+  override: SamplingParams | null;
+  personaDefault: SamplingParams | null;
+  modelDefault: SamplingParams | null;
+  source: 'session-override' | 'persona-default' | 'model-default' | 'engine-default';
+  /** Only the openai-compatible engine honours sampling params;
+   *  false = the values are stored but dormant on the active engine. */
+  engineSupportsSampling: boolean;
+}
+
 export interface AgentInfo {
   name: string;
   description: string;

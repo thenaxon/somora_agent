@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import matter from 'gray-matter';
 import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
-import { ThinkingLevelSchema, type ThinkingLevel } from '../config/types.ts';
+import { ThinkingLevelSchema, type ThinkingLevel, SamplingSchema, type SamplingConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { normalizeSkillGating, type SkillGating } from '../skills/gating.ts';
 
@@ -107,6 +107,13 @@ const AgentYamlSchema = z
      * model has the 'reasoning' capability — otherwise dormant.
      */
     thinking: ThinkingLevelSchema.optional(),
+    /**
+     * Agent-level sampling defaults (temperature, top_p, …) for the
+     * openai-compatible engine. Overrides the model's `sampling:` block
+     * per key; overridable per session via `/sampling`. Dormant on
+     * claude-cli / codex-cli / grok-cli.
+     */
+    sampling: SamplingSchema.optional(),
     /**
      * Per-agent workspace override. When set, file_* tools default to
      * this dir instead of the server-global `workspace.default`. Path
@@ -199,6 +206,8 @@ export interface Persona {
   model: string | undefined;
   fallback: string | undefined;
   thinking: ThinkingLevel | undefined;
+  /** agent.yaml `sampling:` block, see docs/sampling.md. */
+  sampling: SamplingConfig | undefined;
   /**
    * Optional per-agent workspace override (resolved absolute path with
    * ~ expanded). When undefined, file_* tools fall back to the server-
@@ -334,6 +343,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     model: agentYaml.model,
     fallback: agentYaml.fallback,
     thinking: agentYaml.thinking,
+    sampling: agentYaml.sampling,
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
     skillGating: normalizeSkillGating(agentYaml.skills),
@@ -380,10 +390,15 @@ const SAMPLE_AGENT_YAML = `# Operator config for this agent. Edit by hand — no
 # thinking: cross-engine reasoning depth — off|low|medium|high. Engine
 #           adapters apply it only if the active model has the 'reasoning'
 #           capability. Per-session override via /thinking <level>.
+# sampling: temperature / top_p / … for openai-compatible models. Overrides
+#           the model's defaults per key. Per-session via /sampling, /temp.
 
 model: opus
 # fallback: sonnet
 # thinking: medium
+# sampling:
+#   temperature: 1.0
+#   top_p: 0.95
 `;
 
 const SAMPLE_SOUL_MD = `# Who I am

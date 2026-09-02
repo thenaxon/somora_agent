@@ -380,6 +380,11 @@ providers:
         # where they go in the request — see docs/thinking.md.
         reasoning:
           levels: { high: xhigh }
+        # Vendor-recommended sampling for this model; agent.yaml and the
+        # session override win per key — see docs/sampling.md.
+        sampling:
+          temperature: 1.0
+          top_p: 0.95
 
 agentLoop:
   maxToolCallsPerTurn: 30   # hard ceiling on tool calls per turn (openai-compatible)

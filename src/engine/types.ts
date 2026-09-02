@@ -1,5 +1,5 @@
 import type { CompactionConfig } from '../compaction/types.ts';
-import type { AgentLoopConfig, ResolvedModel, ThinkingLevel } from '../config/types.ts';
+import type { AgentLoopConfig, ResolvedModel, ThinkingLevel, SamplingConfig } from '../config/types.ts';
 import type { ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { DetectedMime } from '../multimodal/mime.ts';
@@ -180,6 +180,12 @@ export interface TurnInput {
    * 'off' disables thinking; missing means "engine default".
    */
   thinking?: ThinkingLevel;
+  /**
+   * Effective sampling parameters for this turn — server merges model
+   * default < agent.yaml < session override. Only the openai-compatible
+   * engine applies them; the others ignore the field (dormant).
+   */
+  sampling?: SamplingConfig;
   /**
    * Agent-to-agent (A2A) sender attribution. When set, the
    * `userMessage` for this turn was written by another agent, not by
