@@ -5,8 +5,8 @@
 // No logout button: somora is LAN-only, no auth, no session to
 // terminate.
 
-import { useEffect, useState } from 'react';
-import { Grid3x3, Maximize, Minimize, Pin, Sparkles } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Grid3x3, Maximize, Minimize, Pin, Power, RefreshCw, Settings, Sparkles } from 'lucide-react';
 import { Koala } from './Koala';
 import type { WindowState } from '../types/window';
 import { api, type AgentInfo } from '../lib/api';
@@ -36,6 +36,110 @@ export function Taskbar({
   const [version, setVersion] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [hostStats, setHostStats] = useState<{ cpuPct: number; memPct: number } | null>(null);
+  // Gear menu: reload config.yaml / restart the service. `toast` is the
+  // one-line outcome shown in the taskbar for a few seconds.
+  const [gearOpen, setGearOpen] = useState(false);
+  const [gearBusy, setGearBusy] = useState<'reload' | 'restart' | null>(null);
+  const [configStatus, setConfigStatus] = useState<{
+    loadedAt: string;
+    changedOnDisk: boolean;
+    restartAvailable: boolean;
+  } | null>(null);
+  const [toast, setToast] = useState<{ text: string; tone: 'info' | 'warn' | 'error' } | null>(null);
+  const gearRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), toast.tone === 'info' ? 6000 : 12000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  useEffect(() => {
+    // Refresh the on-disk marker whenever the menu opens — the point of
+    // the menu is to tell the user whether a reload would do anything.
+    if (!gearOpen) return;
+    api
+      .configStatus()
+      .then((r) =>
+        setConfigStatus({ loadedAt: r.loadedAt, changedOnDisk: r.changedOnDisk, restartAvailable: r.restartAvailable }),
+      )
+      .catch(() => setConfigStatus(null));
+    const onDown = (e: MouseEvent) => {
+      if (gearRef.current && !gearRef.current.contains(e.target as Node)) setGearOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setGearOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [gearOpen]);
+
+  const reloadConfig = async () => {
+    setGearBusy('reload');
+    try {
+      const r = await api.reloadConfig();
+      if (!r.ok) {
+        setToast({ text: `config not reloaded — ${r.error ?? 'unknown error'}`, tone: 'error' });
+        return;
+      }
+      const what = r.changed.length === 0 ? 'no changes' : `changed: ${r.changed.join(', ')}`;
+      if (r.restartRequired.length > 0) {
+        setToast({ text: `config reloaded — ${what} · restart needed for: ${r.restartRequired.join(', ')}`, tone: 'warn' });
+      } else {
+        setToast({ text: `config reloaded — ${what}`, tone: 'info' });
+      }
+    } catch (err) {
+      setToast({ text: `config reload failed — ${(err as Error).message}`, tone: 'error' });
+    } finally {
+      setGearBusy(null);
+      setGearOpen(false);
+    }
+  };
+
+  const restartServer = async () => {
+    if (!window.confirm('Restart somora? Every open chat stream and terminal drops for a few seconds.')) return;
+    setGearBusy('restart');
+    try {
+      const r = await api.restartServer();
+      if (!r.ok) {
+        setToast({ text: `restart refused — ${r.error ?? 'unknown error'}`, tone: 'error' });
+        return;
+      }
+      setToast({ text: 'restarting somora — reconnecting…', tone: 'warn' });
+      // Poll /health until the new process answers, then reload the page
+      // so every window re-subscribes cleanly.
+      const started = Date.now();
+      const poll = async () => {
+        if (Date.now() - started > 90_000) {
+          setToast({ text: 'somora did not come back within 90 s — check the service', tone: 'error' });
+          return;
+        }
+        try {
+          const res = await fetch('/health', { cache: 'no-store' });
+          if (res.ok) {
+            const body = (await res.json()) as { serverUptimeMs?: number };
+            if (typeof body.serverUptimeMs === 'number' && body.serverUptimeMs < 60_000) {
+              window.location.reload();
+              return;
+            }
+          }
+        } catch {
+          // still down
+        }
+        setTimeout(poll, 1500);
+      };
+      setTimeout(poll, 2500);
+    } catch (err) {
+      setToast({ text: `restart failed — ${(err as Error).message}`, tone: 'error' });
+    } finally {
+      setGearBusy(null);
+      setGearOpen(false);
+    }
+  };
 
   useEffect(() => {
     const t = setInterval(() => setClock(new Date()), 1000 * 30);
@@ -180,6 +284,62 @@ export function Taskbar({
       </div>
 
       <div className="taskbar-tools">
+        {toast && (
+          <span className={`taskbar-toast taskbar-toast-${toast.tone}`} role="status" title={toast.text}>
+            {toast.text}
+          </span>
+        )}
+        <div className="taskbar-gear" ref={gearRef}>
+          <button
+            className="taskbar-tool"
+            type="button"
+            title="Server: reload config, restart"
+            aria-haspopup="menu"
+            aria-expanded={gearOpen}
+            onClick={() => setGearOpen((v) => !v)}
+          >
+            <Settings size={14} />
+          </button>
+          {gearOpen && (
+            <div className="taskbar-menu" role="menu">
+              <button
+                className="taskbar-menu-item"
+                type="button"
+                role="menuitem"
+                disabled={gearBusy !== null}
+                onClick={() => void reloadConfig()}
+                title="Re-read ~/.somora/config.yaml and apply it without a restart"
+              >
+                <RefreshCw size={13} />
+                <span>
+                  Reload config
+                  {configStatus?.changedOnDisk && <em className="taskbar-menu-hint"> · changed on disk</em>}
+                </span>
+              </button>
+              <button
+                className="taskbar-menu-item"
+                type="button"
+                role="menuitem"
+                disabled={gearBusy !== null || configStatus?.restartAvailable === false}
+                onClick={() => void restartServer()}
+                title={
+                  configStatus?.restartAvailable === false
+                    ? 'somora is not running as the systemd user unit — restart it the way you started it'
+                    : 'Restart the somora service via systemd'
+                }
+              >
+                <Power size={13} />
+                <span>Restart somora</span>
+              </button>
+              <div className="taskbar-menu-meta">
+                {version ? `v${version}` : ''}
+                {configStatus?.loadedAt
+                  ? ` · config loaded ${new Date(configStatus.loadedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                  : ''}
+              </div>
+            </div>
+          )}
+        </div>
         <button
           className="taskbar-tool"
           type="button"

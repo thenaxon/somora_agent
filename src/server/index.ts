@@ -18,7 +18,10 @@ import {
 } from 'node:os';
 import { resolve as resolvePath } from 'node:path';
 import { WebSocketServer } from 'ws';
-import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig } from '../config/loader.ts';
+import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig, primeFreshConfig } from '../config/loader.ts';
+import { diffConfigSections, restartRequiredFor, RESTART_REQUIRED_SECTIONS } from '../config/reload.ts';
+import { spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
+import { stat as statFile } from 'node:fs/promises';
 import { workerChain, type Config, resolveAnyRef, type ThinkingLevel, SamplingSchema } from '../config/types.ts';
 import { mergeSampling, SAMPLING_KEYS } from '../engine/sampling.ts';
 import { storeAttachment } from '../attachments/store.ts';
@@ -427,8 +430,19 @@ if (envFileResult.exists) {
 setupClaudeConfigDir();
 
 let config: Config;
+// Reload bookkeeping for GET /config/status + POST /config/reload.
+let configLoadedAt = new Date().toISOString();
+let configLoadedMtimeMs = 0;
+async function configFileMtime(): Promise<number> {
+  try {
+    return (await statFile(configPath())).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
 try {
   config = await loadConfig();
+  configLoadedMtimeMs = await configFileMtime();
 } catch (err) {
   // pino's worker transport can swallow the error during fast crash; print
   // directly to stderr so the operator sees what's wrong with their config.
@@ -1530,6 +1544,70 @@ app.get(
 // the lifetime of the process. JSON keeps room for future fields
 // (build-time, git SHA, env name) without breaking the client.
 app.get('/version', (c) => c.json({ version: SOMORA_VERSION }));
+
+// ─── Config reload + restart ─────────────────────────────────────────
+// Web taskbar gear + TUI /reload, /restart. Reload re-reads config.yaml,
+// validates it, and swaps the in-memory Config only on success — a typo
+// leaves the running config untouched and comes back as 400 with the
+// schema issues. Sections consumed at boot (see RESTART_REQUIRED_SECTIONS)
+// are reported so the client can say "restart needed".
+app.get('/config/status', async (c) => {
+  const mtimeMs = await configFileMtime();
+  return c.json({
+    path: configPath(),
+    loadedAt: configLoadedAt,
+    changedOnDisk: mtimeMs > configLoadedMtimeMs,
+    restartRequiredSections: RESTART_REQUIRED_SECTIONS,
+    restartAvailable: systemdUnitActive(),
+  });
+});
+
+app.post('/config/reload', async (c) => {
+  let next: Config;
+  try {
+    next = await loadConfig();
+  } catch (err) {
+    logger.warn({ msg: 'config.reload_rejected', err: (err as Error).message });
+    return c.json({ ok: false, error: (err as Error).message }, 400);
+  }
+  const changed = diffConfigSections(config, next);
+  const restartRequired = restartRequiredFor(changed);
+  config = next;
+  configLoadedAt = new Date().toISOString();
+  configLoadedMtimeMs = await configFileMtime();
+  primeFreshConfig(next, configLoadedMtimeMs);
+  logger.info({ msg: 'config.reloaded', changed, restartRequired });
+  return c.json({ ok: true, changed, restartRequired, loadedAt: configLoadedAt });
+});
+
+function systemdUnitActive(): boolean {
+  if (process.platform !== 'linux') return false;
+  const r = spawnSyncChild('systemctl', ['--user', 'is-active', 'somora.service'], { encoding: 'utf8' });
+  return r.status === 0 && r.stdout.trim() === 'active';
+}
+
+// Restart via systemd (the way `somora update` and the docs restart it).
+// Responds first, then asks systemd a moment later so the client gets
+// its 200 before the socket goes away. 409 when somora is not running
+// as the user unit — a foreground `somora server start` has nothing to
+// bring it back.
+app.post('/server/restart', (c) => {
+  if (!systemdUnitActive()) {
+    return c.json(
+      { ok: false, error: 'somora is not running as the systemd user unit somora.service — restart it the way you started it' },
+      409,
+    );
+  }
+  logger.warn({ msg: 'server.restart_requested', via: 'systemd' });
+  setTimeout(() => {
+    const child = spawnChild('systemctl', ['--user', 'restart', 'somora.service'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  }, 300);
+  return c.json({ ok: true, via: 'systemd', expectedDowntimeSeconds: 8 });
+});
 
 app.get('/env', (c) => c.json(getEffectiveEnv()));
 
@@ -4721,15 +4799,23 @@ try {
 // agents and runs background extractions. Registers each enabled agent
 // once at startup; the first idle timer runs idleMinutes from now,
 // which gives any paused-from-crash dreams a quiet window to be picked up.
+// `config` is a getter everywhere a boot-time object keeps a handle on
+// it: POST /config/reload swaps the module variable, and the getter
+// makes the workers and the turn pipeline see the new one without a
+// restart. A plain `config,` here would pin the boot-time snapshot.
 const remWorker = new RemWorker({
-  config,
+  get config() {
+    return config;
+  },
   getMemoryManager: (agent) => getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian }),
 });
 
 // Shared deps object for runChatTurn — server boot wires everything up
 // once and chat/send + spawn_subagent both reuse it.
 const chatTurnDeps = {
-  config,
+  get config() {
+    return config;
+  },
   sessionMetaStore,
   tools,
   onActivity: (agent: string) => remWorker.resetActivity(agent),
@@ -4836,7 +4922,9 @@ for (const a of agentList) {
 // user approves REM findings via dream_apply.
 const globalVault = resolveObsidianSource(config.obsidian);
 const deepWorker = new DeepWorker({
-  config,
+  get config() {
+    return config;
+  },
   getParticipatingAgents: async () => {
     if (!globalVault) return [];
     // Live-listing (not the boot-time `agentList` snapshot) so agents
@@ -4859,7 +4947,11 @@ const deepWorker = new DeepWorker({
     }),
 });
 void deepWorker.start();
-const lucidWorker = new LucidWorker({ config });
+const lucidWorker = new LucidWorker({
+  get config() {
+    return config;
+  },
+});
 void lucidWorker.start();
 configureDreamRunTool({ deepWorker, lucidWorker });
 

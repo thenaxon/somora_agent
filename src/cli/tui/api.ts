@@ -185,6 +185,20 @@ export class Api {
     if (!res.ok) throw new Error(await res.text());
   }
 
+  async reloadConfig(): Promise<{ ok: boolean; changed?: string[]; restartRequired?: string[]; error?: string }> {
+    const res = await loopbackFetch(`${this.base}/config/reload`, { method: 'POST' });
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; changed?: string[]; restartRequired?: string[]; error?: string };
+    if (!res.ok) return { ok: false, error: body.error ?? `reload ${res.status}` };
+    return { ok: true, changed: body.changed ?? [], restartRequired: body.restartRequired ?? [] };
+  }
+
+  async restartServer(): Promise<{ ok: boolean; error?: string; expectedDowntimeSeconds?: number }> {
+    const res = await loopbackFetch(`${this.base}/server/restart`, { method: 'POST' });
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; expectedDowntimeSeconds?: number };
+    if (!res.ok) return { ok: false, error: body.error ?? `restart ${res.status}` };
+    return { ok: true, expectedDowntimeSeconds: body.expectedDowntimeSeconds };
+  }
+
   async send(agent: string, session: string, text: string): Promise<{ turnId: string }> {
     const res = await loopbackFetch(`${this.base}/chat/send`, {
       method: 'POST',

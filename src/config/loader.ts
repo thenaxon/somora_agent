@@ -196,6 +196,13 @@ export async function loadConfig(): Promise<Config> {
 let cachedFreshConfig: Config | null = null;
 let cachedFreshMtimeMs = 0;
 
+/** After POST /config/reload: make getFreshConfig() hand out the same
+ *  object the server just switched to, instead of re-parsing once more. */
+export function primeFreshConfig(cfg: Config, mtimeMs: number): void {
+  cachedFreshConfig = cfg;
+  cachedFreshMtimeMs = mtimeMs;
+}
+
 export async function getFreshConfig(): Promise<Config> {
   let mtimeMs = 0;
   try {

@@ -158,6 +158,25 @@ without it.
   and, only if it is bigger than the desktop itself, shrunk to fit.
   Nothing is rearranged and nothing grows back when the browser gets
   bigger again: use **Save/Restore layout** in the taskbar for that.
+
+## Taskbar gear: reload config, restart
+
+The gear left of **Arrange** opens a small server menu:
+
+- **Reload config** re-reads `~/.somora/config.yaml`, validates it and
+  swaps it in without a restart. A typo leaves the running config
+  untouched; the toast shows the schema error with field and message.
+  On success the toast lists the changed sections and, when one of
+  them only applies at boot (server, memory, mcp, voice, wiki
+  schedulers, …), says so. The menu marks *changed on disk* when the
+  file is newer than what the server loaded.
+- **Restart somora** asks systemd to restart the user unit. Every open
+  stream drops for a few seconds; the page polls `/health` and reloads
+  itself once the new process answers. Greyed out when somora is not
+  running as `somora.service`.
+
+`agent.yaml` needs neither: it is read on every turn. The TUI has the
+same two actions as `/reload` and `/restart YES`.
 - **Taskbar (bottom)**: lists open windows and always stays on top —
   no window can cover it, so **Arrange** (tile all windows across the
   desktop) is always reachable. Save/restore persists positions in

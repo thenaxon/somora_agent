@@ -166,6 +166,8 @@ once:
 "$(npm root -g)"/somora/bin/somora.mjs init
 systemctl --user daemon-reload
 systemctl --user restart somora.service
+# or, for a config.yaml edit that touches models, providers, caps, tools:
+# the gear menu in the web taskbar → Reload config, or /reload in the TUI
 curl -ks https://<host>:18737/version
 ```
 

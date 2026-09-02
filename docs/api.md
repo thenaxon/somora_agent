@@ -711,6 +711,21 @@ model-set endpoints.
 ---
 
 
+## Config reload + restart
+
+```bash
+curl -sk https://<host>:18737/config/status          # loadedAt, changedOnDisk, restartRequiredSections, restartAvailable
+curl -sk -X POST https://<host>:18737/config/reload  # → { ok, changed: [...], restartRequired: [...] } or 400 with the schema issues
+curl -sk -X POST https://<host>:18737/server/restart # → { ok, via: "systemd", expectedDowntimeSeconds } or 409 without a systemd unit
+```
+
+Reload validates the file first and keeps the running config on any
+error. Sections listed in `restartRequiredSections` (server, memory,
+obsidian, wiki, mcp, claudeCli, codexCli, stt, tts, sentinel, tmux,
+web, mobile) are consumed at boot and only change after a restart; the
+rest applies to the next request. See [web.md](web.md) for the taskbar
+surface and the TUI's `/reload` / `/restart`.
+
 ## Sampling
 
 Per-session sampling override (`temperature`, `top_p`, …), merged over

@@ -52,6 +52,8 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/show', usage: '/show [memory|tools] [on|off]' },
   { name: '/verbose', usage: '/verbose [tools|memory|system] [on|off]' },
   { name: '/thinking', usage: '/thinking [off|low|medium|high|default]' },
+  { name: '/reload', usage: '/reload' },
+  { name: '/restart', usage: '/restart [YES]' },
   { name: '/sampling', usage: '/sampling [key=value …|default]' },
   { name: '/temp', usage: '/temp <0–2>|default' },
   { name: '/export', usage: '/export [json|markdown] [path]' },
@@ -114,6 +116,8 @@ const HELP_TEXT_BASE = `Available commands:
   /thinking                   — show effective thinking depth + source
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
+  /reload                     — re-read ~/.somora/config.yaml without a restart (reports what changed)
+  /restart YES                — restart the somora service via systemd (drops every open session stream)
   /sampling                   — show effective sampling params + source
   /sampling key=value …       — set sampling params for this session (temperature, top_p, top_k,
                                 min_p, frequency_penalty, presence_penalty, repetition_penalty,
@@ -467,6 +471,34 @@ export async function runCommand(
       } catch (err) {
         out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
       }
+      return out;
+    }
+
+    case '/reload': {
+      const r = await ctx.api.reloadConfig();
+      if (!r.ok) {
+        out.push({ kind: 'notice', text: `config not reloaded — ${r.error}`, tone: 'error' });
+        return out;
+      }
+      const changed = r.changed ?? [];
+      const restart = r.restartRequired ?? [];
+      const what = changed.length === 0 ? 'no changes' : `changed: ${changed.join(', ')}`;
+      const tail = restart.length > 0 ? `\n  restart needed for: ${restart.join(', ')} (/restart YES)` : '';
+      out.push({ kind: 'notice', text: `config reloaded — ${what}${tail}`, tone: restart.length > 0 ? 'warn' : 'info' });
+      return out;
+    }
+
+    case '/restart': {
+      if (args[0] !== 'YES') {
+        out.push({ kind: 'notice', text: 'restarts the somora service and drops every open stream — type /restart YES to confirm', tone: 'warn' });
+        return out;
+      }
+      const r = await ctx.api.restartServer();
+      if (!r.ok) {
+        out.push({ kind: 'notice', text: `restart refused — ${r.error}`, tone: 'error' });
+        return out;
+      }
+      out.push({ kind: 'notice', text: `restarting somora via systemd — back in ~${r.expectedDowntimeSeconds ?? 8}s, this client will reconnect`, tone: 'warn' });
       return out;
     }
 

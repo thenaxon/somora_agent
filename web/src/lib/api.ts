@@ -402,6 +402,31 @@ export interface GenerateImageResponse {
 
 export const api = {
   version: () => getJson<{ version: string }>('/version'),
+  configStatus: () =>
+    getJson<{
+      path: string;
+      loadedAt: string;
+      changedOnDisk: boolean;
+      restartRequiredSections: string[];
+      restartAvailable: boolean;
+    }>('/config/status'),
+  reloadConfig: async (): Promise<{ ok: boolean; changed: string[]; restartRequired: string[]; error?: string }> => {
+    const res = await fetch('/config/reload', { method: 'POST' });
+    const body = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      changed?: string[];
+      restartRequired?: string[];
+      error?: string;
+    };
+    if (!res.ok) return { ok: false, changed: [], restartRequired: [], error: body.error ?? `reload ${res.status}` };
+    return { ok: true, changed: body.changed ?? [], restartRequired: body.restartRequired ?? [] };
+  },
+  restartServer: async (): Promise<{ ok: boolean; error?: string; expectedDowntimeSeconds?: number }> => {
+    const res = await fetch('/server/restart', { method: 'POST' });
+    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; expectedDowntimeSeconds?: number };
+    if (!res.ok) return { ok: false, error: body.error ?? `restart ${res.status}` };
+    return { ok: true, expectedDowntimeSeconds: body.expectedDowntimeSeconds };
+  },
   hostStats: () =>
     getJson<{
       cpu: { loadAvg1: number; cores: number; percent: number };
