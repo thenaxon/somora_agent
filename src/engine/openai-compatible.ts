@@ -33,13 +33,7 @@ import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
-import {
-  isReasoningEffortError,
-  openAiReasoningBody,
-  parseSupportedEfforts,
-  pickFallbackEffort,
-  resolveOpenAiReasoning,
-} from './thinking-params.ts';
+import { openAiReasoningState, withReasoningRetry } from './reasoning-retry.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -736,55 +730,21 @@ export const openAiCompatibleEngine: AgentEngine = {
       // 'reasoning' capability — for opaque local endpoints (Gemma etc.)
       // it returns {} so the request stays clean and the user sees the
       // dormant state in the header.
-      const reasoningResolved = resolveOpenAiReasoning(thinking, resolvedModel.model);
-      let reasoningParam: Record<string, unknown> = reasoningResolved.body;
-      let reasoningSent = reasoningResolved.value;
-      // Set when the backend rejected the effort value and the request
-      // went out again with a neighbour (or without the param). Yielded
-      // once as engine_meta so the user sees what was actually sent.
-      let reasoningAdjustment: { requested: string; sent: string | null; backend: string } | null =
-        null;
+      const reasoning = openAiReasoningState(thinking, resolvedModel.model);
       type CreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
-      // Vocabularies differ per model (Qwen: xhigh|medium|low, DeepSeek:
-      // low|high|max, OpenAI: none…xhigh) and some backends answer an
-      // unknown value with HTTP 400 instead of ignoring it — Qwen's chat
-      // template raises (verified 2026-09-01). Rather than failing the
-      // turn over a thinking knob: read the backend's own supported list
-      // from the error, pick the nearest neighbour, retry ONCE, and keep
-      // the adjusted value for the remaining rounds of this turn.
-      const createChatStream = async (params: CreateParams) => {
-        try {
-          return await client.chat.completions.create(
-            { ...params, ...reasoningParam } as CreateParams,
-            { signal: effectiveSignal },
-          );
-        } catch (err) {
-          if (reasoningSent === null || !isReasoningEffortError(err)) throw err;
-          const backend = String((err as Error).message ?? err);
-          const supported = parseSupportedEfforts(backend);
-          const fallback = supported ? pickFallbackEffort(reasoningSent, supported) : null;
-          if (fallback === reasoningSent) throw err; // backend lists it yet rejects — not ours to fix
-          logger.warn({
-            msg: 'engine.reasoning_effort_rejected',
-            engine: ENGINE,
-            provider: resolvedModel.providerName,
-            model: resolvedModel.modelId,
-            agent,
-            session,
-            requested: reasoningSent,
-            supported,
-            fallback,
-            backend: backend.slice(0, 300),
-          });
-          reasoningAdjustment = { requested: reasoningSent, sent: fallback, backend: backend.slice(0, 300) };
-          reasoningSent = fallback;
-          reasoningParam = openAiReasoningBody(reasoningResolved.param, fallback);
-          return await client.chat.completions.create(
-            { ...params, ...reasoningParam } as CreateParams,
-            { signal: effectiveSignal },
-          );
-        }
-      };
+      // One retry when the backend rejects the effort value — see
+      // src/engine/reasoning-retry.ts. The adjusted value sticks for the
+      // remaining rounds of this turn; `reasoning.adjustment` is yielded
+      // once as engine_meta below so the user sees what was sent.
+      const createChatStream = (params: CreateParams) =>
+        withReasoningRetry(
+          reasoning,
+          (body) =>
+            client.chat.completions.create({ ...params, ...body } as CreateParams, {
+              signal: effectiveSignal,
+            }),
+          { engine: ENGINE, provider: resolvedModel.providerName, model: resolvedModel.modelId, agent, session },
+        );
 
       let round = 0;
       // Did the LAST executed round still want tools? Distinguishes
@@ -827,9 +787,9 @@ export const openAiCompatibleEngine: AgentEngine = {
               : {}),
           ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
         });
-        if (reasoningAdjustment) {
-          const adj: { requested: string; sent: string | null; backend: string } = reasoningAdjustment;
-          reasoningAdjustment = null;
+        if (reasoning.adjustment) {
+          const adj = reasoning.adjustment;
+          reasoning.adjustment = null;
           yield {
             kind: 'engine_meta',
             ts: ts(),

@@ -22,7 +22,7 @@ import { resolveAnyRef } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { Finding, FindingAction } from './types.ts';
-import { openAiReasoningParam } from '../engine/thinking-params.ts';
+import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
 
 export interface ExtractContext {
   agent: string;
@@ -419,6 +419,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
   const systemPrompt = SYSTEM_PROMPT;
 
   const client = buildClient(ctx.workerModel);
+  const reasoning = openAiReasoningState(ctx.thinking, ctx.workerModel.model);
   const accumulated: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
   const startAt = ctx.startChunk ?? 0;
   let failedChunks = 0;
@@ -463,23 +464,40 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         eventsInChunk: chunk.events.length,
         estimatedTokensIn: reqTokens,
       });
-      const reasoningParam = openAiReasoningParam(ctx.thinking, ctx.workerModel.model);
       const completion = await Promise.race([
-        client.chat.completions.create(
+        // Same reasoning mapping + one retry on rejection as chat turns
+        // (src/engine/reasoning-retry.ts); the adjusted value sticks for
+        // the remaining chunks of this run. `max_tokens` from the model's
+        // `maxTokens` bounds a runaway thinking phase on reasoning workers.
+        withReasoningRetry(
+          reasoning,
+          (reasoningBody) =>
+            client.chat.completions.create(
+              {
+                model: ctx.workerModel.modelId,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: userMsg },
+                ],
+                stream: false,
+                ...(ctx.workerModel.model.maxTokens
+                  ? { max_tokens: ctx.workerModel.model.maxTokens }
+                  : {}),
+                ...reasoningBody,
+              },
+              // Pass the abort signal through to the HTTP layer so shutdown /
+              // user-activity aborts cancel the in-flight request cleanly
+              // instead of dying later with an opaque transport error
+              // ("terminated") when the process tears down its sockets.
+              ctx.signal ? { signal: ctx.signal } : undefined,
+            ),
           {
+            engine: 'openai-compatible',
+            phase: 'rem',
+            agent: ctx.agent,
+            provider: ctx.workerModel.providerName,
             model: ctx.workerModel.modelId,
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userMsg },
-            ],
-            stream: false,
-            ...reasoningParam,
           },
-          // Pass the abort signal through to the HTTP layer so shutdown /
-          // user-activity aborts cancel the in-flight request cleanly
-          // instead of dying later with an opaque transport error
-          // ("terminated") when the process tears down its sockets.
-          ctx.signal ? { signal: ctx.signal } : undefined,
         ),
         new Promise<never>((_, reject) =>
           setTimeout(

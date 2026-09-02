@@ -25,11 +25,8 @@ import { createPatientOpenAIClient } from '../server/openai-client.ts';
 
 import type { ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import {
-  claudeCliThinkingOptions,
-  codexCliReasoningArgs,
-  openAiReasoningParam,
-} from '../engine/thinking-params.ts';
+import { claudeCliThinkingOptions, codexCliReasoningArgs } from '../engine/thinking-params.ts';
+import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
 
 export interface OneShotArgs {
   workerModel: ResolvedModel;
@@ -85,19 +82,35 @@ async function callOpenAICompat(args: OneShotArgs): Promise<string> {
     model: args.workerModel.modelId,
   });
 
-  const reasoningParam = openAiReasoningParam(args.thinking, args.workerModel.model);
+  // Same reasoning mapping + one retry on rejection as chat turns
+  // (src/engine/reasoning-retry.ts); `max_tokens` from the model's
+  // `maxTokens` bounds a runaway thinking phase on reasoning workers.
+  const reasoning = openAiReasoningState(args.thinking, args.workerModel.model);
   const completion = await Promise.race([
-    client.chat.completions.create(
+    withReasoningRetry(
+      reasoning,
+      (reasoningBody) =>
+        client.chat.completions.create(
+          {
+            model: args.workerModel.modelId,
+            messages: [
+              { role: 'system', content: args.systemPrompt },
+              { role: 'user', content: args.userMessage },
+            ],
+            stream: false,
+            ...(args.workerModel.model.maxTokens
+              ? { max_tokens: args.workerModel.model.maxTokens }
+              : {}),
+            ...reasoningBody,
+          },
+          args.signal ? { signal: args.signal } : undefined,
+        ),
       {
+        engine: 'openai-compatible',
+        ...args.logCtx,
+        provider: args.workerModel.providerName,
         model: args.workerModel.modelId,
-        messages: [
-          { role: 'system', content: args.systemPrompt },
-          { role: 'user', content: args.userMessage },
-        ],
-        stream: false,
-        ...reasoningParam,
       },
-      args.signal ? { signal: args.signal } : undefined,
     ),
     new Promise<never>((_, reject) =>
       setTimeout(

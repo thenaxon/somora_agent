@@ -41,8 +41,14 @@ worker LLMs have their own per-phase thinking knobs:
 | Lucid | `config.yaml` server-global | `wiki.lucid.thinking` |
 
 All three are optional; unset = engine default (no reasoning_effort
-sent). Dream phases share the same engine adapters + per-engine
-mapping table below, so the values follow identical semantics. REM
+sent — on a model that cannot stop reasoning, such as Qwen, that is the
+model's own default, i.e. its maximum). Dream phases share the same
+engine adapters + per-engine mapping table below, so the values follow
+identical semantics: the per-model `reasoning.levels` block, the retry
+on a rejected value and the model's `maxTokens` output cap all apply to
+REM, Deep and Lucid calls exactly as to chat turns. High thinking is a
+reasonable choice for these background workers — nobody waits on the
+latency — at the cost of longer chunks and more tokens per run. REM
 is per-agent because session-extraction styles vary by persona;
 Deep/Lucid are server-global because they operate on the shared
 wiki across all agents.
