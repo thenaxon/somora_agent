@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import type { ChatMessage } from '../hooks/useChatStream';
+import type { ChatMessage, ThinkingContent } from '../hooks/useChatStream';
 import type { AgentInfo } from '../hooks/useAgents';
 import { resolveAgentColor } from '../hooks/agentColors';
 
@@ -217,6 +217,7 @@ function MobileMessage({
       )}
       <div className="msg-col">
         <div className={`msg-bubble ${variant}`} style={bubbleStyle}>
+          {isAgent && msg.thinking && <ThinkingLine thinking={msg.thinking} hasText={!!msg.text} />}
           {isAgent && !msg.text && msg.mediaNote ? null : isAgent ? (
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
@@ -283,6 +284,94 @@ function MobileMessage({
         </span>
       </div>
     </div>
+  );
+}
+
+// Compact reasoning line at the top of an agent bubble — the phone
+// version of the web's ThinkingBlock. One row, never a big open box:
+//   thinking, no reply text yet — the row plus the LAST line of the
+//     reasoning underneath it, muted and ellipsised, so the user sees
+//     the model working without the bubble growing on a small screen;
+//   thinking, reply text arrived — just the row, pulsing until the
+//     thinking final lands;
+//   final — just the row. Tap to expand: full text, plain (half-formed
+//     markdown mid-stream renders badly), pre-wrap, capped at ~50vh and
+//     scrollable, with the server's truncation note when flagged.
+// A manual tap wins for the life of the row: `userOpen` starts as null
+// ("no opinion") and is never reset by prop updates, so a late final
+// does not snap a block the user opened shut.
+function ThinkingLine({ thinking, hasText }: { thinking: ThinkingContent; hasText: boolean }) {
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const streaming = thinking.streaming === true;
+  const open = userOpen ?? false;
+  const peek = streaming && !hasText && !open ? lastNonEmptyLine(thinking.text) : '';
+  // Keep an opened box pinned to the newest line while deltas arrive.
+  useEffect(() => {
+    if (!open || !streaming) return;
+    const el = bodyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [open, streaming, thinking.text]);
+  return (
+    <div
+      className={`thinking-line ${open ? 'open' : ''} ${streaming ? 'streaming' : ''} ${hasText ? 'with-text' : ''}`}
+    >
+      <button
+        type="button"
+        className="thinking-head"
+        onClick={() => setUserOpen(!open)}
+        aria-expanded={open}
+        aria-label={open ? 'Hide thinking' : 'Show thinking'}
+      >
+        <span className="thinking-head-row">
+          <span className="thinking-label">🧠 thinking</span>
+          {streaming && (
+            <span className="thinking-pulse" aria-label="thinking in progress">…</span>
+          )}
+          <span className="thinking-chevron" aria-hidden="true">
+            <ChevronIcon up={open} />
+          </span>
+        </span>
+        {peek && <span className="thinking-peek">{peek}</span>}
+      </button>
+      {open && (
+        <div className="thinking-body" ref={bodyRef}>
+          {thinking.text}
+          {!streaming && thinking.truncated && (
+            <span className="thinking-truncated"> (truncated by the server)</span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function lastNonEmptyLine(text: string): string {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]?.trim() ?? '';
+    if (line) return line;
+  }
+  return '';
+}
+
+// Inline line-art chevron (lucide path) — mobile bundle keeps the
+// "no lucide-react" rule, see MicButton.tsx.
+function ChevronIcon({ up }: { up: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {up ? <path d="m18 15-6-6-6 6" /> : <path d="m6 9 6 6 6-6" />}
+    </svg>
   );
 }
 

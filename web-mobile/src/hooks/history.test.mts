@@ -91,5 +91,56 @@ const img = (id: string) => ({ type: 'image', id, filename: `${id}.png`, mime: '
   t('audio folded onto the agent row', rows[0]?.audio?.url === '/tts/x.mp3', JSON.stringify(rows[0]));
 }
 
+// ── 5. thinking_message folds onto the following agent row ─────────
+{
+  const events: HistoryEvent[] = [
+    { kind: 'user_message', ts: 1, text: 'q' },
+    { kind: 'turn_start', ts: 2, turnId: 't-1' },
+    { kind: 'tool_call', ts: 3 },
+    { kind: 'tool_result', ts: 4 },
+    { kind: 'thinking_message', ts: 5, text: 'let me weigh this\n\nok, answer', truncated: true },
+    { kind: 'assistant_message', ts: 6, text: 'answer' },
+    { kind: 'turn_end', ts: 7, turnId: 't-1' },
+  ];
+  const rows = historyEventsToMessages(events);
+  t('thinking: two rows (no thinking-only row)', rows.length === 2, String(rows.length));
+  t('thinking: folded onto the agent row', rows[1]?.thinking?.text === 'let me weigh this\n\nok, answer', JSON.stringify(rows[1]?.thinking));
+  t('thinking: truncated flag kept', rows[1]?.thinking?.truncated === true);
+  t('thinking: not streaming after history load', rows[1]?.thinking?.streaming === undefined);
+  t('thinking: agent row keeps text + turnId', rows[1]?.text === 'answer' && rows[1]?.turnId === 't-1');
+}
+
+// ── 6. thinking without an assistant row is dropped ─────────────────
+{
+  const events: HistoryEvent[] = [
+    { kind: 'user_message', ts: 1, text: 'q' },
+    { kind: 'turn_start', ts: 2, turnId: 't-1' },
+    { kind: 'thinking_message', ts: 3, text: 'hmm' },
+    { kind: 'error', ts: 4, message: 'boom' },
+    { kind: 'turn_end', ts: 5, turnId: 't-1' },
+    { kind: 'user_message', ts: 6, text: 'again' },
+    { kind: 'turn_start', ts: 7, turnId: 't-2' },
+    { kind: 'assistant_message', ts: 8, text: 'fine now' },
+    { kind: 'turn_end', ts: 9, turnId: 't-2' },
+  ];
+  const rows = historyEventsToMessages(events);
+  const roles = rows.map((r) => r.role).join(',');
+  t('dropped: row sequence user,error,user,agent', roles === 'user,error,user,agent', roles);
+  t('dropped: error row carries no thinking', rows[1]?.thinking === undefined);
+  t('dropped: next turn\'s answer did NOT inherit it', rows[3]?.thinking === undefined, JSON.stringify(rows[3]?.thinking));
+}
+
+// ── 7. empty thinking text is ignored ───────────────────────────────
+{
+  const events: HistoryEvent[] = [
+    { kind: 'turn_start', ts: 1, turnId: 't-1' },
+    { kind: 'thinking_message', ts: 2, text: '' },
+    { kind: 'assistant_message', ts: 3, text: 'a' },
+    { kind: 'turn_end', ts: 4, turnId: 't-1' },
+  ];
+  const rows = historyEventsToMessages(events);
+  t('empty thinking: no field on the row', rows[0]?.thinking === undefined);
+}
+
 console.log(`\nhistory: ${ok} passed, ${bad} failed`);
 assert.equal(bad, 0);

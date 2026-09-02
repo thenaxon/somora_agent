@@ -10,6 +10,18 @@
 // a turn carries the engine's turnId; media and errors go to a row of
 // the SAME turn or to a fresh row — never to another turn's.
 
+/** Model reasoning attached to an agent row. Arrives over SSE
+ *  (`thinking` event, cumulative deltas then a final) or from the
+ *  `thinking_message` history row that precedes the turn's
+ *  assistant_message. Plain text — never markdown-rendered. */
+export interface ThinkingContent {
+  text: string;
+  /** The server cut the text at its configured cap (ends with `…`). */
+  truncated?: boolean;
+  /** True while thinking deltas are still arriving for this turn. */
+  streaming?: boolean;
+}
+
 export interface ChatMessage {
   id: string;
   /** `error`: the turn ended with an engine/backend error instead of
@@ -20,6 +32,10 @@ export interface ChatMessage {
   ts: number;
   /** True while the agent's response is still streaming. */
   streaming?: boolean;
+  /** agent rows: the model's reasoning for this turn, when the engine
+   *  surfaces it and the server captures it. Rendered as a compact
+   *  collapsible line at the top of the bubble. */
+  thinking?: ThinkingContent;
   /** A2A: name of the peer agent that wrote this inbound. Renderer
    *  swaps the user-bubble for a peer-agent bubble in the sender's
    *  color/icon. */
@@ -61,6 +77,8 @@ export interface HistoryEvent {
   text?: string;
   /** `kind: 'error'` rows carry the failure text here. */
   message?: string;
+  /** `kind: 'thinking_message'`: the server cut the text at its cap. */
+  truncated?: boolean;
   turnId?: string;
   from_agent?: string;
   from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
@@ -139,15 +157,28 @@ export function findTurnRow(list: readonly ChatMessage[], turnId: string | undef
 export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   let currentTurnId: string | undefined;
+  // thinking_message precedes its turn's assistant_message (after the
+  // tool rows): fold it onto the NEXT agent row. A turn that ends
+  // without one (error, abort) drops it — there is no bubble to
+  // hang it on, and a thinking-only row would read as an answer.
+  let pendingThinking: ThinkingContent | null = null;
   for (const ev of events) {
     if (ev.kind === 'turn_start') {
       currentTurnId = typeof ev.turnId === 'string' ? ev.turnId : undefined;
+      pendingThinking = null;
       continue;
     }
     if (ev.kind === 'turn_end') {
       // Keep the id: assistant_media for this turn is written AFTER
       // turn_end. The next turn_start replaces it.
       if (typeof ev.turnId === 'string') currentTurnId = ev.turnId;
+      pendingThinking = null;
+      continue;
+    }
+    if (ev.kind === 'thinking_message') {
+      if (typeof ev.text === 'string' && ev.text.length > 0) {
+        pendingThinking = { text: ev.text, ...(ev.truncated ? { truncated: true } : {}) };
+      }
       continue;
     }
     if (ev.kind === 'assistant_audio' && ev.audio) {
@@ -191,6 +222,10 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
     if (!mapped) continue;
     if ((mapped.role === 'agent' || mapped.role === 'error') && currentTurnId) {
       mapped.turnId = currentTurnId;
+    }
+    if (mapped.role === 'agent' && pendingThinking) {
+      mapped.thinking = pendingThinking;
+      pendingThinking = null;
     }
     out.push(mapped);
   }

@@ -10,6 +10,10 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 // the desktop equivalent):
 //   - 'chat' { state: 'delta', text }  — running cumulative text
 //   - 'chat' { state: 'final', text }  — final assistant text for the turn
+//   - 'thinking' { state: 'delta'|'final', text, truncated? } — model
+//                                          reasoning, cumulative like
+//                                          `chat`; final lands before
+//                                          the chat final of the turn
 //   - 'agent' { phase: 'start'|'end', usage?: ... } — turn lifecycle
 //   - 'status' { msg }                  — error / connection messages
 //   - 'tool' { phase, tool, summary }   — tool call/result (ignored in
@@ -33,9 +37,27 @@ import {
   newId,
   type ChatMessage,
   type HistoryEvent,
+  type ThinkingContent,
 } from './history';
 
-export type { ChatMessage } from './history';
+export type { ChatMessage, ThinkingContent } from './history';
+
+/** An aborted or errored turn may never send the thinking final —
+ *  stop the line's pulse together with the text cursor. Returns the
+ *  same array when nothing had to change. */
+function settleStreams(prev: ChatMessage[]): ChatMessage[] {
+  let changed = false;
+  const next = prev.map((m) => {
+    if (m.role !== 'agent' || !(m.streaming || m.thinking?.streaming)) return m;
+    changed = true;
+    return {
+      ...m,
+      streaming: false,
+      ...(m.thinking?.streaming ? { thinking: { ...m.thinking, streaming: false } } : {}),
+    };
+  });
+  return changed ? next : prev;
+}
 
 export interface ChatStream {
   messages: ChatMessage[];
@@ -246,6 +268,61 @@ export function useChatStream(agent: string | null): ChatStream {
       }
     };
 
+    // Model reasoning for the in-flight turn. Same cumulative-text
+    // convention and the SAME bubble as `chat`: the first thinking
+    // delta usually arrives before the first chat delta, so it is what
+    // creates the turn's agent bubble (empty text, thinking line on
+    // top), anchored before any still-pending user bubble exactly like
+    // the first chat delta would be. Later chat deltas find the id in
+    // streamingIdRef and fill the text in place; their `{ ...existing,
+    // text }` spread keeps the thinking field. Ref bookkeeping stays
+    // outside the updater (updaters run at flush time — see the
+    // turn_queued note below).
+    const onThinking = (e: MessageEvent) => {
+      bump();
+      let d: { state?: string; text?: string; truncated?: boolean } | null = null;
+      try { d = JSON.parse(e.data); } catch { return; }
+      if (!d || typeof d.text !== 'string') return;
+      if (d.state !== 'delta' && d.state !== 'final') return;
+      const thinking: ThinkingContent =
+        d.state === 'final'
+          ? { text: d.text, streaming: false, ...(d.truncated ? { truncated: true } : {}) }
+          : { text: d.text, streaming: true };
+      let id = streamingIdRef.current;
+      const isFirst = !id;
+      if (!id) {
+        id = newId('a');
+        streamingIdRef.current = id;
+      }
+      const trackedId = id;
+      setMessages((prev) => {
+        const idx = prev.findIndex((m) => m.id === trackedId);
+        if (idx < 0) {
+          const newBubble: ChatMessage = {
+            id: trackedId,
+            role: 'agent',
+            ts: Date.now(),
+            text: '',
+            streaming: true,
+            thinking,
+            ...(currentTurnIdRef.current ? { turnId: currentTurnIdRef.current } : {}),
+          };
+          const insertIdx = isFirst
+            ? prev.findIndex((m) => m.role === 'user' && m.pending)
+            : -1;
+          if (insertIdx < 0) return [...prev, newBubble];
+          const next = prev.slice();
+          next.splice(insertIdx, 0, newBubble);
+          return next;
+        }
+        const existing = prev[idx];
+        if (!existing || existing.role !== 'agent') return prev;
+        const next = prev.slice();
+        next[idx] = { ...existing, thinking };
+        return next;
+      });
+    };
+
     const onAgent = (e: MessageEvent) => {
       bump();
       let d: { phase?: string } | null = null;
@@ -256,6 +333,9 @@ export function useChatStream(agent: string | null): ChatStream {
       } else if (d.phase === 'end') {
         setStreaming(false);
         streamingIdRef.current = null;
+        // Sweep leftover streaming flags (text cursor AND thinking
+        // pulse) — an aborted turn sends neither final.
+        setMessages(settleStreams);
       }
     };
 
@@ -268,6 +348,7 @@ export function useChatStream(agent: string | null): ChatStream {
         setConnectionError(d.msg);
         setStreaming(false);
         streamingIdRef.current = null;
+        setMessages(settleStreams);
       }
     };
 
@@ -499,6 +580,7 @@ export function useChatStream(agent: string | null): ChatStream {
     es.addEventListener('error', onError);
     es.addEventListener('heartbeat', onHeartbeat);
     es.addEventListener('chat', onChat);
+    es.addEventListener('thinking', onThinking);
     es.addEventListener('agent', onAgent);
     es.addEventListener('status', onStatus);
     es.addEventListener('assistant_audio', onAssistantAudio);
@@ -515,6 +597,7 @@ export function useChatStream(agent: string | null): ChatStream {
       es.removeEventListener('error', onError);
       es.removeEventListener('heartbeat', onHeartbeat);
       es.removeEventListener('chat', onChat);
+      es.removeEventListener('thinking', onThinking);
       es.removeEventListener('agent', onAgent);
       es.removeEventListener('status', onStatus);
       es.removeEventListener('assistant_audio', onAssistantAudio);

@@ -71,6 +71,20 @@ own app switcher entry.
   thinking / running tools, a three-dot pulse appears in an agent
   bubble. It's replaced by the actual streaming response as soon as
   the model starts emitting text.
+- **Thinking line:** when the engine surfaces its reasoning (see
+  [thinking.md](thinking.md) for which engines do and how the server
+  captures it), the agent bubble gets a single `🧠 thinking` row at
+  the top with a chevron. While the model is still thinking and has
+  not written any reply text, the newest line of its reasoning peeks
+  underneath, muted and cut to one line — no big open block on a
+  phone. Once reply text arrives or the turn finishes, only the row
+  remains. Tap it to expand the full text (plain, scrollable, capped
+  at half the screen; a `(truncated by the server)` note appears
+  when the server cut it) and tap again to collapse — your tap wins
+  for that message. History reloads keep the reasoning on the reply
+  it belongs to. There is no client toggle: the line only exists when
+  the server sends the content, so `thinkingContent.capture: false`
+  in `config.yaml` hides it everywhere.
 - **Connection-lost banner** appears when the SSE stream drops (e.g.
   Tailscale wakes up, server briefly down). The browser auto-reconnects
   the EventSource; the banner clears once the stream is back.

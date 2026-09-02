@@ -716,10 +716,12 @@ export const TuiConfigSchema = z.object({
     tools: z.boolean().default(false),
     memory: z.boolean().default(false),
     system: z.boolean().default(false),
-  }).default({ tools: false, memory: false, system: false }),
+    /** Model thinking text above each reply (engines that surface it). */
+    thinking: z.boolean().default(false),
+  }).default({ tools: false, memory: false, system: false, thinking: false }),
 }).default({
   show: { memory: true, tools: true },
-  verbose: { tools: false, memory: false, system: false },
+  verbose: { tools: false, memory: false, system: false, thinking: false },
 });
 export type TuiConfig = z.infer<typeof TuiConfigSchema>;
 
