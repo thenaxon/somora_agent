@@ -229,7 +229,9 @@ providers:
 ```
 
 Requires the Codex CLI binary on PATH (or `SOMORA_CODEX_BIN` env to its
-path). Auth via `codex login` (ChatGPT Plus/Pro/Business preferred,
+path), 0.148 or newer recommended — somora only passes the lock-down
+flags the installed codex knows, and `view_image` became a feature flag
+in 0.148 (see [security.md](security.md)). Auth via `codex login` (ChatGPT Plus/Pro/Business preferred,
 or `OPENAI_API_KEY` env).
 
 ### xAI via Grok Build CLI subscription (no API key)

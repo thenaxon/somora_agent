@@ -900,6 +900,13 @@ Event types:
   and clients can optionally render them. `label` is server-resolved
   (e.g. `todo_list` → `"plan"`); unknown item-types fall back to the
   raw `itemType`. `payload` is the engine's original event, opaque.
+  Besides engine-native items, somora emits its own: `model_switch`
+  (codex thread rebuilt after a model change), `mcp_server_renamed`
+  (engine session rebuilt after somora's MCP server rename, label
+  "session restarted"), `context_compacted` (history compacted after a
+  context overflow), `reasoning_effort_adjusted` and `sampling_dropped`
+  (backend rejected the parameter, turn retried without it). Each
+  carries a human-readable `payload.text`.
 - `model_fallback` — `{requested, actual, reason}` (refs are
   `provider/modelId`) — the persona's primary model failed before
   producing anything and the configured `fallback:` model is answering

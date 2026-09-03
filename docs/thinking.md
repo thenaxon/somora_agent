@@ -263,8 +263,16 @@ If Anthropic later exposes thinking-tokens as a distinct field in the
 SDK usage block, somora will pick it up the same way — until then
 claude-cli turns show only the combined output count.
 
-Per-token streaming of *thinking content* (the actual reasoning text)
-is **not** wired up — see "What's not built" below.
+Some OpenAI-compatible backends stream the reasoning text but report
+no `reasoning_tokens` in usage (SGLang, some router setups). For those
+somora estimates the count from the streamed `reasoning_content`
+(about four characters per token) and flags it with
+`tokens_out_reasoning_estimated: true`; the TUI and web client show
+the badge with a tilde (`~1.2k 🧠`). An exact count from usage always
+wins over the estimate.
+
+The reasoning *text* itself is a separate feature — see
+"Thinking content" below.
 
 ## Wire format
 
@@ -290,7 +298,8 @@ data: {
     "tokens_in": 12450,
     "tokens_out": 387,
     "tokens_in_cached": 11800,
-    "tokens_out_reasoning": 1240
+    "tokens_out_reasoning": 1240,
+    "tokens_out_reasoning_estimated": false
   },
   "contextWindow": 1000000,
   "provider": "anthropic",

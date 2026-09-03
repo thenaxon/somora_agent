@@ -134,7 +134,9 @@ Hard:
   agents) and by the web tmux app. Install via your package manager.
 - **At least one LLM backend.** Pick what you have:
   - Claude Code binary (Claude subscription) — for `claude-cli` engine.
-  - Codex CLI binary (ChatGPT subscription) — for `codex-cli` engine.
+  - Codex CLI binary (ChatGPT subscription) — for `codex-cli` engine. Codex 0.148 or
+    newer recommended: older binaries lack the `view_image` feature flag, so that
+    built-in stays visible to the model there (see [docs/security.md](docs/security.md)).
   - Grok Build CLI binary (SuperGrok/Premium subscription) — for `grok-cli` engine.
   - Any OpenAI-compatible HTTP server — Ollama, LM Studio, vLLM, oMLX, OpenRouter, etc.
 
@@ -354,17 +356,23 @@ Both TUI and web support these:
 /model <alias-or-ref>          override model for this session
 /model default                 clear override
 /thinking <off|low|medium|high>  reasoning depth (where the model supports it)
+/sampling [key=value …|default]  temperature, top_p, … for this session (openai-compatible)
+/temp <0–2>|default            shorthand for /sampling temperature=<n>
 /projekt                       show currently-pinned project   (requires projects feature)
 /projekt <slug>                pin a project to this session
 /projekt unlink                clear the pinned project
 /projects                      list configured projects        (TUI only)
 /show <memory|tools> on|off    toggle TUI display of memory-injection / tool-calls
-/verbose <memory|tools|system> on|off  more detail per turn
+/verbose <memory|tools|system|thinking> on|off  more detail per turn; `thinking` shows the model's reasoning text (TUI + web)
+/reload                        re-read config.yaml without a restart
+/restart YES                   restart the systemd service
 /quit, /exit                   leave somora                  (TUI only)
 ```
 
 Web users: the agent dock on the left handles agent switching; the slash
-popup covers the same `/model` `/session` `/new` `/thinking` `/reset` set.
+popup covers `/model` `/session` `/new` `/thinking` `/sampling` `/temp`
+`/verbose thinking` `/projekt` `/reset`. Reload and restart live in the
+taskbar gear menu, thinking visibility also in the ••• session menu.
 
 ## Tool surface
 
@@ -420,7 +428,8 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/imagegen.md](docs/imagegen.md) — text-to-image, the Media window, per-agent review stance
 - [docs/videogen.md](docs/videogen.md) — text-to-video: job lifecycle, being woken instead of waiting, what is verified and what isn't
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
-- [docs/thinking.md](docs/thinking.md) — reasoning-depth surface across engines
+- [docs/thinking.md](docs/thinking.md) — reasoning depth, reasoning-token counts and the model's thinking text across engines
+- [docs/sampling.md](docs/sampling.md) — temperature, top_p and friends per model, agent and session
 - [docs/display.md](docs/display.md) — TUI display toggles
 - [docs/cache-strategy.md](docs/cache-strategy.md) — prompt-cache mechanics
 - [docs/security.md](docs/security.md) — what's locked down per engine

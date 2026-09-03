@@ -634,6 +634,12 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   - `/new <slug>` — create a new session and switch this window to it.
   - `/thinking <off|low|medium|high|default>` — set / clear the
     thinking-effort override.
+  - `/sampling [key=value …|default]` and `/temp <n>|default` — sampling
+    parameters for this session (openai-compatible engine), see
+    [sampling.md](sampling.md).
+  - `/verbose thinking on|off` — show or hide the 🧠 thinking block
+    above replies in this session (display only; same switch as the
+    checkbox in the ••• session menu).
   - `/projekt <slug>` (alias `/project`) — pin a project to this
     session. Autocompletes from `/projects` with entity + path-count
     detail per row. `/projekt unlink` is always the first row so
