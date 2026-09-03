@@ -37,6 +37,8 @@ export type SlashCommand =
   | { kind: 'sampling'; params: SamplingPatch }
   | { kind: 'sampling-clear' }
   | { kind: 'sampling-show' }
+  // Render preference, client-side only (mirrors the TUI's /verbose).
+  | { kind: 'verbose'; topic: 'thinking'; value: 'on' | 'off' }
   | { kind: 'reset' }
   | { kind: 'projekt'; slug: string }
   | { kind: 'projekt-unlink' };
@@ -58,6 +60,11 @@ const COMMANDS: CommandSpec[] = [
     hint: 'temperature, top_p, top_k, … for this session (openai-compatible engine only)',
   },
   { name: '/temp', usage: '/temp <0–2>|default', hint: 'shorthand for /sampling temperature=<n>' },
+  {
+    name: '/verbose',
+    usage: '/verbose thinking on|off',
+    hint: 'show or hide the thinking block above replies (this session, display only)',
+  },
   { name: '/projekt', usage: '/projekt <slug>', hint: 'pin a project to this session (or "unlink" to clear)' },
   { name: '/project', usage: '/project <slug>', hint: 'alias of /projekt' },
   {
@@ -264,6 +271,24 @@ export function SlashCommandPopup({
                 ? 'disable thinking'
                 : `effort: ${l}`,
           resolved: { kind: 'thinking', level: l } as SlashCommand,
+        }));
+    }
+
+    if (cmd === '/verbose') {
+      // Client-side render toggle. Only `thinking` exists in the web
+      // client (tools/memory have header buttons); the arg is matched
+      // as a prefix of "thinking on" / "thinking off".
+      const lower = argPrefix.trim().toLowerCase();
+      return (['on', 'off'] as const)
+        .filter((v) => `thinking ${v}`.startsWith(lower) || lower.startsWith(`thinking ${v}`))
+        .map((v) => ({
+          commit: `/verbose thinking ${v}`,
+          label: `thinking ${v}`,
+          detail:
+            v === 'on'
+              ? 'show the 🧠 thinking block above replies in this session'
+              : 'hide the thinking block in this session (still captured + exported)',
+          resolved: { kind: 'verbose', topic: 'thinking', value: v } as SlashCommand,
         }));
     }
 

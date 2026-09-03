@@ -65,6 +65,10 @@ interface Props {
    *  the turn starts the server owns the message and Stop is the only
    *  handle left. Rene, 2026-08-26. */
   onRecall?: (messageId: string) => void;
+  /** Render preference: hide the 🧠 thinking block above assistant
+   *  replies. Pure display — the content is still captured, persisted
+   *  and exported. Defaults to shown (collapsed) when omitted. */
+  showThinking?: boolean;
 }
 
 /** `provider/modelId` → the id only, for compact chips. */
@@ -82,6 +86,7 @@ export const MessageItem = memo(function MessageItem({
   onPinClick,
   onAbort,
   onRecall,
+  showThinking = true,
 }: Props) {
   if (msg.role === 'tool_call') {
     return <ToolCallBlock toolCall={msg.toolCall} />;
@@ -218,11 +223,15 @@ export const MessageItem = memo(function MessageItem({
             />
           )}
           <div className="chat-msg-bubble agent-bubble" style={{ position: 'relative' }}>
-            {msg.thinking && <ThinkingBlock thinking={msg.thinking} hasText={!!msg.text} />}
+            {msg.thinking && showThinking && (
+              <ThinkingBlock thinking={msg.thinking} hasText={!!msg.text} />
+            )}
             {msg.text ? (
               <AssistantMarkdown content={msg.text} />
             ) : (
-              !msg.thinking?.streaming && <span style={{ color: 'var(--text-3)' }}>…</span>
+              (!msg.thinking?.streaming || !showThinking) && (
+                <span style={{ color: 'var(--text-3)' }}>…</span>
+              )
             )}
             {msg.streaming && (
               <span

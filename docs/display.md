@@ -56,6 +56,8 @@ internals" bucket as tool calls, hence the shared toggle. See
 /verbose system on          — print the agent's persona system prompt as a one-shot block
 /verbose system off         — clear the system flag (no effect on previously printed blocks)
 /verbose thinking on|off    — show the model's thinking text above each reply
+                              (also in the web client, where it is on by default;
+                              same switch as the ••• menu checkbox)
 ```
 
 Verbose data is always on the wire — server pre-formats and includes it

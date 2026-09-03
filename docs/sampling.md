@@ -70,8 +70,9 @@ sampling:
 /temp default                   drop temperature from the override
 ```
 
-The web header shows `🌡 1.0` (the effective temperature) next to the
-thinking badge; hovering lists every effective key.
+Neither client shows the temperature permanently — it is configuration,
+not conversation. `/sampling` reports the effective values and where
+they come from whenever you want to check.
 
 ## Rejections
 

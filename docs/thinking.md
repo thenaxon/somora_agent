@@ -343,10 +343,14 @@ from the reply, and is never sent back to a model or into memory.
 `🧠 thinking` block above the reply text. While the model is still
 thinking and has not written a word yet, the block is open and shows
 the tail of the reasoning live; the moment the reply starts it folds
-away, and a click opens it again. **TUI:** off by default — `/verbose
-thinking on` shows the text dimmed and indented above the reply,
-capped at 40 lines (`… (+N lines)`), and the live tail while the model
-thinks. See [display.md](display.md).
+away, and a click opens it again. Not everyone wants the block: the
+`•••` session menu has a **Show thinking in replies** checkbox, and
+`/verbose thinking on|off` does the same from the composer. Both are
+display-only and remembered per session in the browser — the text is
+still captured, persisted and exported. **TUI:** off by default —
+`/verbose thinking on` shows the text dimmed and indented above the
+reply, capped at 40 lines (`… (+N lines)`), and the live tail while the
+model thinks. See [display.md](display.md).
 
 ### Engine matrix
 

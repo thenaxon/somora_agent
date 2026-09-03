@@ -27,7 +27,7 @@ import { useChatSessionFromContext } from './ChatProvider';
 import { useActivity } from './ActivityProvider';
 import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
-import { formatSamplingParams, hasSamplingParams } from '../lib/sampling';
+import { formatSamplingParams } from '../lib/sampling';
 import { AttachmentTray, type PendingAttachment } from './AttachmentTray';
 import { ScreenshotCapture } from './ScreenshotCapture';
 import { MicCapture } from './MicCapture';
@@ -70,7 +70,7 @@ export function ChatWindow({
   onUnpin,
 }: Props) {
   const color = resolveAgentColor(agent);
-  const { model, thinking, sampling, refresh: refreshSessionInfo } = useSessionInfo(
+  const { model, thinking, refresh: refreshSessionInfo } = useSessionInfo(
     agent.name,
     sessionId,
   );
@@ -127,6 +127,27 @@ export function ChatWindow({
       /* storage unavailable — drop silently */
     }
   }, [showMemory, showMemoryKey]);
+  // Thinking-block visibility — per (agent,session), display only. The
+  // server keeps capturing + persisting the text; this just decides
+  // whether MessageItem renders the 🧠 block. Default ON (collapsed
+  // block, one line) so the feature is discoverable; the ••• menu row
+  // and `/verbose thinking off` hide it. Rene 2026-09-03: per session,
+  // not per browser — "maybe I want it in one session and not another".
+  const showThinkingKey = `somora.web.showThinking.${agent.name}::${sessionId}`;
+  const [showThinking, setShowThinking] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(showThinkingKey) !== '0';
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(showThinkingKey, showThinking ? '1' : '0');
+    } catch {
+      /* storage unavailable — drop silently */
+    }
+  }, [showThinking, showThinkingKey]);
   // Voice auto-play toggle — per (agent,session). When ON and the
   // user submits a turn via mic (STT-transcribed draft), the server
   // generates TTS for the assistant reply and we auto-play it as
@@ -475,6 +496,10 @@ export function ChatWindow({
           await api.setSessionThinking(agent.name, sessionId, cmd.level);
           refreshSessionInfo();
           setSystemNotice({ text: `thinking → ${cmd.level}`, tone: 'info' });
+        } else if (cmd.kind === 'verbose') {
+          // Client-side render preference — no server call.
+          setShowThinking(cmd.value === 'on');
+          setSystemNotice({ text: `verbose thinking → ${cmd.value}`, tone: 'info' });
         } else if (cmd.kind === 'sampling') {
           await api.setSessionSampling(agent.name, sessionId, cmd.params);
           refreshSessionInfo();
@@ -787,13 +812,9 @@ export function ChatWindow({
   const thinkingLevelSet = thinking?.effective && thinking.effective !== 'off';
   const thinkingActive = thinkingLevelSet && thinking?.modelSupportsReasoning;
   const thinkingDormant = thinkingLevelSet && !thinking?.modelSupportsReasoning;
-  // Sampling badge mirrors the thinking one: 🌡 <temperature> when the
-  // engine honours sampling, a muted "(dormant)" marker when params are
-  // set but the active engine ignores them, nothing when unset.
-  const samplingSet = hasSamplingParams(sampling?.effective);
-  const samplingActive = samplingSet && sampling?.engineSupportsSampling;
-  const samplingDormant = samplingSet && !sampling?.engineSupportsSampling;
-  const samplingTitle = `sampling: ${formatSamplingParams(sampling?.effective)}`;
+  // No sampling badge in the header: the temperature is configuration,
+  // not conversation (Rene 2026-09-03). `/sampling` reports it on
+  // demand, same as the TUI.
 
   return (
     <div
@@ -959,25 +980,6 @@ export function ChatWindow({
                 >
                   thinking={thinking?.effective}{' '}
                   <span style={{ color: 'var(--warn)' }}>(dormant)</span>
-                </span>
-              </>
-            )}
-            {samplingActive && sampling?.effective?.temperature !== undefined && (
-              <>
-                <Sep />
-                <span style={{ color: 'var(--accent)' }} title={samplingTitle}>
-                  🌡 {sampling.effective.temperature}
-                </span>
-              </>
-            )}
-            {samplingDormant && (
-              <>
-                <Sep />
-                <span
-                  style={{ color: 'var(--text-2)' }}
-                  title={`${samplingTitle} — only the openai-compatible engine applies sampling params; switch model, or run /sampling default`}
-                >
-                  sampling <span style={{ color: 'var(--warn)' }}>(dormant)</span>
                 </span>
               </>
             )}
@@ -1148,6 +1150,8 @@ export function ChatWindow({
         anchorRect={menuAnchorRect}
         model={model}
         thinking={thinking}
+        showThinking={showThinking}
+        onToggleShowThinking={() => setShowThinking((v) => !v)}
         onSlash={dispatchSlash}
       />
 
@@ -1262,6 +1266,7 @@ export function ChatWindow({
                 isPinned={isPinned}
                 onAbort={onAbort}
                 onRecall={onRecall}
+                showThinking={showThinking}
                 {...(onPinClick ? { onPinClick } : {})}
               />
             );

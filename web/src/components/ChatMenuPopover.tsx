@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, AlertTriangle } from 'lucide-react';
+import { ChevronDown, AlertTriangle, CheckSquare, Square } from 'lucide-react';
 import { api, type ModelOption, type SessionModelInfo, type SessionThinkingInfo } from '../lib/api';
 import type { SlashCommand } from './SlashCommandPopup';
 
@@ -22,12 +22,25 @@ interface Props {
   anchorRect: DOMRect | null;
   model: SessionModelInfo | null;
   thinking: SessionThinkingInfo | null;
+  /** Display preference for the 🧠 thinking block (per session, stored
+   *  client-side by ChatWindow). Same switch as `/verbose thinking`. */
+  showThinking: boolean;
+  onToggleShowThinking: () => void;
   onSlash: (cmd: SlashCommand) => Promise<void> | void;
 }
 
 type ResetState = 'idle' | 'confirming' | 'pending';
 
-export function ChatMenuPopover({ open, onClose, anchorRect, model, thinking, onSlash }: Props) {
+export function ChatMenuPopover({
+  open,
+  onClose,
+  anchorRect,
+  model,
+  thinking,
+  showThinking,
+  onToggleShowThinking,
+  onSlash,
+}: Props) {
   const [resetState, setResetState] = useState<ResetState>('idle');
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [models, setModels] = useState<ModelOption[] | null>(null);
@@ -261,6 +274,13 @@ export function ChatMenuPopover({ open, onClose, anchorRect, model, thinking, on
         >
           Reset to default
         </div>
+        <CheckRow
+          className="thinking-visibility-row"
+          label="Show thinking in replies"
+          checked={showThinking}
+          onClick={onToggleShowThinking}
+          title="Display only, this session — the text is still captured and exported. Same as /verbose thinking on|off"
+        />
       </Section>
 
       <Divider />
@@ -398,6 +418,40 @@ function ToggleRow({ label, open, onClick }: { label: string; open: boolean; onC
           transition: 'transform 0.12s',
         }}
       />
+    </div>
+  );
+}
+
+function CheckRow({
+  label,
+  checked,
+  onClick,
+  title,
+  className,
+}: {
+  label: string;
+  checked: boolean;
+  onClick: () => void;
+  title?: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={className}
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      onClick={onClick}
+      title={title}
+      style={{ ...toggleRowStyle, justifyContent: 'flex-start', gap: 6, fontSize: 11 }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--bg-3)')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+    >
+      {checked ? (
+        <CheckSquare size={12} style={{ color: 'var(--accent)' }} />
+      ) : (
+        <Square size={12} style={{ color: 'var(--text-3)' }} />
+      )}
+      <span>{label}</span>
     </div>
   );
 }
