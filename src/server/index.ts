@@ -2,6 +2,7 @@ import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { streamSSEH2Safe } from './sse-h2-safe.ts';
+import { destroySocketOf, installTransportLiveness, remoteOf, startSseHeartbeat } from './sse-liveness.ts';
 import { bridgeMcpTools } from '../mcp/hub/bridge.ts';
 import { writeCatalog } from '../mcp/hub/catalog.ts';
 import { McpHubManager } from '../mcp/hub/manager.ts';
@@ -2688,24 +2689,36 @@ app.get('/chat/stream', async (c) => {
     return c.json({ error: `session '${sessionRef}' not found for agent '${agent}'` }, 404);
   }
   return streamSSEH2Safe(c, async (stream) => {
-    logger.info({ msg: 'sse.connect', agent, session });
-    // Teardown runs from EITHER side — client abort (onAbort) or
-    // server-side eviction after a publish timeout (evict hook). Guard
-    // against double-execution; on eviction additionally close the
-    // stream so the client's EventSource sees EOF and auto-reconnects
-    // instead of idling on heartbeats that carry no events.
-    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const remote = remoteOf(c);
+    const connectedAt = Date.now();
+    logger.info({ msg: 'sse.connect', agent, session, remote });
+    // Teardown runs from ANY side — client abort (onAbort), server-side
+    // eviction after a publish timeout (evict hook), or a dead verdict
+    // from the heartbeat watcher. Guard against double-execution; on
+    // eviction/dead additionally close the stream and destroy the
+    // socket so the client's EventSource sees EOF (or nothing keeps
+    // buffering into a vanished peer) and auto-reconnects instead of
+    // idling on heartbeats that carry no events.
+    let stopHeartbeat: (() => void) | undefined;
     let done = false;
     let resolveDone: () => void = () => {};
     const donePromise = new Promise<void>((resolve) => {
       resolveDone = resolve; // executor runs synchronously — safe before any await
     });
-    const finish = (reason: 'disconnect' | 'evicted'): void => {
+    const finish = (reason: 'disconnect' | 'evicted' | 'dead', detail?: string): void => {
       if (done) return;
       done = true;
-      if (heartbeat) clearInterval(heartbeat);
+      stopHeartbeat?.();
       unsub();
-      logger.info({ msg: reason === 'evicted' ? 'sse.evicted_closed' : 'sse.disconnect', agent, session });
+      logger.info({
+        msg: reason === 'evicted' ? 'sse.evicted_closed' : 'sse.disconnect',
+        agent,
+        session,
+        remote,
+        reason,
+        ...(detail ? { detail } : {}),
+        durationMs: Date.now() - connectedAt,
+      });
       resolveDone();
     };
     const unsub = subscribe(
@@ -2726,11 +2739,21 @@ app.get('/chat/stream', async (c) => {
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected', session }) });
     // Heartbeat keeps TCP alive past Undici's idle-body timeout (~5 min default)
     // and gives the client a positive signal the link is still healthy.
-    heartbeat = setInterval(() => {
-      stream
-        .writeSSE({ event: 'heartbeat', data: String(Date.now()) })
-        .catch((err) => logger.debug({ msg: 'sse.heartbeat_fail', session, err: String(err) }));
-    }, 20_000);
+    // Its writes are watched: a write that fails or never completes
+    // means the peer is gone (see sse-liveness.ts).
+    stopHeartbeat = startSseHeartbeat(stream, {
+      intervalMs: config.sse.heartbeatMs,
+      deadAfterMs: config.sse.deadAfterMs,
+      onDead: (why, detail) => {
+        finish('dead', `${why}${detail ? ': ' + detail : ''}`);
+        try {
+          stream.close();
+        } catch {
+          /* already closed */
+        }
+        destroySocketOf(c);
+      },
+    });
     stream.onAbort(() => finish('disconnect'));
     await donePromise;
   });
@@ -2742,21 +2765,42 @@ app.get('/chat/stream', async (c) => {
 // src/server/activity-stream.ts for the event vocabulary.
 app.get('/activity/stream', async (c) => {
   return streamSSEH2Safe(c, async (stream) => {
-    logger.info({ msg: 'activity.connect' });
+    const remote = remoteOf(c);
+    const connectedAt = Date.now();
+    logger.info({ msg: 'activity.connect', remote });
     const unsub = subscribeActivity(async (event) => {
       await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
     });
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected' }) });
-    const heartbeat = setInterval(() => {
-      stream
-        .writeSSE({ event: 'heartbeat', data: String(Date.now()) })
-        .catch((err) => logger.debug({ msg: 'activity.heartbeat_fail', err: String(err) }));
-    }, 20_000);
+    let done = false;
+    let resolveDone: () => void = () => {};
+    const donePromise = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    const finish = (reason: 'disconnect' | 'dead', detail?: string) => {
+      if (done) return;
+      done = true;
+      stopHeartbeat();
+      unsub();
+      logger.info({ msg: 'activity.disconnect', remote, reason, ...(detail ? { detail } : {}), durationMs: Date.now() - connectedAt });
+      resolveDone();
+    };
+    const stopHeartbeat = startSseHeartbeat(stream, {
+      intervalMs: config.sse.heartbeatMs,
+      deadAfterMs: config.sse.deadAfterMs,
+      onDead: (why, detail) => {
+        finish('dead', `${why}${detail ? ': ' + detail : ''}`);
+        try {
+          stream.close();
+        } catch {
+          /* already closed */
+        }
+        destroySocketOf(c);
+      },
+    });
     await new Promise<void>((resolve) => {
       stream.onAbort(() => {
-        clearInterval(heartbeat);
-        unsub();
-        logger.info({ msg: 'activity.disconnect' });
+        finish('disconnect');
         resolve();
       });
     });
@@ -5043,6 +5087,18 @@ const tunable = httpServer as unknown as {
 };
 tunable.requestTimeout = 0;
 tunable.keepAliveTimeout = 60_000;
+// Dead-peer detection on the transport: TCP keepalive on every socket,
+// h2 PING per session with a timeout (TLS listener). sessionTimeout
+// stays 0 on purpose — an idle-session timeout would cut a long
+// /chat/send-sync wait; PING only kills sessions that stop answering.
+// Report 2026-09-03: 16 SSE streams of vanished tabs stayed open for
+// 25 minutes because nothing on the server ever probed the peer.
+const liveness = installTransportLiveness(httpServer, {
+  keepAliveDelayMs: config.sse.keepAliveDelayMs,
+  h2PingIntervalMs: config.sse.h2PingIntervalMs,
+  h2PingTimeoutMs: config.sse.h2PingTimeoutMs,
+});
+logger.info({ msg: 'transport.liveness', ...liveness, keepAliveDelayMs: config.sse.keepAliveDelayMs, h2PingIntervalMs: config.sse.h2PingIntervalMs, h2PingTimeoutMs: config.sse.h2PingTimeoutMs });
 
 // Best-effort cleanup on signal — keeps embedding processes from lingering
 // and SQLite handles closed cleanly. tsx watch tends to send SIGTERM on reload.

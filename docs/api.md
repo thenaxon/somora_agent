@@ -916,7 +916,14 @@ Event types:
   reload keeps the marker on that turn.
 - `memory_inject` — `{hits, block}` — memory recall for this turn
 - `status` — `{msg}` — connection events, error notices
-- `heartbeat` — current ms timestamp, fires every 20 s
+- `heartbeat` — current ms timestamp, every `sse.heartbeatMs` (20 s). The
+  server watches these writes: one that fails or stays pending for
+  `sse.deadAfterMs` (60 s) marks the stream dead — it is closed and its
+  socket destroyed, logged as `sse.disconnect {reason: 'dead'}`. On the
+  TLS listener every HTTP/2 session is also PINGed (`sse.h2PingIntervalMs`)
+  and destroyed when it stops answering (`sse.h2PingTimeoutMs`), and every
+  socket carries TCP keepalive — a tab that vanished without closing is
+  gone server-side in about a minute instead of never.
 
 Tool names are normalised through the same path the wire serializer
 uses — clients receive `memory_search`, not
@@ -951,7 +958,8 @@ Event types:
   POSTs `/sessions/:agent/:session/seen`. Sibling clients clear
   their unread badge for that session.
 - `status` — `{msg}` — connection lifecycle.
-- `heartbeat` — current ms timestamp, fires every 20 s.
+- `heartbeat` — current ms timestamp, every `sse.heartbeatMs`; same
+  liveness rules as `/chat/stream`.
 
 Unread state is persisted in the session's meta as `unreadAt` and
 `seenAt` (both ISO timestamps). A session is unread when

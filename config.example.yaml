@@ -512,7 +512,11 @@ providers:
 #                                  # nacheinander — ein slow client blockt nie die
 #                                  # anderen. Auf false stellen nur wenn du strikt
 #                                  # serielle delivery-order brauchst.
-
+#   heartbeatMs: 20000             # Server→Client-Heartbeat auf /chat/stream + /activity/stream
+#   deadAfterMs: 60000             # Heartbeat-Write hängt länger → Stream gilt als tot, Socket zu
+#   h2PingIntervalMs: 30000        # HTTP/2 PING pro Client-Session (TLS-Listener) …
+#   h2PingTimeoutMs: 30000         # … ohne ACK in dieser Zeit → Session zerstört (Tab weg, WLAN weg)
+#   keepAliveDelayMs: 30000        # TCP-Keepalive auf jedem Socket (Kernel-Probes obendrauf)
 # tmux attention watcher — somora watches its own tmux sessions that were
 # created with kind "claude-code" or "codex" and detects when the CLI in
 # the pane goes from running to ready (finished OR waiting for input).

@@ -364,9 +364,30 @@ export const SseConfigSchema = z.object({
    *  only flip this if you need strict per-subscriber send ordering for
    *  some odd integration). */
   publishParallel: z.boolean().default(true),
+  /** Server → client heartbeat interval on /chat/stream and
+   *  /activity/stream. Clients treat a gap of > ~2 intervals as a lost
+   *  link (docs/mobile.md). */
+  heartbeatMs: z.number().int().positive().default(20_000),
+  /** A heartbeat write that has not completed after this long marks
+   *  the stream dead: it is torn down and its socket destroyed. */
+  deadAfterMs: z.number().int().positive().default(60_000),
+  /** HTTP/2 PING per client session (TLS listener only). A session
+   *  that does not ACK within h2PingTimeoutMs is destroyed — the way
+   *  a silently vanished tab (WLAN drop, sleep) is detected in about
+   *  a minute instead of never. */
+  h2PingIntervalMs: z.number().int().positive().default(30_000),
+  h2PingTimeoutMs: z.number().int().positive().default(30_000),
+  /** TCP keepalive delay set on every accepted socket. Kernel probe
+   *  interval/count still apply on top (Linux default 75 s × 9). */
+  keepAliveDelayMs: z.number().int().positive().default(30_000),
 }).default({
   publishTimeoutMs: 10_000,
   publishParallel: true,
+  heartbeatMs: 20_000,
+  deadAfterMs: 60_000,
+  h2PingIntervalMs: 30_000,
+  h2PingTimeoutMs: 30_000,
+  keepAliveDelayMs: 30_000,
 });
 export type SseConfig = z.infer<typeof SseConfigSchema>;
 
