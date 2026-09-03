@@ -117,6 +117,16 @@ adapter does nothing engine-specific. Otherwise it maps:
 maps to `minimal` (its lowest setting). The semantic difference vs
 `off` on claude is documented but unavoidable.
 
+The per-model `reasoning.levels` block (see the vocabulary section
+below) applies to **codex-cli and grok-cli as well**, not only to the
+OpenAI-compatible engine: codex accepts `xhigh` and `max` for the
+GPT-5.6 family, so `reasoning: { levels: { high: xhigh } }` on such a
+model sends `model_reasoning_effort=xhigh` for `/thinking high`.
+Without a mapping the level goes through verbatim as in the table.
+`max` is deliberately not a suggested default — OpenAI documents it for
+the hardest problems, with the latency and cost to match; map it in a
+session when you need it.
+
 ### Why three different surfaces
 
 The mapping is intentionally lossy because the underlying APIs disagree:

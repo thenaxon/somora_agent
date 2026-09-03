@@ -10,6 +10,8 @@ import {
   parseSupportedEfforts,
   pickFallbackEffort,
   resolveOpenAiReasoning,
+  codexCliReasoningArgs,
+  grokCliReasoningArgs,
 } from './thinking-params.ts';
 
 let pass = 0;
@@ -86,6 +88,21 @@ check('minimal → low when only low+ exist', pickFallbackEffort('minimal', ['lo
 check('never picks none', pickFallbackEffort('minimal', ['none', 'medium']) === 'medium');
 check('unknown requested word → treated as medium → low', pickFallbackEffort('turbo', ['low', 'high', 'max']) === 'low');
 check('nothing usable → null', pickFallbackEffort('high', ['none']) === null);
+
+
+// ── codex-cli / grok-cli honour reasoning.levels (2026-09-03 report) ──
+{
+  const plain = { capabilities: ['text', 'reasoning'] } as any;
+  const mapped = { capabilities: ['text', 'reasoning'], reasoning: { levels: { high: 'xhigh', off: 'low' } } } as any;
+  check('codex: no mapping → verbatim', JSON.stringify(codexCliReasoningArgs('high', plain)) === '["-c","model_reasoning_effort=high"]');
+  check('codex: off → minimal without mapping', JSON.stringify(codexCliReasoningArgs('off', plain)) === '["-c","model_reasoning_effort=minimal"]');
+  check('codex: levels.high → xhigh', JSON.stringify(codexCliReasoningArgs('high', mapped)) === '["-c","model_reasoning_effort=xhigh"]');
+  check('codex: levels.off overrides minimal', JSON.stringify(codexCliReasoningArgs('off', mapped)) === '["-c","model_reasoning_effort=low"]');
+  check('codex: unmapped level stays verbatim', JSON.stringify(codexCliReasoningArgs('medium', mapped)) === '["-c","model_reasoning_effort=medium"]');
+  check('codex: no reasoning capability → no args', codexCliReasoningArgs('high', { capabilities: ['text'] } as any).length === 0);
+  check('grok: levels.high → xhigh', JSON.stringify(grokCliReasoningArgs('high', mapped)) === '["--reasoning-effort","xhigh"]');
+  check('grok: off → low without mapping', JSON.stringify(grokCliReasoningArgs('off', plain)) === '["--reasoning-effort","low"]');
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

@@ -213,7 +213,13 @@ export function codexCliReasoningArgs(
   model: ModelLike,
 ): string[] {
   if (!thinking || !modelSupportsReasoning(model)) return [];
-  const codexEffort = thinking === 'off' ? 'minimal' : thinking;
+  // Per-model `reasoning.levels` applies here too (2026-09-03 report:
+  // codex accepts `xhigh`/`max` for GPT-5.6 but somora's vocabulary
+  // ends at `high`; `levels: { high: xhigh }` on a codex model was
+  // silently ignored). Without a mapping the level goes through
+  // verbatim, `off` → `minimal` as before.
+  const configured = model.reasoning?.levels?.[thinking];
+  const codexEffort = configured ?? (thinking === 'off' ? 'minimal' : thinking);
   return ['-c', `model_reasoning_effort=${codexEffort}`];
 }
 
@@ -235,6 +241,9 @@ export function grokCliReasoningArgs(
   model: ModelLike,
 ): string[] {
   if (!thinking || !modelSupportsReasoning(model)) return [];
-  const effort = thinking === 'off' ? 'low' : thinking;
+  // Same per-model mapping as codex/openai-compatible; `off` → `low`
+  // (grok has no lower value) unless the model maps it.
+  const configured = model.reasoning?.levels?.[thinking];
+  const effort = configured ?? (thinking === 'off' ? 'low' : thinking);
   return ['--reasoning-effort', effort];
 }
