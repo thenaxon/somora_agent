@@ -22,6 +22,8 @@ import { fileURLToPath } from 'node:url';
 
 import { SOMORA_VERSION } from '../version.ts';
 import { buildSystemdUnit, extractCustomEnvLines } from './systemd-unit.ts';
+// Plain-ESM helper shared with bin/somora.mjs (must run on the Node we reject).
+import { nodeUpgradeHint, satisfiesNode } from '../../bin/node-version.mjs';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const LOCKFILE_PATH = join(SOMORA_HOME, 'locks', 'server.lock');
@@ -493,6 +495,24 @@ async function cmdUpdate(args: string[]): Promise<number> {
     if (cl.code !== 0) {
       process.stderr.write(`git clone failed (exit ${cl.code})\n`);
       return cl.code;
+    }
+
+    // The target release may require a newer Node than the one running
+    // this (older) CLI. Check its engines BEFORE building: after the
+    // install the new bin would refuse to start anyway, but the user
+    // would have waited through the whole web build first.
+    try {
+      const targetPkg = JSON.parse(readFileSync(join(cloneDir, 'package.json'), 'utf8')) as {
+        engines?: { node?: string };
+      };
+      const range = targetPkg.engines?.node;
+      if (range && !satisfiesNode(range, process.versions.node)) {
+        process.stderr.write(`\n${label} needs a newer Node.js than this machine has — update aborted before building.\n`);
+        process.stderr.write(nodeUpgradeHint(range, process.versions.node, process.execPath));
+        return 1;
+      }
+    } catch {
+      /* unreadable target package.json — npm pack will complain */
     }
 
     process.stdout.write('  packing tarball (builds web bundle)…\n');

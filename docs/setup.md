@@ -11,7 +11,7 @@ Hard requirements:
 
 | Tool | Why | Install |
 |---|---|---|
-| **Node ≥22.13** | runtime + native `node:sqlite` | [nodejs.org](https://nodejs.org/) or `nvm install 22` |
+| **Node ≥22.13** | runtime + native `node:sqlite`; every `somora` command refuses to start on an older Node and prints the upgrade steps, `somora update` checks the target release before building | [nodejs.org](https://nodejs.org/) or `nvm install 22` |
 | **tmux** | the `tmux` tool + the web tmux app | `sudo apt install tmux` (Debian/Ubuntu) · `brew install tmux` (macOS) · `sudo dnf install tmux` (Fedora) |
 | **ripgrep** (`rg`) | needed by `file_search` | `sudo apt install ripgrep` · `brew install ripgrep` · `sudo dnf install ripgrep` |
 | **git** | clone the repo | usually pre-installed; otherwise package-manage |

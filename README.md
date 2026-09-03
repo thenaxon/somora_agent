@@ -129,7 +129,7 @@ What makes it different:
 
 Hard:
 
-- **Node ≥22.13** — uses native `node:sqlite` plus `better-sqlite3`.
+- **Node ≥22.13** — uses native `node:sqlite` plus `better-sqlite3`. On an older Node every `somora` command stops with the upgrade steps instead of failing somewhere inside a dependency.
 - **tmux** — required by the `tmux` tool (long-lived terminal sessions for
   agents) and by the web tmux app. Install via your package manager.
 - **At least one LLM backend.** Pick what you have:

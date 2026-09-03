@@ -5,12 +5,28 @@
 // somora is shipped as TS (no compile step). tsx is a runtime dep.
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { nodeUpgradeHint, satisfiesNode } from './node-version.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(here, '..');
+
+// Node version gate — runs before tsx or any dependency loads, so a
+// too-old Node fails with instructions instead of a stack trace from
+// somewhere inside node_modules. Requirement comes from package.json
+// `engines.node` (single source, bumped with the dependencies).
+try {
+  const pkg = JSON.parse(readFileSync(resolve(pkgRoot, 'package.json'), 'utf8'));
+  const range = pkg?.engines?.node;
+  if (range && !satisfiesNode(range, process.versions.node)) {
+    process.stderr.write(nodeUpgradeHint(range, process.versions.node, process.execPath));
+    process.exit(1);
+  }
+} catch {
+  // unreadable package.json — let the normal path report it
+}
 
 const tsxBin = resolve(pkgRoot, 'node_modules', '.bin', 'tsx');
 const cliEntry = resolve(pkgRoot, 'src', 'cli', 'somora.ts');
