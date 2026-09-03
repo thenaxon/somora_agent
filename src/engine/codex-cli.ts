@@ -31,6 +31,7 @@ import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
 import { codexCliReasoningArgs } from './thinking-params.ts';
+import { codexDisableArgs } from './codex-features.ts';
 import { CodexFailureDetail } from './codex-events.ts';
 
 const ENGINE = 'codex-cli';
@@ -339,7 +340,9 @@ export const codexCliEngine: AgentEngine = {
     // network well outside the somora memory scope. The somora MCP
     // continues to work because MCP tool dispatch is infrastructure, not
     // gated by these feature flags.
-    for (const feat of CODEX_DISABLED_FEATURES) args.push('--disable', feat);
+    // Only flags the INSTALLED codex knows — an unknown `--disable` is a
+    // hard spawn error (see ./codex-features.ts; probe cached per process).
+    args.push(...codexDisableArgs(CODEX_BIN, CODEX_DISABLED_FEATURES));
     // Context-isolation flags — keep host-codex setup from leaking into
     // somora agents (analogous to claude-cli's settingSources:[] +
     // managedSettings.autoMemoryEnabled=false defenses):
