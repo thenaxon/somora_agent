@@ -333,6 +333,16 @@ export const claudeCliEngine: AgentEngine = {
             ),
           },
           canUseTool: somoraToolGate,
+          // Only the MCP servers passed above exist for this session —
+          // ignores ~/.claude.json, project .mcp.json, plugins and the
+          // claude.ai account connectors (Gmail/Calendar/Drive). Before
+          // this (SDK 0.3.259 re-audit, 2026-09-03) those connectors
+          // showed up in the init message as "needs-auth" AND were
+          // mentioned to the model in its system prompt; the deny-list
+          // in KNOWN_ACCOUNT_TOOLS only kept their tools uncallable. Now
+          // they never reach the session; the deny-list stays as the
+          // second layer for whatever a future SDK adds.
+          strictMcpConfig: true,
           abortController: sdkAbortController,
           // Policy-layer settings: turn off Claude Code's auto-memory so the
           // CLI doesn't inject ~/.claude/projects/<cwd>/memory/* into the

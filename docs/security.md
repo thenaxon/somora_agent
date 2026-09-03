@@ -51,6 +51,17 @@ Five-layer defense in [`src/engine/claude-cli.ts`](../src/engine/claude-cli.ts):
 5. `managedSettings: { autoMemoryEnabled: false }` — disables the
    project-memory auto-loader. Without this, `~/.claude/projects/<cwd>/memory/*`
    files leak into the system prompt.
+6. `strictMcpConfig: true` — only the MCP servers somora passes exist
+   for the session. The claude.ai account connectors (Gmail, Calendar,
+   Drive) no longer appear at all; before, they were listed as
+   "needs-auth" and mentioned to the model, with only their tools
+   denied (SDK 0.3.259 re-audit, 2026-09-03).
+
+What the SDK's init message lists as `skills`, `slash_commands` and
+`agents` is SDK-side inventory: with a plain-string `systemPrompt` and
+`settingSources: []` none of it reaches the model (verified by asking
+the model to list everything it was told about — only the somora tools
+and ToolSearch came back).
 
 Diagnostic logs you'll see:
 
