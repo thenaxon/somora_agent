@@ -59,11 +59,40 @@ export interface RunDreamArgs {
  * the runtime auto-inject for this conversation. Approximation but
  * cheaper than re-running search per user message.
  */
-function buildVaultRecallQuery(events: Awaited<ReturnType<typeof getHistory>>): string {
-  return events
-    .filter((e) => e.kind === 'user_message')
-    .map((e) => (e as { text: string }).text)
-    .join(' ');
+/** Bounds for the vault/wiki recall query. It used to be EVERY user
+ *  message of the range joined together — 900 messages / 275k chars on
+ *  one reset, which the FTS layer then turned into ~50k OR-terms and
+ *  the server stood still for minutes (2026-09-03). The recall only
+ *  needs the gist of what the conversation was about: the most recent
+ *  messages, human ones only (A2A traffic and injected blocks are
+ *  persisted as user_message too), capped in characters. */
+export const RECALL_QUERY_MAX_MESSAGES = 20;
+export const RECALL_QUERY_MAX_CHARS = 4000;
+
+export function buildVaultRecallQuery(
+  events: ReadonlyArray<{ kind: string; text?: string; from_agent?: string }>,
+  limits: { maxMessages?: number; maxChars?: number } = {},
+): string {
+  const maxMessages = limits.maxMessages ?? RECALL_QUERY_MAX_MESSAGES;
+  const maxChars = limits.maxChars ?? RECALL_QUERY_MAX_CHARS;
+  const texts = events
+    .filter((e) => e.kind === 'user_message' && !e.from_agent && typeof e.text === 'string' && e.text.trim().length > 0)
+    .map((e) => e.text as string)
+    .slice(-maxMessages);
+  // Newest first so the tail of the conversation survives the char cap.
+  const out: string[] = [];
+  let chars = 0;
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const t = texts[i]!;
+    if (chars + t.length > maxChars) {
+      const room = maxChars - chars;
+      if (room > 40) out.unshift(t.slice(t.length - room));
+      break;
+    }
+    out.unshift(t);
+    chars += t.length + 1;
+  }
+  return out.join(' ');
 }
 
 /**
@@ -258,6 +287,15 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   // through to the extractor.
   const referencedVault: Array<{ slug: string; markdown: string; score: number }> = [];
   const recallQuery = buildVaultRecallQuery(eventsInRange);
+  // Logged BEFORE the two synchronous searches so a slow recall is
+  // visible in the log instead of a silent gap before dream.start.
+  logger.info({
+    msg: 'dream.recall_query',
+    agent: args.agent,
+    sourceSession: args.sourceSession,
+    eventsInRange: eventsInRange.length,
+    queryChars: recallQuery.length,
+  });
   if (recallQuery.trim().length > 0) {
     try {
       const hits = await args.mgr.search(recallQuery, { limit: 40, minScore: 0.4 });

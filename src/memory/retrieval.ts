@@ -318,16 +318,32 @@ function runBm25Search(
 }
 
 /**
- * Build a safe FTS5 MATCH query from free-form text. Strategy: tokenize on
- * whitespace, drop FTS5-special characters, OR-join the surviving tokens.
- * No prefix matching by default — keeps recall conservative; we can revisit
- * if synonym-recall is too narrow.
+ * Hard cap on OR-terms in one FTS5 MATCH. The query cost grows roughly
+ * quadratically with the term count (measured on a 1.3k-chunk index:
+ * 5k chars of text → 174 ms, 50k → 17 s, 275k → not finished after
+ * 150 s), and better-sqlite3 runs it synchronously on the event loop —
+ * a /reset over a long session froze the whole server for minutes
+ * (2026-09-03). 64 distinct terms keep the MATCH O(1) in the input
+ * length; beyond that more terms only dilute the OR anyway.
  */
-function sanitizeFtsQuery(input: string): string {
-  const tokens = input
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}_]+/u)
-    .filter((t) => t.length >= 2);
+export const FTS_MAX_TERMS = 64;
+
+/**
+ * Build a safe FTS5 MATCH query from free-form text. Strategy: tokenize on
+ * whitespace, drop FTS5-special characters, de-duplicate, keep the first
+ * FTS_MAX_TERMS distinct tokens, OR-join them. No prefix matching by
+ * default — keeps recall conservative; we can revisit if synonym-recall
+ * is too narrow.
+ */
+export function sanitizeFtsQuery(input: string, maxTerms: number = FTS_MAX_TERMS): string {
+  const seen = new Set<string>();
+  const tokens: string[] = [];
+  for (const raw of input.toLowerCase().split(/[^\p{L}\p{N}_]+/u)) {
+    if (raw.length < 2 || seen.has(raw)) continue;
+    seen.add(raw);
+    tokens.push(raw);
+    if (tokens.length >= maxTerms) break;
+  }
   if (tokens.length === 0) return '';
   // Wrap each token in double-quotes to avoid FTS5 reserved-word issues
   return tokens.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');

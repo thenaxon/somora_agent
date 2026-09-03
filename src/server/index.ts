@@ -2074,12 +2074,23 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
     const remConfig = persona.rem;
     void (async () => {
       try {
+        // Only the part idle-REM has not seen yet. The archived meta
+        // carries the session's `dreamReadThroughTs` (resetSession moves
+        // the meta file along with the JSONL); rangeFromTs: 0 re-dreamed
+        // the WHOLE session — on 2026-09-03 that was 11,020 of 11,024
+        // events already extracted once, sent through the worker a
+        // second time (duplicate findings), and the recall query built
+        // from 900 messages froze the server (see rem-runner.ts).
+        const archivedMeta = await sessionMetaStore.get(agent, archivedId);
+        const rangeFromTs =
+          typeof archivedMeta.dreamReadThroughTs === 'number' ? archivedMeta.dreamReadThroughTs : 0;
+        logger.info({ msg: 'session.reset_dream_range', agent, archivedId, rangeFromTs });
         const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
         await runDream({
           agent,
           sourceSession: archivedId,
           trigger: 'manual',
-          rangeFromTs: 0,
+          rangeFromTs,
           rangeThroughTs: Date.now(),
           rem: remConfig,
           config,
