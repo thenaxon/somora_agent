@@ -6,7 +6,7 @@
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "bin": {
     "somora": "bin/somora.mjs"
@@ -53,7 +53,7 @@
     "jsdom": "^29.1.1",
     "node-pty": "^1.1.0",
     "openai": "^6.39.0",
-    "pdf-to-img": "^6.0.0",
+    "pdf-to-img": "^7.0.0",
     "pino": "^10.3.1",
     "pino-roll": "^4.0.0",
     "react": "^19.2.5",
