@@ -15,7 +15,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { blacklistReasons, checkBlacklist } from './blacklist.ts';
+import { blacklistReasons, checkBlacklist, splitCommandSegments } from './blacklist.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const AUDIT_DIR = join(SOMORA_HOME, 'audit');
@@ -47,30 +47,9 @@ function hasCommandSubstitution(s: string): boolean {
   return s.includes('$(') || s.includes('`');
 }
 
-/**
- * Split a command line into the sub-commands the shell would run as
- * separate processes. We split on the command SEPARATORS — `;`, `&&`,
- * `||`, `|` (pipe), background `&`, and newlines — but NOT on redirect
- * tokens (`2>&1`, `&>`, `>&`), which stay within their segment.
- *
- * This is a pragmatic splitter, not a shell parser (same philosophy as
- * blacklist.ts): it is quote-unaware, so `echo "a; b"` splits into two
- * segments. That only ever makes us MORE conservative (more segments →
- * more blacklist checks), never less — a safe direction. Determined-
- * adversary evasion (encoded payloads) is explicitly out of scope.
- */
-export function splitCommandSegments(command: string): string[] {
-  // Order matters: multi-char operators (&&, ||) must be alternatives
-  // tried before their single-char counterparts. The background-`&`
-  // branch uses look-around to skip `&` that is part of a redirect
-  // (`2>&1`, `&>`, `&&` already consumed): not preceded by `>`/`&`/digit
-  // and not followed by `>`/`&`.
-  const SEP = /&&|\|\||;|\||\r?\n|(?<![>&\d])&(?![>&])/g;
-  return command
-    .split(SEP)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-}
+// The segment splitter lives in ./blacklist.ts (shared with the
+// per-segment blacklist entries); re-exported for callers and tests.
+export { splitCommandSegments };
 
 /**
  * Match a SINGLE command segment against the allowBlocked entries.
@@ -110,9 +89,10 @@ export interface ExecPolicyDecision {
   pattern?: string;
   /** The exact shell segment that caused the block (when a single
    *  segment is attributable). The splitter is quote-unaware, so a
-   *  harmless string argument can trip a pattern (`echo "poweroff
-   *  done"`) — naming the segment makes that self-explanatory
-   *  instead of looking like a matcher bug (2026-07-27 report). */
+   *  string argument carrying a separator (`echo "a; sudo b"`) can
+   *  produce a segment of its own — naming the segment makes that
+   *  self-explanatory instead of looking like a matcher bug
+   *  (2026-07-27 report). */
   segment?: string;
   /** allowBlocked entries that cleared blacklisted segments (when allowed
    *  via override — for the audit trail). Empty when nothing was

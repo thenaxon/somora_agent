@@ -24,7 +24,65 @@
 interface BlacklistEntry {
   pattern: RegExp;
   reason: string;
+  /**
+   * Test the pattern against each shell segment (split at `;`, `&&`,
+   * `||`, `|`, background `&`, newlines) instead of the whole command
+   * string. Lets a pattern anchor on COMMAND POSITION (`^…`) — the
+   * halt/shutdown rule needs that so `echo "poweroff done"` (word in a
+   * string argument) is not mistaken for `poweroff` (the command).
+   */
+  perSegment?: boolean;
 }
+
+/**
+ * Split a command line into the sub-commands the shell would run as
+ * separate processes: at `;`, `&&`, `||`, `|` (pipe), background `&`,
+ * and newlines — but NOT at redirect tokens (`2>&1`, `&>`, `>&`), which
+ * stay within their segment.
+ *
+ * Pragmatic splitter, not a shell parser (same philosophy as the
+ * patterns): quote-unaware, so `echo "a; b"` yields two segments. That
+ * only ever makes us MORE conservative (more segments → more checks),
+ * never less. Shared by the allowBlocked policy (./allowlist.ts) and
+ * the per-segment blacklist entries below.
+ */
+export function splitCommandSegments(command: string): string[] {
+  // Order matters: multi-char operators (&&, ||) must be alternatives
+  // tried before their single-char counterparts. The background-`&`
+  // branch uses look-around to skip `&` that is part of a redirect
+  // (`2>&1`, `&>`, `&&` already consumed): not preceded by `>`/`&`/digit
+  // and not followed by `>`/`&`.
+  const SEP = /&&|\|\||;|\||\r?\n|(?<![>&\d])&(?![>&])/g;
+  return command
+    .split(SEP)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+// System halt/shutdown — matched on COMMAND POSITION only (per segment).
+// The previous rule was a bare word search (`\b(shutdown|…)\b` over the
+// whole text) and blocked every string that merely mentioned the word:
+// `echo "poweroff issued"`, `cat poweroff.log`, `# reboot later`. On a
+// host whose allowBlocked list permits `systemctl poweroff`, the
+// shutdown itself passed while the status echo next to it was blocked
+// (hans's report 2026-09-03). Now the word must be the command the
+// shell would run: first token of the segment, optionally behind a
+// subshell paren, leading `VAR=x` assignments, and wrapper commands
+// (`sudo -n`, `doas`, `env`, `nice`, `nohup`, `time`, `ionice`,
+// `command`, `exec`), or the verb right after `systemctl`.
+// `bash -c "shutdown"` slips past — same class as the base64 bypass
+// the header accepts.
+const HALT_WRAPPERS = '(?:sudo|doas|env|nice|nohup|time|ionice|command|exec)';
+const HALT_COMMAND_PATTERN = new RegExp(
+  String.raw`^[({]?\s*` +
+    // leading VAR=value assignments
+    String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*` +
+    // wrapper commands with their flags
+    String.raw`(?:${HALT_WRAPPERS}\s+(?:-\S+\s+)*)*` +
+    // systemctl <verb>
+    String.raw`(?:systemctl\s+(?:-\S+\s+)*)?` +
+    String.raw`(shutdown|halt|reboot|poweroff)\b(?!\s+-h\s+now\s+--help)`,
+);
 
 // `rm -rf <path>` matcher. We block ONLY when <path> is a system
 // directory; user-owned dirs (/Users/<u>, /home/<u>, /tmp,
@@ -70,7 +128,7 @@ const HARD_BLACKLIST: ReadonlyArray<BlacklistEntry> = [
 
   // ── Fork bombs + system halt ──
   { pattern: /:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}/, reason: 'classic fork bomb' },
-  { pattern: /\b(shutdown|halt|reboot|poweroff)\b(?!\s+-h\s+now\s+--help)/, reason: 'system halt/shutdown' },
+  { pattern: HALT_COMMAND_PATTERN, reason: 'system halt/shutdown', perSegment: true },
 
   // ── World-writable on system paths ──
   {
@@ -112,9 +170,10 @@ export type BlacklistCheck = BlacklistMatch | BlacklistOk;
  * past the simple anchor rules — that's OK for our threat model.
  */
 export function checkBlacklist(command: string): BlacklistCheck {
-  const normalized = command.trim().replace(/\s+/g, ' ');
+  const normalized = normalize(command);
+  const segments = splitCommandSegments(command).map(normalize);
   for (const entry of HARD_BLACKLIST) {
-    if (entry.pattern.test(normalized)) {
+    if (entryMatches(entry, normalized, segments)) {
       return {
         matched: true,
         reason: entry.reason,
@@ -123,6 +182,22 @@ export function checkBlacklist(command: string): BlacklistCheck {
     }
   }
   return { matched: false };
+}
+
+function normalize(s: string): string {
+  return s.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Whole-text entries test the normalized command; per-segment entries
+ * test every shell segment on its own. Segments are split BEFORE
+ * whitespace normalization so a newline still separates commands —
+ * otherwise `echo hi\nshutdown -h now` would collapse into one line
+ * and the command-position anchor would never see `shutdown`.
+ */
+function entryMatches(entry: BlacklistEntry, normalized: string, segments: string[]): boolean {
+  if (entry.perSegment) return segments.some((seg) => entry.pattern.test(seg));
+  return entry.pattern.test(normalized);
 }
 
 /**
@@ -135,10 +210,11 @@ export function checkBlacklist(command: string): BlacklistCheck {
  * checkBlacklist.
  */
 export function blacklistReasons(command: string): string[] {
-  const normalized = command.trim().replace(/\s+/g, ' ');
+  const normalized = normalize(command);
+  const segments = splitCommandSegments(command).map(normalize);
   const out: string[] = [];
   for (const entry of HARD_BLACKLIST) {
-    if (entry.pattern.test(normalized)) out.push(entry.reason);
+    if (entryMatches(entry, normalized, segments)) out.push(entry.reason);
   }
   return out;
 }

@@ -12,6 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { evaluateExecPolicy, splitCommandSegments } from './allowlist.ts';
+import { checkBlacklist } from './blacklist.ts';
 
 let pass = 0;
 let fail = 0;
@@ -123,22 +124,58 @@ check(
   evaluateExecPolicy('sudo -n systemctl poweroff && echo done', SUDO_SYSCTL).allowed,
   JSON.stringify(evaluateExecPolicy('sudo -n systemctl poweroff && echo done', SUDO_SYSCTL)),
 );
+// ── Halt words inside strings / names are not commands (hans 2026-09-03) ──
+// The halt/shutdown rule matches on command position per segment. A
+// status echo next to a permitted poweroff used to be the blocked
+// segment while the poweroff itself passed.
+for (const cmd of [
+  'sudo -n systemctl poweroff && echo "poweroff issued"',
+  'sudo -n shutdown -h +0 2>&1 | head -3 & sleep 2; echo "shutdown abgesetzt (exit=$?)"',
+  'sudo -n systemctl poweroff &\nsleep 2\necho "poweroff abgesetzt"',
+]) {
+  const d = evaluateExecPolicy(cmd, SUDO_SYSCTL);
+  check(`report case allowed on the permitting host: ${cmd}`, d.allowed, JSON.stringify(d));
+}
+for (const cmd of [
+  'echo "poweroff abgesetzt"',
+  'echo shutdown pending',
+  'cat poweroff.log',
+  'echo $reboot_reason',
+  'ls -la /var/log/reboot',
+  'true # reboot later',
+  'grep -c halt /var/log/syslog',
+  'systemctl status reboot-guard.service',
+]) {
+  check(`harmless mention passes on any host: ${cmd}`, !checkBlacklist(cmd).matched, cmd);
+  check(`harmless mention passes local policy: ${cmd}`, evaluateExecPolicy(cmd, []).allowed, cmd);
+}
+for (const cmd of [
+  'shutdown -h now',
+  'halt',
+  'reboot',
+  'poweroff',
+  'sudo -n shutdown -h +0',
+  'sudo reboot',
+  'doas poweroff',
+  'systemctl poweroff',
+  'sudo -n systemctl poweroff',
+  'systemctl --no-wall reboot',
+  'nohup reboot',
+  'FOO=1 shutdown -r now',
+  '(shutdown -h now)',
+  'echo hi; shutdown -h now',
+  'echo hi && reboot',
+  'echo hi\nshutdown -h now',
+  'true & poweroff',
+]) {
+  const b = checkBlacklist(cmd);
+  check(`real halt command still blocked: ${cmd}`, b.matched, cmd);
+  check(`real halt command still blocked by policy without entries: ${cmd}`, !evaluateExecPolicy(cmd, []).allowed, cmd);
+}
 {
-  // Documented conservative behavior: the splitter is quote-unaware,
-  // so a string ARGUMENT containing a blacklist word trips the pattern
-  // (`echo "poweroff issued"` matches \bpoweroff\b). Stays blocked —
-  // but the decision must name the offending segment so the agent can
-  // see it's the echo string, not the sudo command.
-  const d = evaluateExecPolicy(
-    'sudo -n systemctl poweroff && echo "poweroff issued"',
-    SUDO_SYSCTL,
-  );
-  check('quoted blacklist word still blocks (conservative)', !d.allowed);
-  check(
-    'blocked decision names the offending segment',
-    d.segment === 'echo "poweroff issued"',
-    JSON.stringify(d),
-  );
+  // Only the halt SEGMENT needs an entry; the echo next to it never did.
+  const d = evaluateExecPolicy('echo starting; shutdown -h now', ['sudo']);
+  check('uncovered halt segment is the one named', !d.allowed && d.segment === 'shutdown -h now', JSON.stringify(d));
 }
 check(
   'sudo reboot allowed with sudo entry (multi-pattern, prefix covers)',
