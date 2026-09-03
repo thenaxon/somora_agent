@@ -409,6 +409,34 @@ function resolveGlobalBin(): string | null {
   return existsSync(candidate) ? candidate : null;
 }
 
+/**
+ * Re-resolve the installed package's node_modules in place so the
+ * `overrides` in its package.json take effect. npm honours overrides
+ * only for the ROOT project — `npm install -g <tgz>` treats somora as
+ * a dependency of the global prefix and silently ignores them, which
+ * left the live copy on the vulnerable sharp/adm-zip pins the repo had
+ * already overridden (2026-09-03). Running `npm install` inside the
+ * installed directory makes it the root and applies them; there is no
+ * prepare/postinstall script on somora itself, so this only touches
+ * node_modules. Non-fatal: a failure leaves a working (if
+ * un-overridden) install behind.
+ */
+function applyPackageOverridesInPlace(): void {
+  const r = run('npm', ['root', '-g']);
+  if (r.code !== 0) return;
+  const pkgDir = join(r.stdout.trim(), 'somora');
+  if (!existsSync(join(pkgDir, 'package.json'))) return;
+  process.stdout.write('  applying package overrides in the installed copy (npm install --omit=dev)…\n');
+  const res = spawnSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+    cwd: pkgDir,
+    encoding: 'utf8',
+    stdio: ['inherit', 'pipe', 'inherit'],
+  });
+  if (res.status !== 0) {
+    process.stderr.write(`warning: in-place npm install failed (exit ${res.status ?? 'unknown'}) — overrides not applied\n`);
+  }
+}
+
 async function cmdUpdate(args: string[]): Promise<number> {
   const parsed = parseUpdateArgs(args);
   if (parsed.kind === 'help') { process.stdout.write(updateUsage()); return 0; }
@@ -488,6 +516,7 @@ async function cmdUpdate(args: string[]): Promise<number> {
     try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
   }
   if (installCode !== 0) return installCode;
+  applyPackageOverridesInPlace();
 
   // Re-run init from the freshly-installed global binary so the
   // systemd unit's ExecStart picks up the new path. Without this,

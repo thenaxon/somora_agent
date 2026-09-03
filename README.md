@@ -177,6 +177,9 @@ npm install -g @openai/codex              &&  codex login
 git clone https://github.com/thenaxon/somora_agent.git somora
 cd somora
 npm install -g "$(npm pack | tail -1)"
+# apply the package overrides inside the installed copy (npm honours
+# `overrides` only for a root project, not for a globally installed one)
+(cd "$(npm root -g)/somora" && npm install --omit=dev --no-audit --no-fund)
 
 # 4. First-run setup + start
 somora init                    # creates ~/.somora/ and registers the systemd unit
