@@ -47,9 +47,12 @@ const ENGINE = 'codex-cli';
 // `functions.update_plan`, `functions.view_image`, `multi_tool_use.*`,
 // etc.). Those live in OpenAI's `RESERVED_RESPONSES_NAMESPACES` and are
 // NOT controllable via codex feature flags — they require config-level
-// overrides (see -c web_search="disabled" + tools.view_image=false in
-// the spawn block below) or a model-preset change. Issue openai/codex#6049
-// tracks the upstream gap; somora can only do its half here.
+// overrides (see -c web_search="disabled", tools.update_plan.enabled,
+// tools.experimental_request_user_input.enabled in the spawn block
+// below; view_image became a feature flag in 0.151) or a model-preset
+// change. `functions.apply_patch` has no switch at all (model catalog).
+// Issue openai/codex#6049 tracks the upstream gap; somora can only do
+// its half here.
 //
 // Audit policy: list contains ONLY features that are currently `stable`
 // AND `default true` per `codex features list`. Stale entries (removed /
@@ -91,6 +94,17 @@ const CODEX_DISABLED_FEATURES = [
   // Misc behavior toggles we don't want flipping under us
   'fast_mode', // picks a different model — somora picks models
   'unavailable_dummy_tools',
+  // 0.151 re-audit (2026-09-03): `tools.view_image=false` became an
+  // UNKNOWN config key (silently ignored without --strict-config), so
+  // `functions.view_image` had leaked back since the 0.151 bump. The
+  // switch is a feature flag now.
+  'view_image',
+  // 0.151: skill discovery tool — somora agents get skills from
+  // somora's own registry (skills.bundled.enabled=false below).
+  'skill_search',
+  // NB: `collaboration_modes` and `unavailable_dummy_tools` are marked
+  // "removed" in 0.151 — `--disable` tolerates removed flags, and older
+  // codex binaries still honour them, so they stay.
   //
   // KEPT enabled (intentionally NOT in this list) because somora's
   // memory/dream MCP needs them:
@@ -348,14 +362,26 @@ export const codexCliEngine: AgentEngine = {
     //   web_search="disabled"   → hides `web.run` (hosted web-search tool).
     //                             Without this, the model sees web.run even
     //                             with browser_use* disabled.
-    //   tools.view_image=false  → hides `functions.view_image`.
-    // Other `functions.*` namespaces (apply_patch, update_plan,
-    // request_user_input, list_mcp_resources) are server-injected by the
-    // Responses API based on the codex-* model preset and cannot be
-    // suppressed from the codex CLI side — issue openai/codex#6049.
-    // somora's web_search/file_patch/etc. are the intended path.
+    //   --disable view_image    → hides `functions.view_image` (feature
+    //                             flag since 0.151; see the list above).
+    //   tools.update_plan.enabled=false
+    //   tools.experimental_request_user_input.enabled=false
+    //                           → 0.151 re-audit (2026-09-03): both
+    //                             `functions.*` tools now have config
+    //                             switches (verified with --strict-config
+    //                             + a model-visible tool listing).
+    // Still NOT suppressible: `functions.apply_patch` — its presence is
+    // driven by the model catalog (`apply_patch_tool_type: "freeform"`
+    // on gpt-5.5), no config key exists (probed apply_patch_tool_type,
+    // tools.apply_patch*, features.apply_patch: all unknown). The
+    // `list_mcp_resources*` trio only reads MCP resources, and somora's
+    // server exposes none. `multi_tool_use.parallel` is the Responses
+    // API's own wrapper, not a tool. somora's file_patch/web_search are
+    // the intended path; audit the listing again after every codex bump:
+    //   codex exec … 'List the exact names of every tool you can call'
     args.push('-c', 'web_search="disabled"');
-    args.push('-c', 'tools.view_image=false');
+    args.push('-c', 'tools.update_plan.enabled=false');
+    args.push('-c', 'tools.experimental_request_user_input.enabled=false');
     // codex 0.144 re-audit (2026-07-21, hans's skill-discovery report):
     // codex 0.14x embeds "core skills" (imagegen, openai-docs,
     // plugin-creator, skill-creator, skill-installer) in the binary,

@@ -70,13 +70,27 @@ None belong inside a somora agent.
 
 Defense in [`src/engine/codex-cli.ts`](../src/engine/codex-cli.ts):
 
-- **Feature disables** via `--disable <feature>` for each: `shell_tool`,
-  `unified_exec`, `apply_patch_freeform`, `apply_patch_streaming_events`,
-  `browser_use`, `in_app_browser`, `computer_use`, `image_generation`,
-  `js_repl`, `apps`, `web_search_cached`, `multi_agent`, `personality`,
-  `memories`.
-- **Sandbox**: `--sandbox read-only` as defense-in-depth (in case a
-  feature flag drifts in a future codex release).
+- **Feature disables** via `--disable <feature>` — the list is
+  `CODEX_DISABLED_FEATURES` at the top of the adapter and is re-audited
+  against `codex features list` after every codex bump: shell and exec
+  tools, browser and computer use, image generation, apps, multi-agent,
+  personality, hooks/plugins, goals, `view_image` and `skill_search`
+  (both feature flags since codex 0.151), and more.
+- **Config switches** for the `functions.*` tools the Responses API
+  injects: `web_search="disabled"`, `tools.update_plan.enabled=false`,
+  `tools.experimental_request_user_input.enabled=false`. Verified with
+  `--strict-config` (unknown keys are a hard error there) and by asking
+  the model to list every tool it can call.
+- **Known residual**: `functions.apply_patch` cannot be switched off —
+  the model catalog marks gpt-5.x with `apply_patch_tool_type:
+  "freeform"` and codex has no config key for it. `list_mcp_resources`
+  and its two siblings only read MCP resources, which somora's server
+  does not expose.
+- **Sandbox**: somora is the sandbox. The adapter runs codex with
+  `--dangerously-bypass-approvals-and-sandbox` so that somora's own
+  tools (which enforce the path blacklist and per-resource policy) are
+  not blocked by codex's approval flow; codex's built-in file/shell
+  tools are disabled above instead.
 - **`--ignore-user-config`**: skip `~/.codex/config.toml` (other MCP
   configs, model overrides, project trust list).
 - **`--ignore-rules`**: skip user / project execpolicy `.rules`.
