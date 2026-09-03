@@ -205,10 +205,10 @@ providers:
   anthropic:
     engine: claude-cli
     models:
-      - id: claude-opus-4-7
+      - id: claude-opus-5
         alias: opus
         contextWindow: 1000000
-        capabilities: [text, image]
+        capabilities: [text, image, pdf, reasoning]
 ```
 
 Requires the Claude Code CLI binary at `~/.local/bin/claude` (or set
@@ -222,11 +222,19 @@ providers:
   openai:
     engine: codex-cli
     models:
-      - id: gpt-5.5
-        alias: gpt55
-        contextWindow: 400000
-        capabilities: [text, image]
+      - id: gpt-5.6-terra
+        alias: terra
+        contextWindow: 272000        # Codex session cap, not the 1.05M API window
+        capabilities: [text, image, pdf, reasoning]
 ```
+
+`contextWindow: 272000` is deliberate: Codex caps a GPT-5.6 session at
+272k tokens (server-delivered default since Codex 0.144.6), and on a
+CLI engine the value does not trigger somora's compaction anyway — it
+only decides whether the model is picked as a compaction worker and
+what the header percentage claims. See
+[compaction.md](compaction.md#what-contextwindow-really-controls--per-engine)
+and [models.md](models.md).
 
 Requires the Codex CLI binary on PATH (or `SOMORA_CODEX_BIN` env to its
 path), 0.148 or newer recommended — somora only passes the lock-down
@@ -314,6 +322,11 @@ over. Replayed frames from `session/load` are ignored via
 resumed one.
 
 ### Local OpenAI-compatible LLM (Ollama, LM Studio, vLLM, oMLX, ...)
+
+For this engine `contextWindow` is the compaction wall — set it to the
+**server's** limit (`--max-model-len`, `--context-length`), not the
+model card's. Recommended blocks per model family, with sampling and
+reasoning vocabularies, are in [models.md](models.md).
 
 ```yaml
 providers:
@@ -532,7 +545,10 @@ compaction:
   # exchange and retries the turn once; a second refusal surfaces as a
   # plain-language error (switch model or /reset) instead of the raw 400.
   # Compaction workers are picked from models whose engine has a one-shot
-  # path (claude-cli, codex-cli, openai-compatible).
+  # path (claude-cli, codex-cli, openai-compatible): the smallest
+  # contextWindow that fits the range × 1.3 — which can be a
+  # subscription-backed CLI model. Mechanics, and what contextWindow
+  # means on each engine, in docs/compaction.md.
 
 agentLoop:
   maxRounds: 8                # tool-call rounds per turn (openai-compatible)

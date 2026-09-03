@@ -430,6 +430,8 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning depth, reasoning-token counts and the model's thinking text across engines
 - [docs/sampling.md](docs/sampling.md) — temperature, top_p and friends per model, agent and session
+- [docs/models.md](docs/models.md) — models known to run with somora, per engine, with the config values that work and why
+- [docs/compaction.md](docs/compaction.md) — when a session is summarised, which model does it, what `contextWindow` controls per engine
 - [docs/display.md](docs/display.md) — TUI display toggles
 - [docs/cache-strategy.md](docs/cache-strategy.md) — prompt-cache mechanics
 - [docs/security.md](docs/security.md) — what's locked down per engine
