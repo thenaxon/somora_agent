@@ -10,7 +10,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
-[![Node ≥20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)](#requirements)
+[![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](#requirements)
 
 ## What is somora?
 
@@ -129,7 +129,7 @@ What makes it different:
 
 Hard:
 
-- **Node ≥20** — uses native `node:sqlite` plus `better-sqlite3`.
+- **Node ≥22.13** — uses native `node:sqlite` plus `better-sqlite3`.
 - **tmux** — required by the `tmux` tool (long-lived terminal sessions for
   agents) and by the web tmux app. Install via your package manager.
 - **At least one LLM backend.** Pick what you have:
