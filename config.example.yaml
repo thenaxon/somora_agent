@@ -561,7 +561,7 @@ providers:
 # overrides on each `codex exec` invocation.
 # codexCli:
 #   toolTimeoutSec: 1800      # 30 min — per-MCP-tool-call timeout in
-#                             # seconds; sets mcp_servers.somora-memory.tool_timeout_sec
+#                             # seconds; sets mcp_servers.somora.tool_timeout_sec
 #                             # in codex's TOML. Codex's hidden default is
 #                             # 60s — way too short for slow local models.
 #                             # Default 1800s matches claudeCli.mcpToolTimeoutMs

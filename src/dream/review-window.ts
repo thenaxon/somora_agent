@@ -15,7 +15,7 @@ const TOOL = 'dream_review';
 
 /** `dream_review` as written by any engine: openai-compatible records
  *  the bare name, the CLI engines the MCP-prefixed one
- *  (`mcp__somora-memory__dream_review`). */
+ *  (`mcp__somora__dream_review`). */
 function isDreamReviewCall(ev: NormalizedEvent): ev is Extract<NormalizedEvent, { kind: 'tool_call' }> {
   if (ev.kind !== 'tool_call') return false;
   return ev.tool === TOOL || ev.tool.endsWith(`__${TOOL}`);

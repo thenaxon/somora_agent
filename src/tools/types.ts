@@ -211,7 +211,7 @@ export interface ToolDefinition<TInput = unknown, TOutput = unknown> {
  * run their own agent-loop (currently only openai-compatible).
  *
  * Engines that delegate tool dispatch to a CLI subprocess (claude-cli,
- * codex-cli) ignore this — they configure the somora-memory MCP server
+ * codex-cli) ignore this — they configure the somora MCP server
  * separately, and the CLI handles list+invoke internally.
  */
 export interface ToolInvoker {

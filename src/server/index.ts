@@ -2632,7 +2632,7 @@ app.get('/chat/history', async (c) => {
   // explicitly asks for it).
   //
   // Tool names are normalized through shortToolName so clients render
-  // `memory_search` instead of `mcp__somora-memory__memory_search`
+  // `memory_search` instead of `mcp__somora__memory_search`
   // (claude-cli + codex-cli wrap MCP tools with that prefix). Live SSE
   // already strips it via the per-turn serializer; this endpoint is
   // the parity for the load-from-JSONL path.

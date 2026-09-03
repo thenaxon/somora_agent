@@ -31,11 +31,11 @@ const call = (ts: number, tool: string, input: unknown): NormalizedEvent =>
   const events = [
     user(10, 'Polizze 788/0327487 gehört zu Walter'),
     agent(11, 'notiert'),
-    call(20, 'mcp__somora-memory__dream_review', { dream_id: 'x_auto_lucid', action: 'start' }),
+    call(20, 'mcp__somora__dream_review', { dream_id: 'x_auto_lucid', action: 'start' }),
     user(21, '#3 ja es ist rm52 geworden'),
-    call(22, 'mcp__somora-memory__wiki_edit', { wikiPath: 'projekte/ai-server', newBody: '… RM52 …' }),
+    call(22, 'mcp__somora__wiki_edit', { wikiPath: 'projekte/ai-server', newBody: '… RM52 …' }),
     agent(23, 'eingetragen'),
-    call(30, 'mcp__somora-memory__dream_review', { dream_id: 'x_auto_lucid', action: 'end', summary: '…' }),
+    call(30, 'mcp__somora__dream_review', { dream_id: 'x_auto_lucid', action: 'end', summary: '…' }),
     user(40, 'was gibts sonst neues'),
     agent(41, 'nichts'),
   ];
@@ -71,7 +71,7 @@ const call = (ts: number, tool: string, input: unknown): NormalizedEvent =>
 
 // ── no loop → untouched ──────────────────────────────────────────────
 {
-  const events = [user(1, 'a'), agent(2, 'b'), call(3, 'mcp__somora-memory__memory_write', { slug: 'x' })];
+  const events = [user(1, 'a'), agent(2, 'b'), call(3, 'mcp__somora__memory_write', { slug: 'x' })];
   const r = excludeReviewWindows(events);
   check('no windows → identity', r.dropped === 0 && r.events.length === 3 && r.windows.length === 0);
 }

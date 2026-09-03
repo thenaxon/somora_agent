@@ -11,12 +11,24 @@
 // engine-prefixed so e.g. claude-cli could ship its own `thinking`
 // itemType later without conflicting with codex's namespace.
 
+// somora-emitted by every CLI adapter: the engine-side session was
+// restarted because somora's MCP server name changed (the old session
+// knew the tools under `mcp__<old>__*`). History is replayed.
+const MCP_SERVER_RENAMED = 'session restarted';
+
 export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   'codex-cli': {
     todo_list: 'plan',
     // somora-emitted (not from the codex wire): the adapter re-threaded
     // the codex session because the selected model changed.
     model_switch: 'model switch',
+    mcp_server_renamed: MCP_SERVER_RENAMED,
+  },
+  'claude-cli': {
+    mcp_server_renamed: MCP_SERVER_RENAMED,
+  },
+  'grok-cli': {
+    mcp_server_renamed: MCP_SERVER_RENAMED,
   },
   'openai-compatible': {
     // somora-emitted: the backend rejected the prompt as too long, the
@@ -55,6 +67,11 @@ export function summariseEngineMeta(
   itemType: string,
   payload: unknown,
 ): string | undefined {
+  if (itemType === 'mcp_server_renamed') {
+    const p = payload as { text?: unknown; from?: unknown; to?: unknown } | null | undefined;
+    if (p && typeof p.text === 'string') return p.text;
+    return `engine session restarted after the MCP server rename (${typeof p?.from === 'string' ? p.from : 'somora-memory'} → ${typeof p?.to === 'string' ? p.to : 'somora'})`;
+  }
   if (engine === 'codex-cli' && itemType === 'model_switch') {
     const p = payload as { text?: unknown; from?: unknown; to?: unknown } | null | undefined;
     if (p && typeof p.text === 'string') return p.text;

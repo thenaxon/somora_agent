@@ -396,7 +396,7 @@ export function App({
     // History events come from JSONL with raw `mcp__<server>__<tool>`
     // tool names; the SSE serializer strips this prefix on the live
     // path. Replay needs the same shortening so the TUI doesn't show
-    // mcp__somora-memory__exec for old turns. Same regex as the
+    // mcp__somora__exec for old turns. Same regex as the
     // server's shortToolName helper.
     const stripMcpPrefix = (t: string): string => t.replace(/^mcp__[^_]+__/, '');
     for (const ev of events) {

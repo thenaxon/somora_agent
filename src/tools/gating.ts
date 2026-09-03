@@ -1,7 +1,7 @@
 // Per-agent tool visibility (design: private/mcp-hub-design.md §4.6).
 // One filter, applied at BOTH tool-list surfaces — the in-process
 // per-turn ToolInvoker (openai-compat) and the MCP child's tools/list
-// (somora-memory and external-server proxy mode) — so every engine sees
+// (somora and external-server proxy mode) — so every engine sees
 // the identical gated set.
 //
 // Pattern forms (config lives in each agent's agent.yaml `tools:`):

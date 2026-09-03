@@ -16,7 +16,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { somoraMcpProxyCodexFlags, somoraMemoryCodexFlags } from '../mcp/config.ts';
+import { MCP_SERVER_NAME, somoraMcpProxyCodexFlags, somoraMemoryCodexFlags } from '../mcp/config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import {
@@ -25,6 +25,7 @@ import {
   renderReplayPrefix,
   withLastSeenTs,
   type EngineLastSeen,
+  capReplayDelta,
 } from './replay.ts';
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
@@ -95,7 +96,7 @@ const CODEX_DISABLED_FEATURES = [
   // memory/dream MCP needs them:
   //   tool_search, tool_suggest                — codex routes MCP tool
   //     calls through these meta-tools for discovery/dispatch. Disabling
-  //     them was a 2j.3 mistake: gpt-5.5 then "saw" our somora-memory
+  //     them was a 2j.3 mistake: gpt-5.5 then "saw" our somora
   //     tools but never actually called them, hallucinating fake tool-
   //     call results instead.
   //   tool_call_mcp_elicitation                — MCP-tool invocation flow
@@ -117,6 +118,11 @@ interface CodexCliMeta {
    *  a mismatch is detected BEFORE resume and handled as a deliberate
    *  re-thread, not surfaced as a broken turn. */
   codexRecordedModel?: string;
+  /** MCP server name the thread was recorded with — a rename
+   *  (`somora-memory` → `somora`, 2026-09-03) re-threads the same way a
+   *  model switch does, because the rollout remembers the tools under
+   *  the old name. Absent on threads from before the field existed. */
+  mcpServerName?: string;
   engineLastSeen?: EngineLastSeen;
   compactions?: Compaction[];
 }
@@ -198,11 +204,31 @@ export const codexCliEngine: AgentEngine = {
         droppedThreadId: meta.codexSessionId,
       });
     }
+    // Same re-thread for an MCP server rename: the rollout's tool calls
+    // are `mcp__<old>__*`, the new exec registers `mcp__<new>__*`.
+    let mcpRenamed = false;
+    if (resumeId && meta.mcpServerName !== MCP_SERVER_NAME) {
+      mcpRenamed = true;
+      logger.info({
+        msg: 'engine.mcp_rename_rethread',
+        engine: ENGINE,
+        agent,
+        session,
+        recordedServer: meta.mcpServerName ?? null,
+        currentServer: MCP_SERVER_NAME,
+        droppedThreadId: resumeId,
+      });
+      resumeId = undefined;
+    }
     // On a re-thread the fresh codex thread knows NOTHING — replay from
     // ts 0 so the compaction-aware delta folds in the whole session
     // ([summary] + pairs after), not just the gap since codex last ran.
-    const lastSeenTs = modelSwitched ? 0 : getLastSeenTs(meta, ENGINE);
-    const replayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
+    const rethread = Boolean(modelSwitched) || mcpRenamed;
+    const lastSeenTs = rethread ? 0 : getLastSeenTs(meta, ENGINE);
+    const rawReplayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
+    // A from-zero replay without a compaction on file would be the whole
+    // session — cap it to the recent tail (see capReplayDelta).
+    const replayDelta = rethread ? capReplayDelta(rawReplayDelta) : rawReplayDelta;
     const replayPrefix = renderReplayPrefix(replayDelta);
 
     const turnId = `t-${Date.now()}`;
@@ -220,6 +246,19 @@ export const codexCliEngine: AgentEngine = {
           from: modelSwitched.from,
           to: modelSwitched.to,
           text: `Codex thread restarted for the model switch (${modelSwitched.from} → ${modelSwitched.to}) — session history carried over.`,
+        },
+      };
+    }
+    if (mcpRenamed) {
+      yield {
+        kind: 'engine_meta',
+        ts: ts(),
+        engine: ENGINE,
+        itemType: 'mcp_server_renamed',
+        payload: {
+          from: meta.mcpServerName ?? null,
+          to: MCP_SERVER_NAME,
+          text: `Codex thread restarted because somora's MCP server was renamed (${meta.mcpServerName ?? 'somora-memory'} → ${MCP_SERVER_NAME}) — session history carried over.`,
         },
       };
     }
@@ -254,7 +293,7 @@ export const codexCliEngine: AgentEngine = {
 
     const args: string[] = ['exec'];
     if (resumeId) args.push('resume');
-    // Register the somora-memory MCP server for this exec via `-c` overrides.
+    // Register the somora MCP server for this exec via `-c` overrides.
     // Must come BEFORE `--json` so codex's argument parser applies them
     // before evaluating the rest of the command (codex's CLI lib expects
     // global flags up front).
@@ -283,7 +322,7 @@ export const codexCliEngine: AgentEngine = {
     // tool surface; only somora-defined tools should be available). codex's
     // default-on tools include shell, file-editing, browser, image-gen,
     // js-repl, etc., which would let the model touch the filesystem and
-    // network well outside the somora memory scope. The somora-memory MCP
+    // network well outside the somora memory scope. The somora MCP
     // continues to work because MCP tool dispatch is infrastructure, not
     // gated by these feature flags.
     for (const feat of CODEX_DISABLED_FEATURES) args.push('--disable', feat);
@@ -314,7 +353,7 @@ export const codexCliEngine: AgentEngine = {
     // request_user_input, list_mcp_resources) are server-injected by the
     // Responses API based on the codex-* model preset and cannot be
     // suppressed from the codex CLI side — issue openai/codex#6049.
-    // somora-memory's web_search/file_patch/etc. are the intended path.
+    // somora's web_search/file_patch/etc. are the intended path.
     args.push('-c', 'web_search="disabled"');
     args.push('-c', 'tools.view_image=false');
     // codex 0.144 re-audit (2026-07-21, hans's skill-discovery report):
@@ -353,7 +392,7 @@ export const codexCliEngine: AgentEngine = {
     //     edit_*) are ALL disabled via the --disable list above. codex has no
     //     way to touch the filesystem on its own.
     //   - the agent's actual write capability comes from somora's MCP tools
-    //     (mcp__somora-memory__file_write/exec/file_patch/…) which live OUTSIDE
+    //     (mcp__somora__file_write/exec/file_patch/…) which live OUTSIDE
     //     codex's sandbox surface entirely. somora is the external sandbox —
     //     and that's precisely what the bypass flag is documented for:
     //     "intended solely for running in environments that are externally
@@ -878,6 +917,7 @@ export const codexCliEngine: AgentEngine = {
           // to it. Stamped every turn so the mismatch check above always
           // compares against the thread's true current model.
           codexRecordedModel: resolvedModel.modelId,
+          mcpServerName: MCP_SERVER_NAME,
           engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
         }));
       }

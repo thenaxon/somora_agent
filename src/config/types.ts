@@ -574,7 +574,7 @@ export const CodexCliConfigSchema = z
     /**
      * Per-MCP-tool-call timeout in seconds. Codex's hidden default is
      * 60s (`tool_timeout_sec`) — way too short for slow local models.
-     * Maps to `mcp_servers.somora-memory.tool_timeout_sec` in codex's
+     * Maps to `mcp_servers.somora.tool_timeout_sec` in codex's
      * TOML. Default 1800s (30 min) matches claudeCli.mcpToolTimeoutMs
      * and agentLoop.longTaskMaxTimeoutMs so the CLI's MCP layer never
      * cuts off a long-blocking tool call before our own ceiling does.
@@ -1664,13 +1664,12 @@ export const McpConfigSchema = z
       .record(
         z
           .string()
+          // Proxy children register as `somora-<name>`; somora's own
+          // server is `somora`, so no external name can collide with it.
           .regex(
             /^[a-z0-9][a-z0-9-]{0,29}$/,
             'MCP server name must match [a-z0-9][a-z0-9-]{0,29} (no underscores)',
-          )
-          .refine((n) => n !== 'memory', {
-            message: 'MCP server name "memory" collides with somora-memory',
-          }),
+          ),
         McpServerConfigSchema,
       )
       .default({}),

@@ -124,7 +124,7 @@ export interface TurnInput {
   /**
    * Tool surface for engines that run their own agent-loop (Phase
    * 2-Stufe-C). Currently only the openai-compatible engine uses this —
-   * claude-cli and codex-cli configure the somora-memory MCP server as
+   * claude-cli and codex-cli configure the somora MCP server as
    * a child process and the CLI handles tool list+invoke internally.
    *
    * Server binds the agent context (memory manager, etc.) into the
@@ -136,7 +136,7 @@ export interface TurnInput {
    * External MCP servers (config.yaml `mcp.servers`, enabled entries
    * only) — design private/mcp-hub-design.md §4.4. CLI engines add one
    * proxy MCP-child entry `somora-<name>` per server next to
-   * somora-memory; the child serves the hub's catalog snapshot and
+   * somora; the child serves the hub's catalog snapshot and
    * forwards calls to the main server. The openai-compatible engine
    * ignores this — its external tools arrive pre-bridged via `tools`.
    * `timeoutMs` is the per-server tools/call budget (drives codex's

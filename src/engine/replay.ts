@@ -36,6 +36,43 @@ export interface ReplayDelta {
   summary?: string;
   /** Pairs since `max(sinceTs, latestApplicableCompaction.throughTs)`. */
   pairs: ReplayPair[];
+  /** Older pairs dropped by `capReplayDelta` — rendered as one note
+   *  line so the engine knows the transcript is a tail, not the whole. */
+  omittedPairs?: number;
+}
+
+/** Bounds for a from-scratch replay (engine session rebuilt, see
+ *  `capReplayDelta`). ~40 recent exchanges / ~60k chars ≈ 15k tokens —
+ *  enough for continuity, far below any CLI engine's context. */
+export const RETHREAD_REPLAY_CAP = { maxPairs: 40, maxChars: 60_000 } as const;
+
+/**
+ * Keep only the most recent pairs of a delta so that a replay from ts 0
+ * (engine-side session dropped: codex model switch, MCP server rename)
+ * can never balloon into the whole session. Without a compaction on
+ * file, a long-running session replays EVERY user/assistant pair —
+ * measured 883 pairs / 1.8M chars on one main session (2026-09-03),
+ * which no engine would accept. Drops from the oldest end until both
+ * the pair count and the character budget fit; the summary (if any)
+ * is kept untouched. Returns the same delta when nothing exceeds.
+ */
+export function capReplayDelta(
+  delta: ReplayDelta,
+  cap: { maxPairs: number; maxChars: number } = RETHREAD_REPLAY_CAP,
+): ReplayDelta {
+  let start = Math.max(0, delta.pairs.length - cap.maxPairs);
+  let chars = 0;
+  for (let i = delta.pairs.length - 1; i >= start; i--) {
+    const p = delta.pairs[i]!;
+    chars += p.user.length + p.assistant.length;
+    if (chars > cap.maxChars && i < delta.pairs.length - 1) {
+      start = i + 1;
+      break;
+    }
+  }
+  if (start === 0) return delta;
+  const omitted = start + (delta.omittedPairs ?? 0);
+  return { ...delta, pairs: delta.pairs.slice(start), omittedPairs: omitted };
 }
 
 /**
@@ -98,6 +135,10 @@ export function renderReplayPrefix(delta: ReplayDelta): string {
   }
   if (delta.pairs.length > 0) {
     lines.push('<recent-pairs>');
+    if (delta.omittedPairs) {
+      lines.push(`(${delta.omittedPairs} earlier exchanges omitted — only the most recent ones follow)`);
+      lines.push('');
+    }
     for (const p of delta.pairs) {
       // A2A: when the user-side was written by another agent, mark
       // it explicitly in the replay so engines catching up don't

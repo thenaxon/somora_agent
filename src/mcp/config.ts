@@ -1,4 +1,4 @@
-// Shared helper for engine adapters that need to spawn the somora-memory
+// Shared helper for engine adapters that need to spawn the somora
 // MCP server as a child process. Both claude-cli and codex-cli adapters
 // import this so the spawn config is consistent (path, env, name).
 
@@ -13,14 +13,19 @@ const REPO_ROOT = join(__dirname, '..', '..');
 const TSX_BIN_REPO = join(REPO_ROOT, 'node_modules', '.bin', 'tsx');
 const MCP_SERVER_TS = join(REPO_ROOT, 'src', 'mcp', 'server.ts');
 
-/** MCP-server name as it appears in claude-cli/codex-cli configs. */
-export const MCP_SERVER_NAME = 'somora-memory';
+/** MCP-server name as it appears in claude-cli/codex-cli configs.
+ *  Renamed from `somora-memory` (v2026.09.03.05): the server carries
+ *  every somora tool, not only memory. External-server proxy children
+ *  register as `somora-<name>` and stay distinct. CLI sessions recorded
+ *  under the old name are restarted once — see the `mcpServerName`
+ *  resume guard in each CLI adapter. */
+export const MCP_SERVER_NAME = 'somora';
 
-/** Tool-name prefix in the LLM's view: `mcp__somora-memory__memory_search` etc. */
+/** Tool-name prefix in the LLM's view: `mcp__somora__memory_search` etc. */
 export const MCP_TOOL_PREFIX = `mcp__${MCP_SERVER_NAME}__`;
 
 /**
- * Build the stdio-spawn config for the somora-memory MCP server, scoped
+ * Build the stdio-spawn config for the somora MCP server, scoped
  * to the given agent + session + sub-depth. SOMORA_AGENT scopes memory
  * tools, SOMORA_SESSION lets spawn_subagent record parent_session for
  * traceability, and SOMORA_SUBAGENT_DEPTH enforces the recursion cap
@@ -76,7 +81,7 @@ function filterEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 
 /**
  * External-MCP proxy children (design: private/mcp-hub-design.md §4.4).
- * Same binary as somora-memory, switched into proxy mode by the
+ * Same binary as somora, switched into proxy mode by the
  * SOMORA_MCP_PROXY_SERVER env var: it then serves ONE upstream server's
  * tools from the catalog snapshot and forwards tools/call via HTTP to
  * the main server's hub (the single real MCP client). CLI-side entry
@@ -146,7 +151,7 @@ export function somoraMcpProxyCodexFlags(args: {
 /**
  * codex-cli takes runtime config via `-c key=value` flags, where value
  * is parsed as TOML. Build the trio of flags that registers the
- * somora-memory MCP server for one `codex exec` invocation.
+ * somora MCP server for one `codex exec` invocation.
  *
  * codex inherits its own env into MCP children, so we override only
  * the somora-specific bits: SOMORA_AGENT (memory scoping),
@@ -174,7 +179,7 @@ export function somoraMemoryCodexFlags(args: {
   const argsToml = `[${cmdArgs.map(tomlString).join(', ')}]`;
 
   // Forward the full parent process.env into the MCP child so skill-
-  // backed tools (gog, etc.) inside the somora-memory exec path see
+  // backed tools (gog, etc.) inside the somora exec path see
   // GOG_KEYRING_PASSWORD, GOG_ACCOUNT and any other credentials loaded
   // from ~/.config/systemd/user/somora.env or ~/.somora/somora.env at
   // server start. This mirrors claude-cli's somoraMemoryServerSpawn()
@@ -218,10 +223,10 @@ export function somoraMemoryCodexFlags(args: {
     `mcp_servers.${MCP_SERVER_NAME}.env=${envToml}`,
     // Auto-approve our tools — codex's default ("auto") still routes through
     // the approval flow, which in `codex exec` (non-interactive) hits no UI
-    // and auto-cancels with "user cancelled MCP tool call". The somora-memory
+    // and auto-cancels with "user cancelled MCP tool call". The somora
     // server is OUR server with OUR allowlisted tool surface, no need for
     // user approval per-call. Equivalent to claude-cli's canUseTool gate
-    // returning {behavior:'allow'} for `mcp__somora-memory__*`.
+    // returning {behavior:'allow'} for `mcp__somora__*`.
     '-c',
     `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
     ...resolveToolTimeoutFlag(args.toolTimeoutSec),

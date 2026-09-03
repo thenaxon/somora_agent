@@ -913,7 +913,7 @@ Event types:
 
 Tool names are normalised through the same path the wire serializer
 uses — clients receive `memory_search`, not
-`mcp__somora-memory__memory_search`. Tool input/output payloads ride
+`mcp__somora__memory_search`. Tool input/output payloads ride
 in the `details` field as pretty-printed JSON.
 
 ### `GET /activity/stream`

@@ -22,6 +22,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type { ZodObject, ZodRawShape } from 'zod';
 import { loadConfig } from '../config/loader.ts';
+import { MCP_SERVER_NAME } from './config.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
@@ -231,7 +232,7 @@ async function main(): Promise<void> {
   };
 
   const server = new McpServer(
-    { name: 'somora-memory', version: '0.0.1' },
+    { name: MCP_SERVER_NAME, version: '0.0.1' },
     { capabilities: { tools: {} } },
   );
 

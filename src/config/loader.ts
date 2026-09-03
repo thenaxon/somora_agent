@@ -246,7 +246,7 @@ export function applyClaudeCliSdkEnv(config: Config): void {
  * Push codex-cli-relevant tunables from config into process.env. Used as
  * an internal bridge — somoraMemoryCodexFlags() reads
  * SOMORA_CODEX_TOOL_TIMEOUT_SEC and emits the matching `-c
- * mcp_servers.somora-memory.tool_timeout_sec=N` flag for each codex exec
+ * mcp_servers.somora.tool_timeout_sec=N` flag for each codex exec
  * invocation. Mirrors applyClaudeCliSdkEnv()'s policy: explicit env wins.
  */
 export function applyCodexCliEnv(config: Config): void {

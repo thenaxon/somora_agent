@@ -13,7 +13,7 @@
 // execute them via the registry and feed results back. Loop exits when
 // the model returns a final response without tool_calls, or when we hit
 // MAX_TOOL_ROUNDS (defensive cap, prevents runaway models). claude-cli
-// and codex-cli ignore TurnInput.tools — they configure the somora-memory
+// and codex-cli ignore TurnInput.tools — they configure the somora
 // MCP server out-of-process and let their CLI handle dispatch.
 
 import OpenAI from 'openai';

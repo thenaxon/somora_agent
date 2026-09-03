@@ -271,8 +271,8 @@ directory (`$HOME`).
 Grok reaches MCP tools through a `search_tool` / `use_tool`
 indirection rather than listing all of them up front, which keeps a
 large surface cheap context-wise. The adapter unwraps that: a
-`use_tool{tool_name:'somora-memory__memory_list'}` call is recorded as
-`mcp__somora-memory__memory_list`, so session logs and tool rows match
+`use_tool{tool_name:'somora__memory_list'}` call is recorded as
+`mcp__somora__memory_list`, so session logs and tool rows match
 what the other engines emit. The `search_tool` probes themselves
 surface as-is.
 

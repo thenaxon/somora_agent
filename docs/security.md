@@ -42,7 +42,12 @@ Five-layer defense in [`src/engine/claude-cli.ts`](../src/engine/claude-cli.ts):
    et al). They sometimes appear in the SDK's tool list anyway — the
    adapter logs `engine.tools_leaked` if a new one shows up.
 4. `canUseTool` gate — a per-call permission callback that allows
-   only `mcp__somora-memory__*` tool names; everything else is denied.
+   only `mcp__somora__*` tool names (plus `mcp__somora-<name>__*` for
+   configured external-server proxies); everything else is denied.
+   The server was called `somora-memory` before v2026.09.03.05; a CLI
+   session recorded under the old name is restarted once on its next
+   turn, with the session history replayed, and shows a
+   `session restarted` engine row.
 5. `managedSettings: { autoMemoryEnabled: false }` — disables the
    project-memory auto-loader. Without this, `~/.claude/projects/<cwd>/memory/*`
    files leak into the system prompt.
@@ -78,8 +83,8 @@ Defense in [`src/engine/codex-cli.ts`](../src/engine/codex-cli.ts):
 - **`-c project_root_markers=[]`**: disable AGENTS.md walk-up. By
   default codex walks from cwd up to the nearest `.git` and concatenates
   every AGENTS.md it finds; we cap that to cwd-only.
-- **MCP auto-approve**: `mcp_servers.somora-memory.default_tools_approval_mode = "approve"`
-  so the somora-memory tool calls don't require user approval at every
+- **MCP auto-approve**: `mcp_servers.somora.default_tools_approval_mode = "approve"`
+  so the somora tool calls don't require user approval at every
   step (codex exec is non-interactive, default would auto-cancel them).
 
 The list is in `CODEX_DISABLED_FEATURES` at the top of the adapter.

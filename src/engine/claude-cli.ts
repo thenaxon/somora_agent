@@ -22,6 +22,7 @@ import {
   renderReplayPrefix,
   withLastSeenTs,
   type EngineLastSeen,
+  capReplayDelta,
 } from './replay.ts';
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
@@ -52,13 +53,14 @@ const KNOWN_ACCOUNT_TOOLS = [
   'mcp__claude_ai_Google_Drive__complete_authentication',
 ];
 
-// Allow somora-memory's own MCP tools through; deny everything else.
+// Allow somora's own MCP tools through; deny everything else.
 // Account-MCPs and built-ins (Bash/Edit/etc.) should never be invoked
 // by a somora session — that's DECISION #23.
 const somoraToolGate: CanUseTool = async (toolName, input) => {
-  // `mcp__somora-` covers somora-memory AND the somora-<server> proxy
-  // children for external MCP servers (design §4.4) — all of them are
-  // our own MCP entries with an already-gated tool surface.
+  // MCP_TOOL_PREFIX (`mcp__somora__`) is our own server; `mcp__somora-`
+  // covers the somora-<server> proxy children for external MCP servers
+  // (design §4.4) — all of them are our own MCP entries with an
+  // already-gated tool surface.
   if (toolName.startsWith(MCP_TOOL_PREFIX) || toolName.startsWith('mcp__somora-')) {
     return { behavior: 'allow', updatedInput: input };
   }
@@ -85,6 +87,13 @@ import type { Compaction } from '../compaction/index.ts';
 interface ClaudeCliMeta {
   engine?: string;
   sdkSessionId?: string;
+  /** MCP server name the SDK session was recorded with. The session's
+   *  transcript holds tool_use blocks under `mcp__<name>__*`; after a
+   *  rename the SDK would offer the tools under the new name while the
+   *  model keeps calling the old one. A mismatch (or absence, for
+   *  sessions from before the field existed) restarts the SDK session
+   *  with the full history replayed. */
+  mcpServerName?: string;
   engineLastSeen?: EngineLastSeen;
   compactions?: Compaction[];
 }
@@ -115,9 +124,30 @@ export const claudeCliEngine: AgentEngine = {
     // engine was last active. The internal session knows every turn that
     // _claude-cli_ ever made on this somora-session; the gap (turns made
     // by other engines) is bridged via delta-replay below.
-    const resume = meta.sdkSessionId;
-    const lastSeenTs = getLastSeenTs(meta, ENGINE);
-    const replayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
+    //
+    // EXCEPT after an MCP server rename (`somora-memory` → `somora`,
+    // 2026-09-03): the SDK session remembers tools under the old name.
+    // Drop only the SDK-side session and rebuild it from ts 0 with the
+    // compaction-aware history replay — same shape as codex's model-
+    // switch re-thread. The somora session (slug, JSONL, meta) stays.
+    const mcpRenamed = Boolean(meta.sdkSessionId) && meta.mcpServerName !== MCP_SERVER_NAME;
+    const resume = mcpRenamed ? undefined : meta.sdkSessionId;
+    if (mcpRenamed) {
+      logger.info({
+        msg: 'engine.mcp_rename_resession',
+        engine: ENGINE,
+        agent,
+        session,
+        recordedServer: meta.mcpServerName ?? null,
+        currentServer: MCP_SERVER_NAME,
+        droppedSdkSessionId: meta.sdkSessionId,
+      });
+    }
+    const lastSeenTs = mcpRenamed ? 0 : getLastSeenTs(meta, ENGINE);
+    const rawReplayDelta = computeReplayDelta(history, lastSeenTs, meta.compactions);
+    // A from-zero replay without a compaction on file would be the whole
+    // session — cap it to the recent tail (see capReplayDelta).
+    const replayDelta = mcpRenamed ? capReplayDelta(rawReplayDelta) : rawReplayDelta;
     const replayPrefix = renderReplayPrefix(replayDelta);
     // Memory recall (ephemeralContext, already wrapped in
     // <memory-context>...</memory-context>) goes BEFORE the actual user
@@ -151,6 +181,19 @@ export const claudeCliEngine: AgentEngine = {
     const ts = () => Date.now();
 
     yield { kind: 'turn_start', ts: ts(), engine: ENGINE, turnId };
+    if (mcpRenamed) {
+      yield {
+        kind: 'engine_meta',
+        ts: ts(),
+        engine: ENGINE,
+        itemType: 'mcp_server_renamed',
+        payload: {
+          from: meta.mcpServerName ?? null,
+          to: MCP_SERVER_NAME,
+          text: `Claude session restarted because somora's MCP server was renamed (${meta.mcpServerName ?? 'somora-memory'} → ${MCP_SERVER_NAME}) — session history carried over.`,
+        },
+      };
+    }
 
     let cumulative = '';
     let finalText = '';
@@ -403,10 +446,10 @@ export const claudeCliEngine: AgentEngine = {
             tools: msg.tools,
             mcpServers: msg.mcp_servers,
           });
-          // Strip our own somora-memory tools/server before checking for
+          // Strip our own somora tools/server before checking for
           // leaks — they're expected and add intentional surface. Proxy
           // children for external MCP servers register as
-          // somora-<name>, so `mcp__somora-` covers memory AND proxies.
+          // somora-<name>, so `mcp__somora-` covers the proxies.
           const unexpectedTools = msg.tools.filter(
             (t: string) => !t.startsWith(MCP_TOOL_PREFIX) && !t.startsWith('mcp__somora-'),
           );
@@ -666,6 +709,7 @@ export const claudeCliEngine: AgentEngine = {
           ...freshMeta,
           engine: ENGINE,
           sdkSessionId: lastSdkSessionId,
+          mcpServerName: MCP_SERVER_NAME,
           engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
         }));
       }

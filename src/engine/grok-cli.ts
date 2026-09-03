@@ -114,11 +114,11 @@ interface AcpMcpServer {
  * costs little context.
  *
  * Tool naming: grok presents them as `<server>__<tool>`
- * (`somora-memory__time_now`), NOT with somora's own `mcp__` prefix.
+ * (`somora__time_now`), NOT with somora's own `mcp__` prefix.
  * See stripToolPrefix() for the normalisation applied before events
  * reach the rest of somora.
  *
- * Beyond somora-memory this also returns one `somora-<name>` proxy
+ * Beyond somora this also returns one `somora-<name>` proxy
  * child per enabled external MCP server (hub design §4.4) — the same
  * entries claude-cli and codex-cli add. grok-cli is a CLI engine, so
  * it reaches external servers the CLI way: the child serves the hub's
@@ -179,15 +179,15 @@ function buildMcpServers(args: {
  *
  * So: unwrap use_tool to the inner name, then prefix.
  *
- *   use_tool{tool_name:'somora-memory__time_now'}
- *                                → mcp__somora-memory__time_now
- *   somora-memory__memory_list   → mcp__somora-memory__memory_list
+ *   use_tool{tool_name:'somora__time_now'}
+ *                                → mcp__somora__time_now
+ *   somora__memory_list   → mcp__somora__memory_list
  *   somora-parallel__web_search  → mcp__somora-parallel__web_search
- *   mcp__somora-memory__time_now → unchanged (already normalised)
+ *   mcp__somora__time_now → unchanged (already normalised)
  *   search_tool, read_file       → unchanged (grok's own built-ins)
  *
  * `serverNames` is the set of MCP entries actually handed to this
- * session (somora-memory plus one somora-<name> per external server),
+ * session (somora plus one somora-<name> per external server),
  * so the prefix decision is an exact match against what we registered
  * rather than a guess at what a `somora-`-shaped name might be.
  */
@@ -472,8 +472,36 @@ export const grokCliEngine: AgentEngine = {
     yield { kind: 'turn_start', ts: Date.now(), engine: ENGINE, turnId };
 
     const meta = await input.metaStore.get(input.agent, input.session);
+    // After an MCP server rename (`somora-memory` → `somora`, 2026-09-03)
+    // the stored grok session knows the tools under the old name — start
+    // a fresh ACP session instead of session/load. Same guard as the
+    // claude-cli / codex-cli adapters.
+    const recordedServer = typeof meta.mcpServerName === 'string' ? meta.mcpServerName : null;
+    const mcpRenamed = typeof meta.grokSessionId === 'string' && recordedServer !== MCP_SERVER_NAME;
     const priorSessionId =
-      typeof meta.grokSessionId === 'string' ? meta.grokSessionId : null;
+      typeof meta.grokSessionId === 'string' && !mcpRenamed ? meta.grokSessionId : null;
+    if (mcpRenamed) {
+      logger.info({
+        msg: 'engine.mcp_rename_resession',
+        engine: ENGINE,
+        agent: input.agent,
+        session: input.session,
+        recordedServer,
+        currentServer: MCP_SERVER_NAME,
+        droppedSessionId: meta.grokSessionId,
+      });
+      yield {
+        kind: 'engine_meta',
+        ts: Date.now(),
+        engine: ENGINE,
+        itemType: 'mcp_server_renamed',
+        payload: {
+          from: recordedServer,
+          to: MCP_SERVER_NAME,
+          text: `Grok session restarted because somora's MCP server was renamed (${recordedServer ?? 'somora-memory'} → ${MCP_SERVER_NAME}) — session history carried over.`,
+        },
+      };
+    }
 
     // cwd: the agent's workspace is what grok's built-in file/shell
     // tools operate on. Falls back to $HOME rather than somora's own
@@ -559,7 +587,7 @@ export const grokCliEngine: AgentEngine = {
           { cwd, mcpServers },
           // MCP child startup (tsx + the somora server) adds a few
           // seconds on top of the bare handshake — measured ~3.5s for
-          // the single somora-memory child on 2026-07-20. External
+          // the single somora child on 2026-07-20. External
           // servers add one more child of the same binary each, so the
           // budget scales per child instead of being a flat doubling.
           // With no external servers configured this is exactly the
@@ -583,6 +611,7 @@ export const grokCliEngine: AgentEngine = {
       await input.metaStore.update(input.agent, input.session, (cur) => ({
         ...cur,
         grokSessionId: sessionId,
+        mcpServerName: MCP_SERVER_NAME,
         engine: ENGINE,
       }));
 
