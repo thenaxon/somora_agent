@@ -217,10 +217,21 @@ function wakePrompt(e: AsyncTaskEntry): string {
     media.length > 0
       ? ` Generated media (${media.length}): ${media.map((m) => m.path).join(', ')}.`
       : '';
+  const files = e.result?.files_written ?? [];
+  const filesLine = files.length > 0 ? ` Files written (${files.length}): ${files.join(', ')}.` : '';
+  const outcome = e.result?.outcome;
+  const outcomeLine = outcome
+    ? ` Outcome: ${outcome}${e.result?.outcome_reason ? ` (${e.result.outcome_reason})` : ''}, ` +
+      `${e.result?.tool_calls ?? 0} tool calls` +
+      (e.result?.rounds !== undefined ? `, ${e.result.rounds} rounds` : '') +
+      '.'
+    : '';
   return (
     `[subagent attention] Task '${e.task_id}' (sub-agent '${e.target_agent}', session ` +
     `'${e.target_session}') finished with state '${e.state}'.` +
+    outcomeLine +
     (head ? ` First line: "${head}"` : '') +
+    filesLine +
     mediaLine +
     `\nFetch the full answer with subagent_result({ task_id: "${e.task_id}" }), then continue ` +
     `whatever depended on it (validate, report to the user, or chain the next step). If nothing ` +

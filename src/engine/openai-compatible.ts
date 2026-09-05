@@ -763,6 +763,11 @@ export const openAiCompatibleEngine: AgentEngine = {
     /** Rounds whose request was sent — the reactive context retry is only
      *  safe before anything happened (round 1, nothing emitted). */
     let roundsStarted = 0;
+    /** Outcome signals for turn_end (ChatTurnResult.outcome): set when a
+     *  forced no-tools finish was needed, and when the final text ended
+     *  up as a somora marker instead of a model answer. */
+    let forcedFinalReason: string | undefined;
+    let degradedReason: string | undefined;
     let totalUsage:
       | {
           tokens_in: number;
@@ -1412,6 +1417,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       const forcedByCap = (round >= maxRounds && lastRoundHadTools) || hitToolBudget;
       if (forcedByCap || scaffoldLeak) {
         cumulative = '';
+        forcedFinalReason = scaffoldLeak ? 'scaffold_leak' : hitToolBudget ? 'tool_budget' : 'round_cap';
         logger.warn({
           msg: 'engine.force_final_answer',
           engine: ENGINE,
@@ -1572,6 +1578,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           // partial result instead of a pointer to a JSONL it cannot
           // read.
           const errText = (err as Error).message.replace(/\.+$/, '');
+          degradedReason = 'force_summary_failed';
           cumulative =
             `[somora] Agent loop stopped at ${capDescription} without a final answer, and the ` +
             `forced summary call also failed: ${errText}. ` +
@@ -1594,6 +1601,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           before: cumulative.length,
           after: cleaned.length,
         });
+        if (cleaned.length < 20 || looksRepetitive(cleaned)) degradedReason = 'scaffold_stripped';
         cumulative =
           cleaned.length >= 20 && !looksRepetitive(cleaned)
             ? cleaned
@@ -1612,6 +1620,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         // Loop ended at the cap and the force-summary path didn't
         // populate cumulative either — synthesize a marker so the
         // caller doesn't get `result: ""` silently.
+        degradedReason = 'round_cap_no_answer';
         cumulative =
           `[somora] Agent loop reached the cap of ${maxRounds} tool-call rounds ` +
           'and produced no final message. Increase agentLoop.maxRounds in config.yaml or ' +
@@ -1641,6 +1650,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         ts: ts(),
         engine: ENGINE,
         turnId,
+        rounds: round,
+        ...(forcedFinalReason ? { forced_final: forcedFinalReason } : {}),
+        ...(degradedReason ? { degraded: { reason: degradedReason } } : {}),
         ...(totalUsage
           ? {
               usage: {

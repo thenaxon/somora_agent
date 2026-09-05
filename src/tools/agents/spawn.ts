@@ -372,6 +372,14 @@ interface OneSpawnSyncResult {
   session_slug: string;
   model: string;
   result?: string;
+  /** Runtime verdict — see ChatTurnResult.outcome. */
+  outcome?: ChatTurnResult['outcome'];
+  outcome_reason?: string;
+  tool_calls?: number;
+  rounds?: number;
+  fallback?: ChatTurnResult['fallback'];
+  files_written?: string[];
+  media?: ChatTurnResult['media'];
   error?: string;
   ms: number;
   thinkingActive: boolean;
@@ -602,6 +610,12 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
       session_slug: slug,
       model: result.model,
       result: result.finalText,
+      outcome: result.outcome,
+      ...(result.outcome_reason ? { outcome_reason: result.outcome_reason } : {}),
+      tool_calls: result.tool_calls,
+      ...(result.rounds !== undefined ? { rounds: result.rounds } : {}),
+      ...(result.fallback ? { fallback: result.fallback } : {}),
+      ...(result.files_written?.length ? { files_written: result.files_written } : {}),
       ...(result.media?.length ? { media: result.media } : {}),
       ...(result.error ? { error: result.error } : {}),
       ms: result.ms,

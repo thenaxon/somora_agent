@@ -182,7 +182,13 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   description:
     'Fetch the result of a sub-agent task. Returns one of three states: ' +
     '"done" (with result text + usage), "failed" (with error), or "pending" ' +
-    '(task still running). When the sub generated images or videos, `media` lists them ' +
+    '(task still running). `outcome` is the runtime verdict, never read from the text: ' +
+    '"completed" (the sub answered), "partial" (the engine had to force a finish at the ' +
+    'round cap / tool budget and the sub then answered), "degraded" (the text is a somora ' +
+    'marker — the sub looped or never answered; its tool work may still be intact, see ' +
+    '`files_written` / `media`), "failed". `outcome_reason` names the trigger. `tool_calls` ' +
+    'and `rounds` say how much work happened, `files_written` lists files the sub created ' +
+    'or edited via file_write/file_patch. When the sub generated images or videos, `media` lists them ' +
     '(absolute `path`, `url`, `prompt`) straight from the media store — use those paths, ' +
     'do not search the filesystem or the transcript for them. `media` is present even when ' +
     'the result text is a degraded marker (the model failed to phrase its final answer), so ' +
@@ -308,6 +314,13 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
         target_agent: local.target_agent,
         target_session: local.target_session,
         result: local.result?.finalText ?? '',
+        outcome: local.result?.outcome ?? 'completed',
+        ...(local.result?.outcome_reason ? { outcome_reason: local.result.outcome_reason } : {}),
+        tool_calls: local.result?.tool_calls ?? 0,
+        ...(local.result?.rounds !== undefined ? { rounds: local.result.rounds } : {}),
+        ...(local.result?.model ? { model: `${local.result.provider}/${local.result.model}` } : {}),
+        ...(local.result?.fallback ? { fallback: local.result.fallback } : {}),
+        ...(local.result?.files_written?.length ? { files_written: local.result.files_written } : {}),
         ...(local.result?.media?.length ? { media: local.result.media } : {}),
         usage: local.result?.usage,
         ms: local.result?.ms,
@@ -345,6 +358,13 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
       task_id: remote.task_id,
       state: 'done' as const,
       result: remote.result?.finalText ?? '',
+      outcome: remote.result?.outcome ?? 'completed',
+      ...(remote.result?.outcome_reason ? { outcome_reason: remote.result.outcome_reason } : {}),
+      tool_calls: remote.result?.tool_calls ?? 0,
+      ...(remote.result?.rounds !== undefined ? { rounds: remote.result.rounds } : {}),
+      ...(remote.result?.model ? { model: `${remote.result.provider}/${remote.result.model}` } : {}),
+      ...(remote.result?.fallback ? { fallback: remote.result.fallback } : {}),
+      ...(remote.result?.files_written?.length ? { files_written: remote.result.files_written } : {}),
       ...(remote.result?.media?.length ? { media: remote.result.media } : {}),
       usage: remote.result?.usage,
       ms: remote.result?.ms,

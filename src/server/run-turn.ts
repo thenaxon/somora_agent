@@ -21,7 +21,12 @@
 // inject still happens. This is the hot path for spawn_subagent.
 
 import { randomUUID } from 'node:crypto';
-import type { ChatTurnMedia, ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
+import type {
+  ChatTurnMedia,
+  ChatTurnOutcome,
+  ChatTurnResolveDeps,
+  ChatTurnResult,
+} from './run-turn-types.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { healOrphanToolCalls } from './heal-session.ts';
 import { readProject } from '../projects/store.ts';
@@ -831,6 +836,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     | undefined;
   let finalText = '';
   let turnMedia: ChatTurnMedia[] = [];
+  // Outcome bookkeeping (ChatTurnResult.outcome / tool_calls / rounds /
+  // files_written) — all from events, none from model text.
+  let toolCallCount = 0;
+  let turnRounds: number | undefined;
+  let forcedFinal: string | undefined;
+  let degradedReason: string | undefined;
+  const pendingWrites = new Map<string, string>();
+  const filesWritten: string[] = [];
   let errorMessage: string | undefined;
   // The engine's own turn id (`t-…`), learned from its turn_start. Kept
   // outside the try so the failure path can stamp its turn_error with
@@ -1063,6 +1076,26 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         sawTurnEnd = true;
         if (ev.usage) lastUsage = ev.usage;
         if (typeof ev.turnId === 'string') streamTurnId = ev.turnId;
+        if (typeof ev.rounds === 'number') turnRounds = ev.rounds;
+        if (ev.forced_final) forcedFinal = ev.forced_final;
+        if (ev.degraded) degradedReason = ev.degraded.reason;
+      }
+      if (ev.kind === 'tool_call') {
+        toolCallCount += 1;
+        if (ev.tool === 'file_write' || ev.tool === 'file_patch') {
+          const inp = ev.input as { path?: unknown; target?: unknown } | null;
+          if (inp && typeof inp.path === 'string') {
+            const target = typeof inp.target === 'string' && inp.target !== 'local' ? `${inp.target}:` : '';
+            pendingWrites.set(ev.callId, `${target}${inp.path}`);
+          }
+        }
+      }
+      if (ev.kind === 'tool_result') {
+        const path = pendingWrites.get(ev.callId);
+        if (path !== undefined) {
+          pendingWrites.delete(ev.callId);
+          if (!ev.error && !filesWritten.includes(path)) filesWritten.push(path);
+        }
       }
       if (ev.kind === 'assistant_message') {
         finalText = ev.text;
@@ -1313,8 +1346,26 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   });
 
   const actualForResult = turnFallback ? splitModelRef(turnFallback.actual) : undefined;
+  const outcome: ChatTurnOutcome = errorMessage
+    ? 'failed'
+    : degradedReason
+      ? 'degraded'
+      : finalText.trim().length === 0
+        ? 'degraded'
+        : forcedFinal
+          ? 'partial'
+          : 'completed';
+  const outcomeReason =
+    outcome === 'failed'
+      ? undefined
+      : (degradedReason ?? (finalText.trim().length === 0 ? 'empty_answer' : forcedFinal));
   return {
     finalText,
+    outcome,
+    ...(outcomeReason ? { outcome_reason: outcomeReason } : {}),
+    tool_calls: toolCallCount,
+    ...(turnRounds !== undefined ? { rounds: turnRounds } : {}),
+    ...(filesWritten.length > 0 ? { files_written: filesWritten } : {}),
     ...(turnMedia.length > 0 ? { media: turnMedia } : {}),
     usage: lastUsage,
     contextWindow: resolvedModel.model.contextWindow,

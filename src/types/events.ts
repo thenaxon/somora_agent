@@ -257,6 +257,16 @@ export type NormalizedEvent =
         /** True when tokens_out_reasoning was estimated from streamed reasoning text (backend reported none). */
         tokens_out_reasoning_estimated?: boolean;
       };
+      /** Tool-call rounds the engine ran this turn (engines that count). */
+      rounds?: number;
+      /** The engine had to force a no-tools finish (round cap, tool
+       *  budget, scaffold leak) and the model then produced a real
+       *  answer — a partial result, not a clean one. */
+      forced_final?: string;
+      /** The final text is a harness marker, not a model answer:
+       *  the model looped, leaked scaffold, or never answered. Runtime
+       *  signal — never inferred from model text by consumers. */
+      degraded?: { reason: string };
     }
   | { kind: 'error'; ts: number; engine: string; message: string }
   // Server-side marker for project focus changes within a session. Fired

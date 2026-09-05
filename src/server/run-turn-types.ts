@@ -33,8 +33,28 @@ export interface ChatTurnMedia {
   url: string;
 }
 
+/** Runtime-derived verdict on a turn — never read from model text.
+ *  completed: model answered. partial: the engine had to force a
+ *  no-tools finish (round cap / tool budget / scaffold leak) and the
+ *  model then answered. degraded: finalText is a harness marker or
+ *  empty — the model never produced an answer. failed: engine error. */
+export type ChatTurnOutcome = 'completed' | 'partial' | 'degraded' | 'failed';
+
 export interface ChatTurnResult {
   finalText: string;
+  outcome: ChatTurnOutcome;
+  /** Why the outcome is partial/degraded (round_cap, tool_budget,
+   *  scaffold_leak, scaffold_stripped, force_summary_failed,
+   *  round_cap_no_answer, empty_answer). */
+  outcome_reason?: string;
+  /** Tool calls the engine made this turn (counted from tool_call events). */
+  tool_calls: number;
+  /** Tool-call rounds, where the engine reports them. */
+  rounds?: number;
+  /** Files created or edited via file_write / file_patch this turn,
+   *  from the tool calls that returned without error. Remote targets
+   *  are prefixed `<resource>:`. */
+  files_written?: string[];
   /** Media generated during the turn (images, finished videos), oldest
    *  first. Absent when the turn produced none or media is not
    *  configured. Independent of finalText: present even when the model
