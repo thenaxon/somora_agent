@@ -55,9 +55,11 @@ with them via terminal, browser, or installable mobile PWA; they remember
 things across sessions; they use the same tool surface (memory, files,
 web, shell, tmux, attachments) regardless of which LLM you point them at.
 
-Your agent data — config, memory, sessions, the wiki, attachments — lives
-in `~/.somora/` on your machine. Which models and which external services
-(web search, MCP servers, media endpoints) your agents talk to is your
+You control where your agent data is stored. Config, agent memory,
+sessions and attachments live in `~/.somora/`; the shared wiki lives in
+your Obsidian vault; workspace files and generated media live in your
+configured workspace. Which models and which external services (web
+search, MCP servers, media endpoints) your agents talk to is your
 configuration, not a default.
 
 Beyond chat and memory, briefly:
@@ -168,7 +170,7 @@ dream-system + web + tmux + mobile) is feature-complete and used daily:
 | Memory tools (read + write) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Wiki layer (shared) | ✓ | ✓ | ✓ | ✓ |
 | Three-phase dreams | ✓ | ✓ | as chat model only¹ | ✓ |
-| Tool surface (40+ tools) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
+| Tool surface | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
 | Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | text only | ✓ image; PDF native or rasterized per provider |
 | Image + video generation² | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
@@ -375,7 +377,10 @@ taskbar gear menu, thinking visibility also in the ••• session menu.
 
 ## Tool surface
 
-Agents see ~40 tools across 12 toolsets. The same registry feeds all four
+Tools are grouped into toolsets. Which tools an agent sees depends on your
+configuration, its permissions (the Abilities window), and the active
+workflow — optional toolsets only exist when configured, and external MCP
+servers add their own. The same registry feeds all four
 engines (in-process for openai-compatible, dynamic tools via the bundled
 Codex app-server for codex-cli, a per-turn MCP child for claude-cli and
 grok-cli) — same tool surface regardless of model.
