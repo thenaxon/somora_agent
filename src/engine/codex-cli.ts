@@ -413,6 +413,13 @@ export const codexCliEngine: AgentEngine = {
         case 'warning':
         case 'configWarning':
         case 'deprecationNotice': {
+          const text = String(p.message ?? p.summary ?? '');
+          // Sandbox prerequisites are irrelevant: threads run with
+          // danger-full-access (somora is the sandbox). Keep the log clean.
+          if (/bubblewrap|sandbox prerequisites/i.test(text)) {
+            logger.debug({ msg: 'engine.codex_warning', ...logCtx, method, message: text.slice(0, 200) });
+            break;
+          }
           logger.warn({
             msg: 'engine.codex_warning',
             ...logCtx,
