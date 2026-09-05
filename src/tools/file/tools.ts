@@ -41,7 +41,13 @@ async function readImageAsContentBlock(
     );
   }
   const { loadAttachment } = await import('../../multimodal/load.ts');
-  const att = await loadAttachment(absolutePath);
+  // Same cap as chat attachments (config.attachments.maxImageBytes) —
+  // the loader's own default is 5 MB, which a 2K image-generation
+  // output exceeds; that error used to fall through to the TEXT reader
+  // and dump PNG bytes into the model context (2026-09-05 report).
+  const att = await loadAttachment(absolutePath, {
+    maxImageBytes: ctx.config.attachments?.maxImageBytes,
+  });
   return {
     _somoraMultimodal: true,
     contentBlocks: [
@@ -233,6 +239,11 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
         // its own error path that already produces good messages.
         const msg = (err as Error).message;
         if (msg.startsWith('file_read:')) throw err;
+        // Multimodal loader/renderer errors (size cap, unreadable PDF)
+        // are final too: an image or PDF must never be re-read as text.
+        if (msg.startsWith('multimodal:') || /\.(png|jpe?g|gif|webp|bmp|pdf)$/i.test(input.path)) {
+          throw new Error(`file_read: ${msg}`);
+        }
       }
       return localRead({
         path: input.path,

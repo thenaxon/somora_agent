@@ -11,6 +11,7 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     todo_list: 'plan',
     model_switch: 'model switch',
     thread_recreated: 'thread recreated',
+    tools_changed: 'tools changed',
     contextCompaction: 'codex compaction',
     error: 'codex error',
   },

@@ -26,6 +26,9 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // somora-emitted: thread/resume found no thread, a fresh one was
     // started with the session history replayed.
     thread_recreated: 'thread recreated',
+    // somora-emitted: the dynamic tool catalog changed (Abilities, hub,
+    // loop, update) — Codex threads keep their tools, so a fresh thread.
+    tools_changed: 'tools changed',
     // codex app-server items: Codex compacted the thread context itself
     // (happens on a model switch), and its `error` notifications.
     contextCompaction: 'codex compaction',

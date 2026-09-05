@@ -5,6 +5,30 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+
+// Agents reference local files by bare absolute path (FileView convention
+// on the desktop client). The phone has no FileView window, so both links
+// and inline images to such paths go through /files/raw, which applies
+// the file_read policy. Module-level so ReactMarkdown keeps component
+// identity across renders.
+const FILESYSTEM_PATH_RE = /^(~|\/(home|Users|var|opt|tmp|etc|mnt|root))(\/|$)/;
+const rawUrl = (p: string | undefined): string | undefined =>
+  p && FILESYSTEM_PATH_RE.test(p) ? `/files/raw?path=${encodeURIComponent(p)}` : p;
+const MARKDOWN_COMPONENTS = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => (
+    <a href={rawUrl(href)} target="_blank" rel="noopener noreferrer" draggable={false}>
+      {children}
+    </a>
+  ),
+  img: ({ src, alt }: { src?: string; alt?: string }) => {
+    const url = rawUrl(typeof src === 'string' ? src : undefined);
+    return (
+      <a href={url} target="_blank" rel="noopener noreferrer">
+        <img src={url} alt={alt ?? ''} style={{ maxWidth: '100%', maxHeight: 320, borderRadius: 6 }} />
+      </a>
+    );
+  },
+};
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import type { ChatMessage, ThinkingContent } from '../hooks/useChatStream';
@@ -222,18 +246,7 @@ function MobileMessage({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
-              components={{
-                a: ({ href, children }) => (
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    draggable={false}
-                  >
-                    {children}
-                  </a>
-                ),
-              }}
+              components={MARKDOWN_COMPONENTS}
             >
               {msg.text}
             </ReactMarkdown>

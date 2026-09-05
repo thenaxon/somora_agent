@@ -19,6 +19,7 @@
 // Engine name stays 'codex-cli' so provider configs keep working.
 
 import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -63,6 +64,14 @@ interface CodexCliMeta {
    *  thread/resume as `model` (no rethread needed with the app-server)
    *  and surfaced as an engine_meta marker. */
   codexRecordedModel?: string;
+  /** Fingerprint of the dynamic tool catalog the thread was started
+   *  with. Codex keeps a thread's tools for its lifetime — `thread/resume`
+   *  and `thread/fork` both ignore a new `dynamicTools` list (verified
+   *  2026-09-05) — so a changed catalog (Abilities toggle in /web, a new
+   *  hub server, a dream_review loop, a somora update that changed a
+   *  schema) means a fresh thread with the session history replayed.
+   *  Same trigger OpenClaw uses ("dynamic-tools-mismatch"). */
+  codexToolsFingerprint?: string;
   /** Obsolete (MCP-era rename tracking); tolerated on old sessions. */
   mcpServerName?: string;
   engineLastSeen?: EngineLastSeen;
@@ -78,6 +87,19 @@ interface UsageAcc {
   tokens_out: number;
   tokens_out_reasoning: number;
   seen: boolean;
+}
+
+/** Names, deferral and input schemas — what decides whether a call can
+ *  be made. Descriptions are left out so wording edits do not rethread. */
+function catalogFingerprint(catalog: CodexToolCatalog): string {
+  const h = createHash('sha1');
+  for (const spec of catalog.specs) {
+    const tools = spec.type === 'namespace' ? spec.tools : [spec];
+    for (const t of tools) {
+      h.update(`${spec.name}.${t.name}|${t.deferLoading ? 'd' : 'i'}|${JSON.stringify(t.inputSchema)}\n`);
+    }
+  }
+  return h.digest('hex').slice(0, 16);
 }
 
 /** Config bridged through process.env by applyCodexCliEnv (config.yaml
@@ -220,6 +242,29 @@ export const codexCliEngine: AgentEngine = {
       logger.warn({ msg: 'engine.codex_tools_skipped', ...logCtx, skipped: catalog.skipped });
     }
     const developerInstructions = `${systemPrompt}\n\n---\n\n${codexToolGuidance(catalog)}`;
+    const toolsFingerprint = catalogFingerprint(catalog);
+    if (resumeId && meta.codexToolsFingerprint !== toolsFingerprint) {
+      logger.info({
+        msg: 'engine.tools_changed_rethread',
+        ...logCtx,
+        droppedThreadId: resumeId,
+        previous: meta.codexToolsFingerprint ?? null,
+        next: toolsFingerprint,
+        directTools: catalog.directNames.length,
+        deferredTools: catalog.deferredNames.length,
+      });
+      yield {
+        kind: 'engine_meta',
+        ts: ts(),
+        engine: ENGINE,
+        itemType: 'tools_changed',
+        payload: {
+          from: resumeId,
+          text: 'The tool set available to this agent changed — Codex thread restarted with the session history carried over.',
+        },
+      };
+      resumeId = undefined;
+    }
     const threadConfig = buildCodexThreadConfig({
       shellEnvironmentPolicy: process.env.SOMORA_CODEX_SHELL_ENV_POLICY,
       directOnlyNamespaces: catalog.directOnlyNamespaces,
@@ -744,6 +789,7 @@ export const codexCliEngine: AgentEngine = {
             engine: ENGINE,
             codexSessionId: id,
             codexRecordedModel: resolvedModel.modelId,
+            codexToolsFingerprint: toolsFingerprint,
             engineLastSeen: withLastSeenTs(freshMeta, ENGINE, ts()),
           };
         });

@@ -42,7 +42,13 @@ const STATIC_COMPONENTS = {
     <pre style={{ maxWidth: '100%', overflowX: 'auto' }}>{children}</pre>
   ),
   img: ({ src, alt }) => {
-    const url = typeof src === 'string' ? src : undefined;
+    // `![…](/abs/path.png)` — agents reference generated files by their
+    // absolute path (same convention as FileView links). The browser
+    // cannot load a filesystem path, so route it through /files/raw,
+    // which applies the file_read policy (2026-09-05 report).
+    const raw = typeof src === 'string' ? src : undefined;
+    const url =
+      raw && FILESYSTEM_PATH_RE.test(raw) ? `/files/raw?path=${encodeURIComponent(raw)}` : raw;
     return (
       <a href={url} target="_blank" rel="noopener noreferrer">
         <img
