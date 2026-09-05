@@ -97,6 +97,12 @@ providers:
   openai:
     engine: codex-cli
     models:
+      - id: gpt-6-astra
+        alias: astra
+        contextWindow: 272000          # same Codex session cap as the 5.6 family
+        capabilities: [text, image, pdf, reasoning]
+        reasoning:
+          levels: { high: xhigh }      # Codex knows low/medium/high/xhigh/max; `max` deliberately not a default
       - id: gpt-5.6-sol
         alias: gpt56
         contextWindow: 272000          # Codex session cap, NOT the 1.05M API window
@@ -111,12 +117,6 @@ providers:
         alias: luna
         contextWindow: 272000
         capabilities: [text, image, pdf, reasoning]
-      - id: gpt-6-astra
-        alias: astra
-        contextWindow: 272000          # same Codex session cap as the 5.6 family
-        capabilities: [text, image, pdf, reasoning]
-        reasoning:
-          levels: { high: xhigh }      # Codex knows low/medium/high/xhigh/max; `max` deliberately not a default
       - id: gpt-5.5
         alias: gpt55
         contextWindow: 272000
@@ -125,10 +125,10 @@ providers:
 
 | model | contextWindow | notes | verified |
 |---|---|---|---|
+| `gpt-6-astra` | 272000 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. `contextWindow: 272000` until Codex says otherwise. | 2026-09-05 (app-server engine) |
 | `gpt-5.6-sol` | 272000 | Flagship — complex coding, research, deepest reasoning. | 2026-09-03 |
 | `gpt-5.6-terra` | 272000 | Workhorse; OpenAI positions it as GPT-5.5-class at lower cost. | 2026-09-05 (app-server engine) |
 | `gpt-5.6-luna` | 272000 | Fast and cheap — extraction, classification, volume. | 2026-09-03 |
-| `gpt-6-astra` | 272000 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. `contextWindow: 272000` until Codex says otherwise. | 2026-09-05 (app-server engine) |
 | `gpt-5.5` | 272000 | Still listed by Codex; the one model here that does **not** run code-mode-only. Terra is the equivalent at lower cost. | 2026-09-05 (app-server engine) |
 | `gpt-5.4-mini`, `gpt-5.3-codex` | — | **Retired** for ChatGPT accounts (Codex answers with an error, seen 2026-08-31 as an `exit 1` compaction-worker crash). Remove them. | 2026-08-31 |
 
@@ -306,34 +306,6 @@ providers:
 | `minimax/minimax-m3` | 1048576 | 1.0 / 0.95 / 40 (model card) | image and video input; vocabulary `low/medium/high` = somora's default, no `levels` needed | 2026-09-03 |
 | `moonshotai/kimi-k3` | 1048576 | **none — on purpose.** Moonshot fixes temperature 1.0 / top_p 0.95 server-side and documents "leave the parameters out". | vocabulary `low/medium/high` | 2026-09-03 |
 | `deepseek/deepseek-v4-pro-0813` | 1048576 | 1.0 / 0.95 | no vision; the hosted big sibling of a local V4 Flash — a good fallback when the local box is off | 2026-09-03 |
-
-## openai-compatible — hosted via Ablatic (Talos)
-
-Same engine and wire as OpenRouter: a plain OpenAI-shaped endpoint with
-`pdfMode: native`.
-
-```yaml
-providers:
-  ablatic:
-    engine: openai-compatible
-    baseUrl: https://api.ablatic.ai/v1
-    apiKey: "<your key>"
-    pdfMode: native
-    models:
-      - id: talos-preview
-        alias: talos
-        contextWindow: 200000
-        capabilities: [text, image, pdf, reasoning]
-      - id: talos-fast
-        alias: talosfast
-        contextWindow: 200000
-        capabilities: [text, image, pdf]
-```
-
-| model | contextWindow | notes | verified |
-|---|---|---|---|
-| `talos-preview` | 200000 | Chat turns with tools ran on 2026-08-20. Reasoning vocabulary and the `levels` mapping are **unmeasured** — treat `reasoning` as "default depth only" until probed. | 2026-08-20 (chat); re-check pending — the key had expired on 2026-09-05 and the turn fell back to the next model |
-| `talos-fast` | 200000 | No reasoning capability declared. | not verified |
 
 **Watch the fallback.** When a hosted key expires, somora's model fallback
 chain answers the turn with the next configured model and the chat header
