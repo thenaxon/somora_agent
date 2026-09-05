@@ -139,6 +139,8 @@ without it.
   (attach to an existing tmux session), `terminal` (fresh shell in
   the somora workspace), `sessions` (cross-agent session browser
   — see next section), and `abilities` (per-agent visibility matrix
+
+> A toggle takes effect on the agent's next turn on every engine. On codex-cli the Codex thread is restarted with the session history carried over (a `tools changed` marker appears in the chat), because Codex keeps a thread's tool set for its lifetime.
   for tools and skills plus external MCP server health — see
   [mcp.md](mcp.md) and [skills.md](skills.md)). The `wiki`
   tile carries a violet **Lucid badge** when completed lucid runs are

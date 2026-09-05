@@ -902,7 +902,10 @@ Event types:
   Besides engine-native items, somora emits its own: `model_switch`
   (codex thread continued under a new model), `thread_recreated` (the
   Codex thread no longer existed; a fresh one was started with the
-  session history replayed), `mcp_server_renamed`
+  session history replayed), `tools_changed` (the agent's tool set
+  changed — Abilities toggle, hub server, review loop, update — and
+  Codex threads keep their tools, so a fresh thread was started with the
+  history replayed), `mcp_server_renamed`
   (engine session rebuilt after somora's MCP server rename, label
   "session restarted"), `context_compacted` (history compacted after a
   context overflow), `reasoning_effort_adjusted` and `sampling_dropped`
