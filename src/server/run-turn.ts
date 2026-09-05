@@ -1091,9 +1091,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         }
       }
       if (ev.kind === 'tool_result') {
-        const path = pendingWrites.get(ev.callId);
-        if (path !== undefined) {
+        const requested = pendingWrites.get(ev.callId);
+        if (requested !== undefined) {
           pendingWrites.delete(ev.callId);
+          // Prefer the path the tool resolved (absolute, workspace-
+          // relative input expanded) over the one the model typed.
+          const out = ev.output as { path?: unknown } | null;
+          const resolved = out && typeof out.path === 'string' ? out.path : undefined;
+          const remotePrefix = requested.includes(':') ? requested.slice(0, requested.indexOf(':') + 1) : '';
+          const path = resolved ? `${remotePrefix}${resolved}` : requested;
           if (!ev.error && !filesWritten.includes(path)) filesWritten.push(path);
         }
       }
