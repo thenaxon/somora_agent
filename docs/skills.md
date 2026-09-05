@@ -367,10 +367,9 @@ same catalogue as the `<available_skills>` prompt block (name,
 description, `when_to_use`, availability, tags), fetched fresh from disk
 and filtered by the calling agent's allow-list.
 
-Why it exists: not every engine re-reads the system prompt each turn.
-codex freezes it at session start, so a long-running codex session can
-lose the registry to engine-side context compaction — and skills added
-after session start never appear. `skill_list` is the on-demand answer:
+Why it exists: CLI engines compact their own context; a long-running
+session can lose the registry that way — and skills added after session
+start may not appear until the next turn. `skill_list` is the on-demand answer:
 call it before concluding that no suitable skill exists, then activate
 with `skill({name})`.
 

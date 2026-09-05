@@ -18,6 +18,17 @@ depth.
 
 Aliases below are suggestions — pick your own.
 
+**What "verified" means.** A dated row went through somora's engine
+matrix on that day, on a live install: basic tools (`time_now`, `exec`,
+`file_read`, `tmux`, `memory_search`, a deferred tool), tools on an SSH
+resource (`exec`, `file_write` / `file_read` / `file_list`, `tmux` on
+another host), `web_fetch`, `agent_ask` to another agent, `spawn_subagent`,
+an image attachment (where the model has vision), `/thinking high`, an
+abort mid-turn, and session memory across turns. Last full run:
+2026-09-05 — claude-fable-5-1, gpt-5.6-terra, gpt-5.5, deepseek-v4-flash,
+qwen3.8-flash-next, all green (DeepSeek: image attachment refused by
+design, no vision).
+
 ---
 
 ## claude-cli — Claude Code subscription
@@ -100,14 +111,25 @@ providers:
         alias: luna
         contextWindow: 272000
         capabilities: [text, image, pdf, reasoning]
+      - id: gpt-6-astra
+        alias: astra
+        contextWindow: 272000          # same Codex session cap as the 5.6 family
+        capabilities: [text, image, pdf, reasoning]
+        reasoning:
+          levels: { high: xhigh }      # Codex knows low/medium/high/xhigh/max; `max` deliberately not a default
+      - id: gpt-5.5
+        alias: gpt55
+        contextWindow: 272000
+        capabilities: [text, image, pdf, reasoning]
 ```
 
 | model | contextWindow | notes | verified |
 |---|---|---|---|
 | `gpt-5.6-sol` | 272000 | Flagship — complex coding, research, deepest reasoning. | 2026-09-03 |
-| `gpt-5.6-terra` | 272000 | Workhorse; OpenAI positions it as GPT-5.5-class at lower cost. | 2026-09-03 |
+| `gpt-5.6-terra` | 272000 | Workhorse; OpenAI positions it as GPT-5.5-class at lower cost. | 2026-09-05 (app-server engine) |
 | `gpt-5.6-luna` | 272000 | Fast and cheap — extraction, classification, volume. | 2026-09-03 |
-| `gpt-5.5` | — | Still listed by Codex; Terra is the equivalent at lower cost. | 2026-09-03 |
+| `gpt-6-astra` | 272000 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. `contextWindow: 272000` until Codex says otherwise. | 2026-09-05 (app-server engine) |
+| `gpt-5.5` | 272000 | Still listed by Codex; the one model here that does **not** run code-mode-only. Terra is the equivalent at lower cost. | 2026-09-05 (app-server engine) |
 | `gpt-5.4-mini`, `gpt-5.3-codex` | — | **Retired** for ChatGPT accounts (Codex answers with an error, seen 2026-08-31 as an `exit 1` compaction-worker crash). Remove them. | 2026-08-31 |
 
 **Peculiarities of this engine**
@@ -126,28 +148,20 @@ providers:
   unless you map it (`levels: { high: xhigh }`). `max` is documented
   by OpenAI for the hardest problems with cost and latency to match —
   map it in a session when you need it, not as a default.
-- Tools are a **deferred namespace** (`mcp__somora`): the model must
-  call `tool_search` before it can use them. It does so reliably for
-  concrete tasks; asked "which tools do you have" it cannot enumerate
-  them. Since Codex 0.144.6, well before somora's MCP rename.
-- Thinking text: Codex emits reasoning *summaries*, and only on the
-  first turn of a thread (0.151 sends none on resumed threads).
-- **Code Mode (Codex ≥ 0.153).** The GPT-5.6 family and GPT-6 run
-  with `tool_mode=code_mode_only`: every tool, MCP tools included, is
-  reached through a code-mode `exec` tool that Codex's built-in
-  code-mode host executes. somora therefore no longer disables
-  `code_mode_host` (it did until 2026-09-05, which left those models
-  without a single somora tool — each turn opened with an `error`
-  item "Code Mode is unavailable because code-mode host is disabled").
-  Older models (gpt-5.5) and older Codex versions are unaffected either
-  way: they never route through the host. After a Codex upgrade, check
-  one turn per configured Codex model calls `time_now`; the server log
-  now flags Codex `error` items as `engine.codex_error_item`.
-- `functions.apply_patch` stays visible to the model — the model
-  catalog drives it and Codex has no switch ([security.md](security.md)).
-- A retired model does not fail loudly: the turn errors out with the
-  flattened HTTP error in the chat. Check `codex debug models` when a
-  model stops answering after a Codex update.
+- **Tools are Codex dynamic tools** in the `somora` namespace
+  (`somora_direct` for image-bearing results, `somora_mcp_<server>` for
+  external MCP servers). The tools in `codexCli.directTools` sit in the
+  model's direct list every turn; the rest is deferred and reached via
+  Codex tool search — the developer instructions list their names.
+- Thinking text: Codex emits reasoning *summaries* per thinking phase
+  (`summary: auto` on `turn/start`), streamed as the thinking block.
+- **Code Mode.** Since Codex 0.153 the GPT-5.6 family and GPT-6 are
+  `code_mode_only`: the model writes a JavaScript cell that calls
+  `tools.somora.<tool>(...)` (deferred tools are found through
+  `ALL_TOOLS`), Codex's built-in host runs the cell, somora runs the
+  tools. That sandbox has no `require`, `process`, `fetch` or filesystem
+  (verified 2026-09-05). gpt-5.5 calls the same dynamic tools directly.
+  `somora codex debug models` shows the `tool_mode` per model.
 
 ## grok-cli — SuperGrok / Premium subscription
 
@@ -183,7 +197,7 @@ providers:
     baseUrl: http://<your-host>:8000/v1
     apiKey: "<key or anything for a local server>"
     models:
-      - id: deepseek-v4-flash             # SGLang
+      - id: deepseek-v4-flash             # SGLang; behind LiteLLM use the route name (e.g. deepseek-v4-flash-0731)
         alias: deep4flash
         contextWindow: 700000             # = the server's --context-length, not the model's 1M
         capabilities: [text, reasoning]
@@ -292,6 +306,39 @@ providers:
 | `minimax/minimax-m3` | 1048576 | 1.0 / 0.95 / 40 (model card) | image and video input; vocabulary `low/medium/high` = somora's default, no `levels` needed | 2026-09-03 |
 | `moonshotai/kimi-k3` | 1048576 | **none — on purpose.** Moonshot fixes temperature 1.0 / top_p 0.95 server-side and documents "leave the parameters out". | vocabulary `low/medium/high` | 2026-09-03 |
 | `deepseek/deepseek-v4-pro-0813` | 1048576 | 1.0 / 0.95 | no vision; the hosted big sibling of a local V4 Flash — a good fallback when the local box is off | 2026-09-03 |
+
+## openai-compatible — hosted via Ablatic (Talos)
+
+Same engine and wire as OpenRouter: a plain OpenAI-shaped endpoint with
+`pdfMode: native`.
+
+```yaml
+providers:
+  ablatic:
+    engine: openai-compatible
+    baseUrl: https://api.ablatic.ai/v1
+    apiKey: "<your key>"
+    pdfMode: native
+    models:
+      - id: talos-preview
+        alias: talos
+        contextWindow: 200000
+        capabilities: [text, image, pdf, reasoning]
+      - id: talos-fast
+        alias: talosfast
+        contextWindow: 200000
+        capabilities: [text, image, pdf]
+```
+
+| model | contextWindow | notes | verified |
+|---|---|---|---|
+| `talos-preview` | 200000 | Chat turns with tools ran on 2026-08-20. Reasoning vocabulary and the `levels` mapping are **unmeasured** — treat `reasoning` as "default depth only" until probed. | 2026-08-20 (chat); re-check pending — the key had expired on 2026-09-05 and the turn fell back to the next model |
+| `talos-fast` | 200000 | No reasoning capability declared. | not verified |
+
+**Watch the fallback.** When a hosted key expires, somora's model fallback
+chain answers the turn with the next configured model and the chat header
+shows that model — the `engine.fail` line in the server log (`401 API key
+expired`) is the only loud signal. Check the header, not just the reply.
 
 ## What each field does, per engine
 

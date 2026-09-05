@@ -108,10 +108,10 @@ adapter does nothing engine-specific. Otherwise it maps:
 
 | somora level | claude-cli                                 | codex-cli                              | openai-compatible             |
 |--------------|--------------------------------------------|----------------------------------------|-------------------------------|
-| `off`        | `thinking: { type: 'disabled' }`           | `-c model_reasoning_effort=minimal` †  | param omitted entirely ‡      |
-| `low`        | `effort: 'low'`                            | `-c model_reasoning_effort=low`        | `reasoning_effort: 'low'`     |
-| `medium`     | `effort: 'medium'`                         | `-c model_reasoning_effort=medium`     | `reasoning_effort: 'medium'`  |
-| `high`       | `effort: 'high'`                           | `-c model_reasoning_effort=high`       | `reasoning_effort: 'high'`    |
+| `off`        | `thinking: { type: 'disabled' }`           | `turn/start.effort: minimal` †         | param omitted entirely ‡      |
+| `low`        | `effort: 'low'`                            | `turn/start.effort: low`               | `reasoning_effort: 'low'`     |
+| `medium`     | `effort: 'medium'`                         | `turn/start.effort: medium`            | `reasoning_effort: 'medium'`  |
+| `high`       | `effort: 'high'`                           | `turn/start.effort: high`              | `reasoning_effort: 'high'`    |
 
 † codex-cli has no real "off" state for reasoning-capable models — `off`
 maps to `minimal` (its lowest setting). The semantic difference vs
@@ -121,7 +121,7 @@ The per-model `reasoning.levels` block (see the vocabulary section
 below) applies to **codex-cli and grok-cli as well**, not only to the
 OpenAI-compatible engine: codex accepts `xhigh` and `max` for the
 GPT-5.6 family, so `reasoning: { levels: { high: xhigh } }` on such a
-model sends `model_reasoning_effort=xhigh` for `/thinking high`.
+model sends `effort: xhigh` for `/thinking high`.
 Without a mapping the level goes through verbatim as in the table.
 `max` is deliberately not a suggested default — OpenAI documents it for
 the hardest problems, with the latency and cost to match; map it in a
@@ -136,9 +136,10 @@ The mapping is intentionally lossy because the underlying APIs disagree:
   `{ type: 'enabled', budgetTokens: N }` for fixed budgets, OR
   `{ type: 'disabled' }`. Adaptive is the default for Opus 4.6+.
 
-- **Codex CLI** wraps OpenAI's reasoning models. The TOML override
-  `model_reasoning_effort` on `-c` accepts `minimal | low | medium |
-  high`. Set per-invocation; not persistent in the codex thread.
+- **Codex** wraps OpenAI's reasoning models. The app-server's
+  `turn/start.effort` accepts `minimal | low | medium | high | xhigh |
+  max` (per model, see `somora codex debug models`). Set per turn; the
+  thread keeps the last value.
 
 - **OpenAI-compatible chat.completions** accepts the body field
   `reasoning_effort`. OpenAI's own vocabulary is `none | minimal | low |
@@ -392,9 +393,9 @@ model thinks. See [display.md](display.md).
 | Engine | Thinking content | What you get | Status |
 |---|---|---|---|
 | `openai-compatible` | yes, when the backend streams `reasoning_content` (or `reasoning`) deltas | the full reasoning text as the model wrote it | verified end to end (SSE + history row) on DeepSeek V4 (SGLang, 893 chars) and Qwen 3.8 (vLLM, 440 chars) through a LiteLLM router, 2026-09-03 |
-| `openai-compatible`, inline `<think>` models (DeepSeek-R1, QwQ) | no | the reasoning stays inside the reply text as the model emits it | not supported — needs tag detection and its own capability, see below |
+| `openai-compatible`, inline `<think>` models (DeepSeek V4 on SGLang without a reasoning parser, R1, QwQ) | yes | somora splits an inline `<think>…</think>` block off the reply — also the DeepSeek shape where only the closing tag arrives because the template prefilled the opening one — and routes it to the thinking block; the visible reply and subagent results stay clean | verified on deepseek-v4-flash, 2026-09-05 |
 | `claude-cli` | placeholder only with the current SDK | The Claude Agent SDK carries thinking as its own blocks, but what those blocks contain depends on the SDK version, not on somora: with `@anthropic-ai/claude-agent-sdk` 0.3.258 every model measured (Fable, Opus 4.7, Sonnet 4.6) runs the thinking phase and delivers an **empty** block — somora shows one placeholder line. With SDK 0.3.215 Sonnet 4.6 streamed the text (280 chars on a short problem) while Fable and Opus 4.7 stayed empty. Explicitly redacted blocks get their own placeholder. | measured 2026-09-03 on both SDK versions |
-| `codex-cli` | summaries, first turn of a session only | codex never streams the raw chain of thought; with `model_reasoning_summary=auto` (somora sets it while `thinkingContent.capture` is on) it emits one `reasoning` item per thinking phase carrying the provider's summary — a heading-like sentence. On a **resumed** thread (every turn after the first in a session) codex 0.151 emits no reasoning item at all, flag or not. | verified on gpt-5.5, 2026-09-03 |
+| `codex-cli` | summaries per thinking phase | Codex never streams the raw chain of thought; with `summary: auto` on `turn/start` (somora sets it while `thinkingContent.capture` is on) the app-server streams `item/reasoning/summaryTextDelta` per thinking phase — heading-like sentences, shown as the thinking block. | verified on gpt-5.6-terra, 2026-09-05 (app-server engine) |
 | `grok-cli` | wired, unverified | ACP `agent_thought_chunk` frames, cumulative like message chunks | nobody here has a Grok account — the mapping follows the ACP schema only |
 
 The token counter and the badge are unchanged and work on every engine
@@ -428,11 +429,17 @@ per turn; the clients show "(truncated by the server)" on a cut block.
 - Never replayed: history rebuilds for the model, compaction summaries
   and REM extraction read user, assistant and tool rows only.
 
-### Not built: inline `<think>` models
+### Inline `<think>` models
 
 Models that print their reasoning as `<think>…</think>` inside the
-normal text stream (DeepSeek-R1, QwQ) ignore `reasoning_effort` and
-would need stream-side tag detection plus a `reasoning-inline`
-capability so the badge does not claim a depth knob that does nothing.
-Nobody here runs one; it stays out until someone does. Until then, do
-not give such a model the `reasoning` capability.
+normal text stream (DeepSeek V4 on a server without a reasoning parser,
+R1, QwQ) get the block split off by the openai-compatible engine: the
+reasoning goes to the thinking block, the reply and any subagent
+`result` stay clean. Both shapes are handled — the full block, and the
+DeepSeek-on-SGLang shape where the chat template prefilled `<think>` in
+the prompt so only the closing tag arrives (measured 2026-09-03: a
+subagent result opened with 2.5k characters of reasoning and a bare
+`</think>`). Until the closing tag arrives the deltas may stream as
+reply text; the final message is always clean. A `reasoning_effort`
+knob still only works where the backend honours it — for DeepSeek V4
+see [models.md](models.md).

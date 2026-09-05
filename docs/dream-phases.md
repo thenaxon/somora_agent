@@ -447,7 +447,7 @@ While the loop is active for an agent:
   temporarily hidden so the conversation stays focused. Hiding is
   enforced at the call, not only in the listing: a hidden tool invoked
   from a definition the model already had is refused.
-- **MCP-served engines (claude-cli, codex-cli, grok-cli) learn the tool
+- **CLI engines (claude-cli, codex-cli, grok-cli) receive the tool
   list once per turn.** Starting the loop mid-turn does not make
   `wiki_*` callable in that same turn — they appear on the next turn.
   Practical pattern: `dream_review start`, end the reply, continue after

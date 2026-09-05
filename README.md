@@ -152,7 +152,8 @@ Optional:
   package manager.
 
 See [docs/setup.md](docs/setup.md) for the full install walkthrough,
-including step-by-step prereq setup.
+including step-by-step prereq setup, and [docs/models.md](docs/models.md)
+for the models known to run with somora and their tested config blocks.
 
 ## Quickstart
 
@@ -203,13 +204,13 @@ dream-system + web + tmux + mobile) is feature-complete and used daily:
 |---|:-:|:-:|:-:|:-:|
 | Chat (streaming) | ✓ | ✓ | ✓ | ✓ |
 | Memory auto-injection | ✓ | ✓ | ✓ | ✓ |
-| Memory tools (read + write) | ✓ via MCP | ✓ via MCP | ✓ via MCP | ✓ in-process |
+| Memory tools (read + write) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Wiki layer (shared) | ✓ | ✓ | ✓ | ✓ |
 | Three-phase dreams | ✓ | ✓ | as chat model only¹ | ✓ |
-| Tool surface (40+ tools) | ✓ via MCP | ✓ via MCP | ✓ via MCP | ✓ in-process |
+| Tool surface (40+ tools) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
 | Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | text only | ✓ image; PDF native or rasterized per provider |
-| Image + video generation² | ✓ via MCP | ✓ via MCP | ✓ via MCP | ✓ in-process |
+| Image + video generation² | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
 | Sub-agent spawning | ✓ | ✓ | ✓ | ✓ |
 | SSH-resource exec | ✓ | ✓ | ✓ | ✓ |
 
@@ -300,9 +301,15 @@ the new engine just picks up the thread.
 | Engine | Auth | Use when |
 |---|---|---|
 | `claude-cli` | Claude Code binary in `~/.local/bin/claude` (subscription) — shares your `claude login`, kept in sync automatically (`somora auth status` to inspect) | Best quality on Anthropic stack, no API key needed. |
-| `codex-cli` | `codex` binary on PATH (ChatGPT subscription) | Strong reasoning, ChatGPT subscription cost. |
+| `codex-cli` | Codex bundled with somora (`somora codex login`, ChatGPT subscription); an existing `codex login` is mirrored | Strong reasoning, ChatGPT subscription cost. GPT-5.6 / GPT-6 run tool calls through Codex Code Mode. |
 | `grok-cli` | `grok` binary (Grok Build CLI, SuperGrok/Premium subscription), driven over ACP | xAI models on a subscription, no API key. Community-maintained, text attachments only. |
 | `openai-compatible` | Any baseUrl + apiKey config | Local models, OpenRouter, any OpenAI-shaped endpoint. |
+
+**Which models, with which settings?** [docs/models.md](docs/models.md) is
+the curated list: every model family we run (Claude, GPT-5.6 / GPT-6 via
+Codex, DeepSeek, Qwen, Gemma, …) with the `contextWindow`, sampling and
+`reasoning.levels` values that actually work, why, and when they were last
+verified against a live somora.
 
 ## Managing skills — `somora skill`
 
@@ -333,7 +340,8 @@ Three files matter, all optional except `config.yaml`:
 | `~/.somora/agents/<name>/agent.yaml` | Per-agent | model + fallback, REM phase config (worker model, idle minutes, chunk sizes), workspace override, resource deny-list, per-agent tool + skill visibility (also editable in the web Abilities window) |
 | `~/.somora/agents/<name>/{AGENTS,SOUL,USER}.md` | Per-agent | Persona — behavioural rules (`AGENTS.md`), voice (`SOUL.md`), what the agent knows about you (`USER.md`) |
 
-See [docs/setup.md](docs/setup.md) for `config.yaml` reference and
+See [docs/setup.md](docs/setup.md) for `config.yaml` reference,
+[docs/models.md](docs/models.md) for tested model config blocks and
 [docs/agents.md](docs/agents.md) for creating new agents.
 
 ## Slash commands
@@ -409,6 +417,7 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
   somora is, which doc to read for which goal, and one-sentence glossary of
   every concept that appears in the rest of the docs.
 - [docs/setup.md](docs/setup.md) — install, providers, first run, HTTPS via Tailscale
+- [docs/models.md](docs/models.md) — **tested models** per engine with the config values that work, why, and the verification date
 - [docs/agents.md](docs/agents.md) — creating agents, persona files, model overrides
 - [docs/memory.md](docs/memory.md) — how the memory inbox works, vault integration, retrieval
 - [docs/wiki.md](docs/wiki.md) — the shared long-term wiki layer
@@ -429,7 +438,6 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning depth, reasoning-token counts and the model's thinking text across engines
 - [docs/sampling.md](docs/sampling.md) — temperature, top_p and friends per model, agent and session
-- [docs/models.md](docs/models.md) — models known to run with somora, per engine, with the config values that work and why
 - [docs/compaction.md](docs/compaction.md) — when a session is summarised, which model does it, what `contextWindow` controls per engine
 - [docs/display.md](docs/display.md) — TUI display toggles
 - [docs/cache-strategy.md](docs/cache-strategy.md) — prompt-cache mechanics

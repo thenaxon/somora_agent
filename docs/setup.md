@@ -374,6 +374,13 @@ flooding you:
 - **A per-turn tool-call budget** (`agentLoop.maxToolCallsPerTurn`,
   default 30) stops a runaway that the round cap can't see, and forces a
   clean final answer.
+- **A budget notice at 75 %** of either cap: one user-role message
+  ("N rounds and M calls remain — wrap up") so a "read N things, then
+  summarise" task ends on its own instead of at the hard stop.
+- **The forced final answer** is a user-role message, valid on every
+  backend (strict chat templates such as vLLM + Qwen reject a trailing
+  system message). If that call fails too, the turn returns a digest of
+  the last tool results instead of only an error line.
 - **Output guards** detect a leaked template or a repeated-text loop in
   the stream, cut it before it floods the window, and force one clean
   no-tools answer.
@@ -994,7 +1001,7 @@ then never touches either credentials file, and you manage
 | `SOMORA_LOG_LEVEL`               | `info`                       | Pino log level                           |
 | `SOMORA_CLAUDE_BIN`              | `~/.local/bin/claude`        | Claude Code binary path                  |
 | `CLAUDE_CONFIG_DIR`              | `~/.somora/claude-home`      | Isolated state dir for claude-cli subprocesses (auto-created on boot, see "Isolated Claude config dir") |
-| `SOMORA_CODEX_BIN`               | `~/.npm-global/bin/codex`    | Codex CLI binary path                    |
+| `SOMORA_CODEX_BIN`               | unset (bundled)              | Debugging override for the Codex binary; otherwise the bundled `@openai/codex` is used |
 | `SOMORA_COMPACTION_TRIGGER_RATIO`| from config                  | override compaction trigger              |
 | `SOMORA_COMPACTION_SAFETY_PAIRS` | from config                  | override compaction cushion              |
 | `SOMORA_COMPACTION_MODEL`        | from config                  | override compaction worker               |

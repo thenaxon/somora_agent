@@ -194,8 +194,8 @@ provider ceilings). PDF render: max 20 pages by default, scale 1.5×
 **Engine support:**
 - claude-cli (Anthropic) — full polymorph support; images and rendered
   PDFs ride as native ImageBlock / DocumentBlock content
-- codex-cli (OpenAI) — same MCP-image-content path; images forward
-  natively, PDFs rasterise to per-page PNGs
+- codex-cli (OpenAI) — dynamic-tool results carry images natively
+  (`inputImage`); PDFs rasterise to per-page PNGs
 - openai-compatible (omlx, openrouter, ollama) — works for vision-
   capable models (gemma-vision, gpt-5 via openrouter, etc.); local
   servers vary in tool-result image-content support — failures
@@ -225,9 +225,9 @@ attach files directly to a chat turn. Pipeline:
    disk on demand.
 4. Each engine adapter builds its native multimodal user-message
    shape: claude-cli inlines as `ContentBlockParam[]` with
-   `ImageBlockParam` / `DocumentBlockParam`; codex-cli pipes images
-   through `-i <PATH>` and rasterises PDFs to per-page PNGs into a
-   sibling cache dir; openai-compatible produces an array-content
+   `ImageBlockParam` / `DocumentBlockParam`; codex-cli sends images as
+   native `localImage` turn inputs and rasterises PDFs to per-page PNGs
+   into a sibling cache dir; openai-compatible produces an array-content
    user message (`{type:'image_url'}` / `{type:'file'}` / rasterised
    PNGs depending on the provider's `pdfMode`).
 
@@ -260,8 +260,8 @@ providers:
 
 - `claude-cli` providers: always native (Anthropic supports inline
   PDF). No knob.
-- `codex-cli` providers: always rasterise (codex's `--image` accepts
-  only images). No knob.
+- `codex-cli` providers: always rasterise (Codex accepts only images
+  as native input). No knob.
 - `openai-compatible` providers: depends on the actual backend
   behind the URL. `rasterize` (default) renders pages to PNG and
   works against omlx, ollama, anything image-capable. `native`

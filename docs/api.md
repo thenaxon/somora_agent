@@ -669,11 +669,10 @@ The `model` field accepts an alias (`claude-opus-4-7`), a
 `<provider>/<id>` tuple (`anthropic/claude-opus-4-20250514`), or
 anything else resolvable by `GET /models`.
 
-Switching models mid-session is safe on every engine. Codex pins its
-internal thread to the model it was recorded with — somora detects the
-mismatch before resume, starts a fresh codex thread seeded with the full
-session history, and drops a `model switch` marker into the
-conversation. The somora session (id, history, meta) is untouched;
+Switching models mid-session is safe on every engine. On codex-cli the
+thread simply continues under the new model (`thread/resume` takes the
+model; Codex may compact the thread context once) and somora drops a
+`model switch` marker into the conversation. The somora session (id, history, meta) is untouched;
 alias changes that resolve to the same underlying model don't trigger a
 re-thread.
 
@@ -901,7 +900,9 @@ Event types:
   (e.g. `todo_list` → `"plan"`); unknown item-types fall back to the
   raw `itemType`. `payload` is the engine's original event, opaque.
   Besides engine-native items, somora emits its own: `model_switch`
-  (codex thread rebuilt after a model change), `mcp_server_renamed`
+  (codex thread continued under a new model), `thread_recreated` (the
+  Codex thread no longer existed; a fresh one was started with the
+  session history replayed), `mcp_server_renamed`
   (engine session rebuilt after somora's MCP server rename, label
   "session restarted"), `context_compacted` (history compacted after a
   context overflow), `reasoning_effort_adjusted` and `sampling_dropped`

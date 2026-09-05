@@ -263,11 +263,11 @@ project switch only invalidates from this point onward; everything
 above stays cached. A typical Anthropic prompt cache survives the
 switch with just one extra cache breakpoint to recompute.
 
-The `codex-cli` engine drops `systemPrompt` on resumed sessions
-(codex remembers it internally from session-start), so somora
-inlines the project block via the user-message-prefix path on
-codex-resume — the model sees it either way, with a small
-duplication cost only in the first turn after a pin.
+The `codex-cli` engine re-sends the system prompt as developer
+instructions on every thread resume, and additionally inlines the
+project block via the user-message-prefix path on resumed threads —
+the model sees a pin immediately, with a small duplication cost in the
+first turn after it.
 
 ## CRUD via the agent
 

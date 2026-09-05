@@ -283,8 +283,10 @@ regex rejects `/`, uppercase, special chars). Agents cannot write
 to wiki or vault directly — those go through Deep/Lucid.
 
 The tools are exposed three ways:
-- For `claude-cli` and `codex-cli` engines: via a local stdio MCP
-  server (`src/mcp/server.ts`).
+- For `claude-cli` (and `grok-cli`): via a local stdio MCP server
+  (`src/mcp/server.ts`).
+- For `codex-cli`: as Codex dynamic tools on the app-server; somora
+  serves each call from the in-process registry.
 - For `openai-compatible` engines: as in-process function definitions
   via the agent's tool-call loop.
 

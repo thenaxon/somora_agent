@@ -601,7 +601,7 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
 - **Drag & drop / paste / paperclip attachments.**
   Per-turn user-attachments end-to-end through all three engines:
   claude-cli inlines as native ImageBlock / DocumentBlock;
-  codex-cli pipes images through `--image` and rasterises PDFs to
+  codex-cli sends images as native turn inputs and rasterises PDFs to
   per-page PNGs; openai-compatible builds an array-content user
   message (`image_url` for images, `file` or rasterised pages for
   PDFs depending on `pdfMode`). Bytes live content-addressed at

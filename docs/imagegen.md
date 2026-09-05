@@ -264,9 +264,10 @@ it's only deferred until someone decides it's worth the tokens.
 
 `maxImagesPerTurn` caps how many images one turn may produce. It's a
 cost brake, not a rate limit: an agent set to `always` can otherwise
-re-prompt in a loop at real money per round. Under claude-cli and
-codex-cli the tool runs in an MCP child process with no turn id; there
-the per-call cap still applies but nothing accumulates.
+re-prompt in a loop at real money per round. Under claude-cli the tool
+runs in an MCP child process with no turn id; there the per-call cap
+still applies but nothing accumulates. codex-cli and openai-compatible
+run it in-process with the turn id, so the cap accumulates.
 
 ## In the chat
 

@@ -38,7 +38,7 @@ somora has three engine adapters with very different cache mechanics:
 | Engine | Backend | Cache scope |
 |---|---|---|
 | `claude-cli` | Anthropic via SDK, stateful resumed session | SDK manages internal session state; we send only the new user message; Anthropic cache_control on system+tools holds across turns |
-| `codex-cli` | OpenAI via codex binary, stateful via `codex exec resume <thread_id>` | codex remembers history internally; we send only new content; codex's API call to OpenAI gets full prefix cache |
+| `codex-cli` | OpenAI via the bundled Codex app-server, stateful via `thread/resume <thread_id>` | Codex remembers history internally; we send only new content; Codex's API call to OpenAI gets full prefix cache |
 | `openai-compatible` | Anything (mlx-omx, ollama, OpenAI, vLLM, ...), stateless | We reconstruct the full conversation from JSONL on every call; the request must be byte-identical to prior calls for the prefix to match |
 
 The first two are stateful — the underlying CLI/SDK preserves session
@@ -109,20 +109,17 @@ first turn.
 ### codex-cli (stateful)
 
 ```ts
-// src/engine/codex-cli.ts
-const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
-const promptPayload = resumeId
-  ? `${ephemeralBlock}${replayPrefix}${taggedUserMessage}`
-  : `${systemPrompt}\n\n---\n\n${ephemeralBlock}${replayPrefix}${taggedUserMessage}`;
-
-codex_exec[--json][resume <id>] < stdin promptPayload
+// src/engine/codex-cli.ts — one app-server process per turn
+thread/start | thread/resume { developerInstructions: systemPrompt + tool guidance, dynamicTools, config }
+turn/start   { input: [ text: ephemeral + replayPrefix + userMessage, localImage… ], effort }
 ```
 
-codex has no separate `--system` CLI flag — everything goes in via
-stdin as the user-message payload. Memory lands at the end of the
-payload (before the actual user text). codex remembers prior payloads
-internally and sends them to its OpenAI backend with the right cache
-shape. Hits ~70% cache.
+The system prompt travels as Codex *developer instructions* on every
+thread start/resume (stable across turns), the tool schemas as dynamic
+tools, and only the new turn as user input. Memory lands at the start of
+the user text. Codex keeps the thread and sends it to its OpenAI backend
+with the right cache shape. Hits ~70–85% cache (measured 2026-09-05:
+128k of 153k input cached on a six-tool turn).
 
 ### openai-compatible (stateless)
 

@@ -1,9 +1,11 @@
 # Tools
 
 somora exposes tools to the agent through a single registry. Every
-tool is **engine-agnostic**: claude-cli + codex-cli see them via an
-MCP server somora spawns per turn, openai-compatible sees them
-in-process. The model never knows which path it's on.
+tool is **engine-agnostic**: claude-cli (and grok-cli) see them via an
+MCP server somora spawns per turn, codex-cli receives them as Codex
+dynamic tools on the app-server and somora answers the calls,
+openai-compatible sees them in-process. The model never knows which
+path it's on.
 
 ## Tool families
 
@@ -56,8 +58,9 @@ Two `ToolRegistry` instances exist by necessity:
   openai-compatible engine's agent-loop and by HTTP debug endpoints
   (`GET /tools`).
 - **MCP child-process registry** in `src/mcp/server.ts` — spawned per
-  turn by claude-cli and codex-cli (different process, separate
-  memory).
+  turn by claude-cli and grok-cli (different process, separate
+  memory). codex-cli uses the in-process registry: the app-server asks
+  somora (`item/tool/call`) and the tool runs in the server.
 
 Both populate from a single `registerAllTools(registry)` function in
 `src/tools/index.ts`. Adding a new tool bundle = ONE new
