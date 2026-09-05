@@ -4,81 +4,184 @@
 
 # somora 🐨
 
-> Local-first AI agents that never forget. Multiple personas with private
-> memory, a shared long-term wiki they curate themselves while they sleep,
-> and one conversation that flows across Claude, ChatGPT, and any local model.
+> **Your AI team. Shared memory. Your choice of models.**
+>
+> Run personal AI agents on your own machine, switch between Claude, ChatGPT,
+> Grok and local models in the middle of a conversation, and let the agents
+> turn what they learn into a shared long-term wiki while they sleep.
+> Run. Rest. Dream.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
 [![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](#requirements)
 
+## See it
+
+![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web-2026-05-23.png)
+
+<table>
+  <tr>
+    <td width="66%" valign="top">
+      <img src="docs/images/somora-tui-2026-05-23.png" alt="somora TUI screenshot — terminal multi-agent chat with memory injection and tool calls" />
+    </td>
+    <td width="34%" valign="top">
+      <img src="docs/images/somora-mobile-2026-05-23.png" alt="somora mobile PWA screenshot — avatar row at the top, A2A reply from one agent quoting two others, paperclip + camera + mic + send input bar at the bottom" />
+    </td>
+  </tr>
+</table>
+
+Browser desktop, terminal, and installable phone app — all talking to the
+same local server, the same agents, the same memory.
+
+## Why somora
+
+- **A personal agent team.** Configure as many agents as you want, each
+  with its own character, private memory, model preferences, and tool
+  permissions. Agents delegate to each other: one spawns a sub-agent for a
+  task, another asks a colleague a question mid-turn.
+- **Knowledge that compounds.** Agents notice facts while you chat, keep
+  them privately, and a background dream cycle promotes stable knowledge
+  into a shared Obsidian wiki — with your approval where it matters. What
+  one agent learns today, another can use next week.
+- **Any model, one conversation.** Flip between Claude (your Claude
+  subscription), ChatGPT (your ChatGPT subscription), Grok, or any
+  OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, OpenRouter) with a
+  slash command. History and tools carry over.
+
 ## What is somora?
 
-A small server you run on your machine that hosts one or more AI **agents**,
-each with its own personality, memory, and configuration. You chat with them
-via terminal, browser, or installable mobile PWA; they remember things across
-sessions; they can use the same tool surface (memory, files, web, exec, tmux,
-attachments) regardless of which LLM you point them at.
+A small server you run on your machine that hosts your agents. You chat
+with them via terminal, browser, or installable mobile PWA; they remember
+things across sessions; they use the same tool surface (memory, files,
+web, shell, tmux, attachments) regardless of which LLM you point them at.
 
-What makes it different:
+Your agent data — config, memory, sessions, the wiki, attachments — lives
+in `~/.somora/` on your machine. Which models and which external services
+(web search, MCP servers, media endpoints) your agents talk to is your
+configuration, not a default.
 
-- **Local-first.** All data — config, memory, sessions, the wiki, attachments
-  — lives in `~/.somora/` on your machine. Nothing leaves your laptop unless
-  you point an engine at a cloud provider.
-- **Multi-agent.** Configure as many personas as you want — each with a
-  distinct character, separate memory inbox, and own model preferences.
-  All agents share one long-term wiki of consolidated knowledge.
-- **Multi-engine.** One conversation can flip between Claude (via your
-  Claude subscription), ChatGPT (via your ChatGPT subscription), or any
-  local model exposing an OpenAI-compatible endpoint (Ollama, LM Studio,
-  vLLM, oMLX, OpenRouter). Conversation history carries over.
-- **Memory that compounds.** Three-phase background consolidation: agents
-  notice new facts during conversation, accumulate them privately, then
-  promote stable knowledge to a shared Obsidian-vault wiki. The wiki is
-  cleaned up periodically by a separate worker.
+Beyond chat and memory, briefly:
+
 - **Tools, not magic.** Every capability — recall, file edits, shell
   commands, web fetches, sub-agent spawning, multimodal attachments — is a
-  typed tool the agent can call. The same registry feeds all three engines
-  via either an in-process loop or per-turn MCP child processes.
-- **Media generation (optional, off until configured).** Point somora at
-  an image or video endpoint and both you and your agents can make
-  pictures and film. Specs like aspect ratio, size and length are real
-  request fields, not hints buried in the prompt, and which ones a model
-  accepts is read from the provider's own catalog — so an unsupported
-  setting is refused with the list of valid ones instead of silently
-  ignored. Results land in your workspace, appear in the chat, and stay
-  searchable in one gallery.
-
-  Video is job-based, because a render takes minutes and backends
-  usually do one at a time: the tool starts the job and returns, and the
-  agent is **woken when its video is ready** rather than holding a turn
-  open for eight minutes. Nothing appears until an `imageGen` or
-  `videoGen` block exists — no tool is offered to a model, the HTTP
-  routes answer 503, and the desktop tile stays hidden.
-
-  **What has been tested, and what hasn't:** everything above runs daily
-  against a self-hosted, OpenAI-shaped endpoint — both wire dialects,
-  reference images, catalogs, thumbnails, the full job lifecycle. The
-  provider-agnostic paths are built to published API shapes but have
-  **not** been exercised against OpenAI's or Google's hosted APIs yet.
-  Treat those as untested rather than broken, and see
+  typed tool. One registry feeds all four engines. See
+  [Tool surface](#tool-surface) and [docs/tools.md](docs/tools.md).
+- **Skills.** Markdown how-tos the agent can activate, with declared
+  binaries and secrets that somora checks and injects. See
+  [docs/skills.md](docs/skills.md).
+- **Media generation (optional).** Point somora at an image or video
+  endpoint and both you and your agents can make pictures and film.
+  Results land in your workspace, appear in the chat, and stay searchable
+  in one gallery. Off until configured. See
   [docs/imagegen.md](docs/imagegen.md) and
-  [docs/videogen.md](docs/videogen.md) for exactly which parts are
-  which.
-- **Projects (optional).** Bind a chat session to a real-world thing —
-  a renovation, a research thread, a piece of code — via a curated
-  manifest of pointers (Obsidian notes, local source dirs, GDrive URLs,
-  remote-machine paths). When you `/projekt heimkino`, the manifest
-  lands in the agent's prompt so it knows the canonical list of files
-  that belong to this conversation. Opt-in, off by default — flip
-  `projects.enabled: true` in `config.yaml` to use.
-  See [docs/projects.md](docs/projects.md).
-- **Sentinel (proactive triggers).** Install time-based triggers
-  (`at` / `every` / `daily` / `weekly` / `cron`) that wake an agent on
-  a schedule. The agent does work into its own chat session — daily
-  mail digests, scheduled GitHub-check routines, reminders that
-  surface as agent messages, not toasts. Visible and manageable in the
-  web-UI Sentinel tab. See [docs/sentinel.md](docs/sentinel.md).
+  [docs/videogen.md](docs/videogen.md), including what is tested against
+  which provider.
+- **Projects (optional).** Bind a session to a real-world thing — a
+  renovation, a research thread, a codebase — via a manifest of pointers
+  the agent sees in its prompt. See [docs/projects.md](docs/projects.md).
+- **Sentinel.** Time-based triggers (`at` / `every` / `daily` / `cron`)
+  that wake an agent on a schedule to do work into its own chat session.
+  See [docs/sentinel.md](docs/sentinel.md).
+- **External MCP servers.** One config entry, all engines see the tools,
+  gateable per agent. See [docs/mcp.md](docs/mcp.md).
+
+## Requirements
+
+Hard:
+
+- **Node ≥22.13** — uses native `node:sqlite` plus `better-sqlite3`. On an older Node every `somora` command stops with the upgrade steps instead of failing somewhere inside a dependency.
+- **tmux** — required by the `tmux` tool (long-lived terminal sessions for
+  agents) and by the web tmux app. Install via your package manager.
+- **At least one LLM backend.** Pick what you have:
+  - Claude Code binary (Claude subscription) — for `claude-cli` engine.
+  - ChatGPT subscription — for the `codex-cli` engine. Codex itself is bundled
+    with somora (`somora codex login`), no separate install.
+  - Grok Build CLI binary (SuperGrok/Premium subscription) — for `grok-cli` engine.
+  - Any OpenAI-compatible HTTP server — Ollama, LM Studio, vLLM, oMLX, OpenRouter, etc.
+
+Optional:
+
+- **Obsidian vault** — for the wiki + read-only vault recall. Without it
+  somora still works (memory inbox + per-agent storage), you just lose the
+  shared long-term layer.
+- **Tailscale** — strongly recommended for the web client. HTTPS via
+  `tailscale cert` lifts the browser's 6-connection limit (HTTP/2 multiplex)
+  and unlocks secure-context-only browser APIs (microphone, screen-share,
+  clipboard, push). Without it the web client is single-window-only.
+- **ripgrep (`rg`)** — required for `file_search`. Install via your
+  package manager.
+
+See [docs/setup.md](docs/setup.md) for the full install walkthrough,
+including step-by-step prereq setup, and [docs/models.md](docs/models.md)
+for the models known to run with somora and their tested config blocks.
+
+## Quickstart
+
+> somora is currently installed **from source** — there is no npm
+> registry release yet. The `npm pack` + tarball install below is the
+> supported install path; updates come via `somora update`.
+
+```bash
+# 1. Install prereqs (see docs/setup.md for details per OS)
+sudo apt install tmux ripgrep         # Debian/Ubuntu
+# brew install tmux ripgrep           # macOS
+
+# 2. Install somora from source
+#    `npm pack` triggers the prepack hook → builds web/dist, then emits
+#    a tarball. Installing from the tarball is the reliable path; bare
+#    `npm install -g .` falls into npm's link semantics on some setups
+#    and would leave a broken install.
+git clone https://github.com/thenaxon/somora_agent.git somora
+cd somora
+npm install -g "$(npm pack | tail -1)"
+# apply the package overrides inside the installed copy (npm honours
+# `overrides` only for a root project, not for a globally installed one)
+(cd "$(npm root -g)/somora" && npm install --omit=dev --no-audit --no-fund)
+
+# 3. Log in to at least one LLM backend (pick one or more):
+npm install -g @anthropic-ai/claude-code  &&  claude login   # Claude subscription
+somora codex login                        # ChatGPT subscription; Codex is bundled with somora
+# (for local models: install Ollama / LM Studio / oMLX separately and
+#  add the endpoint to ~/.somora/config.yaml after step 4)
+
+# 4. First-run setup + start
+somora init                    # creates ~/.somora/ and registers the systemd unit
+somora server start            # starts the unit (auto-starts on login)
+somora tui                     # default agent is created on first run
+```
+
+First run creates `~/.somora/config.yaml` and a default agent. For
+the web client + provider configuration + Tailscale HTTPS setup, see
+[docs/setup.md](docs/setup.md) — full step-by-step.
+
+Want to hack on somora itself? See the [contributor section in docs/setup.md](docs/setup.md#develop-from-a-checkout-contributors).
+
+## Status
+
+Active development. Open to early testers. Core surface (memory + wiki +
+dream-system + web + tmux + mobile) is feature-complete and used daily:
+
+| Capability | claude-cli | codex-cli | grok-cli | openai-compatible |
+|---|:-:|:-:|:-:|:-:|
+| Chat (streaming) | ✓ | ✓ | ✓ | ✓ |
+| Memory auto-injection | ✓ | ✓ | ✓ | ✓ |
+| Memory tools (read + write) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
+| Wiki layer (shared) | ✓ | ✓ | ✓ | ✓ |
+| Three-phase dreams | ✓ | ✓ | as chat model only¹ | ✓ |
+| Tool surface (40+ tools) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
+| Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
+| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | text only | ✓ image; PDF native or rasterized per provider |
+| Image + video generation² | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
+| Sub-agent spawning | ✓ | ✓ | ✓ | ✓ |
+| SSH-resource exec | ✓ | ✓ | ✓ | ✓ |
+
+¹ grok-cli has no one-shot path yet, so it can't serve as a dream/REM or
+compaction *worker* — configure those on another engine.
+
+² Off until an `imageGen` / `videoGen` block exists. Verified end-to-end
+against a self-hosted OpenAI-shaped endpoint; the hosted providers
+(OpenAI images/video, Google Veo) are implemented to their published
+shapes but **not yet tested against a live account**.
 
 ## Architecture at a glance
 
@@ -125,103 +228,6 @@ What makes it different:
         Lucid (platform, wiki cleanup)
 ```
 
-## Requirements
-
-Hard:
-
-- **Node ≥22.13** — uses native `node:sqlite` plus `better-sqlite3`. On an older Node every `somora` command stops with the upgrade steps instead of failing somewhere inside a dependency.
-- **tmux** — required by the `tmux` tool (long-lived terminal sessions for
-  agents) and by the web tmux app. Install via your package manager.
-- **At least one LLM backend.** Pick what you have:
-  - Claude Code binary (Claude subscription) — for `claude-cli` engine.
-  - ChatGPT subscription — for the `codex-cli` engine. Codex itself is bundled
-    with somora (`somora codex login`), no separate install.
-  - Grok Build CLI binary (SuperGrok/Premium subscription) — for `grok-cli` engine.
-  - Any OpenAI-compatible HTTP server — Ollama, LM Studio, vLLM, oMLX, OpenRouter, etc.
-
-Optional:
-
-- **Obsidian vault** — for the wiki + read-only vault recall. Without it
-  somora still works (memory inbox + per-agent storage), you just lose the
-  shared long-term layer.
-- **Tailscale** — strongly recommended for the web client. HTTPS via
-  `tailscale cert` lifts the browser's 6-connection limit (HTTP/2 multiplex)
-  and unlocks secure-context-only browser APIs (microphone, screen-share,
-  clipboard, push). Without it the web client is single-window-only.
-- **ripgrep (`rg`)** — required for `file_search`. Install via your
-  package manager.
-
-See [docs/setup.md](docs/setup.md) for the full install walkthrough,
-including step-by-step prereq setup, and [docs/models.md](docs/models.md)
-for the models known to run with somora and their tested config blocks.
-
-## Quickstart
-
-> somora is currently installed **from source** — there is no npm
-> registry release yet. The `npm pack` + tarball install below is the
-> supported install path; updates come via `somora update`.
-
-```bash
-# 1. Install prereqs (see docs/setup.md for details per OS)
-sudo apt install tmux ripgrep         # Debian/Ubuntu
-# brew install tmux ripgrep           # macOS
-
-# 2. Install at least one LLM backend (pick one or more):
-npm install -g @anthropic-ai/claude-code  &&  claude login
-somora codex login                        # Codex is bundled with somora
-# (for local models: install Ollama / LM Studio / oMLX separately)
-
-# 3. Install somora from source
-#    `npm pack` triggers the prepack hook → builds web/dist, then emits
-#    a tarball. Installing from the tarball is the reliable path; bare
-#    `npm install -g .` falls into npm's link semantics on some setups
-#    and would leave a broken install.
-git clone https://github.com/thenaxon/somora_agent.git somora
-cd somora
-npm install -g "$(npm pack | tail -1)"
-# apply the package overrides inside the installed copy (npm honours
-# `overrides` only for a root project, not for a globally installed one)
-(cd "$(npm root -g)/somora" && npm install --omit=dev --no-audit --no-fund)
-
-# 4. First-run setup + start
-somora init                    # creates ~/.somora/ and registers the systemd unit
-somora server start            # starts the unit (auto-starts on login)
-somora tui                     # default agent is created on first run
-```
-
-First run creates `~/.somora/config.yaml` and a default agent. For
-the web client + provider configuration + Tailscale HTTPS setup, see
-[docs/setup.md](docs/setup.md) — full step-by-step.
-
-Want to hack on somora itself? See the [contributor section in docs/setup.md](docs/setup.md#develop-from-a-checkout-contributors).
-
-## Status
-
-Active development. Open to early testers. Core surface (memory + wiki +
-dream-system + web + tmux + mobile) is feature-complete and used daily:
-
-| Capability | claude-cli | codex-cli | grok-cli | openai-compatible |
-|---|:-:|:-:|:-:|:-:|
-| Chat (streaming) | ✓ | ✓ | ✓ | ✓ |
-| Memory auto-injection | ✓ | ✓ | ✓ | ✓ |
-| Memory tools (read + write) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
-| Wiki layer (shared) | ✓ | ✓ | ✓ | ✓ |
-| Three-phase dreams | ✓ | ✓ | as chat model only¹ | ✓ |
-| Tool surface (40+ tools) | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
-| Skills (markdown how-tos) | ✓ | ✓ | ✓ | ✓ |
-| Multimodal attachments (image, PDF) | ✓ native | ✓ image native, PDF rasterized | text only | ✓ image; PDF native or rasterized per provider |
-| Image + video generation² | ✓ via MCP | ✓ dynamic tools | ✓ via MCP | ✓ in-process |
-| Sub-agent spawning | ✓ | ✓ | ✓ | ✓ |
-| SSH-resource exec | ✓ | ✓ | ✓ | ✓ |
-
-¹ grok-cli has no one-shot path yet, so it can't serve as a dream/REM or
-compaction *worker* — configure those on another engine.
-
-² Off until an `imageGen` / `videoGen` block exists. Verified end-to-end
-against a self-hosted OpenAI-shaped endpoint; the hosted providers
-(OpenAI images/video, Google Veo) are implemented to their published
-shapes but **not yet tested against a live account**.
-
 ## Clients
 
 Four first-party clients, all hitting the same local server:
@@ -229,25 +235,11 @@ Four first-party clients, all hitting the same local server:
 | Client | How to launch | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop with multi-window chat per agent (freely arrangeable desktop icons, per-agent text zoom, visible model-fallback marker), drag&drop attachments, screenshot capture, tmux app, plain-shell terminal, a read-only Wiki Explorer (folder tree + rendered pages + clickable `[[wikilinks]]` + a zoomable link graph), a Media app for generated images and video (gallery, generation form, running renders), a Sessions browser for cross-agent housekeeping (archive, REM-coverage view, click-to-chat), an Abilities matrix (which tools and skills each agent may use, per click), right-click on an agent tile for its sessions (open main, recent ones, start a named new one), queued messages you can take back and edit before they run, failed turns shown in place, windows that never leave the desktop when the browser shrinks, per-bubble copy + pin-to-floating-note for working memory, optional voice in (STT) + spoken replies (TTS) per-session toggle. **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. See [docs/web.md](docs/web.md). |
-| **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet. Minimal-scope: avatar-row to switch active agent, single chat surface for the agent's `main` session, voice input via STT (tap-to-record) + optional spoken replies via TTS (per-agent toggle), photo/PDF attachments via the native picker, typing indicator while the agent thinks. No tmux / no file viewer / no multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop: multi-window chat per agent, drag&drop attachments and screenshot capture, tmux app and shell terminal, Wiki Explorer with link graph, Media gallery, Sessions browser, Abilities matrix (which tools and skills each agent may use), queued messages you can take back, optional voice in (STT) and spoken replies (TTS). **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. Full feature list in [docs/web.md](docs/web.md). |
+| **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet: avatar row to switch agent, one chat surface per agent, voice input + optional spoken replies, photo/PDF attachments via the native picker. No tmux, file viewer, or multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
 | **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
 
-### TUI — `somora tui`
-
-![somora TUI screenshot — terminal multi-agent chat with memory injection and tool calls](docs/images/somora-tui-2026-05-23.png)
-
-### Web — browser desktop
-
-![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web-2026-05-23.png)
-
-### Mobile — installable PWA on your phone
-
-<p align="center">
-  <img src="docs/images/somora-mobile-2026-05-23.png" width="320" alt="somora mobile PWA screenshot — avatar row at the top, A2A reply from jarvis quoting both lisa and naxon, paperclip + camera + mic + send input bar at the bottom" />
-</p>
-
-Tailscale-only by design — same posture as `/web/`. Build pipeline ships
+Web and mobile are Tailscale-only by design. The build pipeline ships
 `web/dist` and `web-mobile/dist` together; `somora update` picks up
 both with no operator intervention.
 
@@ -383,9 +375,10 @@ taskbar gear menu, thinking visibility also in the ••• session menu.
 
 ## Tool surface
 
-Agents see ~40 tools across 12 toolsets. The same registry feeds all three
-engines (in-process for openai-compatible, MCP-child per-turn for claude-cli
-and codex-cli) — same tool surface regardless of model.
+Agents see ~40 tools across 12 toolsets. The same registry feeds all four
+engines (in-process for openai-compatible, dynamic tools via the bundled
+Codex app-server for codex-cli, a per-turn MCP child for claude-cli and
+grok-cli) — same tool surface regardless of model.
 
 | Toolset | Examples | Purpose |
 |---|---|---|

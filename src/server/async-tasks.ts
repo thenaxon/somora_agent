@@ -210,10 +210,18 @@ export function configureSubagentAttention(deps: AttentionDeps): void {
 
 function wakePrompt(e: AsyncTaskEntry): string {
   const head = (e.result?.finalText ?? e.error ?? '').replace(/\s+/g, ' ').slice(0, 160);
+  // Artifacts are the tool's word, not the model's — name them here so
+  // a sub whose final text degraded still hands over what it made.
+  const media = e.result?.media ?? [];
+  const mediaLine =
+    media.length > 0
+      ? ` Generated media (${media.length}): ${media.map((m) => m.path).join(', ')}.`
+      : '';
   return (
     `[subagent attention] Task '${e.task_id}' (sub-agent '${e.target_agent}', session ` +
     `'${e.target_session}') finished with state '${e.state}'.` +
     (head ? ` First line: "${head}"` : '') +
+    mediaLine +
     `\nFetch the full answer with subagent_result({ task_id: "${e.task_id}" }), then continue ` +
     `whatever depended on it (validate, report to the user, or chain the next step). If nothing ` +
     `depends on it, a short acknowledgement to the user is enough.`

@@ -25,7 +25,7 @@ platforms; if your build falls through to source you'll need
 ## 2. At least one LLM backend
 
 Pick one or more. somora doesn't care which you use, but at least one
-must be installed and authenticated before the first chat.
+must be installed and authenticated before the first chat (§5).
 
 **Claude (recommended)** — Anthropic's Claude Code CLI uses your Claude
 subscription, no API key needed:
@@ -36,7 +36,8 @@ claude login
 ```
 
 **ChatGPT** — the Codex engine uses your ChatGPT subscription. Codex is
-bundled with somora (no separate install):
+bundled with somora (no separate install), so this login step comes
+**after** [§4 Install somora](#4-install-somora):
 
 ```bash
 somora codex login   # ChatGPT Plus/Pro/Business; an existing `codex login` is picked up too

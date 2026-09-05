@@ -21,7 +21,7 @@
 // inject still happens. This is the hot path for spawn_subagent.
 
 import { randomUUID } from 'node:crypto';
-import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
+import type { ChatTurnMedia, ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { healOrphanToolCalls } from './heal-session.ts';
 import { readProject } from '../projects/store.ts';
@@ -469,7 +469,7 @@ async function publishTurnMedia(args: {
    */
   attachMediaIds?: string[];
   publishSse?: (event: SseEvent) => Promise<void>;
-}): Promise<void> {
+}): Promise<ChatTurnMedia[]> {
   const { agent, session, turnId, engine, startedAt, publishSse } = args;
   const { items } = await listMediaRecords({
     agent,
@@ -486,7 +486,7 @@ async function publishTurnMedia(args: {
       seen.add(id);
     }
   }
-  if (items.length === 0) return;
+  if (items.length === 0) return [];
 
   // listRecords returns newest first; chat should read in the order
   // they were made.
@@ -512,6 +512,15 @@ async function publishTurnMedia(args: {
     await publishSse({ event: 'assistant_media', data: { turnId, media: evt.media } });
   }
   logger.info({ msg: 'turn.media_published', turnId, agent, session, count: evt.media.length });
+  return ordered.map((m) => ({
+    type: (m.kind ?? 'image') as 'image' | 'video',
+    id: m.id,
+    path: m.path,
+    filename: m.filename,
+    mime: m.mime,
+    prompt: m.prompt,
+    url: `/media/${m.id}/file`,
+  }));
 }
 
 export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult> {
@@ -821,6 +830,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       }
     | undefined;
   let finalText = '';
+  let turnMedia: ChatTurnMedia[] = [];
   let errorMessage: string | undefined;
   // The engine's own turn id (`t-…`), learned from its turn_start. Kept
   // outside the try so the failure path can stamp its turn_error with
@@ -1113,15 +1123,16 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     // the conversation, and depending on the agent to remember makes
     // "Done!" with nothing to look at the failure mode.
     //
-    // Fire-and-forget and non-fatal: a turn that produced a real image
-    // must not be reported as failed because the gallery index
-    // couldn't be read.
+    // Awaited (an index read, milliseconds) so the list lands on the
+    // ChatTurnResult for spawn callers — but non-fatal: a turn that
+    // produced a real image must not be reported as failed because the
+    // gallery index couldn't be read.
     // Gated on EITHER surface: a setup with video but no images still
     // has media to publish, and gating on images alone meant a
     // finished video never reached the chat at all.
     if ((deps.config.imageGen?.enabled || deps.config.videoGen?.enabled) && streamTurnId) {
       const capturedMediaTurnId = streamTurnId;
-      void publishTurnMedia({
+      turnMedia = await publishTurnMedia({
         agent,
         session,
         turnId: capturedMediaTurnId,
@@ -1137,6 +1148,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           session,
           err: (err as Error).message,
         });
+        return [] as ChatTurnMedia[];
       });
     }
 
@@ -1303,6 +1315,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   const actualForResult = turnFallback ? splitModelRef(turnFallback.actual) : undefined;
   return {
     finalText,
+    ...(turnMedia.length > 0 ? { media: turnMedia } : {}),
     usage: lastUsage,
     contextWindow: resolvedModel.model.contextWindow,
     provider: actualForResult?.provider ?? resolvedModel.providerName,

@@ -602,6 +602,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
       session_slug: slug,
       model: result.model,
       result: result.finalText,
+      ...(result.media?.length ? { media: result.media } : {}),
       ...(result.error ? { error: result.error } : {}),
       ms: result.ms,
       thinkingActive: result.thinkingActive,

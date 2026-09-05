@@ -182,7 +182,11 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   description:
     'Fetch the result of a sub-agent task. Returns one of three states: ' +
     '"done" (with result text + usage), "failed" (with error), or "pending" ' +
-    '(task still running). ' +
+    '(task still running). When the sub generated images or videos, `media` lists them ' +
+    '(absolute `path`, `url`, `prompt`) straight from the media store — use those paths, ' +
+    'do not search the filesystem or the transcript for them. `media` is present even when ' +
+    'the result text is a degraded marker (the model failed to phrase its final answer), so ' +
+    'check it before calling a task a failure. ' +
     'Pass `wait_until_done: true` to block server-side until the task finishes — much more ' +
     'efficient than polling subagent_status in a loop, since each poll burns one of your own ' +
     'agent-loop tool-call rounds. Default `timeout_ms` is 5min (configurable via ' +
@@ -304,6 +308,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
         target_agent: local.target_agent,
         target_session: local.target_session,
         result: local.result?.finalText ?? '',
+        ...(local.result?.media?.length ? { media: local.result.media } : {}),
         usage: local.result?.usage,
         ms: local.result?.ms,
       };
@@ -340,6 +345,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
       task_id: remote.task_id,
       state: 'done' as const,
       result: remote.result?.finalText ?? '',
+      ...(remote.result?.media?.length ? { media: remote.result.media } : {}),
       usage: remote.result?.usage,
       ms: remote.result?.ms,
     };

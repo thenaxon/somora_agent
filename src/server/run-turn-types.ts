@@ -16,8 +16,30 @@ export interface ChatTurnResolveDeps {
   onActivity: (agent: string) => void;
 }
 
+/** One image or video made (or announced) during a turn. Carried on
+ *  ChatTurnResult so a spawn caller gets the artifact paths without
+ *  reading the sub's transcript — the final text is the model's word,
+ *  the media list is the tool's (2026-09-05 spielberg report: three
+ *  images on disk, final answer a loop-marker, caller had to file_list). */
+export interface ChatTurnMedia {
+  type: 'image' | 'video';
+  id: string;
+  /** Absolute path in the canonical media directory. */
+  path: string;
+  filename: string;
+  mime: string;
+  prompt: string;
+  /** Absolute URL path on the somora server (`/media/<id>/file`). */
+  url: string;
+}
+
 export interface ChatTurnResult {
   finalText: string;
+  /** Media generated during the turn (images, finished videos), oldest
+   *  first. Absent when the turn produced none or media is not
+   *  configured. Independent of finalText: present even when the model
+   *  failed to phrase an answer. */
+  media?: ChatTurnMedia[];
   usage?: {
     tokens_in: number;
     tokens_out: number;
