@@ -139,8 +139,6 @@ without it.
   (attach to an existing tmux session), `terminal` (fresh shell in
   the somora workspace), `sessions` (cross-agent session browser
   — see next section), and `abilities` (per-agent visibility matrix
-
-> A toggle takes effect on the agent's next turn on every engine. On codex-cli the Codex thread is restarted with the session history carried over (a `tools changed` marker appears in the chat), because Codex keeps a thread's tool set for its lifetime.
   for tools and skills plus external MCP server health — see
   [mcp.md](mcp.md) and [skills.md](skills.md)). The `wiki`
   tile carries a violet **Lucid badge** when completed lucid runs are
@@ -599,7 +597,11 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   with any media it produced under it.
 - **Abilities window** — per-agent matrix for tools *and* skills, plus
   external MCP server health. See [mcp.md](mcp.md#the-abilities-window)
-  and [skills.md](skills.md#per-agent-visibility).
+  and [skills.md](skills.md#per-agent-visibility). A toggle takes effect
+  on the agent's next turn on every engine; on codex-cli the Codex
+  thread is restarted with the session history carried over (a
+  `tools changed` marker appears in the chat), because Codex keeps a
+  thread's tool set for its lifetime.
 - **Drag & drop / paste / paperclip attachments.**
   Per-turn user-attachments end-to-end through all three engines:
   claude-cli inlines as native ImageBlock / DocumentBlock;
