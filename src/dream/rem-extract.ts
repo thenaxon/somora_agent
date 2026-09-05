@@ -24,6 +24,7 @@ import type { NormalizedEvent } from '../types/events.ts';
 import type { Finding, FindingAction } from './types.ts';
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
 import { samplingBody } from '../engine/sampling.ts';
+import { normalizeSlug } from '../memory/slug.ts';
 
 export interface ExtractContext {
   agent: string;
@@ -365,8 +366,16 @@ function parseFindings(raw: string): Omit<Finding, 'id' | 'status' | 'resolved_a
     const obj = item as Record<string, unknown>;
     const action = obj.action;
     if (typeof action !== 'string' || !VALID_ACTIONS.has(action as FindingAction)) continue;
-    const slug = obj.slug;
-    if (typeof slug !== 'string' || slug.length === 0) continue;
+    const rawSlug = obj.slug;
+    if (typeof rawSlug !== 'string' || rawSlug.length === 0) continue;
+    // The worker model writes slugs the way the conversation spelled
+    // them (umlauts, CamelCase) and memory_write's validator rejects
+    // those at apply time. Normalise here so the finding is applicable.
+    const slug = normalizeSlug(rawSlug);
+    if (!slug) continue;
+    if (slug !== rawSlug) {
+      logger.info({ msg: 'dream.extract_slug_normalized', from: rawSlug, to: slug });
+    }
     const reason = obj.reason;
     if (typeof reason !== 'string' || reason.length === 0) continue;
     out.push({

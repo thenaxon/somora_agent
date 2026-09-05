@@ -41,8 +41,8 @@ worker LLMs have their own per-phase thinking knobs:
 | Lucid | `config.yaml` server-global | `wiki.lucid.thinking` |
 
 All three are optional; unset = engine default (no reasoning_effort
-sent — on a model that cannot stop reasoning, such as Qwen, that is the
-model's own default, i.e. its maximum). Dream phases share the same
+sent — the backend decides; a Qwen 3.x thinking model under vLLM then
+*thinks*, see the vocabulary table below). Dream phases share the same
 engine adapters + per-engine mapping table below, so the values follow
 identical semantics: the per-model `reasoning.levels` block, the retry
 on a rejected value and the model's `maxTokens` output cap all apply to
@@ -108,7 +108,7 @@ adapter does nothing engine-specific. Otherwise it maps:
 
 | somora level | claude-cli                                 | codex-cli                              | openai-compatible             |
 |--------------|--------------------------------------------|----------------------------------------|-------------------------------|
-| `off`        | `thinking: { type: 'disabled' }`           | `-c model_reasoning_effort=minimal` †  | param omitted entirely        |
+| `off`        | `thinking: { type: 'disabled' }`           | `-c model_reasoning_effort=minimal` †  | param omitted entirely ‡      |
 | `low`        | `effort: 'low'`                            | `-c model_reasoning_effort=low`        | `reasoning_effort: 'low'`     |
 | `medium`     | `effort: 'medium'`                         | `-c model_reasoning_effort=medium`     | `reasoning_effort: 'medium'`  |
 | `high`       | `effort: 'high'`                           | `-c model_reasoning_effort=high`       | `reasoning_effort: 'high'`    |
@@ -157,8 +157,16 @@ Three models, three vocabularies:
 | Model family | Accepted values | Unknown value → |
 |---|---|---|
 | OpenAI o-series / gpt-5 | `none minimal low medium high xhigh` | 400 |
-| Qwen 3.x reasoning (vLLM chat template) | `low medium xhigh` — no `high`, no `none` | **400** — the template raises |
-| DeepSeek V4 | `low high max` | ignored |
+| Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh` — no `high`; `none` = 0 reasoning tokens (verified 2026-09-05 on Qwen3.8-Flash-Next; unverified on 3.5-397B and 3.8-27B) | **400** — the template raises |
+| DeepSeek V4 | `low high max`; `none` and unset both = no reasoning (2026-09-05) | ignored |
+
+‡ "Omitted" means the backend's own default. For a Qwen 3.x thinking
+model that default is *thinking on* — measured 2026-09-04: unset 60
+reasoning tokens on a one-line arithmetic prompt, `low` 31, `none` 0.
+So `off` without a `levels` mapping does **not** switch Qwen off; map
+it (`off: none`, below) and give Qwen-based personas an explicit
+`thinking:` in `agent.yaml`, otherwise "nothing set" is silently the
+most expensive behaviour.
 
 somora's neutral `off | low | medium | high` fits none of them fully.
 Two things keep a thinking knob from killing a turn:
@@ -199,31 +207,39 @@ providers:
   `{ "reasoning": { "effort": … } }`, or `chat_template_kwargs` for
   vLLM templates that only read `{ "chat_template_kwargs": {
   "reasoning_effort": … } }`.
-- `off` means "somora does not ask for a depth". On a model that cannot
-  stop reasoning that is the model's default — which for Qwen is its
-  *maximum*. If you want `off` to mean "as little as possible" on such a
-  model, map it: `off: low`. somora does not guess this for you.
+- `off` means "somora does not ask for a depth" — the model's own
+  default, which for Qwen 3.x under vLLM is *thinking on*. To make
+  `off` really switch reasoning off, map it: `off: none` (verified on
+  Qwen3.8-Flash-Next, 0 reasoning tokens; `chat_template_kwargs:
+  { enable_thinking: false }` is the template-level equivalent). On a
+  backend without `none` in its vocabulary, `off: low` is the floor.
+  somora does not guess this for you.
 
 **2. Retry on rejection.** With or without a block, when the backend
 answers a request with an error about the effort value, somora reads the
 backend's own list of accepted values out of the message ("Supported:
 xhigh, medium, low"), picks the nearest weaker one (then the nearest
-stronger; never `none`), and sends the request again once. If the
-message names no values, the retry goes out without the parameter. The
+stronger; never `none`), and sends the request again once. A rejected
+`none` is the exception: it is retried with the parameter *omitted*,
+never with a level that thinks. If the message names no values, the
+retry goes out without the parameter. The
 adjusted value stays for the rest of that turn. The turn gets an
 `engine_meta` line ("reasoning effort adjusted") saying what was sent,
 and the server log carries `engine.reasoning_effort_rejected` with the
 backend's text — the cue to add the mapping to the model's block so it
 stops costing a round-trip.
 
-**Behind a router or proxy the retry never fires.** The retry needs the
-backend's 400 to reach somora. A parameter-normalising gateway in
+**Behind a router or proxy the retry may never fire.** The retry needs
+the backend's 400 to reach somora. A parameter-normalising gateway in
 between — LiteLLM with `drop_params: true`, most OpenAI-compatible
-routers — typically swallows it: measured 2026-09-02 against a Qwen
-route through LiteLLM, every value (`low`, `high`, `xhigh`, `none`,
-unset) returned 200 with a completion, and the reasoning volume did not
-move with the value either — the router had dropped the parameter
-before the backend saw it. Two consequences for router-fronted models:
+routers — typically swallows it. Measured 2026-09-02 against a Qwen
+route through LiteLLM *before* the route allowed the parameter through:
+every value (`low`, `high`, `xhigh`, `none`, unset) returned 200 with a
+completion, and the reasoning volume did not move with the value
+either — the router had dropped the parameter before the backend saw
+it. (After `allowed_openai_params: ["reasoning_effort"]` on that route
+the volume moves as expected: unset 60 / low 31 / none 0 reasoning
+tokens, 2026-09-04.) Two consequences for router-fronted models:
 
 - Neither the retry nor the `levels` mapping can help when the router
   drops the parameter; the model runs at its own default depth whatever

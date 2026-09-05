@@ -41,6 +41,7 @@ import {
 } from '../../dream/loop-state.ts';
 import { resolveObsidianSource } from '../../memory/registry.ts';
 import { rename } from 'node:fs/promises';
+import { isValidSlug, normalizeSlug } from '../../memory/slug.ts';
 import { join } from 'node:path';
 
 // ── Shared helpers ────────────────────────────────────────────────────
@@ -291,6 +292,15 @@ async function applyMemoryFinding(
   }
   const mgr = await ctx.getMemoryManager();
   let executed: { description: string };
+  // Findings extracted before slugs were normalised at the source can
+  // still carry umlauts / capitals; fix them here rather than failing
+  // the apply (2026-09-03 report). The note lands under the normalised
+  // slug and the response says so.
+  const slug = isValidSlug(finding.slug) ? finding.slug : normalizeSlug(finding.slug);
+  const slugNote = slug !== finding.slug ? ` (slug normalised from '${finding.slug}')` : '';
+  if (!slug) {
+    throw new Error(`finding ${findingId}: slug '${finding.slug}' cannot be normalised to a valid slug`);
+  }
   switch (finding.action) {
     case 'memory_write': {
       if (!finding.proposed_content) {
@@ -300,21 +310,38 @@ async function applyMemoryFinding(
         finding.frontmatter_tags && finding.frontmatter_tags.length > 0
           ? { tags: finding.frontmatter_tags }
           : undefined;
-      await mgr.writeNote(finding.slug, finding.proposed_content, fm);
-      executed = { description: `wrote memory/${finding.slug}.md` };
+      await mgr.writeNote(slug, finding.proposed_content, fm);
+      executed = { description: `wrote memory/${slug}.md${slugNote}` };
       break;
     }
     case 'memory_edit': {
       if (!finding.proposed_content) {
         throw new Error(`finding ${findingId}: memory_edit needs proposed_content`);
       }
-      await mgr.writeNote(finding.slug, finding.proposed_content, undefined, { mustExist: true });
-      executed = { description: `edited memory/${finding.slug}.md` };
+      // Between extraction and review Deep may have promoted the target
+      // note into the wiki and deleted the memory file. The finding's
+      // content is still valid knowledge — write it as a fresh note
+      // (Deep picks it up next run) instead of failing with "does not
+      // exist" and forcing a manual memory_write + resolved_manually
+      // (2026-09-03 report, 2× in one review). Same downgrade the REM
+      // dedup stage applies at extraction time.
+      const existing = await mgr.getNote(slug).catch(() => null);
+      if (existing) {
+        await mgr.writeNote(slug, finding.proposed_content, undefined, { mustExist: true });
+        executed = { description: `edited memory/${slug}.md${slugNote}` };
+      } else {
+        await mgr.writeNote(slug, finding.proposed_content);
+        executed = {
+          description:
+            `memory/${slug}.md no longer existed (promoted to the wiki or deleted since extraction) — ` +
+            `wrote the proposed content as a fresh note instead${slugNote}`,
+        };
+      }
       break;
     }
     case 'memory_delete': {
-      const ok = await mgr.deleteNote(finding.slug);
-      executed = { description: ok ? `deleted memory/${finding.slug}.md` : `memory/${finding.slug}.md was already gone` };
+      const ok = await mgr.deleteNote(slug);
+      executed = { description: ok ? `deleted memory/${slug}.md` : `memory/${slug}.md was already gone` };
       break;
     }
     case 'vault_hint': {
@@ -827,9 +854,12 @@ export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
         wiki_calls_per_turn: cap,
         message:
           'Wiki review loop is now active for you. The findings are now in your system context ' +
-          'every turn; wiki_edit/wiki_create/wiki_delete are exposed; file_*/exec_*/agents_*/' +
-          "skill_*/tmux_* are hidden until you call dream_review action='end'. " +
-          `Hard limit: ${cap} wiki_* calls per user turn — plan batches accordingly.`,
+          'every turn; wiki_edit/wiki_create/wiki_delete are exposed; file_write/file_patch/' +
+          "exec_*/agents_*/skill_*/tmux_* are refused until you call dream_review action='end'. " +
+          `Hard limit: ${cap} wiki_* calls per user turn — plan batches accordingly. ` +
+          'NOTE for MCP-served engines (claude-cli, codex-cli, grok-cli): the tool list is fixed ' +
+          'per turn, so wiki_* become callable from your NEXT turn — finish this reply, then continue ' +
+          'after the user speaks. Until then, dream_dismiss with resolved_manually=true is available.',
       };
     }
     // action === 'end'

@@ -48,6 +48,13 @@ const LOOP_HIDDEN_TOOLSETS = new Set<Toolset>(['exec', 'agents', 'skills']);
  */
 const LOOP_HIDDEN_TOOL_NAMES = new Set<string>(['file_write', 'file_patch']);
 
+function isLoopHiddenTool(tool: ToolDefinition): boolean {
+  return (
+    LOOP_HIDDEN_TOOL_NAMES.has(tool.name) ||
+    (tool.toolset !== undefined && LOOP_HIDDEN_TOOLSETS.has(tool.toolset))
+  );
+}
+
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
 
@@ -174,6 +181,18 @@ export class ToolRegistry {
       const suggestions = nearestToolNames(name, [...this.tools.keys()], 3);
       const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
       return { ok: false, error: `unknown tool '${name}'.${hint}` };
+    }
+    // Loop-hiding must hold at the CALL, not only in the listing: MCP-
+    // served engines learn the tool list once per turn, so a session
+    // that started a dream_review mid-turn could still call file_patch
+    // from the definition it already had (2026-09-03 report).
+    if (isLoopHolder(ctx.agent) && isLoopHiddenTool(tool)) {
+      return {
+        ok: false,
+        error:
+          `tool '${name}' is hidden while you hold the active dream_review loop — ` +
+          "use wiki_* for wiki changes, or end the loop with dream_review action='end' first",
+      };
     }
     if (tool.available) {
       try {

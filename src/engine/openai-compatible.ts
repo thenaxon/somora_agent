@@ -35,6 +35,7 @@ import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
 import { openAiReasoningState, withReasoningRetry } from './reasoning-retry.ts';
 import { formatSampling, isSamplingParamError, samplingBody } from './sampling.ts';
+import { insideOpenThink, splitInlineThink } from './inline-think.ts';
 
 const ENGINE = 'openai-compatible';
 
@@ -169,6 +170,64 @@ export function containsScaffold(text: string): boolean {
   return SCAFFOLD_MARKERS.some((m) => lower.includes(m));
 }
 
+const PARTIAL_DIGEST_MAX_RESULTS = 12;
+const PARTIAL_DIGEST_PER_RESULT = 500;
+const PARTIAL_DIGEST_MAX_CHARS = 8000;
+
+/**
+ * "Half a synthesis beats none": when the loop stopped at a cap AND the
+ * forced no-tools summary call failed too, hand the caller a compact
+ * digest of what the turn gathered instead of only an error string.
+ * Before 2026-09-04 a capped research sub returned nothing but
+ * "Inspect the sub-session JSONL" — unusable for a parent agent
+ * (other agents' session dirs are read-blacklisted) and a total loss of
+ * 20–40 min / 1.5M-token turns (three reports, 2026-09-03/04).
+ *
+ * Takes the last assistant text (if any) plus the tail of the tool
+ * results, each truncated, hard-capped in total. Tool names come from
+ * the assistant tool_calls that requested them.
+ */
+export function buildPartialDigest(messages: readonly ChatMessage[]): string {
+  const nameByCallId = new Map<string, string>();
+  let lastAssistantText = '';
+  for (const m of messages) {
+    if (m.role !== 'assistant') continue;
+    const calls = (m as { tool_calls?: Array<{ id?: string; function?: { name?: string } }> })
+      .tool_calls;
+    for (const c of calls ?? []) {
+      if (c.id && c.function?.name) nameByCallId.set(c.id, c.function.name);
+    }
+    if (typeof m.content === 'string' && m.content.trim()) lastAssistantText = m.content.trim();
+  }
+  const toolMsgs = messages.filter((m) => m.role === 'tool');
+  const tail = toolMsgs.slice(-PARTIAL_DIGEST_MAX_RESULTS);
+  const lines: string[] = [];
+  if (lastAssistantText) {
+    lines.push('Last assistant text before the cap:', lastAssistantText.slice(0, 1500), '');
+  }
+  lines.push(
+    `Last ${tail.length} of ${toolMsgs.length} tool results (each truncated to ${PARTIAL_DIGEST_PER_RESULT} chars):`,
+  );
+  for (const m of tail) {
+    const id = (m as { tool_call_id?: string }).tool_call_id ?? '';
+    const name = nameByCallId.get(id) ?? 'tool';
+    const raw =
+      typeof m.content === 'string'
+        ? m.content
+        : Array.isArray(m.content)
+          ? m.content
+              .map((b) => ('text' in b && typeof b.text === 'string' ? b.text : `[${b.type}]`))
+              .join(' ')
+          : '';
+    const oneLine = raw.replace(/\s+/g, ' ').trim();
+    lines.push(
+      `- ${name}: ${oneLine.slice(0, PARTIAL_DIGEST_PER_RESULT)}${oneLine.length > PARTIAL_DIGEST_PER_RESULT ? '…' : ''}`,
+    );
+  }
+  const out = lines.join('\n');
+  return out.length > PARTIAL_DIGEST_MAX_CHARS ? `${out.slice(0, PARTIAL_DIGEST_MAX_CHARS)}…` : out;
+}
+
 /**
  * True when the tail of the text is the same chunk repeated over and over
  * — a degenerate loop, regardless of WHAT is repeating. Catches walls that
@@ -218,16 +277,19 @@ export async function buildMessages(
    *  image blocks at a model that cannot accept them. */
   caps: readonly ModelCapability[],
 ): Promise<ChatMessage[]> {
-  const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
-
-  // Prepend the latest compaction summary as a second system message.
-  // Most OpenAI-compatible providers accept multiple system messages;
-  // those that don't will collapse them on their side.
+  // The latest compaction summary is appended to the ONE leading system
+  // message instead of travelling as a second `system` entry. Strict
+  // chat templates (vLLM + Qwen 3.x) accept `role: system` only at
+  // index 0 — "System message must be at the beginning" (400) — and the
+  // force-summary path already paid for that assumption once
+  // (2026-09-04). One system message is valid everywhere; the
+  // <conversation-summary> block keeps its own delimiters so the
+  // model still sees where the prompt ends and the summary starts.
   const latest = pickLatest(compactions);
-  if (latest) {
-    messages.push({
-      role: 'system',
-      content: [
+  const systemContent = latest
+    ? [
+        systemPrompt,
+        '',
         '<conversation-summary>',
         'Eine vorherige Compaction hat den älteren Verlauf der',
         'Session zusammengefasst. Behandle den folgenden Block als',
@@ -236,9 +298,9 @@ export async function buildMessages(
         '',
         latest.summary,
         '</conversation-summary>',
-      ].join('\n'),
-    });
-  }
+      ].join('\n')
+    : systemPrompt;
+  const messages: ChatMessage[] = [{ role: 'system', content: systemContent }];
   const sinceTs = latest?.throughTs ?? 0;
 
   let pendingRole: 'user' | 'assistant' | null = null;
@@ -788,6 +850,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       // calls in one round). When it trips we force a clean final answer.
       let totalToolCalls = 0;
       let hitToolBudget = false;
+      let softWarned = false;
       while (round < maxRounds) {
         round++;
         roundsStarted = round;
@@ -864,6 +927,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         // folded into turnThinking at round end, emitted once as
         // thinking_message before the final assistant_message.
         let roundThinking = '';
+        // Inline-think text already surfaced as thinking_delta this round
+        // (dedupes the cumulative re-split on every content delta).
+        let roundInlineThinkingSeen = '';
         const roundToolCalls = new Map<number, StreamingToolCall>();
         let finishReason: string | null = null;
 
@@ -941,6 +1007,27 @@ export const openAiCompatibleEngine: AgentEngine = {
           }
           if (delta?.content && typeof delta.content === 'string') {
             roundContent += delta.content;
+            // Inline `<think>…</think>` in content (backend without a
+            // reasoning parser — DeepSeek V4 on SGLang): route the
+            // reasoning part to thinking_delta and stream only the
+            // answer part as assistant text. Without an opening tag the
+            // block is only recognisable once `</think>` arrives, so the
+            // first deltas of such a round may stream as assistant text;
+            // the round-end split below and the final assistant_message
+            // are always clean.
+            const inline = splitInlineThink(roundContent);
+            if (inline.thinking && inline.thinking !== roundInlineThinkingSeen) {
+              roundInlineThinkingSeen = inline.thinking;
+              roundReasoningChars += inline.thinking.length;
+              yield {
+                kind: 'thinking_delta',
+                ts: ts(),
+                engine: ENGINE,
+                text: turnThinking ? `${turnThinking}\n\n${inline.thinking}` : inline.thinking,
+              };
+            }
+            if (insideOpenThink(roundContent)) continue;
+            const visibleRound = inline.content;
             // Scaffold guard AT THE STREAM. A confused model emits the
             // provider's tool-result template ("Use the results below to
             // formulate an answer…") as content and repeats it hundreds of
@@ -950,16 +1037,17 @@ export const openAiCompatibleEngine: AgentEngine = {
             // it, close the upstream stream so the model stops generating,
             // and let the forced no-tools finish (below) produce a clean
             // answer. The user sees at most one partial sentence, not 100.
-            if (containsScaffold(roundContent) || looksRepetitive(roundContent)) {
+            if (containsScaffold(visibleRound) || looksRepetitive(visibleRound)) {
               sawScaffoldLeak = true;
               roundContent = '';
               void Promise.resolve(chunkIter.return?.(undefined)).catch(() => {});
               break;
             }
+            if (!visibleRound) continue;
             // Stream the running cumulative (existing rounds + this round so far).
             const runningCumulative = cumulative
-              ? `${cumulative}\n\n${roundContent}`
-              : roundContent;
+              ? `${cumulative}\n\n${visibleRound}`
+              : visibleRound;
             yield { kind: 'assistant_delta', ts: ts(), engine: ENGINE, text: runningCumulative };
           }
           if (delta?.tool_calls) {
@@ -1037,6 +1125,24 @@ export const openAiCompatibleEngine: AgentEngine = {
         // round-top before the next create() call (Juni-Audit 2026-06).
         disarmIdleTimer();
 
+        // Inline think block (see the delta handler): move it out of the
+        // content for good so neither the persisted assistant_message nor
+        // a subagent `result` carries raw reasoning + a bare `</think>`.
+        if (roundContent) {
+          const inline = splitInlineThink(roundContent);
+          if (inline.thinking) {
+            logger.info({
+              msg: 'engine.inline_think_split',
+              engine: ENGINE,
+              agent,
+              session,
+              thinkingChars: inline.thinking.length,
+              contentChars: inline.content.length,
+            });
+            roundThinking = roundThinking ? `${roundThinking}\n\n${inline.thinking}` : inline.thinking;
+            roundContent = inline.content;
+          }
+        }
         // Merge the round's content into the cumulative (separator only when
         // there's previous content AND new content).
         if (roundContent) {
@@ -1216,6 +1322,41 @@ export const openAiCompatibleEngine: AgentEngine = {
         // three-digit total. Once the budget is spent, stop and force a
         // clean final answer (below) instead of executing more.
         totalToolCalls += toolCallsForApi.length;
+        // Soft warning at ~75 % of either budget, once per turn: the
+        // model cannot see the caps, so a "read N things and summarise"
+        // task ran straight into the hard stop and then into the
+        // force-summary path (three reports 2026-09-03/04, 1–2.5M-token
+        // turns lost). A plain user-role notice is accepted by every
+        // backend (a second `system` entry is not — see below) and
+        // models reliably wrap up on it.
+        const roundsLeft = maxRounds - round;
+        const callsLeft = maxToolCallsPerTurn - totalToolCalls;
+        if (
+          !softWarned &&
+          roundsLeft > 0 &&
+          callsLeft > 0 &&
+          (round >= Math.ceil(maxRounds * 0.75) ||
+            totalToolCalls >= Math.ceil(maxToolCallsPerTurn * 0.75))
+        ) {
+          softWarned = true;
+          logger.info({
+            msg: 'engine.budget_soft_warn',
+            engine: ENGINE,
+            agent,
+            session,
+            round,
+            maxRounds,
+            totalToolCalls,
+            maxToolCallsPerTurn,
+          });
+          loopMessages.push({
+            role: 'user',
+            content:
+              `[somora] Budget notice: ${roundsLeft} tool-call round(s) and ${callsLeft} tool call(s) ` +
+              'remain in this turn before the loop is stopped. Wrap up now: write your final answer ' +
+              'from what you already have. Call a tool only if it is essential for the answer.',
+          });
+        }
         if (totalToolCalls >= maxToolCallsPerTurn) {
           hitToolBudget = true;
           logger.warn({
@@ -1275,16 +1416,29 @@ export const openAiCompatibleEngine: AgentEngine = {
           rounds: round,
           reason: scaffoldLeak ? 'scaffold_leak' : hitToolBudget ? 'tool_budget' : 'round_cap',
         });
+        // The stop reason, spelled out: the old text always said
+        // "maximum number of tool-call rounds (maxRounds)" even when the
+        // TOOL-CALL BUDGET fired (2026-09-04: "cap of 50" reported on
+        // sessions with 30 calls — a diagnosis detour).
+        const capDescription = hitToolBudget
+          ? `the tool-call budget of ${maxToolCallsPerTurn} calls for this turn (agentLoop.maxToolCallsPerTurn)`
+          : `the agent-loop cap of ${maxRounds} tool-call rounds for this turn (agentLoop.maxRounds)`;
+        // USER role, not a trailing `system` entry: strict chat templates
+        // (vLLM + Qwen 3.x behind LiteLLM) reject any system message
+        // after index 0 with 400 "System message must be at the
+        // beginning" — which killed exactly this rescue on every Qwen
+        // backend since at least 2026-08-23 (six losses on 2026-09-03
+        // alone). A user message is valid on every backend.
         loopMessages.push({
-          role: 'system',
+          role: 'user',
           content: scaffoldLeak
-            ? 'Your previous draft repeated an internal tool-result instruction ' +
-              'instead of answering. Answer the user’s question directly NOW, ' +
+            ? '[somora] Your previous draft repeated an internal tool-result instruction ' +
+              'instead of answering. Answer the question directly NOW, ' +
               'in your own words, using the tool results already gathered above. ' +
               'Do not call any tools and do not repeat any instruction text.'
-            : 'You have reached the maximum number of tool-call rounds for this turn ' +
-              `(${maxRounds}). Respond NOW without further tool calls — summarize what you ` +
-              'have learned from the tool results so far, even partially. Do not call any tools.',
+            : `[somora] You have reached ${capDescription}. Respond NOW without further ` +
+              'tool calls — summarize what you have learned from the tool results so far, ' +
+              'even partially. Do not call any tools.',
         } as ChatMessage);
         try {
           // Re-arm the idle watchdog: it was disarmed at the end of the
@@ -1339,11 +1493,14 @@ export const openAiCompatibleEngine: AgentEngine = {
                 void Promise.resolve(summaryIter.return?.(undefined)).catch(() => {});
                 break;
               }
+              if (insideOpenThink(cumulative)) continue;
+              const visible = splitInlineThink(cumulative).content;
+              if (!visible) continue;
               yield {
                 kind: 'assistant_delta',
                 ts: ts(),
                 engine: ENGINE,
-                text: cumulative,
+                text: visible,
               };
             }
             const usage = chunk.usage;
@@ -1375,6 +1532,13 @@ export const openAiCompatibleEngine: AgentEngine = {
             }
           }
           disarmIdleTimer();
+          {
+            const inline = splitInlineThink(cumulative);
+            if (inline.thinking) {
+              turnThinking = turnThinking ? `${turnThinking}\n\n${inline.thinking}` : inline.thinking;
+              cumulative = inline.content;
+            }
+          }
         } catch (err) {
           disarmIdleTimer();
           // A watchdog timeout or user-cancel during the forced finish
@@ -1391,14 +1555,23 @@ export const openAiCompatibleEngine: AgentEngine = {
           logger.error({
             msg: 'engine.force_summary_failed',
             engine: ENGINE,
+            agent,
+            session,
+            reason: scaffoldLeak ? 'scaffold_leak' : hitToolBudget ? 'tool_budget' : 'round_cap',
+            rounds: round,
+            totalToolCalls,
             err: (err as Error).message,
           });
-          // Fallback synthetic message so the caller at least knows
-          // what happened, even if the summary call itself failed.
+          // Fallback: an honest marker PLUS a digest of what the turn
+          // gathered, so the caller (user or parent agent) gets the
+          // partial result instead of a pointer to a JSONL it cannot
+          // read.
+          const errText = (err as Error).message.replace(/\.+$/, '');
           cumulative =
-            `[somora] Sub-agent reached the agent-loop cap of ${maxRounds} tool-call rounds ` +
-            'without producing a final answer, and the force-summary fallback also failed: ' +
-            `${(err as Error).message}. Inspect the sub-session JSONL for the partial tool results.`;
+            `[somora] Agent loop stopped at ${capDescription} without a final answer, and the ` +
+            `forced summary call also failed: ${errText}. ` +
+            `Partial results follow (session ${agent}/${session}).\n\n` +
+            buildPartialDigest(loopMessages);
         }
       }
 
@@ -1435,9 +1608,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         // populate cumulative either — synthesize a marker so the
         // caller doesn't get `result: ""` silently.
         cumulative =
-          `[somora] Sub-agent reached the agent-loop cap of ${maxRounds} tool-call rounds ` +
+          `[somora] Agent loop reached the cap of ${maxRounds} tool-call rounds ` +
           'and produced no final message. Increase agentLoop.maxRounds in config.yaml or ' +
-          'pass agentLoop.maxRounds in spawn_subagent input if more rounds are needed.';
+          'pass maxRounds in spawn_subagent input if more rounds are needed.';
         if (turnThinking) {
           yield { kind: 'thinking_message', ts: ts(), engine: ENGINE, text: turnThinking };
           turnThinking = '';

@@ -417,8 +417,7 @@ export async function remotePatch(args: {
     const tmp = uniqueRemoteTmp(remotePath);
     await sftpWriteFile(sftp, tmp, updated);
     await sftpRename(sftp, tmp, remotePath, { op: 'file_patch', resource: args.resourceName });
-    const newStats = await sftpStat(sftp, remotePath);
-    return { path: remotePath, replacements: count, bytes: newStats?.size ?? 0 };
+    return { path: remotePath, replacements: count, bytes: Buffer.byteLength(updated, 'utf8') };
   });
 }
 

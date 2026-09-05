@@ -595,6 +595,13 @@ sse:
   publishParallel: true           # broadcast in parallel — one slow client
                                   # never blocks the others. Flip to false only
                                   # if you need strict serial delivery order.
+  heartbeatMs: 20000              # comment-frame heartbeat on every stream;
+                                  # clients treat > ~2 missed as a lost link.
+  deadAfterMs: 60000              # a subscriber whose heartbeat write has not
+                                  # completed for this long is dead: evicted
+                                  # (`sse.publish_evict_dead` in the log), socket
+                                  # destroyed. Catches vanished tabs / stuck
+                                  # TCP windows that never send FIN.
 
 memory:
   embedding:

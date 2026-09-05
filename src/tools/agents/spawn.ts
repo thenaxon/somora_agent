@@ -128,7 +128,7 @@ const TaskSchema = z.object({
     .max(100)
     .optional()
     .describe(
-      'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) for ' +
+      'Per-spawn override of agentLoop.maxRounds (the server config value; 8 if unset). Use higher (e.g. 32) for ' +
         'orchestrator subs that spawn further sub-subs and poll their results.',
     ),
   attention: z
@@ -197,7 +197,7 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
         minimum: 1,
         maximum: 100,
         description:
-          'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) for ' +
+          'Per-spawn override of agentLoop.maxRounds (the server config value; 8 if unset). Use higher (e.g. 32) for ' +
           'orchestrator subs that spawn further sub-subs and poll their results.',
       },
       attention: {
@@ -297,7 +297,7 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
               minimum: 1,
               maximum: 100,
               description:
-                'Per-spawn override of agentLoop.maxRounds (default 8). Use higher (e.g. 32) ' +
+                'Per-spawn override of agentLoop.maxRounds (the server config value; 8 if unset). Use higher (e.g. 32) ' +
                 'for orchestrator subs that spawn further sub-subs and poll their results.',
             },
             attention: {

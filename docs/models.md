@@ -126,6 +126,17 @@ providers:
   them. Since Codex 0.144.6, well before somora's MCP rename.
 - Thinking text: Codex emits reasoning *summaries*, and only on the
   first turn of a thread (0.151 sends none on resumed threads).
+- **Code Mode (Codex ≥ 0.153).** The GPT-5.6 family and GPT-6 run
+  with `tool_mode=code_mode_only`: every tool, MCP tools included, is
+  reached through a code-mode `exec` tool that Codex's built-in
+  code-mode host executes. somora therefore no longer disables
+  `code_mode_host` (it did until 2026-09-05, which left those models
+  without a single somora tool — each turn opened with an `error`
+  item "Code Mode is unavailable because code-mode host is disabled").
+  Older models (gpt-5.5) and older Codex versions are unaffected either
+  way: they never route through the host. After a Codex upgrade, check
+  one turn per configured Codex model calls `time_now`; the server log
+  now flags Codex `error` items as `engine.codex_error_item`.
 - `functions.apply_patch` stays visible to the model — the model
   catalog drives it and Codex has no switch ([security.md](security.md)).
 - A retired model does not fail loudly: the turn errors out with the
@@ -209,10 +220,10 @@ providers:
 
 | model family | server | contextWindow | sampling | reasoning | notes | verified |
 |---|---|---|---|---|---|---|
-| **DeepSeek V4 Flash** (284B MoE, 13B active) | SGLang, TP=4 | the server's `--context-length` (700000 on a two-GPU profile; 1M only with the whole box) | 1.0 / 0.95 (DeepSeek's agentic/coding recommendation) | vocabulary `low`, `high`, `max`; unknown values are ignored, not rejected → map `high: max`. **Thinks only when `reasoning_effort` is sent**; without it the reasoning lands in the visible text and `reasoning_tokens` is 0. | no vision; streams `reasoning_content`, full thinking text in the chat; tool calls parsed server-side | 2026-09-03 |
-| **Qwen3.8-Flash-Next** FP8 (176B / 6B active) | vLLM, TP=4 | `--max-model-len`, 524288 with YaRN 2.0 | 0.6 / 0.95 / 20 / min_p 0 (Qwen thinking-mode defaults) | knows no `high` → **400** unless mapped; `xhigh` is the real maximum; unset = xhigh, so `off` → `low` | vision verified; `maxTokens: 16384` because reasoning otherwise eats short answers; parsers `qwen3` + `qwen3_xml` | 2026-09-03 |
-| **Qwen3.5-397B-A17B** AWQ INT4 | vLLM, TP=4 | 262144 (`max_model_len`) | same as above | same as above | vision verified; hermes tool parser | 2026-09-03 |
-| **Qwen3.8-27B** FP8, dense | vLLM, 1 GPU | 262144 | same as above | same as above | vision; `qwen3_coder` tool parser verified | 2026-09-03 |
+| **DeepSeek V4 Flash** (284B MoE, 13B active) | SGLang, TP=4 | the server's `--context-length` (700000 on a two-GPU profile; 1M only with the whole box) | 1.0 / 0.95 (DeepSeek's agentic/coding recommendation) | vocabulary `low`, `high`, `max`; unknown values are ignored, not rejected → map `high: max`. `off`: omitting the parameter and sending `none` both give 0 reasoning tokens (measured 2026-09-05), so no `off` mapping is needed; `low` reasons via `reasoning_content` (84 tokens on a one-line prompt). On longer prompts without the parameter the reasoning can land inline in the text (`…</think>`); somora splits that into the thinking channel. | no vision; streams `reasoning_content`, full thinking text in the chat; tool calls parsed server-side | 2026-09-05 |
+| **Qwen3.8-Flash-Next** FP8 (176B / 6B active) | vLLM, TP=4 | `--max-model-len`, 524288 with YaRN 2.0 | 0.6 / 0.95 / 20 / min_p 0 (Qwen thinking-mode defaults) | knows no `high` → **400** unless mapped; `none low medium xhigh` accepted; **unset = model default = thinks** (61 reasoning tokens on a one-line prompt, `low` 55, `xhigh` 60, `none` 0, measured 2026-09-05) → map `off: none`, `high: xhigh` | vision verified; `maxTokens: 16384` because reasoning otherwise eats short answers; parsers `qwen3` + `qwen3_xml` | 2026-09-05 |
+| **Qwen3.5-397B-A17B** AWQ INT4 | vLLM, TP=4 | 262144 (`max_model_len`) | same as above | as above, but `none` **unverified** on this backend — keep `off: low` until probed | vision verified; hermes tool parser | 2026-09-03 |
+| **Qwen3.8-27B** FP8, dense | vLLM, 1 GPU | 262144 | same as above | as above, `none` **unverified** — keep `off: low` until probed | vision; `qwen3_coder` tool parser verified | 2026-09-03 |
 | **Gemma 4** 31B / 26B-A4B | oMLX | 131072 | 1.0 / 0.95 / 64 (Gemma team recommendation) | none — no `reasoning` capability | vision; prefill memory guard answers 400 on long prompts → somora's reactive compaction handles it | 2026-09-03 |
 
 **Peculiarities of this engine**

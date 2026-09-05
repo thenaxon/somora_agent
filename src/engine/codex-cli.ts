@@ -91,7 +91,19 @@ const CODEX_DISABLED_FEATURES = [
   'remote_plugin', // 0.144 audit — same
   // New 0.144 behavior toggles we don't use
   'goals', // thread-goal tracking (sqlite state db + goal events)
-  'code_mode_host', // host side of the (still-experimental) code_mode surface
+  // `code_mode_host` was here from the 0.144 audit ("host side of the
+  // still-experimental code_mode surface"). REMOVED 2026-09-05: since
+  // codex 0.153 the GPT-5.6 family and GPT-6 run with
+  // `tool_mode=code_mode_only` — every tool, MCP tools included, is
+  // reachable only through the code-mode `exec` tool that this host
+  // executes. With the host disabled codex "fails closed": each turn
+  // opened with an `error` item ("Code Mode is unavailable because
+  // code-mode host is disabled") and the model could not call a single
+  // somora tool (2026-09-05 report; verified out-of-process: same spawn
+  // line without the disable → `mcp_tool_call time_now` works). The
+  // host is part of the codex binary (`codex features list` →
+  // `code_mode_host stable true`); models without code_mode_only
+  // (gpt-5.5, gpt-5.3-codex) never use it, so nothing changes for them.
   // Misc behavior toggles we don't want flipping under us
   'fast_mode', // picks a different model — somora picks models
   'unavailable_dummy_tools',
@@ -736,6 +748,22 @@ export const codexCliEngine: AgentEngine = {
                 itemType,
                 itemKeys: Object.keys(item).slice(0, 16),
               });
+              // codex-side `error` items (feature fails closed, tool
+              // surface broken, …) used to be info-level breadcrumbs
+              // only — the 2026-09-05 code_mode_host regression sat in
+              // every codex turn for two days as a "harmless" session
+              // event. Surface them as warn with agent/session so the
+              // server log shows the problem without SOMORA_LOG_LEVEL.
+              if (itemType === 'error') {
+                logger.warn({
+                  msg: 'engine.codex_error_item',
+                  engine: ENGINE,
+                  agent,
+                  session,
+                  message: String((item as { message?: unknown }).message ?? '').slice(0, 500),
+                  hint: 'codex reported an error item on this turn; the turn may have continued without tools',
+                });
+              }
               yield {
                 kind: 'engine_meta',
                 ts: ts(),

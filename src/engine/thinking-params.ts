@@ -166,6 +166,11 @@ export function parseSupportedEfforts(message: string): string[] | null {
 export function pickFallbackEffort(requested: string, supported: readonly string[]): string | null {
   const ok = new Set(supported.map((v) => v.toLowerCase()));
   if (ok.has(requested.toLowerCase())) return requested;
+  // `none` means "do not think". A backend that rejects it must not be
+  // retried with a level that thinks (the ladder's nearest neighbour is
+  // `minimal`/`low`) — omit the parameter instead and let the model
+  // default decide (2026-09-04 Qwen report).
+  if (requested.toLowerCase() === 'none') return null;
   const known = EFFORT_LADDER.indexOf(requested.toLowerCase());
   const idx = known >= 0 ? known : EFFORT_LADDER.indexOf('medium');
   const candidates = [...EFFORT_LADDER.slice(0, idx).reverse(), ...EFFORT_LADDER.slice(idx + 1)];

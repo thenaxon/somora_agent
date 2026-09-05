@@ -214,8 +214,11 @@ export async function localPatch(args: {
   await writeFile(tmp, updated, 'utf8');
   await rename(tmp, absolute);
 
-  const finalSize = (await stat(absolute)).size;
-  return { path: absolute, replacements: count, bytes: finalSize };
+  // Length of what we wrote, not a stat() after the rename: on CIFS
+  // mounts (cache=strict) the stat right after an atomic rename can
+  // report 0 while the file is complete — `bytes: 0` looks like data
+  // loss to the caller (2026-09-03 report).
+  return { path: absolute, replacements: count, bytes: Buffer.byteLength(updated, 'utf8') };
 }
 
 export interface SearchHit {

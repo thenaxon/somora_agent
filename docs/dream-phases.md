@@ -444,7 +444,15 @@ While the loop is active for an agent:
   material before proposing an edit. `file_write` / `file_patch` are
   hidden — only wiki_* may mutate.
 - The agent's `exec_*` / `agents_*` / `skill_*` / `tmux_*` tools are
-  temporarily hidden so the conversation stays focused
+  temporarily hidden so the conversation stays focused. Hiding is
+  enforced at the call, not only in the listing: a hidden tool invoked
+  from a definition the model already had is refused.
+- **MCP-served engines (claude-cli, codex-cli, grok-cli) learn the tool
+  list once per turn.** Starting the loop mid-turn does not make
+  `wiki_*` callable in that same turn — they appear on the next turn.
+  Practical pattern: `dream_review start`, end the reply, continue after
+  the user speaks. `dream_dismiss` with `resolved_manually: true`
+  closes a finding you resolved by other means at any time.
 - Other agents continue normal operation but cannot start their own
   loop until this one ends — somora-instance-global lock
 - The TUI status line shows `📝 wiki-review:<agent>`
