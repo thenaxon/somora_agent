@@ -14,8 +14,7 @@
 //   - If no model fits: hard-fail with a clear message. Map-Reduce
 //     for histories larger than any single model is Phase 3.
 
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -27,7 +26,10 @@ import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../server/openai-client.ts';
 import type { ResolvedModel } from '../config/types.ts';
 import type { ReplayPair } from '../engine/replay.ts';
-import { CodexFailureDetail } from '../engine/codex-events.ts';
+import { CodexAppServerClient } from '../engine/codex-app-server-client.ts';
+import { codexAppServerArgv, resolveCodexLaunch } from '../engine/codex-bin.ts';
+import { codexChildEnv, somoraCodexHome, syncCodexAuth } from '../engine/codex-home.ts';
+import { buildCodexThreadConfig } from '../engine/codex-thread-config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { buildSummaryPrompt } from './template.ts';
@@ -250,100 +252,125 @@ async function summarizeViaClaudeCli(
   };
 }
 
-function resolveCodexBin(): string {
-  if (process.env.SOMORA_CODEX_BIN) return process.env.SOMORA_CODEX_BIN;
-  const npmGlobal = join(homedir(), '.npm-global', 'bin', 'codex');
-  if (existsSync(npmGlobal)) return npmGlobal;
-  return 'codex';
-}
-
+/**
+ * codex-cli worker: an ephemeral Codex app-server thread without dynamic
+ * tools — the same client the engine adapter uses (design
+ * private/codex-app-server-design.md §3.10). No rollout is written
+ * (`ephemeral: true`); the final agentMessage is the summary.
+ */
 async function summarizeViaCodexCli(
   input: SummarizeViaInput,
 ): Promise<SummarizeViaResult> {
   const { systemPrompt, userPrompt, resolvedModel } = input;
-  const codexBin = resolveCodexBin();
-  // codex exec has no separate system-prompt option — inline it.
-  const promptPayload = `${systemPrompt}\n\n---\n\n${userPrompt}`;
-  const args = [
-    'exec',
-    '--json',
-    '--skip-git-repo-check',
-    '--sandbox',
-    'read-only',
-    '-m',
-    resolvedModel.modelId,
-    '-',
-  ];
-  return new Promise<SummarizeViaResult>((resolve, reject) => {
-    const child = spawn(codexBin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stderrBuf = '';
-    let stdoutBuf = '';
-    let resultText = '';
-    let tokensIn: number | undefined;
-    let tokensOut: number | undefined;
-    // codex puts the failure reason on stdout as JSON events; stderr is
-    // empty on e.g. an unsupported model (HTTP 400). Keep them, or the
-    // worker crash is "exit 1" and nothing else (2026-08-29 report).
-    const failure = new CodexFailureDetail();
-    let lastStdoutLine = '';
-
-    child.on('error', (err) => reject(err));
-    child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (c: string) => {
-      stderrBuf += c;
-    });
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (c: string) => {
-      stdoutBuf += c;
-      let nl: number;
-      while ((nl = stdoutBuf.indexOf('\n')) >= 0) {
-        const line = stdoutBuf.slice(0, nl).trim();
-        stdoutBuf = stdoutBuf.slice(nl + 1);
-        if (!line) continue;
-        lastStdoutLine = line;
-        try {
-          const ev = JSON.parse(line) as { type?: string; [k: string]: unknown };
-          failure.observe(ev);
-          if (ev.type === 'item.completed') {
-            const item = ev.item as { type?: string; text?: string } | undefined;
-            if (item?.type === 'agent_message' && typeof item.text === 'string') {
-              resultText = item.text;
-            }
-          } else if (ev.type === 'turn.completed') {
-            const u = ev.usage as { input_tokens?: number; output_tokens?: number } | undefined;
-            tokensIn = u?.input_tokens;
-            tokensOut = u?.output_tokens;
-          }
-        } catch {
-          // ignore — non-JSON line
-        }
-      }
-    });
-    child.on('exit', (code) => {
-      if (code !== 0 || !resultText) {
-        const detail = failure.render(stderrBuf);
-        logger.error({
-          msg: 'compaction.worker_fail',
-          engine: 'codex-cli',
-          model: resolvedModel.modelId,
-          exitCode: code,
-          promptChars: promptPayload.length,
-          streamErrors: failure.errors,
-          stderr: stderrBuf.slice(0, 1000),
-          lastStdoutLine: lastStdoutLine.slice(0, 300),
-          hadResult: Boolean(resultText),
-        });
-        reject(
-          new Error(
-            `codex-cli summary failed (exit ${code}, model ${resolvedModel.modelId}): ${detail}`,
-          ),
-        );
-        return;
-      }
-      resolve({ text: resultText.trim(), tokensIn, tokensOut });
-    });
-    child.stdin.end(promptPayload);
+  const launch = resolveCodexLaunch();
+  syncCodexAuth();
+  const workspace = join(somoraCodexHome(), 'workspace');
+  mkdirSync(workspace, { recursive: true });
+  const segments = new Map<string, string>();
+  const order: string[] = [];
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let usageSeen = false;
+  let outcome: { status: string; error?: string } | undefined;
+  const errors: string[] = [];
+  let resolveDone: (() => void) | undefined;
+  const done = new Promise<void>((r) => {
+    resolveDone = r;
   });
+  const client = await CodexAppServerClient.start({
+    command: launch.command,
+    args: codexAppServerArgv(launch),
+    env: codexChildEnv(),
+    cwd: workspace,
+    logCtx: { role: 'compaction-worker', model: resolvedModel.modelId },
+    onServerRequest: async () => ({ contentItems: [], success: false }),
+    onNotification: (method, rawParams) => {
+      const p = (rawParams ?? {}) as Record<string, unknown>;
+      if (method === 'item/agentMessage/delta' && typeof p.itemId === 'string' && typeof p.delta === 'string') {
+        if (!segments.has(p.itemId)) order.push(p.itemId);
+        segments.set(p.itemId, `${segments.get(p.itemId) ?? ''}${p.delta}`);
+      } else if (method === 'item/completed') {
+        const item = p.item as { id?: unknown; type?: unknown; text?: unknown } | undefined;
+        if (item?.type === 'agentMessage' && typeof item.id === 'string' && typeof item.text === 'string') {
+          if (!segments.has(item.id)) order.push(item.id);
+          segments.set(item.id, item.text);
+        }
+      } else if (method === 'thread/tokenUsage/updated') {
+        const last = (p.tokenUsage as { last?: Record<string, unknown> } | undefined)?.last;
+        if (last) {
+          tokensIn += typeof last.inputTokens === 'number' ? last.inputTokens : 0;
+          tokensOut += typeof last.outputTokens === 'number' ? last.outputTokens : 0;
+          usageSeen = true;
+        }
+      } else if (method === 'error') {
+        errors.push(typeof p.message === 'string' ? p.message : JSON.stringify(p).slice(0, 300));
+      } else if (method === 'turn/completed') {
+        const turn = p.turn as { status?: unknown; error?: { message?: unknown } | null } | undefined;
+        outcome = {
+          status: typeof turn?.status === 'string' ? turn.status : 'unknown',
+          ...(turn?.error && typeof turn.error.message === 'string' ? { error: turn.error.message } : {}),
+        };
+        resolveDone?.();
+      }
+    },
+  });
+  void client.exited().then(() => resolveDone?.());
+  try {
+    const started = (await client.request(
+      'thread/start',
+      {
+        model: resolvedModel.modelId,
+        cwd: workspace,
+        approvalPolicy: 'never',
+        sandbox: 'read-only',
+        ephemeral: true,
+        serviceName: 'somora',
+        personality: 'none',
+        config: buildCodexThreadConfig({
+          shellEnvironmentPolicy: process.env.SOMORA_CODEX_SHELL_ENV_POLICY,
+        }),
+        developerInstructions: systemPrompt,
+        dynamicTools: [],
+      },
+      { timeoutMs: 60_000 },
+    )) as { thread?: { id?: string } };
+    const threadId = started.thread?.id;
+    if (!threadId) throw new Error('thread/start returned no thread id');
+    await client.request(
+      'turn/start',
+      {
+        threadId,
+        input: [{ type: 'text', text: userPrompt, text_elements: [] }],
+        summary: 'none',
+      },
+      { timeoutMs: 60_000 },
+    );
+    await Promise.race([done, new Promise<void>((r) => setTimeout(r, 15 * 60_000).unref())]);
+  } finally {
+    client.close();
+  }
+  const text = order
+    .map((id) => (segments.get(id) ?? '').trim())
+    .filter((t) => t.length > 0)
+    .join('\n\n');
+  if (outcome?.status !== 'completed' || !text) {
+    const detail = outcome?.error ?? (errors.length ? errors.join('; ') : `status ${outcome?.status ?? 'none (timeout or exit)'}`);
+    logger.error({
+      msg: 'compaction.worker_fail',
+      engine: 'codex-cli',
+      model: resolvedModel.modelId,
+      status: outcome?.status,
+      promptChars: systemPrompt.length + userPrompt.length,
+      streamErrors: errors,
+      stderr: client.stderrTail.slice(-600),
+      hadResult: Boolean(text),
+    });
+    throw new Error(`codex-cli summary failed (model ${resolvedModel.modelId}): ${detail}`);
+  }
+  return {
+    text: text.trim(),
+    ...(usageSeen ? { tokensIn, tokensOut } : {}),
+  };
 }
 
 /** Engines with a one-shot summarization path. grok-cli is missing on

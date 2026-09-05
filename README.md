@@ -134,9 +134,8 @@ Hard:
   agents) and by the web tmux app. Install via your package manager.
 - **At least one LLM backend.** Pick what you have:
   - Claude Code binary (Claude subscription) — for `claude-cli` engine.
-  - Codex CLI binary (ChatGPT subscription) — for `codex-cli` engine. Codex 0.148 or
-    newer recommended: older binaries lack the `view_image` feature flag, so that
-    built-in stays visible to the model there (see [docs/security.md](docs/security.md)).
+  - ChatGPT subscription — for the `codex-cli` engine. Codex itself is bundled
+    with somora (`somora codex login`), no separate install.
   - Grok Build CLI binary (SuperGrok/Premium subscription) — for `grok-cli` engine.
   - Any OpenAI-compatible HTTP server — Ollama, LM Studio, vLLM, oMLX, OpenRouter, etc.
 
@@ -168,7 +167,7 @@ sudo apt install tmux ripgrep         # Debian/Ubuntu
 
 # 2. Install at least one LLM backend (pick one or more):
 npm install -g @anthropic-ai/claude-code  &&  claude login
-npm install -g @openai/codex              &&  codex login
+somora codex login                        # Codex is bundled with somora
 # (for local models: install Ollama / LM Studio / oMLX separately)
 
 # 3. Install somora from source

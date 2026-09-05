@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.09.05.01",
+  "version": "2026.09.05.02",
   "private": true,
   "type": "module",
   "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
@@ -41,6 +41,7 @@
     "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
+    "@openai/codex": "0.153.4",
     "adm-zip": "^0.6.0",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",

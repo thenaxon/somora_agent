@@ -23,6 +23,13 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // the codex session because the selected model changed.
     model_switch: 'model switch',
     mcp_server_renamed: MCP_SERVER_RENAMED,
+    // somora-emitted: thread/resume found no thread, a fresh one was
+    // started with the session history replayed.
+    thread_recreated: 'thread recreated',
+    // codex app-server items: Codex compacted the thread context itself
+    // (happens on a model switch), and its `error` notifications.
+    contextCompaction: 'codex compaction',
+    error: 'codex error',
   },
   'claude-cli': {
     mcp_server_renamed: MCP_SERVER_RENAMED,

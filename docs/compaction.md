@@ -42,9 +42,9 @@ full record, and REM reads it independently.
 5. **Persist.** The summary is stored with the timestamp it covers
    (`throughTs`) in the session's meta; later turns replay
    `[summary] + pairs after throughTs`. CLI engines use the same
-   record when they rebuild a session (a codex model switch, the MCP
-   server rename) — the replay is bounded to the most recent 40
-   exchanges either way.
+   record when they rebuild a session (a Codex thread that no longer
+   exists, an MCP server rename on claude-cli) — the replay is bounded
+   to the most recent 40 exchanges either way.
 
 **Reactive path.** The estimate can be wrong (tool payloads, images, a
 backend with a smaller real limit than configured). When a backend

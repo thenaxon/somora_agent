@@ -51,9 +51,11 @@ matter which engine asked:
 
 - **openai-compatible** agents get the tools bridged straight into
   somora's tool registry.
-- **claude-cli / codex-cli** get a lightweight per-turn proxy that
-  serves the discovered tool list and forwards calls to the hub. The
-  CLIs never talk to the external server themselves — connections,
+- **claude-cli** gets a lightweight per-turn proxy that serves the
+  discovered tool list and forwards calls to the hub.
+- **codex-cli** receives them as Codex dynamic tools, one namespace per
+  external server (`somora_mcp_<server>`), and somora answers the calls.
+  The CLIs never talk to the external server themselves — connections,
   credentials, retries and audit stay in one place.
 
 Tool names are namespaced `mcp__<server>__<tool>` (the CLI engines see

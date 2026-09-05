@@ -9,6 +9,10 @@
 export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   'codex-cli': {
     todo_list: 'plan',
+    model_switch: 'model switch',
+    thread_recreated: 'thread recreated',
+    contextCompaction: 'codex compaction',
+    error: 'codex error',
   },
   'openai-compatible': {
     context_compacted: 'context compacted',

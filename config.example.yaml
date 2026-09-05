@@ -561,8 +561,8 @@ providers:
 #                               # `somora auth status`.
 
 # codex-cli engine tunables. Same posture as claudeCli — surface codex-
-# internal limits so they're configurable here. Applied via -c TOML
-# overrides on each `codex exec` invocation.
+# internal limits so they're configurable here. Applied as thread config
+# on the bundled Codex app-server every turn.
 # codexCli:
 #   toolTimeoutSec: 1800      # 30 min — per-MCP-tool-call timeout in
 #                             # seconds; sets mcp_servers.somora.tool_timeout_sec
@@ -583,6 +583,26 @@ providers:
 #                             # (PATH/HOME/USER/LANG only). Use only after
 #                             # auditing every skill — declared env_vars will
 #                             # silently appear missing inside shells.
+#   directTools:              # somora tools kept in Codex's DIRECT tool list
+#     - memory_search         # (schemas in context every turn). Everything
+#     - memory_get            # else is a deferred dynamic tool the model
+#     - memory_write          # reaches via Codex tool search / Code Mode
+#     - memory_edit           # discovery. Default = this everyday core;
+#     - file_read             # add tools an agent needs in nearly every
+#     - file_write            # turn, drop what it rarely uses.
+#     - file_patch
+#     - file_list
+#     - file_search
+#     - exec
+#     - tmux
+#     - web_search
+#     - web_fetch
+#     - time_now
+#     - agent_ask
+#     - spawn_subagent
+#     - subagent_result
+#     - somora_docs_list
+#     - somora_docs_read
 
 # memory:
 #   embedding:

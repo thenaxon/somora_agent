@@ -14,6 +14,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { resolveCodexLaunch } from '../engine/codex-bin.ts';
 
 export interface EnvField {
   /** Effective value the server is using. `null` means "not set, no default". */
@@ -62,10 +63,17 @@ function resolveClaudeBin(): EnvField {
 
 function resolveCodexBin(): EnvField {
   const raw = process.env.SOMORA_CODEX_BIN;
-  if (raw) return { value: raw, isDefault: false };
-  const npmGlobal = join(homedir(), '.npm-global', 'bin', 'codex');
-  if (existsSync(npmGlobal)) return { value: npmGlobal, isDefault: true, note: 'filesystem-fallback' };
-  return { value: 'codex', isDefault: true, note: 'PATH-fallback (binary not found at npm-global)' };
+  if (raw) return { value: raw, isDefault: false, note: 'override — the bundled Codex is NOT used' };
+  try {
+    const launch = resolveCodexLaunch();
+    return {
+      value: launch.args[0] ?? launch.command,
+      isDefault: true,
+      note: `bundled @openai/codex ${launch.version ?? '?'} (app-server)`,
+    };
+  } catch (err) {
+    return { value: null, isDefault: true, note: `bundled codex missing: ${(err as Error).message}` };
+  }
 }
 
 export function getEffectiveEnv(): EffectiveEnv {

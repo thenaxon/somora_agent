@@ -79,42 +79,41 @@ automation, computer use, image generation, JS REPL, web search, plus
 context loaders (config.toml, AGENTS.md walk-up, personality, memories).
 None belong inside a somora agent.
 
-Defense in [`src/engine/codex-cli.ts`](../src/engine/codex-cli.ts):
+Defense in [`src/engine/codex-thread-config.ts`](../src/engine/codex-thread-config.ts)
+(the config overlay every thread starts with) and
+[`src/engine/codex-home.ts`](../src/engine/codex-home.ts):
 
-- **Feature disables** via `--disable <feature>` — the list is
-  `CODEX_DISABLED_FEATURES` at the top of the adapter and is re-audited
-  against `codex features list` after every codex bump: shell and exec
-  tools, browser and computer use, image generation, apps, multi-agent,
-  personality, hooks/plugins, goals, `view_image` and `skill_search`
-  (both feature flags since codex 0.151), and more.
-- **Config switches** for the `functions.*` tools the Responses API
-  injects: `web_search="disabled"`, `tools.update_plan.enabled=false`,
-  `tools.experimental_request_user_input.enabled=false`. Verified with
-  `--strict-config` (unknown keys are a hard error there) and by asking
-  the model to list every tool it can call.
-- **Known residual**: `functions.apply_patch` cannot be switched off —
-  the model catalog marks gpt-5.x with `apply_patch_tool_type:
-  "freeform"` and codex has no config key for it. `list_mcp_resources`
-  and its two siblings only read MCP resources, which somora's server
-  does not expose.
-- **Sandbox**: somora is the sandbox. The adapter runs codex with
-  `--dangerously-bypass-approvals-and-sandbox` so that somora's own
-  tools (which enforce the path blacklist and per-resource policy) are
-  not blocked by codex's approval flow; codex's built-in file/shell
-  tools are disabled above instead.
-- **`--ignore-user-config`**: skip `~/.codex/config.toml` (other MCP
-  configs, model overrides, project trust list).
-- **`--ignore-rules`**: skip user / project execpolicy `.rules`.
-- **`-c project_root_markers=[]`**: disable AGENTS.md walk-up. By
-  default codex walks from cwd up to the nearest `.git` and concatenates
-  every AGENTS.md it finds; we cap that to cwd-only.
-- **MCP auto-approve**: `mcp_servers.somora.default_tools_approval_mode = "approve"`
-  so the somora tool calls don't require user approval at every
-  step (codex exec is non-interactive, default would auto-cancel them).
-
-The list is in `CODEX_DISABLED_FEATURES` at the top of the adapter.
-When upgrading the codex binary, re-audit `codex features list` for
-new stable-true features that look like context loaders.
+- **Pinned binary.** Codex is a bundled, exact-version dependency. A
+  Codex release cannot change the tool surface underneath somora; the
+  pin is bumped deliberately and the overlay re-audited against
+  `somora codex features list`.
+- **Feature lock-down** as thread config: shell and exec tools, browser
+  and computer use, image generation, apps, multi-agent (`multi_agent`,
+  `multi_agent_v2`, `agents.enabled`), personality, mentions, hooks and
+  plugins, goals, fast mode, `view_image`, `skill_search`; plus
+  `web_search="disabled"`, `tools.update_plan.enabled=false`,
+  `tools.experimental_request_user_input.enabled=false`, bundled skills
+  off, `project_doc_max_bytes=0` and `project_root_markers=[]` (no
+  AGENTS.md walk-up), `notify=[]`, `mcp_servers={}`.
+- **Own Codex home.** Codex runs with `CODEX_HOME=~/.somora/codex-home`
+  (like claude-cli's `~/.somora/claude-home`). Only `auth.json` is
+  mirrored from `~/.codex`, so the user's `config.toml`, MCP servers,
+  hooks, plugins, skills and thread store never reach an agent.
+- **Code Mode.** The GPT-5.6 family and GPT-6 run tool calls through
+  Codex's code-mode host: the model writes JavaScript that calls
+  `tools.somora.<tool>(...)`. Verified 2026-09-05: that sandbox has no
+  `require`, `process`, `fetch` or filesystem — it can only bundle
+  calls to the tools somora exposes, which run on the somora server
+  under the same policies as on every other engine.
+- **Known residual**: `apply_patch` cannot be switched off — the model
+  catalog marks gpt-5.x with `apply_patch_tool_type: "freeform"` and
+  Codex has no config key for it. The three `list_mcp_resource*`
+  helpers only read MCP resources, and no MCP server is configured.
+- **Sandbox**: somora is the sandbox. Threads start with
+  `approvalPolicy: never` and `sandbox: danger-full-access` so somora's
+  own tools (path blacklist, per-resource policy) are never blocked by
+  Codex's approval flow; Codex's built-in file/shell tools are locked
+  down above instead. Approval requests that arrive anyway are declined.
 
 `tool_search` and `tool_suggest` stay enabled on purpose — codex routes
 MCP tool calls through these meta-tools as the discovery/dispatch layer.

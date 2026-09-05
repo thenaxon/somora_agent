@@ -53,6 +53,8 @@ Usage:
                                      (run \`somora skill\` for sub-help)
   somora auth status|sync            shared claude-cli login: inspect / reconcile
                                      the two credential stores
+  somora codex [args...]             run the bundled Codex CLI (e.g. \`somora codex login\`,
+                                     \`somora codex debug models\`); somora mirrors the login
   somora update [<version>|--edge]   install + rebake systemd + restart
                                      (run \`somora update --help\` for options)
   somora --version                   show version
@@ -597,6 +599,10 @@ async function main(): Promise<number> {
     }
     case 'update':
       return await cmdUpdate(rest);
+    case 'codex': {
+      const { runCodexCli } = await import('./codex.ts');
+      return await runCodexCli(rest);
+    }
     default:
       process.stderr.write(`unknown command: ${cmd}\n${usage()}`);
       return 2;

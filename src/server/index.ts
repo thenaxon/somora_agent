@@ -180,7 +180,7 @@ import {
 } from './async-tasks.ts';
 import { reserveSpawnSlot, releaseSpawnSlot } from '../tools/agents/spawn.ts';
 import { readSessionJsonlRaw, renderSessionMarkdown } from './session-export.ts';
-import { codexCliReasoningArgs, resolveOpenAiReasoning } from '../engine/thinking-params.ts';
+import { codexReasoningEffort, resolveOpenAiReasoning } from '../engine/thinking-params.ts';
 
 type Subscriber = (e: SseEvent) => Promise<void>;
 interface StreamSub {
@@ -539,7 +539,7 @@ startClaudeCredentialSyncWatcher();
 // inherits them. Must run before the first engine call.
 applyClaudeCliSdkEnv(config);
 // Same for codex-cli — bridges config.codexCli into a process.env var
-// that somoraMemoryCodexFlags() reads when building -c TOML overrides.
+// that the codex-cli engine reads (tool timeout, shell env policy, direct tools).
 applyCodexCliEnv(config);
 
 logger.info({
@@ -2161,10 +2161,7 @@ app.get('/agents/:agent/sessions/:session/thinking', async (c) => {
     if (resolved.provider.engine === 'openai-compatible') {
       wireValue = resolveOpenAiReasoning(effective, resolved.model).value ?? 'off';
     } else if (resolved.provider.engine === 'codex-cli') {
-      const arg = codexCliReasoningArgs(effective, resolved.model).find((a) =>
-        a.startsWith('model_reasoning_effort='),
-      );
-      wireValue = arg ? arg.slice('model_reasoning_effort='.length) : null;
+      wireValue = codexReasoningEffort(effective, resolved.model);
     }
   }
   return c.json({

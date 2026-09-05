@@ -217,15 +217,25 @@ export function codexCliReasoningArgs(
   thinking: ThinkingLevel | undefined,
   model: ModelLike,
 ): string[] {
-  if (!thinking || !modelSupportsReasoning(model)) return [];
-  // Per-model `reasoning.levels` applies here too (2026-09-03 report:
-  // codex accepts `xhigh`/`max` for GPT-5.6 but somora's vocabulary
-  // ends at `high`; `levels: { high: xhigh }` on a codex model was
-  // silently ignored). Without a mapping the level goes through
-  // verbatim, `off` → `minimal` as before.
+  const effort = codexReasoningEffort(thinking, model);
+  return effort ? ['-c', `model_reasoning_effort=${effort}`] : [];
+}
+
+/**
+ * The effort word Codex gets for this level — sent as `turn/start.effort`
+ * on the app-server. Per-model `reasoning.levels` applies (2026-09-03
+ * report: codex accepts `xhigh`/`max` for GPT-5.6 but somora's vocabulary
+ * ends at `high`); without a mapping the level goes through verbatim,
+ * `off` → `minimal` (codex has no literal disable). null = nothing sent.
+ */
+export function codexReasoningEffort(
+  thinking: ThinkingLevel | undefined,
+  model: ModelLike,
+): string | null {
+  if (!thinking || !modelSupportsReasoning(model)) return null;
   const configured = model.reasoning?.levels?.[thinking];
-  const codexEffort = configured ?? (thinking === 'off' ? 'minimal' : thinking);
-  return ['-c', `model_reasoning_effort=${codexEffort}`];
+  if (configured === null) return null;
+  return configured ?? (thinking === 'off' ? 'minimal' : thinking);
 }
 
 /**

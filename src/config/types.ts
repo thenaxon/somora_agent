@@ -3,6 +3,7 @@
 // Providers are concrete instances of an engine with baseUrl/apiKey and a model list.
 // Personas reference models as `<provider>/<modelId>`.
 
+import { DEFAULT_CODEX_DIRECT_TOOLS } from '../engine/codex-dynamic-tools.ts';
 import { z } from 'zod';
 
 // Model capabilities. `text` is universal. `image` enables Vision (image
@@ -589,7 +590,7 @@ export type ClaudeCliConfig = z.infer<typeof ClaudeCliConfigSchema>;
 // codex-cli engine tunables. Same posture as claudeCli — surface
 // codex-internal limits in config.yaml so they're visible/editable.
 // Applied via -c TOML overrides on each `codex exec` invocation by
-// somoraMemoryCodexFlags() in src/mcp/config.ts.
+// the codex-cli engine (src/engine/codex-cli.ts) via process.env.
 export const CodexCliConfigSchema = z
   .object({
     /**
@@ -619,8 +620,20 @@ export const CodexCliConfigSchema = z
      * flag (codex 0.125+).
      */
     shellEnvironmentPolicy: z.enum(['inherit-all', 'core-only']).default('inherit-all'),
+    /**
+     * somora tools kept in the model's DIRECT tool list on the Codex
+     * app-server (schemas in context every turn). Every other tool is a
+     * deferred dynamic tool the model reaches via Codex tool search /
+     * Code Mode discovery. Default: the everyday core (memory, files,
+     * exec, tmux, web, time, A2A, docs).
+     */
+    directTools: z.array(z.string()).default([...DEFAULT_CODEX_DIRECT_TOOLS]),
   })
-  .default({ toolTimeoutSec: 1800, shellEnvironmentPolicy: 'inherit-all' });
+  .default({
+    toolTimeoutSec: 1800,
+    shellEnvironmentPolicy: 'inherit-all',
+    directTools: [...DEFAULT_CODEX_DIRECT_TOOLS],
+  });
 export type CodexCliConfig = z.infer<typeof CodexCliConfigSchema>;
 
 // Workspace — default cwd for the file_* tools. NOT a sandbox: agents

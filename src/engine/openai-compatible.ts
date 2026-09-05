@@ -1143,6 +1143,10 @@ export const openAiCompatibleEngine: AgentEngine = {
             roundContent = inline.content;
           }
         }
+        // Leading whitespace is never meaningful in an answer; DeepSeek V4
+        // with reasoning off opens every reply with the blank lines of an
+        // empty think block ("\n\n\n\n\n391", 2026-09-05).
+        roundContent = roundContent.replace(/^\s+/, '');
         // Merge the round's content into the cumulative (separator only when
         // there's previous content AND new content).
         if (roundContent) {
@@ -1538,6 +1542,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               turnThinking = turnThinking ? `${turnThinking}\n\n${inline.thinking}` : inline.thinking;
               cumulative = inline.content;
             }
+            cumulative = cumulative.replace(/^\s+/, '');
           }
         } catch (err) {
           disarmIdleTimer();

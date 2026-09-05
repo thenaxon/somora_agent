@@ -72,8 +72,14 @@ providers:
 
 ## codex-cli — ChatGPT subscription
 
-Runs `codex exec` per turn on your `codex login`. **Codex CLI 0.148 or
-newer** ([security.md](security.md) explains why).
+Runs the **bundled** Codex (`@openai/codex`, exact version pinned in
+somora's package.json) as an app-server per turn, on your `codex login`.
+somora hands its tools to Codex as *dynamic tools* — no MCP child, no
+deferred-namespace guessing — so every model Codex offers (gpt-5.5,
+the GPT-5.6 family, GPT-6) reaches the same tool set the other engines
+see. A global `codex` on the host is not used; `somora codex login`
+signs in with the bundled one, and an existing `codex login` is picked
+up automatically ([setup.md](setup.md#codex)).
 
 ```yaml
 providers:

@@ -244,7 +244,7 @@ export function applyClaudeCliSdkEnv(config: Config): void {
 
 /**
  * Push codex-cli-relevant tunables from config into process.env. Used as
- * an internal bridge — somoraMemoryCodexFlags() reads
+ * an internal bridge — the codex-cli engine reads
  * SOMORA_CODEX_TOOL_TIMEOUT_SEC and emits the matching `-c
  * mcp_servers.somora.tool_timeout_sec=N` flag for each codex exec
  * invocation. Mirrors applyClaudeCliSdkEnv()'s policy: explicit env wins.
@@ -257,7 +257,7 @@ export function applyCodexCliEnv(config: Config): void {
   ) {
     process.env.SOMORA_CODEX_TOOL_TIMEOUT_SEC = String(c.toolTimeoutSec);
   }
-  // shellEnvironmentPolicy is consumed by somoraMemoryCodexFlags() via
+  // shellEnvironmentPolicy is consumed by the codex-cli engine via
   // SOMORA_CODEX_SHELL_ENV_POLICY → `-c shell_environment_policy.inherit=…`.
   // Default 'inherit-all' makes codex's exec-shells see the full somora
   // server env (GOG_KEYRING_PASSWORD etc.) — fixes the 2026-05-10
@@ -269,4 +269,7 @@ export function applyCodexCliEnv(config: Config): void {
   ) {
     process.env.SOMORA_CODEX_SHELL_ENV_POLICY = c.shellEnvironmentPolicy;
   }
+  // Read by the codex-cli engine when it builds the dynamic tool catalog
+  // (deferLoading per tool). Always mirrors config — no operator env knob.
+  process.env.SOMORA_CODEX_DIRECT_TOOLS = JSON.stringify(c.directTools);
 }

@@ -35,12 +35,11 @@ npm install -g @anthropic-ai/claude-code
 claude login
 ```
 
-**ChatGPT** — OpenAI's Codex CLI uses your ChatGPT subscription:
+**ChatGPT** — the Codex engine uses your ChatGPT subscription. Codex is
+bundled with somora (no separate install):
 
 ```bash
-npm install -g @openai/codex
-codex login        # ChatGPT Plus/Pro/Business
-# or set OPENAI_API_KEY in env if you prefer pay-per-token
+somora codex login   # ChatGPT Plus/Pro/Business; an existing `codex login` is picked up too
 ```
 
 **Local models** — Ollama, LM Studio, vLLM, or oMLX. Install separately
@@ -236,11 +235,22 @@ what the header percentage claims. See
 [compaction.md](compaction.md#what-contextwindow-really-controls--per-engine)
 and [models.md](models.md).
 
-Requires the Codex CLI binary on PATH (or `SOMORA_CODEX_BIN` env to its
-path), 0.148 or newer recommended — somora only passes the lock-down
-flags the installed codex knows, and `view_image` became a feature flag
-in 0.148 (see [security.md](security.md)). Auth via `codex login` (ChatGPT Plus/Pro/Business preferred,
-or `OPENAI_API_KEY` env).
+<a id="codex"></a>
+Codex is **bundled** — `@openai/codex` is an exact-version dependency of
+somora and runs as an app-server per turn; a global `codex` on the host
+is ignored (`SOMORA_CODEX_BIN` remains as a debugging override). Auth:
+`somora codex login` (ChatGPT Plus/Pro/Business). somora keeps its own
+Codex home at `~/.somora/codex-home` and mirrors `auth.json` from
+`~/.codex` on every turn, so a login done with a global Codex CLI works
+as well. `somora codex debug models` shows the model catalog the bundled
+version sees.
+
+somora's tools reach Codex as dynamic tools. `codexCli.directTools`
+(config.yaml) names the tools kept in the model's direct tool list every
+turn; everything else is deferred and found via Codex tool search (or
+`ALL_TOOLS` inside Code Mode on the GPT-5.6/GPT-6 models). The default
+is the everyday core: memory_*, file_*, exec, tmux, web_*, time_now,
+agent_ask, spawn_subagent, subagent_result, somora_docs_*.
 
 ### xAI via Grok Build CLI subscription (no API key)
 
