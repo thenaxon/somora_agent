@@ -286,7 +286,7 @@ export function TeamWindow() {
         onDragEnd={() => setDragging(null)}
         onDragOver={(e) => { const from = draggingRef.current; if (from && from !== name && !isSelfOrDescendant(draft.agents, from, name)) e.preventDefault(); }}
         onDrop={(e) => { e.preventDefault(); onDrop(name); }}
-        onClick={() => setSelected(name)}
+        onClick={() => { setSelected(name); setPreviewAgent(name); }}
         style={{
           marginLeft: 14 + depth * 22, marginBottom: 6, padding: '6px 8px', borderRadius: 8, cursor: 'pointer',
           display: 'flex', alignItems: 'center', gap: 8, opacity: inactive ? 0.5 : 1,
@@ -328,7 +328,8 @@ export function TeamWindow() {
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         {/* Chart */}
         <div style={{ width: 320, flexShrink: 0, borderRight: '1px solid var(--bg-3)', padding: 10, overflowY: 'auto' }}>
-          <div style={label}>Org chart — drag a card onto its new superior</div>
+          <div style={{ ...label, marginBottom: 0 }}>Org chart</div>
+          <div style={{ fontSize: 11, color: 'var(--text-3)', marginBottom: 8 }}>Drag a card onto its new superior — or onto you.</div>
           <div
             data-testid="team-card-principal"
             onDragOver={(e) => { if (draggingRef.current) e.preventDefault(); }}
@@ -352,7 +353,7 @@ export function TeamWindow() {
                   <span>{a.icon ?? '🤖'}</span><span>{a.name}</span><span style={{ fontSize: 11 }}>{a.role ?? ''}</span>
                   <button
                     type="button" data-testid={`team-add-${a.name}`} style={{ ...btn(), marginLeft: 'auto', padding: '2px 8px' }}
-                    onClick={() => { update((f) => ({ ...f, agents: { ...f.agents, [a.name]: { reports_to: 'principal', ...(a.role ? { title: a.role } : {}) } } })); setSelected(a.name); }}
+                    onClick={() => { update((f) => ({ ...f, agents: { ...f.agents, [a.name]: { reports_to: 'principal', ...(a.role ? { title: a.role } : {}) } } })); setSelected(a.name); setPreviewAgent(a.name); }}
                   >
                     <UserPlus size={12} /> add
                   </button>
@@ -365,7 +366,7 @@ export function TeamWindow() {
 
         {/* Form */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: 12, overflowY: 'auto', flex: 1 }}>
+          <div style={{ padding: 12, overflowY: 'auto', flex: 1, minHeight: 0 }}>
             {sel === 'principal' && (
               <div data-testid="team-form-principal">
                 <Field title="Name" hint="How the agents should refer to you.">
@@ -430,7 +431,7 @@ export function TeamWindow() {
           </div>
 
           {/* Preview */}
-          <div style={{ borderTop: '1px solid var(--bg-3)', height: 220, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ borderTop: '1px solid var(--bg-3)', flex: '0 0 46%', minHeight: 280, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px' }}>
               <Eye size={13} style={{ color: 'var(--text-2)' }} />
               <span style={{ ...label, marginBottom: 0 }}>Preview — what</span>
