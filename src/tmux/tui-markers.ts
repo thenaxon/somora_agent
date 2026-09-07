@@ -98,6 +98,13 @@ const TUI_MARKERS: Partial<Record<TmuxSessionKind, MarkerSet>> = {
       // Allow always / Reject) also drops the cue, so it reads as ready
       // — correct, it is waiting for a human/agent decision.
       'esc interrupt',
+      // After one Escape mid-turn the footer swaps to `esc again to
+      // interrupt` (confirmation window) while the child command is
+      // still running. That text does not contain `esc interrupt`, so
+      // without this marker the pane read as ready and orchestrators
+      // took the confirmation prompt for completion (2026-09-06
+      // opencode-interrupt-state report).
+      'esc again to interrupt',
     ],
   },
   // 'shell' intentionally has no entry — falls through to the

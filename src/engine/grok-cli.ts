@@ -633,7 +633,7 @@ export const grokCliEngine: AgentEngine = {
         const rendered = renderAttachments(attachments);
         if (rendered) parts.push(rendered);
       }
-      parts.push(withFromAgentHeader(input.userMessage, input.fromAgent));
+      parts.push(withFromAgentHeader(input.userMessage, input.fromAgent, input.fromSession));
       const promptText = parts.join('\n\n---\n\n');
 
       const undelivered = attachments.filter((a) => a.mime.kind !== 'text');

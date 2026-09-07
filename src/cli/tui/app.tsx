@@ -406,6 +406,7 @@ export function App({
           id: nid(),
           text: ev.text,
           ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
+          ...(ev.from_agent && ev.from_session ? { fromSession: ev.from_session } : {}),
           ...(ev.from_system ? { fromSystem: ev.from_system } : {}),
         });
       } else if (ev.kind === 'assistant_message' && typeof ev.text === 'string') {
@@ -708,6 +709,7 @@ export function App({
           id: nextId(),
           text: ev.text,
           ...(ev.fromAgent ? { fromAgent: ev.fromAgent } : {}),
+          ...(ev.fromAgent && ev.fromSession ? { fromSession: ev.fromSession } : {}),
           ...(ev.fromSystem ? { fromSystem: ev.fromSystem } : {}),
         });
         return;

@@ -927,6 +927,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           ts: number;
           turnId?: string;
           from_agent?: string;
+          from_session?: string;
           from_system?: 'sentinel' | 'tmux';
         }>(ev as MessageEvent);
         if (!d) return;
@@ -987,6 +988,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 text: d.text,
                 ...(d.turnId ? { turnId: d.turnId } : {}),
                 ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
+                ...(d.from_agent && d.from_session ? { fromSession: d.from_session } : {}),
                 ...(d.from_system ? { fromSystem: d.from_system } : {}),
               },
             ],

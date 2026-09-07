@@ -202,6 +202,12 @@ export interface TurnInput {
    */
   fromAgent?: string;
   /**
+   * A2A: session the asking agent wrote from (id or 'main'). Rendered
+   * into the attribution header as its slug so the model can address a
+   * follow-up: `[Message from agent hans, session cerebrocraft]`.
+   */
+  fromSession?: string;
+  /**
    * When this turn runs inside a spawned sub-agent context, depth is
    * the nesting level (0 = top-level user turn, 1 = first sub, …).
    * Engine adapters use it for the self-pointer block ("you are a sub

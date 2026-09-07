@@ -179,6 +179,8 @@ export type Turn =
       id: string;
       text: string;
       fromAgent?: string;
+      /** A2A: session id (or 'main') the sender wrote from. */
+      fromSession?: string;
       /** Set on synthesized inbounds (today: 'sentinel'). TUI
        *  renders the row as a compact system-trigger line instead
        *  of a user turn. */
@@ -307,6 +309,7 @@ export type StreamEvent =
       text: string;
       turnId?: string;
       fromAgent?: string;
+      fromSession?: string;
       fromSystem?: 'sentinel' | 'tmux' | 'subagent';
       callId?: string;
     }

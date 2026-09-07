@@ -32,6 +32,10 @@ const OC_DONE = "     \u25a3  Build \u00b7 Local Model (local) \u00b7 10.0s\n  \
   const run = detectTuiState(OC_RUNNING, 'opencode');
   check('opencode mid-turn → running', run?.state === 'running', JSON.stringify(run));
   check('opencode running marker is the footer cue', run?.markers.includes('esc interrupt') === true);
+  const interrupting = OC_RUNNING.replace('esc interrupt', 'esc again to interrupt');
+  const i = detectTuiState(interrupting, 'opencode');
+  check('opencode interrupt-confirmation footer → still running', i?.state === 'running', JSON.stringify(i));
+  check('interrupt-confirmation marker is reported', i?.markers.includes('esc again to interrupt') === true);
   const q = detectTuiState(OC_QUEUED, 'opencode');
   check('opencode message submitted mid-turn → queued (beats running)', q?.state === 'queued', JSON.stringify(q));
   const p = detectTuiState(OC_PERMISSION, 'opencode');

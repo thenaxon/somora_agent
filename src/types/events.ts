@@ -24,6 +24,14 @@ export type NormalizedEvent =
        */
       from_agent?: string;
       /**
+       * A2A: the session the asking agent wrote from (its session id,
+       * or 'main'). Set together with from_agent by agent_ask. Lets
+       * the receiver address a follow-up to the right session and
+       * lets `agent_ask` without an explicit `session` route a reply
+       * back there (see src/server/turn-origin.ts).
+       */
+      from_session?: string;
+      /**
        * Marks a user_message that was synthesized by an internal
        * subsystem rather than typed by a human or sent by a peer
        * agent. Today only `'sentinel'` (the trigger runtime) sets

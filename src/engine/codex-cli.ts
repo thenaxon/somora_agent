@@ -35,7 +35,12 @@ import {
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
-import { codexReasoningEffort } from './thinking-params.ts';
+import {
+  codexReasoningEffort,
+  isReasoningEffortError,
+  parseSupportedEfforts,
+  pickFallbackEffort,
+} from './thinking-params.ts';
 import { CodexAppServerClient, CodexRpcError } from './codex-app-server-client.ts';
 import { codexAppServerArgv, resolveCodexLaunch } from './codex-bin.ts';
 import { codexChildEnv, somoraCodexHome, syncCodexAuth } from './codex-home.ts';
@@ -201,6 +206,7 @@ export const codexCliEngine: AgentEngine = {
       resolvedModel,
       thinking,
       fromAgent,
+      fromSession,
       signal,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
@@ -274,14 +280,23 @@ export const codexCliEngine: AgentEngine = {
     const { imagePaths, promptPrefix: attachmentPrefix } = await buildCodexAttachments(
       input.attachments ?? [],
     );
-    const taggedUserMessage = withFromAgentHeader(userMessage, fromAgent);
+    const taggedUserMessage = withFromAgentHeader(userMessage, fromAgent, fromSession);
     const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
     const buildText = (resumed: boolean, replayPrefix: string): string => {
       const projectBlock = resumed && projectContext ? `${projectContext}\n\n---\n\n` : '';
       return `${attachmentPrefix}${ephemeralBlock}${projectBlock}${replayPrefix}${taggedUserMessage}`;
     };
-    const effort = codexReasoningEffort(thinking, resolvedModel.model);
+    let effort = codexReasoningEffort(thinking, resolvedModel.model);
     const summary = input.captureThinking === false ? 'none' : 'auto';
+    // One retry when the backend rejects the effort word (GPT-6 Astra
+    // has no `minimal`, which is what somora's `off` maps to — 2026-09-06
+    // report). The rejection arrives as an `error` notification followed
+    // by `turn/completed` with status failed; the retry re-issues
+    // turn/start on the same thread with the nearest value the backend
+    // itself listed. Mirrors withReasoningRetry() on the openai path.
+    let effortRetryPending: string | null = null;
+    let effortRetried = false;
+    let startTurn: ((eff: string | null) => Promise<void>) | undefined;
 
     // ---- process ----------------------------------------------------------
     const auth = syncCodexAuth();
@@ -444,6 +459,39 @@ export const codexCliEngine: AgentEngine = {
         }
         case 'error': {
           const message = typeof p.message === 'string' ? p.message : JSON.stringify(p).slice(0, 500);
+          if (!effortRetried && effort && isReasoningEffortError(message)) {
+            const supported = parseSupportedEfforts(message);
+            const fallback = supported ? pickFallbackEffort(effort, supported) : null;
+            if (fallback && fallback !== effort) {
+              effortRetried = true;
+              effortRetryPending = fallback;
+              logger.warn({
+                msg: 'engine.reasoning_effort_rejected',
+                ...logCtx,
+                model: resolvedModel.modelId,
+                requested: effort,
+                supported,
+                fallback,
+                backend: message.slice(0, 300),
+              });
+              queue.push({
+                kind: 'engine_meta',
+                ts: ts(),
+                engine: ENGINE,
+                itemType: 'reasoning_effort_adjusted',
+                payload: {
+                  text:
+                    `${resolvedModel.modelId} rejected reasoning effort '${effort}' — ` +
+                    `retrying with '${fallback}'. Map the level in the model's ` +
+                    '`reasoning.levels` config to make this permanent.',
+                  requested: effort,
+                  sent: fallback,
+                  backend: message.slice(0, 300),
+                },
+              });
+              break;
+            }
+          }
           streamErrors.push(message);
           logger.warn({ msg: 'engine.codex_error_item', ...logCtx, message: message.slice(0, 500) });
           queue.push({
@@ -474,6 +522,22 @@ export const codexCliEngine: AgentEngine = {
           break;
         }
         case 'turn/completed': {
+          if (effortRetryPending && startTurn) {
+            // The failed turn produced nothing; start over on the same
+            // thread with the adjusted effort. A failure of the retry
+            // itself ends the stream through the normal error path.
+            const next = effortRetryPending;
+            effortRetryPending = null;
+            effort = next;
+            logger.info({ msg: 'engine.reasoning_effort_retry', ...logCtx, effort: next });
+            void startTurn(next).catch((err: unknown) => {
+              if (finished) return;
+              streamErrors.push((err as Error).message);
+              logger.error({ msg: 'engine.fail', ...logCtx, err: (err as Error).message });
+              finish();
+            });
+            break;
+          }
           const turn = p.turn as { status?: unknown; error?: { message?: unknown } | null } | undefined;
           turnOutcome = {
             status: typeof turn?.status === 'string' ? turn.status : 'unknown',
@@ -674,17 +738,21 @@ export const codexCliEngine: AgentEngine = {
           { type: 'text', text: buildText(resumed, replayPrefix), text_elements: [] },
           ...imagePaths.map((path) => ({ type: 'localImage', path })),
         ];
-        const t = (await client.request(
-          'turn/start',
-          {
-            threadId,
-            input: inputItems,
-            ...(effort ? { effort } : {}),
-            summary,
-          },
-          { timeoutMs: 60_000 },
-        )) as { turn?: { id?: string } };
-        if (typeof t.turn?.id === 'string') activeTurnId = t.turn.id;
+        const rpc = client;
+        startTurn = async (eff: string | null): Promise<void> => {
+          const t = (await rpc.request(
+            'turn/start',
+            {
+              threadId,
+              input: inputItems,
+              ...(eff ? { effort: eff } : {}),
+              summary,
+            },
+            { timeoutMs: 60_000 },
+          )) as { turn?: { id?: string } };
+          if (typeof t.turn?.id === 'string') activeTurnId = t.turn.id;
+        };
+        await startTurn(effort);
       } catch (err) {
         if (!finished) {
           streamErrors.push((err as Error).message);

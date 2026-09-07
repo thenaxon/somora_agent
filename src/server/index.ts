@@ -163,6 +163,7 @@ import {
   listAllSessionLockStates,
 } from './session-queue.ts';
 import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
+import { getTurnOrigin } from './turn-origin.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
@@ -4102,12 +4103,36 @@ app.post('/chat/abort', async (c) => {
 //
 // 127.0.0.1-only by virtue of how the server is bound; same trust
 // posture as the existing debug endpoints.
+// /a2a/turn-origin — who wrote the message the turn on agent/session
+// is currently answering. agent_ask (running in an MCP child of that
+// turn) asks this before defaulting its target session: a reply to the
+// asker goes to the session the question came from. Two sources:
+//   - live A2A turn: run-turn registered from_agent/from_session
+//   - sub-agent session: spawn meta carries parent_agent/parent_session
+// Returns { origin: null } when the turn is a plain human/system turn.
+app.get('/a2a/turn-origin/:agent/:session', async (c) => {
+  const agent = c.req.param('agent');
+  const session = c.req.param('session');
+  const live = getTurnOrigin(agent, session);
+  if (live) return c.json({ origin: { ...live, kind: 'a2a' } });
+  const meta = (await sessionMetaStore.get(agent, session)) as {
+    spawn?: { parent_agent?: unknown; parent_session?: unknown };
+  };
+  const pa = meta.spawn?.parent_agent;
+  const ps = meta.spawn?.parent_session;
+  if (typeof pa === 'string' && typeof ps === 'string' && ps !== '?') {
+    return c.json({ origin: { agent: pa, session: ps, kind: 'subagent' } });
+  }
+  return c.json({ origin: null });
+});
+
 app.post('/chat/send-sync', async (c) => {
   const body = (await c.req.json()) as {
     agent?: string;
     session?: string;
     text?: string;
     from_agent?: string;
+    from_session?: string;
     waiter_agent?: string;
     waiter_session?: string;
     agent_ask_call_id?: string;
@@ -4123,6 +4148,10 @@ app.post('/chat/send-sync', async (c) => {
   const text = body.text ?? '';
   const fromAgent =
     typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
+  const fromSession =
+    fromAgent && typeof body.from_session === 'string' && body.from_session.length > 0
+      ? body.from_session
+      : undefined;
   // waiter_* identify the CALLER TURN that blocks on this request, for
   // circular-wait detection. Deliberately separate from from_agent:
   // from_agent changes message semantics in the target's session (the
@@ -4154,7 +4183,13 @@ app.post('/chat/send-sync', async (c) => {
   }
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) {
-    return c.json({ error: `session '${sessionRef}' not found for agent '${agent}'` }, 404);
+    // Name the sessions that DO exist so an agent that guessed a slug
+    // can correct it instead of retreating to main (2026-09-06 report).
+    const known = (await listSessions(agent)).map((s) => s.slug);
+    return c.json(
+      { error: `session '${sessionRef}' not found for agent '${agent}'`, known_sessions: known },
+      404,
+    );
   }
 
   // Acquire the session lock. A from_agent caller (agent_ask, sub-spawn)
@@ -4211,6 +4246,7 @@ app.post('/chat/send-sync', async (c) => {
         session,
         text,
         ...(fromAgent ? { fromAgent } : {}),
+        ...(fromSession ? { fromSession } : {}),
         ...(agentAskCallId ? { agentAskCallId } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
         ...(modelOverride ? { modelOverride } : {}),

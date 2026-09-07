@@ -825,10 +825,24 @@ curl -X POST https://<host>:18737/chat/send-sync \
 Body fields: same as `/chat/send` (`agent`, `session`, `text`,
 `from_agent`, `agent_ask_call_id`), plus:
 
+- `from_session` (optional, A2A) — the session the asking agent wrote
+  from (id or `main`). Persisted as `user_message.from_session` and
+  shown to the target in the attribution header
+  (`[Message from agent hans, session cerebrocraft]`) so it can address
+  a follow-up. Ignored without `from_agent`.
 - `waiter_agent` / `waiter_session` (optional, A2A) — identify the
   caller turn that blocks on this request. Used by `agent_ask` and
   `spawn_subagent` internally to register the wait in the server's
   deadlock guard; set both or neither.
+
+An unknown `session` answers `404` with the target's existing,
+non-archived session slugs, so a caller that guessed wrong can correct
+itself instead of retreating to `main`:
+
+```json
+{ "error": "session 'cerebro' not found for agent 'hans'",
+  "known_sessions": ["main", "cerebrocraft", "somora-dev"] }
+```
 
 When `waiter_*` are present and the request would close a wait cycle
 (the target is already — directly or through a chain of waits —
@@ -842,6 +856,23 @@ deadlocking:
 
 Response on success: the full turn result (`finalText`, `usage`,
 `model`, `ms`, …).
+
+### `GET /a2a/turn-origin/:agent/:session`
+
+Who started the turn currently running on `agent/session`: the A2A
+asker (`from_agent`/`from_session` of the live turn) or, for a
+sub-agent session, the spawning parent from its spawn meta.
+
+```json
+{ "origin": { "agent": "hans", "session": "20260906-172957_cerebrocraft", "kind": "a2a" } }
+{ "origin": null }
+```
+
+`agent_ask` calls this when its `session` argument is omitted: if the
+target is the origin agent, the message goes back to the origin
+session instead of `main` (logged as `agent_ask.session_inferred`,
+reported as `session_inferred: true` in the tool result). An explicit
+`session` always wins.
 
 ### `GET /chat/stream`
 
@@ -857,8 +888,8 @@ Event types:
   output
 - `agent` — `{phase: 'start'|'end', usage?, model?, ...}` — turn
   lifecycle around the model call
-- `user_message` — `{text, ts, turnId?, from_agent?, from_system?,
-  agent_ask_call_id?}` — broadcast when a turn's user_message is
+- `user_message` — `{text, ts, turnId?, from_agent?, from_session?,
+  from_system?, agent_ask_call_id?}` — broadcast when a turn's user_message is
   written to JSONL. Self-typed sends, A2A inbounds, and sentinel
   triggers all flow through here. `turnId` lets a sending client
   match this event to the optimistic bubble it rendered after

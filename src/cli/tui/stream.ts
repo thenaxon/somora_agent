@@ -252,6 +252,9 @@ export function openStream(
           // them live. Self-echoes carry no from_agent; consumer
           // dedupes by recent-text against its own optimistic copy.
           ...(typeof data.from_agent === 'string' ? { fromAgent: data.from_agent } : {}),
+          ...(typeof data.from_agent === 'string' && typeof data.from_session === 'string'
+            ? { fromSession: data.from_session }
+            : {}),
           ...(data.from_system === 'sentinel' || data.from_system === 'tmux'
             ? { fromSystem: data.from_system as 'sentinel' | 'tmux' }
             : {}),

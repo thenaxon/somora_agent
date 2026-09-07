@@ -4,9 +4,18 @@
 // set to the caller's name, runs a normal turn (memory auto-inject,
 // tools, persona — all of it), and the reply text comes back inline.
 //
-// Session targeting: defaults to 'main'. The target agent's main session
-// is the canonical "talk to it" entry point, same surface a human user
-// types into.
+// Session targeting: an explicit `session` always wins. Without one,
+// the default is context-sensitive (2026-09-06 report — replies to a
+// project session kept landing in main): when the CURRENT turn is
+// itself an A2A turn from agent X (or a sub-agent whose parent is X)
+// and the target is X, the message goes back to the session X wrote
+// from (GET /a2a/turn-origin). Otherwise 'main' — the target agent's
+// canonical "talk to it" entry point, same surface a human types into.
+//
+// Every call carries from_session so the receiver's header reads
+// `[Message from agent hans, session cerebrocraft]` and it can address
+// a follow-up. An unknown session slug returns the target's existing
+// sessions instead of a bare 404.
 //
 // Lock + queue (src/server/session-queue.ts): an agent_ask call is
 // priority='agent' and yields to any concurrent human user turn on the
@@ -58,8 +67,10 @@ const AskInput = z
       .min(1)
       .optional()
       .describe(
-        'Target session slug. Defaults to "main" — the target\'s primary conversation. ' +
-          'Override only for unusual flows (e.g. picking up a sub-session).',
+        'Target session slug (or id). Default: if you are answering a message that THIS agent ' +
+          'sent you (A2A, or it is your spawning parent), the session they wrote from — ' +
+          'otherwise "main". Pass it explicitly to talk to a specific project session; an unknown ' +
+          'slug returns the target\'s existing sessions.',
       ),
     timeout_ms: z
       .number()
@@ -83,6 +94,9 @@ interface AskDoneResult {
   call_id: string;
   target_agent: string;
   target_session: string;
+  /** True when `session` was omitted and the reply-back default picked
+   *  the asker's source session instead of main. */
+  session_inferred?: boolean;
   response: string;
   ms: number;
   usage?: {
@@ -99,6 +113,7 @@ interface AskPendingResult {
   call_id: string;
   target_agent: string;
   target_session: string;
+  session_inferred?: boolean;
   hint: string;
   ms: number;
 }
@@ -115,7 +130,10 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'and the exchange is visible in their session afterwards. Use this when you need the TARGET\'s ' +
     'expertise/state ("<agent>, what did the user say last week about X?"), NOT when you have a ' +
     'self-contained task you could delegate (use spawn_subagent for that). ' +
-    'Defaults to the target\'s main session. Default timeout 5 min, cap 30 min — slow local ' +
+    'Session: when you are replying to an agent that wrote to you (their message carries ' +
+    '"[Message from agent X, session Y]") and omit `session`, the message goes back to that ' +
+    'session Y; otherwise to the target\'s main session. Pass `session` explicitly for a specific ' +
+    'project session. Default timeout 5 min, cap 30 min — slow local ' +
     'models routinely need minutes. On timeout: returns state:"pending" (NOT an error); the call ' +
     'may still complete on the target side and land in their JSONL. ' +
     'IMPORTANT: cannot ask yourself — use spawn_subagent for self-clone tasks. ' +
@@ -132,7 +150,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
       message: { type: 'string', description: 'Message text.' },
       session: {
         type: 'string',
-        description: 'Target session slug (default "main").',
+        description:
+          'Target session slug or id. Default: the session your asker wrote from when the target ' +
+          'is that asker (A2A reply-back / your spawning parent), otherwise "main".',
       },
       timeout_ms: {
         type: 'integer',
@@ -157,7 +177,6 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
   maxTimeoutMs: 7_200_000 + TIMEOUT_BUFFER_MS,
   async handler(input, ctx): Promise<AskResult> {
     const targetAgent = input.agent;
-    const targetSession = input.session ?? 'main';
 
     if (targetAgent === ctx.agent) {
       throw new Error(
@@ -168,6 +187,34 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
 
     const callId = randomUUID();
     const timeoutMs = Math.min(input.timeout_ms ?? longTaskDefaultMs(), longTaskMaxMs());
+
+    const host = process.env.SOMORA_HOST || '127.0.0.1';
+    const port = process.env.SOMORA_PORT || '18737';
+    // SOMORA_TLS=1 → server is HTTP/2-over-TLS; A2A loopback must use
+    // https://<publicHost> (see spawn.ts:runChatTurnViaHttp).
+    const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+    const base = `${scheme}://${host}:${port}`;
+
+    // Reply-back default: no explicit session + this turn was started
+    // by the target (A2A inbound or spawning parent) → their session.
+    let targetSession = input.session ?? 'main';
+    let sessionInferred = false;
+    if (!input.session && ctx.session) {
+      const origin = await lookupTurnOrigin(base, ctx.agent, ctx.session);
+      if (origin && origin.agent === targetAgent && origin.session) {
+        targetSession = origin.session;
+        sessionInferred = true;
+        logger.info({
+          msg: 'agent_ask.session_inferred',
+          from: ctx.agent,
+          from_session: ctx.session,
+          to: targetAgent,
+          session: targetSession,
+          origin_kind: origin.kind,
+          call_id: callId,
+        });
+      }
+    }
 
     logger.info({
       msg: 'agent_ask.start',
@@ -180,11 +227,6 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     });
 
     const start = Date.now();
-    const host = process.env.SOMORA_HOST || '127.0.0.1';
-    const port = process.env.SOMORA_PORT || '18737';
-    // SOMORA_TLS=1 → server is HTTP/2-over-TLS; A2A loopback must use
-    // https://<publicHost> (see spawn.ts:runChatTurnViaHttp).
-    const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
 
     // AbortController hard-bounds the wait. If the timer fires before
     // the response comes back, the fetch errors with AbortError and we
@@ -197,7 +239,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     const timer = setTimeout(() => ac.abort(), timeoutMs);
 
     try {
-      const res = await loopbackFetch(`${scheme}://${host}:${port}/chat/send-sync`, {
+      const res = await loopbackFetch(`${base}/chat/send-sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -205,6 +247,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           session: targetSession,
           text: input.message,
           from_agent: ctx.agent,
+          // from_session lets the target address a follow-up to the
+          // session this question came from (header + reply-back default).
+          ...(ctx.session ? { from_session: ctx.session } : {}),
           // waiter_* register this turn in the server's A2A wait-graph
           // (circular-wait detection, src/server/ask-wait-graph.ts).
           // Missing ctx.session (shouldn't happen — MCP children get
@@ -241,6 +286,22 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
               `you; just finish your current reply with the answer.`,
           );
         }
+        if (res.status === 404 && body.includes('"known_sessions"')) {
+          let known: string[] = [];
+          try {
+            const parsed = JSON.parse(body) as { known_sessions?: string[] };
+            if (Array.isArray(parsed.known_sessions)) known = parsed.known_sessions;
+          } catch {
+            /* keep known empty */
+          }
+          throw new Error(
+            `agent_ask: session '${targetSession}' does not exist for agent ${targetAgent}. ` +
+              (known.length > 0
+                ? `Existing sessions: ${known.join(', ')}. Pick one of these (or omit session ` +
+                  `for the default) — do NOT fall back to main for project work.`
+                : `That agent has no sessions yet; omit session to use main.`),
+          );
+        }
         throw new Error(
           `agent_ask: target ${targetAgent}/${targetSession} returned HTTP ${res.status}: ${body.slice(0, 300)}`,
         );
@@ -266,6 +327,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         call_id: callId,
         target_agent: targetAgent,
         target_session: targetSession,
+        ...(sessionInferred ? { session_inferred: true } : {}),
         response: data.finalText ?? '',
         ms: Date.now() - start,
         ...(data.usage ? { usage: data.usage } : {}),
@@ -295,6 +357,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           call_id: callId,
           target_agent: targetAgent,
           target_session: targetSession,
+          ...(sessionInferred ? { session_inferred: true } : {}),
           hint:
             `${targetAgent} did not reply within timeout_ms (${timeoutMs}ms). ` +
             `The call may still be queued or in flight; if it completes, the response will land in ` +
@@ -325,3 +388,34 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     }
   },
 };
+
+interface TurnOriginInfo {
+  agent: string;
+  session: string;
+  kind: 'a2a' | 'subagent';
+}
+
+/** Who started the turn `agent/session` is running right now — the
+ *  A2A asker, or the spawning parent for a sub-session. Null for a
+ *  plain human/system turn or when the lookup fails (never blocks a
+ *  call; the default then stays main). */
+async function lookupTurnOrigin(
+  base: string,
+  agent: string,
+  session: string,
+): Promise<TurnOriginInfo | null> {
+  try {
+    const res = await loopbackFetch(
+      `${base}/a2a/turn-origin/${encodeURIComponent(agent)}/${encodeURIComponent(session)}`,
+      { signal: AbortSignal.timeout(3_000) },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { origin?: TurnOriginInfo | null };
+    return data.origin && typeof data.origin.agent === 'string' && typeof data.origin.session === 'string'
+      ? data.origin
+      : null;
+  } catch (err) {
+    logger.warn({ msg: 'agent_ask.turn_origin_lookup_failed', agent, session, err: String(err) });
+    return null;
+  }
+}

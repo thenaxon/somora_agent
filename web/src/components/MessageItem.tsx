@@ -118,6 +118,14 @@ export const MessageItem = memo(function MessageItem({
 
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
   const peer = isPeer && msg.fromAgent ? peerAgents?.get(msg.fromAgent) : undefined;
+  // Origin caption for A2A inbounds from a NON-main session: "naxon ·
+  // cerebrocraft". main traffic stays as quiet as before; project
+  // sessions become visible so mis-routing is obvious at a glance
+  // (2026-09-06 A2A routing reports).
+  const peerSlug =
+    msg.role === 'user' && msg.fromAgent && msg.fromSession ? sessionSlug(msg.fromSession) : undefined;
+  const peerOrigin =
+    msg.role === 'user' && peerSlug && peerSlug !== 'main' ? `${msg.fromAgent} · ${peerSlug}` : undefined;
 
   if (msg.role === 'user') {
     // User OR peer-agent inbound — both right-aligned. Distinction
@@ -181,6 +189,7 @@ export const MessageItem = memo(function MessageItem({
             <BubbleTimestamp
               ts={msg.ts}
               queued={msg.queued}
+              {...(peerOrigin ? { origin: peerOrigin } : {})}
               {...(msg.queued && !isPeer && onRecall
                 ? { onRecall: () => onRecall(msg.id) }
                 : {})}
@@ -440,15 +449,18 @@ function summarizeSentinelTriggerText(text: string): string {
 function BubbleTimestamp({
   ts,
   queued,
+  origin,
   onRecall,
 }: {
   ts: number;
   queued?: { ahead: number };
+  /** A2A origin caption ("naxon · cerebrocraft"), left of the time. */
+  origin?: string;
   /** Present only while queued: takes the message back into the
    *  composer for another edit before it starts. */
   onRecall?: () => void;
 }) {
-  if (!ts && !queued) return null;
+  if (!ts && !queued && !origin) return null;
   // queued marker sits to the LEFT of the time, same row, dimmed.
   // We surface "queued" alone when ahead<=1 (just the currently-
   // running turn to wait for), and "queued · N ahead" when there
@@ -475,9 +487,21 @@ function BubbleTimestamp({
           <span className="chat-msg-queued-sep">·</span>
         </span>
       )}
+      {origin && (
+        <span className="chat-msg-origin" title="Sending agent · its session">
+          {origin}
+          <span className="chat-msg-queued-sep">·</span>
+        </span>
+      )}
       {ts ? formatBubbleTime(ts) : ''}
     </span>
   );
+}
+
+/** `20260906-172957_cerebrocraft` → `cerebrocraft`; `main` stays. */
+function sessionSlug(sessionId: string): string {
+  const m = /^\d{8}-\d{6}_(.+)$/.exec(sessionId);
+  return m ? m[1]! : sessionId;
 }
 
 // A turn that ended in an error. Sits inside the turn (after any

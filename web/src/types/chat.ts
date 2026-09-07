@@ -88,6 +88,10 @@ export type ChatMessage =
       ts: number;
       text: string;
       fromAgent?: string;
+      /** A2A: session id (or 'main') the sending agent wrote from.
+       *  Shown as a small origin caption on the peer bubble when it
+       *  is not main. */
+      fromSession?: string;
       /** Marks an inbound that the server synthesized via an internal
        *  subsystem (today: 'sentinel'). Renderer draws a centered
        *  system divider instead of a user-bubble. */
@@ -240,6 +244,7 @@ export type StreamEvent =
         ts: number;
         turnId?: string;
         from_agent?: string;
+        from_session?: string;
         from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
       };
     }

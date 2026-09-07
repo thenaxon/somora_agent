@@ -102,7 +102,7 @@ providers:
         contextWindow: 272000          # same Codex session cap as the 5.6 family
         capabilities: [text, image, pdf, reasoning]
         reasoning:
-          levels: { high: xhigh }      # Codex knows low/medium/high/xhigh/max; `max` deliberately not a default
+          levels: { "off": low, high: xhigh }   # Astra has no `minimal` — map `off` explicitly; `max` deliberately not a default
       - id: gpt-5.6-sol
         alias: gpt56
         contextWindow: 272000          # Codex session cap, NOT the 1.05M API window
@@ -125,7 +125,7 @@ providers:
 
 | model | contextWindow | notes | verified |
 |---|---|---|---|
-| `gpt-6-astra` | 272000 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. `contextWindow: 272000` until Codex says otherwise. | 2026-09-05 (app-server engine) |
+| `gpt-6-astra` | 272000 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. `contextWindow: 272000` until Codex says otherwise. Effort vocabulary is `low | medium | high | xhigh | max` — no `minimal`, so a persona without a thinking level (`off`) needs `reasoning: { levels: { "off": low } }`; without it codex-cli retries once with `low` after the 400 (2026-09-06). | 2026-09-05 (app-server engine) |
 | `gpt-5.6-sol` | 272000 | Flagship — complex coding, research, deepest reasoning. | 2026-09-03 |
 | `gpt-5.6-terra` | 272000 | Workhorse; OpenAI positions it as GPT-5.5-class at lower cost. | 2026-09-05 (app-server engine) |
 | `gpt-5.6-luna` | 272000 | Fast and cheap — extraction, classification, volume. | 2026-09-03 |

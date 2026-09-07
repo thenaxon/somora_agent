@@ -137,8 +137,58 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
       fallbackResolved.provider.engine,
     ),
   };
-  for await (const ev of fallbackEngine.runTurn(fallbackInput)) {
-    yield ev;
+  // When the fallback dies before producing anything either, the one
+  // `error` row the user sees must name BOTH failures — the primary's
+  // reason otherwise lives only in engine_meta/model_fallback and the
+  // chat shows a raw fallback error with no hint why that model was
+  // asked at all (2026-09-06 Astra report: 400 on primary + offline
+  // fallback looked like "the agent does not answer").
+  const primaryLabel = `${primary.providerName}/${primary.modelId}`;
+  const fallbackLabel = `${fallbackResolved.providerName}/${fallbackResolved.modelId}`;
+  const bothFailed = (fallbackError: string): string =>
+    `Both models failed. Primary ${primaryLabel}: ${primaryError.slice(0, 300)} — ` +
+    `fallback ${fallbackLabel}: ${fallbackError.slice(0, 300)}`;
+  let fallbackHasContent = false;
+  try {
+    for await (const ev of fallbackEngine.runTurn(fallbackInput)) {
+      if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message' || ev.kind === 'tool_call') {
+        fallbackHasContent = true;
+      }
+      if (ev.kind === 'error' && !fallbackHasContent) {
+        logger.error({
+          msg: 'engine.fallback_failed_too',
+          primary: primaryLabel,
+          primary_error: primaryError.slice(0, 300),
+          fallback: fallbackLabel,
+          fallback_error: ev.message.slice(0, 300),
+        });
+        yield { ...ev, message: bothFailed(ev.message) };
+        continue;
+      }
+      yield ev;
+    }
+  } catch (err) {
+    if (fallbackHasContent) throw err;
+    const message = (err as Error).message;
+    logger.error({
+      msg: 'engine.fallback_failed_too',
+      primary: primaryLabel,
+      primary_error: primaryError.slice(0, 300),
+      fallback: fallbackLabel,
+      fallback_error: message.slice(0, 300),
+    });
+    yield {
+      kind: 'error',
+      ts: Date.now(),
+      engine: fallbackResolved.provider.engine,
+      message: bothFailed(message),
+    };
+    yield {
+      kind: 'turn_end',
+      ts: Date.now(),
+      engine: fallbackResolved.provider.engine,
+      turnId: `t-${Date.now()}`,
+    };
   }
 }
 

@@ -115,7 +115,13 @@ adapter does nothing engine-specific. Otherwise it maps:
 
 † codex-cli has no real "off" state for reasoning-capable models — `off`
 maps to `minimal` (its lowest setting). The semantic difference vs
-`off` on claude is documented but unavoidable.
+`off` on claude is documented but unavoidable. Not every Codex model
+accepts `minimal` (GPT-6 Astra answers `low | medium | high | xhigh |
+max` only): when the backend rejects the effort word, codex-cli reads
+the supported list out of the error and retries the turn once with the
+nearest value (`engine_meta` `reasoning_effort_adjusted`, log
+`engine.reasoning_effort_rejected`). Map the level in the model's
+`reasoning.levels` (e.g. `{ "off": low }`) to skip the retry.
 
 The per-model `reasoning.levels` block (see the vocabulary section
 below) applies to **codex-cli and grok-cli as well**, not only to the

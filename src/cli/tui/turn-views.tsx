@@ -14,6 +14,7 @@
 //   system warn:      yellow
 //   system error:     red bold
 
+import { sessionSlugOf } from '../../engine/a2a.ts';
 import { Box, Text } from 'ink';
 import type { Turn } from './types.ts';
 import { renderInline } from './markdown.tsx';
@@ -41,6 +42,7 @@ export function TurnView({
         <UserTurn
           text={turn.text}
           {...(turn.fromAgent ? { fromAgent: turn.fromAgent } : {})}
+          {...(turn.fromSession ? { fromSession: turn.fromSession } : {})}
           {...(turn.fromSystem ? { fromSystem: turn.fromSystem } : {})}
         />
       );
@@ -80,10 +82,12 @@ export function TurnView({
 function UserTurn({
   text,
   fromAgent,
+  fromSession,
   fromSystem,
 }: {
   text: string;
   fromAgent?: string;
+  fromSession?: string;
   fromSystem?: 'sentinel' | 'tmux' | 'subagent';
 }) {
   // System inbound (sentinel trigger / tmux attention wake):
@@ -118,7 +122,11 @@ function UserTurn({
   // local human just typed. Same line height, similar weight — keeps
   // scrollback rhythm intact.
   if (fromAgent) {
-    const tag = `↬ ${fromAgent}`.padEnd(6, ' ');
+    // Sender from a non-main session shows as `↬ naxon/cerebrocraft`
+    // so mis-routed project traffic is visible in scrollback; main
+    // stays the plain `↬ naxon` it always was.
+    const slug = fromSession ? sessionSlugOf(fromSession) : undefined;
+    const tag = `↬ ${fromAgent}${slug && slug !== 'main' ? `/${slug}` : ''}`.padEnd(6, ' ');
     return (
       <Box marginTop={1}>
         <Text color="cyan" bold>

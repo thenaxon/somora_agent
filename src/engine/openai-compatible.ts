@@ -374,7 +374,7 @@ export async function buildMessages(
       // A turn that never produced an assistant_message (crash, abort)
       // still has its tool activity replayed, ahead of the next user turn.
       flushToolTurn();
-      const headed = withFromAgentHeader(ev.text, ev.from_agent);
+      const headed = withFromAgentHeader(ev.text, ev.from_agent, ev.from_session);
       // Memory-recall block (if any) was persisted on the event when
       // this turn was originally sent; reconstruct it here so the
       // byte sequence matches what the backend already cached. This

@@ -206,6 +206,7 @@ export interface HistoryEvent {
    *  text at its configured cap. */
   truncated?: boolean;
   from_agent?: string;
+  from_session?: string;
   from_system?: 'sentinel' | 'tmux';
   attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
   /** Set on `kind: 'assistant_audio'` history rows. Tracks the

@@ -43,6 +43,7 @@ import {
 } from '../config/types.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
+import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
@@ -297,6 +298,10 @@ export interface RunChatTurnArgs {
   /** A2A: when set, this turn was authored by another agent, not by the
    *  human user. Persists in user_message.from_agent. */
   fromAgent?: string;
+  /** A2A: session the asking agent wrote from (id or 'main'). Persists
+   *  in user_message.from_session and registers the turn's origin for
+   *  agent_ask's reply-back default (src/server/turn-origin.ts). */
+  fromSession?: string;
   /** Synthesized inbound marker: when set, this turn's text was
    *  produced by an internal subsystem (today only 'sentinel' — the
    *  trigger runtime injecting a `[Sentinel trigger fired]…` prompt).
@@ -535,6 +540,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     session,
     text,
     fromAgent,
+    fromSession,
     fromSystem,
     attachMediaIds,
     agentAskCallId,
@@ -569,9 +575,13 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     session,
     subagentDepth,
     fromAgent: fromAgent ?? null,
+    fromSession: fromSession ?? null,
     textLen: text.length,
     attachmentCount: attachments?.length ?? 0,
   });
+  // Reply-back routing for agent_ask (see turn-origin.ts). Reset on
+  // every turn so a human turn following an A2A one never inherits it.
+  setTurnOrigin(agent, session, fromAgent && fromSession ? { agent: fromAgent, session: fromSession } : null);
 
   const persona = await loadPersona(agent);
   if (!persona) {
@@ -750,6 +760,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     engine: engine.name,
     text,
     ...(fromAgent ? { from_agent: fromAgent } : {}),
+    ...(fromAgent && fromSession ? { from_session: fromSession } : {}),
     ...(fromSystem ? { from_system: fromSystem } : {}),
     ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
     ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
@@ -773,6 +784,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ts: Date.now(),
         turnId,
         ...(fromAgent ? { from_agent: fromAgent } : {}),
+        ...(fromAgent && fromSession ? { from_session: fromSession } : {}),
         ...(fromSystem ? { from_system: fromSystem } : {}),
         ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
       },
@@ -967,6 +979,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ...(projectBlock ? { projectContext: projectBlock } : {}),
         userMessage: text,
         ...(fromAgent ? { fromAgent } : {}),
+        ...(fromAgent && fromSession ? { fromSession } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
         history,
         metaStore: deps.sessionMetaStore,
@@ -1351,6 +1364,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(errorMessage ? { err: errorMessage } : {}),
   });
 
+  clearTurnOrigin(agent, session);
   const actualForResult = turnFallback ? splitModelRef(turnFallback.actual) : undefined;
   const outcome: ChatTurnOutcome = errorMessage
     ? 'failed'

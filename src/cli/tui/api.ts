@@ -377,6 +377,7 @@ export interface HistoryEvent {
   ts: number;
   text?: string;
   from_agent?: string;
+  from_session?: string;
   from_system?: 'sentinel' | 'tmux' | 'subagent';
   agent_ask_call_id?: string;
   // tool_call / tool_result

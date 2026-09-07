@@ -19,6 +19,7 @@
 // gaps the engine sees `[summary] + recent pairs` instead of thousands
 // of raw turns.
 
+import { sessionSlugOf } from './a2a.ts';
 import { pickLatestApplicable, type Compaction } from '../compaction/index.ts';
 import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -29,6 +30,8 @@ export interface ReplayPair {
   /** A2A attribution of the user-side. Set when the user-message in
    *  this pair was written by another agent, not the human user. */
   fromAgent?: string;
+  /** Session the asking agent wrote from (id or 'main'). */
+  fromSession?: string;
 }
 
 export interface ReplayDelta {
@@ -94,16 +97,21 @@ export function computeReplayDelta(
   const applicable = pickLatestApplicable(compactions, sinceTs);
   const effectiveSinceTs = applicable ? applicable.throughTs : sinceTs;
   const pairs: ReplayPair[] = [];
-  let pendingUser: { text: string; fromAgent?: string } | undefined;
+  let pendingUser: { text: string; fromAgent?: string; fromSession?: string } | undefined;
   for (const ev of history) {
     if (ev.ts <= effectiveSinceTs) continue;
     if (ev.kind === 'user_message') {
-      pendingUser = { text: ev.text, ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}) };
+      pendingUser = {
+        text: ev.text,
+        ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
+        ...(ev.from_session ? { fromSession: ev.from_session } : {}),
+      };
     } else if (ev.kind === 'assistant_message' && pendingUser !== undefined) {
       pairs.push({
         user: pendingUser.text,
         assistant: ev.text,
         ...(pendingUser.fromAgent ? { fromAgent: pendingUser.fromAgent } : {}),
+        ...(pendingUser.fromSession ? { fromSession: pendingUser.fromSession } : {}),
       });
       pendingUser = undefined;
     }
@@ -143,7 +151,9 @@ export function renderReplayPrefix(delta: ReplayDelta): string {
       // A2A: when the user-side was written by another agent, mark
       // it explicitly in the replay so engines catching up don't
       // confuse it with a human-user turn.
-      const userLabel = p.fromAgent ? `User (from agent ${p.fromAgent})` : 'User';
+      const userLabel = p.fromAgent
+        ? `User (from agent ${p.fromAgent}${p.fromSession ? `, session ${sessionSlugOf(p.fromSession)}` : ''})`
+        : 'User';
       lines.push(`${userLabel}: ${p.user}`);
       // Defensive XML-strip: if a prior engine's assistant_message
       // text contains hallucinated <tool_call>…</tool_call> /

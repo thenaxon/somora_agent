@@ -863,6 +863,15 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   align-items: center;
   gap: 4px;
 }
+/* A2A origin caption ("naxon · cerebrocraft") — left of the time on a
+ * peer bubble whose sender wrote from a non-main session. */
+.chat-msg-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: normal;
+  letter-spacing: 0;
+}
 /* Queued marker — sits LEFT of the time, same line, dimmed. Only
  * present on optimistic user bubbles whose turnId received a
  * turn_queued SSE event before the matching user_message event.

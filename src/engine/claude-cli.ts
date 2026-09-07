@@ -113,6 +113,7 @@ export const claudeCliEngine: AgentEngine = {
       resolvedModel,
       thinking,
       fromAgent,
+      fromSession,
       signal,
     } = input;
     if (resolvedModel.provider.engine !== ENGINE) {
@@ -166,7 +167,7 @@ export const claudeCliEngine: AgentEngine = {
     // is the structurally correct choice for this engine.
     const memoryBlock = ephemeralContext ? `${ephemeralContext}\n\n` : '';
     const effectiveUserMessage =
-      replayPrefix + memoryBlock + withFromAgentHeader(userMessage, fromAgent);
+      replayPrefix + memoryBlock + withFromAgentHeader(userMessage, fromAgent, fromSession);
     // Phase Y.B — when the user attached files to this turn, build the
     // multimodal content array. Image/PDF blocks come first, the
     // composed text block last (replay + memory + user text). Anthropic's
