@@ -156,9 +156,13 @@ somora server start            # starts the unit (auto-starts on login)
 somora tui                     # default agent is created on first run
 ```
 
-First run creates `~/.somora/config.yaml` and a default agent. For
-the web client + provider configuration + Tailscale HTTPS setup, see
-[docs/setup.md](docs/setup.md) — full step-by-step.
+First run creates `~/.somora/config.yaml` and a default agent. Once you
+have more than one agent, `somora team init --principal "<your name>"`
+writes `~/.somora/team.yaml` so every agent knows who is who and who to
+involve for what — or open the **team** tile in `/web` and arrange it
+there ([docs/team.md](docs/team.md)). For the web client + provider
+configuration + Tailscale HTTPS setup, see [docs/setup.md](docs/setup.md)
+— full step-by-step.
 
 Want to hack on somora itself? See the [contributor section in docs/setup.md](docs/setup.md#develop-from-a-checkout-contributors).
 
