@@ -215,6 +215,10 @@ export class MemoryManager {
   private wiki?: WikiSource;
   private searchBoosts?: { wiki: number; memory: number; vault: number };
   private lastEmbedderRetry = 0;
+  /** True once ensureEmbedder() failed at least once for this manager —
+   *  a later success then triggers a reindex sweep so chunks written
+   *  vector-less while the embedder was down get their embeddings. */
+  private embedderWasDown = false;
 
   constructor(opts: ManagerOptions) {
     this.agent = opts.agent;
@@ -325,13 +329,30 @@ export class MemoryManager {
         model: provider.name,
         dim: provider.dim,
       });
+      if (this.embedderWasDown) {
+        // Late recovery (embedder came up on a search, not at init):
+        // indexFile()'s `reembed_missing_vec` self-heal only runs inside
+        // a reindex sweep, so kick one off now instead of waiting for the
+        // next restart or file event. Fire-and-forget: the search that
+        // triggered ensureEmbedder() must not block on a full sweep.
+        this.embedderWasDown = false;
+        logger.info({ msg: 'memory.embedder_recovered_reindex', agent: this.agent });
+        void this.reindexAll().catch((err) => {
+          logger.warn({
+            msg: 'memory.embedder_recovered_reindex_failed',
+            agent: this.agent,
+            err: (err as Error).message,
+          });
+        });
+      }
       return true;
     } catch (err) {
+      this.embedderWasDown = true;
       logger.warn({
         msg: 'memory.embedder_unavailable',
         agent: this.agent,
         err: (err as Error).message,
-        hint: 'falling back to FTS-only retrieval; will retry in 60s on next search',
+        hint: 'falling back to FTS-only retrieval; will retry in 60s on next search — see GET /health → memoryEmbedder',
       });
       this.embedder = null;
       return false;

@@ -120,6 +120,16 @@ Returns:
     "lastSyncResult": "noop",
     "lastSyncAt": 1785496349000
   },
+  "memoryEmbedder": {
+    "state": "ok",
+    "provider": "local",
+    "model": "all-MiniLM-L6-v2",
+    "dim": 384,
+    "error": null,
+    "since": 1785496350120,
+    "attempts": 1,
+    "loadMs": 2373
+  },
   "sessions": [
     {
       "agent": "<your-agent>",
@@ -157,6 +167,17 @@ sides present means the stores have diverged and the watcher hasn't
 caught up yet — if it persists, claude-cli auth is about to break;
 run `somora auth status` on the host. See
 [setup.md](setup.md#isolated-claude-config-dir).
+
+`memoryEmbedder` is the health of the embedding model behind memory
+retrieval (see [memory.md](memory.md#hybrid-retrieval-mechanics)). The
+server loads it once at boot; `state` is `ok` when the model is loaded,
+`loading` while the (first-run) download is in flight, and `failed` when
+the last attempt threw — `error` then carries the reason. `failed` means
+every agent's memory search is BM25-only until the next retry succeeds
+(one retry per agent per minute, on search): the server keeps working,
+but semantic recall and dream dedup are silently degraded, so treat a
+persistent `failed` as an incident. The model cache lives under
+`~/.somora/models/transformers/` and survives updates.
 
 `subscriberCount` is the number of currently-connected SSE clients
 (web / mobile / TUI tail) watching this session. `lastPublishOkAt` only

@@ -136,6 +136,10 @@ twice in the injected block.
   fails — retrieval degrades gracefully to BM25-only; it upgrades to
   hybrid automatically once the model is present, and the next reindex
   backfills embeddings for anything indexed while it was unavailable.
+  Whether the model is actually loaded is visible on `GET /health` as
+  `memoryEmbedder` (`state: ok | loading | failed`, plus the error);
+  a failed load is also logged once at boot as
+  `memory.embedder_boot_failed`.
 - **BM25** — SQLite FTS5 over chunk text. Tokenizer drops punctuation,
   lowercases everything (so `[[wiki-link]]` tokenizes to `wiki` and
   `link`).
@@ -297,6 +301,9 @@ When recall feels off, query the raw index directly:
 ```bash
 # How many notes are indexed for this agent (across all sources)
 curl 'http://127.0.0.1:18737/agents/<name>/memory/notes' | jq '.count'
+
+# Is the embedding model loaded? "failed" = BM25-only for every agent
+curl 'http://127.0.0.1:18737/health' | jq '.memoryEmbedder'
 
 # Raw search — see exactly what would be auto-injected for a given query
 curl 'http://127.0.0.1:18737/agents/<name>/memory/search?q=garten&minScore=0' \

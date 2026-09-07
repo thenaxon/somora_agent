@@ -66,6 +66,7 @@ import {
   getMemoryManager,
   shutdownMemoryRegistry,
 } from '../memory/registry.ts';
+import { getEmbedderStatus, warmupEmbedder } from '../memory/embeddings.ts';
 import { setupClaudeConfigDir } from './claude-config-dir.ts';
 import { paginateHistory } from './history-page.ts';
 import {
@@ -690,6 +691,10 @@ app.get('/health', (c) => {
     // hasn't caught up — if that state persists, auth is about to break.
     // Expiry values only, never token material.
     claudeAuth: credentialSyncStatus(),
+    // Embedding model health. `state: "failed"` means every agent's memory
+    // retrieval is FTS-only (BM25 without vectors) — the server keeps
+    // running, but semantic recall and REM dedup are silently degraded.
+    memoryEmbedder: getEmbedderStatus(),
     sessions,
   });
 });
@@ -5253,6 +5258,12 @@ for (const a of agentList) {
     logger.warn({ msg: 'memory.ensure_dirs_failed', agent: a.name, err: String(err) });
   }
 }
+
+// Load the embedding model once at boot. Fire-and-forget: the download
+// (first run only) must not delay listen(), but a failure gets ONE loud
+// `error` line here instead of a throttled `warn` per agent after the
+// first chat turn — and `GET /health` shows it as `memoryEmbedder`.
+void warmupEmbedder(config.memory.embedding);
 
 // Workspace dirs — server-global default plus every per-agent override.
 // Created idempotently so file_* tools never race a first-write mkdir.
