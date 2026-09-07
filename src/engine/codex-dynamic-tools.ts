@@ -48,6 +48,7 @@ export const DEFAULT_CODEX_DIRECT_TOOLS: readonly string[] = [
   'web_fetch',
   'time_now',
   'agent_ask',
+  'agent_ask_result',
   'spawn_subagent',
   'subagent_result',
   'somora_docs_list',

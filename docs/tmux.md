@@ -145,7 +145,7 @@ The kinds and what they detect:
 | `shell` (default) | nothing — pure content-stability | bash/zsh/fish, build scripts, REPLs, vim/htop, anything not in the list below |
 | `claude-code` | `Press up to edit queued messages` (queued), `esc to interrupt` + spinner words like `Tempering…` / `Whisking…` (running) | `claude` / `claude --dangerously-skip-permissions` |
 | `codex` | `esc to interrupt` (running) | `codex` CLI |
-| `opencode` | `QUEUED` label under a message submitted mid-turn (queued), `esc interrupt` footer cue (running) | `opencode` TUI ([sst/opencode](https://github.com/sst/opencode)) |
+| `opencode` | `QUEUED` label under a message submitted mid-turn (queued), `esc interrupt` footer cue and the `esc again to interrupt` confirmation after a first Escape (running — the child command is still alive until the second Escape) | `opencode` TUI ([sst/opencode](https://github.com/sst/opencode)) |
 
 Pick `shell` (or omit the field) when unsure — the TUI flags are
 additive and only help if the correct kind is declared. A wrong

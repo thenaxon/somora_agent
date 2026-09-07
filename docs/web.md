@@ -293,6 +293,14 @@ archived copy at the next idle window.
   a `model_fallback` event in the session history. A short notice
   appears once at the start of a fallback streak and once more when
   the primary model answers again; turns in between get the chip only.
+  When the fallback fails as well before producing anything, the turn's
+  error row names both models and both reasons (`Both models failed.
+  Primary … — fallback …`) instead of only the fallback's raw error.
+- **Peer origin caption**: a message another agent sent via `agent_ask`
+  renders with that agent's icon and colour; when it was sent from one
+  of the sender's non-main sessions, `<agent> · <session>` sits left of
+  the timestamp (e.g. `naxon · cerebrocraft`). Main-session traffic
+  shows no caption. The TUI shows the same as `↬ naxon/cerebrocraft`.
 - **Body**: pinned-to-bottom auto-scroll. Manually scroll up to read
   history; new messages won't yank you down. Scroll back to the
   bottom to re-pin.
@@ -524,7 +532,7 @@ The web client listens for these named events on `/chat/stream`:
 | Event | Payload | Meaning |
 |---|---|---|
 | `status` | `{msg}` | Connection state — initial `connected`, periodic keepalive |
-| `user_message` | `{text, ts, turnId?, from_agent?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system: 'sentinel'` marks a system-trigger inbound. |
+| `user_message` | `{text, ts, turnId?, from_agent?, from_session?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system: 'sentinel'` marks a system-trigger inbound. |
 | `turn_queued` | `{turnId, ahead}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. Drives the `⌛ queued` marker. Re-emitted for the waiters that move up after a dequeue. |
 | `turn_dequeued` | `{turnId}` | A queued message was taken back (↩ edit, from any client). The bubble is dropped. |
 | `turn_started` | `{turnId}` | The engine's own turn id — stamped on the assistant bubble so `assistant_media` / `turn_error` pair to this turn. |

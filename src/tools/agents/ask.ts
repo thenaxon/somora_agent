@@ -52,7 +52,7 @@ const AskInput = z
       .min(1)
       .describe(
         'Target agent name (e.g. "<agent-name>", "<other-agent>"). Must NOT be yourself — ' +
-          'use spawn_subagent for self-clone tasks. Talks to the target\'s main session by default.',
+          'use spawn_subagent for self-clone tasks.',
       ),
     message: z
       .string()

@@ -217,7 +217,7 @@ shapes but **not yet tested against a live account**.
    │
    ├─ Tool registry
    │    memory_*, dream_*, file_*, exec, tmux, web_*,
-   │    spawn_subagent, somora_docs_*, skill, skill_list,
+   │    spawn_subagent, agent_ask*, somora_docs_*, skill, skill_list,
    │    resource_*, sentinel, time_now, analyze_file
    │
    ├─ Sentinel (proactive triggers)
@@ -239,7 +239,7 @@ Four first-party clients, all hitting the same local server:
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
 | **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop: multi-window chat per agent, drag&drop attachments and screenshot capture, tmux app and shell terminal, Wiki Explorer with link graph, Media gallery, Sessions browser, Abilities matrix (which tools and skills each agent may use), queued messages you can take back, optional voice in (STT) and spoken replies (TTS). **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. Full feature list in [docs/web.md](docs/web.md). |
 | **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet: avatar row to switch agent, one chat surface per agent, voice input + optional spoken replies, photo/PDF attachments via the native picker. No tmux, file viewer, or multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
-| **A2A** | `agent_ask` tool | One agent asks another from inside a turn. |
+| **A2A** | `agent_ask` / `agent_ask_result` tools | One agent asks another from inside a turn; the target sees who asked and from which session, replies route back there, and a late answer is picked up by call id. |
 
 Web and mobile are Tailscale-only by design. The build pipeline ships
 `web/dist` and `web-mobile/dist` together; `somora update` picks up
@@ -394,10 +394,10 @@ grok-cli) — same tool surface regardless of model.
 | exec | `exec`, `process` | One-shot shell + background jobs, local or SSH. |
 | tmux | `tmux` | Persistent multi-turn terminal sessions for TUIs (claude/codex/vim/REPLs). |
 | web | `web_search`, `web_fetch` | Brave-API search + Mozilla-Readability fetch. |
-| agents | `spawn_subagent`, `subagent_*`, `agent_ask` | Sub-agent orchestration; ask another agent something. |
+| agents | `spawn_subagent`, `subagent_*`, `agent_ask`, `agent_ask_result` | Sub-agent orchestration; ask another agent something and fetch a late reply by call id. |
 | skills | `skill`, `skill_list` | Activate a Markdown how-to from `~/.somora/skills/`, or list all skills available to the agent fresh from disk. |
 | projects (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests linking a session to a real-world thing. Only registered when `projects.enabled: true`. |
-| sentinel | `sentinel` | Install + manage time-based triggers that wake agents on a schedule (single action-enum tool: create/list/get/pause/resume/delete/test/history). |
+| sentinel | `sentinel` | Install + manage time-based triggers that wake agents on a schedule (single action-enum tool: create/list/get/pause/resume/delete/test/history/purge_completed). |
 | image (optional) | `image_generate`, `image_models` | Text-to-image, and what each configured model accepts. Only registered when `imageGen.enabled: true`. |
 | media (optional) | `media_list` | Find images and video generated earlier, with an optional type filter. Registered when either media surface is configured. |
 | video (optional) | `video_generate`, `video_status`, `video_models` | Text-to-video. Starts a render and returns immediately — the agent is woken when it lands, never left waiting. Only registered when `videoGen.enabled: true`. |

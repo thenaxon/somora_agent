@@ -251,7 +251,7 @@ somora's tools reach Codex as dynamic tools. `codexCli.directTools`
 turn; everything else is deferred and found via Codex tool search (or
 `ALL_TOOLS` inside Code Mode on the GPT-5.6/GPT-6 models). The default
 is the everyday core: memory_*, file_*, exec, tmux, web_*, time_now,
-agent_ask, spawn_subagent, subagent_result, somora_docs_*.
+agent_ask, agent_ask_result, spawn_subagent, subagent_result, somora_docs_*.
 
 ### xAI via Grok Build CLI subscription (no API key)
 
