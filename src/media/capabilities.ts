@@ -62,6 +62,9 @@ interface ParamSpec {
   values?: unknown;
   /** Suggestions, not a restriction — see ModelCapabilities.recommended. */
   recommended?: unknown;
+  /** Extra vocabulary the field takes besides its type — for `size`,
+   *  named ratios (cerebro visual-adapter, 2026-09-07). */
+  also_accepts?: unknown;
   min?: unknown;
   max?: unknown;
 }
@@ -280,11 +283,13 @@ export async function resolveCapabilities(
     const hint = asStringArray(params?.[field]?.recommended);
     if (hint) recommended[field] = hint;
   }
+  const sizeAlsoAccepts = asStringArray(params?.size?.also_accepts);
   return {
     known: true,
     source: 'catalog',
     values,
     ...(Object.keys(recommended).length > 0 ? { recommended } : {}),
+    ...(sizeAlsoAccepts ? { sizeAlsoAccepts } : {}),
     // Only when the catalog published a parameter list. A catalog entry
     // without one tells us the model exists, not what it takes.
     ...(params ? { supported: Object.keys(params) } : {}),

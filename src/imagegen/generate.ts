@@ -17,6 +17,7 @@ import { Buffer } from 'node:buffer';
 import type { Config, ImageModel, Provider } from '../config/types.ts';
 import { resolveImageModel } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
+import { ratioMismatch, requestedRatio, translateAspectForOpenAiWire } from './aspect.ts';
 import { applyDefaults, resolveCapabilities, validateSpecs } from '../media/capabilities.ts';
 import { linkMedia, storeMedia } from '../media/store.ts';
 import { parseSizeSpec, readDimensions } from '../multimodal/dimensions.ts';
@@ -326,6 +327,36 @@ async function generateOnce(
   }
   if (problems.length > 0) throw new ImageGenError(problems.join('\n'), 'input');
 
+  // What the caller asked for stays `specs` (validation, warnings, the
+  // ratio check on the result); `wireSpecs` is what actually goes out.
+  // On the OpenAI wire `aspect_ratio` becomes `size` — the wire has no
+  // ratio field and routers drop it on /images/edits (aspect.ts).
+  const warnings: string[] = [];
+  let wireSpecs: ImageSpecs = specs;
+  if (entry.wire === 'openai') {
+    const t = translateAspectForOpenAiWire(specs, caps);
+    wireSpecs = t.specs;
+    if (t.translated) {
+      logger.info({
+        msg: 'imagegen.aspect_ratio_translated',
+        model: entry.name,
+        from: t.translated.from,
+        to: t.translated.to,
+        via: t.translated.via,
+        exact: t.translated.exact,
+      });
+      if (!t.translated.exact) {
+        warnings.push(
+          `${label} takes no aspect_ratio on this wire; ${t.translated.from} was sent as size ${t.translated.to}, ` +
+            `the closest shape available — not an exact ${t.translated.from}.`,
+        );
+      }
+    } else if (t.dropped) {
+      logger.warn({ msg: 'imagegen.aspect_ratio_dropped', model: entry.name, from: t.dropped.from, reason: t.dropped.reason });
+      warnings.push(`aspect_ratio '${t.dropped.from}' could not be expressed for ${label} and was not sent (${t.dropped.reason}).`);
+    }
+  }
+
   const timeoutMs = config.imageGen?.timeoutMs ?? 300_000;
   const base = provider.baseUrl.replace(/\/+$/, '');
   const headers: Record<string, string> = {};
@@ -346,7 +377,7 @@ async function generateOnce(
     const form = new FormData();
     form.append('model', entry.model);
     form.append('prompt', prompt);
-    for (const [key, value] of Object.entries(specs)) {
+    for (const [key, value] of Object.entries(wireSpecs)) {
       if (value !== undefined) form.append(key, String(value));
     }
     for (const [key, value] of Object.entries(input.extra ?? {})) {
@@ -367,7 +398,7 @@ async function generateOnce(
       model: entry.model,
       prompt,
     };
-    for (const [key, value] of Object.entries(specs)) {
+    for (const [key, value] of Object.entries(wireSpecs)) {
       if (value !== undefined) body[key] = value;
     }
     if (references.length > 0) {
@@ -389,6 +420,20 @@ async function generateOnce(
     }
     requestBody = JSON.stringify(body);
   }
+
+  // The fields as sent (no bytes) — the arbiter when a shape comes back
+  // wrong. The 2026-09-06 case took a day to pin on the router because
+  // nothing recorded what left somora.
+  logger.info({
+    msg: 'imagegen.request',
+    model: entry.name,
+    wire: entry.wire,
+    endpoint: useMultipart ? entry.editEndpoint : entry.endpoint,
+    multipart: useMultipart,
+    references: references.length,
+    specs: Object.fromEntries(Object.entries(wireSpecs).filter(([, v]) => v !== undefined)),
+    ...(input.extra && Object.keys(input.extra).length > 0 ? { extra: Object.keys(input.extra) } : {}),
+  });
 
   const startedAt = Date.now();
   let res: Response;
@@ -464,7 +509,6 @@ async function generateOnce(
 
   const costUsd = typeof payload.usage?.cost === 'number' ? payload.usage.cost : undefined;
 
-  const warnings: string[] = [];
   // Whatever the endpoint volunteered, relayed as-is.
   if (Array.isArray(payload.ignored_params)) {
     const names = payload.ignored_params.filter((x): x is string => typeof x === 'string');
@@ -483,7 +527,7 @@ async function generateOnce(
   // only renders squares all answer 200 with a perfectly good image of
   // the wrong shape. Only comparable when the request named pixels —
   // a tier like "2K" is a different vocabulary.
-  const requested = parseSizeSpec(specs.size);
+  const requested = parseSizeSpec(wireSpecs.size);
   const firstDims = readDimensions(decoded[0]!.bytes);
   if (requested && firstDims &&
       (requested.width !== firstDims.width || requested.height !== firstDims.height)) {
@@ -495,7 +539,26 @@ async function generateOnce(
     logger.info({
       msg: 'imagegen.size_substituted',
       model: entry.name,
-      requested: specs.size,
+      requested: wireSpecs.size,
+      actual: `${firstDims.width}x${firstDims.height}`,
+    });
+  }
+  // Same check for a SHAPE: a ratio was asked for (as aspect_ratio, or
+  // as a named size) and the pixels say otherwise. This is what would
+  // have stopped a whole series of "16:9" squares after the first one.
+  const wantedRatio = requestedRatio(specs) ?? requestedRatio(wireSpecs);
+  if (!requested && wantedRatio !== null && firstDims && ratioMismatch(wantedRatio, firstDims.width, firstDims.height)) {
+    const asked = specs.aspect_ratio ?? wireSpecs.size ?? specs.size;
+    warnings.push(
+      `Requested aspect ratio ${asked} but the image came back ${firstDims.width}x${firstDims.height} ` +
+        `(${(firstDims.width / firstDims.height).toFixed(2)}:1). The endpoint or a router in front of it ` +
+        `ignored the ratio — check the model's catalog and prefer an explicit size if this repeats.`,
+    );
+    logger.warn({
+      msg: 'imagegen.aspect_ratio_substituted',
+      model: entry.name,
+      requested: asked,
+      sent: Object.fromEntries(Object.entries(wireSpecs).filter(([, v]) => v !== undefined)),
       actual: `${firstDims.width}x${firstDims.height}`,
     });
   }
@@ -511,7 +574,7 @@ async function generateOnce(
       prompt,
       config,
       declaredMime: img.mime,
-      outputFormat: specs.output_format,
+      outputFormat: wireSpecs.output_format,
       now,
     });
 
@@ -540,7 +603,9 @@ async function generateOnce(
       modelName: entry.name,
       modelId: entry.model,
       provider: providerName,
-      specs: { ...specs },
+      // As SENT — the gallery must never show a spec the endpoint never
+      // saw as if it were the image's shape (width/height carry the truth).
+      specs: { ...wireSpecs },
       path: stored.path,
       filename: stored.filename,
       mime: stored.mime,

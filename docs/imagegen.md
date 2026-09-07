@@ -112,6 +112,24 @@ router such as LiteLLM in front of a local image backend. There is no
 autodetection: a wrong guess would only surface after the user already
 waited for a render, and whoever configures the model knows the answer.
 
+**On the `openai` wire, `aspect_ratio` is sent as `size`.** That wire
+has no ratio field, and a router in front of a backend that does
+understand ratios forwards the unknown key on `/images/generations` but
+rebuilds the multipart body for `/images/edits` from a fixed whitelist
+— so a "16:9" edit with reference images came back 1024×1024 without a
+word (measured 2026-09-07 against LiteLLM). somora therefore translates
+before sending: if the model's catalog says `size` also accepts named
+ratios (`supported_parameters.size.also_accepts`, as the cerebro
+visual-adapter publishes), the ratio string itself goes out as `size`
+and the backend renders it exactly; else the listed size closest to
+the ratio; else OpenAI's own sizes (1792×1024 / 1024×1792 — 7:4, not
+16:9, and the result carries a warning saying so). An explicit `size`
+always wins over `aspect_ratio`. The `openrouter` wire keeps
+`aspect_ratio`, which is native there. What actually left somora is
+logged per request (`imagegen.request`: endpoint, multipart or not,
+the spec fields — never the image bytes) and stored on the record as
+its `specs`.
+
 **Responses come in three shapes, and all three end as a local file.**
 An endpoint that does not want to serve files itself returns the image
 inline as `data[].b64_json`; OpenAI direct returns an absolute URL on a
@@ -151,7 +169,12 @@ dimensions, round to sizes they support, or only render squares — and
 they answer `200` with a perfectly good image of the wrong shape. somora
 reads the returned image's real pixel dimensions and compares them to
 what was asked for; a mismatch becomes a note on the result naming both
-numbers. This deliberately does not depend on the endpoint reporting it,
+numbers. The same check runs for the **shape**: when a ratio was asked
+for (as `aspect_ratio`, or as a named `size`) and the pixels are more
+than 1 % off, the result says which ratio was requested and what came
+back (`imagegen.aspect_ratio_substituted` in the log) — the case that
+would have stopped a series of accidental squares after the first
+one. This deliberately does not depend on the endpoint reporting it,
 because a strict OpenAI-shaped proxy in front of a backend drops any
 non-standard response field — measured against exactly such a router on
 2026-08-27. Dimensions are kept on the image record.

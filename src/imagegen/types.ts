@@ -89,6 +89,14 @@ export interface ModelCapabilities {
    * `size`, where an endpoint has a sweet spot but takes any WxH.
    */
   recommended?: Partial<Record<EnumerableSpecField, string[]>>;
+  /**
+   * Named ratios the endpoint accepts IN `size` ("16:9") — the cerebro
+   * visual-adapter publishes them as `supported_parameters.size.
+   * also_accepts` because `aspect_ratio` does not survive OpenAI-shaped
+   * routers on /images/edits. Drives the ratio → size translation on
+   * the OpenAI wire (src/imagegen/aspect.ts).
+   */
+  sizeAlsoAccepts?: string[];
   maxN?: number;
   maxReferences?: number;
   /**
