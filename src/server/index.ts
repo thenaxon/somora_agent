@@ -167,6 +167,8 @@ import {
 } from './session-queue.ts';
 import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
 import { getTurnOrigin } from './turn-origin.ts';
+import { getResolvedTeam, loadTeamFile, teamFilePath } from '../team/store.ts';
+import { renderTeamBlock, TEAM_BLOCK_SOFT_MAX_CHARS } from '../team/render.ts';
 import {
   completeAskCall,
   failAskCall,
@@ -1717,6 +1719,64 @@ app.get('/agents/:agent/system-prompt', async (c) => {
 });
 
 app.get('/agents', async (c) => c.json(await listAgents()));
+
+// ── Team (team.yaml → "# Your team" block) ─────────────────────────
+// Read side of the org chart. Phase 1 is read-only over HTTP; the file
+// is edited by hand (docs/team.md) — PUT /team arrives with the web
+// Team window (Phase 2).
+app.get('/team', async (c) => {
+  const load = await loadTeamFile();
+  const team = await getResolvedTeam();
+  return c.json({
+    enabled: team !== null,
+    path: teamFilePath(),
+    exists: load.exists,
+    valid: load.file !== null,
+    issues: load.issues,
+    ...(load.file ? { file: load.file } : {}),
+    ...(team
+      ? {
+          principal: team.principal,
+          rules: team.rules,
+          agents: team.agents,
+          order: team.order,
+          unlisted: team.unlisted,
+          missing: team.missing,
+          warnings: team.warnings,
+        }
+      : {}),
+  });
+});
+
+app.get('/team/preview/:agent', async (c) => {
+  const agent = c.req.param('agent');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const team = await getResolvedTeam();
+  if (!team) return c.json({ agent, enabled: false, block: '' });
+  const block = renderTeamBlock(team, agent) ?? '';
+  return c.json({ agent, enabled: true, block, chars: block.length, softMaxChars: TEAM_BLOCK_SOFT_MAX_CHARS });
+});
+
+app.get('/team/check', async (c) => {
+  const load = await loadTeamFile();
+  const team = await getResolvedTeam();
+  const blocks = team
+    ? team.order.map((name) => {
+        const chars = (renderTeamBlock(team, name) ?? '').length;
+        return { agent: name, chars, overSoftMax: chars > TEAM_BLOCK_SOFT_MAX_CHARS };
+      })
+    : [];
+  return c.json({
+    exists: load.exists,
+    valid: load.file !== null,
+    issues: load.issues,
+    warnings: team?.warnings ?? [],
+    unlisted: team?.unlisted ?? [],
+    missing: team?.missing ?? [],
+    blocks,
+    softMaxChars: TEAM_BLOCK_SOFT_MAX_CHARS,
+  });
+});
 
 app.get('/models', (c) => {
   const list: Array<{

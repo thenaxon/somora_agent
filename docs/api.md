@@ -601,6 +601,35 @@ clients that want to display "what the agent sees".
 
 ---
 
+## Team
+
+The org chart from `~/.somora/team.yaml` (see [team.md](team.md)).
+Read-only over HTTP in this phase; the file is edited by hand.
+
+### `GET /team`
+
+`{enabled, path, exists, valid, issues, file?, principal?, rules?,
+agents?, order?, unlisted?, missing?, warnings?}` — `file` is the parsed
+document as written; `agents` (keyed by name: `{name, title, reportsTo,
+involveFor, notFor, notes?, children, depth}`), `order` (pre-order
+walk), `unlisted` (agents on disk missing from the file) and `missing`
+(file entries without a directory) are the resolved view. `enabled:
+false` with `exists: false` means no file; with `valid: false` the
+`issues` say what is wrong (`{path, message}`), and the server keeps
+the last valid team in force.
+
+### `GET /team/preview/:agent`
+
+`{agent, enabled, block, chars, softMaxChars}` — the exact `# Your
+team` text that agent gets in its system prompt. `404` for an unknown
+agent.
+
+### `GET /team/check`
+
+`{exists, valid, issues, warnings, unlisted, missing, blocks: [{agent,
+chars, overSoftMax}], softMaxChars}` — what `somora team check` prints,
+minus the persona scan.
+
 ## Sessions
 
 A session is a single conversation thread inside an agent. Each

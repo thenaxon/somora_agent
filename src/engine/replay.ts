@@ -128,11 +128,11 @@ export function renderReplayPrefix(delta: ReplayDelta): string {
   if (!delta.summary && delta.pairs.length === 0) return '';
   const lines = [
     '<context-from-other-engines>',
-    'In dieser laufenden Session wurden zwischen deinem letzten Beitrag',
-    'und der jetzigen Frage Turns mit anderen Modellen gemacht. Hier',
-    'sind sie der Vollständigkeit halber. Sie sind Teil der Konversation,',
-    'als hättest du sie selbst gehört. Antworte _nicht_ darauf — nur',
-    'auf die aktuelle Frage am Ende.',
+    'In this session, turns with other models took place between your',
+    'last contribution and the current question. They follow for',
+    'completeness. They are part of the conversation, as if you had',
+    'heard them yourself. Do _not_ answer them — only the current',
+    'question at the end.',
     '',
   ];
   if (delta.summary) {

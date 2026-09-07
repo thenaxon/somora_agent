@@ -18,42 +18,42 @@ export function buildSummaryPrompt({
   priorSummary,
 }: BuildSummaryPromptInput): { system: string; user: string } {
   const system = [
-    'Du erstellst eine strukturierte Zusammenfassung eines laufenden',
-    'Konversations-Verlaufs für einen Agent-Harness. Die Zusammenfassung',
-    'ersetzt einen Teil des Verlaufs vor dem Modell, damit der Context',
-    'kürzer wird. Sie wird beim nächsten Turn als pseudo-system-message',
-    'eingespielt — bleib daher faktentreu, neutral, kompakt.',
+    'You write a structured summary of an ongoing conversation for an',
+    'agent harness. The summary replaces part of the history in front of',
+    'the model so the context gets shorter. It is fed back on the next',
+    'turn as a pseudo system message — stay factual, neutral, compact.',
+    'Write it in the language the conversation is held in.',
     '',
-    'Format: exakt fünf Markdown-Sektionen mit folgenden Headings.',
-    'Bevorzuge wörtliche Zitate aus dem Verlauf gegenüber Paraphrase.',
-    'Nichts erfinden, das nicht im Verlauf steht.',
+    'Format: exactly five Markdown sections with the headings below.',
+    'Prefer verbatim quotes from the history over paraphrase.',
+    'Invent nothing that is not in the history.',
     '',
     '## Goal',
-    'Worum geht es in der Session insgesamt? Ein Satz.',
+    'What is the session about as a whole? One sentence.',
     '',
     '## Constraints',
-    'Harte Vorgaben, Vorlieben, Ausschlüsse, Fakten über den User',
-    '(Lieblingszahl, Bevorzugte Sprache, Keine Emojis, etc.). Bullets.',
+    'Hard requirements, preferences, exclusions, facts about the user',
+    '(favourite number, preferred language, no emojis, etc.). Bullets.',
     '',
     '## Decisions',
-    'Architektur-/Plan-/Inhalts-Entscheidungen die gefällt wurden.',
-    'Bullets. Mit Begründung wenn der Verlauf eine nennt.',
+    'Architecture / plan / content decisions that were made. Bullets,',
+    'with the reason when the history gives one.',
     '',
     '## Recent Context',
-    'Was zuletzt im Verlauf passiert ist — die letzten 2–3 wichtigsten',
-    'Punkte. Erlaubt: kurze direkte Zitate.',
+    'What happened last in the history — the 2–3 most important recent',
+    'points. Short direct quotes are welcome.',
     '',
     '## Open Questions',
-    'Was war zum Zeitpunkt der Compaction unklar oder unbeantwortet?',
-    'Bullets, leer wenn nichts offen ist.',
+    'What was unclear or unanswered at the time of compaction? Bullets;',
+    'empty if nothing is open.',
   ].join('\n');
 
   const userParts: string[] = [];
   if (priorSummary) {
     userParts.push(
       '<prior-summary>',
-      'Frühere Zusammenfassung, die in dieser neuen Compaction subsumiert',
-      'werden soll (alle relevanten Punkte daraus übernehmen):',
+      'Earlier summary that this compaction must subsume (carry every',
+      'relevant point over):',
       '',
       priorSummary,
       '</prior-summary>',
@@ -74,7 +74,7 @@ export function buildSummaryPrompt({
   }
   userParts.push('</conversation-to-summarize>');
   userParts.push('');
-  userParts.push('Erstelle die fünf Sektionen jetzt.');
+  userParts.push('Write the five sections now.');
 
   return { system, user: userParts.join('\n') };
 }

@@ -81,6 +81,10 @@ Beyond chat and memory, briefly:
 - **Projects (optional).** Bind a session to a real-world thing — a
   renovation, a research thread, a codebase — via a manifest of pointers
   the agent sees in its prompt. See [docs/projects.md](docs/projects.md).
+- **Team.** One `team.yaml` says who reports to whom and who to involve
+  for what; every agent gets the org chart rendered into its prompt from
+  its own seat. No more hand-copied "who is who" in each persona. See
+  [docs/team.md](docs/team.md).
 - **Sentinel.** Time-based triggers (`at` / `every` / `daily` / `cron`)
   that wake an agent on a schedule to do work into its own chat session.
   See [docs/sentinel.md](docs/sentinel.md).
@@ -429,6 +433,7 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/mobile.md](docs/mobile.md) — mobile PWA install + usage, scope, troubleshooting
 - [docs/api.md](docs/api.md) — HTTP+SSE+WS API reference for building custom clients
 - [docs/tmux.md](docs/tmux.md) — long-lived terminal sessions for TUIs
+- [docs/team.md](docs/team.md) — the org chart in `team.yaml`, rendered into every agent's prompt
 - [docs/sentinel.md](docs/sentinel.md) — proactive time-based triggers
 - [docs/voice.md](docs/voice.md) — STT + TTS, per-session auto-play toggle, /voice/turn endpoint
 - [docs/imagegen.md](docs/imagegen.md) — text-to-image, the Media window, per-agent review stance

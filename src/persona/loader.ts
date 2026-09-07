@@ -333,8 +333,10 @@ export async function loadPersona(name: string): Promise<Persona | null> {
 
   const sections: string[] = [];
   if (soulMd?.content) sections.push(soulMd.content);
-  if (agentMd.content) sections.push(`# Verhaltensregeln\n\n${agentMd.content}`);
-  if (userMd?.content) sections.push(`# Über den User\n\n${userMd.content}`);
+  // Headings are somora's, hence English (the persona text itself is
+  // whatever language the operator writes) — 2026-09-07, was German.
+  if (agentMd.content) sections.push(`# Behaviour\n\n${agentMd.content}`);
+  if (userMd?.content) sections.push(`# About the user\n\n${userMd.content}`);
 
   return {
     name,

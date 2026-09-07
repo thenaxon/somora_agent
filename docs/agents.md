@@ -27,6 +27,12 @@ The memory directory is the agent's **inbox** — short-term, volatile.
 Deep periodically promotes content to the shared wiki and deletes the
 source. See [memory.md](memory.md) and [wiki.md](wiki.md).
 
+What the agent knows about its **colleagues** — who reports to whom,
+who to involve for what — does not live in the persona. It is rendered
+into the prompt from `~/.somora/team.yaml`, one file for the whole
+install; see [team.md](team.md). Keep `AGENTS.md` to the agent's own
+behaviour and lane.
+
 ## Creating a new agent
 
 The minimum is an agent directory with an `AGENTS.md`. Everything else is

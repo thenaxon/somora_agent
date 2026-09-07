@@ -192,6 +192,13 @@ On first start somora creates `~/.somora/`:
     └── server-YYYY-MM-DD.log
 ```
 
+### Optional: tell the agents who is who
+
+With more than one agent, write `~/.somora/team.yaml` (start with
+`somora team init --principal "<your name>"`) so every agent gets the
+org chart and "who to involve for what" in its prompt. See
+[team.md](team.md).
+
 ## 6. Configuring providers
 
 Edit `~/.somora/config.yaml`. The shipped default has just one provider

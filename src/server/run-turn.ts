@@ -44,6 +44,7 @@ import {
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
+import { buildTeamBlock } from '../team/store.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
@@ -948,8 +949,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       deps.config.agentLoop.toolUsageReminder && availableTools.length > 0
         ? `\n\n---\n\n${TOOL_USAGE_REMINDER}`
         : '';
+    // Team block (team.yaml → "# Your team", src/team) sits right after
+    // the persona: first who I am, then who the others are, then tools.
+    // Changes only when team.yaml or the agent roster changes, so it
+    // keeps the static → volatile cache hierarchy intact.
+    const teamText = await buildTeamBlock(agent);
+    const teamBlock = teamText ? `\n\n---\n\n${teamText}` : '';
     const systemPromptForTurn =
-      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${toolsBlock}${wikiBlock}${skillsBlock}${projectBlock}`;
+      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${teamBlock}${toolsBlock}${wikiBlock}${skillsBlock}${projectBlock}`;
 
     logger.info({
       msg: 'turn.engine_init',
