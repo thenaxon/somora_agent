@@ -138,9 +138,10 @@ without it.
 - **App tiles**: non-agent surfaces — `tmux`
   (attach to an existing tmux session), `terminal` (fresh shell in
   the somora workspace), `sessions` (cross-agent session browser
-  — see next section), and `abilities` (per-agent visibility matrix
+  — see next section), `abilities` (per-agent visibility matrix
   for tools and skills plus external MCP server health — see
-  [mcp.md](mcp.md) and [skills.md](skills.md)). The `wiki`
+  [mcp.md](mcp.md) and [skills.md](skills.md)), and `team` (the org
+  chart editor for `team.yaml` — see [team.md](team.md)). The `wiki`
   tile carries a violet **Lucid badge** when completed lucid runs are
   waiting for review — lucid is platform-wide wiki cleanup, so its
   review backlog lives here rather than on any single agent. The

@@ -160,9 +160,10 @@ agent, title, reports-to, the **active** switch, "involve for" and "not
 for" as chips (Enter adds one), notes, and *remove* (the agent stays on
 disk, its reports move up one level). Agents on disk that are not in
 the chart are listed underneath with an *add* button. The bottom pane
-previews the exact block any agent would see — rendered on the server
-from the unsaved draft, with the character count against the soft
-limit. **Save** validates like the loader, writes the file atomically
+previews the exact block the selected agent would see — it follows the
+card you click, and a selector lets you look at any other agent —
+rendered on the server from the unsaved draft, with the character count
+against the soft limit. **Save** validates like the loader, writes the file atomically
 and keeps the previous five versions as `team.yaml.bak-<timestamp>`;
 **Discard** returns to the file on disk. Agents pick the change up on
 their next turn. Without a file the window offers to create one from
