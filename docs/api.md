@@ -983,6 +983,23 @@ Body fields: same as `/chat/send` (`agent`, `session`, `text`,
   caller turn that blocks on this request. Used by `agent_ask` and
   `spawn_subagent` internally to register the wait in the server's
   deadlock guard; set both or neither.
+- `create_session` (optional, default false) — when `session` is a
+  named slug that does not exist on the target yet, create it (with
+  the standard timestamped id) and deliver the message into it. Only
+  slugs: `main` always exists, exact ids and `sub-*` names answer
+  `400`. The target's first message is prefixed with a bracketed note
+  that the session was just created (and on which model).
+- `create_model` (optional, with `create_session`) — alias or
+  `provider/id` pinned on the session **if this call creates it**
+  (same effect as `PUT …/sessions/:session/model`). An unknown model
+  is `400 {error, known_models}` and nothing is created. When the
+  session already exists the model is ignored and the response
+  carries `session_note` saying so.
+
+The success response is the turn result plus `session_id` (the
+resolved id), `session_created: true` and `session_model` when this
+call created the session, or `session_note` when `create_model` was
+ignored.
 
 An unknown `session` answers `404` with the target's existing,
 non-archived session slugs, so a caller that guessed wrong can correct

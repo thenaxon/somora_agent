@@ -71,6 +71,24 @@ const AskInput = z
           'otherwise "main". Pass it explicitly to talk to a specific project session; an unknown ' +
           'slug returns the target\'s existing sessions.',
       ),
+    create_session: z
+      .boolean()
+      .optional()
+      .describe(
+        'Create `session` on the target if it does not exist yet (named project slugs only — ' +
+          'not main, ids or sub-* sessions). Off by default so a typo stays an error listing the ' +
+          'existing sessions. Use it when the user asks for a project session that the target ' +
+          'may not have yet.',
+      ),
+    model: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Only with create_session: model (alias or provider/id) pinned on the NEW session, e.g. ' +
+          '"fable" or "astra". Ignored with a note when the session already exists — changing ' +
+          'the model of a running session is the user\'s call.',
+      ),
     timeout_ms: z
       .number()
       .int()
@@ -96,6 +114,12 @@ interface AskDoneResult {
   /** True when `session` was omitted and the reply-back default picked
    *  the asker's source session instead of main. */
   session_inferred?: boolean;
+  /** True when this call created the target session (create_session). */
+  session_created?: boolean;
+  /** provider/modelId pinned on a session this call created. */
+  session_model?: string;
+  /** e.g. "session already existed — model ignored". */
+  session_note?: string;
   response: string;
   ms: number;
   usage?: {
@@ -132,7 +156,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'Session: when you are replying to an agent that wrote to you (their message carries ' +
     '"[Message from agent X, session Y]") and omit `session`, the message goes back to that ' +
     'session Y; otherwise to the target\'s main session. Pass `session` explicitly for a specific ' +
-    'project session. Default timeout 5 min, cap 30 min — slow local ' +
+    'project session; add create_session:true (optionally with model:"<alias>") when the user ' +
+    'wants the target in a project session it may not have yet — the session is created, the ' +
+    'model pinned on it, and the target told. Default timeout 5 min, cap 30 min — slow local ' +
     'models routinely need minutes. On timeout: returns state:"pending" (NOT an error); the call ' +
     'may still complete on the target side — fetch or wait for it with agent_ask_result ' +
     '(call_id), never by re-sending the message. ' +
@@ -153,6 +179,18 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         description:
           'Target session slug or id. Default: the session your asker wrote from when the target ' +
           'is that asker (A2A reply-back / your spawning parent), otherwise "main".',
+      },
+      create_session: {
+        type: 'boolean',
+        description:
+          'Create `session` on the target if missing (named project slugs only). Default false — ' +
+          'an unknown slug is then an error listing the existing sessions.',
+      },
+      model: {
+        type: 'string',
+        description:
+          'Only with create_session: model alias or provider/id pinned on the NEW session. Ignored ' +
+          'with a note when the session already exists.',
       },
       timeout_ms: {
         type: 'integer',
@@ -185,6 +223,16 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
       );
     }
 
+    if (input.model && !input.create_session) {
+      throw new Error(
+        `agent_ask: 'model' only applies together with create_session:true (it pins the model on a ` +
+          `session this call creates). To change the model of an existing session, ask the user — ` +
+          `that is done with /model or PUT /agents/<agent>/sessions/<session>/model.`,
+      );
+    }
+    if (input.create_session && !input.session) {
+      throw new Error(`agent_ask: create_session:true needs an explicit 'session' slug to create.`);
+    }
     const callId = randomUUID();
     const timeoutMs = Math.min(input.timeout_ms ?? longTaskDefaultMs(), longTaskMaxMs());
 
@@ -250,6 +298,8 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           // from_session lets the target address a follow-up to the
           // session this question came from (header + reply-back default).
           ...(ctx.session ? { from_session: ctx.session } : {}),
+          ...(input.create_session ? { create_session: true } : {}),
+          ...(input.create_session && input.model ? { create_model: input.model } : {}),
           // waiter_* register this turn in the server's A2A wait-graph
           // (circular-wait detection, src/server/ask-wait-graph.ts).
           // Missing ctx.session (shouldn't happen — MCP children get
@@ -286,6 +336,19 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
               `you; just finish your current reply with the answer.`,
           );
         }
+        if (res.status === 400 && body.includes('"known_models"')) {
+          let known: string[] = [];
+          try {
+            const parsed = JSON.parse(body) as { known_models?: string[] };
+            if (Array.isArray(parsed.known_models)) known = parsed.known_models;
+          } catch {
+            /* keep known empty */
+          }
+          throw new Error(
+            `agent_ask: model '${input.model}' is not configured — session '${targetSession}' was NOT ` +
+              `created. Known models: ${known.join(', ')}. Fix the alias and call again.`,
+          );
+        }
         if (res.status === 404 && body.includes('"known_sessions"')) {
           let known: string[] = [];
           try {
@@ -310,7 +373,21 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
       const data = (await res.json()) as {
         finalText?: string;
         usage?: AskDoneResult['usage'];
+        session_id?: string;
+        session_created?: boolean;
+        session_model?: string;
+        session_note?: string;
       };
+      if (data.session_created) {
+        logger.info({
+          msg: 'agent_ask.session_created',
+          from: ctx.agent,
+          to: targetAgent,
+          session: data.session_id ?? targetSession,
+          model: data.session_model ?? null,
+          call_id: callId,
+        });
+      }
 
       logger.info({
         msg: 'agent_ask.done',
@@ -328,6 +405,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         target_agent: targetAgent,
         target_session: targetSession,
         ...(sessionInferred ? { session_inferred: true } : {}),
+        ...(data.session_created ? { session_created: true } : {}),
+        ...(data.session_model ? { session_model: data.session_model } : {}),
+        ...(data.session_note ? { session_note: data.session_note } : {}),
         response: data.finalText ?? '',
         ms: Date.now() - start,
         ...(data.usage ? { usage: data.usage } : {}),

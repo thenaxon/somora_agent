@@ -23,7 +23,9 @@ import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig, primeFr
 import { diffConfigSections, restartRequiredFor, RESTART_REQUIRED_SECTIONS } from '../config/reload.ts';
 import { spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
 import { stat as statFile } from 'node:fs/promises';
-import { workerChain, type Config, resolveAnyRef, type ThinkingLevel, SamplingSchema } from '../config/types.ts';
+import { workerChain, type Config, resolveAnyRef, type ThinkingLevel, SamplingSchema,
+  listAllModels,
+} from '../config/types.ts';
 import { mergeSampling, SAMPLING_KEYS } from '../engine/sampling.ts';
 import { storeAttachment } from '../attachments/store.ts';
 import { generateImage, ImageGenError } from '../imagegen/generate.ts';
@@ -4262,13 +4264,20 @@ app.post('/chat/send-sync', async (c) => {
     subagent_depth?: number;
     model?: string;
     max_rounds?: number;
+    /** Create `session` (a slug) on the target when it does not exist
+     *  yet — opt-in, so a typo in a slug stays a 404 with the list of
+     *  existing sessions instead of a silent new session. */
+    create_session?: boolean;
+    /** Model (alias or provider/id) pinned on the session IF this call
+     *  creates it. Ignored — with a note — when the session exists. */
+    create_model?: string;
   };
   const agent = body.agent ?? (await defaultAgentFallback());
   if (!agent) {
     return c.json({ error: 'no agents configured' }, 400);
   }
   const sessionRef = body.session ?? 'main';
-  const text = body.text ?? '';
+  let text = body.text ?? '';
   const fromAgent =
     typeof body.from_agent === 'string' && body.from_agent.length > 0 ? body.from_agent : undefined;
   const fromSession =
@@ -4304,7 +4313,62 @@ app.post('/chat/send-sync', async (c) => {
   if (!(await loadPersona(agent))) {
     return c.json({ error: `agent '${agent}' not found` }, 404);
   }
-  const session = await resolveSessionId(agent, sessionRef);
+  let session = await resolveSessionId(agent, sessionRef);
+  let sessionCreated = false;
+  let sessionModel: string | undefined;
+  let sessionNote: string | undefined;
+  const createModel =
+    typeof body.create_model === 'string' && body.create_model.length > 0 ? body.create_model : undefined;
+  if (!session && body.create_session === true) {
+    // Opt-in creation of a named project session (2026-09-07: "take
+    // Hans and Spielberg in their projektA sessions — create them if
+    // missing, Hans on fable, Spielberg on astra"). Only slugs: main
+    // always exists, exact ids and sub-* names are not project sessions.
+    const isExactId = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/.test(sessionRef);
+    if (isExactId || sessionRef.startsWith('sub-')) {
+      return c.json(
+        { error: `session '${sessionRef}' does not exist and create_session only creates named project slugs (not ids or sub-* sessions)` },
+        400,
+      );
+    }
+    let resolvedModel: ReturnType<typeof resolveAnyRef> = null;
+    if (createModel) {
+      resolvedModel = resolveAnyRef(config, createModel);
+      if (!resolvedModel) {
+        const known = listAllModels(config).map((m) => m.model.alias ?? `${m.providerName}/${m.modelId}`);
+        return c.json(
+          { error: `model '${createModel}' not found in config.yaml — session NOT created`, known_models: known },
+          400,
+        );
+      }
+    }
+    try {
+      session = await createSession(agent, sessionRef);
+    } catch (err) {
+      return c.json({ error: `cannot create session '${sessionRef}': ${(err as Error).message}` }, 400);
+    }
+    sessionCreated = true;
+    if (createModel && resolvedModel) {
+      await sessionMetaStore.update(agent, session, (current) => ({ ...current, modelOverride: createModel }));
+      sessionModel = `${resolvedModel.providerName}/${resolvedModel.modelId}`;
+    }
+    logger.info({
+      msg: 'a2a.session_created',
+      agent,
+      session,
+      slug: sessionRef,
+      by: fromAgent ?? null,
+      model: sessionModel ?? null,
+    });
+    // Tell the target what just happened — this is its first message
+    // in a session it did not know it had.
+    text =
+      `[Your session '${sessionRef}' was just created by ${fromAgent ?? 'the caller'} for this conversation` +
+      (sessionModel ? `; it runs on model ${sessionModel}` : '') +
+      `.]\n\n${text}`;
+  } else if (session && createModel) {
+    sessionNote = `session '${sessionRef}' already existed — create_model '${createModel}' ignored; switch models with PUT /agents/${agent}/sessions/${session}/model`;
+  }
   if (!session) {
     // Name the sessions that DO exist so an agent that guessed a slug
     // can correct it instead of retreating to main (2026-09-06 report).
@@ -4395,7 +4459,13 @@ app.post('/chat/send-sync', async (c) => {
         deps: chatTurnDeps,
       });
       if (agentAskCallId) completeAskCall(agentAskCallId, result);
-      return c.json(result);
+      return c.json({
+        ...result,
+        session_id: session,
+        ...(sessionCreated ? { session_created: true } : {}),
+        ...(sessionModel ? { session_model: sessionModel } : {}),
+        ...(sessionNote ? { session_note: sessionNote } : {}),
+      });
     } finally {
       release();
     }
