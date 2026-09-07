@@ -215,6 +215,26 @@ tools report:
 `usedBytes` = `totalBytes − availableBytes`. Read-only, cheap (no disk
 I/O on Linux, a sub-millisecond `vm_stat` spawn on macOS).
 
+### `GET /tui-config` · `GET /mobile-config`
+
+Display preferences for thin clients, read from config.yaml by the
+server so no client parses the file itself. `/tui-config` returns
+`{show: {memory, tools}, verbose: {tools, memory, system, thinking}}`
+(the `tui:` block, see [display.md](display.md)); `/mobile-config`
+returns `{show: {tools, memory}}` (the `mobile:` block). A custom
+client is free to use either as its own defaults.
+
+### `GET /env`
+
+The environment overrides the running server resolved at boot, one
+entry per variable: `{SOMORA_HOME, SOMORA_PORT, SOMORA_LOG_LEVEL,
+SOMORA_CLAUDE_BIN, SOMORA_CODEX_BIN, SOMORA_CODEX_TOOL_TIMEOUT_SEC,
+SOMORA_COMPACTION_TRIGGER_RATIO, SOMORA_COMPACTION_SAFETY_PAIRS,
+SOMORA_COMPACTION_MODEL}`, each `{value, isDefault, note?}` — `value`
+is what is in force, `isDefault` says the variable was unset or
+invalid, `note` explains a fallback (e.g. "unset → uses config.yaml
+server.port"). Diagnostic; see [setup.md](setup.md).
+
 ### `GET /tools`
 
 List every tool registered on the server (the same tools agents see).
@@ -343,6 +363,80 @@ failed.
 
 Forgets the record. **The file on disk is kept** — returns
 `{ok, path, fileKept: true}`.
+
+## Media
+
+One gallery over everything somora generated — images and videos.
+The `/images/*` routes above are the image-only view; these are the
+medium-agnostic ones the web Media window and the mobile PWA use.
+
+### `GET /media`
+
+Query: `kind` (`image` | `video`; omit for both), `agent`, `query`
+(prompt substring), `limit` (default 60, max 200), `offset`.
+
+Returns `{total, offset, items: [MediaRecord], totalBytes}`. A
+`MediaRecord` is `{id, kind, createdAt, prompt, modelName, modelId,
+provider, specs, path, filename, mime, bytes, width?, height?,
+durationSec?, thumbPath?, thumbMime?, linkedTo, costUsd?, agent?,
+session?, references?, batchId, batchIndex}` — `kind` is absent on
+records written before video existed and then means `image`;
+`durationSec` and the thumbnail fields are video-only.
+
+### `GET /media/:id`
+
+One `MediaRecord`, `404` when unknown.
+
+### `GET /media/:id/file`
+
+The bytes with the record's MIME, `Content-Disposition: inline`
+(`?download=1` forces `attachment`), immutable cache headers, and
+**HTTP Range support** (`206` / `416`) so a video player can seek
+without re-downloading. `410` when the record exists but the file
+left the disk.
+
+### `GET /media/:id/thumb`
+
+A video's still image (`image/webp` unless the record says otherwise),
+same headers as `/file`. `404` when the provider served no thumbnail.
+
+### `DELETE /media/:id`
+
+Removes the record. Returns `{ok: true}` or `404`.
+
+## Video
+
+Video generation runs as **jobs**: `POST` starts one and returns at
+once, the render continues in the main server, the finished file
+becomes a `MediaRecord`, and an agent that started the job is woken
+with a `from_system: 'job'` turn. Enabled by `videoGen.enabled` in
+config.yaml; see [videogen.md](videogen.md).
+
+### `GET /video/status`
+
+`{enabled: false, reason}` when video is off or no model is
+configured. Otherwise `{enabled: true, active, limit, models:
+[{name, label, model, provider, wire}], jobs: [VideoJob]}` — `active`
+and `limit` are the concurrent-job slot (`videoGen.maxConcurrent`,
+default 4). `?agent=<name>` limits `jobs` to that agent's. A `VideoJob`
+is `{id, providerJobId, modelName, provider, prompt, specs, status,
+progress?, queuePosition?, error?, createdAt, updatedAt, mediaId?,
+path?, agent?, session?, references?}` with `status` one of `queued`,
+`in_progress`, `completed`, `failed`; `mediaId` appears once the file
+is stored and is what `/media/:id` takes.
+
+### `POST /video/generate`
+
+Body: `prompt` (required), optional `model` (a configured handle),
+the specs `seconds`, `size`, `aspect_ratio`, `audio`, `quality`,
+`seed`, optional `reference_images` (**base64**, as on
+`/images/generate`), and optional `agent` + `session` naming who
+should be woken when the job finishes.
+
+Returns `{job: VideoJob}` immediately. `400` for a bad request, `429`
+when all job slots are busy, `503` when the model is configured but
+not available right now, `502` when the provider failed. Poll
+`GET /video/status` or watch the session for the completion turn.
 
 ## Files
 
@@ -691,8 +785,27 @@ curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/thinking \
 curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/thinking
 ```
 
-Levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`. See
-[thinking.md](thinking.md) for what each maps to per engine.
+Levels: `off`, `low`, `medium`, `high` — anything else is a `400`.
+Per-model `reasoning.levels` in config.yaml decides which wire word
+(`minimal`, `xhigh`, `max`, …) each level becomes; see
+[thinking.md](thinking.md).
+
+`GET` returns `{agent, session, effective, override, personaDefault,
+source, modelSupportsReasoning, wire}`: `effective` is the level in
+force (session override > persona default > `null` = engine default),
+`source` says which of those won (`session-override` /
+`persona-default` / `engine-default`), `modelSupportsReasoning` tells a
+client whether the setting is live or dormant on the current model,
+and `wire` is the value actually sent when it differs from the level
+(e.g. `high` → `xhigh`). `PUT` answers `{agent, session, level}`,
+`DELETE` answers `{agent, session, cleared: true}`.
+
+The `GET …/model` payload is `{agent, session, provider, modelId,
+alias, engine, contextWindow, source, override, personaDefault}` with
+`source` `session-override` or `persona-default`; `PUT` answers
+`{agent, session, model, resolved: "<provider>/<modelId>"}` and `400`
+names an unknown model; `DELETE` answers `{agent, session, cleared:
+true}`.
 
 ### `GET /models`
 
@@ -709,6 +822,32 @@ model-set endpoints.
 
 ---
 
+
+## External MCP servers
+
+Status and control of the MCP hub (`mcp.servers` in config.yaml, see
+[mcp.md](mcp.md)). All three answer `503` when no external server is
+configured.
+
+### `GET /mcp/status`
+
+`{enabled: true, servers: {<name>: {state, toolCount, transport?,
+lastError?, lastConnectedAt?, consecutiveFailures}}}` — `state` is
+`pending`, `connected`, `failed`, `needs-auth` or `disabled`.
+
+### `POST /mcp/servers/:name/reconnect`
+
+Tears the connection down and reconnects immediately, resetting the
+backoff. `{ok: true, status}` with the server's new status entry;
+`400` when the name is unknown or the server is disabled in config.
+
+### `POST /mcp/call`
+
+Body: `server`, `tool` (the upstream tool name), `args` (object),
+optional `timeoutMs`. Calls the tool through the hub and returns
+`{isError, text, images: [{data, mimeType}]}`. `502` when the upstream
+call failed. This is the loopback path somora's own MCP children use;
+it bypasses per-agent tool gating, so treat it as an operator surface.
 
 ## Config reload + restart
 
@@ -740,6 +879,16 @@ curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/sampling \
 
 curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/sampling
 ```
+
+Keys: `temperature`, `top_p`, `top_k`, `min_p`, `frequency_penalty`,
+`presence_penalty`, `repetition_penalty`, `seed`, `stop`; an unknown key
+or an out-of-range value is a `400` naming the field. `GET` returns
+`{agent, session, effective, override, personaDefault, modelDefault,
+source, engineSupportsSampling}` (`source` is `session-override`,
+`persona-default`, `model-default` or `engine-default`). `PUT` merges
+the body into the override and returns `{agent, session, override}`
+(`null` once the last key is dropped); `DELETE` returns `{agent,
+session, cleared: true}`.
 
 ## Chat
 
@@ -856,6 +1005,53 @@ deadlocking:
 
 Response on success: the full turn result (`finalText`, `usage`,
 `model`, `ms`, …).
+
+### Sub-agent tasks — `/spawn-*`
+
+The HTTP twins of the `spawn_subagent` / `subagent_*` tools. Agents
+running in an MCP child (claude-cli, codex-cli) reach the task store
+this way; a custom client can use them to run a sealed background
+task in a fresh session and collect the result.
+
+#### `POST /spawn-async`
+
+Body: `agent` and `session` (required — a slug that does not exist is
+created with the standard timestamped id; an exact id that is gone is
+a `404`), `text` (the task), optional `from_agent`, `parent_agent` +
+`parent_session` (who to report back to; default the caller),
+`subagent_depth`, `model` (override), `max_rounds`, `attention`
+(`false` suppresses the `[subagent attention]` wake of the parent).
+
+Returns `202 {task_id}` at once; the turn runs in the background under
+the target session's lock. `429` when the per-agent concurrent spawn
+cap is full.
+
+#### `GET /spawn-status?task_id=…`
+
+`{task_id, state, parent_agent, parent_session, target_agent,
+target_session, started_at, finished_at?, error?}` — `state` is
+`running`, `done`, `failed` or `cancelled`. `404` for an unknown id.
+
+#### `GET /spawn-result?task_id=…`
+
+Same fields plus `result` (the full turn result: `finalText`,
+`outcome`, `tool_calls`, `files_written`, `media`, `usage`, …) once
+terminal. `wait_until_done=1` + `timeout_ms` block server-side; with
+`waiter_agent` / `waiter_session` the wait joins the deadlock guard
+and a cycle answers `409 {circular_wait: true, chain}`.
+
+#### `GET /spawn-list?parent_agent=…`
+
+`{tasks: [entry]}` — every task this agent spawned since server start
+(the store is in-memory).
+
+#### `POST /spawn-cancel`
+
+Body: `task_id`, `requesting_agent` (must be the spawning agent —
+otherwise `403`), optional `reason`. Aborts the running turn and
+cascades to child spawns; returns `{cancelled: [task_ids],
+skipped: [{task_id, state}]}` (tasks that were already terminal are
+skipped). Disk artifacts stay.
 
 ### `GET /a2a/ask-result`
 
@@ -977,7 +1173,11 @@ Event types:
   `agent` phase:'end' also carries `fallback` and reports the ACTUAL
   `provider`/`model`. Persisted to history as the same kind, so a
   reload keeps the marker on that turn.
-- `memory_inject` — `{hits, block}` — memory recall for this turn
+- `memory` — `{count, topScore?, refs, fullText}` — the memory recall
+  injected into this turn: number of hits, best fused score, the
+  `source/slug` refs, and the full `<memory-context>` block text.
+  Sent after `agent` phase:'start'; `count` is `0` with empty `refs`
+  when recall found nothing.
 - `status` — `{msg}` — connection events, error notices
 - `heartbeat` — current ms timestamp, every `sse.heartbeatMs` (20 s). The
   server watches these writes: one that fails or stays pending for
@@ -1836,7 +2036,15 @@ so `/chat/history` returns it on reload and Play-buttons survive.
 ### `GET /web/`
 
 Serves the bundled web UI from `web/dist/`. Same-origin as the API,
-so the web app's `fetch('/agents')` works without CORS.
+so the web app's `fetch('/agents')` works without CORS. `GET /web`
+(no slash) redirects here.
+
+### `GET /mobile/`
+
+Serves the mobile PWA from `web-mobile/dist/` the same way; `GET
+/mobile` redirects to it. Both bundles are static files — a custom
+client does not need them, every function they use is in the routes
+above.
 
 ---
 
