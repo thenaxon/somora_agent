@@ -204,6 +204,21 @@ providers:
         sampling: { temperature: 1.0, top_p: 0.95 }
         reasoning:
           levels: { medium: high, high: max }
+      - id: glm-5.3-flash                 # vLLM TP=4, native FP8; behind LiteLLM use the route name
+        alias: glm
+        contextWindow: 700000             # = --max-model-len (model-native 1M; 262k in the reference recipe)
+        capabilities: [text, image, reasoning]
+        sampling: { temperature: 1.0, top_p: 0.95 }   # = the model's generation_config.json (vLLM applies it when nothing is sent)
+        maxTokens: 16384
+        reasoning:
+          levels: { "off": low, low: low, medium: high, high: max }   # vocabulary is ONLY low/high/max; anything else = max
+      - id: deepseek-v4-flash-vision-exp  # SGLang TP=2, same backbone as deepseek-v4-flash + ViT; experimental
+        alias: deep4vision
+        contextWindow: 700000             # = --context-length (KV pool 859k tokens at mem-fraction 0.90)
+        capabilities: [text, image, reasoning]
+        sampling: { temperature: 1.0, top_p: 0.95 }   # as deepseek-v4-flash
+        reasoning:
+          levels: { medium: high, high: max }         # as deepseek-v4-flash
       - id: qwen3.8-flash-next            # vLLM, FP8
         alias: qwen38next
         contextWindow: 524288             # = --max-model-len (YaRN)
@@ -241,6 +256,8 @@ providers:
 | model family | server | contextWindow | sampling | reasoning | notes | verified |
 |---|---|---|---|---|---|---|
 | **DeepSeek V4 Flash** (284B MoE, 13B active) | SGLang, TP=4 | the server's `--context-length` (700000 on a two-GPU profile; 1M only with the whole box) | 1.0 / 0.95 (DeepSeek's agentic/coding recommendation) | vocabulary `low`, `high`, `max`; unknown values are ignored, not rejected → map `high: max`. `off`: omitting the parameter and sending `none` both give 0 reasoning tokens (measured 2026-09-05), so no `off` mapping is needed; `low` reasons via `reasoning_content` (84 tokens on a one-line prompt). On longer prompts without the parameter the reasoning can land inline in the text (`…</think>`); somora splits that into the thinking channel. | no vision; streams `reasoning_content`, full thinking text in the chat; tool calls parsed server-side | 2026-09-05 |
+| **GLM-5.3-Flash** (321B MoE, 18B active, KDA + sparse-MLA hybrid) | vLLM, TP=4, native FP8, MTP-4, fp8 KV | `--max-model-len` 700000 (KV pool 1.16M tokens with `--kv-cache-memory` 7.5 GiB; needle found at 427k/555k/651k/695k) | 1.0 / 0.95 (`generation_config.json`; vLLM `--generation-config auto` applies it server-side when the request omits sampling) | vocabulary **`low`, `high`, `max` only**; **any other value — including `none` and `medium` — silently becomes `max`** (measured: `none` → 2169 reasoning chars, `low` → 0). Top-level `reasoning_effort` and `chat_template_kwargs.reasoning_effort` are equivalent. `max` makes the model write whole solutions inside `reasoning_content` and hit output caps (31.9k reasoning / 100 output tokens, `finish_reason: length` in an OpenCode run) → map `high: max` only for deliberate use, `medium: high`, `off: low` | native vision (1036 image tokens for 1024×768, correct description; declines to hallucinate unreadable text); tool calls via `glm47` parser, reasoning via `glm45`; ~95 tok/s prose, 200–210 tok/s code (MTP), prefill ~45k tok/s; prefix cache reuses >600k tokens (647k cached → 2 s); 4 GPUs = exclusive profile | 2026-09-06 (backend probes: PONG, tool calls, vision, long-context needles; somora engine matrix pending) |
+| **DeepSeek-V4-Flash-Vision-Exp** (284B MoE, 13B active + 0.5B ViT) | SGLang, TP=2 (preview image sgl-project/sglang#37253 + sm_120 patches) | `--context-length` 700000 (pool 859k at mem-fraction 0.90; 0.85 gives only 203k) | 1.0 / 0.95 | same vocabulary and behaviour as DeepSeek V4 Flash (`low`/`high`/`max`, unknown ignored) | vision verified on synthetic + photo (208–356 image tokens); text/agent quality ≈ Flash-0731 (tool call `deepseekv4` parser verified), 81 tok/s single-stream TP=2; on sm_120 image spans use causal windows (local patch) — small-text OCR is shaky, screenshots/charts fine; experimental per DeepSeek | 2026-09-06 (backend probes; somora engine matrix pending) |
 | **Qwen3.8-Flash-Next** FP8 (176B / 6B active) | vLLM, TP=4 | `--max-model-len`, 524288 with YaRN 2.0 | 0.6 / 0.95 / 20 / min_p 0 (Qwen thinking-mode defaults) | knows no `high` → **400** unless mapped; `none low medium xhigh` accepted; **unset = model default = thinks** (61 reasoning tokens on a one-line prompt, `low` 55, `xhigh` 60, `none` 0, measured 2026-09-05) → map `off: none`, `high: xhigh` | vision verified; `maxTokens: 16384` because reasoning otherwise eats short answers; parsers `qwen3` + `qwen3_xml` | 2026-09-05 |
 | **Qwen3.5-397B-A17B** AWQ INT4 | vLLM, TP=4 | 262144 (`max_model_len`) | same as above | as above, but `none` **unverified** on this backend — keep `off: low` until probed | vision verified; hermes tool parser | 2026-09-03 |
 | **Qwen3.8-27B** FP8, dense | vLLM, 1 GPU | 262144 | same as above | as above, `none` **unverified** — keep `off: low` until probed | vision; `qwen3_coder` tool parser verified | 2026-09-03 |
@@ -258,6 +275,15 @@ providers:
   volume and somora's retry-on-400 never fires. Fix it in the router,
   then verify with `/thinking high` vs `/thinking low` and the 🧠
   count ([thinking.md](thinking.md)).
+- **Reasoning vocabularies differ per family and unknown values are
+  not always ignored.** GLM-5.x treats anything but `low`/`high`/`max`
+  as `max` — the `none` that somora sends Qwen for `off` is full
+  reasoning there. Always map `off` explicitly to the family's lowest
+  level and probe with a one-line prompt (reasoning chars must be 0).
+- **vLLM applies the model's `generation_config.json`** when a request
+  sends no sampling params (`--generation-config auto`, the default) —
+  the `sampling:` block in somora is then a *documented* value, not the
+  only place the default lives. SGLang does not do this.
 - Backends that stream reasoning but report no `reasoning_tokens` get
   an **estimated** 🧠 count with a tilde.
 - `analyze_file` (vision worker) and the dream workers use this engine
