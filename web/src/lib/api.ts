@@ -406,7 +406,79 @@ export interface GenerateImageResponse {
   costUsd: number | null;
 }
 
+// ── Team (team.yaml → "# Your team" block) ────────────────────────────
+export interface TeamAgentDto {
+  reports_to: string;
+  title?: string;
+  active?: boolean;
+  involve_for?: string[];
+  not_for?: string[];
+  notes?: string;
+}
+export interface TeamFileDto {
+  version: 1;
+  principal: { name: string; title?: string; about?: string };
+  rules?: string[];
+  agents: Record<string, TeamAgentDto>;
+}
+export interface TeamIssueDto {
+  path: string;
+  message: string;
+}
+export interface TeamResponse {
+  enabled: boolean;
+  path: string;
+  exists: boolean;
+  valid: boolean;
+  issues: TeamIssueDto[];
+  file?: TeamFileDto;
+  order?: string[];
+  unlisted?: Array<{ name: string; title: string }>;
+  missing?: string[];
+  warnings?: string[];
+  /** PUT only — the previous file, kept as a backup. */
+  backup?: string | null;
+}
+export interface TeamPreviewResponse {
+  agent: string;
+  valid: boolean;
+  issues: TeamIssueDto[];
+  warnings?: string[];
+  block: string;
+  chars?: number;
+  softMaxChars?: number;
+}
+
 export const api = {
+  teamGet: () => getJson<TeamResponse>('/team'),
+  teamPreview: (file: TeamFileDto, agent: string) =>
+    getJson<TeamPreviewResponse>('/team/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file, agent }),
+    }),
+  teamInit: async (principal?: string): Promise<TeamResponse> =>
+    getJson<TeamResponse>('/team/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(principal ? { principal } : {}),
+    }),
+  /** Replace the whole file. A 400 carries `issues`; they are attached to
+   *  the thrown error so the editor can show them per field. */
+  teamSave: async (file: TeamFileDto): Promise<TeamResponse> => {
+    const res = await fetch('/team', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(file),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string; issues?: TeamIssueDto[] };
+      const err = new Error(body.error ?? `PUT /team ${res.status}`) as Error & { issues?: TeamIssueDto[] };
+      err.issues = body.issues ?? [];
+      throw err;
+    }
+    return (await res.json()) as TeamResponse;
+  },
   version: () => getJson<{ version: string }>('/version'),
   configStatus: () =>
     getJson<{

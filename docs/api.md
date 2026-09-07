@@ -630,6 +630,32 @@ agent.
 chars, overSoftMax}], softMaxChars}` — what `somora team check` prints,
 minus the persona scan.
 
+### `PUT /team`
+
+Body: the whole document as JSON (`{version: 1, principal, rules?,
+agents}` — the same shape `GET /team` returns under `file`). The server
+validates exactly like the loader; `400 {error, issues: [{path,
+message}]}` writes nothing. On success the previous file is kept as
+`team.yaml.bak-<timestamp>` (last five), the new one is written
+atomically, the read cache is dropped, and the response is `{ok: true,
+backup, …}` plus everything `GET /team` returns. Agents see the change
+on their next turn.
+
+### `POST /team/init`
+
+Body: `{principal?: string}`. Writes a first document with every agent
+on disk reporting to the principal (titles from the frontmatter, the
+default rules spelled out). `409` when a file already exists — this
+never overwrites. Returns the same shape as `GET /team`.
+
+### `POST /team/preview`
+
+Body: `{file, agent}` — a draft document and the agent to render for.
+Returns `{agent, valid, issues, warnings, block, chars, softMaxChars}`;
+an invalid draft comes back with `valid: false` and its `issues`, and
+nothing is written. This is what the web Team window's live preview
+uses.
+
 ## Sessions
 
 A session is a single conversation thread inside an agent. Each

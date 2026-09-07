@@ -34,6 +34,9 @@ export const TeamAgentSchema = z
     reports_to: z.string().trim().min(1),
     /** Display title; defaults to `role` from AGENTS.md frontmatter. */
     title: z.string().trim().min(1).max(80).optional(),
+    /** false = temporarily out of the team: stays in the chart (greyed),
+     *  colleagues are told not to involve it. Default true. */
+    active: z.boolean().optional(),
     /** Short trigger phrases: "library docs and framework comparisons". */
     involve_for: z.array(Phrase).max(20).optional(),
     /** Short phrases naming what NOT to bring to this agent. */
@@ -79,6 +82,7 @@ export interface ResolvedTeamAgent {
   involveFor: string[];
   notFor: string[];
   notes?: string;
+  active: boolean;
   /** Direct reports, in file order. */
   children: string[];
   /** 1 = reports to the principal. */

@@ -84,6 +84,7 @@ export function resolveTeam(file: TeamFile, onDisk: TeamAgentInfo[]): ResolvedTe
       involveFor: a.involve_for ?? [],
       notFor: a.not_for ?? [],
       ...(a.notes ? { notes: a.notes } : {}),
+      active: a.active !== false,
       children: [],
       depth: 0,
     };

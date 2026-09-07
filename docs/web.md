@@ -610,6 +610,16 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   thread is restarted with the session history carried over (a
   `tools changed` marker appears in the chat), because Codex keeps a
   thread's tool set for its lifetime.
+- **Team window** — the org chart editor for `~/.somora/team.yaml`
+  ([team.md](team.md)): drag an agent card onto its new superior (or
+  onto you), edit title, "involve for" / "not for" chips, notes and the
+  active switch per agent, your own name/title/about and the global
+  rules; the preview pane shows the exact `# Your team` block any agent
+  would get — rendered from the unsaved draft, so you see the effect
+  before saving. Save validates on the server, writes atomically and
+  keeps the last five versions as backups; agents pick the change up on
+  their next turn. With no file yet the window offers to create one from
+  the agents on disk.
 - **Drag & drop / paste / paperclip attachments.**
   Per-turn user-attachments end-to-end through all three engines:
   claude-cli inlines as native ImageBlock / DocumentBlock;

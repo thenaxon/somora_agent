@@ -13,9 +13,8 @@ system prompt, from that agent's own seat: its superior, its peers, its
 reports, and a one-line "involve for … / not for …" per colleague. Add an
 agent to the file and everyone knows about it on their next turn.
 
-- **Operator-owned.** You edit the file (by hand, or in the web Team
-  window once it ships). Agents read the block; they have no tool to
-  change it.
+- **Operator-owned.** You edit the file — by hand, or in the web Team
+  window. Agents read the block; they have no tool to change it.
 - **Opt-in.** No `team.yaml` → no block, prompts unchanged.
 - **Hot.** Save the file; the next turn of every agent uses it. No
   restart, no `config.yaml` reload.
@@ -82,6 +81,7 @@ Field by field:
 | `rules` | no | Rendered verbatim under `Rules:`. When the key is absent the four defaults above apply; when present, exactly your list. |
 | `agents.<name>.reports_to` | yes | `principal` or another agent listed in the file. Must form a tree. |
 | `agents.<name>.title` | no | Falls back to `role` in the agent's `AGENTS.md` frontmatter, then to its `description`. |
+| `agents.<name>.active` | no | `false` takes the agent temporarily out of the team: it stays in the chart marked `(currently inactive)`, drops out of every colleague's "Who to involve" list with a `do not involve` line, and gets a note in its own block. Default `true`. |
 | `agents.<name>.involve_for` | no | Up to 20 short phrases, rendered as one line. |
 | `agents.<name>.not_for` | no | Up to 20 short phrases, rendered as `Not for: …`. |
 | `agents.<name>.notes` | no | Free text after the phrases, max 600 characters. |
@@ -149,9 +149,30 @@ contain tree drawings or team headings. Compare `somora team show
 Keep personal facts about the human in `USER.md`; the team file only
 carries the principal's name, title and a short `about`.
 
+## The Team window (web)
+
+`/web` → the **team** tile. Left, the org chart: you at the top, agent
+cards below with their icon and colour; drag a card onto another card
+(or onto your own) to change who it reports to — dropping an agent under
+one of its own reports is refused. Right, the form for the selected
+node: for you, name, title, about and the rules (one per line); for an
+agent, title, reports-to, the **active** switch, "involve for" and "not
+for" as chips (Enter adds one), notes, and *remove* (the agent stays on
+disk, its reports move up one level). Agents on disk that are not in
+the chart are listed underneath with an *add* button. The bottom pane
+previews the exact block any agent would see — rendered on the server
+from the unsaved draft, with the character count against the soft
+limit. **Save** validates like the loader, writes the file atomically
+and keeps the previous five versions as `team.yaml.bak-<timestamp>`;
+**Discard** returns to the file on disk. Agents pick the change up on
+their next turn. Without a file the window offers to create one from
+the agents on disk — the same as `somora team init`.
+
 ## API
 
-Read-only in this phase — see [api.md](api.md): `GET /team` (the
-file, the resolved tree and warnings), `GET /team/preview/:agent` (the
-rendered block), `GET /team/check` (validation, block sizes). Writing
-through the API and the web Team window come with the next phase.
+See [api.md](api.md): `GET /team` (the file, the resolved tree and
+warnings), `PUT /team` (replace the file, validated, atomic, backed
+up), `POST /team/init` (bootstrap from the agents on disk), `POST
+/team/preview` (render a draft for one agent), `GET
+/team/preview/:agent` (render the saved file), `GET /team/check`
+(validation and block sizes).

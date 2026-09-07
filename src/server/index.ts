@@ -169,6 +169,8 @@ import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
 import { getTurnOrigin } from './turn-origin.ts';
 import { getResolvedTeam, loadTeamFile, teamFilePath } from '../team/store.ts';
 import { renderTeamBlock, TEAM_BLOCK_SOFT_MAX_CHARS } from '../team/render.ts';
+import { parseTeamFile, resolveTeam } from '../team/resolve.ts';
+import { initialTeamFile, writeTeamFile } from '../team/write.ts';
 import {
   completeAskCall,
   failAskCall,
@@ -1724,10 +1726,12 @@ app.get('/agents', async (c) => c.json(await listAgents()));
 // Read side of the org chart. Phase 1 is read-only over HTTP; the file
 // is edited by hand (docs/team.md) — PUT /team arrives with the web
 // Team window (Phase 2).
-app.get('/team', async (c) => {
+app.get('/team', async (c) => c.json(await teamResponse()));
+
+async function teamResponse(): Promise<Record<string, unknown>> {
   const load = await loadTeamFile();
   const team = await getResolvedTeam();
-  return c.json({
+  return {
     enabled: team !== null,
     path: teamFilePath(),
     exists: load.exists,
@@ -1745,7 +1749,47 @@ app.get('/team', async (c) => {
           warnings: team.warnings,
         }
       : {}),
-  });
+  };
+}
+
+// Write side (web Team window). The whole document is replaced; the
+// server validates exactly like the loader, writes atomically and keeps
+// the last five versions as team.yaml.bak-<ts>.
+app.put('/team', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return c.json({ error: 'JSON body required' }, 400);
+  const parsed = parseTeamFile(body);
+  if (!parsed.file) return c.json({ error: 'team.yaml would be invalid — nothing written', issues: parsed.issues }, 400);
+  const { backup } = await writeTeamFile(parsed.file);
+  logger.info({ msg: 'team.saved', agents: Object.keys(parsed.file.agents).length, backup });
+  return c.json({ ok: true, backup, ...(await teamResponse()) });
+});
+
+// Bootstrap without a terminal: a first document from the agents on
+// disk. 409 when a file exists — this never overwrites.
+app.post('/team/init', async (c) => {
+  const load = await loadTeamFile();
+  if (load.exists) return c.json({ error: 'team.yaml already exists' }, 409);
+  const body = (await c.req.json().catch(() => ({}))) as { principal?: string };
+  const name = typeof body.principal === 'string' && body.principal.trim() ? body.principal.trim() : 'Principal';
+  const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description }));
+  if (agents.length === 0) return c.json({ error: 'no agents on disk' }, 400);
+  await writeTeamFile(initialTeamFile(agents, name));
+  logger.info({ msg: 'team.initialised', agents: agents.length, principal: name });
+  return c.json({ ok: true, ...(await teamResponse()) });
+});
+
+// Render a DRAFT (unsaved) document for one agent — the editor's live
+// preview. Validation errors come back as issues, nothing is written.
+app.post('/team/preview', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { file?: unknown; agent?: string } | null;
+  if (!body || typeof body.agent !== 'string') return c.json({ error: 'body {file, agent} required' }, 400);
+  const parsed = parseTeamFile(body.file ?? {});
+  if (!parsed.file) return c.json({ agent: body.agent, valid: false, issues: parsed.issues, block: '' });
+  const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description }));
+  const team = resolveTeam(parsed.file, agents);
+  const block = renderTeamBlock(team, body.agent) ?? '';
+  return c.json({ agent: body.agent, valid: true, issues: [], warnings: team.warnings, block, chars: block.length, softMaxChars: TEAM_BLOCK_SOFT_MAX_CHARS });
 });
 
 app.get('/team/preview/:agent', async (c) => {

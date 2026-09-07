@@ -26,7 +26,11 @@ function chartLines(team: ResolvedTeam, self: string): string[] {
     kids.forEach((name, i) => {
       const last = i === kids.length - 1;
       const a = team.agents[name]!;
-      lines.push(`${prefix}${last ? '└── ' : '├── '}${name} — ${a.title}${name === self ? '  ← you' : ''}`);
+      lines.push(
+        `${prefix}${last ? '└── ' : '├── '}${name} — ${a.title}` +
+          (a.active ? '' : ' (currently inactive)') +
+          (name === self ? '  ← you' : ''),
+      );
       walk(name, `${prefix}${last ? '    ' : '│   '}`);
     });
   };
@@ -69,9 +73,16 @@ export function renderTeamBlock(team: ResolvedTeam, self: string): string | null
           `inside your lane. The principal (${principal}) has the final say over everyone.`,
       );
     }
+    if (!me.active) {
+      out.push(
+        'You are currently marked inactive in the team — colleagues were told not to involve you. ' +
+          'You were addressed anyway, so work normally, but do not pull colleagues in unless asked.',
+      );
+    }
+    const tag = (n: string): string => (team.agents[n]!.active ? n : `${n} (inactive)`);
     const peers = team.order.filter((n) => n !== self && team.agents[n]!.reportsTo === me.reportsTo);
-    out.push(`Your peers (same superior): ${peers.length > 0 ? peers.join(', ') : 'none'}.`);
-    out.push(`Your reports: ${me.children.length > 0 ? me.children.join(', ') : 'none'}.`);
+    out.push(`Your peers (same superior): ${peers.length > 0 ? peers.map(tag).join(', ') : 'none'}.`);
+    out.push(`Your reports: ${me.children.length > 0 ? me.children.map(tag).join(', ') : 'none'}.`);
   } else {
     out.push(
       `You are not placed in the org chart yet — the operator maintains it in team.yaml. ` +
@@ -80,7 +91,8 @@ export function renderTeamBlock(team: ResolvedTeam, self: string): string | null
   }
   out.push('');
 
-  const colleagues = team.order.filter((n) => n !== self);
+  const colleagues = team.order.filter((n) => n !== self && team.agents[n]!.active);
+  const inactive = team.order.filter((n) => n !== self && !team.agents[n]!.active);
   if (colleagues.length > 0) {
     out.push('Who to involve — via agent_ask; their reply comes back to your session:');
     const plain: string[] = [];
@@ -90,8 +102,11 @@ export function renderTeamBlock(team: ResolvedTeam, self: string): string | null
       else plain.push(`${n} (${team.agents[n]!.title})`);
     }
     if (plain.length > 0) out.push(`- ${plain.join(', ')}.`);
-    out.push('');
   }
+  if (inactive.length > 0) {
+    out.push(`Currently inactive — do not involve: ${inactive.join(', ')}. Go one level up instead.`);
+  }
+  if (colleagues.length > 0 || inactive.length > 0) out.push('');
 
   if (team.rules.length > 0) {
     out.push('Rules:');

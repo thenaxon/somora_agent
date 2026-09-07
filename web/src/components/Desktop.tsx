@@ -6,7 +6,7 @@
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { useMemo, useState } from 'react';
-import { Bell, BookOpen, ImagePlus, MessagesSquare, Square, Terminal, Wrench } from 'lucide-react';
+import { Bell, BookOpen, ImagePlus, MessagesSquare, Square, Terminal, Users, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
 import { AgentContextMenu } from './AgentContextMenu';
@@ -21,6 +21,7 @@ import { SessionsWindow } from './SessionsWindow';
 import { SentinelWindow } from './SentinelWindow';
 import { WikiWindow } from './WikiWindow';
 import { ToolsWindow } from './ToolsWindow';
+import { TeamWindow } from './TeamWindow';
 import { MediaWindow } from './MediaWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
@@ -105,6 +106,7 @@ export function Desktop() {
       if (w.kind === 'wiki') return ['wiki'];
       if (w.kind === 'tools') return ['tools'];
       if (w.kind === 'images') return ['images'];
+      if (w.kind === 'team') return ['team'];
       return [];
     }),
   );
@@ -187,6 +189,17 @@ export function Desktop() {
           icon={<Wrench size={26} />}
           active={activeApps.has('tools')}
           onClick={() => wm.openTools()}
+        />
+      ),
+    },
+    {
+      id: 'app:team',
+      node: (
+        <AppTile
+          label="team"
+          icon={<Users size={26} />}
+          active={activeApps.has('team')}
+          onClick={() => wm.openTeam()}
         />
       ),
     },
@@ -453,6 +466,22 @@ export function Desktop() {
                 onResize={wm.resize}
               >
                 <ToolsWindow />
+              </Window>
+            );
+          }
+          if (win.kind === 'team') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <TeamWindow />
               </Window>
             );
           }

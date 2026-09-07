@@ -219,6 +219,28 @@ export function useWindowManager() {
    *  The window KIND stays `images`: it is persisted in the saved
    *  desktop layout, and renaming it would drop everyone's window
    *  position on the next release for a label nobody sees. */
+  /** Open or focus the Team window (org chart editor). Singleton. */
+  const openTeam = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'team');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(980, 660, zCounter + 1);
+    const id = `team-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'team',
+      title: 'Team',
+      icon: '👥',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   const openImages = useCallback(() => {
     const existing = windows.find((w) => w.kind === 'images');
     if (existing) {
@@ -520,6 +542,7 @@ export function useWindowManager() {
     openSentinelList,
     openWiki,
     openTools,
+    openTeam,
     openImages,
     setWikiSlug,
     openPinNote,

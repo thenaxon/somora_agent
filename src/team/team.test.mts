@@ -107,6 +107,22 @@ const team = resolveTeam(parseTeamFile(good).file!, onDisk);
   check('unlisted self gets a placement note', ghost.includes('You are not placed in the org chart yet'));
   check('unlisted self marked', ghost.includes('ghost (Unassigned) ← you'));
 
+  const inactiveFile = parseTeamFile({
+    ...good,
+    agents: { ...good.agents, lisa: { reports_to: 'naxon', involve_for: ['research'], active: false } },
+  }).file!;
+  const tInactive = resolveTeam(inactiveFile, onDisk);
+  const hansI = renderTeamBlock(tInactive, 'hans')!;
+  check('inactive marked in the chart', hansI.includes('├── lisa — Researcher (currently inactive)'));
+  check('inactive excluded from involve list', !hansI.includes('- lisa (Researcher)'));
+  check('inactive named in the do-not-involve line', hansI.includes('Currently inactive — do not involve: lisa.'));
+  check('inactive peer tagged', hansI.includes('Your peers (same superior): lisa (inactive), spielberg.'));
+  const lisaI = renderTeamBlock(tInactive, 'lisa')!;
+  check('inactive self gets the notice', lisaI.includes('You are currently marked inactive in the team'));
+  const naxonI = renderTeamBlock(tInactive, 'naxon')!;
+  check('inactive report tagged', naxonI.includes('Your reports: hans, lisa (inactive), spielberg.'));
+  check('active default true', team.agents.hans!.active === true);
+
   const empty = resolveTeam(parseTeamFile({ version: 1, principal: { name: 'X' }, agents: {} }).file!, []);
   check('empty team renders nothing', renderTeamBlock(empty, 'anyone') === null);
 }

@@ -13,7 +13,7 @@ import { listAgents } from '../persona/loader.ts';
 import { renderTeamBlock, TEAM_BLOCK_SOFT_MAX_CHARS } from '../team/render.ts';
 import { resolveTeam } from '../team/resolve.ts';
 import { loadTeamFile, teamFilePath } from '../team/store.ts';
-import { DEFAULT_TEAM_RULES } from '../team/types.ts';
+import { initialTeamFile, teamFileToYaml } from '../team/write.ts';
 
 function usage(): string {
   return `Usage:
@@ -22,8 +22,6 @@ function usage(): string {
   somora team show <agent>                 print the "# Your team" block that agent sees
 `;
 }
-
-const yamlStr = (s: string): string => JSON.stringify(s);
 
 async function cmdInit(args: string[]): Promise<number> {
   const path = teamFilePath();
@@ -39,31 +37,11 @@ async function cmdInit(args: string[]): Promise<number> {
     process.stderr.write('no agents found — create an agent first (somora init writes a starter agent).\n');
     return 1;
   }
-  const lines: string[] = [
-    '# somora team — who is who, who reports to whom, who to involve for what.',
-    '# Rendered into every agent\'s system prompt as "# Your team" (see docs/team.md).',
-    '# Edit by hand or in the web Team window; agents read it, they never write it.',
-    'version: 1',
-    '',
-    'principal:                     # the human at the root',
-    `  name: ${yamlStr(principal)}`,
-    '  title: Principal',
-    '  about: ""                    # 1–3 sentences, optional',
-    '',
-    'rules:                         # rendered verbatim; delete a line you do not want',
-    ...DEFAULT_TEAM_RULES.map((r) => `  - ${yamlStr(r)}`),
-    '',
-    'agents:                        # every entry must be an agent directory under ~/.somora/agents/',
-  ];
-  for (const a of agents) {
-    lines.push(`  ${a.name}:`);
-    lines.push('    reports_to: principal    # or another agent name');
-    if (a.role) lines.push(`    title: ${yamlStr(a.role)}`);
-    lines.push('    involve_for: []          # short trigger phrases, e.g. "library docs", "framework comparisons"');
-    lines.push('    not_for: []              # what NOT to bring here, e.g. "media"');
-  }
-  lines.push('');
-  writeFileSync(path, lines.join('\n'), 'utf8');
+  const file = initialTeamFile(
+    agents.map((a) => ({ name: a.name, role: a.role, description: a.description })),
+    principal,
+  );
+  writeFileSync(path, teamFileToYaml(file), 'utf8');
   process.stdout.write(`wrote ${path} with ${agents.length} agent(s), all reporting to the principal.\n`);
   process.stdout.write('Next: set reports_to / involve_for / not_for, then `somora team check` and `somora team show <agent>`.\n');
   return 0;
