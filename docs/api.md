@@ -595,9 +595,53 @@ Source: `~/.somora/agents/<name>/AGENTS.md` frontmatter.
 
 ### `GET /agents/:agent/system-prompt`
 
-Returns the assembled system prompt for the agent (persona +
-behavior + injected blocks). Mostly useful for debugging or for
-clients that want to display "what the agent sees".
+Returns the persona part of the system prompt (`SOUL.md`, `AGENTS.md`,
+`USER.md` with somora's headings) — `{agent, systemPrompt}`. For the
+complete prompt as a turn sends it, use `/prompt-preview` below.
+
+### `GET /agents/:agent/prompt-preview`
+
+The system prompt exactly as the next turn on `?session=<slug|id>`
+(default `main`) would send it, without running a turn or touching the
+session:
+
+```json
+{ "agent": "hans", "session": "main", "text": "…", "chars": 16210,
+  "parts": [{"key": "self", "label": "Self-pointer", "chars": 900},
+            {"key": "persona", "label": "Persona (SOUL.md · AGENTS.md · USER.md)", "chars": 9340},
+            {"key": "team", "label": "Team block", "chars": 2652}, …],
+  "tools": {"count": 41, "schemaChars": 26510, "names": ["exec", …]},
+  "budgets": {"teamBlockChars": 3000, "personaFileChars": 8000, "personaTotalChars": 14000},
+  "notIncluded": ["tool schemas (…)", "memory recall injected per turn", …] }
+```
+
+`parts` concatenate to `text` (separators included), in prompt order:
+self-pointer, persona, team, tool reminder, wiki overview, skills,
+project. `tools` counts the tools this agent can see after gating and
+the size of their JSON schemas — they travel on the API tool channel,
+not in `text`, and engines load them direct or deferred. Read-only: a
+session whose wiki overview was never snapshotted is rendered without
+persisting the snapshot.
+
+### `GET /agents/:agent/persona`
+
+`{agent, files: [{name, exists, content, hash, chars, bytes, mtime,
+readOnly}], budgets, totals: {personaChars}}` — `AGENTS.md`, `SOUL.md`,
+`USER.md` (editable) and `agent.yaml` (`readOnly: true`). `hash` is the
+optimistic lock for the write below; `budgets` is
+`config.promptBudgets`.
+
+### `PUT /agents/:agent/persona/:file`
+
+Body: `{content, baseHash}`; `file` is one of `AGENTS.md`, `SOUL.md`,
+`USER.md`. Writes only when `baseHash` equals the hash of the file
+currently on disk — agents self-edit these files, so a stale save must
+not overwrite theirs: `409 {error, currentHash, currentContent}` tells
+the client to reload. `AGENTS.md` must keep a parseable frontmatter
+whose `name` (when set) matches the agent directory and a non-empty
+body (`400` otherwise). The previous version is kept as
+`<file>.bak-<timestamp>` (last five); the write is atomic. Returns
+`{ok: true, hash, backup, chars}`. The next turn uses the new text.
 
 ---
 

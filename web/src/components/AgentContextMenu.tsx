@@ -13,7 +13,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, Clock, List, MessageSquare, Plus } from 'lucide-react';
+import { AlertTriangle, Clock, List, MessageSquare, Plus, Settings } from 'lucide-react';
 import { api, type AgentInfo, type SessionSummary } from '../lib/api';
 import { suggestSlug, validateSessionSlug } from '../lib/session-slug';
 
@@ -31,9 +31,11 @@ interface Props {
   onOpenSession: (agent: AgentInfo, sessionId: string, label: string) => void;
   /** Open the cross-agent Sessions tool. */
   onOpenSessionsTool: () => void;
+  /** Open the Agent window (persona files, prompt budget). */
+  onOpenConfig: (agent: AgentInfo) => void;
 }
 
-export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSessionsTool }: Props) {
+export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSessionsTool, onOpenConfig }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [pos, setPos] = useState({ left: x, top: y });
@@ -273,6 +275,19 @@ export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSe
         testId="agent-menu-all-sessions"
         onClick={() => {
           onOpenSessionsTool();
+          onClose();
+        }}
+      />
+
+      <div style={divider} />
+
+      <MenuItem
+        icon={<Settings size={13} />}
+        label="Configure…"
+        hint="persona · prompt"
+        testId="agent-menu-configure"
+        onClick={() => {
+          onOpenConfig(agent);
           onClose();
         }}
       />

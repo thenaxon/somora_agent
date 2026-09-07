@@ -449,7 +449,61 @@ export interface TeamPreviewResponse {
   softMaxChars?: number;
 }
 
+// ── Persona files + prompt preview (Agent window) ─────────────────────
+export interface PersonaFileDto {
+  name: 'AGENTS.md' | 'SOUL.md' | 'USER.md' | 'agent.yaml';
+  exists: boolean;
+  content: string;
+  hash: string;
+  chars: number;
+  bytes: number;
+  mtime: string | null;
+  readOnly: boolean;
+}
+export interface PromptBudgets {
+  teamBlockChars: number;
+  personaFileChars: number;
+  personaTotalChars: number;
+}
+export interface PersonaResponse {
+  agent: string;
+  files: PersonaFileDto[];
+  budgets: PromptBudgets;
+  totals: { personaChars: number };
+}
+export interface PromptPreviewResponse {
+  agent: string;
+  session: string;
+  text: string;
+  chars: number;
+  parts: Array<{ key: string; label: string; chars: number }>;
+  tools: { count: number; schemaChars: number; names: string[] };
+  budgets: PromptBudgets;
+  notIncluded: string[];
+}
+
 export const api = {
+  persona: (agent: string) => getJson<PersonaResponse>(`/agents/${encodeURIComponent(agent)}/persona`),
+  /** Save one persona file. A 409 (changed on disk meanwhile) is thrown
+   *  with `status` and `currentContent` attached so the editor can offer
+   *  a reload instead of overwriting the agent's own edit. */
+  personaSave: async (agent: string, file: string, content: string, baseHash: string): Promise<{ ok: true; hash: string; backup: string | null }> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/persona/${encodeURIComponent(file)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, baseHash }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string; currentContent?: string; currentHash?: string };
+      const err = new Error(body.error ?? `PUT persona ${res.status}`) as Error & { status?: number; currentContent?: string };
+      err.status = res.status;
+      err.currentContent = body.currentContent;
+      throw err;
+    }
+    return (await res.json()) as { ok: true; hash: string; backup: string | null };
+  },
+  promptPreview: (agent: string, session = 'main') =>
+    getJson<PromptPreviewResponse>(`/agents/${encodeURIComponent(agent)}/prompt-preview?session=${encodeURIComponent(session)}`),
   teamGet: () => getJson<TeamResponse>('/team'),
   teamPreview: (file: TeamFileDto, agent: string) =>
     getJson<TeamPreviewResponse>('/team/preview', {

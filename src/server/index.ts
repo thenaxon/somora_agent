@@ -167,8 +167,10 @@ import {
 } from './session-queue.ts';
 import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
 import { getTurnOrigin } from './turn-origin.ts';
+import { readPersonaFiles, writePersonaFile } from '../persona/files.ts';
+import { assembleSystemPrompt } from './prompt-assembly.ts';
 import { getResolvedTeam, loadTeamFile, teamFilePath } from '../team/store.ts';
-import { renderTeamBlock, TEAM_BLOCK_SOFT_MAX_CHARS } from '../team/render.ts';
+import { renderTeamBlock } from '../team/render.ts';
 import { parseTeamFile, resolveTeam } from '../team/resolve.ts';
 import { initialTeamFile, writeTeamFile } from '../team/write.ts';
 import {
@@ -1722,6 +1724,98 @@ app.get('/agents/:agent/system-prompt', async (c) => {
 
 app.get('/agents', async (c) => c.json(await listAgents()));
 
+// ── Persona files + prompt preview (web Agent window) ───────────────
+// Read the three persona files (+ agent.yaml read-only) with hashes and
+// sizes against config.promptBudgets; write one under an optimistic
+// lock (baseHash) because the agents self-edit these files.
+app.get('/agents/:agent/persona', async (c) => {
+  const agent = c.req.param('agent');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const files = await readPersonaFiles(agent);
+  const personaChars = files.filter((f) => !f.readOnly).reduce((n, f) => n + f.chars, 0);
+  return c.json({
+    agent,
+    files,
+    budgets: config.promptBudgets,
+    totals: { personaChars },
+  });
+});
+
+app.put('/agents/:agent/persona/:file', async (c) => {
+  const agent = c.req.param('agent');
+  const file = c.req.param('file');
+  const body = (await c.req.json().catch(() => null)) as { content?: unknown; baseHash?: unknown } | null;
+  if (!body || typeof body.content !== 'string' || typeof body.baseHash !== 'string') {
+    return c.json({ error: 'body {content: string, baseHash: string} required' }, 400);
+  }
+  let r;
+  try {
+    r = await writePersonaFile(agent, file, body.content, body.baseHash);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+  if (!r.ok) {
+    return c.json(
+      { error: r.error, ...(r.currentHash ? { currentHash: r.currentHash, currentContent: r.currentContent } : {}) },
+      r.status,
+    );
+  }
+  logger.info({ msg: 'persona.saved', agent, file, chars: body.content.length, backup: r.backup });
+  return c.json({ ok: true, hash: r.hash, backup: r.backup, chars: body.content.length });
+});
+
+// The system prompt exactly as the next turn on `session` would send it,
+// split into its parts, plus the tool schemas the agent can see (they
+// travel on the API tool channel, not in this text — but they cost
+// context all the same). Read-only: the wiki snapshot is not persisted.
+app.get('/agents/:agent/prompt-preview', async (c) => {
+  const agent = c.req.param('agent');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const sessionRef = c.req.query('session') || 'main';
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  const sessionMeta = await sessionMetaStore.get(agent, session);
+  const toolCtx = {
+    agent,
+    session,
+    getMemoryManager: () =>
+      getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian }),
+    config,
+    contentBlocks: [],
+  };
+  const available = (await tools.listAvailable(toolCtx)).filter((t) => isToolAllowed(t.name, t.toolset, persona.toolGating));
+  const toolSchemaChars = available.reduce(
+    (n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: t.jsonSchema }).length,
+    0,
+  );
+  const assembled = await assembleSystemPrompt({
+    agent,
+    session,
+    persona,
+    sessionMeta,
+    deps: chatTurnDeps,
+    subagentDepth: 0,
+    toolCount: available.length,
+    persistWikiSnapshot: false,
+  });
+  return c.json({
+    agent,
+    session,
+    text: assembled.text,
+    chars: assembled.text.length,
+    parts: assembled.parts.map((p) => ({ key: p.key, label: p.label, chars: p.text.length })),
+    tools: { count: available.length, schemaChars: toolSchemaChars, names: available.map((t) => t.name) },
+    budgets: config.promptBudgets,
+    notIncluded: [
+      'tool schemas (sent on the API tool channel; counted above, engines load them direct or deferred)',
+      'memory recall injected per turn',
+      'the conversation history',
+      "the engine's own built-in instructions (Claude Code, Codex)",
+    ],
+  });
+});
+
 // ── Team (team.yaml → "# Your team" block) ─────────────────────────
 // Read side of the org chart. Phase 1 is read-only over HTTP; the file
 // is edited by hand (docs/team.md) — PUT /team arrives with the web
@@ -1789,7 +1883,7 @@ app.post('/team/preview', async (c) => {
   const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description }));
   const team = resolveTeam(parsed.file, agents);
   const block = renderTeamBlock(team, body.agent) ?? '';
-  return c.json({ agent: body.agent, valid: true, issues: [], warnings: team.warnings, block, chars: block.length, softMaxChars: TEAM_BLOCK_SOFT_MAX_CHARS });
+  return c.json({ agent: body.agent, valid: true, issues: [], warnings: team.warnings, block, chars: block.length, softMaxChars: config.promptBudgets.teamBlockChars });
 });
 
 app.get('/team/preview/:agent', async (c) => {
@@ -1798,7 +1892,7 @@ app.get('/team/preview/:agent', async (c) => {
   const team = await getResolvedTeam();
   if (!team) return c.json({ agent, enabled: false, block: '' });
   const block = renderTeamBlock(team, agent) ?? '';
-  return c.json({ agent, enabled: true, block, chars: block.length, softMaxChars: TEAM_BLOCK_SOFT_MAX_CHARS });
+  return c.json({ agent, enabled: true, block, chars: block.length, softMaxChars: config.promptBudgets.teamBlockChars });
 });
 
 app.get('/team/check', async (c) => {
@@ -1807,7 +1901,7 @@ app.get('/team/check', async (c) => {
   const blocks = team
     ? team.order.map((name) => {
         const chars = (renderTeamBlock(team, name) ?? '').length;
-        return { agent: name, chars, overSoftMax: chars > TEAM_BLOCK_SOFT_MAX_CHARS };
+        return { agent: name, chars, overSoftMax: chars > config.promptBudgets.teamBlockChars };
       })
     : [];
   return c.json({
@@ -1818,7 +1912,7 @@ app.get('/team/check', async (c) => {
     unlisted: team?.unlisted ?? [],
     missing: team?.missing ?? [],
     blocks,
-    softMaxChars: TEAM_BLOCK_SOFT_MAX_CHARS,
+    softMaxChars: config.promptBudgets.teamBlockChars,
   });
 });
 

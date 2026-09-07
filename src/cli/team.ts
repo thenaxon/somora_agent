@@ -11,6 +11,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listAgents } from '../persona/loader.ts';
 import { renderTeamBlock, TEAM_BLOCK_SOFT_MAX_CHARS } from '../team/render.ts';
+import { loadConfig } from '../config/loader.ts';
 import { resolveTeam } from '../team/resolve.ts';
 import { loadTeamFile, teamFilePath } from '../team/store.ts';
 import { initialTeamFile, teamFileToYaml } from '../team/write.ts';
@@ -85,11 +86,17 @@ async function cmdCheck(): Promise<number> {
     return 1;
   }
   const team = resolveTeam(load.file, agents.map((a) => ({ name: a.name, role: a.role, description: a.description })));
+  let cap = TEAM_BLOCK_SOFT_MAX_CHARS;
+  try {
+    cap = (await loadConfig()).promptBudgets.teamBlockChars;
+  } catch {
+    /* unreadable config → built-in default */
+  }
   process.stdout.write(`team.yaml OK: principal ${team.principal.name}, ${team.order.length} agent(s) in the chart.\n`);
   for (const w of team.warnings) process.stdout.write(`  warning: ${w}\n`);
   for (const name of team.order) {
     const block = renderTeamBlock(team, name) ?? '';
-    const flag = block.length > TEAM_BLOCK_SOFT_MAX_CHARS ? `  ← over ${TEAM_BLOCK_SOFT_MAX_CHARS} chars, shorten involve_for/not_for/notes` : '';
+    const flag = block.length > cap ? `  ← over ${cap} chars (promptBudgets.teamBlockChars), shorten involve_for/not_for/notes` : '';
     process.stdout.write(`  ${name}: block ${block.length} chars${flag}\n`);
   }
   const hits = scanPersonasForTeamProse(agents.map((a) => a.name));

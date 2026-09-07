@@ -145,6 +145,16 @@ in the .md files, operator-config evolves in .yaml. Agents can self-edit
 both today; future Skills-layer guidance will steer them toward the right
 file for each kind of change.
 
+### Seeing and editing the persona without a terminal
+
+`/web` → right-click the agent tile → **Configure…** opens the Agent
+window: the three persona files as editors, `agent.yaml` read-only, a
+budget strip (persona total, team block, full prompt, tool schemas —
+characters and estimated tokens against `promptBudgets` in config.yaml)
+and a *Full prompt* tab with the system prompt exactly as the next turn
+would send it. Saves are refused when the agent changed the file in the
+meantime, and every save keeps a backup. See [web.md](web.md).
+
 ### Self-edit and cross-agent edit
 
 Each agent gets a small self-pointer block prepended to its system prompt

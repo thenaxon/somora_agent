@@ -43,6 +43,28 @@ const FrontmatterSchema = z
   })
   .passthrough();
 
+/**
+ * Can this AGENTS.md text be loaded as a persona? Used before a human
+ * save from the web Agent window: a broken frontmatter would only
+ * degrade (readMd falls back to plain body), but a `name` that does
+ * not match the directory would rename the agent in every listing.
+ */
+export function validateAgentsMd(raw: string, dirName: string): { ok: true } | { ok: false; error: string } {
+  let parsed: ReturnType<typeof matter>;
+  try {
+    parsed = matter(raw);
+  } catch (err) {
+    return { ok: false, error: `frontmatter is not valid YAML: ${(err as Error).message}` };
+  }
+  const fm = FrontmatterSchema.safeParse(parsed.data ?? {});
+  if (!fm.success) return { ok: false, error: `frontmatter: ${fm.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}` };
+  if (fm.data.name !== undefined && fm.data.name !== dirName) {
+    return { ok: false, error: `frontmatter name '${fm.data.name}' must match the agent directory '${dirName}'` };
+  }
+  if (parsed.content.trim().length === 0) return { ok: false, error: 'AGENTS.md has no body below the frontmatter' };
+  return { ok: true };
+}
+
 const RemConfigSchema = z.object({
   /** Master toggle. When false, REM-Phase never runs for this agent. */
   enabled: z.boolean(),

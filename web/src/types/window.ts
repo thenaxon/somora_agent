@@ -15,7 +15,8 @@ export type WindowKind =
   | 'wiki'
   | 'tools'
   | 'images'
-  | 'team';
+  | 'team'
+  | 'agent-config';
 
 /** A snapshot of an agent message that the user pinned for working-
  *  memory. Stored on the WindowState.payload of `kind: 'pin-note'`

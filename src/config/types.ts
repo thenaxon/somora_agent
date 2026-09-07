@@ -778,6 +778,25 @@ export const MobileConfigSchema = z.object({
 }).default({
   show: { tools: false, memory: false },
 });
+
+/**
+ * Soft budgets for the static prompt text — warnings only, nothing is
+ * ever truncated. Surfaced as counters in the web Team and Agent
+ * windows and by `somora team check`, so an operator notices when a
+ * persona or the team block grows into a biography. Hot: read per
+ * request, no restart.
+ */
+export const PromptBudgetsSchema = z
+  .object({
+    /** The rendered "# Your team" block per agent. */
+    teamBlockChars: z.number().int().min(500).default(3000),
+    /** Each of AGENTS.md / SOUL.md / USER.md. */
+    personaFileChars: z.number().int().min(500).default(8000),
+    /** The three persona files together. */
+    personaTotalChars: z.number().int().min(1000).default(14000),
+  })
+  .default({ teamBlockChars: 3000, personaFileChars: 8000, personaTotalChars: 14000 });
+export type PromptBudgetsConfig = z.infer<typeof PromptBudgetsSchema>;
 export type MobileConfig = z.infer<typeof MobileConfigSchema>;
 
 // Vision/multimodal worker config. Two tools route through this:
@@ -1745,6 +1764,7 @@ export const ConfigSchema = z.object({
   memory: MemoryConfigSchema,
   rem: RemGlobalConfigSchema,
   agentLoop: AgentLoopConfigSchema,
+  promptBudgets: PromptBudgetsSchema,
   engineWatchdog: EngineWatchdogConfigSchema,
   sse: SseConfigSchema,
   tmux: TmuxConfigSchema,

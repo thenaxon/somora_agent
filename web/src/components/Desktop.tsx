@@ -22,6 +22,7 @@ import { SentinelWindow } from './SentinelWindow';
 import { WikiWindow } from './WikiWindow';
 import { ToolsWindow } from './ToolsWindow';
 import { TeamWindow } from './TeamWindow';
+import { AgentConfigWindow } from './AgentConfigWindow';
 import { MediaWindow } from './MediaWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
@@ -485,6 +486,22 @@ export function Desktop() {
               </Window>
             );
           }
+          if (win.kind === 'agent-config' && win.agentName) {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <AgentConfigWindow agentName={win.agentName} />
+              </Window>
+            );
+          }
           return null;
         })}
       </div>
@@ -496,6 +513,7 @@ export function Desktop() {
           onClose={() => setAgentMenu(null)}
           onOpenSession={openAgentSession}
           onOpenSessionsTool={() => wm.openSessionsList()}
+          onOpenConfig={(a) => wm.openAgentConfig(a.name)}
         />
       )}
       <Taskbar

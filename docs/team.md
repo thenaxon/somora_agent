@@ -136,7 +136,9 @@ colleague, and so does every model: write **triggers**, not résumés —
 `library docs and framework comparisons`, not `Lisa is an experienced
 researcher with a journalist's mindset`. Character and voice belong in
 that agent's own persona. Keep the block short: every agent loads it in
-every turn, and `somora team check` warns above 3 000 characters.
+every turn, and `somora team check` (and the web preview) warn above
+`promptBudgets.teamBlockChars` in config.yaml — 3 000 characters by
+default, a warning only, nothing is truncated.
 
 ## Migrating personas
 

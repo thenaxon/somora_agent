@@ -599,7 +599,25 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   the window-manager section above.
 - **Agent context menu** — right-click an agent tile: open main, jump
   to one of its recent sessions, start a named new session in its own
-  window, or open the Sessions tool.
+  window, open the Sessions tool, or **Configure…** (the Agent window
+  below).
+- **Agent window** — what a persona is made of and what it costs. A
+  budget strip on top: the three persona files together, the team
+  block, the full assembled prompt and the tool schemas, each in
+  characters and estimated tokens against `promptBudgets` in
+  config.yaml (soft caps: over budget turns the counter yellow, nothing
+  is truncated). Tabs for `AGENTS.md`, `SOUL.md` and `USER.md` as plain
+  editors with a per-file counter and Save/Discard, `agent.yaml`
+  read-only (model, fallback, REM — edit the file or use the session
+  controls), and **Full prompt**: the system prompt exactly as the next
+  turn on a chosen session would send it, split into its parts with
+  sizes, plus the tool-schema total and a note on what is *not* in that
+  text (memory recall, history, the engine's own instructions). Saving
+  is guarded: the agents edit these files themselves, so a save is
+  refused when the file changed on disk since you loaded it, and you
+  are asked to reload; the previous version is kept as a backup.
+  `AGENTS.md` must keep a loadable frontmatter whose `name` matches the
+  agent directory.
 - **Queued messages are editable** — a message waiting behind a running
   turn shows ⌛ and an *edit* link that takes it back into the composer;
   a turn that fails renders as a *Turn failed* block inside the turn,

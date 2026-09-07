@@ -219,6 +219,34 @@ export function useWindowManager() {
    *  The window KIND stays `images`: it is persisted in the saved
    *  desktop layout, and renaming it would drop everyone's window
    *  position on the next release for a label nobody sees. */
+  /** Open or focus the Agent window (persona files + prompt budget)
+   *  for one agent. One per agent. */
+  const openAgentConfig = useCallback(
+    (agentName: string) => {
+      const existing = windows.find((w) => w.kind === 'agent-config' && w.agentName === agentName);
+      if (existing) {
+        focus(existing.id);
+        return;
+      }
+      const pos = randomPos(900, 640, zCounter + 1);
+      const id = `agent-config-${agentName}-${Date.now()}`;
+      const next: WindowState = {
+        id,
+        kind: 'agent-config',
+        title: agentName,
+        meta: 'configure',
+        icon: '⚙️',
+        agentName,
+        ...pos,
+        minimized: false,
+      };
+      setWindows((ws) => [...ws, next]);
+      setZCounter((z) => z + 1);
+      setFocusedId(id);
+    },
+    [windows, zCounter, focus],
+  );
+
   /** Open or focus the Team window (org chart editor). Singleton. */
   const openTeam = useCallback(() => {
     const existing = windows.find((w) => w.kind === 'team');
@@ -543,6 +571,7 @@ export function useWindowManager() {
     openWiki,
     openTools,
     openTeam,
+    openAgentConfig,
     openImages,
     setWikiSlug,
     openPinNote,

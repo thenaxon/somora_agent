@@ -558,6 +558,11 @@ These all live in `config.yaml` with conservative defaults; uncomment to
 override. Full schema in [`src/config/types.ts`](../src/config/types.ts).
 
 ```yaml
+promptBudgets:                # soft caps for static prompt text — warnings only, nothing is truncated
+  teamBlockChars: 3000        # the "# Your team" block per agent (docs/team.md)
+  personaFileChars: 8000      # each of AGENTS.md / SOUL.md / USER.md
+  personaTotalChars: 14000    # the three together — shown in the web Agent window
+
 compaction:
   triggerRatio: 0.8           # fraction of context window
   safetyCushionPairs: 4       # most-recent turns kept uncompacted

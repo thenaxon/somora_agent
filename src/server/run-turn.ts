@@ -29,10 +29,7 @@ import type {
 } from './run-turn-types.ts';
 import { appendEvent, getHistory } from '../storage/sessions.ts';
 import { healOrphanToolCalls } from './heal-session.ts';
-import { readProject } from '../projects/store.ts';
-import { renderProjectBlock } from '../projects/prompt-block.ts';
 import { resolveCompactionConfig } from '../compaction/index.ts';
-import { getFreshConfig } from '../config/loader.ts';
 import {
   type Config,
   describeModelRefs,
@@ -44,7 +41,7 @@ import {
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
-import { buildTeamBlock } from '../team/store.ts';
+import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
@@ -58,15 +55,12 @@ import { getMemoryManager } from '../memory/registry.ts';
 import { logger } from './logger.ts';
 import { loadPersona, type Persona } from '../persona/loader.ts';
 import { isToolAllowed } from '../tools/gating.ts';
-import { loadAvailableSkills } from '../skills/load.ts';
-import { buildSkillsRegistry } from '../skills/registry.ts';
 import { createTurnSerializer } from './sse-serializer.ts';
 import { sanitizeAssistantText } from './sanitize-assistant-text.ts';
 import { synthesize } from '../tts/service.ts';
 import { prepareForTts } from '../tts/prepare-for-tts.ts';
 import type { ToolRegistry } from '../tools/index.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
-import { buildSelfPointer } from './workspace.ts';
 import { resolveOpenAiReasoning } from '../engine/thinking-params.ts';
 import { mergeSampling } from '../engine/sampling.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
@@ -79,132 +73,7 @@ const VALID_THINKING_LEVELS = new Set<ThinkingLevel>(['off', 'low', 'medium', 'h
 // Exported so prompt-effect probes can assemble the same system prompt
 // the runtime sends. Measuring a variant that omits it measures a prompt
 // nobody ever sees.
-export const TOOL_USAGE_REMINDER = [
-  '## Tools',
-  '',
-  'You have tools available. They are passed to you through the API tool',
-  'channel, not listed in this text — they are present even when the',
-  'conversation history above happens to show no tool calls.',
-  '',
-  'Never describe an execution in words alone. If you want to write a',
-  'file, run a command, or look something up, call the corresponding',
-  'tool. A sentence like "I am creating the file now" without the',
-  'matching tool call is a failure: nothing happens, and the user waits',
-  'for a result that will never arrive.',
-].join('\n');
-
-/**
- * Build the project-block portion of the system prompt. Returns the
- * empty string when:
- *   - config.projects is missing or `enabled: false`
- *   - session has no `projectSlug` (nothing pinned)
- *   - the slug points at a missing file (warn-log + soft-degrade)
- *
- * Reads from disk every turn so a `project_update` lands in the next
- * turn's prompt without any cache-invalidation step. The pure-frontmatter
- * file format keeps this read cheap.
- */
-async function buildProjectBlock(
-  sessionMeta: Record<string, unknown>,
-  config: Config,
-): Promise<string> {
-  if (!config.projects?.enabled) return '';
-  const slug = sessionMeta.projectSlug;
-  if (typeof slug !== 'string' || slug.length === 0) return '';
-  try {
-    const project = await readProject(slug);
-    if (!project) {
-      logger.warn({
-        msg: 'project.focused_but_missing',
-        slug,
-        hint: 'session.meta points at a project file that no longer exists; project block will be empty',
-      });
-      return '';
-    }
-    return renderProjectBlock(project);
-  } catch (err) {
-    logger.warn({
-      msg: 'project.load_failed',
-      slug,
-      err: (err as Error).message,
-    });
-    return '';
-  }
-}
-
-/** Key under which the per-session wiki-overview snapshot is persisted. */
-const WIKI_OVERVIEW_META_KEY = 'wikiOverview';
-
-/**
- * Wiki topology block for the system prompt — snapshotted once per
- * session and then frozen.
- *
- * Two decisions worth keeping straight:
- *
- * 1. **System prompt, not ephemeral context.** The overview is the same
- *    bytes on every turn. In the per-turn memory block it was repeated
- *    once per turn, and on openai-compatible `buildMessages` replayed
- *    every past copy on every request (measured 2026-07-22: 897 chars ×
- *    27 turns = 24 KB re-sent per request). Here it is one copy in the
- *    cached prefix.
- *
- * 2. **Frozen for the session.** Dream-B rewrites index.md every ~12 h.
- *    Re-reading it would move a block that sits in front of the whole
- *    conversation, breaking the provider's prefix cache mid-session for
- *    a header that only exists to say "these topics exist". Rene's call
- *    (2026-07-22): a stale overview is fine, cost is not — details come
- *    from `memory_search` and auto-injected hits, which are live. A new
- *    session picks up the new wiki.
- *
- * A `null` from getWikiOverview (no index.md yet) is snapshotted as '',
- * so a session started before the wiki existed stays consistent too.
- */
-async function buildWikiOverviewBlock(
-  agent: string,
-  session: string,
-  sessionMeta: Record<string, unknown>,
-  deps: ChatTurnResolveDeps,
-): Promise<string> {
-  if (!deps.config.wiki.enabled) return '';
-  const cached = sessionMeta[WIKI_OVERVIEW_META_KEY];
-  if (typeof cached === 'string') return renderWikiOverviewBlock(cached);
-  let text = '';
-  try {
-    const mgr = await getMemoryManager(agent, {
-      config: deps.config.memory,
-      wiki: deps.config.wiki,
-      obsidian: deps.config.obsidian,
-    });
-    text =
-      (await mgr.getWikiOverview({
-        maxChars: deps.config.wiki.search.overviewMaxChars,
-        topNSlugs: deps.config.wiki.search.overviewTopNSlugs,
-      })) ?? '';
-  } catch (err) {
-    // Soft-degrade: a missing overview costs discoverability, not the turn.
-    // Not snapshotted either, so the next turn retries.
-    logger.warn({ msg: 'wiki.overview_failed', agent, session, err: (err as Error).message });
-    return '';
-  }
-  await deps.sessionMetaStore.update(agent, session, (current) => ({
-    ...current,
-    [WIKI_OVERVIEW_META_KEY]: text,
-  }));
-  logger.info({ msg: 'wiki.overview_snapshotted', agent, session, chars: text.length });
-  return renderWikiOverviewBlock(text);
-}
-
-function renderWikiOverviewBlock(text: string): string {
-  if (text.length === 0) return '';
-  return (
-    `\n\n---\n\n## Wiki overview (shared long-term knowledge)\n\n` +
-    `A map of what the shared wiki holds, as it stood when this session ` +
-    `started — page names and topics only, no content, and it does not ` +
-    `list your own memory notes. Read a page with ` +
-    `\`memory_get('wiki/<path>')\` or search across memory, wiki and vault ` +
-    `with \`memory_search\`.\n\n${text}`
-  );
-}
+export { TOOL_USAGE_REMINDER } from './prompt-assembly.ts';
 
 function resolveEffectiveModel(
   config: Config,
@@ -904,59 +773,20 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       invoke: (name: string, input: unknown) => deps.tools.invoke(name, input, toolCtx),
     };
 
-    // Build the self-pointer from FRESH config so newly-added resources
-    // appear in the agent's "Configured remote resources: …" line on the
-    // next turn instead of waiting for a server restart. Pairs with the
-    // bug-4 hot-reload pattern (resource_list / resource_test already
-    // use getFreshConfig). selfPointer otherwise stays stable across
-    // turns within the same session — its content is derived from
-    // config.resources + persona.resourceDeny + paths, none of which
-    // change mid-turn — so the prefix-cache impact is nil.
-    const freshConfig = await getFreshConfig();
-    const selfPointer = buildSelfPointer(persona, freshConfig, SOMORA_HOME_DIR);
-    const subContextNote =
-      subagentDepth > 0
-        ? `\n\nNote: this is a SUBAGENT turn (depth=${subagentDepth}). You were spawned by another agent to do a focused task; finish, return your result, and stop.`
-        : '';
-    // Skills registry — loaded fresh each turn so a SKILL.md edit takes
-    // effect on the next turn without a server restart, same convention
-    // as the persona reload above. Sits in the cached prefix portion of
-    // the prompt: skills change rarely (rarer than memory which is
-    // ephemeral and goes elsewhere), so they're ideal for prefix-cache.
-    // Empty registry = empty section, no separator added.
-    const allSkills = await loadAvailableSkills(freshConfig);
-    const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillGating, freshConfig);
-    const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
-    // Project block — sits AFTER skills in the cache hierarchy because
-    // it's more volatile (changes on /projekt switch — rare but more
-    // often than SKILL.md edits). Putting it after skills means a
-    // project switch only invalidates from this point onward; selfPointer
-    // + persona + skills all stay cached. The block is empty when no
-    // project is pinned. Project lookup uses freshly-read from disk so
-    // a project_update on the same turn lands in the next turn.
-    const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
-    // Wiki overview — session-static by construction (snapshotted on the
-    // first turn, then frozen), so it sits ABOVE skills and project in
-    // the cache hierarchy: those still change mid-session on a SKILL.md
-    // edit or a /projekt switch, this one never does.
-    const wikiBlock = await buildWikiOverviewBlock(agent, session, sessionMeta, deps);
-    // Tool-usage reminder — constant text, so it sits BEFORE the more
-    // volatile skills/project blocks and keeps the existing static →
-    // volatile cache hierarchy intact. Gated on the agent actually
-    // having tools; telling a tool-less agent to call tools is noise.
-    // Rationale + measurements: private/toolcall-investigation.md.
-    const toolsBlock =
-      deps.config.agentLoop.toolUsageReminder && availableTools.length > 0
-        ? `\n\n---\n\n${TOOL_USAGE_REMINDER}`
-        : '';
-    // Team block (team.yaml → "# Your team", src/team) sits right after
-    // the persona: first who I am, then who the others are, then tools.
-    // Changes only when team.yaml or the agent roster changes, so it
-    // keeps the static → volatile cache hierarchy intact.
-    const teamText = await buildTeamBlock(agent);
-    const teamBlock = teamText ? `\n\n---\n\n${teamText}` : '';
-    const systemPromptForTurn =
-      `${selfPointer}${subContextNote}\n\n---\n\n${persona.systemPrompt}${teamBlock}${toolsBlock}${wikiBlock}${skillsBlock}${projectBlock}`;
+    // One assembly for the real turn and for GET /agents/:agent/prompt-
+    // preview (web Agent window) — see prompt-assembly.ts for the order
+    // and the cache rationale per block.
+    const assembled = await assembleSystemPrompt({
+      agent,
+      session,
+      persona,
+      sessionMeta,
+      deps,
+      subagentDepth,
+      toolCount: availableTools.length,
+    });
+    const projectBlock = assembled.projectBlock;
+    const systemPromptForTurn = assembled.text;
 
     logger.info({
       msg: 'turn.engine_init',
