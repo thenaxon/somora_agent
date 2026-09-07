@@ -316,7 +316,7 @@ a way to read arbitrary files.
 
 ### `GET /images/models/:name/capabilities`
 
-`{model, source: 'catalog'|'config'|'unknown', known, values, maxN, maxReferences, defaults}`.
+`{model, source: 'catalog'|'config'|'unknown', known, values, maxN, maxReferences, sizeAlsoAccepts, defaults}`. `sizeAlsoAccepts` lists named ratios the endpoint takes in `size` (`null` when it publishes none) — see the aspect-ratio note in [imagegen.md](imagegen.md).
 
 `values` maps a spec field to its allowed values. **A field absent from
 `values` has no known constraint** — clients should offer free input

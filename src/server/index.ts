@@ -3208,6 +3208,9 @@ app.get('/images/models/:name/capabilities', async (c) => {
     supported: caps.supported ?? null,
     maxN: caps.maxN ?? null,
     maxReferences: caps.maxReferences ?? null,
+    // Named ratios the endpoint takes in `size` — what the OpenAI-wire
+    // aspect_ratio → size translation keys on (imagegen.md).
+    sizeAlsoAccepts: caps.sizeAlsoAccepts ?? null,
     defaults: entry.defaults,
   });
 });
