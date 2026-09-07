@@ -68,9 +68,20 @@ export interface AspectTranslation {
  * `size` always wins (the ratio is dropped without a word — pixels are
  * more specific). Pure; the caller logs and warns.
  */
-export function translateAspectForOpenAiWire(specs: ImageSpecs, caps: ModelCapabilities): AspectTranslation {
+export function translateAspectForOpenAiWire(
+  specs: ImageSpecs,
+  caps: ModelCapabilities,
+  path: 'json' | 'multipart' = 'json',
+): AspectTranslation {
   const ratio = specs.aspect_ratio;
   if (!ratio) return { specs };
+  // Upgrade-safety: a backend that positively declares `aspect_ratio`
+  // and offers no named sizes keeps getting it on the JSON path, where
+  // routers forward unknown keys — exactly what worked before. Only the
+  // multipart edit path (where routers drop it) is always translated.
+  if (path === 'json' && caps.supported?.includes('aspect_ratio') && !caps.sizeAlsoAccepts && !specs.size) {
+    return { specs };
+  }
   const { aspect_ratio: _drop, ...rest } = specs;
   if (rest.size) return { specs: rest };
 

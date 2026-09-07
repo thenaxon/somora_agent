@@ -334,7 +334,7 @@ async function generateOnce(
   const warnings: string[] = [];
   let wireSpecs: ImageSpecs = specs;
   if (entry.wire === 'openai') {
-    const t = translateAspectForOpenAiWire(specs, caps);
+    const t = translateAspectForOpenAiWire(specs, caps, references.length > 0 ? 'multipart' : 'json');
     wireSpecs = t.specs;
     if (t.translated) {
       logger.info({

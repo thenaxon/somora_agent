@@ -55,6 +55,14 @@ check('garbage is null', ratioValue('wide') === null && ratioValue('0:1') === nu
   const r7 = translateAspectForOpenAiWire({ aspect_ratio: 'wide' }, unknown);
   check('unparseable ratio without named sizes is dropped with a reason', r7.specs.aspect_ratio === undefined && !!r7.dropped);
 
+  const native: ModelCapabilities = { known: true, source: 'catalog', values: { aspect_ratio: ['16:9'] }, supported: ['aspect_ratio', 'n'] };
+  const r9 = translateAspectForOpenAiWire({ aspect_ratio: '16:9' }, native, 'json');
+  check('backend that declares aspect_ratio keeps it on the JSON path', r9.specs.aspect_ratio === '16:9' && !r9.translated, JSON.stringify(r9));
+  const r10 = translateAspectForOpenAiWire({ aspect_ratio: '16:9' }, native, 'multipart');
+  check('…but the multipart edit path is always translated', r10.specs.aspect_ratio === undefined && r10.specs.size === '1792x1024', JSON.stringify(r10));
+  const r11 = translateAspectForOpenAiWire({ aspect_ratio: '16:9' }, cerebro, 'json');
+  check('named-size catalogs translate on the JSON path too', r11.specs.size === '16:9', JSON.stringify(r11));
+
   const r8 = translateAspectForOpenAiWire({ aspect_ratio: '21:9' }, unknown);
   check('unknown ratio picks the closest table entry', r8.specs.size === '1792x1024' && r8.translated?.exact === false, JSON.stringify(r8));
 }

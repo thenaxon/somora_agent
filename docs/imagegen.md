@@ -124,7 +124,11 @@ visual-adapter publishes), the ratio string itself goes out as `size`
 and the backend renders it exactly; else the listed size closest to
 the ratio; else OpenAI's own sizes (1792×1024 / 1024×1792 — 7:4, not
 16:9, and the result carries a warning saying so). An explicit `size`
-always wins over `aspect_ratio`. The `openrouter` wire keeps
+always wins over `aspect_ratio`. One exception keeps existing setups
+working: a backend whose catalog positively declares `aspect_ratio`
+and offers no named sizes still receives `aspect_ratio` on the plain
+generation path (routers forward unknown JSON keys there); only the
+multipart edit path is always translated. The `openrouter` wire keeps
 `aspect_ratio`, which is native there. What actually left somora is
 logged per request (`imagegen.request`: endpoint, multipart or not,
 the spec fields — never the image bytes) and stored on the record as
