@@ -75,9 +75,11 @@ message. You see it next time you open that agent in the web/mobile UI.
 Same tool:
 
 ```jsonc
-sentinel({ action: "list" })                              // all triggers
+sentinel({ action: "list" })                              // working view: fired one-shots hidden
+sentinel({ action: "list", include_completed: true })     // …including fired one-shots
 sentinel({ action: "list", owner: "<your-agent>" })             // filter by owner agent
 sentinel({ action: "list", status: "paused" })            // filter by status
+sentinel({ action: "purge_completed" })                   // delete every fired one-shot (optional owner)
 sentinel({ action: "get", id: "morning-mail-summary-a7c3" })
 sentinel({ action: "pause", id: "..." })
 sentinel({ action: "resume", id: "..." })
@@ -140,8 +142,11 @@ web-UI with a status icon and the reason.
 ## Completed-trigger retention (GC)
 
 One-shot `at`-triggers turn into status `completed` once they've
-fired. They sit there forever otherwise — useful for an audit trail,
-clutter on the long view. Sentinel auto-deletes `completed` triggers
+fired. `list` hides them by default and reports the number as
+`hidden_completed` (`include_completed: true` or `status: "completed"`
+shows them); `purge_completed` deletes all of them in one call,
+optionally per owner — recurring, active, paused and errored triggers
+are never touched. Sentinel also auto-deletes `completed` triggers
 (and their history file) older than a configurable retention window.
 
 Configure in `config.yaml`:

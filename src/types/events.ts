@@ -59,10 +59,9 @@ export type NormalizedEvent =
        * target's side as user_message.agent_ask_call_id alongside
        * from_agent.
        *
-       * MVP today: plumbed through but only used for log correlation.
-       * FUTURE: powers a planned `agent_ask_result(call_id)` retrieval
-       * tool so a caller can pick up the response asynchronously when
-       * the synchronous wait timed out (see A2A-design.md).
+       * Powers `agent_ask_result(call_id)`: the live registry
+       * (src/server/ask-calls.ts) answers first; after a restart the
+       * route re-reads this field from the target's JSONL.
        */
       agent_ask_call_id?: string;
       /**

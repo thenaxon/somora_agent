@@ -82,7 +82,7 @@ const PolicySchema = z.object({
 const SentinelInput = z
   .object({
     action: z.enum([
-      'create', 'list', 'get', 'pause', 'resume', 'delete', 'test', 'history',
+      'create', 'list', 'get', 'pause', 'resume', 'delete', 'test', 'history', 'purge_completed',
     ]),
     // create
     name: z.string().min(1).max(100).optional(),
@@ -92,9 +92,10 @@ const SentinelInput = z
     policy: PolicySchema.optional(),
     // get / pause / resume / delete / test / history
     id: z.string().min(1).optional(),
-    // list
+    // list (owner also filters purge_completed)
     owner: z.string().optional(),
     status: z.enum(['active', 'paused', 'error', 'completed']).optional(),
+    include_completed: z.boolean().optional(),
     // history
     limit: z.number().int().min(1).max(200).default(50).optional(),
   })
@@ -109,7 +110,16 @@ type SentinelInputT = z.infer<typeof SentinelInput>;
 type SentinelResult =
   | { action: 'create'; ok: true; trigger: Trigger; hint: string }
   | { action: 'create'; ok: false; error: string }
-  | { action: 'list'; ok: true; count: number; triggers: Array<TriggerSummary> }
+  | {
+      action: 'list';
+      ok: true;
+      count: number;
+      triggers: Array<TriggerSummary>;
+      /** Fired one-shots hidden from this listing (no status filter, no include_completed). */
+      hidden_completed?: number;
+      hint?: string;
+    }
+  | { action: 'purge_completed'; ok: true; count: number; ids: string[] }
   | { action: 'get'; ok: true; trigger: Trigger; describe: string }
   | { action: 'get'; ok: false; error: string }
   | { action: 'pause' | 'resume' | 'delete'; ok: boolean; id: string; error?: string }
@@ -206,12 +216,16 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
     '\n\n' +
     'Actions: ' +
     '"create" (name + source + dispatch + optional policy → registered trigger), ' +
-    '"list" (optional owner / status filter), ' +
+    '"list" (optional owner / status filter; fired one-shots are hidden unless status:"completed" ' +
+    'or include_completed:true — the count is reported as hidden_completed), ' +
     '"get" (full detail by id), ' +
     '"pause" / "resume" (toggle active/paused by id), ' +
     '"delete" (remove + clean history), ' +
     '"test" (fire NOW, bypass cooldown/cap, mark as testMode in history), ' +
-    '"history" (last N fire-events for a trigger). ' +
+    '"history" (last N fire-events for a trigger), ' +
+    '"purge_completed" (delete ALL fired one-shots at once, optional owner filter — recurring, ' +
+    'active, paused and errored triggers are never touched). Fired one-shots are also ' +
+    'auto-deleted after sentinel.completedRetentionDays (default 7). ' +
     '\n\n' +
     'Source variants (all under type:"time"): ' +
     '`at` (one-shot ISO timestamp), `every` (interval like "5m", min 60s), `daily` ("08:00"), ' +
@@ -230,7 +244,7 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
     properties: {
       action: {
         type: 'string',
-        enum: ['create', 'list', 'get', 'pause', 'resume', 'delete', 'test', 'history'],
+        enum: ['create', 'list', 'get', 'pause', 'resume', 'delete', 'test', 'history', 'purge_completed'],
       },
       // create
       name: { type: 'string', maxLength: 100, description: 'create only — human label.' },
@@ -286,8 +300,9 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
       // get / pause / resume / delete / test / history
       id: { type: 'string', description: 'Trigger id — required for get/pause/resume/delete/test/history.' },
       // list
-      owner: { type: 'string', description: 'list only — filter by owner-agent.' },
+      owner: { type: 'string', description: 'list / purge_completed — filter by owner-agent.' },
       status: { type: 'string', enum: ['active', 'paused', 'error', 'completed'], description: 'list only — filter by status.' },
+      include_completed: { type: 'boolean', description: 'list only — also show fired one-shots (hidden by default).' },
       limit: { type: 'integer', minimum: 1, maximum: 200, default: 50, description: 'history only — newest-first cap.' },
     },
     required: ['action'],
@@ -377,6 +392,14 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
         let all = listTriggers();
         if (input.owner) all = all.filter((t) => t.ownerAgent === input.owner);
         if (input.status) all = all.filter((t) => t.status === input.status);
+        // Fired one-shots stay for the audit trail (and history) but
+        // clutter the working view — 27 of them after one project
+        // evening (2026-09-07 report). Hide by default, say how many.
+        let hiddenCompleted = 0;
+        if (!input.status && !input.include_completed) {
+          hiddenCompleted = all.filter((t) => t.status === 'completed').length;
+          all = all.filter((t) => t.status !== 'completed');
+        }
         // Newest first by createdAt
         all.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
         return {
@@ -384,7 +407,27 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
           ok: true,
           count: all.length,
           triggers: all.map(summarize),
+          ...(hiddenCompleted > 0
+            ? {
+                hidden_completed: hiddenCompleted,
+                hint:
+                  `${hiddenCompleted} fired one-shot(s) hidden — list with include_completed:true, ` +
+                  `remove them with action:"purge_completed" (auto-deleted after the retention window anyway).`,
+              }
+            : {}),
         };
+      }
+
+      case 'purge_completed': {
+        let victims = listTriggers().filter((t) => t.status === 'completed');
+        if (input.owner) victims = victims.filter((t) => t.ownerAgent === input.owner);
+        const ids: string[] = [];
+        for (const t of victims) {
+          if (await deleteTrigger(t.id)) ids.push(t.id);
+        }
+        if (ids.length > 0) reschedule();
+        logger.info({ msg: 'sentinel.tool.purge_completed', by: ctx.agent, owner: input.owner ?? null, count: ids.length });
+        return { action: 'purge_completed', ok: true, count: ids.length, ids };
       }
 
       case 'get': {

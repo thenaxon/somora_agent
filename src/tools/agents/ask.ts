@@ -28,10 +28,9 @@
 // agentLoop.longTaskDefaultTimeoutMs (5 min) and clamps at
 // longTaskMaxTimeoutMs (30 min). On timeout the tool returns
 // state:'pending' (NOT an error) — the underlying call may still be
-// queued or running on the target side; if it finishes, the response
-// lands in the target's session JSONL. Programmatic retrieval of a
-// pending response is a FUTURE item (planned `agent_ask_result` tool;
-// see private/A2A-design.md).
+// queued or running on the target side. The outcome is retrievable by
+// call_id through agent_ask_result (src/tools/agents/ask-result.ts,
+// backed by src/server/ask-calls.ts) — never by re-sending the message.
 //
 // Self-call guard: agent_ask({agent: ctx.agent}) would deadlock the
 // caller's own session lock. We refuse early with a clear error
@@ -135,7 +134,8 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'session Y; otherwise to the target\'s main session. Pass `session` explicitly for a specific ' +
     'project session. Default timeout 5 min, cap 30 min — slow local ' +
     'models routinely need minutes. On timeout: returns state:"pending" (NOT an error); the call ' +
-    'may still complete on the target side and land in their JSONL. ' +
+    'may still complete on the target side — fetch or wait for it with agent_ask_result ' +
+    '(call_id), never by re-sending the message. ' +
     'IMPORTANT: cannot ask yourself — use spawn_subagent for self-clone tasks. ' +
     'Concurrent human user turns on the target\'s session take priority over your A2A call. ' +
     'agent_ask is REQUEST-RESPONSE, not a message bus: if YOU received a question via agent_ask ' +
@@ -360,10 +360,10 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           ...(sessionInferred ? { session_inferred: true } : {}),
           hint:
             `${targetAgent} did not reply within timeout_ms (${timeoutMs}ms). ` +
-            `The call may still be queued or in flight; if it completes, the response will land in ` +
-            `${targetAgent}'s session ${targetSession} (visible in their TUI / JSONL). ` +
-            `For programmatic retrieval of a pending response, see the planned agent_ask_result ` +
-            `tool (FUTURE). To wait longer NOW, retry agent_ask with a higher timeout_ms.`,
+            `The call is still queued or running on ${targetAgent}/${targetSession} — do NOT ` +
+            `re-send the message (it would run the work twice). Fetch the outcome with ` +
+            `agent_ask_result({ call_id: "${callId}" }) — add wait_until_done:true to block ` +
+            `until it finishes.`,
           ms: Date.now() - start,
         };
       }

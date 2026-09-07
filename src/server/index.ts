@@ -161,9 +161,18 @@ import {
   DequeuedError,
   dequeueSessionTurn,
   listAllSessionLockStates,
+  getSessionLockStatus,
 } from './session-queue.ts';
 import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
 import { getTurnOrigin } from './turn-origin.ts';
+import {
+  completeAskCall,
+  failAskCall,
+  getAskCall,
+  markAskCallRunning,
+  registerAskCall,
+  waitForAskCall,
+} from './ask-calls.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
@@ -4103,6 +4112,120 @@ app.post('/chat/abort', async (c) => {
 //
 // 127.0.0.1-only by virtue of how the server is bound; same trust
 // posture as the existing debug endpoints.
+// /a2a/ask-result — outcome of an agent_ask call by call_id. Backs the
+// agent_ask_result tool. Primary source is the in-memory registry fed
+// by /chat/send-sync below; after a restart the target session's JSONL
+// is the fallback (user_message.agent_ask_call_id is persisted), which
+// needs agent + session from the caller. wait_until_done blocks
+// server-side and is cycle-checked like /spawn-result.
+app.get('/a2a/ask-result', async (c) => {
+  const callId = c.req.query('call_id');
+  if (!callId) return c.json({ error: 'call_id query required' }, 400);
+  const waitFlag = c.req.query('wait_until_done');
+  const wantWait = waitFlag === '1' || waitFlag === 'true';
+  const timeoutMs = (() => {
+    const def = config.agentLoop.longTaskDefaultTimeoutMs;
+    const max = config.agentLoop.longTaskMaxTimeoutMs;
+    const raw = c.req.query('timeout_ms');
+    if (!raw) return def;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? Math.min(n, max) : def;
+  })();
+
+  let entry = getAskCall(callId);
+  if (entry) {
+    if (wantWait && entry.finished_at === undefined) {
+      const waiterAgent = c.req.query('waiter_agent') || undefined;
+      const waiterSession = c.req.query('waiter_session') || undefined;
+      const waiter =
+        waiterAgent && waiterSession ? { agent: waiterAgent, session: waiterSession } : undefined;
+      const target = { agent: entry.target_agent, session: entry.target_session };
+      if (waiter) {
+        const cycle = findWaitCycle(waiter, target);
+        if (cycle) {
+          logger.warn({
+            msg: 'a2a.circular_wait_rejected',
+            via: 'ask-result',
+            from: `${waiter.agent}/${waiter.session}`,
+            to: `${target.agent}/${target.session}`,
+            chain: cycle,
+          });
+          return c.json(
+            {
+              call_id: callId,
+              state: entry.state,
+              target_agent: entry.target_agent,
+              target_session: entry.target_session,
+              started_at: entry.started_at,
+              circular_wait: true,
+              chain: cycle,
+              source: 'registry',
+            },
+            409,
+          );
+        }
+      }
+      const releaseWait = waiter ? registerWait(waiter, target) : undefined;
+      try {
+        entry = (await waitForAskCall(callId, timeoutMs)) ?? entry;
+      } finally {
+        releaseWait?.();
+      }
+    }
+    return c.json({
+      call_id: entry.call_id,
+      state: entry.state,
+      target_agent: entry.target_agent,
+      target_session: entry.target_session,
+      started_at: entry.started_at,
+      ...(entry.finished_at !== undefined ? { finished_at: entry.finished_at } : {}),
+      ...(entry.result ? { response: entry.result.finalText, outcome: entry.result.outcome } : {}),
+      ...(entry.error ? { error: entry.error } : {}),
+      source: 'registry',
+    });
+  }
+
+  // History fallback — the registry is process-local; after a restart
+  // the persisted user_message (agent_ask_call_id) is all that is left.
+  const agent = c.req.query('agent');
+  const sessionRef = c.req.query('session');
+  if (!agent || !sessionRef) {
+    return c.json({ error: `call '${callId}' not in the live registry; pass agent + session to read the target session` }, 404);
+  }
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found for agent '${agent}'` }, 404);
+  const events = await getHistory(agent, session);
+  const idx = events.findIndex((e) => e.kind === 'user_message' && e.agent_ask_call_id === callId);
+  if (idx < 0) return c.json({ error: `no user_message with call_id '${callId}' in ${agent}/${session}` }, 404);
+  const startedAt = events[idx]!.ts;
+  let response: string | undefined;
+  let error: string | undefined;
+  let finishedAt: number | undefined;
+  for (const e of events.slice(idx + 1)) {
+    if (e.kind === 'user_message') break;
+    if (e.kind === 'assistant_message') response = e.text;
+    else if (e.kind === 'error') error = e.message;
+    else if (e.kind === 'turn_end') {
+      finishedAt = e.ts;
+      break;
+    }
+  }
+  const lock = getSessionLockStatus(agent, session);
+  const state =
+    finishedAt !== undefined ? (error && !response ? 'failed' : 'done') : lock.busy ? 'running' : 'unknown';
+  return c.json({
+    call_id: callId,
+    state,
+    target_agent: agent,
+    target_session: session,
+    started_at: startedAt,
+    ...(finishedAt !== undefined ? { finished_at: finishedAt } : {}),
+    ...(response !== undefined ? { response } : {}),
+    ...(error ? { error } : {}),
+    source: 'history',
+  });
+});
+
 // /a2a/turn-origin — who wrote the message the turn on agent/session
 // is currently answering. agent_ask (running in an MCP child of that
 // turn) asks this before defaulting its target session: a reply to the
@@ -4235,11 +4358,23 @@ app.post('/chat/send-sync', async (c) => {
   }
 
   const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
+  // agent_ask round trips are tracked by call_id so a caller whose
+  // wait timed out can pick the outcome up later (agent_ask_result).
+  if (agentAskCallId && fromAgent) {
+    registerAskCall({
+      call_id: agentAskCallId,
+      from_agent: fromAgent,
+      ...(fromSession ? { from_session: fromSession } : {}),
+      target_agent: agent,
+      target_session: session,
+    });
+  }
   try {
     const release = await acquireSessionLock(agent, session, {
       priority,
       ...(agentAskCallId ? { callId: agentAskCallId } : {}),
     });
+    if (agentAskCallId) markAskCallRunning(agentAskCallId);
     try {
       const result = await runChatTurn({
         agent,
@@ -4259,11 +4394,13 @@ app.post('/chat/send-sync', async (c) => {
         publishSse: (event) => publish(agent, session, event),
         deps: chatTurnDeps,
       });
+      if (agentAskCallId) completeAskCall(agentAskCallId, result);
       return c.json(result);
     } finally {
       release();
     }
   } catch (err) {
+    if (agentAskCallId) failAskCall(agentAskCallId, (err as Error).message);
     return c.json({ error: (err as Error).message }, 500);
   } finally {
     releaseWait?.();

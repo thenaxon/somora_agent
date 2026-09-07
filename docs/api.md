@@ -857,6 +857,34 @@ deadlocking:
 Response on success: the full turn result (`finalText`, `usage`,
 `model`, `ms`, …).
 
+### `GET /a2a/ask-result`
+
+Outcome of an `agent_ask` call by `call_id` — backs the
+`agent_ask_result` tool.
+
+```
+GET /a2a/ask-result?call_id=<uuid>
+GET /a2a/ask-result?call_id=<uuid>&wait_until_done=1&timeout_ms=300000
+GET /a2a/ask-result?call_id=<uuid>&agent=<target>&session=<slug>    # after a restart
+```
+
+```json
+{ "call_id": "…", "state": "done", "target_agent": "hans",
+  "target_session": "20260906-172957_cerebrocraft", "started_at": 1788…,
+  "finished_at": 1788…, "response": "…", "outcome": "completed", "source": "registry" }
+```
+
+`state` is `queued` (behind another turn on the target session),
+`running`, `done` or `failed`. The live registry is fed by
+`/chat/send-sync`; when it has no record (server restarted since the
+call) pass `agent` + `session` and the route reads the target's JSONL
+(`user_message.agent_ask_call_id`) — `source: "history"`, and `state`
+becomes `unknown` when the turn never reached `turn_end`. With
+`wait_until_done` the request blocks until the call finishes or
+`timeout_ms` passes; `waiter_agent` / `waiter_session` register the
+wait in the deadlock guard, and a cycle answers `409` with
+`circular_wait: true` like `/spawn-result`.
+
 ### `GET /a2a/turn-origin/:agent/:session`
 
 Who started the turn currently running on `agent/session`: the A2A

@@ -6,11 +6,13 @@
 //     agent_ask — Phase 6c
 
 import { agentAsk } from './ask.ts';
+import { agentAskResult } from './ask-result.ts';
 import { spawnSubagent, spawnSubagents } from './spawn.ts';
 import { subagentCancel, subagentList, subagentResult, subagentStatus } from './status.ts';
 import type { ToolDefinition } from '../types.ts';
 
 export { agentAsk } from './ask.ts';
+export { agentAskResult } from './ask-result.ts';
 export { configureSpawnTools, spawnSubagent, spawnSubagents } from './spawn.ts';
 export { subagentCancel, subagentList, subagentResult, subagentStatus } from './status.ts';
 
@@ -23,5 +25,6 @@ export function agentTools(): ToolDefinition[] {
     subagentList,
     subagentCancel,
     agentAsk,
+    agentAskResult,
   ] as ToolDefinition[];
 }
