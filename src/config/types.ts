@@ -1576,9 +1576,15 @@ export const WikiConfigSchema = z
      *  lives. Dream-B writes here; everything else in the vault is
      *  read-only for somora. */
     vaultSubfolder: z.string().min(1).default('somora'),
-    /** Subdirs Dream-B uses by default. New subdirs may be created
-     *  on demand when topics don't fit. */
-    defaultSubdirs: z.array(z.string().min(1)).default(['personen', 'projekte', 'wissen']),
+    /** Language of the wiki scaffolding: section headings, page types,
+     *  default subfolders, index/log wording and the language Deep
+     *  writes page prose in. `de` is the historical default; existing
+     *  installations keep it. See src/wiki/language.ts. */
+    language: z.enum(['de', 'en']).default('de'),
+    /** Subdirs Deep uses by default. Unset → the language's set
+     *  (de: personen/projekte/wissen, en: people/projects/knowledge).
+     *  New subdirs may be created on demand when topics don't fit. */
+    defaultSubdirs: z.array(z.string().min(1)).optional(),
     deep: WikiDeepConfigSchema,
     lucid: WikiLucidConfigSchema,
     search: WikiSearchConfigSchema,
@@ -1586,7 +1592,7 @@ export const WikiConfigSchema = z
   .default({
     enabled: false,
     vaultSubfolder: 'somora',
-    defaultSubdirs: ['personen', 'projekte', 'wissen'],
+    language: 'de',
     deep: {
       enabled: true,
       intervalHours: 12,

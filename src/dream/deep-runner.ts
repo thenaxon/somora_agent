@@ -33,6 +33,7 @@ import {
   type ActionContext,
 } from './deep-actions.ts';
 import { DefaultPromotionDispatcher } from './deep-dispatcher.ts';
+import { resolveWikiSchema } from '../wiki/language.ts';
 import { regenerateIndex } from '../wiki/index-builder.ts';
 import { appendLogEntries, outcomeToLogEntry, type LogEntry } from '../wiki/log-builder.ts';
 import { readWithMtime } from '../wiki/conflict.ts';
@@ -81,7 +82,8 @@ export interface RunDreamBResult {
 
 export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   const start = Date.now();
-  const dispatcher = args.dispatcher ?? new DefaultPromotionDispatcher();
+  const schema = resolveWikiSchema(args.config.wiki);
+  const dispatcher = args.dispatcher ?? new DefaultPromotionDispatcher(schema);
 
   // Resolve worker model. Without it Deep can't run.
   const ref = args.config.wiki.deep.model;
@@ -112,7 +114,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   for (const [vaultPath, agentsInVault] of byVault) {
     if (args.signal?.aborted) break;
     const wikiAbs = join(vaultPath, wikiSubfolder);
-    const ctx: ActionContext = { wikiAbs, mergeShrinkGuard: args.config.wiki.deep.mergeShrinkGuard };
+    const ctx: ActionContext = { wikiAbs, mergeShrinkGuard: args.config.wiki.deep.mergeShrinkGuard, schema };
 
     for (const agent of agentsInVault) {
       if (args.signal?.aborted) break;
@@ -207,7 +209,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
     // Per-vault: append logs + regenerate index.
     if (allLogEntries.length > 0) {
       try {
-        await appendLogEntries({ wikiAbs, entries: allLogEntries });
+        await appendLogEntries({ wikiAbs, entries: allLogEntries, schema });
       } catch (err) {
         logger.error({ msg: 'dream.deep.log_append_failed', err: (err as Error).message });
       }
@@ -218,7 +220,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
         summary: e.summary,
         date: utcDate(e.ts),
       }));
-      await regenerateIndex({ wikiAbs, recentUpdates });
+      await regenerateIndex({ wikiAbs, recentUpdates, schema });
     } catch (err) {
       logger.error({ msg: 'dream.deep.index_regen_failed', err: (err as Error).message });
     }

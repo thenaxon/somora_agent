@@ -11,6 +11,7 @@ import { join, relative } from 'node:path';
 
 import { logger } from '../server/logger.ts';
 import { parseWikiPage } from './templates.ts';
+import { DEFAULT_WIKI_SCHEMA, type WikiSchema } from './language.ts';
 
 interface PageEntry {
   slug: string; // relative to wiki root, no .md
@@ -22,7 +23,10 @@ interface PageEntry {
 export async function regenerateIndex(args: {
   wikiAbs: string;
   recentUpdates: Array<{ wikiPath: string; summary: string; date: string }>;
+  /** Wiki language set — headings and wording of the generated file. */
+  schema?: WikiSchema;
 }): Promise<void> {
+  const t = (args.schema ?? DEFAULT_WIKI_SCHEMA).text;
   const pages = await collectPages(args.wikiAbs);
   const bySubfolder = new Map<string, PageEntry[]>();
   for (const p of pages) {
@@ -34,15 +38,15 @@ export async function regenerateIndex(args: {
   }
 
   const lines: string[] = [
-    '# somora-Wiki Index',
+    `# ${t.indexTitle}`,
     '',
-    `Letztes Update: ${nowIsoMinute()} von Dream-B`,
+    t.indexUpdated(nowIsoMinute(), 'Deep'),
     '',
   ];
 
   // Headed sections per subfolder, alphabetical. Root-level pages
   // (no subfolder, e.g. someone manually adds a page at wiki root)
-  // come last under "## Sonstiges".
+  // come last under the "misc" heading.
   const subfolders = [...bySubfolder.keys()].filter((s) => s !== '').sort();
   for (const sf of subfolders) {
     lines.push(`## ${capitalize(sf)}`);
@@ -52,7 +56,7 @@ export async function regenerateIndex(args: {
     lines.push('');
   }
   if (bySubfolder.has('')) {
-    lines.push('## Sonstiges');
+    lines.push(`## ${t.indexMisc}`);
     for (const p of bySubfolder.get('')!) {
       lines.push(`- [[${p.slug}]]${p.description ? ` — ${p.description}` : ''}`);
     }
@@ -61,7 +65,7 @@ export async function regenerateIndex(args: {
 
   // Recent updates (last 10 from caller's accumulation)
   if (args.recentUpdates.length > 0) {
-    lines.push('## Letzte Updates');
+    lines.push(`## ${t.indexRecent}`);
     for (const u of args.recentUpdates.slice(0, 10)) {
       lines.push(`- ${u.date}: [[${u.wikiPath}]] — ${u.summary}`);
     }

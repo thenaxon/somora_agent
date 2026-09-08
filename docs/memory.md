@@ -315,6 +315,7 @@ obsidian:
 wiki:
   enabled: true
   vaultSubfolder: somora    # → ~/Documents/Vault/somora/ becomes the wiki
+  language: de              # de | en — headings, folders, index/log wording (wiki.md)
 ```
 
 All agents share this single vault, and so do they share its index

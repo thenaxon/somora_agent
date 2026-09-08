@@ -14,6 +14,7 @@
 //
 // See `private/dream-system-v2.md`.
 
+import { DEFAULT_WIKI_SCHEMA, type WikiSchema } from '../wiki/language.ts';
 import { mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -53,6 +54,9 @@ export interface ActionContext {
    *  applies — the guard must never be OFF just because a caller forgot
    *  to thread config through. */
   mergeShrinkGuard?: WikiMergeShrinkGuard;
+  /** Wiki language set — wording of generated log lines. Optional so
+   *  older callers compile; defaults to German like the config does. */
+  schema?: WikiSchema;
 }
 
 /** Fallback when no config was threaded in. Mirrors the Zod defaults in
@@ -124,7 +128,7 @@ export async function applyPromote(args: {
     agent: candidate.agent,
     memorySlug: candidate.slug,
     wikiPath,
-    logSummary: `${wikiPath} promoted from ${candidate.agent}/${candidate.slug}`,
+    logSummary: (ctx.schema ?? DEFAULT_WIKI_SCHEMA).text.promoted(wikiPath, `${candidate.agent}/${candidate.slug}`),
   };
 }
 

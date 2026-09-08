@@ -262,8 +262,8 @@ shapes but **not yet tested against a live account**.
    │
    ├─ Wiki layer (shared, optional)
    │    <obsidian-vault>/<wiki-subfolder>/
-   │    personen/ projekte/ wissen/ orte/ …
-   │    index.md auto-regenerated, monthly logs
+   │    personen/ projekte/ wissen/ … (or people/ projects/ knowledge/
+   │    with wiki.language: en); index.md auto-regenerated, monthly logs
    │
    ├─ Attachments (content-addressed)
    │    ~/.somora/attachments/<sha256>.<ext>

@@ -16,12 +16,18 @@
 import matter from 'gray-matter';
 import { dump as yamlDump } from 'js-yaml';
 
+import { wikiSchemaFor, type WikiLanguage, type WikiSections } from './language.ts';
+
 // ─── Wiki-Page ───────────────────────────────────────────────────────
 
-/** Allowed `type` values in wiki-page frontmatter. Non-exhaustive —
- *  Deep may introduce new types when it creates new subdirs.
- *  Validation: warn on unknown types, don't reject. */
-export const KNOWN_WIKI_TYPES = ['person', 'projekt', 'konzept', 'ort', 'werkzeug'] as const;
+/** Allowed `type` values in wiki-page frontmatter, both languages
+ *  (see src/wiki/language.ts). Non-exhaustive — Deep may introduce new
+ *  types when it creates new subdirs. Validation: warn on unknown
+ *  types, don't reject. */
+export const KNOWN_WIKI_TYPES = [
+  ...wikiSchemaFor('de').types,
+  ...wikiSchemaFor('en').types,
+] as const;
 export type KnownWikiType = (typeof KNOWN_WIKI_TYPES)[number];
 
 export interface WikiPageFrontmatter {
@@ -40,14 +46,12 @@ export interface WikiPageFrontmatter {
   [extra: string]: unknown;
 }
 
-/** Section titles Deep prefers when generating new pages. User may
- *  introduce others; Deep respects existing structure. */
-export const WIKI_SECTION_TITLES = {
-  currentState: 'Aktueller Stand',
-  properties: 'Eigenschaften',
-  timeline: 'Zeitleiste',
-  notes: 'Notizen',
-} as const;
+/** Section titles Deep prefers when generating new pages, per wiki
+ *  language. User may introduce others; Deep respects existing
+ *  structure. */
+export function wikiSectionTitles(language: WikiLanguage = 'de'): WikiSections {
+  return wikiSchemaFor(language).sections;
+}
 
 export interface WikiPage {
   frontmatter: WikiPageFrontmatter;

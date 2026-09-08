@@ -32,6 +32,11 @@ and contribute to via the Deep dream phase.
         └── YYYY-MM.md                 ← monthly Deep audit log
 ```
 
+The folder names, section headings and the wording of index and log
+follow `wiki.language` (`de`, the default, or `en` — see
+[Language](#language)). The tree above is the German set; with `en`
+it reads `people/`, `projects/`, `knowledge/`, `places/`.
+
 ## Why a separate layer
 
 Three reasons memory and wiki need to be separate:
@@ -142,13 +147,15 @@ two dogs. This page bundles the key people …
 
 ### Section conventions (soft)
 
-Deep prefers writing pages with these section headers (German, since
-the user is German-speaking by default):
+Deep prefers writing pages with four section headers, named by
+`wiki.language`:
 
-- `## Aktueller Stand` — prose summary, current state of the topic
-- `## Eigenschaften` — bullet-list of stable facts
-- `## Zeitleiste` — dated entries (additions, changes, milestones)
-- `## Notizen` — miscellaneous observations, cross-refs
+| `de` (default) | `en` | content |
+|---|---|---|
+| `## Aktueller Stand` | `## Current state` | prose summary, current state of the topic |
+| `## Eigenschaften` | `## Properties` | bullet-list of stable facts |
+| `## Zeitleiste` | `## Timeline` | dated entries (additions, changes, milestones) |
+| `## Notizen` | `## Notes` | miscellaneous observations, cross-refs |
 
 You can introduce other sections; Deep respects existing structure on
 Merge. The conventions exist so multi-agent reads have a predictable
@@ -170,9 +177,11 @@ fetch the referenced page via `memory_get`.
 Auto-regenerated after every Deep run. Contains:
 
 - Header with last-update timestamp
-- Sections per subfolder (`## Personen`, `## Projekte`, …)
+- Sections per subfolder (`## Personen`, `## Projekte`, … — the
+  capitalised folder names)
   - One bullet per page with the slug + first-line description
-- `## Letzte Updates` — last 10 Promote/Merge entries from the current run
+- `## Letzte Updates` (`## Recent updates` with `wiki.language: en`) —
+  last 10 Promote/Merge entries from the current run
 
 ```markdown
 # somora-Wiki Index
@@ -200,11 +209,18 @@ body.
 
 ## Subfolders Deep uses by default
 
+`personen/`, `projekte/`, `wissen/` with `wiki.language: de`;
+`people/`, `projects/`, `knowledge/` with `en`. Your own set replaces
+either:
+
 ```yaml
-defaultSubdirs: ['personen', 'projekte', 'wissen']
+wiki:
+  defaultSubdirs: ['people', 'work', 'reference']
 ```
 
-Plus on-demand subfolders Deep invents when a topic doesn't fit:
+Plus on-demand subfolders Deep invents when a topic doesn't fit
+(`orte/` and `infrastruktur/` are the German examples the prompt gives,
+`places/` and `infrastructure/` the English ones):
 
 - `orte/` — physical places (gardens, houses, addresses)
 - `infrastruktur/` — hardware, network nodes
@@ -339,6 +355,8 @@ within that window; the refresh button skips it.
 wiki:
   enabled: true                          # master toggle
   vaultSubfolder: somora                 # <vault>/somora/ becomes the wiki
+  language: de                           # de | en — see "Language" below
+  # defaultSubdirs: [people, projects]   # replaces the language's default set
 
   deep:
     enabled: true
@@ -366,6 +384,31 @@ obsidian:
 subfolder of your Obsidian vault. If you don't use Obsidian, you can
 still point `vault` at any directory; somora doesn't require Obsidian
 itself, just the markdown-vault layout.
+
+## Language
+
+`wiki.language` decides what the wiki's scaffolding is called and
+which language Deep writes page prose in. It covers:
+
+- the section headings of new pages (table above),
+- the `type:` values Deep picks (`person / projekt / konzept / ort /
+  werkzeug` vs `person / project / concept / place / tool`),
+- the default subfolders and the examples in the Deep and Lucid
+  prompts and the `wiki_*` tool descriptions,
+- the wording of `index.md` (`Letztes Update … von Deep` / `Sonstiges`
+  / `Letzte Updates` vs `Last update … by Deep` / `Other` / `Recent
+  updates`) and of the monthly log (`# Wiki-Log Mai 2026` vs `# Wiki
+  log May 2026`, promotion lines),
+- the instruction to the Deep worker to write titles, headings and
+  prose in that language.
+
+`de` is the default because the wiki started German; an installation
+that never sets the key keeps producing pages that match its existing
+ones. Set `en` for an English wiki. Switching later changes only new
+scaffolding: Merge keeps the headings a page already has, existing
+pages are not translated, and memory notes and search are unaffected
+(they were language-neutral already). Names and terms are quoted as
+they appear in the memory, whatever the wiki language.
 
 ## Multi-agent participation
 

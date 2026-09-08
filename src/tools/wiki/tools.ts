@@ -10,6 +10,7 @@
 // (`src/wiki/conflict.ts`) so concurrent edits via Obsidian on disk
 // don't get clobbered silently.
 
+import { DEFAULT_WIKI_SCHEMA, allSectionHeadings, resolveWikiSchema, wikiSchemaFor } from '../../wiki/language.ts';
 import { mkdir, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -160,13 +161,13 @@ export const wikiEdit: ToolDefinition<z.infer<typeof EditInput>> = {
     properties: {
       wikiPath: {
         type: 'string',
-        description: 'Wiki page path without .md, e.g. "personen/anna" or "infrastruktur/mac-studio".',
+        description: 'Wiki page path without .md, e.g. "<subfolder>/anna" as listed in the wiki index.',
       },
       newBody: {
         type: 'string',
         description:
-          'Optional. Full new body markdown (no frontmatter, no leading "---"). Use sections like ' +
-          '"## Aktueller Stand", "## Eigenschaften", "## Zeitleiste", "## Notizen" if appropriate. ' +
+          'Optional. Full new body markdown (no frontmatter, no leading "---"). Keep the page\'s existing sections; ' +
+          'new pages use the wiki language\'s headings (' + allSectionHeadings() + '). ' +
           'Omit when only the frontmatter (related/sources) needs to change.',
       },
       relatedAdd: {
@@ -280,7 +281,7 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
   toolset: 'wiki',
   description:
     'Create a new wiki page. ONLY available while you hold the active dream_review loop. ' +
-    'The path must be a sub-folder + slug (e.g. "personen/jane-doe", "projekte/orbit"). ' +
+    'The path must be a sub-folder + slug (e.g. "' + DEFAULT_WIKI_SCHEMA.examples.person + '" or "' + wikiSchemaFor('en').examples.project + '" — use the subfolders the wiki index shows). ' +
     'Fails if a page already exists at that path. Pass body content WITHOUT frontmatter ' +
     'and WITHOUT a leading H1 — the title argument is rendered as H1 automatically.',
   inputSchema: CreateInput,
@@ -289,11 +290,11 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
     properties: {
       wikiPath: {
         type: 'string',
-        description: 'Wiki page path with subfolder, no .md, e.g. "personen/jane-doe".',
+        description: 'Wiki page path with subfolder, no .md, e.g. "<subfolder>/jane-doe".',
       },
       type: {
         type: 'string',
-        description: 'Frontmatter type — typically "person", "projekt", "konzept", "ort", "werkzeug".',
+        description: 'Frontmatter type — typically ' + DEFAULT_WIKI_SCHEMA.types.map((t) => `"${t}"`).join(', ') + ' (de) or ' + wikiSchemaFor('en').types.map((t) => `"${t}"`).join(', ') + ' (en).',
       },
       title: {
         type: 'string',
@@ -302,7 +303,7 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
       body: {
         type: 'string',
         description:
-          'Body markdown without frontmatter and without H1. Start with "## Aktueller Stand" or another section heading.',
+          'Body markdown without frontmatter and without H1. Start with the wiki language\'s first section heading (' + allSectionHeadings() + ') or another "## " heading.',
       },
       related: {
         type: 'array',
@@ -320,7 +321,7 @@ export const wikiCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
     const wikiAbs = resolveWikiAbs(ctx);
     const wikiPath = validateWikiPath(input.wikiPath);
     if (!wikiPath.includes('/')) {
-      throw new Error(`wiki_create: wikiPath '${wikiPath}' must include a subfolder (e.g. 'personen/jane-doe')`);
+      throw new Error(`wiki_create: wikiPath '${wikiPath}' must include a subfolder (e.g. '${resolveWikiSchema(ctx.config.wiki).examples.person}')`);
     }
     const fileAbs = join(wikiAbs, `${wikiPath}.md`);
     await mkdir(dirname(fileAbs), { recursive: true });

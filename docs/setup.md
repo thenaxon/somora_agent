@@ -722,6 +722,8 @@ obsidian:
 wiki:
   enabled: true
   vaultSubfolder: somora       # → <vault>/somora/ becomes the wiki
+  language: de                 # de | en — section headings, default folders,
+                               # index/log wording, prose language (docs/wiki.md)
 
   deep:                        # Memory→Wiki consolidation
     enabled: true

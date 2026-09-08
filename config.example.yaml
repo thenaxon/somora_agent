@@ -643,6 +643,33 @@ providers:
 #     bm25Weight: 0.3                     # weight of BM25/FTS5 in fused score
 #     slugMatchBoost: 1.5                 # page whose slug names a query word (1 = off); all searches
 
+# Obsidian vault + wiki layer (docs/wiki.md, docs/dream-phases.md).
+# The vault is read as a recall source for every agent; the wiki is a
+# subfolder of it that Deep writes (memory → wiki consolidation) and
+# Lucid reviews. Without `obsidian.vault` there is no vault read and no
+# wiki.
+# obsidian:
+#   vault: ~/Documents/Vault
+# wiki:
+#   enabled: true
+#   vaultSubfolder: somora                # → <vault>/somora/ becomes the wiki
+#   language: de                          # de | en — section headings, page types,
+#                                         # default subfolders, index/log wording and
+#                                         # the language Deep writes page prose in.
+#                                         # de is the historical default; existing
+#                                         # wikis keep it. Existing pages are never
+#                                         # translated; Merge keeps their headings.
+#   # defaultSubdirs: [people, projects]  # replaces the language's default folders
+#   deep:
+#     enabled: true
+#     intervalHours: 12
+#     model: opus                         # worker model ref (alias or provider/model)
+#   lucid:
+#     enabled: true
+#     intervalDays: 7
+#     model: opus
+#     requireApproval: true
+
 # Workspace — default cwd for file_* tools. NOT a sandbox: agents can
 # also write outside (their own persona files, the global config).
 # Protection comes from a path-blacklist in the file tools, not from

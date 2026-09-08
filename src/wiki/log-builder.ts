@@ -1,7 +1,7 @@
 // Append entries to the wiki's monthly log (`logs/YYYY-MM.md`).
 //
 // Format:
-//   # Wiki-Log Mai 2026
+//   # Wiki-Log Mai 2026        (or "# Wiki log May 2026" with wiki.language: en)
 //
 //   ## 2026-05-08
 //
@@ -22,6 +22,7 @@ import { join } from 'node:path';
 
 import { logger } from '../server/logger.ts';
 import type { CandidateOutcome } from './types.ts';
+import { DEFAULT_WIKI_SCHEMA, type WikiSchema } from './language.ts';
 
 export interface LogEntry {
   /** Wiki path (relative to wiki root, no .md). */
@@ -31,7 +32,7 @@ export interface LogEntry {
    * "updated"  → "Updated" section.
    */
   kind: 'promoted' | 'updated';
-  /** Short German one-liner. */
+  /** Short one-liner in the wiki language. */
   summary: string;
   /** ISO timestamp of when the action ran. */
   ts: number;
@@ -53,8 +54,11 @@ export function outcomeToLogEntry(o: CandidateOutcome, ts: number): LogEntry | n
 export async function appendLogEntries(args: {
   wikiAbs: string;
   entries: LogEntry[];
+  /** Wiki language set — file title and month names. */
+  schema?: WikiSchema;
 }): Promise<void> {
   if (args.entries.length === 0) return;
+  const schema = args.schema ?? DEFAULT_WIKI_SCHEMA;
 
   // Bucket entries by UTC date.
   const byDate = new Map<
@@ -93,8 +97,8 @@ export async function appendLogEntries(args: {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
     if (!existing) {
-      const monthName = monthLabel(month);
-      existing = `# Wiki-Log ${monthName}\n\n`;
+      const monthName = monthLabel(month, schema);
+      existing = `# ${schema.text.logTitle} ${monthName}\n\n`;
     }
     let appended = existing.endsWith('\n') ? existing : existing + '\n';
     // Sort dates descending — newest first inside the month file.
@@ -139,12 +143,8 @@ function utcDate(ts: number): string {
   return `${y}-${m}-${day}`;
 }
 
-function monthLabel(yyyymm: string): string {
+function monthLabel(yyyymm: string, schema: WikiSchema): string {
   const [y, m] = yyyymm.split('-');
-  const monthNames = [
-    'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-    'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
-  ];
   const idx = Number(m) - 1;
-  return `${monthNames[idx] ?? m} ${y}`;
+  return `${schema.months[idx] ?? m} ${y}`;
 }

@@ -28,7 +28,8 @@ import { resolveAnyRef } from '../config/types.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
 import { callOneShotLLM } from './deep-llm.ts';
-import { LUCID_SYSTEM_PROMPT } from './lucid-prompt.ts';
+import { buildLucidSystemPrompt } from './lucid-prompt.ts';
+import { resolveWikiSchema } from '../wiki/language.ts';
 import { setRunStatus, writeLucidRun } from './lucid-storage.ts';
 import type {
   LucidFinding,
@@ -65,6 +66,7 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
     return failedRun(id, args.trigger, start, 0, `worker model '${ref}' did not resolve`);
   }
   const thinking = args.config.wiki.lucid.thinking;
+  const lucidPrompt = buildLucidSystemPrompt(resolveWikiSchema(args.config.wiki));
 
   // Resolve wiki root.
   const obs = resolveObsidianSource(args.config.obsidian);
@@ -113,13 +115,13 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
       id,
       subfolder,
       pagesInSubfolder: pages.length,
-      estimatedTokensIn: Math.ceil((LUCID_SYSTEM_PROMPT.length + userMsg.length) / 4),
+      estimatedTokensIn: Math.ceil((lucidPrompt.length + userMsg.length) / 4),
     });
     let llmText: string;
     try {
       llmText = await callOneShotLLM({
         workerModel,
-        systemPrompt: LUCID_SYSTEM_PROMPT,
+        systemPrompt: lucidPrompt,
         userMessage: userMsg,
         timeoutMs: 600_000,
         ...(args.signal ? { signal: args.signal } : {}),
@@ -149,12 +151,12 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
       msg: 'dream.lucid.llm_request',
       id,
       subfolder: '(cross)',
-      estimatedTokensIn: Math.ceil((LUCID_SYSTEM_PROMPT.length + userMsg.length) / 4),
+      estimatedTokensIn: Math.ceil((lucidPrompt.length + userMsg.length) / 4),
     });
     try {
       const llmText = await callOneShotLLM({
         workerModel,
-        systemPrompt: LUCID_SYSTEM_PROMPT,
+        systemPrompt: lucidPrompt,
         userMessage: userMsg,
         timeoutMs: 600_000,
         ...(args.signal ? { signal: args.signal } : {}),

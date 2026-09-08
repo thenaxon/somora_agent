@@ -18,10 +18,19 @@ import type {
   PromotionDispatcher,
 } from '../wiki/types.ts';
 import type { ThinkingLevel } from '../config/types.ts';
-import { DEEP_SYSTEM_PROMPT } from './deep-prompts.ts';
+import { buildDeepSystemPrompt } from './deep-prompts.ts';
 import { callOneShotLLM } from './deep-llm.ts';
+import { DEFAULT_WIKI_SCHEMA, type WikiSchema } from '../wiki/language.ts';
 
 export class DefaultPromotionDispatcher implements PromotionDispatcher {
+  private readonly systemPrompt: string;
+
+  /** `schema` = the wiki language set (config `wiki.language`); the
+   *  prompt names its headings, types, subfolders and prose language. */
+  constructor(schema: WikiSchema = DEFAULT_WIKI_SCHEMA) {
+    this.systemPrompt = buildDeepSystemPrompt(schema);
+  }
+
   async decideMemoryFate(args: {
     candidate: PromotionCandidate;
     wikiIndex: string;
@@ -40,7 +49,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
     try {
       text = await callOneShotLLM({
         workerModel: args.workerModel,
-        systemPrompt: DEEP_SYSTEM_PROMPT,
+        systemPrompt: this.systemPrompt,
         userMessage: userMsg,
         timeoutMs: args.timeoutMs,
         ...(args.signal ? { signal: args.signal } : {}),

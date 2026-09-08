@@ -584,6 +584,7 @@ outcome). Default `wait: false` is fire-and-forget — agent gets a
 wiki:
   enabled: true
   vaultSubfolder: somora                 # → <vault>/somora/
+  language: de                           # de | en — scaffolding + prose language
   deep:
     enabled: true
     intervalHours: 12
