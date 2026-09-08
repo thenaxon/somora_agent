@@ -276,6 +276,16 @@ export type StreamEvent =
   | { kind: 'thinking-final'; text: string; truncated?: boolean }
   | { kind: 'memory'; count: number; topScore: number | null; refs: string[]; fullText?: string }
   | {
+      // The persona's primary model failed before producing anything and
+      // a `fallback:` model answers this turn. `hops` lists every model
+      // that failed so far (primary first) — one entry per hop of a chain.
+      kind: 'model-fallback';
+      requested: string;
+      actual: string;
+      reason: string;
+      hops?: Array<{ model: string; reason: string }>;
+    }
+  | {
       kind: 'tool';
       tool: string;
       phase: 'call' | 'result' | 'error' | string;

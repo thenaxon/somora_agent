@@ -24,6 +24,7 @@ import {
 } from '@anthropic-ai/claude-agent-sdk';
 import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../server/openai-client.ts';
+import { userTagParam } from '../engine/user-tag.ts';
 import type { ResolvedModel } from '../config/types.ts';
 import type { ReplayPair } from '../engine/replay.ts';
 import { CodexAppServerClient } from '../engine/codex-app-server-client.ts';
@@ -129,6 +130,8 @@ interface SummarizeViaInput {
   systemPrompt: string;
   userPrompt: string;
   resolvedModel: ResolvedModel;
+  /** Whose history is being compacted — for the `user` request tag. */
+  agent?: string;
 }
 
 interface SummarizeViaResult {
@@ -158,6 +161,7 @@ async function summarizeViaOpenAiCompatible(
     ],
     stream: false,
     ...(resolvedModel.model.maxTokens ? { max_tokens: resolvedModel.model.maxTokens } : {}),
+    ...userTagParam(resolvedModel, input.agent ?? 'somora', 'compaction'),
   });
   return {
     text: completion.choices[0]?.message?.content?.trim() ?? '',

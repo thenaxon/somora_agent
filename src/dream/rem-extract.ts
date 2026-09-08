@@ -15,6 +15,7 @@
 
 import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../server/openai-client.ts';
+import { userTagParam } from '../engine/user-tag.ts';
 import { readFile } from 'node:fs/promises';
 import matter from 'gray-matter';
 import type { Config, ResolvedModel, ThinkingLevel } from '../config/types.ts';
@@ -24,6 +25,7 @@ import type { NormalizedEvent } from '../types/events.ts';
 import type { Finding, FindingAction } from './types.ts';
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
 import { samplingBody } from '../engine/sampling.ts';
+import { isAvailabilityError } from '../engine/availability.ts';
 import { normalizeSlug } from '../memory/slug.ts';
 
 export interface ExtractContext {
@@ -48,6 +50,12 @@ export interface ExtractContext {
   relevantWikiPages?: Array<{ slug: string; markdown: string }>;
   /** The resolved dream worker model. */
   workerModel: ResolvedModel;
+  /** Optional backup worker (`rem.fallback`). Taken over for the rest
+   *  of the run when `workerModel` is unreachable — connection
+   *  refused, 5xx, timeout — never on a 4xx rejection. The chunk that
+   *  hit the outage is retried once on the backup; nothing of it was
+   *  persisted, so the retry cannot double findings. */
+  fallbackModel?: ResolvedModel;
   /** Per-chunk LLM-call timeout. */
   chunkTimeoutMs: number;
   /** Roughly tokens per chunk; events are packed up to this size. */
@@ -61,7 +69,29 @@ export interface ExtractContext {
   /** Skip the first N chunks (for resume after pause/crash). */
   startChunk?: number;
   /** Per-chunk progress callback so the driver can persist `chunks_done`. */
-  onChunkComplete?: (info: { chunkIndex: number; totalChunks: number; chunkFindings: Finding[] }) => Promise<void>;
+  onChunkComplete?: (info: {
+    chunkIndex: number;
+    totalChunks: number;
+    chunkFindings: Finding[];
+    /** `provider/modelId` that produced this chunk. */
+    workerModel: string;
+  }) => Promise<void>;
+  /** Fired once, when the run moved from `workerModel` to
+   *  `fallbackModel`, so the driver can persist the switch before the
+   *  retried chunk runs. */
+  onWorkerSwitch?: (info: WorkerSwitch) => Promise<void>;
+}
+
+/** The moment a REM run switched to its backup worker. */
+export interface WorkerSwitch {
+  /** `provider/modelId` that became unreachable. */
+  from: string;
+  /** `provider/modelId` that finished the run. */
+  to: string;
+  /** The primary's failure, trimmed. */
+  reason: string;
+  /** 1-based chunk that hit the outage and was retried on the backup. */
+  atChunk: number;
 }
 
 export interface ExtractResult {
@@ -75,6 +105,8 @@ export interface ExtractResult {
    *  empty result — that would silently lose the session range (bug
    *  report 2026-07-24: 19 runs masked as "no findings" in 3 days). */
   failedChunks: number;
+  /** Set when the backup worker took over mid-run. */
+  workerSwitch?: WorkerSwitch;
 }
 
 const SYSTEM_PROMPT = `You are REM, the session→memory extraction worker for an AI agent in the somora system.
@@ -428,8 +460,14 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
 
   const systemPrompt = SYSTEM_PROMPT;
 
-  const client = buildClient(ctx.workerModel);
-  const reasoning = openAiReasoningState(ctx.thinking, ctx.workerModel.model);
+  // The worker in use. Starts as the configured model; after an
+  // availability failure it is the backup for the rest of the run
+  // (no ping-pong: the primary that just went away is not asked
+  // again on the next chunk).
+  let model = ctx.workerModel;
+  let client = buildClient(model);
+  let reasoning = openAiReasoningState(ctx.thinking, model.model);
+  let workerSwitch: WorkerSwitch | undefined;
   const accumulated: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
   const startAt = ctx.startChunk ?? 0;
   let failedChunks = 0;
@@ -448,6 +486,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         totalChunks,
         completed: false,
         failedChunks,
+        ...(workerSwitch ? { workerSwitch } : {}),
       };
     }
     const chunk = chunks[i]!;
@@ -467,9 +506,9 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         agent: ctx.agent,
         chunkIndex: i + 1,
         totalChunks,
-        workerModel: `${ctx.workerModel.providerName}/${ctx.workerModel.modelId}`,
-        baseUrl: ctx.workerModel.provider.engine === 'openai-compatible'
-          ? (ctx.workerModel.provider as { baseUrl?: string }).baseUrl
+        workerModel: `${model.providerName}/${model.modelId}`,
+        baseUrl: model.provider.engine === 'openai-compatible'
+          ? (model.provider as { baseUrl?: string }).baseUrl
           : undefined,
         eventsInChunk: chunk.events.length,
         estimatedTokensIn: reqTokens,
@@ -484,16 +523,15 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
           (reasoningBody) =>
             client.chat.completions.create(
               {
-                model: ctx.workerModel.modelId,
+                model: model.modelId,
                 messages: [
                   { role: 'system', content: systemPrompt },
                   { role: 'user', content: userMsg },
                 ],
                 stream: false,
-                ...(ctx.workerModel.model.maxTokens
-                  ? { max_tokens: ctx.workerModel.model.maxTokens }
-                  : {}),
-                ...samplingBody(ctx.workerModel.model.sampling),
+                ...(model.model.maxTokens ? { max_tokens: model.model.maxTokens } : {}),
+                ...samplingBody(model.model.sampling),
+                ...userTagParam(model, ctx.agent, 'rem'),
                 ...reasoningBody,
               },
               // Pass the abort signal through to the HTTP layer so shutdown /
@@ -506,8 +544,8 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
             engine: 'openai-compatible',
             phase: 'rem',
             agent: ctx.agent,
-            provider: ctx.workerModel.providerName,
-            model: ctx.workerModel.modelId,
+            provider: model.providerName,
+            model: model.modelId,
           },
         ),
         new Promise<never>((_, reject) =>
@@ -546,6 +584,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
           chunkIndex: i + 1,
           totalChunks,
           chunkFindings: dedupeAndAssignIds(chunkFindings),
+          workerModel: `${model.providerName}/${model.modelId}`,
         });
       }
     } catch (err) {
@@ -569,12 +608,47 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
           failedChunks,
         };
       }
+      // Backup worker: only for an outage of the primary, only once
+      // per run, and only if the chunk produced nothing (it didn't —
+      // findings are pushed after a successful parse). A 4xx is a
+      // config error and must stay visible as a failed chunk.
+      if (ctx.fallbackModel && !workerSwitch && isAvailabilityError(err)) {
+        const from = `${model.providerName}/${model.modelId}`;
+        const to = `${ctx.fallbackModel.providerName}/${ctx.fallbackModel.modelId}`;
+        workerSwitch = { from, to, reason: (err as Error).message.slice(0, 300), atChunk: i + 1 };
+        logger.warn({
+          msg: 'dream.worker_fallback',
+          agent: ctx.agent,
+          chunkIndex: i + 1,
+          totalChunks,
+          from,
+          to,
+          reason: workerSwitch.reason,
+        });
+        if (ctx.fallbackModel.model.contextWindow < ctx.chunkTokens * 1.2) {
+          logger.warn({
+            msg: 'dream.worker_fallback_small_window',
+            agent: ctx.agent,
+            to,
+            contextWindow: ctx.fallbackModel.model.contextWindow,
+            chunkTokens: ctx.chunkTokens,
+            hint: 'rem.chunkTokens is close to the backup worker\'s window — chunks may overflow on the backup',
+          });
+        }
+        model = ctx.fallbackModel;
+        client = buildClient(model);
+        reasoning = openAiReasoningState(ctx.thinking, model.model);
+        if (ctx.onWorkerSwitch) await ctx.onWorkerSwitch(workerSwitch);
+        i -= 1; // retry this chunk on the backup
+        continue;
+      }
       failedChunks++;
       logger.warn({
         msg: 'dream.chunk_failed',
         agent: ctx.agent,
         chunkIndex: i + 1,
         totalChunks,
+        workerModel: `${model.providerName}/${model.modelId}`,
         err: (err as Error).message,
       });
       // continue to next chunk — single-chunk failure shouldn't sink the
@@ -588,5 +662,6 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
     totalChunks,
     completed: true,
     failedChunks,
+    ...(workerSwitch ? { workerSwitch } : {}),
   };
 }

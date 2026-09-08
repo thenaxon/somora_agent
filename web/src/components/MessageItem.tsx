@@ -263,8 +263,12 @@ export const MessageItem = memo(function MessageItem({
               <span
                 className="fallback-chip"
                 title={
-                  `Answered by the fallback model ${msg.fallback.actual} — the primary ` +
-                  `${msg.fallback.requested} failed before producing anything: ${msg.fallback.reason}`
+                  msg.fallback.hops && msg.fallback.hops.length > 1
+                    ? `Answered by ${msg.fallback.actual} after ${msg.fallback.hops.length} models failed ` +
+                      'before producing anything:\n' +
+                      msg.fallback.hops.map((h, i) => `${i + 1}. ${h.model}: ${h.reason}`).join('\n')
+                    : `Answered by the fallback model ${msg.fallback.actual} — the primary ` +
+                      `${msg.fallback.requested} failed before producing anything: ${msg.fallback.reason}`
                 }
               >
                 ⇄ fallback · {shortModelRef(msg.fallback.actual)}

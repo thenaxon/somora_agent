@@ -363,6 +363,19 @@ button { cursor: pointer; }
   align-items: center;
   gap: 4px;
 }
+/* ⇄ fallback marker on an agent bubble: the persona's primary model
+ * failed before producing anything and a `fallback:` model answered.
+ * Tap-and-hold shows the reason via title. */
+.msg-fallback {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-3);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  border-radius: 999px;
+  padding: 0 6px;
+  margin-top: 4px;
+  white-space: nowrap;
+}
 /* Queue-marker — sits left of the time on user bubbles whose turn
  * is still waiting for the previous one to finish. Inline-SVG
  * hourglass renders as line-art (`stroke=currentColor`), same

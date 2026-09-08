@@ -74,6 +74,12 @@ export interface ChatTurnResult {
   ms: number;
   /** Present when the persona's fallback model answered instead of the
    *  primary. `provider`/`model` above already reflect the fallback. */
-  fallback?: { requested: string; actual: string; reason: string };
+  fallback?: {
+    requested: string;
+    actual: string;
+    reason: string;
+    /** Failed attempts in order, primary first (fallback chains). */
+    hops?: Array<{ model: string; reason: string }>;
+  };
   error?: string;
 }

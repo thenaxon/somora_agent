@@ -18,6 +18,7 @@
 
 import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../server/openai-client.ts';
+import { userTagParam } from './user-tag.ts';
 import {
   pickLatest,
   runCompaction,
@@ -817,6 +818,9 @@ export const openAiCompatibleEngine: AgentEngine = {
       // key answers 400 → retry ONCE without any sampling and say so via
       // engine_meta; the drop sticks for the rest of the turn.
       let samplingParam: Record<string, unknown> = samplingBody(sampling);
+      // `user: "<agent>/<session>"` — standard field, lets a gateway
+      // attribute cost per agent and group a session's requests.
+      const userTag = userTagParam(resolvedModel, agent, session);
       let samplingDropped: { sent: Record<string, unknown>; backend: string } | null = null;
       const logCtx = { engine: ENGINE, provider: resolvedModel.providerName, model: resolvedModel.modelId, agent, session };
       const createChatStream = async (params: CreateParams) => {
@@ -824,7 +828,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           withReasoningRetry(
             reasoning,
             (body) =>
-              client.chat.completions.create({ ...params, ...samplingParam, ...body } as CreateParams, {
+              client.chat.completions.create({ ...params, ...samplingParam, ...userTag, ...body } as CreateParams, {
                 signal: effectiveSignal,
               }),
             logCtx,

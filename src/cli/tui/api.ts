@@ -390,6 +390,11 @@ export interface HistoryEvent {
   engine?: string;
   itemType?: string;
   payload?: unknown;
+  /** `kind: 'model_fallback'` rows. */
+  requested?: string;
+  actual?: string;
+  reason?: string;
+  hops?: Array<{ model: string; reason: string }>;
   // thinking_message
   truncated?: boolean;
 }

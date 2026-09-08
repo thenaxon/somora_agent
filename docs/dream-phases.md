@@ -100,6 +100,7 @@ Configured per-agent in `agent.yaml`:
 rem:
   enabled: true
   model: gemma4big           # alias from config.yaml or 'provider/modelId'
+  # fallback: deep4pro       # optional backup worker — see below
   idleMinutes: 30
   chunkTokens: 50000         # range-split for very long sessions
   chunkTimeoutMs: 600000     # 10 min per chunk (gemma-friendly)
@@ -115,6 +116,25 @@ Default worker is small/local (`gemma4big` via mlx-omx, ~31B params).
 You can switch to opus/sonnet/gpt-5.5 — but REM runs often, so cost
 matters. Gemma is good enough for atomic-fact extraction with the right
 prompt.
+
+**`rem.fallback` — a backup worker.** A local worker is away whenever
+its box switches profiles, benchmarks or reboots. With `fallback:` set
+to a second model (typically a cheap hosted one on a *different*
+provider), a run whose primary is unreachable — connection refused,
+5xx, timeout, 429 after the SDK's retries — continues on the backup
+from the chunk that hit the outage; chunks the primary already
+finished are kept, the failed chunk is retried once on the backup, and
+the backup stays in charge for the rest of that run. What does NOT
+switch: a 4xx rejection (bad parameter, unsupported reasoning level,
+auth) — that is a config problem and the dream fails visibly; and a
+run paused by user activity — that pauses as before. The agent's chat
+`model:`/`fallback:` are never used implicitly: REM only ever runs on
+workers you named. Both refs are validated when the run starts, so a
+typo in `fallback:` fails the dream immediately rather than on the day
+the primary is down. The dream file records `worker_fallback_ref` and,
+when the switch happened, `worker_switch` (`from`, `to`, `reason`,
+`at_chunk`); the Markdown body shows the same line, and the log carries
+`dream.worker_fallback`.
 
 ### What REM sees
 

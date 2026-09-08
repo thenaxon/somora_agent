@@ -127,6 +127,50 @@ for the models known to run with somora and their tested config blocks.
 > registry release yet. The `npm pack` + tarball install below is the
 > supported install path; updates come via `somora update`.
 
+### Already using a coding agent? Let it set up somora.
+
+If you already run Claude Code, Codex CLI or another AI agent with
+terminal access to your machine, hand it the setup. It reads the docs,
+does the install and configuration below, and gets you a complete
+instance — model providers, agents, a team, memory, skills, resources —
+not just a running server. (A chat without access to your machine can't
+do this; it needs to run commands here.) Copy this into your agent:
+
+```text
+Set up somora for me from the official repository:
+https://github.com/thenaxon/somora_agent
+
+Read the current README, then docs/setup.md, docs/models.md,
+docs/agents.md, docs/team.md, docs/resources.md and docs/skills.md.
+Inspect my environment, then install and configure somora using the
+supported install method from the README (npm pack + tarball).
+
+Aim for a complete, useful setup, not just a running server:
+- Help me choose model providers and connect the CLI logins or API
+  access I already have. Use the documented model configurations
+  (engine, reasoning mapping, context window, capabilities, sampling,
+  fallback) from docs/models.md — don't guess model IDs.
+- Set up my agents and a coherent team with clear roles and
+  delegation rules (docs/agents.md, docs/team.md).
+- Configure the features that fit me: memory and the dream phases,
+  skills, projects, scheduled tasks (sentinel), and image, video or
+  voice generation where I have a backend for it. Explain optional
+  features and what they need rather than silently skipping them.
+- Connect the machines and services I want as resources
+  (docs/resources.md).
+- Ask concise questions for missing preferences, credentials or
+  decisions.
+- Verify: the server is healthy, a chat turn answers on the
+  configured model, tools run, and every integration you set up
+  works. Summarise what works and what still needs my input.
+
+Preserve unrelated services and configuration. Ask before making
+disruptive changes. Never invent model IDs, credentials, resources or
+configuration options that the docs don't describe.
+```
+
+Prefer to do it by hand? The manual path follows.
+
 ```bash
 # 1. Install prereqs (see docs/setup.md for details per OS)
 sudo apt install tmux ripgrep         # Debian/Ubuntu

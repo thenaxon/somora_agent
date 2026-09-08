@@ -65,6 +65,33 @@ export function validateAgentsMd(raw: string, dirName: string): { ok: true } | {
   return { ok: true };
 }
 
+/**
+ * `fallback:` → ordered, de-duplicated list. The primary itself and
+ * repeated entries are dropped with a log line rather than an error:
+ * a persona must still load when the operator lists a model twice.
+ */
+function normaliseFallbackChain(
+  model: string | undefined,
+  raw: string | string[] | undefined,
+  agent: string,
+): string[] {
+  if (raw === undefined) return [];
+  const list = typeof raw === 'string' ? [raw] : raw;
+  const out: string[] = [];
+  for (const ref of list) {
+    if (ref === model) {
+      logger.warn({ msg: 'persona.fallback_is_primary', agent, ref });
+      continue;
+    }
+    if (out.includes(ref)) {
+      logger.warn({ msg: 'persona.fallback_duplicate', agent, ref });
+      continue;
+    }
+    out.push(ref);
+  }
+  return out;
+}
+
 const RemConfigSchema = z.object({
   /** Master toggle. When false, REM-Phase never runs for this agent. */
   enabled: z.boolean(),
@@ -74,6 +101,15 @@ const RemConfigSchema = z.object({
    * primary, so a REM run never silently runs on an expensive model.
    */
   model: z.string().min(1),
+  /**
+   * Optional backup worker (alias or `provider/modelId`), used only
+   * when `model` is unreachable — connection refused, 5xx, timeout,
+   * rate-limit after retry. Never inherits the agent's chat model or
+   * chat fallback: REM must stay on a model you chose for its cost.
+   * A 4xx (bad request, auth, unsupported parameter) is a config
+   * problem and does NOT switch — the dream fails visibly instead.
+   */
+  fallback: z.string().min(1).optional(),
   /**
    * Idle minutes before the auto-REM-trigger fires. Reset on every
    * chat.send to this agent. Default 30.
@@ -122,7 +158,14 @@ const RemConfigSchema = z.object({
 const AgentYamlSchema = z
   .object({
     model: z.string().optional(),
-    fallback: z.string().optional(),
+    /**
+     * Ordered fallback chain: one ref or a list (`fallback: sonnet` or
+     * `fallback: [deep4flash, orhaiku]`). Tried in order when the
+     * previous model failed before producing any output or tool call.
+     * Normalised to `string[]` on the Persona. Duplicates and the
+     * primary itself are dropped at load time.
+     */
+    fallback: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
     /**
      * Persona-level thinking depth default. Overridable per-session via
      * `/thinking <level>`. Engine adapters apply it only if the active
@@ -226,7 +269,8 @@ export interface Persona {
   description: string;
   icon: string | undefined;
   model: string | undefined;
-  fallback: string | undefined;
+  /** Ordered fallback chain (alias or provider/modelId). Empty = none. */
+  fallback: string[];
   thinking: ThinkingLevel | undefined;
   /** agent.yaml `sampling:` block, see docs/sampling.md. */
   sampling: SamplingConfig | undefined;
@@ -365,7 +409,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     description: agentMd.data.description ?? '',
     icon: agentMd.data.icon,
     model: agentYaml.model,
-    fallback: agentYaml.fallback,
+    fallback: normaliseFallbackChain(agentYaml.model, agentYaml.fallback, name),
     thinking: agentYaml.thinking,
     sampling: agentYaml.sampling,
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
@@ -410,7 +454,9 @@ const SAMPLE_AGENT_YAML = `# Operator config for this agent. Edit by hand — no
 #
 # model:    primary model. Alias or 'provider/modelId'. If unset, falls back
 #           to the first configured model in config.yaml.
-# fallback: secondary model used when the primary fails before first output.
+# fallback: model(s) used when the primary fails before first output. One
+#           ref or an ordered list ("fallback: [deep4flash, orhaiku]") tried
+#           in turn. Put at least one on a different host/provider.
 # thinking: cross-engine reasoning depth — off|low|medium|high. Engine
 #           adapters apply it only if the active model has the 'reasoning'
 #           capability. Per-session override via /thinking <level>.

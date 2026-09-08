@@ -116,7 +116,12 @@ function renderBody(
     '',
     `Source session: \`${meta.source_session}\`  `,
     `Range: \`${new Date(meta.range_from_ts).toISOString()}\` → \`${new Date(meta.range_through_ts).toISOString()}\`  `,
-    `Worker model: \`${meta.worker_model_ref}\`  `,
+    `Worker model: \`${meta.worker_model_ref}\`${meta.worker_fallback_ref ? ` (backup: \`${meta.worker_fallback_ref}\`)` : ''}  `,
+    ...(meta.worker_switch
+      ? [
+          `Worker switched: \`${meta.worker_switch.from}\` → \`${meta.worker_switch.to}\` from chunk ${meta.worker_switch.at_chunk} on — ${meta.worker_switch.reason}  `,
+        ]
+      : []),
     `Created: \`${meta.created_at}\`  `,
     `Status: **${meta.status}**`,
     '',
@@ -214,8 +219,21 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   // Resolve worker model first — fail-loud per design (RemConfig requires
   // an explicit model when enabled, no fallback).
   let workerModel: ResolvedModel;
+  let fallbackModel: ResolvedModel | undefined;
   try {
     workerModel = resolveDreamModel(args.config, args.rem.model);
+    // The backup is validated up front too: a typo in `rem.fallback`
+    // must surface now, not on the day the primary is down.
+    if (args.rem.fallback) {
+      fallbackModel = resolveDreamModel(args.config, args.rem.fallback);
+      if (
+        fallbackModel.providerName === workerModel.providerName &&
+        fallbackModel.modelId === workerModel.modelId
+      ) {
+        logger.warn({ msg: 'dream.worker_fallback_is_primary', agent: args.agent, ref: args.rem.fallback });
+        fallbackModel = undefined;
+      }
+    }
   } catch (err) {
     logger.error({
       msg: 'dream.worker_resolve_failed',
@@ -369,6 +387,9 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     chunks_done: 0,
     chunks_total: 0,
     worker_model_ref: `${workerModel.providerName}/${workerModel.modelId}`,
+    ...(fallbackModel
+      ? { worker_fallback_ref: `${fallbackModel.providerName}/${fallbackModel.modelId}` }
+      : {}),
     findings: [],
   };
   let file: DreamFile = {
@@ -391,6 +412,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     referencedWikiCount: referencedWiki.length,
     referencedWikiSlugs: referencedWiki.map((w) => w.slug),
     workerModel: meta.worker_model_ref,
+    workerFallback: meta.worker_fallback_ref ?? null,
   });
 
   try {
@@ -402,6 +424,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       wikiIndex,
       relevantWikiPages: referencedWiki,
       workerModel,
+      ...(fallbackModel ? { fallbackModel } : {}),
       chunkTimeoutMs: args.rem.chunkTimeoutMs,
       chunkTokens: args.rem.chunkTokens,
       thinking: args.rem.thinking,
@@ -410,6 +433,13 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
         // Persist progress so a crash mid-flight leaves a recoverable file.
         meta.chunks_done = chunkIndex;
         meta.chunks_total = totalChunks;
+        file = { meta, body: renderBody(meta, args.sourceSession, sources) };
+        await writeDreamFile(args.agent, file);
+      },
+      onWorkerSwitch: async (sw) => {
+        // Persist the switch before the retried chunk runs, so a crash
+        // right after still shows which worker was in charge.
+        meta.worker_switch = { from: sw.from, to: sw.to, reason: sw.reason, at_chunk: sw.atChunk };
         file = { meta, body: renderBody(meta, args.sourceSession, sources) };
         await writeDreamFile(args.agent, file);
       },

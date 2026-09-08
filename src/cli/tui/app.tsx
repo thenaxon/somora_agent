@@ -37,6 +37,21 @@ interface Props {
 
 const HISTORY_MAX = 100;
 
+
+/** One line for the scrollback when a fallback model takes over a turn.
+ *  With a chain, every failed hop is named so the operator sees which
+ *  hosts were down — the ⇄ chip in /web carries the same list. */
+function fallbackNotice(fb: {
+  requested: string;
+  actual: string;
+  reason: string;
+  hops?: Array<{ model: string; reason: string }>;
+}): string {
+  const hops = fb.hops && fb.hops.length > 0 ? fb.hops : [{ model: fb.requested, reason: fb.reason }];
+  const failed = hops.map((h) => `${h.model} (${h.reason || 'no reason given'})`).join(', ');
+  return `⇄ model fallback: ${failed} failed before producing anything — answering with ${fb.actual}`;
+}
+
 export function App({
   base,
   initialAgent,
@@ -451,6 +466,22 @@ export function App({
           });
         }
       } else if (
+        ev.kind === 'model_fallback' &&
+        typeof ev.requested === 'string' &&
+        typeof ev.actual === 'string'
+      ) {
+        out.push({
+          kind: 'system',
+          id: nid(),
+          text: fallbackNotice({
+            requested: ev.requested,
+            actual: ev.actual,
+            reason: typeof ev.reason === 'string' ? ev.reason : '',
+            ...(Array.isArray(ev.hops) ? { hops: ev.hops as Array<{ model: string; reason: string }> } : {}),
+          }),
+          tone: 'warn',
+        });
+      } else if (
         ev.kind === 'engine_meta' &&
         typeof ev.engine === 'string' &&
         typeof ev.itemType === 'string'
@@ -636,6 +667,10 @@ export function App({
           details: phase === 'error' ? undefined : ev.details,
           error: phase === 'error' ? summarize(ev.error, 200) : undefined,
         });
+        return;
+      }
+      case 'model-fallback': {
+        appendTurn({ kind: 'system', id: nextId(), text: fallbackNotice(ev), tone: 'warn' });
         return;
       }
       case 'engine_meta': {

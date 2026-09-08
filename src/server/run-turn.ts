@@ -437,7 +437,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   const turnStartedAt = Date.now();
   /** Set when run-turn-fallback re-ran this turn on the fallback model —
    *  the phase:'end' payload and the result report the ACTUAL model. */
-  let turnFallback: { requested: string; actual: string; reason: string } | undefined;
+  let turnFallback: ChatTurnResult['fallback'];
   logger.info({
     msg: 'turn.started',
     turnId,
@@ -802,7 +802,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
 
     const stream = runTurnWithFallback({
       primary: resolvedModel,
-      fallbackRef: persona.fallback,
+      fallbackRefs: persona.fallback,
       config: deps.config,
       baseInput: {
         agent,
@@ -853,7 +853,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     let firstEventLogged = false;
     let sawTurnEnd = false;
     let lastSeenEngine: string = resolvedModel.provider.engine;
-    let fallbackInfo: { requested: string; actual: string; reason: string } | undefined;
+    let fallbackInfo: ChatTurnResult['fallback'];
     for await (const ev of stream) {
       if (!firstEventLogged) {
         firstEventLogged = true;
@@ -919,7 +919,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         }
       }
       if (ev.kind === 'model_fallback') {
-        fallbackInfo = { requested: ev.requested, actual: ev.actual, reason: ev.reason };
+        fallbackInfo = {
+          requested: ev.requested,
+          actual: ev.actual,
+          reason: ev.reason,
+          ...(ev.hops ? { hops: ev.hops } : {}),
+        };
         turnFallback = fallbackInfo;
       }
       if (ev.kind === 'turn_end') {

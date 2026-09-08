@@ -172,6 +172,8 @@ export const dreamGet: ToolDefinition<z.infer<typeof GetInput>> = {
         completed_at: memFile.meta.completed_at,
         processed_at: memFile.meta.processed_at,
         worker_model_ref: memFile.meta.worker_model_ref,
+        ...(memFile.meta.worker_fallback_ref ? { worker_fallback_ref: memFile.meta.worker_fallback_ref } : {}),
+        ...(memFile.meta.worker_switch ? { worker_switch: memFile.meta.worker_switch } : {}),
         ...(memFile.meta.error ? { error: memFile.meta.error } : {}),
         ...(typeof memFile.meta.chunks_failed === 'number' && memFile.meta.chunks_failed > 0
           ? { chunks_failed: memFile.meta.chunks_failed }

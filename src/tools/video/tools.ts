@@ -295,6 +295,11 @@ interface VideoModelRow {
   provider: string;
   is_default: boolean;
   accepts?: Record<string, string[] | string>;
+  /** Values the backend names as known-good for a free-text field
+   *  (`accepts.<field>` = 'any value'). Not a restriction — but a
+   *  value outside this list is the usual reason for an upstream
+   *  400, so prefer these. */
+  recommended?: Record<string, string[]>;
   max_references?: number;
   variants?: string[];
   note?: string;
@@ -387,6 +392,9 @@ export const videoModels: ToolDefinition<ModelsArgs, { models: VideoModelRow[] }
               row.note = 'No published parameter list; unlisted fields are passed through untouched.';
             }
             row.accepts = accepts;
+            if (caps.recommended && Object.keys(caps.recommended).length > 0) {
+              row.recommended = caps.recommended as Record<string, string[]>;
+            }
             if (caps.maxReferences !== undefined) row.max_references = caps.maxReferences;
             if (caps.variants) row.variants = caps.variants;
           } catch (err) {

@@ -305,12 +305,18 @@ export type NormalizedEvent =
       actual: string;
       /** Primary's failure message, trimmed — what the user sees on hover. */
       reason: string;
+      /** Every model that died before producing anything on this turn,
+       *  in order (the primary first). Present since fallback chains
+       *  (2026-09-08); one entry when a single `fallback:` took over. */
+      hops?: Array<{ model: string; reason: string }>;
     };
 
 export interface ModelFallbackInfo {
   requested: string;
   actual: string;
   reason: string;
+  /** Failed attempts in order, primary first. See NormalizedEvent. */
+  hops?: Array<{ model: string; reason: string }>;
 }
 
 // Wire format over SSE — orbit-compatible. Deltas are cumulative.

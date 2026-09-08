@@ -395,6 +395,13 @@ export async function fireTrigger(
     target_agent: dispatch.agent,
     target_session: session,
     started_at: Date.now(),
+    // 'sentinel' is a synthetic parent (the scheduler itself), not a
+    // persona. Without this opt-out the completion attention-wake
+    // tries to dispatch a turn to it and logs
+    // subagent.attention_wake_failed "agent 'sentinel' not found" on
+    // every fire. The scheduler reads the outcome via completeTask /
+    // recordFire itself; there is nothing left to report to anyone.
+    attention: false,
   });
 
   const prompt = buildFirePrompt(trigger, now, opts.catchUp);

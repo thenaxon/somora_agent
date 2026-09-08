@@ -22,6 +22,13 @@ export interface ThinkingContent {
   streaming?: boolean;
 }
 
+export interface ModelFallback {
+  requested: string;
+  actual: string;
+  reason: string;
+  hops?: Array<{ model: string; reason: string }>;
+}
+
 export interface ChatMessage {
   id: string;
   /** `error`: the turn ended with an engine/backend error instead of
@@ -47,6 +54,11 @@ export interface ChatMessage {
    *  `assistant_audio` SSE event arrived after the message; drives the
    *  Play-button on the agent bubble. */
   audio?: { url: string; mime: string; durationMs?: number };
+  /** agent rows: the persona's primary model failed before producing
+   *  anything and a `fallback:` model answered. `requested` is the
+   *  primary, `actual` the model that answered; `hops` every model that
+   *  failed (primary first) when a fallback chain was walked. */
+  fallback?: ModelFallback;
   /** Media the agent produced during this turn. The PWA deliberately
    *  does NOT display it — this is a marker so the reply doesn't look
    *  like the agent delivered nothing, with the desktop app as the
@@ -84,6 +96,11 @@ export interface HistoryEvent {
   from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
   media?: Array<{ type: string; id: string; filename: string; mime: string; url: string }>;
+  /** `kind: 'model_fallback'` rows. */
+  requested?: string;
+  actual?: string;
+  reason?: string;
+  hops?: Array<{ model: string; reason: string }>;
 }
 
 /** Split a media list by type. An entry whose type this client doesn't
@@ -162,10 +179,23 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
   // without one (error, abort) drops it — there is no bubble to
   // hang it on, and a thinking-only row would read as an answer.
   let pendingThinking: ThinkingContent | null = null;
+  // model_fallback precedes the fallback model's assistant_message:
+  // fold it onto the NEXT agent row, same as thinking.
+  let pendingFallback: ModelFallback | null = null;
   for (const ev of events) {
     if (ev.kind === 'turn_start') {
       currentTurnId = typeof ev.turnId === 'string' ? ev.turnId : undefined;
       pendingThinking = null;
+      pendingFallback = null;
+      continue;
+    }
+    if (ev.kind === 'model_fallback' && typeof ev.requested === 'string' && typeof ev.actual === 'string') {
+      pendingFallback = {
+        requested: ev.requested,
+        actual: ev.actual,
+        reason: typeof ev.reason === 'string' ? ev.reason : '',
+        ...(Array.isArray(ev.hops) ? { hops: ev.hops as ModelFallback['hops'] } : {}),
+      };
       continue;
     }
     if (ev.kind === 'turn_end') {
@@ -226,6 +256,10 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
     if (mapped.role === 'agent' && pendingThinking) {
       mapped.thinking = pendingThinking;
       pendingThinking = null;
+    }
+    if (mapped.role === 'agent' && pendingFallback) {
+      mapped.fallback = pendingFallback;
+      pendingFallback = null;
     }
     out.push(mapped);
   }

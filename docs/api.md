@@ -1305,13 +1305,18 @@ Event types:
   context overflow), `reasoning_effort_adjusted` and `sampling_dropped`
   (backend rejected the parameter, turn retried without it). Each
   carries a human-readable `payload.text`.
-- `model_fallback` — `{requested, actual, reason}` (refs are
+- `model_fallback` — `{requested, actual, reason, hops?}` (refs are
   `provider/modelId`) — the persona's primary model failed before
-  producing anything and the configured `fallback:` model is answering
-  this turn. Sent before the fallback's first delta; the following
-  `agent` phase:'end' also carries `fallback` and reports the ACTUAL
-  `provider`/`model`. Persisted to history as the same kind, so a
-  reload keeps the marker on that turn.
+  producing anything and a configured `fallback:` model is answering
+  this turn. `requested` is always the primary, `actual` the model
+  now answering, `reason` the failure that triggered this hop. `hops`
+  lists every model that failed so far, in order
+  (`[{model, reason}, …]`, primary first) — with a fallback chain
+  (`fallback: [a, b]`) one event is sent per hop and the last one
+  carries the whole chain. Sent before the fallback's first delta;
+  the following `agent` phase:'end' also carries `fallback` (same
+  shape) and reports the ACTUAL `provider`/`model`. Persisted to
+  history as the same kind, so a reload keeps the marker on that turn.
 - `memory` — `{count, topScore?, refs, fullText}` — the memory recall
   injected into this turn: number of hits, best fused score, the
   `source/slug` refs, and the full `<memory-context>` block text.

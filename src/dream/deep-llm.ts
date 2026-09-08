@@ -28,6 +28,7 @@ import { logger } from '../server/logger.ts';
 import { claudeCliThinkingOptions, codexCliReasoningArgs } from '../engine/thinking-params.ts';
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
 import { samplingBody } from '../engine/sampling.ts';
+import { userTagParam } from '../engine/user-tag.ts';
 
 export interface OneShotArgs {
   workerModel: ResolvedModel;
@@ -103,6 +104,13 @@ async function callOpenAICompat(args: OneShotArgs): Promise<string> {
               ? { max_tokens: args.workerModel.model.maxTokens }
               : {}),
             ...samplingBody(args.workerModel.model.sampling),
+            // `user: "<agent>/<op>"` — Deep tags the memory's owner
+            // agent, Lucid tags `lucid/<pass>`; see engine/user-tag.ts.
+            ...userTagParam(
+              args.workerModel,
+              typeof args.logCtx.agent === 'string' ? args.logCtx.agent : 'somora',
+              typeof args.logCtx.op === 'string' ? args.logCtx.op.split(':')[0]! : 'dream',
+            ),
             ...reasoningBody,
           },
           args.signal ? { signal: args.signal } : undefined,

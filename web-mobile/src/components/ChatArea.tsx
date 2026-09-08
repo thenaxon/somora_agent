@@ -266,6 +266,20 @@ function MobileMessage({
             </button>
           )}
           {isAgent && msg.audio && <PlayAudioButton url={msg.audio.url} />}
+          {isAgent && msg.fallback && (
+            <span
+              className="msg-fallback"
+              title={
+                msg.fallback.hops && msg.fallback.hops.length > 1
+                  ? `Answered by ${msg.fallback.actual} after ${msg.fallback.hops.length} models failed:\n` +
+                    msg.fallback.hops.map((h, i) => `${i + 1}. ${h.model}: ${h.reason}`).join('\n')
+                  : `Answered by the fallback model ${msg.fallback.actual} — the primary ` +
+                    `${msg.fallback.requested} failed before producing anything: ${msg.fallback.reason}`
+              }
+            >
+              ⇄ fallback · {msg.fallback.actual.split('/').pop()}
+            </span>
+          )}
           {isAgent && msg.mediaNote && (
             <MediaNote images={msg.mediaNote.images} videos={msg.mediaNote.videos} />
           )}

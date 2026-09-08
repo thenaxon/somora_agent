@@ -74,6 +74,11 @@ icon: 🌼              # optional emoji shown in CLI prompts and listings
 model: opus           # alias OR provider/modelId
 fallback: gpt55       # used when primary fails before producing any output
                       # (visible: ⇄ chip on that turn + notice in the web UI)
+# fallback: [deep4flash, orhaiku]   # or an ordered chain — each is tried in
+                      # turn when the previous one died before its first
+                      # output or tool call. Put at least one entry on a
+                      # different host/provider than the primary: two
+                      # models on the same GPU box go down together.
 
 # Optional: cross-engine thinking depth (off|low|medium|high)
 # Per-session override via /thinking <level>. Only applies to models with
@@ -119,7 +124,9 @@ skills:
 # Optional: REM phase (per-agent session→memory extraction)
 rem:
   enabled: true
-  model: gemma4big          # required when enabled — no fallback (intentional)
+  model: gemma4big          # required when enabled — never inherits the chat model
+  # fallback: deep4pro      # optional backup worker, used only when `model`
+                            # is unreachable (connection refused, 5xx, timeout)
   idleMinutes: 30           # auto-trigger after N min idle
   chunkTokens: 50000        # range-split for very long sessions
   chunkTimeoutMs: 600000    # 10 min/chunk; gemma-friendly

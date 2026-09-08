@@ -196,6 +196,10 @@ export interface ModelFallback {
   requested: string;
   actual: string;
   reason: string;
+  /** Every model that died before producing anything on this turn, in
+   *  order (primary first). Present with fallback chains; a single
+   *  `fallback:` sends one entry. */
+  hops?: Array<{ model: string; reason: string }>;
 }
 
 /** Live SSE wire-format envelope. The `event:` line is the

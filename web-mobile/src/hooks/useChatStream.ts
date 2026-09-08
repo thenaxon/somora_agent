@@ -36,6 +36,7 @@ import {
   historyEventsToMessages,
   newId,
   type ChatMessage,
+  type ModelFallback,
   type HistoryEvent,
   type ThinkingContent,
 } from './history';
@@ -325,7 +326,7 @@ export function useChatStream(agent: string | null): ChatStream {
 
     const onAgent = (e: MessageEvent) => {
       bump();
-      let d: { phase?: string } | null = null;
+      let d: { phase?: string; fallback?: ModelFallback } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d) return;
       if (d.phase === 'start') {
@@ -335,7 +336,25 @@ export function useChatStream(agent: string | null): ChatStream {
         streamingIdRef.current = null;
         // Sweep leftover streaming flags (text cursor AND thinking
         // pulse) — an aborted turn sends neither final.
-        setMessages(settleStreams);
+        const fb = d.fallback;
+        setMessages((prev) => {
+          const settled = settleStreams(prev);
+          if (!fb) return settled;
+          // phase:'end' carries the fallback of the turn that just
+          // finished — stamp the last agent row so the ⇄ marker shows
+          // without a reload (history replay folds model_fallback the
+          // same way).
+          for (let i = settled.length - 1; i >= 0; i -= 1) {
+            const m = settled[i];
+            if (m && m.role === 'agent') {
+              if (m.fallback) return settled;
+              const next = settled.slice();
+              next[i] = { ...m, fallback: fb };
+              return next;
+            }
+          }
+          return settled;
+        });
       }
     };
 

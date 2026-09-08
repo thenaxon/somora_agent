@@ -232,6 +232,15 @@ export function openStream(
           ...(typeof data.summary === 'string' ? { summary: data.summary } : {}),
           payload: data.payload,
         };
+      case 'model_fallback':
+        if (typeof data.requested !== 'string' || typeof data.actual !== 'string') return null;
+        return {
+          kind: 'model-fallback',
+          requested: data.requested,
+          actual: data.actual,
+          reason: typeof data.reason === 'string' ? data.reason : '',
+          ...(Array.isArray(data.hops) ? { hops: data.hops as Array<{ model: string; reason: string }> } : {}),
+        };
       case 'status':
         if (data.msg === 'connected') {
           reconnectMs = RECONNECT_INITIAL_MS;

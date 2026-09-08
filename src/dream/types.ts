@@ -97,8 +97,13 @@ export interface DreamMeta {
    *  dream is incomplete — it lands as `failed` and the session range is
    *  NOT marked as dreamed, so the next trigger retries it. */
   chunks_failed?: number;
-  /** Engine + model that ran the extraction (for diagnostics). */
+  /** Engine + model configured to run the extraction (`rem.model`). */
   worker_model_ref: string;
+  /** `rem.fallback` as resolved at start, when configured. */
+  worker_fallback_ref?: string;
+  /** Set when the primary worker became unreachable mid-run and the
+   *  backup finished the extraction — from which chunk on, and why. */
+  worker_switch?: { from: string; to: string; reason: string; at_chunk: number };
   findings: Finding[];
 }
 

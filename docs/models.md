@@ -196,6 +196,8 @@ providers:
     engine: openai-compatible
     baseUrl: http://<your-host>:8000/v1
     apiKey: "<key or anything for a local server>"
+    # sendUserTag: true                   # default — `user: "<agent>/<session>"` on every request so a
+                                          # gateway can attribute spend per agent; false to withhold
     models:
       - id: deepseek-v4-flash             # SGLang; behind LiteLLM use the route name (e.g. deepseek-v4-flash-0731)
         alias: deep4flash
@@ -349,6 +351,7 @@ expired`) is the only loud signal. Check the header, not just the reply.
 | `sampling` | sent on every call, dropped once if the backend rejects a key | ignored (not exposed by the CLI) | ignored | ignored |
 | `maxTokens` | output cap on every call incl. dream workers | — | — | — |
 | `fallback` | availability chain on unreachable / 5xx | same | same | same |
+| `sendUserTag` (provider) | `user: "<agent>/<session>"` on every request, `<agent>/rem`, `<agent>/deep`, `lucid/<pass>`, `<agent>/compaction`, `<agent>/analyze_file` for workers — a gateway (LiteLLM spend logs) groups cost per agent and session; default on, `false` to withhold | — | — | — |
 
 **Minimum versions** (from v2026.09.03.06 / .09): Node.js ≥ 22.13,
 Codex CLI ≥ 0.148, a current Claude Code. A CLI engine's tools and

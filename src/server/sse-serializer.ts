@@ -96,7 +96,12 @@ export function createTurnSerializer() {
       case 'model_fallback':
         return {
           event: 'model_fallback',
-          data: { requested: ev.requested, actual: ev.actual, reason: ev.reason },
+          data: {
+            requested: ev.requested,
+            actual: ev.actual,
+            reason: ev.reason,
+            ...(ev.hops ? { hops: ev.hops } : {}),
+          },
         };
       default:
         return null;

@@ -202,6 +202,18 @@ export const OpenAiCompatibleProviderSchema = z.object({
     .enum(['inline-user', 'system'])
     .default('inline-user')
     .optional(),
+  /**
+   * Send `user: "<agent>/<session>"` (chat turns) or
+   * `user: "<agent>/<worker>"` (REM, Deep, compaction, analyze_file)
+   * on every chat-completions request. `user` is a standard field of
+   * the OpenAI API ("unique identifier representing your end-user"),
+   * accepted by OpenAI, LiteLLM, vLLM, SGLang, Ollama and ignored by
+   * backends that don't use it. A gateway that logs it (LiteLLM spend
+   * logs) can then attribute cost per agent and group a session's
+   * requests. Default on; set false for a provider that must not see
+   * agent or session names.
+   */
+  sendUserTag: z.boolean().default(true).optional(),
 });
 
 /** The one provider variant that carries baseUrl + apiKey. Named so

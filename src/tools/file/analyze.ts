@@ -14,6 +14,7 @@
 
 import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../../server/openai-client.ts';
+import { userTagParam } from '../../engine/user-tag.ts';
 import { z } from 'zod';
 import { workerChain, resolveAnyRef, type ResolvedModel } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
@@ -221,6 +222,7 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
             // vision Q&A wants the model's default depth.
             ...(worker.model.maxTokens ? { max_tokens: worker.model.maxTokens } : {}),
             ...samplingBody(worker.model.sampling),
+            ...userTagParam(worker, ctx.agent, 'analyze_file'),
           },
           { signal: AbortSignal.timeout(visionConfig.timeoutMs) },
         );
