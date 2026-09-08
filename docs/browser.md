@@ -2,8 +2,11 @@
 
 A real Chromium on the somora host that an agent drives with the
 `browser` tool — and that you can watch and take over in the web
-client, so a login, a 2FA code or a captcha is yours to do and the
-agent continues in the same, now signed-in tab.
+client, so a login with credentials the agent does not have, a 2FA
+code or a passkey is yours to do and the agent continues in the same,
+now signed-in tab. Everything else it does on its own — a captcha or
+image puzzle included: it screenshots, reads the picture with a vision
+model and tries, and asks for you only when that keeps failing.
 
 Stage 1 is the service and the tool; stage 2 (this version) adds the
 live picture, manual control and the browser list in the web client.
