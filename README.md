@@ -78,6 +78,11 @@ Beyond chat and memory, briefly:
   [docs/imagegen.md](docs/imagegen.md) and
   [docs/videogen.md](docs/videogen.md), including what is tested against
   which provider.
+- **Shared browser (optional).** A real Chromium per agent that the
+  agent drives and you can watch and take over in the web client — sign
+  in, pass a 2FA prompt, decide something, hand back, and the agent
+  continues in the same tab. Off until `browser.enabled`. See
+  [docs/browser.md](docs/browser.md).
 - **Projects (optional).** Bind a session to a real-world thing — a
   renovation, a research thread, a codebase — via a manifest of pointers
   the agent sees in its prompt. See [docs/projects.md](docs/projects.md).
@@ -153,8 +158,8 @@ Aim for a complete, useful setup, not just a running server:
 - Set up my agents and a coherent team with clear roles and
   delegation rules (docs/agents.md, docs/team.md).
 - Configure the features that fit me: memory and the dream phases,
-  skills, projects, scheduled tasks (sentinel), and image, video or
-  voice generation where I have a backend for it. Explain optional
+  skills, projects, scheduled tasks (sentinel), the shared browser, and
+  image, video or voice generation where I have a backend for it. Explain optional
   features and what they need rather than silently skipping them.
 - Connect the machines and services I want as resources
   (docs/resources.md).
@@ -290,7 +295,7 @@ Four first-party clients, all hitting the same local server:
 | Client | How to launch | Use |
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control. |
-| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop: multi-window chat per agent, drag&drop attachments and screenshot capture, tmux app and shell terminal, Wiki Explorer with link graph, Media gallery, Sessions browser, Abilities matrix (which tools and skills each agent may use), Team window (the org chart every agent gets in its prompt), Agent window (persona files, prompt budget, the full prompt as sent), queued messages you can take back, optional voice in (STT) and spoken replies (TTS). **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. Full feature list in [docs/web.md](docs/web.md). |
+| **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | Browser desktop: multi-window chat per agent, drag&drop attachments and screenshot capture, tmux app and shell terminal, Wiki Explorer with link graph, Media gallery, Sessions browser, Browser window (watch and take over an agent's Chromium), Abilities matrix (which tools and skills each agent may use), Team window (the org chart every agent gets in its prompt), Agent window (persona files, prompt budget, the full prompt as sent), queued messages you can take back, optional voice in (STT) and spoken replies (TTS). **HTTPS required** for >6 connections (HTTP/2 multiplex) and for mic/screenshare/clipboard browser APIs — easiest path is `tailscale cert <fqdn>`. LAN-trust, no auth. Full feature list in [docs/web.md](docs/web.md). |
 | **Mobile (PWA)** | `https://<host>.<tailnet>.ts.net:18737/mobile/` then "Add to Home Screen" | Installable phone app for chatting with all your agents from anywhere on the tailnet: avatar row to switch agent, one chat surface per agent, voice input + optional spoken replies, photo/PDF attachments via the native picker. No tmux, file viewer, or multi-window — that's `/web/`'s job. See [docs/mobile.md](docs/mobile.md). |
 | **A2A** | `agent_ask` / `agent_ask_result` tools | One agent asks another from inside a turn; the target sees who asked and from which session, replies route back there, and a late answer is picked up by call id. |
 
@@ -444,10 +449,10 @@ grok-cli) — same tool surface regardless of model.
 | memory | `memory_search`, `memory_get`, `memory_write`, `memory_edit`, `memory_delete`, `memory_list` | Read/write memory across all three layers (memory + wiki + vault). |
 | dream | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run`, `dream_review` | Inspect REM/Lucid findings, trigger Deep/Lucid manually, open/close the wiki review loop. |
 | wiki | `wiki_edit`, `wiki_create`, `wiki_delete` | Loop-scoped wiki writes — only exposed inside an active `dream_review` loop. |
-| file | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or any configured SSH resource. |
+| file | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or any configured SSH resource. `analyze_file` (images, PDFs, audio through a vision/transcription worker) needs `vision.worker`. |
 | exec | `exec`, `process` | One-shot shell + background jobs, local or SSH. |
 | tmux | `tmux` | Persistent multi-turn terminal sessions for TUIs (claude/codex/vim/REPLs). |
-| web | `web_search`, `web_fetch` | Brave-API search + Mozilla-Readability fetch. |
+| web | `web_search`, `web_fetch` | Brave-API search + Mozilla-Readability fetch. `web_search` needs `web.brave.apiKey`; `web_fetch` is always there. |
 | agents | `spawn_subagent`, `subagent_*`, `agent_ask`, `agent_ask_result` | Sub-agent orchestration; ask another agent something and fetch a late reply by call id. |
 | skills | `skill`, `skill_list` | Activate a Markdown how-to from `~/.somora/skills/`, or list all skills available to the agent fresh from disk. |
 | projects (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests linking a session to a real-world thing. Only registered when `projects.enabled: true`. |
@@ -455,6 +460,7 @@ grok-cli) — same tool surface regardless of model.
 | image (optional) | `image_generate`, `image_models` | Text-to-image, and what each configured model accepts. Only registered when `imageGen.enabled: true`. |
 | media (optional) | `media_list` | Find images and video generated earlier, with an optional type filter. Registered when either media surface is configured. |
 | video (optional) | `video_generate`, `video_status`, `video_models` | Text-to-video. Starts a render and returns immediately — the agent is woken when it lands, never left waiting. Only registered when `videoGen.enabled: true`. |
+| browser (optional) | `browser` | A managed Chromium per agent profile: open, snapshot (accessibility tree with element refs), act, screenshot, tabs; `request_handoff` lets you sign in or decide in the web client's live browser window, then the agent continues in the same tab. Only registered when `browser.enabled: true`. See [docs/browser.md](docs/browser.md). |
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
 | resources | `resource_list`, `resource_test` | Discover/probe configured SSH targets. |
 | time | `time_now` | Current date/time/timezone. |
