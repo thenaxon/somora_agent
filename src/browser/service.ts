@@ -53,6 +53,10 @@ export interface ControlState {
   handoff?: Handoff;
   /** Who holds human control (web client connection id), stage 2. */
   humanBy?: string;
+  /** The human did something (click, typing, navigation) while in
+   *  control — a hand-back then wakes the agent even without a pending
+   *  handoff. A look-and-return leaves it false: no turn is spent. */
+  humanTouched?: boolean;
   since: number;
 }
 
@@ -755,22 +759,61 @@ export class BrowserService {
       await this.persist();
       return b.control;
     }
+    const touched = b.control.humanTouched === true;
     b.control = { mode: 'agent_control', since: nowMs() };
     this.touch(b);
     await this.persist();
-    logger.info({ msg: 'browser.agent_control', browser: b.id, wake: handoff ? handoff.id : null });
+    // Whom to wake: the requesting agent+session when a handoff was
+    // pending; otherwise — only if the human actually did something —
+    // the session of the tab an agent used last (Rene 2026-09-08).
+    let wake: { agent: string; session: string; text: string } | null = null;
+    if (handoff) {
+      wake = {
+        agent: handoff.agent,
+        session: handoff.session,
+        text:
+          `[browser] The user handed browser '${b.id}' back to you (handoff ${handoff.id}). ` +
+          `Reason you asked for it: ${handoff.reason}. ` +
+          (handoff.resumeNote ? `Your note: ${handoff.resumeNote}. ` : '') +
+          'Take a fresh snapshot before acting — the page may have changed.',
+      };
+    } else if (touched) {
+      const last = this.lastAgentTab(b);
+      if (last) {
+        wake = {
+          agent: last.agent,
+          session: last.session,
+          text:
+            `[browser] The user took over browser '${b.id}', did something there (navigation, clicks or typing) and handed it back to you. ` +
+            'If you still have work in this browser, take a fresh snapshot before acting — the page may have changed. Otherwise just acknowledge briefly.',
+        };
+      }
+    }
+    logger.info({ msg: 'browser.agent_control', browser: b.id, wake: handoff ? handoff.id : wake ? 'activity' : null, ...(wake ? { agent: wake.agent, session: wake.session } : {}) });
     this.emitChange(b.id);
-    if (handoff && this.deps.dispatchWakeTurn) {
-      const text =
-        `[browser] The user handed browser '${b.id}' back to you (handoff ${handoff.id}). ` +
-        `Reason you asked for it: ${handoff.reason}. ` +
-        (handoff.resumeNote ? `Your note: ${handoff.resumeNote}. ` : '') +
-        'Take a fresh snapshot before acting — the page may have changed.';
-      void this.deps.dispatchWakeTurn({ agent: handoff.agent, session: handoff.session, text }).catch((err) =>
-        logger.warn({ msg: 'browser.wake_failed', browser: b.id, err: String(err) }),
-      );
+    if (wake && this.deps.dispatchWakeTurn) {
+      void this.deps.dispatchWakeTurn(wake).catch((err) => logger.warn({ msg: 'browser.wake_failed', browser: b.id, err: String(err) }));
     }
     return b.control;
+  }
+
+  /** The tab an agent used most recently (has a session), or null. */
+  private lastAgentTab(b: BrowserRec): { agent: string; session: string } | null {
+    let best: TabRec | null = null;
+    for (const t of b.tabs.values()) {
+      if (!t.session || !t.createdByAgent || t.page.isClosed()) continue;
+      if (!best || t.lastUsed > best.lastUsed) best = t;
+    }
+    return best && best.session ? { agent: best.agent, session: best.session } : null;
+  }
+
+  /** Record human activity while in control (see ControlState.humanTouched). */
+  markHumanActivity(browserId: string, kind: string): void {
+    if (kind === 'mousemove' || kind === 'resize' || kind === 'tab') return;
+    const b = this.browsers.get(browserId);
+    if (!b || b.control.mode !== 'human_control' || b.control.humanTouched) return;
+    b.control.humanTouched = true;
+    void this.persist();
   }
 
   // ── viewer surface (stage 2: web client) ──────────────────────────
@@ -820,6 +863,7 @@ export class BrowserService {
     const verdict = await checkNavigationAllowed(url, this.cfg);
     if (!verdict.ok) throw new BrowserOpError('BROWSER_NAVIGATION_DENIED', verdict.reason!);
     const { page } = this.viewerPage(browserId, tabId);
+    this.markHumanActivity(browserId, 'navigate');
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((err) => {
       throw new BrowserOpError('BROWSER_ACTION_FAILED', (err as Error).message.split('\n')[0]!);
     });
@@ -831,6 +875,7 @@ export class BrowserService {
     if (b.tabs.size >= this.cfg.maxTabsPerAgent) throw new BrowserOpError('BROWSER_TAB_LIMIT', `browser '${b.id}' already has ${b.tabs.size} tabs`);
     const page = await b.context.newPage();
     const tab = this.adoptPage(b, page, { agent: `_user:${by}`, createdByAgent: false });
+    this.markHumanActivity(browserId, 'newtab');
     this.touch(b);
     return tab.id;
   }
@@ -839,6 +884,7 @@ export class BrowserService {
     const b = this.runningBrowser(browserId);
     const t = b.tabs.get(tabId);
     if (!t) return;
+    this.markHumanActivity(browserId, 'closetab');
     await t.page.close().catch(() => {});
     b.tabs.delete(tabId);
     this.emitChange(b.id);

@@ -112,7 +112,10 @@ buttons that matter:
   Other viewers of the same browser keep watching.
 - **Agent übernimmt** — hands control back. If the agent had asked for
   you (`request_handoff`), it is woken once in the session it asked
-  from and told to take a fresh snapshot.
+  from and told to take a fresh snapshot. If you took over on your own
+  and did something (navigated, clicked, typed), the agent that used
+  this browser last is woken in that session with the same advice.
+  Looking and handing back unchanged wakes nobody.
 
 Watching needs no take-over. Closing the window stops the stream, not
 the browser and not the agent's work. Control is per browser, not per

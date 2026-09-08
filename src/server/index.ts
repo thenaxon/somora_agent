@@ -3749,6 +3749,7 @@ app.get(
           if (!raw.__tabId) return;
           const { page } = browserService.viewerPage(browserId, raw.__tabId);
           const hub = await screencasts.attach(browserId, raw.__tabId, raw.__viewer!);
+          browserService.markHumanActivity(browserId, msg.type);
           const notice = await applyViewerInput(page, hub.hub.session, msg as { type: string });
           if (notice) reply({ type: 'notice', text: notice });
         } catch (err) {

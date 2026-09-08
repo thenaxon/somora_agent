@@ -169,6 +169,31 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
     assert.ok(list.some((b) => b.browser_id === 'agent:naxon' && b.control === 'agent_control'));
   });
 
+  await t.test('hand-back without handoff: wakes only after human activity, in the last agent session', async () => {
+    const before = wakes.length;
+    // look and return: no turn
+    await svc.setControl('agent:naxon', 'human', { by: 'web-2' });
+    await svc.setControl('agent:naxon', 'agent');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(wakes.length, before);
+    // the agent used t1 from session 'research' last; the user navigates, then hands back
+    await svc.snapshot('naxon', { tab: 't1' }); // t1 was opened from session 'main'
+    await svc.setControl('agent:naxon', 'human', { by: 'web-2' });
+    svc.markHumanActivity('agent:naxon', 'click');
+    await svc.setControl('agent:naxon', 'agent');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(wakes.length, before + 1);
+    assert.equal(wakes[before]!.agent, 'naxon');
+    assert.equal(wakes[before]!.session, 'main');
+    assert.match(wakes[before]!.text, /took over browser/);
+    // mousemove alone is not activity
+    await svc.setControl('agent:naxon', 'human', { by: 'web-2' });
+    svc.markHumanActivity('agent:naxon', 'mousemove');
+    await svc.setControl('agent:naxon', 'agent');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(wakes.length, before + 1);
+  });
+
   await t.test('stop keeps the profile; ephemeral is separate', async () => {
     const e = await svc.open('naxon', 'main', { url: `${base}/`, ephemeral: true });
     assert.equal(e.browser_id, 'agent:naxon:tmp');
