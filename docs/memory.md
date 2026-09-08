@@ -180,14 +180,44 @@ memory:
     targetTokens: 400
     overlapTokens: 80
   autoInject:
-    queryTurns: 3
+    queryTurns: 3            # current message + the 2 turns before it
     maxResults: 5
     minScore: 0.35
     maxTokens: 1500
+    historyWeight: 0.3       # how much those turns steer the vector query
+    historyWeightShort: 0.55 # … when the message has only 1–2 content words
+    historyWeightEmpty: 0.8  # … when it has none ("das solltest du wissen oder?")
+    historyTurnChars: 800    # head of each turn that goes into the blend
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3
 ```
+
+**How the query is built (since 2026-09-08).** The current message is
+the query. The previous `queryTurns - 1` turns are context: embedded
+separately and blended into the message embedding at
+`historyWeight` — so the question decides and the conversation nudges.
+Before, everything was one concatenated text, and a 46-character
+question after two long answers about something else recalled that
+something else. Two refinements, both measured on replayed real
+sessions:
+
+- The weight adapts to how much the message says. Three or more
+  content words (everything that is not a filler word like "ok",
+  "kannst", "mir", "so"): `historyWeight`. One or two ("und seine
+  frau?"): `historyWeightShort`. None ("das solltest du aber wissen
+  oder?"): `historyWeightEmpty` — the conversation is the topic.
+- A message with a content word also runs on its own, and a chunk
+  keeps the better of the two vector scores. A page the question names
+  outright is never pushed down by the history; a follow-up without a
+  topic word still finds its page through the history.
+
+The BM25 side sees the message only, with filler words removed
+(`FTS_STOPWORDS` in `src/memory/retrieval.ts`, German and English) —
+otherwise every page that says "was", "du" and "so" a lot outranked
+the one page that says "walter". `POST /agents/<name>/memory/recall-preview`
+runs exactly this path for a message plus a supplied history, which is
+how the change was measured ([api.md](api.md#post-agentsagentmemoryrecall-preview)).
 
 ## Writing memory
 

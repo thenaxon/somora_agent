@@ -2030,7 +2030,13 @@ app.post('/agents/:agent/memory/recall-preview', async (c) => {
         .map((h) => ({ kind: h.kind as 'user_message' | 'assistant_message', ts: 0, engine: 'preview', text: h.text as string }) as NormalizedEvent)
     : [];
   const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
-  const inject = await injectMemoryContext({ mgr, history, userMessage: text, cfg: config.memory.autoInject });
+  // Optional per-call override of the autoInject knobs — lets a
+  // measurement sweep weights without touching config.yaml or restarting.
+  const override = (body as { autoInject?: unknown }).autoInject;
+  const cfg = override && typeof override === 'object'
+    ? { ...config.memory.autoInject, ...(override as Record<string, unknown>) } as typeof config.memory.autoInject
+    : config.memory.autoInject;
+  const inject = await injectMemoryContext({ mgr, history, userMessage: text, cfg });
   return c.json({
     agent,
     text,

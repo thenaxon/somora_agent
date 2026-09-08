@@ -20,7 +20,7 @@ import type { MemoryConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { chunkMarkdown } from './chunking.ts';
 import { resolveEmbeddingProvider, type EmbeddingProvider } from './embeddings.ts';
-import { hybridSearch, type Hit, type SearchTarget } from './retrieval.ts';
+import { blendEmbeddings, hybridSearch, type Hit, type SearchTarget } from './retrieval.ts';
 import type { SharedIndex } from './shared-index.ts';
 import {
   closeMemoryDb,
@@ -660,6 +660,18 @@ export class MemoryManager {
       minScore?: number;
       /** Restrict to specific sources. Undefined or 'all' = no filter. */
       sources?: ChunkSource[] | 'all';
+      /**
+       * Conversation context that should NUDGE the vector query, not
+       * define it: embedded separately and blended into the query
+       * embedding at `contextWeight` (default autoInject.historyWeight).
+       * BM25 never sees it — keywords come from `query` alone.
+       */
+      context?: string;
+      contextWeight?: number;
+      /** With `context`: also run the message-only vector query and
+       *  keep the better score per chunk (see hybridSearch). Auto-inject
+       *  sets this whenever the message has a content word. */
+      alsoQueryAlone?: boolean;
     },
   ): Promise<Hit[]> {
     const memDb = this.requireDb();
@@ -672,11 +684,21 @@ export class MemoryManager {
       opts?.sources && opts.sources !== 'all' && opts.sources.length > 0
         ? opts.sources
         : undefined;
-    let queryEmbedding: Float32Array | null = null;
+    let queryEmbedding: Float32Array | Float32Array[] | null = null;
     if (this.embedder) {
       try {
-        const [emb] = await this.embedder.embed([query]);
-        queryEmbedding = emb ?? null;
+        const context = opts?.context?.trim();
+        const weight = opts?.contextWeight ?? this.cfg.autoInject.historyWeight;
+        if (context && weight > 0) {
+          const [q, c] = await this.embedder.embed([query, context]);
+          if (q) {
+            const blended = blendEmbeddings(q, c ?? null, weight);
+            queryEmbedding = opts?.alsoQueryAlone && blended !== q ? [q, blended] : blended;
+          }
+        } else {
+          const [emb] = await this.embedder.embed([query]);
+          queryEmbedding = emb ?? null;
+        }
       } catch (err) {
         logger.warn({ msg: 'memory.query_embed_failed', err: (err as Error).message });
       }

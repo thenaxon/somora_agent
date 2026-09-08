@@ -1,7 +1,11 @@
 // Auto-inject memory recall as ephemeral per-turn context (DECISION #26).
 //
-// The runtime, not the agent, drives recall. Query = current user message
-// concatenated with the last (queryTurns - 1) text turns from history.
+// The runtime, not the agent, drives recall. The current user message
+// is the query; the last (queryTurns - 1) text turns are CONTEXT that
+// nudges the vector side at `historyWeight` (each turn capped at
+// `historyTurnChars`) and never reaches the BM25 side. Until 2026-09-08
+// everything was one concatenated text: a 46-character question after
+// two long answers about something else recalled that something else.
 // Top-N hits are formatted as a `<memory-context>` block.
 //
 // We return the block as a SEPARATE field from systemPrompt so engines can
@@ -23,7 +27,7 @@
 
 import type { NormalizedEvent } from '../types/events.ts';
 import type { MemoryManager } from './manager.ts';
-import type { Hit } from './retrieval.ts';
+import { contentTerms, type Hit } from './retrieval.ts';
 
 // Mirrors MemoryConfig.autoInject; we keep a local alias to avoid importing
 // the inferred Zod type just for one struct.
@@ -32,6 +36,10 @@ type AutoInjectCfg = {
   maxResults: number;
   minScore: number;
   maxTokens: number;
+  historyWeight: number;
+  historyWeightShort: number;
+  historyWeightEmpty: number;
+  historyTurnChars: number;
 };
 
 export interface InjectResult {
@@ -52,13 +60,19 @@ export async function injectMemoryContext(args: {
   userMessage: string;
   cfg: AutoInjectCfg;
 }): Promise<InjectResult> {
-  const query = buildRecallQuery(args.userMessage, args.history, args.cfg.queryTurns);
+  const query = args.userMessage;
   if (!query.trim()) {
     return { ephemeralContext: undefined, injectedCount: 0, hits: [] };
   }
+  const context = buildRecallContext(args.history, args.cfg.queryTurns, args.cfg.historyTurnChars);
+  const contextWeight = historyWeightFor(query, args.cfg);
+  // A message with a content word also runs on its own, so a page it
+  // names outright keeps its score against whatever the history says.
+  const alsoQueryAlone = contentTerms(query).length > 0;
   const hits = await args.mgr.search(query, {
     limit: args.cfg.maxResults,
     minScore: args.cfg.minScore,
+    ...(context ? { context, contextWeight, alsoQueryAlone } : {}),
   });
 
   if (hits.length === 0) {
@@ -76,24 +90,40 @@ export async function injectMemoryContext(args: {
 }
 
 /**
- * Pull plain text out of recent assistant + user events for the recall
- * query. Newest first, capped at queryTurns text-bearing items.
+ * How much the history may steer this message's recall. A message with
+ * three or more content words ("was weißt du über walter") decides for
+ * itself; with one or two ("und seine frau?") the conversation must add
+ * the topic; with none ("das solltest du aber wissen oder?") it IS the
+ * topic. Exported for tests.
  */
-function buildRecallQuery(
-  userMessage: string,
+export function historyWeightFor(
+  message: string,
+  cfg: Pick<AutoInjectCfg, 'historyWeight' | 'historyWeightShort' | 'historyWeightEmpty'>,
+): number {
+  const n = contentTerms(message).length;
+  if (n === 0) return cfg.historyWeightEmpty;
+  if (n <= 2) return cfg.historyWeightShort;
+  return cfg.historyWeight;
+}
+
+/**
+ * Recent conversation as context for the vector query: the last
+ * (queryTurns - 1) text-bearing turns, newest first, each cut to the
+ * head of `turnChars` characters (where a turn's topic usually is).
+ * Returns '' when there is no history. Exported for tests.
+ */
+export function buildRecallContext(
   history: NormalizedEvent[],
   queryTurns: number,
+  turnChars: number,
 ): string {
-  const parts: string[] = [userMessage];
-  let collected = 1;
-  for (let i = history.length - 1; i >= 0 && collected < queryTurns; i--) {
+  const parts: string[] = [];
+  for (let i = history.length - 1; i >= 0 && parts.length < queryTurns - 1; i--) {
     const ev = history[i]!;
-    if (ev.kind === 'assistant_message') {
-      parts.push(ev.text);
-      collected++;
-    } else if (ev.kind === 'user_message') {
-      parts.push(ev.text);
-      collected++;
+    if (ev.kind === 'assistant_message' || ev.kind === 'user_message') {
+      const text = ev.text.trim();
+      if (!text) continue;
+      parts.push(text.length > turnChars ? text.slice(0, turnChars) : text);
     }
   }
   return parts.reverse().join('\n');

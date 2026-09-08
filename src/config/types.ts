@@ -268,7 +268,27 @@ export const MemoryAutoInjectConfigSchema = z.object({
   minScore: z.number().min(0).max(1).default(0.35),
   /** Hard cap on tokens of the injected memory block (Heuristik 4 chars/token). */
   maxTokens: z.number().int().positive().default(1500),
-}).default({ queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500 });
+  /**
+   * How much the previous turns steer the vector query, 0..1. The
+   * current message is embedded on its own and blended with the
+   * embedding of the recent history at this weight — 0.3 = the
+   * question decides, the conversation nudges. Before 2026-09-08 the
+   * turns were concatenated as one text, and a 46-character question
+   * after two long answers about something else recalled that
+   * something else (Walter → CerebroCraft). 0 = current message only.
+   */
+  historyWeight: z.number().min(0).max(1).default(0.3),
+  /** History weight when the message has only one or two content words
+   *  ("und seine frau?") — the conversation must carry more. */
+  historyWeightShort: z.number().min(0).max(1).default(0.55),
+  /** History weight when the message has NO content word ("das solltest
+   *  du aber wissen oder?") — the conversation is the whole query. */
+  historyWeightEmpty: z.number().min(0).max(1).default(0.8),
+  /** Characters kept per history turn for the blend (head of the turn,
+   *  where the topic usually is). 800 measured best on the labelled
+   *  cases (400 lost follow-ups whose topic sat past the opening). */
+  historyTurnChars: z.number().int().positive().default(800),
+}).default({ queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800 });
 
 export const MemoryHybridConfigSchema = z.object({
   vectorWeight: z.number().min(0).max(1).default(0.7),
@@ -283,7 +303,7 @@ export const MemoryConfigSchema = z.object({
 }).default({
   embedding: { provider: 'local', model: 'all-MiniLM-L6-v2' },
   chunking: { targetTokens: 400, overlapTokens: 80 },
-  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500 },
+  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800 },
   hybrid: { vectorWeight: 0.7, bm25Weight: 0.3 },
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;

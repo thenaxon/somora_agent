@@ -643,10 +643,14 @@ memory:
     targetTokens: 400
     overlapTokens: 80
   autoInject:
-    queryTurns: 3             # last-N turns used as the recall query
+    queryTurns: 3             # current message + last-(N-1) turns as context
     maxResults: 5             # top-N hits injected per turn
     minScore: 0.35            # discard hits below this score (0..1)
     maxTokens: 1500           # hard cap on the injected memory block
+    historyWeight: 0.3        # how much the previous turns steer the vector query
+    historyWeightShort: 0.55  # … for a message with only 1–2 content words
+    historyWeightEmpty: 0.8   # … for a message with none ("das solltest du wissen?")
+    historyTurnChars: 800     # head of each previous turn used for the blend
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3

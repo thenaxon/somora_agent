@@ -1483,6 +1483,31 @@ architecture.
 List indexed notes for an agent. Optional `?source=memory|vault|wiki`
 to filter by source layer.
 
+### `POST /agents/:agent/memory/recall-preview`
+
+What auto-inject would recall for a message in a given conversation
+state — the turn's own recall path (query construction, history blend,
+search, block budget) without running a turn. Body:
+
+```json
+{
+  "text": "und wer gehört sonst noch zur familie?",
+  "history": [
+    { "kind": "user_message", "text": "was kannst du mir über walter erzählen?" },
+    { "kind": "assistant_message", "text": "Walter ist …" }
+  ],
+  "autoInject": { "historyWeight": 0.4 }
+}
+```
+
+`history` is optional (oldest first; only `user_message` and
+`assistant_message` entries count). `autoInject` optionally overrides
+any `memory.autoInject` knob for this call only — for measuring a
+setting before changing config.yaml. Response: `hits` with `slug`,
+`source`, `score`, `vecScore`, `bm25Score`, line range, plus
+`injectedCount` and `ephemeralContextChars`. Used by the recall replay
+harness; loopback-only like every debug route.
+
 ### `GET /agents/:agent/memory/search`
 
 Hybrid (BM25 + vector) search across the agent's memory.

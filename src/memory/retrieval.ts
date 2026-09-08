@@ -87,10 +87,18 @@ const keyOf = (target: number, chunkId: number): Key => `${target}:${chunkId}`;
 export function hybridSearch(
   target: MemoryDb | SearchTarget[],
   queryText: string,
-  queryEmbedding: Float32Array | null,
+  /** One query vector, or several — a chunk's vector score is then the
+   *  BEST over them. Auto-inject passes [message-only, message⊕history]
+   *  so a page the question names outright keeps its score even when
+   *  the conversation was about something else, while a follow-up
+   *  without a topic word still finds its page through the history. */
+  queryEmbedding: Float32Array | Float32Array[] | null,
   cfg: RetrievalConfig,
 ): Hit[] {
   const targets: SearchTarget[] = Array.isArray(target) ? target : [{ memDb: target }];
+  const queryEmbeddings: Float32Array[] = queryEmbedding
+    ? Array.isArray(queryEmbedding) ? queryEmbedding : [queryEmbedding]
+    : [];
   // Each modality returns up to k * 4 candidates so the fusion has room to
   // promote items that one side missed. We trim to `maxResults` at the end.
   const recall = Math.max(cfg.maxResults * 4, 20);
@@ -107,17 +115,24 @@ export function hybridSearch(
   const vecPool: Cand[] = [];
   const bm25Pool: Cand[] = [];
   targets.forEach((t, ti) => {
-    if (queryEmbedding && t.memDb.hasVec) {
-      for (const h of runVectorSearch(t.memDb, queryEmbedding, recall, t.sources)) {
-        vecPool.push({ target: ti, chunkId: h.chunkId, score: h.score });
+    if (queryEmbeddings.length > 0 && t.memDb.hasVec) {
+      // Several query vectors: best score per chunk wins.
+      const best = new Map<number, number>();
+      for (const emb of queryEmbeddings) {
+        for (const h of runVectorSearch(t.memDb, emb, recall, t.sources)) {
+          const cur = best.get(h.chunkId);
+          if (cur === undefined || h.score > cur) best.set(h.chunkId, h.score);
+        }
       }
+      for (const [chunkId, score] of best) vecPool.push({ target: ti, chunkId, score });
     }
     for (const h of runBm25Search(t.memDb, queryText, recall, t.sources)) {
       bm25Pool.push({ target: ti, chunkId: h.chunkId, score: h.score });
     }
   });
   const byScore = (a: Cand, b: Cand) => b.score - a.score;
-  const vecHits = targets.length > 1 ? vecPool.sort(byScore).slice(0, recall) : vecPool;
+  const vecHits =
+    targets.length > 1 || queryEmbeddings.length > 1 ? vecPool.sort(byScore).slice(0, recall) : vecPool;
   const bm25Hits = targets.length > 1 ? bm25Pool.sort(byScore).slice(0, recall) : bm25Pool;
 
   // Build a combined map keyed by (target, chunk id) with both raw scores.
@@ -395,6 +410,84 @@ function runBm25Search(
 }
 
 /**
+ * Blend a query embedding with a context embedding: `(1-w)·q + w·c`,
+ * re-normalised to unit length (the embedder emits unit vectors and
+ * vec0 distances assume them). `w` = 0 returns `q` untouched. Used by
+ * auto-inject so the current message decides and the recent history
+ * only nudges — instead of one embedding of everything concatenated,
+ * where two long previous answers outweigh a short question.
+ */
+export function blendEmbeddings(q: Float32Array, c: Float32Array | null, w: number): Float32Array {
+  if (!c || !(w > 0)) return q;
+  if (c.length !== q.length) return q;
+  const wc = Math.min(1, w);
+  const out = new Float32Array(q.length);
+  let norm = 0;
+  for (let i = 0; i < q.length; i++) {
+    const v = (1 - wc) * q[i]! + wc * c[i]!;
+    out[i] = v;
+    norm += v * v;
+  }
+  norm = Math.sqrt(norm);
+  if (!(norm > 0)) return q;
+  for (let i = 0; i < out.length; i++) out[i] = out[i]! / norm;
+  return out;
+}
+
+/**
+ * Words that carry no retrieval signal in an OR-joined FTS5 query.
+ * German and English function words plus chat filler. Without this,
+ * "ok was kannst du mir über walter so erzählen" ranked pages by how
+ * often they say "was", "du", "mir", "so" — every page — and the one
+ * term that mattered drowned. Applied only to the BM25 query; the
+ * embedding sees the full text. When every token is a stopword the
+ * filter steps aside so the query is not empty.
+ */
+export const FTS_STOPWORDS: ReadonlySet<string> = new Set([
+  // German
+  'aber', 'alle', 'allem', 'allen', 'aller', 'alles', 'als', 'also', 'am', 'an', 'ander', 'andere',
+  'anderem', 'anderen', 'anderer', 'anderes', 'auch', 'auf', 'aus', 'bei', 'bin', 'bis', 'bist',
+  'da', 'damit', 'dann', 'das', 'dass', 'daß', 'dem', 'den', 'der', 'des', 'dich', 'die', 'dies',
+  'diese', 'diesem', 'diesen', 'dieser', 'dieses', 'dir', 'doch', 'dort', 'du', 'durch', 'ein',
+  'eine', 'einem', 'einen', 'einer', 'eines', 'er', 'es', 'etwas', 'euch', 'euer', 'eure', 'für',
+  'gegen', 'gewesen', 'hab', 'habe', 'haben', 'hat', 'hatte', 'hatten', 'hier', 'hin', 'hinter',
+  'ich', 'ihm', 'ihn', 'ihnen', 'ihr', 'ihre', 'ihrem', 'ihren', 'ihrer', 'ihres', 'im', 'in',
+  'indem', 'ins', 'ist', 'ja', 'jede', 'jedem', 'jeden', 'jeder', 'jedes', 'jetzt', 'kann',
+  'kannst', 'kein', 'keine', 'keinem', 'keinen', 'keiner', 'keines', 'können', 'könnte', 'machen',
+  'mal', 'man', 'mehr', 'mein', 'meine', 'meinem', 'meinen', 'meiner', 'meines', 'mich', 'mir',
+  'mit', 'muss', 'musst', 'nach', 'nein', 'nicht', 'nichts', 'noch', 'nun', 'nur', 'ob', 'oder',
+  'ohne', 'ok', 'okay', 'sag', 'sagen', 'schon', 'sehr', 'sei', 'sein', 'seine', 'seinem',
+  'seinen', 'seiner', 'seines', 'sich', 'sie', 'sind', 'so', 'solche', 'soll', 'sollte', 'sondern',
+  'sonst', 'über', 'um', 'und', 'uns', 'unser', 'unsere', 'unter', 'viel', 'vom', 'von', 'vor',
+  'war', 'waren', 'warst', 'was', 'weg', 'weil', 'weiter', 'welche', 'welchem', 'welchen',
+  'welcher', 'welches', 'wenn', 'wer', 'werde', 'werden', 'wie', 'wieder', 'will', 'wir', 'wird',
+  'wirst', 'wo', 'wollen', 'wollte', 'würde', 'würden', 'zu', 'zum', 'zur', 'zwar', 'zwischen',
+  'bitte', 'danke', 'eigentlich', 'einfach', 'erzähl', 'erzählen', 'erzähle', 'gerade', 'genau',
+  'gibt', 'glaub', 'glaube', 'halt', 'irgendwie', 'kurz', 'naja', 'quasi', 'sowas', 'überhaupt',
+  'vielleicht', 'wirklich', 'zb', 'solltest', 'sollten', 'weißt', 'weisst', 'wissen', 'meinst',
+  'meinen', 'denkst', 'denke', 'findest', 'finde', 'stimmt', 'passt', 'gut', 'nochmal', 'eh',
+  'hm', 'hmm', 'hmmm', 'aha', 'ach', 'na', 'nur', 'dazu', 'davon', 'darüber', 'daran', 'dafür',
+  'dabei', 'darauf', 'daraus', 'deshalb', 'trotzdem', 'sicher', 'klar', 'gerne', 'gern',
+  'natürlich', 'also', 'jetzt', 'heute', 'morgen', 'gestern', 'immer', 'nie', 'wieder',
+  'selbst', 'eben', 'sogar', 'ganz', 'echt', 'total', 'ziemlich', 'mehr', 'weniger', 'lieber',
+  'gleich', 'bald', 'oft', 'fast', 'etwa', 'circa',
+  'yes', 'yeah', 'ok', 'okay', 'thanks', 'thank', 'sure', 'right', 'really', 'actually', 'maybe',
+  'know', 'think', 'mean', 'said', 'say', 'get', 'got', 'go', 'going', 'like', 'want', 'need',
+  // English
+  'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are',
+  'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but',
+  'by', 'can', 'could', 'did', 'do', 'does', 'doing', 'down', 'during', 'each', 'few', 'for',
+  'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'him', 'his',
+  'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'just', 'let', 'me', 'more', 'most', 'my',
+  'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other', 'our', 'ours',
+  'out', 'over', 'own', 'please', 'same', 'she', 'should', 'so', 'some', 'such', 'tell', 'than',
+  'that', 'the', 'their', 'theirs', 'them', 'then', 'there', 'these', 'they', 'this', 'those',
+  'through', 'to', 'too', 'under', 'until', 'up', 'us', 'very', 'was', 'we', 'were', 'what',
+  'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'will', 'with', 'would', 'you',
+  'your', 'yours',
+]);
+
+/**
  * Hard cap on OR-terms in one FTS5 MATCH. The query cost grows roughly
  * quadratically with the term count (measured on a 1.3k-chunk index:
  * 5k chars of text → 174 ms, 50k → 17 s, 275k → not finished after
@@ -412,15 +505,38 @@ export const FTS_MAX_TERMS = 64;
  * default — keeps recall conservative; we can revisit if synonym-recall
  * is too narrow.
  */
+/** The tokens of `text` that carry retrieval signal (≥ 2 chars, not a
+ *  stopword, de-duplicated). Zero for "das solltest du aber wissen oder?"
+ *  — auto-inject uses the count to decide how much the history may
+ *  steer the query. */
+export function contentTerms(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of text.toLowerCase().split(/[^\p{L}\p{N}_]+/u)) {
+    if (raw.length < 2 || seen.has(raw) || FTS_STOPWORDS.has(raw)) continue;
+    seen.add(raw);
+    out.push(raw);
+  }
+  return out;
+}
+
 export function sanitizeFtsQuery(input: string, maxTerms: number = FTS_MAX_TERMS): string {
   const seen = new Set<string>();
   const tokens: string[] = [];
+  const dropped: string[] = [];
   for (const raw of input.toLowerCase().split(/[^\p{L}\p{N}_]+/u)) {
     if (raw.length < 2 || seen.has(raw)) continue;
     seen.add(raw);
+    if (FTS_STOPWORDS.has(raw)) {
+      dropped.push(raw);
+      continue;
+    }
     tokens.push(raw);
     if (tokens.length >= maxTerms) break;
   }
+  // Nothing but stopwords ("was war das nochmal?"): better a noisy
+  // match than none — fall back to the unfiltered tokens.
+  if (tokens.length === 0) tokens.push(...dropped.slice(0, maxTerms));
   if (tokens.length === 0) return '';
   // Wrap each token in double-quotes to avoid FTS5 reserved-word issues
   return tokens.map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');
