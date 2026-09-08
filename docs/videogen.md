@@ -124,7 +124,11 @@ tool that finds an older image, because it is the same question.
 Video models differ sharply — one takes length, aspect ratio and an
 audio toggle, the next takes a seed and little else — and a parameter a
 model ignores costs minutes of GPU before anyone notices it did
-nothing.
+nothing. Read `accepts` as the rule and `recommended` as the hint: a
+field listed as `any value` takes free text, and when the catalog names
+known-good values for it (a fixed set of canvas sizes, say), they show
+under `recommended`. A size off that list is what a backend with a
+fixed canvas rejects.
 
 `reference_images` takes file paths and **the order carries meaning**:
 none is text-to-video, one makes that image the opening frame, two mean

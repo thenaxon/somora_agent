@@ -262,7 +262,12 @@ with more than one model configured, nothing else tells the caller
 which handles are available, and a wrong guess costs a round trip.
 Listing handles is free; passing `model:` for one of them also reports
 the values that model accepts per spec field, which is the other thing
-that is otherwise learned only by being rejected.
+that is otherwise learned only by being rejected. A field the catalog
+takes as free text shows as `any value`; when the catalog also names
+known-good values for it (`supported_parameters.<field>.recommended`),
+they appear under `recommended` — not a restriction, but a value
+outside that list is the usual reason for an upstream 400, so prefer
+them.
 
 **`reference_images` takes file paths**, not base64 — the tool reads
 them itself, through the same read policy as `file_read`. Passing
