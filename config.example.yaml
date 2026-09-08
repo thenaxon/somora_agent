@@ -340,6 +340,20 @@ providers:
 # somora starts the job, lets the agent's turn end, and wakes the agent
 # when its video is ready. Nobody waits.
 #
+# Shared browser (docs/browser.md) — a managed Chromium per agent profile
+# that agents drive with the `browser` tool and you can watch and take
+# over in the web client. Needs a Chromium on the host; off by default.
+# browser:
+#   enabled: true
+#   executablePath: /usr/bin/chromium       # optional; auto-detected when unset
+#   maxTabsPerAgent: 8
+#   idleStopMinutes: 30                     # stop an unused browser; logins stay
+#   viewport: { width: 1280, height: 800 }
+#   allowPrivate: []                        # LAN hosts/CIDRs agents may open,
+#                                           #  e.g. ["192.168.1.0/24", "nas.local"]
+#   deny: []                                # hostnames never opened, e.g. ["*.bank.at"]
+#   profiles: {}                            # shared profiles: { firma: { agents: [a, b] } }
+
 # videoGen:
 #   enabled: true
 #   outputDir: ~/somoraworkspace/videos

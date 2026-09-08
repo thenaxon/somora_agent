@@ -1791,6 +1791,57 @@ export const ThinkingContentSchema = z
   })
   .default({ capture: true, maxChars: 65_536 });
 
+// Shared browser — a managed Chromium per agent profile that agents drive
+// through the `browser` tool and the user can watch and take over in the
+// web client. Design: private/browser-design.md. Off by default: it
+// needs a Chromium on the host.
+export const BrowserConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    /** Chromium/Chrome binary. Unset = auto-detect (chromium, chromium-browser,
+     *  google-chrome, Chrome.app …); the error says what was tried. */
+    executablePath: z.string().min(1).optional(),
+    /** Open tabs per browser (= per profile). The ninth `open` is refused. */
+    maxTabsPerAgent: z.number().int().min(1).max(32).default(8),
+    /** A browser with no tool call and no viewer for this long is stopped;
+     *  its profile (cookies, logins) stays on disk. */
+    idleStopMinutes: z.number().int().min(1).default(30),
+    viewport: z
+      .object({ width: z.number().int().min(320).default(1280), height: z.number().int().min(240).default(800) })
+      .default({ width: 1280, height: 800 }),
+    /** Screencast to the web client (stage 2). */
+    stream: z
+      .object({ quality: z.number().int().min(10).max(100).default(60), maxFps: z.number().int().min(1).max(30).default(15) })
+      .default({ quality: 60, maxFps: 15 }),
+    /**
+     * Where agents may navigate. Public hosts are allowed unless denied.
+     * Private networks (RFC1918, loopback, link-local, ULA) are BLOCKED
+     * unless the host or CIDR is listed in `allowPrivate` — a page an
+     * agent reads could otherwise steer it to an internal service.
+     * Hostnames are resolved before the check; `file:`/`chrome:` never.
+     */
+    allowPrivate: z.array(z.string().min(1)).default([]),
+    /** Hostnames (exact or `*.suffix`) never navigated to. */
+    deny: z.array(z.string().min(1)).default([]),
+    /**
+     * Named profiles shared by several agents. Without an entry every
+     * agent has its own profile (`~/.somora/browser/profiles/<agent>`);
+     * a shared profile means shared cookies AND shared tabs.
+     */
+    profiles: z.record(z.string().regex(/^[a-z0-9][a-z0-9_-]*$/), z.object({ agents: z.array(z.string().min(1)).min(1) })).default({}),
+  })
+  .default({
+    enabled: false,
+    maxTabsPerAgent: 8,
+    idleStopMinutes: 30,
+    viewport: { width: 1280, height: 800 },
+    stream: { quality: 60, maxFps: 15 },
+    allowPrivate: [],
+    deny: [],
+    profiles: {},
+  });
+export type BrowserConfig = z.infer<typeof BrowserConfigSchema>;
+
 export const ConfigSchema = z.object({
   thinkingContent: ThinkingContentSchema,
   server: z
@@ -1828,6 +1879,7 @@ export const ConfigSchema = z.object({
   tts: TtsConfigSchema,
   imageGen: ImageGenConfigSchema,
   videoGen: VideoGenConfigSchema,
+  browser: BrowserConfigSchema,
   projects: ProjectsConfigSchema,
   sentinel: SentinelConfigSchema,
   obsidian: ObsidianConfigSchema,

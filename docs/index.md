@@ -148,6 +148,7 @@ high-value next steps in rough order:
 | [voice.md](voice.md) | STT + TTS + /voice/turn | Voice in, spoken replies, audio-in/audio-out endpoint |
 | [imagegen.md](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
 | [videogen.md](videogen.md) | Text-to-video | Job-based renders, and how an agent gets its result without waiting |
+| [browser.md](browser.md) | Shared browser | A Chromium per agent profile that agents drive and you can take over for logins |
 | [team.md](team.md) | Org chart → prompt block | Telling every agent who is who and who to involve |
 | [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
 | [models.md](models.md) | Model reference | Models known to run with somora, per engine, with the config values that work and why |

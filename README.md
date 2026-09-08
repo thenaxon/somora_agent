@@ -488,6 +488,7 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/voice.md](docs/voice.md) — STT + TTS, per-session auto-play toggle, /voice/turn endpoint
 - [docs/imagegen.md](docs/imagegen.md) — text-to-image, the Media window, per-agent review stance
 - [docs/videogen.md](docs/videogen.md) — text-to-video: job lifecycle, being woken instead of waiting, what is verified and what isn't
+- [docs/browser.md](docs/browser.md) — a managed Chromium per agent: snapshot/act loop, per-agent profiles, navigation policy, handing a login over to you
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning depth, reasoning-token counts and the model's thinking text across engines
 - [docs/sampling.md](docs/sampling.md) — temperature, top_p and friends per model, agent and session

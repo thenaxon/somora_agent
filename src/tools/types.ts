@@ -144,6 +144,7 @@ export type Toolset =
   | 'image'
   | 'video'
   | 'media'
+  | 'browser'
   | 'mcp';
 
 export interface ToolDefinition<TInput = unknown, TOutput = unknown> {

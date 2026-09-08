@@ -19,6 +19,7 @@ import { projectTools } from './projects/index.ts';
 import { sentinelTools } from './sentinel/index.ts';
 import { imageTools } from './image/index.ts';
 import { videoTools } from './video/index.ts';
+import { browserTools } from './browser/index.ts';
 
 export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
@@ -43,6 +44,7 @@ export { projectTools } from './projects/index.ts';
 export { sentinelTools } from './sentinel/index.ts';
 export { imageTools } from './image/index.ts';
 export { videoTools } from './video/index.ts';
+export { browserTools } from './browser/index.ts';
 export { configureDreamRunTool } from './dream/index.ts';
 
 /**
@@ -87,4 +89,6 @@ export function registerAllTools(registry: ToolRegistry): void {
   // worse than one that isn't offered.
   registry.registerMany(imageTools());
   registry.registerMany(videoTools());
+  // Shared browser: self-gates on config.browser.enabled via `available`.
+  registry.registerMany(browserTools());
 }

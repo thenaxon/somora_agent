@@ -159,6 +159,8 @@ import { pendingLucidSummary } from '../dream/lucid-storage.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { injectMemoryContext } from '../memory/inject.ts';
+import { configureBrowserService, getBrowserService, BrowserOpError } from '../browser/service.ts';
+import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
@@ -3562,6 +3564,49 @@ function videoGenReady(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
+// ── Shared browser (src/browser/service.ts) ───────────────────────
+// Loopback-only like /tools. `POST /browser/op` is what the MCP tool
+// child calls for claude-cli/codex-cli turns (the Chromium lives in
+// this process); `GET /browser/status` feeds the web client's browser
+// list (stage 3); `POST /browser/:id/control` is the human take-over /
+// hand-back switch (stage 3 UI, testable now).
+
+app.post('/browser/op', async (c) => {
+  if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as { agent?: unknown; session?: unknown; input?: unknown };
+  const agent = typeof body.agent === 'string' ? body.agent : '';
+  if (!agent || !(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const input = body.input as BrowserOp | undefined;
+  if (!input || typeof input !== 'object' || typeof (input as { op?: unknown }).op !== 'string') {
+    return c.json({ error: '"input" with an "op" is required' }, 400);
+  }
+  const session = typeof body.session === 'string' ? body.session : undefined;
+  const result = await runBrowserOp({ agent, ...(session ? { session } : {}), config }, input);
+  return c.json(result);
+});
+
+app.get('/browser/status', async (c) => {
+  if (!config.browser.enabled) return c.json({ enabled: false, browsers: [] });
+  const browsers = await getBrowserService().listAll();
+  return c.json({ enabled: true, browsers });
+});
+
+app.post('/browser/:id/control', async (c) => {
+  if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);
+  const body = (await c.req.json().catch(() => ({}))) as { mode?: unknown; by?: unknown; handoffId?: unknown };
+  if (body.mode !== 'human' && body.mode !== 'agent') return c.json({ error: '"mode" must be "human" or "agent"' }, 400);
+  try {
+    const control = await getBrowserService().setControl(c.req.param('id'), body.mode, {
+      ...(typeof body.by === 'string' ? { by: body.by } : {}),
+      ...(typeof body.handoffId === 'string' ? { handoffId: body.handoffId } : {}),
+    });
+    return c.json({ ok: true, control });
+  } catch (err) {
+    if (err instanceof BrowserOpError) return c.json({ error: err.message }, err.code === 'BROWSER_NOT_FOUND' ? 404 : 409);
+    throw err;
+  }
+});
+
 app.get('/video/status', async (c) => {
   const ready = videoGenReady();
   if (!ready.ok) return c.json({ enabled: false, reason: ready.reason });
@@ -5458,6 +5503,28 @@ if (config.videoGen?.enabled) {
 // turn live (feedback_publishsse_must_broadcast). The wake turn
 // queues on the parent's session lock, so it never interrupts an
 // active turn.
+// Shared browser service — the Chromium processes live here. The wake
+// on hand-back goes through the same lock + runChatTurn path as a
+// subagent attention wake, so it streams live and respects the queue.
+const browserService = configureBrowserService(config.browser, {
+  dispatchWakeTurn: async ({ agent, session, text }) => {
+    const release = await acquireSessionLock(agent, session, { priority: 'agent' });
+    try {
+      await runChatTurn({
+        agent,
+        session,
+        text,
+        fromSystem: 'subagent',
+        deps: chatTurnDeps,
+        publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
+      });
+    } finally {
+      release();
+    }
+  },
+});
+void browserService.init().catch((err) => logger.error({ msg: 'browser.service_init_failed', err: String(err) }));
+
 configureSubagentAttention({
   graceMs: 2_000,
   dispatchWakeTurn: async ({ agent, session, text }) => {
@@ -5638,6 +5705,7 @@ async function shutdown(signal: string): Promise<void> {
   releaseLockfile();
   stopClaudeCredentialSyncWatcher();
   await shutdownMemoryRegistry();
+  await browserService.shutdown().catch(() => {});
   await shutdownSshPool();
   process.exit(0);
 }

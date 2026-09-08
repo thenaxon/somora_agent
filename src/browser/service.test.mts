@@ -1,0 +1,180 @@
+// Stage-1 acceptance for the shared browser, against the real host
+// Chromium: profile isolation (6), stale refs (7), crash-free errors,
+// navigation policy (spec 9), tab cap, handoff state machine (3/4/5 at
+// the service level — the web client comes in stage 2/3).
+//
+// A tiny local web app (login form → OTP → welcome, cookie-based) is
+// served from this file so the test has a login flow without touching
+// the internet. Skipped when no Chromium is on the host.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer, type Server } from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+process.env.SOMORA_HOME = mkdtempSync(join(tmpdir(), 'somora-browser-test-'));
+const { BrowserService, BrowserOpError, detectExecutable } = await import('./service.ts');
+
+const chromium = detectExecutable();
+const PAGE = (body: string) => `<!doctype html><html><head><title>Somora Test App</title></head><body>${body}</body></html>`;
+
+function app(): Promise<{ server: Server; base: string }> {
+  return new Promise((resolve) => {
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://x');
+      const cookie = req.headers.cookie ?? '';
+      const loggedIn = /session=ok/.test(cookie);
+      const send = (html: string, headers: Record<string, string> = {}) => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', ...headers });
+        res.end(PAGE(html));
+      };
+      if (url.pathname === '/') {
+        if (loggedIn) return send('<h1>Welcome back</h1><p id="who">logged in</p><a href="/redirect-private">private link</a>');
+        return send('<h1>Sign in</h1><form method="GET" action="/otp"><label>Username <input name="user"></label><label>Password <input type="password" name="pass"></label><button type="submit">Continue</button></form>');
+      }
+      if (url.pathname === '/otp') {
+        return send('<h1>One-time code</h1><form method="GET" action="/login"><label>Code <input name="otp"></label><button type="submit">Verify</button></form>');
+      }
+      if (url.pathname === '/login') {
+        if (url.searchParams.get('otp') === '123456') return send('<h1>Welcome</h1><p id="who">logged in</p>', { 'Set-Cookie': 'session=ok; Path=/' });
+        return send('<h1>Wrong code</h1>');
+      }
+      if (url.pathname === '/redirect-private') {
+        // 127.0.0.2 is loopback too (reachable on Linux) but NOT in
+        // allowPrivate — a redirect the policy must catch after the fact.
+        res.writeHead(302, { Location: `http://127.0.0.2:${(server.address() as { port: number }).port}/secret` });
+        return res.end();
+      }
+      if (url.pathname === '/secret') return send('<h1>Internal secret</h1>');
+      res.writeHead(404);
+      res.end();
+    });
+    server.listen(0, '0.0.0.0', () => {
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      resolve({ server, base: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
+const cfg = {
+  enabled: true,
+  maxTabsPerAgent: 2,
+  idleStopMinutes: 30,
+  viewport: { width: 1000, height: 700 },
+  stream: { quality: 60, maxFps: 15 },
+  allowPrivate: ['127.0.0.1'],
+  deny: ['*.example.org'],
+  profiles: { team: { agents: ['hans', 'lisa'] } },
+};
+
+test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on this host' }, async (t) => {
+  const { server, base } = await app();
+  const wakes: Array<{ agent: string; session: string; text: string }> = [];
+  const svc = new BrowserService(cfg as never, { dispatchWakeTurn: async (w) => { wakes.push(w); } });
+  await svc.init();
+  t.after(async () => {
+    await svc.shutdown();
+    server.close();
+    rmSync(process.env.SOMORA_HOME!, { recursive: true, force: true });
+  });
+
+  await t.test('login flow: open → snapshot → fill → click → otp → welcome', async () => {
+    const opened = await svc.open('naxon', 'main', { url: `${base}/` });
+    assert.equal(opened.browser_id, 'agent:naxon');
+    const tab = opened.tab.tab_id;
+    let snap = await svc.snapshot('naxon', { tab });
+    assert.match(snap.snapshot, /textbox "Username" \[ref=(?:f\d+)?e\d+\]/);
+    assert.doesNotMatch(snap.snapshot, /^\s*- generic \[ref=/m, 'compact snapshot drops bare containers');
+    const user = /textbox "Username" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
+    const pass = /textbox "Password" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
+    const btn = /button "Continue" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
+    await svc.act('naxon', { tab, action: 'fill', ref: user, value: 'rene', generation: snap.generation });
+    await svc.act('naxon', { tab, action: 'fill', ref: pass, value: 'geheim', generation: snap.generation });
+    const clicked = await svc.act('naxon', { tab, action: 'click', ref: btn, generation: snap.generation });
+    assert.equal(clicked.navigated, true);
+    assert.match(clicked.tab.url, /\/otp\?user=rene/);
+    // stale ref from the previous page is refused (acceptance 7)
+    await assert.rejects(svc.act('naxon', { tab, action: 'click', ref: btn }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_STALE_REF');
+    await assert.rejects(svc.act('naxon', { tab, action: 'click', ref: btn, generation: snap.generation }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_STALE_REF');
+    snap = await svc.snapshot('naxon', { tab });
+    const otp = /textbox "Code" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
+    await svc.act('naxon', { tab, action: 'fill', ref: otp, value: '123456' });
+    await svc.act('naxon', { tab, action: 'press', ref: otp, value: 'Enter' });
+    snap = await svc.snapshot('naxon', { tab });
+    assert.match(snap.snapshot, /heading "Welcome"/);
+    const shot = await svc.screenshot('naxon', { tab });
+    assert.ok(shot.png.length > 1000);
+  });
+
+  await t.test('profile isolation: another agent is not logged in (acceptance 6)', async () => {
+    const opened = await svc.open('spielberg', 'main', { url: `${base}/` });
+    assert.equal(opened.browser_id, 'agent:spielberg');
+    const snap = await svc.snapshot('spielberg', { tab: opened.tab.tab_id });
+    assert.match(snap.snapshot, /heading "Sign in"/);
+    // and naxon's own browser is still logged in
+    const again = await svc.open('naxon', 'main', { url: `${base}/`, tab: 't1' });
+    const s2 = await svc.snapshot('naxon', { tab: again.tab.tab_id });
+    assert.match(s2.snapshot, /heading "Welcome back"/);
+    await assert.rejects(svc.tabs('lisa'), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NOT_FOUND');
+  });
+
+  await t.test('shared profile: hans and lisa share one browser, others are refused', async () => {
+    const h = await svc.open('hans', 'main', { url: `${base}/` });
+    assert.equal(h.browser_id, 'profile:team');
+    const l = await svc.tabs('lisa');
+    assert.equal(l.browser_id, 'profile:team');
+    assert.equal(l.tabs.length, 1);
+  });
+
+  await t.test('navigation policy: private host denied, deny list, redirect into LAN blocked', async () => {
+    await assert.rejects(svc.open('naxon', 'main', { url: 'http://10.0.0.1/' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
+    await assert.rejects(svc.open('naxon', 'main', { url: 'https://www.example.org/' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
+    await assert.rejects(svc.open('naxon', 'main', { url: 'file:///etc/passwd' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
+    // a page that redirects into the LAN: the route interception stops it
+    const r = await svc.open('naxon', 'main', { url: `${base}/redirect-private`, tab: 't1' });
+    assert.ok(r.blocked, 'redirect target denied: ' + JSON.stringify(r));
+    assert.equal(r.tab.url, 'about:blank');
+    const s = await svc.snapshot('naxon', { tab: 't1' });
+    assert.doesNotMatch(s.snapshot, /Internal secret/);
+  });
+
+  await t.test('tab cap', async () => {
+    const second = await svc.open('naxon', 'main', { url: `${base}/otp` }); // second tab
+    await assert.rejects(svc.open('naxon', 'main', { url: `${base}/otp` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_LIMIT');
+    const closed = await svc.closeTab('naxon', { tab: second.tab.tab_id });
+    assert.equal(closed.remaining, 1);
+  });
+
+  await t.test('handoff: request → human control refuses agent ops → hand back wakes once', async () => {
+    const h = await svc.requestHandoff('naxon', 'main', { reason: 'login needed', resume_note: 'continue with the profile page' });
+    assert.equal(h.control, 'handoff_requested');
+    await assert.rejects(svc.snapshot('naxon', { tab: 't1' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    const human = await svc.setControl('agent:naxon', 'human', { by: 'web-1' });
+    assert.equal(human.mode, 'human_control');
+    await assert.rejects(svc.act('naxon', { tab: 't1', action: 'press', value: 'Enter' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    await assert.rejects(svc.stop('naxon'), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    const back = await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
+    assert.equal(back.mode, 'agent_control');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(wakes.length, 1);
+    assert.equal(wakes[0]!.session, 'main');
+    assert.match(wakes[0]!.text, /login needed/);
+    // a second hand-back must not wake again (acceptance 5)
+    await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
+    assert.equal(wakes.length, 1);
+    const list = await svc.listAll();
+    assert.ok(list.some((b) => b.browser_id === 'agent:naxon' && b.control === 'agent_control'));
+  });
+
+  await t.test('stop keeps the profile; ephemeral is separate', async () => {
+    const e = await svc.open('naxon', 'main', { url: `${base}/`, ephemeral: true });
+    assert.equal(e.browser_id, 'agent:naxon:tmp');
+    const s = await svc.snapshot('naxon', { tab: e.tab.tab_id });
+    assert.match(s.snapshot, /heading "Sign in"/, 'ephemeral profile has no cookie');
+    const stopped = await svc.stop('naxon');
+    assert.ok(stopped.stopped);
+  });
+});

@@ -1941,6 +1941,38 @@ Fresh shell (no tmux session). Same binary/text frame protocol as
 
 ---
 
+## Browser — shared managed Chromium
+
+Loopback-only like `/tools`. See [browser.md](browser.md). All routes
+answer `503` while `browser.enabled` is false.
+
+### `POST /browser/op`
+
+Run one `browser` tool operation for an agent — the path the MCP tool
+child takes for claude-cli/codex-cli turns, because the Chromium lives
+in the server process. Body `{ agent, session?, input }` where `input`
+is the tool's argument object (`{ op: "open", url }`, `{ op:
+"snapshot", tab }`, …). Returns the tool's result object (`ok`,
+`error`, `hint`, `tab`, `snapshot`, …), never a non-2xx for a tool-level
+refusal.
+
+### `GET /browser/status`
+
+`{ enabled, browsers: [{ browser_id, profile, ephemeral, state,
+control, handoff?, tabs: [{ tab_id, url, title, agent, session?,
+generation }], last_used }] }` — every running browser plus stopped
+ones with a pending handoff. `control` is `agent_control`,
+`handoff_requested`, `human_control` or `paused`.
+
+### `POST /browser/:id/control`
+
+Body `{ mode: "human" | "agent", by?, handoffId? }`. `human` takes
+control: every agent op on that browser is refused until handed back.
+`agent` hands it back; with a pending handoff the requesting agent is
+woken once in its session (pass the `handoffId` from the status so a
+stale button press after a newer handoff does not wake twice). `404`
+when the browser is not running, `409` on a state conflict.
+
 ## Sentinel — proactive triggers
 
 Sentinel installs time-based triggers that wake agents on a schedule.
