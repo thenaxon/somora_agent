@@ -39,6 +39,12 @@ events are dropped going forward; rows that already rendered stay as-is.
 
 The header surfaces the current state with `mem ✓ tools ✗` badges.
 
+Not gated by any flag: the warn line the TUI prints when a turn was
+answered by a `fallback:` model (`⇄ model fallback: <primary> (<reason>)
+failed before producing anything — answering with <model>`, every failed
+hop of a chain listed). It is a system line, always visible, and is
+replayed from history on reconnect.
+
 `/show tools` is also the gate for **engine_meta** rows — codex-cli
 emits internal plan/checklist items (`itemType: todo_list`) that we
 persist alongside tool calls. They render with a dimmer `◌ codex ·

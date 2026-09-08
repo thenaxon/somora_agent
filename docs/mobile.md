@@ -67,6 +67,10 @@ own app switcher entry.
   files upload to the server immediately and appear as chips above
   the textarea; tap the × on a chip to drop it before sending. You
   can send with attachments only (no text).
+- **Fallback marker:** a reply produced by the persona's `fallback:`
+  model (or one of a fallback chain) carries a small `⇄ fallback ·
+  <model>` pill under the bubble; long-press shows which models failed
+  and why. Same data the desktop chip uses, so a reload keeps it.
 - **Typing indicator:** when you've sent and the agent is still
   thinking / running tools, a three-dot pulse appears in an agent
   bubble. It's replaced by the actual streaming response as soon as

@@ -288,15 +288,19 @@ archived copy at the next idle window.
   enlarged without touching other agents, the window chrome or the
   desktop. The percentage readout appears only off-default and doubles
   as the reset. Persisted per browser (`somora-chat-zoom`).
-- **Fallback marker on bubbles**: an assistant turn produced by the
-  fallback model carries a `⇄ fallback · <model>` chip (hover for the
-  primary's failure reason). It survives reloads — the server persists
-  a `model_fallback` event in the session history. A short notice
+- **Fallback marker on bubbles**: an assistant turn produced by a
+  fallback model carries a `⇄ fallback · <model>` chip. Hover shows why
+  the primary failed — and with a fallback chain (`fallback: [a, b]` in
+  agent.yaml, see [agents.md](agents.md)) every model that failed before
+  this one, in order. It survives reloads — the server persists a
+  `model_fallback` event in the session history. A short notice
   appears once at the start of a fallback streak and once more when
   the primary model answers again; turns in between get the chip only.
-  When the fallback fails as well before producing anything, the turn's
-  error row names both models and both reasons (`Both models failed.
-  Primary … — fallback …`) instead of only the fallback's raw error.
+  When every model in the chain fails before producing anything, the
+  turn's error row names all of them with their reasons (`All 3 models
+  failed. …`) instead of only the last one's raw error. The TUI prints
+  the same as a warn line in the scrollback, the mobile client shows
+  the chip on the bubble.
 - **Peer origin caption**: a message another agent sent via `agent_ask`
   renders with that agent's icon and colour; when it was sent from one
   of the sender's non-main sessions, `<agent> · <session>` sits left of
@@ -538,8 +542,8 @@ The web client listens for these named events on `/chat/stream`:
 | `turn_dequeued` | `{turnId}` | A queued message was taken back (↩ edit, from any client). The bubble is dropped. |
 | `turn_started` | `{turnId}` | The engine's own turn id — stamped on the assistant bubble so `assistant_media` / `turn_error` pair to this turn. |
 | `turn_error` | `{turnId?, message, engine}` | The turn failed. Rendered as the **Turn failed** block inside the turn. |
-| `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider`/`model` are the model that ACTUALLY answered; `fallback` `{requested, actual, reason}` is set when that was the persona's fallback. |
-| `model_fallback` | `{requested, actual, reason}` | The primary model failed before producing anything; the fallback model is answering this turn. Precedes its first `chat` delta. |
+| `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider`/`model` are the model that ACTUALLY answered; `fallback` `{requested, actual, reason, hops?}` is set when that was a fallback model (same shape as `model_fallback`). |
+| `model_fallback` | `{requested, actual, reason, hops?}` | The primary model failed before producing anything; a fallback model is answering this turn. `requested` is always the primary, `actual` the model now answering; `hops` lists every model that failed so far (chain). One event per hop, precedes the first `chat` delta of the model that answers. |
 | `chat` | `{state: 'delta'\|'final', text}` | Cumulative assistant text (each delta carries the full running text, not just the new chunk) |
 | `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | Tool invocation lifecycle |
 | `engine_meta` | `{engine, itemType, label, summary?, payload}` | Engine-internal side-channel (e.g. codex `todo_list`). Renders under the tools toggle. |

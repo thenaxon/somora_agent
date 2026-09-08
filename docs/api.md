@@ -1510,18 +1510,27 @@ harness; loopback-only like every debug route.
 
 ### `GET /agents/:agent/memory/search`
 
-Hybrid (BM25 + vector) search across the agent's memory.
+Hybrid (BM25 + vector) search over the agent's own memory notes plus
+the shared vault/wiki index — the same `MemoryManager.search` the
+`memory_search` tool and auto-inject use: filler words are dropped
+from the keyword side, a page whose slug names a query word is boosted
+(`memory.hybrid.slugMatchBoost`), see [memory.md](memory.md). No
+history blend here — that is auto-inject's, use `recall-preview` above
+to see a turn's actual recall.
 
 ```bash
 curl "https://<host>:18737/agents/<your-agent>/memory/search?q=voice+satellites&limit=5&minScore=0.3"
 ```
 
-Query params: `q` (required), `limit` (default 5), `minScore`
-(default 0.5), `source` (optional filter).
+Query params: `q` (required), `limit` (1–50, default 5), `minScore`
+(0..1, default 0 — the route shows everything; auto-inject applies
+`autoInject.minScore`).
 
-Returns `{ query, count, hits: [...] }` with each hit carrying
-`reference`, `source`, `slug`, `score`, `snippet`, `path`, line
-numbers.
+Returns `{ agent, query, limit, minScore, count, hits: [...] }`; each
+hit carries `slug`, `source` (`memory` | `wiki` | `vault`), `score`
+(fused, min-max normalised within this query's candidates — a rank,
+not a similarity), `vecScore`, `bm25Score`, `startLine`, `endLine`,
+`filePath` and the chunk `text`.
 
 For full content of a hit, agents call `memory_get` via the tool
 endpoint (`POST /agents/:a/tools/memory_get`). Same path is

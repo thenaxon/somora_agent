@@ -129,6 +129,15 @@ host-context auto-loading because there's no CLI subprocess to inherit
 from. The only attack surface is the LLM endpoint itself, which is your
 choice (local Ollama, vendor API, etc.).
 
+One more field goes along by default: the standard OpenAI `user`
+string, filled with `<agent>/<session id>` for chat turns and
+`<agent>/rem`, `<agent>/deep`, `lucid/<pass>`, `<agent>/compaction`,
+`<agent>/analyze_file` for background workers — so a gateway in
+between (LiteLLM, a vLLM router) can attribute spend per agent. Agent
+names and session ids are the only content; no message text beyond
+what the turn sends anyway. If a provider must not see them, set
+`sendUserTag: false` on that provider ([models.md](models.md)).
+
 The agent-loop in [`src/engine/openai-compatible.ts`](../src/engine/openai-compatible.ts)
 caps tool-call rounds (`agentLoop.maxRounds`, default 8) and per-tool
 timeout (`agentLoop.toolCallTimeoutMs`, default 30 s) to prevent runaway

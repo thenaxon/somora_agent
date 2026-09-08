@@ -308,8 +308,9 @@ both with no operator intervention.
 
 When you ask an agent a question:
 1. **Auto-injection** runs hybrid search (vector + BM25) across all three
-   layers. Top hits prepend to the system prompt as `<memory-context>`. The
-   agent doesn't need to call a search tool to recall relevant facts.
+   layers — the current message drives the query, the last turns only
+   nudge it. Top hits prepend to the system prompt as `<memory-context>`.
+   The agent doesn't need to call a search tool to recall relevant facts.
 2. The agent can also call `memory_search` / `memory_get` explicitly for
    deeper digs; `file_read` for vault paths outside the wiki.
 

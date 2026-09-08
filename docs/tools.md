@@ -11,7 +11,7 @@ path it's on.
 
 | Toolset | Tools | Purpose |
 |---|---|---|
-| `memory` | `memory_search`, `memory_get`, `memory_list`, `memory_write`, `memory_edit`, `memory_delete` | Read/write across the three layers — agent memory inbox, shared wiki, read-only vault. Hybrid retrieval (vector + BM25) with per-source boost. |
+| `memory` | `memory_search`, `memory_get`, `memory_list`, `memory_write`, `memory_edit`, `memory_delete` | Read/write across the three layers — agent memory inbox, shared wiki, read-only vault. Hybrid retrieval (vector + BM25) with per-source boost; filler words are dropped from the keyword side and a page whose slug names a query word is lifted, so `memory_search "walter"` finds the page about Walter, not the pages that mention him most (see `memory.md`). |
 | `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run`, `dream_review` | Inspect findings from REM (per-agent) and Lucid (platform-wide); trigger Deep/Lucid via `dream_run({phase: 'deep'\|'lucid'})`. `dream_review({dream_id, action:'start'\|'end'})` opens/closes a conversational wiki-edit loop for a Lucid run. See `dream-phases.md`. |
 | `wiki` | `wiki_edit`, `wiki_create`, `wiki_delete` | Loop-scoped wiki write tools. Only exposed to the agent currently holding the active `dream_review` loop; otherwise hidden. `wiki_edit` mutates body and/or `related:`/`sources:` frontmatter. Per-turn cap of 3 wiki_* calls keeps the model from batch-editing without user check-in. See `dream-phases.md`. |
 | `time` | `time_now` | Current date/time/timezone — model never hallucinates "today". |
