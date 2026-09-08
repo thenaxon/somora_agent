@@ -351,7 +351,7 @@ expired`) is the only loud signal. Check the header, not just the reply.
 | `sampling` | sent on every call, dropped once if the backend rejects a key | ignored (not exposed by the CLI) | ignored | ignored |
 | `maxTokens` | output cap on every call incl. dream workers | — | — | — |
 | `fallback` | availability chain on unreachable / 5xx | same | same | same |
-| `sendUserTag` (provider) | `user: "<agent>/<session>"` on every request, `<agent>/rem`, `<agent>/deep`, `lucid/<pass>`, `<agent>/compaction`, `<agent>/analyze_file` for workers — a gateway (LiteLLM spend logs) groups cost per agent and session; default on, `false` to withhold | — | — | — |
+| `sendUserTag` (provider) | `user: "<agent>/<session>"` on every request, `<agent>/rem`, `<agent>/deep`, `lucid/<pass>`, `<agent>/compaction`, `<agent>/analyze_file` for workers — a gateway groups cost per agent and session (LiteLLM stores it in the `end_user` column of its spend logs, not `user`); default on, `false` to withhold | — | — | — |
 
 **Minimum versions** (from v2026.09.03.06 / .09): Node.js ≥ 22.13,
 Codex CLI ≥ 0.148, a current Claude Code. A CLI engine's tools and
