@@ -34,12 +34,14 @@ export function browserTitle(b: Pick<BrowserInfo, 'browser_id' | 'profile' | 'ep
 
 export function BrowserListWindow({ onOpen }: Props) {
   const [browsers, setBrowsers] = useState<BrowserInfo[] | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const r = await api.browserStatus();
       setBrowsers(r.browsers);
+      setWarnings(r.warnings ?? []);
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -84,6 +86,11 @@ export function BrowserListWindow({ onOpen }: Props) {
         </button>
       </div>
       {error && <div style={{ padding: 12, color: 'var(--danger, #f85149)', fontSize: 12 }}>{error}</div>}
+      {warnings.map((w) => (
+        <div key={w} style={{ padding: '8px 12px', color: 'var(--warn, #d29922)', fontSize: 11, borderBottom: '1px solid var(--line)' }}>
+          {w}
+        </div>
+      ))}
       <div style={{ overflowY: 'auto', flex: 1 }}>
         {(browsers ?? []).map((b) => {
           const label = controlLabel(b);

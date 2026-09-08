@@ -13,12 +13,14 @@ import { createServer, type Server } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { findXvfb, planHeaded } from './display.ts';
 
 process.env.SOMORA_HOME = mkdtempSync(join(tmpdir(), 'somora-browser-test-'));
 const { BrowserService, BrowserOpError, detectExecutable } = await import('./service.ts');
 
 const chromium = detectExecutable();
-const PAGE = (body: string) => `<!doctype html><html><head><title>Somora Test App</title></head><body>${body}</body></html>`;
+const PAGE = (body: string) => `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Somora Test App</title></head><body>${body}</body></html>`;
 
 function app(): Promise<{ server: Server; base: string }> {
   return new Promise((resolve) => {
@@ -61,6 +63,8 @@ function app(): Promise<{ server: Server; base: string }> {
 
 const cfg = {
   enabled: true,
+  headed: false,
+  extraArgs: [] as string[],
   maxTabsPerAgent: 2,
   idleStopMinutes: 30,
   viewport: { width: 1000, height: 700 },
@@ -203,3 +207,110 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
     assert.ok(stopped.stopped);
   });
 });
+
+test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb', { skip: chromium.path ? false : 'no Chromium on this host' }, async (t) => {
+  const { server, base } = await app();
+  t.after(() => server.close());
+
+  await t.test('extraArgs reach Chromium (a --user-agent flag is visible to the page)', async () => {
+    const svc = new BrowserService({ ...cfg, extraArgs: ['--user-agent=somora-test-ua/1'] } as never, {});
+    await svc.init();
+    try {
+      const opened = await svc.open('jarvis', 'main', { url: `${base}/` });
+      const { page } = svc.viewerPage(opened.browser_id, opened.tab.tab_id);
+      assert.equal(await page.evaluate(() => navigator.userAgent), 'somora-test-ua/1');
+    } finally {
+      await svc.shutdown();
+    }
+  });
+
+  await t.test('open {device, locale}: user agent, viewport, touch and language of that tab only', async () => {
+    const svc = new BrowserService(cfg as never, {});
+    await svc.init();
+    try {
+      const phone = await svc.open('jarvis', 'main', { url: `${base}/`, device: 'iPhone 15', locale: 'de-AT' });
+      assert.deepEqual(phone.tab.emulation, { device: 'iPhone 15', locale: 'de-AT' });
+      const p1 = svc.viewerPage(phone.browser_id, phone.tab.tab_id).page;
+      const a = await p1.evaluate(() => ({ ua: navigator.userAgent, w: window.innerWidth, touch: navigator.maxTouchPoints > 0, lang: navigator.language, dpr: window.devicePixelRatio }));
+      assert.match(a.ua, /iPhone/);
+      assert.equal(a.w, 393);
+      assert.equal(a.touch, true);
+      assert.equal(a.lang, 'de-AT');
+      assert.equal(a.dpr, 3);
+      const plain = await svc.open('jarvis', 'main', { url: `${base}/` });
+      const p2 = svc.viewerPage(plain.browser_id, plain.tab.tab_id).page;
+      const b = await p2.evaluate(() => ({ ua: navigator.userAgent, w: window.innerWidth, touch: navigator.maxTouchPoints > 0 }));
+      assert.doesNotMatch(b.ua, /iPhone/);
+      assert.equal(b.w, 1000);
+      assert.equal(b.touch, false);
+      assert.equal(plain.tab.emulation, undefined);
+      // (tab cap is 2 in this cfg — reuse the plain tab for the negative case)
+      await assert.rejects(svc.open('jarvis', 'main', { url: `${base}/`, tab: plain.tab.tab_id, device: 'Nokia 3310' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_ACTION_FAILED' && /iPhone 15/.test(e.message));
+    } finally {
+      await svc.shutdown();
+    }
+  });
+
+  await t.test('headed without a display and without Xvfb refuses loudly (no headless fallback)', async () => {
+    const saved = { DISPLAY: process.env.DISPLAY, WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY, XV: process.env.SOMORA_XVFB_PATH };
+    delete process.env.DISPLAY;
+    delete process.env.WAYLAND_DISPLAY;
+    process.env.SOMORA_XVFB_PATH = '/nonexistent/Xvfb';
+    try {
+      const plan = planHeaded(true);
+      assert.equal(plan.mode, process.platform === 'linux' ? 'unavailable' : 'display');
+      if (plan.mode === 'unavailable') {
+        assert.match(plan.reason, /apt install xvfb/);
+        const svc = new BrowserService({ ...cfg, headed: true } as never, {});
+        await svc.init();
+        assert.match(svc.warnings().join('\n'), /Xvfb/);
+        await assert.rejects(svc.open('jarvis', 'main', { url: `${base}/` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_LAUNCH_FAILED' && /Xvfb/.test(e.message));
+        assert.equal((await svc.status('jarvis')).headed.mode, 'unavailable');
+        await svc.shutdown();
+      }
+    } finally {
+      if (saved.DISPLAY !== undefined) process.env.DISPLAY = saved.DISPLAY;
+      if (saved.WAYLAND_DISPLAY !== undefined) process.env.WAYLAND_DISPLAY = saved.WAYLAND_DISPLAY;
+      if (saved.XV === undefined) delete process.env.SOMORA_XVFB_PATH;
+      else process.env.SOMORA_XVFB_PATH = saved.XV;
+    }
+  });
+
+  const xvfb = process.env.DISPLAY || process.env.WAYLAND_DISPLAY ? null : findXvfb();
+  const xSockets = () => (existsSync('/tmp/.X11-unix') ? readdirSync('/tmp/.X11-unix').filter((s) => /^X(9\d|1\d\d)$/.test(s)) : []);
+  await t.test('headed on Xvfb: normal user agent, navigator.webdriver false, screencast works, Xvfb stops with the browser', { skip: xvfb ? false : 'no Xvfb on this host, or a DISPLAY is set' }, async () => {
+    const svc = new BrowserService({ ...cfg, headed: true } as never, {});
+    await svc.init();
+    assert.equal(svc.headedPlan().mode, 'xvfb');
+    const before = xSockets();
+    try {
+      const opened = await svc.open('buffet', 'main', { url: `${base}/` });
+      const list = await svc.listAll();
+      assert.equal(list.find((b) => b.browser_id === opened.browser_id)?.headed, true);
+      const { page } = svc.viewerPage(opened.browser_id, opened.tab.tab_id);
+      const r = await page.evaluate(() => ({ ua: navigator.userAgent, webdriver: navigator.webdriver }));
+      assert.doesNotMatch(r.ua, /Headless/);
+      assert.match(r.ua, /Chrome\/\d+/);
+      assert.equal(r.webdriver, false);
+      const cdp = await page.context().newCDPSession(page);
+      const frame = await new Promise<{ w: number }>((resolve) => {
+        cdp.on('Page.screencastFrame', (ev: { metadata: { deviceWidth: number }; sessionId: number }) => {
+          void cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId });
+          resolve({ w: ev.metadata.deviceWidth });
+        });
+        void cdp.send('Page.startScreencast', { format: 'jpeg', quality: 50, maxWidth: 1000, maxHeight: 700 });
+      });
+      assert.ok(frame.w > 0);
+      await cdp.send('Page.stopScreencast').catch(() => {});
+      await cdp.detach().catch(() => {});
+      assert.equal((await svc.status('buffet')).headed.mode, 'xvfb');
+      assert.equal(xSockets().length, before.length + 1, 'somora started one Xvfb for this browser');
+      await svc.stop('buffet');
+      await new Promise((r) => setTimeout(r, 500));
+      assert.equal(xSockets().length, before.length, 'the Xvfb is gone with the browser');
+    } finally {
+      await svc.shutdown();
+    }
+  });
+});
+

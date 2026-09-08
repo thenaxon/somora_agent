@@ -16,6 +16,13 @@ Hard requirements:
 | **ripgrep** (`rg`) | needed by `file_search` | `sudo apt install ripgrep` · `brew install ripgrep` · `sudo dnf install ripgrep` |
 | **git** | clone the repo | usually pre-installed; otherwise package-manage |
 
+Optional, per feature:
+
+| Tool | Why | Install |
+|---|---|---|
+| **Chromium / Chrome** | the shared `browser` tool ([browser.md](browser.md)) — auto-detected, or set `browser.executablePath` | `sudo apt install chromium` · `brew install --cask chromium` · `sudo dnf install chromium` |
+| **Xvfb** | `browser.headed: true` on a host without a display (a virtual screen so Chromium runs with a window and does not announce itself as headless) | `sudo apt install xvfb` · `sudo dnf install xorg-x11-server-Xvfb` · `sudo pacman -S xorg-server-xvfb` · macOS: not needed |
+
 C/C++ toolchain — `npm install` builds two native modules
 (`better-sqlite3` for SQLite, `@huggingface/transformers`'s ONNX runtime
 for local embeddings). Both ship prebuilt binaries for the common

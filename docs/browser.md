@@ -19,6 +19,8 @@ asks for you, and the taskbar marker.
 browser:
   enabled: true
   # executablePath: /usr/bin/chromium     # auto-detected when unset
+  headed: false                           # true = Chromium with a window, see "Headed mode"
+  extraArgs: []                           # extra Chromium flags, e.g. ["--proxy-server=http://proxy:3128"]
   maxTabsPerAgent: 8
   idleStopMinutes: 30
   viewport: { width: 1280, height: 800 }
@@ -35,6 +37,56 @@ tried. `playwright-core` (no bundled browser) drives it.
 The tool appears only when `browser.enabled` is true, and can be denied
 per agent like any other toolset (`tools.deny: ['toolset:browser']` in
 agent.yaml, or the Abilities window).
+
+## Headed mode
+
+Headless Chromium tells every server and every page what it is: the
+user agent reads `HeadlessChrome/151…` and `navigator.webdriver` is
+true. Services with any bot filtering see that on the first request.
+`headed: true` starts Chromium with a window instead, without the
+automation flag and without Blink's `AutomationControlled` feature —
+the user agent is the normal `Chrome/151…` and `navigator.webdriver`
+is false, like a browser a person opened.
+
+On a desktop the window goes to `$DISPLAY`. On a server without a
+display somora starts a virtual X server per browser — **Xvfb**, a
+system package you install once (Debian/Ubuntu `sudo apt install
+xvfb`, Fedora `sudo dnf install xorg-x11-server-Xvfb`, Arch `sudo
+pacman -S xorg-server-xvfb`; macOS needs nothing). It is stopped with
+the browser. Nobody looks at that screen; the web client's live view
+keeps working, it streams over CDP either way.
+
+Without a display and without Xvfb the browser **refuses to start**
+and says so — in the tool result, in `browser status`, in the browser
+list of the web client and as `browser.headed_unavailable` in the log.
+It does not fall back to headless, because that would silently bring
+back the signals you switched headed on to avoid. Headed rendering
+costs some CPU and memory more per browser.
+
+What headed does not do: TLS fingerprints, canvas and behaviour
+analysis, Turnstile-style challenges. A service with serious bot
+protection may still tell.
+
+`extraArgs` appends Chromium launch flags verbatim (proxy, window
+size, sandbox flags). Both settings are per process: they apply to
+every profile and take effect on the next browser start.
+
+## Per-tab device and locale
+
+An agent can open a tab as a phone or in another language, the way
+the device mode in Chrome DevTools does:
+
+```
+browser { op: "open", url: "https://example.com", device: "iPhone 15", locale: "de-AT" }
+```
+
+`device` is a Playwright device name (`iPhone 15`, `Pixel 7`, `iPad
+Pro 11`, …; an unknown name is refused with examples) and sets user
+agent, viewport, pixel ratio and touch of that one tab. `locale` is a
+BCP-47 tag and sets `Accept-Language` and `navigator.language`. Other
+tabs of the same browser are untouched; the tab's `emulation` field
+in `tabs`/`status` shows what is active. Ask an agent "open the mobile
+version" and it uses this.
 
 ## Profiles — one per agent
 
@@ -65,11 +117,11 @@ One tool, `op`-variants:
 
 | op | what |
 |---|---|
-| `open` | `url`, optional `tab` to navigate an existing tab, `ephemeral`. Returns `tab`, `generation`. |
+| `open` | `url`, optional `tab` to navigate an existing tab, `ephemeral`, `device` / `locale` (per-tab emulation, see above). Returns `tab`, `generation`. |
 | `snapshot` | Compact accessibility tree of a tab; interactive elements carry `[ref=e12]`. `full: true` for the raw tree. |
 | `act` | `action` `click` / `fill` / `press` / `scroll` / `select` on a `ref` (`press`/`scroll` also without one), optional `value`, optional `generation`. |
 | `screenshot` | PNG into `<workspace>/browser/<agent>/`, path returned. |
-| `tabs`, `status` | What is open; whether the browser runs, which profile, who controls it. |
+| `tabs`, `status` | What is open; whether the browser runs, which profile, who controls it, the headed plan (`headless` / `display` / `xvfb` / `unavailable` with reason) and operator warnings. |
 | `request_handoff` | `reason`, optional `resume_note`. Marks the browser as waiting for you. |
 | `close_tab`, `stop` | Clean up. `stop` keeps the profile. |
 

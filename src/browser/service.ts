@@ -29,11 +29,12 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { chromium, type BrowserContext, type Page } from 'playwright-core';
+import { chromium, devices, type BrowserContext, type CDPSession, type Page } from 'playwright-core';
 import type { BrowserConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { checkNavigationAllowed } from './policy.ts';
 import { compactAriaSnapshot } from './snapshot.ts';
+import { planHeaded, startVirtualDisplay, type HeadedPlan, type VirtualDisplay } from './display.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 
@@ -72,6 +73,10 @@ interface TabRec {
    *  ref that was never in a snapshot of this generation is refused. */
   snapshotRefs: Set<string>;
   snapshotGeneration: number;
+  /** Per-tab emulation set by open {device, locale} — reported in TabInfo. */
+  emulation?: { device?: string; locale?: string };
+  /** CDP session used for emulation (kept for the tab's lifetime). */
+  cdp?: CDPSession;
   /** A denied URL the tab was navigated to (redirect, in-page script)
    *  and evicted from; reported once by the next op. */
   evictedFrom?: string;
@@ -90,6 +95,10 @@ interface BrowserRec {
   lastUsed: number;
   idleTimer: NodeJS.Timeout | null;
   closing: Promise<void> | null;
+  /** Launched with a window (browser.headed). */
+  headed: boolean;
+  /** The Xvfb this browser runs on, when somora started one. */
+  display?: VirtualDisplay;
 }
 
 export interface TabInfo {
@@ -99,6 +108,8 @@ export interface TabInfo {
   agent: string;
   session?: string;
   generation: number;
+  /** Device/locale emulation active on this tab (open {device, locale}). */
+  emulation?: { device?: string; locale?: string };
 }
 
 export interface BrowserInfo {
@@ -110,6 +121,8 @@ export interface BrowserInfo {
   handoff?: Handoff;
   tabs: TabInfo[];
   last_used: number;
+  /** Launched with a window (browser.headed); absent for stopped entries. */
+  headed?: boolean;
 }
 
 export interface ServiceDeps {
@@ -224,13 +237,34 @@ export class BrowserService {
       this.persisted = {};
     }
     const exe = detectExecutable(this.cfg.executablePath);
+    const headed = planHeaded(this.cfg.headed);
     logger.info({
       msg: 'browser.service_ready',
       enabled: this.cfg.enabled,
       executable: exe.path,
+      headed: headed.mode,
       profilesDir: BrowserService.profilesDir,
       pendingHandoffs: Object.values(this.persisted).filter((p) => p.control?.handoff).length,
     });
+    if (this.cfg.enabled && headed.mode === 'unavailable') {
+      logger.warn({ msg: 'browser.headed_unavailable', reason: headed.reason });
+    }
+  }
+
+  /** Headed-mode plan for this host (config + DISPLAY + Xvfb), without launching. */
+  headedPlan(): HeadedPlan {
+    return planHeaded(this.cfg.headed);
+  }
+
+  /** Operator-facing warnings for the status route and the browser list. */
+  warnings(): string[] {
+    const out: string[] = [];
+    if (!this.cfg.enabled) return out;
+    const exe = detectExecutable(this.cfg.executablePath);
+    if (!exe.path) out.push(`no Chromium found (tried ${exe.tried.join(', ')}) — install chromium or set browser.executablePath`);
+    const headed = planHeaded(this.cfg.headed);
+    if (headed.mode === 'unavailable') out.push(headed.reason);
+    return out;
   }
 
   private async persist(): Promise<void> {
@@ -310,16 +344,45 @@ export class BrowserService {
     const dir = ephemeral ? join(BrowserService.profilesDir, `.tmp-${base.profile}-${randomUUID().slice(0, 8)}`) : base.dir;
     mkdirSync(dir, { recursive: true });
     const t0 = nowMs();
+    // Headed: a window on $DISPLAY, or on an Xvfb somora starts for this
+    // browser. No display and no Xvfb → refuse, never fall back to
+    // headless (that would silently bring the headless signals back).
+    const plan = planHeaded(this.cfg.headed);
+    if (plan.mode === 'unavailable') throw new BrowserOpError('BROWSER_LAUNCH_FAILED', plan.reason);
+    let display: VirtualDisplay | undefined;
+    if (plan.mode === 'xvfb') {
+      try {
+        display = await startVirtualDisplay(plan.xvfb, this.cfg.viewport);
+      } catch (err) {
+        throw new BrowserOpError('BROWSER_LAUNCH_FAILED', `Xvfb: ${(err as Error).message}`);
+      }
+    }
+    const headed = plan.mode !== 'headless';
     let context: BrowserContext;
     try {
       context = await chromium.launchPersistentContext(dir, {
         executablePath: exe.path,
-        headless: true,
+        headless: !headed,
         viewport: { width: this.cfg.viewport.width, height: this.cfg.viewport.height },
         acceptDownloads: false,
-        args: ['--no-first-run', '--disable-background-networking', '--disable-sync'],
+        args: [
+          '--no-first-run',
+          '--disable-background-networking',
+          '--disable-sync',
+          // Headed = a browser a person could have opened: no automation
+          // banner flag and no AutomationControlled blink feature, so
+          // navigator.webdriver is false (measured 2026-09-08; the
+          // ignoreDefaultArgs alone leaves it true). Headless keeps the
+          // HeadlessChrome user agent whatever the flags, so nothing is
+          // changed there.
+          ...(headed ? ['--disable-blink-features=AutomationControlled'] : []),
+          ...(this.cfg.extraArgs ?? []),
+        ],
+        ...(headed ? { ignoreDefaultArgs: ['--enable-automation'] } : {}),
+        ...(display ? { env: { ...process.env, DISPLAY: display.display } } : {}),
       });
     } catch (err) {
+      if (display) await display.stop().catch(() => {});
       throw new BrowserOpError('BROWSER_LAUNCH_FAILED', `${exe.path}: ${(err as Error).message}`);
     }
     const rec: BrowserRec = {
@@ -334,6 +397,8 @@ export class BrowserService {
       lastUsed: nowMs(),
       idleTimer: null,
       closing: null,
+      headed,
+      ...(display ? { display } : {}),
     };
     // A pending handoff from before a restart stays pending — the user
     // may still be about to take over. Anything else starts fresh.
@@ -435,6 +500,7 @@ export class BrowserService {
         logger.warn({ msg: 'browser.close_failed', browser: b.id, err: (err as Error).message });
       }
       this.browsers.delete(b.id);
+      if (b.display) await b.display.stop().catch(() => {});
       if (b.ephemeral) await rm(b.profileDir, { recursive: true, force: true }).catch(() => {});
       await this.persist();
     })();
@@ -471,6 +537,45 @@ export class BrowserService {
     return `the page was sent to '${url}', which the navigation policy forbids — the tab was reset to about:blank`;
   }
 
+  /**
+   * Per-tab device/locale emulation — what the Chrome DevTools device
+   * mode does: user agent, viewport, pixel ratio, touch and language of
+   * that one tab. `device` is a Playwright device name ("iPhone 15",
+   * "Pixel 7", "iPad Pro 11"); `locale` a BCP-47 tag ("de-AT").
+   */
+  private async emulate(tab: TabRec, args: { device?: string; locale?: string }): Promise<void> {
+    let descriptor: (typeof devices)[string] | undefined;
+    if (args.device) {
+      descriptor = devices[args.device];
+      if (!descriptor) {
+        const known = Object.keys(devices).filter((n) => !/landscape/i.test(n));
+        const hint = known.filter((n) => /^(iPhone 15|iPhone 14|Pixel 7|Galaxy S24|iPad Pro 11|iPad Mini|Desktop Chrome)/.test(n)).slice(0, 8);
+        throw new BrowserOpError('BROWSER_ACTION_FAILED', `unknown device '${args.device}' — known names include ${hint.join(', ')} (${known.length} in total)`);
+      }
+    }
+    const cdp = tab.cdp ?? (await tab.page.context().newCDPSession(tab.page));
+    tab.cdp = cdp;
+    const userAgent = descriptor?.userAgent ?? (await tab.page.evaluate(() => navigator.userAgent));
+    await cdp.send('Emulation.setUserAgentOverride', {
+      userAgent,
+      ...(args.locale ? { acceptLanguage: args.locale } : {}),
+      ...(descriptor?.isMobile ? { platform: /iPhone|iPad/.test(descriptor.userAgent) ? 'iPhone' : 'Linux armv8l' } : {}),
+    });
+    if (args.locale) await cdp.send('Emulation.setLocaleOverride', { locale: args.locale });
+    if (descriptor) {
+      await tab.page.setViewportSize({ ...descriptor.viewport });
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: descriptor.viewport.width,
+        height: descriptor.viewport.height,
+        deviceScaleFactor: descriptor.deviceScaleFactor,
+        mobile: descriptor.isMobile,
+      });
+      await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: descriptor.hasTouch });
+    }
+    tab.emulation = { ...(tab.emulation ?? {}), ...(args.device ? { device: args.device } : {}), ...(args.locale ? { locale: args.locale } : {}) };
+    logger.info({ msg: 'browser.emulate', tab: tab.id, device: args.device ?? null, locale: args.locale ?? null });
+  }
+
   private async tabInfo(t: TabRec): Promise<TabInfo> {
     let title = '';
     try {
@@ -484,6 +589,7 @@ export class BrowserService {
       title,
       agent: t.agent,
       ...(t.session ? { session: t.session } : {}),
+      ...(t.emulation ? { emulation: t.emulation } : {}),
       generation: t.generation,
     };
   }
@@ -493,7 +599,7 @@ export class BrowserService {
   async open(
     agent: string,
     session: string | undefined,
-    args: { url: string; tab?: string; ephemeral?: boolean },
+    args: { url: string; tab?: string; ephemeral?: boolean; device?: string; locale?: string },
   ): Promise<{ browser_id: string; tab: TabInfo; control: ControlMode; blocked?: string }> {
     const verdict = await checkNavigationAllowed(args.url, this.cfg);
     if (!verdict.ok) throw new BrowserOpError('BROWSER_NAVIGATION_DENIED', verdict.reason!);
@@ -521,6 +627,7 @@ export class BrowserService {
         tab = this.adoptPage(b, page, { agent, ...(session ? { session } : {}), createdByAgent: true });
       }
     }
+    if (args.device || args.locale) await this.emulate(tab, { ...(args.device ? { device: args.device } : {}), ...(args.locale ? { locale: args.locale } : {}) });
     let blocked: string | undefined;
     try {
       await tab.page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -552,6 +659,9 @@ export class BrowserService {
     profile: string;
     browser_id: string;
     running: boolean;
+    /** headless | display | xvfb, or unavailable with the reason. */
+    headed: HeadedPlan;
+    warnings: string[];
     control?: ControlMode;
     handoff?: Handoff;
     tabs?: TabInfo[];
@@ -559,7 +669,9 @@ export class BrowserService {
     const exe = detectExecutable(this.cfg.executablePath);
     const base = this.profileFor(agent);
     const b = this.browsers.get(base.id);
-    if (!b || b.closing) return { enabled: this.cfg.enabled, executable: exe.path, profile: base.profile, browser_id: base.id, running: false };
+    const headed = planHeaded(this.cfg.headed);
+    const warnings = this.warnings();
+    if (!b || b.closing) return { enabled: this.cfg.enabled, executable: exe.path, profile: base.profile, browser_id: base.id, running: false, headed, warnings };
     const tabs = await Promise.all([...b.tabs.values()].filter((t) => !t.page.isClosed()).map((t) => this.tabInfo(t)));
     return {
       enabled: this.cfg.enabled,
@@ -567,6 +679,8 @@ export class BrowserService {
       profile: base.profile,
       browser_id: b.id,
       running: true,
+      headed,
+      warnings,
       control: b.control.mode,
       ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
       tabs,
@@ -726,6 +840,7 @@ export class BrowserService {
         ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
         tabs,
         last_used: b.lastUsed,
+        headed: b.headed,
       });
     }
     for (const [id, p] of Object.entries(this.persisted)) {

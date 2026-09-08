@@ -3587,9 +3587,10 @@ app.post('/browser/op', async (c) => {
 });
 
 app.get('/browser/status', async (c) => {
-  if (!config.browser.enabled) return c.json({ enabled: false, browsers: [] });
-  const browsers = await getBrowserService().listAll();
-  return c.json({ enabled: true, browsers });
+  if (!config.browser.enabled) return c.json({ enabled: false, browsers: [], warnings: [] });
+  const svc = getBrowserService();
+  const browsers = await svc.listAll();
+  return c.json({ enabled: true, headed: svc.headedPlan().mode, browsers, warnings: svc.warnings() });
 });
 
 app.post('/browser/:id/control', async (c) => {

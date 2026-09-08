@@ -1807,6 +1807,17 @@ export const BrowserConfigSchema = z
     /** Chromium/Chrome binary. Unset = auto-detect (chromium, chromium-browser,
      *  google-chrome, Chrome.app …); the error says what was tried. */
     executablePath: z.string().min(1).optional(),
+    /**
+     * Run Chromium with a window instead of headless. Headless Chromium
+     * announces itself ("HeadlessChrome" user agent, navigator.webdriver);
+     * headed does not. On a host without a display somora starts an Xvfb
+     * per browser (system package, see docs/setup.md); without Xvfb the
+     * browser refuses to start — no silent headless fallback.
+     */
+    headed: z.boolean().default(false),
+    /** Extra Chromium launch flags, appended verbatim (e.g. a proxy or
+     *  window size). Process-wide; take effect on the next browser start. */
+    extraArgs: z.array(z.string().min(1)).default([]),
     /** Open tabs per browser (= per profile). The ninth `open` is refused. */
     maxTabsPerAgent: z.number().int().min(1).max(32).default(8),
     /** A browser with no tool call and no viewer for this long is stopped;
@@ -1838,6 +1849,8 @@ export const BrowserConfigSchema = z
   })
   .default({
     enabled: false,
+    headed: false,
+    extraArgs: [],
     maxTabsPerAgent: 8,
     idleStopMinutes: 30,
     viewport: { width: 1280, height: 800 },

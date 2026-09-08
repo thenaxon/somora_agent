@@ -346,6 +346,13 @@ providers:
 # browser:
 #   enabled: true
 #   executablePath: /usr/bin/chromium       # optional; auto-detected when unset
+#   headed: false                           # true: Chromium with a window — no
+#                                           #  "HeadlessChrome" user agent, no
+#                                           #  navigator.webdriver. Needs a DISPLAY
+#                                           #  or Xvfb (sudo apt install xvfb); refuses
+#                                           #  to start otherwise. docs/browser.md
+#   extraArgs: []                           # extra Chromium flags, verbatim, e.g.
+#                                           #  ["--proxy-server=http://proxy:3128"]
 #   maxTabsPerAgent: 8
 #   idleStopMinutes: 30                     # stop an unused browser; logins stay
 #   viewport: { width: 1280, height: 800 }

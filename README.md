@@ -121,6 +121,10 @@ Optional:
   clipboard, push). Without it the web client is single-window-only.
 - **ripgrep (`rg`)** — required for `file_search`. Install via your
   package manager.
+- **Chromium or Chrome** — for the shared `browser` tool. Auto-detected;
+  otherwise set `browser.executablePath`. With `browser.headed: true` on a
+  host without a display you also need **Xvfb** (`sudo apt install xvfb`),
+  see [docs/browser.md](docs/browser.md#headed-mode).
 
 See [docs/setup.md](docs/setup.md) for the full install walkthrough,
 including step-by-step prereq setup, and [docs/models.md](docs/models.md)

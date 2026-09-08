@@ -508,11 +508,13 @@ export interface BrowserInfo {
   handoff?: BrowserHandoff;
   tabs: BrowserTabInfo[];
   last_used: number;
+  /** Launched with a window (browser.headed). */
+  headed?: boolean;
 }
 
 export const api = {
   /** Shared browser (docs/browser.md): running browsers + control state. */
-  browserStatus: () => getJson<{ enabled: boolean; browsers: BrowserInfo[] }>('/browser/status'),
+  browserStatus: () => getJson<{ enabled: boolean; headed?: 'headless' | 'display' | 'xvfb' | 'unavailable'; browsers: BrowserInfo[]; warnings?: string[] }>('/browser/status'),
   browserControl: async (browserId: string, mode: 'human' | 'agent', handoffId?: string) => {
     const res = await fetch(`/browser/${encodeURIComponent(browserId)}/control`, {
       method: 'POST',

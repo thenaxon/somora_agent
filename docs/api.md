@@ -1960,11 +1960,15 @@ refusal.
 
 ### `GET /browser/status`
 
-`{ enabled, browsers: [{ browser_id, profile, ephemeral, state,
+`{ enabled, headed, browsers: [{ browser_id, profile, ephemeral, state,
 control, handoff?, tabs: [{ tab_id, url, title, agent, session?,
-generation }], last_used }] }` — every running browser plus stopped
-ones with a pending handoff. `control` is `agent_control`,
-`handoff_requested`, `human_control` or `paused`.
+generation, emulation? }], last_used, headed? }], warnings }` — every
+running browser plus stopped ones with a pending handoff. `control` is
+`agent_control`, `handoff_requested`, `human_control` or `paused`.
+`headed` is the host plan for `browser.headed` (`headless`, `display`,
+`xvfb`, `unavailable`); `warnings` lists what the operator must fix
+(no Chromium found, headed configured but no display and no Xvfb).
+`emulation` shows a tab's `device` / `locale` from `open`.
 
 ### `POST /browser/:id/control`
 

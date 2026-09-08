@@ -12,7 +12,7 @@ import { effectiveWorkspace } from '../../server/workspace.ts';
 import { BrowserOpError, getBrowserService, type ControlMode, type TabInfo } from '../../browser/service.ts';
 
 export type BrowserOp =
-  | { op: 'open'; url: string; tab?: string; ephemeral?: boolean }
+  | { op: 'open'; url: string; tab?: string; ephemeral?: boolean; device?: string; locale?: string }
   | { op: 'tabs' }
   | { op: 'status' }
   | { op: 'snapshot'; tab: string; full?: boolean; max_chars?: number }
@@ -67,7 +67,13 @@ export async function runBrowserOp(ctx: BrowserOpContext, input: BrowserOp): Pro
   try {
     switch (input.op) {
       case 'open': {
-        const r = await svc.open(ctx.agent, ctx.session, { url: input.url, ...(input.tab ? { tab: input.tab } : {}), ...(input.ephemeral ? { ephemeral: true } : {}) });
+        const r = await svc.open(ctx.agent, ctx.session, {
+          url: input.url,
+          ...(input.tab ? { tab: input.tab } : {}),
+          ...(input.ephemeral ? { ephemeral: true } : {}),
+          ...(input.device ? { device: input.device } : {}),
+          ...(input.locale ? { locale: input.locale } : {}),
+        });
         return { op: 'open', ok: true, browser_id: r.browser_id, tab: r.tab, generation: r.tab.generation, control: r.control, ...(r.blocked ? { blocked: r.blocked } : {}) };
       }
       case 'tabs': {
