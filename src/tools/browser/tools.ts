@@ -13,38 +13,41 @@ import { runBrowserOp, type BrowserOp, type BrowserOpResult } from './ops.ts';
 const TAB_RE = /^t\d+$/;
 const REF_RE = /^(?:f\d+)?e\d+$/;
 
-const BrowserInput = z.discriminatedUnion('op', [
-  z.object({
-    op: z.literal('open'),
-    url: z.string().url().describe('http(s) URL. Public hosts, plus private hosts the operator listed.'),
-    tab: z.string().regex(TAB_RE).optional().describe('Navigate an existing tab instead of opening a new one.'),
-    ephemeral: z.boolean().optional().describe('Use a throw-away profile (no saved logins) for this browser.'),
-  }),
-  z.object({ op: z.literal('tabs') }),
-  z.object({ op: z.literal('status') }),
-  z.object({
-    op: z.literal('snapshot'),
-    tab: z.string().regex(TAB_RE),
-    full: z.boolean().optional().describe('Raw accessibility tree instead of the compact one (bigger).'),
-    max_chars: z.number().int().min(1000).max(200_000).optional(),
-  }),
-  z.object({
-    op: z.literal('act'),
-    tab: z.string().regex(TAB_RE),
-    action: z.enum(['click', 'fill', 'press', 'scroll', 'select']),
-    ref: z.string().regex(REF_RE).optional().describe('Element ref from the latest snapshot of this tab (e.g. "e12" or "f3e12").'),
-    value: z.string().max(20_000).optional().describe('fill: text · press: key name (Enter, Tab, Escape, ArrowDown) · scroll: pixels (default 600) · select: option value/label.'),
-    generation: z.number().int().optional().describe('The `generation` the snapshot returned — refused if the tab navigated since.'),
-  }),
-  z.object({ op: z.literal('screenshot'), tab: z.string().regex(TAB_RE) }),
-  z.object({
-    op: z.literal('request_handoff'),
-    reason: z.string().min(3).max(500).describe('Why the user must take over (login, 2FA, captcha, a choice only they can make).'),
-    resume_note: z.string().max(2000).optional().describe('What you will do once you get the browser back — shown to you in the wake-up message.'),
-  }),
-  z.object({ op: z.literal('close_tab'), tab: z.string().regex(TAB_RE) }),
-  z.object({ op: z.literal('stop') }),
-]);
+// A flat object with an `op` enum rather than a discriminated union: the
+// MCP tool child registers tools from `inputSchema.shape` (high-level
+// SDK API), and a union has no shape — hans's first live call arrived
+// with `op` stripped ("Invalid discriminator value", 2026-09-08). The
+// per-op requirements are checked in the handler; the JSON schema below still
+// spells out the variants for the openai-compatible engine.
+const OPS = ['open', 'tabs', 'status', 'snapshot', 'act', 'screenshot', 'request_handoff', 'close_tab', 'stop'] as const;
+const NEEDS_TAB = new Set(['snapshot', 'act', 'screenshot', 'close_tab']);
+
+const BrowserInput = z
+  .object({
+    op: z.enum(OPS).describe('open | tabs | status | snapshot | act | screenshot | request_handoff | close_tab | stop'),
+    url: z.string().url().optional().describe('open: http(s) URL. Public hosts, plus private hosts the operator listed.'),
+    tab: z.string().regex(TAB_RE).optional().describe('Tab id like "t3" (from open/tabs). Required for snapshot/act/screenshot/close_tab; optional for open (navigate that tab).'),
+    ephemeral: z.boolean().optional().describe('open: use a throw-away profile (no saved logins).'),
+    full: z.boolean().optional().describe('snapshot: raw accessibility tree instead of the compact one (bigger).'),
+    max_chars: z.number().int().min(1000).max(200_000).optional().describe('snapshot: cap on the returned tree.'),
+    action: z.enum(['click', 'fill', 'press', 'scroll', 'select']).optional().describe('act: what to do.'),
+    ref: z.string().regex(REF_RE).optional().describe('act: element ref from the latest snapshot of this tab (e.g. "e12" or "f3e12").'),
+    value: z.string().max(20_000).optional().describe('act — fill: text · press: key name (Enter, Tab, Escape, ArrowDown) · scroll: pixels (default 600) · select: option value/label.'),
+    generation: z.number().int().optional().describe('act: the `generation` the snapshot returned — refused if the tab navigated since.'),
+    reason: z.string().min(3).max(500).optional().describe('request_handoff: why the user must take over (login, 2FA, captcha, a decision only they can make).'),
+    resume_note: z.string().max(2000).optional().describe('request_handoff: what you will do once you get the browser back — shown to you in the wake-up message.'),
+  });
+
+/** Per-op requirements — checked in the handler, not via superRefine:
+ *  the MCP child reads `inputSchema.shape`, which a ZodEffects wrapper
+ *  would not have. */
+function missingFor(v: BrowserInputT): string | null {
+  if (v.op === 'open' && !v.url) return 'open needs url';
+  if (NEEDS_TAB.has(v.op) && !v.tab) return `${v.op} needs tab (from open/tabs)`;
+  if (v.op === 'act' && !v.action) return 'act needs action (click|fill|press|scroll|select)';
+  if (v.op === 'request_handoff' && !v.reason) return 'request_handoff needs reason';
+  return null;
+}
 
 type BrowserInputT = z.infer<typeof BrowserInput>;
 
@@ -90,6 +93,22 @@ export const browserTool: ToolDefinition<BrowserInputT, BrowserOpResult> = {
   inputSchema: BrowserInput as unknown as z.ZodType<BrowserInputT>,
   jsonSchema: {
     type: 'object',
+    properties: {
+      op: { type: 'string', enum: [...OPS] },
+      url: { type: 'string', description: 'open: http(s) URL.' },
+      tab: { type: 'string', pattern: '^t\\d+$', description: 'Tab id from open/tabs.' },
+      ephemeral: { type: 'boolean' },
+      full: { type: 'boolean' },
+      max_chars: { type: 'integer', minimum: 1000, maximum: 200000 },
+      action: { type: 'string', enum: ['click', 'fill', 'press', 'scroll', 'select'] },
+      ref: { type: 'string', pattern: '^(f\\d+)?e\\d+$' },
+      value: { type: 'string' },
+      generation: { type: 'integer' },
+      reason: { type: 'string', minLength: 3, maxLength: 500 },
+      resume_note: { type: 'string', maxLength: 2000 },
+    },
+    required: ['op'],
+    additionalProperties: false,
     oneOf: [
       {
         type: 'object',
@@ -147,6 +166,8 @@ export const browserTool: ToolDefinition<BrowserInputT, BrowserOpResult> = {
   defaultTimeoutMs: 60_000,
   maxResultSizeChars: 220_000,
   async handler(input, ctx): Promise<BrowserOpResult> {
+    const missing = missingFor(input);
+    if (missing) return { op: input.op, ok: false, error: `invalid input: ${missing}` };
     if (inMcpChild()) return viaHttp(ctx.agent, ctx.session, input as BrowserOp);
     return runBrowserOp({ agent: ctx.agent, ...(ctx.session ? { session: ctx.session } : {}), config: ctx.config }, input as BrowserOp);
   },
