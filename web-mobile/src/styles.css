@@ -327,6 +327,44 @@ button { cursor: pointer; }
   user-select: text;
   -webkit-user-select: text;
 }
+/* Markdown tables in bubbles: real table, cell padding, subtle row
+ * lines, a distinct header; the wrapper scrolls wide tables. No
+ * text-align so GFM column alignment (inline style) wins. */
+.msg-bubble table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: max-content;
+  max-width: 100%;
+  font-size: 0.95em;
+  line-height: 1.4;
+}
+.msg-bubble th,
+.msg-bubble td {
+  padding: 0.35em 0.7em;
+  border-bottom: 1px solid var(--line-2);
+  vertical-align: top;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.msg-bubble th {
+  font-weight: 600;
+  background: var(--bg-3);
+  white-space: nowrap;
+}
+.msg-bubble tbody tr:last-child td {
+  border-bottom: none;
+}
+.msg-bubble td > code,
+.msg-bubble th > code {
+  white-space: nowrap;
+}
+.msg-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .msg-bubble.user {
   background: var(--user-bubble);
   border: 1px solid var(--line-2);

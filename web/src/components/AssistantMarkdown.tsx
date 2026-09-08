@@ -60,7 +60,7 @@ const STATIC_COMPONENTS = {
     );
   },
   table: ({ children }) => (
-    <div style={{ overflowX: 'auto' }}>
+    <div className="chat-msg-table-scroll">
       <table>{children}</table>
     </div>
   ),

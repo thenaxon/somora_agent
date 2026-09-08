@@ -202,9 +202,54 @@ body {
   word-break: normal;
   overflow: visible;
 }
+/* Markdown tables in chat bubbles (2026-09-08 report: they read like
+ * tab-separated text — Tailwind's preflight strips every border and
+ * nothing added cell padding back). The table stays a real table; the
+ * wrapper AssistantMarkdown puts around it owns the horizontal scroll.
+ * No text-align here: GFM column alignment arrives as inline style
+ * and must win. Sizes are em-relative so chat zoom scales them. */
 .chat-msg-bubble table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  /* Natural width when it fits, else capped — columns then wrap at
+   * spaces; a cell that cannot wrap (URL, code) makes the table
+   * overflow the wrapper, which scrolls. */
+  width: max-content;
   max-width: 100%;
-  display: block;
+  font-size: 0.95em;
+  line-height: 1.4;
+}
+.chat-msg-bubble th,
+.chat-msg-bubble td {
+  padding: 0.35em 0.7em;
+  border-bottom: 1px solid var(--line-2, #2a394e);
+  vertical-align: top;
+  /* The bubble breaks anywhere so prose never overflows; inside a
+   * table that splits words mid-syllable ("statu|s"). Wrap at spaces
+   * only and let the wrapper scroll instead. */
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.chat-msg-bubble th {
+  font-weight: 600;
+  color: var(--text-0, var(--text-1));
+  background: var(--bg-3, rgba(255, 255, 255, 0.05));
+  border-bottom: 1px solid var(--line-2, #2a394e);
+  white-space: nowrap;
+}
+.chat-msg-bubble tbody tr:last-child td {
+  border-bottom: none;
+}
+.chat-msg-bubble tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--bg-3, #18202c) 40%, transparent);
+}
+.chat-msg-bubble td > code,
+.chat-msg-bubble th > code {
+  white-space: nowrap;
+}
+/* The scroll wrapper AssistantMarkdown renders around every table. */
+.chat-msg-table-scroll {
+  max-width: 100%;
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }

@@ -28,6 +28,13 @@ const MARKDOWN_COMPONENTS = {
       </a>
     );
   },
+  // A wide table scrolls inside the bubble instead of widening it —
+  // the phone viewport has no room to spare (styles: .msg-table-scroll).
+  table: ({ children }: { children?: React.ReactNode }) => (
+    <div className="msg-table-scroll">
+      <table>{children}</table>
+    </div>
+  ),
 };
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
