@@ -184,7 +184,7 @@ export type Turn =
       /** Set on synthesized inbounds (today: 'sentinel'). TUI
        *  renders the row as a compact system-trigger line instead
        *  of a user turn. */
-      fromSystem?: 'sentinel' | 'tmux' | 'subagent';
+      fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser';
     }
   | { kind: 'agent'; id: string; text: string }
   | {
@@ -320,7 +320,7 @@ export type StreamEvent =
       turnId?: string;
       fromAgent?: string;
       fromSession?: string;
-      fromSystem?: 'sentinel' | 'tmux' | 'subagent';
+      fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser';
       callId?: string;
     }
   | {

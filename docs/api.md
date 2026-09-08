@@ -1271,8 +1271,9 @@ Event types:
   lifecycle around the model call
 - `user_message` — `{text, ts, turnId?, from_agent?, from_session?,
   from_system?, agent_ask_call_id?}` — broadcast when a turn's user_message is
-  written to JSONL. Self-typed sends, A2A inbounds, and sentinel
-  triggers all flow through here. `turnId` lets a sending client
+  written to JSONL. Self-typed sends, A2A inbounds, and system wakes
+  all flow through here; `from_system` is one of `sentinel`, `tmux`,
+  `subagent`, `job`, `browser`. `turnId` lets a sending client
   match this event to the optimistic bubble it rendered after
   `POST /chat/send` (which echoes the same id).
 - `turn_queued` — `{turnId, ahead}` — fired when `POST /chat/send`
@@ -1376,7 +1377,8 @@ Event types:
   event landed in the session's JSONL. Unread candidates are:
   - `chat:final` (assistant answer)
   - `user_message` with `from_agent` set (A2A peer wrote to us)
-  - `user_message` with `from_system` set (sentinel woke us)
+  - `user_message` with `from_system` set (`sentinel`, `tmux`,
+    `subagent`, `job` or `browser` woke us)
   Plain self-typed user messages, tool / memory / engine_meta events,
   and lifecycle (`agent:start`, `agent:end`) are excluded.
 - `seen` — `{agent, session, seenAt}` — broadcast when any client

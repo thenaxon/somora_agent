@@ -541,7 +541,7 @@ The web client listens for these named events on `/chat/stream`:
 | Event | Payload | Meaning |
 |---|---|---|
 | `status` | `{msg}` | Connection state — initial `connected`, periodic keepalive |
-| `user_message` | `{text, ts, turnId?, from_agent?, from_session?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system: 'sentinel'` marks a system-trigger inbound. |
+| `user_message` | `{text, ts, turnId?, from_agent?, from_session?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system` marks a system-trigger inbound: `sentinel`, `tmux` (attention watcher), `subagent` (finished task), `job` (video job), `browser` (hand-back). Each is drawn as a centered divider, not a bubble. |
 | `turn_queued` | `{turnId, ahead}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. Drives the `⌛ queued` marker. Re-emitted for the waiters that move up after a dequeue. |
 | `turn_dequeued` | `{turnId}` | A queued message was taken back (↩ edit, from any client). The bubble is dropped. |
 | `turn_started` | `{turnId}` | The engine's own turn id — stamped on the assistant bubble so `assistant_media` / `turn_error` pair to this turn. |

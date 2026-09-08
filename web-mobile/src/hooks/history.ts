@@ -49,7 +49,7 @@ export interface ChatMessage {
   fromAgent?: string;
   /** Synthesized inbound marker. Today: 'sentinel'. Renderer draws a
    *  centered system divider instead of a user-bubble. */
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job';
+  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
   /** Voice: optional TTS audio URL produced for this turn. Set when an
    *  `assistant_audio` SSE event arrived after the message; drives the
    *  Play-button on the agent bubble. */
@@ -93,7 +93,7 @@ export interface HistoryEvent {
   truncated?: boolean;
   turnId?: string;
   from_agent?: string;
-  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
+  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
   media?: Array<{ type: string; id: string; filename: string; mime: string; url: string }>;
   /** `kind: 'model_fallback'` rows. */

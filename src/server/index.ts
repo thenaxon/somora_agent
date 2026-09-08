@@ -5676,7 +5676,7 @@ const browserService = configureBrowserService(config.browser, {
         agent,
         session,
         text,
-        fromSystem: 'subagent',
+        fromSystem: 'browser',
         deps: chatTurnDeps,
         publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
       });

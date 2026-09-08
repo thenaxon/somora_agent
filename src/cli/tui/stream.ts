@@ -264,8 +264,8 @@ export function openStream(
           ...(typeof data.from_agent === 'string' && typeof data.from_session === 'string'
             ? { fromSession: data.from_session }
             : {}),
-          ...(data.from_system === 'sentinel' || data.from_system === 'tmux'
-            ? { fromSystem: data.from_system as 'sentinel' | 'tmux' }
+          ...(data.from_system === 'sentinel' || data.from_system === 'tmux' || data.from_system === 'subagent' || data.from_system === 'browser'
+            ? { fromSystem: data.from_system as 'sentinel' | 'tmux' | 'subagent' | 'browser' }
             : {}),
           callId: typeof data.agent_ask_call_id === 'string' ? data.agent_ask_call_id : undefined,
         };

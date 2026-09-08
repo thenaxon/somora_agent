@@ -503,7 +503,7 @@ export function useChatStream(agent: string | null): ChatStream {
             ts?: number;
             turnId?: string;
             from_agent?: string;
-            from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job';
+            from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
           }
         | null = null;
       try { d = JSON.parse(e.data); } catch { return; }

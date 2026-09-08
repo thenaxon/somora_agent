@@ -115,7 +115,9 @@ buttons that matter:
   from and told to take a fresh snapshot. If you took over on your own
   and did something (navigated, clicked, typed), the agent that used
   this browser last is woken in that session with the same advice.
-  Looking and handing back unchanged wakes nobody.
+  Looking and handing back unchanged wakes nobody. The wake shows up
+  in the chat as a centered *browser · <agent> · handed back* divider
+  (`from_system: 'browser'`), like tmux and sentinel wakes.
 
 Watching needs no take-over. Closing the window stops the stream, not
 the browser and not the agent's work. Control is per browser, not per

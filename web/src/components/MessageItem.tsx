@@ -30,6 +30,7 @@ import {
   SquareTerminal,
   Undo2,
   User,
+  Globe,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
@@ -114,6 +115,9 @@ export const MessageItem = memo(function MessageItem({
   }
   if (msg.role === 'user' && msg.fromSystem === 'subagent') {
     return <SubagentDivider text={msg.text} ts={msg.ts} />;
+  }
+  if (msg.role === 'user' && msg.fromSystem === 'browser') {
+    return <BrowserDivider text={msg.text} ts={msg.ts} />;
   }
 
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
@@ -401,6 +405,38 @@ function TmuxDivider({ text, ts }: { text: string; ts: number }) {
 // Subagent attention wake — same centered-divider language as
 // sentinel/tmux. Shows the finished task_id so the user can correlate
 // with subagent_list output at a glance.
+/** Browser id out of a hand-back wake text: "browser 'agent:naxon'" → "naxon". */
+export function summarizeBrowserWakeText(text: string): string {
+  const id = text.match(/browser '([^']+)'/)?.[1] ?? '';
+  return id.replace(/^agent:/, '').replace(/^profile:/, 'profile ');
+}
+
+function BrowserDivider({ text, ts }: { text: string; ts: number }) {
+  const name = summarizeBrowserWakeText(text);
+  const handoff = /handoff [a-z0-9]/i.test(text) ? 'handed back' : 'handed back after your changes';
+  const time = formatBubbleTime(ts);
+  return (
+    <div className="sentinel-divider" aria-label="browser hand-back wake">
+      <span className="sentinel-divider-rule" />
+      <span className="sentinel-divider-body">
+        <Globe size={12} />
+        <span className="sentinel-divider-label">browser</span>
+        {name && (
+          <>
+            <span className="sentinel-divider-sep">·</span>
+            <span className="sentinel-divider-name">{name}</span>
+          </>
+        )}
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-name">{handoff}</span>
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-time">{time}</span>
+      </span>
+      <span className="sentinel-divider-rule" />
+    </div>
+  );
+}
+
 function SubagentDivider({ text, ts }: { text: string; ts: number }) {
   const taskId = summarizeSubagentWakeText(text);
   const time = formatBubbleTime(ts);
