@@ -20,7 +20,8 @@ import type { MemoryConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { chunkMarkdown } from './chunking.ts';
 import { resolveEmbeddingProvider, type EmbeddingProvider } from './embeddings.ts';
-import { hybridSearch, type Hit } from './retrieval.ts';
+import { hybridSearch, type Hit, type SearchTarget } from './retrieval.ts';
+import type { SharedIndex } from './shared-index.ts';
 import {
   closeMemoryDb,
   deleteFile as dbDeleteFile,
@@ -194,6 +195,27 @@ export interface ManagerOptions {
   /** Optional per-source score multipliers for retrieval. Wired up
    *  from config.wiki.search when wiki is enabled. */
   searchBoosts?: { wiki: number; memory: number; vault: number };
+  /** Override for the DB file (default `agents/<agent>/memory.db`).
+   *  The shared index points this at `index/shared.db`. */
+  dbPath?: string;
+  /** Override for the memory-notes root (default `agents/<agent>/memory`).
+   *  The shared index points this at an always-empty directory. */
+  memoryRoot?: string;
+  /**
+   * Whether THIS manager sweeps, watches and writes vault/wiki rows.
+   * Since the shared index (2026-09) only the shared instance does;
+   * agent managers keep `source='memory'` only and read vault/wiki
+   * through `shared`. Default false.
+   */
+  indexVault?: boolean;
+  /** `init()` opens the DB and loads the embedder, nothing more — no
+   *  sweep, no watcher. The shared index uses this so its seed can run
+   *  before the first sweep; a reader process never sweeps at all. */
+  openOnly?: boolean;
+  /** Accessor for the shared vault/wiki index. Read at query time, so
+   *  a manager created while the index was still building switches
+   *  over the moment it becomes ready. */
+  shared?: () => SharedIndex | null;
 }
 
 export interface NoteSummary {
@@ -214,6 +236,11 @@ export class MemoryManager {
   private obsidian?: ObsidianSource;
   private wiki?: WikiSource;
   private searchBoosts?: { wiki: number; memory: number; vault: number };
+  private dbPathOverride?: string;
+  private memoryRootOverride?: string;
+  private indexVault: boolean;
+  private openOnly: boolean;
+  private shared?: () => SharedIndex | null;
   private lastEmbedderRetry = 0;
   /** True once ensureEmbedder() failed at least once for this manager —
    *  a later success then triggers a reindex sweep so chunks written
@@ -226,9 +253,30 @@ export class MemoryManager {
     this.obsidian = opts.obsidian;
     this.wiki = opts.wiki;
     this.searchBoosts = opts.searchBoosts;
+    this.dbPathOverride = opts.dbPath;
+    this.memoryRootOverride = opts.memoryRoot;
+    this.indexVault = opts.indexVault ?? false;
+    this.openOnly = opts.openOnly ?? false;
+    this.shared = opts.shared;
+  }
+
+  /** The vault/wiki DB to read from, when the shared index is ready.
+   *  Null = answer vault/wiki from this manager's own DB (pre-split
+   *  rows, or this IS the shared instance). */
+  private sharedDb(): MemoryDb | null {
+    if (this.indexVault || !this.shared) return null;
+    const idx = this.shared();
+    return idx && idx.ready ? idx.db() : null;
+  }
+
+  /** The DB behind this manager — the shared index reads its counts
+   *  and build state through this. */
+  rawDb(): MemoryDb | null {
+    return this.memDb;
   }
 
   get memoryRoot(): string {
+    if (this.memoryRootOverride) return this.memoryRootOverride;
     // Flat layout: user-facing notes live directly under memory/<slug>.md.
     // Automation-generated stuff (future Dream-findings, internal caches)
     // lives in dot-prefixed subdirs (`memory/.dreams/`, `memory/.cache/`)
@@ -236,7 +284,7 @@ export class MemoryManager {
     return join(SOMORA_HOME, 'agents', this.agent, 'memory');
   }
   get dbPath(): string {
-    return join(SOMORA_HOME, 'agents', this.agent, 'memory.db');
+    return this.dbPathOverride ?? join(SOMORA_HOME, 'agents', this.agent, 'memory.db');
   }
 
   async init(): Promise<void> {
@@ -249,11 +297,19 @@ export class MemoryManager {
     // ensureEmbedder() will retry on subsequent searches so we recover
     // automatically once the underlying issue is resolved.
     await this.ensureEmbedder();
+    if (this.openOnly) return;
 
+    // Agent managers sweep only their memory notes — a handful of files,
+    // instant. The vault (hundreds of files, 85 s to embed for a new
+    // agent) is the shared index's job.
     await this.reindexAll();
+    this.startWatcher();
+  }
 
-    const roots = [this.memoryRoot];
-    if (this.obsidian?.vaultPath) roots.push(this.obsidian.vaultPath);
+  /** Watch this manager's roots for changes. Idempotent. */
+  startWatcher(): void {
+    if (this.watcher) return;
+    const roots = this.walkRoots();
     const ignored = this.buildIgnored();
     this.watcher = new MarkdownWatcher({
       roots,
@@ -263,14 +319,20 @@ export class MemoryManager {
     this.watcher.start();
   }
 
+  /** Roots this manager indexes: always the memory notes, plus the
+   *  vault only when it owns the vault/wiki rows. */
+  private walkRoots(): string[] {
+    const roots = [this.memoryRoot];
+    if (this.indexVault && this.obsidian?.vaultPath) roots.push(this.obsidian.vaultPath);
+    return roots;
+  }
+
   private buildIgnored(): Array<(path: string) => boolean> {
     // chokidar 5 evaluates `ignored` against absolute paths. A naive
     // dotfile-regex like `/(^|[\\/])\../` blocks the entire ~/.somora tree
     // because `.somora` itself contains a dot. We therefore go function-
     // based and only exclude components RELATIVE to a watched root.
-    const memRoot = this.memoryRoot;
-    const vault = this.obsidian?.vaultPath;
-    const roots = [memRoot, ...(vault ? [vault] : [])];
+    const roots = this.walkRoots();
 
     return [
       (path: string) => {
@@ -371,6 +433,10 @@ export class MemoryManager {
       // and — since it's in classifySource — the watcher path too.)
       return isFlatMemoryFile(path, this.memoryRoot) ? 'memory' : null;
     }
+    // Vault/wiki rows are written only by the manager that owns them
+    // (the shared index). An agent manager ignores vault paths — its
+    // watcher never sees them anyway (walkRoots), this is belt and braces.
+    if (!this.indexVault) return null;
     // Wiki check goes BEFORE vault since the wiki subfolder lives
     // inside the vault. Order matters: vaultPath would also match.
     if (this.wiki && path.startsWith(this.wiki.absPath)) return 'wiki';
@@ -430,8 +496,7 @@ export class MemoryManager {
     // 'wiki' via classifySource — not via a separate walk root, since
     // the wiki lives inside the vault and would otherwise be visited
     // twice. classifySource checks wiki BEFORE vault.
-    const roots: string[] = [this.memoryRoot];
-    if (this.obsidian?.vaultPath) roots.push(this.obsidian.vaultPath);
+    const roots = this.walkRoots();
     for (const root of roots) {
       for await (const path of this.walkMarkdown(root)) {
         seen.add(path);
@@ -451,8 +516,12 @@ export class MemoryManager {
       }
     }
 
-    // Drop rows for files that vanished between runs
-    for (const f of listAllFiles(memDb)) {
+    // Drop rows for files that vanished between runs. An agent manager
+    // (indexVault=false) only judges its memory rows: the vault/wiki
+    // rows an agent DB carries from before the shared index are not in
+    // `seen` because the vault was not walked — they are deliberately
+    // left in place (design decision 2026-09-08), just never read.
+    for (const f of listAllFiles(memDb, this.indexVault ? undefined : 'memory')) {
       if (!seen.has(f.path)) {
         dbDeleteFile(memDb, f.path);
         logger.info({ msg: 'memory.unindex_stale', path: f.path });
@@ -612,7 +681,16 @@ export class MemoryManager {
         logger.warn({ msg: 'memory.query_embed_failed', err: (err as Error).message });
       }
     }
-    return hybridSearch(memDb, query, queryEmbedding, {
+    // Two DBs once the shared index is ready: own memory notes + the
+    // shared vault/wiki. Own DB restricted to 'memory' because a DB
+    // from before the split still carries (inert) vault/wiki rows.
+    // Until then — or with no vault at all — the own DB answers alone,
+    // exactly as before the split.
+    const sharedDb = this.sharedDb();
+    const targets: SearchTarget[] = sharedDb
+      ? [{ memDb, sources: ['memory'] }, { memDb: sharedDb, sources: ['vault', 'wiki'] }]
+      : [{ memDb }];
+    return hybridSearch(targets, query, queryEmbedding, {
       vectorWeight: this.cfg.hybrid.vectorWeight,
       bm25Weight: this.cfg.hybrid.bm25Weight,
       maxResults: limit,
@@ -639,9 +717,10 @@ export class MemoryManager {
         ? ['memory', 'wiki', 'vault']
         : filter.sources;
 
+    const sharedDb = this.sharedDb();
     const out: NoteSummary[] = [];
     for (const source of sources) {
-      const files = listAllFiles(memDb, source);
+      const files = listAllFiles(source !== 'memory' && sharedDb ? sharedDb : memDb, source);
       for (const f of files) {
         try {
           const slug =
@@ -778,7 +857,9 @@ export class MemoryManager {
     if (source !== 'memory' && source !== 'vault' && source !== 'wiki') return null;
 
     const memDb = this.requireDb();
-    const row = memDb.db
+    const sharedDb = this.sharedDb();
+    const lookup = source !== 'memory' && sharedDb ? sharedDb : memDb;
+    const row = lookup.db
       .prepare(`SELECT file_path FROM chunks WHERE source = ? AND slug = ? LIMIT 1`)
       .get(source, slug) as { file_path: string } | undefined;
     if (!row) return null;

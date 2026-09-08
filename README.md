@@ -258,6 +258,7 @@ shapes but **not yet tested against a live account**.
    ├─ Memory layer (per-agent)
    │    ~/.somora/agents/<name>/memory/*.md
    │    indexed: SQLite + sqlite-vec + FTS5 (hybrid retrieval)
+   │    vault + wiki indexed once per instance: ~/.somora/index/shared.db
    │
    ├─ Wiki layer (shared, optional)
    │    <obsidian-vault>/<wiki-subfolder>/

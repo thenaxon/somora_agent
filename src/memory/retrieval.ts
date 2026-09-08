@@ -53,39 +53,89 @@ export interface Hit {
 }
 
 /**
+ * One database to search, optionally restricted to some of its sources.
+ *
+ * Since the shared index (2026-09) a query spans two DBs: the agent's
+ * own `memory.db` (its memory notes — restricted to `source='memory'`,
+ * because an agent DB from before the split still carries inert
+ * vault/wiki rows) and `~/.somora/index/shared.db` (vault + wiki, one
+ * copy per instance). The restriction is applied INSIDE the candidate
+ * queries (`rowid IN (…)` for vec0, `AND source IN (…)` for FTS), not
+ * after the fact — otherwise the top-k of an old agent DB would be
+ * 98 % wiki rows that get filtered away, leaving no memory candidates.
+ */
+export interface SearchTarget {
+  memDb: MemoryDb;
+  /** Only candidates with one of these sources are taken from this DB.
+   *  Undefined = every row. */
+  sources?: ReadonlyArray<string>;
+}
+
+/** Candidate key: chunk ids are per-DB, so a key needs the target index. */
+type Key = string;
+const keyOf = (target: number, chunkId: number): Key => `${target}:${chunkId}`;
+
+/**
  * Run a hybrid query. `queryEmbedding` may be null — then only BM25 fires
  * (e.g. if embedding provider is unavailable).
+ *
+ * `target` is one DB (the pre-2026-09 shape, kept for callers and tests)
+ * or a list of targets whose candidates are fused as ONE pool: the
+ * min-max normalisation and the top-k cut run over all of them together,
+ * exactly as they ran over one DB before the split.
  */
 export function hybridSearch(
-  memDb: MemoryDb,
+  target: MemoryDb | SearchTarget[],
   queryText: string,
   queryEmbedding: Float32Array | null,
   cfg: RetrievalConfig,
 ): Hit[] {
+  const targets: SearchTarget[] = Array.isArray(target) ? target : [{ memDb: target }];
   // Each modality returns up to k * 4 candidates so the fusion has room to
   // promote items that one side missed. We trim to `maxResults` at the end.
   const recall = Math.max(cfg.maxResults * 4, 20);
 
-  const vecHits = queryEmbedding && memDb.hasVec
-    ? runVectorSearch(memDb, queryEmbedding, recall)
-    : [];
-  const bm25Hits = runBm25Search(memDb, queryText, recall);
+  // Candidates per modality across ALL targets, cut to `recall` by raw
+  // score — the same pool size a single DB produced. Without the cut two
+  // DBs would contribute 2×recall candidates, the min-max normalisation
+  // would see a different minimum, and rankings would shift for no
+  // reason (measured 2026-09-08: 109 of 150 baseline cells moved before
+  // the cut, on identical content). Vector scores are comparable across
+  // DBs (same embedder), so the cut reproduces the single-DB top-k
+  // exactly; BM25 is corpus-relative, so there it is the closest analogue.
+  type Cand = { target: number; chunkId: number; score: number };
+  const vecPool: Cand[] = [];
+  const bm25Pool: Cand[] = [];
+  targets.forEach((t, ti) => {
+    if (queryEmbedding && t.memDb.hasVec) {
+      for (const h of runVectorSearch(t.memDb, queryEmbedding, recall, t.sources)) {
+        vecPool.push({ target: ti, chunkId: h.chunkId, score: h.score });
+      }
+    }
+    for (const h of runBm25Search(t.memDb, queryText, recall, t.sources)) {
+      bm25Pool.push({ target: ti, chunkId: h.chunkId, score: h.score });
+    }
+  });
+  const byScore = (a: Cand, b: Cand) => b.score - a.score;
+  const vecHits = targets.length > 1 ? vecPool.sort(byScore).slice(0, recall) : vecPool;
+  const bm25Hits = targets.length > 1 ? bm25Pool.sort(byScore).slice(0, recall) : bm25Pool;
 
-  // Build a combined map keyed by chunk id with both raw scores.
-  const merged = new Map<number, { vec: number; bm25: number }>();
+  // Build a combined map keyed by (target, chunk id) with both raw scores.
+  const merged = new Map<Key, { target: number; chunkId: number; vec: number; bm25: number }>();
   for (const h of vecHits) {
-    merged.set(h.chunkId, { vec: h.score, bm25: 0 });
+    merged.set(keyOf(h.target, h.chunkId), { target: h.target, chunkId: h.chunkId, vec: h.score, bm25: 0 });
   }
   for (const h of bm25Hits) {
-    const cur = merged.get(h.chunkId) ?? { vec: 0, bm25: 0 };
+    const k = keyOf(h.target, h.chunkId);
+    const cur = merged.get(k) ?? { target: h.target, chunkId: h.chunkId, vec: 0, bm25: 0 };
     cur.bm25 = h.score;
-    merged.set(h.chunkId, cur);
+    merged.set(k, cur);
   }
   if (merged.size === 0) return [];
 
   // Min-max normalize each modality independently. Avoids one signal
   // dominating because of raw-score scale differences.
-  const normalize = (key: 'vec' | 'bm25'): Map<number, number> => {
+  const normalize = (key: 'vec' | 'bm25'): Map<Key, number> => {
     let min = Infinity;
     let max = -Infinity;
     for (const v of merged.values()) {
@@ -94,7 +144,7 @@ export function hybridSearch(
       if (x < min) min = x;
       if (x > max) max = x;
     }
-    const out = new Map<number, number>();
+    const out = new Map<Key, number>();
     if (!Number.isFinite(min) || max === min) {
       // Either nothing in this modality, or all identical — neutral 0.
       for (const id of merged.keys()) out.set(id, 0);
@@ -115,25 +165,29 @@ export function hybridSearch(
   const totalWeight = cfg.vectorWeight + cfg.bm25Weight || 1;
 
   // If source-boosts OR source-filter is configured, materialize source
-  // per fused chunkId BEFORE sort. One query covers both features.
+  // per fused candidate BEFORE sort. One query per DB covers both features.
   const needSources = Boolean(cfg.sourceBoosts) || Boolean(cfg.sourceFilter?.length);
-  const sourceById = needSources
-    ? loadSourcesForIds(memDb, [...merged.keys()])
-    : null;
+  const sourceByKey = new Map<Key, string>();
+  if (needSources) {
+    targets.forEach((t, ti) => {
+      const ids = [...merged.values()].filter((m) => m.target === ti).map((m) => m.chunkId);
+      for (const [id, src] of loadSourcesForIds(t.memDb, ids)) sourceByKey.set(keyOf(ti, id), src);
+    });
+  }
 
   const filterSet = cfg.sourceFilter?.length ? new Set(cfg.sourceFilter) : null;
 
-  const fused: Array<{ id: number; score: number; vec: number; bm25: number }> = [];
-  for (const [id, raw] of merged) {
-    if (filterSet && sourceById) {
-      const src = sourceById.get(id);
+  const fused: Array<{ key: Key; target: number; id: number; score: number; vec: number; bm25: number }> = [];
+  for (const [key, raw] of merged) {
+    if (filterSet) {
+      const src = sourceByKey.get(key);
       if (!src || !filterSet.has(src)) continue;
     }
-    const vScore = vecNorm.get(id) ?? 0;
-    const bScore = bm25Norm.get(id) ?? 0;
+    const vScore = vecNorm.get(key) ?? 0;
+    const bScore = bm25Norm.get(key) ?? 0;
     let score = (cfg.vectorWeight * vScore + cfg.bm25Weight * bScore) / totalWeight;
-    if (sourceById && cfg.sourceBoosts) {
-      const src = sourceById.get(id);
+    if (cfg.sourceBoosts) {
+      const src = sourceByKey.get(key);
       const boost =
         src === 'wiki' ? cfg.sourceBoosts.wiki :
         src === 'memory' ? cfg.sourceBoosts.memory :
@@ -141,24 +195,17 @@ export function hybridSearch(
         1.0;
       score *= boost;
     }
-    fused.push({ id, score, vec: raw.vec, bm25: raw.bm25 });
+    fused.push({ key, target: raw.target, id: raw.chunkId, score, vec: raw.vec, bm25: raw.bm25 });
   }
   fused.sort((a, b) => b.score - a.score);
 
   // Materialize chunk metadata for the survivors only. Over-fetch a few
   // candidates beyond maxResults so dedupeNestedHits() below can drop a
   // nested chunk and still hand back a full page.
-  const survivors = fused.filter((f) => f.score >= cfg.minScore);
-  const ids = survivors.slice(0, cfg.maxResults * NESTED_OVERFETCH).map((f) => f.id);
-  if (ids.length === 0) return [];
+  const survivors = fused.filter((f) => f.score >= cfg.minScore).slice(0, cfg.maxResults * NESTED_OVERFETCH);
+  if (survivors.length === 0) return [];
 
-  const placeholders = ids.map(() => '?').join(',');
-  const rows = memDb.db
-    .prepare(
-      `SELECT id, file_path, source, slug, text, start_line, end_line
-       FROM chunks WHERE id IN (${placeholders})`,
-    )
-    .all(...ids) as Array<{
+  type Row = {
     id: number;
     file_path: string;
     source: string;
@@ -166,14 +213,25 @@ export function hybridSearch(
     text: string;
     start_line: number;
     end_line: number;
-  }>;
-  const byId = new Map(rows.map((r) => [r.id, r]));
+  };
+  const byKey = new Map<Key, Row>();
+  targets.forEach((t, ti) => {
+    const ids = survivors.filter((f) => f.target === ti).map((f) => f.id);
+    if (ids.length === 0) return;
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = t.memDb.db
+      .prepare(
+        `SELECT id, file_path, source, slug, text, start_line, end_line
+         FROM chunks WHERE id IN (${placeholders})`,
+      )
+      .all(...ids) as Row[];
+    for (const r of rows) byKey.set(keyOf(ti, r.id), r);
+  });
 
   const hits = survivors
-    .slice(0, cfg.maxResults * NESTED_OVERFETCH)
-    .filter((f) => byId.has(f.id))
+    .filter((f) => byKey.has(f.key))
     .map((f) => {
-      const r = byId.get(f.id)!;
+      const r = byKey.get(f.key)!;
       return {
         chunkId: r.id,
         filePath: r.file_path,
@@ -236,15 +294,30 @@ function runVectorSearch(
   memDb: MemoryDb,
   embedding: Float32Array,
   k: number,
+  sources?: ReadonlyArray<string>,
 ): Array<{ chunkId: number; score: number }> {
   // sqlite-vec returns `distance` (lower = closer). Convert to a similarity
   // score in (0, 1] so fusion can weight it like BM25.
-  const rows = memDb.db
-    .prepare(
-      `SELECT rowid, distance FROM chunks_vec
-       WHERE embedding MATCH ? ORDER BY distance LIMIT ?`,
-    )
-    .all(embedding, k) as Array<{ rowid: number | bigint; distance: number }>;
+  //
+  // The optional source restriction is a `rowid IN (subquery)` on the KNN
+  // itself (supported by vec0 since 0.1.x; probed 2026-09-08 on 0.1.9):
+  // the k nearest rows AMONG the allowed sources, not the k nearest
+  // overall filtered afterwards.
+  const rows = sources && sources.length > 0
+    ? (memDb.db
+        .prepare(
+          `SELECT rowid, distance FROM chunks_vec
+           WHERE embedding MATCH ?
+             AND rowid IN (SELECT id FROM chunks WHERE source IN (${sources.map(() => '?').join(',')}))
+           ORDER BY distance LIMIT ?`,
+        )
+        .all(embedding, ...sources, k) as Array<{ rowid: number | bigint; distance: number }>)
+    : (memDb.db
+        .prepare(
+          `SELECT rowid, distance FROM chunks_vec
+           WHERE embedding MATCH ? ORDER BY distance LIMIT ?`,
+        )
+        .all(embedding, k) as Array<{ rowid: number | bigint; distance: number }>);
   return rows.map((r) => ({ chunkId: Number(r.rowid), score: 1 / (1 + r.distance) }));
 }
 
@@ -294,21 +367,25 @@ function runBm25Search(
   memDb: MemoryDb,
   query: string,
   k: number,
+  sources?: ReadonlyArray<string>,
 ): Array<{ chunkId: number; score: number }> {
   // FTS5 returns negative `bm25(...)` scores (lower = better). We negate
   // so higher = better and treat as the raw modality score.
   const sanitized = sanitizeFtsQuery(query);
   if (!sanitized) return [];
   try {
+    const sourceClause = sources && sources.length > 0
+      ? ` AND chunks.source IN (${sources.map(() => '?').join(',')})`
+      : '';
     const rows = memDb.db
       .prepare(
         `SELECT chunks.id AS id, bm25(chunks_fts) AS bm25
          FROM chunks_fts
          JOIN chunks ON chunks.id = chunks_fts.rowid
-         WHERE chunks_fts MATCH ?
+         WHERE chunks_fts MATCH ?${sourceClause}
          ORDER BY bm25 LIMIT ?`,
       )
-      .all(sanitized, k) as Array<{ id: number; bm25: number }>;
+      .all(sanitized, ...(sources && sources.length > 0 ? sources : []), k) as Array<{ id: number; bm25: number }>;
     return rows.map((r) => ({ chunkId: r.id, score: -r.bm25 }));
   } catch {
     // FTS5 syntax-rejects malformed queries (e.g. unbalanced quotes after

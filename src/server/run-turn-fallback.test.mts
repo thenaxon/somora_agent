@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 
-const mk = (id: string) => ({ id, alias: id, contextWindow: 1000, capabilities: ['text'] });
+const mk = (id: string): any => ({ id, alias: id, contextWindow: 1000, capabilities: ['text'] });
 const config: any = {
   engineWatchdog: { claudeCliIdleMs: 1, codexCliIdleMs: 1, grokCliIdleMs: 1, openaiCompatibleIdleMs: 1 },
   providers: {

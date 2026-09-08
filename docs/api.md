@@ -130,6 +130,14 @@ Returns:
     "attempts": 1,
     "loadMs": 2373
   },
+  "sharedIndex": {
+    "state": "ready",
+    "role": "owner",
+    "path": "/home/me/.somora/index/shared.db",
+    "files": 626,
+    "chunks": 1466,
+    "built_by": "seed:buffet"
+  },
   "sessions": [
     {
       "agent": "<your-agent>",
@@ -167,6 +175,16 @@ sides present means the stores have diverged and the watcher hasn't
 caught up yet — if it persists, claude-cli auth is about to break;
 run `somora auth status` on the host. See
 [setup.md](setup.md#isolated-claude-config-dir).
+
+`sharedIndex` is the vault/wiki retrieval index shared by all agents
+([memory.md](memory.md#mental-model--memory-inbox)). `state` is
+`ready` when agents read vault/wiki from it, `building` while the
+first build after an update is still running (agents then still answer
+from their own DB), `disabled` when no vault is configured, `failed`
+with `error` when the DB could not be opened or built. `built_by`
+says where the content came from: `seed:<agent>` (copied out of that
+agent's DB on the first boot after the update) or `sweep` (embedded
+from disk). `null` until the server has opened it.
 
 `memoryEmbedder` is the health of the embedding model behind memory
 retrieval (see [memory.md](memory.md#hybrid-retrieval-mechanics)). The

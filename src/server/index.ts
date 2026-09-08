@@ -65,6 +65,8 @@ import {
   ensureMemoryDirs,
   getMemoryManager,
   shutdownMemoryRegistry,
+  getSharedIndex,
+  sharedIndexStatus,
 } from '../memory/registry.ts';
 import { getEmbedderStatus, warmupEmbedder } from '../memory/embeddings.ts';
 import { setupClaudeConfigDir } from './claude-config-dir.ts';
@@ -695,6 +697,10 @@ app.get('/health', (c) => {
     // retrieval is FTS-only (BM25 without vectors) — the server keeps
     // running, but semantic recall and REM dedup are silently degraded.
     memoryEmbedder: getEmbedderStatus(),
+    // Shared vault/wiki index (one per instance). `state: "building"`
+    // right after an update means agents still read vault/wiki from
+    // their own DB; `ready` means they read from index/shared.db.
+    sharedIndex: sharedIndexStatus(),
     sessions,
   });
 });
@@ -5264,6 +5270,11 @@ for (const a of agentList) {
 // `error` line here instead of a throttled `warn` per agent after the
 // first chat turn — and `GET /health` shows it as `memoryEmbedder`.
 void warmupEmbedder(config.memory.embedding);
+// Open the shared vault/wiki index and start its build now, so the seed
+// (first boot after the split) or the catch-up sweep runs before the
+// first turn instead of inside it. Agents answer from their own DB until
+// it is ready — see src/memory/shared-index.ts.
+void getSharedIndex({ config: config.memory, obsidian: config.obsidian, wiki: config.wiki }).init();
 
 // Workspace dirs — server-global default plus every per-agent override.
 // Created idempotently so file_* tools never race a first-write mkdir.

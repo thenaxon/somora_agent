@@ -31,7 +31,7 @@ how vault binding works.
 ~/.somora/agents/<name>/memory/
 ├── *.md                          ← un-consolidated notes the agent has now
 │
-├── memory.db (+ -wal, -shm)      ← derived index, rebuilt from .md if deleted
+├── memory.db (+ -wal, -shm)      ← derived index of THIS agent's notes, rebuilt from .md if deleted
 ├── .deep-skip-cache.json         ← Deep's hash-cache (skipped files)
 └── .dreams/                      ← REM extraction findings
     ├── <id>.dream.md             ← pending review
@@ -43,6 +43,26 @@ delete `memory.db*` and it rebuilds from the `.md` files on next agent
 init. Files survive `git`, `vim`, `rsync`, anything. The agent reads
 them through the same pipeline regardless of who wrote them (you, the
 agent itself via tools, REM extraction, or a sync from another machine).
+
+The vault and the wiki are indexed **once per instance**, not once per
+agent, in `~/.somora/index/shared.db`. The index belongs to the source,
+not to the reader: every agent would embed exactly the same chunks, so
+one copy serves them all, and one file-watcher on the vault replaces
+one per agent. A new agent's first turn therefore costs nothing beyond
+its own notes (before this, a new agent embedded the whole vault on its
+first turn — 85 s on a 600-page vault). `shared.db` is derived too:
+delete it and the server rebuilds it, seeding from an existing agent DB
+when one holds the same embedding model, otherwise from disk.
+
+**Updating from a version before the shared index** needs nothing from
+you. On the first boot the server copies the vault/wiki rows out of the
+largest agent DB into `shared.db` (seconds, no model call), sweeps the
+vault in the background, and only then switches the agents over; until
+that moment they keep answering from their own DB, which still holds
+the old rows. Those old vault/wiki rows are left in place — they are
+never read again and cost only disk. `GET /health` → `sharedIndex`
+shows `building` during the switch and `ready` after
+([api.md](api.md#get-health)).
 
 The inbox is **volatile by design**. Files come in via REM or
 `memory_write`; Deep consolidates them into the wiki and deletes the
@@ -56,7 +76,8 @@ Two paths flow into every chat turn:
 ### 1. Auto-injection (always on)
 
 The runtime builds an embedding query from the user's current message
-plus the last few turns, runs hybrid search against the unified index,
+plus the last few turns, runs hybrid search over the agent's own
+memory index and the shared vault/wiki index as one candidate pool,
 takes the top-N hits above a configurable score threshold, and prepends
 them as a `<memory-context>` block to the system prompt.
 
@@ -251,8 +272,9 @@ wiki:
   vaultSubfolder: somora    # → ~/Documents/Vault/somora/ becomes the wiki
 ```
 
-All agents share this single vault. Vault notes are indexed for recall
-alongside each agent's own memory. Hits return them as
+All agents share this single vault, and so do they share its index
+(`~/.somora/index/shared.db`, see the mental model above). Vault notes
+are recalled alongside each agent's own memory. Hits return them as
 `vault/<path>` (slugs use `--` as path separator:
 `Projects/Personal/Travel.md` → `Projects--Personal--Travel`).
 
@@ -299,8 +321,12 @@ The tools are exposed three ways:
 When recall feels off, query the raw index directly:
 
 ```bash
-# How many notes are indexed for this agent (across all sources)
+# How many notes are indexed for this agent (across all sources —
+# memory from the agent's own DB, wiki/vault from the shared index)
 curl 'http://127.0.0.1:18737/agents/<name>/memory/notes' | jq '.count'
+
+# State of the shared vault/wiki index: building | ready, files, chunks
+curl 'http://127.0.0.1:18737/health' | jq '.sharedIndex'
 
 # Is the embedding model loaded? "failed" = BM25-only for every agent
 curl 'http://127.0.0.1:18737/health' | jq '.memoryEmbedder'

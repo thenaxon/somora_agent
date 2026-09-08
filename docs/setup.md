@@ -188,6 +188,8 @@ On first start somora creates `~/.somora/`:
 │       ├── SOUL.md
 │       ├── USER.md
 │       └── agent.yaml
+├── index/
+│   └── shared.db              ← vault + wiki retrieval index, one per instance (derived, rebuilt if deleted)
 └── logs/
     └── server-YYYY-MM-DD.log
 ```

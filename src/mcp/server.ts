@@ -227,6 +227,9 @@ async function main(): Promise<void> {
         config: config.memory,
         obsidian: config.obsidian,
         wiki: config.wiki,
+        // The tool child only reads the shared vault/wiki index; the
+        // server process builds and watches it.
+        sharedRole: 'reader',
       }),
     config,
   };

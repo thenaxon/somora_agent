@@ -82,8 +82,10 @@ the full flow + loop discipline rules.
 ### By you (manually in Obsidian)
 
 The wiki is just markdown. Open Obsidian, edit a page, save. somora's
-file-watcher re-indexes the change. Deep and Lucid will respect your edit
-on next run (mtime check before writing — they back off on conflict).
+file-watcher re-indexes the change — once, into the shared vault/wiki
+index every agent reads ([memory.md](memory.md#mental-model--memory-inbox)).
+Deep and Lucid will respect your edit on next run (mtime check before
+writing — they back off on conflict).
 
 ## Page format
 
