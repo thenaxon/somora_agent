@@ -157,7 +157,8 @@ import { LucidWorker } from '../dream/lucid-worker.ts';
 import { getLoopState, setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
 import { pendingLucidSummary } from '../dream/lucid-storage.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
-import type { SseEvent } from '../types/events.ts';
+import type { NormalizedEvent, SseEvent } from '../types/events.ts';
+import { injectMemoryContext } from '../memory/inject.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
@@ -2002,6 +2003,50 @@ app.get('/agents/:agent/memory/notes', async (c) => {
   const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
   const notes = await mgr.listNotes();
   return c.json({ agent, count: notes.length, notes });
+});
+
+// What auto-inject WOULD recall for a message in a given conversation
+// state — the exact code path of a turn (buildRecallQuery + search +
+// block budget), minus the turn. Debug/measurement surface: the recall
+// replay harness feeds real session histories through it to compare
+// ranking changes before/after a retrieval change (2026-09-08).
+// Body: { text, history?: [{ kind: 'user_message'|'assistant_message', text }] }
+app.post('/agents/:agent/memory/recall-preview', async (c) => {
+  const agent = c.req.param('agent');
+  if (!(await loadPersona(agent))) {
+    return c.json({ error: `agent '${agent}' not found` }, 404);
+  }
+  let body: { text?: unknown; history?: unknown };
+  try {
+    body = (await c.req.json()) as { text?: unknown; history?: unknown };
+  } catch {
+    return c.json({ error: 'JSON body required' }, 400);
+  }
+  const text = typeof body.text === 'string' ? body.text : '';
+  if (!text.trim()) return c.json({ error: '"text" required' }, 400);
+  const history: NormalizedEvent[] = Array.isArray(body.history)
+    ? (body.history as Array<{ kind?: unknown; text?: unknown }>)
+        .filter((h) => (h.kind === 'user_message' || h.kind === 'assistant_message') && typeof h.text === 'string')
+        .map((h) => ({ kind: h.kind as 'user_message' | 'assistant_message', ts: 0, engine: 'preview', text: h.text as string }) as NormalizedEvent)
+    : [];
+  const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
+  const inject = await injectMemoryContext({ mgr, history, userMessage: text, cfg: config.memory.autoInject });
+  return c.json({
+    agent,
+    text,
+    historyTurns: history.length,
+    injectedCount: inject.injectedCount,
+    hits: inject.hits.map((h) => ({
+      slug: h.slug,
+      source: h.source,
+      score: Number(h.score.toFixed(4)),
+      vecScore: Number(h.vecScore.toFixed(4)),
+      bm25Score: Number(h.bm25Score.toFixed(4)),
+      startLine: h.startLine,
+      endLine: h.endLine,
+    })),
+    ephemeralContextChars: inject.ephemeralContext?.length ?? 0,
+  });
 });
 
 app.get('/agents/:agent/memory/search', async (c) => {
