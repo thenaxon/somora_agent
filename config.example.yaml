@@ -509,25 +509,24 @@ providers:
 #                                  # backend regularly silences for longer
 #                                  # than 20 min mid-turn.
 
-# SSE-broadcast tunables. Pro abonniertem Client (web/mobile/TUI) hat
-# somora ein write-budget pro EINZELNEM event-paket. Eine gesunde
-# writeSSE-write ist Mikrosekunden; ein wedged stream (Mobile-Browser
-# im Hintergrund, gefrorenes TCP-receive-window, halbtoter TLS-
-# handshake) backpressured sonst forever ohne zu throwen — und blockt
-# damit JEDEN folgenden turn auf dieser (agent, session). Greift NICHT
-# auf turn-Dauer / LLM-streaming-Zeit / langen tool-calls — die laufen
-# weiter, weil jedes einzelne event-paket eh nur µs zum schreiben braucht.
+# SSE broadcast tunables. Per subscribed client (web/mobile/TUI) somora
+# has a write budget per SINGLE event packet. A healthy SSE write takes
+# microseconds; a wedged stream (mobile browser in the background, frozen
+# TCP receive window, half-dead TLS handshake) would otherwise backpressure
+# forever without throwing — and block EVERY following turn on that
+# (agent, session). Does NOT apply to turn duration / LLM streaming time /
+# long tool calls — those keep running, each event packet only needs µs.
 # sse:
-#   publishTimeoutMs: 10000        # 10s pro event-write — self-heal-budget für
-#                                  # einen wedged subscriber. Greift faktisch nie
-#                                  # bei gesunden clients; 2 Größenordnungen mehr
-#                                  # als ein normaler write je dauert.
-#   publishParallel: true          # alle subscriber gleichzeitig beschicken statt
-#                                  # nacheinander — ein slow client blockt nie die
-#                                  # anderen. Auf false stellen nur wenn du strikt
-#                                  # serielle delivery-order brauchst.
-#   heartbeatMs: 20000             # Server→Client-Heartbeat auf /chat/stream + /activity/stream
-#   deadAfterMs: 60000             # Heartbeat-Write hängt länger → Stream gilt als tot, Socket zu
+#   publishTimeoutMs: 10000        # 10 s per event write — self-heal budget for
+#                                  # a wedged subscriber. Practically never hit by
+#                                  # healthy clients; two orders of magnitude above
+#                                  # what a normal write takes.
+#   publishParallel: true          # write to all subscribers at once instead of
+#                                  # one after another — a slow client never blocks
+#                                  # the others. Set false only if you strictly need
+#                                  # serial delivery order.
+#   heartbeatMs: 20000             # server→client heartbeat on /chat/stream + /activity/stream
+#   deadAfterMs: 60000             # a heartbeat write hanging longer → stream counts as dead, socket closed
 #   h2PingIntervalMs: 30000        # HTTP/2 PING pro Client-Session (TLS-Listener) …
 #   h2PingTimeoutMs: 30000         # … ohne ACK in dieser Zeit → Session zerstört (Tab weg, WLAN weg)
 #   keepAliveDelayMs: 30000        # TCP-Keepalive auf jedem Socket (Kernel-Probes obendrauf)
@@ -629,14 +628,20 @@ providers:
 #   chunking:
 #     targetTokens: 400
 #     overlapTokens: 80
-#   autoInject:
-#     queryTurns: 3                       # how many last turns feed the recall query
+#   autoInject:                           # docs/memory.md — "What gets injected"
+#     queryTurns: 3                       # last turns that give the recall query its context
 #     maxResults: 5                       # top-N matches injected
-#     minScore: 0.5                       # discard matches below this score
+#     minScore: 0.35                      # discard matches below this score
 #     maxTokens: 1500                     # hard cap on the injected memory block
+#     historyWeight: 0.3                  # how much those turns steer the vector query
+#     historyWeightShort: 0.55            # … when the message has only 1–2 content words
+#     historyWeightEmpty: 0.8             # … when it has none ("you should know that, right?")
+#     historyTurnChars: 800               # chars taken from each history turn
+#     shortQueryBm25Weight: 0.5           # BM25 weight for 1–2-word messages (null = hybrid.bm25Weight)
 #   hybrid:
 #     vectorWeight: 0.7                   # weight of vector similarity in fused score
 #     bm25Weight: 0.3                     # weight of BM25/FTS5 in fused score
+#     slugMatchBoost: 1.5                 # page whose slug names a query word (1 = off); all searches
 
 # Workspace — default cwd for file_* tools. NOT a sandbox: agents can
 # also write outside (their own persona files, the global config).

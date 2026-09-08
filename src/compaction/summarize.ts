@@ -73,7 +73,7 @@ export function extractCompactionRange(
         pairs.push({
           ts: pendingUser.ts,
           user: pendingUser.text,
-          assistant: '[kein Assistant-Reply — Turn ohne Antwort beendet]',
+          assistant: '[no assistant reply — the turn ended without an answer]',
         });
       }
       pendingUser = { ts: ev.ts, text: ev.text };

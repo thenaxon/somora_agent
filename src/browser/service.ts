@@ -113,7 +113,7 @@ export interface BrowserInfo {
 }
 
 export interface ServiceDeps {
-  /** Stage 3: wake the agent in its session after "Agent übernimmt". */
+  /** Wake the agent in its session after "Hand back". */
   dispatchWakeTurn?: (args: { agent: string; session: string; text: string }) => Promise<void>;
   /** Stage 3: tell the session that a handoff was requested (notice). */
   notifyHandoff?: (handoff: Handoff, browserId: string) => Promise<void>;

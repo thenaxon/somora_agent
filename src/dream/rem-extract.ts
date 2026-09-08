@@ -165,7 +165,7 @@ WHAT NOT TO SURFACE:
 - Statements made by the AGENT — only USER statements are authoritative.
 - Tool-result content the agent quoted back (memory_search, somora_docs_read,
   file_read output) — those are not user assertions.
-- "Consolidated overviews" ("Alles über X", thematic summaries) — memory is
+- "Consolidated overviews" ("everything about X", thematic summaries) — memory is
   atomic, consolidation is Deep's job.
 - For vault_hint: only when an existing vault note is clearly outdated given
   user statements; do not propose creating new vault notes.

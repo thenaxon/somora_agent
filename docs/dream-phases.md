@@ -437,21 +437,21 @@ each finding, the agent writes changes via loop-scoped `wiki_*` tools
 when you OK each step, and you close the loop when done.
 
 ```
-> du:    schau dir das lucid result mal an
+> you:    have a look at the lucid result
 scribe:    dream_list   → finds the Lucid run
          dream_get(id) → reads all findings
          dream_review({dream_id, action: 'start'})  ← opens the loop
-         "Hier ist was Lucid gefunden hat: 5 contradictions, 2 dead refs.
-          Ich fang mit der ersten an: page X sagt Y, page Z sagt W.
-          Mein Vorschlag: <konkrete Änderung>. OK?"
+         "Here is what Lucid found: 5 contradictions, 2 dead refs.
+          Starting with the first: page X says Y, page Z says W.
+          My proposal: <concrete change>. OK?"
 
-> du:    ja, mach so
+> you:    yes, do it
 scribe:    wiki_edit({...})   ← writes the page
-         "Erledigt. Nächste Finding: ..."
+         "Done. Next finding: ..."
 
 > [several rounds of walk-discuss-edit]
 
-> du:    passt, mach Schluss
+> you:    good, wrap it up
 scribe:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
          loop is archived to processed/, normal tools come back
 ```

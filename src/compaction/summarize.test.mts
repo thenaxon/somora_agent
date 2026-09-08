@@ -31,7 +31,7 @@ const a = (ts: number, text: string): NormalizedEvent =>
 const cfg = (cushion: number): CompactionConfig =>
   ({ safetyCushionPairs: cushion } as CompactionConfig);
 
-const ORPHAN = '[kein Assistant-Reply — Turn ohne Antwort beendet]';
+const ORPHAN = '[no assistant reply — the turn ended without an answer]';
 
 // ── the live bug: an error-ended turn in the MIDDLE is preserved ──────
 {

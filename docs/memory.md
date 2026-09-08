@@ -206,7 +206,8 @@ sessions:
 
 - The weight adapts to how much the message says. Three or more
   content words (everything that is not a filler word like "ok",
-  "kannst", "mir", "so"): `historyWeight`. One or two ("und seine
+  "kannst", "mir", "so" — a built-in German + English stopword list,
+  also dropped from BM25 queries): `historyWeight`. One or two ("und seine
   frau?"): `historyWeightShort`. None ("das solltest du aber wissen
   oder?"): `historyWeightEmpty` — the conversation is the topic.
 - A message with a content word also runs on its own, and a chunk

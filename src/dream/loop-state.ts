@@ -243,7 +243,7 @@ export async function buildReviewLoopBlock(agent: string): Promise<string | null
       `editing — never silently extend scope.`,
   );
   lines.push(
-    `6. Do NOT silently drop a finding. If the user says "skip this one" / "machen wir später", note ` +
+    `6. Do NOT silently drop a finding. If the user says "skip this one" / "let's do that later", note ` +
       `that intent for the loop summary.`,
   );
   lines.push(
