@@ -269,6 +269,10 @@ export function BrowserWindow({ browserId }: Props) {
     const k = e.key;
     const printable = k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
     if (printable) return; // arrives via onInput as text
+    // Paste stays local: preventing default on Ctrl/Cmd+V would suppress
+    // the paste event, and the remote page's clipboard is empty anyway —
+    // onPaste sends the clipboard text as one `text` message.
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === 'v') return;
     if (k === 'Unidentified' || k === 'Dead' || k === 'Process') return;
     e.preventDefault();
     send({ type: 'key', key: k, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey });
