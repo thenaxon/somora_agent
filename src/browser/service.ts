@@ -155,9 +155,13 @@ function nowMs(): number {
   return Date.now();
 }
 
+/** Something a viewer should redraw: tabs came or went, control changed. */
+export type ChangeListener = (browserId: string) => void;
+
 export class BrowserService {
   private cfg: BrowserConfig;
   private deps: ServiceDeps;
+  private listeners = new Set<ChangeListener>();
   private browsers = new Map<string, BrowserRec>();
   private launching = new Map<string, Promise<BrowserRec>>();
   /** Tab ids are unique across ALL browsers (an agent can have its
@@ -185,6 +189,25 @@ export class BrowserService {
 
   get enabled(): boolean {
     return this.cfg.enabled;
+  }
+
+  get config(): BrowserConfig {
+    return this.cfg;
+  }
+
+  onChange(listener: ChangeListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private emitChange(browserId: string): void {
+    for (const l of this.listeners) {
+      try {
+        l(browserId);
+      } catch {
+        /* listener errors never reach the service */
+      }
+    }
   }
 
   async init(): Promise<void> {
@@ -329,6 +352,7 @@ export class BrowserService {
       this.browsers.delete(id);
       if (rec.idleTimer) clearTimeout(rec.idleTimer);
       logger.info({ msg: 'browser.closed', browser: id });
+      this.emitChange(id);
     });
     // Playwright opens one blank page with a persistent context; keep
     // it as the first tab so `open` without a tab reuses it.
@@ -375,8 +399,10 @@ export class BrowserService {
     });
     page.on('close', () => {
       b.tabs.delete(id);
+      this.emitChange(b.id);
     });
     b.tabs.set(id, tab);
+    this.emitChange(b.id);
     return tab;
   }
 
@@ -654,6 +680,7 @@ export class BrowserService {
     b.control = { mode: 'handoff_requested', handoff, since: nowMs() };
     this.touch(b);
     await this.persist();
+    this.emitChange(b.id);
     logger.info({ msg: 'browser.handoff_requested', browser: b.id, agent, session, reason: args.reason });
     if (this.deps.notifyHandoff) await this.deps.notifyHandoff(handoff, b.id).catch((err) => logger.warn({ msg: 'browser.handoff_notify_failed', err: String(err) }));
     return { browser_id: b.id, handoff_id: handoff.id, control: b.control.mode };
@@ -718,6 +745,7 @@ export class BrowserService {
       this.touch(b);
       await this.persist();
       logger.info({ msg: 'browser.human_control', browser: b.id, by: opts.by ?? null });
+      this.emitChange(b.id);
       return b.control;
     }
     const handoff = b.control.handoff;
@@ -731,6 +759,7 @@ export class BrowserService {
     this.touch(b);
     await this.persist();
     logger.info({ msg: 'browser.agent_control', browser: b.id, wake: handoff ? handoff.id : null });
+    this.emitChange(b.id);
     if (handoff && this.deps.dispatchWakeTurn) {
       const text =
         `[browser] The user handed browser '${b.id}' back to you (handoff ${handoff.id}). ` +
@@ -742,6 +771,77 @@ export class BrowserService {
       );
     }
     return b.control;
+  }
+
+  // ── viewer surface (stage 2: web client) ──────────────────────────
+
+  /** Running browser by id, for the viewer path. */
+  private runningBrowser(browserId: string): BrowserRec {
+    const b = this.browsers.get(browserId);
+    if (!b || b.closing) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${browserId}' is not running`);
+    return b;
+  }
+
+  /** Summary of one browser for the viewer header. */
+  async browserInfo(browserId: string): Promise<BrowserInfo> {
+    const b = this.runningBrowser(browserId);
+    const tabs = await Promise.all([...b.tabs.values()].filter((t) => !t.page.isClosed()).map((t) => this.tabInfo(t)));
+    return {
+      browser_id: b.id,
+      profile: b.profile,
+      ephemeral: b.ephemeral,
+      state: 'running',
+      control: b.control.mode,
+      ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
+      tabs,
+      last_used: b.lastUsed,
+    };
+  }
+
+  /** The page a viewer wants to watch: the given tab, else the most
+   *  recently used one. Touches the browser (viewers count as activity). */
+  viewerPage(browserId: string, tabId?: string): { tabId: string; page: Page; generation: number } {
+    const b = this.runningBrowser(browserId);
+    this.touch(b);
+    const live = [...b.tabs.values()].filter((t) => !t.page.isClosed());
+    const t = (tabId ? live.find((x) => x.id === tabId) : undefined) ?? live.sort((a, c) => c.lastUsed - a.lastUsed)[0];
+    if (!t) throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `browser '${browserId}' has no open tab`);
+    return { tabId: t.id, page: t.page, generation: t.generation };
+  }
+
+  /** True when this viewer connection may drive the browser. */
+  humanControls(browserId: string, by: string): boolean {
+    const b = this.browsers.get(browserId);
+    return Boolean(b && !b.closing && b.control.mode === 'human_control' && (b.control.humanBy === undefined || b.control.humanBy === by));
+  }
+
+  /** Human navigation (URL bar) — same policy as the agent's `open`. */
+  async humanNavigate(browserId: string, tabId: string, url: string): Promise<void> {
+    const verdict = await checkNavigationAllowed(url, this.cfg);
+    if (!verdict.ok) throw new BrowserOpError('BROWSER_NAVIGATION_DENIED', verdict.reason!);
+    const { page } = this.viewerPage(browserId, tabId);
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((err) => {
+      throw new BrowserOpError('BROWSER_ACTION_FAILED', (err as Error).message.split('\n')[0]!);
+    });
+  }
+
+  /** A tab the human opened (not the agent's, so tab cleanup leaves it). */
+  async humanNewTab(browserId: string, by: string): Promise<string> {
+    const b = this.runningBrowser(browserId);
+    if (b.tabs.size >= this.cfg.maxTabsPerAgent) throw new BrowserOpError('BROWSER_TAB_LIMIT', `browser '${b.id}' already has ${b.tabs.size} tabs`);
+    const page = await b.context.newPage();
+    const tab = this.adoptPage(b, page, { agent: `_user:${by}`, createdByAgent: false });
+    this.touch(b);
+    return tab.id;
+  }
+
+  async humanCloseTab(browserId: string, tabId: string): Promise<void> {
+    const b = this.runningBrowser(browserId);
+    const t = b.tabs.get(tabId);
+    if (!t) return;
+    await t.page.close().catch(() => {});
+    b.tabs.delete(tabId);
+    this.emitChange(b.id);
   }
 
   async shutdown(): Promise<void> {

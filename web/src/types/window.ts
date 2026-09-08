@@ -16,7 +16,9 @@ export type WindowKind =
   | 'tools'
   | 'images'
   | 'team'
-  | 'agent-config';
+  | 'agent-config'
+  | 'browser-list'
+  | 'browser';
 
 /** A snapshot of an agent message that the user pinned for working-
  *  memory. Stored on the WindowState.payload of `kind: 'pin-note'`
@@ -65,6 +67,8 @@ export interface WindowState {
   // wiki specific — slug of the page the reader is on. Persisted so a
   // browser reload lands back on the same page instead of the tree root.
   wikiSlug?: string;
+  /** browser windows: which managed browser (`agent:<name>` / `profile:<name>`). */
+  browserId?: string;
   // Geometry
   x: number;
   y: number;

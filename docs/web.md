@@ -301,6 +301,10 @@ archived copy at the next idle window.
   failed. …`) instead of only the last one's raw error. The TUI prints
   the same as a warn line in the scrollback, the mobile client shows
   the chip on the bubble.
+- **Browser window** (when `browser.enabled`): the **browser** tile
+  lists the running managed browsers; a row opens the live view with
+  tab bar, URL bar and the take-over buttons. See
+  [browser.md](browser.md#in-the-web-client).
 - **Peer origin caption**: a message another agent sent via `agent_ask`
   renders with that agent's icon and colour; when it was sent from one
   of the sender's non-main sessions, `<agent> · <session>` sits left of

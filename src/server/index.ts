@@ -160,6 +160,7 @@ import { resolveObsidianSource } from '../memory/registry.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { injectMemoryContext } from '../memory/inject.ts';
 import { configureBrowserService, getBrowserService, BrowserOpError } from '../browser/service.ts';
+import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSocket } from '../browser/screencast.ts';
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
@@ -3607,6 +3608,166 @@ app.post('/browser/:id/control', async (c) => {
   }
 });
 
+// Live picture + input for one browser tab (stage 2). Binary frames out
+// (see src/browser/screencast.ts for the wire format), JSON both ways:
+//   server → viewer: ping, ready {browser, tabId}, tabs {browser}, error, notice
+//   viewer → server: pong, input events (mousemove/click/wheel/text/key/resize/back/forward/reload),
+//                    navigate {url}, tab {tabId} (switch what is streamed), newtab, closetab {tabId},
+//                    control {mode:'human'|'agent'}
+// Input is applied only while THIS viewer holds human control.
+interface BrowserWsBag {
+  __hbTimer?: ReturnType<typeof setInterval>;
+  __lastSeenAt?: number;
+  __viewer?: ViewerSocket;
+  __tabId?: string;
+  __unsub?: () => void;
+  __changeTimer?: ReturnType<typeof setTimeout>;
+}
+app.get(
+  '/browser/attach',
+  upgradeWebSocket((c) => {
+    const browserId = c.req.query('browser') ?? '';
+    const wantTab = c.req.query('tab') || undefined;
+    const viewerId = c.req.query('viewer') || `v-${Date.now().toString(36)}`;
+    return {
+      async onOpen(_evt, ws) {
+        if (!config.browser.enabled) {
+          ws.close(1008, 'browser.enabled is false');
+          return;
+        }
+        const raw = ws.raw as (BrowserWsBag & { bufferedAmount?: number; terminate?: () => void }) | undefined;
+        if (!raw) {
+          ws.close(1011, 'no raw socket');
+          return;
+        }
+        const viewer: ViewerSocket = {
+          send: (d) => ws.send(d as never),
+          close: (code, reason) => ws.close(code, reason),
+          buffered: () => raw.bufferedAmount ?? 0,
+        };
+        raw.__viewer = viewer;
+        try {
+          const { tabId } = await screencasts.attach(browserId, wantTab, viewer);
+          raw.__tabId = tabId;
+          const info = await browserService.browserInfo(browserId);
+          ws.send(JSON.stringify({ type: 'ready', browser: info, tabId, viewerId }));
+        } catch (err) {
+          ws.close(1008, isBrowserOpError(err) ? err.message : String(err));
+          return;
+        }
+        // Tabs / control changes → push the fresh summary (debounced).
+        raw.__unsub = browserService.onChange((id) => {
+          if (id !== browserId) return;
+          if (raw.__changeTimer) clearTimeout(raw.__changeTimer);
+          raw.__changeTimer = setTimeout(() => {
+            void browserService
+              .browserInfo(browserId)
+              .then((info) => ws.send(JSON.stringify({ type: 'tabs', browser: info })))
+              .catch(() => ws.close(4001, 'browser closed'));
+          }, 100);
+        });
+        raw.__lastSeenAt = Date.now();
+        raw.__hbTimer = setInterval(() => {
+          const idle = Date.now() - (raw.__lastSeenAt ?? 0);
+          if (idle > TERMINAL_WS_DEAD_MS) {
+            try {
+              ws.close(4000, 'heartbeat timeout');
+            } catch {
+              /* ignore */
+            }
+            try {
+              raw.terminate?.();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          try {
+            ws.send('{"type":"ping"}');
+          } catch {
+            /* closed */
+          }
+        }, TERMINAL_WS_PING_MS);
+        logger.info({ msg: 'browser.viewer_attached', browser: browserId, tab: raw.__tabId, viewer: viewerId });
+      },
+      async onMessage(evt, ws) {
+        const raw = ws.raw as BrowserWsBag | undefined;
+        if (!raw) return;
+        raw.__lastSeenAt = Date.now();
+        if (typeof evt.data !== 'string') return;
+        let msg: { type?: string; [k: string]: unknown };
+        try {
+          msg = JSON.parse(evt.data) as typeof msg;
+        } catch {
+          return;
+        }
+        if (msg.type === 'pong' || typeof msg.type !== 'string') return;
+        const reply = (m: Record<string, unknown>) => {
+          try {
+            ws.send(JSON.stringify(m));
+          } catch {
+            /* closed */
+          }
+        };
+        try {
+          if (msg.type === 'control') {
+            const mode = msg.mode === 'human' ? 'human' : 'agent';
+            const control = await browserService.setControl(browserId, mode, { by: viewerId, ...(typeof msg.handoffId === 'string' ? { handoffId: msg.handoffId } : {}) });
+            reply({ type: 'control', control });
+            return;
+          }
+          if (msg.type === 'tab' && typeof msg.tabId === 'string') {
+            // Switch the streamed tab: detach from the old hub, attach to the new.
+            const viewer = raw.__viewer!;
+            if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
+            const { tabId } = await screencasts.attach(browserId, msg.tabId, viewer);
+            raw.__tabId = tabId;
+            reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
+            return;
+          }
+          if (!browserService.humanControls(browserId, viewerId)) {
+            reply({ type: 'notice', text: 'Take over the browser first ("Ich übernehme") to click, type or navigate.' });
+            return;
+          }
+          if (msg.type === 'navigate' && typeof msg.url === 'string' && raw.__tabId) {
+            await browserService.humanNavigate(browserId, raw.__tabId, msg.url);
+            return;
+          }
+          if (msg.type === 'newtab') {
+            const tabId = await browserService.humanNewTab(browserId, viewerId);
+            const viewer = raw.__viewer!;
+            if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
+            await screencasts.attach(browserId, tabId, viewer);
+            raw.__tabId = tabId;
+            reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
+            return;
+          }
+          if (msg.type === 'closetab' && typeof msg.tabId === 'string') {
+            await browserService.humanCloseTab(browserId, msg.tabId);
+            return;
+          }
+          if (!raw.__tabId) return;
+          const { page } = browserService.viewerPage(browserId, raw.__tabId);
+          const hub = await screencasts.attach(browserId, raw.__tabId, raw.__viewer!);
+          const notice = await applyViewerInput(page, hub.hub.session, msg as { type: string });
+          if (notice) reply({ type: 'notice', text: notice });
+        } catch (err) {
+          reply({ type: 'error', text: isBrowserOpError(err) ? err.message : (err as Error).message.split('\n')[0] });
+        }
+      },
+      onClose(_evt, ws) {
+        const raw = ws.raw as BrowserWsBag | undefined;
+        if (!raw) return;
+        if (raw.__hbTimer) clearInterval(raw.__hbTimer);
+        if (raw.__changeTimer) clearTimeout(raw.__changeTimer);
+        raw.__unsub?.();
+        if (raw.__viewer && raw.__tabId) screencasts.detach(browserId, raw.__tabId, raw.__viewer);
+        logger.info({ msg: 'browser.viewer_detached', browser: browserId, tab: raw.__tabId ?? null });
+      },
+    };
+  }),
+);
+
 app.get('/video/status', async (c) => {
   const ready = videoGenReady();
   if (!ready.ok) return c.json({ enabled: false, reason: ready.reason });
@@ -5524,6 +5685,7 @@ const browserService = configureBrowserService(config.browser, {
   },
 });
 void browserService.init().catch((err) => logger.error({ msg: 'browser.service_init_failed', err: String(err) }));
+const screencasts = new ScreencastRegistry(browserService);
 
 configureSubagentAttention({
   graceMs: 2_000,
@@ -5705,6 +5867,7 @@ async function shutdown(signal: string): Promise<void> {
   releaseLockfile();
   stopClaudeCredentialSyncWatcher();
   await shutdownMemoryRegistry();
+  await screencasts.shutdown().catch(() => {});
   await browserService.shutdown().catch(() => {});
   await shutdownSshPool();
   process.exit(0);

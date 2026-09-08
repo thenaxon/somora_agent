@@ -482,7 +482,46 @@ export interface PromptPreviewResponse {
   notIncluded: string[];
 }
 
+export interface BrowserTabInfo {
+  tab_id: string;
+  url: string;
+  title: string;
+  agent: string;
+  session?: string;
+  generation: number;
+}
+export type BrowserControlMode = 'agent_control' | 'handoff_requested' | 'human_control' | 'paused';
+export interface BrowserHandoff {
+  id: string;
+  agent: string;
+  session: string;
+  reason: string;
+  resumeNote?: string;
+  requestedAt: number;
+}
+export interface BrowserInfo {
+  browser_id: string;
+  profile: string;
+  ephemeral: boolean;
+  state: 'running' | 'stopped';
+  control: BrowserControlMode;
+  handoff?: BrowserHandoff;
+  tabs: BrowserTabInfo[];
+  last_used: number;
+}
+
 export const api = {
+  /** Shared browser (docs/browser.md): running browsers + control state. */
+  browserStatus: () => getJson<{ enabled: boolean; browsers: BrowserInfo[] }>('/browser/status'),
+  browserControl: async (browserId: string, mode: 'human' | 'agent', handoffId?: string) => {
+    const res = await fetch(`/browser/${encodeURIComponent(browserId)}/control`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode, ...(handoffId ? { handoffId } : {}) }),
+    });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `control ${res.status}`);
+    return (await res.json()) as { ok: true; control: { mode: BrowserControlMode } };
+  },
   persona: (agent: string) => getJson<PersonaResponse>(`/agents/${encodeURIComponent(agent)}/persona`),
   /** Save one persona file. A 409 (changed on disk meanwhile) is thrown
    *  with `status` and `currentContent` attached so the editor can offer

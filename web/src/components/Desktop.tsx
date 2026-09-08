@@ -6,7 +6,7 @@
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { useMemo, useState } from 'react';
-import { Bell, BookOpen, ImagePlus, MessagesSquare, Square, Terminal, Users, Wrench } from 'lucide-react';
+import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, Square, Terminal, Users, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
 import { AgentContextMenu } from './AgentContextMenu';
@@ -16,6 +16,8 @@ import { Window } from './Window';
 import { ChatWindow } from './ChatWindow';
 import { TmuxListWindow } from './TmuxListWindow';
 import { TmuxTerminalWindow } from './TmuxTerminalWindow';
+import { BrowserListWindow } from './BrowserListWindow';
+import { BrowserWindow } from './BrowserWindow';
 import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
 import { SentinelWindow } from './SentinelWindow';
@@ -35,6 +37,7 @@ import { useWindowManager } from '../hooks/useWindowManager';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { useWikiEnabled } from '../hooks/useWikiEnabled';
 import { useMediaEnabled } from '../hooks/useMediaEnabled';
+import { useBrowserEnabled } from '../hooks/useBrowserEnabled';
 import { ActivityProvider } from './ActivityProvider';
 import type { AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
@@ -47,6 +50,7 @@ export function Desktop() {
   const chatCtx = useChatContext();
   const wikiEnabled = useWikiEnabled();
   const media = useMediaEnabled();
+  const browserEnabled = useBrowserEnabled();
 
   // Cross-agent activity feed: covers streaming-dots for agents whose
   // chat window the user has NOT opened (ChatProvider only knows about
@@ -102,6 +106,7 @@ export function Desktop() {
   const activeApps = new Set(
     wm.windows.flatMap((w) => {
       if (w.kind === 'tmux-list') return ['tmux'];
+      if (w.kind === 'browser-list' || w.kind === 'browser') return ['browser'];
       if (w.kind === 'sessions-list') return ['sessions'];
       if (w.kind === 'sentinel') return ['sentinel'];
       if (w.kind === 'wiki') return ['wiki'];
@@ -204,6 +209,22 @@ export function Desktop() {
         />
       ),
     },
+    // Shared browser (docs/browser.md) — hidden unless browser.enabled.
+    ...(browserEnabled
+      ? [
+          {
+            id: 'app:browser',
+            node: (
+              <AppTile
+                label="browser"
+                icon={<Globe size={26} />}
+                active={activeApps.has('browser')}
+                onClick={() => wm.openBrowserList()}
+              />
+            ),
+          },
+        ]
+      : []),
     // Hidden unless imageGen is configured — same probe-driven gate as
     // the wiki tile below.
     ...(media.any
@@ -341,6 +362,38 @@ export function Desktop() {
                 onResize={wm.resize}
               >
                 <TmuxListWindow onAttach={(tmuxName) => wm.openTmuxTerm(tmuxName)} />
+              </Window>
+            );
+          }
+          if (win.kind === 'browser-list') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <BrowserListWindow onOpen={(browserId, title) => wm.openBrowser(browserId, title)} />
+              </Window>
+            );
+          }
+          if (win.kind === 'browser' && win.browserId) {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <BrowserWindow browserId={win.browserId} />
               </Window>
             );
           }

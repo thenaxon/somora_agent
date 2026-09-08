@@ -1973,6 +1973,34 @@ woken once in its session (pass the `handoffId` from the status so a
 stale button press after a newer handoff does not wake twice). `404`
 when the browser is not running, `409` on a state conflict.
 
+### `GET /browser/attach` (WebSocket)
+
+`?browser=<id>&tab=<tabId>&viewer=<id>` — the live view behind the web
+client's browser window. Binary frames carry one JPEG each:
+`[u32 BE header length][JSON header][JPEG]`, header `{ tabId,
+generation, seq, url, cssWidth, cssHeight, scrollX, scrollY, ts }`.
+Frames are ack-paced (~20 fps max) and skipped for a viewer whose
+socket has more than 2 MB pending. Text frames (JSON):
+
+- server → viewer: `ping` (answer `{"type":"pong"}`; 80 s of silence
+  drops the socket), `ready` `{browser, tabId, viewerId}` after attach
+  or a tab switch, `tabs` `{browser}` whenever tabs or control changed,
+  `control` `{control}` after a control request, `notice`/`error`
+  `{text}`.
+- viewer → server: `control` `{mode:"human"|"agent", handoffId?}`,
+  `tab` `{tabId}` (switch the streamed tab), and — only while this
+  viewer holds human control — `navigate` `{url}` (same policy as the
+  tool), `newtab`, `closetab` `{tabId}`, `resize` `{width,height}`,
+  `mousemove`/`click`/`mousedown`/`mouseup` `{x,y,button?,clickCount?}`
+  in CSS pixels of the streamed viewport, `wheel` `{x,y,deltaX,deltaY}`,
+  `text` `{text}` (composed text incl. paste; CDP `Input.insertText`),
+  `key` `{key, ctrl?, alt?, shift?, meta?, action?}` (Playwright key
+  names, e.g. `Enter`, `Control+a`), `back`, `forward`, `reload`. Input
+  from a viewer without control gets a `notice`, nothing is applied.
+
+Close codes: `1008` bad request (unknown browser, disabled), `4000`
+heartbeat timeout, `4001` tab closed, `1012` server shutdown.
+
 ## Sentinel — proactive triggers
 
 Sentinel installs time-based triggers that wake agents on a schedule.

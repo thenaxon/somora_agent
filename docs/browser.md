@@ -5,10 +5,10 @@ A real Chromium on the somora host that an agent drives with the
 client, so a login, a 2FA code or a captcha is yours to do and the
 agent continues in the same, now signed-in tab.
 
-Stage 1 (this version) is the service and the tool. The live picture
-in the web client, the browser tile and the take-over buttons follow
-in stages 2 and 3; the state machine behind them is already here and
-reachable over HTTP.
+Stage 1 is the service and the tool; stage 2 (this version) adds the
+live picture, manual control and the browser list in the web client.
+Stage 3 brings the chat notice with an **Open** button when an agent
+asks for you, and the taskbar marker.
 
 ## Setup
 
@@ -92,14 +92,41 @@ the tab is reset to `about:blank` right after and the next op reports
 where it was sent. That first request has been made by then — same
 limit OpenClaw documents; not a network firewall.
 
+## In the web client
+
+A **browser** tile appears on the desktop once `browser.enabled` is
+true. It opens the list: one row per running browser (= agent profile)
+with tab count, the active tab's title and the control state — *Agent
+steuert*, *wartet auf dich*, *du steuerst*. A row opens the browser
+window.
+
+The window streams the active tab live (JPEG screencast over a
+WebSocket, paced so a slow viewer drops frames instead of buffering
+them), with a tab bar, URL bar, back/forward/reload and the two
+buttons that matter:
+
+- **Ich übernehme** — you take control of this browser: clicks, wheel,
+  typing (umlauts, dead keys and paste included) and the URL bar go to
+  the page, the remote viewport follows your window size, and every
+  agent operation on this browser is refused until you hand back.
+  Other viewers of the same browser keep watching.
+- **Agent übernimmt** — hands control back. If the agent had asked for
+  you (`request_handoff`), it is woken once in the session it asked
+  from and told to take a fresh snapshot.
+
+Watching needs no take-over. Closing the window stops the stream, not
+the browser and not the agent's work. Control is per browser, not per
+tab. The footer shows the streamed tab, the viewport size, the page
+generation and the frame counter — useful when a picture looks stale
+right after a navigation.
+
 ## Handing the browser over
 
 When a page needs you, the agent calls `request_handoff` and ends its
 turn. The browser is now `handoff_requested`: every agent op is refused
 with `BROWSER_HUMAN_CONTROL`, and the tool description tells the model
-not to retry. Stage 3 puts a notice with an **Open** button in the chat
-and the take-over buttons in the browser window; until then the switch
-is the HTTP route:
+not to retry. The take-over buttons live in the browser window; the same
+switch is an HTTP route:
 
 ```bash
 curl -sk -X POST https://localhost:18737/browser/agent:naxon/control \
@@ -116,12 +143,13 @@ handoff survives a server restart. Control is per browser, not per tab:
 while you hold it, none of that agent's tabs move.
 
 `GET /browser/status` lists every running browser with tabs, control
-state and pending handoff — what the browser tile shows in stage 3.
+state and pending handoff — what the browser list shows.
 
 ## What it does not do (yet)
 
-No live picture and no manual control in the web client (stage 2),
-no upload/download UI, no passkeys or hardware keys (the remote
+No chat notice yet when an agent asks for you (stage 3 — watch the
+list's *wartet auf dich*), no upload/download UI, no passkeys or
+hardware keys (the remote
 browser cannot see your devices), no audio/video, no free JavaScript
 evaluation. Anti-bot detection is not evaded: a site that blocks
 automation blocks this too, so test with your own applications before

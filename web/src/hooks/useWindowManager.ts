@@ -318,6 +318,56 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the browser list (singleton), stage 2 of the shared
+   *  browser (docs/browser.md). */
+  const openBrowserList = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'browser-list');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(560, 420, zCounter + 1);
+    const id = `browser-list-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'browser-list',
+      title: 'browsers',
+      icon: '🌐',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
+  /** Open or focus the live view of one managed browser. Deduped per
+   *  browser id — one window per Chromium process, tabs inside it. */
+  const openBrowser = useCallback(
+    (browserId: string, title: string) => {
+      const existing = windows.find((w) => w.kind === 'browser' && w.browserId === browserId);
+      if (existing) {
+        focus(existing.id);
+        return;
+      }
+      const pos = randomPos(1100, 760, zCounter + 1);
+      const id = `browser-${browserId}-${Date.now()}`;
+      const next: WindowState = {
+        id,
+        kind: 'browser',
+        title,
+        meta: 'browser',
+        browserId,
+        ...pos,
+        minimized: false,
+      };
+      setWindows((ws) => [...ws, next]);
+      setZCounter((z) => z + 1);
+      setFocusedId(id);
+    },
+    [windows, zCounter, focus],
+  );
+
   /** Open a fresh shell-terminal window rooted in the somora
    *  workspace. NOT deduped — every click spawns another independent
    *  shell. Phase 1.5. */
@@ -565,6 +615,8 @@ export function useWindowManager() {
     setWindowSession,
     openTmuxList,
     openTmuxTerm,
+    openBrowserList,
+    openBrowser,
     openShellTerm,
     openSessionsList,
     openSentinelList,
