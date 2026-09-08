@@ -3726,7 +3726,7 @@ app.get(
             return;
           }
           if (!browserService.humanControls(browserId, viewerId)) {
-            reply({ type: 'notice', text: 'Take over the browser first ("Ich übernehme") to click, type or navigate.' });
+            reply({ type: 'notice', text: 'Take over the browser first ("Take over") to click, type or navigate.' });
             return;
           }
           if (msg.type === 'navigate' && typeof msg.url === 'string' && raw.__tabId) {

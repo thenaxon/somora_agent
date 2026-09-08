@@ -1,6 +1,6 @@
 // Live view of one managed browser (docs/browser.md, stage 2).
 //
-// Header: control state + "Ich übernehme" / "Agent übernimmt", tab bar,
+// Header: control state + "Take over" / "Hand back", tab bar,
 // URL bar with back/forward/reload. Stage: the JPEG screencast as an
 // <img>, one object URL at a time (revoked when the next frame lands).
 // Input goes to the server only while THIS viewer holds human control;
@@ -330,12 +330,12 @@ export function BrowserWindow({ browserId }: Props) {
         <span style={{ flex: 1 }} />
         <span style={{ color: status === 'open' ? 'var(--ok, #3fb950)' : 'var(--text-3)' }}>{status === 'open' ? '● live' : status === 'connecting' ? '○ connecting…' : `○ ${detail ?? 'closed'}`}</span>
         {iControl ? (
-          <button type="button" onClick={() => void handBack()} className="browser-btn browser-btn-primary" title="Give control back to the agent (wakes it if it asked for you)">
-            <Hand size={12} /> Agent übernimmt
+          <button type="button" onClick={() => void handBack()} className="browser-btn browser-btn-primary" title="Give control back to the agent (wakes it if it asked for you or if you changed something)">
+            <Hand size={12} /> Hand back
           </button>
         ) : (
           <button type="button" onClick={() => void takeOver()} className="browser-btn" title="Take control: your clicks and typing go to the page; the agent is paused">
-            <Hand size={12} /> Ich übernehme
+            <Hand size={12} /> Take over
           </button>
         )}
       </div>

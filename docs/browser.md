@@ -96,8 +96,8 @@ limit OpenClaw documents; not a network firewall.
 
 A **browser** tile appears on the desktop once `browser.enabled` is
 true. It opens the list: one row per running browser (= agent profile)
-with tab count, the active tab's title and the control state — *Agent
-steuert*, *wartet auf dich*, *du steuerst*. A row opens the browser
+with tab count, the active tab's title and the control state — *agent
+controls*, *waiting for you*, *you control*. A row opens the browser
 window.
 
 The window streams the active tab live (JPEG screencast over a
@@ -105,12 +105,12 @@ WebSocket, paced so a slow viewer drops frames instead of buffering
 them), with a tab bar, URL bar, back/forward/reload and the two
 buttons that matter:
 
-- **Ich übernehme** — you take control of this browser: clicks, wheel,
+- **Take over** — you take control of this browser: clicks, wheel,
   typing (umlauts, dead keys and paste included) and the URL bar go to
   the page, the remote viewport follows your window size, and every
   agent operation on this browser is refused until you hand back.
   Other viewers of the same browser keep watching.
-- **Agent übernimmt** — hands control back. If the agent had asked for
+- **Hand back** — hands control back. If the agent had asked for
   you (`request_handoff`), it is woken once in the session it asked
   from and told to take a fresh snapshot. If you took over on your own
   and did something (navigated, clicked, typed), the agent that used
@@ -151,7 +151,7 @@ state and pending handoff — what the browser list shows.
 ## What it does not do (yet)
 
 No chat notice yet when an agent asks for you (stage 3 — watch the
-list's *wartet auf dich*), no upload/download UI, no passkeys or
+list's *waiting for you*), no upload/download UI, no passkeys or
 hardware keys (the remote
 browser cannot see your devices), no audio/video, no free JavaScript
 evaluation. Anti-bot detection is not evaded: a site that blocks

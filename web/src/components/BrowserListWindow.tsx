@@ -1,7 +1,7 @@
 // Browser list — the body of the "browsers" app window. One row per
 // running managed Chromium (= per agent profile): who, how many tabs,
 // what the active tab shows, and above all the control state — "agent
-// steuert", "wartet auf dich", "du steuerst". Click a row → the live
+// controls", "waiting for you", "you control". Click a row → the live
 // browser window. Polls /browser/status every 3 s; stage 3 replaces the
 // polling with the change stream.
 
@@ -14,22 +14,22 @@ interface Props {
 }
 
 export function controlLabel(b: Pick<BrowserInfo, 'control' | 'state'>): { text: string; tone: 'ok' | 'warn' | 'info' | 'muted' } {
-  if (b.state === 'stopped') return { text: 'gestoppt', tone: 'muted' };
+  if (b.state === 'stopped') return { text: 'stopped', tone: 'muted' };
   switch (b.control) {
     case 'handoff_requested':
-      return { text: 'wartet auf dich', tone: 'warn' };
+      return { text: 'waiting for you', tone: 'warn' };
     case 'human_control':
-      return { text: 'du steuerst', tone: 'info' };
+      return { text: 'you control', tone: 'info' };
     case 'paused':
-      return { text: 'pausiert', tone: 'muted' };
+      return { text: 'paused', tone: 'muted' };
     default:
-      return { text: 'Agent steuert', tone: 'ok' };
+      return { text: 'agent controls', tone: 'ok' };
   }
 }
 
 export function browserTitle(b: Pick<BrowserInfo, 'browser_id' | 'profile' | 'ephemeral'>): string {
-  const base = b.browser_id.startsWith('profile:') ? `Profil ${b.profile}` : b.profile;
-  return b.ephemeral ? `${base} (temporär)` : base;
+  const base = b.browser_id.startsWith('profile:') ? `profile ${b.profile}` : b.profile;
+  return b.ephemeral ? `${base} (temporary)` : base;
 }
 
 export function BrowserListWindow({ onOpen }: Props) {
