@@ -20,7 +20,7 @@ import type { MemoryConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { chunkMarkdown } from './chunking.ts';
 import { resolveEmbeddingProvider, type EmbeddingProvider } from './embeddings.ts';
-import { blendEmbeddings, hybridSearch, type Hit, type SearchTarget } from './retrieval.ts';
+import { blendEmbeddings, contentTerms, hybridSearch, type Hit, type SearchTarget } from './retrieval.ts';
 import type { SharedIndex } from './shared-index.ts';
 import {
   closeMemoryDb,
@@ -672,6 +672,10 @@ export class MemoryManager {
        *  keep the better score per chunk (see hybridSearch). Auto-inject
        *  sets this whenever the message has a content word. */
       alsoQueryAlone?: boolean;
+      /** Override the fusion's BM25 share for this query (vector share
+       *  is the remainder). Auto-inject raises it for one/two-word
+       *  questions where the exact match is the whole point. */
+      bm25Weight?: number;
     },
   ): Promise<Hit[]> {
     const memDb = this.requireDb();
@@ -712,9 +716,13 @@ export class MemoryManager {
     const targets: SearchTarget[] = sharedDb
       ? [{ memDb, sources: ['memory'] }, { memDb: sharedDb, sources: ['vault', 'wiki'] }]
       : [{ memDb }];
+    const bm25Weight = opts?.bm25Weight ?? this.cfg.hybrid.bm25Weight;
+    const vectorWeight = opts?.bm25Weight !== undefined ? 1 - opts.bm25Weight : this.cfg.hybrid.vectorWeight;
     return hybridSearch(targets, query, queryEmbedding, {
-      vectorWeight: this.cfg.hybrid.vectorWeight,
-      bm25Weight: this.cfg.hybrid.bm25Weight,
+      vectorWeight,
+      bm25Weight,
+      queryTerms: contentTerms(query),
+      slugMatchBoost: this.cfg.hybrid.slugMatchBoost,
       maxResults: limit,
       minScore,
       ...(this.searchBoosts ? { sourceBoosts: this.searchBoosts } : {}),

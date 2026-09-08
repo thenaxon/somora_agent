@@ -651,9 +651,11 @@ memory:
     historyWeightShort: 0.55  # … for a message with only 1–2 content words
     historyWeightEmpty: 0.8   # … for a message with none ("das solltest du wissen?")
     historyTurnChars: 800     # head of each previous turn used for the blend
+    shortQueryBm25Weight: 0.5 # BM25 share for a 1–2-word question; null = hybrid default
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3
+    slugMatchBoost: 1.5       # boost a page whose slug names a query word (1 = off)
 
 # Projects (opt-in, off by default) — pointer-file manifests binding
 # a chat session to a real-world thing (Obsidian notes, code dirs,

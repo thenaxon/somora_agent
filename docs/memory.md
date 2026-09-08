@@ -188,9 +188,11 @@ memory:
     historyWeightShort: 0.55 # … when the message has only 1–2 content words
     historyWeightEmpty: 0.8  # … when it has none ("das solltest du wissen oder?")
     historyTurnChars: 800    # head of each turn that goes into the blend
+    shortQueryBm25Weight: 0.5 # BM25 share for a 1–2-word question (null = hybrid default)
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3
+    slugMatchBoost: 1.5      # page whose slug names a query word (1 = off)
 ```
 
 **How the query is built (since 2026-09-08).** The current message is
@@ -208,9 +210,21 @@ sessions:
   frau?"): `historyWeightShort`. None ("das solltest du aber wissen
   oder?"): `historyWeightEmpty` — the conversation is the topic.
 - A message with a content word also runs on its own, and a chunk
-  keeps the better of the two vector scores. A page the question names
-  outright is never pushed down by the history; a follow-up without a
-  topic word still finds its page through the history.
+  keeps the better of the two vector scores — each query vector's
+  candidates normalised on their own first, because a long blend
+  scores every page higher than a five-word question does. A page the
+  question names outright is never pushed down by the history; a
+  follow-up without a topic word still finds its page through the
+  history.
+- For a one- or two-word question ("wer ist walter?") the exact word
+  match is the question, so BM25 gets `shortQueryBm25Weight` of the
+  fusion instead of the hybrid default.
+- `hybrid.slugMatchBoost` (all searches, not only auto-inject): a chunk
+  whose slug contains a content word of the query is multiplied. The
+  page ABOUT a person or thing rarely repeats its own name — the Walter
+  page says "Walter" once, the family page four times — so BM25 alone
+  ranks the mentions above the page; the name in the slug marks the
+  canonical page.
 
 The BM25 side sees the message only, with filler words removed
 (`FTS_STOPWORDS` in `src/memory/retrieval.ts`, German and English) —

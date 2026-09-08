@@ -288,12 +288,27 @@ export const MemoryAutoInjectConfigSchema = z.object({
    *  where the topic usually is). 800 measured best on the labelled
    *  cases (400 lost follow-ups whose topic sat past the opening). */
   historyTurnChars: z.number().int().positive().default(800),
-}).default({ queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800 });
+  /**
+   * BM25 share of the fusion for a message with only one or two content
+   * words ("wer ist walter?"): the exact word match IS the question, and
+   * the default 0.3 lets a topic-drifted vector outvote it. Vector share
+   * is the remainder. `null` = use `memory.hybrid` as for every query.
+   */
+  shortQueryBm25Weight: z.number().min(0).max(1).nullable().default(0.5),
+}).default({ queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5 });
 
 export const MemoryHybridConfigSchema = z.object({
   vectorWeight: z.number().min(0).max(1).default(0.7),
   bm25Weight: z.number().min(0).max(1).default(0.3),
-}).default({ vectorWeight: 0.7, bm25Weight: 0.3 });
+  /**
+   * Multiplier on the fused score of a chunk whose slug contains a
+   * content word of the query — `personen/walter-siegl` for "wer ist
+   * walter?". The page ABOUT something rarely repeats its name in the
+   * body, so BM25 ranks the pages that mention it above it; the slug
+   * says which page is the canonical one. 1 = off.
+   */
+  slugMatchBoost: z.number().min(1).max(3).default(1.5),
+}).default({ vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5 });
 
 export const MemoryConfigSchema = z.object({
   embedding: MemoryEmbeddingConfigSchema,
@@ -303,8 +318,8 @@ export const MemoryConfigSchema = z.object({
 }).default({
   embedding: { provider: 'local', model: 'all-MiniLM-L6-v2' },
   chunking: { targetTokens: 400, overlapTokens: 80 },
-  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800 },
-  hybrid: { vectorWeight: 0.7, bm25Weight: 0.3 },
+  autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5 },
+  hybrid: { vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5 },
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 

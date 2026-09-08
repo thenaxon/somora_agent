@@ -167,3 +167,17 @@ test('search over [agent∖memory, shared] ranks like the old single DB (order; 
   assert.ok(wikiOnly.length > 0 && wikiOnly.every((h) => h.source === 'wiki'));
   single.db.close(); agent.db.close(); shared.db.close();
 });
+
+test('slugMatchBoost lifts the page whose slug names the query term above pages that merely mention it', () => {
+  const db = open('slugboost.db');
+  fill(db, [
+    { path: '/vault/somora/w.md', source: 'wiki', slug: 'personen/walter-siegl', text: 'walter ist der vater von rene und wohnt in klosterneuburg', vec: [0.7, 0.7, 0, 0] },
+    { path: '/vault/somora/f.md', source: 'wiki', slug: 'personen/familie-siegl', text: 'walter walter walter walter ist teil der familie mit rene', vec: [0.7, 0.7, 0, 0] },
+  ]);
+  const cfg = { vectorWeight: 0.7, bm25Weight: 0.3, maxResults: 5, minScore: 0, queryTerms: ['walter'] };
+  const off = hybridSearch(db, 'wer ist walter', Float32Array.from([0.7, 0.7, 0, 0]), { ...cfg, slugMatchBoost: 1 });
+  assert.equal(off[0]!.slug, 'personen/familie-siegl', 'without the boost BM25 prefers the page that repeats the name');
+  const on = hybridSearch(db, 'wer ist walter', Float32Array.from([0.7, 0.7, 0, 0]), { ...cfg, slugMatchBoost: 1.5 });
+  assert.equal(on[0]!.slug, 'personen/walter-siegl');
+  db.db.close();
+});

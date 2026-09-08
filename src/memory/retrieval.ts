@@ -28,6 +28,17 @@ export interface RetrievalConfig {
   /** Optional hard filter — only return hits from these sources.
    *  Empty/undefined means "all sources" (default behavior). */
   sourceFilter?: ReadonlyArray<string>;
+  /**
+   * Content words of the query (see contentTerms). A chunk whose slug
+   * contains one of them — `personen/walter-siegl` for "wer ist
+   * walter?" — gets its fused score multiplied by `slugMatchBoost`.
+   * The page ABOUT a person or thing rarely repeats its own name in
+   * the body (the Walter page says "Walter" once; the family page says
+   * it four times), so BM25 alone ranks the mentions above the page.
+   * The name in the slug is the signal that it is the canonical page.
+   */
+  queryTerms?: ReadonlyArray<string>;
+  slugMatchBoost?: number;
 }
 
 export interface Hit {
@@ -114,14 +125,33 @@ export function hybridSearch(
   type Cand = { target: number; chunkId: number; score: number };
   const vecPool: Cand[] = [];
   const bm25Pool: Cand[] = [];
+  // Several query vectors: each vector's candidates are min-max
+  // normalised on their own BEFORE the best score per chunk is taken.
+  // Raw similarities of different query vectors are not comparable —
+  // a message⊕history blend (long, rich) scores every page ~0.54 while
+  // a five-word question tops out at 0.49, so a raw cut kept only the
+  // blend's candidates and the page the question named never entered
+  // the pool (live case 2026-09-08 17:58, "wer ist walter ?").
+  const perVectorNormalised = queryEmbeddings.length > 1;
   targets.forEach((t, ti) => {
     if (queryEmbeddings.length > 0 && t.memDb.hasVec) {
-      // Several query vectors: best score per chunk wins.
       const best = new Map<number, number>();
       for (const emb of queryEmbeddings) {
-        for (const h of runVectorSearch(t.memDb, emb, recall, t.sources)) {
+        const hits = runVectorSearch(t.memDb, emb, recall, t.sources);
+        let min = Infinity;
+        let max = -Infinity;
+        for (const h of hits) {
+          if (h.score < min) min = h.score;
+          if (h.score > max) max = h.score;
+        }
+        for (const h of hits) {
+          // Keep the normalised value strictly positive: 0 means "absent
+          // from this modality" downstream.
+          const v = perVectorNormalised
+            ? max > min ? 0.001 + 0.999 * ((h.score - min) / (max - min)) : 1
+            : h.score;
           const cur = best.get(h.chunkId);
-          if (cur === undefined || h.score > cur) best.set(h.chunkId, h.score);
+          if (cur === undefined || v > cur) best.set(h.chunkId, v);
         }
       }
       for (const [chunkId, score] of best) vecPool.push({ target: ti, chunkId, score });
@@ -181,14 +211,26 @@ export function hybridSearch(
 
   // If source-boosts OR source-filter is configured, materialize source
   // per fused candidate BEFORE sort. One query per DB covers both features.
-  const needSources = Boolean(cfg.sourceBoosts) || Boolean(cfg.sourceFilter?.length);
+  const slugTerms = (cfg.queryTerms ?? []).filter((w) => w.length >= 4);
+  const useSlugBoost = slugTerms.length > 0 && (cfg.slugMatchBoost ?? 1) !== 1;
+  const needSources = Boolean(cfg.sourceBoosts) || Boolean(cfg.sourceFilter?.length) || useSlugBoost;
   const sourceByKey = new Map<Key, string>();
+  const slugByKey = new Map<Key, string>();
   if (needSources) {
     targets.forEach((t, ti) => {
       const ids = [...merged.values()].filter((m) => m.target === ti).map((m) => m.chunkId);
-      for (const [id, src] of loadSourcesForIds(t.memDb, ids)) sourceByKey.set(keyOf(ti, id), src);
+      for (const [id, row] of loadSourcesForIds(t.memDb, ids)) {
+        sourceByKey.set(keyOf(ti, id), row.source);
+        slugByKey.set(keyOf(ti, id), row.slug);
+      }
     });
   }
+  const slugMatches = (key: Key): boolean => {
+    const slug = slugByKey.get(key);
+    if (!slug) return false;
+    const words = slug.toLowerCase().split(/[^\p{L}\p{N}]+/u);
+    return slugTerms.some((t) => words.includes(t));
+  };
 
   const filterSet = cfg.sourceFilter?.length ? new Set(cfg.sourceFilter) : null;
 
@@ -210,6 +252,7 @@ export function hybridSearch(
         1.0;
       score *= boost;
     }
+    if (useSlugBoost && slugMatches(key)) score *= cfg.slugMatchBoost!;
     fused.push({ key, target: raw.target, id: raw.chunkId, score, vec: raw.vec, bm25: raw.bm25 });
   }
   fused.sort((a, b) => b.score - a.score);
@@ -367,14 +410,14 @@ export function vecScoreFromCosine(cos: number): number {
   return 1 / (1 + d);
 }
 
-function loadSourcesForIds(memDb: MemoryDb, ids: number[]): Map<number, string> {
-  const out = new Map<number, string>();
+function loadSourcesForIds(memDb: MemoryDb, ids: number[]): Map<number, { source: string; slug: string }> {
+  const out = new Map<number, { source: string; slug: string }>();
   if (ids.length === 0) return out;
   const placeholders = ids.map(() => '?').join(',');
   const rows = memDb.db
-    .prepare(`SELECT id, source FROM chunks WHERE id IN (${placeholders})`)
-    .all(...ids) as Array<{ id: number; source: string }>;
-  for (const r of rows) out.set(r.id, r.source);
+    .prepare(`SELECT id, source, slug FROM chunks WHERE id IN (${placeholders})`)
+    .all(...ids) as Array<{ id: number; source: string; slug: string }>;
+  for (const r of rows) out.set(r.id, { source: r.source, slug: r.slug });
   return out;
 }
 

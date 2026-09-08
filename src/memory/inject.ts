@@ -40,6 +40,7 @@ type AutoInjectCfg = {
   historyWeightShort: number;
   historyWeightEmpty: number;
   historyTurnChars: number;
+  shortQueryBm25Weight: number | null;
 };
 
 export interface InjectResult {
@@ -68,11 +69,17 @@ export async function injectMemoryContext(args: {
   const contextWeight = historyWeightFor(query, args.cfg);
   // A message with a content word also runs on its own, so a page it
   // names outright keeps its score against whatever the history says.
-  const alsoQueryAlone = contentTerms(query).length > 0;
+  const terms = contentTerms(query).length;
+  const alsoQueryAlone = terms > 0;
+  // One or two content words: the exact word match is the question.
+  const shortBm25 = terms > 0 && terms <= 2 && args.cfg.shortQueryBm25Weight !== null
+    ? args.cfg.shortQueryBm25Weight
+    : undefined;
   const hits = await args.mgr.search(query, {
     limit: args.cfg.maxResults,
     minScore: args.cfg.minScore,
     ...(context ? { context, contextWeight, alsoQueryAlone } : {}),
+    ...(shortBm25 !== undefined ? { bm25Weight: shortBm25 } : {}),
   });
 
   if (hits.length === 0) {
