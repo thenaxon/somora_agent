@@ -182,6 +182,16 @@ same two actions as `/reload` and `/restart YES`.
   no window can cover it, so **Arrange** (tile all windows across the
   desktop) is always reachable. Save/restore persists positions in
   `localStorage`.
+- **Arrange** tiles every non-minimized window over the full desktop.
+  Counts that don't fill a grid get a full-height *master* on the left
+  with the rest stacked beside it (3 → one left, two right; likewise 5
+  and 7) instead of a grid with a hole in it; 1, 2, 4, 6 … tile as the
+  even grid they always did. Windows keep their left-to-right,
+  top-to-bottom order, so the leftmost window becomes the master and
+  arranging twice changes nothing. Icons are not worked around — they
+  sit below windows, so Arrange uses the width right up to the left
+  edge and a covered icon is back when you close or minimize the
+  window.
 
 Layout state is per-browser-profile. There's no server-side window
 manager — each device remembers its own arrangement.

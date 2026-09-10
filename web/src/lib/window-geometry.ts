@@ -81,6 +81,73 @@ export function fitToDesktop<T extends Rect>(win: T, vp: Viewport): T {
   return { ...win, x, y, w, h };
 }
 
+/** Gap between arranged windows, and the inset from the desktop edges. */
+export const ARRANGE_GAP = 16;
+export const ARRANGE_PAD = 24;
+
+/** Columns the plain grid uses for n windows — the rule Arrange has had
+ *  since it existed, kept so 1, 2, 4, 6 … windows land exactly where
+ *  users are used to. */
+function gridColumns(n: number): number {
+  return n <= 1 ? 1 : n <= 4 ? 2 : 3;
+}
+
+/** Slots for n windows inside `area`, in the order they should be filled.
+ *
+ *  A plain grid leaves a hole whenever n does not fill it — three windows
+ *  used to quarter the screen and leave the fourth quarter empty, which
+ *  is what prompted this (Luca's report). So when the grid would not come
+ *  out even, the first slot becomes a MASTER spanning the full height on
+ *  the left and the remaining windows tile to its right:
+ *
+ *      3 windows            5 windows
+ *      ┌────┬────┐          ┌───┬───┬───┐
+ *      │    │ B  │          │   │ B │ C │
+ *      │ A  ├────┤          │ A ├───┼───┤
+ *      │    │ C  │          │   │ D │ E │
+ *      └────┴────┘          └───┴───┴───┘
+ *
+ *  The master keeps one grid column's width, so the outer proportions
+ *  stay those of the plain grid. The fallback matters as much as the
+ *  rule: master-stack is only used when the rest divides evenly into the
+ *  remaining columns (3, 5, 7 …). For 8 windows it would just move the
+ *  hole from the grid into the stack, so the plain grid stays. */
+export function arrangeSlots(n: number, area: Rect, gap: number = ARRANGE_GAP): Rect[] {
+  if (n <= 0) return [];
+  const cols = gridColumns(n);
+  const rows = Math.ceil(n / cols);
+  const cellW = Math.floor((area.w - gap * (cols - 1)) / cols);
+
+  const stackCols = cols - 1;
+  const rest = n - 1;
+  const stackRows = stackCols > 0 ? Math.ceil(rest / stackCols) : 0;
+  const useMaster = cols * rows !== n && stackCols > 0 && stackCols * stackRows === rest;
+
+  if (!useMaster) {
+    const cellH = Math.floor((area.h - gap * (rows - 1)) / rows);
+    return Array.from({ length: n }, (_, i) => ({
+      x: area.x + (i % cols) * (cellW + gap),
+      y: area.y + Math.floor(i / cols) * (cellH + gap),
+      w: cellW,
+      h: cellH,
+    }));
+  }
+
+  const stackX = area.x + cellW + gap;
+  const stackW = area.w - cellW - gap;
+  const sw = Math.floor((stackW - gap * (stackCols - 1)) / stackCols);
+  const sh = Math.floor((area.h - gap * (stackRows - 1)) / stackRows);
+  return [
+    { x: area.x, y: area.y, w: cellW, h: area.h },
+    ...Array.from({ length: rest }, (_, i) => ({
+      x: stackX + (i % stackCols) * (sw + gap),
+      y: area.y + Math.floor(i / stackCols) * (sh + gap),
+      w: sw,
+      h: sh,
+    })),
+  ];
+}
+
 /** Fit every window; returns the same array when none moved. */
 export function fitAllToDesktop<T extends Rect>(wins: T[], vp: Viewport): T[] {
   let changed = false;
