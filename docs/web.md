@@ -191,7 +191,9 @@ same two actions as `/reload` and `/restart YES`.
   arranging twice changes nothing. Icons are not worked around — they
   sit below windows, so Arrange uses the width right up to the left
   edge and a covered icon is back when you close or minimize the
-  window.
+  window. Chat windows whose agent no longer exists (a renamed or
+  deleted agent in a restored layout) are dropped once the server has
+  answered, rather than sitting there invisible and taking up a tile.
 
 Layout state is per-browser-profile. There's no server-side window
 manager — each device remembers its own arrangement.

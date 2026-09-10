@@ -5,7 +5,7 @@
 // taskbar (bottom). Window manager state is owned here so dock
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, Square, Terminal, Users, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
@@ -51,6 +51,16 @@ export function Desktop() {
   const wikiEnabled = useWikiEnabled();
   const media = useMediaEnabled();
   const browserEnabled = useBrowserEnabled();
+  // Saved layouts outlive the agents in them. Once the server has
+  // actually answered (not loading, not offline), chat windows for
+  // agents it does not serve are dropped — otherwise they linger
+  // invisible, because the render below skips them, while still taking
+  // up a slot in Arrange.
+  const { dropOrphanChats } = wm;
+  useEffect(() => {
+    if (loading || error) return;
+    dropOrphanChats(new Set(agents.map((a) => a.name)));
+  }, [agents, loading, error, dropOrphanChats]);
 
   // Cross-agent activity feed: covers streaming-dots for agents whose
   // chat window the user has NOT opened (ChatProvider only knows about

@@ -549,6 +549,24 @@ export function useWindowManager() {
     [windows],
   );
 
+  /** Drop restored chat windows whose agent no longer exists.
+   *
+   *  A saved layout outlives the agents in it: rename or delete an agent
+   *  and its window comes back from localStorage pointing at a name the
+   *  server no longer serves. Desktop.tsx renders nothing for it, so it
+   *  sits there invisible and unclosable — but still counted, which made
+   *  Arrange leave a hole for a window nobody could see (Luca's report).
+   *
+   *  Only ever called with an agent list the server actually answered
+   *  with; while it is loading or unreachable the windows stay put,
+   *  because "no agents" and "cannot ask" must not look the same here. */
+  const dropOrphanChats = useCallback((known: ReadonlySet<string>) => {
+    setWindows((ws) => {
+      const next = ws.filter((w) => w.kind !== 'chat' || !w.agentName || known.has(w.agentName));
+      return next.length === ws.length ? ws : next;
+    });
+  }, []);
+
   /** Arrange uses the whole desktop, right up to the left edge.
    *
    *  It used to keep a fixed 140 px free there, from the days when the
@@ -619,6 +637,7 @@ export function useWindowManager() {
     move,
     resize,
     autoArrange,
+    dropOrphanChats,
     saveLayout,
     restoreLayout,
     setWindowSession,
