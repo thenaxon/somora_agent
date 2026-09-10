@@ -12,9 +12,26 @@
 // the server (PUT /agents/:name/tools, PUT /agents/:name/skills) — the
 // UI never touches agent.yaml itself. The window's internal kind stays
 // `tools` so saved window layouts keep working.
+//
+// Groups are collapsible and carry their own eye (2026-09-10, Luca's
+// report). One MCP server can contribute dozens of tools, and turning
+// that server off for an agent meant clicking every single row; the
+// group eye writes them all in ONE request instead. Collapsed by
+// default for the same reason — with a big MCP connected the flat list
+// was hundreds of rows deep before you reached the skills.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Eye, EyeOff, Plug, RefreshCw, Sparkles } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Plug,
+  RefreshCw,
+  Sparkles,
+} from 'lucide-react';
+import { toggleGroupVisibility, type AbilityRow } from '../lib/ability-gating';
 import {
   api,
   type AgentInfo,
@@ -22,6 +39,107 @@ import {
   type AgentToolsResponse,
   type McpStatusResponse,
 } from '../lib/api';
+
+/** Which groups the user has opened, by group key. Persisted so the
+ *  window does not forget the toolsets you actually work with every
+ *  time it is closed. Stores the OPEN ones: the default is collapsed,
+ *  so an empty/missing entry has to mean "all shut". */
+const STORAGE_KEY_EXPANDED = 'somora-abilities-expanded';
+/** Group key of the skills section — namespaced so it can never collide
+ *  with a toolset or an MCP server called "skills". */
+const SKILLS_KEY = '\0skills';
+
+function readExpanded(): Set<string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_EXPANDED);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((k): k is string => typeof k === 'string')) : new Set();
+  } catch {
+    // Blocked or corrupt storage — everything collapsed, same as a
+    // first visit.
+    return new Set();
+  }
+}
+
+const groupHeadStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 6,
+  fontFamily: '"JetBrains Mono", monospace',
+  fontSize: 11,
+  textTransform: 'uppercase',
+  letterSpacing: 1,
+  color: 'var(--text-2)',
+  marginBottom: 4,
+  cursor: 'pointer',
+  userSelect: 'none',
+};
+
+interface GroupProps {
+  /** Stable key for storage and test ids — `label` may be JSX. */
+  groupKey: string;
+  label: ReactNode;
+  /** How many rows the group holds, and how many of them are hidden —
+   *  the counts are the whole point of a collapsed group. */
+  total: number;
+  hidden: number;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  /** Show/hide every row at once. Undefined while the matrix is
+   *  read-only or a write is in flight. */
+  onToggleAll: (() => void) | undefined;
+  children: ReactNode;
+}
+
+/** One collapsible group: header with expander, group eye and counts.
+ *  Exported for tools-render.test.mts. */
+export function Group({ groupKey, label, total, hidden, expanded, onToggleExpanded, onToggleAll, children }: GroupProps) {
+  const allHidden = total > 0 && hidden === total;
+  const someHidden = hidden > 0 && hidden < total;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={groupHeadStyle} onClick={onToggleExpanded}>
+        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        <span
+          data-testid={`tools-group-toggle-${groupKey}`}
+          title={
+            !onToggleAll
+              ? undefined
+              : allHidden
+                ? 'Show all in this group'
+                : 'Hide all in this group'
+          }
+          onClick={(e) => {
+            // The header itself expands/collapses — the eye must not
+            // also do that on its way through.
+            e.stopPropagation();
+            onToggleAll?.();
+          }}
+          style={{
+            display: 'inline-flex',
+            cursor: onToggleAll ? 'pointer' : 'not-allowed',
+            // Mixed groups sit between the two states: the eye is open
+            // (one more click hides everything) but dimmed, so "some
+            // hidden" is not mistaken for "all visible".
+            color: allHidden ? 'var(--text-2)' : 'var(--accent)',
+            opacity: someHidden ? 0.55 : 1,
+          }}
+        >
+          {allHidden ? <EyeOff size={14} /> : <Eye size={14} />}
+        </span>
+        <span style={{ color: hidden === total && total > 0 ? 'var(--text-2)' : 'var(--text-1)' }}>
+          {label}
+        </span>
+        <span style={{ textTransform: 'none', letterSpacing: 0, opacity: 0.75 }}>
+          {total}
+          {hidden > 0 ? ` · ${hidden} hidden` : ''}
+        </span>
+      </div>
+      {expanded && children}
+    </div>
+  );
+}
 
 export function ToolsWindow() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -31,6 +149,24 @@ export function ToolsWindow() {
   const [mcp, setMcp] = useState<McpStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(readExpanded);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_EXPANDED, JSON.stringify([...expanded]));
+    } catch {
+      // Quota or blocked — the open/closed state just won't survive
+      // this session, which is not worth surfacing.
+    }
+  }, [expanded]);
+
+  const toggleExpanded = useCallback((key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     void api
@@ -54,25 +190,6 @@ export function ToolsWindow() {
     }
   }, []);
 
-  const toggleSkill = useCallback(
-    async (skillName: string, currentlyVisible: boolean) => {
-      if (!agent || !skills || skills.hasPatternRules || saving) return;
-      const deny = new Set(skills.gating?.deny ?? []);
-      if (currentlyVisible) deny.add(skillName);
-      else deny.delete(skillName);
-      setSaving(true);
-      try {
-        await api.setAgentSkills(agent, { deny: [...deny], allow: skills.gating?.allow ?? [] });
-        await refresh(agent);
-      } catch (err) {
-        setError((err as Error).message);
-      } finally {
-        setSaving(false);
-      }
-    },
-    [agent, skills, saving, refresh],
-  );
-
   useEffect(() => {
     if (agent) void refresh(agent);
   }, [agent, refresh]);
@@ -94,15 +211,15 @@ export function ToolsWindow() {
     });
   }, [data]);
 
-  const toggle = useCallback(
-    async (toolName: string, currentlyVisible: boolean) => {
+  /** Write a tool deny-list and reload. One request however many names
+   *  changed — a group of 60 MCP tools is a single PUT, not 60. */
+  const writeTools = useCallback(
+    async (rows: AbilityRow[]) => {
       if (!agent || !data || data.hasPatternRules || saving) return;
-      const deny = new Set(data.gating?.deny ?? []);
-      if (currentlyVisible) deny.add(toolName);
-      else deny.delete(toolName);
+      const deny = toggleGroupVisibility(data.gating?.deny ?? [], rows);
       setSaving(true);
       try {
-        await api.setAgentTools(agent, { deny: [...deny], allow: data.gating?.allow ?? [] });
+        await api.setAgentTools(agent, { deny, allow: data.gating?.allow ?? [] });
         await refresh(agent);
       } catch (err) {
         setError((err as Error).message);
@@ -112,6 +229,48 @@ export function ToolsWindow() {
     },
     [agent, data, saving, refresh],
   );
+
+  const toggle = useCallback(
+    (toolName: string, currentlyVisible: boolean) =>
+      void writeTools([{ name: toolName, visible: currentlyVisible }]),
+    [writeTools],
+  );
+
+  const toggleGroup = useCallback(
+    (list: AbilityRow[]) => void writeTools(list),
+    [writeTools],
+  );
+
+  const writeSkills = useCallback(
+    async (rows: AbilityRow[]) => {
+      if (!agent || !skills || skills.hasPatternRules || saving) return;
+      const deny = toggleGroupVisibility(skills.gating?.deny ?? [], rows);
+      setSaving(true);
+      try {
+        await api.setAgentSkills(agent, { deny, allow: skills.gating?.allow ?? [] });
+        await refresh(agent);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [agent, skills, saving, refresh],
+  );
+
+  const toggleSkill = useCallback(
+    (skillName: string, currentlyVisible: boolean) =>
+      void writeSkills([{ name: skillName, visible: currentlyVisible }]),
+    [writeSkills],
+  );
+
+  const toggleAllSkills = useCallback(
+    () => void writeSkills(skills?.skills ?? []),
+    [writeSkills, skills],
+  );
+
+  const toolsLocked = !!data?.hasPatternRules || saving;
+  const skillsLocked = !!skills?.hasPatternRules || saving;
 
   return (
     <div style={{ display: 'flex', height: '100%', fontSize: 13 }}>
@@ -174,19 +333,16 @@ export function ToolsWindow() {
         )}
         {!data && !error && <div style={{ color: 'var(--text-2)' }}>Loading…</div>}
         {groups.map(([group, list]) => (
-          <div key={group} style={{ marginBottom: 14 }}>
-            <div
-              style={{
-                fontFamily: '"JetBrains Mono", monospace',
-                fontSize: 11,
-                textTransform: 'uppercase',
-                letterSpacing: 1,
-                color: 'var(--text-2)',
-                marginBottom: 4,
-              }}
-            >
-              {group}
-            </div>
+          <Group
+            key={group}
+            groupKey={group}
+            label={group}
+            total={list.length}
+            hidden={list.filter((t) => !t.visible).length}
+            expanded={expanded.has(group)}
+            onToggleExpanded={() => toggleExpanded(group)}
+            onToggleAll={toolsLocked ? undefined : () => toggleGroup(list)}
+          >
             {list.map((t) => (
               <div
                 key={t.name}
@@ -203,9 +359,9 @@ export function ToolsWindow() {
               >
                 <span
                   data-testid={`tools-toggle-${t.name}`}
-                  onClick={() => void toggle(t.name, t.visible)}
+                  onClick={() => toggle(t.name, t.visible)}
                   style={{
-                    cursor: data?.hasPatternRules || saving ? 'not-allowed' : 'pointer',
+                    cursor: toolsLocked ? 'not-allowed' : 'pointer',
                     color: t.visible ? 'var(--accent)' : 'var(--text-2)',
                     display: 'inline-flex',
                   }}
@@ -220,87 +376,88 @@ export function ToolsWindow() {
                 >
                   {t.name}
                 </span>
-
               </div>
             ))}
-          </div>
+          </Group>
         ))}
 
-        {/* Skills — same matrix, same rules, one section. */}
+        {/* Skills — same matrix, same rules, one more group. */}
         {skills && (
           <div style={{ marginTop: 18, borderTop: '1px solid var(--bg-3)', paddingTop: 12 }}>
-            <div
-              style={{
-                fontFamily: '"JetBrains Mono", monospace',
-                fontSize: 11,
-                textTransform: 'uppercase',
-                letterSpacing: 1,
-                color: 'var(--text-2)',
-                marginBottom: 4,
-              }}
+            <Group
+              groupKey="skills"
+              label={
+                <>
+                  <Sparkles size={12} style={{ verticalAlign: -1 }} /> skills
+                </>
+              }
+              total={skills.skills.length}
+              hidden={skills.skills.filter((s) => !s.visible).length}
+              expanded={expanded.has(SKILLS_KEY)}
+              onToggleExpanded={() => toggleExpanded(SKILLS_KEY)}
+              onToggleAll={skillsLocked || skills.skills.length === 0 ? undefined : toggleAllSkills}
             >
-              <Sparkles size={12} style={{ verticalAlign: -1 }} /> skills
-            </div>
-            {skills.hasPatternRules && (
-              <div
-                style={{
-                  background: 'var(--bg-2)',
-                  border: '1px solid var(--bg-3)',
-                  borderRadius: 6,
-                  padding: '8px 10px',
-                  marginBottom: 8,
-                  color: 'var(--text-2)',
-                }}
-              >
-                <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> This agent's{' '}
-                <code>agent.yaml</code> carries a hand-written skill allow-list (
-                {(skills.gating?.allow ?? []).join(', ')}) — the skill matrix is read-only. Edit the
-                file to change it.
-              </div>
-            )}
-            {skills.skills.length === 0 && (
-              <div style={{ color: 'var(--text-2)' }}>
-                No skills installed — see <code>docs/skills.md</code>.
-              </div>
-            )}
-            {skills.skills.map((s) => (
-              <div
-                key={s.name}
-                data-testid={`skills-row-${s.name}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '4px 6px',
-                  borderRadius: 4,
-                  opacity: s.visible ? 1 : 0.45,
-                }}
-                title={s.available ? s.description : `${s.description}\n\nunavailable on this host: ${s.unavailableReason ?? 'requirements not met'}`}
-              >
-                <span
-                  data-testid={`skills-toggle-${s.name}`}
-                  onClick={() => void toggleSkill(s.name, s.visible)}
+              {skills.hasPatternRules && (
+                <div
                   style={{
-                    cursor: skills.hasPatternRules || saving ? 'not-allowed' : 'pointer',
-                    color: s.visible ? 'var(--accent)' : 'var(--text-2)',
-                    display: 'inline-flex',
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--bg-3)',
+                    borderRadius: 6,
+                    padding: '8px 10px',
+                    marginBottom: 8,
+                    color: 'var(--text-2)',
                   }}
                 >
-                  {s.visible ? <Eye size={15} /> : <EyeOff size={15} />}
-                </span>
-                <span
+                  <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> This agent's{' '}
+                  <code>agent.yaml</code> carries a hand-written skill allow-list (
+                  {(skills.gating?.allow ?? []).join(', ')}) — the skill matrix is read-only. Edit
+                  the file to change it.
+                </div>
+              )}
+              {skills.skills.length === 0 && (
+                <div style={{ color: 'var(--text-2)' }}>
+                  No skills installed — see <code>docs/skills.md</code>.
+                </div>
+              )}
+              {skills.skills.map((s) => (
+                <div
+                  key={s.name}
+                  data-testid={`skills-row-${s.name}`}
                   style={{
-                    fontFamily: '"JetBrains Mono", monospace',
-                    color: s.visible ? 'var(--text-1)' : 'var(--text-2)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '4px 6px',
+                    borderRadius: 4,
+                    opacity: s.visible ? 1 : 0.45,
                   }}
+                  title={s.available ? s.description : `${s.description}\n\nunavailable on this host: ${s.unavailableReason ?? 'requirements not met'}`}
                 >
-                  {s.name}
-                </span>
-                {!s.available && (
-                  <span style={{ fontSize: 11, color: 'var(--warn, #d29922)' }}>unavailable</span>
-                )}
-              </div>
-            ))}
+                  <span
+                    data-testid={`skills-toggle-${s.name}`}
+                    onClick={() => toggleSkill(s.name, s.visible)}
+                    style={{
+                      cursor: skillsLocked ? 'not-allowed' : 'pointer',
+                      color: s.visible ? 'var(--accent)' : 'var(--text-2)',
+                      display: 'inline-flex',
+                    }}
+                  >
+                    {s.visible ? <Eye size={15} /> : <EyeOff size={15} />}
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: '"JetBrains Mono", monospace',
+                      color: s.visible ? 'var(--text-1)' : 'var(--text-2)',
+                    }}
+                  >
+                    {s.name}
+                  </span>
+                  {!s.available && (
+                    <span style={{ fontSize: 11, color: 'var(--warn, #d29922)' }}>unavailable</span>
+                  )}
+                </div>
+              ))}
+            </Group>
           </div>
         )}
       </div>

@@ -128,6 +128,17 @@ transport, last error, and a reconnect button per server. Below the
 tools sits the same matrix for **skills** — which markdown how-tos this
 agent may see and activate; see [skills.md](skills.md#per-agent-visibility).
 
+Every group — each built-in toolset, each MCP server, and the skills
+section — is a collapsible block, closed by default; the header shows
+how many abilities it holds and how many of those are hidden, and which
+blocks you left open is remembered per browser
+(`localStorage`, `somora-abilities-expanded`). The eye in the header
+toggles the **whole group** in a single write, which is what makes an
+MCP server with dozens of tools practical to switch off for an agent.
+With a group half hidden, one click hides the rest and the next brings
+all of it back — the header eye is dimmed in that state so "some
+hidden" doesn't read as "all visible".
+
 Toggles manage exact-name deny entries and are written server-side into
 the agent's `agent.yaml` (comments and the rest of the file stay
 untouched). If an agent's `agent.yaml` carries hand-written pattern

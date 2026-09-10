@@ -4,7 +4,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PersistedLayout, PinNote, WindowState } from '../types/window';
-import { currentViewport, fitAllToDesktop, TASKBAR_HEIGHT } from '../lib/window-geometry';
+import {
+  ARRANGE_PAD,
+  arrangeSlots,
+  currentViewport,
+  fitAllToDesktop,
+  type Rect,
+  TASKBAR_HEIGHT,
+} from '../lib/window-geometry';
 
 const STORAGE_KEY = 'somora-web-layout';
 const STORAGE_KEY_SAVED = 'somora-web-layout-saved';
@@ -566,34 +573,54 @@ export function useWindowManager() {
     [windows],
   );
 
+  /** Drop restored chat windows whose agent no longer exists.
+   *
+   *  A saved layout outlives the agents in it: rename or delete an agent
+   *  and its window comes back from localStorage pointing at a name the
+   *  server no longer serves. Desktop.tsx renders nothing for it, so it
+   *  sits there invisible and unclosable — but still counted, which made
+   *  Arrange leave a hole for a window nobody could see (Luca's report).
+   *
+   *  Only ever called with an agent list the server actually answered
+   *  with; while it is loading or unreachable the windows stay put,
+   *  because "no agents" and "cannot ask" must not look the same here. */
+  const dropOrphanChats = useCallback((known: ReadonlySet<string>) => {
+    setWindows((ws) => {
+      const next = ws.filter((w) => w.kind !== 'chat' || !w.agentName || known.has(w.agentName));
+      return next.length === ws.length ? ws : next;
+    });
+  }, []);
+
+  /** Arrange uses the whole desktop, right up to the left edge.
+   *
+   *  It used to keep a fixed 140 px free there, from the days when the
+   *  agent dock WAS a fixed column on the left. Since icons can be
+   *  dragged anywhere that reservation only guessed — it held a strip
+   *  free whether or not an icon still stood in it, and never matched a
+   *  second icon column (Luca's report). Icons sit below the windows by
+   *  design, so a window covering one is exactly what a desktop does;
+   *  minimize or close it and the icon is back. */
   const autoArrange = useCallback(() => {
     setWindows((ws) => {
       const visible = ws.filter((w) => !w.minimized);
       const n = visible.length;
       if (n === 0) return ws;
-      const dockX = 140;
-      const padX = 24;
-      const padY = 24;
-      const gap = 16;
-      const areaW = window.innerWidth - dockX - padX;
-      const areaH = window.innerHeight - TASKBAR_HEIGHT - padY * 2;
-      const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3;
-      const rows = Math.ceil(n / cols);
-      const cellW = Math.floor((areaW - gap * (cols - 1)) / cols);
-      const cellH = Math.floor((areaH - gap * (rows - 1)) / rows);
+      const area = {
+        x: ARRANGE_PAD,
+        y: ARRANGE_PAD,
+        w: window.innerWidth - ARRANGE_PAD * 2,
+        h: window.innerHeight - TASKBAR_HEIGHT - ARRANGE_PAD * 2,
+      };
+      // Slots go to windows left-to-right, top-to-bottom by where they
+      // already are, so Arrange rearranges what the user sees instead of
+      // reshuffling by open order — and the leftmost window is the one
+      // that becomes the full-height master. Arranging twice is a no-op.
+      const order = [...visible].sort((a, b) => a.x - b.x || a.y - b.y);
+      const slots = arrangeSlots(n, area);
+      const byId = new Map(order.map((w, i) => [w.id, slots[i] as Rect]));
       return ws.map((w) => {
-        if (w.minimized) return w;
-        const idx = visible.indexOf(w);
-        if (idx === -1) return w;
-        const r = Math.floor(idx / cols);
-        const c = idx % cols;
-        return {
-          ...w,
-          x: dockX + c * (cellW + gap),
-          y: padY + r * (cellH + gap),
-          w: cellW,
-          h: cellH,
-        };
+        const slot = byId.get(w.id);
+        return slot ? { ...w, ...slot } : w;
       });
     });
   }, []);
@@ -634,6 +661,7 @@ export function useWindowManager() {
     move,
     resize,
     autoArrange,
+    dropOrphanChats,
     saveLayout,
     restoreLayout,
     setWindowSession,
