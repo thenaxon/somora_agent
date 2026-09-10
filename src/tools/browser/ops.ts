@@ -32,6 +32,8 @@ export interface BrowserOpContext {
 export interface BrowserOpResult {
   op: BrowserOp['op'];
   ok: boolean;
+  /** `<browser id>@<agent>` — this agent's window on the process. */
+  view_id?: string;
   browser_id?: string;
   control?: ControlMode;
   tab?: TabInfo;
@@ -78,11 +80,11 @@ export async function runBrowserOp(ctx: BrowserOpContext, input: BrowserOp): Pro
           ...(input.device ? { device: input.device } : {}),
           ...(input.locale ? { locale: input.locale } : {}),
         });
-        return { op: 'open', ok: true, browser_id: r.browser_id, tab: r.tab, generation: r.tab.generation, control: r.control, ...(r.blocked ? { blocked: r.blocked } : {}) };
+        return { op: 'open', ok: true, view_id: r.view_id, browser_id: r.browser_id, tab: r.tab, generation: r.tab.generation, control: r.control, ...(r.blocked ? { blocked: r.blocked } : {}) };
       }
       case 'tabs': {
         const r = await svc.tabs(ctx.agent);
-        return { op: 'tabs', ok: true, browser_id: r.browser_id, control: r.control, tabs: r.tabs };
+        return { op: 'tabs', ok: true, view_id: r.view_id, browser_id: r.browser_id, control: r.control, tabs: r.tabs };
       }
       case 'status': {
         const r = await svc.status(ctx.agent);
@@ -118,6 +120,7 @@ export async function runBrowserOp(ctx: BrowserOpContext, input: BrowserOp): Pro
         return {
           op: 'request_handoff',
           ok: true,
+          view_id: r.view_id,
           browser_id: r.browser_id,
           handoff_id: r.handoff_id,
           control: r.control,

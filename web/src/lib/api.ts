@@ -500,6 +500,11 @@ export interface BrowserHandoff {
   requestedAt: number;
 }
 export interface BrowserInfo {
+  /** `<browser id>@<agent>` — one window per agent, even when several
+   *  agents share one Chromium (docs/browser.md). */
+  view_id: string;
+  /** The agent this window belongs to. */
+  agent: string;
   browser_id: string;
   profile: string;
   ephemeral: boolean;
@@ -514,15 +519,15 @@ export interface BrowserInfo {
 }
 
 export const api = {
-  browserRestart: async (browserId: string) => {
-    const res = await fetch(`/browser/${encodeURIComponent(browserId)}/restart`, { method: 'POST' });
+  browserRestart: async (viewId: string) => {
+    const res = await fetch(`/browser/${encodeURIComponent(viewId)}/restart`, { method: 'POST' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
   },
-  /** Shared browser (docs/browser.md): running browsers + control state. */
+  /** Shared browser (docs/browser.md): one entry per open window. */
   browserStatus: () => getJson<{ enabled: boolean; headed?: 'headless' | 'display' | 'xvfb' | 'unavailable'; browsers: BrowserInfo[]; warnings?: string[] }>('/browser/status'),
-  browserControl: async (browserId: string, mode: 'human' | 'agent', handoffId?: string) => {
-    const res = await fetch(`/browser/${encodeURIComponent(browserId)}/control`, {
+  browserControl: async (viewId: string, mode: 'human' | 'agent', handoffId?: string) => {
+    const res = await fetch(`/browser/${encodeURIComponent(viewId)}/control`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ mode, ...(handoffId ? { handoffId } : {}) }),

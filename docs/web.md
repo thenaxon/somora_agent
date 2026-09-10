@@ -302,9 +302,12 @@ archived copy at the next idle window.
   the same as a warn line in the scrollback, the mobile client shows
   the chip on the bubble.
 - **Browser window** (when `browser.enabled`): the **browser** tile
-  lists managed browsers; a row opens the live view with tab bar, URL
-  bar and take-over buttons. A pending handoff adds an **Open browser**
-  notice in its source chat and a taskbar marker. These and the list
+  lists browser sessions, one row per agent window — agents sharing a
+  profile run in one Chromium but get a window each, with their own
+  tabs, control state and handoff. A row opens the live view with tab
+  bar, URL bar and take-over buttons. Stopped browsers are not listed,
+  except one still holding an unanswered handoff. A pending handoff adds
+  an **Open browser** notice in its source chat and a taskbar marker. These and the list
   update from one change stream. Broken viewer connections reconnect;
   stopped browsers can be explicitly reopened without replaying old
   actions. Closing the viewer keeps human control in place. See

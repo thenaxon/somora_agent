@@ -1,4 +1,6 @@
-// Live view of one managed browser (docs/browser.md, stage 2).
+// Live view of one browser window — one agent's tabs on one managed
+// Chromium (docs/browser.md). Agents sharing a profile share the process
+// but not this window: control, handoff and tabs here are theirs alone.
 //
 // Header: control state + "Take over" / "Hand back", tab bar,
 // URL bar with back/forward/reload. Stage: the JPEG screencast as an
@@ -21,10 +23,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Hand, Plus, RotateCw, X } from 'lucide-react';
 import type { BrowserInfo } from '../lib/api';
-import { browserTitle, controlLabel } from './BrowserListWindow';
+import { browserProfileLabel, browserTitle, controlLabel } from './BrowserListWindow';
 
 interface Props {
-  browserId: string;
+  /** `<browser id>@<agent>`, from the browser list or a handoff notice. */
+  viewId: string;
 }
 
 type Status = 'connecting' | 'open' | 'closed';
@@ -41,7 +44,7 @@ interface FrameMeta {
   cssHeight: number;
 }
 
-export function BrowserWindow({ browserId }: Props) {
+export function BrowserWindow({ viewId }: Props) {
   const [status, setStatus] = useState<Status>('connecting');
   const [detail, setDetail] = useState<string | null>(null);
   const [info, setInfo] = useState<BrowserInfo | null>(null);
@@ -95,7 +98,7 @@ export function BrowserWindow({ browserId }: Props) {
       const tabQ = currentTab ? `&tab=${encodeURIComponent(currentTab)}` : '';
       lastMetaRef.current = null;
       setFrame(null);
-      const sock = new WebSocket(`${wsOrigin}/browser/attach?browser=${encodeURIComponent(browserId)}${tabQ}&viewer=${viewerId}`);
+      const sock = new WebSocket(`${wsOrigin}/browser/attach?view=${encodeURIComponent(viewId)}${tabQ}&viewer=${viewerId}`);
       sock.binaryType = 'arraybuffer';
       ws = sock;
       wsRef.current = sock;
@@ -217,7 +220,7 @@ export function BrowserWindow({ browserId }: Props) {
     };
     // The socket is bound to the browser, not the tab: tab switches go over the open socket.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [browserId, viewerId]);
+  }, [viewId, viewerId]);
 
   // URL bar follows the streamed tab unless the user is editing.
   const editingUrl = useRef(false);
@@ -328,7 +331,7 @@ export function BrowserWindow({ browserId }: Props) {
     <div style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', height: '100%', minHeight: 0, background: 'var(--bg-2)' }}>
       {/* header: state + control buttons */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderBottom: '1px solid var(--line)', fontSize: 11, fontFamily: '"JetBrains Mono", monospace' }}>
-        <span style={{ color: 'var(--text-2)' }}>{info ? browserTitle(info) : browserId}</span>
+        <span style={{ color: 'var(--text-2)' }}>{info ? `${browserTitle(info)} · ${browserProfileLabel(info)}` : viewId}</span>
         {label && (
           <span style={{ color: label.tone === 'warn' ? 'var(--warn, #d29922)' : label.tone === 'info' ? 'var(--accent, #58a6ff)' : 'var(--text-3)' }}>
             · {iControl ? 'you control' : label.text}

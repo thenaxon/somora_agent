@@ -17,13 +17,17 @@ async function listen(server: Server) {
   return (server.address() as { port: number }).port;
 }
 
-test('scratch /web: handoff notice → streamed frame → OTP → hand-back, reconnect and gates', { skip: process.env.SOMORA_BROWSER_WEB_SMOKE !== '1', timeout: 100_000 }, async () => {
+test('scratch /web: two agents on one profile, handoff notice → streamed frame → OTP → hand-back, reconnect and gates', { skip: process.env.SOMORA_BROWSER_WEB_SMOKE !== '1', timeout: 140_000 }, async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'somora-browser-web-'));
   let loggedIn = false;
   let wakes = 0;
+  const wakeBodies: string[] = [];
   const fixture = createServer((req, res) => {
     if (req.url?.startsWith('/v1/')) {
       wakes++;
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', () => { wakeBodies.push(body); });
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       res.end('data: {"id":"smoke","choices":[{"index":0,"delta":{"role":"assistant","content":"Browser resumed."},"finish_reason":null}]}\n\ndata: {"id":"smoke","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
       return;
@@ -40,12 +44,17 @@ test('scratch /web: handoff notice → streamed frame → OTP → hand-back, rec
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'AGENTS.md'), '---\nname: smoke\n---\nBrowser smoke test agent.\n');
   await writeFile(join(dir, 'agent.yaml'), 'model: fake\n');
+  // A second agent on the SAME profile: one Chromium, two windows.
+  const mateDir = join(scratch, 'agents', 'mate');
+  await mkdir(mateDir, { recursive: true });
+  await writeFile(join(mateDir, 'AGENTS.md'), '---\nname: mate\n---\nSecond agent sharing the browser profile.\n');
+  await writeFile(join(mateDir, 'agent.yaml'), 'model: fake\n');
   await writeFile(join(scratch, 'config.yaml'), JSON.stringify({
     server: { host: '127.0.0.1', port },
     providers: { fixture: { engine: 'openai-compatible', baseUrl: `http://127.0.0.1:${fixturePort}/v1`, apiKey: 'fixture', models: [{ id: 'fake', alias: 'fake', capabilities: ['text'], contextWindow: 32000 }] } },
     claudeCli: { sharedUserCredentials: false },
     memory: { embedding: { provider: 'openai', model: 'unused-fixture' } },
-    browser: { enabled: true, executablePath: '/usr/bin/chromium', allowPrivate: ['127.0.0.1'], viewport: { width: 1000, height: 700 } },
+    browser: { enabled: true, executablePath: '/usr/bin/chromium', allowPrivate: ['127.0.0.1'], viewport: { width: 1000, height: 700 }, profiles: { team: { agents: ['smoke', 'mate'] } } },
   }));
   const log = openSync(join(scratch, 'server.log'), 'w');
   const server = spawn(process.execPath, ['--import', 'tsx', 'src/server/index.ts'], {
@@ -61,6 +70,7 @@ test('scratch /web: handoff notice → streamed frame → OTP → hand-back, rec
     return await r.json() as any;
   };
   const op = (input: unknown, session = 'main') => api('/browser/op', { agent: 'smoke', session, input });
+  const mateOp = (input: unknown, session = 'main') => api('/browser/op', { agent: 'mate', session, input });
   try {
     let ready = false;
     for (let n = 0; n < 160; n++) {
@@ -71,11 +81,22 @@ test('scratch /web: handoff notice → streamed frame → OTP → hand-back, rec
     assert.ok(ready, `server did not start; see ${scratch}/server.log`);
     const opened = await op({ op: 'open', url: `http://127.0.0.1:${fixturePort}/` });
     assert.equal(opened.ok, true, JSON.stringify(opened));
+    assert.equal(opened.view_id, 'profile:team@smoke');
+    const mateOpened = await mateOp({ op: 'open', url: `http://127.0.0.1:${fixturePort}/` });
+    assert.equal(mateOpened.view_id, 'profile:team@mate', JSON.stringify(mateOpened));
+    assert.equal(mateOpened.browser_id, opened.browser_id, 'one process for the shared profile');
+    assert.deepEqual((await mateOp({ op: 'tabs' })).tabs.map((t: { tab_id: string }) => t.tab_id), [mateOpened.tab.tab_id], 'each window lists only its own tabs');
     assert.equal((await op({ op: 'request_handoff', reason: 'Please enter the test OTP' }, 'missing')).ok, false);
     const handoff = await op({ op: 'request_handoff', reason: 'Please enter the test OTP' });
     assert.equal(handoff.ok, true, JSON.stringify(handoff));
     await page.goto(origin + '/web/');
     await page.locator('.browser-attention').waitFor();
+    // The list shows one row per window, not one per Chromium.
+    await page.locator('.browser-attention').click();
+    await page.locator('[title="open profile:team@smoke"]').waitFor();
+    await page.locator('[title="open profile:team@mate"]').waitFor();
+    assert.match(await page.locator('[title="open profile:team@smoke"]').innerText(), /waiting for you/);
+    assert.match(await page.locator('[title="open profile:team@mate"]').innerText(), /agent controls/);
     // The user may reopen a chat after the request: the current snapshot restores the notice.
     await page.locator('.agent-icon').filter({ hasText: 'smoke' }).first().click();
     await page.locator('.browser-handoff-notice').waitFor();
@@ -85,6 +106,7 @@ test('scratch /web: handoff notice → streamed frame → OTP → hand-back, rec
     await page.getByRole('button', { name: 'Take over', exact: true }).click();
     await page.getByRole('button', { name: 'Hand back', exact: true }).waitFor();
     assert.equal((await op({ op: 'snapshot', tab: opened.tab.tab_id })).ok, false);
+    assert.equal((await mateOp({ op: 'snapshot', tab: mateOpened.tab.tab_id })).ok, true, 'the other window keeps working while you control this one');
     // Pixel click in the actual streamed image, followed by normal keyboard input.
     await delay(500);
     const img = page.locator('.browser-stage img');
@@ -104,7 +126,10 @@ test('scratch /web: handoff notice → streamed frame → OTP → hand-back, rec
     await page.locator('.browser-attention').waitFor({ state: 'detached' });
     for (let n = 0; n < 100 && !wakes; n++) await delay(100);
     assert.equal(wakes, 1, 'one wake reaches the local model fixture');
-    const duplicate = await api('/browser/agent:smoke/control', { mode: 'agent', handoffId: handoff.handoff_id });
+    await delay(200);
+    assert.match(wakeBodies.join('\n'), /profile:team@smoke/, 'the woken session is the one that asked');
+    assert.doesNotMatch(wakeBodies.join('\n'), /profile:team@mate/, 'the other agent on the profile is left alone');
+    const duplicate = await api('/browser/profile:team@smoke/control', { mode: 'agent', handoffId: handoff.handoff_id });
     assert.equal(duplicate.ok, true); await delay(300); assert.equal(wakes, 1);
     await writeFile(join(dir, 'agent.yaml'), 'model: fake\ntools:\n  deny: [toolset:browser]\n');
     assert.equal((await op({ op: 'status' })).ok, false);

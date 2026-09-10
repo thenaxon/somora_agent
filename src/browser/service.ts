@@ -12,9 +12,14 @@
 //               opened it, with a `generation` that bumps on every
 //               main-frame navigation — refs from an older generation
 //               are refused by `act`.
-//   control   = per browser: agent_control | handoff_requested |
-//               human_control | paused. While a human controls, every
-//               agent operation is refused with BROWSER_HUMAN_CONTROL.
+//   view      = one agent's window on a process (`<browser id>@<agent>`).
+//               A shared profile has ONE process but one view per agent,
+//               so hans and lisa each get their own window, tabs, control
+//               state and handoff (private/browser-design.md §10).
+//   control   = per view: agent_control | handoff_requested |
+//               human_control | paused. While a human controls a view,
+//               that view's agent operations are refused with
+//               BROWSER_HUMAN_CONTROL; the other agents keep working.
 //
 // Playwright (playwright-core, no bundled browser) drives the pages —
 // actionability checks, auto-wait, iframes, dialogs — against the host
@@ -61,6 +66,30 @@ export interface ControlState {
   since: number;
 }
 
+/** One agent's window on a browser process. */
+export interface ViewState {
+  agent: string;
+  control: ControlState;
+}
+
+/** `<browser id>@<agent>` — what every viewer surface addresses. `@` is
+ *  safe in a URL path and query and cannot occur in an agent name. */
+export function viewIdOf(browserId: string, agent: string): string {
+  return `${browserId}@${agent}`;
+}
+
+/** The Chromium process behind a view id; a process id passes through. */
+export function processIdOf(id: string): string {
+  const i = id.lastIndexOf('@');
+  return i < 0 ? id : id.slice(0, i);
+}
+
+/** The owning agent of a view id, or undefined for a bare process id. */
+export function agentOfViewId(id: string): string | undefined {
+  const i = id.lastIndexOf('@');
+  return i < 0 ? undefined : id.slice(i + 1);
+}
+
 interface TabRec {
   id: string;
   page: Page;
@@ -68,6 +97,9 @@ interface TabRec {
   session?: string;
   generation: number;
   createdByAgent: boolean;
+  /** The blank page a persistent context always opens; the first
+   *  `open` without a tab reuses it instead of adding a second tab. */
+  initialBlank?: boolean;
   lastUsed: number;
   /** Refs of the last snapshot, keyed by generation — an `act` with a
    *  ref that was never in a snapshot of this generation is refused. */
@@ -91,7 +123,8 @@ interface BrowserRec {
   agents: ReadonlySet<string> | 'any';
   context: BrowserContext;
   tabs: Map<string, TabRec>;
-  control: ControlState;
+  /** One view per agent that has used this process, keyed by agent. */
+  views: Map<string, ViewState>;
   lastUsed: number;
   idleTimer: NodeJS.Timeout | null;
   closing: Promise<void> | null;
@@ -113,6 +146,10 @@ export interface TabInfo {
 }
 
 export interface BrowserInfo {
+  /** `<browser id>@<agent>` — what control, attach and restart take. */
+  view_id: string;
+  /** The agent this window belongs to. */
+  agent: string;
   browser_id: string;
   profile: string;
   ephemeral: boolean;
@@ -173,8 +210,26 @@ function nowMs(): number {
   return Date.now();
 }
 
-/** Something a viewer should redraw: tabs came or went, control changed. */
+/** Something a viewer should redraw: tabs came or went, control changed.
+ *  The id is the PROCESS id — a viewer on `<id>@<agent>` redraws too. */
 export type ChangeListener = (browserId: string) => void;
+
+/** Pre-§10 state files stored one control per process. Keep only what
+ *  still means something: a pending handoff, moved to its agent's view. */
+export function migratePersisted(
+  saved: Record<string, { control: ControlState }>,
+): Record<string, { control: ControlState }> {
+  const out: Record<string, { control: ControlState }> = {};
+  for (const [id, entry] of Object.entries(saved)) {
+    if (id.includes('@')) {
+      out[id] = entry;
+      continue;
+    }
+    const agent = entry?.control?.handoff?.agent;
+    if (agent) out[viewIdOf(id, agent)] = entry;
+  }
+  return out;
+}
 
 export class BrowserService {
   private cfg: BrowserConfig;
@@ -189,7 +244,7 @@ export class BrowserService {
    *  identifies the browser too. */
   private nextTab = 1;
   /** Control state survives a stop/restart of the process for the
-   *  pending-handoff case; persisted per browser id. */
+   *  pending-handoff case; persisted per VIEW id (`<browser>@<agent>`). */
   private persisted: Record<string, { control: ControlState }> = {};
 
   constructor(cfg: BrowserConfig, deps: ServiceDeps = {}) {
@@ -235,7 +290,7 @@ export class BrowserService {
     try {
       const raw = await readFile(BrowserService.statePath, 'utf8');
       const parsed = JSON.parse(raw) as { browsers?: Record<string, { control: ControlState }> };
-      this.persisted = parsed.browsers ?? {};
+      this.persisted = migratePersisted(parsed.browsers ?? {});
     } catch {
       this.persisted = {};
     }
@@ -272,7 +327,8 @@ export class BrowserService {
 
   /** Shared by agent operations and viewer input: takeover waits for accepted
    * work, and a queued agent action checks control again before executing. */
-  async withBrowserLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+  async withBrowserLock<T>(viewOrBrowserId: string, fn: () => Promise<T>): Promise<T> {
+    const id = processIdOf(viewOrBrowserId);
     const previous = this.operations.get(id) ?? Promise.resolve();
     const next = previous.catch(() => {}).then(fn);
     this.operations.set(id, next);
@@ -280,26 +336,28 @@ export class BrowserService {
     finally { if (this.operations.get(id) === next) this.operations.delete(id); }
   }
 
-  private persist(change?: { browser: BrowserRec; control: ControlState }): Promise<void> {
+  private persist(change?: { browser: BrowserRec; view: ViewState; control: ControlState }): Promise<void> {
     const next = this.writes.catch(() => {}).then(async () => {
       // Build inside the write queue from committed controls. Another browser's
       // pending transition must not leak into this snapshot before its own save.
       const saved = { ...this.persisted };
-      for (const b of this.browsers.values()) saved[b.id] = { control: b.control };
-      if (change) saved[change.browser.id] = { control: change.control };
+      for (const b of this.browsers.values()) {
+        for (const v of b.views.values()) saved[viewIdOf(b.id, v.agent)] = { control: v.control };
+      }
+      if (change) saved[viewIdOf(change.browser.id, change.view.agent)] = { control: change.control };
       const tmp = `${BrowserService.statePath}.tmp`;
       await writeFile(tmp, JSON.stringify({ browsers: saved }, null, 2), { encoding: 'utf8', mode: 0o600 });
       await rename(tmp, BrowserService.statePath);
       this.persisted = saved;
-      if (change) change.browser.control = change.control;
+      if (change) change.view.control = change.control;
     });
     this.writes = next;
     return next;
   }
 
   /** Publish a control transition only after its durable state write succeeds. */
-  private commitControl(browser: BrowserRec, control: ControlState): Promise<void> {
-    return this.persist({ browser, control });
+  private commitControl(browser: BrowserRec, view: ViewState, control: ControlState): Promise<void> {
+    return this.persist({ browser, view, control });
   }
 
   // ── profiles ──────────────────────────────────────────────────────
@@ -320,20 +378,52 @@ export class BrowserService {
     }
   }
 
-  private assertAgentControl(b: BrowserRec): void {
+  /** The agent's window on this process. Created on first use. */
+  private viewOf(b: BrowserRec, agent: string, create = false): ViewState {
+    const existing = b.views.get(agent);
+    if (existing) return existing;
+    if (!create) {
+      throw new BrowserOpError('BROWSER_NOT_FOUND', `agent '${agent}' has no window on browser '${b.id}' — call op:"open" first`);
+    }
+    const view: ViewState = { agent, control: { mode: 'agent_control', since: nowMs() } };
+    b.views.set(agent, view);
+    return view;
+  }
+
+  private assertAgentControl(b: BrowserRec, view: ViewState): void {
     if (b.closing || this.browsers.get(b.id) !== b) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${b.id}' is no longer running`);
-    if (b.control.mode === 'human_control' || b.control.mode === 'paused') {
+    const id = viewIdOf(b.id, view.agent);
+    if (view.control.mode === 'human_control' || view.control.mode === 'paused') {
       throw new BrowserOpError(
         'BROWSER_HUMAN_CONTROL',
-        `browser '${b.id}' is paused for the user — do not retry; end your turn and wait until the user hands control back`,
+        `browser '${id}' is paused for the user — do not retry; end your turn and wait until the user hands control back`,
       );
     }
-    if (b.control.mode === 'handoff_requested') {
+    if (view.control.mode === 'handoff_requested') {
       throw new BrowserOpError(
         'BROWSER_HUMAN_CONTROL',
-        `browser '${b.id}' is waiting for the user (handoff requested: ${b.control.handoff?.reason ?? ''}) — end your turn; you will be woken when the user hands control back`,
+        `browser '${id}' is waiting for the user (handoff requested: ${view.control.handoff?.reason ?? ''}) — end your turn; you will be woken when the user hands control back`,
       );
     }
+  }
+
+  /** Resolve what a viewer addressed: a view id, or a process id while
+   *  exactly one agent has a window on it. */
+  private resolveView(id: string): { browser: BrowserRec; view: ViewState } {
+    const browser = this.runningBrowser(processIdOf(id));
+    const agent = agentOfViewId(id);
+    if (agent) {
+      const view = browser.views.get(agent);
+      if (!view) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${id}' is not running`);
+      return { browser, view };
+    }
+    const views = [...browser.views.values()];
+    if (views.length === 1) return { browser, view: views[0]! };
+    if (views.length === 0) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${id}' has no open window`);
+    throw new BrowserOpError(
+      'BROWSER_NOT_FOUND',
+      `browser '${id}' has ${views.length} windows — address one of ${views.map((v) => viewIdOf(browser.id, v.agent)).join(', ')}`,
+    );
   }
 
   // ── lifecycle ─────────────────────────────────────────────────────
@@ -345,12 +435,13 @@ export class BrowserService {
     const existing = this.browsers.get(id);
     if (existing && !existing.closing) {
       this.assertAllowed(existing, agent);
+      this.viewOf(existing, agent, true);
       this.touch(existing);
       return existing;
     }
     const pending = this.launching.get(id);
     if (pending) return pending;
-    const p = this.launch(id, base, Boolean(opts.ephemeral)).finally(() => this.launching.delete(id));
+    const p = this.launch(id, base, Boolean(opts.ephemeral), agent).finally(() => this.launching.delete(id));
     this.launching.set(id, p);
     return p;
   }
@@ -359,6 +450,7 @@ export class BrowserService {
     id: string,
     base: ReturnType<BrowserService['profileFor']>,
     ephemeral: boolean,
+    owner: string,
   ): Promise<BrowserRec> {
     const exe = detectExecutable(this.cfg.executablePath);
     if (!exe.path) {
@@ -419,18 +511,27 @@ export class BrowserService {
       agents: base.agents,
       context,
       tabs: new Map(),
-      control: this.persisted[id]?.control ?? { mode: 'agent_control', since: nowMs() },
+      views: new Map(),
       lastUsed: nowMs(),
       idleTimer: null,
       closing: null,
       headed,
       ...(display ? { display } : {}),
     };
-    // A pending handoff from before a restart stays pending — the user
-    // may still be about to take over. Anything else starts fresh.
-    if (this.persisted[id]) {
-      rec.control = { ...rec.control, mode: rec.control.handoff ? 'handoff_requested' : 'paused', humanBy: undefined };
+    // Every agent that had a window on this process before the restart
+    // gets it back. A pending handoff stays pending — the user may still
+    // be about to take over. Anything else starts paused, so no stored
+    // action is replayed until an agent or the user touches it again.
+    for (const [savedId, saved] of Object.entries(this.persisted)) {
+      if (processIdOf(savedId) !== id) continue;
+      const agent = agentOfViewId(savedId);
+      if (!agent) continue;
+      rec.views.set(agent, {
+        agent,
+        control: { ...saved.control, mode: saved.control.handoff ? 'handoff_requested' : 'paused', humanBy: undefined, humanTouched: false },
+      });
     }
+    if (!rec.views.has(owner)) rec.views.set(owner, { agent: owner, control: { mode: 'agent_control', since: nowMs() } });
     // Every document request (incl. redirects and target=_blank) runs
     // through the policy — the route is the safety net behind the
     // pre-check in open()/act().
@@ -442,9 +543,13 @@ export class BrowserService {
       logger.warn({ msg: 'browser.navigation_denied', browser: id, url: req.url(), reason: verdict.reason });
       return route.abort('blockedbyclient');
     });
-    context.on('page', (page) => this.adoptPage(rec, page, { agent: '_user', createdByAgent: false }));
+    // A popup (target=_blank, window.open) belongs to the window that
+    // opened it; only a page with no traceable opener stays unowned.
+    context.on('page', (page) => void this.adoptPopup(rec, page));
     context.on('close', () => {
-      this.persisted[id] = { control: { ...rec.control, mode: 'paused', humanBy: undefined } };
+      for (const v of rec.views.values()) {
+        this.persisted[viewIdOf(id, v.agent)] = { control: { ...v.control, mode: 'paused', humanBy: undefined, humanTouched: false } };
+      }
       this.browsers.delete(id);
       void this.persist().catch((err) => logger.warn({ msg: 'browser.state_persist_failed', err: String(err) }));
       if (rec.display) void rec.display.stop().catch(() => {});
@@ -455,7 +560,7 @@ export class BrowserService {
     });
     // Playwright opens one blank page with a persistent context; keep
     // it as the first tab so `open` without a tab reuses it.
-    for (const page of context.pages()) this.adoptPage(rec, page, { agent: '_init', createdByAgent: false });
+    for (const page of context.pages()) this.adoptPage(rec, page, { agent: owner, createdByAgent: false, initialBlank: true });
     this.browsers.set(id, rec);
     this.touch(rec);
     void this.persist().catch((err) => logger.warn({ msg: 'browser.state_persist_failed', err: String(err) }));
@@ -463,7 +568,26 @@ export class BrowserService {
     return rec;
   }
 
-  private adoptPage(b: BrowserRec, page: Page, owner: { agent: string; session?: string; createdByAgent: boolean }): TabRec {
+  /** Attribute a page Chromium opened on its own to the view that opened it. */
+  private async adoptPopup(b: BrowserRec, page: Page): Promise<void> {
+    let owner: { agent: string; session?: string; createdByAgent: boolean } = { agent: '_user', createdByAgent: false };
+    try {
+      const opener = await page.opener();
+      if (opener) {
+        for (const t of b.tabs.values()) {
+          if (t.page !== opener) continue;
+          owner = { agent: t.agent, ...(t.session ? { session: t.session } : {}), createdByAgent: false };
+          break;
+        }
+      }
+    } catch {
+      /* the opener may already be gone — the page stays unowned */
+    }
+    if (page.isClosed()) return;
+    this.adoptPage(b, page, owner);
+  }
+
+  private adoptPage(b: BrowserRec, page: Page, owner: { agent: string; session?: string; createdByAgent: boolean; initialBlank?: boolean }): TabRec {
     for (const t of b.tabs.values()) if (t.page === page) return t;
     const id = `t${this.nextTab++}`;
     const tab: TabRec = {
@@ -473,6 +597,7 @@ export class BrowserService {
       ...(owner.session ? { session: owner.session } : {}),
       generation: 1,
       createdByAgent: owner.createdByAgent,
+      ...(owner.initialBlank ? { initialBlank: true } : {}),
       lastUsed: nowMs(),
       snapshotRefs: new Set(),
       snapshotGeneration: 0,
@@ -510,8 +635,10 @@ export class BrowserService {
     b.lastUsed = nowMs();
     if (b.idleTimer) clearTimeout(b.idleTimer);
     b.idleTimer = setTimeout(() => {
-      // Never stop under a human's hands or with a handoff pending.
-      if (b.control.mode === 'human_control' || b.control.handoff || this.operations.has(b.id)) {
+      // Never stop under a human's hands or with a handoff pending —
+      // in ANY of the windows on this process.
+      const busy = [...b.views.values()].some((v) => v.control.mode === 'human_control' || v.control.handoff);
+      if (busy || this.operations.has(b.id)) {
         this.touch(b);
         return;
       }
@@ -544,6 +671,11 @@ export class BrowserService {
     return [this.browsers.get(id), this.browsers.get(`${id}:tmp`)].filter((b): b is BrowserRec => Boolean(b) && !b!.closing);
   }
 
+  /** The live tabs of one agent's window. */
+  private viewTabs(b: BrowserRec, agent: string): TabRec[] {
+    return [...b.tabs.values()].filter((t) => t.agent === agent && !t.page.isClosed());
+  }
+
   private browserOf(agent: string, tabId?: string): BrowserRec {
     const candidates = this.browsersFor(agent);
     if (candidates.length === 0) throw new BrowserOpError('BROWSER_NOT_FOUND', `no running browser for agent '${agent}' — call op:"open" first`);
@@ -552,9 +684,14 @@ export class BrowserService {
     return b;
   }
 
-  private tabOf(b: BrowserRec, tabId: string): TabRec {
+  private tabOf(b: BrowserRec, tabId: string, agent?: string): TabRec {
     const t = b.tabs.get(tabId);
     if (!t || t.page.isClosed()) throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `tab '${tabId}' not found in browser '${b.id}' — op:"tabs" lists the open ones`);
+    // Tabs belong to one window. In a shared profile that keeps hans out
+    // of lisa's tabs even though both drive the same Chromium.
+    if (agent && t.agent !== agent) {
+      throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `tab '${tabId}' belongs to another agent's window on browser '${b.id}' — op:"tabs" lists yours`);
+    }
     t.lastUsed = nowMs();
     this.touch(b);
     return t;
@@ -631,34 +768,38 @@ export class BrowserService {
     agent: string,
     session: string | undefined,
     args: { url: string; tab?: string; ephemeral?: boolean; device?: string; locale?: string },
-  ): Promise<{ browser_id: string; tab: TabInfo; control: ControlMode; blocked?: string }> {
+  ): Promise<{ view_id: string; browser_id: string; tab: TabInfo; control: ControlMode; blocked?: string }> {
     if (session && this.deps.resolveSession) session = await this.deps.resolveSession(agent, session);
     const verdict = await checkNavigationAllowed(args.url, this.cfg);
     if (!verdict.ok) throw new BrowserOpError('BROWSER_NAVIGATION_DENIED', verdict.reason!);
     const b = args.tab ? this.browserOf(agent, args.tab) : await this.ensureBrowser(agent, { ephemeral: args.ephemeral });
     return this.withBrowserLock(b.id, async () => {
-      // An explicit new navigation may resume an idle/restarted browser; old
+      // Navigating an existing tab needs an existing window; a fresh
+      // `open` may create one (ensureBrowser already did for a new process).
+      const view = this.viewOf(b, agent, !args.tab);
+      // An explicit new navigation may resume an idle/restarted window; old
       // operations are never replayed, and a pending handoff still blocks it.
-      if (b.control.mode === 'paused' && !b.control.handoff) {
-        await this.commitControl(b, { mode: 'agent_control', since: nowMs() });
+      if (view.control.mode === 'paused' && !view.control.handoff) {
+        await this.commitControl(b, view, { mode: 'agent_control', since: nowMs() });
       }
-      this.assertAgentControl(b);
+      this.assertAgentControl(b, view);
+      const own = this.viewTabs(b, agent);
       let tab: TabRec;
       if (args.tab) {
-        tab = this.tabOf(b, args.tab);
+        tab = this.tabOf(b, args.tab, agent);
       } else {
         // Reuse the initial blank tab once; otherwise a new one under the cap.
-        const blank = [...b.tabs.values()].find((t) => t.agent === '_init' && t.page.url() === 'about:blank');
+        const blank = own.find((t) => t.initialBlank && t.page.url() === 'about:blank');
         if (blank) {
           tab = blank;
-          tab.agent = agent;
+          delete tab.initialBlank;
           if (session) tab.session = session;
           tab.createdByAgent = true;
         } else {
-          if (b.tabs.size >= this.cfg.maxTabsPerAgent) {
+          if (own.length >= this.cfg.maxTabsPerAgent) {
             throw new BrowserOpError(
               'BROWSER_TAB_LIMIT',
-              `browser '${b.id}' already has ${b.tabs.size} tabs (browser.maxTabsPerAgent) — close one with op:"close_tab" or reuse one with tab:"t<n>"`,
+              `your window on browser '${b.id}' already has ${own.length} tabs (browser.maxTabsPerAgent) — close one with op:"close_tab" or reuse one with tab:"t<n>"`,
             );
           }
           const page = await b.context.newPage();
@@ -683,24 +824,31 @@ export class BrowserService {
       if (tab.page.url().startsWith('chrome-error://')) blocked = blocked ?? 'the navigation ended on an error page (unreachable host)';
       this.emitChange(b.id);
       logger.info({ msg: 'browser.open', browser: b.id, tab: tab.id, agent, url: args.url, blocked: blocked ?? null });
-      return { browser_id: b.id, tab: await this.tabInfo(tab), control: b.control.mode, ...(blocked ? { blocked } : {}) };
+      return { view_id: viewIdOf(b.id, agent), browser_id: b.id, tab: await this.tabInfo(tab), control: view.control.mode, ...(blocked ? { blocked } : {}) };
     });
   }
 
-  async tabs(agent: string): Promise<{ browser_id: string; control: ControlMode; tabs: TabInfo[] }> {
+  async tabs(agent: string): Promise<{ view_id: string; browser_id: string; control: ControlMode; tabs: TabInfo[] }> {
     const bs = this.browsersFor(agent);
     if (bs.length === 0) throw new BrowserOpError('BROWSER_NOT_FOUND', `no running browser for agent '${agent}' — call op:"open" first`);
     for (const b of bs) this.assertAllowed(b, agent);
-    const tabs = (
-      await Promise.all(bs.map((b) => Promise.all([...b.tabs.values()].filter((t) => !t.page.isClosed()).map((t) => this.tabInfo(t)))))
-    ).flat();
-    return { browser_id: bs[0]!.id, control: bs[0]!.control.mode, tabs };
+    // Only this agent's window: a shared profile lists the other agent's
+    // tabs nowhere, they are not his to act on.
+    const tabs = (await Promise.all(bs.map((b) => Promise.all(this.viewTabs(b, agent).map((t) => this.tabInfo(t)))))).flat();
+    const first = bs[0]!;
+    return {
+      view_id: viewIdOf(first.id, agent),
+      browser_id: first.id,
+      control: first.views.get(agent)?.control.mode ?? 'paused',
+      tabs,
+    };
   }
 
   async status(agent: string): Promise<{
     enabled: boolean;
     executable: string | null;
     profile: string;
+    view_id: string;
     browser_id: string;
     running: boolean;
     /** headless | display | xvfb, or unavailable with the reason. */
@@ -715,19 +863,23 @@ export class BrowserService {
     const b = this.browsers.get(base.id);
     const headed = planHeaded(this.cfg.headed);
     const warnings = this.warnings();
-    if (!b || b.closing) return { enabled: this.cfg.enabled, executable: exe.path, profile: base.profile, browser_id: base.id, running: false, headed, warnings };
-    const tabs = await Promise.all([...b.tabs.values()].filter((t) => !t.page.isClosed()).map((t) => this.tabInfo(t)));
+    const view = b && !b.closing ? b.views.get(agent) : undefined;
+    if (!b || b.closing || !view) {
+      return { enabled: this.cfg.enabled, executable: exe.path, profile: base.profile, view_id: viewIdOf(base.id, agent), browser_id: base.id, running: false, headed, warnings };
+    }
+    const tabs = await Promise.all(this.viewTabs(b, agent).map((t) => this.tabInfo(t)));
     return {
       enabled: this.cfg.enabled,
       executable: exe.path,
       profile: base.profile,
+      view_id: viewIdOf(b.id, agent),
       browser_id: b.id,
       running: true,
       headed,
       warnings,
-      control: b.control.mode,
-      ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
-        ...(b.control.humanBy ? { human_by: b.control.humanBy } : {}),
+      control: view.control.mode,
+      ...(view.control.handoff ? { handoff: view.control.handoff } : {}),
+      ...(view.control.humanBy ? { human_by: view.control.humanBy } : {}),
       tabs,
     };
   }
@@ -738,8 +890,8 @@ export class BrowserService {
   ): Promise<{ tab: TabInfo; generation: number; snapshot: string; truncated: boolean }> {
     const b = this.browserOf(agent, args.tab);
     return this.withBrowserLock(b.id, async () => {
-      this.assertAgentControl(b);
-      const t = this.tabOf(b, args.tab);
+      this.assertAgentControl(b, this.viewOf(b, agent));
+      const t = this.tabOf(b, args.tab, agent);
       const raw = await t.page.ariaSnapshot({ mode: 'ai', timeout: 15_000 });
       const gen = t.generation;
       const result = args.full ? { text: raw, truncated: false } : compactAriaSnapshot(raw, args.max_chars ?? 20_000);
@@ -763,8 +915,8 @@ export class BrowserService {
   ): Promise<{ tab: TabInfo; generation: number; navigated: boolean; blocked?: string }> {
     const b = this.browserOf(agent, args.tab);
     return this.withBrowserLock(b.id, async () => {
-      this.assertAgentControl(b);
-      const t = this.tabOf(b, args.tab);
+      this.assertAgentControl(b, this.viewOf(b, agent));
+      const t = this.tabOf(b, args.tab, agent);
       const genBefore = t.generation;
       if (args.generation !== undefined && args.generation !== t.generation) {
         throw new BrowserOpError(
@@ -821,8 +973,8 @@ export class BrowserService {
   async screenshot(agent: string, args: { tab: string }): Promise<{ tab: TabInfo; png: Buffer }> {
     const b = this.browserOf(agent, args.tab);
     return this.withBrowserLock(b.id, async () => {
-      this.assertAgentControl(b);
-      const t = this.tabOf(b, args.tab);
+      this.assertAgentControl(b, this.viewOf(b, agent));
+      const t = this.tabOf(b, args.tab, agent);
       const png = await t.page.screenshot({ type: 'png', timeout: 15_000 });
       return { tab: await this.tabInfo(t), png };
     });
@@ -832,18 +984,20 @@ export class BrowserService {
     agent: string,
     session: string | undefined,
     args: { reason: string; resume_note?: string },
-  ): Promise<{ browser_id: string; handoff_id: string; control: ControlMode }> {
+  ): Promise<{ view_id: string; browser_id: string; handoff_id: string; control: ControlMode }> {
     if (session && this.deps.resolveSession) session = await this.deps.resolveSession(agent, session);
     const b = this.browserOf(agent);
+    const id = viewIdOf(b.id, agent);
     return this.withBrowserLock(b.id, async () => {
       if (!session) throw new BrowserOpError('BROWSER_ACTION_FAILED', 'request_handoff needs a session to resume in');
-      if (b.control.mode === 'human_control') {
-        throw new BrowserOpError('BROWSER_HUMAN_CONTROL', `the user already controls browser '${b.id}'`);
+      const view = this.viewOf(b, agent, true);
+      if (view.control.mode === 'human_control') {
+        throw new BrowserOpError('BROWSER_HUMAN_CONTROL', `the user already controls browser '${id}'`);
       }
-      if (b.control.handoff) {
-        if (b.control.handoff.agent !== agent || b.control.handoff.session !== session)
+      if (view.control.handoff) {
+        if (view.control.handoff.agent !== agent || view.control.handoff.session !== session)
           throw new BrowserOpError('BROWSER_HUMAN_CONTROL', 'another session is already waiting for this browser');
-        return { browser_id: b.id, handoff_id: b.control.handoff.id, control: b.control.mode };
+        return { view_id: id, browser_id: b.id, handoff_id: view.control.handoff.id, control: view.control.mode };
       }
       const handoff: Handoff = {
         id: randomUUID(),
@@ -853,74 +1007,123 @@ export class BrowserService {
         ...(args.resume_note ? { resumeNote: args.resume_note } : {}),
         requestedAt: nowMs(),
       };
-      await this.commitControl(b, { mode: 'handoff_requested', handoff, since: nowMs() });
+      await this.commitControl(b, view, { mode: 'handoff_requested', handoff, since: nowMs() });
       this.touch(b);
       this.emitChange(b.id);
-      logger.info({ msg: 'browser.handoff_requested', browser: b.id, agent, session, reason: args.reason });
-      return { browser_id: b.id, handoff_id: handoff.id, control: b.control.mode };
+      logger.info({ msg: 'browser.handoff_requested', browser: id, agent, session, reason: args.reason });
+      return { view_id: id, browser_id: b.id, handoff_id: handoff.id, control: view.control.mode };
     });
   }
 
   async closeTab(agent: string, args: { tab: string }): Promise<{ closed: string; remaining: number }> {
     const b = this.browserOf(agent, args.tab);
     return this.withBrowserLock(b.id, async () => {
-      this.assertAgentControl(b);
-      const t = this.tabOf(b, args.tab);
+      this.assertAgentControl(b, this.viewOf(b, agent));
+      const t = this.tabOf(b, args.tab, agent);
       await t.page.close().catch(() => {});
       b.tabs.delete(t.id);
-      return { closed: t.id, remaining: [...b.tabs.values()].filter((x) => !x.page.isClosed()).length };
+      return { closed: t.id, remaining: this.viewTabs(b, agent).length };
     });
   }
 
+  /**
+   * Close this agent's window. The Chromium process only ends when no
+   * other agent still has one on it — in a shared profile hans must not
+   * pull the browser out from under lisa.
+   */
   async stop(agent: string): Promise<{ stopped: string | null }> {
-    const bs = this.browsersFor(agent);
+    const bs = this.browsersFor(agent).filter((b) => b.views.has(agent));
     if (bs.length === 0) return { stopped: null };
     for (const b of bs) {
       this.assertAllowed(b, agent);
-      if (b.control.mode === 'human_control') throw new BrowserOpError('BROWSER_HUMAN_CONTROL', `the user controls browser '${b.id}'`);
+      const view = this.viewOf(b, agent);
+      if (view.control.mode === 'human_control') throw new BrowserOpError('BROWSER_HUMAN_CONTROL', `the user controls browser '${viewIdOf(b.id, agent)}'`);
     }
     await Promise.all(bs.map((b) => this.withBrowserLock(b.id, async () => {
-      this.assertAgentControl(b);
-      await this.stopBrowser(b);
+      const view = this.viewOf(b, agent);
+      this.assertAgentControl(b, view);
+      for (const t of this.viewTabs(b, agent)) {
+        await t.page.close().catch(() => {});
+        b.tabs.delete(t.id);
+      }
+      b.views.delete(agent);
+      delete this.persisted[viewIdOf(b.id, agent)];
+      if (b.views.size === 0) await this.stopBrowser(b);
+      else {
+        await this.persist();
+        this.emitChange(b.id);
+      }
     })));
-    return { stopped: bs.map((b) => b.id).join(', ') };
+    return { stopped: bs.map((b) => viewIdOf(b.id, agent)).join(', ') };
   }
 
   // ── UI / control (stage 3 surfaces; HTTP-testable now) ────────────
 
+  /**
+   * One entry per open window, not per process: in a shared profile hans
+   * and lisa are two rows with their own tabs and control state. Stopped
+   * browsers are left out the way the tmux list leaves dead sessions out
+   * — except one still holding an unanswered handoff, which is the only
+   * trail back to that request (private/browser-design.md §10.4).
+   */
   async listAll(): Promise<BrowserInfo[]> {
     const out: BrowserInfo[] = [];
     for (const b of this.browsers.values()) {
       if (b.closing) continue;
-      const tabs = await Promise.all([...b.tabs.values()].filter((t) => !t.page.isClosed()).map((t) => this.tabInfo(t)));
-      out.push({
-        browser_id: b.id,
-        profile: b.profile,
-        ephemeral: b.ephemeral,
-        state: 'running',
-        control: b.control.mode,
-        ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
-        ...(b.control.humanBy ? { human_by: b.control.humanBy } : {}),
-        tabs,
-        last_used: b.lastUsed,
-        headed: b.headed,
-      });
+      for (const view of b.views.values()) {
+        const tabs = await Promise.all(this.viewTabs(b, view.agent).map((t) => this.tabInfo(t)));
+        // An empty window is only worth a row while something is pending.
+        if (tabs.length === 0 && !view.control.handoff && view.control.mode !== 'human_control') continue;
+        out.push({
+          view_id: viewIdOf(b.id, view.agent),
+          agent: view.agent,
+          browser_id: b.id,
+          profile: b.profile,
+          ephemeral: b.ephemeral,
+          state: 'running',
+          control: view.control.mode,
+          ...(view.control.handoff ? { handoff: view.control.handoff } : {}),
+          ...(view.control.humanBy ? { human_by: view.control.humanBy } : {}),
+          tabs,
+          last_used: b.lastUsed,
+          headed: b.headed,
+        });
+      }
     }
     for (const [id, p] of Object.entries(this.persisted)) {
-      if (this.browsers.has(id)) continue;
-      if (!p.control) continue;
-      out.push({ browser_id: id, profile: id.replace(/^(agent|profile):/, '').replace(/:tmp$/, ''), ephemeral: id.endsWith(':tmp'), state: 'stopped', control: 'paused', handoff: p.control.handoff, tabs: [], last_used: 0 });
+      const browserId = processIdOf(id);
+      const agent = agentOfViewId(id);
+      if (!agent || !p.control?.handoff) continue;
+      if (this.browsers.get(browserId)?.views.has(agent)) continue;
+      out.push({
+        view_id: id,
+        agent,
+        browser_id: browserId,
+        profile: browserId.replace(/^(agent|profile):/, '').replace(/:tmp$/, ''),
+        ephemeral: browserId.endsWith(':tmp'),
+        state: 'stopped',
+        control: 'paused',
+        handoff: p.control.handoff,
+        tabs: [],
+        last_used: 0,
+      });
     }
     return out;
   }
 
   /** Explicit user recovery starts a blank page in the same profile. */
-  async restartForViewer(browserId: string): Promise<void> {
-    const saved = this.persisted[browserId];
-    if (!saved) throw new BrowserOpError('BROWSER_NOT_FOUND', 'unknown browser');
+  async restartForViewer(viewOrBrowserId: string): Promise<void> {
+    const browserId = processIdOf(viewOrBrowserId);
+    const savedViews = Object.keys(this.persisted).filter((k) => processIdOf(k) === browserId);
+    if (!this.persisted[viewOrBrowserId] && savedViews.length === 0) throw new BrowserOpError('BROWSER_NOT_FOUND', 'unknown browser');
     const match = /^(agent|profile):(.+?)(:tmp)?$/.exec(browserId);
     if (!match) throw new BrowserOpError('BROWSER_NOT_FOUND', 'invalid browser id');
-    const agent = match[1] === 'profile' ? this.cfg.profiles[match[2]!]?.agents[0] : match[2];
+    // The window's own agent restarts the process; for a bare process id
+    // take a saved window, else the first agent the profile still lists.
+    const agent =
+      agentOfViewId(viewOrBrowserId) ??
+      (savedViews.length ? agentOfViewId(savedViews[0]!) : undefined) ??
+      (match[1] === 'profile' ? this.cfg.profiles[match[2]!]?.agents[0] : match[2]);
     if (!agent || this.profileFor(agent).id + (match[3] ?? '') !== browserId)
       throw new BrowserOpError('BROWSER_NOT_ALLOWED', 'profile is no longer configured');
     await this.ensureBrowser(agent, { ephemeral: Boolean(match[3]) });
@@ -928,84 +1131,91 @@ export class BrowserService {
   }
 
   /**
-   * Human takes or returns control. `agent` = hand back: if a handoff
-   * was pending, the requesting agent is woken exactly once in its
-   * session (idempotent per handoff id).
+   * Human takes or returns ONE window. `agent` = hand back: with a
+   * pending handoff the requesting agent is woken exactly once in its
+   * session (idempotent per handoff id); without one, only the window's
+   * own agent is woken, and only after real activity. The other agents
+   * on a shared profile keep working throughout.
    */
-  async setControl(browserId: string, mode: 'human' | 'agent', opts: { by?: string; handoffId?: string } = {}): Promise<ControlState> {
-    return this.withBrowserLock(browserId, async () => {
-      const b = this.browsers.get(browserId);
-      if (!b || b.closing) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${browserId}' is not running`);
+  async setControl(viewId: string, mode: 'human' | 'agent', opts: { by?: string; handoffId?: string } = {}): Promise<ControlState> {
+    return this.withBrowserLock(viewId, async () => {
+      const { browser: b, view } = this.resolveView(viewId);
+      const id = viewIdOf(b.id, view.agent);
       if (mode === 'human') {
-        await this.commitControl(b, { mode: 'human_control', ...(b.control.handoff ? { handoff: b.control.handoff } : {}), ...(opts.by ? { humanBy: opts.by } : {}), since: nowMs() });
+        await this.commitControl(b, view, { mode: 'human_control', ...(view.control.handoff ? { handoff: view.control.handoff } : {}), ...(opts.by ? { humanBy: opts.by } : {}), since: nowMs() });
         this.touch(b);
-        logger.info({ msg: 'browser.human_control', browser: b.id, by: opts.by ?? null });
+        logger.info({ msg: 'browser.human_control', browser: id, by: opts.by ?? null });
         this.emitChange(b.id);
-        return b.control;
+        return view.control;
       }
-      const handoff = b.control.handoff;
+      const handoff = view.control.handoff;
       if (opts.handoffId && handoff && opts.handoffId !== handoff.id) {
         throw new BrowserOpError('BROWSER_ACTION_FAILED', 'stale handoff — refresh before handing back');
       }
-      if (opts.handoffId && !handoff) return b.control; // duplicate, never release a newer manual takeover
-      if (opts.by && b.control.humanBy && opts.by !== b.control.humanBy) {
+      if (opts.handoffId && !handoff) return view.control; // duplicate, never release a newer manual takeover
+      if (opts.by && view.control.humanBy && opts.by !== view.control.humanBy) {
         throw new BrowserOpError('BROWSER_HUMAN_CONTROL', 'another viewer controls this browser');
       }
       if (handoff && this.deps.resolveSession) await this.deps.resolveSession(handoff.agent, handoff.session);
-      const touched = b.control.humanTouched === true;
-      await this.commitControl(b, { mode: 'agent_control', since: nowMs() });
+      const touched = view.control.humanTouched === true;
+      await this.commitControl(b, view, { mode: 'agent_control', since: nowMs() });
       this.touch(b);
       // Whom to wake: the requesting agent+session when a handoff was
       // pending; otherwise — only if the human actually did something —
-      // the session of the tab an agent used last (Rene 2026-09-08).
+      // the session of the last tab used IN THIS WINDOW (Rene 2026-09-10).
       let wake: { agent: string; session: string; text: string } | null = null;
       if (handoff) {
         wake = {
           agent: handoff.agent,
           session: handoff.session,
           text:
-            `[browser] The user handed browser '${b.id}' back to you (handoff ${handoff.id}). ` +
+            `[browser] The user handed browser '${id}' back to you (handoff ${handoff.id}). ` +
             `Reason you asked for it: ${handoff.reason}. ` +
             (handoff.resumeNote ? `Your note: ${handoff.resumeNote}. ` : '') +
             'Take a fresh snapshot before acting — the page may have changed.',
         };
       } else if (touched) {
-        const last = this.lastAgentTab(b);
+        const last = this.lastAgentTab(b, view.agent);
         if (last) {
           wake = {
             agent: last.agent,
             session: last.session,
             text:
-              `[browser] The user took over browser '${b.id}', did something there (navigation, clicks or typing) and handed it back to you. ` +
+              `[browser] The user took over browser '${id}', did something there (navigation, clicks or typing) and handed it back to you. ` +
               'If you still have work in this browser, take a fresh snapshot before acting — the page may have changed. Otherwise just acknowledge briefly.',
           };
         }
       }
-      logger.info({ msg: 'browser.agent_control', browser: b.id, wake: handoff ? handoff.id : wake ? 'activity' : null, ...(wake ? { agent: wake.agent, session: wake.session } : {}) });
+      logger.info({ msg: 'browser.agent_control', browser: id, wake: handoff ? handoff.id : wake ? 'activity' : null, ...(wake ? { agent: wake.agent, session: wake.session } : {}) });
       this.emitChange(b.id);
       if (wake && this.deps.dispatchWakeTurn) {
-        void this.deps.dispatchWakeTurn(wake).catch((err) => logger.warn({ msg: 'browser.wake_failed', browser: b.id, err: String(err) }));
+        void this.deps.dispatchWakeTurn(wake).catch((err) => logger.warn({ msg: 'browser.wake_failed', browser: id, err: String(err) }));
       }
-      return b.control;
+      return view.control;
     });
   }
 
-  /** The tab an agent used most recently (has a session), or null. */
-  private lastAgentTab(b: BrowserRec): { agent: string; session: string } | null {
+  /** The tab this window's agent used most recently (has a session), or null. */
+  private lastAgentTab(b: BrowserRec, agent: string): { agent: string; session: string } | null {
     let best: TabRec | null = null;
-    for (const t of b.tabs.values()) {
-      if (!t.session || !t.createdByAgent || t.page.isClosed()) continue;
+    for (const t of this.viewTabs(b, agent)) {
+      if (!t.session || !t.createdByAgent) continue;
       if (!best || t.lastUsed > best.lastUsed) best = t;
     }
     return best && best.session ? { agent: best.agent, session: best.session } : null;
   }
 
-  /** Record human activity while in control (see ControlState.humanTouched). */
-  markHumanActivity(browserId: string, kind: string): void {
+  /** Record human activity in one window (see ControlState.humanTouched). */
+  markHumanActivity(viewId: string, kind: string): void {
     if (kind === 'mousemove' || kind === 'resize' || kind === 'tab') return;
-    const b = this.browsers.get(browserId);
-    if (!b || b.control.mode !== 'human_control' || b.control.humanTouched) return;
-    b.control.humanTouched = true;
+    let view: ViewState;
+    try {
+      view = this.resolveView(viewId).view;
+    } catch {
+      return;
+    }
+    if (view.control.mode !== 'human_control' || view.control.humanTouched) return;
+    view.control.humanTouched = true;
     void this.persist().catch((err) => logger.warn({ msg: 'browser.state_persist_failed', err: String(err) }));
   }
 
@@ -1018,67 +1228,78 @@ export class BrowserService {
     return b;
   }
 
-  /** Summary of one browser for the viewer header. */
-  async browserInfo(browserId: string): Promise<BrowserInfo> {
-    const b = this.runningBrowser(browserId);
-    const tabs = await Promise.all([...b.tabs.values()].filter((t) => !t.page.isClosed()).map((t) => this.tabInfo(t)));
+  /** Summary of one window for the viewer header. */
+  async browserInfo(viewId: string): Promise<BrowserInfo> {
+    const { browser: b, view } = this.resolveView(viewId);
+    const tabs = await Promise.all(this.viewTabs(b, view.agent).map((t) => this.tabInfo(t)));
     return {
+      view_id: viewIdOf(b.id, view.agent),
+      agent: view.agent,
       browser_id: b.id,
       profile: b.profile,
       ephemeral: b.ephemeral,
       state: 'running',
-      control: b.control.mode,
-      ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
-        ...(b.control.humanBy ? { human_by: b.control.humanBy } : {}),
+      control: view.control.mode,
+      ...(view.control.handoff ? { handoff: view.control.handoff } : {}),
+      ...(view.control.humanBy ? { human_by: view.control.humanBy } : {}),
       tabs,
       last_used: b.lastUsed,
+      headed: b.headed,
     };
   }
 
-  /** The page a viewer wants to watch: the given tab, else the most
-   *  recently used one. Touches the browser (viewers count as activity). */
-  viewerPage(browserId: string, tabId?: string): { tabId: string; page: Page; generation: number } {
-    const b = this.runningBrowser(browserId);
+  /** The page a viewer wants to watch: the given tab of THIS window, else
+   *  its most recently used one. Touches the browser (viewers count as
+   *  activity). A tab of another agent's window is not reachable here. */
+  viewerPage(viewId: string, tabId?: string): { tabId: string; page: Page; generation: number } {
+    const { browser: b, view } = this.resolveView(viewId);
     this.touch(b);
-    const live = [...b.tabs.values()].filter((t) => !t.page.isClosed());
+    const live = this.viewTabs(b, view.agent);
     const t = tabId ? live.find((x) => x.id === tabId) : live.sort((a, c) => c.lastUsed - a.lastUsed)[0];
-    if (!t) throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `browser '${browserId}' has no open tab`);
+    if (!t) throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `browser '${viewId}' has no open tab`);
     return { tabId: t.id, page: t.page, generation: t.generation };
   }
 
-  /** True when this viewer connection may drive the browser. */
-  humanControls(browserId: string, by: string): boolean {
-    const b = this.browsers.get(browserId);
-    return Boolean(b && !b.closing && b.control.mode === 'human_control' && (b.control.humanBy === undefined || b.control.humanBy === by));
+  /** True when this viewer connection may drive this window. */
+  humanControls(viewId: string, by: string): boolean {
+    let view: ViewState;
+    try {
+      view = this.resolveView(viewId).view;
+    } catch {
+      return false;
+    }
+    return view.control.mode === 'human_control' && (view.control.humanBy === undefined || view.control.humanBy === by);
   }
 
   /** Human navigation (URL bar) — same policy as the agent's `open`. */
-  async humanNavigate(browserId: string, tabId: string, url: string): Promise<void> {
+  async humanNavigate(viewId: string, tabId: string, url: string): Promise<void> {
     const verdict = await checkNavigationAllowed(url, this.cfg);
     if (!verdict.ok) throw new BrowserOpError('BROWSER_NAVIGATION_DENIED', verdict.reason!);
-    const { page } = this.viewerPage(browserId, tabId);
-    this.markHumanActivity(browserId, 'navigate');
+    const { page } = this.viewerPage(viewId, tabId);
+    this.markHumanActivity(viewId, 'navigate');
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch((err) => {
       throw new BrowserOpError('BROWSER_ACTION_FAILED', (err as Error).message.split('\n')[0]!);
     });
   }
 
-  /** A tab the human opened (not the agent's, so tab cleanup leaves it). */
-  async humanNewTab(browserId: string, by: string): Promise<string> {
-    const b = this.runningBrowser(browserId);
-    if (b.tabs.size >= this.cfg.maxTabsPerAgent) throw new BrowserOpError('BROWSER_TAB_LIMIT', `browser '${b.id}' already has ${b.tabs.size} tabs`);
+  /** A tab the human opened: it belongs to this window (so the agent can
+   *  use it afterwards), but not to the agent (tab cleanup leaves it). */
+  async humanNewTab(viewId: string, _by: string): Promise<string> {
+    const { browser: b, view } = this.resolveView(viewId);
+    const own = this.viewTabs(b, view.agent);
+    if (own.length >= this.cfg.maxTabsPerAgent) throw new BrowserOpError('BROWSER_TAB_LIMIT', `this window already has ${own.length} tabs`);
     const page = await b.context.newPage();
-    const tab = this.adoptPage(b, page, { agent: `_user:${by}`, createdByAgent: false });
-    this.markHumanActivity(browserId, 'newtab');
+    const tab = this.adoptPage(b, page, { agent: view.agent, createdByAgent: false });
+    this.markHumanActivity(viewId, 'newtab');
     this.touch(b);
     return tab.id;
   }
 
-  async humanCloseTab(browserId: string, tabId: string): Promise<void> {
-    const b = this.runningBrowser(browserId);
+  async humanCloseTab(viewId: string, tabId: string): Promise<void> {
+    const { browser: b, view } = this.resolveView(viewId);
     const t = b.tabs.get(tabId);
-    if (!t) return;
-    this.markHumanActivity(browserId, 'closetab');
+    if (!t || t.agent !== view.agent) return;
+    this.markHumanActivity(viewId, 'closetab');
     await t.page.close().catch(() => {});
     b.tabs.delete(tabId);
     this.emitChange(b.id);

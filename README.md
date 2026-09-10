@@ -81,7 +81,8 @@ Beyond chat and memory, briefly:
 - **Shared browser (optional).** A real Chromium per agent that the
   agent drives and you can watch and take over in the web client — sign
   in, pass a 2FA prompt, decide something, hand back, and the agent
-  continues in the same tab. Off until `browser.enabled`. See
+  continues in the same tab. Agents can share a profile and its logins;
+  each still gets its own window, tabs and handoff. Off until `browser.enabled`. See
   [docs/browser.md](docs/browser.md).
 - **Projects (optional).** Bind a session to a real-world thing — a
   renovation, a research thread, a codebase — via a manifest of pointers
@@ -464,7 +465,7 @@ grok-cli) — same tool surface regardless of model.
 | image (optional) | `image_generate`, `image_models` | Text-to-image, and what each configured model accepts. Only registered when `imageGen.enabled: true`. |
 | media (optional) | `media_list` | Find images and video generated earlier, with an optional type filter. Registered when either media surface is configured. |
 | video (optional) | `video_generate`, `video_status`, `video_models` | Text-to-video. Starts a render and returns immediately — the agent is woken when it lands, never left waiting. Only registered when `videoGen.enabled: true`. |
-| browser (optional) | `browser` | A managed Chromium per agent profile: open, snapshot (accessibility tree with element refs), act, screenshot, tabs; `request_handoff` lets you sign in or decide in the web client's live browser window, then the agent continues in the same tab. Only registered when `browser.enabled: true`. See [docs/browser.md](docs/browser.md). |
+| browser (optional) | `browser` | A managed Chromium per agent profile, one window per agent when a profile is shared: open, snapshot (accessibility tree with element refs), act, screenshot, tabs; `request_handoff` lets you sign in or decide in the web client's live browser window, then the agent continues in the same tab. Only registered when `browser.enabled: true`. See [docs/browser.md](docs/browser.md). |
 | docs | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation. |
 | resources | `resource_list`, `resource_test` | Discover/probe configured SSH targets. |
 | time | `time_now` | Current date/time/timezone. |
@@ -498,7 +499,7 @@ See [docs/tools.md](docs/tools.md) for the full surface, and
 - [docs/voice.md](docs/voice.md) — STT + TTS, per-session auto-play toggle, /voice/turn endpoint
 - [docs/imagegen.md](docs/imagegen.md) — text-to-image, the Media window, per-agent review stance
 - [docs/videogen.md](docs/videogen.md) — text-to-video: job lifecycle, being woken instead of waiting, what is verified and what isn't
-- [docs/browser.md](docs/browser.md) — a managed Chromium per agent: snapshot/act loop, per-agent profiles, navigation policy, handing a login over to you
+- [docs/browser.md](docs/browser.md) — a managed Chromium per agent: snapshot/act loop, per-agent profiles and per-agent windows on a shared one, navigation policy, handing a login over to you
 - [docs/resources.md](docs/resources.md) — SSH targets, exec routing
 - [docs/thinking.md](docs/thinking.md) — reasoning depth, reasoning-token counts and the model's thinking text across engines
 - [docs/sampling.md](docs/sampling.md) — temperature, top_p and friends per model, agent and session

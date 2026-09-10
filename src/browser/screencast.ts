@@ -30,7 +30,7 @@
 
 import type { CDPSession, Page } from 'playwright-core';
 import { logger } from '../server/logger.ts';
-import { BrowserOpError, type BrowserService } from './service.ts';
+import { BrowserOpError, processIdOf, type BrowserService } from './service.ts';
 
 const FRAME_INTERVAL_MS = 50;
 const MAX_BUFFERED = 2 * 1024 * 1024;
@@ -77,7 +77,7 @@ export class ScreencastHub {
   private ackTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(
-    readonly browserId: string,
+    readonly viewId: string,
     readonly tabId: string,
     private page: Page,
     private generationOf: () => number,
@@ -173,7 +173,7 @@ export class ScreencastHub {
         everyNthFrame: 1,
       });
     } catch (error) { await this.stop(); throw error; }
-    logger.info({ msg: 'browser.screencast_start', browser: this.browserId, tab: this.tabId });
+    logger.info({ msg: 'browser.screencast_start', browser: this.viewId, tab: this.tabId });
   }
 
   private async stop(): Promise<void> {
@@ -188,7 +188,7 @@ export class ScreencastHub {
       this.cdp = null;
       this.started = false;
       this.stopping = false;
-      logger.info({ msg: 'browser.screencast_stop', browser: this.browserId, tab: this.tabId });
+      logger.info({ msg: 'browser.screencast_stop', browser: this.viewId, tab: this.tabId });
     }
   }
 
@@ -211,29 +211,31 @@ export class ScreencastHub {
 }
 
 export class ScreencastRegistry {
+  /** Keyed by `<view id>|<tab id>` — one hub per window and tab, so two
+   *  agents sharing a Chromium never share a stream. */
   private hubs = new Map<string, ScreencastHub>();
 
   constructor(private service: BrowserService) {
     service.onChange((browserId) => this.onBrowserChange(browserId));
   }
 
-  private key(browserId: string, tabId: string): string {
-    return `${browserId}|${tabId}`;
+  private key(viewId: string, tabId: string): string {
+    return `${viewId}|${tabId}`;
   }
 
-  async attach(browserId: string, tabId: string | undefined, viewer: ViewerSocket): Promise<{ tabId: string; page: Page; hub: ScreencastHub }> {
-    const target = this.service.viewerPage(browserId, tabId);
-    const k = this.key(browserId, target.tabId);
+  async attach(viewId: string, tabId: string | undefined, viewer: ViewerSocket): Promise<{ tabId: string; page: Page; hub: ScreencastHub }> {
+    const target = this.service.viewerPage(viewId, tabId);
+    const k = this.key(viewId, target.tabId);
     let hub = this.hubs.get(k);
     if (!hub) {
       const cfg = this.service.config;
       hub = new ScreencastHub(
-        browserId,
+        viewId,
         target.tabId,
         target.page,
         () => {
           try {
-            return this.service.viewerPage(browserId, target.tabId).generation;
+            return this.service.viewerPage(viewId, target.tabId).generation;
           } catch {
             return -1;
           }
@@ -253,8 +255,8 @@ export class ScreencastRegistry {
     return { tabId: target.tabId, page: target.page, hub };
   }
 
-  detach(browserId: string, tabId: string, viewer: ViewerSocket): void {
-    const k = this.key(browserId, tabId);
+  detach(viewId: string, tabId: string, viewer: ViewerSocket): void {
+    const k = this.key(viewId, tabId);
     const hub = this.hubs.get(k);
     if (!hub) return;
     void hub.remove(viewer).then(() => {
@@ -262,12 +264,14 @@ export class ScreencastRegistry {
     });
   }
 
+  /** `browserId` is the process id: every window on it may have changed. */
   private onBrowserChange(browserId: string): void {
     // Tabs that vanished take their hub with them.
     for (const [k, hub] of this.hubs) {
-      if (!k.startsWith(`${browserId}|`)) continue;
+      const viewId = k.slice(0, k.lastIndexOf('|'));
+      if (processIdOf(viewId) !== browserId) continue;
       try {
-        this.service.viewerPage(browserId, hub.tabId);
+        this.service.viewerPage(viewId, hub.tabId);
         hub.refresh();
       } catch {
         void hub.closeAll(4001, 'tab closed');

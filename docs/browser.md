@@ -88,7 +88,7 @@ tabs of the same browser are untouched; the tab's `emulation` field
 in `tabs`/`status` shows what is active. Ask an agent "open the mobile
 version" and it uses this.
 
-## Profiles — one per agent
+## Profiles and windows
 
 A Chromium profile is a cookie jar. Every agent gets its own under
 `~/.somora/browser/profiles/<agent>/`, so naxon being signed in to a
@@ -105,8 +105,25 @@ browser:
       agents: [naxon, hans]
 ```
 
-Shared means shared cookies **and** shared tabs. An agent not listed on
-a profile cannot touch it.
+Shared means shared cookies and one Chromium process — Chromium allows
+only one process per profile directory. It does **not** mean shared
+tabs: every agent gets its own **window** on that process.
+
+A window is `<browser id>@<agent>`, for example `profile:firma@hans`
+or `agent:loki@loki`. It is the unit for everything you and the agents
+touch:
+
+- Each window lists and drives only its own tabs. An agent cannot
+  snapshot or click a tab in another agent's window, and `stop` closes
+  its own window; the process ends when the last window is gone.
+- `maxTabsPerAgent` counts per window, not per process.
+- Control, handoff and take-over are per window. While you drive hans'
+  window, lisa keeps working in hers, on the same Chromium.
+- A login is still shared, because the cookie jar is. That is the point
+  of a shared profile: sign in once in hans' window and lisa is signed
+  in too.
+
+An agent not listed on a profile cannot touch it.
 
 `open` with `ephemeral: true` uses a throw-away profile next to the
 agent's own — for "look at this without my logins" — deleted on `stop`.
@@ -121,9 +138,9 @@ One tool, `op`-variants:
 | `snapshot` | Compact accessibility tree of a tab; interactive elements carry `[ref=e12]`. `full: true` for the raw tree. |
 | `act` | `action` `click` / `fill` / `press` / `scroll` / `select` on a `ref` (`press`/`scroll` also without one), optional `value`, optional `generation`. |
 | `screenshot` | PNG into `<workspace>/browser/<agent>/`, path returned. |
-| `tabs`, `status` | What is open; whether the browser runs, which profile, who controls it, the headed plan (`headless` / `display` / `xvfb` / `unavailable` with reason) and operator warnings. |
+| `tabs`, `status` | What is open in **your** window; whether the browser runs, which profile and window (`view_id`), who controls it, the headed plan (`headless` / `display` / `xvfb` / `unavailable` with reason) and operator warnings. |
 | `request_handoff` | `reason`, optional `resume_note`. Marks the browser as waiting for you. |
-| `close_tab`, `stop` | Clean up. `stop` keeps the profile. |
+| `close_tab`, `stop` | Clean up. `stop` closes your window and keeps the profile; the Chromium stays up for other agents that still have one. |
 
 The loop an agent runs is `open` → `snapshot` → `act` → `snapshot`.
 Refs are valid until the next snapshot or navigation of that tab; the
@@ -150,33 +167,42 @@ limit OpenClaw documents; not a network firewall.
 ## In the web client
 
 A **browser** tile appears on the desktop once `browser.enabled` is
-true. It opens the list: one row per running browser (= agent profile)
-with tab count, the active tab's title and the control state — *agent
-controls*, *waiting for you*, *you control*. A row opens the browser
-window.
+true. It opens the **browser sessions** list: one row per open window,
+named by the agent that owns it, with its profile, tab count, the
+active tab's title and the control state — *agent controls*, *waiting
+for you*, *human controls*. Two agents on a shared profile are two
+rows. A row opens that window.
+
+Only running windows are listed, the way the tmux session list only
+shows live sessions. The single exception is a stopped browser that
+still holds an unanswered handoff: it stays, with **Reopen browser**,
+because it is the only trail back to that request.
 
 The window streams the active tab live (JPEG screencast over a
 WebSocket, paced so a slow viewer drops frames instead of buffering
 them), with a tab bar, URL bar, back/forward/reload and the two
 buttons that matter:
 
-- **Take over** — you take control of this browser: clicks, wheel,
+- **Take over** — you take control of this window: clicks, wheel,
   typing (umlauts, dead keys and paste included) and the URL bar go to
-  the page, the remote viewport follows your window size, and every
-  agent operation on this browser is refused until you hand back.
-  Other viewers of the same browser keep watching.
+  the page, the remote viewport follows your window size, and this
+  agent's operations are refused until you hand back. Another agent
+  sharing the profile keeps working in its own window. Other viewers of
+  the same window keep watching. A tab you open here belongs to this
+  window, so the agent can use it afterwards.
 - **Hand back** — hands control back. If the agent had asked for
   you (`request_handoff`), it is woken once in the session it asked
   from and told to take a fresh snapshot. If you took over on your own
-  and did something (navigated, clicked, typed), the agent that used
-  this browser last is woken in that session with the same advice.
-  Looking and handing back unchanged wakes nobody. The wake shows up
+  and did something (navigated, clicked, typed), the owner of this
+  window is woken, in the session of the last tab it used here.
+  The window you worked in decides who is woken, never the busiest
+  agent on the process. Looking and handing back unchanged wakes nobody. The wake shows up
   in the chat as a centered *browser · <agent> · handed back* divider
   (`from_system: 'browser'`), like tmux and sentinel wakes.
 
 Watching needs no take-over. Closing the window stops the stream, not
-the browser and not the agent's work. Control is per browser, not per
-tab. The footer shows the streamed tab, the viewport size, the page
+the browser and not the agent's work. Control is per window, not per
+tab: while you hold it, none of that agent's tabs move. The footer shows the streamed tab, the viewport size, the page
 generation and the frame counter — useful when a picture looks stale
 right after a navigation.
 
@@ -189,18 +215,21 @@ not to retry. The take-over buttons live in the browser window; the same
 switch is an HTTP route:
 
 ```bash
-curl -sk -X POST https://localhost:18737/browser/agent:naxon/control \
+curl -sk -X POST https://localhost:18737/browser/agent:naxon@naxon/control \
   -H 'Content-Type: application/json' -d '{"mode":"human"}'
 # … sign in …
-curl -sk -X POST https://localhost:18737/browser/agent:naxon/control \
+curl -sk -X POST https://localhost:18737/browser/agent:naxon@naxon/control \
   -H 'Content-Type: application/json' -d '{"mode":"agent","handoffId":"<id>"}'
 ```
+
+The path is the window id. A bare browser id still works while only one
+agent has a window on that process.
 
 Handing back schedules one wake for the requesting agent in the session it
 asked from (idempotent per handoff id) with the reason and its own
 resume note; the wake tells it to take a fresh snapshot first. A pending
-handoff survives a server restart. Control is per browser, not per tab:
-while you hold it, none of that agent's tabs move.
+handoff survives a server restart. It belongs to one window: another
+agent on the same profile neither sees the request nor the hand-back.
 
 The notice appears in the requesting chat, including when that chat is
 opened later. Its reason and **Open browser** button remain until the
@@ -208,7 +237,8 @@ handoff is returned. The taskbar marker opens the browser list even
 when that chat or browser window is closed. These are current-state
 notices, not historical transcript messages.
 
-`GET /browser/status` lists running and previously stopped browsers.
+`GET /browser/status` lists the open windows, plus stopped ones that
+still hold a pending handoff.
 `GET /browser/stream` sends that state initially and on changes; the web
 client uses this stream instead of repeatedly fetching the list.
 
@@ -222,8 +252,8 @@ Old-tab or old-navigation frames are discarded, and inputs based on
 an obsolete frame are refused. Capture replacement waits for the old
 CDP session to stop.
 
-After a browser crash or server restart, stopped profiles and pending
-handoffs remain visible. **Reopen browser** launches a blank page in the
+After a browser crash or server restart, every window that existed
+comes back with its control state, and pending handoffs remain visible. **Reopen browser** launches a blank page in the
 same persistent profile; saved cookies remain, but old tabs, submitted
 forms and clicks are not replayed. Temporary profiles lose their data.
 A pending handoff must still be returned by the user. Without a pending
@@ -261,8 +291,11 @@ SOMORA_BROWSER_WEB_SMOKE=1 node --import tsx src/browser/web-smoke.test.mts
 ```
 
 This starts an isolated server, local OTP page and local model fixture,
-then drives `/web` through takeover, OTP entry, reconnect and hand-back.
-It checks notice removal, one wake and the direct ability gate. It uses
+with two agents on one shared profile, then drives `/web` through
+takeover, OTP entry, reconnect and hand-back. It checks that the list
+shows one row per window, that the second agent keeps working while you
+control the first, notice removal, exactly one wake into the session
+that asked, and the direct ability gate. It uses
 temporary profiles and requires Chromium and permission to bind local
 ports; the running installation is not used.
 

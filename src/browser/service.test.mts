@@ -125,12 +125,88 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
     await assert.rejects(svc.tabs('lisa'), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NOT_FOUND');
   });
 
-  await t.test('shared profile: hans and lisa share one browser, others are refused', async () => {
+  await t.test('shared profile: one Chromium, one window per agent', async () => {
     const h = await svc.open('hans', 'main', { url: `${base}/` });
-    assert.equal(h.browser_id, 'profile:team');
-    const l = await svc.tabs('lisa');
+    assert.equal(h.browser_id, 'profile:team', 'one process for the shared profile');
+    assert.equal(h.view_id, 'profile:team@hans');
+    const l = await svc.open('lisa', 'main', { url: `${base}/otp` });
     assert.equal(l.browser_id, 'profile:team');
-    assert.equal(l.tabs.length, 1);
+    assert.equal(l.view_id, 'profile:team@lisa', 'lisa gets her own window on the same process');
+    // Each window lists only its own tabs, and cannot touch the other's.
+    assert.deepEqual((await svc.tabs('hans')).tabs.map((t) => t.tab_id), [h.tab.tab_id]);
+    assert.deepEqual((await svc.tabs('lisa')).tabs.map((t) => t.tab_id), [l.tab.tab_id]);
+    await assert.rejects(svc.snapshot('lisa', { tab: h.tab.tab_id }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_NOT_FOUND');
+    const rows = (await svc.listAll()).filter((b) => b.browser_id === 'profile:team');
+    assert.deepEqual(rows.map((r) => r.view_id).sort(), ['profile:team@hans', 'profile:team@lisa']);
+    // The shared cookie jar is the point of the shared profile: hans logs
+    // in, lisa is logged in too.
+    let snap = await svc.snapshot('hans', { tab: h.tab.tab_id });
+    const user = /textbox "Username" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
+    const btn = /button "Continue" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
+    await svc.act('hans', { tab: h.tab.tab_id, action: 'fill', ref: user, value: 'hans' });
+    await svc.act('hans', { tab: h.tab.tab_id, action: 'click', ref: btn });
+    snap = await svc.snapshot('hans', { tab: h.tab.tab_id });
+    const otp = /textbox "Code" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
+    await svc.act('hans', { tab: h.tab.tab_id, action: 'fill', ref: otp, value: '123456' });
+    await svc.act('hans', { tab: h.tab.tab_id, action: 'press', ref: otp, value: 'Enter' });
+    const lisaSees = await svc.open('lisa', 'main', { url: `${base}/`, tab: l.tab.tab_id });
+    assert.equal(lisaSees.view_id, 'profile:team@lisa');
+    assert.match((await svc.snapshot('lisa', { tab: l.tab.tab_id })).snapshot, /heading "Welcome back"/);
+  });
+
+  await t.test('handoff, takeover and hand-back stay inside one window', async () => {
+    const hansTab = (await svc.tabs('hans')).tabs[0]!.tab_id;
+    const lisaTab = (await svc.tabs('lisa')).tabs[0]!.tab_id;
+    const before = wakes.length;
+    const h = await svc.requestHandoff('hans', 'main', { reason: 'team login' });
+    assert.equal(h.view_id, 'profile:team@hans');
+    await assert.rejects(svc.snapshot('hans', { tab: hansTab }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    // lisa keeps working in the same Chromium
+    assert.ok((await svc.snapshot('lisa', { tab: lisaTab })).snapshot.length > 0);
+    // a bare process id is ambiguous once two agents have a window
+    await assert.rejects(svc.setControl('profile:team', 'human', { by: 'web-team' }), /windows/);
+    await svc.setControl('profile:team@hans', 'human', { by: 'web-team' });
+    await assert.rejects(svc.act('hans', { tab: hansTab, action: 'press', value: 'Enter' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    assert.ok((await svc.snapshot('lisa', { tab: lisaTab })).snapshot.length > 0, 'lisa is not locked out');
+    assert.equal(svc.humanControls('profile:team@hans', 'web-team'), true);
+    assert.equal(svc.humanControls('profile:team@lisa', 'web-team'), false);
+    await svc.setControl('profile:team@hans', 'agent', { handoffId: h.handoff_id });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(wakes.length, before + 1);
+    assert.equal(wakes[before]!.agent, 'hans');
+  });
+
+  await t.test('hand-back after activity wakes the window\'s owner, not the last agent in the process', async () => {
+    const hansTab = (await svc.tabs('hans')).tabs[0]!.tab_id;
+    const lisaTab = (await svc.tabs('lisa')).tabs[0]!.tab_id;
+    await svc.snapshot('hans', { tab: hansTab });
+    // lisa is the most recently active agent ON THE PROCESS …
+    await svc.snapshot('lisa', { tab: lisaTab });
+    const before = wakes.length;
+    // … but the user works in hans' window, so hans is woken.
+    await svc.setControl('profile:team@hans', 'human', { by: 'web-team' });
+    svc.markHumanActivity('profile:team@hans', 'click');
+    await svc.setControl('profile:team@hans', 'agent');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(wakes.length, before + 1);
+    assert.equal(wakes[before]!.agent, 'hans');
+    assert.equal(wakes[before]!.session, 'main');
+  });
+
+  await t.test('the tab cap counts per window, and stop closes only that window', async () => {
+    // cfg.maxTabsPerAgent is 2: lisa fills hers, hans still has room.
+    await svc.open('lisa', 'main', { url: `${base}/otp` });
+    await assert.rejects(svc.open('lisa', 'main', { url: `${base}/otp` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_LIMIT');
+    const extra = await svc.open('hans', 'main', { url: `${base}/otp` });
+    assert.equal(extra.browser_id, 'profile:team');
+    const stopped = await svc.stop('hans');
+    assert.equal(stopped.stopped, 'profile:team@hans');
+    let rows = (await svc.listAll()).filter((b) => b.browser_id === 'profile:team');
+    assert.deepEqual(rows.map((r) => r.view_id), ['profile:team@lisa'], 'the process stays up for lisa');
+    assert.equal((await svc.tabs('lisa')).tabs.length, 2, 'lisa keeps her tabs');
+    await svc.stop('lisa');
+    rows = (await svc.listAll()).filter((b) => b.browser_id === 'profile:team');
+    assert.equal(rows.length, 0, 'the last window closes the process');
   });
 
   await t.test('navigation policy: private host denied, deny list, redirect into LAN blocked', async () => {
@@ -153,6 +229,7 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
   });
 
   await t.test('handoff: request → human control refuses agent ops → hand back wakes once', async () => {
+    const before = wakes.length;
     const h = await svc.requestHandoff('naxon', 'main', { reason: 'login needed', resume_note: 'continue with the profile page' });
     assert.equal(h.control, 'handoff_requested');
     await assert.rejects(svc.snapshot('naxon', { tab: 't1' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
@@ -163,12 +240,12 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
     const back = await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
     assert.equal(back.mode, 'agent_control');
     await new Promise((r) => setTimeout(r, 50));
-    assert.equal(wakes.length, 1);
-    assert.equal(wakes[0]!.session, 'main');
-    assert.match(wakes[0]!.text, /login needed/);
+    assert.equal(wakes.length, before + 1);
+    assert.equal(wakes[before]!.session, 'main');
+    assert.match(wakes[before]!.text, /login needed/);
     // a second hand-back must not wake again (acceptance 5)
     await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
-    assert.equal(wakes.length, 1);
+    assert.equal(wakes.length, before + 1);
     const list = await svc.listAll();
     assert.ok(list.some((b) => b.browser_id === 'agent:naxon' && b.control === 'agent_control'));
   });
@@ -282,6 +359,7 @@ test('restart restores handoff without replay; explicit recovery and crash are v
   t.after(async () => { await next.shutdown(); server.close(); });
   await next.init();
   let info = (await next.listAll()).find((b) => b.browser_id === 'agent:recovery')!;
+  assert.equal(info.view_id, 'agent:recovery@recovery');
   assert.equal(info.state, 'stopped');
   assert.equal(info.handoff?.id, h.handoff_id);
   assert.equal(wakes.length, 0);
@@ -294,9 +372,9 @@ test('restart restores handoff without replay; explicit recovery and crash are v
   assert.equal(wakes.length, 1);
   const page = next.viewerPage('agent:recovery').page;
   await page.context().close(); // Chromium disappearance, not the service stop path
-  info = (await next.listAll()).find((b) => b.browser_id === 'agent:recovery')!;
-  assert.equal(info.state, 'stopped');
-  assert.equal(info.handoff, undefined, 'completed request must not resurrect');
+  // A stopped browser with nothing pending is not a row at all — the
+  // list shows what is running, like the tmux session list (design §10.4).
+  assert.equal((await next.listAll()).some((b) => b.browser_id === 'agent:recovery'), false);
 });
 
 test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb', { skip: chromium.path ? false : 'no Chromium on this host' }, async (t) => {

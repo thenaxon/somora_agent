@@ -10,8 +10,8 @@ export function BrowserHandoffNotice({ browser, connected, onOpen }: {
     setBusy(true);
     setError(null);
     try {
-      if (browser.state === 'stopped') await api.browserRestart(browser.browser_id);
-      onOpen(browser.browser_id, browser.profile);
+      if (browser.state === 'stopped') await api.browserRestart(browser.view_id);
+      onOpen(browser.view_id, browser.agent);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };

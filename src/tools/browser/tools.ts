@@ -93,6 +93,8 @@ export const browserTool: ToolDefinition<BrowserInputT, BrowserOpResult> = {
     '\n\n' +
     'op:"screenshot" saves a PNG to the workspace (for the user, or for a vision model via analyze_file). ' +
     'op:"tabs"/"status" show what is open; op:"close_tab"/"stop" clean up (stop keeps the profile). ' +
+    'You have your own browser window even when you share a profile with other agents: you see and act on YOUR tabs only, ' +
+    'a handoff is yours alone, and op:"stop" closes your window without pulling the browser out from under the others. ' +
     'Only public http(s) hosts and hosts the operator allowed are reachable; a denied URL is not worth retrying.',
   inputSchema: BrowserInput as unknown as z.ZodType<BrowserInputT>,
   jsonSchema: {

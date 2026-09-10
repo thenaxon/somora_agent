@@ -331,7 +331,7 @@ export function useWindowManager() {
     const next: WindowState = {
       id,
       kind: 'browser-list',
-      title: 'browsers',
+      title: 'browser sessions',
       icon: '🌐',
       ...pos,
       minimized: false,
@@ -341,23 +341,23 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
-  /** Open or focus the live view of one managed browser. Deduped per
-   *  browser id — one window per Chromium process, tabs inside it. */
+  /** Open or focus the live view of one browser window. Deduped per VIEW
+   *  id — one window per agent, its own tabs inside it. */
   const openBrowser = useCallback(
-    (browserId: string, title: string) => {
-      const existing = windows.find((w) => w.kind === 'browser' && w.browserId === browserId);
+    (viewId: string, title: string) => {
+      const existing = windows.find((w) => w.kind === 'browser' && w.browserViewId === viewId);
       if (existing) {
         focus(existing.id);
         return;
       }
       const pos = randomPos(1100, 760, zCounter + 1);
-      const id = `browser-${browserId}-${Date.now()}`;
+      const id = `browser-${viewId}-${Date.now()}`;
       const next: WindowState = {
         id,
         kind: 'browser',
         title,
         meta: 'browser',
-        browserId,
+        browserViewId: viewId,
         ...pos,
         minimized: false,
       };

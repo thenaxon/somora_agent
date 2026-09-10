@@ -380,11 +380,11 @@ export function Desktop() {
                 onMove={wm.move}
                 onResize={wm.resize}
               >
-                <BrowserListWindow onOpen={(browserId, title) => wm.openBrowser(browserId, title)} />
+                <BrowserListWindow onOpen={(viewId, title) => wm.openBrowser(viewId, title)} />
               </Window>
             );
           }
-          if (win.kind === 'browser' && win.browserId) {
+          if (win.kind === 'browser' && win.browserViewId) {
             return (
               <Window
                 key={win.id}
@@ -396,7 +396,7 @@ export function Desktop() {
                 onMove={wm.move}
                 onResize={wm.resize}
               >
-                <BrowserWindow browserId={win.browserId} />
+                <BrowserWindow viewId={win.browserViewId} />
               </Window>
             );
           }

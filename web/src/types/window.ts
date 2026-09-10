@@ -67,8 +67,9 @@ export interface WindowState {
   // wiki specific — slug of the page the reader is on. Persisted so a
   // browser reload lands back on the same page instead of the tree root.
   wikiSlug?: string;
-  /** browser windows: which managed browser (`agent:<name>` / `profile:<name>`). */
-  browserId?: string;
+  /** browser windows: which window (`<browser id>@<agent>`), e.g.
+   *  `profile:team@hans` or `agent:loki@loki`. */
+  browserViewId?: string;
   // Geometry
   x: number;
   y: number;

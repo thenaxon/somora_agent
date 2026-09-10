@@ -161,7 +161,7 @@ import { pendingLucidSummary } from '../dream/lucid-storage.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import type { NormalizedEvent, SseEvent } from '../types/events.ts';
 import { injectMemoryContext } from '../memory/inject.ts';
-import { configureBrowserService, getBrowserService, BrowserOpError } from '../browser/service.ts';
+import { configureBrowserService, getBrowserService, BrowserOpError, processIdOf } from '../browser/service.ts';
 import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSocket } from '../browser/screencast.ts';
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
@@ -3571,6 +3571,8 @@ function videoGenReady(): { ok: boolean; reason?: string } {
 // The MCP child calls /browser/op; Chromium lives in this process.
 // The web client shares /browser/stream across chat, taskbar and list
 // and sends control/input through its identified viewer WebSocket.
+// Everything a viewer addresses is a VIEW — `<browser id>@<agent>`, one
+// window per agent even when several share a Chromium (design §10).
 
 app.post('/browser/op', async (c) => {
   if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);
@@ -3638,6 +3640,8 @@ app.post('/browser/:id/restart', async (c) => {
   }
 });
 
+// `:id` is a view id (`profile:team@hans`); a process id still works
+// while only one agent has a window on it.
 app.post('/browser/:id/control', async (c) => {
   if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);
   const body = (await c.req.json().catch(() => ({}))) as { mode?: unknown; by?: unknown; handoffId?: unknown };
@@ -3675,7 +3679,10 @@ interface BrowserWsBag {
 app.get(
   '/browser/attach',
   upgradeWebSocket((c) => {
-    const browserId = c.req.query('browser') ?? '';
+    // `view` is the current parameter; `browser` stays accepted because
+    // it is what the query is called on the wire.
+    const viewId = c.req.query('view') || c.req.query('browser') || '';
+    const processId = processIdOf(viewId);
     const wantTab = c.req.query('tab') || undefined;
     const viewerId = c.req.query('viewer') || `v-${Date.now().toString(36)}`;
     return {
@@ -3696,23 +3703,24 @@ app.get(
         };
         raw.__viewer = viewer;
         try {
-          const { tabId } = await screencasts.attach(browserId, wantTab, viewer);
+          const { tabId } = await screencasts.attach(viewId, wantTab, viewer);
           raw.__tabId = tabId;
-          if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
-          const info = await browserService.browserInfo(browserId);
-          if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
+          if (raw.__closed) { screencasts.detach(viewId, tabId, viewer); return; }
+          const info = await browserService.browserInfo(viewId);
+          if (raw.__closed) { screencasts.detach(viewId, tabId, viewer); return; }
           ws.send(JSON.stringify({ type: 'ready', browser: info, tabId, viewerId }));
         } catch (err) {
           ws.close(1008, isBrowserOpError(err) ? err.message : String(err));
           return;
         }
         // Tabs / control changes → push the fresh summary (debounced).
+        // onChange carries the PROCESS id: every window on it redraws.
         raw.__unsub = browserService.onChange((id) => {
-          if (id !== browserId) return;
+          if (id !== processId) return;
           if (raw.__changeTimer) clearTimeout(raw.__changeTimer);
           raw.__changeTimer = setTimeout(() => {
             void browserService
-              .browserInfo(browserId)
+              .browserInfo(viewId)
               .then((info) => ws.send(JSON.stringify({ type: 'tabs', browser: info })))
               .catch(() => ws.close(4001, 'browser closed'));
           }, 100);
@@ -3739,7 +3747,7 @@ app.get(
             /* closed */
           }
         }, TERMINAL_WS_PING_MS);
-        logger.info({ msg: 'browser.viewer_attached', browser: browserId, tab: raw.__tabId, viewer: viewerId });
+        logger.info({ msg: 'browser.viewer_attached', browser: viewId, tab: raw.__tabId, viewer: viewerId });
       },
       async onMessage(evt, ws) {
         const raw = ws.raw as BrowserWsBag | undefined;
@@ -3770,52 +3778,52 @@ app.get(
             if (msg.type === 'control') {
               if (msg.mode !== 'human' && msg.mode !== 'agent') throw new Error('invalid control mode');
               const mode = msg.mode;
-              const control = await browserService.setControl(browserId, mode, { by: viewerId, ...(typeof msg.handoffId === 'string' ? { handoffId: msg.handoffId } : {}) });
+              const control = await browserService.setControl(viewId, mode, { by: viewerId, ...(typeof msg.handoffId === 'string' ? { handoffId: msg.handoffId } : {}) });
               reply({ type: 'control', control });
               return;
             }
             if (msg.type === 'tab' && typeof msg.tabId === 'string') {
               // Switch the streamed tab: detach from the old hub, attach to the new.
               const viewer = raw.__viewer!;
-              if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
-              const { tabId } = await screencasts.attach(browserId, msg.tabId, viewer);
+              if (raw.__tabId) screencasts.detach(viewId, raw.__tabId, viewer);
+              const { tabId } = await screencasts.attach(viewId, msg.tabId, viewer);
               raw.__tabId = tabId;
-              if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
-              reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
+              if (raw.__closed) { screencasts.detach(viewId, tabId, viewer); return; }
+              reply({ type: 'ready', browser: await browserService.browserInfo(viewId), tabId, viewerId });
               return;
             }
-            await browserService.withBrowserLock(browserId, async () => {
+            await browserService.withBrowserLock(viewId, async () => {
               if (raw.__closed) return;
-              if (!browserService.humanControls(browserId, viewerId)) {
+              if (!browserService.humanControls(viewId, viewerId)) {
                 reply({ type: 'notice', text: 'Take over the browser first ("Take over") to click, type or navigate.' });
                 return;
               }
               if (msg.type === 'navigate' && typeof msg.url === 'string' && raw.__tabId) {
-                await browserService.humanNavigate(browserId, raw.__tabId, msg.url);
+                await browserService.humanNavigate(viewId, raw.__tabId, msg.url);
                 return;
               }
               if (msg.type === 'newtab') {
-                const tabId = await browserService.humanNewTab(browserId, viewerId);
+                const tabId = await browserService.humanNewTab(viewId, viewerId);
                 const viewer = raw.__viewer!;
-                if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
-                await screencasts.attach(browserId, tabId, viewer);
+                if (raw.__tabId) screencasts.detach(viewId, raw.__tabId, viewer);
+                await screencasts.attach(viewId, tabId, viewer);
                 raw.__tabId = tabId;
-                if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
-                reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
+                if (raw.__closed) { screencasts.detach(viewId, tabId, viewer); return; }
+                reply({ type: 'ready', browser: await browserService.browserInfo(viewId), tabId, viewerId });
                 return;
               }
               if (msg.type === 'closetab' && typeof msg.tabId === 'string') {
-                await browserService.humanCloseTab(browserId, msg.tabId);
+                await browserService.humanCloseTab(viewId, msg.tabId);
                 return;
               }
               if (!raw.__tabId) return;
-              const { page, generation } = browserService.viewerPage(browserId, raw.__tabId);
+              const { page, generation } = browserService.viewerPage(viewId, raw.__tabId);
               if (msg.frameTab !== raw.__tabId || msg.generation !== generation) {
                 reply({ type: 'notice', text: 'The page changed — wait for a fresh picture before acting.' });
                 return;
               }
-              const hub = await screencasts.attach(browserId, raw.__tabId, raw.__viewer!);
-              browserService.markHumanActivity(browserId, msg.type!);
+              const hub = await screencasts.attach(viewId, raw.__tabId, raw.__viewer!);
+              browserService.markHumanActivity(viewId, msg.type!);
               const notice = await applyViewerInput(page, hub.hub.session, msg as { type: string });
               if (notice) reply({ type: 'notice', text: notice });
             });
@@ -3833,8 +3841,8 @@ app.get(
         if (raw.__hbTimer) clearInterval(raw.__hbTimer);
         if (raw.__changeTimer) clearTimeout(raw.__changeTimer);
         raw.__unsub?.();
-        if (raw.__viewer && raw.__tabId) screencasts.detach(browserId, raw.__tabId, raw.__viewer);
-        logger.info({ msg: 'browser.viewer_detached', browser: browserId, tab: raw.__tabId ?? null });
+        if (raw.__viewer && raw.__tabId) screencasts.detach(viewId, raw.__tabId, raw.__viewer);
+        logger.info({ msg: 'browser.viewer_detached', browser: viewId, tab: raw.__tabId ?? null });
       },
     };
   }),

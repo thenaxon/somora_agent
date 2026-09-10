@@ -1952,7 +1952,7 @@ The viewer WebSocket refuses attachment when disabled.
 
 ### `POST /browser/op`
 
-Run one `browser` tool operation for an agent — the path the MCP tool
+Run one `browser` tool operation for an agent, in that agent's window — the path the MCP tool
 child takes for claude-cli/codex-cli turns, because the Chromium lives
 in the server process. Body `{ agent, session?, input }` where `input`
 is the tool's argument object (`{ op: "open", url }`, `{ op:
@@ -1962,10 +1962,14 @@ refusal.
 
 ### `GET /browser/status`
 
-`{ enabled, headed, browsers: [{ browser_id, profile, ephemeral, state,
-control, human_by?, handoff?, tabs: [{ tab_id, url, title, agent, session?,
-generation, emulation? }], last_used, headed? }], warnings }` — every
-running browser plus previously stopped profiles. `control` is
+`{ enabled, headed, browsers: [{ view_id, agent, browser_id, profile,
+ephemeral, state, control, human_by?, handoff?, tabs: [{ tab_id, url,
+title, agent, session?, generation, emulation? }], last_used, headed? }],
+warnings }` — one entry per open **window**, not per Chromium process:
+`view_id` is `<browser_id>@<agent>` and `agent` owns it. Agents sharing
+a profile run in one process (`browser_id`) with one window each, own
+tabs, own control state, own handoff. Stopped browsers are not listed,
+except one still holding a pending handoff. `control` is
 `agent_control`, `handoff_requested`, `human_control` or `paused`.
 `headed` is the host plan for `browser.headed` (`headless`, `display`,
 `xvfb`, `unavailable`); `warnings` lists what the operator must fix
@@ -1983,17 +1987,24 @@ stalled writes terminate the connection.
 ### `POST /browser/:id/restart`
 
 Explicitly reopen a known stopped browser with a blank page and the
-same profile. No old navigation or input is replayed. Pending handoffs
+same profile. `:id` may be a window id or a browser id — a restart is
+per process; every window that existed comes back with its control
+state. No old navigation or input is replayed. Pending handoffs
 remain pending. Returns `{ok:true}` or `409` with `{error}` when recovery
 is refused (unknown browser or removed shared-profile configuration).
 
 ### `POST /browser/:id/control`
 
-Body `{ mode: "human" | "agent", by?, handoffId? }`. `human` takes
-control: every agent op on that browser is refused until handed back.
+`:id` is a window id (`profile:team@hans`); a bare browser id works
+while only one agent has a window on that process, and is otherwise
+refused as ambiguous. Body `{ mode: "human" | "agent", by?, handoffId? }`.
+`human` takes control of that window: its agent's ops are refused until
+handed back, while other agents on the same process keep working.
 `agent` hands it back; with a pending handoff the requesting agent is
 woken once in its session (pass the `handoffId` from the status so a
-stale button press after a newer handoff does not wake twice). `404`
+stale button press after a newer handoff does not wake twice). Without a
+pending handoff, a hand-back after real activity wakes the window's own
+agent, in the session of the last tab it used there. `404`
 when the browser is not running, `409` on a state conflict. A mismatched
 handoff ID is refused; a duplicate completed ID does not release a newer
 manual takeover. With `by`, a different current controller cannot be
@@ -2003,8 +2014,11 @@ queue; see the recovery limitations in [browser.md](browser.md).
 
 ### `GET /browser/attach` (WebSocket)
 
-`?browser=<id>&tab=<tabId>&viewer=<id>` — the live view behind the web
-client's browser window. Binary frames carry one JPEG each:
+`?view=<viewId>&tab=<tabId>&viewer=<id>` — the live view behind the web
+client's browser window. `viewId` is `<browser_id>@<agent>`; only that
+window's tabs are reachable, and `browser=` is still accepted as the
+parameter name. Control, input and hand-back over this socket act on
+that window. Binary frames carry one JPEG each:
 `[u32 BE header length][JSON header][JPEG]`, header `{ tabId,
 generation, seq, url, cssWidth, cssHeight, scrollX, scrollY, ts }`.
 Frames are ack-paced (`browser.stream.maxFps`, default 15, at most 20 fps) and skipped for a viewer whose
