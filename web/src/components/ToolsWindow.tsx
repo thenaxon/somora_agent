@@ -46,7 +46,9 @@ import {
  *  so an empty/missing entry has to mean "all shut". */
 const STORAGE_KEY_EXPANDED = 'somora-abilities-expanded';
 /** Group key of the skills section — namespaced so it can never collide
- *  with a toolset or an MCP server called "skills". */
+ *  with a toolset or an MCP server called "skills". There IS one: the
+ *  toolset that holds `skill_list`/`skill`, which is why the section's
+ *  test id says `skills-section` as well. */
 const SKILLS_KEY = '\0skills';
 
 function readExpanded(): Set<string> {
@@ -307,7 +309,7 @@ export function ToolsWindow() {
       <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
         {error && (
           <div style={{ color: 'var(--danger, #e5534b)', marginBottom: 8 }}>
-            <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> {error}
+            <AlertTriangle size={14} className="icon-inline" /> {error}
           </div>
         )}
         {data?.hasPatternRules && (
@@ -321,7 +323,7 @@ export function ToolsWindow() {
               color: 'var(--text-2)',
             }}
           >
-            <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> This agent's{' '}
+            <AlertTriangle size={14} className="icon-inline" /> This agent's{' '}
             <code>agent.yaml</code> carries hand-written pattern rules (
             {[
               ...(data.gating?.deny.filter((p) => p.includes('*') || p.startsWith('toolset:')) ??
@@ -385,10 +387,10 @@ export function ToolsWindow() {
         {skills && (
           <div style={{ marginTop: 18, borderTop: '1px solid var(--bg-3)', paddingTop: 12 }}>
             <Group
-              groupKey="skills"
+              groupKey="skills-section"
               label={
                 <>
-                  <Sparkles size={12} style={{ verticalAlign: -1 }} /> skills
+                  <Sparkles size={12} className="icon-inline" /> skills
                 </>
               }
               total={skills.skills.length}
@@ -408,7 +410,7 @@ export function ToolsWindow() {
                     color: 'var(--text-2)',
                   }}
                 >
-                  <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> This agent's{' '}
+                  <AlertTriangle size={14} className="icon-inline" /> This agent's{' '}
                   <code>agent.yaml</code> carries a hand-written skill allow-list (
                   {(skills.gating?.allow ?? []).join(', ')}) — the skill matrix is read-only. Edit
                   the file to change it.
@@ -482,7 +484,7 @@ export function ToolsWindow() {
             marginBottom: 6,
           }}
         >
-          <Plug size={12} style={{ verticalAlign: -1 }} /> MCP servers
+          <Plug size={12} className="icon-inline" /> MCP servers
         </div>
         {!mcp?.enabled && (
           <div style={{ color: 'var(--text-2)' }}>

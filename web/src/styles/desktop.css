@@ -1774,3 +1774,18 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .browser-handoff-notice button, .browser-attention { border: 1px solid var(--warn, #d29922); border-radius: 5px; background: rgba(210,153,34,.12); color: var(--text-1); padding: 5px 9px; cursor: pointer; align-self: flex-start; }
 .browser-handoff-notice button:disabled { opacity: .5; cursor: default; }
 .browser-attention { align-self: center; white-space: nowrap; font-size: 11px; }
+
+/* Icons that sit inside a line of text.
+ *
+ * Tailwind preflight blockifies every graphic (`img,svg,video,… {
+ * display: block }`), so a lucide icon written next to a word gets a
+ * line of its own and the `vertical-align` nudge beside it does
+ * nothing — vertical-align has no effect on a block box. Measured on
+ * the live desktop 2026-09-10: in the abilities window the sparkles
+ * icon sat 14px above the word "skills", one whole line up, and the
+ * MCP heading did the same. Rene: "bei skills in den abilities ist das
+ * icon verschoben". Icons that belong inside the line opt back in. */
+.icon-inline {
+  display: inline-block;
+  vertical-align: -0.15em;
+}

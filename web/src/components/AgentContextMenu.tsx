@@ -173,12 +173,12 @@ export function AgentContextMenu({ agent, x, y, onClose, onOpenSession, onOpenSe
       />
 
       <div style={sectionTitle}>
-        <Clock size={11} style={{ verticalAlign: -1 }} /> recent sessions
+        <Clock size={11} className="icon-inline" /> recent sessions
       </div>
       {recent === null && !recentError && <div style={muted}>Loading…</div>}
       {recentError && (
         <div style={{ ...muted, color: 'var(--danger, #e5534b)' }}>
-          <AlertTriangle size={11} style={{ verticalAlign: -1 }} /> {recentError}
+          <AlertTriangle size={11} className="icon-inline" /> {recentError}
         </div>
       )}
       {recent && recent.length === 0 && <div style={muted}>Only main so far.</div>}

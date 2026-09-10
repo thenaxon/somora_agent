@@ -235,7 +235,7 @@ export function TeamWindow() {
   };
 
   // ── empty / broken states ───────────────────────────────────────────
-  if (error && !server) return <div style={{ padding: 16, color: 'var(--danger)' }}><AlertTriangle size={14} style={{ verticalAlign: -2 }} /> {error}</div>;
+  if (error && !server) return <div style={{ padding: 16, color: 'var(--danger)' }}><AlertTriangle size={14} className="icon-inline" /> {error}</div>;
   if (!server) return <div style={{ padding: 16, color: 'var(--text-2)' }}>Loading…</div>;
   if (!server.exists) {
     return (
@@ -311,7 +311,7 @@ export function TeamWindow() {
         <span style={{ ...mono, fontSize: 11, color: 'var(--text-3)' }}>{server.path}</span>
         <span style={{ flex: 1 }} />
         {dirty && <span style={{ fontSize: 12, color: 'var(--warn)' }}>unsaved changes</span>}
-        {!dirty && notice && <span style={{ fontSize: 12, color: 'var(--ok)' }}><Check size={12} style={{ verticalAlign: -2 }} /> {notice}</span>}
+        {!dirty && notice && <span style={{ fontSize: 12, color: 'var(--ok)' }}><Check size={12} className="icon-inline" /> {notice}</span>}
         <button type="button" style={btn(false, !dirty || busy)} disabled={!dirty || busy} onClick={discard} title="Discard unsaved changes"><Undo2 size={13} /> Discard</button>
         <button type="button" style={btn(false, busy)} disabled={busy} onClick={() => void load()} title="Reload from disk"><RefreshCw size={13} /></button>
         <button type="button" data-testid="team-save" style={btn(true, !dirty || busy)} disabled={!dirty || busy} onClick={() => void save()}><Save size={13} /> Save</button>
@@ -319,7 +319,7 @@ export function TeamWindow() {
 
       {(error || saveIssues.length > 0 || (server.warnings?.length ?? 0) > 0) && (
         <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--bg-3)', fontSize: 12 }}>
-          {error && <div style={{ color: 'var(--danger)' }}><AlertTriangle size={12} style={{ verticalAlign: -2 }} /> {error}</div>}
+          {error && <div style={{ color: 'var(--danger)' }}><AlertTriangle size={12} className="icon-inline" /> {error}</div>}
           {saveIssues.map((i, k) => <div key={k} style={{ color: 'var(--danger)' }} data-testid="team-issue">not saved — <code>{i.path}</code>: {i.message}</div>)}
           {server.warnings?.map((w, k) => <div key={k} style={{ color: 'var(--warn)' }}>{w}</div>)}
         </div>

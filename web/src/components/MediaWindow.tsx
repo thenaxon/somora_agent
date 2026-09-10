@@ -318,7 +318,7 @@ export function MediaWindow() {
   if (status && !status.enabled && video && !video.enabled) {
     return (
       <div style={{ padding: 20, fontSize: 13, color: 'var(--text-1)' }}>
-        <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> Media generation is not
+        <AlertTriangle size={14} className="icon-inline" /> Media generation is not
         configured. Add an <code>imageGen</code> or <code>videoGen</code> block with at least
         one model to config.yaml.
       </div>
@@ -370,7 +370,7 @@ export function MediaWindow() {
 
         {mode === 'image' && models.length === 0 && (
           <div style={{ color: 'var(--text-2)', fontSize: 12, lineHeight: 1.45 }}>
-            <AlertTriangle size={14} style={{ verticalAlign: -2 }} /> No image models configured —
+            <AlertTriangle size={14} className="icon-inline" /> No image models configured —
             set <code>imageGen</code> in config.yaml. The gallery below still shows everything
             that exists.
           </div>

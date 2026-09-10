@@ -108,7 +108,7 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
     } finally { setBusy(false); }
   };
 
-  if (error && !data) return <div style={{ padding: 16, color: 'var(--danger)' }}><AlertTriangle size={14} style={{ verticalAlign: -2 }} /> {error}</div>;
+  if (error && !data) return <div style={{ padding: 16, color: 'var(--danger)' }}><AlertTriangle size={14} className="icon-inline" /> {error}</div>;
   if (!data) return <div style={{ padding: 16, color: 'var(--text-2)' }}>Loading…</div>;
 
   const b = data.budgets;
@@ -151,13 +151,13 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
           );
         })}
         <span style={{ flex: 1 }} />
-        {notice && <span style={{ fontSize: 12, color: 'var(--ok)' }}><Check size={12} style={{ verticalAlign: -2 }} /> {notice}</span>}
+        {notice && <span style={{ fontSize: 12, color: 'var(--ok)' }}><Check size={12} className="icon-inline" /> {notice}</span>}
         <button type="button" style={btn(false, busy)} disabled={busy} onClick={() => { void load(); void loadPreview(); }} title="Reload from disk"><RefreshCw size={13} /></button>
       </div>
 
       {(error || conflict) && (
         <div style={{ padding: '6px 12px', borderBottom: '1px solid var(--bg-3)', fontSize: 12, color: 'var(--danger)' }} data-testid="agent-conflict">
-          <AlertTriangle size={12} style={{ verticalAlign: -2 }} />{' '}
+          <AlertTriangle size={12} className="icon-inline" />{' '}
           {conflict
             ? <>{conflict.file} changed on disk since you loaded it — the agent may have edited it. Your text was NOT saved.{' '}
                 <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => void load()}>Reload</button>{' '}
@@ -183,7 +183,7 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
                 {!f.exists && <span style={{ fontSize: 11, color: 'var(--text-3)' }}>(file does not exist yet — saving creates it)</span>}
                 <span style={{ flex: 1 }} />
                 {f.readOnly ? (
-                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}><Lock size={11} style={{ verticalAlign: -1 }} /> operator config — model, fallback, REM. Read-only here; edit the file or use the session model/thinking controls.</span>
+                  <span style={{ fontSize: 11, color: 'var(--text-3)' }}><Lock size={11} className="icon-inline" /> operator config — model, fallback, REM. Read-only here; edit the file or use the session model/thinking controls.</span>
                 ) : (
                   <>
                     <button type="button" style={btn(false, !isDirty(tab) || busy)} disabled={!isDirty(tab) || busy} onClick={() => setDrafts((d) => ({ ...d, [tab]: f.content }))}><Undo2 size={12} /> Discard</button>
