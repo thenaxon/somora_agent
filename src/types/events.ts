@@ -263,6 +263,17 @@ export type NormalizedEvent =
         tokens_out_reasoning?: number;
         /** True when tokens_out_reasoning was estimated from streamed reasoning text (backend reported none). */
         tokens_out_reasoning_estimated?: boolean;
+        /**
+         * Prompt size of the LAST request of this turn — how full the
+         * context actually was, not how much was spent getting there.
+         *
+         * `tokens_in` is a sum across every request a turn makes, which
+         * for a tool-using turn is a multiple of the window and cannot
+         * be compared against it. Displaying that sum as occupancy is
+         * what let a turn read as 58k while the backend was refusing
+         * 507k (2026-09-10 report). Engines that can report it do.
+         */
+        context_tokens?: number;
       };
       /** Tool-call rounds the engine ran this turn (engines that count). */
       rounds?: number;
@@ -275,7 +286,26 @@ export type NormalizedEvent =
        *  signal — never inferred from model text by consumers. */
       degraded?: { reason: string };
     }
-  | { kind: 'error'; ts: number; engine: string; message: string }
+  | {
+      kind: 'error';
+      ts: number;
+      engine: string;
+      message: string;
+      /**
+       * The PROVIDER refused or could not serve this request: quota
+       * exhausted, auth rejected, host unreachable, backend 5xx. Set by
+       * the engine adapter, which is the only place that knows how its
+       * provider dresses a failure — never inferred from model text.
+       *
+       * Two consumers depend on it. The fallback chain may switch models
+       * even when text already arrived, because a quota notice that the
+       * provider streamed as an assistant message is not an answer
+       * (2026-09-09 report: Claude's monthly-limit text set the
+       * first-output guard and the configured backups never ran). And
+       * the turn result counts as failed rather than completed.
+       */
+      providerError?: boolean;
+    }
   // Server-side marker for project focus changes within a session. Fired
   // whenever the user pins a project via slash-command OR an agent
   // autonomously calls project_focus via the Tool surface. Persists in
@@ -334,6 +364,8 @@ export type SseEvent =
           tokens_in_cached?: number;
           tokens_out_reasoning?: number;
           tokens_out_reasoning_estimated?: boolean;
+          /** Prompt size of the turn's last request — occupancy, not spend. */
+          context_tokens?: number;
         };
         contextWindow?: number;
         /** The model that ACTUALLY answered (the fallback when one ran). */

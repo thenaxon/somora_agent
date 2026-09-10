@@ -222,10 +222,16 @@ made it. That single directory is what the gallery and the file-serving
 route index; resolving it per agent workspace would scatter images
 across several and leave the gallery blind to most of them.
 
-`save_to` (tool) or "Also save to" (UI) adds a **second name** for the
-same bytes via `link(2)` — one file, two paths, no extra disk. Across
-filesystems, or on one that rejects hardlinks, somora falls back to a
-real copy. Deleting either name leaves the other intact.
+**One image, one place.** There is no second destination any more
+(2026-09-10). It produced two paths for the same bytes, one of them
+routinely a `<workspace>/<workspace>/…` folder that a relative path
+created by accident, and the gallery then listed the same picture under
+two names. An agent that needs the file uses the path in the tool
+result. `save_to` is still accepted by the tool and the route so an old
+persona line does not fail a generation; it is ignored, and the result
+says where the image actually is. Files written by earlier versions are
+left exactly where they are — they are simply no longer a second home,
+and the Media window shows the one canonical path.
 
 Filenames are `2026-08-26_143012_koala-im-weltraum.png`: chronologically
 sortable and recognizable without opening them.
@@ -275,8 +281,8 @@ several is how sources get combined into one picture. Whether a model
 accepts more than one is its own business; `image_models` reports the
 limit when the provider publishes it.
 
-`save_to` runs through the same write gate as `file_write`
-(`checkWriteAllowed`), so generating an image is not a way around it.
+Image generation writes only into `imageGen.outputDir`, so it is not a
+way around the `file_write` policy.
 
 ### Per-agent review stance
 
@@ -339,8 +345,8 @@ from there. That's what lets the images directory be user-chosen
 without the route becoming a way to read arbitrary files.
 
 `DELETE` removes the gallery entry only. Deleting user files from a
-one-click gallery button is the wrong default, and with hardlinks
-somora couldn't reliably reach every name for the file anyway.
+one-click gallery button is the wrong default, and older images may
+still have a hardlink somewhere that somora cannot reliably reach.
 
 ## Known gaps
 

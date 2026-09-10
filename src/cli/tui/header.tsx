@@ -240,10 +240,22 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
     reasoning !== null && reasoning > 0 ? (
       <Text color="cyan"> ({stats.tokensOutReasoningEstimated ? '~' : ''}{formatTokens(reasoning)} 🧠)</Text>
     ) : null;
+  // Occupancy is its own number. `↑` is what the turn spent, summed over
+  // every request it made — printing that over the window read as "the
+  // context is 4x full" on tool-using turns and hid a real overflow
+  // until the backend refused it (2026-09-10).
+  const filled = stats.contextTokens;
+  const ratio = filled !== null && window ? filled / window : null;
+  const contextSegment =
+    filled !== null && window ? (
+      <Text color={ratio! > 0.9 ? 'red' : ratio! > 0.75 ? 'yellow' : 'gray'}>
+        {' '}▣ {formatTokens(filled)}/{formatTokens(window)}
+      </Text>
+    ) : null;
   return (
     <Text>
       {inSegment}
-      {window ? <Text color="gray"> / {formatTokens(window)}</Text> : null}
+      {contextSegment}
       <Text color="white">   ↓ {formatTokens(stats.tokensOut)}</Text>
       {reasoningSegment}
     </Text>

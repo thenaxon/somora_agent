@@ -168,6 +168,16 @@ export async function resolveSessionId(agent: string, ref: string): Promise<stri
     return (await fileExists(jsonlPath(agent, ref))) ? ref : null;
   }
 
+  // A file that is literally called this IS this session. Sessions
+  // created before the id format was enforced (and anything that once
+  // wrote a raw reference straight to disk) are listed under their own
+  // name, so they must be reachable under it too. Without this, a slug
+  // lookup below quietly answered with a DIFFERENT session that happened
+  // to end in the same word, and archiving hit that one instead — with
+  // HTTP 200 (2026-09-09 report). Ambiguity must never be resolved by
+  // silently picking the other object.
+  if (VALID_SLUG.test(ref) && (await fileExists(jsonlPath(agent, ref)))) return ref;
+
   // Slug: find latest matching file
   if (!VALID_SLUG.test(ref)) return null;
   let entries: string[];

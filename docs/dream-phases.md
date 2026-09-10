@@ -80,12 +80,28 @@ watches each agent's chat activity. After `idleMinutes` of no chat
 
 1. Resumes any previously-paused dream first (don't waste prior work).
 2. Otherwise picks the most-recently-active session whose last activity
-   is past its `dreamReadThroughTs` marker.
+   is past its `dreamReadThroughTs` marker. **Archived sessions count**:
+   filing a conversation away says you are done with it, not that it
+   should be forgotten, and a session archived before REM caught up used
+   to drop out of the selection with its last stretch unread.
 3. Runs an extraction over the delta range — minus any Lucid review
    loop inside it (`dream_review start` … `end`): facts the user
    clarifies there are written to the wiki directly, so REM skips that
    window instead of re-extracting them as duplicate findings.
 4. On success, bumps the marker so the next idle cycle sees a fresh delta.
+
+**It comes back on its own.** When a cycle ends with work still left —
+a run that failed, a paused dream, a session nobody has read yet — the
+worker schedules itself again rather than waiting for you to chat. Four
+attempts at one, two, four and eight idle intervals, then it goes quiet
+until real activity restarts the count. A backend that is down for an
+hour is caught; one that is down all afternoon does not become an
+all-afternoon retry loop. A successful run resets the count, so draining
+a backlog of several sessions is not charged against it.
+
+A failed range keeps its record until a run actually reads it. A
+successful run only clears the failures it covered, so a shorter manual
+run cannot make the evidence of an unread stretch disappear.
 
 Manual REM runs do **not** pause when you start chatting again — they're
 user-initiated, bounded, just run to completion.

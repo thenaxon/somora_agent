@@ -895,13 +895,31 @@ export const VisionConfigSchema = z
      *  local vision model describing a large image legitimately takes
      *  tens of seconds. */
     timeoutMs: z.number().int().positive().default(60_000),
+    /** Budget for the WHOLE chain, not one attempt. Without it a chain
+     *  of four workers can spend four times `timeoutMs` before the tool
+     *  gives up — measured 176 s for one screenshot, with the caller
+     *  and the user waiting (2026-09-08 report). Each attempt gets
+     *  whatever is left, so the last worker is not started at all when
+     *  it could not finish in time. */
+    totalBudgetMs: z.number().int().positive().default(90_000),
+    /** Output cap for a vision answer, overriding the worker model's
+     *  own `maxTokens`. A chat model's cap (16k and up) lets a
+     *  reasoning worker think its way past the timeout while writing a
+     *  caption. Raise it when you ask workers for long transcriptions. */
+    maxOutputTokens: z.number().int().positive().default(1_500),
     /** How long a failed worker is skipped before being tried again.
      *  Without this, every single call pays the full timeout of a
      *  worker that is down for the rest of the afternoon. 0 disables
      *  the memory. */
     healthCacheMs: z.number().int().min(0).default(60_000),
+    /** Cooldown after a TIMEOUT specifically. A worker that answers too
+     *  slowly is not the same as one that is gone: it may be loading a
+     *  model, or the picture may have been unusually large. Shorter by
+     *  default so a slow answer does not sideline a good worker for a
+     *  full minute. 0 means no cooldown for timeouts. */
+    timeoutCooldownMs: z.number().int().min(0).default(10_000),
   })
-  .default({ timeoutMs: 60_000, healthCacheMs: 60_000 });
+  .default({ timeoutMs: 60_000, healthCacheMs: 60_000, totalBudgetMs: 90_000, maxOutputTokens: 1_500, timeoutCooldownMs: 10_000 });
 
 /** Normalise either accepted shape into the list the runtime walks. */
 export function workerChain(ref: string | string[] | undefined): string[] {

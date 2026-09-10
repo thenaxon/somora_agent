@@ -152,13 +152,29 @@ check(
 const jsonProps = Object.keys(
   (imageGenerate.jsonSchema as { properties: Record<string, unknown> }).properties,
 );
+// Retired inputs: still accepted by zod (the object is `.strict()`, so
+// dropping one would make an old persona line fail the whole call), but
+// deliberately not advertised to the model any more. `save_to` went in
+// 2026-09-10 when images became single-location.
+const RETIRED_INPUTS = new Set(['save_to']);
 const zodKeys = Object.keys(
   (imageGenerate.inputSchema as unknown as { shape: Record<string, unknown> }).shape,
 );
+const advertisable = zodKeys.filter((k) => !RETIRED_INPUTS.has(k));
 check(
   'schemas: json and zod expose the same fields',
-  jsonProps.slice().sort().join() === zodKeys.slice().sort().join(),
-  `json=${jsonProps.sort().join()} zod=${zodKeys.sort().join()}`,
+  jsonProps.slice().sort().join() === advertisable.slice().sort().join(),
+  `json=${jsonProps.sort().join()} zod=${advertisable.sort().join()}`,
+);
+check(
+  'schemas: a retired input is accepted but never advertised',
+  RETIRED_INPUTS.size > 0 &&
+    [...RETIRED_INPUTS].every((k) => zodKeys.includes(k) && !jsonProps.includes(k)),
+  `json=${jsonProps.join()} zod=${zodKeys.join()}`,
+);
+check(
+  'a call that still passes save_to is accepted, not refused',
+  imageGenerate.inputSchema.safeParse({ prompt: 'a koala', save_to: 'somewhere/else' }).success,
 );
 
 const listJsonProps = Object.keys(

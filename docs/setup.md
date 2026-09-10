@@ -1065,8 +1065,20 @@ Other useful scripts:
 | Command | What |
 |---|---|
 | `npm run typecheck` | server-side `tsc --noEmit` |
+| `npm test` | every `*.test.mts`, each against a throwaway `SOMORA_HOME` |
+| `npm test src/browser` | one subtree, same isolation |
+| `npm run verify:fast` | typecheck plus the suite |
 | `cd web && npm run dev` | Vite dev server for the web client (proxies API to `:18737`) |
 | `cd web && npm run build` | rebuild `web/dist/` (the bundle the production server serves at `/web/`) |
+
+Run tests through `npm test`, not `tsx --test` directly. The logger opens
+its file the moment it is imported, so a test started without an
+explicit `SOMORA_HOME` used to write into the running installation's log
+and make its error count meaningless. The launcher sets a temporary home
+before anything loads and removes it afterwards; `SOMORA_TEST_HOME=/some/dir`
+keeps it when you want to read the test's own log. A file started by hand
+under `node:test` falls back to a temporary log directory too, but only
+the launcher isolates sessions, memory and the Claude config as well.
 
 There's no built-in auth on the HTTP API — somora binds to `127.0.0.1`
 by default and assumes you're its only user. To expose it across a

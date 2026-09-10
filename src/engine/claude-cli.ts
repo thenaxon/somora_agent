@@ -202,6 +202,15 @@ export const claudeCliEngine: AgentEngine = {
     let yieldedErrorEvent = false;
     let lastSdkSessionId: string | undefined;
     let usage: { tokens_in: number; tokens_out: number } | undefined;
+    /**
+     * Prompt size of the LAST API call the CLI made this turn — how full
+     * the context got. The `result` message sums every call of the turn,
+     * which on a tool-using turn is a multiple of the window (measured:
+     * 2.28M reported against a 1M model), so it cannot be shown as
+     * occupancy. Each `assistant` message carries the usage of its own
+     * call, and the last one is the answer to "how full was it".
+     */
+    let lastCallContextTokens: number | undefined;
     let tokensInCachedClaude: number | undefined;
 
     // Bridge somora's AbortSignal into the SDK's abortController option.
@@ -506,6 +515,11 @@ export const claudeCliEngine: AgentEngine = {
             }
           }
         } else if (msg.type === 'assistant') {
+          const au = (msg.message as unknown as { usage?: { input_tokens?: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null } }).usage;
+          if (au) {
+            lastCallContextTokens =
+              (au.input_tokens ?? 0) + (au.cache_read_input_tokens ?? 0) + (au.cache_creation_input_tokens ?? 0);
+          }
           for (const block of msg.message.content) {
             if (block.type === 'thinking' && !receivedThinkingViaStream) {
               const t = (block as { thinking?: unknown }).thinking;
@@ -613,6 +627,7 @@ export const claudeCliEngine: AgentEngine = {
               agent,
               session,
               tokens_in: usage.tokens_in,
+              context_tokens: lastCallContextTokens,
               tokens_in_new: newIn,
               tokens_in_cache_read: cacheRead,
               tokens_in_cache_create: cacheCreate,
@@ -622,11 +637,17 @@ export const claudeCliEngine: AgentEngine = {
             });
           } else {
             yieldedErrorEvent = true;
+            // The provider ended the turn itself. The monthly-quota case
+            // arrives exactly here, right after the CLI streamed its
+            // notice as ordinary assistant text — that text is not an
+            // answer, so the fallback chain must still be allowed to run
+            // (2026-09-09 report).
             yield {
               kind: 'error',
               ts: ts(),
               engine: ENGINE,
               message: `${msg.subtype}: ${msg.errors?.join(', ') ?? 'unknown'}`,
+              providerError: true,
             };
           }
         }
@@ -646,7 +667,7 @@ export const claudeCliEngine: AgentEngine = {
           healed === 'pulled' || healed === 'pushed'
             ? 'Credential drift detected and auto-healed — just resend your message.'
             : 'Please run `claude login` in your terminal and resend (`somora auth status` shows the credential state).';
-        yield { kind: 'error', ts: ts(), engine: ENGINE, message: `${finalText.trim()} — ${hint}` };
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: `${finalText.trim()} — ${hint}`, providerError: true };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
         return;
       }
@@ -679,6 +700,7 @@ export const claudeCliEngine: AgentEngine = {
           ts: ts(),
           engine: ENGINE,
           message: `claude-cli returned an empty turn (no text, no tool call, no error event) — ${hint}`,
+          providerError: true,
         };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
         return;
@@ -699,6 +721,7 @@ export const claudeCliEngine: AgentEngine = {
                 ...(typeof tokensInCachedClaude === 'number' && tokensInCachedClaude > 0
                   ? { tokens_in_cached: tokensInCachedClaude }
                   : {}),
+                ...(lastCallContextTokens !== undefined ? { context_tokens: lastCallContextTokens } : {}),
               },
             }
           : {}),
@@ -750,6 +773,7 @@ export const claudeCliEngine: AgentEngine = {
           ts: ts(),
           engine: ENGINE,
           message: `engine timed out: no SDK events for ${IDLE_TIMEOUT_MS / 1000}s (claude-cli child likely died silently)`,
+          providerError: true,
         };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else {
@@ -798,7 +822,7 @@ export const claudeCliEngine: AgentEngine = {
         }
 
         logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: errMsg });
-        yield { kind: 'error', ts: ts(), engine: ENGINE, message: errMsg };
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: errMsg, providerError: true };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       }
     } finally {

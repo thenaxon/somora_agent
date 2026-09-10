@@ -118,14 +118,22 @@ as images post-rasterization. The `pdf` capability is meaningful for
 
 ### `analyze_file` — the worker dispatcher
 
-For when file_read polymorph isn't right:
-- Active main model lacks `image` capability (text-only LLM), but you
-  still need to reason about a file
-- Token thrift — a 1024×1024 image is ~1300 tokens in main context;
-  a haiku-worker description is usually < 200 tokens
-- Targeted questions — `analyze_file({path, prompt: "Which row of the
-  table has the highest value?"})` lets the worker focus, the agent
-  gets a sharp answer
+It is a **substitute for models that cannot see**, and only those. The
+tool is not offered at all when the active model has the `image`
+capability: an agent that can look at the file itself should, and a tool
+it never sees is one it cannot pick by mistake. Before that gate, the
+live logs showed 142 dispatches from agents whose own model had vision,
+67 of them into a failing worker.
+
+It appears when:
+- the active main model lacks `image` capability (text-only LLM) and you
+  still need to reason about a file;
+- targeted questions help — `analyze_file({path, prompt: "Which row of
+  the table has the highest value?"})` lets the worker focus, the agent
+  gets a sharp answer.
+
+A described file is second-hand: the tool result names the worker, and
+the agent is told to quote it rather than claim to have looked.
 
 ```yaml
 # config.yaml — global vision worker config
@@ -143,8 +151,24 @@ vision:
     - local/qwen-vision                    # preferred: free, stays in-house
     - openrouter/claude-haiku-4-5          # always available, costs money
   timeoutMs: 60000                         # per attempt, then move on
+  totalBudgetMs: 90000                     # for the WHOLE chain
+  maxOutputTokens: 1500                    # a caption is not a chat answer
   healthCacheMs: 60000                     # skip a just-failed worker this long
+  timeoutCooldownMs: 10000                 # shorter: slow is not dead
 ```
+
+Two budgets, because one was not enough. `timeoutMs` bounds a single
+attempt and `totalBudgetMs` bounds the walk: each attempt gets whatever
+is left, and a worker that could not finish in the remaining time is not
+started. A chain of four workers used to spend four full timeouts back
+to back, measured at 176 s for one screenshot. `maxOutputTokens`
+overrides the worker model's own cap, which is a chat cap — with 16k
+available, a reasoning worker thinks its way past the timeout while
+writing three lines about a screenshot. A worker that returns nothing
+with `finish_reason: length` says exactly that instead of "empty
+response". A timeout cools a worker down for `timeoutCooldownMs` rather
+than the full `healthCacheMs`, because slow and gone are different
+things.
 
 This exists because a locally hosted worker is only loaded while its GPU
 profile is active; with a single configured value, switching profiles
@@ -166,9 +190,15 @@ Attachments the active model cannot process are now replayed as a text
 marker naming the file, its type and its size, so the conversation keeps
 working and the model can still refer to what it cannot see
 (`[Image attachment "shot.png" (image/png, 1.2 MB) — not shown: …]`).
-The text of those turns is untouched. Sending a *new* attachment to such
-a model is still refused outright — that is a mistake worth stopping,
-not something to paper over.
+The text of those turns is untouched.
+
+Sending a **new** attachment to such a model no longer fails the turn.
+somora hands the file to the configured vision worker and appends its
+description to the message the model receives, marked as a description
+rather than the file itself. The clients still show the original
+attachment, so what you see is unchanged. Only when no `vision.worker`
+is configured does the turn refuse, and the error says both ways out:
+switch models, or configure a worker.
 
 ### What can be attached
 

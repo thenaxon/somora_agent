@@ -18,7 +18,8 @@ export type WindowKind =
   | 'team'
   | 'agent-config'
   | 'browser-list'
-  | 'browser';
+  | 'browser'
+  | 'logs';
 
 /** A snapshot of an agent message that the user pinned for working-
  *  memory. Stored on the WindowState.payload of `kind: 'pin-note'`

@@ -46,7 +46,12 @@ it on Tailscale or on `127.0.0.1` and tunnel.
   originating component).
 - **IDs.** Session IDs are `<YYYYMMDD>-<HHMMSS>_<slug>`. The literal
   string `main` is the always-on default session per agent and is
-  always addressable.
+  always addressable. A route that takes `<slug|id>` resolves in this
+  order: `main`, an exact id, a session stored under exactly that name,
+  then the newest session with that slug. The third rule matters for
+  sessions written before the id format was enforced: whatever the
+  session list shows can be addressed under the name it was shown with.
+  An unknown reference is refused rather than resolved to a neighbour.
 - **Polling cadence.** Endpoints that surface live state are cheap
   by design — poll every 2 s for the dream loop, 30 s for dream
   phases, 60 s for sessions. The server caches expensive lookups
@@ -373,7 +378,9 @@ still decides what somora will call.
 Body: `prompt` (required), optional `model` (a configured handle) and
 any specs — `resolution`, `aspect_ratio`, `size`, `quality`,
 `output_format`, `background`, `output_compression`, `seed`, `n` — plus
-optional `save_to` and `reference_images`.
+optional `reference_images`. A `save_to` field is accepted for
+compatibility and ignored: every image lives in one place, the
+configured images directory, and the response carries its path.
 
 `reference_images` is **base64 on this route** — a browser has the bytes
 of a file the user picked and no server-side path for it. The
@@ -1267,8 +1274,16 @@ curl -N "https://<host>:18737/chat/stream?agent=<your-agent>&session=main"
 Event types:
 - `chat` — `{state: 'delta'|'final', text}` — streaming assistant
   output
-- `agent` — `{phase: 'start'|'end', usage?, model?, ...}` — turn
-  lifecycle around the model call
+- `agent` — `{phase: 'start'|'end', usage?, contextWindow?, provider?,
+  model?, thinking?, fallback?}` — turn lifecycle around the model call.
+  `usage` carries `tokens_in`, `tokens_out`, optional `tokens_in_cached`,
+  `tokens_out_reasoning` (+`_estimated`) and `context_tokens`. Read them
+  as two different things: `tokens_in`/`tokens_out` are what the turn
+  SPENT, summed over every request it made, so a tool-using turn exceeds
+  the window several times over. `context_tokens` is OCCUPANCY, the
+  prompt size of the turn's last request, and is the only one to compare
+  against `contextWindow`. All three engines report it; a client should
+  still treat it as optional.
 - `user_message` — `{text, ts, turnId?, from_agent?, from_session?,
   from_system?, agent_ask_call_id?}` — broadcast when a turn's user_message is
   written to JSONL. Self-typed sends, A2A inbounds, and system wakes
@@ -1949,6 +1964,29 @@ Served by the somora web server. See [browser.md](browser.md). Mutating
 HTTP routes answer `503` while `browser.enabled` is false; status and
 the change stream return `{enabled:false,browsers:[],warnings:[]}`.
 The viewer WebSocket refuses attachment when disabled.
+
+### `GET /logs`
+
+The server's own log, for the log window in the web client. Query:
+`day` (`YYYY-MM-DD`, default the newest file), `minLevel` (pino numbers:
+20 debug, 30 info, 40 warn, 50 error), `q` (case-insensitive substring
+over the raw line), `agent`, `limit` (default 300, max 2000).
+
+Returns `{ day, days, lines: [{ ts, level, msg, agent?, session?, fields }],
+offset, truncated }`. `days` lists every day that has a file, newest
+first. `offset` is a byte position to continue from. `truncated` says
+older lines were outside the read window.
+
+Only the tail of one day's file is read (512 KiB), so the cost does not
+grow with the log — the directory routinely holds hundreds of megabytes.
+The caller names a day, never a path.
+
+### `GET /logs/since`
+
+`?offset=<n>` plus the same filters. Returns `{ lines, offset, day }`
+with only what was appended after `offset` — the follow path for the log
+window. A file that shrank (rotation, truncation) snaps the offset back
+to its real size instead of reading backwards.
 
 ### `POST /browser/op`
 

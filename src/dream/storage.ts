@@ -384,7 +384,7 @@ export async function consolidateStalePausedDreams(agents: string[]): Promise<nu
 export async function pruneFailedDreams(
   agent: string,
   sourceSession: string,
-  opts: { keepId?: string } = {},
+  opts: { keepId?: string; coveredThroughTs?: number } = {},
 ): Promise<number> {
   let removed = 0;
   const all = await listDreams(agent);
@@ -392,6 +392,23 @@ export async function pruneFailedDreams(
     if (d.meta.status !== 'failed') continue;
     if (d.meta.source_session !== sourceSession) continue;
     if (opts.keepId && d.meta.id === opts.keepId) continue;
+    // A successful run only supersedes what it actually read. Passing
+    // the range it covered keeps the evidence for a failure that reached
+    // further — otherwise a short manual run over the same session would
+    // quietly delete the record of an uncovered gap, and nobody would
+    // ever learn that part of a conversation never made it into memory.
+    if (opts.coveredThroughTs !== undefined && d.meta.range_through_ts > opts.coveredThroughTs) {
+      logger.info({
+        msg: 'dream.prune_failed_skipped',
+        agent,
+        id: d.meta.id,
+        source_session: sourceSession,
+        failed_through_ts: d.meta.range_through_ts,
+        covered_through_ts: opts.coveredThroughTs,
+        reason: 'the successful run did not cover this range',
+      });
+      continue;
+    }
     const path = dreamFilePath(agent, d.meta.id, 'failed');
     try {
       await unlink(path);

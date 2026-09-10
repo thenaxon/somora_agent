@@ -94,7 +94,7 @@ async function readPdfAsContentBlocks(
       type: 'text',
       text:
         `[file_read: PDF has ${result.totalPages} pages; rendered first ${result.pages.length} as images. ` +
-        `Use analyze_file for full-document text analysis, or read further pages with a tighter range.]`,
+        `Read further pages with a tighter range.]`,
     });
   }
   return { _somoraMultimodal: true, contentBlocks: blocks };
@@ -179,11 +179,11 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
     'have `image` capability; if not, you get an error pointing at `analyze_file`.\n' +
     '  - PDF → each page rendered to PNG (max 20 pages by default), returned as ' +
     'image-array. Same `image`-capability gate. Token cost: ~1300 tokens per page on ' +
-    'Anthropic models — for large PDFs prefer `analyze_file` (dispatches to a vision ' +
-    'worker model and returns a text description).\n' +
+    'Anthropic models.\n' +
     '  - Unknown binary → error with a hint to inspect with `exec` first.\n\n' +
-    'When the active model lacks `image` capability OR you prefer a token-cheap text ' +
-    'description over raw bytes in context, use `analyze_file` instead.',
+    'If your model can see images, look yourself — that is more reliable than a ' +
+    'second-hand description. `analyze_file` exists for models that cannot, and is only ' +
+    'offered to those.',
   inputSchema: ReadInput,
   jsonSchema: {
     type: 'object',

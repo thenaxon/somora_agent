@@ -198,6 +198,10 @@ export interface HistoryEvent {
     tokens_out_reasoning?: number;
     /** True when the reasoning count is an estimate from streamed text. */
     tokens_out_reasoning_estimated?: boolean;
+    /** Prompt size of the turn's LAST request: how full the context was.
+     *  `tokens_in` is the sum across every request the turn made, which
+     *  for a tool-using turn is a multiple of the window. */
+    context_tokens?: number;
   };
   ephemeral?: string;
   /** Set on `kind: 'error'` rows — the engine's failure text. */
@@ -398,6 +402,7 @@ export interface GenerateImageBody {
   background?: string;
   seed?: number;
   n?: number;
+  /** Removed 2026-09-10: images live in one place. The server ignores it. */
   save_to?: string;
 }
 
@@ -518,7 +523,43 @@ export interface BrowserInfo {
   headed?: boolean;
 }
 
+export interface LogLine {
+  ts: number;
+  /** pino numeric level: 20 debug, 30 info, 40 warn, 50 error. */
+  level: number;
+  msg: string;
+  agent?: string;
+  session?: string;
+  fields: Record<string, unknown>;
+}
+
+export interface LogSnapshot {
+  day: string;
+  days: string[];
+  lines: LogLine[];
+  /** Byte offset to continue from; the server never re-reads the file. */
+  offset: number;
+  truncated: boolean;
+}
+
 export const api = {
+  /** The end of one day's server log, filtered. */
+  logs: (params: { day?: string; minLevel?: number; q?: string; agent?: string; limit?: number } = {}) =>
+    getJson<LogSnapshot>(`/logs?${new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v !== undefined && v !== '')
+        .map(([k, v]) => [k, String(v)]),
+    ).toString()}`),
+  /** Only what was appended since `offset`. */
+  logsSince: (offset: number, params: { day?: string; minLevel?: number; q?: string; agent?: string } = {}) =>
+    getJson<{ lines: LogLine[]; offset: number; day: string }>(
+      `/logs/since?${new URLSearchParams([
+        ['offset', String(offset)],
+        ...Object.entries(params)
+          .filter(([, v]) => v !== undefined && v !== '')
+          .map(([k, v]) => [k, String(v)] as [string, string]),
+      ]).toString()}`,
+    ),
   browserRestart: async (viewId: string) => {
     const res = await fetch(`/browser/${encodeURIComponent(viewId)}/restart`, { method: 'POST' });
     const body = await res.json();

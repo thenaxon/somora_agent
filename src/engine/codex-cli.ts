@@ -89,6 +89,7 @@ const CODEX_STALE_THREAD_RE = /no rollout found|not found|does not exist|failed 
 interface UsageAcc {
   tokens_in: number;
   tokens_in_cached: number;
+  context_tokens: number;
   tokens_out: number;
   tokens_out_reasoning: number;
   seen: boolean;
@@ -318,6 +319,7 @@ export const codexCliEngine: AgentEngine = {
     const usage: UsageAcc = {
       tokens_in: 0,
       tokens_in_cached: 0,
+      context_tokens: 0,
       tokens_out: 0,
       tokens_out_reasoning: 0,
       seen: false,
@@ -451,6 +453,10 @@ export const codexCliEngine: AgentEngine = {
             const n = (k: string) => (typeof last[k] === 'number' ? (last[k] as number) : 0);
             usage.tokens_in += n('inputTokens');
             usage.tokens_in_cached += n('cachedInputTokens');
+            // Occupancy: this request's prompt, replaced not summed.
+            // `tokens_in` above is what the turn cost across all of its
+            // requests and is a multiple of the window on a long turn.
+            usage.context_tokens = n('inputTokens') + n('cachedInputTokens');
             usage.tokens_out += n('outputTokens');
             usage.tokens_out_reasoning += n('reasoningOutputTokens');
             usage.seen = true;
@@ -781,6 +787,7 @@ export const codexCliEngine: AgentEngine = {
             tokens_out: usage.tokens_out,
             tokens_in_cached: usage.tokens_in_cached,
             tokens_out_reasoning: usage.tokens_out_reasoning,
+            ...(usage.context_tokens > 0 ? { context_tokens: usage.context_tokens } : {}),
           },
         }
       : {};
@@ -791,7 +798,7 @@ export const codexCliEngine: AgentEngine = {
 
     if (watchdogFired) {
       const message = `codex app-server timed out (${IDLE_TIMEOUT_MS / 1000}s idle)${streamErrors.length ? `: ${streamErrors.join('; ').slice(0, 400)}` : ''}`;
-      yield { kind: 'error', ts: ts(), engine: ENGINE, message };
+      yield { kind: 'error', ts: ts(), engine: ENGINE, message, providerError: true };
       yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...usageOut };
       await persistMeta();
       return;
@@ -821,7 +828,7 @@ export const codexCliEngine: AgentEngine = {
         yield* emitFinal();
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: finalText };
       }
-      yield { kind: 'error', ts: ts(), engine: ENGINE, message: `codex turn failed: ${reason}` };
+      yield { kind: 'error', ts: ts(), engine: ENGINE, message: `codex turn failed: ${reason}`, providerError: true };
       yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId, ...usageOut };
       await persistMeta();
       return;
@@ -838,6 +845,7 @@ export const codexCliEngine: AgentEngine = {
       model: resolvedModel.modelId,
       tokens_in: usage.tokens_in,
       tokens_in_cached: usage.tokens_in_cached,
+      context_tokens: usage.context_tokens,
       tokens_out: usage.tokens_out,
       tokens_out_reasoning: usage.tokens_out_reasoning,
       threadId,

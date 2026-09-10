@@ -6,7 +6,7 @@
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { useMemo, useState } from 'react';
-import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, Square, Terminal, Users, Wrench } from 'lucide-react';
+import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, ScrollText, Square, Terminal, Users, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
 import { AgentContextMenu } from './AgentContextMenu';
@@ -17,6 +17,7 @@ import { ChatWindow } from './ChatWindow';
 import { TmuxListWindow } from './TmuxListWindow';
 import { TmuxTerminalWindow } from './TmuxTerminalWindow';
 import { BrowserListWindow } from './BrowserListWindow';
+import { LogsWindow } from './LogsWindow';
 import { BrowserWindow } from './BrowserWindow';
 import { ShellTerminalWindow } from './ShellTerminalWindow';
 import { SessionsWindow } from './SessionsWindow';
@@ -211,6 +212,17 @@ export function Desktop() {
         />
       ),
     },
+    {
+      id: 'app:logs',
+      node: (
+        <AppTile
+          label="log"
+          icon={<ScrollText size={26} />}
+          active={activeApps.has('logs')}
+          onClick={() => wm.openLogs()}
+        />
+      ),
+    },
     // Shared browser (docs/browser.md) — hidden unless browser.enabled.
     ...(browserEnabled
       ? [
@@ -365,6 +377,22 @@ export function Desktop() {
                 onResize={wm.resize}
               >
                 <TmuxListWindow onAttach={(tmuxName) => wm.openTmuxTerm(tmuxName)} />
+              </Window>
+            );
+          }
+          if (win.kind === 'logs') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <LogsWindow />
               </Window>
             );
           }

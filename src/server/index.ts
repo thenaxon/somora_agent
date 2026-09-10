@@ -1,4 +1,5 @@
 import { resolveBrowserSession } from '../browser/session.ts';
+import { readLogSince, readLogTail } from './logs.ts';
 import { watchBrowserSnapshots } from '../browser/change-stream.ts';
 import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
@@ -3385,9 +3386,10 @@ app.post('/images/generate', async (c) => {
     if (body[key] !== undefined && body[key] !== null && body[key] !== '') specs[key] = body[key];
   }
 
-  // The browser is the user's own agent here — no write-policy gate,
-  // same as any other place the user names a path in their own UI.
-  const saveTo = typeof body.save_to === 'string' && body.save_to.trim() ? body.save_to.trim() : undefined;
+  // One image, one place (2026-09-10): the second destination is gone
+  // from the tool and from this route. A field that is still sent by an
+  // older client is ignored rather than rejected.
+  const saveTo: string | undefined = undefined;
 
   try {
     const result = await generateImage(
@@ -3573,6 +3575,36 @@ function videoGenReady(): { ok: boolean; reason?: string } {
 // and sends control/input through its identified viewer WebSocket.
 // Everything a viewer addresses is a VIEW — `<browser id>@<agent>`, one
 // window per agent even when several share a Chromium (design §10).
+
+// ── Server log (src/server/logs.ts) ───────────────────────────────
+// The log window in /web. Reads only the tail of one day's file, never
+// the whole directory: it holds hundreds of megabytes.
+
+app.get('/logs', async (c) => {
+  const num = (v: string | undefined, d: number | undefined): number | undefined => {
+    const n = v === undefined ? NaN : Number(v);
+    return Number.isFinite(n) ? n : d;
+  };
+  const snap = await readLogTail({
+    ...(c.req.query('day') ? { day: c.req.query('day')! } : {}),
+    ...(c.req.query('agent') ? { agent: c.req.query('agent')! } : {}),
+    ...(c.req.query('q') ? { q: c.req.query('q')! } : {}),
+    ...(num(c.req.query('minLevel'), undefined) !== undefined ? { minLevel: num(c.req.query('minLevel'), 30)! } : {}),
+    ...(num(c.req.query('limit'), undefined) !== undefined ? { limit: num(c.req.query('limit'), 300)! } : {}),
+  });
+  return c.json(snap);
+});
+
+app.get('/logs/since', async (c) => {
+  const offset = Number(c.req.query('offset') ?? '0');
+  const result = await readLogSince(Number.isFinite(offset) ? offset : 0, {
+    ...(c.req.query('day') ? { day: c.req.query('day')! } : {}),
+    ...(c.req.query('agent') ? { agent: c.req.query('agent')! } : {}),
+    ...(c.req.query('q') ? { q: c.req.query('q')! } : {}),
+    ...(c.req.query('minLevel') ? { minLevel: Number(c.req.query('minLevel')) } : {}),
+  });
+  return c.json(result);
+});
 
 app.post('/browser/op', async (c) => {
   if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);

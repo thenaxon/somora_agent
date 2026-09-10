@@ -79,6 +79,13 @@ fallback: gpt55       # used when primary fails before producing any output
                       # output or tool call. Put at least one entry on a
                       # different host/provider than the primary: two
                       # models on the same GPU box go down together.
+#
+# One exception to "before producing any output": some providers stream
+# their refusal AS assistant text and only then report the error — a
+# monthly quota notice is the common case. The engine adapter marks
+# those, and the chain still runs, because such text is not an answer.
+# A turn that already called a tool is never repeated on another model:
+# the side effects have happened.
 
 # Optional: cross-engine thinking depth (off|low|medium|high)
 # Per-session override via /thinking <level>. Only applies to models with

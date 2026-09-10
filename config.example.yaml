@@ -171,7 +171,15 @@ providers:
 #     - openrouter/anthropic/claude-haiku-4-5  # always there, costs money
 #   pdfWorker: openrouter/anthropic/claude-sonnet-4-6
 #   timeoutMs: 60000                        # per attempt, then the chain moves on
+#   totalBudgetMs: 90000                    # for the WHOLE chain, not one attempt
+#   maxOutputTokens: 1500                   # a caption is not a chat answer
 #   healthCacheMs: 60000                    # skip a just-failed worker this long
+#   timeoutCooldownMs: 10000                # after a timeout only: slow is not dead
+#
+# The worker is the substitute for models that cannot see: `analyze_file`
+# is hidden from agents whose model has the `image` capability, and a chat
+# attachment to such a model is described by the worker instead of
+# refusing the turn.
 
 # Speech-to-Text (Phase voice). Optional. When `enabled: true`, the
 # web chat input grows a mic button next to send: click → record, click

@@ -42,6 +42,8 @@ interface AgentState {
   /** In-flight run promise — shutdown() awaits these (bounded) so the
    *  paused/failed dream file lands on disk before process.exit. */
   activeRun: Promise<void> | null;
+  /** Consecutive self-scheduled retries; reset by real activity. */
+  selfHealAttempts: number;
 }
 
 export interface RemWorkerDeps {
@@ -55,6 +57,19 @@ export interface RemWorkerDeps {
  * with `ts > dreamReadThroughTs`.
  */
 const META_KEY = 'dreamReadThroughTs';
+
+/**
+ * Delay multiplier for self-scheduled retry `attempt` (1-based), or
+ * null once the budget is spent. Four attempts at 1, 2, 4 and 8 idle
+ * intervals: a backend that comes back within the hour is caught, one
+ * that is down all afternoon does not turn into an all-afternoon loop.
+ * Real chat activity resets the count.
+ */
+export function selfHealFactor(attempt: number): number | null {
+  const MAX_ATTEMPTS = 4;
+  if (attempt < 1 || attempt > MAX_ATTEMPTS) return null;
+  return 2 ** (attempt - 1);
+}
 
 export class RemWorker {
   private agents = new Map<string, AgentState>();
@@ -81,6 +96,7 @@ export class RemWorker {
       activeAbort: null,
       isWorking: false,
       activeRun: null,
+      selfHealAttempts: 0,
     };
     this.agents.set(agent, state);
     this.scheduleIdle(state);
@@ -110,6 +126,8 @@ export class RemWorker {
       clearTimeout(state.idleTimer);
       state.idleTimer = null;
     }
+    // Real activity means the user is here: start the retry budget over.
+    state.selfHealAttempts = 0;
     this.scheduleIdle(state);
   }
 
@@ -144,12 +162,68 @@ export class RemWorker {
     logger.info({ msg: 'dream.rem.shutdown', awaited_runs: inFlight.length });
   }
 
-  private scheduleIdle(state: AgentState): void {
+  private scheduleIdle(state: AgentState, factor = 1): void {
     if (this.shuttingDown) return;
-    const ms = Math.max(1, state.rem.idleMinutes) * 60_000;
+    const ms = Math.max(1, state.rem.idleMinutes) * 60_000 * factor;
     state.idleTimer = setTimeout(() => {
       void this.fireIdle(state.agent);
     }, ms);
+  }
+
+  /**
+   * Come back on our own while work is left over.
+   *
+   * The worker used to wait for the next `chat.send` and nothing else.
+   * A range that failed — backend down, worker model missing — was
+   * therefore retried only if the user happened to keep talking to that
+   * agent, and a conversation that ended right after the failure never
+   * made it into memory at all (2026-09-08 report). Users reasonably
+   * assume their conversations are dreamed, so the worker now retries
+   * itself.
+   *
+   * Bounded on purpose: a handful of attempts with a growing gap, then
+   * quiet until real activity. A backend that is down for the afternoon
+   * must not turn into an all-afternoon retry loop.
+   */
+  private async rearmIfWorkRemains(state: AgentState): Promise<void> {
+    if (this.shuttingDown || state.idleTimer) return;
+    const factor = selfHealFactor(state.selfHealAttempts + 1);
+    if (factor === null) {
+      logger.info({
+        msg: 'dream.rem.self_heal_exhausted',
+        agent: state.agent,
+        attempts: state.selfHealAttempts,
+        hint: 'next chat activity for this agent starts a fresh cycle',
+      });
+      return;
+    }
+    let remains = false;
+    try {
+      remains = await this.workRemaining(state.agent);
+    } catch (err) {
+      logger.debug({ msg: 'dream.rem.self_heal_check_failed', agent: state.agent, err: (err as Error).message });
+      return;
+    }
+    if (!remains) {
+      state.selfHealAttempts = 0;
+      return;
+    }
+    state.selfHealAttempts++;
+    logger.info({
+      msg: 'dream.rem.self_heal_scheduled',
+      agent: state.agent,
+      attempt: state.selfHealAttempts,
+      inMinutes: Math.max(1, state.rem.idleMinutes) * factor,
+    });
+    this.scheduleIdle(state, factor);
+  }
+
+  /**
+   * Is there anything left to dream for this agent — a paused run, or a
+   * session (archived included) with events past its marker?
+   */
+  async workRemaining(agent: string): Promise<boolean> {
+    return Boolean((await this.findPausedDream(agent)) ?? (await this.findSessionWithDelta(agent)));
   }
 
   private async fireIdle(agent: string): Promise<void> {
@@ -216,9 +290,11 @@ export class RemWorker {
       });
     } finally {
       state.isWorking = false;
-      // We intentionally do NOT auto-reschedule here. Next chat.send
-      // will trigger the next idle cycle. If the user never chats
-      // again, the agent's dreams stay where they are — quiet by default.
+      // Quiet by default still holds: with nothing left over this does
+      // not schedule anything, and the next chat.send starts the next
+      // cycle. What it no longer does is leave a failed or archived
+      // range lying there until the user happens to come back.
+      await this.rearmIfWorkRemains(state);
     }
   }
 
@@ -250,6 +326,9 @@ export class RemWorker {
         });
         if (result.finalStatus === 'completed' || result.finalStatus === 'processed') {
           await this.markSessionDreamed(state.agent, target.sourceSession, rangeThroughTs);
+          // Progress, not a retry: draining a backlog of several sessions
+          // must not run into the self-heal budget.
+          state.selfHealAttempts = 0;
         }
       } else {
         // Resume path — runner.ts:resumeDream re-runs from scratch in v1
@@ -268,6 +347,7 @@ export class RemWorker {
         });
         if (result.finalStatus === 'completed' || result.finalStatus === 'processed') {
           await this.markSessionDreamed(state.agent, target.sourceSession, result.rangeThroughTs);
+          state.selfHealAttempts = 0;
         }
       }
     } catch (err) {
@@ -328,7 +408,14 @@ export class RemWorker {
   private async findSessionWithDelta(agent: string): Promise<
     { id: string; dreamReadThroughTs: number } | null
   > {
-    const sessions = await listSessions(agent);
+    // Archived too. Archiving a conversation says "I am done with it",
+    // not "forget what was said": a session archived before REM caught
+    // up used to fall out of the selection and its last stretch never
+    // reached memory (2026-09-08 report). The marker still advances on
+    // success, so an archived session is read once and then stops
+    // showing up. Newest-first ordering below keeps live sessions ahead
+    // of archived ones, which are old by definition.
+    const sessions = await listSessions(agent, { includeArchived: true });
     // Sort newest-first so the most recently active session gets dreamed
     // first when multiple have delta.
     sessions.sort((a, b) => {

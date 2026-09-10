@@ -1057,7 +1057,27 @@ export function ChatWindow({
               </button>
             )}
             <Sep />
-            <span style={{ color: 'var(--text-2)' }} title="prompt tokens (cached part dimmed)">
+            {chat.usage?.context_tokens && chat.usage.contextWindow ? (
+              // How full the window is, from the turn's LAST request.
+              // The ↑ next to it is what the turn SPENT: on a tool-using
+              // turn that sum runs past the window several times over,
+              // and showing it as occupancy is what hid a context
+              // overflow until the backend refused (2026-09-10).
+              <span
+                style={{
+                  color:
+                    chat.usage.context_tokens / chat.usage.contextWindow > 0.9
+                      ? 'var(--danger, #f85149)'
+                      : chat.usage.context_tokens / chat.usage.contextWindow > 0.75
+                        ? 'var(--warn, #d29922)'
+                        : 'var(--text-2)',
+                }}
+                title={`context filled: ${chat.usage.context_tokens.toLocaleString()} of ${chat.usage.contextWindow.toLocaleString()} tokens in the last request of this turn`}
+              >
+                ▣ {Math.round((chat.usage.context_tokens / chat.usage.contextWindow) * 100)}%
+              </span>
+            ) : null}
+            <span style={{ color: 'var(--text-2)' }} title="prompt tokens spent this turn, summed over every request (cached part dimmed)">
               ↑ {formatTokens(chat.usage?.tokens_in)}
               {chat.usage?.tokens_in_cached ? (
                 <span style={{ color: 'var(--text-3)' }}>

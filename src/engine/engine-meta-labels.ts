@@ -50,6 +50,10 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // somora-emitted: the backend rejected a sampling key (temperature,
     // top_p, …), the engine retried without sampling.
     sampling_dropped: 'sampling dropped',
+    // somora-emitted: the turn grew past the context window during its
+    // tool rounds, so the oldest tool results were shortened to keep it
+    // going. Nothing was re-run.
+    context_trimmed: 'context trimmed',
   },
 };
 

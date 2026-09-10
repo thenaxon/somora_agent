@@ -21,7 +21,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api, type AttachmentRef, type ProjectInfo } from '../lib/api';
-import { attachMedia, historyEventsToMessages } from '../lib/history';
+import { attachMedia, historyEventsToMessages, mergeHistorySnapshot } from '../lib/history';
 import type {
   AssistantMedia,
   ChatMessage,
@@ -307,23 +307,31 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const bump = () => lastEventAtRef.current.set(key, Date.now());
       patchStream(key, { connected: false, loading: true });
 
-      // Load history once per session-key. Stream events that happen
-      // between history-snapshot and EventSource-open could be missed
-      // — the race is rare and the reload UX is just F5.
-      // Initial load is paginated (last N events). Older windows
-      // come in via loadOlder() when the user scrolls to the top.
+      // Load history for this session-key, then again after every
+      // reconnect (see the 'open' handler below).
+      //
+      // The snapshot is MERGED, never assigned. A history response that
+      // lands after the stream already delivered something newer used to
+      // replace the whole list and take that with it — which is one of
+      // the two ways an answer could vanish after a connection blip
+      // (2026-09-09 report). Everything the stream produced after the
+      // newest event in the snapshot survives; anything older is what
+      // the snapshot itself now carries, in its persisted form.
       // signal: ac.signal so closeStream() aborts an in-flight history
       // fetch instead of letting it land on a no-longer-subscribed key.
+      const applyHistory = (events: Parameters<typeof historyEventsToMessages>[0]) => {
+        setMessages((prev) => ({
+          ...prev,
+          [key]: mergeHistorySnapshot(historyEventsToMessages(events), prev[key] ?? []),
+        }));
+      };
       api
         .history(agent, session, { limit: INITIAL_HISTORY_LIMIT, signal: ac.signal })
         .then((res) => {
           const entry = sourcesRef.current.get(key);
           if (!entry) return;
           entry.loaded = true;
-          setMessages((prev) => ({
-            ...prev,
-            [key]: historyEventsToMessages(res.events),
-          }));
+          applyHistory(res.events);
           if (typeof res.oldestTs === 'number') {
             paginationRef.current.set(key, {
               hasMore: Boolean(res.hasMore),
@@ -372,9 +380,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      let openedOnce = false;
       es.addEventListener('open', () => {
         bump();
         patchStream(key, { connected: true });
+        // EventSource reconnects on its own, and a plain 'open' told us
+        // nothing about what happened while it was away: the turn kept
+        // running on the server and its events went nowhere. Ask what we
+        // missed, every time the connection comes back.
+        if (!openedOnce) {
+          openedOnce = true;
+          return;
+        }
+        api
+          .history(agent, session, { limit: INITIAL_HISTORY_LIMIT, signal: ac.signal })
+          .then((res) => {
+            if (!sourcesRef.current.get(key)) return;
+            applyHistory(res.events);
+          })
+          .catch(() => {
+            /* the watchdog below still has the last word */
+          });
       });
       es.addEventListener('error', () => patchStream(key, { connected: false }));
       // Heartbeat fires every 20s from the server (sse.publishTimeoutMs +
@@ -599,9 +625,12 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       es.addEventListener('agent', (ev) => {
         bump();
-        const d = parse<{ phase: 'start' | 'end'; usage?: ChatUsage; fallback?: ModelFallback }>(
-          ev as MessageEvent,
-        );
+        const d = parse<{
+          phase: 'start' | 'end';
+          usage?: ChatUsage;
+          contextWindow?: number;
+          fallback?: ModelFallback;
+        }>(ev as MessageEvent);
         if (!d) return;
         if (d.phase === 'start') {
           patchStream(key, { streaming: true, thinking: true, primaryRestored: null });
@@ -613,7 +642,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           patchStream(key, {
             streaming: false,
             thinking: false,
-            ...(d.usage ? { usage: d.usage } : {}),
+            // The window travels beside the usage; the header needs both
+            // to show occupancy rather than spend.
+            ...(d.usage
+              ? { usage: { ...d.usage, ...(d.contextWindow ? { contextWindow: d.contextWindow } : {}) } }
+              : {}),
             lastFallback: fb,
             primaryRestored: !fb && prevFb ? prevFb.requested : null,
           });

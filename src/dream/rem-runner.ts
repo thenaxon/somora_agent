@@ -515,8 +515,11 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
           'processed',
           { completed_at: meta.completed_at, processed_at: meta.processed_at },
         );
-        // A clean run supersedes any earlier failed attempts on this session.
-        await pruneFailedDreams(args.agent, args.sourceSession);
+        // A clean run supersedes earlier failed attempts on this session
+        // — but only as far as it actually read.
+        await pruneFailedDreams(args.agent, args.sourceSession, {
+          coveredThroughTs: meta.range_through_ts,
+        });
         logger.info({
           msg: 'dream.completed_empty',
           agent: args.agent,
@@ -531,7 +534,9 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
         'completed',
         { completed_at: meta.completed_at },
       );
-      await pruneFailedDreams(args.agent, args.sourceSession);
+      await pruneFailedDreams(args.agent, args.sourceSession, {
+        coveredThroughTs: meta.range_through_ts,
+      });
       logger.info({
         msg: 'dream.completed',
         agent: args.agent,

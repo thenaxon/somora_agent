@@ -77,7 +77,6 @@ export function MediaWindow() {
   const [prompt, setPrompt] = useState('');
   const [specs, setSpecs] = useState<Partial<Record<ImageSpecField, string>>>({});
   const [count, setCount] = useState(1);
-  const [saveTo, setSaveTo] = useState('');
   const [seed, setSeed] = useState('');
 
   const [busy, setBusy] = useState(false);
@@ -275,7 +274,6 @@ export function MediaWindow() {
         ...specs,
         ...(count > 1 && maxN > 1 ? { n: count } : {}),
         ...(seed.trim() && supports('seed') ? { seed: Number(seed.trim()) } : {}),
-        ...(saveTo.trim() ? { save_to: saveTo.trim() } : {}),
       });
       // Put the new images at the head rather than refetching, so the
       // result is on screen the moment it exists.
@@ -288,7 +286,7 @@ export function MediaWindow() {
     } finally {
       setBusy(false);
     }
-  }, [prompt, busy, model, specs, count, maxN, seed, supports, saveTo]);
+  }, [prompt, busy, model, specs, count, maxN, seed, supports]);
 
   const forget = useCallback(async (id: string) => {
     try {
@@ -534,19 +532,13 @@ export function MediaWindow() {
           </div>
         )}
 
-        <label style={labelStyle}>
-          Also save to
-          <input
-            value={saveTo}
-            onChange={(e) => setSaveTo(e.target.value)}
-            placeholder={status?.outputDir ?? 'optional folder'}
-            style={inputStyle}
-          />
-          <span style={hintStyle}>
-            Every image is kept in {status?.outputDir ?? 'the images folder'}. This adds a second
-            location.
-          </span>
-        </label>
+
+        {/* Where the file will be. One place, one path (2026-09-10):
+            the "Also save to" field is gone, so this line is the only
+            thing that still has to say it. */}
+        <span style={hintStyle}>
+          Every image is kept in {status?.outputDir ?? 'the images folder'}, and nowhere else.
+        </span>
 
         <button
           type="button"
@@ -909,15 +901,11 @@ export function MediaWindow() {
                   own copy button. Keyed on the record so the "Copied"
                   state does not carry over to the next selection. */}
               <PathRow key={`p-${selected.id}`} path={selected.path} testId="media-copy-path" />
-              {selected.linkedTo.map((p) => (
-                <PathRow
-                  key={`l-${selected.id}-${p}`}
-                  path={p}
-                  prefix="also at"
-                  dim
-                  testId="media-copy-linked-path"
-                />
-              ))}
+              {/* One image, one path (2026-09-10). Older records may still
+                  carry a second location from when image_generate could
+                  hardlink one; showing it made the same picture look like
+                  two files in two folders. The files on disk are left
+                  alone, they are simply not a second home any more. */}
               <div style={{ display: 'flex', gap: 7, marginTop: 3, flexWrap: 'wrap' }}>
                 <button type="button" onClick={() => reuseSpecs(selected)} style={smallBtnStyle}>
                   Use these settings

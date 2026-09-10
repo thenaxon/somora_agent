@@ -26,6 +26,7 @@ import {
   type Compaction,
 } from '../compaction/index.ts';
 import { logger } from '../server/logger.ts';
+import { estimateRequestTokens, promptBudget, trimToolResults } from './context-budget.ts';
 import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -777,6 +778,8 @@ export const openAiCompatibleEngine: AgentEngine = {
         }
       | undefined;
     let tokensInCached: number | undefined;
+    /** Prompt size of the most recent request — see usage.context_tokens. */
+    let lastPromptTokens: number | undefined;
 
     const tools = input.tools;
     const toolList = tools ? tools.list() : [];
@@ -863,6 +866,92 @@ export const openAiCompatibleEngine: AgentEngine = {
         round++;
         roundsStarted = round;
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
+
+        // Does what we are about to send still fit? The pre-turn
+        // compaction sized the conversation before any tool ran, and a
+        // turn grows with every round: tool results, images, the tool
+        // schemas that ride along each time. Checking once was how a
+        // turn estimated at 58k tokens reached the backend at 507k and
+        // died on a raw 400 (2026-09-10 report).
+        //
+        // The remedy has to work INSIDE the running turn: the tools have
+        // already run, and re-running them is not an option. So the
+        // oldest tool results are shortened, which keeps every
+        // tool_call/result pair intact and keeps the model's record of
+        // what it already did.
+        const budget = promptBudget({
+          contextWindow: resolvedModel.model.contextWindow,
+          ...(resolvedModel.model.maxTokens ? { maxOutputTokens: resolvedModel.model.maxTokens } : {}),
+        });
+        const estimated = estimateRequestTokens(loopMessages, openAiTools);
+        if (estimated > budget) {
+          const trim = trimToolResults(loopMessages, { budget, tools: openAiTools });
+          logger.warn({
+            msg: 'engine.context_trim',
+            engine: ENGINE,
+            agent,
+            session,
+            round,
+            estimated,
+            budget,
+            contextWindow: resolvedModel.model.contextWindow,
+            trimmed: trim.trimmed,
+            after: trim.estimate,
+            fits: trim.fits,
+          });
+          if (trim.trimmed > 0) {
+            loopMessages.length = 0;
+            loopMessages.push(...(trim.messages as ChatMessage[]));
+            yield {
+              kind: 'engine_meta',
+              ts: ts(),
+              engine: ENGINE,
+              itemType: 'context_trimmed',
+              payload: {
+                text:
+                  `The conversation reached ${resolvedModel.modelId}'s context window, so somora shortened ` +
+                  `${trim.trimmed} older tool result${trim.trimmed === 1 ? '' : 's'} to keep this turn going. ` +
+                  'Nothing was run twice.',
+                trimmed: trim.trimmed,
+                estimated,
+                budget,
+              },
+            };
+          }
+          if (!trim.fits) {
+            // Even trimmed it does not fit. Stop with an explanation
+            // instead of letting the backend answer with a raw 400 —
+            // and stop AFTER the tool results are persisted, so the work
+            // of this turn is on the record.
+            logger.error({
+              msg: 'engine.fail',
+              engine: ENGINE,
+              agent,
+              session,
+              err: `context budget exceeded mid-turn (${trim.estimate} > ${budget})`,
+            });
+            yield {
+              kind: 'error',
+              ts: ts(),
+              engine: ENGINE,
+              message:
+                round === 1
+                  ? `This conversation does not fit ${resolvedModel.modelId}'s context window ` +
+                    `(${resolvedModel.model.contextWindow.toLocaleString('en-US')} tokens): about ` +
+                    `${trim.estimate.toLocaleString('en-US')} tokens of prompt against a budget of ` +
+                    `${budget.toLocaleString('en-US')}, and there is nothing left to shorten. Start a new session ` +
+                    '(/reset) or switch to a model with a larger window (/model).'
+                  : `This turn no longer fits ${resolvedModel.modelId}'s context window ` +
+                    `(${resolvedModel.model.contextWindow.toLocaleString('en-US')} tokens) after ${round - 1} tool ` +
+                    `round${round === 2 ? '' : 's'}: about ${trim.estimate.toLocaleString('en-US')} tokens of prompt ` +
+                    `against a budget of ${budget.toLocaleString('en-US')}. The tool results so far are in the ` +
+                    'session — ask for the next step in a new message, or switch to a model with a larger window (/model).',
+              providerError: false,
+            };
+            yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+            return;
+          }
+        }
         armIdleTimer();
         const stream = await createChatStream({
           model: resolvedModel.modelId,
@@ -1096,6 +1185,10 @@ export const openAiCompatibleEngine: AgentEngine = {
             const reasoningTokens = reasoningEstimated
               ? Math.ceil(roundReasoningChars / 4)
               : (reportedReasoning ?? undefined);
+            // Occupancy, not spend: the prompt of THIS request, replaced
+            // each round rather than summed. The sum below is what the
+            // turn cost; this is how full the window actually got.
+            lastPromptTokens = chunk.usage.prompt_tokens ?? lastPromptTokens;
             const u = {
               tokens_in: chunk.usage.prompt_tokens ?? 0,
               tokens_out: chunk.usage.completion_tokens ?? 0,
@@ -1644,6 +1737,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         session,
         tokens_in: totalUsage?.tokens_in,
         tokens_in_cached: tokensInCached,
+        context_tokens: lastPromptTokens,
         tokens_out: totalUsage?.tokens_out,
         toolRounds: round,
       });
@@ -1661,6 +1755,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               usage: {
                 ...totalUsage,
                 ...(tokensInCached !== undefined ? { tokens_in_cached: tokensInCached } : {}),
+                ...(lastPromptTokens !== undefined ? { context_tokens: lastPromptTokens } : {}),
               },
             }
           : {}),
@@ -1683,7 +1778,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           err: 'idle watchdog timeout',
           idleMs: IDLE_TIMEOUT_MS,
         });
-        yield { kind: 'error', ts: ts(), engine: ENGINE, message };
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message, providerError: true };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else if (signal?.aborted) {
         logger.info({ msg: 'engine.aborted', engine: ENGINE, agent, session });
@@ -1801,7 +1896,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       } else {
         logger.error({ msg: 'engine.fail', engine: ENGINE, agent, session, err: String(err) });
-        yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message };
+        yield { kind: 'error', ts: ts(), engine: ENGINE, message: (err as Error).message, providerError: true };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
       }
     } finally {

@@ -35,9 +35,12 @@ import {
   describeModelRefs,
   listAllModels,
   resolveAnyRef,
+  workerChain,
   type ThinkingLevel,
   type SamplingConfig,
 } from '../config/types.ts';
+import { describeMedia } from '../tools/file/analyze.ts';
+import { loadAttachment } from '../multimodal/load.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
@@ -571,6 +574,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // a ref that points at nothing. Per-turn count + per-file caps
   // were enforced at upload time; here we just do a sanity stat.
   const resolvedAttachments: ResolvedAttachment[] = [];
+  /** Worker descriptions of files the model cannot see, appended to the
+   *  message the engine gets. The persisted user_message keeps the
+   *  original attachment refs, so the clients still show the picture. */
+  const describedAttachments: string[] = [];
   if (attachments && attachments.length > 0) {
     if (attachments.length > deps.config.attachments.maxPerTurn) {
       throw new Error(
@@ -587,23 +594,74 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         size: r.size,
       });
     }
-    // Capability gate (Phase Y.B requirement #5): hard refuse when
-    // the resolved model can't see the attached kind. Surfaces the
-    // mismatch BEFORE the engine spends tokens trying to interpret
-    // the file. The user nudge is the slash-command for the win.
+    // Capability gate. A model that cannot see the attached kind used to
+    // end the turn with "switch models". That is exactly the situation
+    // the vision worker exists for (Rene 2026-09-10), so the worker
+    // describes the file and its text rides along with the message. The
+    // refusal stays for the case where no worker is configured.
+    //
+    // PDFs ride either as native document blocks (cap=pdf) or as
+    // rasterised PNGs (cap=image), so either capability is enough.
     const caps = resolvedModel.model.capabilities;
-    for (const r of resolvedAttachments) {
-      if (r.mime.kind === 'image' && !caps.includes('image')) {
+    const unseeable = resolvedAttachments.filter(
+      (r) =>
+        (r.mime.kind === 'image' && !caps.includes('image')) ||
+        (r.mime.kind === 'pdf' && !caps.includes('pdf') && !caps.includes('image')),
+    );
+    if (unseeable.length > 0) {
+      const modelLabel = `${resolvedModel.providerName}/${resolvedModel.modelId}`;
+      const kinds = [...new Set(unseeable.map((r) => r.mime.kind))].join('/');
+      if (workerChain(deps.config.vision.worker).length === 0) {
         throw new Error(
-          `model '${resolvedModel.providerName}/${resolvedModel.modelId}' does not support image inputs — switch to a vision-capable model first (try /model)`,
+          `model '${modelLabel}' does not support ${kinds} inputs — switch to a capable model (try /model), ` +
+            `or configure config.vision.worker so somora can have a vision worker describe attachments for it`,
         );
       }
-      if (r.mime.kind === 'pdf' && !caps.includes('pdf') && !caps.includes('image')) {
-        // PDFs ride either as native document blocks (cap=pdf) or as
-        // rasterised PNGs (cap=image). Refuse only if neither is on.
-        throw new Error(
-          `model '${resolvedModel.providerName}/${resolvedModel.modelId}' does not support PDF inputs — switch to a model with 'pdf' or 'image' capability (try /model)`,
+      for (const r of unseeable) {
+        let described;
+        try {
+          const att = await loadAttachment(r.path, {
+            maxImageBytes: deps.config.attachments.maxImageBytes,
+            maxPdfBytes: deps.config.attachments.maxPdfBytes,
+            maxTextBytes: deps.config.attachments.maxTextBytes,
+          });
+          described = await describeMedia({
+            att,
+            config: deps.config,
+            agent,
+            session,
+            caller: 'chat_attachment',
+          });
+        } catch (err) {
+          throw new Error(
+            `model '${modelLabel}' cannot see '${r.name}', and the vision worker could not describe it either: ` +
+              `${(err as Error).message}`,
+          );
+        }
+        // Second-hand sight, and the model is told so. A described
+        // picture that pretends to be the picture is how an agent ends
+        // up asserting detail nobody ever saw.
+        describedAttachments.push(
+          `[attachment ${r.name} (${r.mime.mimeType}) — your model cannot see ${r.mime.kind} files, ` +
+            `so somora had the vision worker ${described.worker} look at it and report back:\n` +
+            `${described.analysis}\n` +
+            `This is a description, not the file. Say so when the exact detail matters.]`,
         );
+        logger.info({
+          msg: 'chat.attachment.described',
+          agent,
+          session,
+          file: r.name,
+          kind: r.mime.kind,
+          model: modelLabel,
+          worker: described.worker,
+          ms: described.ms,
+        });
+      }
+      // The engine must not receive what it cannot read.
+      for (const r of unseeable) {
+        const i = resolvedAttachments.indexOf(r);
+        if (i >= 0) resolvedAttachments.splice(i, 1);
       }
     }
     logger.info({
@@ -814,7 +872,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         // user-message-prefix path. claude-cli + openai-compatible
         // already see it via systemPrompt and ignore this field.
         ...(projectBlock ? { projectContext: projectBlock } : {}),
-        userMessage: text,
+        userMessage: describedAttachments.length > 0 ? `${text}\n\n${describedAttachments.join('\n\n')}` : text,
         ...(fromAgent ? { fromAgent } : {}),
         ...(fromAgent && fromSession ? { fromSession } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
@@ -911,6 +969,25 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       }
       if (ev.kind !== 'assistant_delta' && ev.kind !== 'thinking_delta') {
         await appendEvent(agent, session, ev);
+      }
+      // An error event that survives the fallback chain is this turn's
+      // outcome. Without this the variable was only ever set by the
+      // outer catch, so a turn that ended on a streamed provider error
+      // was logged as turn.completed and reported success to whoever
+      // asked for it — a subagent caller, the A2A result, the audit
+      // (2026-09-09 and 2026-09-10 reports). First one wins: later
+      // errors are usually consequences of the first.
+      if (ev.kind === 'error' && !errorMessage) {
+        errorMessage = ev.message;
+        logger.warn({
+          msg: 'turn.engine_error',
+          turnId,
+          agent,
+          session,
+          engine: ev.engine,
+          providerError: ev.providerError === true,
+          err: ev.message,
+        });
       }
       if (ev.kind === 'turn_start' && typeof ev.turnId === 'string') {
         streamTurnId = ev.turnId;

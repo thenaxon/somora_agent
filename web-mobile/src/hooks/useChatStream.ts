@@ -34,6 +34,7 @@ import {
   countMedia,
   findTurnRow,
   historyEventsToMessages,
+  mergeHistorySnapshot,
   newId,
   type ChatMessage,
   type ModelFallback,
@@ -148,19 +149,25 @@ export function useChatStream(agent: string | null): ChatStream {
 
     // 1. Hydrate from /chat/history (most-recent N events). The
     //    turnId-aware conversion lives in history.ts (unit-tested).
-    void fetch(
-      `/chat/history?agent=${encodeURIComponent(agent)}&session=main`,
-    )
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = (await res.json()) as { events?: HistoryEvent[] };
-        if (cancelled) return;
-        setMessages(historyEventsToMessages(body.events ?? []));
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        console.warn('[somora-mobile] history load failed:', err);
-      });
+    //
+    //    MERGED, never assigned: a snapshot that lands after the stream
+    //    already delivered something newer would otherwise replace the
+    //    list and take that with it — one of the two ways an answer
+    //    disappeared after a connection blip (2026-09-09 report).
+    const syncHistory = () =>
+      fetch(`/chat/history?agent=${encodeURIComponent(agent)}&session=main`)
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const body = (await res.json()) as { events?: HistoryEvent[] };
+          if (cancelled) return;
+          const restored = historyEventsToMessages(body.events ?? []);
+          setMessages((prev) => mergeHistorySnapshot(restored, prev));
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          console.warn('[somora-mobile] history load failed:', err);
+        });
+    void syncHistory();
 
     // 2. Subscribe to SSE for live events.
     const url = `/chat/stream?agent=${encodeURIComponent(agent)}&session=main`;
@@ -168,10 +175,19 @@ export function useChatStream(agent: string | null): ChatStream {
     lastEventAtRef.current = Date.now();
     const bump = () => { lastEventAtRef.current = Date.now(); };
 
+    let openedOnce = false;
     const onOpen = () => {
       if (cancelled) return;
       bump();
       setConnectionError(null);
+      // The browser reconnects an EventSource on its own, and the turn
+      // kept running on the server meanwhile. Ask what was missed rather
+      // than waiting for the staleness watchdog further down.
+      if (!openedOnce) {
+        openedOnce = true;
+        return;
+      }
+      void syncHistory();
     };
     const onError = () => {
       if (cancelled) return;

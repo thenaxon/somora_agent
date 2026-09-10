@@ -14,19 +14,42 @@ const config: any = {
   },
 };
 const rm = (id: string) => ({ providerName: 'a', modelId: id, model: mk(id), provider: config.providers.a });
-const behaviour = new Map<string, 'ok' | 'die'>();
+// 'quota'    — provider streams its refusal as assistant text, then a
+//              marked provider error (the 2026-09-09 Claude case).
+// 'lateflop' — a real answer was streaming and then something broke.
+// 'toolthen' — a tool already ran, so the turn had side effects.
+type Behaviour = 'ok' | 'die' | 'quota' | 'lateflop' | 'toolthen';
+const behaviour = new Map<string, Behaviour>();
 (engineRegistry as any)['openai-compatible'] = {
   name: 'openai-compatible',
   async *runTurn(input: any) {
     const id = input.resolvedModel.modelId;
+    const end = { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
     yield { kind: 'turn_start', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
-    if (behaviour.get(id) === 'die') {
-      yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `${id} down` };
-      yield { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
-      return;
+    switch (behaviour.get(id)) {
+      case 'die':
+        yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `${id} down` };
+        yield end;
+        return;
+      case 'quota':
+        yield { kind: 'assistant_delta', ts: 1, engine: 'openai-compatible', text: 'Monthly quota exceeded.' };
+        yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `${id} quota`, providerError: true };
+        yield end;
+        return;
+      case 'lateflop':
+        yield { kind: 'assistant_delta', ts: 1, engine: 'openai-compatible', text: 'here is half an answer' };
+        yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `${id} flopped` };
+        yield end;
+        return;
+      case 'toolthen':
+        yield { kind: 'tool_call', ts: 1, engine: 'openai-compatible', name: 'file_write', id: 'c1', args: {} };
+        yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `${id} died after writing`, providerError: true };
+        yield end;
+        return;
+      default:
+        yield { kind: 'assistant_message', ts: 1, engine: 'openai-compatible', text: `hi from ${id}` };
+        yield end;
     }
-    yield { kind: 'assistant_message', ts: 1, engine: 'openai-compatible', text: `hi from ${id}` };
-    yield { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
   },
 };
 async function run(refs: string[]) {
@@ -74,4 +97,54 @@ test('no fallback → primary error + turn_end (legacy behaviour)', async () => 
   const out = await run([]);
   assert.deepEqual(out.map((e) => e.kind), ['turn_start', 'error', 'turn_end']);
   assert.equal(out[1].message, 'm1 down');
+});
+
+// ── a provider failure dressed as an answer (2026-09-09) ────────────
+
+test('a quota notice streamed as assistant text does not block the fallback', async () => {
+  behaviour.set('m1', 'quota');
+  behaviour.set('m2', 'ok');
+  const out = await run(['m2']);
+  const fb = out.filter((e) => e.kind === 'model_fallback');
+  assert.equal(fb.length, 1, 'the chain ran');
+  assert.equal(fb[0].actual, 'a/m2');
+  assert.match(fb[0].reason, /quota/);
+  assert.ok(out.some((e) => e.kind === 'assistant_message' && e.text === 'hi from m2'));
+  assert.equal(out.filter((e) => e.kind === 'error').length, 0, 'the failed attempt keeps its error to itself');
+});
+
+test('an ordinary failure after real output still ends the turn', async () => {
+  behaviour.set('m1', 'lateflop');
+  behaviour.set('m2', 'ok');
+  const out = await run(['m2']);
+  assert.equal(out.filter((e) => e.kind === 'model_fallback').length, 0, 'half an answer is not thrown away for a retry');
+  assert.equal(out.filter((e) => e.kind === 'error').length, 1);
+  assert.ok(!out.some((e) => e.kind === 'assistant_message' && e.text === 'hi from m2'));
+});
+
+test('a turn that already ran a tool is never repeated on another model', async () => {
+  behaviour.set('m1', 'toolthen');
+  behaviour.set('m2', 'ok');
+  const out = await run(['m2']);
+  assert.equal(out.filter((e) => e.kind === 'model_fallback').length, 0, 'side effects are not replayed');
+  const errs = out.filter((e) => e.kind === 'error');
+  assert.equal(errs.length, 1);
+  assert.match(errs[0].message, /died after writing/);
+});
+
+test('a user abort is not a provider failure', async () => {
+  behaviour.set('m1', 'quota');
+  behaviour.set('m2', 'ok');
+  const controller = new AbortController();
+  controller.abort();
+  const out: any[] = [];
+  for await (const ev of runTurnWithFallback({
+    primary: rm('m1'),
+    fallbackRefs: ['m2'],
+    baseInput: { signal: controller.signal } as any,
+    config,
+  })) {
+    out.push(ev);
+  }
+  assert.equal(out.filter((e) => e.kind === 'model_fallback').length, 0, 'the user stopped it, do not spend another model');
 });

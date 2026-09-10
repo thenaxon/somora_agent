@@ -5,7 +5,7 @@
 // Run: npx tsx web/src/lib/history.test.mts   (cwd = repo root)
 
 import assert from 'node:assert/strict';
-import { attachMedia, findTurnOwner, historyEventsToMessages } from './history';
+import { attachMedia, findTurnOwner, historyEventsToMessages, mergeHistorySnapshot } from './history';
 import type { HistoryEvent } from './api';
 import type { AssistantMedia, ChatMessage } from '../types/chat';
 
@@ -176,6 +176,31 @@ const ev = (e: Partial<HistoryEvent> & { kind: string }): HistoryEvent => ({ ts:
   check('two turns: first answer has "one"', a?.role === 'assistant' && a.thinking?.text === 'one' && a.turnId === 't-1');
   check('two turns: second answer has "two"', b?.role === 'assistant' && b.thinking?.text === 'two' && b.turnId === 't-2');
   check('two turns: no truncated flag when absent', a?.role === 'assistant' && a.thinking?.truncated === undefined);
+}
+
+// ── reconnect reconciliation (2026-09-09) ──────────────────────────
+{
+  const msg = (id: string, ts: number, text: string): ChatMessage =>
+    ({ id, role: 'assistant', ts, text }) as ChatMessage;
+
+  // A snapshot that covers everything on screen simply replaces it.
+  const snapshot = [msg('h1', 10, 'A'), msg('h2', 20, 'B')];
+  const same = mergeHistorySnapshot(snapshot, [msg('l1', 10, 'A'), msg('l2', 20, 'B')]);
+  check('merge: a covering snapshot does not duplicate', same.length === 2, JSON.stringify(same.map((m) => m.ts)));
+
+  // The case that lost answers: a late snapshot arrives while the
+  // stream has already delivered something newer.
+  const withLive = mergeHistorySnapshot(snapshot, [msg('live', 30, 'still streaming')]);
+  check('merge: newer live content survives a late snapshot', withLive.length === 3 && withLive[2]?.ts === 30);
+
+  // And the other direction: what the snapshot brought back is kept
+  // even when the screen was empty (a reconnect after a full reload).
+  const fromNothing = mergeHistorySnapshot(snapshot, []);
+  check('merge: an empty screen is filled from the snapshot', fromNothing.length === 2);
+
+  // An empty snapshot must not wipe a live turn in progress.
+  const emptySnapshot = mergeHistorySnapshot([], [msg('live', 5, 'typing')]);
+  check('merge: an empty snapshot keeps live content', emptySnapshot.length === 1);
 }
 
 console.log(`history: ${pass} passed, ${fail} failed`);

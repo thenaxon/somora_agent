@@ -41,6 +41,9 @@ const GenerateInput = z
     steps: z.number().int().positive().optional(),
     cfg: z.number().optional(),
     guidance: z.number().optional(),
+    /** Removed 2026-09-10: images live in one place. Still accepted so a
+     *  persona or habit that still passes it does not fail the call — it
+     *  is ignored and the result says where the image actually is. */
     save_to: z.string().min(1).optional(),
     reference_images: z.array(z.string().min(1)).max(16).optional(),
     return_image: z.boolean().optional(),
@@ -119,9 +122,9 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
     'quality, n (how many), output_format, seed, and the sampling knobs steps/cfg/guidance. ' +
     'Do NOT write them into the prompt. WHICH fields a model takes differs per model — ' +
     'image_models tells you, and one it does not take is rejected before the request goes out, ' +
-    'naming what it does take. Images always land in the configured images directory; save_to ' +
-    'additionally places a hardlink where you want it (relative paths resolve against your ' +
-    'workspace). reference_images takes FILE PATHS of images to work from (image-to-image), ' +
+    'naming what it does take. Every image lives in exactly ONE place, the configured images ' +
+    'directory, and the result gives you its path — use that path when you need the file, do ' +
+    'not copy it somewhere else. reference_images takes FILE PATHS of images to work from (image-to-image), ' +
     'where the model supports it — the tool reads them itself, so never paste base64. Several ' +
     'are allowed: that is how you combine multiple sources into one picture.',
   inputSchema: GenerateInput,
@@ -156,10 +159,6 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
       guidance: {
         type: 'number',
         description: 'Guidance scale, where the model uses one instead of cfg.',
-      },
-      save_to: {
-        type: 'string',
-        description: 'Extra destination — a directory or a full file path. Hardlinked.',
       },
       reference_images: {
         type: 'array',
@@ -200,21 +199,12 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
       throw new Error(`image_generate: ${budget.reason}`);
     }
 
-    // A caller-chosen destination goes through the same gate as
-    // file_write. Without it, "generate an image to ~/.ssh/authorized_keys"
-    // would be a way around exactly the rule that gate enforces.
-    let saveTo: string | undefined;
-    if (input.save_to) {
-      const { absolute, warning } = await resolveLocalPath(input.save_to, ctx.agent, ctx.config);
-      const verdict = checkWriteAllowed(absolute, ctx.agent);
-      if (!verdict.ok) {
-        throw new Error(`image_generate: save_to ${verdict.reason}`);
-      }
-      if (warning) logger.debug({ msg: 'imagegen.save_to_warning', warning });
-      // Keep the trailing separator so a directory stays a directory —
-      // resolveLocalPath normalizes it away.
-      saveTo = /[\\/]$/.test(input.save_to) ? `${absolute}/` : absolute;
-    }
+    // One image, one place (Rene 2026-09-10). The second destination is
+    // gone: it produced two paths for the same file, one of which was
+    // routinely the nested `<workspace>/<workspace>/…` a relative path
+    // creates, and the gallery then showed the same picture under two
+    // names. An agent that needs the file uses the path in the result.
+    const saveTo: string | undefined = undefined;
 
     const wantImage = await wantsImageBack(input, ctx);
     const notes: string[] = [];
@@ -303,10 +293,13 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
         `Used a fallback model — the requested one was unavailable: ${result.fellBackFrom.join('; ')}`,
       );
     }
-    if (input.save_to && result.images.some((img) => img.linkedTo.length === 0)) {
+    if (input.save_to) {
+      // Still accepted, deliberately ignored: an old persona line or a
+      // habit must not fail the generation. Say where the image is.
       notes.push(
-        `Could not place a copy at '${input.save_to}' — the image is saved in the images directory.`,
+        `save_to is no longer used — every image lives in one place. This one is at ${result.images[0]?.path ?? 'the images directory'}.`,
       );
+      logger.info({ msg: 'imagegen.save_to_ignored', agent: ctx.agent, requested: input.save_to });
     }
 
     const payload: GenerateOutput = {

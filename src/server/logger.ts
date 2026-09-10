@@ -1,9 +1,19 @@
-import { mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pino, { type Logger } from 'pino';
 
-const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
+// Last line of defence for test isolation. `npm test` (scripts/run-tests.mjs)
+// already points SOMORA_HOME at a throwaway directory before anything is
+// imported. Someone running a single file by hand does not, and this module
+// opens its log file at import time — that is how test errors ended up in
+// the live server log and made its error count worthless (2026-09-08 report).
+// Under node:test without an explicit home, log to a temp directory instead.
+// Only the destination changes: stdout stays untouched, because the MCP
+// child speaks JSON-RPC over it.
+const UNDER_NODE_TEST = Boolean(process.env.NODE_TEST_CONTEXT);
+const SOMORA_HOME =
+  process.env.SOMORA_HOME ?? (UNDER_NODE_TEST ? mkdtempSync(join(tmpdir(), 'somora-test-log-')) : join(homedir(), '.somora'));
 const LOG_DIR = join(SOMORA_HOME, 'logs');
 mkdirSync(LOG_DIR, { recursive: true });
 

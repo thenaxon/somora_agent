@@ -318,6 +318,30 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the server log window (singleton). Reading the log
+   *  used to mean an ssh session and `tail` — which is not available at
+   *  the moment something looks wrong (Rene 2026-09-10). */
+  const openLogs = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'logs');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(900, 560, zCounter + 1);
+    const id = `logs-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'logs',
+      title: 'server log',
+      icon: '📜',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   /** Open or focus the browser list (singleton), stage 2 of the shared
    *  browser (docs/browser.md). */
   const openBrowserList = useCallback(() => {
@@ -616,6 +640,7 @@ export function useWindowManager() {
     openTmuxList,
     openTmuxTerm,
     openBrowserList,
+    openLogs,
     openBrowser,
     openShellTerm,
     openSessionsList,

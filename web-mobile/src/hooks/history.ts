@@ -265,3 +265,19 @@ export function historyEventsToMessages(events: readonly HistoryEvent[]): ChatMe
   }
   return out;
 }
+
+/**
+ * Fold a fresh history snapshot into what is already on screen.
+ *
+ * The snapshot is authoritative for everything it covers; anything the
+ * live stream produced AFTER its newest event is kept. Replacing the
+ * list instead — which is what both clients used to do — meant a
+ * snapshot that arrived late could take a just-streamed answer with it.
+ * That was one of the two ways an answer went missing after a
+ * connection blip (2026-09-09 report); the other was never asking for a
+ * snapshot after a silent reconnect at all.
+ */
+export function mergeHistorySnapshot(restored: ChatMessage[], live: readonly ChatMessage[]): ChatMessage[] {
+  const newestPersistedTs = restored.length > 0 ? restored[restored.length - 1]!.ts : 0;
+  return [...restored, ...live.filter((m) => m.ts > newestPersistedTs)];
+}

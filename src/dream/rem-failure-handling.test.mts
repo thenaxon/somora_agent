@@ -256,6 +256,23 @@ function extractCtx(signal?: AbortSignal) {
   const removedAll = await pruneFailedDreams(agent, 'sess-b');
   const after2 = await listDreams(agent);
   check('prune without keepId clears the session entirely', removedAll === 1 && !after2.some((x) => x.meta.id === 'f-new'));
+
+  // A successful run only supersedes what it actually read: a failure
+  // that reached further keeps its record, or a gap in memory would
+  // disappear without anyone noticing (2026-09-08 report).
+  await writeDreamFile(agent, {
+    meta: { ...baseMeta, id: 'f-short', source_session: 'sess-d', status: 'failed', findings: [], error: 'boom', range_through_ts: 500 },
+    body: 'failed',
+  });
+  await writeDreamFile(agent, {
+    meta: { ...baseMeta, id: 'f-long', source_session: 'sess-d', status: 'failed', findings: [], error: 'boom', range_through_ts: 5000 },
+    body: 'failed',
+  });
+  const removedCovered = await pruneFailedDreams(agent, 'sess-d', { coveredThroughTs: 1000 });
+  const after3 = await listDreams(agent);
+  const stillFailed = after3.filter((x) => x.meta.status === 'failed' && x.meta.source_session === 'sess-d').map((x) => x.meta.id);
+  check('prune removes what the successful run covered', removedCovered === 1, `${removedCovered}`);
+  check('prune keeps the uncovered failure', stillFailed.join(',') === 'f-long', stillFailed.join(','));
 }
 
 // ── 5b. resolved_manually terminal status (memory dreams) ─────────────

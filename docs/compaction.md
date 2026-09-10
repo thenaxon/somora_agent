@@ -53,7 +53,45 @@ context length"`, oMLX's prefill guard — the engine forces a compaction
 down to the last exchange, retries the turn once, and leaves a
 `context compacted` engine row. A second refusal surfaces as a
 plain-language error (switch model, or `/reset`) instead of the raw
-400.
+400. This path only runs before anything has streamed and before any
+tool has run: retrying later would execute those tools a second time.
+
+## Inside a running turn
+
+Steps 1 to 5 size the conversation *before* the turn. A turn with tools
+grows while it runs — every result, every image, and the tool schemas
+that travel with each request. Sizing it once is how a turn estimated at
+58k tokens reached the backend at over 507k against a 524k window, died
+on a raw 400, and lost its work (2026-09-10).
+
+So before **every** request of a turn, somora measures what it is about
+to send: all messages, images counted as images rather than as their
+base64 length, plus the tool schemas. It compares that against the
+window minus the model's output reserve minus a 5% margin. If it does
+not fit:
+
+1. **The oldest tool results are shortened** to a one-line notice that
+   says the call already ran and must not be repeated. Nothing is
+   dropped: an assistant message with `tool_calls` and no matching
+   reply is rejected by every OpenAI-compatible backend, and the
+   model's own record of what it did is what stops it repeating work.
+2. If that is not enough, more recent results follow, **except the
+   newest**, which is what the model is reasoning about right now.
+3. As a last resort the newest result is **cut**, keeping its beginning
+   and labelling the cut.
+4. Only when there is nothing left to shorten does the turn stop, with
+   an explanation naming the numbers instead of a raw backend error.
+   The tool results already produced stay in the session, so nothing
+   has to be redone.
+
+A trimmed turn leaves a `context trimmed` engine row, so it is visible
+that the model saw less than the full results.
+
+**Reading the numbers.** The chat header shows two different things.
+`▣` is occupancy: the prompt size of the turn's **last** request against
+the window. `↑` is spend: the sum over every request the turn made, which
+on a tool-using turn is several times the window and must never be read
+as "how full it is".
 
 ## Which model summarises
 

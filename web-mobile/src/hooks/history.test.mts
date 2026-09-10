@@ -7,7 +7,7 @@
 // pairs by turnId or gets its own row.
 
 import assert from 'node:assert/strict';
-import { historyEventsToMessages, type HistoryEvent } from './history';
+import { historyEventsToMessages, mergeHistorySnapshot, type ChatMessage, type HistoryEvent } from './history';
 
 let ok = 0;
 let bad = 0;
@@ -140,6 +140,18 @@ const img = (id: string) => ({ type: 'image', id, filename: `${id}.png`, mime: '
   ];
   const rows = historyEventsToMessages(events);
   t('empty thinking: no field on the row', rows[0]?.thinking === undefined);
+}
+
+
+// ── reconnect reconciliation (2026-09-09) ──────────────────────────
+{
+  const msg = (id: string, ts: number, text: string): ChatMessage =>
+    ({ id, role: 'agent', ts, text }) as ChatMessage;
+  const snapshot = [msg('h1', 10, 'A'), msg('h2', 20, 'B')];
+  t('merge: a covering snapshot does not duplicate', mergeHistorySnapshot(snapshot, [msg('l1', 10, 'A')]).length === 2);
+  const withLive = mergeHistorySnapshot(snapshot, [msg('live', 30, 'still streaming')]);
+  t('merge: newer live content survives a late snapshot', withLive.length === 3 && withLive[2]?.ts === 30);
+  t('merge: an empty snapshot keeps live content', mergeHistorySnapshot([], [msg('live', 5, 'typing')]).length === 1);
 }
 
 console.log(`\nhistory: ${ok} passed, ${bad} failed`);

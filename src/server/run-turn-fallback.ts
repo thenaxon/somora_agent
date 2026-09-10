@@ -50,14 +50,33 @@ async function* attempt(
     onFail(`engine '${model.provider.engine}' not registered`);
     return;
   }
-  let hasContent = false;
+  // Two different reasons not to switch models, and they are not the
+  // same reason.
+  //
+  // A tool ran: the turn had side effects. Re-running it on another
+  // model would do them again, so the failure stands whatever caused it.
+  //
+  // Text arrived: normally that means the model was answering, and a
+  // late failure should not buy a second full answer. But a provider
+  // that streams "you are out of quota" as ordinary assistant text and
+  // only then reports the error produced no answer at all — that text
+  // used to set this guard and silently disable a correctly configured
+  // fallback chain (2026-09-09 report). So text yields to an error the
+  // ENGINE marked as a provider failure. Never to a text match: the
+  // engine adapter is the only place that knows how its provider dresses
+  // a refusal.
+  let sawToolCall = false;
+  let sawText = false;
   let failure: string | null = null;
+  const mayRetry = (providerError: boolean): boolean => {
+    if (sawToolCall || input.signal?.aborted) return false;
+    return !sawText || providerError;
+  };
   try {
     for await (const ev of engine.runTurn(input)) {
-      if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message' || ev.kind === 'tool_call') {
-        hasContent = true;
-      }
-      if (ev.kind === 'error' && !hasContent) {
+      if (ev.kind === 'tool_call') sawToolCall = true;
+      if (ev.kind === 'assistant_delta' || ev.kind === 'assistant_message') sawText = true;
+      if (ev.kind === 'error' && mayRetry(ev.providerError === true)) {
         failure = ev.message;
         continue;
       }
@@ -65,7 +84,10 @@ async function* attempt(
       yield ev;
     }
   } catch (err) {
-    if (hasContent) throw err;
+    // A throw never reaches the client as text, so it is a transport or
+    // provider failure by definition — the engines catch their own
+    // recoverable cases and yield an error event instead.
+    if (!mayRetry(true)) throw err;
     failure = (err as Error).message;
   }
   if (failure) onFail(failure);

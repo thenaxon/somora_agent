@@ -17,6 +17,9 @@ export interface ThinkingState {
 export interface TurnStats {
   tokensIn: number;
   tokensInCached: number | null;
+  /** Prompt size of the turn's last request: how full the window is.
+   *  `tokensIn` is the spend across every request the turn made. */
+  contextTokens: number | null;
   tokensOut: number;
   tokensOutReasoning: number | null;
   /** True when the reasoning count is an estimate from streamed text. */
@@ -257,6 +260,8 @@ export type StreamEvent =
         tokens_out?: number;
         tokens_out_reasoning?: number;
         tokens_out_reasoning_estimated?: boolean;
+        /** Prompt size of the turn's last request (occupancy, not spend). */
+        context_tokens?: number;
       };
       contextWindow?: number;
       provider?: string;

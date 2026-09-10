@@ -544,6 +544,7 @@ export function App({
           setStats((prev) => ({
             tokensIn: prev?.tokensIn ?? 0,
             tokensInCached: prev?.tokensInCached ?? null,
+            contextTokens: prev?.contextTokens ?? null,
             tokensOut: prev?.tokensOut ?? 0,
             tokensOutReasoning: prev?.tokensOutReasoning ?? null,
             tokensOutReasoningEstimated: prev?.tokensOutReasoningEstimated ?? false,
@@ -620,6 +621,7 @@ export function App({
           setStats({
             tokensIn: ev.usage?.tokens_in ?? 0,
             tokensInCached: ev.usage?.tokens_in_cached ?? null,
+            contextTokens: ev.usage?.context_tokens ?? null,
             tokensOut: ev.usage?.tokens_out ?? 0,
             tokensOutReasoning: ev.usage?.tokens_out_reasoning ?? null,
             tokensOutReasoningEstimated: ev.usage?.tokens_out_reasoning_estimated ?? false,

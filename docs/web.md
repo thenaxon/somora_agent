@@ -140,8 +140,9 @@ without it.
   the somora workspace), `sessions` (cross-agent session browser
   — see next section), `abilities` (per-agent visibility matrix
   for tools and skills plus external MCP server health — see
-  [mcp.md](mcp.md) and [skills.md](skills.md)), and `team` (the org
-  chart editor for `team.yaml` — see [team.md](team.md)). The `wiki`
+  [mcp.md](mcp.md) and [skills.md](skills.md)), `team` (the org
+  chart editor for `team.yaml` — see [team.md](team.md)), and `log`
+  (the server's own log, see below). The `wiki`
   tile carries a violet **Lucid badge** when completed lucid runs are
   waiting for review — lucid is platform-wide wiki cleanup, so its
   review backlog lives here rather than on any single agent. The
@@ -264,7 +265,7 @@ archived copy at the next idle window.
 ```
  ┌──────────────────────────────────────────────────────┐
  │ 🧠  scribe  · assistant             ● streaming     │ ← header
- │ main · opus · think:medium · 🔧 on · ↑12k ↓4k · ●    │ ← live meta
+ │ main · opus · think:medium · 🔧 on · ▣21% ↑12k ↓4k · ●│ ← live meta
  ├──────────────────────────────────────────────────────┤
  │  [user]   summarize today's notes                    │
  │                                                       │
@@ -279,7 +280,12 @@ archived copy at the next idle window.
 
 - **Header**: agent name, role badge from `AGENTS.md`, streaming pill.
 - **Meta line (10px mono)**: session id, model, thinking level, tools
-  toggle, ↑/↓ token counts, connection dot. When the last turn was
+  toggle, context fill, ↑/↓ token counts, connection dot. The two token
+  readings mean different things. `▣` is how full the window was on the
+  turn's last request, amber past 75 % and red past 90 %. `↑` and `↓`
+  are what the turn spent, summed over every request it made — on a
+  turn with tool rounds that sum runs past the window several times and
+  says nothing about how full it is. The TUI header shows the same pair. When the last turn was
   answered by the persona's `fallback:` model, a warn-coloured
   `⇄ <backup-model>` marker sits next to the model (tooltip: why the
   primary failed).
@@ -301,6 +307,12 @@ archived copy at the next idle window.
   failed. …`) instead of only the last one's raw error. The TUI prints
   the same as a warn line in the scrollback, the mobile client shows
   the chip on the bubble.
+- **Server log** (the **log** tile): the end of somora's own log in a
+  window, so a look at what the server did no longer needs an ssh
+  session. Pick the day, a minimum level (debug, info, warn, error) and
+  a text filter; new lines follow every two seconds while the window is
+  open, and following pauses when you scroll up to read. Only the tail
+  of one day's file is ever read.
 - **Browser window** (when `browser.enabled`): the **browser** tile
   lists browser sessions, one row per agent window — agents sharing a
   profile run in one Chromium but get a window each, with their own

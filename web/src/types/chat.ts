@@ -182,6 +182,15 @@ export interface ChatUsage {
   tokens_out_reasoning?: number;
   /** True when the reasoning count is an estimate from streamed text. */
   tokens_out_reasoning_estimated?: boolean;
+  /**
+   * Prompt size of the turn's LAST request: how full the context is.
+   * `tokens_in` is the SUM over every request the turn made, so on a
+   * tool-using turn it runs past the window several times over and is
+   * spend, not occupancy (2026-09-10 report).
+   */
+  context_tokens?: number;
+  /** The answering model's window, for the occupancy display. */
+  contextWindow?: number;
 }
 
 export interface MemoryHitsSnapshot {

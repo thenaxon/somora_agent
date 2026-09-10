@@ -16,9 +16,9 @@ import OpenAI from 'openai';
 import { createPatientOpenAIClient } from '../../server/openai-client.ts';
 import { userTagParam } from '../../engine/user-tag.ts';
 import { z } from 'zod';
-import { workerChain, resolveAnyRef, type ResolvedModel } from '../../config/types.ts';
+import { workerChain, resolveAnyRef, type Config, type ResolvedModel } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
-import { loadAttachment } from '../../multimodal/load.ts';
+import { loadAttachment, type LoadedAttachment } from '../../multimodal/load.ts';
 import { samplingBody } from '../../engine/sampling.ts';
 import { toOpenAiContent } from '../../multimodal/blocks.ts';
 import { checkReadAllowed, realpathSafeAncestor, resolveLocalPath } from './policy.ts';
@@ -84,18 +84,16 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
   name: 'analyze_file',
   toolset: 'file',
   description:
-    'Analyze an image or PDF by dispatching it to a configured vision worker model. ' +
-    'Returns the worker\'s text analysis — the agent never sees raw image bytes. Use ' +
-    'this when:\n' +
-    '  (a) The active main model lacks `image` or `pdf` capability (file_read on media ' +
-    'will error with a hint pointing here);\n' +
-    '  (b) You want a token-cheap summary instead of dropping a full image into context ' +
-    '(1024×1024 image ≈ 1300 tokens; a haiku-worker description is usually < 200 tokens);\n' +
-    '  (c) You need targeted visual questions ("which row is highest", "is there a stamp"). ' +
-    'Pass an explicit `prompt` for those — the default is a generic "describe in detail".\n\n' +
+    'Look at an image or PDF you cannot see yourself. Your active model has no `image` ' +
+    'capability, so somora dispatches the file to a configured vision worker model and ' +
+    'returns its text description — you never see raw image bytes. ' +
+    'Pass an explicit `prompt` for targeted questions ("which row is highest", "is there ' +
+    'a stamp"); the default is a generic "describe in detail". ' +
+    'A described image is a second-hand account: quote what the worker reported, do not ' +
+    'claim to have seen the file yourself.\n\n' +
     'Worker model is configured globally in `config.vision.worker` (and optional ' +
-    '`config.vision.pdfWorker` override for PDFs). Returns an error if no worker is ' +
-    'configured or the file type is unsupported. Image cap 5 MB, PDF cap 32 MB.',
+    '`config.vision.pdfWorker` override for PDFs). Returns an error if the file type is ' +
+    'unsupported. Image cap 5 MB, PDF cap 32 MB.',
   inputSchema: AnalyzeInput,
   jsonSchema: {
     type: 'object',
@@ -109,12 +107,26 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
     required: ['path'],
     additionalProperties: false,
   },
-  // Self-gate: hide the tool entirely when no vision worker is
-  // configured. Otherwise the model sees `analyze_file` in its toolbox,
-  // burns a turn calling it, and gets a "no vision worker configured"
-  // error every single time. Same pattern as projects/wiki self-gating
-  // (see [[feedback_opt_in_features_three_gates]]).
-  available: (ctx) => Boolean(ctx.config.vision?.worker),
+  // Self-gate, two conditions.
+  //
+  // No vision worker configured: hide it, or the model burns a turn
+  // calling a tool that can only answer "no worker configured". Same
+  // pattern as projects/wiki self-gating.
+  //
+  // Active model can see images itself: hide it too (Rene 2026-09-10).
+  // The worker is a SUBSTITUTE for models without vision, not a cheaper
+  // route for models with it. Measured before this gate: 142 dispatches
+  // in the live logs, 67 of them with a failing worker, and every one
+  // of them from an agent whose own model has the `image` capability.
+  // A tool the model never sees is a tool it cannot pick by mistake.
+  // PDFs ride along: file_read rasterises them to images, so `image`
+  // capability is enough to look at one.
+  available: (ctx) => {
+    if (!ctx.config.vision?.worker) return false;
+    const caps = ctx.activeModel?.model.capabilities;
+    // No active model (debug invoke, tests): leave it available.
+    return !caps?.includes('image');
+  },
   defaultTimeoutMs: 120_000,
   async handler(input, ctx): Promise<AnalyzeOutput> {
     // Resolve the path through the same pipeline file_read uses: expand
@@ -154,127 +166,212 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
       );
     }
 
-    // Pick the chain: the pdf-specific one if set and this is a PDF,
-    // otherwise the general one.
-    const visionConfig = ctx.config.vision;
-    const chain = workerChain(
-      att.mime.kind === 'pdf' ? (visionConfig.pdfWorker ?? visionConfig.worker) : visionConfig.worker,
-    );
-    if (chain.length === 0) {
-      throw new Error(
-        `analyze_file: no vision worker configured. Set config.vision.worker ` +
-          `(and optionally config.vision.pdfWorker) to a '<provider>/<modelId>' on an ` +
-          `openai-compatible engine.`,
-      );
-    }
-    const requiredCap = att.mime.kind === 'pdf' ? 'pdf' : 'image';
-    const content = toOpenAiContent(att, input.prompt);
-    const start = Date.now();
-
-    // Try in order; the first worker that answers wins. Availability
-    // only — a worker that replies with nonsense has still answered,
-    // and which model is good enough is the operator's decision, not
-    // something this tool should second-guess.
-    const skipped: string[] = [];
-    let attempts = 0;
-    for (const ref of chain) {
-      const worker = resolveAnyRef(ctx.config, ref);
-      if (!worker) {
-        skipped.push(`${ref}: not a known model in config.yaml`);
-        continue;
-      }
-      if (!worker.model.capabilities.includes(requiredCap)) {
-        skipped.push(`${ref}: lacks '${requiredCap}' capability`);
-        continue;
-      }
-      const cooling = failedUntil.get(ref);
-      if (cooling !== undefined && cooling > Date.now()) {
-        skipped.push(`${ref}: failed recently, still cooling down`);
-        continue;
-      }
-
-      attempts += 1;
-      const label = `${worker.providerName}/${worker.modelId}`;
-      logger.info({
-        msg: 'analyze_file.dispatch',
+    let result;
+    try {
+      result = await describeMedia({
+        att,
+        prompt: input.prompt,
+        config: ctx.config,
         agent: ctx.agent,
-        session: ctx.session,
-        worker: label,
-        ref,
-        attempt: attempts,
-        chainLength: chain.length,
-        path: input.path,
-        kind: att.mime.kind,
-        size: att.size,
+        ...(ctx.session ? { session: ctx.session } : {}),
+        caller: 'analyze_file',
       });
-
-      try {
-        const completion = await buildClient(worker).chat.completions.create(
-          {
-            model: worker.modelId,
-            messages: [
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              { role: 'user', content: content as any },
-            ],
-            // Same per-model knobs as every other openai-compatible call:
-            // the output cap bounds a reasoning worker's thinking phase,
-            // the model's sampling defaults apply. No thinking level —
-            // vision Q&A wants the model's default depth.
-            ...(worker.model.maxTokens ? { max_tokens: worker.model.maxTokens } : {}),
-            ...samplingBody(worker.model.sampling),
-            ...userTagParam(worker, ctx.agent, 'analyze_file'),
-          },
-          { signal: AbortSignal.timeout(visionConfig.timeoutMs) },
-        );
-        const text = completion.choices[0]?.message?.content;
-        if (typeof text !== 'string' || text.length === 0) {
-          throw new Error('worker returned an empty response');
-        }
-        failedUntil.delete(ref);
-        if (attempts > 1 || skipped.length > 0) {
-          // Worth a line of its own: a chain that has quietly settled
-          // on its external last resort is a running cost nobody
-          // notices otherwise.
-          logger.warn({
-            msg: 'analyze_file.fell_back',
-            agent: ctx.agent,
-            worker: label,
-            skipped,
-          });
-        }
-        return {
-          analysis: text,
-          worker: label,
-          ...(skipped.length > 0 ? { fellBackFrom: skipped } : {}),
-          mimeType: att.mime.mimeType,
-          size: att.size,
-          ms: Date.now() - start,
-        };
-      } catch (err) {
-        const reason = (err as Error).message;
-        if (visionConfig.healthCacheMs > 0) {
-          failedUntil.set(ref, Date.now() + visionConfig.healthCacheMs);
-        }
-        logger.warn({
-          msg: 'analyze_file.worker_failed',
-          agent: ctx.agent,
-          worker: label,
-          ref,
-          err: reason,
-        });
-        skipped.push(`${ref}: ${reason}`);
-      }
+    } catch (err) {
+      // The shared helper serves two callers, so it does not know whose
+      // name belongs in front of the message. Here it is the tool's.
+      throw new Error(`analyze_file: ${(err as Error).message}`);
     }
-
-    // Nothing in the chain worked. Name every entry and why it was
-    // passed over — "no vision worker available" alone would send the
-    // operator hunting through logs for something this already knows.
-    throw new Error(
-      `analyze_file: no vision worker could handle this ${att.mime.kind}. Tried:\n` +
-        skipped.map((s2) => `  - ${s2}`).join('\n'),
-    );
+    return {
+      analysis: result.analysis,
+      worker: result.worker,
+      ...(result.fellBackFrom ? { fellBackFrom: result.fellBackFrom } : {}),
+      mimeType: result.mimeType,
+      size: result.size,
+      ms: result.ms,
+    };
   },
 };
+
+export interface VisionDescription {
+  analysis: string;
+  /** `<provider>/<modelId>` of the worker that answered. */
+  worker: string;
+  /** Workers passed over before this one, with the reason. */
+  fellBackFrom?: string[];
+  mimeType: string;
+  size: number;
+  ms: number;
+}
+
+/**
+ * Run one image or PDF through the configured worker chain and return
+ * the first answer. Shared by `analyze_file` and by the chat path,
+ * which reaches for a worker when the agent's own model cannot see an
+ * attachment — one chain, one budget, one set of log lines.
+ *
+ * Two budgets apply. `timeoutMs` bounds a single attempt, and
+ * `totalBudgetMs` bounds the whole chain: each attempt gets whatever is
+ * left, and a worker that could not finish in the remaining time is not
+ * started at all. Before that budget existed, four workers of a chain
+ * could spend four full timeouts in a row while the caller waited.
+ */
+export async function describeMedia(args: {
+  att: LoadedAttachment;
+  prompt?: string;
+  config: Config;
+  agent: string;
+  session?: string;
+  caller: 'analyze_file' | 'chat_attachment';
+}): Promise<VisionDescription> {
+  const { att, config, agent, caller } = args;
+  const visionConfig = config.vision;
+  // Pick the chain: the pdf-specific one if set and this is a PDF,
+  // otherwise the general one.
+  const chain = workerChain(
+    att.mime.kind === 'pdf' ? (visionConfig.pdfWorker ?? visionConfig.worker) : visionConfig.worker,
+  );
+  if (chain.length === 0) {
+    throw new Error(
+      `no vision worker configured. Set config.vision.worker ` +
+        `(and optionally config.vision.pdfWorker) to a '<provider>/<modelId>' on an ` +
+        `openai-compatible engine.`,
+    );
+  }
+  const requiredCap = att.mime.kind === 'pdf' ? 'pdf' : 'image';
+  const content = toOpenAiContent(att, args.prompt);
+  const start = Date.now();
+  const deadline = start + visionConfig.totalBudgetMs;
+
+  // Try in order; the first worker that answers wins. Availability
+  // only — a worker that replies with nonsense has still answered,
+  // and which model is good enough is the operator's decision, not
+  // something this tool should second-guess.
+  const skipped: string[] = [];
+  let attempts = 0;
+  for (const ref of chain) {
+    const worker = resolveAnyRef(config, ref);
+    if (!worker) {
+      skipped.push(`${ref}: not a known model in config.yaml`);
+      continue;
+    }
+    if (!worker.model.capabilities.includes(requiredCap)) {
+      skipped.push(`${ref}: lacks '${requiredCap}' capability`);
+      continue;
+    }
+    const cooling = failedUntil.get(ref);
+    if (cooling !== undefined && cooling > Date.now()) {
+      skipped.push(`${ref}: failed recently, still cooling down`);
+      continue;
+    }
+    // What is left of the chain budget. Starting an attempt that cannot
+    // finish only delays the error the caller is going to get anyway.
+    const remaining = deadline - Date.now();
+    if (remaining < 2_000) {
+      skipped.push(`${ref}: chain budget spent (vision.totalBudgetMs ${visionConfig.totalBudgetMs} ms)`);
+      continue;
+    }
+    const attemptMs = Math.min(visionConfig.timeoutMs, remaining);
+
+    attempts += 1;
+    const label = `${worker.providerName}/${worker.modelId}`;
+    logger.info({
+      msg: 'analyze_file.dispatch',
+      agent,
+      session: args.session,
+      caller,
+      worker: label,
+      ref,
+      attempt: attempts,
+      chainLength: chain.length,
+      attemptMs,
+    });
+    try {
+      const completion = await buildClient(worker).chat.completions.create(
+        {
+          model: worker.modelId,
+          messages: [
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            { role: 'user', content: content as any },
+          ],
+          // A caption is not a chat answer. The worker model's own cap
+          // is a chat cap (16k and up is normal), which lets a reasoning
+          // worker think its way past the timeout while writing three
+          // lines about a screenshot. vision.maxOutputTokens is the
+          // budget for THIS job; sampling stays the model's own.
+          max_tokens: visionConfig.maxOutputTokens,
+          ...samplingBody(worker.model.sampling),
+          ...userTagParam(worker, agent, 'analyze_file'),
+        },
+        { signal: AbortSignal.timeout(attemptMs) },
+      );
+      const text = completion.choices[0]?.message?.content;
+      if (typeof text !== 'string' || text.length === 0) {
+        // An empty answer with a length stop is a worker that spent the
+        // whole budget thinking. Say so: it reads as a model choice
+        // problem, not as a broken connection.
+        const stop = completion.choices[0]?.finish_reason;
+        throw new Error(
+          stop === 'length'
+            ? `worker produced no text within ${visionConfig.maxOutputTokens} output tokens (finish_reason=length) — raise vision.maxOutputTokens or use a worker that does not think first`
+            : 'worker returned an empty response',
+        );
+      }
+      failedUntil.delete(ref);
+      if (attempts > 1 || skipped.length > 0) {
+        // Worth a line of its own: a chain that has quietly settled
+        // on its external last resort is a running cost nobody
+        // notices otherwise.
+        logger.warn({
+          msg: 'analyze_file.fell_back',
+          agent,
+          worker: label,
+          skipped,
+        });
+      }
+      return {
+        analysis: text,
+        worker: label,
+        ...(skipped.length > 0 ? { fellBackFrom: skipped } : {}),
+        mimeType: att.mime.mimeType,
+        size: att.size,
+        ms: Date.now() - start,
+      };
+    } catch (err) {
+      const reason = (err as Error).message;
+      // Slow is not dead. A worker that ran out of time may have been
+      // loading a model or handed a very large picture; a connection
+      // error means it is not there at all. Cool them down differently
+      // so one slow answer does not sideline a good worker.
+      const timedOut = isTimeout(err);
+      const cooldown = timedOut ? visionConfig.timeoutCooldownMs : visionConfig.healthCacheMs;
+      if (cooldown > 0) failedUntil.set(ref, Date.now() + cooldown);
+      logger.warn({
+        msg: 'analyze_file.worker_failed',
+        agent,
+        worker: label,
+        ref,
+        timedOut,
+        cooldownMs: cooldown,
+        err: reason,
+      });
+      skipped.push(`${ref}: ${timedOut ? `no answer within ${attemptMs} ms` : reason}`);
+    }
+  }
+
+  // Nothing in the chain worked. Name every entry and why it was
+  // passed over — "no vision worker available" alone would send the
+  // operator hunting through logs for something this already knows.
+  throw new Error(
+    `no vision worker could handle this ${att.mime.kind} within ${Date.now() - start} ms. Tried:\n` +
+      skipped.map((s2) => `  - ${s2}`).join('\n'),
+  );
+}
+
+/** An aborted attempt, however the client dressed it up. */
+function isTimeout(err: unknown): boolean {
+  const e = err as { name?: string; message?: string };
+  return e?.name === 'TimeoutError' || e?.name === 'AbortError' || /timed? ?out|aborted/i.test(e?.message ?? '');
+}
 
 export function analyzeFileTools(): ToolDefinition[] {
   return [analyzeFile] as ToolDefinition[];
