@@ -447,6 +447,12 @@ providers:
 #   triggerRatio: 0.8          # compact when context >= 80% of window
 #   safetyCushionPairs: 4      # keep N most-recent user/assistant pairs uncompacted
 #   modelOverride: opus        # force a specific worker model (alias or provider/id)
+#   workers: [small-local, big-local, opus]   # who may summarise, in the order they are tried.
+#                              # A model that is not listed is never a worker. Without the list
+#                              # somora auto-picks: every model whose window fits, smallest first.
+#                              # At most three workers are asked per compaction; one refusing
+#                              # (busy host, rate limit, reloading route) costs an attempt, not
+#                              # the compaction.
 
 # Memory-Layer tunables (DECISIONS #25–#27). All optional. Per-agent
 # overrides can live in agent.yaml later. (Phase 2-Stufe-B — not yet

@@ -96,6 +96,9 @@ export function getEffectiveEnv(): EffectiveEnv {
     SOMORA_COMPACTION_MODEL: process.env.SOMORA_COMPACTION_MODEL
       ? { value: process.env.SOMORA_COMPACTION_MODEL, isDefault: false }
       : { value: null, isDefault: true, note: 'unset → uses config.yaml compaction.modelOverride (default auto-pick)' },
+    SOMORA_COMPACTION_WORKERS: process.env.SOMORA_COMPACTION_WORKERS
+      ? { value: process.env.SOMORA_COMPACTION_WORKERS, isDefault: false }
+      : { value: null, isDefault: true, note: 'unset → uses config.yaml compaction.workers (default auto-pick, smallest fitting window first)' },
     // claude-agent-sdk env. applyClaudeCliSdkEnv() pushes config defaults
     // here at boot if they were unset; explicit values pre-set in the env
     // win over config (override layer per project policy).

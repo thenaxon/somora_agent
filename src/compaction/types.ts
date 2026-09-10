@@ -39,6 +39,19 @@ export interface CompactionConfig {
    * Format: alias or `provider/modelId` (resolved via resolveAnyRef).
    */
   modelOverride?: string;
+  /**
+   * Ordered list of models allowed to do the summarizing, tried in this
+   * order until one of them delivers. A model that is not on the list is
+   * never a worker. Unset means auto-pick: every configured model whose
+   * window fits, smallest window first.
+   *
+   * Written because auto-pick had no second try (2026-09-10): the one
+   * model it chose was refused by its host's memory guard, and with the
+   * compaction gone the whole turn fell through to another chat model.
+   * The order is also the only honest answer to "which one is cheapest" —
+   * somora has no price data, the operator does.
+   */
+  workers?: string[];
 }
 
 function parsePositiveFloat(raw: string | undefined): number | undefined {
@@ -71,9 +84,19 @@ const DEFAULTS = {
  * env vars set and get the right behavior.
  */
 export function resolveCompactionConfig(
-  raw?: { compaction?: { triggerRatio?: number; safetyCushionPairs?: number; modelOverride?: string } },
+  raw?: {
+    compaction?: {
+      triggerRatio?: number;
+      safetyCushionPairs?: number;
+      modelOverride?: string;
+      workers?: string[];
+    };
+  },
 ): CompactionConfig {
   const cfg = raw?.compaction ?? {};
+  const envWorkers = process.env.SOMORA_COMPACTION_WORKERS?.split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
   return {
     triggerRatio:
       parsePositiveFloat(process.env.SOMORA_COMPACTION_TRIGGER_RATIO)
@@ -87,6 +110,9 @@ export function resolveCompactionConfig(
       process.env.SOMORA_COMPACTION_MODEL?.trim()
       || cfg.modelOverride
       || undefined,
+    workers:
+      (envWorkers && envWorkers.length > 0 ? envWorkers : undefined)
+      ?? (cfg.workers && cfg.workers.length > 0 ? cfg.workers : undefined),
   };
 }
 

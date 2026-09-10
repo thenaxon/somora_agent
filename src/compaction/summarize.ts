@@ -116,12 +116,52 @@ export function pickCompactionModel(
   candidates: ResolvedModel[],
   override?: ResolvedModel,
 ): ResolvedModel | null {
-  if (override) return override;
+  return rankCompactionModels(estimatedTokens, candidates, { override })[0] ?? null;
+}
+
+/** How many workers one compaction may ask before it gives up. Each
+ *  attempt is a real request the user waits on, so the cascade is short. */
+export const MAX_WORKER_ATTEMPTS = 3;
+
+function matchesRef(m: ResolvedModel, ref: string): boolean {
+  return m.model.alias === ref || m.modelId === ref || `${m.providerName}/${m.modelId}` === ref;
+}
+
+/**
+ * The worker cascade: every model this compaction may try, in order.
+ *
+ * With `workers` configured the list IS the cascade — configured order,
+ * nothing else appended, because a model the operator left out must
+ * never summarize (their reasons: cost, a subscription they don't want
+ * spent on summaries, a route that is slow). Entries are honored as
+ * written, without a window check: an operator naming a model means it,
+ * and the model itself is the better judge of what it can take.
+ *
+ * Without it, auto-pick as before: every candidate whose window fits the
+ * summary prompt with headroom, smallest window first, so a summary does
+ * not burn the biggest model in the house.
+ */
+export function rankCompactionModels(
+  estimatedTokens: number,
+  candidates: ResolvedModel[],
+  opts: { override?: ResolvedModel; workers?: readonly string[] } = {},
+): ResolvedModel[] {
+  const ordered: ResolvedModel[] = [];
+  const push = (m: ResolvedModel | undefined): void => {
+    if (m && !ordered.includes(m)) ordered.push(m);
+  };
+  push(opts.override);
+  if (opts.workers && opts.workers.length > 0) {
+    for (const ref of opts.workers) push(candidates.find((c) => matchesRef(c, ref)));
+    return ordered;
+  }
   const required = Math.ceil(estimatedTokens * HEADROOM_FACTOR);
-  const fitting = candidates
+  for (const c of candidates
     .filter((c) => c.model.contextWindow >= required)
-    .sort((a, b) => a.model.contextWindow - b.model.contextWindow);
-  return fitting[0] ?? null;
+    .sort((a, b) => a.model.contextWindow - b.model.contextWindow)) {
+    push(c);
+  }
+  return ordered;
 }
 
 // ──── per-engine summarize dispatchers ────
@@ -417,6 +457,9 @@ export interface RunCompactionInput {
   availableModels: ResolvedModel[];
   compactions: Compaction[] | undefined;
   config: CompactionConfig;
+  /** Test seam: run the summary through this instead of the real engine
+   *  dispatcher, so the cascade can be exercised without a provider. */
+  summarize?: (worker: ResolvedModel) => Promise<SummarizeViaResult>;
 }
 
 export async function runCompaction(
@@ -446,11 +489,12 @@ export async function runCompaction(
 
   const tokensBefore = estimateTokens(system + user);
 
-  // Worker model selection (DECISION #21a). The override (typically
-  // SOMORA_COMPACTION_MODEL env) wins if it resolves to a configured
-  // model. If the override string doesn't match any alias/ref, we
-  // warn and fall through to auto-pick — silent typo-fall-through
-  // would be a debugging nightmare.
+  // Worker model selection (DECISION #21a), now a cascade.
+  //
+  // `modelOverride` (typically the SOMORA_COMPACTION_MODEL env) is tried
+  // first if it resolves. A typo warns loudly instead of silently
+  // picking something else — silent typo-fall-through would be a
+  // debugging nightmare.
   let override: ResolvedModel | undefined;
   if (config.modelOverride) {
     override = availableModels.find(
@@ -462,45 +506,110 @@ export async function runCompaction(
         requested: config.modelOverride,
         availableAliases: availableModels.flatMap((m) => (m.model.alias ? [m.model.alias] : [])),
         availableRefs: availableModels.map((m) => `${m.providerName}/${m.modelId}`),
-        hint: 'SOMORA_COMPACTION_MODEL did not match any configured alias or provider/modelId; falling back to auto-pick.',
+        hint: 'SOMORA_COMPACTION_MODEL did not match any configured alias or provider/modelId; falling back to the rest of the cascade.',
       });
     }
   }
-  const worker = pickCompactionModel(tokensBefore, availableModels, override);
-  if (!worker) {
+  if (config.workers) {
+    const unresolved = config.workers.filter(
+      (ref) => !availableModels.some((m) => matchesRef(m, ref)),
+    );
+    if (unresolved.length > 0) {
+      logger.warn({
+        msg: 'compaction.workers_unresolved',
+        requested: unresolved,
+        availableAliases: availableModels.flatMap((m) => (m.model.alias ? [m.model.alias] : [])),
+        availableRefs: availableModels.map((m) => `${m.providerName}/${m.modelId}`),
+        hint: 'compaction.workers entries that match no configured alias or provider/modelId are skipped.',
+      });
+    }
+  }
+  const ranked = rankCompactionModels(tokensBefore, availableModels, {
+    override,
+    workers: config.workers,
+  });
+  if (ranked.length === 0) {
     logger.warn({
       msg: 'compaction.no_model_fits',
       estimatedTokens: tokensBefore,
       requiredWindow: Math.ceil(tokensBefore * HEADROOM_FACTOR),
+      configuredWorkers: config.workers,
       candidates: availableModels.map((m) => ({
         ref: `${m.providerName}/${m.modelId}`,
         contextWindow: m.model.contextWindow,
       })),
-      hint: 'Configure a larger-window model or implement Map-Reduce (Phase 3).',
+      hint: config.workers
+        ? 'No compaction.workers entry resolved to a configured model.'
+        : 'Configure a larger-window model or implement Map-Reduce (Phase 3).',
     });
     throw new Error(
-      `no configured model has a context window >= ${Math.ceil(
-        tokensBefore * HEADROOM_FACTOR,
-      )} tokens; cannot compact ${tokensBefore} estimated tokens. Add a bigger model or implement Map-Reduce.`,
+      config.workers
+        ? `no compaction.workers entry (${config.workers.join(', ')}) resolves to a configured model that can summarize`
+        : `no configured model has a context window >= ${Math.ceil(
+            tokensBefore * HEADROOM_FACTOR,
+          )} tokens; cannot compact ${tokensBefore} estimated tokens. Add a bigger model or implement Map-Reduce.`,
     );
   }
 
-  logger.info({
-    msg: 'compaction.worker_chosen',
-    triggerEngine: resolvedModel.provider.engine,
-    triggerModel: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
-    workerEngine: worker.provider.engine,
-    workerModel: `${worker.providerName}/${worker.modelId}`,
-    workerContextWindow: worker.model.contextWindow,
-    estimatedTokens: tokensBefore,
-    pairsCount: range.pairs.length,
-  });
-
-  const summaryResult = await summarizeViaEngine(worker.provider.engine, {
-    systemPrompt: system,
-    userPrompt: user,
-    resolvedModel: worker,
-  });
+  // The cascade. One worker refusing is not the compaction failing: on
+  // 2026-09-10 the single chosen worker was rejected by its host's
+  // memory guard, the compaction gave up, the prompt still did not fit,
+  // and the whole turn fell through to another chat model. somora cannot
+  // know which machine sits behind which route — so it does not guess,
+  // it just asks the next one.
+  const cascade = ranked.slice(0, MAX_WORKER_ATTEMPTS);
+  const summarize = input.summarize ?? ((worker: ResolvedModel) =>
+    summarizeViaEngine(worker.provider.engine, {
+      systemPrompt: system,
+      userPrompt: user,
+      resolvedModel: worker,
+    }));
+  const failures: string[] = [];
+  let worker: ResolvedModel | undefined;
+  let summaryResult: SummarizeViaResult | undefined;
+  for (const [i, candidate] of cascade.entries()) {
+    logger.info({
+      msg: 'compaction.worker_chosen',
+      attempt: i + 1,
+      attemptsAllowed: cascade.length,
+      triggerEngine: resolvedModel.provider.engine,
+      triggerModel: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
+      workerEngine: candidate.provider.engine,
+      workerModel: `${candidate.providerName}/${candidate.modelId}`,
+      workerContextWindow: candidate.model.contextWindow,
+      estimatedTokens: tokensBefore,
+      pairsCount: range.pairs.length,
+    });
+    try {
+      summaryResult = await summarize(candidate);
+      worker = candidate;
+      break;
+    } catch (err) {
+      const message = String((err as Error)?.message ?? err);
+      failures.push(`${candidate.providerName}/${candidate.modelId}: ${message}`);
+      logger.warn({
+        msg: 'compaction.worker_failed',
+        attempt: i + 1,
+        attemptsAllowed: cascade.length,
+        workerModel: `${candidate.providerName}/${candidate.modelId}`,
+        err: message,
+        next: cascade[i + 1]
+          ? `${cascade[i + 1]!.providerName}/${cascade[i + 1]!.modelId}`
+          : null,
+      });
+    }
+  }
+  if (!worker || !summaryResult) {
+    logger.error({
+      msg: 'compaction.all_workers_failed',
+      attempts: failures.length,
+      remainingCandidates: ranked.length - cascade.length,
+      failures,
+    });
+    throw new Error(
+      `all ${failures.length} compaction worker(s) refused the summary — ${failures.join(' | ')}`,
+    );
+  }
   if (!summaryResult.text) return null;
 
   return {

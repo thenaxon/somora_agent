@@ -238,6 +238,8 @@ export const CompactionConfigSchema = z
     safetyCushionPairs: z.number().int().nonnegative().optional(),
     /** Optional override for the worker model (alias or `provider/modelId`). */
     modelOverride: z.string().min(1).optional(),
+    /** Models allowed to summarize, in the order they should be tried. */
+    workers: z.array(z.string().min(1)).optional(),
   })
   .optional();
 export type CompactionConfigSchema = z.infer<typeof CompactionConfigSchema>;

@@ -129,20 +129,46 @@ request). Both are correct; only the first one says how full it is.
 
 ## Which model summarises
 
-`compaction.modelOverride` names a model and wins unconditionally.
-Otherwise somora picks, **from every configured model on every engine
-that has a one-shot path** (claude-cli, codex-cli, openai-compatible):
+`compaction.workers` is an **ordered list** of the models allowed to
+summarise, and that order is the cascade — the first entry is asked
+first, and a model that is not on the list is never a worker:
 
-> the model with the **smallest `contextWindow`** that still satisfies
-> `contextWindow >= estimatedTokens × 1.3`
+```yaml
+compaction:
+  workers: [gemma4small, deep4flash, glm]
+```
+
+Listed entries are honoured as written, including their window: naming
+a model means you meant it. An entry that matches no configured alias
+or `provider/modelId` is skipped with a `compaction.workers_unresolved`
+warning.
+
+Without the list, somora picks automatically **from every configured
+model on every engine that has a one-shot path** (claude-cli,
+codex-cli, openai-compatible), in this order:
+
+> every model whose `contextWindow >= estimatedTokens × 1.3`,
+> **smallest window first**
+
+`compaction.modelOverride` still works and simply goes to the front of
+whatever cascade is in play.
+
+**A refusal costs one attempt, not the compaction.** At most
+**three** workers are asked per compaction; each failure is logged as
+`compaction.worker_failed` with the reason and the next candidate, and
+only when all of them refuse does the compaction fail. This matters
+because a worker can fail for reasons that have nothing to do with the
+summary: a memory guard on a busy host, a route being reloaded, a rate
+limit. somora cannot see which machine sits behind which route, so it
+does not guess — it asks the next model.
 
 Three consequences worth knowing:
 
 - The worker may be a **subscription-backed CLI model**. If the
   smallest fitting window belongs to a Claude or Codex model, the
   summary is produced through that CLI and counts against that
-  subscription. Nothing in the UI says so today. Set `modelOverride`
-  if you want the summariser pinned to a local model.
+  subscription. Nothing in the UI says so today. Set `workers` if you
+  want the summariser kept to local models.
 - A `contextWindow` that is **too high** for what the engine can
   really take makes that model eligible for histories it cannot
   hold; the summarise call then fails or is compacted again by the
@@ -191,6 +217,7 @@ native API window of the model:
 compaction:
   triggerRatio: 0.8           # fraction of contextWindow (openai-compatible only)
   safetyCushionPairs: 4       # most-recent exchanges never summarised
+  # workers: [gemma4small, deep4flash, glm]   # who may summarise, in the order they are tried
   # modelOverride: gemma4big  # pin the summariser (any engine with a one-shot path)
 ```
 

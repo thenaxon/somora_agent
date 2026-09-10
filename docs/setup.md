@@ -1039,6 +1039,7 @@ then never touches either credentials file, and you manage
 | `SOMORA_COMPACTION_TRIGGER_RATIO`| from config                  | override compaction trigger              |
 | `SOMORA_COMPACTION_SAFETY_PAIRS` | from config                  | override compaction cushion              |
 | `SOMORA_COMPACTION_MODEL`        | from config                  | override compaction worker               |
+| `SOMORA_COMPACTION_WORKERS`      | from config                  | comma-separated worker cascade           |
 
 The live values are queryable: `GET /env` returns the resolved set with
 `isDefault` flags, and the same data is logged at server startup as
