@@ -265,7 +265,7 @@ archived copy at the next idle window.
 ```
  ┌──────────────────────────────────────────────────────┐
  │ 🧠  scribe  · assistant             ● streaming     │ ← header
- │ main · opus · think:medium · 🔧 on · ▣21% ↑12k ↓4k · ●│ ← live meta
+ │ main · opus · think:medium · 🔧 on · ▣21% Σ↑12k ↓4k · ●│ ← live meta
  ├──────────────────────────────────────────────────────┤
  │  [user]   summarize today's notes                    │
  │                                                       │
@@ -280,12 +280,14 @@ archived copy at the next idle window.
 
 - **Header**: agent name, role badge from `AGENTS.md`, streaming pill.
 - **Meta line (10px mono)**: session id, model, thinking level, tools
-  toggle, context fill, ↑/↓ token counts, connection dot. The two token
-  readings mean different things. `▣` is how full the window was on the
-  turn's last request, amber past 75 % and red past 90 %. `↑` and `↓`
-  are what the turn spent, summed over every request it made — on a
-  turn with tool rounds that sum runs past the window several times and
-  says nothing about how full it is. The TUI header shows the same pair. When the last turn was
+  toggle, context fill, token counts, connection dot. The two readings
+  mean different things. `▣` is how full the window was on the turn's
+  last request, amber past 75 % and red past 90 %. `Σ↑` and `↓` are what
+  the turn spent; the Σ says it is a sum over every request the turn
+  made. A turn with 21 tool rounds sends its context 21 times, so the
+  sum runs far past the window and says nothing about how full it is —
+  a real one read `▣ 62% Σ↑ 6.0M` against a 524k window. The TUI header
+  shows the same pair. When the last turn was
   answered by the persona's `fallback:` model, a warn-coloured
   `⇄ <backup-model>` marker sits next to the model (tooltip: why the
   primary failed).

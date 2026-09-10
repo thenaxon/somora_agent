@@ -1296,11 +1296,55 @@ export const openAiCompatibleEngine: AgentEngine = {
           });
         }
 
+        // Arguments are classified BEFORE the assistant message is built,
+        // because a call whose arguments are not valid JSON must never go
+        // back on the wire.
+        //
+        // 2026-09-10, spielberg/main: a call arrived cut off after 64
+        // characters (`{"project_id": "…", "files": `). somora ran it
+        // anyway, got a confusing "project_id is required", and then sent
+        // the same fragment back in the next round. The backend parses
+        // tool-call arguments while building the prompt, so it answered
+        // 400 "Expecting value: line 1 column 65 (char 64)" — and every
+        // further round of that turn failed the same way, because the
+        // fragment sits in the running conversation. The turn was lost.
+        //
+        // Truncation like this is what an output limit hit mid-call looks
+        // like, so the model is told exactly that and can retry smaller.
+        const calls = toolCallsForApi.map((call) => {
+          try {
+            return { call, args: JSON.parse(call.function.arguments || '{}') as unknown, cutOff: false };
+          } catch {
+            return { call, args: { _raw: call.function.arguments } as unknown, cutOff: true };
+          }
+        });
+        const cutOffCalls = calls.filter((c) => c.cutOff);
+        if (cutOffCalls.length > 0) {
+          logger.warn({
+            msg: 'engine.tool_args_unparseable',
+            engine: ENGINE,
+            agent,
+            session,
+            round,
+            finishReason,
+            calls: cutOffCalls.map((c) => ({
+              tool: c.call.function.name,
+              chars: c.call.function.arguments.length,
+              head: c.call.function.arguments.slice(0, 120),
+            })),
+          });
+        }
+
         loopMessages.push({
           role: 'assistant',
           // OpenAI accepts content=null when only tool_calls are present.
           content: roundContent || null,
-          tool_calls: toolCallsForApi,
+          // A cut-off argument string is replaced by an empty object here.
+          // The call itself stays: dropping it would leave a `tool` reply
+          // without its call, which backends refuse just as hard.
+          tool_calls: calls.map(({ call, cutOff }) =>
+            cutOff ? { ...call, function: { ...call.function, arguments: '{}' } } : call,
+          ),
         } as ChatMessage);
 
         // Run each tool call, emit normalized events, append a `tool` message
@@ -1310,22 +1354,43 @@ export const openAiCompatibleEngine: AgentEngine = {
           // shouldn't request them. Bail with a clear error.
           throw new Error('model requested tool_calls but no tool registry was passed to the engine');
         }
-        for (const call of toolCallsForApi) {
-          let parsedArgs: unknown = {};
-          try {
-            parsedArgs = JSON.parse(call.function.arguments);
-          } catch {
-            // leave as raw string fallback so tool sees something
-            parsedArgs = { _raw: call.function.arguments };
-          }
+        for (const { call, args: parsedArgs, cutOff } of calls) {
           yield {
             kind: 'tool_call',
             ts: ts(),
             engine: ENGINE,
             callId: call.id,
             tool: call.function.name,
+            // The fragment is kept HERE, in the session record, because it
+            // is the evidence of what went wrong. It never reaches the wire.
             input: parsedArgs,
           };
+          if (cutOff) {
+            // Not run: with half its arguments the call would either fail
+            // in a confusing way or, worse, do something partial. The
+            // answer names the likely cause so the retry is smaller.
+            const chars = call.function.arguments.length;
+            const message =
+              `Your call to ${call.function.name} arrived cut off after ${chars} characters and its arguments are not valid JSON, so it was not run. ` +
+              (finishReason === 'length'
+                ? 'The answer hit the output limit while writing them. '
+                : '') +
+              'Call it again with complete arguments — shorter, or split across several calls.';
+            yield {
+              kind: 'tool_result',
+              ts: ts(),
+              engine: ENGINE,
+              callId: call.id,
+              output: null,
+              error: message,
+            };
+            loopMessages.push({
+              role: 'tool',
+              tool_call_id: call.id,
+              content: message,
+            } as ChatMessage);
+            continue;
+          }
           // Resolve the per-call timeout. Tools that declare themselves
           // long-running (subagent_result with wait_until_done, agent_ask,
           // exec, etc.) override the global cap via timeoutFromInput

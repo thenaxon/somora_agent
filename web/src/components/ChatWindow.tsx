@@ -1077,8 +1077,12 @@ export function ChatWindow({
                 ▣ {Math.round((chat.usage.context_tokens / chat.usage.contextWindow) * 100)}%
               </span>
             ) : null}
-            <span style={{ color: 'var(--text-2)' }} title="prompt tokens spent this turn, summed over every request (cached part dimmed)">
-              ↑ {formatTokens(chat.usage?.tokens_in)}
+            {/* Σ, because this is a SUM: every request the turn made, not
+                the prompt that stands now. A 21-round turn sends its
+                context 21 times, so the number can be many times the
+                window and must not read like the ▣ next to it. */}
+            <span style={{ color: 'var(--text-2)' }} title="prompt tokens spent this turn, summed over every request of the turn (cached part dimmed)">
+              Σ↑ {formatTokens(chat.usage?.tokens_in)}
               {chat.usage?.tokens_in_cached ? (
                 <span style={{ color: 'var(--text-3)' }}>
                   {' '}

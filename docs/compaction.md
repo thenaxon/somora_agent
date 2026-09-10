@@ -89,9 +89,11 @@ that the model saw less than the full results.
 
 **Reading the numbers.** The chat header shows two different things.
 `▣` is occupancy: the prompt size of the turn's **last** request against
-the window. `↑` is spend: the sum over every request the turn made, which
-on a tool-using turn is several times the window and must never be read
-as "how full it is".
+the window. `Σ↑` is spend, and the Σ is the point — it sums every
+request the turn made. A measured example: 21 tool rounds on a 524k
+window read `▣ 62%` (322,878 tokens in the last request) and `Σ↑ 6.0M`
+(5,974,097 sent in total, because the context travels with every
+request). Both are correct; only the first one says how full it is.
 
 ## Which model summarises
 

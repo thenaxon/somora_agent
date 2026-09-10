@@ -223,17 +223,20 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
   const total = stats.tokensIn;
   const window = stats.contextWindow;
 
+  // Σ marks a SUM: every request the turn made. A turn with 21 tool
+  // rounds sends its context 21 times, so this runs far past the window
+  // and must not be read as the fill level next to it.
   let inSegment: ReactElement;
   if (cached !== null && cached > 0 && total >= cached) {
     const uncached = total - cached;
     inSegment = (
       <Text>
-        <Text color="white">↑ {formatTokens(uncached)}</Text>
+        <Text color="white">Σ↑ {formatTokens(uncached)}</Text>
         <Text color="green">+{formatTokens(cached)}¢</Text>
       </Text>
     );
   } else {
-    inSegment = <Text color="white">↑ {formatTokens(total)}</Text>;
+    inSegment = <Text color="white">Σ↑ {formatTokens(total)}</Text>;
   }
   const reasoning = stats.tokensOutReasoning;
   const reasoningSegment =

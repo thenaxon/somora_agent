@@ -72,6 +72,24 @@ two registries are physically separate (process boundary) but the
 code that fills them is shared, so the effective tool set is
 identical across all three engines.
 
+## When a call arrives broken
+
+A model streams the arguments of a tool call as text, so the call can
+arrive incomplete — the usual reason is the answer hitting the output
+limit while writing them. somora does not run such a call: it replies to
+it with what happened ("arrived cut off after N characters … call it
+again with complete arguments"), and if the round ended on the output
+limit it says so, which is the actionable part.
+
+The fragment also never travels back to the model. Backends parse
+tool-call arguments while building the next prompt, so returning it
+means the whole request is rejected — and since the call sits in the
+running conversation, every following round of that turn is rejected
+too. The call keeps its place in the message (dropping it would leave a
+reply without its call, which backends refuse just as hard) but its
+arguments are replaced by an empty object. The unparsed fragment stays
+in the session record, where it is evidence rather than a payload.
+
 ## Background reading
 
 - `display.md` — `/show` and `/verbose` toggles for the TUI
