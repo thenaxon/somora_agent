@@ -8,10 +8,10 @@ now signed-in tab. Everything else it does on its own — a captcha or
 image puzzle included: it screenshots, reads the picture with a vision
 model and tries, and asks for you only when that keeps failing.
 
-Stage 1 is the service and the tool; stage 2 (this version) adds the
-live picture, manual control and the browser list in the web client.
-Stage 3 brings the chat notice with an **Open** button when an agent
-asks for you, and the taskbar marker.
+The web client includes the live picture, manual control, browser list,
+a chat notice with **Open browser** when an agent asks for you, and a
+taskbar marker for pending requests. Chat, taskbar and list share one
+change stream; reconnecting restores the current state automatically.
 
 ## Setup
 
@@ -196,20 +196,79 @@ curl -sk -X POST https://localhost:18737/browser/agent:naxon/control \
   -H 'Content-Type: application/json' -d '{"mode":"agent","handoffId":"<id>"}'
 ```
 
-Handing back wakes the requesting agent exactly once in the session it
+Handing back schedules one wake for the requesting agent in the session it
 asked from (idempotent per handoff id) with the reason and its own
 resume note; the wake tells it to take a fresh snapshot first. A pending
 handoff survives a server restart. Control is per browser, not per tab:
 while you hold it, none of that agent's tabs move.
 
-`GET /browser/status` lists every running browser with tabs, control
-state and pending handoff — what the browser list shows.
+The notice appears in the requesting chat, including when that chat is
+opened later. Its reason and **Open browser** button remain until the
+handoff is returned. The taskbar marker opens the browser list even
+when that chat or browser window is closed. These are current-state
+notices, not historical transcript messages.
+
+`GET /browser/status` lists running and previously stopped browsers.
+`GET /browser/stream` sends that state initially and on changes; the web
+client uses this stream instead of repeatedly fetching the list.
+
+## Recovery and limits
+
+A viewer reconnects after a broken connection and keeps its selected
+tab and controller identity. A disconnect never gives control back to
+the agent. A different viewer can explicitly take over; only the current
+controller can send input or hand back through the viewer socket.
+Old-tab or old-navigation frames are discarded, and inputs based on
+an obsolete frame are refused. Capture replacement waits for the old
+CDP session to stop.
+
+After a browser crash or server restart, stopped profiles and pending
+handoffs remain visible. **Reopen browser** launches a blank page in the
+same persistent profile; saved cookies remain, but old tabs, submitted
+forms and clicks are not replayed. Temporary profiles lose their data.
+A pending handoff must still be returned by the user. Without a pending
+handoff, a new explicit agent `open` may resume a stopped profile.
+
+State writes use an atomic file replacement. A failed control-state write
+refuses the transition. The wake is dispatched after the handoff is
+cleared; there is no durable wake queue. If the server dies between that
+write and dispatch, or the wake fails, the user must continue the chat
+manually. Missing or archived source sessions are refused rather than
+creating a new conversation under an arbitrary name.
+
+Capture uses `browser.stream.maxFps` (default 15, capped at 20 by ack
+pacing). A viewer with 2 MB buffered drops frames; a slow status reader
+gets coalesced snapshots. Viewer input is limited to 64 KiB per message
+and 64 pending commands. WebSocket ping/pong detects a dead viewer after
+80 seconds. The status stream has heartbeats and bounded writes too.
+Idle cleanup does not stop a browser with a pending handoff, human
+control, or an operation in progress.
+
+The global browser switch and per-agent browser ability apply to direct
+`/browser/op` requests as well as tool visibility. Human viewer access
+uses the web application's existing access boundary.
+
+## Verification
+
+Run `node --import tsx src/browser/service.test.mts` for real-Chromium
+service tests, and the `change-stream.test.mts`, `screencast.test.mts`,
+and `session.test.mts` files in the same directory for focused tests
+(use `SOMORA_HOME=/tmp/somora-browser-unit` for isolated test logs).
+After `npm --prefix web run build`, run:
+
+```bash
+SOMORA_BROWSER_WEB_SMOKE=1 node --import tsx src/browser/web-smoke.test.mts
+```
+
+This starts an isolated server, local OTP page and local model fixture,
+then drives `/web` through takeover, OTP entry, reconnect and hand-back.
+It checks notice removal, one wake and the direct ability gate. It uses
+temporary profiles and requires Chromium and permission to bind local
+ports; the running installation is not used.
 
 ## What it does not do (yet)
 
-No chat notice yet when an agent asks for you (stage 3 — watch the
-list's *waiting for you*), no upload/download UI, no passkeys or
-hardware keys (the remote
+No upload/download UI, no passkeys or hardware keys (the remote
 browser cannot see your devices), no audio/video, no free JavaScript
 evaluation. Anti-bot detection is not evaded: a site that blocks
 automation blocks this too, so test with your own applications before

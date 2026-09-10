@@ -25,7 +25,7 @@
 // (claude-cli/codex-cli) reaches it over HTTP (`POST /browser/op`).
 
 import { existsSync, mkdirSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -120,6 +120,7 @@ export interface BrowserInfo {
   control: ControlMode;
   handoff?: Handoff;
   tabs: TabInfo[];
+  human_by?: string;
   last_used: number;
   /** Launched with a window (browser.headed); absent for stopped entries. */
   headed?: boolean;
@@ -128,8 +129,8 @@ export interface BrowserInfo {
 export interface ServiceDeps {
   /** Wake the agent in its session after "Hand back". */
   dispatchWakeTurn?: (args: { agent: string; session: string; text: string }) => Promise<void>;
-  /** Stage 3: tell the session that a handoff was requested (notice). */
-  notifyHandoff?: (handoff: Handoff, browserId: string) => Promise<void>;
+  /** Resolve and validate a live session before binding a browser or waking it. */
+  resolveSession?: (agent: string, ref: string) => Promise<string>;
 }
 
 export class BrowserOpError extends Error {
@@ -178,6 +179,8 @@ export type ChangeListener = (browserId: string) => void;
 export class BrowserService {
   private cfg: BrowserConfig;
   private deps: ServiceDeps;
+  private writes: Promise<void> = Promise.resolve();
+  private operations = new Map<string, Promise<unknown>>();
   private listeners = new Set<ChangeListener>();
   private browsers = new Map<string, BrowserRec>();
   private launching = new Map<string, Promise<BrowserRec>>();
@@ -267,14 +270,36 @@ export class BrowserService {
     return out;
   }
 
-  private async persist(): Promise<void> {
-    const browsers: Record<string, { control: ControlState }> = { ...this.persisted };
-    for (const b of this.browsers.values()) browsers[b.id] = { control: b.control };
-    try {
-      await writeFile(BrowserService.statePath, JSON.stringify({ browsers }, null, 2), 'utf8');
-    } catch (err) {
-      logger.warn({ msg: 'browser.state_persist_failed', err: (err as Error).message });
-    }
+  /** Shared by agent operations and viewer input: takeover waits for accepted
+   * work, and a queued agent action checks control again before executing. */
+  async withBrowserLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.operations.get(id) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(fn);
+    this.operations.set(id, next);
+    try { return await next; }
+    finally { if (this.operations.get(id) === next) this.operations.delete(id); }
+  }
+
+  private persist(change?: { browser: BrowserRec; control: ControlState }): Promise<void> {
+    const next = this.writes.catch(() => {}).then(async () => {
+      // Build inside the write queue from committed controls. Another browser's
+      // pending transition must not leak into this snapshot before its own save.
+      const saved = { ...this.persisted };
+      for (const b of this.browsers.values()) saved[b.id] = { control: b.control };
+      if (change) saved[change.browser.id] = { control: change.control };
+      const tmp = `${BrowserService.statePath}.tmp`;
+      await writeFile(tmp, JSON.stringify({ browsers: saved }, null, 2), { encoding: 'utf8', mode: 0o600 });
+      await rename(tmp, BrowserService.statePath);
+      this.persisted = saved;
+      if (change) change.browser.control = change.control;
+    });
+    this.writes = next;
+    return next;
+  }
+
+  /** Publish a control transition only after its durable state write succeeds. */
+  private commitControl(browser: BrowserRec, control: ControlState): Promise<void> {
+    return this.persist({ browser, control });
   }
 
   // ── profiles ──────────────────────────────────────────────────────
@@ -296,10 +321,11 @@ export class BrowserService {
   }
 
   private assertAgentControl(b: BrowserRec): void {
-    if (b.control.mode === 'human_control') {
+    if (b.closing || this.browsers.get(b.id) !== b) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${b.id}' is no longer running`);
+    if (b.control.mode === 'human_control' || b.control.mode === 'paused') {
       throw new BrowserOpError(
         'BROWSER_HUMAN_CONTROL',
-        `the user is controlling browser '${b.id}' right now — do not retry; end your turn and wait until the user hands control back`,
+        `browser '${b.id}' is paused for the user — do not retry; end your turn and wait until the user hands control back`,
       );
     }
     if (b.control.mode === 'handoff_requested') {
@@ -402,8 +428,8 @@ export class BrowserService {
     };
     // A pending handoff from before a restart stays pending — the user
     // may still be about to take over. Anything else starts fresh.
-    if (rec.control.mode === 'human_control' || rec.control.mode === 'paused') {
-      rec.control = { mode: 'agent_control', since: nowMs() };
+    if (this.persisted[id]) {
+      rec.control = { ...rec.control, mode: rec.control.handoff ? 'handoff_requested' : 'paused', humanBy: undefined };
     }
     // Every document request (incl. redirects and target=_blank) runs
     // through the policy — the route is the safety net behind the
@@ -418,7 +444,11 @@ export class BrowserService {
     });
     context.on('page', (page) => this.adoptPage(rec, page, { agent: '_user', createdByAgent: false }));
     context.on('close', () => {
+      this.persisted[id] = { control: { ...rec.control, mode: 'paused', humanBy: undefined } };
       this.browsers.delete(id);
+      void this.persist().catch((err) => logger.warn({ msg: 'browser.state_persist_failed', err: String(err) }));
+      if (rec.display) void rec.display.stop().catch(() => {});
+      if (rec.ephemeral) void rm(rec.profileDir, { recursive: true, force: true }).catch(() => {});
       if (rec.idleTimer) clearTimeout(rec.idleTimer);
       logger.info({ msg: 'browser.closed', browser: id });
       this.emitChange(id);
@@ -428,7 +458,7 @@ export class BrowserService {
     for (const page of context.pages()) this.adoptPage(rec, page, { agent: '_init', createdByAgent: false });
     this.browsers.set(id, rec);
     this.touch(rec);
-    void this.persist();
+    void this.persist().catch((err) => logger.warn({ msg: 'browser.state_persist_failed', err: String(err) }));
     logger.info({ msg: 'browser.launched', browser: id, profile: base.profile, dir, ephemeral, ms: nowMs() - t0, executable: exe.path });
     return rec;
   }
@@ -451,6 +481,7 @@ export class BrowserService {
       if (frame !== page.mainFrame()) return;
       tab.generation++;
       tab.snapshotRefs = new Set();
+      this.emitChange(b.id);
       // Redirect hops are not routed through the request interception
       // (Chromium follows them before Playwright sees a new request), so
       // a page that ended up somewhere the policy forbids is evicted
@@ -480,7 +511,7 @@ export class BrowserService {
     if (b.idleTimer) clearTimeout(b.idleTimer);
     b.idleTimer = setTimeout(() => {
       // Never stop under a human's hands or with a handoff pending.
-      if (b.control.mode === 'human_control' || b.control.mode === 'handoff_requested') {
+      if (b.control.mode === 'human_control' || b.control.handoff || this.operations.has(b.id)) {
         this.touch(b);
         return;
       }
@@ -601,46 +632,59 @@ export class BrowserService {
     session: string | undefined,
     args: { url: string; tab?: string; ephemeral?: boolean; device?: string; locale?: string },
   ): Promise<{ browser_id: string; tab: TabInfo; control: ControlMode; blocked?: string }> {
+    if (session && this.deps.resolveSession) session = await this.deps.resolveSession(agent, session);
     const verdict = await checkNavigationAllowed(args.url, this.cfg);
     if (!verdict.ok) throw new BrowserOpError('BROWSER_NAVIGATION_DENIED', verdict.reason!);
     const b = args.tab ? this.browserOf(agent, args.tab) : await this.ensureBrowser(agent, { ephemeral: args.ephemeral });
-    this.assertAgentControl(b);
-    let tab: TabRec;
-    if (args.tab) {
-      tab = this.tabOf(b, args.tab);
-    } else {
-      // Reuse the initial blank tab once; otherwise a new one under the cap.
-      const blank = [...b.tabs.values()].find((t) => t.agent === '_init' && t.page.url() === 'about:blank');
-      if (blank) {
-        tab = blank;
-        tab.agent = agent;
-        if (session) tab.session = session;
-        tab.createdByAgent = true;
-      } else {
-        if (b.tabs.size >= this.cfg.maxTabsPerAgent) {
-          throw new BrowserOpError(
-            'BROWSER_TAB_LIMIT',
-            `browser '${b.id}' already has ${b.tabs.size} tabs (browser.maxTabsPerAgent) — close one with op:"close_tab" or reuse one with tab:"t<n>"`,
-          );
-        }
-        const page = await b.context.newPage();
-        tab = this.adoptPage(b, page, { agent, ...(session ? { session } : {}), createdByAgent: true });
+    return this.withBrowserLock(b.id, async () => {
+      // An explicit new navigation may resume an idle/restarted browser; old
+      // operations are never replayed, and a pending handoff still blocks it.
+      if (b.control.mode === 'paused' && !b.control.handoff) {
+        await this.commitControl(b, { mode: 'agent_control', since: nowMs() });
       }
-    }
-    if (args.device || args.locale) await this.emulate(tab, { ...(args.device ? { device: args.device } : {}), ...(args.locale ? { locale: args.locale } : {}) });
-    let blocked: string | undefined;
-    try {
-      await tab.page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    } catch (err) {
-      const msg = (err as Error).message;
-      if (/ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(msg)) blocked = 'a redirect target was denied by the navigation policy';
-      else throw new BrowserOpError('BROWSER_ACTION_FAILED', `open ${args.url}: ${msg.split('\n')[0]}`);
-    }
-    await tab.page.waitForTimeout(150);
-    blocked = blocked ?? this.evicted(tab);
-    if (tab.page.url().startsWith('chrome-error://')) blocked = blocked ?? 'the navigation ended on an error page (unreachable host)';
-    logger.info({ msg: 'browser.open', browser: b.id, tab: tab.id, agent, url: args.url, blocked: blocked ?? null });
-    return { browser_id: b.id, tab: await this.tabInfo(tab), control: b.control.mode, ...(blocked ? { blocked } : {}) };
+      this.assertAgentControl(b);
+      let tab: TabRec;
+      if (args.tab) {
+        tab = this.tabOf(b, args.tab);
+      } else {
+        // Reuse the initial blank tab once; otherwise a new one under the cap.
+        const blank = [...b.tabs.values()].find((t) => t.agent === '_init' && t.page.url() === 'about:blank');
+        if (blank) {
+          tab = blank;
+          tab.agent = agent;
+          if (session) tab.session = session;
+          tab.createdByAgent = true;
+        } else {
+          if (b.tabs.size >= this.cfg.maxTabsPerAgent) {
+            throw new BrowserOpError(
+              'BROWSER_TAB_LIMIT',
+              `browser '${b.id}' already has ${b.tabs.size} tabs (browser.maxTabsPerAgent) — close one with op:"close_tab" or reuse one with tab:"t<n>"`,
+            );
+          }
+          const page = await b.context.newPage();
+          tab = this.adoptPage(b, page, { agent, ...(session ? { session } : {}), createdByAgent: true });
+        }
+      }
+      tab.agent = agent;
+      if (session) tab.session = session;
+      tab.createdByAgent = true;
+      this.touch(b);
+      if (args.device || args.locale) await this.emulate(tab, { ...(args.device ? { device: args.device } : {}), ...(args.locale ? { locale: args.locale } : {}) });
+      let blocked: string | undefined;
+      try {
+        await tab.page.goto(args.url, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (/ERR_BLOCKED_BY_CLIENT|blockedbyclient/i.test(msg)) blocked = 'a redirect target was denied by the navigation policy';
+        else throw new BrowserOpError('BROWSER_ACTION_FAILED', `open ${args.url}: ${msg.split('\n')[0]}`);
+      }
+      await tab.page.waitForTimeout(150);
+      blocked = blocked ?? this.evicted(tab);
+      if (tab.page.url().startsWith('chrome-error://')) blocked = blocked ?? 'the navigation ended on an error page (unreachable host)';
+      this.emitChange(b.id);
+      logger.info({ msg: 'browser.open', browser: b.id, tab: tab.id, agent, url: args.url, blocked: blocked ?? null });
+      return { browser_id: b.id, tab: await this.tabInfo(tab), control: b.control.mode, ...(blocked ? { blocked } : {}) };
+    });
   }
 
   async tabs(agent: string): Promise<{ browser_id: string; control: ControlMode; tabs: TabInfo[] }> {
@@ -683,6 +727,7 @@ export class BrowserService {
       warnings,
       control: b.control.mode,
       ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
+        ...(b.control.humanBy ? { human_by: b.control.humanBy } : {}),
       tabs,
     };
   }
@@ -692,16 +737,18 @@ export class BrowserService {
     args: { tab: string; full?: boolean; max_chars?: number },
   ): Promise<{ tab: TabInfo; generation: number; snapshot: string; truncated: boolean }> {
     const b = this.browserOf(agent, args.tab);
-    this.assertAgentControl(b);
-    const t = this.tabOf(b, args.tab);
-    const raw = await t.page.ariaSnapshot({ mode: 'ai', timeout: 15_000 });
-    const gen = t.generation;
-    const result = args.full ? { text: raw, truncated: false } : compactAriaSnapshot(raw, args.max_chars ?? 20_000);
-    // Playwright numbers refs `e<n>`, prefixed `f<n>` once the page has
-    // navigated within the context (frame generation) — accept both.
-    t.snapshotRefs = new Set([...raw.matchAll(/\[ref=((?:f\d+)?e\d+)\]/g)].map((m) => m[1]!));
-    t.snapshotGeneration = gen;
-    return { tab: await this.tabInfo(t), generation: gen, snapshot: result.text, truncated: result.truncated };
+    return this.withBrowserLock(b.id, async () => {
+      this.assertAgentControl(b);
+      const t = this.tabOf(b, args.tab);
+      const raw = await t.page.ariaSnapshot({ mode: 'ai', timeout: 15_000 });
+      const gen = t.generation;
+      const result = args.full ? { text: raw, truncated: false } : compactAriaSnapshot(raw, args.max_chars ?? 20_000);
+      // Playwright numbers refs `e<n>`, prefixed `f<n>` once the page has
+      // navigated within the context (frame generation) — accept both.
+      t.snapshotRefs = new Set([...raw.matchAll(/\[ref=((?:f\d+)?e\d+)\]/g)].map((m) => m[1]!));
+      t.snapshotGeneration = gen;
+      return { tab: await this.tabInfo(t), generation: gen, snapshot: result.text, truncated: result.truncated };
+    });
   }
 
   async act(
@@ -715,66 +762,70 @@ export class BrowserService {
     },
   ): Promise<{ tab: TabInfo; generation: number; navigated: boolean; blocked?: string }> {
     const b = this.browserOf(agent, args.tab);
-    this.assertAgentControl(b);
-    const t = this.tabOf(b, args.tab);
-    const genBefore = t.generation;
-    if (args.generation !== undefined && args.generation !== t.generation) {
-      throw new BrowserOpError(
-        'BROWSER_STALE_REF',
-        `tab '${t.id}' navigated since generation ${args.generation} (now ${t.generation}) — take a new snapshot before acting`,
-      );
-    }
-    if (args.ref) {
-      if (t.snapshotGeneration !== t.generation || !t.snapshotRefs.has(args.ref)) {
+    return this.withBrowserLock(b.id, async () => {
+      this.assertAgentControl(b);
+      const t = this.tabOf(b, args.tab);
+      const genBefore = t.generation;
+      if (args.generation !== undefined && args.generation !== t.generation) {
         throw new BrowserOpError(
           'BROWSER_STALE_REF',
-          `ref '${args.ref}' is not from a snapshot of the current page state of tab '${t.id}' — take a new snapshot first`,
+          `tab '${t.id}' navigated since generation ${args.generation} (now ${t.generation}) — take a new snapshot before acting`,
         );
       }
-    }
-    const loc = args.ref ? t.page.locator(`aria-ref=${args.ref}`) : null;
-    const timeout = 10_000;
-    try {
-      switch (args.action) {
-        case 'click':
-          if (!loc) throw new Error('click needs a ref');
-          await loc.click({ timeout });
-          break;
-        case 'fill':
-          if (!loc) throw new Error('fill needs a ref');
-          await loc.fill(args.value ?? '', { timeout });
-          break;
-        case 'press':
-          if (!args.value) throw new Error('press needs value (a key name like Enter, Tab, Escape, ArrowDown)');
-          if (loc) await loc.press(args.value, { timeout });
-          else await t.page.keyboard.press(args.value);
-          break;
-        case 'scroll':
-          if (loc) await loc.scrollIntoViewIfNeeded({ timeout });
-          else await t.page.mouse.wheel(0, Number(args.value ?? '600') || 600);
-          break;
-        case 'select':
-          if (!loc) throw new Error('select needs a ref');
-          await loc.selectOption(args.value ?? '', { timeout });
-          break;
+      if (args.ref) {
+        if (t.snapshotGeneration !== t.generation || !t.snapshotRefs.has(args.ref)) {
+          throw new BrowserOpError(
+            'BROWSER_STALE_REF',
+            `ref '${args.ref}' is not from a snapshot of the current page state of tab '${t.id}' — take a new snapshot first`,
+          );
+        }
       }
-    } catch (err) {
-      throw new BrowserOpError('BROWSER_ACTION_FAILED', `${args.action}${args.ref ? ` ${args.ref}` : ''}: ${(err as Error).message.split('\n')[0]}`);
-    }
-    // Give a navigation the action may have started a moment to land.
-    await t.page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => {});
-    await t.page.waitForTimeout(150);
-    const navigated = t.generation !== genBefore;
-    const blocked = this.evicted(t) ?? (t.page.url().startsWith('chrome-error://') ? 'the navigation ended on an error page (unreachable host)' : undefined);
-    return { tab: await this.tabInfo(t), generation: t.generation, navigated, ...(blocked ? { blocked } : {}) };
+      const loc = args.ref ? t.page.locator(`aria-ref=${args.ref}`) : null;
+      const timeout = 10_000;
+      try {
+        switch (args.action) {
+          case 'click':
+            if (!loc) throw new Error('click needs a ref');
+            await loc.click({ timeout });
+            break;
+          case 'fill':
+            if (!loc) throw new Error('fill needs a ref');
+            await loc.fill(args.value ?? '', { timeout });
+            break;
+          case 'press':
+            if (!args.value) throw new Error('press needs value (a key name like Enter, Tab, Escape, ArrowDown)');
+            if (loc) await loc.press(args.value, { timeout });
+            else await t.page.keyboard.press(args.value);
+            break;
+          case 'scroll':
+            if (loc) await loc.scrollIntoViewIfNeeded({ timeout });
+            else await t.page.mouse.wheel(0, Number(args.value ?? '600') || 600);
+            break;
+          case 'select':
+            if (!loc) throw new Error('select needs a ref');
+            await loc.selectOption(args.value ?? '', { timeout });
+            break;
+        }
+      } catch (err) {
+        throw new BrowserOpError('BROWSER_ACTION_FAILED', `${args.action}${args.ref ? ` ${args.ref}` : ''}: ${(err as Error).message.split('\n')[0]}`);
+      }
+      // Give a navigation the action may have started a moment to land.
+      await t.page.waitForLoadState('domcontentloaded', { timeout: 5_000 }).catch(() => {});
+      await t.page.waitForTimeout(150);
+      const navigated = t.generation !== genBefore;
+      const blocked = this.evicted(t) ?? (t.page.url().startsWith('chrome-error://') ? 'the navigation ended on an error page (unreachable host)' : undefined);
+      return { tab: await this.tabInfo(t), generation: t.generation, navigated, ...(blocked ? { blocked } : {}) };
+    });
   }
 
   async screenshot(agent: string, args: { tab: string }): Promise<{ tab: TabInfo; png: Buffer }> {
     const b = this.browserOf(agent, args.tab);
-    this.assertAgentControl(b);
-    const t = this.tabOf(b, args.tab);
-    const png = await t.page.screenshot({ type: 'png', timeout: 15_000 });
-    return { tab: await this.tabInfo(t), png };
+    return this.withBrowserLock(b.id, async () => {
+      this.assertAgentControl(b);
+      const t = this.tabOf(b, args.tab);
+      const png = await t.page.screenshot({ type: 'png', timeout: 15_000 });
+      return { tab: await this.tabInfo(t), png };
+    });
   }
 
   async requestHandoff(
@@ -782,35 +833,43 @@ export class BrowserService {
     session: string | undefined,
     args: { reason: string; resume_note?: string },
   ): Promise<{ browser_id: string; handoff_id: string; control: ControlMode }> {
+    if (session && this.deps.resolveSession) session = await this.deps.resolveSession(agent, session);
     const b = this.browserOf(agent);
-    if (!session) throw new BrowserOpError('BROWSER_ACTION_FAILED', 'request_handoff needs a session to resume in');
-    if (b.control.mode === 'human_control') {
-      throw new BrowserOpError('BROWSER_HUMAN_CONTROL', `the user already controls browser '${b.id}'`);
-    }
-    const handoff: Handoff = {
-      id: randomUUID(),
-      agent,
-      session,
-      reason: args.reason,
-      ...(args.resume_note ? { resumeNote: args.resume_note } : {}),
-      requestedAt: nowMs(),
-    };
-    b.control = { mode: 'handoff_requested', handoff, since: nowMs() };
-    this.touch(b);
-    await this.persist();
-    this.emitChange(b.id);
-    logger.info({ msg: 'browser.handoff_requested', browser: b.id, agent, session, reason: args.reason });
-    if (this.deps.notifyHandoff) await this.deps.notifyHandoff(handoff, b.id).catch((err) => logger.warn({ msg: 'browser.handoff_notify_failed', err: String(err) }));
-    return { browser_id: b.id, handoff_id: handoff.id, control: b.control.mode };
+    return this.withBrowserLock(b.id, async () => {
+      if (!session) throw new BrowserOpError('BROWSER_ACTION_FAILED', 'request_handoff needs a session to resume in');
+      if (b.control.mode === 'human_control') {
+        throw new BrowserOpError('BROWSER_HUMAN_CONTROL', `the user already controls browser '${b.id}'`);
+      }
+      if (b.control.handoff) {
+        if (b.control.handoff.agent !== agent || b.control.handoff.session !== session)
+          throw new BrowserOpError('BROWSER_HUMAN_CONTROL', 'another session is already waiting for this browser');
+        return { browser_id: b.id, handoff_id: b.control.handoff.id, control: b.control.mode };
+      }
+      const handoff: Handoff = {
+        id: randomUUID(),
+        agent,
+        session,
+        reason: args.reason,
+        ...(args.resume_note ? { resumeNote: args.resume_note } : {}),
+        requestedAt: nowMs(),
+      };
+      await this.commitControl(b, { mode: 'handoff_requested', handoff, since: nowMs() });
+      this.touch(b);
+      this.emitChange(b.id);
+      logger.info({ msg: 'browser.handoff_requested', browser: b.id, agent, session, reason: args.reason });
+      return { browser_id: b.id, handoff_id: handoff.id, control: b.control.mode };
+    });
   }
 
   async closeTab(agent: string, args: { tab: string }): Promise<{ closed: string; remaining: number }> {
     const b = this.browserOf(agent, args.tab);
-    this.assertAgentControl(b);
-    const t = this.tabOf(b, args.tab);
-    await t.page.close().catch(() => {});
-    b.tabs.delete(t.id);
-    return { closed: t.id, remaining: [...b.tabs.values()].filter((x) => !x.page.isClosed()).length };
+    return this.withBrowserLock(b.id, async () => {
+      this.assertAgentControl(b);
+      const t = this.tabOf(b, args.tab);
+      await t.page.close().catch(() => {});
+      b.tabs.delete(t.id);
+      return { closed: t.id, remaining: [...b.tabs.values()].filter((x) => !x.page.isClosed()).length };
+    });
   }
 
   async stop(agent: string): Promise<{ stopped: string | null }> {
@@ -820,7 +879,10 @@ export class BrowserService {
       this.assertAllowed(b, agent);
       if (b.control.mode === 'human_control') throw new BrowserOpError('BROWSER_HUMAN_CONTROL', `the user controls browser '${b.id}'`);
     }
-    await Promise.all(bs.map((b) => this.stopBrowser(b)));
+    await Promise.all(bs.map((b) => this.withBrowserLock(b.id, async () => {
+      this.assertAgentControl(b);
+      await this.stopBrowser(b);
+    })));
     return { stopped: bs.map((b) => b.id).join(', ') };
   }
 
@@ -838,6 +900,7 @@ export class BrowserService {
         state: 'running',
         control: b.control.mode,
         ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
+        ...(b.control.humanBy ? { human_by: b.control.humanBy } : {}),
         tabs,
         last_used: b.lastUsed,
         headed: b.headed,
@@ -845,10 +908,23 @@ export class BrowserService {
     }
     for (const [id, p] of Object.entries(this.persisted)) {
       if (this.browsers.has(id)) continue;
-      if (!p.control?.handoff) continue;
-      out.push({ browser_id: id, profile: id.replace(/^(agent|profile):/, ''), ephemeral: false, state: 'stopped', control: 'paused', handoff: p.control.handoff, tabs: [], last_used: 0 });
+      if (!p.control) continue;
+      out.push({ browser_id: id, profile: id.replace(/^(agent|profile):/, '').replace(/:tmp$/, ''), ephemeral: id.endsWith(':tmp'), state: 'stopped', control: 'paused', handoff: p.control.handoff, tabs: [], last_used: 0 });
     }
     return out;
+  }
+
+  /** Explicit user recovery starts a blank page in the same profile. */
+  async restartForViewer(browserId: string): Promise<void> {
+    const saved = this.persisted[browserId];
+    if (!saved) throw new BrowserOpError('BROWSER_NOT_FOUND', 'unknown browser');
+    const match = /^(agent|profile):(.+?)(:tmp)?$/.exec(browserId);
+    if (!match) throw new BrowserOpError('BROWSER_NOT_FOUND', 'invalid browser id');
+    const agent = match[1] === 'profile' ? this.cfg.profiles[match[2]!]?.agents[0] : match[2];
+    if (!agent || this.profileFor(agent).id + (match[3] ?? '') !== browserId)
+      throw new BrowserOpError('BROWSER_NOT_ALLOWED', 'profile is no longer configured');
+    await this.ensureBrowser(agent, { ephemeral: Boolean(match[3]) });
+    this.emitChange(browserId);
   }
 
   /**
@@ -857,59 +933,61 @@ export class BrowserService {
    * session (idempotent per handoff id).
    */
   async setControl(browserId: string, mode: 'human' | 'agent', opts: { by?: string; handoffId?: string } = {}): Promise<ControlState> {
-    const b = this.browsers.get(browserId);
-    if (!b || b.closing) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${browserId}' is not running`);
-    if (mode === 'human') {
-      b.control = { mode: 'human_control', ...(b.control.handoff ? { handoff: b.control.handoff } : {}), ...(opts.by ? { humanBy: opts.by } : {}), since: nowMs() };
-      this.touch(b);
-      await this.persist();
-      logger.info({ msg: 'browser.human_control', browser: b.id, by: opts.by ?? null });
-      this.emitChange(b.id);
-      return b.control;
-    }
-    const handoff = b.control.handoff;
-    if (handoff && opts.handoffId && opts.handoffId !== handoff.id) {
-      // A stale button press for an older handoff: just switch, no wake.
-      b.control = { mode: 'agent_control', since: nowMs() };
-      await this.persist();
-      return b.control;
-    }
-    const touched = b.control.humanTouched === true;
-    b.control = { mode: 'agent_control', since: nowMs() };
-    this.touch(b);
-    await this.persist();
-    // Whom to wake: the requesting agent+session when a handoff was
-    // pending; otherwise — only if the human actually did something —
-    // the session of the tab an agent used last (Rene 2026-09-08).
-    let wake: { agent: string; session: string; text: string } | null = null;
-    if (handoff) {
-      wake = {
-        agent: handoff.agent,
-        session: handoff.session,
-        text:
-          `[browser] The user handed browser '${b.id}' back to you (handoff ${handoff.id}). ` +
-          `Reason you asked for it: ${handoff.reason}. ` +
-          (handoff.resumeNote ? `Your note: ${handoff.resumeNote}. ` : '') +
-          'Take a fresh snapshot before acting — the page may have changed.',
-      };
-    } else if (touched) {
-      const last = this.lastAgentTab(b);
-      if (last) {
-        wake = {
-          agent: last.agent,
-          session: last.session,
-          text:
-            `[browser] The user took over browser '${b.id}', did something there (navigation, clicks or typing) and handed it back to you. ` +
-            'If you still have work in this browser, take a fresh snapshot before acting — the page may have changed. Otherwise just acknowledge briefly.',
-        };
+    return this.withBrowserLock(browserId, async () => {
+      const b = this.browsers.get(browserId);
+      if (!b || b.closing) throw new BrowserOpError('BROWSER_NOT_FOUND', `browser '${browserId}' is not running`);
+      if (mode === 'human') {
+        await this.commitControl(b, { mode: 'human_control', ...(b.control.handoff ? { handoff: b.control.handoff } : {}), ...(opts.by ? { humanBy: opts.by } : {}), since: nowMs() });
+        this.touch(b);
+        logger.info({ msg: 'browser.human_control', browser: b.id, by: opts.by ?? null });
+        this.emitChange(b.id);
+        return b.control;
       }
-    }
-    logger.info({ msg: 'browser.agent_control', browser: b.id, wake: handoff ? handoff.id : wake ? 'activity' : null, ...(wake ? { agent: wake.agent, session: wake.session } : {}) });
-    this.emitChange(b.id);
-    if (wake && this.deps.dispatchWakeTurn) {
-      void this.deps.dispatchWakeTurn(wake).catch((err) => logger.warn({ msg: 'browser.wake_failed', browser: b.id, err: String(err) }));
-    }
-    return b.control;
+      const handoff = b.control.handoff;
+      if (opts.handoffId && handoff && opts.handoffId !== handoff.id) {
+        throw new BrowserOpError('BROWSER_ACTION_FAILED', 'stale handoff — refresh before handing back');
+      }
+      if (opts.handoffId && !handoff) return b.control; // duplicate, never release a newer manual takeover
+      if (opts.by && b.control.humanBy && opts.by !== b.control.humanBy) {
+        throw new BrowserOpError('BROWSER_HUMAN_CONTROL', 'another viewer controls this browser');
+      }
+      if (handoff && this.deps.resolveSession) await this.deps.resolveSession(handoff.agent, handoff.session);
+      const touched = b.control.humanTouched === true;
+      await this.commitControl(b, { mode: 'agent_control', since: nowMs() });
+      this.touch(b);
+      // Whom to wake: the requesting agent+session when a handoff was
+      // pending; otherwise — only if the human actually did something —
+      // the session of the tab an agent used last (Rene 2026-09-08).
+      let wake: { agent: string; session: string; text: string } | null = null;
+      if (handoff) {
+        wake = {
+          agent: handoff.agent,
+          session: handoff.session,
+          text:
+            `[browser] The user handed browser '${b.id}' back to you (handoff ${handoff.id}). ` +
+            `Reason you asked for it: ${handoff.reason}. ` +
+            (handoff.resumeNote ? `Your note: ${handoff.resumeNote}. ` : '') +
+            'Take a fresh snapshot before acting — the page may have changed.',
+        };
+      } else if (touched) {
+        const last = this.lastAgentTab(b);
+        if (last) {
+          wake = {
+            agent: last.agent,
+            session: last.session,
+            text:
+              `[browser] The user took over browser '${b.id}', did something there (navigation, clicks or typing) and handed it back to you. ` +
+              'If you still have work in this browser, take a fresh snapshot before acting — the page may have changed. Otherwise just acknowledge briefly.',
+          };
+        }
+      }
+      logger.info({ msg: 'browser.agent_control', browser: b.id, wake: handoff ? handoff.id : wake ? 'activity' : null, ...(wake ? { agent: wake.agent, session: wake.session } : {}) });
+      this.emitChange(b.id);
+      if (wake && this.deps.dispatchWakeTurn) {
+        void this.deps.dispatchWakeTurn(wake).catch((err) => logger.warn({ msg: 'browser.wake_failed', browser: b.id, err: String(err) }));
+      }
+      return b.control;
+    });
   }
 
   /** The tab an agent used most recently (has a session), or null. */
@@ -928,7 +1006,7 @@ export class BrowserService {
     const b = this.browsers.get(browserId);
     if (!b || b.control.mode !== 'human_control' || b.control.humanTouched) return;
     b.control.humanTouched = true;
-    void this.persist();
+    void this.persist().catch((err) => logger.warn({ msg: 'browser.state_persist_failed', err: String(err) }));
   }
 
   // ── viewer surface (stage 2: web client) ──────────────────────────
@@ -951,6 +1029,7 @@ export class BrowserService {
       state: 'running',
       control: b.control.mode,
       ...(b.control.handoff ? { handoff: b.control.handoff } : {}),
+        ...(b.control.humanBy ? { human_by: b.control.humanBy } : {}),
       tabs,
       last_used: b.lastUsed,
     };
@@ -962,7 +1041,7 @@ export class BrowserService {
     const b = this.runningBrowser(browserId);
     this.touch(b);
     const live = [...b.tabs.values()].filter((t) => !t.page.isClosed());
-    const t = (tabId ? live.find((x) => x.id === tabId) : undefined) ?? live.sort((a, c) => c.lastUsed - a.lastUsed)[0];
+    const t = tabId ? live.find((x) => x.id === tabId) : live.sort((a, c) => c.lastUsed - a.lastUsed)[0];
     if (!t) throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `browser '${browserId}' has no open tab`);
     return { tabId: t.id, page: t.page, generation: t.generation };
   }

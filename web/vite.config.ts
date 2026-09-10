@@ -54,6 +54,7 @@ export default defineConfig({
       // get forwarded. Target switches to https://<publicHost>:18737
       // when TLS is on so the parent server's cert-bound hostname is
       // honored end-to-end.
+      '/browser': { target: proxyTarget, changeOrigin: true, secure: true, ws: true },
       '/agents': { target: proxyTarget, changeOrigin: true, secure: true },
       '/attachments': { target: proxyTarget, changeOrigin: true, secure: true },
       '/chat': { target: proxyTarget, changeOrigin: true, secure: true },

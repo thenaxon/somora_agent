@@ -1768,3 +1768,9 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   font: 12px "JetBrains Mono", monospace;
   pointer-events: none;
 }
+
+/* Pending browser requests remain visible without opening the browser list. */
+.browser-handoff-notice { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(210,153,34,.09); color: var(--text-1); font-size: 12px; max-height: 180px; overflow: auto; flex-shrink: 0; }
+.browser-handoff-notice button, .browser-attention { border: 1px solid var(--warn, #d29922); border-radius: 5px; background: rgba(210,153,34,.12); color: var(--text-1); padding: 5px 9px; cursor: pointer; align-self: flex-start; }
+.browser-handoff-notice button:disabled { opacity: .5; cursor: default; }
+.browser-attention { align-self: center; white-space: nowrap; font-size: 11px; }

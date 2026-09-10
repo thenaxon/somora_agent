@@ -1,3 +1,5 @@
+import { useBrowsers } from './BrowserProvider';
+import { BrowserHandoffNotice } from './BrowserHandoffNotice';
 // Live ChatWindow: SSE-streaming, history hydration, markdown,
 // tool-blocks, live token counts, pinned-to-bottom scroll, send +
 // abort. Slash-command popup, drag&drop attachments and the
@@ -35,6 +37,7 @@ import { ChatMenuPopover } from './ChatMenuPopover';
 import { ProjectChip } from './ProjectChip';
 
 interface Props {
+  onOpenBrowser?: (id: string, title: string) => void;
   agent: AgentInfo;
   sessionId: string;
   /** Window-manager focus state. When this flips to true (e.g. user
@@ -68,7 +71,10 @@ export function ChatWindow({
   pinnedMsgIds,
   onPin,
   onUnpin,
+  onOpenBrowser,
 }: Props) {
+  const browsers = useBrowsers();
+  const handoffs = browsers.browsers.filter((b) => b.handoff?.agent === agent.name && b.handoff.session === sessionId);
   const color = resolveAgentColor(agent);
   const { model, thinking, refresh: refreshSessionInfo } = useSessionInfo(
     agent.name,
@@ -1144,6 +1150,7 @@ export function ChatWindow({
           </button>
         </div>
       </div>
+      {onOpenBrowser && handoffs.map((b) => <BrowserHandoffNotice key={b.handoff!.id} browser={b} connected={browsers.connected} onOpen={onOpenBrowser} />)}
       <ChatMenuPopover
         open={menuOpen}
         onClose={() => setMenuOpen(false)}

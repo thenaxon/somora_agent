@@ -2,12 +2,12 @@
 // running managed Chromium (= per agent profile): who, how many tabs,
 // what the active tab shows, and above all the control state — "agent
 // controls", "waiting for you", "you control". Click a row → the live
-// browser window. Polls /browser/status every 3 s; stage 3 replaces the
-// polling with the change stream.
+// browser window. Shares the authoritative change stream with chat and taskbar.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Globe, RefreshCw } from 'lucide-react';
 import { api, type BrowserInfo } from '../lib/api';
+import { useBrowsers } from './BrowserProvider';
 
 interface Props {
   onOpen: (browserId: string, title: string) => void;
@@ -19,7 +19,7 @@ export function controlLabel(b: Pick<BrowserInfo, 'control' | 'state'>): { text:
     case 'handoff_requested':
       return { text: 'waiting for you', tone: 'warn' };
     case 'human_control':
-      return { text: 'you control', tone: 'info' };
+      return { text: 'human controls', tone: 'info' };
     case 'paused':
       return { text: 'paused', tone: 'muted' };
     default:
@@ -33,26 +33,21 @@ export function browserTitle(b: Pick<BrowserInfo, 'browser_id' | 'profile' | 'ep
 }
 
 export function BrowserListWindow({ onOpen }: Props) {
-  const [browsers, setBrowsers] = useState<BrowserInfo[] | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const state = useBrowsers();
+  const browsers = state.loaded ? state.browsers : null;
+  const warnings = state.warnings ?? [];
   const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
+  const [opening, setOpening] = useState<string | null>(null);
+  const refresh = state.refresh;
+  const open = async (b: BrowserInfo) => {
+    setOpening(b.browser_id);
+    setError(null);
     try {
-      const r = await api.browserStatus();
-      setBrowsers(r.browsers);
-      setWarnings(r.warnings ?? []);
-      setError(null);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const t = setInterval(() => void refresh(), 3000);
-    return () => clearInterval(t);
-  }, [refresh]);
+      if (b.state === 'stopped') await api.browserRestart(b.browser_id);
+      onOpen(b.browser_id, browserTitle(b));
+    } catch (e) { setError((e as Error).message); }
+    finally { setOpening(null); }
+  };
 
   const toneColor: Record<string, string> = {
     ok: 'var(--ok, #3fb950)',
@@ -85,6 +80,7 @@ export function BrowserListWindow({ onOpen }: Props) {
           <RefreshCw size={11} />
         </button>
       </div>
+      {!state.connected && <div role="status" style={{ padding: 12 }}>Reconnecting to browser status…</div>}
       {error && <div style={{ padding: 12, color: 'var(--danger, #f85149)', fontSize: 12 }}>{error}</div>}
       {warnings.map((w) => (
         <div key={w} style={{ padding: '8px 12px', color: 'var(--warn, #d29922)', fontSize: 11, borderBottom: '1px solid var(--line)' }}>
@@ -99,8 +95,8 @@ export function BrowserListWindow({ onOpen }: Props) {
             <button
               type="button"
               key={b.browser_id}
-              onClick={() => b.state === 'running' && onOpen(b.browser_id, browserTitle(b))}
-              disabled={b.state !== 'running'}
+              onClick={() => void open(b)}
+              disabled={!state.connected || opening !== null}
               style={{
                 all: 'unset',
                 display: 'grid',
@@ -109,7 +105,7 @@ export function BrowserListWindow({ onOpen }: Props) {
                 alignItems: 'center',
                 width: 'calc(100% - 24px)',
                 padding: '10px 12px',
-                cursor: b.state === 'running' ? 'pointer' : 'default',
+                cursor: !state.connected || opening !== null ? 'default' : 'pointer',
                 borderBottom: '1px solid var(--line)',
                 opacity: b.state === 'running' ? 1 : 0.6,
               }}
@@ -123,7 +119,7 @@ export function BrowserListWindow({ onOpen }: Props) {
                   {b.handoff ? ` · ${b.handoff.reason}` : ''}
                 </span>
               </span>
-              <span style={{ fontSize: 11, color: toneColor[label.tone], whiteSpace: 'nowrap' }}>{label.text}</span>
+              <span style={{ fontSize: 11, color: toneColor[label.tone], whiteSpace: 'nowrap' }}>{opening === b.browser_id ? 'opening…' : b.state === 'stopped' ? 'stopped · reopen' : label.text}</span>
             </button>
           );
         })}

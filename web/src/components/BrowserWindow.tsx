@@ -15,15 +15,12 @@
 // sent (debounced) as the new remote viewport — only by the human
 // controller, so two viewers never fight over the size.
 //
-// Frames tagged with an older generation than the last `ready`/`tabs`
-// info are still drawn (they are the newest picture we have), but the
-// generation is shown in the header so a stale picture after a
-// navigation is recognisable; the server's eviction handles denied
-// pages.
+// Frames from an old tab/navigation are discarded. Each input carries the
+// displayed tab and generation so the server can reject clicks on stale pixels.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Hand, Plus, RotateCw, X } from 'lucide-react';
-import { api, type BrowserInfo } from '../lib/api';
+import type { BrowserInfo } from '../lib/api';
 import { browserTitle, controlLabel } from './BrowserListWindow';
 
 interface Props {
@@ -61,12 +58,15 @@ export function BrowserWindow({ browserId }: Props) {
   const lastMetaRef = useRef<FrameMeta | null>(null);
   const objectUrlRef = useRef<string | null>(null);
 
-  const iControl = info?.control === 'human_control';
+  const activeTabRef = useRef<string | null>(null);
+  const generationRef = useRef(0);
+  const iControl = status === 'open' && info?.control === 'human_control' && info.human_by === viewerId;
 
   const send = useCallback((msg: Record<string, unknown>) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify(msg));
+    const meta = lastMetaRef.current;
+    ws.send(JSON.stringify({ ...(meta ? { frameTab: meta.tabId, generation: meta.generation } : {}), ...msg }));
   }, []);
 
   // ── socket ──────────────────────────────────────────────────────
@@ -91,7 +91,10 @@ export function BrowserWindow({ browserId }: Props) {
 
     function connect(): void {
       if (disposed) return;
-      const tabQ = tabId ? `&tab=${encodeURIComponent(tabId)}` : '';
+      const currentTab = activeTabRef.current;
+      const tabQ = currentTab ? `&tab=${encodeURIComponent(currentTab)}` : '';
+      lastMetaRef.current = null;
+      setFrame(null);
       const sock = new WebSocket(`${wsOrigin}/browser/attach?browser=${encodeURIComponent(browserId)}${tabQ}&viewer=${viewerId}`);
       sock.binaryType = 'arraybuffer';
       ws = sock;
@@ -107,15 +110,22 @@ export function BrowserWindow({ browserId }: Props) {
         if (ws !== sock) return;
         lastMsgAt = Date.now();
         if (ev.data instanceof ArrayBuffer) {
-          const view = new DataView(ev.data);
-          const hlen = view.getUint32(0);
-          const header = JSON.parse(new TextDecoder().decode(new Uint8Array(ev.data, 4, hlen))) as FrameMeta;
-          const blob = new Blob([new Uint8Array(ev.data, 4 + hlen)], { type: 'image/jpeg' });
-          const url = URL.createObjectURL(blob);
-          if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-          objectUrlRef.current = url;
-          lastMetaRef.current = header;
-          setFrame({ url, meta: header });
+          try {
+            if (ev.data.byteLength < 4) return;
+            const view = new DataView(ev.data);
+            const hlen = view.getUint32(0);
+            if (hlen > 65536 || hlen + 4 >= ev.data.byteLength) return;
+            const header = JSON.parse(new TextDecoder().decode(new Uint8Array(ev.data, 4, hlen))) as FrameMeta;
+            if (activeTabRef.current && header.tabId !== activeTabRef.current) return;
+            if (header.generation < generationRef.current) return;
+            if (header.cssWidth <= 0 || header.cssHeight <= 0) return;
+            const blob = new Blob([new Uint8Array(ev.data, 4 + hlen)], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = url;
+            lastMetaRef.current = header;
+            setFrame({ url, meta: header });
+          } catch { /* malformed or stale frame */ }
           return;
         }
         if (typeof ev.data !== 'string') return;
@@ -132,11 +142,21 @@ export function BrowserWindow({ browserId }: Props) {
         if (msg.type === 'ready' || msg.type === 'tabs') {
           const b = msg.browser as BrowserInfo;
           setInfo(b);
-          if (typeof msg.tabId === 'string') setTabId(msg.tabId);
+          if (typeof msg.tabId === 'string') {
+            activeTabRef.current = msg.tabId;
+            setTabId(msg.tabId);
+          }
+          const active = b.tabs.find((t) => t.tab_id === activeTabRef.current);
+          generationRef.current = active?.generation ?? 0;
+          if (lastMetaRef.current && (lastMetaRef.current.tabId !== activeTabRef.current || lastMetaRef.current.generation < generationRef.current)) {
+            lastMetaRef.current = null;
+            setFrame(null);
+          }
           return;
         }
         if (msg.type === 'control') {
-          setInfo((cur) => (cur ? { ...cur, control: (msg.control as { mode: BrowserInfo['control'] }).mode } : cur));
+          const control = msg.control as { mode: BrowserInfo['control']; humanBy?: string; handoff?: BrowserInfo['handoff'] };
+          setInfo((cur) => cur ? { ...cur, control: control.mode, human_by: control.humanBy, handoff: control.handoff } : cur);
           return;
         }
         if (msg.type === 'notice' || msg.type === 'error') {
@@ -149,6 +169,8 @@ export function BrowserWindow({ browserId }: Props) {
         ws = null;
         wsRef.current = null;
         if (ev.code === 1008 || ev.code === 4001) {
+          activeTabRef.current = null;
+          lastMetaRef.current = null;
           setStatus('closed');
           setDetail(ev.reason || `code ${ev.code}`);
           return;
@@ -293,21 +315,11 @@ export function BrowserWindow({ browserId }: Props) {
   };
 
   // ── control ─────────────────────────────────────────────────────
-  const takeOver = async () => {
-    try {
-      await api.browserControl(browserId, 'human');
-      inputRef.current?.focus();
-    } catch (err) {
-      setNotice((err as Error).message);
-    }
+  const takeOver = () => {
+    send({ type: 'control', mode: 'human' });
+    inputRef.current?.focus();
   };
-  const handBack = async () => {
-    try {
-      await api.browserControl(browserId, 'agent', info?.handoff?.id);
-    } catch (err) {
-      setNotice((err as Error).message);
-    }
-  };
+  const handBack = () => send({ type: 'control', mode: 'agent', handoffId: info?.handoff?.id });
 
   const label = info ? controlLabel(info) : null;
   const tabs = info?.tabs ?? [];
@@ -319,7 +331,7 @@ export function BrowserWindow({ browserId }: Props) {
         <span style={{ color: 'var(--text-2)' }}>{info ? browserTitle(info) : browserId}</span>
         {label && (
           <span style={{ color: label.tone === 'warn' ? 'var(--warn, #d29922)' : label.tone === 'info' ? 'var(--accent, #58a6ff)' : 'var(--text-3)' }}>
-            · {label.text}
+            · {iControl ? 'you control' : label.text}
           </span>
         )}
         {info?.handoff && info.control !== 'human_control' && (
@@ -330,11 +342,11 @@ export function BrowserWindow({ browserId }: Props) {
         <span style={{ flex: 1 }} />
         <span style={{ color: status === 'open' ? 'var(--ok, #3fb950)' : 'var(--text-3)' }}>{status === 'open' ? '● live' : status === 'connecting' ? '○ connecting…' : `○ ${detail ?? 'closed'}`}</span>
         {iControl ? (
-          <button type="button" onClick={() => void handBack()} className="browser-btn browser-btn-primary" title="Give control back to the agent (wakes it if it asked for you or if you changed something)">
+          <button type="button" onClick={handBack} className="browser-btn browser-btn-primary" title="Give control back to the agent (wakes it if it asked for you or if you changed something)">
             <Hand size={12} /> Hand back
           </button>
         ) : (
-          <button type="button" onClick={() => void takeOver()} className="browser-btn" title="Take control: your clicks and typing go to the page; the agent is paused">
+          <button type="button" disabled={status !== 'open'} onClick={takeOver} className="browser-btn" title="Take control: your clicks and typing go to the page; the agent is paused">
             <Hand size={12} /> Take over
           </button>
         )}
@@ -342,7 +354,7 @@ export function BrowserWindow({ browserId }: Props) {
       {/* tab bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderBottom: '1px solid var(--line)', overflowX: 'auto', fontSize: 11 }}>
         {tabs.map((t) => (
-          <span key={t.tab_id} className={`browser-tab${t.tab_id === tabId ? ' active' : ''}`} onClick={() => send({ type: 'tab', tabId: t.tab_id })} title={t.url}>
+          <span key={t.tab_id} className={`browser-tab${t.tab_id === tabId ? ' active' : ''}`} onClick={() => { lastMetaRef.current = null; setFrame(null); activeTabRef.current = t.tab_id; generationRef.current = t.generation; send({ type: 'tab', tabId: t.tab_id }); }} title={t.url}>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{t.title || t.url || 'about:blank'}</span>
             {iControl && (
               <X

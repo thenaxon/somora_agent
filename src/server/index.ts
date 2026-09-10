@@ -1,3 +1,5 @@
+import { resolveBrowserSession } from '../browser/session.ts';
+import { watchBrowserSnapshots } from '../browser/change-stream.ts';
 import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
@@ -3566,11 +3568,9 @@ function videoGenReady(): { ok: boolean; reason?: string } {
 }
 
 // ── Shared browser (src/browser/service.ts) ───────────────────────
-// Loopback-only like /tools. `POST /browser/op` is what the MCP tool
-// child calls for claude-cli/codex-cli turns (the Chromium lives in
-// this process); `GET /browser/status` feeds the web client's browser
-// list (stage 3); `POST /browser/:id/control` is the human take-over /
-// hand-back switch (stage 3 UI, testable now).
+// The MCP child calls /browser/op; Chromium lives in this process.
+// The web client shares /browser/stream across chat, taskbar and list
+// and sends control/input through its identified viewer WebSocket.
 
 app.post('/browser/op', async (c) => {
   if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);
@@ -3591,6 +3591,51 @@ app.get('/browser/status', async (c) => {
   const svc = getBrowserService();
   const browsers = await svc.listAll();
   return c.json({ enabled: true, headed: svc.headedPlan().mode, browsers, warnings: svc.warnings() });
+});
+
+// Authoritative snapshots restore pending handoffs on every reconnect.
+app.get('/browser/stream', (c) => streamSSEH2Safe(c, async (stream) => {
+  let finish!: () => void;
+  const done = new Promise<void>((resolve) => { finish = resolve; });
+  let stopped = false;
+  let unwatch = () => {};
+  let stopHeartbeat = () => {};
+  const close = () => {
+    if (stopped) return;
+    stopped = true;
+    unwatch();
+    stopHeartbeat();
+    stream.close();
+    finish();
+  };
+  stream.onAbort(close);
+  unwatch = watchBrowserSnapshots({
+    subscribe: (changed) => getBrowserService().onChange(changed),
+    read: async () => ({ enabled: config.browser.enabled, browsers: config.browser.enabled ? await getBrowserService().listAll() : [], warnings: getBrowserService().warnings() }),
+    send: async (snapshot) => {
+      // Bound stalled writes independently of the heartbeat.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          stream.writeSSE({ event: 'browsers', data: JSON.stringify(snapshot) }),
+          new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('browser stream timed out')), config.sse.publishTimeoutMs); }),
+        ]);
+      } finally { if (timer) clearTimeout(timer); }
+    },
+    failed: close,
+  });
+  stopHeartbeat = startSseHeartbeat(stream, { intervalMs: config.sse.heartbeatMs, deadAfterMs: config.sse.deadAfterMs, onDead: close });
+  await done;
+}));
+
+app.post('/browser/:id/restart', async (c) => {
+  if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);
+  try {
+    await getBrowserService().restartForViewer(c.req.param('id'));
+    return c.json({ ok: true });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 409);
+  }
 });
 
 app.post('/browser/:id/control', async (c) => {
@@ -3617,6 +3662,9 @@ app.post('/browser/:id/control', async (c) => {
 //                    control {mode:'human'|'agent'}
 // Input is applied only while THIS viewer holds human control.
 interface BrowserWsBag {
+  __closed?: boolean;
+  __messages?: Promise<void>;
+  __queued?: number;
   __hbTimer?: ReturnType<typeof setInterval>;
   __lastSeenAt?: number;
   __viewer?: ViewerSocket;
@@ -3650,7 +3698,9 @@ app.get(
         try {
           const { tabId } = await screencasts.attach(browserId, wantTab, viewer);
           raw.__tabId = tabId;
+          if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
           const info = await browserService.browserInfo(browserId);
+          if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
           ws.send(JSON.stringify({ type: 'ready', browser: info, tabId, viewerId }));
         } catch (err) {
           ws.close(1008, isBrowserOpError(err) ? err.message : String(err));
@@ -3693,9 +3743,10 @@ app.get(
       },
       async onMessage(evt, ws) {
         const raw = ws.raw as BrowserWsBag | undefined;
-        if (!raw) return;
+        if (!raw || raw.__closed) return;
         raw.__lastSeenAt = Date.now();
         if (typeof evt.data !== 'string') return;
+        if (Buffer.byteLength(evt.data, 'utf8') > 64 * 1024) { ws.close(1009, 'input too large'); return; }
         let msg: { type?: string; [k: string]: unknown };
         try {
           msg = JSON.parse(evt.data) as typeof msg;
@@ -3703,63 +3754,82 @@ app.get(
           return;
         }
         if (msg.type === 'pong' || typeof msg.type !== 'string') return;
-        const reply = (m: Record<string, unknown>) => {
+        if ((raw.__queued ?? 0) >= 64) { ws.close(1008, 'too many pending inputs'); return; }
+        raw.__queued = (raw.__queued ?? 0) + 1;
+        const previous = raw.__messages ?? Promise.resolve();
+        const work = previous.catch(() => {}).then(async () => {
+          if (raw.__closed) return;
+          const reply = (m: Record<string, unknown>) => {
+            try {
+              ws.send(JSON.stringify(m));
+            } catch {
+              /* closed */
+            }
+          };
           try {
-            ws.send(JSON.stringify(m));
-          } catch {
-            /* closed */
+            if (msg.type === 'control') {
+              if (msg.mode !== 'human' && msg.mode !== 'agent') throw new Error('invalid control mode');
+              const mode = msg.mode;
+              const control = await browserService.setControl(browserId, mode, { by: viewerId, ...(typeof msg.handoffId === 'string' ? { handoffId: msg.handoffId } : {}) });
+              reply({ type: 'control', control });
+              return;
+            }
+            if (msg.type === 'tab' && typeof msg.tabId === 'string') {
+              // Switch the streamed tab: detach from the old hub, attach to the new.
+              const viewer = raw.__viewer!;
+              if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
+              const { tabId } = await screencasts.attach(browserId, msg.tabId, viewer);
+              raw.__tabId = tabId;
+              if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
+              reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
+              return;
+            }
+            await browserService.withBrowserLock(browserId, async () => {
+              if (raw.__closed) return;
+              if (!browserService.humanControls(browserId, viewerId)) {
+                reply({ type: 'notice', text: 'Take over the browser first ("Take over") to click, type or navigate.' });
+                return;
+              }
+              if (msg.type === 'navigate' && typeof msg.url === 'string' && raw.__tabId) {
+                await browserService.humanNavigate(browserId, raw.__tabId, msg.url);
+                return;
+              }
+              if (msg.type === 'newtab') {
+                const tabId = await browserService.humanNewTab(browserId, viewerId);
+                const viewer = raw.__viewer!;
+                if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
+                await screencasts.attach(browserId, tabId, viewer);
+                raw.__tabId = tabId;
+                if (raw.__closed) { screencasts.detach(browserId, tabId, viewer); return; }
+                reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
+                return;
+              }
+              if (msg.type === 'closetab' && typeof msg.tabId === 'string') {
+                await browserService.humanCloseTab(browserId, msg.tabId);
+                return;
+              }
+              if (!raw.__tabId) return;
+              const { page, generation } = browserService.viewerPage(browserId, raw.__tabId);
+              if (msg.frameTab !== raw.__tabId || msg.generation !== generation) {
+                reply({ type: 'notice', text: 'The page changed — wait for a fresh picture before acting.' });
+                return;
+              }
+              const hub = await screencasts.attach(browserId, raw.__tabId, raw.__viewer!);
+              browserService.markHumanActivity(browserId, msg.type!);
+              const notice = await applyViewerInput(page, hub.hub.session, msg as { type: string });
+              if (notice) reply({ type: 'notice', text: notice });
+            });
+          } catch (err) {
+            reply({ type: 'error', text: isBrowserOpError(err) ? err.message : (err as Error).message.split('\n')[0] });
           }
-        };
-        try {
-          if (msg.type === 'control') {
-            const mode = msg.mode === 'human' ? 'human' : 'agent';
-            const control = await browserService.setControl(browserId, mode, { by: viewerId, ...(typeof msg.handoffId === 'string' ? { handoffId: msg.handoffId } : {}) });
-            reply({ type: 'control', control });
-            return;
-          }
-          if (msg.type === 'tab' && typeof msg.tabId === 'string') {
-            // Switch the streamed tab: detach from the old hub, attach to the new.
-            const viewer = raw.__viewer!;
-            if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
-            const { tabId } = await screencasts.attach(browserId, msg.tabId, viewer);
-            raw.__tabId = tabId;
-            reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
-            return;
-          }
-          if (!browserService.humanControls(browserId, viewerId)) {
-            reply({ type: 'notice', text: 'Take over the browser first ("Take over") to click, type or navigate.' });
-            return;
-          }
-          if (msg.type === 'navigate' && typeof msg.url === 'string' && raw.__tabId) {
-            await browserService.humanNavigate(browserId, raw.__tabId, msg.url);
-            return;
-          }
-          if (msg.type === 'newtab') {
-            const tabId = await browserService.humanNewTab(browserId, viewerId);
-            const viewer = raw.__viewer!;
-            if (raw.__tabId) screencasts.detach(browserId, raw.__tabId, viewer);
-            await screencasts.attach(browserId, tabId, viewer);
-            raw.__tabId = tabId;
-            reply({ type: 'ready', browser: await browserService.browserInfo(browserId), tabId, viewerId });
-            return;
-          }
-          if (msg.type === 'closetab' && typeof msg.tabId === 'string') {
-            await browserService.humanCloseTab(browserId, msg.tabId);
-            return;
-          }
-          if (!raw.__tabId) return;
-          const { page } = browserService.viewerPage(browserId, raw.__tabId);
-          const hub = await screencasts.attach(browserId, raw.__tabId, raw.__viewer!);
-          browserService.markHumanActivity(browserId, msg.type);
-          const notice = await applyViewerInput(page, hub.hub.session, msg as { type: string });
-          if (notice) reply({ type: 'notice', text: notice });
-        } catch (err) {
-          reply({ type: 'error', text: isBrowserOpError(err) ? err.message : (err as Error).message.split('\n')[0] });
-        }
+        });
+        raw.__messages = work;
+        try { await work; } finally { raw.__queued = (raw.__queued ?? 1) - 1; }
       },
       onClose(_evt, ws) {
         const raw = ws.raw as BrowserWsBag | undefined;
         if (!raw) return;
+        raw.__closed = true;
         if (raw.__hbTimer) clearInterval(raw.__hbTimer);
         if (raw.__changeTimer) clearTimeout(raw.__changeTimer);
         raw.__unsub?.();
@@ -5670,9 +5740,12 @@ if (config.videoGen?.enabled) {
 // on hand-back goes through the same lock + runChatTurn path as a
 // subagent attention wake, so it streams live and respects the queue.
 const browserService = configureBrowserService(config.browser, {
+  resolveSession: resolveBrowserSession,
   dispatchWakeTurn: async ({ agent, session, text }) => {
+    session = await resolveBrowserSession(agent, session);
     const release = await acquireSessionLock(agent, session, { priority: 'agent' });
     try {
+      await resolveBrowserSession(agent, session);
       await runChatTurn({
         agent,
         session,
@@ -5686,7 +5759,7 @@ const browserService = configureBrowserService(config.browser, {
     }
   },
 });
-void browserService.init().catch((err) => logger.error({ msg: 'browser.service_init_failed', err: String(err) }));
+await browserService.init();
 const screencasts = new ScreencastRegistry(browserService);
 
 configureSubagentAttention({

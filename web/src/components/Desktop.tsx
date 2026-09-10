@@ -37,7 +37,7 @@ import { useWindowManager } from '../hooks/useWindowManager';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { useWikiEnabled } from '../hooks/useWikiEnabled';
 import { useMediaEnabled } from '../hooks/useMediaEnabled';
-import { useBrowserEnabled } from '../hooks/useBrowserEnabled';
+import { useBrowsers } from './BrowserProvider';
 import { ActivityProvider } from './ActivityProvider';
 import type { AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
@@ -50,7 +50,9 @@ export function Desktop() {
   const chatCtx = useChatContext();
   const wikiEnabled = useWikiEnabled();
   const media = useMediaEnabled();
-  const browserEnabled = useBrowserEnabled();
+  const browserState = useBrowsers();
+  const browserEnabled = browserState.enabled;
+  const browserWaiting = browserState.browsers.filter((b) => b.handoff);
 
   // Cross-agent activity feed: covers streaming-dots for agents whose
   // chat window the user has NOT opened (ChatProvider only knows about
@@ -217,7 +219,7 @@ export function Desktop() {
             node: (
               <AppTile
                 label="browser"
-                icon={<Globe size={26} />}
+                icon={<Globe size={26} color={browserWaiting.length ? 'var(--warn, #d29922)' : undefined} />}
                 active={activeApps.has('browser')}
                 onClick={() => wm.openBrowserList()}
               />
@@ -313,6 +315,7 @@ export function Desktop() {
                   pinnedMsgIds={wm.pinnedMsgIds}
                   onPin={wm.openPinNote}
                   onUnpin={wm.unpinMessage}
+                  onOpenBrowser={wm.openBrowser}
                 />
               </Window>
             );
@@ -570,6 +573,7 @@ export function Desktop() {
         />
       )}
       <Taskbar
+        onOpenBrowsers={wm.openBrowserList}
         windows={wm.windows}
         focusedId={wm.focusedId}
         agents={agents}

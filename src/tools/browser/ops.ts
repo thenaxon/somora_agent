@@ -7,6 +7,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config } from '../../config/types.ts';
+import { isToolAllowed } from '../gating.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import { effectiveWorkspace } from '../../server/workspace.ts';
 import { BrowserOpError, getBrowserService, type ControlMode, type TabInfo } from '../../browser/service.ts';
@@ -65,6 +66,9 @@ const HINTS: Record<string, string> = {
 export async function runBrowserOp(ctx: BrowserOpContext, input: BrowserOp): Promise<BrowserOpResult> {
   const svc = getBrowserService();
   try {
+    if (!ctx.config.browser.enabled) throw new BrowserOpError('BROWSER_DISABLED', 'browser.enabled is false');
+    const persona = await loadPersona(ctx.agent);
+    if (!persona || !isToolAllowed('browser', 'browser', persona.toolGating)) throw new BrowserOpError('BROWSER_NOT_ALLOWED', 'browser ability is not allowed for this agent');
     switch (input.op) {
       case 'open': {
         const r = await svc.open(ctx.agent, ctx.session, {

@@ -1,3 +1,4 @@
+import { useBrowsers } from './BrowserProvider';
 // Bottom taskbar. Layout: somora-logo + window-list (one button per
 // open window, color-tinted per agent) + tools (auto-arrange / save /
 // restore) + live host CPU/mem from `/host-stats` + clock.
@@ -14,6 +15,7 @@ import { resolveAgentColor } from '../lib/colors';
 import { sessionSlug } from '../lib/session-label';
 
 interface Props {
+  onOpenBrowsers?: () => void;
   windows: WindowState[];
   focusedId: string | null;
   agents: AgentInfo[];
@@ -25,6 +27,7 @@ interface Props {
 
 export function Taskbar({
   windows,
+  onOpenBrowsers,
   focusedId,
   agents,
   onFocus,
@@ -32,6 +35,8 @@ export function Taskbar({
   onSaveLayout,
   onRestoreLayout,
 }: Props) {
+  const browserState = useBrowsers();
+  const waiting = browserState.browsers.filter((b) => b.handoff);
   const [clock, setClock] = useState(new Date());
   const [version, setVersion] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -218,6 +223,7 @@ export function Taskbar({
         </div>
       </div>
 
+      {waiting.length > 0 && <button type="button" className="browser-attention" onClick={onOpenBrowsers} title={waiting.map((b) => `${b.handoff!.agent}: ${b.handoff!.reason}`).join('\n')}>Browser · {waiting.length} waiting for you</button>}
       <div className="taskbar-windows">
         {windows.map((w) => {
           const agent =

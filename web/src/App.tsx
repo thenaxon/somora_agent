@@ -7,6 +7,7 @@
 
 import { useEffect } from 'react';
 import { ChatProvider } from './components/ChatProvider';
+import { BrowserProvider } from './components/BrowserProvider';
 import { Desktop } from './components/Desktop';
 
 // Document-level mouseup-capture handler for Markdown links in chat
@@ -63,7 +64,7 @@ export default function App() {
   useGlobalMarkdownLinkOpener();
   return (
     <ChatProvider>
-      <Desktop />
+      <BrowserProvider><Desktop /></BrowserProvider>
     </ChatProvider>
   );
 }

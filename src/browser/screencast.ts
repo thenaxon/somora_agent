@@ -66,12 +66,15 @@ function encodeFrame(header: FrameHeader, jpeg: Buffer): Buffer {
   return Buffer.concat([len, h, jpeg]);
 }
 
-class ScreencastHub {
+export class ScreencastHub {
   private cdp: CDPSession | null = null;
   private viewers = new Set<ViewerSocket>();
   private seq = 0;
   private started = false;
   private stopping = false;
+  private lifecycle: Promise<void> = Promise.resolve();
+  private epoch = -1;
+  private ackTimers = new Set<ReturnType<typeof setTimeout>>();
 
   constructor(
     readonly browserId: string,
@@ -81,32 +84,61 @@ class ScreencastHub {
     private quality: number,
     private maxWidth: number,
     private maxHeight: number,
+    private maxFps = 15,
   ) {}
 
   get size(): number {
     return this.viewers.size;
   }
 
-  async add(v: ViewerSocket): Promise<void> {
-    this.viewers.add(v);
-    if (!this.started) await this.start();
+  private serial(fn: () => Promise<void>): Promise<void> {
+    const next = this.lifecycle.catch(() => {}).then(fn);
+    this.lifecycle = next;
+    return next;
   }
 
-  remove(v: ViewerSocket): void {
+  async add(v: ViewerSocket): Promise<void> {
+    this.viewers.add(v);
+    try {
+      await this.serial(async () => {
+        if (this.viewers.size && (!this.cdp || this.epoch !== this.generationOf())) {
+          await this.stop();
+          await this.start();
+        }
+      });
+    } catch (error) { this.viewers.delete(v); throw error; }
+  }
+
+  async remove(v: ViewerSocket): Promise<void> {
     this.viewers.delete(v);
-    if (this.viewers.size === 0) void this.stop();
+    await this.serial(async () => { if (!this.viewers.size) await this.stop(); });
+  }
+
+  refresh(): void {
+    void this.serial(async () => {
+      if (this.viewers.size && this.epoch !== this.generationOf()) {
+        await this.stop();
+        await this.start();
+      }
+    }).catch(() => this.closeAll(4001, 'capture stopped'));
   }
 
   private async start(): Promise<void> {
     this.started = true;
+    const epoch = this.generationOf();
+    this.epoch = epoch;
     const cdp = await this.page.context().newCDPSession(this.page);
     this.cdp = cdp;
     cdp.on('Page.screencastFrame', (ev: { data: string; sessionId: number; metadata: { deviceWidth: number; deviceHeight: number; scrollOffsetX: number; scrollOffsetY: number; timestamp?: number } }) => {
+      if (this.cdp !== cdp || this.stopping || this.generationOf() !== epoch) {
+        void cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }).catch(() => {});
+        return;
+      }
       const jpeg = Buffer.from(ev.data, 'base64');
       const frame = encodeFrame(
         {
           tabId: this.tabId,
-          generation: this.generationOf(),
+          generation: epoch,
           seq: ++this.seq,
           url: this.page.url(),
           cssWidth: ev.metadata.deviceWidth,
@@ -126,23 +158,29 @@ class ScreencastHub {
         }
       }
       // Pace the source: the next frame is produced only after the ack.
-      setTimeout(() => {
+      const timer = setTimeout(() => {
+        this.ackTimers.delete(timer);
         cdp.send('Page.screencastFrameAck', { sessionId: ev.sessionId }).catch(() => {});
-      }, FRAME_INTERVAL_MS);
+      }, Math.max(FRAME_INTERVAL_MS, Math.ceil(1000 / this.maxFps)));
+      this.ackTimers.add(timer);
     });
-    await cdp.send('Page.startScreencast', {
-      format: 'jpeg',
-      quality: this.quality,
-      maxWidth: this.maxWidth,
-      maxHeight: this.maxHeight,
-      everyNthFrame: 1,
-    });
+    try {
+      await cdp.send('Page.startScreencast', {
+        format: 'jpeg',
+        quality: this.quality,
+        maxWidth: this.maxWidth,
+        maxHeight: this.maxHeight,
+        everyNthFrame: 1,
+      });
+    } catch (error) { await this.stop(); throw error; }
     logger.info({ msg: 'browser.screencast_start', browser: this.browserId, tab: this.tabId });
   }
 
   private async stop(): Promise<void> {
     if (this.stopping || !this.cdp) return;
     this.stopping = true;
+    for (const timer of this.ackTimers) clearTimeout(timer);
+    this.ackTimers.clear();
     try {
       await this.cdp.send('Page.stopScreencast').catch(() => {});
       await this.cdp.detach().catch(() => {});
@@ -168,7 +206,7 @@ class ScreencastHub {
       }
     }
     this.viewers.clear();
-    await this.stop();
+    await this.serial(() => this.stop());
   }
 }
 
@@ -203,10 +241,15 @@ export class ScreencastRegistry {
         cfg.stream.quality,
         cfg.viewport.width,
         cfg.viewport.height,
+        cfg.stream.maxFps,
       );
       this.hubs.set(k, hub);
     }
-    await hub.add(viewer);
+    try { await hub.add(viewer); }
+    catch (error) {
+      if (hub.size === 0 && this.hubs.get(k) === hub) this.hubs.delete(k);
+      throw error;
+    }
     return { tabId: target.tabId, page: target.page, hub };
   }
 
@@ -214,8 +257,9 @@ export class ScreencastRegistry {
     const k = this.key(browserId, tabId);
     const hub = this.hubs.get(k);
     if (!hub) return;
-    hub.remove(viewer);
-    if (hub.size === 0) this.hubs.delete(k);
+    void hub.remove(viewer).then(() => {
+      if (hub.size === 0 && this.hubs.get(k) === hub) this.hubs.delete(k);
+    });
   }
 
   private onBrowserChange(browserId: string): void {
@@ -224,6 +268,7 @@ export class ScreencastRegistry {
       if (!k.startsWith(`${browserId}|`)) continue;
       try {
         this.service.viewerPage(browserId, hub.tabId);
+        hub.refresh();
       } catch {
         void hub.closeAll(4001, 'tab closed');
         this.hubs.delete(k);

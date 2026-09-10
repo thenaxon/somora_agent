@@ -1945,8 +1945,10 @@ Fresh shell (no tmux session). Same binary/text frame protocol as
 
 ## Browser — shared managed Chromium
 
-Loopback-only like `/tools`. See [browser.md](browser.md). All routes
-answer `503` while `browser.enabled` is false.
+Served by the somora web server. See [browser.md](browser.md). Mutating
+HTTP routes answer `503` while `browser.enabled` is false; status and
+the change stream return `{enabled:false,browsers:[],warnings:[]}`.
+The viewer WebSocket refuses attachment when disabled.
 
 ### `POST /browser/op`
 
@@ -1961,14 +1963,29 @@ refusal.
 ### `GET /browser/status`
 
 `{ enabled, headed, browsers: [{ browser_id, profile, ephemeral, state,
-control, handoff?, tabs: [{ tab_id, url, title, agent, session?,
+control, human_by?, handoff?, tabs: [{ tab_id, url, title, agent, session?,
 generation, emulation? }], last_used, headed? }], warnings }` — every
-running browser plus stopped ones with a pending handoff. `control` is
+running browser plus previously stopped profiles. `control` is
 `agent_control`, `handoff_requested`, `human_control` or `paused`.
 `headed` is the host plan for `browser.headed` (`headless`, `display`,
 `xvfb`, `unavailable`); `warnings` lists what the operator must fix
 (no Chromium found, headed configured but no display and no Xvfb).
 `emulation` shows a tab's `device` / `locale` from `open`.
+
+### `GET /browser/stream`
+
+SSE events `browsers` contain `{enabled,browsers,warnings}` with the same
+browser entries as `/browser/status`. Every connection starts with a
+complete snapshot; later events replace it. `heartbeat` follows the
+normal SSE liveness settings. Slow readers receive coalesced snapshots;
+stalled writes terminate the connection.
+
+### `POST /browser/:id/restart`
+
+Explicitly reopen a known stopped browser with a blank page and the
+same profile. No old navigation or input is replayed. Pending handoffs
+remain pending. Returns `{ok:true}` or `409` with `{error}` when recovery
+is refused (unknown browser or removed shared-profile configuration).
 
 ### `POST /browser/:id/control`
 
@@ -1977,7 +1994,12 @@ control: every agent op on that browser is refused until handed back.
 `agent` hands it back; with a pending handoff the requesting agent is
 woken once in its session (pass the `handoffId` from the status so a
 stale button press after a newer handoff does not wake twice). `404`
-when the browser is not running, `409` on a state conflict.
+when the browser is not running, `409` on a state conflict. A mismatched
+handoff ID is refused; a duplicate completed ID does not release a newer
+manual takeover. With `by`, a different current controller cannot be
+handed back. The web client sends control over its viewer WebSocket so
+the identity matches subsequent input. Wake dispatch is not a durable
+queue; see the recovery limitations in [browser.md](browser.md).
 
 ### `GET /browser/attach` (WebSocket)
 
@@ -1985,7 +2007,7 @@ when the browser is not running, `409` on a state conflict.
 client's browser window. Binary frames carry one JPEG each:
 `[u32 BE header length][JSON header][JPEG]`, header `{ tabId,
 generation, seq, url, cssWidth, cssHeight, scrollX, scrollY, ts }`.
-Frames are ack-paced (~20 fps max) and skipped for a viewer whose
+Frames are ack-paced (`browser.stream.maxFps`, default 15, at most 20 fps) and skipped for a viewer whose
 socket has more than 2 MB pending. Text frames (JSON):
 
 - server → viewer: `ping` (answer `{"type":"pong"}`; 80 s of silence
@@ -2003,9 +2025,14 @@ socket has more than 2 MB pending. Text frames (JSON):
   `key` `{key, ctrl?, alt?, shift?, meta?, action?}` (Playwright key
   names, e.g. `Enter`, `Control+a`), `back`, `forward`, `reload`. Input
   from a viewer without control gets a `notice`, nothing is applied.
+  Input other than `navigate`, `newtab`, `closetab`, `tab` and `control`
+  must also carry `frameTab` and `generation` from the displayed frame;
+  obsolete metadata is refused. Messages above 64 KiB and queues above
+  64 commands close the connection.
 
 Close codes: `1008` bad request (unknown browser, disabled), `4000`
-heartbeat timeout, `4001` tab closed, `1012` server shutdown.
+heartbeat timeout, `4001` tab closed, `1009` oversized input, `1012` server
+shutdown. `1008` also covers excessive pending input.
 
 ## Sentinel — proactive triggers
 

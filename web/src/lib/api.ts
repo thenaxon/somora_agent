@@ -505,6 +505,7 @@ export interface BrowserInfo {
   ephemeral: boolean;
   state: 'running' | 'stopped';
   control: BrowserControlMode;
+  human_by?: string;
   handoff?: BrowserHandoff;
   tabs: BrowserTabInfo[];
   last_used: number;
@@ -513,6 +514,11 @@ export interface BrowserInfo {
 }
 
 export const api = {
+  browserRestart: async (browserId: string) => {
+    const res = await fetch(`/browser/${encodeURIComponent(browserId)}/restart`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+  },
   /** Shared browser (docs/browser.md): running browsers + control state. */
   browserStatus: () => getJson<{ enabled: boolean; headed?: 'headless' | 'display' | 'xvfb' | 'unavailable'; browsers: BrowserInfo[]; warnings?: string[] }>('/browser/status'),
   browserControl: async (browserId: string, mode: 'human' | 'agent', handoffId?: string) => {

@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync, readdirSync } from 'node:fs';
@@ -40,7 +40,7 @@ function app(): Promise<{ server: Server; base: string }> {
         return send('<h1>One-time code</h1><form method="GET" action="/login"><label>Code <input name="otp"></label><button type="submit">Verify</button></form>');
       }
       if (url.pathname === '/login') {
-        if (url.searchParams.get('otp') === '123456') return send('<h1>Welcome</h1><p id="who">logged in</p>', { 'Set-Cookie': 'session=ok; Path=/' });
+        if (url.searchParams.get('otp') === '123456') return send('<h1>Welcome</h1><p id="who">logged in</p>', { 'Set-Cookie': 'session=ok; Path=/; Max-Age=3600' });
         return send('<h1>Wrong code</h1>');
       }
       if (url.pathname === '/redirect-private') {
@@ -198,6 +198,64 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
     assert.equal(wakes.length, before + 1);
   });
 
+  await t.test('stale hand-back preserves newer request; concurrent return wakes once', async () => {
+    const old = await svc.requestHandoff('naxon', 'main', { reason: 'first' });
+    await svc.setControl('agent:naxon', 'agent', { handoffId: old.handoff_id });
+    const current = await svc.requestHandoff('naxon', 'main', { reason: 'second' });
+    await assert.rejects(svc.setControl('agent:naxon', 'agent', { handoffId: old.handoff_id }), /stale handoff/);
+    assert.equal((await svc.browserInfo('agent:naxon')).handoff?.id, current.handoff_id);
+    const before = wakes.length;
+    await Promise.all([1, 2, 3].map(() => svc.setControl('agent:naxon', 'agent', { handoffId: current.handoff_id })));
+    assert.equal(wakes.length, before + 1);
+  });
+
+  await t.test('one human controller, duplicate hand-back cannot release a later takeover', async () => {
+    const h = await svc.requestHandoff('naxon', 'main', { reason: 'test' });
+    await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
+    await svc.setControl('agent:naxon', 'human', { by: 'viewer-a' });
+    assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), true);
+    assert.equal(svc.humanControls('agent:naxon', 'viewer-b'), false);
+    assert.equal((await svc.browserInfo('agent:naxon')).human_by, 'viewer-a');
+    await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
+    assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), true);
+    await assert.rejects(svc.setControl('agent:naxon', 'agent', { by: 'viewer-b' }), /another viewer/);
+    await svc.setControl('agent:naxon', 'agent', { by: 'viewer-a' });
+  });
+
+  await t.test('takeover waits for accepted work and rejects queued agent actions', async () => {
+    let release!: () => void;
+    const pending = svc.withBrowserLock('agent:naxon', () => new Promise<void>((r) => { release = r; }));
+    await new Promise((r) => setImmediate(r));
+    const takeover = svc.setControl('agent:naxon', 'human', { by: 'viewer-a' });
+    const action = svc.snapshot('naxon', { tab: 't1' });
+    const rejection = assert.rejects(action, /BROWSER_HUMAN_CONTROL/);
+    assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), false);
+    release();
+    await pending;
+    await takeover;
+    await rejection;
+    await svc.setControl('agent:naxon', 'agent', { by: 'viewer-a' });
+  });
+
+  await t.test('failed state write keeps the handoff and does not wake the agent', async () => {
+    const handoff = await svc.requestHandoff('naxon', 'main', { reason: 'disk failure test' });
+    await svc.setControl('agent:naxon', 'human', { by: 'viewer-a' });
+    const before = wakes.length;
+    mkdirSync(`${BrowserService.statePath}.tmp`); // writeFile must refuse a directory
+    try {
+      await assert.rejects(svc.setControl('agent:naxon', 'agent', { handoffId: handoff.handoff_id, by: 'viewer-a' }));
+      assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), true);
+      assert.equal((await svc.browserInfo('agent:naxon')).handoff?.id, handoff.handoff_id);
+      assert.equal(wakes.length, before);
+    } finally { rmSync(`${BrowserService.statePath}.tmp`, { recursive: true }); }
+    await svc.setControl('agent:naxon', 'agent', { handoffId: handoff.handoff_id, by: 'viewer-a' });
+    assert.equal(wakes.length, before + 1);
+  });
+
+  await t.test('explicit tab lookup never silently switches to another tab', async () => {
+    assert.throws(() => svc.viewerPage('agent:naxon', 'missing-tab'), /BROWSER_TAB_NOT_FOUND/);
+  });
+
   await t.test('stop keeps the profile; ephemeral is separate', async () => {
     const e = await svc.open('naxon', 'main', { url: `${base}/`, ephemeral: true });
     assert.equal(e.browser_id, 'agent:naxon:tmp');
@@ -205,7 +263,40 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
     assert.match(s.snapshot, /heading "Sign in"/, 'ephemeral profile has no cookie');
     const stopped = await svc.stop('naxon');
     assert.ok(stopped.stopped);
+    const resumed = await svc.open('naxon', 'main', { url: `${base}/` });
+    assert.equal(resumed.control, 'agent_control', 'an explicit open resumes a cleanly stopped profile');
+    assert.match((await svc.snapshot('naxon', { tab: resumed.tab.tab_id })).snapshot, /Welcome back/);
   });
+});
+
+test('restart restores handoff without replay; explicit recovery and crash are visible', { skip: chromium.path ? false : 'no Chromium' }, async (t) => {
+  const { server, base } = await app();
+  const wakes: unknown[] = [];
+  const first = new BrowserService(cfg as never, {});
+  await first.init();
+  await first.open('recovery', 'main', { url: base });
+  const h = await first.requestHandoff('recovery', 'main', { reason: 'test OTP' });
+  await first.setControl('agent:recovery', 'human', { by: 'old-viewer' });
+  await first.shutdown();
+  const next = new BrowserService(cfg as never, { dispatchWakeTurn: async (w) => { wakes.push(w); } });
+  t.after(async () => { await next.shutdown(); server.close(); });
+  await next.init();
+  let info = (await next.listAll()).find((b) => b.browser_id === 'agent:recovery')!;
+  assert.equal(info.state, 'stopped');
+  assert.equal(info.handoff?.id, h.handoff_id);
+  assert.equal(wakes.length, 0);
+  await next.restartForViewer('agent:recovery');
+  info = await next.browserInfo('agent:recovery');
+  assert.equal(info.control, 'handoff_requested');
+  assert.equal(info.tabs[0]?.url, 'about:blank');
+  await next.setControl('agent:recovery', 'human', { by: 'new-viewer' });
+  await next.setControl('agent:recovery', 'agent', { by: 'new-viewer', handoffId: h.handoff_id });
+  assert.equal(wakes.length, 1);
+  const page = next.viewerPage('agent:recovery').page;
+  await page.context().close(); // Chromium disappearance, not the service stop path
+  info = (await next.listAll()).find((b) => b.browser_id === 'agent:recovery')!;
+  assert.equal(info.state, 'stopped');
+  assert.equal(info.handoff, undefined, 'completed request must not resurrect');
 });
 
 test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb', { skip: chromium.path ? false : 'no Chromium on this host' }, async (t) => {
@@ -228,7 +319,7 @@ test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb
     const svc = new BrowserService(cfg as never, {});
     await svc.init();
     try {
-      const phone = await svc.open('jarvis', 'main', { url: `${base}/`, device: 'iPhone 15', locale: 'de-AT' });
+      const phone = await svc.open('emulation', 'main', { url: `${base}/`, device: 'iPhone 15', locale: 'de-AT' });
       assert.deepEqual(phone.tab.emulation, { device: 'iPhone 15', locale: 'de-AT' });
       const p1 = svc.viewerPage(phone.browser_id, phone.tab.tab_id).page;
       const a = await p1.evaluate(() => ({ ua: navigator.userAgent, w: window.innerWidth, touch: navigator.maxTouchPoints > 0, lang: navigator.language, dpr: window.devicePixelRatio }));
@@ -237,7 +328,7 @@ test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb
       assert.equal(a.touch, true);
       assert.equal(a.lang, 'de-AT');
       assert.equal(a.dpr, 3);
-      const plain = await svc.open('jarvis', 'main', { url: `${base}/` });
+      const plain = await svc.open('emulation', 'main', { url: `${base}/` });
       const p2 = svc.viewerPage(plain.browser_id, plain.tab.tab_id).page;
       const b = await p2.evaluate(() => ({ ua: navigator.userAgent, w: window.innerWidth, touch: navigator.maxTouchPoints > 0 }));
       assert.doesNotMatch(b.ua, /iPhone/);
@@ -245,7 +336,7 @@ test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb
       assert.equal(b.touch, false);
       assert.equal(plain.tab.emulation, undefined);
       // (tab cap is 2 in this cfg — reuse the plain tab for the negative case)
-      await assert.rejects(svc.open('jarvis', 'main', { url: `${base}/`, tab: plain.tab.tab_id, device: 'Nokia 3310' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_ACTION_FAILED' && /iPhone 15/.test(e.message));
+      await assert.rejects(svc.open('emulation', 'main', { url: `${base}/`, tab: plain.tab.tab_id, device: 'Nokia 3310' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_ACTION_FAILED' && /iPhone 15/.test(e.message));
     } finally {
       await svc.shutdown();
     }
