@@ -444,7 +444,7 @@ providers:
 # Compaction tunables (DECISION #21). All optional — built-in defaults apply
 # when omitted. SOMORA_COMPACTION_* env vars override these for ops/CI.
 # compaction:
-#   triggerRatio: 0.8          # compact when context >= 80% of window
+#   triggerRatio: 0.8          # compact at 80% of the input budget (window minus the answer)
 #   safetyCushionPairs: 4      # keep N most-recent user/assistant pairs uncompacted
 #   modelOverride: opus        # force a specific worker model (alias or provider/id)
 #   workers: [small-local, big-local, opus]   # who may summarise, in the order they are tried.

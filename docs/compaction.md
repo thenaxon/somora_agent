@@ -15,7 +15,7 @@ Related: [setup.md → Tunables](setup.md#tunables) (the knobs),
 
 | | who compacts | when | what you see |
 |---|---|---|---|
-| `openai-compatible` | **somora** | before a turn, when the estimated prompt reaches `triggerRatio × contextWindow` (default 0.8) | a `context compacted` row when the reactive path ran; otherwise nothing — the summary is invisible, the recent pairs are verbatim |
+| `openai-compatible` | **somora** | before a turn, when the prompt reaches `triggerRatio × inputBudget` (default 0.8; the budget is the window minus the answer, and the number is the one the provider measured last) | a `context compacted` row when the reactive path ran; otherwise nothing — the summary is invisible, the recent pairs are verbatim |
 | `claude-cli`, `codex-cli`, `grok-cli` | **the CLI itself**, inside its own session/thread | at the CLI's own threshold (codex: its server-delivered session cap) | nothing from somora; the engine's own compaction is opaque to it |
 
 somora's history file (`sessions/<id>.jsonl`) is never shortened by
@@ -215,7 +215,7 @@ native API window of the model:
 
 ```yaml
 compaction:
-  triggerRatio: 0.8           # fraction of contextWindow (openai-compatible only)
+  triggerRatio: 0.8           # fraction of the input budget (openai-compatible only)
   safetyCushionPairs: 4       # most-recent exchanges never summarised
   # workers: [gemma4small, deep4flash, glm]   # who may summarise, in the order they are tried
   # modelOverride: gemma4big  # pin the summariser (any engine with a one-shot path)

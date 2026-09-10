@@ -577,10 +577,13 @@ promptBudgets:                # soft caps for static prompt text — warnings on
   personaTotalChars: 14000    # the three together — shown in the web Agent window
 
 compaction:
-  triggerRatio: 0.8           # fraction of context window
+  triggerRatio: 0.8           # fraction of the input budget (window minus the answer)
   safetyCushionPairs: 4       # most-recent turns kept uncompacted
   # modelOverride: opus       # force a specific compaction worker model
-  # The trigger works off somora's own token ESTIMATE. When the backend
+  # workers: [big-local, small-local]   # who may summarise, in the order they are tried
+  # The trigger works off the token count the provider reported for the
+  # last request, and off somora's own ESTIMATE only until there is one
+  # (new session, model switch, provider without usage). When the backend
   # nevertheless rejects a prompt as too long (400 "Prompt too long",
   # "maximum context length", oMLX's prefill memory guard — typical after
   # switching a long session from a 1M-window model to a 131k one), the
@@ -590,8 +593,12 @@ compaction:
   # Compaction workers are picked from models whose engine has a one-shot
   # path (claude-cli, codex-cli, openai-compatible): the smallest
   # contextWindow that fits the range × 1.3 — which can be a
-  # subscription-backed CLI model. Mechanics, and what contextWindow
-  # means on each engine, in docs/compaction.md.
+  # subscription-backed CLI model. `workers:` replaces that pick with an
+  # ordered list of your own; a model that is not listed never
+  # summarises. Either way up to three workers are asked per compaction,
+  # so one refusing (busy host, rate limit, a route being reloaded)
+  # costs an attempt, not the compaction. Mechanics, and what
+  # contextWindow means on each engine, in docs/compaction.md.
 
 agentLoop:
   maxRounds: 8                # tool-call rounds per turn (openai-compatible)

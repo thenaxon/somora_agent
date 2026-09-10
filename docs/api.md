@@ -1342,7 +1342,11 @@ Event types:
   history replayed), `mcp_server_renamed`
   (engine session rebuilt after somora's MCP server rename, label
   "session restarted"), `context_compacted` (history compacted after a
-  context overflow), `reasoning_effort_adjusted` and `sampling_dropped`
+  context overflow), `context_trimmed` (the oldest tool results in a
+  running turn were shortened to keep the request inside the window —
+  the turn continues, the model keeps the record that those tools already
+  ran), `attachments_unsupported` (the engine cannot forward attachments,
+  grok-cli), `reasoning_effort_adjusted` and `sampling_dropped`
   (backend rejected the parameter, turn retried without it). Each
   carries a human-readable `payload.text`.
 - `model_fallback` — `{requested, actual, reason, hops?}` (refs are
