@@ -347,7 +347,9 @@ is the unpaged count.
 ### `GET /images/:id`
 
 One `ImageRecord`: prompt, model, specs, path, mime, bytes, cost,
-agent, session, and any additional hardlinked locations.
+agent, session. `linkedTo` still exists on records written before
+2026-09-10, when an image could be hardlinked to a second location;
+nothing writes it any more and the clients show the one canonical path.
 
 ### `GET /images/:id/file`
 
@@ -667,7 +669,11 @@ session:
 self-pointer, persona, team, tool reminder, wiki overview, skills,
 project. `tools` counts the tools this agent can see after gating and
 the size of their JSON schemas — they travel on the API tool channel,
-not in `text`, and engines load them direct or deferred. Read-only: a
+not in `text`, and engines load them direct or deferred. The list is
+resolved against the model that session would actually use, including a
+per-session `/model` override, because a capability-gated tool differs
+per model: `analyze_file` is offered only where the model cannot see
+images itself. Read-only: a
 session whose wiki overview was never snapshotted is rendered without
 persisting the snapshot.
 

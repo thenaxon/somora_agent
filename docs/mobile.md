@@ -91,7 +91,11 @@ own app switcher entry.
   in `config.yaml` hides it everywhere.
 - **Connection-lost banner** appears when the SSE stream drops (e.g.
   Tailscale wakes up, server briefly down). The browser auto-reconnects
-  the EventSource; the banner clears once the stream is back.
+  the EventSource; the banner clears once the stream is back, and the
+  client then asks the server what it missed while it was away — the
+  answer that was streaming during the drop is restored instead of
+  being lost (2026-09-09 report). The same reconciliation runs in the
+  web client.
 - **Background sleep recovery.** iOS Safari aggressively freezes TCP
   sockets while the PWA is in the background — the stream looks alive
   but no bytes flow, and no error fires. When you return to the app,

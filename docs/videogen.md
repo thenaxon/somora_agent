@@ -101,8 +101,10 @@ its still downloaded alongside the video. That is not a nicety:
 
 - the gallery can show a frame instead of a black rectangle, without
   anyone shipping a video decoder or requiring ffmpeg;
-- the still is an ordinary image, so `analyze_file` reads it — which is
-  how an agent judges a video it just made.
+- the still is an ordinary image, so an agent can look at it — with
+  `file_read` when its own model has vision, and through the vision
+  worker (`analyze_file`) when it does not. Either way it can judge a
+  video it just made.
 
 `analyze_file` does **not** take video. Extracting a frame ourselves
 would mean depending on ffmpeg being installed everywhere; asking the

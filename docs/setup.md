@@ -198,8 +198,12 @@ On first start somora creates `~/.somora/`:
 ├── index/
 │   └── shared.db              ← vault + wiki retrieval index, one per instance (derived, rebuilt if deleted)
 └── logs/
-    └── server-YYYY-MM-DD.log
+    └── server.YYYY-MM-DD.1.log
 ```
+
+The log rolls daily. You do not need a shell to read it: the **log**
+tile in the web client shows the end of a day's file with filters for
+level, agent and text ([web.md](web.md)).
 
 ### Optional: tell the agents who is who
 

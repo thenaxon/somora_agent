@@ -175,6 +175,13 @@ memory directory through `memory_write`/`memory_edit`/`memory_delete`.
   you're its only user. Putting it behind a network reverse proxy
   without proper auth would expose your agents to anyone who can reach
   the proxy.
+- **The server log is readable over the API.** `GET /logs` serves the
+  tail of somora's own log so the web client can show it, and the log
+  records prompts' metadata, tool names, paths, agent and session names
+  — not the message text, but enough to profile the work. It is bounded
+  to a day's file and never takes a path, so it cannot read arbitrary
+  files; it is not, however, a secret. Anyone who can reach the port can
+  read it, which is the same trust assumption as every other route.
 
 ## Reporting issues
 

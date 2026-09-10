@@ -165,8 +165,9 @@ when set and omitted when not, so a model's own defaults stand unless
 someone deliberately overrides them. They are not part of OpenAI's image
 API but are the common vocabulary of diffusion backends; which of them a
 given model actually reads is answered by its capability list, not by
-anything hardcoded. Useful in a loop: generate, judge the result with
-`analyze_file`, adjust, regenerate.
+anything hardcoded. Useful in a loop: generate, look at the result
+(`file_read` with a vision model, `analyze_file` without one), adjust,
+regenerate.
 
 **A substituted size is noticed here, not upstream.** Endpoints cap
 dimensions, round to sizes they support, or only render squares — and
