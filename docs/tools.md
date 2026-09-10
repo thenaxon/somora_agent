@@ -74,21 +74,35 @@ identical across all three engines.
 
 ## When a call arrives broken
 
-A model streams the arguments of a tool call as text, so the call can
-arrive incomplete — the usual reason is the answer hitting the output
-limit while writing them. somora does not run such a call: it replies to
-it with what happened ("arrived cut off after N characters … call it
-again with complete arguments"), and if the round ended on the output
-limit it says so, which is the actionable part.
+A model streams the arguments of a tool call as text, so a call can
+arrive unusable in two different ways, and they need different answers:
 
-The fragment also never travels back to the model. Backends parse
-tool-call arguments while building the next prompt, so returning it
-means the whole request is rejected — and since the call sits in the
-running conversation, every following round of that turn is rejected
-too. The call keeps its place in the message (dropping it would leave a
-reply without its call, which backends refuse just as hard) but its
-arguments are replaced by an empty object. The unparsed fragment stays
-in the session record, where it is evidence rather than a payload.
+- **Cut off** — the text stops mid-value, usually because the answer ran
+  out of output allowance while writing it. Retrying the same request
+  reproduces it exactly, so somora does not retry: it answers the call
+  with "arrived cut off after N characters … call it again with less in
+  one go", and adds the numbers when the round demonstrably spent its
+  whole allowance.
+- **Malformed** — complete but not valid JSON, the kind of slip a second
+  attempt usually does not repeat. somora silently sends the same
+  request again, up to twice. Only if the model keeps producing invalid
+  JSON does it get told, with the parser's complaint and the reminder
+  that a tool without required parameters takes `{}`.
+
+The two are told apart structurally: a complete JSON value ends on its
+closing bracket. Not by the provider's stop reason — routers rewrite it.
+vLLM replaces `length` with `tool_calls` whenever it parsed a tool call,
+so the stop reason cannot show an output limit at all (measured
+2026-09-10; Hermes Agent documents the same behaviour).
+
+Neither fault ever travels back to the model. Backends parse tool-call
+arguments while building the next prompt, so returning the text means
+the whole request is rejected — and since the call sits in the running
+conversation, every following round of that turn is rejected too. The
+call keeps its place in the message (dropping it would leave a reply
+without its call, which backends refuse just as hard) but its arguments
+are replaced by an empty object. The unparsed text stays in the session
+record, where it is evidence rather than a payload.
 
 ## Background reading
 

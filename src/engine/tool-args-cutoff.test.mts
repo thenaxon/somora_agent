@@ -22,10 +22,16 @@ import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 
 /** The exact fragment from the incident. */
 const CUT_OFF = '{"project_id": "a349a96a-7196-434c-9825-f7bec5356226", "files": ';
+/** Complete, but not JSON: a slip, not a truncation. */
+const MALFORMED = "{'path': 'a.txt'}";
 
 const requests: Array<{ messages: any[] }> = [];
 let invoked: string[] = [];
 let finishReason = 'tool_calls';
+/** What the first round answers with, and how often it repeats itself. */
+let firstRoundArgs = CUT_OFF;
+let badRounds = 1;
+let usage: { completion_tokens?: number } | null = null;
 
 function backend(): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
@@ -52,14 +58,17 @@ function backend(): Promise<{ server: Server; port: number }> {
         const chunk = (delta: object, finish: string | null = null) =>
           `data: ${JSON.stringify({ id: 'f', object: 'chat.completion.chunk', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        if (requests.length === 1) {
+        if (requests.length <= badRounds) {
           res.write(
             chunk({
               role: 'assistant',
-              tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'write_files', arguments: CUT_OFF } }],
+              tool_calls: [{ index: 0, id: `call-${requests.length}`, type: 'function', function: { name: 'write_files', arguments: firstRoundArgs } }],
             }),
           );
           res.write(chunk({}, finishReason));
+          if (usage) {
+            res.write(`data: ${JSON.stringify({ id: 'f', object: 'chat.completion.chunk', choices: [], usage: { prompt_tokens: 100, ...usage } })}\n\n`);
+          }
         } else {
           res.write(chunk({ role: 'assistant', content: 'retried smaller' }));
           res.write(chunk({}, 'stop'));
@@ -118,6 +127,9 @@ test('a cut-off tool call is answered, not run, and never sent back as-is', asyn
   requests.length = 0;
   invoked = [];
   finishReason = 'tool_calls';
+  firstRoundArgs = CUT_OFF;
+  badRounds = 1;
+  usage = null;
 
   const events = await run(port);
   const kinds = events.map((e) => e.kind);
@@ -139,22 +151,64 @@ test('a cut-off tool call is answered, not run, and never sent back as-is', asyn
   const toolMsg = requests[1]!.messages.find((m: any) => m.role === 'tool');
   assert.equal(toolMsg.tool_call_id, assistant.tool_calls[0].id, 'the pairing survives');
   assert.match(toolMsg.content, /arrived cut off after 64 characters/);
-  assert.match(toolMsg.content, /Call it again with complete arguments/);
+  assert.match(toolMsg.content, /Call it again with less in one go/);
 
   // And the client sees why, not a silent skip.
   const result = events.find((e) => e.kind === 'tool_result') as { error?: string } | undefined;
   assert.match(result?.error ?? '', /cut off after 64 characters/);
 });
 
-test('when the output limit cut it off, the model is told that', async (t) => {
+test('the output allowance is named when the round actually spent it', async (t) => {
   const { server, port } = await backend();
   t.after(() => server.close());
   requests.length = 0;
   invoked = [];
-  finishReason = 'length';
+  // The stop reason says 'tool_calls' — which is what vLLM writes even
+  // when the real reason was the limit. The numbers are the evidence.
+  finishReason = 'tool_calls';
+  firstRoundArgs = CUT_OFF;
+  badRounds = 1;
+  usage = { completion_tokens: 4_000 }; // == the model's declared cap
 
   const events = await run(port);
   const result = events.find((e) => e.kind === 'tool_result') as { error?: string } | undefined;
-  assert.match(result?.error ?? '', /hit the output limit/);
+  assert.match(result?.error ?? '', /used its whole output allowance \(4000 of 4000 tokens\)/);
   assert.deepEqual(invoked, []);
+});
+
+test('a merely malformed call is retried quietly first, then explained', async (t) => {
+  const { server, port } = await backend();
+  t.after(() => server.close());
+  requests.length = 0;
+  invoked = [];
+  finishReason = 'tool_calls';
+  firstRoundArgs = MALFORMED;
+  badRounds = 1;
+  usage = null;
+
+  const events = await run(port);
+  // Round 1 was malformed, round 2 was the quiet retry that succeeded:
+  // nothing about it reaches the model or the client.
+  assert.equal(requests.length, 2, 'the same request went out again');
+  assert.equal(events.filter((e) => e.kind === 'tool_result').length, 0, 'no tool result for a re-rolled round');
+  const final = events.find((e) => e.kind === 'assistant_message') as { text?: string } | undefined;
+  assert.equal(final?.text, 'retried smaller');
+});
+
+test('a model that keeps sending invalid JSON is told what is wrong', async (t) => {
+  const { server, port } = await backend();
+  t.after(() => server.close());
+  requests.length = 0;
+  invoked = [];
+  finishReason = 'tool_calls';
+  firstRoundArgs = MALFORMED;
+  badRounds = 3; // more than the two quiet retries
+  usage = null;
+
+  const events = await run(port);
+  const result = events.find((e) => e.kind === 'tool_result') as { error?: string } | undefined;
+  assert.match(result?.error ?? '', /complete but its arguments are not valid JSON/);
+  assert.match(result?.error ?? '', /use \{\}/);
+  assert.doesNotMatch(result?.error ?? '', /cut off/, 'a typo is not a truncation');
+  assert.deepEqual(invoked, [], 'still not executed');
 });

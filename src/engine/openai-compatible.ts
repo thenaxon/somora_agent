@@ -41,6 +41,11 @@ import { insideOpenThink, splitInlineThink } from './inline-think.ts';
 
 const ENGINE = 'openai-compatible';
 
+/** Quiet re-attempts for tool arguments that came back as invalid JSON.
+ *  Hermes Agent retries twice before telling the model; a cut-off call is
+ *  never retried this way, it comes back identical. */
+const MAX_ARG_REROLLS = 2;
+
 // Hard fallbacks if the server forgot to pass an agent-loop config.
 // Should never fire in practice — `config.agentLoop` is non-optional in
 // the Zod schema and defaults itself.
@@ -780,6 +785,13 @@ export const openAiCompatibleEngine: AgentEngine = {
     let tokensInCached: number | undefined;
     /** Prompt size of the most recent request — see usage.context_tokens. */
     let lastPromptTokens: number | undefined;
+    /** Output tokens of the most recent request. Compared against the
+     *  model's declared cap this is the only trustworthy evidence that a
+     *  round ran out of room: the provider's stop reason is rewritten by
+     *  routers (vLLM turns 'length' into 'tool_calls'). */
+    let lastCompletionTokens: number | undefined;
+    /** Quiet retries spent on malformed tool arguments this turn. */
+    let argRerolls = 0;
 
     const tools = input.tools;
     const toolList = tools ? tools.list() : [];
@@ -1189,6 +1201,7 @@ export const openAiCompatibleEngine: AgentEngine = {
             // each round rather than summed. The sum below is what the
             // turn cost; this is how full the window actually got.
             lastPromptTokens = chunk.usage.prompt_tokens ?? lastPromptTokens;
+            lastCompletionTokens = chunk.usage.completion_tokens ?? lastCompletionTokens;
             const u = {
               tokens_in: chunk.usage.prompt_tokens ?? 0,
               tokens_out: chunk.usage.completion_tokens ?? 0,
@@ -1311,28 +1324,81 @@ export const openAiCompatibleEngine: AgentEngine = {
         //
         // Truncation like this is what an output limit hit mid-call looks
         // like, so the model is told exactly that and can retry smaller.
+        // Two different faults, two different answers (Hermes Agent's
+        // turn_tool_validation.py is the template here):
+        //
+        //   cut off  — the text stops mid-value. Retrying the same
+        //              request reproduces it, because the model writes
+        //              the same thing again and it dies at the same
+        //              place. Measured five times in one day, always
+        //              exactly where the big `files` value began.
+        //   malformed — complete but invalid JSON. That is the kind of
+        //              slip a second attempt usually does not repeat.
+        //
+        // Telling them apart by the provider's stop reason does NOT work:
+        // routers rewrite it. vLLM overwrites finish_reason with
+        // 'tool_calls' whenever a tool call was parsed, even when the
+        // real reason was the output limit (measured on cerebro,
+        // 2026-09-10). Hermes documents the same thing. So the test is
+        // structural: a complete JSON value ends on its closing bracket.
         const calls = toolCallsForApi.map((call) => {
+          const raw = call.function.arguments ?? '';
           try {
-            return { call, args: JSON.parse(call.function.arguments || '{}') as unknown, cutOff: false };
-          } catch {
-            return { call, args: { _raw: call.function.arguments } as unknown, cutOff: true };
+            return { call, args: JSON.parse(raw || '{}') as unknown, fault: null as null | 'cut_off' | 'malformed', why: '' };
+          } catch (err) {
+            const looksComplete = /[}\]]$/.test(raw.trimEnd());
+            return {
+              call,
+              args: { _raw: raw } as unknown,
+              fault: (looksComplete ? 'malformed' : 'cut_off') as 'cut_off' | 'malformed',
+              why: (err as Error).message,
+            };
           }
         });
-        const cutOffCalls = calls.filter((c) => c.cutOff);
-        if (cutOffCalls.length > 0) {
+        const badCalls = calls.filter((c) => c.fault !== null);
+        if (badCalls.length > 0) {
           logger.warn({
             msg: 'engine.tool_args_unparseable',
             engine: ENGINE,
             agent,
             session,
             round,
+            // Kept for forensics, not for the decision — see above.
             finishReason,
-            calls: cutOffCalls.map((c) => ({
+            outputTokens: lastCompletionTokens,
+            outputCap: resolvedModel.model.maxTokens,
+            calls: badCalls.map((c) => ({
               tool: c.call.function.name,
+              fault: c.fault,
               chars: c.call.function.arguments.length,
               head: c.call.function.arguments.slice(0, 120),
             })),
           });
+        }
+
+        // A malformed-but-complete call is worth one quiet second
+        // attempt: same request, nothing appended, the model usually
+        // gets it right. Only when this round did nothing else — text
+        // already streamed, or another call about to run, would be
+        // duplicated. A cut-off call is never retried this way; it comes
+        // back identical.
+        if (
+          badCalls.length === calls.length &&
+          calls.every((c) => c.fault === 'malformed') &&
+          !roundContent &&
+          argRerolls < MAX_ARG_REROLLS
+        ) {
+          argRerolls++;
+          logger.info({
+            msg: 'engine.tool_args_reroll',
+            engine: ENGINE,
+            agent,
+            session,
+            round,
+            attempt: argRerolls,
+            calls: calls.map((c) => c.call.function.name),
+          });
+          continue;
         }
 
         loopMessages.push({
@@ -1342,8 +1408,8 @@ export const openAiCompatibleEngine: AgentEngine = {
           // A cut-off argument string is replaced by an empty object here.
           // The call itself stays: dropping it would leave a `tool` reply
           // without its call, which backends refuse just as hard.
-          tool_calls: calls.map(({ call, cutOff }) =>
-            cutOff ? { ...call, function: { ...call.function, arguments: '{}' } } : call,
+          tool_calls: calls.map(({ call, fault }) =>
+            fault ? { ...call, function: { ...call.function, arguments: '{}' } } : call,
           ),
         } as ChatMessage);
 
@@ -1354,7 +1420,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           // shouldn't request them. Bail with a clear error.
           throw new Error('model requested tool_calls but no tool registry was passed to the engine');
         }
-        for (const { call, args: parsedArgs, cutOff } of calls) {
+        for (const { call, args: parsedArgs, fault, why } of calls) {
           yield {
             kind: 'tool_call',
             ts: ts(),
@@ -1365,17 +1431,23 @@ export const openAiCompatibleEngine: AgentEngine = {
             // is the evidence of what went wrong. It never reaches the wire.
             input: parsedArgs,
           };
-          if (cutOff) {
+          if (fault) {
             // Not run: with half its arguments the call would either fail
-            // in a confusing way or, worse, do something partial. The
-            // answer names the likely cause so the retry is smaller.
+            // in a confusing way or, worse, do something partial. The two
+            // faults need different advice — "write less" is useless for
+            // a typo, "retry" is useless for an output limit.
             const chars = call.function.arguments.length;
+            const cap = resolvedModel.model.maxTokens;
+            const spentItsAllowance = cap !== undefined && lastCompletionTokens !== undefined && lastCompletionTokens >= cap;
             const message =
-              `Your call to ${call.function.name} arrived cut off after ${chars} characters and its arguments are not valid JSON, so it was not run. ` +
-              (finishReason === 'length'
-                ? 'The answer hit the output limit while writing them. '
-                : '') +
-              'Call it again with complete arguments — shorter, or split across several calls.';
+              fault === 'cut_off'
+                ? `Your call to ${call.function.name} arrived cut off after ${chars} characters — the arguments stop mid-value, so it was not run. ` +
+                  (spentItsAllowance
+                    ? `That round used its whole output allowance (${lastCompletionTokens} of ${cap} tokens). `
+                    : '') +
+                  'Call it again with less in one go: fewer items, shorter values, or split across several calls.'
+                : `Your call to ${call.function.name} was complete but its arguments are not valid JSON (${why}), so it was not run. ` +
+                  'For a tool with no required parameters use {}. Call it again with valid JSON.';
             yield {
               kind: 'tool_result',
               ts: ts(),
