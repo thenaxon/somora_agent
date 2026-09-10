@@ -1794,6 +1794,11 @@ app.get('/agents/:agent/prompt-preview', async (c) => {
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   const sessionMeta = await sessionMetaStore.get(agent, session);
+  // The preview has to answer with the tools the NEXT TURN would send,
+  // so it needs the same active model that turn resolves. Without it a
+  // capability-gated tool shows up here and then is not offered — the
+  // vision worker is exactly that case since 2026-09-10.
+  const previewModel = resolveEffectiveModel(config, persona, sessionMeta);
   const toolCtx = {
     agent,
     session,
@@ -1801,6 +1806,7 @@ app.get('/agents/:agent/prompt-preview', async (c) => {
       getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian }),
     config,
     contentBlocks: [],
+    ...(previewModel ? { activeModel: previewModel } : {}),
   };
   const available = (await tools.listAvailable(toolCtx)).filter((t) => isToolAllowed(t.name, t.toolset, persona.toolGating));
   const toolSchemaChars = available.reduce(
