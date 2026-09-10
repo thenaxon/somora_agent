@@ -20,6 +20,7 @@ export {
 export {
   estimateContextSize,
   estimateTokens,
+  inputBudget,
   shouldCompact,
   type ShouldCompactDecision,
 } from './policy.ts';

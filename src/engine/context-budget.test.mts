@@ -10,7 +10,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  calibratedEstimate,
   estimateRequestTokens,
+  parseProviderLimits,
   promptBudget,
   trimToolResults,
   type BudgetMessage,
@@ -119,4 +121,57 @@ test('when the old results are not enough it reaches into the recent ones, never
   assert.equal(trim.trimmed, 5);
   const tools = trim.messages.filter((m) => m.role === 'tool');
   assert.equal((tools.at(-1)!.content as string).length, 40_000);
+});
+
+// ── what a refusal tells us (2026-09-10) ────────────────────────────
+
+test('a provider refusal is read for the numbers it states', () => {
+  const litellm =
+    "400 litellm.ContextWindowExceededError: litellm.BadRequestError: ContextWindowExceededError: OpenAIException - " +
+    "This model's maximum context length is 524288 tokens. However, you requested 16384 output tokens and your prompt " +
+    'contains at least 507905 input tokens, for a total of at least 524289 tokens.';
+  assert.deepEqual(parseProviderLimits(litellm), {
+    contextWindow: 524_288,
+    promptTokens: 507_905,
+    outputTokens: 16_384,
+  });
+
+  const promptTooLong = '400 litellm.BadRequestError: OpenAIException - Prompt too long: 251709 tokens exceeds max context window of 131072 tokens';
+  assert.deepEqual(parseProviderLimits(promptTooLong), { contextWindow: 131_072, promptTokens: 251_709 });
+
+  // A refusal that names nothing must not invent anything.
+  assert.deepEqual(parseProviderLimits('400 oMLX prefill memory guard rejected this prompt'), {});
+});
+
+test('one measured reading corrects the next estimate', () => {
+  // The 2026-09-10 turn: we said 327,051, the backend counted 507,905.
+  const ratio = 507_905 / 327_051;
+  assert.ok(ratio > 1.5, 'code-heavy content is denser than the heuristic assumes');
+  assert.equal(calibratedEstimate(327_051, ratio), 507_905);
+  // Clamped both ways, so one odd reading cannot run away with the budget.
+  assert.equal(calibratedEstimate(1_000, 12), 3_000);
+  assert.equal(calibratedEstimate(1_000, 0.01), 500);
+  assert.equal(calibratedEstimate(1_000, undefined), 1_000);
+});
+
+test('the trimmer works in the same currency as the decision', () => {
+  // Live on 2026-09-10: the check said 23,345 against a budget of 20,800
+  // and asked for a trim; the trimmer counted raw characters, saw 19,610
+  // and reported "fits" — so nothing was shortened and the two disagreed.
+  const messages: BudgetMessage[] = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'go' }];
+  for (let i = 1; i <= 6; i++) {
+    messages.push({ role: 'assistant', content: null, tool_calls: [{ id: `c${i}`, type: 'function', function: { name: 'x', arguments: '{}' } }] });
+    messages.push({ role: 'tool', tool_call_id: `c${i}`, content: 'x'.repeat(20_000) });
+  }
+  const raw = estimateRequestTokens(messages);
+  const ratio = 1.2;
+  const budget = Math.floor(raw * 1.1); // raw fits, calibrated does not
+
+  const uncalibrated = trimToolResults(messages, { budget });
+  assert.equal(uncalibrated.trimmed, 0, 'in raw currency there is nothing to do');
+
+  const calibrated = trimToolResults(messages, { budget, ratio });
+  assert.ok(calibrated.trimmed > 0, 'with the correction it actually shortens');
+  assert.ok(calibrated.fits, 'and reaches the budget');
+  assert.ok(calibrated.estimate >= raw * 0.5, 'the reported estimate is in the caller\'s currency');
 });

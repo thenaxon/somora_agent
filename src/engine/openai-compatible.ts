@@ -26,7 +26,13 @@ import {
   type Compaction,
 } from '../compaction/index.ts';
 import { logger } from '../server/logger.ts';
-import { estimateRequestTokens, promptBudget, trimToolResults } from './context-budget.ts';
+import {
+  calibratedEstimate,
+  estimateRequestTokens,
+  parseProviderLimits,
+  promptBudget,
+  trimToolResults,
+} from './context-budget.ts';
 import { sanitizeAssistantText } from '../server/sanitize-assistant-text.ts';
 import type { ToolDefinition, ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -64,6 +70,24 @@ type StreamingToolCall = {
 interface OpenAiCompatibleMeta {
   engine?: string;
   compactions?: Compaction[];
+  /**
+   * What the provider counted for the last request of this session, and
+   * for which model. The compaction trigger trusts this over any
+   * estimate — the same design OpenClaw and Hermes Agent use, and the
+   * reason a session made of tool traffic no longer looks tiny.
+   * A model switch invalidates it: tokenizers differ.
+   */
+  contextTokens?: { tokens: number; model: string; ts: number };
+  /**
+   * measured ÷ estimated for the last request. Character heuristics are
+   * built for prose; code and JSON run near 2.5 chars per token, and a
+   * turn measured on 2026-09-10 was 36 % denser than the estimate said.
+   * Mid-turn, where only an estimate exists for what was appended since
+   * the last reading, this factor carries the correction.
+   */
+  tokenRatio?: { ratio: number; model: string };
+  /** Provider never sent usage — fall back to estimates with more room. */
+  providerOmitsUsage?: boolean;
 }
 
 /** Per-result cap when replaying tool output into rebuilt history.
@@ -494,13 +518,12 @@ export async function buildMessages(
   return messages;
 }
 
+/** Soft-warning estimate over the built messages. Uses the same counter
+ *  as the per-request budget check: the old local version summed string
+ *  content only, so tool arguments and multimodal parts were invisible
+ *  and the warning never fired on the sessions that needed it. */
 function estimateTokens(messages: ChatMessage[]): number {
-  let chars = 0;
-  for (const m of messages) {
-    if (typeof m.content === 'string') chars += m.content.length;
-  }
-  // Rough heuristic: ~4 chars per token. Good enough for soft warnings.
-  return Math.ceil(chars / 4);
+  return estimateRequestTokens(messages as never);
 }
 
 /**
@@ -635,18 +658,44 @@ export const openAiCompatibleEngine: AgentEngine = {
 
     yield { kind: 'turn_start', ts: ts(), engine: ENGINE, turnId };
 
+    /** measured ÷ estimated, carried from the session and refreshed after
+     *  every request of this turn. See calibratedEstimate(). */
+    let tokenRatio: number | undefined;
+    /** What we estimated for the request currently in flight, so the
+     *  provider's answer can be compared against it. */
+    let estimateInFlight: number | undefined;
+    /** A compaction just ran: check the next real reading against the
+     *  trigger instead of assuming it helped. */
+    let verifyCompaction = false;
+    /** The trigger this turn was measured against, for that check. */
+    let compactionTrigger = Number.POSITIVE_INFINITY;
+
     let meta = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
     let compactions = meta.compactions;
 
     // Compaction tunables come from the server-resolved config (env > yaml > defaults).
     const compactionConfig = input.compactionConfig;
+    // The provider's own count for this session's last request, when it
+    // is still valid for the model about to answer. A model switch drops
+    // it: tokenizers differ, and a stale number is worse than none.
+    const measured =
+      meta.contextTokens && meta.contextTokens.model === resolvedModel.modelId
+        ? meta.contextTokens.tokens
+        : undefined;
+    if (meta.tokenRatio && meta.tokenRatio.model === resolvedModel.modelId) {
+      tokenRatio = meta.tokenRatio.ratio;
+    }
     const decision = shouldCompact({
       systemPrompt,
       history,
       compactions,
       contextWindow: resolvedModel.model.contextWindow,
       config: compactionConfig,
+      ...(resolvedModel.model.maxTokens ? { maxOutputTokens: resolvedModel.model.maxTokens } : {}),
+      ...(measured !== undefined ? { measuredTokens: measured } : {}),
+      ...(tokenRatio !== undefined ? { tokenRatio } : {}),
     });
+    compactionTrigger = decision.triggerTokens;
     if (decision.shouldCompact) {
       logger.info({
         msg: 'engine.compaction_trigger',
@@ -654,6 +703,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         agent,
         session,
         estimatedTokens: decision.estimatedTokens,
+        source: decision.source,
         triggerTokens: decision.triggerTokens,
         ratio: Math.round(decision.ratio * 100) / 100,
         existingCompactions: compactions?.length ?? 0,
@@ -668,6 +718,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           config: compactionConfig,
         });
         if (newCompaction) {
+          verifyCompaction = true;
           compactions = [...(compactions ?? []), newCompaction];
           await metaStore.set(agent, session, {
             ...meta,
@@ -685,13 +736,45 @@ export const openAiCompatibleEngine: AgentEngine = {
             summaryChars: newCompaction.summary.length,
           });
         } else {
-          logger.info({
-            msg: 'engine.compaction_skip',
-            engine: ENGINE,
-            agent,
-            session,
-            reason: 'extractCompactionRange returned null (cushion covers everything or empty summary)',
-          });
+          // Nothing to summarise under the normal cushion. That is fine
+          // when the session is short — and fatal when it is short but
+          // already too big for the window (a large system prompt plus a
+          // few long exchanges). Try once more keeping only the last
+          // exchange: an aggressive summary beats a turn that cannot run.
+          // Hermes Agent bounds its compression attempts the same way.
+          const tight = await runCompaction({
+            systemPrompt,
+            history,
+            resolvedModel,
+            availableModels,
+            compactions,
+            config: { ...compactionConfig, safetyCushionPairs: 1 },
+          }).catch(() => null);
+          if (tight) {
+            verifyCompaction = true;
+            compactions = [...(compactions ?? []), tight];
+            await metaStore.update(agent, session, (current) => ({ ...current, compactions }));
+            meta = { ...meta, compactions };
+            logger.info({
+              msg: 'engine.compaction_done',
+              engine: ENGINE,
+              agent,
+              session,
+              cushion: 1,
+              throughTs: tight.throughTs,
+              tokensBefore: tight.tokensBefore,
+              tokensAfter: tight.tokensAfter,
+              reason: 'normal cushion covered everything; compacted down to the last exchange',
+            });
+          } else {
+            logger.info({
+              msg: 'engine.compaction_skip',
+              engine: ENGINE,
+              agent,
+              session,
+              reason: 'nothing left to compact even at cushion 1 (one exchange is already too big)',
+            });
+          }
         }
       } catch (err) {
         // Don't kill the turn if compaction itself fails — degrade gracefully.
@@ -795,7 +878,12 @@ export const openAiCompatibleEngine: AgentEngine = {
 
     const tools = input.tools;
     const toolList = tools ? tools.list() : [];
-    const openAiTools: ChatTool[] | undefined = tools ? toOpenAiTools(toolList) : undefined;
+    // An EMPTY array is not "no tools" to a backend: LiteLLM answers
+    // `400 "tools must not be an empty array. Either provide at least one
+    // tool or omit the field entirely"`. An agent with every tool denied
+    // hit that on every single turn (found while testing 2026-09-10).
+    const advertised: ChatTool[] | undefined = tools ? toOpenAiTools(toolList) : undefined;
+    const openAiTools: ChatTool[] | undefined = advertised && advertised.length > 0 ? advertised : undefined;
     const toolByName = new Map(toolList.map((t) => [t.name, t]));
     const loopMessages = [...messages]; // mutable copy; tool rounds append
     const maxRounds = input.agentLoopConfig?.maxRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
@@ -894,10 +982,20 @@ export const openAiCompatibleEngine: AgentEngine = {
         const budget = promptBudget({
           contextWindow: resolvedModel.model.contextWindow,
           ...(resolvedModel.model.maxTokens ? { maxOutputTokens: resolvedModel.model.maxTokens } : {}),
+          // A provider that never reports usage leaves us with the
+          // estimate alone, and an estimate that cannot be corrected
+          // deserves more room under it.
+          ...(meta.providerOmitsUsage === true ? { safetyRatio: 0.15 } : {}),
         });
-        const estimated = estimateRequestTokens(loopMessages, openAiTools);
+        const rawEstimate = estimateRequestTokens(loopMessages, openAiTools);
+        const estimated = calibratedEstimate(rawEstimate, tokenRatio);
+        estimateInFlight = rawEstimate;
         if (estimated > budget) {
-          const trim = trimToolResults(loopMessages, { budget, tools: openAiTools });
+          const trim = trimToolResults(loopMessages, {
+            budget,
+            tools: openAiTools,
+            ...(tokenRatio !== undefined ? { ratio: tokenRatio } : {}),
+          });
           logger.warn({
             msg: 'engine.context_trim',
             engine: ENGINE,
@@ -905,6 +1003,8 @@ export const openAiCompatibleEngine: AgentEngine = {
             session,
             round,
             estimated,
+            rawEstimate,
+            tokenRatio,
             budget,
             contextWindow: resolvedModel.model.contextWindow,
             trimmed: trim.trimmed,
@@ -1202,6 +1302,28 @@ export const openAiCompatibleEngine: AgentEngine = {
             // turn cost; this is how full the window actually got.
             lastPromptTokens = chunk.usage.prompt_tokens ?? lastPromptTokens;
             lastCompletionTokens = chunk.usage.completion_tokens ?? lastCompletionTokens;
+            // Calibrate: what did the provider count for what we sent?
+            if (chunk.usage.prompt_tokens && estimateInFlight && estimateInFlight > 0) {
+              tokenRatio = chunk.usage.prompt_tokens / estimateInFlight;
+            }
+            // Did the compaction that just ran actually clear the
+            // threshold? Believing "we compacted, so it fits" is how a
+            // session compacts every turn and still dies (Hermes checks
+            // the same thing against the provider's real count).
+            if (verifyCompaction && chunk.usage.prompt_tokens) {
+              verifyCompaction = false;
+              if (chunk.usage.prompt_tokens >= compactionTrigger) {
+                logger.warn({
+                  msg: 'engine.compaction_ineffective',
+                  engine: ENGINE,
+                  agent,
+                  session,
+                  measured: chunk.usage.prompt_tokens,
+                  trigger: compactionTrigger,
+                  hint: 'compaction ran and the prompt is still above the trigger — the uncompacted tail is too big on its own',
+                });
+              }
+            }
             const u = {
               tokens_in: chunk.usage.prompt_tokens ?? 0,
               tokens_out: chunk.usage.completion_tokens ?? 0,
@@ -1898,12 +2020,25 @@ export const openAiCompatibleEngine: AgentEngine = {
           : {}),
       };
 
-      // Tag the session with the engine that owns it now (for future routing logic).
-      // Re-read in case compaction wrote in-between to avoid clobbering.
-      const fresh = (await metaStore.get(agent, session)) as OpenAiCompatibleMeta;
-      if (fresh.engine !== ENGINE) {
-        await metaStore.set(agent, session, { ...fresh, engine: ENGINE });
-      }
+      // Tag the session with the engine that owns it now (for future routing logic)
+      // and hand the next turn what this one measured. Merge under the store's
+      // lock — compaction and the turn-end write race otherwise.
+      await metaStore.update(agent, session, (current) => {
+        const next = { ...current } as OpenAiCompatibleMeta;
+        next.engine = ENGINE;
+        if (lastPromptTokens !== undefined) {
+          next.contextTokens = { tokens: lastPromptTokens, model: resolvedModel.modelId, ts: ts() };
+          next.providerOmitsUsage = false;
+        } else {
+          // No usage in the whole turn: this provider does not report it,
+          // so future turns lean on the estimate with more headroom.
+          next.providerOmitsUsage = true;
+        }
+        if (tokenRatio !== undefined && Number.isFinite(tokenRatio)) {
+          next.tokenRatio = { ratio: tokenRatio, model: resolvedModel.modelId };
+        }
+        return next as never;
+      });
     } catch (err) {
       if (watchdogFired) {
         const message = `openai-compatible backend timed out (${IDLE_TIMEOUT_MS / 1000}s idle, no chunks)`;
@@ -1924,7 +2059,72 @@ export const openAiCompatibleEngine: AgentEngine = {
           : '[somora] aborted by user';
         yield { kind: 'assistant_message', ts: ts(), engine: ENGINE, text: partial };
         yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
-      } else if (isContextLengthError(err) && roundsStarted <= 1 && !cumulative) {
+      } else if (isContextLengthError(err)) {
+        // A refusal is the one moment the backend states its truth. Read
+        // it before anything else: the window it really enforces, and how
+        // big our prompt actually was. Hermes Agent adopts the reported
+        // limit from here for the same reason — a configured window can
+        // simply be wrong, and guessing again after every refusal is how
+        // a session wedges.
+        const limits = parseProviderLimits((err as Error).message);
+        if (limits.promptTokens && estimateInFlight && estimateInFlight > 0) {
+          tokenRatio = limits.promptTokens / estimateInFlight;
+        }
+        if (limits.contextWindow || limits.promptTokens) {
+          logger.warn({
+            msg: 'engine.context_limit_learned',
+            engine: ENGINE,
+            agent,
+            session,
+            model: resolvedModel.modelId,
+            configuredWindow: resolvedModel.model.contextWindow,
+            reportedWindow: limits.contextWindow,
+            reportedPromptTokens: limits.promptTokens,
+            ourEstimate: estimateInFlight,
+            tokenRatio,
+            ...(limits.contextWindow && limits.contextWindow < resolvedModel.model.contextWindow
+              ? { hint: `config.yaml declares a larger window than ${resolvedModel.modelId} enforces — lower contextWindow to ${limits.contextWindow}` }
+              : {}),
+          });
+        }
+        // Remember it for the next turn even though this one is failing:
+        // a rate limit or a crash must not throw the reading away.
+        if (tokenRatio !== undefined && Number.isFinite(tokenRatio)) {
+          await metaStore
+            .update(agent, session, (current) => ({
+              ...current,
+              tokenRatio: { ratio: tokenRatio!, model: resolvedModel.modelId },
+              ...(limits.promptTokens
+                ? { contextTokens: { tokens: limits.promptTokens, model: resolvedModel.modelId, ts: ts() } }
+                : {}),
+            }))
+            .catch(() => {
+              /* a failed note must not replace the error the caller needs */
+            });
+        }
+        if (!(roundsStarted <= 1 && !cumulative)) {
+          // Mid-turn: tools have run, so the turn cannot be replayed.
+          // The budget check with the corrected ratio catches this on the
+          // next round; here the honest move is a clear ending.
+          logger.error({
+            msg: 'engine.fail',
+            engine: ENGINE,
+            agent,
+            session,
+            err: `context overflow after ${roundsStarted} round(s), no replay possible`,
+          });
+          yield {
+            kind: 'error',
+            ts: ts(),
+            engine: ENGINE,
+            message:
+              `The conversation stopped fitting ${resolvedModel.modelId}'s context window during this turn` +
+              (limits.promptTokens ? ` (the backend counted ${limits.promptTokens.toLocaleString('en-US')} input tokens)` : '') +
+              '. The work done so far is in the session — send the next step as a new message, and somora will compact first.',
+          };
+          yield { kind: 'turn_end', ts: ts(), engine: ENGINE, turnId };
+          return;
+        }
         // Reactive compaction: the backend says the prompt doesn't fit,
         // whatever our estimate thought. Force a compaction down to one
         // intact pair and retry the turn ONCE. Only before anything was

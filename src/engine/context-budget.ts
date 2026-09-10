@@ -97,6 +97,27 @@ export function promptBudget({ contextWindow, maxOutputTokens, safetyRatio = 0.0
   return Math.max(1, Math.floor(contextWindow - reserve - contextWindow * safetyRatio));
 }
 
+/**
+ * Correct an estimate with what the provider actually counted last time.
+ *
+ * The character heuristic is built for prose. Code, JSON and markup run
+ * far denser — a measured turn on 2026-09-10 was 36 % bigger than the
+ * estimate claimed, which is exactly the margin that let a request walk
+ * past the budget check and into the provider's refusal. One reading is
+ * enough to correct the next one.
+ *
+ * Clamped: a single odd reading (a cached prefix, a provider counting
+ * something else) must not send the budget check off the rails.
+ */
+export const MIN_TOKEN_RATIO = 0.5;
+export const MAX_TOKEN_RATIO = 3;
+
+export function calibratedEstimate(estimate: number, ratio: number | undefined): number {
+  if (!ratio || !Number.isFinite(ratio)) return estimate;
+  const clamped = Math.min(MAX_TOKEN_RATIO, Math.max(MIN_TOKEN_RATIO, ratio));
+  return Math.ceil(estimate * clamped);
+}
+
 export interface TrimResult {
   messages: BudgetMessage[];
   /** Tool results shortened. */
@@ -125,9 +146,21 @@ export function truncateNotice(originalChars: number, keptChars: number): string
  */
 export function trimToolResults(
   messages: readonly BudgetMessage[],
-  args: { budget: number; tools?: unknown; keepRecent?: number },
+  args: { budget: number; tools?: unknown; keepRecent?: number; ratio?: number },
 ): TrimResult {
   const keepRecent = args.keepRecent ?? 4;
+  // The caller decides against a CALIBRATED estimate, so the trimmer has
+  // to work in the same currency or it disagrees with the decision that
+  // called it. Measured live on 2026-09-10: the check saw 23,345 against
+  // a budget of 20,800 and asked for a trim; the trimmer, still counting
+  // raw characters, saw 19,610, shortened nothing and reported "fits".
+  // Scaling the budget once is the same arithmetic without threading the
+  // factor through every subtraction below.
+  const ratio =
+    args.ratio && Number.isFinite(args.ratio)
+      ? Math.min(MAX_TOKEN_RATIO, Math.max(MIN_TOKEN_RATIO, args.ratio))
+      : 1;
+  const budget = Math.floor(args.budget / ratio);
   const out = messages.map((m) => ({ ...m }));
   const toolIdx = out.map((m, i) => (m.role === 'tool' ? i : -1)).filter((i) => i >= 0);
   // Oldest first. The recent ones are only touched when the old ones
@@ -140,7 +173,7 @@ export function trimToolResults(
   let estimate = estimateRequestTokens(out, args.tools);
   let trimmed = 0;
   for (const i of order) {
-    if (estimate <= args.budget) break;
+    if (estimate <= budget) break;
     const msg = out[i]!;
     const before = contentTokens(msg.content);
     const chars = typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content ?? '').length;
@@ -155,12 +188,12 @@ export function trimToolResults(
   // Cutting it keeps the beginning, which is where a file, a page or a
   // listing says what it is — and it keeps the turn alive. Refusing here
   // would end a turn whose tools have already run.
-  if (estimate > args.budget && toolIdx.length > 0) {
+  if (estimate > budget && toolIdx.length > 0) {
     const i = toolIdx.at(-1)!;
     const msg = out[i]!;
     if (typeof msg.content === 'string') {
       const before = contentTokens(msg.content);
-      const room = args.budget - (estimate - before);
+      const room = budget - (estimate - before);
       const keepChars = Math.max(0, room * CHARS_PER_TOKEN - 400);
       if (keepChars < msg.content.length) {
         const head = msg.content.slice(0, keepChars);
@@ -170,5 +203,55 @@ export function trimToolResults(
       }
     }
   }
-  return { messages: out, trimmed, estimate, fits: estimate <= args.budget };
+  // Report in the caller's currency so log line and decision agree.
+  return { messages: out, trimmed, estimate: Math.ceil(estimate * ratio), fits: estimate <= budget };
+}
+
+
+/**
+ * What a provider's refusal tells us about the real limits.
+ *
+ * A context-length error is the one moment a backend states its truth:
+ * the window it enforces and how big our prompt actually was. Hermes
+ * Agent adopts the reported limit from exactly here and persists it,
+ * because a configured window can be wrong (a route behind a proxy, a
+ * model swapped underneath) and guessing again after every refusal is
+ * how a session wedges.
+ *
+ * Shapes seen in the wild:
+ *   "This model's maximum context length is 524288 tokens. However, you
+ *    requested 16384 output tokens and your prompt contains at least
+ *    507905 input tokens, for a total of at least 524289 tokens."
+ *   "Prompt too long: 251709 tokens exceeds max context window of 131072 tokens"
+ *   oMLX's prefill guard, which reports no numbers at all.
+ */
+export interface ProviderLimits {
+  /** The window the backend actually enforces. */
+  contextWindow?: number;
+  /** How many input tokens it counted for the refused request. */
+  promptTokens?: number;
+  /** The output reservation it counted. */
+  outputTokens?: number;
+}
+
+export function parseProviderLimits(message: string): ProviderLimits {
+  const out: ProviderLimits = {};
+  const num = (m: RegExpMatchArray | null): number | undefined => {
+    if (!m) return undefined;
+    const n = Number(m[1]);
+    return Number.isFinite(n) && n > 0 ? n : undefined;
+  };
+  out.contextWindow =
+    num(message.match(/maximum context length is (\d+)/i)) ??
+    num(message.match(/max(?:imum)? context window of (\d+)/i)) ??
+    num(message.match(/context window(?: size)?[^\d]{0,20}(\d{4,})/i));
+  out.promptTokens =
+    num(message.match(/prompt contains at least (\d+)/i)) ??
+    num(message.match(/Prompt too long: (\d+) tokens/i)) ??
+    num(message.match(/input length (?:is |of )?(\d+)/i));
+  out.outputTokens = num(message.match(/you requested (\d+) output tokens/i));
+  for (const k of ['contextWindow', 'promptTokens', 'outputTokens'] as const) {
+    if (out[k] === undefined) delete out[k];
+  }
+  return out;
 }

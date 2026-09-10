@@ -24,21 +24,45 @@ full record, and REM reads it independently.
 
 ## The openai-compatible path in detail
 
-1. **Estimate.** Before each turn somora estimates the prompt size:
-   system prompt + (latest summary, if any) + every user/assistant
-   pair after that summary, at the heuristic **4 characters per
-   token**. No tokenizer is involved — the estimate is deliberately
-   conservative and only has to answer "are we near the wall".
-2. **Trigger.** `estimatedTokens >= triggerRatio × contextWindow` of
-   the **model that will answer this turn**. Switching a long session
-   from a 1M-window model to a 131k one therefore triggers a
-   compaction on the next turn.
+1. **Measure.** The number that decides is the one the provider
+   reported for this session's last request (`usage.prompt_tokens`,
+   kept on the session as `contextTokens`). Only when there is none —
+   a new session, a model switch, a provider that omits usage — does
+   somora fall back to a character estimate: system prompt, latest
+   summary, every user/assistant message after it, and the tool traffic
+   (arguments in full, results capped the way the replay caps them), at
+   **4 characters per token**.
+
+   That estimate is corrected by what the last request actually cost
+   (`tokenRatio`, measured ÷ estimated). Prose runs near 4 characters
+   per token; code, JSON and markup near 2.5. Measured on 2026-09-10: an
+   estimate of 327,051 against a real 507,905.
+
+   Until 2026-09-10 the estimate counted chat text only. A session made
+   of tool traffic looked tiny — 25,982 tokens visible out of 615,329
+   actually sent — so it never triggered, ran to 97 % and died at the
+   wall.
+2. **Trigger.** `tokens >= triggerRatio × inputBudget`, where the input
+   budget is `contextWindow − maxTokens` of the **model that will answer
+   this turn**. The output reservation comes out of the same window, so
+   measuring against the full window lets a session walk into a provider
+   400 while every check says it fits: the request that died carried
+   507,905 input tokens against a 524,288 window — one token over the
+   input budget. Switching a long session from a 1M-window model to a
+   131k one triggers a compaction on the next turn; the measured number
+   is dropped on a model switch because tokenizers differ.
 3. **Range.** Everything after the previous summary up to, but not
    including, the last `safetyCushionPairs` exchanges (default 4) is
    summarised. Unanswered user messages are never folded in. The
    previous summary is passed to the worker as *prior summary*, so the
    result is a rolling summary, not a chain of summaries.
 4. **Worker.** See below — a separate model call, one-shot, no tools.
+   When the cushion covers the whole session there is nothing to
+   summarise; somora then retries once keeping only the last exchange,
+   because an aggressive summary beats a turn that cannot run. After a
+   compaction the next real reading is checked against the trigger, and
+   a compaction that did not clear it is logged rather than assumed to
+   have worked.
 5. **Persist.** The summary is stored with the timestamp it covers
    (`throughTs`) in the session's meta; later turns replay
    `[summary] + pairs after throughTs`. CLI engines use the same
@@ -55,6 +79,14 @@ down to the last exchange, retries the turn once, and leaves a
 plain-language error (switch model, or `/reset`) instead of the raw
 400. This path only runs before anything has streamed and before any
 tool has run: retrying later would execute those tools a second time.
+Mid-turn the same refusal ends the turn with an explanation, because the
+work already done cannot be replayed.
+
+**Either way the refusal is read.** It is the one moment a backend states
+its own limits — the window it enforces and how many input tokens it
+counted — and somora takes both: the count corrects this session's
+estimate, and a reported window smaller than the configured one is logged
+with the value to put in `config.yaml`.
 
 ## Inside a running turn
 
