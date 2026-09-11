@@ -106,9 +106,14 @@ export function summariseEngineMeta(
     }
     return undefined;
   }
-  if (engine === 'openai-compatible' && itemType === 'context_compacted') {
+  if (itemType === 'context_compacted') {
+    // Both engines write this row: somora's own compaction on
+    // openai-compatible, and codex telling us it compacted its thread.
     const p = payload as { text?: unknown } | null | undefined;
-    return p && typeof p.text === 'string' ? p.text : 'history compacted after a context overflow';
+    if (p && typeof p.text === 'string') return p.text;
+    return engine === 'codex-cli'
+      ? 'codex compacted this thread itself'
+      : 'history compacted after a context overflow';
   }
   if (engine === 'codex-cli' && itemType === 'todo_list') {
     const items = extractTodoListItems(payload);

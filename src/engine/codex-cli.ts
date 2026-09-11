@@ -549,6 +549,25 @@ export const codexCliEngine: AgentEngine = {
           });
           break;
         }
+        case 'thread/compacted': {
+          // codex compacts its own thread and says so. Until now the
+          // only sign was the occupancy number dropping on the next
+          // turn, which is exactly the "what just happened?" the
+          // 2026-09-11 report was about. Same row the openai-compatible
+          // engine writes when somora compacts, so both read alike.
+          queue.push({
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'context_compacted',
+            payload: {
+              text: 'codex compacted this thread itself — the context percentage drops accordingly',
+              reason: 'engine_side',
+            },
+          });
+          logger.info({ msg: 'engine.codex_compacted', ...logCtx });
+          break;
+        }
         case 'turn/completed': {
           if (effortRetryPending && startTurn) {
             // The failed turn produced nothing; start over on the same

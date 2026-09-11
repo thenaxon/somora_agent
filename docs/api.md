@@ -1352,7 +1352,8 @@ Event types:
   history replayed), `mcp_server_renamed`
   (engine session rebuilt after somora's MCP server rename, label
   "session restarted"), `context_compacted` (history compacted after a
-  context overflow), `context_trimmed` (the oldest tool results in a
+  context overflow — on `codex-cli` it means codex compacted its own
+  thread and said so, which is otherwise invisible), `context_trimmed` (the oldest tool results in a
   running turn were shortened to keep the request inside the window —
   the turn continues, the model keeps the record that those tools already
   ran), `attachments_unsupported` (the engine cannot forward attachments,
