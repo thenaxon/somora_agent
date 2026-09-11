@@ -46,6 +46,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
 
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const transcriptRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicCapture | null>(null);
   const playerRef = useRef<VoicePlayer | null>(null);
@@ -91,6 +92,17 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
   }, []);
 
   useEffect(() => () => { if (wsRef.current) hangUp('window closed'); }, [hangUp]);
+
+  // Follow the conversation: the newest line is the one you want while
+  // you are talking. Scrolling up to read stops the follow, the way it
+  // does in the chat window — being yanked back mid-sentence is worse
+  // than pressing End.
+  useEffect(() => {
+    const box = transcriptRef.current;
+    if (!box) return;
+    const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
+    if (distanceFromBottom < 80) box.scrollTop = box.scrollHeight;
+  }, [transcript]);
 
   // The meter runs while nobody speaks, so the clock belongs on screen
   // — and it turns warning-coloured well before the cap cuts the call.
@@ -338,6 +350,8 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
 
       <div
         data-testid="voice-transcript"
+        ref={transcriptRef}
+        className="voice-transcript"
         style={{ flex: '1 1 120px', overflowY: 'auto', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}
       >
         {transcript.map((line, i) => (

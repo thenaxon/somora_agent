@@ -1824,3 +1824,15 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   overflow-wrap: anywhere;
   line-height: 1.45;
 }
+
+/* The running transcript in the voice window.
+ *
+ * It follows the conversation, so the top edge is where lines leave —
+ * a hard cut there reads like a broken layout next to a soft, breathing
+ * figure. The mask fades the first ~28px out instead (Rene,
+ * 2026-09-11: "wäre es schöner wenn da so ein schleier wäre"). */
+.voice-transcript {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.35) 14px, #000 32px);
+  mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.35) 14px, #000 32px);
+  scrollbar-width: thin;
+}
