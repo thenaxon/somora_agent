@@ -225,13 +225,25 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
     consultToolName: CONSULT_TOOL_NAME,
     sessionSlug: 'projektA',
   });
-  check('it knows whose voice it is', built.text.includes('voice of hans'));
+  // Rene, 2026-09-11: asked who he was, the voice self looked its own
+  // name up and then said "ich bin hans und nicht er". Identity is its
+  // own; only the work belongs to the agent.
+  check('it IS the agent, in the first person', built.text.includes('You are hans, speaking out loud'));
+  check('it is told not to speak about the agent as someone else', /never talk about hans as someone else/i.test(built.text));
+  check('and not to narrate the lookup as asking a third party', /not asking someone else/i.test(built.text));
+  check('identity needs no lookup', /who you are.*need no call/i.test(built.text) || /Answer it yourself/i.test(built.text));
   check('it carries the agent\'s own character', built.text.includes('Engineer'));
   check('it carries the spoken style', built.text.includes('trocken'));
   check('it is forbidden to invent', /never invent/i.test(built.text));
   check('it must ask before answering anything of substance', built.text.includes(CONSULT_TOOL_NAME));
-  check('it knows it cannot change target', /cannot change agent or session/i.test(built.text));
-  check('it is short enough to stay fast', built.chars < 1500, `${built.chars} chars`);
+  check('it knows it cannot change target', /cannot switch to another agent or session/i.test(built.text));
+  check('the name leads the answer', /Asked who you are: "Ich bin hans"/i.test(built.text));
+  // An instruction that comments on the answer gets spoken aloud by a
+  // small model; describe behaviour, not the rule about it.
+  check('no meta-commentary the model can read out', !/headline|footnote/i.test(built.text));
+  check('it does not pass itself off as a person', /not a human/i.test(built.text));
+  check('facts still go through the tool', built.text.includes(CONSULT_TOOL_NAME));
+  check('it is short enough to stay fast', built.chars < 1600, `${built.chars} chars`);
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

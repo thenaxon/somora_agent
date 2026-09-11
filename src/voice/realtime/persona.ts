@@ -47,23 +47,41 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
   const style = persona.voice?.style?.trim();
   const sentences = persona.voice?.maxSpokenSentences ?? 4;
 
+  // What the voice self must ask about, and what it simply IS.
+  //
+  // Rene, 2026-09-11, after the first call: asked who he was, the voice
+  // self consulted the agent about its own identity and then said "ich
+  // bin hans und nicht er". Two faults in one sentence — it treated its
+  // own name as a fact it had to look up, and it spoke about the agent
+  // in the third person. Identity, role, manner and what it can do are
+  // ITS OWN; only the work is the agent's.
   const consultLine =
     consultPolicy === 'always'
-      ? `Before ANY answer with content in it, call ${consultToolName}. Greeting, acknowledging and asking a clarifying question are the only things you may say on your own.`
+      ? `Anything factual — work, projects, files, status, memory, anything that happened or should happen — goes through ${consultToolName} first, every time. Greeting, small talk, clarifying questions and who you are need no call.`
       : consultPolicy === 'substantive'
-        ? `Call ${consultToolName} for anything about ${persona.name}'s work, memory, files, projects or the world. Small talk and clarifying questions need no call.`
-        : `Call ${consultToolName} whenever the answer needs ${persona.name}'s knowledge, tools or memory.`;
+        ? `Call ${consultToolName} for anything about your work, memory, files, projects or the world. Small talk, clarifying questions and who you are need no call.`
+        : `Call ${consultToolName} whenever the answer needs your files, tools or memory.`;
 
   const parts = [
-    `You are the voice of ${persona.name}. You speak ${language}.`,
+    `You are ${persona.name}, speaking out loud. Not an assistant for ${persona.name}, not a voice channel: ${persona.name}. Say "I", never talk about ${persona.name} as someone else. You speak ${language}.`,
     personaEssence(persona),
     style ? `Tone: ${style}.` : '',
-    `Speak in at most ${sentences} sentences. This is a conversation, not a lecture — the other side can interrupt you and should want to.`,
+    `At most ${sentences} sentences per answer: a conversation, not a lecture. The other side can interrupt you and should want to.`,
+    `Who you are, what you do, how you work and what you can or cannot do: you know that. Answer it yourself, at once.`,
+    // Measured 2026-09-11: told to answer identity questions itself, the
+    // model filled the gap with "ich bin ein Mensch mit viel
+    // Engineering-Erfahrung". Knowing who you are includes knowing what
+    // you are — without turning every call into a disclaimer.
+    // Wording matters here: an instruction that TALKS ABOUT the answer
+    // ("that is a footnote, not the headline") gets read out loud by a
+    // small model — measured 2026-09-11, it said "das ist ein
+    // Fußnote-Code, nicht der Kern". Describe the behaviour, never the
+    // rule about the behaviour.
+    `Asked who you are: "Ich bin ${persona.name}" and what you do. You are an agent in somora and not a human — say that only when you are asked or it plainly matters, in a few words.`,
     consultLine,
-    `You do NOT know anything about ${persona.name}'s work yourself. You have no memory, no files, no tools beyond the ones listed. Never invent a fact, a result, a name or a number, and never claim you did something, looked something up, or started something. If you have not asked yet, say you are about to.`,
-    `While you wait for an answer, one short sentence is enough ("I'll check"). Do not fill the silence with chatter.`,
-    `When the answer comes back, say it in your own words, shortened for the ear. Do not read lists or paths aloud unless asked.`,
-    `You are talking in ${persona.name}'s session "${sessionSlug}". You cannot change agent or session.`,
+    `The detail of your own work — files, projects, results, what happened when — you look up rather than recall. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
+    `While you look: one short sentence ("moment, ich schau nach"). You are checking, not asking someone else. Then answer in your own words, shortened for the ear, no lists or paths read aloud.`,
+    `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,
   ].filter((p) => p.length > 0);
 
   const text = parts.join('\n');
