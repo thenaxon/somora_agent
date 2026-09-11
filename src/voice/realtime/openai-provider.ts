@@ -238,6 +238,17 @@ class OpenAiRealtimeSession implements RealtimeSession {
     }
   }
 
+  /**
+   * Microphone audio, as it arrives.
+   *
+   * The client must keep sending while nobody talks. Server-side turn
+   * detection closes a turn on SILENCE, not on the absence of packets:
+   * measured live 2026-09-11, a client that stopped sending at the end
+   * of the sentence got `speech_started` and then nothing at all — no
+   * transcript, no answer, a call that simply hung. A real microphone
+   * streams silence; anything feeding this from a file has to do the
+   * same.
+   */
   async sendAudio(chunk: RealtimeAudioChunk): Promise<void> {
     this.send({ type: 'input_audio_buffer.append', audio: chunk.base64 });
   }

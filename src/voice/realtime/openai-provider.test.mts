@@ -22,14 +22,17 @@ const check = (name: string, cond: boolean, detail = ''): void => {
 class FakeSocket implements WebSocketLike {
   sent: string[] = [];
   closed = false;
-  private handlers = new Map<string, Array<(arg?: unknown) => void>>();
-  on(event: string, cb: (arg?: unknown) => void): void {
+  private handlers = new Map<string, Array<(arg: never) => void>>();
+  on(event: 'open' | 'close', cb: () => void): void;
+  on(event: 'message', cb: (data: unknown) => void): void;
+  on(event: 'error', cb: (err: Error) => void): void;
+  on(event: string, cb: (arg: never) => void): void {
     const list = this.handlers.get(event) ?? [];
     list.push(cb);
     this.handlers.set(event, list);
   }
   emit(event: string, arg?: unknown): void {
-    for (const cb of this.handlers.get(event) ?? []) cb(arg);
+    for (const cb of this.handlers.get(event) ?? []) (cb as (a?: unknown) => void)(arg);
   }
   send(data: string): void { this.sent.push(data); }
   close(): void { this.closed = true; }
