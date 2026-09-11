@@ -83,19 +83,50 @@ export type RealtimeEvent =
   | { kind: 'tool_call'; ts: number; callId: string; name: string; args: string }
   /** The user talked over the model; playback should stop. */
   | { kind: 'interrupted'; ts: number }
+  /** Audio the model is speaking, when it flows through somora. */
+  | { kind: 'audio'; ts: number; base64: string; rateHz: number }
   /** Cost/usage, when the provider reports it. */
   | { kind: 'usage'; ts: number; inputTokens?: number; outputTokens?: number; seconds?: number }
   /** Terminal. `reason` is for the log and the UI, not for the model. */
   | { kind: 'closed'; ts: number; reason: string }
   | { kind: 'error'; ts: number; message: string; fatal: boolean };
 
-/** A live provider session. Audio itself never passes through here —
- *  it flows browser ↔ provider directly (WebRTC), which is the whole
- *  point of the latency budget. somora holds the control channel. */
+/** A chunk of audio, base64 PCM16 at the rate the adapter declared. */
+export interface RealtimeAudioChunk {
+  base64: string;
+  rateHz: number;
+}
+
+/**
+ * A live provider session.
+ *
+ * Two transports, two audio paths, and the difference is not cosmetic:
+ *
+ *  - `websocket`: audio flows browser → somora → provider. One extra
+ *    hop, but tool calls, session control and the key live in exactly
+ *    one place. This is what OpenClaw uses for its tool-backed calls
+ *    (read 2026-09-11: their bridge answers a tool with
+ *    `conversation.item.create` + `response.create` over that socket).
+ *  - `webrtc`: audio flows browser ↔ provider directly. Lower latency,
+ *    but then the control channel is in the BROWSER — and somora's
+ *    rule is that tools run server-side, on one path only. OpenAI's
+ *    sideband (`wss://…/v1/realtime?call_id=…`) exists for exactly
+ *    that, but as of 2026-09-09/10 it answers `call_id_not_found` for
+ *    calls created with an ephemeral key; it works when the SDP offer
+ *    was posted with the real API key. So WebRTC here means somora
+ *    brokers the offer, never the browser.
+ *
+ * v1 ships the websocket path because it is provable end to end from a
+ * script, without a browser and without ambiguity about who executes a
+ * tool. The contract carries both so the faster one is an optimisation,
+ * not a rewrite.
+ */
 export interface RealtimeSession {
   readonly id: string;
   /** Provider events, in order. Ends when the session closes. */
   events(): AsyncGenerator<RealtimeEvent>;
+  /** Microphone audio, when the transport routes it through somora. */
+  sendAudio?(chunk: RealtimeAudioChunk): Promise<void>;
   /** Answer a tool call the voice self made. */
   sendToolResult(callId: string, result: string): Promise<void>;
   /** Swap the voice persona mid-call (capability-gated). */
