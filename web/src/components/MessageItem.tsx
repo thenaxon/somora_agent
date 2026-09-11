@@ -419,20 +419,23 @@ function VoiceDivider({ text, ts }: { text: string; ts: number }) {
   // A question the agent's own voice channel asked while the user was
   // on a call. It is NOT a message from another agent — the agent
   // answers into this chat and addresses nobody back — and it is not
-  // the user typing either, so it gets its own quiet divider rather
-  // than a bubble that would read as "Rene wrote this".
+  // the user typing either, so it gets its own quiet block rather than
+  // a bubble that would read as "Rene wrote this".
+  //
+  // A block, not a one-line divider: the first live call produced
+  // questions of 400 to 750 characters that ran off the window in a
+  // single unbroken line and could not be read at all (Rene,
+  // 2026-09-11). The lead-in for the agent is stripped — it is
+  // scaffolding for the model, not something a reader needs.
+  const question = text.replace(/^\[[^\]]*\]\s*/, '').trim();
   return (
-    <div className="sentinel-divider" aria-label="voice channel question">
-      <span className="sentinel-divider-rule" />
-      <span className="sentinel-divider-body">
+    <div className="voice-note" aria-label="voice channel question">
+      <div className="voice-note-head">
         <Mic size={12} />
-        <span className="sentinel-divider-label">voice</span>
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-name">{text.replace(/^\[[^\]]*\]\s*/, '').slice(0, 120)}</span>
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-time">{formatBubbleTime(ts)}</span>
-      </span>
-      <span className="sentinel-divider-rule" />
+        <span className="voice-note-label">voice</span>
+        <span className="voice-note-time">{formatBubbleTime(ts)}</span>
+      </div>
+      <div className="voice-note-body">{question}</div>
     </div>
   );
 }

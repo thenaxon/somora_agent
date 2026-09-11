@@ -1789,3 +1789,38 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   display: inline-block;
   vertical-align: -0.15em;
 }
+
+/* A question the voice channel asked, inside the chat it was asked in.
+ *
+ * It is neither a user bubble nor an agent bubble: it is the agent's
+ * own voice asking the agent. Quiet, indented, and above all WRAPPING —
+ * the first live call wrote 400 to 750 characters into a one-line
+ * divider that ran off the window unreadably (Rene, 2026-09-11). */
+.voice-note {
+  margin: 8px 0 8px 12px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent, #6cf);
+  background: color-mix(in srgb, var(--accent, #6cf) 6%, transparent);
+  border-radius: 0 6px 6px 0;
+  max-width: 100%;
+}
+.voice-note-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-2);
+  margin-bottom: 3px;
+}
+.voice-note-label { color: var(--accent, #6cf); }
+.voice-note-time { margin-left: auto; letter-spacing: 0; text-transform: none; opacity: 0.7; }
+.voice-note-body {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}

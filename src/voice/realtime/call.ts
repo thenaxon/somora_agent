@@ -11,7 +11,14 @@
 import { randomUUID } from 'node:crypto';
 import type { Persona } from '../../persona/loader.ts';
 import type { NormalizedEvent } from '../../types/events.ts';
-import { CONSULT_TOOL_NAME, consultToolSpec, parseConsultArgs, renderConsultTurnText } from './consult.ts';
+import {
+  CONSULT_TOOL_NAME,
+  STATUS_TOOL_NAME,
+  consultToolSpec,
+  parseConsultArgs,
+  renderConsultTurnText,
+  statusToolSpec,
+} from './consult.ts';
 import { buildVoiceInstructions } from './persona.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
@@ -36,6 +43,20 @@ export interface ConsultResult {
   outcome?: string;
   /** For correlating a spoken answer with the turn it came from. */
   turnId?: string;
+  /**
+   * The turn did not finish inside the call's patience, or the session
+   * was busy with older work. The answer is a status, not a result —
+   * the work keeps running and lands in the session either way.
+   */
+  pending?: boolean;
+}
+
+export interface SessionWorkStatus {
+  busy: boolean;
+  /** How long the current work has been running. */
+  sinceMs?: number;
+  /** Anything waiting behind it. */
+  queued?: number;
 }
 
 export interface VoiceCallDeps {
@@ -44,6 +65,8 @@ export interface VoiceCallDeps {
   runConsult(args: { agent: string; session: string; text: string }): Promise<ConsultResult>;
   /** Persists into the bound session's history. */
   appendEvent(agent: string, session: string, ev: NormalizedEvent): Promise<void>;
+  /** Is the bound session busy, and for how long? Must not wait. */
+  sessionStatus?(agent: string, session: string): Promise<SessionWorkStatus>;
   /**
    * Every provider event, as the call processes it.
    *
@@ -153,7 +176,7 @@ export class VoiceCall {
       voice: this.cfg.voice,
       instructions: instructions.text,
       language: this.cfg.language,
-      tools: [consultToolSpec(this.persona.name)],
+      tools: [consultToolSpec(this.persona.name), statusToolSpec()],
     });
     // The meter runs while nobody speaks, so the cap is wall-clock and
     // enforced here rather than left to whoever forgets the tab.
@@ -226,6 +249,17 @@ export class VoiceCall {
   }
 
   private async handleToolCall(session: RealtimeSession, callId: string, name: string, rawArgs: string): Promise<void> {
+    if (name === STATUS_TOOL_NAME) {
+      const status = (await this.deps.sessionStatus?.(this.target.agent, this.target.session)) ?? { busy: false };
+      const minutes = status.sinceMs ? Math.max(1, Math.round(status.sinceMs / 60_000)) : 0;
+      await session.sendToolResult(
+        callId,
+        status.busy
+          ? `still working on something you started ${minutes} minute(s) ago${status.queued ? `, ${status.queued} waiting behind it` : ''} — say so, and offer to look again in a moment`
+          : 'nothing running right now',
+      );
+      return;
+    }
     if (name !== CONSULT_TOOL_NAME) {
       // The voice self only ever gets the tools we hand it. Anything
       // else is a provider or prompt bug, and answering it with an
@@ -256,13 +290,14 @@ export class VoiceCall {
         msg: 'voice.consult_done',
         ms: this.now() - startedAt,
         outcome: result.outcome ?? null,
+        pending: result.pending ?? false,
         chars: answer.length,
       });
       await session.sendToolResult(
         callId,
         answer.length > 0
           ? answer
-          : `${this.persona.name} produced no answer this time — say so, do not invent one`,
+          : `no answer this time — say so, do not invent one`,
       );
     } catch (err) {
       const message = (err as Error).message;

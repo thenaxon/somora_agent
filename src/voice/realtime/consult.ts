@@ -18,17 +18,19 @@ export function consultToolSpec(agent: string): RealtimeToolSpec {
   return {
     name: CONSULT_TOOL_NAME,
     description:
-      `Ask ${agent} — the real agent, with its memory, files and tools — and wait for the answer. ` +
-      'Use it for anything with content in it: facts, status, files, projects, actions. ' +
-      'You have none of that yourself. Ask in one clear sentence, as the user would.',
+      `Look something up or get something done: this reaches your own tools, memory and files, and ` +
+      'returns the result. Use it for anything factual or any action. ' +
+      'ONE short sentence — what the user actually wants, nothing else. No instructions about how to ' +
+      'answer, no "describe briefly", no lists of sub-questions: those make the question longer than ' +
+      'the answer and are read by a human in the chat log.',
     parameters: {
       type: 'object',
       properties: {
         question: {
           type: 'string',
           description:
-            'What to ask, in full. Include what the user actually wants, not a keyword. ' +
-            'Write it in the language of the conversation.',
+            'The request itself, in ONE sentence, in the language of the conversation. ' +
+            'What the user wants — not how it should be answered, not why. Keep it under 200 characters.',
         },
         context: {
           type: 'string',
@@ -39,6 +41,29 @@ export function consultToolSpec(agent: string): RealtimeToolSpec {
       required: ['question'],
       additionalProperties: false,
     },
+  };
+}
+
+export const STATUS_TOOL_NAME = 'somora_work_status';
+
+/**
+ * "How far are you?" without starting anything.
+ *
+ * A lookup takes the session, and while a long job runs there is
+ * nothing to take. Live 2026-09-11: the agent was told to build a small
+ * game in a tmux session, its turn stayed open for minutes, and the
+ * conversation had nothing to say for that whole time — every further
+ * question would have queued behind the build. This reads the state and
+ * returns at once, so the voice can answer instead of going silent.
+ */
+export function statusToolSpec(): RealtimeToolSpec {
+  return {
+    name: STATUS_TOOL_NAME,
+    description:
+      'Check whether you are still working on something and for how long. Returns immediately and ' +
+      'starts nothing. Use it when asked how far along you are, or when a lookup came back saying ' +
+      'you were busy.',
+    parameters: { type: 'object', properties: {}, additionalProperties: false },
   };
 }
 

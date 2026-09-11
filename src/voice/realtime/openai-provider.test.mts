@@ -139,6 +139,27 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   );
 }
 
+// ── asking to speak while it is already speaking ─────────────────────
+{
+  const { socket, session } = await openSession();
+  socket.server({ type: 'session.created' });
+  // The voice self is mid-acknowledgement when the agent's answer
+  // lands. Live 2026-09-11 this produced "Conversation already has an
+  // active response in progress" and the answer was never spoken.
+  socket.server({ type: 'response.created' });
+  socket.sent.length = 0;
+  await session.sendToolResult('call_1', 'Umbau fertig.');
+  let sent = socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type);
+  check('the answer is still handed over at once', sent.includes('conversation.item.create'));
+  check('but speaking is not requested yet', !sent.includes('response.create'), sent.join(','));
+
+  socket.sent.length = 0;
+  socket.server({ type: 'response.done', response: {} });
+  await tick();
+  sent = socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type);
+  check('it is requested when the model falls silent', sent.includes('response.create'), sent.join(','));
+}
+
 // ── an item-level error must not end a living call ───────────────────
 {
   const { socket, events } = await openSession();

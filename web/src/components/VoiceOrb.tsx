@@ -1,30 +1,48 @@
 // The thing you look at while you talk.
 //
-// Two shapes, one canvas: a round, breathing blob in the speaking
-// agent's colour when the agent talks, and a cooler, tighter ring when
-// you do. Both are driven by the REAL audio level — the microphone's
-// on your side, the playback's on the agent's — because an animation
-// that ignores the audio is a decoration, and you cannot tell from it
-// whether the call is alive.
+// One canvas, two figures, drawn from the REAL levels: the agent's from
+// the playback and yours from the microphone. Both are drawn at all
+// times, the speaking one dominant — the first version only drew the
+// side that matched the call state, so when the state lagged the
+// animation sat still while the agent talked (Rene, 2026-09-11: "sie
+// reagiert nur auf meine eingabe aber nicht auf seine ausgabe"). An
+// animation that can be wrong about who is speaking must not be the
+// only thing that knows.
 
 import { useEffect, useRef } from 'react';
 
 export interface VoiceOrbProps {
-  /** The speaking agent's colour; the whole figure takes it. */
+  /** The speaking agent's colour; the agent figure takes it. */
   color: string;
   speaker: 'you' | 'agent';
   active: boolean;
+  muted?: boolean;
   micLevel: () => number;
   agentLevel: () => number;
 }
 
-/** A blob that breathes: radius modulated per angle so it never reads
- *  as a plain circle, and smoothed over frames so a loud consonant
- *  does not make it flicker. */
-export function VoiceOrb({ color, speaker, active, micLevel, agentLevel }: VoiceOrbProps) {
+interface Trail {
+  value: number;
+  update(raw: number): number;
+}
+
+/** Attack fast, release slow: speech is spiky, and a figure that
+ *  follows every consonant looks nervous rather than alive. */
+function trail(): Trail {
+  return {
+    value: 0,
+    update(raw: number): number {
+      this.value = raw > this.value ? this.value + (raw - this.value) * 0.45 : this.value + (raw - this.value) * 0.07;
+      return this.value;
+    },
+  };
+}
+
+export function VoiceOrb({ color, speaker, active, muted = false, micLevel, agentLevel }: VoiceOrbProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const raf = useRef<number>(0);
-  const smoothed = useRef(0);
+  const agentTrail = useRef<Trail>(trail());
+  const micTrail = useRef<Trail>(trail());
   const phase = useRef(0);
 
   useEffect(() => {
@@ -34,7 +52,46 @@ export function VoiceOrb({ color, speaker, active, micLevel, agentLevel }: Voice
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
 
-    const draw = () => {
+    const ring = (
+      cx: number,
+      cy: number,
+      base: number,
+      level: number,
+      lobes: number,
+      spin: number,
+      stroke: string,
+      width: number,
+      alpha: number,
+      fill?: CanvasGradient,
+    ): void => {
+      const swell = base * (0.1 + level * 0.55);
+      ctx.beginPath();
+      const steps = 96;
+      for (let i = 0; i <= steps; i++) {
+        const a = (i / steps) * Math.PI * 2;
+        const wobble =
+          Math.sin(a * lobes + spin) * 0.55 +
+          Math.sin(a * (lobes * 2 + 1) - spin * 0.6) * 0.25 +
+          Math.sin(a * (lobes + 4) + spin * 1.7) * 0.12;
+        const r = base + swell * wobble + swell * level * 0.5;
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      if (fill) {
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.fillStyle = fill;
+        ctx.fill();
+      }
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = width;
+      ctx.stroke();
+    };
+
+    const draw = (): void => {
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
       if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
@@ -44,64 +101,52 @@ export function VoiceOrb({ color, speaker, active, micLevel, agentLevel }: Voice
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      const raw = active ? (speaker === 'agent' ? agentLevel() : micLevel()) : 0;
-      // Attack fast, release slow: speech is spiky, and a figure that
-      // follows every spike looks nervous rather than alive.
-      smoothed.current = raw > smoothed.current
-        ? smoothed.current + (raw - smoothed.current) * 0.5
-        : smoothed.current + (raw - smoothed.current) * 0.08;
-      const level = Math.min(1, smoothed.current * 2.2);
-      phase.current += speaker === 'agent' ? 0.03 : 0.05;
+      const agent = agentTrail.current.update(active ? Math.min(1, agentLevel() * 2.4) : 0);
+      const mic = micTrail.current.update(active && !muted ? Math.min(1, micLevel() * 2.4) : 0);
+      phase.current += 0.02 + agent * 0.05 + mic * 0.03;
 
       const cx = w / 2;
       const cy = h / 2;
-      const base = Math.min(w, h) * 0.24;
-      const swell = base * (0.12 + level * 0.5);
+      const base = Math.min(w, h) * 0.3;
 
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.beginPath();
-      const steps = 72;
-      for (let i = 0; i <= steps; i++) {
-        const a = (i / steps) * Math.PI * 2;
-        // The agent gets soft, rounded lobes; you get a tighter figure
-        // with more edges, so it is obvious at a glance who is talking
-        // without reading a label.
-        const wobble =
-          speaker === 'agent'
-            ? Math.sin(a * 3 + phase.current) * 0.5 + Math.sin(a * 5 - phase.current * 0.7) * 0.25
-            : Math.sin(a * 6 + phase.current) * 0.35 + Math.sin(a * 11 - phase.current) * 0.15;
-        const r = base + swell * wobble + swell * level * 0.4;
-        const x = Math.cos(a) * r;
-        const y = Math.sin(a) * r;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+      // Agent: soft, wide lobes, filled, in its colour.
+      const glow = ctx.createRadialGradient(cx, cy, base * 0.1, cx, cy, base * 1.7);
+      glow.addColorStop(0, color);
+      glow.addColorStop(1, 'transparent');
+      ring(cx, cy, base, agent, 3, phase.current, color, speaker === 'agent' ? 2.4 : 1.4, active ? 0.25 + agent * 0.65 : 0.12, glow);
+
+      // You: a tighter, cooler figure just inside it, so both are
+      // visible at once and neither hides the other.
+      ring(
+        cx,
+        cy,
+        base * 0.62,
+        mic,
+        7,
+        -phase.current * 1.3,
+        muted ? 'var(--text-3, #666)' : 'rgba(255,255,255,0.75)',
+        speaker === 'you' ? 1.8 : 1,
+        active ? 0.2 + mic * 0.7 : 0.1,
+      );
+
+      // A quiet resting pulse so an idle call still looks alive.
+      if (active && agent < 0.02 && mic < 0.02) {
+        const breath = (Math.sin(phase.current * 2) + 1) / 2;
+        ring(cx, cy, base * 0.3, breath * 0.15, 2, phase.current * 0.5, color, 1, 0.25);
       }
-      ctx.closePath();
 
-      const grad = ctx.createRadialGradient(0, 0, base * 0.2, 0, 0, base + swell);
-      grad.addColorStop(0, color);
-      grad.addColorStop(1, 'transparent');
-      ctx.globalAlpha = active ? 0.35 + level * 0.5 : 0.12;
-      ctx.fillStyle = grad;
-      ctx.fill();
-      ctx.globalAlpha = active ? 0.8 : 0.25;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = speaker === 'agent' ? 2 : 1.2;
-      ctx.stroke();
-      ctx.restore();
-
+      ctx.globalAlpha = 1;
       raf.current = requestAnimationFrame(draw);
     };
     raf.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf.current);
-  }, [color, speaker, active, micLevel, agentLevel]);
+  }, [color, speaker, active, muted, micLevel, agentLevel]);
 
   return (
     <canvas
       data-testid="voice-orb"
       ref={canvasRef}
-      style={{ width: '100%', height: 180, display: 'block' }}
+      style={{ width: '100%', height: '100%', display: 'block' }}
       aria-label={active ? `${speaker} speaking` : 'idle'}
     />
   );

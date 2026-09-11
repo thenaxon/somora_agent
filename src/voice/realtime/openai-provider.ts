@@ -71,6 +71,18 @@ class OpenAiRealtimeSession implements RealtimeSession {
   /** The model is mid-answer. Used to tell a barge-in apart from the
    *  normal start of a user turn. */
   private speaking = false;
+  /**
+   * A response is open on the provider's side.
+   *
+   * Asking for a second one while the first runs is refused:
+   * "Conversation already has an active response in progress"
+   * (seen live 2026-09-11, right after a tool answer landed while the
+   * voice self was still saying "moment, ich schau nach"). The answer
+   * item is accepted either way — only the request to SPEAK has to
+   * wait, so it is deferred to the next `response.done`.
+   */
+  private responseActive = false;
+  private speakWhenFree = false;
 
   constructor(
     private readonly ws: WebSocketLike,
@@ -193,7 +205,15 @@ class OpenAiRealtimeSession implements RealtimeSession {
         if (callId && name) this.push({ kind: 'tool_call', ts, callId, name, args });
         break;
       }
+      case 'response.created':
+        this.responseActive = true;
+        break;
       case 'response.done': {
+        this.responseActive = false;
+        if (this.speakWhenFree) {
+          this.speakWhenFree = false;
+          this.send({ type: 'response.create' });
+        }
         if (this.speaking) {
           this.speaking = false;
           this.push({ kind: 'model_speech', ts, phase: 'end' });
@@ -257,12 +277,14 @@ class OpenAiRealtimeSession implements RealtimeSession {
     // Two events, in this order: the answer becomes a conversation
     // item, then the model is asked to speak again. Without the second
     // one the call goes silent after a tool call — the model is waiting
-    // for permission it never gets.
+    // for permission it never gets. But asking while it is still
+    // talking is an error, so that half waits for the current response.
     this.send({
       type: 'conversation.item.create',
       item: { type: 'function_call_output', call_id: callId, output: result },
     });
-    this.send({ type: 'response.create' });
+    if (this.responseActive) this.speakWhenFree = true;
+    else this.send({ type: 'response.create' });
   }
 
   async updateInstructions(instructions: string): Promise<void> {

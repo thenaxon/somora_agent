@@ -5888,8 +5888,45 @@ const voiceCalls = new VoiceCallManager({
   },
   watcher: (callId) => voiceWatchers.get(callId),
   stateWatcher: (callId) => voiceStateWatchers.get(callId),
+  sessionStatus: async (agent, session) => {
+    const st = getSessionLockStatus(agent, session);
+    return {
+      busy: st.busy,
+      ...(st.activeSince ? { sinceMs: Date.now() - st.activeSince } : {}),
+      ...(st.queueLength ? { queued: st.queueLength } : {}),
+    };
+  },
   runConsult: async ({ agent, session, text }) => {
-    const result = await runChatTurn({
+    // A conversation cannot wait on a build.
+    //
+    // Live 2026-09-11: the agent was asked to write a small game in a
+    // tmux session; its turn stayed open for minutes and the call had
+    // nothing to say for that whole time. So a lookup gets a short
+    // patience, in two places. It waits only briefly for the session
+    // lock — every other turn in somora takes that lock, and without it
+    // a spoken question and a typed one would write into the same
+    // history at once — and once running it waits only so long for an
+    // answer. Past either, the work keeps going and lands in the
+    // session; the voice gets a status it can say out loud.
+    const LOCK_PATIENCE_MS = 5_000;
+    const ANSWER_PATIENCE_MS = 60_000;
+    const before = getSessionLockStatus(agent, session);
+    const waiting = new AbortController();
+    const giveUp = setTimeout(() => waiting.abort(), LOCK_PATIENCE_MS);
+    let release: (() => void) | undefined;
+    try {
+      release = await acquireSessionLock(agent, session, { priority: 'agent', signal: waiting.signal });
+    } catch {
+      const minutes = before.activeSince ? Math.max(1, Math.round((Date.now() - before.activeSince) / 60_000)) : 0;
+      return {
+        text: `busy: you are still working on something you started ${minutes} minute(s) ago. Say that, and offer to look again in a moment.`,
+        pending: true,
+      };
+    } finally {
+      clearTimeout(giveUp);
+    }
+
+    const turn = runChatTurn({
       agent,
       session,
       text,
@@ -5898,10 +5935,26 @@ const voiceCalls = new VoiceCallManager({
       // answer appear live, exactly like any other turn.
       publishSse: (event) => publish(agent, session, event),
       deps: chatTurnDeps,
-    });
+    }).finally(() => release?.());
+
+    const timeout = Symbol('voice-consult-timeout');
+    const raced = await Promise.race([
+      turn,
+      new Promise<typeof timeout>((resolve) => setTimeout(() => resolve(timeout), ANSWER_PATIENCE_MS)),
+    ]);
+    if (raced === timeout) {
+      // Deliberately NOT cancelled: the user asked for the work, and it
+      // finishes into the session. Only the conversation moves on.
+      turn.catch((err) => logger.warn({ msg: 'voice.consult_late_failure', err: (err as Error).message }));
+      logger.info({ msg: 'voice.consult_pending', agent, session, afterMs: ANSWER_PATIENCE_MS });
+      return {
+        text: 'still working on it — this is taking longer than a sentence. Say so, keep talking, and offer to check again.',
+        pending: true,
+      };
+    }
     return {
-      text: result.finalText,
-      ...(result.outcome ? { outcome: result.outcome } : {}),
+      text: raced.finalText,
+      ...(raced.outcome ? { outcome: raced.outcome } : {}),
     };
   },
 });

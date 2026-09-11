@@ -81,6 +81,11 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     consultLine,
     `The detail of your own work — files, projects, results, what happened when — you look up rather than recall. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
     `While you look: one short sentence ("moment, ich schau nach"). You are checking, not asking someone else. Then answer in your own words, shortened for the ear, no lists or paths read aloud.`,
+    // Live 2026-09-11: the lookups went out at 427 to 756 characters,
+    // full of "describe briefly" and sub-questions. A human reads those
+    // in the chat log, and a long question does not buy a better
+    // answer.
+    `Keep a lookup to one short sentence — the request, nothing about how to answer it.`,
     `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,
   ].filter((p) => p.length > 0);
 

@@ -38,6 +38,13 @@ t('the orb is there to be driven by real audio', () => {
   assertTrue(html.includes('speaking'), 'no state on the label');
 });
 
+t('the call button says talk, not call', () => {
+  // Rene, 2026-09-11: "man ruft den ja nicht an man spricht mit hans".
+  const html = renderToString(React.createElement(VoiceWindow, { agents } as never));
+  assertTrue(html.includes('talk'), 'button does not say talk');
+  assertTrue(!/>\s*call\s*</.test(html), 'still says call');
+});
+
 t('an idle orb says idle, so a dead call is visible', () => {
   const html = renderToString(
     React.createElement(VoiceOrb, { color: '#6cf', speaker: 'you', active: false, micLevel: () => 0, agentLevel: () => 0 }),

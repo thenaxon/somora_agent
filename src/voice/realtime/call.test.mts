@@ -185,6 +185,67 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   );
 }
 
+// ── "how far are you?" must not start anything ──────────────────────
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: 'somora_work_status', args: '{}' } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 3, reason: 'hung up' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  const consultsRun: string[] = [];
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'v', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async ({ text }) => { consultsRun.push(text); return { text: 'x' }; },
+      appendEvent: async () => {},
+      sessionStatus: async () => ({ busy: true, sinceMs: 200_000, queued: 1 }),
+    },
+  );
+  await drain(call);
+  const answer = provider.lastSession?.toolResults[0]?.result ?? '';
+  check('the status came back without running a turn', consultsRun.length === 0, String(consultsRun.length));
+  check('and it says how long', /3 minute/.test(answer), answer);
+  check('and what is waiting behind it', /1 waiting/.test(answer), answer);
+}
+
+// ── an idle session says so ─────────────────────────────────────────
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: 'somora_work_status', args: '{}' } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 3, reason: 'hung up' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'v', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    { provider, runConsult: async () => ({ text: 'x' }), appendEvent: async () => {}, sessionStatus: async () => ({ busy: false }) },
+  );
+  await drain(call);
+  check('nothing running is said plainly', /nothing running/.test(provider.lastSession?.toolResults[0]?.result ?? ''));
+}
+
+// ── both tools are offered, and only those ──────────────────────────
+{
+  const provider = new FakeRealtimeProvider([{ emit: { kind: 'closed', ts: 1, reason: 'done' } }]);
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'v', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    { provider, runConsult: async () => ({ text: 'x' }), appendEvent: async () => {} },
+  );
+  await call.start();
+  const names = provider.lastSession?.request.tools.map((t) => t.name) ?? [];
+  check('exactly the lookup and the status tool', names.join(',') === 'somora_agent_consult,somora_work_status', names.join(','));
+}
+
 // ── a watcher sees everything, and does not steal it ────────────────
 {
   const script: FakeScriptStep[] = [

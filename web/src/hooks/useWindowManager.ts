@@ -334,7 +334,9 @@ export function useWindowManager() {
       focus(existing.id);
       return;
     }
-    const pos = randomPos(520, 620, zCounter + 1);
+    // Wide enough for the figure AND the running transcript beside the
+    // controls; the first cut was tall and narrow, which squeezed both.
+    const pos = randomPos(760, 560, zCounter + 1);
     const id = `voice-${Date.now()}`;
     const next: WindowState = {
       id,

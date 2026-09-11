@@ -10,7 +10,7 @@ import { resolveSessionId } from '../../storage/sessions.ts';
 import { appendEvent } from '../../storage/sessions.ts';
 import { logger } from '../../server/logger.ts';
 import type { Config } from '../../config/types.ts';
-import { VoiceCall, type ConsultResult, type VoiceCallSnapshot } from './call.ts';
+import { VoiceCall, type ConsultResult, type SessionWorkStatus, type VoiceCallSnapshot } from './call.ts';
 import { OpenAiRealtimeProvider } from './openai-provider.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
@@ -18,6 +18,8 @@ export interface VoiceManagerDeps {
   config: Config;
   /** Runs one turn in the bound session as `from_system: 'voice'`. */
   runConsult(args: { agent: string; session: string; text: string }): Promise<ConsultResult>;
+  /** Is that session busy, and for how long? Answers without waiting. */
+  sessionStatus?(agent: string, session: string): Promise<SessionWorkStatus>;
   /** Injectable for tests. */
   provider?: RealtimeProvider;
   /** Mirrors every provider event of every call to whoever is watching
@@ -102,6 +104,9 @@ export class VoiceCallManager {
       {
         provider: this.buildProvider(),
         runConsult: (args) => this.deps.runConsult(args),
+        ...(this.deps.sessionStatus
+          ? { sessionStatus: (a: string, s: string) => this.deps.sessionStatus!(a, s) }
+          : {}),
         appendEvent,
         log: (entry) => logger.info(entry),
         onEvent: (ev, snap) => this.deps.watcher?.(snap.id)?.(ev, snap),

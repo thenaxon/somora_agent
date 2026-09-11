@@ -44,6 +44,8 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
   const [transcript, setTranscript] = useState<Array<{ who: 'you' | 'agent'; text: string }>>([]);
   const [consults, setConsults] = useState(0);
 
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicCapture | null>(null);
   const playerRef = useRef<VoicePlayer | null>(null);
@@ -85,15 +87,26 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
     playerRef.current?.close();
     playerRef.current = null;
     setState('closed');
+    setStartedAt(null);
   }, []);
 
   useEffect(() => () => { if (wsRef.current) hangUp('window closed'); }, [hangUp]);
+
+  // The meter runs while nobody speaks, so the clock belongs on screen
+  // — and it turns warning-coloured well before the cap cuts the call.
+  useEffect(() => {
+    if (startedAt === null) return;
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
 
   const connect = useCallback(async () => {
     setError(null);
     setTranscript([]);
     setConsults(0);
     setState('connecting');
+    setStartedAt(Date.now());
+    setElapsed(0);
     try {
       // The microphone is asked for FIRST: a refused permission must
       // not leave a paid connection standing.
@@ -190,6 +203,10 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
 
   const color = agents.find((a) => a.name === agent)?.color ?? 'var(--accent, #6cf)';
   const live = state === 'listening' || state === 'speaking' || state === 'consulting';
+  const limitSeconds = (status?.maxCallMinutes ?? 20) * 60;
+  const nearLimit = elapsed > limitSeconds * 0.75;
+  const overtime = elapsed > limitSeconds * 0.92;
+  const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
 
   if (status && !status.enabled) {
     return (
@@ -201,46 +218,84 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: 12, gap: 10 }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <select
-          data-testid="voice-agent"
-          value={agent}
-          disabled={live}
-          onChange={(e) => setAgent(e.target.value)}
-          style={{ background: 'var(--bg-2)', color: 'var(--text-1)', border: '1px solid var(--bg-3)', borderRadius: 6, padding: '4px 6px' }}
-        >
-          {(status?.agents ?? []).map((a) => (
-            <option key={a} value={a}>{a}</option>
-          ))}
-        </select>
-        <select
-          data-testid="voice-session"
-          value={session}
-          disabled={live}
-          onChange={(e) => setSession(e.target.value)}
-          style={{ background: 'var(--bg-2)', color: 'var(--text-1)', border: '1px solid var(--bg-3)', borderRadius: 6, padding: '4px 6px', flex: 1 }}
-        >
-          {sessions.map((s) => (
-            <option key={s.id} value={s.slug}>{s.slug}</option>
-          ))}
-        </select>
+      {live ? (
+        // Target and session are bound for the length of a call, so
+        // during one they are a statement, not a choice.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          <span style={{ fontSize: 18 }}>{agents.find((a) => a.name === agent)?.icon ?? '🎙'}</span>
+          <span style={{ color, fontWeight: 600 }}>{agent}</span>
+          <span style={{ color: 'var(--text-3)' }}>·</span>
+          <span style={{ color: 'var(--text-2)' }}>{session}</span>
+          <span
+            data-testid="voice-clock"
+            style={{
+              marginLeft: 'auto',
+              fontFamily: '"JetBrains Mono", monospace',
+              color: overtime ? 'var(--danger, #e5534b)' : nearLimit ? 'var(--warn, #d29922)' : 'var(--text-3)',
+            }}
+            title={`${status?.maxCallMinutes ?? 20} minute limit — the meter runs while nobody speaks`}
+          >
+            {clock}
+          </span>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <select
+            data-testid="voice-agent"
+            value={agent}
+            onChange={(e) => setAgent(e.target.value)}
+            style={{ background: 'var(--bg-2)', color: 'var(--text-1)', border: '1px solid var(--bg-3)', borderRadius: 6, padding: '4px 6px' }}
+          >
+            {(status?.agents ?? []).map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+          <select
+            data-testid="voice-session"
+            value={session}
+            onChange={(e) => setSession(e.target.value)}
+            style={{ background: 'var(--bg-2)', color: 'var(--text-1)', border: '1px solid var(--bg-3)', borderRadius: 6, padding: '4px 6px', flex: 1 }}
+          >
+            {sessions.map((s) => (
+              <option key={s.id} value={s.slug}>{s.slug}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div style={{ flex: '1 1 220px', minHeight: 160, position: 'relative' }}>
+        <VoiceOrb
+          color={color}
+          speaker={state === 'speaking' ? 'agent' : 'you'}
+          active={live}
+          muted={muted}
+          micLevel={() => micRef.current?.level() ?? 0}
+          agentLevel={() => playerRef.current?.level() ?? 0}
+        />
+        {muted && (
+          <span
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--warn, #d29922)',
+              pointerEvents: 'none',
+            }}
+          >
+            <MicOff size={26} />
+          </span>
+        )}
       </div>
 
-      <VoiceOrb
-        color={color}
-        speaker={state === 'speaking' ? 'agent' : 'you'}
-        active={live}
-        micLevel={() => micRef.current?.level() ?? 0}
-        agentLevel={() => playerRef.current?.level() ?? 0}
-      />
-
       <div data-testid="voice-state" style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 12, minHeight: 18 }}>
-        {state === 'idle' && 'ready'}
+        {state === 'idle' && 'ready to talk'}
         {state === 'connecting' && 'connecting…'}
         {state === 'listening' && 'listening'}
-        {state === 'consulting' && `asking ${agent}…`}
-        {state === 'speaking' && `${agent} is speaking`}
-        {state === 'closed' && 'call ended'}
+        {state === 'consulting' && 'looking it up…'}
+        {state === 'speaking' && `${agent} is talking`}
+        {state === 'closed' && 'ended'}
         {consults > 0 && <span style={{ opacity: 0.6 }}> · {consults} asked</span>}
       </div>
 
@@ -257,7 +312,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
             disabled={!agent || state === 'connecting'}
             style={{ background: color, color: '#000', border: 'none', borderRadius: 20, padding: '8px 18px', display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}
           >
-            <Phone size={14} /> call
+            <Phone size={14} /> talk
           </button>
         ) : (
           <>
@@ -275,16 +330,32 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
               onClick={() => hangUp('user hung up')}
               style={{ background: 'var(--danger, #e5534b)', color: '#fff', border: 'none', borderRadius: 20, padding: '8px 18px', display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}
             >
-              <PhoneOff size={14} /> hang up
+              <PhoneOff size={14} /> end
             </button>
           </>
         )}
       </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div
+        data-testid="voice-transcript"
+        style={{ flex: '1 1 120px', overflowY: 'auto', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}
+      >
         {transcript.map((line, i) => (
-          <div key={i} style={{ color: line.who === 'you' ? 'var(--text-2)' : 'var(--text-1)' }}>
-            <span style={{ opacity: 0.6 }}>{line.who === 'you' ? 'you' : agent}:</span> {line.text}
+          <div
+            key={i}
+            style={{
+              alignSelf: line.who === 'you' ? 'flex-end' : 'flex-start',
+              maxWidth: '85%',
+              padding: '4px 8px',
+              borderRadius: 8,
+              lineHeight: 1.45,
+              overflowWrap: 'anywhere',
+              background: line.who === 'you' ? 'var(--bg-3)' : `color-mix(in srgb, ${color} 14%, transparent)`,
+              color: line.who === 'you' ? 'var(--text-2)' : 'var(--text-1)',
+              borderLeft: line.who === 'you' ? undefined : `2px solid ${color}`,
+            }}
+          >
+            {line.text}
           </div>
         ))}
       </div>
