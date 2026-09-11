@@ -131,6 +131,17 @@ export interface RealtimeSession {
   sendToolResult(callId: string, result: string): Promise<void>;
   /** Swap the voice persona mid-call (capability-gated). */
   updateInstructions(instructions: string): Promise<void>;
+  /**
+   * Make the model say one thing now, under a one-off instruction.
+   *
+   * This is how the filler during a lookup is produced. Leaving it to
+   * the model does not work: told to announce and then call, it
+   * announced and stopped — measured on both gpt-realtime-2.1-mini and
+   * gpt-realtime-2.1 on 2026-09-11, asked to open a browser, it said
+   * "moment, ich schau nach" and waited for the user instead of making
+   * the call. OpenClaw drives the same pattern from the host side.
+   */
+  speak?(instructions: string): Promise<void>;
   /** Stop the model talking right now (barge-in, or the user hung up). */
   interrupt(): Promise<void>;
   close(reason: string): Promise<void>;

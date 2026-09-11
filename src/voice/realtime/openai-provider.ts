@@ -291,6 +291,14 @@ class OpenAiRealtimeSession implements RealtimeSession {
     this.send({ type: 'session.update', session: { instructions } });
   }
 
+  /** One spoken line under a one-off instruction, without touching the
+   *  session's own. Skipped while the model is already talking — the
+   *  filler exists to fill a silence, not to talk over an answer. */
+  async speak(instructions: string): Promise<void> {
+    if (this.responseActive) return;
+    this.send({ type: 'response.create', response: { instructions } });
+  }
+
   async interrupt(): Promise<void> {
     this.send({ type: 'response.cancel' });
   }

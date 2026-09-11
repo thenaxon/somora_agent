@@ -100,6 +100,8 @@ export interface VoiceCallConfig {
   language: string;
   consultPolicy: 'auto' | 'substantive' | 'always';
   maxCallMinutes: number;
+  /** Hand-written character from VOICE.md, when there is one. */
+  personaOverride?: string;
 }
 
 export interface VoiceCallSnapshot {
@@ -169,8 +171,15 @@ export class VoiceCall {
       language: this.cfg.language,
       consultToolName: CONSULT_TOOL_NAME,
       sessionSlug: this.target.slug,
+      ...(this.cfg.personaOverride ? { override: this.cfg.personaOverride } : {}),
     });
-    this.log({ msg: 'voice.call_start', model: this.cfg.model, voice: this.cfg.voice, instructionChars: instructions.chars });
+    this.log({
+      msg: 'voice.call_start',
+      model: this.cfg.model,
+      voice: this.cfg.voice,
+      instructionChars: instructions.chars,
+      personaSource: this.cfg.personaOverride ? 'VOICE.md' : 'derived',
+    });
     this.session = await this.deps.provider.open({
       model: this.cfg.model,
       voice: this.cfg.voice,
@@ -279,6 +288,12 @@ export class VoiceCall {
     const startedAt = this.now();
     const text = renderConsultTurnText(parsed.args, 'the user');
     this.log({ msg: 'voice.consult_start', question: parsed.args.question.slice(0, 160) });
+    // Fill the silence from here rather than asking the model to
+    // announce its own lookup: told to do that, it announced and never
+    // called (both models, 2026-09-11).
+    void session
+      .speak?.('Say ONE short sentence that you are looking it up right now. Nothing else, no promises about what you will find.')
+      .catch(() => {});
     try {
       const result = await this.deps.runConsult({
         agent: this.target.agent,

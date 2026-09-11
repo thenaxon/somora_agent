@@ -5,7 +5,10 @@
 // anything — which agent, which session, which provider, which key, who
 // runs a tool — lives on this side.
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { loadPersona, type Persona } from '../../persona/loader.ts';
+import { SOMORA_HOME_DIR } from '../../server/logger.ts';
 import { resolveSessionId } from '../../storage/sessions.ts';
 import { appendEvent } from '../../storage/sessions.ts';
 import { logger } from '../../server/logger.ts';
@@ -79,6 +82,19 @@ export class VoiceCallManager {
     });
   }
 
+  /** Hand-written voice character, when the operator wrote one. */
+  private async voiceOverride(agent: string): Promise<string | undefined> {
+    try {
+      const text = await readFile(join(SOMORA_HOME_DIR, 'agents', agent, 'VOICE.md'), 'utf8');
+      // Strip a frontmatter block and headings: what belongs in the
+      // model's context is the prose, not the file's furniture.
+      const body = text.replace(/^---\n[\s\S]*?\n---\n/, '').replace(/^#.*$/gm, '').trim();
+      return body.length > 0 ? body : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async start(input: StartCallInput): Promise<ActiveCall> {
     const cfg = this.cfg();
     if (!cfg?.enabled) throw new Error('realtime voice is off (realtimeVoice.enabled)');
@@ -91,10 +107,12 @@ export class VoiceCallManager {
     const session = await resolveSessionId(input.agent, input.session);
     if (!session) throw new Error(`session '${input.session}' not found for ${input.agent}`);
 
+    const personaOverride = await this.voiceOverride(input.agent);
     const call = new VoiceCall(
       { agent: input.agent, session, slug: input.session },
       persona,
       {
+        ...(personaOverride ? { personaOverride } : {}),
         model: cfg.model,
         voice: persona.voice.voice ?? cfg.defaultVoice,
         language: persona.voice.language ?? this.deps.config.stt?.language ?? 'en',

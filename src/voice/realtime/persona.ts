@@ -14,6 +14,21 @@ import type { Persona } from '../../persona/loader.ts';
 
 export interface VoiceInstructionsInput {
   persona: Persona;
+  /**
+   * Hand-written character for the voice self, from
+   * `~/.somora/agents/<name>/VOICE.md`. Replaces the part derived from
+   * the persona — never the rules below it.
+   *
+   * The split is deliberate. OpenClaw writes the whole thing by hand
+   * (their realtime call takes a configured `instructions` string, read
+   * from their bundle 2026-09-11), which is full control and a file per
+   * agent to maintain. somora derives it, which is nothing to maintain
+   * for eight agents and no second place to drift. With this override
+   * you get both: you own the character where you care, somora owns the
+   * contract that keeps it honest — delegate, do not invent, do not
+   * refuse work on your own authority.
+   */
+  override?: string;
   /** Effective policy: the agent's, else the instance default. */
   consultPolicy: 'auto' | 'substantive' | 'always';
   language: string;
@@ -44,6 +59,7 @@ export interface BuiltVoiceInstructions {
 
 export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoiceInstructions {
   const { persona, consultPolicy, language, consultToolName, sessionSlug } = input;
+  const override = input.override?.trim();
   const style = persona.voice?.style?.trim();
   const sentences = persona.voice?.maxSpokenSentences ?? 4;
 
@@ -55,37 +71,33 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
   // own name as a fact it had to look up, and it spoke about the agent
   // in the third person. Identity, role, manner and what it can do are
   // ITS OWN; only the work is the agent's.
+  // Three rules that kept fighting each other in the first live calls,
+  // now one line each.
+  //
+  //  - It refused work on its own authority ("den Browser hab ich
+  //    nicht") because the prompt told it that it knew what it could do.
+  //  - Told to announce a lookup and then make it, it announced and
+  //    stopped — both models, so the filler comes from somora instead.
+  //  - And it narrated the lookup as asking a third party, which breaks
+  //    the one thing this whole design is about: it IS the agent.
   const consultLine =
     consultPolicy === 'always'
-      ? `Anything factual — work, projects, files, status, memory, anything that happened or should happen — goes through ${consultToolName} first, every time. Greeting, small talk, clarifying questions and who you are need no call.`
+      ? `Everything factual and every request to act goes through ${consultToolName}: work, projects, files, status, memory, opening a browser, starting, writing or sending something. Greeting, small talk, clarifying questions and who you are need no call.`
       : consultPolicy === 'substantive'
-        ? `Call ${consultToolName} for anything about your work, memory, files, projects or the world. Small talk, clarifying questions and who you are need no call.`
+        ? `Anything about your work, memory, files or projects, and every request to act, goes through ${consultToolName}. Small talk, clarifying questions and who you are need no call.`
         : `Call ${consultToolName} whenever the answer needs your files, tools or memory.`;
 
   const parts = [
-    `You are ${persona.name}, speaking out loud. Not an assistant for ${persona.name}, not a voice channel: ${persona.name}. Say "I", never talk about ${persona.name} as someone else. You speak ${language}.`,
-    personaEssence(persona),
-    style ? `Tone: ${style}.` : '',
-    `At most ${sentences} sentences per answer: a conversation, not a lecture. The other side can interrupt you and should want to.`,
-    `Who you are, what you do, how you work and what you can or cannot do: you know that. Answer it yourself, at once.`,
-    // Measured 2026-09-11: told to answer identity questions itself, the
-    // model filled the gap with "ich bin ein Mensch mit viel
-    // Engineering-Erfahrung". Knowing who you are includes knowing what
-    // you are — without turning every call into a disclaimer.
-    // Wording matters here: an instruction that TALKS ABOUT the answer
-    // ("that is a footnote, not the headline") gets read out loud by a
-    // small model — measured 2026-09-11, it said "das ist ein
-    // Fußnote-Code, nicht der Kern". Describe the behaviour, never the
-    // rule about the behaviour.
-    `Asked who you are: "Ich bin ${persona.name}" and what you do. You are an agent in somora and not a human — say that only when you are asked or it plainly matters, in a few words.`,
+    `You are ${persona.name}, speaking out loud — not an assistant for ${persona.name}, not a voice channel. Say "I", never talk about ${persona.name} as someone else. You speak ${language}.`,
+    override ? override : personaEssence(persona),
+    override || !style ? '' : `Tone: ${style}.`,
+    `At most ${sentences} sentences per answer: a conversation, not a lecture, and interruptible.`,
+    `Who you are, your role and how you talk: you know that, answer it at once. Asked who you are: "Ich bin ${persona.name}" and what you do — you are an agent in somora and not a human, say that only when asked or when it plainly matters.`,
     consultLine,
-    `The detail of your own work — files, projects, results, what happened when — you look up rather than recall. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
-    `While you look: one short sentence ("moment, ich schau nach"). You are checking, not asking someone else. Then answer in your own words, shortened for the ear, no lists or paths read aloud.`,
-    // Live 2026-09-11: the lookups went out at 427 to 756 characters,
-    // full of "describe briefly" and sub-questions. A human reads those
-    // in the chat log, and a long question does not buy a better
-    // answer.
-    `Keep a lookup to one short sentence — the request, nothing about how to answer it.`,
+    `What you can do is not yours to judge: never say you cannot do something, never claim a missing tool, never offer a workaround instead.`,
+    `Call the moment something is asked of you — do not announce it, do not ask whether you should, do not wait. You are looking it up, not asking someone else.`,
+    `Then answer in your own words, shortened for the ear, no lists or paths read aloud. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
+    `Keep the lookup itself to one short sentence: the request, nothing about how to answer it.`,
     `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,
   ].filter((p) => p.length > 0);
 

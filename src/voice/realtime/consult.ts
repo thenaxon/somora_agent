@@ -19,7 +19,9 @@ export function consultToolSpec(agent: string): RealtimeToolSpec {
     name: CONSULT_TOOL_NAME,
     description:
       `Look something up or get something done: this reaches your own tools, memory and files, and ` +
-      'returns the result. Use it for anything factual or any action. ' +
+      'returns the result. Use it for anything factual AND for every request to act — opening a ' +
+      'browser, starting a session, writing a file, sending something. This is the only way you do ' +
+      'anything at all, so never decide for yourself that something is impossible. ' +
       'ONE short sentence — what the user actually wants, nothing else. No instructions about how to ' +
       'answer, no "describe briefly", no lists of sub-questions: those make the question longer than ' +
       'the answer and are read by a human in the chat log.',

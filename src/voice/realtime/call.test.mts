@@ -277,6 +277,25 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('while the call still ran the turn', consultsRun.length === 1, String(consultsRun.length));
 }
 
+// ── a hand-written voice character replaces the derived one ─────────
+{
+  const built = buildVoiceInstructions({
+    persona: persona(),
+    consultPolicy: 'always',
+    language: 'de',
+    consultToolName: CONSULT_TOOL_NAME,
+    sessionSlug: 'main',
+    override: 'Ich bin knapp, ein bisschen mürrisch, und ich rede wie am Telefon mit einem Kollegen.',
+  });
+  // Rene has eight agents: deriving costs nothing to maintain, writing
+  // by hand gives control. The override buys the second without giving
+  // up the first — and the rules that keep it honest stay either way.
+  check('the written character is used', built.text.includes('mürrisch'));
+  check('and the derived one is gone', !built.text.includes('Engineer'));
+  check('but the rules still stand', built.text.includes(CONSULT_TOOL_NAME) && /never invent/i.test(built.text));
+  check('and so does the identity rule', /You are hans, speaking out loud/.test(built.text));
+}
+
 // ── the instructions the talking model is given ──────────────────────
 {
   const built = buildVoiceInstructions({
@@ -304,6 +323,12 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('no meta-commentary the model can read out', !/headline|footnote/i.test(built.text));
   check('it does not pass itself off as a person', /not a human/i.test(built.text));
   check('facts still go through the tool', built.text.includes(CONSULT_TOOL_NAME));
+  // Rene, 2026-09-11: asked to open somora's browser, it refused on its
+  // own authority instead of passing the request on.
+  check('it may not judge what it can do', /not yours to judge/.test(built.text));
+  check('and may not refuse a task itself', /never say you cannot do something/i.test(built.text));
+  check('and may not announce a lookup instead of making it', /do not announce it/i.test(built.text));
+  check('capabilities are not part of its self-knowledge', !/what you can or cannot do/i.test(built.text));
   check('it is short enough to stay fast', built.chars < 1600, `${built.chars} chars`);
 }
 
