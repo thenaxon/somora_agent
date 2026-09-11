@@ -1836,3 +1836,23 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.35) 14px, #000 32px);
   scrollbar-width: thin;
 }
+
+/* What the voice self said out loud.
+ *
+ * The agent's written answer is the record; this is how it was read to
+ * the human. Worth keeping, not worth a block — it rendered as a
+ * tool-call-looking bubble labelled `voice_spoken` until 2026-09-12. */
+.voice-spoken {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 2px 0 2px 34px;
+  padding: 2px 0;
+  color: var(--text-3, #777);
+  font-size: 11px;
+  font-style: italic;
+  line-height: 1.4;
+}
+.voice-spoken svg { flex: 0 0 auto; opacity: 0.7; align-self: center; }
+.voice-spoken-text { overflow-wrap: anywhere; }
+.voice-spoken-time { margin-left: auto; opacity: 0.6; font-style: normal; }

@@ -42,6 +42,8 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
   const [error, setError] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [transcript, setTranscript] = useState<Array<{ who: 'you' | 'agent'; text: string }>>([]);
+  /** What is being said right now, before the sentence is final. */
+  const [partial, setPartial] = useState<{ who: 'you' | 'agent'; text: string } | null>(null);
   const [consults, setConsults] = useState(0);
 
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -102,7 +104,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
     if (!box) return;
     const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
     if (distanceFromBottom < 80) box.scrollTop = box.scrollHeight;
-  }, [transcript]);
+  }, [transcript, partial]);
 
   // The meter runs while nobody speaks, so the clock belongs on screen
   // — and it turns warning-coloured well before the cap cuts the call.
@@ -115,6 +117,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
   const connect = useCallback(async () => {
     setError(null);
     setTranscript([]);
+    setPartial(null);
     setConsults(0);
     setState('connecting');
     setStartedAt(Date.now());
@@ -130,7 +133,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
       );
       wsRef.current = ws;
       ws.onmessage = (evt) => {
-        let msg: { type?: string; base64?: string; event?: { kind?: string; text?: string; final?: boolean; message?: string }; call?: { consults?: number; state?: string } };
+        let msg: { type?: string; base64?: string; event?: { kind?: string; text?: string; final?: boolean; message?: string }; call?: { consults?: number; state?: string; target?: { agent?: string; slug?: string } } };
         try { msg = JSON.parse(String(evt.data)) as typeof msg; } catch { return; }
         if (msg.type === 'audio' && msg.base64) {
           playerRef.current?.play(msg.base64);
@@ -145,6 +148,11 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
         if (msg.type === 'state' && msg.call?.state) {
           setState(msg.call.state as CallState);
           if (typeof msg.call.consults === 'number') setConsults(msg.call.consults);
+          // The call can be handed to another agent mid-conversation,
+          // so the header follows the server rather than the picker.
+          const t = msg.call.target;
+          if (t?.agent && t.agent !== agent) setAgent(t.agent);
+          if (t?.slug && t.slug !== session) setSession(t.slug);
           return;
         }
         if (msg.call && typeof msg.call.consults === 'number') setConsults(msg.call.consults);
@@ -155,10 +163,21 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
             setState((s) => (s === 'consulting' ? s : 'speaking'));
             break;
           case 'user_transcript':
-            if (ev.final && ev.text) setTranscript((t) => [...t, { who: 'you', text: ev.text! }]);
+            if (ev.final && ev.text) {
+              setPartial(null);
+              setTranscript((t) => [...t, { who: 'you', text: ev.text! }]);
+            } else if (ev.text) setPartial({ who: 'you', text: ev.text });
             break;
           case 'model_transcript':
-            if (ev.final && ev.text) setTranscript((t) => [...t, { who: 'agent', text: ev.text! }]);
+            if (ev.final && ev.text) {
+              setPartial(null);
+              setTranscript((t) => [...t, { who: 'agent', text: ev.text! }]);
+            } else if (ev.text) {
+              // Deltas arrive word by word; showing them is what makes
+              // the window feel like a conversation rather than a log
+              // that updates once per sentence.
+              setPartial((cur) => ({ who: 'agent', text: cur?.who === 'agent' ? cur.text + ev.text! : ev.text! }));
+            }
             break;
           case 'tool_call':
             setState('consulting');
@@ -275,7 +294,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
         </div>
       )}
 
-      <div style={{ flex: '1 1 220px', minHeight: 160, position: 'relative' }}>
+      <div style={{ flex: '0 0 46%', minHeight: 150, position: 'relative' }}>
         <VoiceOrb
           color={color}
           speaker={state === 'speaking' ? 'agent' : 'you'}
@@ -308,7 +327,12 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
         {state === 'consulting' && 'looking it up…'}
         {state === 'speaking' && `${agent} is talking`}
         {state === 'closed' && 'ended'}
-        {consults > 0 && <span style={{ opacity: 0.6 }}> · {consults} asked</span>}
+        {consults > 0 && (
+          <span style={{ opacity: 0.6 }} title={`${agent} looked something up ${consults} time(s) during this call`}>
+            {' · '}
+            {consults === 1 ? 'looked up once' : `looked up ${consults}×`}
+          </span>
+        )}
       </div>
 
       {error && (
@@ -352,9 +376,13 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
         data-testid="voice-transcript"
         ref={transcriptRef}
         className="voice-transcript"
-        style={{ flex: '1 1 120px', overflowY: 'auto', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}
+        // minHeight 0 is the whole trick: without it a flex child never
+        // shrinks below its content, so the list grew instead of
+        // scrolling and the newest line sat below the window edge
+        // (Rene, 2026-09-12: "scrollt noch immer nicht schön weiter").
+        style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}
       >
-        {transcript.map((line, i) => (
+        {[...transcript, ...(partial && partial.text.trim() ? [partial] : [])].map((line, i) => (
           <div
             key={i}
             style={{
@@ -366,6 +394,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
               overflowWrap: 'anywhere',
               background: line.who === 'you' ? 'var(--bg-3)' : `color-mix(in srgb, ${color} 14%, transparent)`,
               color: line.who === 'you' ? 'var(--text-2)' : 'var(--text-1)',
+              opacity: line === partial ? 0.65 : 1,
               borderLeft: line.who === 'you' ? undefined : `2px solid ${color}`,
             }}
           >

@@ -37,6 +37,9 @@ export interface VoiceInstructionsInput {
   /** Which session this call is bound to — the voice self may say
    *  where it is, and it must never imply it can switch. */
   sessionSlug: string;
+  /** Agents this call may be handed over to. Empty = no switching, and
+   *  the instruction says so instead of teasing an ability. */
+  switchTo?: readonly string[];
 }
 
 /** First paragraph of the persona's own description, trimmed. The
@@ -98,7 +101,9 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     `Call the moment something is asked of you — do not announce it, do not ask whether you should, do not wait. You are looking it up, not asking someone else.`,
     `Then answer in your own words, shortened for the ear, no lists or paths read aloud. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
     `Keep the lookup itself to one short sentence: the request, nothing about how to answer it.`,
-    `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,
+    input.switchTo && input.switchTo.length > 0
+      ? `This conversation runs in your session "${sessionSlug}". If the user asks for someone else — ${input.switchTo.join(', ')} — hand the call over with the switch tool, in the session they name. Never do it unasked.`
+      : `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,
   ].filter((p) => p.length > 0);
 
   const text = parts.join('\n');

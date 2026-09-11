@@ -17,6 +17,7 @@ import { VoiceCall, type ConsultResult, type SessionWorkStatus, type VoiceCallSn
 import { CONSULT_TOOL_NAME } from './consult.ts';
 import { buildVoiceInstructions } from './persona.ts';
 import { OpenAiRealtimeProvider } from './openai-provider.ts';
+import type { NormalizedEvent } from '../../types/events.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
 export interface VoiceManagerDeps {
@@ -25,6 +26,10 @@ export interface VoiceManagerDeps {
   runConsult(args: { agent: string; session: string; text: string }): Promise<ConsultResult>;
   /** Is that session busy, and for how long? Answers without waiting. */
   sessionStatus?(agent: string, session: string): Promise<SessionWorkStatus>;
+  /** Puts an event on the live SSE stream of that session. */
+  publishEvent?(agent: string, session: string, ev: NormalizedEvent): void;
+  /** Every agent on this instance — filtered to the callable ones. */
+  listAgentNames?(): Promise<string[]>;
   /** Injectable for tests. */
   provider?: RealtimeProvider;
   /** Mirrors every provider event of every call to whoever is watching
@@ -138,6 +143,52 @@ export class VoiceCallManager {
     };
   }
 
+  /** Everything a call needs to continue as another agent. */
+  private async buildTarget(agent: string, sessionRef: string | undefined): Promise<{
+    persona: Persona;
+    target: { agent: string; session: string; slug: string };
+    cfg: {
+      model: string;
+      voice: string;
+      language: string;
+      consultPolicy: 'auto' | 'substantive' | 'always';
+      maxCallMinutes: number;
+      personaOverride?: string;
+      turnDetection?: { threshold: number; prefixPaddingMs: number; silenceDurationMs: number };
+    };
+  }> {
+    const cfg = this.cfg();
+    if (!cfg?.enabled) throw new Error('realtime voice is off');
+    const persona = await loadPersona(agent);
+    if (!persona) throw new Error(`agent '${agent}' not found`);
+    if (!persona.voice?.enabled) throw new Error(`${agent} cannot be reached by voice`);
+    const slug = sessionRef ?? 'main';
+    const session = await resolveSessionId(agent, slug);
+    if (!session) throw new Error(`${agent} has no session '${slug}'`);
+    const personaOverride = await this.voiceOverride(agent);
+    return {
+      persona,
+      target: { agent, session, slug },
+      cfg: {
+        model: cfg.model,
+        voice: persona.voice.voice ?? cfg.defaultVoice,
+        language: persona.voice.language ?? this.deps.config.stt?.language ?? 'en',
+        consultPolicy: persona.voice.consultPolicy ?? cfg.consultPolicy,
+        maxCallMinutes: cfg.maxCallMinutes,
+        ...(personaOverride ? { personaOverride } : {}),
+        ...(cfg.turnDetection
+          ? {
+              turnDetection: {
+                threshold: cfg.turnDetection.threshold,
+                prefixPaddingMs: cfg.turnDetection.prefixPaddingMs,
+                silenceDurationMs: cfg.turnDetection.silenceDurationMs,
+              },
+            }
+          : {}),
+      },
+    };
+  }
+
   async start(input: StartCallInput): Promise<ActiveCall> {
     const cfg = this.cfg();
     if (!cfg?.enabled) throw new Error('realtime voice is off (realtimeVoice.enabled)');
@@ -177,8 +228,21 @@ export class VoiceCallManager {
         ...(this.deps.sessionStatus
           ? { sessionStatus: (a: string, s: string) => this.deps.sessionStatus!(a, s) }
           : {}),
-        appendEvent,
+        // Written AND published: a reload must not reveal lines the
+        // live view never showed.
+        appendEvent: async (a, sess, ev) => {
+          await appendEvent(a, sess, ev);
+          this.deps.publishEvent?.(a, sess, ev);
+        },
         log: (entry) => logger.info(entry),
+        ...(cfg.allowAgentSwitch
+          ? {
+              callableAgents: await this.callableAgents(
+                (await this.deps.listAgentNames?.()) ?? [],
+              ),
+              resolveTarget: (a: string, sref: string | undefined) => this.buildTarget(a, sref),
+            }
+          : {}),
         onEvent: (ev, snap) => this.deps.watcher?.(snap.id)?.(ev, snap),
         onState: (snap) => this.deps.stateWatcher?.(snap.id)?.(snap),
       },

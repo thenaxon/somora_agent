@@ -223,6 +223,22 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   );
 }
 
+// ── a late cancel is not an error the human should see ──────────────
+{
+  const { socket, events } = await openSession();
+  socket.server({ type: 'session.created' });
+  socket.server({
+    type: 'error',
+    error: { type: 'invalid_request_error', message: 'Cancellation failed: no active response found' },
+  });
+  await tick();
+  check(
+    'the late cancel of an interruption stays out of the conversation',
+    !events.some((e) => e.kind === 'error'),
+    JSON.stringify(events.filter((e) => e.kind === 'error')),
+  );
+}
+
 // ── an item-level error must not end a living call ───────────────────
 {
   const { socket, events } = await openSession();

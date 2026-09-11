@@ -33,6 +33,7 @@ import {
   Globe,
   Mic,
   CornerDownLeft,
+  Volume2,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
@@ -100,6 +101,13 @@ export const MessageItem = memo(function MessageItem({
   if (msg.role === 'tool_result') {
     return <ToolResultBlock toolResult={msg.toolResult} />;
   }
+  if (msg.role === 'engine_meta' && msg.meta.itemType === 'voice_spoken') {
+    // Spoken aloud by the voice self. It belongs in the record — it is
+    // what the human actually heard — but it is a rendering of the
+    // agent's own answer, not a second answer and not a tool call, so
+    // it reads as a quiet aside rather than a block.
+    return <SpokenAsideLine text={typeof msg.meta.payload === 'object' && msg.meta.payload && 'text' in msg.meta.payload ? String((msg.meta.payload as { text?: unknown }).text ?? '') : (msg.meta.summary ?? '')} ts={msg.ts} />;
+  }
   if (msg.role === 'engine_meta') {
     return <EngineMetaBlock meta={msg.meta} />;
   }
@@ -128,6 +136,7 @@ export const MessageItem = memo(function MessageItem({
     return <AgentAnswerDivider text={msg.text} ts={msg.ts} />;
   }
 
+  const spokenByUser = msg.role === 'user' && msg.inputModality === 'voice';
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
   const peer = isPeer && msg.fromAgent ? peerAgents?.get(msg.fromAgent) : undefined;
   // Origin caption for A2A inbounds from a NON-main session: "naxon ·
@@ -167,7 +176,9 @@ export const MessageItem = memo(function MessageItem({
                   }
             }
           >
-            {isPeer ? (peerIcon ?? '🤖') : <User size={12} />}
+            {/* Spoken, not typed: the same person, a different channel,
+                and worth seeing at a glance when reading a call back. */}
+            {isPeer ? (peerIcon ?? '🤖') : spokenByUser ? <Mic size={12} /> : <User size={12} />}
           </div>
           <div className="chat-msg-meta-col">
             {msg.text && (
@@ -417,6 +428,17 @@ function TmuxDivider({ text, ts }: { text: string; ts: number }) {
 export function summarizeBrowserWakeText(text: string): string {
   const id = text.match(/browser '([^']+)'/)?.[1] ?? '';
   return id.replace(/^agent:/, '').replace(/^profile:/, 'profile ');
+}
+
+function SpokenAsideLine({ text, ts }: { text: string; ts: number }) {
+  if (!text) return null;
+  return (
+    <div className="voice-spoken" aria-label="spoken aloud">
+      <Volume2 size={11} />
+      <span className="voice-spoken-text">{text}</span>
+      <span className="voice-spoken-time">{formatBubbleTime(ts)}</span>
+    </div>
+  );
 }
 
 function AgentAnswerDivider({ text, ts }: { text: string; ts: number }) {

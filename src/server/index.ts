@@ -5910,6 +5910,9 @@ const voiceCalls = new VoiceCallManager({
   },
   watcher: (callId) => voiceWatchers.get(callId),
   stateWatcher: (callId) => voiceStateWatchers.get(callId),
+  listAgentNames: async () => (await listAgents()).map((a) => a.name),
+  publishEvent: (agent, session, ev) =>
+    publish(agent, session, ev as unknown as Parameters<typeof publish>[2]),
   sessionStatus: async (agent, session) => {
     const st = getSessionLockStatus(agent, session);
     return {

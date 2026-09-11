@@ -54,6 +54,10 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // tool rounds, so the oldest tool results were shortened to keep it
     // going. Nothing was re-run.
     context_trimmed: 'context trimmed',
+    // What the voice self actually SAID, kept apart from what the agent
+    // wrote. Without a label it showed up as the raw `voice_spoken`,
+    // looking like a tool call (Rene, 2026-09-12).
+    voice_spoken: 'spoken aloud',
   },
 };
 
@@ -105,6 +109,10 @@ export function summariseEngineMeta(
       return `reasoning effort '${p.requested}' rejected by the backend — sent ${typeof p.sent === 'string' ? `'${p.sent}'` : 'without the parameter'} instead`;
     }
     return undefined;
+  }
+  if (itemType === 'voice_spoken') {
+    const p = payload as { text?: unknown } | null | undefined;
+    return typeof p?.text === 'string' ? p.text : undefined;
   }
   if (itemType === 'context_compacted') {
     // Both engines write this row: somora's own compaction on

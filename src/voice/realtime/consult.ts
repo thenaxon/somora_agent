@@ -69,6 +69,65 @@ export function statusToolSpec(): RealtimeToolSpec {
   };
 }
 
+export const SWITCH_TOOL_NAME = 'somora_switch_agent';
+
+/**
+ * Hand the call to another agent, in a named session.
+ *
+ * The target is otherwise fixed for the length of a call, on purpose: a
+ * model that can re-point itself can write into a conversation nobody
+ * asked it to. This is the one exception, and it is explicit — the
+ * human says "put me through to lisa", it is announced in both
+ * sessions, and the picker in the window follows.
+ *
+ * It is a fresh provider session underneath: a voice cannot be changed
+ * once a session has produced audio (measured 2026-09-11), and two
+ * agents that sound alike would be worse than a second of silence.
+ */
+export function switchToolSpec(callable: readonly string[]): RealtimeToolSpec {
+  return {
+    name: SWITCH_TOOL_NAME,
+    description:
+      'Hand this conversation over to another agent when the user asks for it. ' +
+      `Available: ${callable.join(', ')}. ` +
+      'Say one short sentence that you are putting them through, then call. ' +
+      'Never switch on your own initiative, and never to look something up — for that you ask.',
+    parameters: {
+      type: 'object',
+      properties: {
+        agent: { type: 'string', description: `Who to hand over to. One of: ${callable.join(', ')}.` },
+        session: {
+          type: 'string',
+          description:
+            'Which of that agent\'s sessions to talk in, by name (e.g. "main", "projektA"). ' +
+            'Omit for their main session. If the user named one, pass it exactly.',
+        },
+      },
+      required: ['agent'],
+      additionalProperties: false,
+    },
+  };
+}
+
+export interface SwitchArgs {
+  agent: string;
+  session?: string;
+}
+
+export function parseSwitchArgs(raw: string): { ok: true; args: SwitchArgs } | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'your call arrived incomplete — say the name again' };
+  }
+  const obj = parsed as Partial<SwitchArgs> | null;
+  const agent = typeof obj?.agent === 'string' ? obj.agent.trim() : '';
+  if (!agent) return { ok: false, error: 'no agent was named — ask who they want to talk to' };
+  const session = typeof obj?.session === 'string' && obj.session.trim().length > 0 ? obj.session.trim() : undefined;
+  return { ok: true, args: { agent, ...(session ? { session } : {}) } };
+}
+
 /** Arguments as they arrive from the provider (JSON text). */
 export interface ConsultArgs {
   question: string;

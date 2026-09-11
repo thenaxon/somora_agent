@@ -266,6 +266,15 @@ class OpenAiRealtimeSession implements RealtimeSession {
         // The server knows better than our bookkeeping: if it says a
         // response is running, one is. Remember to ask again when that
         // response reports done, so the answer is not lost.
+        // Cancelling a response that just finished is the normal shape
+        // of an interruption, not a fault: the user talks over the last
+        // syllable and the cancel arrives a moment late. It was shown
+        // in red to the human (Rene, 2026-09-12) — it belongs in the
+        // log, nowhere else.
+        if (/no active response/i.test(message)) {
+          this.responseActive = false;
+          break;
+        }
         if (/active response in progress/i.test(message)) {
           this.responseActive = true;
           this.speakWhenFree = true;

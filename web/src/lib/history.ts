@@ -172,6 +172,7 @@ export function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
         ...(e.from_agent ? { fromAgent: e.from_agent } : {}),
         ...(e.from_agent && e.from_session ? { fromSession: e.from_session } : {}),
         ...(e.from_system ? { fromSystem: e.from_system } : {}),
+        ...(e.input?.modality === 'voice' ? { inputModality: 'voice' as const } : {}),
         ...(e.attachments && e.attachments.length > 0
           ? {
               attachments: e.attachments.map((a) => ({

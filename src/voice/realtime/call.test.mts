@@ -277,6 +277,88 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('while the call still ran the turn', consultsRun.length === 1, String(consultsRun.length));
 }
 
+// ── handing the call to another agent ───────────────────────────────
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'lisa', session: 'projektA' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 3, reason: 'handing over' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  const notes: Array<{ agent: string; session: string; text: string }> = [];
+  const lisa = persona({ name: 'lisa', description: 'Researcher.' } as Partial<Persona>);
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid-hans', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async () => ({ text: 'x' }),
+      appendEvent: async (agent, session, ev) => {
+        const payload = (ev as { payload?: { text?: string } }).payload;
+        if (payload?.text) notes.push({ agent, session, text: payload.text });
+      },
+      callableAgents: ['hans', 'lisa', 'naxon'],
+      resolveTarget: async (agent, sessionRef) => ({
+        persona: lisa,
+        target: { agent, session: `sid-${agent}`, slug: sessionRef ?? 'main' },
+        cfg: { model: 'm', voice: 'cedar', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+      }),
+    },
+  );
+  await drain(call);
+
+  const snap = call.snapshot();
+  check('the call continues as the other agent', snap.target.agent === 'lisa', JSON.stringify(snap.target));
+  check('in the session that was named', snap.target.slug === 'projektA', snap.target.slug);
+  check('the old session says where it went', notes.some((n) => n.agent === 'hans' && /handed this call over to lisa/.test(n.text)), JSON.stringify(notes));
+  check('and the new one where it came from', notes.some((n) => n.agent === 'lisa' && /took this call over from hans/.test(n.text)));
+  check('the new voice is used', provider.lastSession?.request.voice === 'cedar', String(provider.lastSession?.request.voice));
+  check('and the new persona speaks', provider.lastSession?.request.instructions.includes('You are lisa') === true);
+}
+
+// ── switching is refused where it is not allowed ────────────────────
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'buffet' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 3, reason: 'hung up' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  let resolved = 0;
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'v', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async () => ({ text: 'x' }),
+      appendEvent: async () => {},
+      callableAgents: ['hans', 'lisa'],
+      resolveTarget: async () => { resolved += 1; throw new Error('should not be reached'); },
+    },
+  );
+  await drain(call);
+  check('an agent without a voice is refused', provider.lastSession?.toolResults[0]?.result.includes('cannot be reached') === true);
+  check('and nothing was switched', resolved === 0 && call.snapshot().target.agent === 'hans');
+}
+
+// ── without permission there is no switch tool at all ───────────────
+{
+  const provider = new FakeRealtimeProvider([{ emit: { kind: 'closed', ts: 1, reason: 'done' } }]);
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'v', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    { provider, runConsult: async () => ({ text: 'x' }), appendEvent: async () => {} },
+  );
+  await call.start();
+  const names = provider.lastSession?.request.tools.map((t) => t.name) ?? [];
+  check('only the two working tools are offered', names.join(',') === 'somora_agent_consult,somora_work_status', names.join(','));
+}
+
 // ── a hand-written voice character replaces the derived one ─────────
 {
   const built = buildVoiceInstructions({
