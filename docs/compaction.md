@@ -193,14 +193,17 @@ whether the percentage in the header tells the truth. Which is exactly
 why it must be the **effective session limit of the CLI**, not the
 native API window of the model:
 
-- **codex-cli**: Codex caps a GPT-5.6 session at **272k tokens**
-  (server-delivered default since Codex 0.144.6; above that OpenAI's
-  input-premium tier applies), although the model's API window is
-  1.05M. Configure `contextWindow: 272000`. A value of 400000 or
-  1000000 — the obvious thing to copy from the model card — makes the
-  header claim "68 % free" while codex is already compacting
-  internally, and lets the model be picked as a summariser for
-  histories it will refuse.
+- **codex-cli**: Codex runs a session against a window it delivers
+  itself and reports per thread as `modelContextWindow` — **258,400**
+  for every model it offers here, measured 2026-09-11 on codex 0.153.3
+  (`gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`), although the model's
+  API window is 1.05M. somora uses that reported number for the header
+  as soon as the first turn reports it, so the configured value matters
+  before the first turn and for the compaction-worker choice: configure
+  `contextWindow: 258400`. A value of 400000 or 1000000 — the obvious
+  thing to copy from the model card — makes the header claim "68 %
+  free" while codex is already compacting internally, and lets the
+  model be picked as a summariser for histories it will refuse.
 - **claude-cli**: Claude Code sessions run against the model's real
   window (1M for the Claude 5 family, 200k for Haiku 4.5), so the
   native value is correct here.

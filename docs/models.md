@@ -99,48 +99,51 @@ providers:
     models:
       - id: gpt-6-astra
         alias: astra
-        contextWindow: 272000          # same Codex session cap as the 5.6 family
+        contextWindow: 258400          # what codex reports as modelContextWindow (measured 2026-09-11)
         capabilities: [text, image, pdf, reasoning]
         reasoning:
           levels: { "off": low, high: xhigh }   # Astra has no `minimal` — map `off` explicitly; `max` deliberately not a default
       - id: gpt-5.6-sol
         alias: gpt56
-        contextWindow: 272000          # Codex session cap, NOT the 1.05M API window
+        contextWindow: 258400          # the codex session window, NOT the 1.05M API window
         capabilities: [text, image, pdf, reasoning]
         reasoning:
           levels: { high: xhigh }      # optional: /thinking high → codex xhigh
       - id: gpt-5.6-terra
         alias: terra
-        contextWindow: 272000
+        contextWindow: 258400
         capabilities: [text, image, pdf, reasoning]
       - id: gpt-5.6-luna
         alias: luna
-        contextWindow: 272000
+        contextWindow: 258400
         capabilities: [text, image, pdf, reasoning]
       - id: gpt-5.5
         alias: gpt55
-        contextWindow: 272000
+        contextWindow: 258400
         capabilities: [text, image, pdf, reasoning]
 ```
 
 | model | contextWindow | notes | verified |
 |---|---|---|---|
-| `gpt-6-astra` | 272000 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. `contextWindow: 272000` until Codex says otherwise. Effort vocabulary is `low | medium | high | xhigh | max` — no `minimal`, so a persona without a thinking level (`off`) needs `reasoning: { levels: { "off": low } }`; without it codex-cli retries once with `low` after the 400 (2026-09-06). | 2026-09-05 (app-server engine) |
-| `gpt-5.6-sol` | 272000 | Flagship — complex coding, research, deepest reasoning. | 2026-09-03 |
-| `gpt-5.6-terra` | 272000 | Workhorse; OpenAI positions it as GPT-5.5-class at lower cost. | 2026-09-05 (app-server engine) |
-| `gpt-5.6-luna` | 272000 | Fast and cheap — extraction, classification, volume. | 2026-09-03 |
-| `gpt-5.5` | 272000 | Still listed by Codex; the one model here that does **not** run code-mode-only. Terra is the equivalent at lower cost. | 2026-09-05 (app-server engine) |
+| `gpt-6-astra` | 258400 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. Every codex model here reports the same `modelContextWindow` of 258,400 (measured 2026-09-11 against codex 0.153.3; 272000 was a guess and read as an over-full context). Effort vocabulary is `low | medium | high | xhigh | max` — no `minimal`, so a persona without a thinking level (`off`) needs `reasoning: { levels: { "off": low } }`; without it codex-cli retries once with `low` after the 400 (2026-09-06). | 2026-09-05 (app-server engine) |
+| `gpt-5.6-sol` | 258400 | Flagship — complex coding, research, deepest reasoning. | 2026-09-03 |
+| `gpt-5.6-terra` | 258400 | Workhorse; OpenAI positions it as GPT-5.5-class at lower cost. | 2026-09-05 (app-server engine) |
+| `gpt-5.6-luna` | 258400 | Fast and cheap — extraction, classification, volume. | 2026-09-03 |
+| `gpt-5.5` | 258400 | Still listed by Codex; the one model here that does **not** run code-mode-only. Terra is the equivalent at lower cost. | 2026-09-05 (app-server engine) |
 | `gpt-5.4-mini`, `gpt-5.3-codex` | — | **Retired** for ChatGPT accounts (Codex answers with an error, seen 2026-08-31 as an `exit 1` compaction-worker crash). Remove them. | 2026-08-31 |
 
 **Peculiarities of this engine**
 
-- **The 272k cap is the important number on this page.** Codex caps a
-  GPT-5.6 session at 272k tokens (server-delivered default since Codex
-  0.144.6; above that OpenAI's input-premium tier), while the API
-  window is 1.05M. The information is not on the model card — it lives
-  in Codex GitHub issues and release notes. With 400000 or 1000000
-  configured, the header percentage lies and the model becomes
-  eligible as a compaction summariser for histories it will refuse.
+- **Ask codex for the window instead of copying it from a model
+  card.** Codex runs a session against a window it delivers itself and
+  reports on every turn (`modelContextWindow`): **258,400** for every
+  model it offers, measured 2026-09-11 on codex 0.153.3, while the API
+  window is 1.05M. somora shows that reported number once the first
+  turn has run, so a wrong configured value only misleads until then —
+  but it also decides whether the model is picked as a compaction
+  summariser, so keep it right. 272000, the figure that circulated in
+  Codex issues and release notes, is 5 % too high and made a long
+  thread read as over-full.
 - Codex compacts the thread itself; somora's `triggerRatio` does not
   apply. `contextWindow` feeds worker choice and display only.
 - Reasoning vocabulary is `minimal | low | medium | high | xhigh |
