@@ -51,7 +51,7 @@ export type NormalizedEvent =
        * after the medium: the distinguishing fact is "something you
        * kicked off is done", and video is only the first of those.
        */
-      from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
+      from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice';
       /**
        * Correlation UUID for an `agent_ask` round-trip. Persisted on
        * BOTH sides: on the caller's side as a tool_call → tool_result
@@ -450,7 +450,7 @@ export type SseEvent =
         /** Set only when the inbound was synthesized by an internal
          *  subsystem (today: 'sentinel'). Clients render the message
          *  as a centered system divider. */
-        from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
+        from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice';
         agent_ask_call_id?: string;
       };
     }

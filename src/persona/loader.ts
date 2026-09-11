@@ -245,11 +245,37 @@ const AgentYamlSchema = z
      * reaches it like any other image.
      */
     imageReview: z.enum(['never', 'always']).optional(),
+    /**
+     * The agent's voice self (private/realtime-voice-design.md).
+     *
+     * Only what is specific to SPEAKING lives here — who the agent is
+     * comes from its persona files, which is the whole reason there is
+     * no second persona to keep in sync. Absent means: this agent
+     * cannot be called, and it does not appear in the /web voice
+     * picker.
+     */
+    voice: z
+      .object({
+        enabled: z.boolean().default(true),
+        /** Provider voice id, or a logical name mapped per provider. */
+        voice: z.string().min(1).optional(),
+        /** Spoken language. Defaults to the instance's stt language. */
+        language: z.string().min(2).max(8).optional(),
+        /** One line on how this agent sounds, e.g. "knapp, trocken". */
+        style: z.string().max(400).optional(),
+        /** Overrides the global consult policy for this agent. */
+        consultPolicy: z.enum(['auto', 'substantive', 'always']).optional(),
+        /** Spoken answers are short by nature — a paragraph read aloud
+         *  is a monologue nobody can interrupt politely. */
+        maxSpokenSentences: z.number().int().min(1).max(10).default(4),
+      })
+      .optional(),
     rem: RemConfigSchema.optional(),
   })
   .passthrough();
 
 export type RemConfig = z.infer<typeof RemConfigSchema>;
+export type VoicePersonaConfig = NonNullable<z.infer<typeof AgentYamlSchema>['voice']>;
 
 type Frontmatter = z.infer<typeof FrontmatterSchema>;
 type AgentYaml = z.infer<typeof AgentYamlSchema>;
@@ -298,6 +324,8 @@ export interface Persona {
   rem: RemConfig | undefined;
   /** Image-review stance from agent.yaml. `undefined` = 'never'. */
   imageReview: 'never' | 'always' | undefined;
+  /** agent.yaml `voice:` — the speaking half of this agent. */
+  voice: VoicePersonaConfig | undefined;
   systemPrompt: string;
 }
 
@@ -420,6 +448,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
       : undefined,
     rem: agentYaml.rem,
     imageReview: agentYaml.imageReview,
+    voice: agentYaml.voice,
     systemPrompt: sections.join('\n\n---\n\n'),
   };
 }

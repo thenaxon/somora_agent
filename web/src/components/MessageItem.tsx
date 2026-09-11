@@ -31,6 +31,7 @@ import {
   Undo2,
   User,
   Globe,
+  Mic,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
@@ -118,6 +119,9 @@ export const MessageItem = memo(function MessageItem({
   }
   if (msg.role === 'user' && msg.fromSystem === 'browser') {
     return <BrowserDivider text={msg.text} ts={msg.ts} />;
+  }
+  if (msg.role === 'user' && msg.fromSystem === 'voice') {
+    return <VoiceDivider text={msg.text} ts={msg.ts} />;
   }
 
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
@@ -409,6 +413,28 @@ function TmuxDivider({ text, ts }: { text: string; ts: number }) {
 export function summarizeBrowserWakeText(text: string): string {
   const id = text.match(/browser '([^']+)'/)?.[1] ?? '';
   return id.replace(/^agent:/, '').replace(/^profile:/, 'profile ');
+}
+
+function VoiceDivider({ text, ts }: { text: string; ts: number }) {
+  // A question the agent's own voice channel asked while the user was
+  // on a call. It is NOT a message from another agent — the agent
+  // answers into this chat and addresses nobody back — and it is not
+  // the user typing either, so it gets its own quiet divider rather
+  // than a bubble that would read as "Rene wrote this".
+  return (
+    <div className="sentinel-divider" aria-label="voice channel question">
+      <span className="sentinel-divider-rule" />
+      <span className="sentinel-divider-body">
+        <Mic size={12} />
+        <span className="sentinel-divider-label">voice</span>
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-name">{text.replace(/^\[[^\]]*\]\s*/, '').slice(0, 120)}</span>
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-time">{formatBubbleTime(ts)}</span>
+      </span>
+      <span className="sentinel-divider-rule" />
+    </div>
+  );
 }
 
 function BrowserDivider({ text, ts }: { text: string; ts: number }) {

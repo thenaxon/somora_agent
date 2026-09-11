@@ -88,13 +88,19 @@ function UserTurn({
   text: string;
   fromAgent?: string;
   fromSession?: string;
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser';
+  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice';
 }) {
   // System inbound (sentinel trigger / tmux attention wake):
   // synthesized, not a real user message. Render as a one-line system
   // notice with a glyph + context so it's clearly distinguishable from
   // human and peer-agent turns in scrollback.
-  if (fromSystem === 'sentinel' || fromSystem === 'tmux' || fromSystem === 'subagent' || fromSystem === 'browser') {
+  if (
+    fromSystem === 'sentinel' ||
+    fromSystem === 'tmux' ||
+    fromSystem === 'subagent' ||
+    fromSystem === 'browser' ||
+    fromSystem === 'voice'
+  ) {
     const name =
       fromSystem === 'sentinel'
         ? summarizeSentinelTriggerText(text)
@@ -102,9 +108,19 @@ function UserTurn({
           ? (text.match(/Task '([^']+)'/)?.[1] ?? '')
           : fromSystem === 'browser'
             ? `${(text.match(/browser '([^']+)'/)?.[1] ?? '').replace(/^agent:/, '')} · handed back`
-            : summarizeTmuxWakeText(text);
+            : fromSystem === 'voice'
+              ? text.replace(/^\[[^\]]*\]\s*/, '').slice(0, 80)
+              : summarizeTmuxWakeText(text);
     const label =
-      fromSystem === 'sentinel' ? '🔔 sentinel' : fromSystem === 'subagent' ? '🤖 subagent' : fromSystem === 'browser' ? '🌐 browser' : '🖥  tmux';
+      fromSystem === 'sentinel'
+        ? '🔔 sentinel'
+        : fromSystem === 'subagent'
+          ? '🤖 subagent'
+          : fromSystem === 'browser'
+            ? '🌐 browser'
+            : fromSystem === 'voice'
+              ? '🎙  voice'
+              : '🖥  tmux';
     return (
       <Box marginTop={1}>
         <Text color="gray" bold>

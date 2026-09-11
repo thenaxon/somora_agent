@@ -211,7 +211,7 @@ export interface HistoryEvent {
   truncated?: boolean;
   from_agent?: string;
   from_session?: string;
-  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
+  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice';
   attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
   /** Set on `kind: 'assistant_audio'` history rows. Tracks the
    *  generated TTS artifact so the client can re-render a Play-button

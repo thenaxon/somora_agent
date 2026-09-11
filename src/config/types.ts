@@ -983,6 +983,52 @@ export const TtsClientPolicySchema = z.object({
 });
 export type TtsClientPolicy = z.infer<typeof TtsClientPolicySchema>;
 
+// ─────────────────────────────────────────────────────────────────────
+// Realtime voice (docs: private/realtime-voice-design.md)
+//
+// A standing, interruptible audio connection to a realtime model that
+// TALKS, while the real somora agent still does the work. Deliberately
+// separate from `stt`/`tts`: those turn one recording into one answer,
+// which is the thing this exists to replace.
+//
+// The provider decides the protocol — OpenAI's realtime API and
+// Google's BidiGenerateContent share no wire format (verified
+// 2026-09-11), and OpenRouter cannot carry either — so this block names
+// a provider and an adapter handles the rest.
+export const RealtimeVoiceConfigSchema = z
+  .object({
+    /** Master toggle. Off (or omitted) means: routes answer 503, the
+     *  /web tile is not rendered, no agent is callable. */
+    enabled: z.boolean().default(false),
+    /** Which adapter speaks to which service. */
+    provider: z.enum(['openai', 'google', 'local']).default('openai'),
+    /** Provider model id — never guessed, always configured. */
+    model: z.string().min(1),
+    /** Where the adapter reads its credential. A FILE, not the key
+     *  itself: a long-lived realtime key is the one secret that buys
+     *  minutes of billed audio, and config.yaml is read by more eyes
+     *  than a 600 file. */
+    apiKeyFile: z.string().min(1).optional(),
+    /** Fallback: name of an existing `providers` entry to borrow the
+     *  key from. Only for providers that use the same credential. */
+    provider_ref: z.string().min(1).optional(),
+    transport: z.enum(['webrtc', 'websocket']).default('webrtc'),
+    /** Voice used when an agent names none. Provider-specific id. */
+    defaultVoice: z.string().min(1).default('alloy'),
+    /** How hard the voice self is held to asking the real agent before
+     *  answering anything of substance. `always` is the honest default
+     *  for a system whose whole point is that the AGENT knows things. */
+    consultPolicy: z.enum(['auto', 'substantive', 'always']).default('always'),
+    /** Hard stop for one call. The meter runs while nobody speaks, so
+     *  an open tab is a standing bill. */
+    maxCallMinutes: z.number().int().min(1).max(180).default(20),
+    /** Switching agent mid-call (a second tool). Off until the basic
+     *  call has proven itself. */
+    allowAgentSwitch: z.boolean().default(false),
+  })
+  .optional();
+export type RealtimeVoiceConfig = z.infer<typeof RealtimeVoiceConfigSchema>;
+
 export const TtsConfigSchema = z
   .object({
     /** Master toggle. When false (or block omitted), /tts/* returns
@@ -1916,6 +1962,7 @@ export const ConfigSchema = z.object({
   vision: VisionConfigSchema,
   stt: SttConfigSchema,
   tts: TtsConfigSchema,
+  realtimeVoice: RealtimeVoiceConfigSchema,
   imageGen: ImageGenConfigSchema,
   videoGen: VideoGenConfigSchema,
   browser: BrowserConfigSchema,
