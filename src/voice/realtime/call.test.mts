@@ -185,6 +185,37 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   );
 }
 
+// ── a watcher sees everything, and does not steal it ────────────────
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'Status?', final: true } },
+    { emit: { kind: 'tool_call', ts: 3, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Status?' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 4, reason: 'hung up' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  const seen: string[] = [];
+  const consultsRun: string[] = [];
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'v', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async ({ text }) => { consultsRun.push(text); return { text: 'fertig' }; },
+      appendEvent: async () => {},
+      onEvent: (ev) => seen.push(ev.kind),
+    },
+  );
+  await drain(call);
+  // The regression this pins: a second reader of the provider stream
+  // does not mirror it, it takes half. The watcher must see every event
+  // AND the call must still do its work.
+  check('the watcher saw every event', seen.join(',') === 'ready,user_transcript,tool_call,closed', seen.join(','));
+  check('while the call still ran the turn', consultsRun.length === 1, String(consultsRun.length));
+}
+
 // ── the instructions the talking model is given ──────────────────────
 {
   const built = buildVoiceInstructions({

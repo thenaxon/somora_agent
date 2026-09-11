@@ -12,7 +12,7 @@ import { logger } from '../../server/logger.ts';
 import type { Config } from '../../config/types.ts';
 import { VoiceCall, type ConsultResult, type VoiceCallSnapshot } from './call.ts';
 import { OpenAiRealtimeProvider } from './openai-provider.ts';
-import type { RealtimeProvider, RealtimeSession } from './types.ts';
+import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
 export interface VoiceManagerDeps {
   config: Config;
@@ -20,6 +20,9 @@ export interface VoiceManagerDeps {
   runConsult(args: { agent: string; session: string; text: string }): Promise<ConsultResult>;
   /** Injectable for tests. */
   provider?: RealtimeProvider;
+  /** Mirrors every provider event of every call to whoever is watching
+   *  it — there is only one consumer of the provider stream. */
+  watcher?(callId: string): ((ev: RealtimeEvent, snap: VoiceCallSnapshot) => void) | undefined;
 }
 
 export interface StartCallInput {
@@ -99,6 +102,7 @@ export class VoiceCallManager {
         runConsult: (args) => this.deps.runConsult(args),
         appendEvent,
         log: (entry) => logger.info(entry),
+        onEvent: (ev, snap) => this.deps.watcher?.(snap.id)?.(ev, snap),
       },
     );
     const providerSession = await call.start();

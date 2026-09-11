@@ -13,7 +13,7 @@ import type { Persona } from '../../persona/loader.ts';
 import type { NormalizedEvent } from '../../types/events.ts';
 import { CONSULT_TOOL_NAME, consultToolSpec, parseConsultArgs, renderConsultTurnText } from './consult.ts';
 import { buildVoiceInstructions } from './persona.ts';
-import type { RealtimeProvider, RealtimeSession } from './types.ts';
+import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
 export type VoiceCallState =
   | 'connecting'
@@ -44,6 +44,18 @@ export interface VoiceCallDeps {
   runConsult(args: { agent: string; session: string; text: string }): Promise<ConsultResult>;
   /** Persists into the bound session's history. */
   appendEvent(agent: string, session: string, ev: NormalizedEvent): Promise<void>;
+  /**
+   * Every provider event, as the call processes it.
+   *
+   * There is exactly ONE consumer of the provider's event stream — this
+   * class. An async generator hands each event to whoever asks first,
+   * so a second reader (the route forwarding frames to the browser)
+   * does not mirror the stream, it STEALS half of it. Measured through
+   * the deployed server on 2026-09-11: the call machine got the tool
+   * call and ran the turn while the browser saw neither transcript nor
+   * audio. Anything that needs to watch a call subscribes here.
+   */
+  onEvent?(ev: RealtimeEvent, snapshot: VoiceCallSnapshot): void;
   log?(entry: Record<string, unknown>): void;
   now?(): number;
 }
@@ -140,6 +152,9 @@ export class VoiceCall {
   async *run(): AsyncGenerator<VoiceCallSnapshot> {
     const session = this.session ?? (await this.start());
     for await (const ev of session.events()) {
+      // Mirror first, act second: a watcher must see the event even if
+      // handling it throws.
+      this.deps.onEvent?.(ev, this.snapshot());
       switch (ev.kind) {
         case 'ready':
           this.state = 'listening';

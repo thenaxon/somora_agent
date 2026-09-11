@@ -168,6 +168,8 @@ import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
 import { VoiceCallManager } from '../voice/realtime/manager.ts';
+import type { VoiceCallSnapshot } from '../voice/realtime/call.ts';
+import type { RealtimeEvent } from '../voice/realtime/types.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
 import {
   acquireSessionLock,
@@ -3695,32 +3697,29 @@ app.get(
           const active = await voiceCalls.start({ agent, session: sessionRef });
           callId = active.call.id;
           ws.send(JSON.stringify({ type: 'ready', call: active.call.snapshot(), rateHz: 24000 }));
-          // Drive the call and forward everything the browser needs to
-          // show or play. Audio is sent as base64 inside a JSON frame:
-          // one format for the whole channel beats a binary/JSON split
-          // that every client has to get right.
+          // ONE consumer drives the call; the browser watches through
+          // its onEvent hook. Reading the provider stream a second time
+          // here would not mirror it, it would steal half of it — the
+          // call machine got the tool call and the browser got neither
+          // transcript nor audio (measured 2026-09-11).
+          voiceWatchers.set(active.call.id, (ev, snap) => {
+            if (closed) return;
+            if (ev.kind === 'audio') {
+              ws.send(JSON.stringify({ type: 'audio', base64: ev.base64, rateHz: ev.rateHz }));
+              return;
+            }
+            ws.send(JSON.stringify({ type: 'event', event: ev, call: snap }));
+          });
           void (async () => {
             try {
-              for await (const ev of active.session.events()) {
-                if (closed) break;
-                if (ev.kind === 'audio') {
-                  ws.send(JSON.stringify({ type: 'audio', base64: ev.base64, rateHz: ev.rateHz }));
-                  continue;
-                }
-                ws.send(JSON.stringify({ type: 'event', event: ev, call: active.call.snapshot() }));
-                if (ev.kind === 'closed') break;
+              for await (const _snap of active.call.run()) {
+                /* state travels through the watcher above */
               }
             } catch (err) {
               logger.warn({ msg: 'voice.stream_failed', err: (err as Error).message });
             } finally {
+              voiceWatchers.delete(active.call.id);
               if (!closed) ws.close(1000, 'call ended');
-            }
-          })();
-          // The call state machine runs alongside: it is what turns a
-          // tool call into a turn in the bound session.
-          void (async () => {
-            for await (const _snap of active.call.run()) {
-              /* snapshots are pushed through the event frames above */
             }
           })();
         } catch (err) {
@@ -5876,10 +5875,13 @@ configureSpawnTools({ chatTurnDeps });
 // dumb terminal on this feature (microphone in, speaker out, state on
 // screen); agent, session, provider, key and tool execution all live
 // here. Design: private/realtime-voice-design.md
+// One watcher per live call: the socket that is listening to it.
+const voiceWatchers = new Map<string, (ev: RealtimeEvent, snap: VoiceCallSnapshot) => void>();
 const voiceCalls = new VoiceCallManager({
   get config() {
     return config;
   },
+  watcher: (callId) => voiceWatchers.get(callId),
   runConsult: async ({ agent, session, text }) => {
     const result = await runChatTurn({
       agent,
