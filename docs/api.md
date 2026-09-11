@@ -1238,6 +1238,13 @@ skipped). Disk artifacts stay.
 Outcome of an `agent_ask` call by `call_id` — backs the
 `agent_ask_result` tool.
 
+A call whose asker stopped waiting (`agent_ask` returned `pending`) does
+not depend on anyone remembering to poll: when the answer lands, the
+asker is woken in the session it asked from, with the first lines and
+the `call_id`. Reading the result — here or through the tool — cancels
+that wake, and a caller still on the line never gets one, because the
+answer reaches it as its tool result.
+
 ```
 GET /a2a/ask-result?call_id=<uuid>
 GET /a2a/ask-result?call_id=<uuid>&wait_until_done=1&timeout_ms=300000

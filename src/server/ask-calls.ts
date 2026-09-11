@@ -34,6 +34,70 @@ export interface AskCallEntry {
   finished_at?: number;
   result?: ChatTurnResult;
   error?: string;
+  /** The asker stopped waiting: `agent_ask` returned `pending`. Only
+   *  such a call needs waking — a caller still holding the line gets
+   *  the answer as its tool result. */
+  went_pending?: boolean;
+  /** The asker read the result (agent_ask_result). No wake needed. */
+  result_fetched?: boolean;
+}
+
+/**
+ * Wake the asker when a call it stopped waiting for finishes.
+ *
+ * A spawned sub-agent has done this since 2026-07-28; an agent_ask
+ * never did, and the difference cost a real result: 2026-09-12,
+ * hans asked lisa for research with the minimum timeout, got `pending`
+ * after 1.005 s and ended his turn four seconds later. Lisa worked for
+ * 208 seconds and wrote a full answer — into her own session. The
+ * result sat in this registry, correct and complete, and nobody ever
+ * learned it existed.
+ */
+export interface AskAttentionDeps {
+  dispatchWakeTurn(args: { agent: string; session: string; text: string }): Promise<void>;
+  /** Grace period: an asker that polls right away needs no wake. */
+  graceMs: number;
+}
+
+let askAttentionDeps: AskAttentionDeps | null = null;
+
+export function configureAskAttention(deps: AskAttentionDeps): void {
+  askAttentionDeps = deps;
+}
+
+export function markAskCallPending(call_id: string): void {
+  const e = calls.get(call_id);
+  if (e) e.went_pending = true;
+}
+
+function askWakePrompt(e: AskCallEntry): string {
+  const head = (e.result?.finalText ?? e.error ?? '').replace(/\s+/g, ' ').slice(0, 200);
+  return (
+    `[agent answer] ${e.target_agent} has answered the question you sent to session ` +
+    `'${e.target_session}' — you had stopped waiting for it.` +
+    (head ? ` It begins: "${head}"` : '') +
+    `\nRead the whole answer with agent_ask_result({ call_id: "${e.call_id}" }), then do what ` +
+    `depended on it. If nothing does, tell your human in one line what came back.`
+  );
+}
+
+function scheduleAskWake(e: AskCallEntry): void {
+  const deps = askAttentionDeps;
+  if (!deps) return;
+  // Still on the line? Then the answer is already on its way back as a
+  // tool result, and a wake would be a duplicate.
+  if (!e.went_pending) return;
+  if (!e.from_session || e.from_session === '?') return;
+  const timer = setTimeout(() => {
+    const fresh = calls.get(e.call_id);
+    if (!fresh || fresh.result_fetched) return;
+    void deps
+      .dispatchWakeTurn({ agent: fresh.from_agent, session: fresh.from_session!, text: askWakePrompt(fresh) })
+      .catch(() => {
+        /* the asker's session may be gone; the result stays fetchable */
+      });
+  }, deps.graceMs);
+  timer.unref?.();
 }
 
 const MAX_ENTRIES = 500;
@@ -78,6 +142,7 @@ export function completeAskCall(call_id: string, result: ChatTurnResult): void {
   e.result = result;
   e.finished_at = Date.now();
   if (result.error) e.error = result.error;
+  scheduleAskWake(e);
 }
 
 export function failAskCall(call_id: string, error: string): void {
@@ -86,10 +151,16 @@ export function failAskCall(call_id: string, error: string): void {
   e.state = 'failed';
   e.error = error;
   e.finished_at = Date.now();
+  // A failure is news too: the asker planned on an answer.
+  scheduleAskWake(e);
 }
 
 export function getAskCall(call_id: string): AskCallEntry | undefined {
-  return calls.get(call_id);
+  const e = calls.get(call_id);
+  // Reading a finished call IS fetching it: no wake afterwards, or the
+  // asker is told twice about an answer it already has.
+  if (e?.finished_at !== undefined) e.result_fetched = true;
+  return e;
 }
 
 /** Poll until the call reaches a terminal state or `timeoutMs` passes.

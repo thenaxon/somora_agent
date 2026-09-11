@@ -190,6 +190,8 @@ import {
   completeAskCall,
   failAskCall,
   getAskCall,
+  configureAskAttention,
+  markAskCallPending,
   markAskCallRunning,
   registerAskCall,
   waitForAskCall,
@@ -5159,6 +5161,15 @@ app.post('/chat/send-sync', async (c) => {
       target_agent: agent,
       target_session: session,
     });
+    // The asker hanging up IS the signal that it stopped waiting:
+    // agent_ask aborts its fetch when its own timeout fires. Only such
+    // a call needs waking when the answer finally lands — one that is
+    // still on the line gets the answer as its tool result.
+    const askerGone = c.req.raw.signal;
+    if (askerGone) {
+      if (askerGone.aborted) markAskCallPending(agentAskCallId);
+      else askerGone.addEventListener('abort', () => markAskCallPending(agentAskCallId), { once: true });
+    }
   }
   try {
     const release = await acquireSessionLock(agent, session, {
@@ -6040,6 +6051,30 @@ const browserService = configureBrowserService(config.browser, {
 });
 await browserService.init();
 const screencasts = new ScreencastRegistry(browserService);
+
+// An answer nobody is waiting for still has to arrive. Same pattern as
+// the sub-agent wake above, for the case that cost a real result on
+// 2026-09-12: hans asked lisa with the minimum timeout, stopped
+// waiting after a second, and never learned that her 208-second answer
+// existed.
+configureAskAttention({
+  graceMs: 3_000,
+  dispatchWakeTurn: async ({ agent, session, text }) => {
+    const release = await acquireSessionLock(agent, session, { priority: 'agent' });
+    try {
+      await runChatTurn({
+        agent,
+        session,
+        text,
+        fromSystem: 'subagent',
+        deps: chatTurnDeps,
+        publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
+      });
+    } finally {
+      release();
+    }
+  },
+});
 
 configureSubagentAttention({
   graceMs: 2_000,
