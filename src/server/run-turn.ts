@@ -181,7 +181,7 @@ export interface RunChatTurnArgs {
    *  Persists in user_message.from_system and on the SSE event, so
    *  clients render the message as a centered system divider rather
    *  than a normal user-bubble. Mutually exclusive with fromAgent. */
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice';
+  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
   /** Media made before this turn that nevertheless belongs to it —
    *  a finished video announced by a wake-up. See publishTurnMedia. */
   attachMediaIds?: string[];

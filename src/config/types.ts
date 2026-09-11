@@ -1025,6 +1025,24 @@ export const RealtimeVoiceConfigSchema = z
     /** Switching agent mid-call (a second tool). Off until the basic
      *  call has proven itself. */
     allowAgentSwitch: z.boolean().default(false),
+    /**
+     * How easily the model lets itself be interrupted.
+     *
+     * Talking over it was hard in practice (Rene, 2026-09-12): the
+     * provider decides an interruption has happened from its own voice
+     * activity detection, and its defaults are tuned for a caller who
+     * waits politely. Lower `threshold` reacts to quieter speech,
+     * shorter `prefixPaddingMs` reacts sooner, shorter
+     * `silenceDurationMs` ends YOUR turn sooner (that is the pause
+     * before the model answers).
+     */
+    turnDetection: z
+      .object({
+        threshold: z.number().min(0).max(1).default(0.4),
+        prefixPaddingMs: z.number().int().min(0).max(2_000).default(200),
+        silenceDurationMs: z.number().int().min(100).max(5_000).default(420),
+      })
+      .default({ threshold: 0.4, prefixPaddingMs: 200, silenceDurationMs: 420 }),
   })
   .optional();
 export type RealtimeVoiceConfig = z.infer<typeof RealtimeVoiceConfigSchema>;

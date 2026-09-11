@@ -51,6 +51,9 @@ export interface RealtimeSessionRequest {
   instructions: string;
   /** Spoken language, BCP-47-ish ('de'), for transcription hints. */
   language: string;
+  /** How eagerly the provider hears an interruption and an end of
+   *  turn. Defaults live in config; see realtimeVoice.turnDetection. */
+  turnDetection?: { threshold: number; prefixPaddingMs: number; silenceDurationMs: number };
   /** The tools the voice self may call. Always small — in v1 exactly
    *  one. These exist ONLY inside the provider session: they are not in
    *  somora's ToolRegistry, no agent can see or call them. */

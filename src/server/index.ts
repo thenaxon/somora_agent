@@ -3678,6 +3678,17 @@ app.get('/voice/status', async (c) => {
   });
 });
 
+// What the voice self is actually told. The derived instructions live
+// only in memory, so this is the only way to read them.
+app.get('/voice/instructions', async (c) => {
+  const agent = c.req.query('agent') ?? '';
+  const session = c.req.query('session') ?? 'main';
+  if (!config.realtimeVoice?.enabled) return c.json({ error: 'realtime voice is off' }, 503);
+  const preview = await voiceCalls.previewInstructions(agent, session);
+  if (!preview) return c.json({ error: `agent '${agent}' has no voice` }, 404);
+  return c.json({ agent, session, ...preview });
+});
+
 // The audio channel. Binary frames are microphone PCM16 going up and
 // the model's PCM16 coming down; JSON frames carry control and state.
 // The browser holds no provider knowledge, no key, and never sees a
@@ -6066,7 +6077,10 @@ configureAskAttention({
         agent,
         session,
         text,
-        fromSystem: 'subagent',
+        // Its own origin, not 'subagent': the reader saw a sub-agent
+        // icon for an answer that came from a peer agent it had asked
+        // (Rene, 2026-09-12 — "war ja eine agent_ask message oder?").
+        fromSystem: 'a2a',
         deps: chatTurnDeps,
         publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
       });

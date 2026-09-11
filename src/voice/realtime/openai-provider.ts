@@ -131,7 +131,16 @@ class OpenAiRealtimeSession implements RealtimeSession {
           input: {
             format: { type: 'audio/pcm', rate: AUDIO_RATE_HZ },
             transcription: { model: 'whisper-1', language: this.req.language },
-            turn_detection: { type: 'server_vad' },
+            turn_detection: {
+              type: 'server_vad',
+              // Tuned to be interruptible: the defaults wait for a
+              // confident, sustained speaker, which makes talking over
+              // the model hard (Rene, 2026-09-12).
+              threshold: this.req.turnDetection?.threshold ?? 0.4,
+              prefix_padding_ms: this.req.turnDetection?.prefixPaddingMs ?? 200,
+              silence_duration_ms: this.req.turnDetection?.silenceDurationMs ?? 420,
+              interrupt_response: true,
+            },
           },
           output: { voice: this.req.voice },
         },
@@ -183,6 +192,10 @@ class OpenAiRealtimeSession implements RealtimeSession {
         // no separate event for it on this transport.
         if (this.speaking) {
           this.speaking = false;
+          // Stop the answer at the source as well: dropping the
+          // playback alone leaves the model talking into a void and
+          // counting it as said.
+          if (this.responseActive) this.send({ type: 'response.cancel' });
           this.push({ kind: 'interrupted', ts });
         }
         break;

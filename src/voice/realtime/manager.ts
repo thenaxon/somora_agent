@@ -14,6 +14,8 @@ import { appendEvent } from '../../storage/sessions.ts';
 import { logger } from '../../server/logger.ts';
 import type { Config } from '../../config/types.ts';
 import { VoiceCall, type ConsultResult, type SessionWorkStatus, type VoiceCallSnapshot } from './call.ts';
+import { CONSULT_TOOL_NAME } from './consult.ts';
+import { buildVoiceInstructions } from './persona.ts';
 import { OpenAiRealtimeProvider } from './openai-provider.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
@@ -95,6 +97,47 @@ export class VoiceCallManager {
     }
   }
 
+  /**
+   * The instructions a call WOULD open with, without opening one.
+   *
+   * The derived voice self lives nowhere on disk — it is built per call
+   * from the persona plus `agent.yaml voice:` — so without this there
+   * is no way to read what the model is actually told (Rene,
+   * 2026-09-12: "wo lebt jetzt diese abgeleitete version … ich würd das
+   * gerne sehen"). Same idea as prompt-preview for a normal turn.
+   */
+  async previewInstructions(agent: string, sessionSlug = 'main'): Promise<{
+    text: string;
+    chars: number;
+    source: 'VOICE.md' | 'derived';
+    voice: string;
+    language: string;
+    consultPolicy: string;
+  } | null> {
+    const cfg = this.cfg();
+    const persona = await loadPersona(agent);
+    if (!cfg || !persona?.voice?.enabled) return null;
+    const override = await this.voiceOverride(agent);
+    const consultPolicy = persona.voice.consultPolicy ?? cfg.consultPolicy;
+    const language = persona.voice.language ?? this.deps.config.stt?.language ?? 'en';
+    const built = buildVoiceInstructions({
+      persona,
+      consultPolicy,
+      language,
+      consultToolName: CONSULT_TOOL_NAME,
+      sessionSlug,
+      ...(override ? { override } : {}),
+    });
+    return {
+      text: built.text,
+      chars: built.chars,
+      source: override ? 'VOICE.md' : 'derived',
+      voice: persona.voice.voice ?? cfg.defaultVoice,
+      language,
+      consultPolicy,
+    };
+  }
+
   async start(input: StartCallInput): Promise<ActiveCall> {
     const cfg = this.cfg();
     if (!cfg?.enabled) throw new Error('realtime voice is off (realtimeVoice.enabled)');
@@ -118,6 +161,15 @@ export class VoiceCallManager {
         language: persona.voice.language ?? this.deps.config.stt?.language ?? 'en',
         consultPolicy: persona.voice.consultPolicy ?? cfg.consultPolicy,
         maxCallMinutes: cfg.maxCallMinutes,
+        ...(cfg.turnDetection
+          ? {
+              turnDetection: {
+                threshold: cfg.turnDetection.threshold,
+                prefixPaddingMs: cfg.turnDetection.prefixPaddingMs,
+                silenceDurationMs: cfg.turnDetection.silenceDurationMs,
+              },
+            }
+          : {}),
       },
       {
         provider: this.buildProvider(),

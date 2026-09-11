@@ -100,6 +100,8 @@ export interface VoiceCallConfig {
   language: string;
   consultPolicy: 'auto' | 'substantive' | 'always';
   maxCallMinutes: number;
+  /** Interruption sensitivity, from config. */
+  turnDetection?: { threshold: number; prefixPaddingMs: number; silenceDurationMs: number };
   /** Hand-written character from VOICE.md, when there is one. */
   personaOverride?: string;
 }
@@ -185,6 +187,7 @@ export class VoiceCall {
       voice: this.cfg.voice,
       instructions: instructions.text,
       language: this.cfg.language,
+      ...(this.cfg.turnDetection ? { turnDetection: this.cfg.turnDetection } : {}),
       tools: [consultToolSpec(this.persona.name), statusToolSpec()],
     });
     // The meter runs while nobody speaks, so the cap is wall-clock and

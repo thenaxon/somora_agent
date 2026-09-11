@@ -74,6 +74,14 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     !!update.session?.audio?.input?.transcription,
   );
   check('server-side turn detection is on', update.session?.audio?.input?.turn_detection?.type === 'server_vad');
+  // Talking over the model was hard with the provider defaults, which
+  // wait for a confident sustained speaker (Rene, 2026-09-12).
+  const vad = update.session?.audio?.input?.turn_detection as
+    | { threshold?: number; prefix_padding_ms?: number; silence_duration_ms?: number; interrupt_response?: boolean }
+    | undefined;
+  check('it is tuned to be interruptible', (vad?.threshold ?? 1) < 0.5, String(vad?.threshold));
+  check('and reacts without a long run-up', (vad?.prefix_padding_ms ?? 999) <= 200, String(vad?.prefix_padding_ms));
+  check('and the provider cuts the answer on interruption', vad?.interrupt_response === true);
 }
 
 // ── their events into ours ───────────────────────────────────────────
@@ -107,10 +115,17 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   await tick();
   check('speaking first does not count as an interruption', !events.some((e) => e.kind === 'interrupted'));
 
+  socket.server({ type: 'response.created' });
   socket.server({ type: 'response.output_audio.delta', delta: 'AAAA' });
+  socket.sent.length = 0;
   socket.server({ type: 'input_audio_buffer.speech_started' });
   await tick();
   check('talking over the model does', events.some((e) => e.kind === 'interrupted'));
+  check(
+    'and the answer is cancelled at the source, not just in the speaker',
+    socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type).includes('response.cancel'),
+    socket.sent.join(' '),
+  );
 }
 
 // ── a tool call, and the two events that answer it ───────────────────

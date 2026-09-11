@@ -88,7 +88,7 @@ function UserTurn({
   text: string;
   fromAgent?: string;
   fromSession?: string;
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice';
+  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a';
 }) {
   // System inbound (sentinel trigger / tmux attention wake):
   // synthesized, not a real user message. Render as a one-line system
@@ -99,7 +99,8 @@ function UserTurn({
     fromSystem === 'tmux' ||
     fromSystem === 'subagent' ||
     fromSystem === 'browser' ||
-    fromSystem === 'voice'
+    fromSystem === 'voice' ||
+    fromSystem === 'a2a'
   ) {
     const name =
       fromSystem === 'sentinel'
@@ -110,7 +111,9 @@ function UserTurn({
             ? `${(text.match(/browser '([^']+)'/)?.[1] ?? '').replace(/^agent:/, '')} · handed back`
             : fromSystem === 'voice'
               ? text.replace(/^\[[^\]]*\]\s*/, '').slice(0, 80)
-              : summarizeTmuxWakeText(text);
+              : fromSystem === 'a2a'
+                ? (text.match(/^\[agent answer\]\s*(\w+)/)?.[1] ?? 'answered')
+                : summarizeTmuxWakeText(text);
     const label =
       fromSystem === 'sentinel'
         ? '🔔 sentinel'
@@ -120,7 +123,9 @@ function UserTurn({
             ? '🌐 browser'
             : fromSystem === 'voice'
               ? '🎙  voice'
-              : '🖥  tmux';
+              : fromSystem === 'a2a'
+                ? '↩  agent answer'
+                : '🖥  tmux';
     return (
       <Box marginTop={1}>
         <Text color="gray" bold>

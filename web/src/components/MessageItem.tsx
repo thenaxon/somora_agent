@@ -32,6 +32,7 @@ import {
   User,
   Globe,
   Mic,
+  CornerDownLeft,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
@@ -122,6 +123,9 @@ export const MessageItem = memo(function MessageItem({
   }
   if (msg.role === 'user' && msg.fromSystem === 'voice') {
     return <VoiceDivider text={msg.text} ts={msg.ts} />;
+  }
+  if (msg.role === 'user' && msg.fromSystem === 'a2a') {
+    return <AgentAnswerDivider text={msg.text} ts={msg.ts} />;
   }
 
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
@@ -413,6 +417,32 @@ function TmuxDivider({ text, ts }: { text: string; ts: number }) {
 export function summarizeBrowserWakeText(text: string): string {
   const id = text.match(/browser '([^']+)'/)?.[1] ?? '';
   return id.replace(/^agent:/, '').replace(/^profile:/, 'profile ');
+}
+
+function AgentAnswerDivider({ text, ts }: { text: string; ts: number }) {
+  // An agent this one ASKED has answered, after it had stopped waiting.
+  // Its own divider, because rendering it as a sub-agent wake (which it
+  // was until 2026-09-12) tells the reader the wrong story about where
+  // the answer came from.
+  const who = /^\[agent answer\]\s*(\w+)/.exec(text)?.[1] ?? '';
+  return (
+    <div className="sentinel-divider" aria-label="answer from an agent you asked">
+      <span className="sentinel-divider-rule" />
+      <span className="sentinel-divider-body">
+        <CornerDownLeft size={12} />
+        <span className="sentinel-divider-label">agent answer</span>
+        {who && (
+          <>
+            <span className="sentinel-divider-sep">·</span>
+            <span className="sentinel-divider-name">{who}</span>
+          </>
+        )}
+        <span className="sentinel-divider-sep">·</span>
+        <span className="sentinel-divider-time">{formatBubbleTime(ts)}</span>
+      </span>
+      <span className="sentinel-divider-rule" />
+    </div>
+  );
 }
 
 function VoiceDivider({ text, ts }: { text: string; ts: number }) {
