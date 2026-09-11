@@ -576,6 +576,20 @@ promptBudgets:                # soft caps for static prompt text — warnings on
   personaFileChars: 8000      # each of AGENTS.md / SOUL.md / USER.md
   personaTotalChars: 14000    # the three together — shown in the web Agent window
 
+realtimeVoice:                # talking to an agent (docs/realtime-voice.md)
+  enabled: false              # off until a realtime provider and a key exist
+  provider: openai            # openai | google | local
+  model: gpt-realtime-2.1-mini
+  apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE, chmod 600 — never the key in config
+  defaultVoice: alloy         # ten exist: alloy ash ballad coral echo sage shimmer verse marin cedar
+  consultPolicy: always       # when the speaking model must ask the real agent
+  maxCallMinutes: 20          # hard stop; a standing call bills while nobody talks
+  allowAgentSwitch: false     # hand a call to another agent mid-conversation
+  turnDetection: { threshold: 0.4, prefixPaddingMs: 200, silenceDurationMs: 420 }
+  # Separate from `stt`/`tts`: those are dictation and spoken replies
+  # (docs/voice.md). A call needs a realtime-capable provider; a normal
+  # chat-completions endpoint cannot carry one.
+
 compaction:
   triggerRatio: 0.8           # fraction of the input budget (window minus the answer)
   safetyCushionPairs: 4       # most-recent turns kept uncompacted

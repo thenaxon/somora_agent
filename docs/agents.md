@@ -11,6 +11,7 @@ optional Obsidian vault binding.
 ├── AGENTS.md                       ← required. behavioural rules + identity (frontmatter)
 ├── SOUL.md                         ← optional. voice / personality
 ├── USER.md                         ← optional. what the agent knows about you
+├── VOICE.md                        ← optional. hand-written character for spoken calls
 ├── agent.yaml                      ← optional. operator-config (model, REM, vault)
 ├── memory/                         ← per-agent memory inbox
 │   ├── *.md                        ← un-consolidated notes
@@ -128,6 +129,20 @@ tools:
 skills:
   deny: ['instagram-downloader']
 
+# Optional: this agent's voice, for realtime calls (realtime-voice.md).
+# Only what SPEAKING needs — who the agent is comes from its persona
+# files, so there is no second character to maintain. Without this block
+# the agent cannot be called and does not appear in the voice picker.
+# A hand-written character can live in VOICE.md next to AGENTS.md; it
+# replaces the derived one, while the rules that keep a call honest stay.
+voice:
+  enabled: true
+  voice: ash                 # alloy ash ballad coral echo sage shimmer verse marin cedar
+  language: de
+  style: "dry, direct, no small talk"
+  consultPolicy: always      # auto | substantive | always
+  maxSpokenSentences: 4
+
 # Optional: REM phase (per-agent session→memory extraction)
 rem:
   enabled: true
@@ -206,6 +221,7 @@ contents of this `docs/` directory.
 | ---------- | --------------------------------------------------------------------- |
 | `AGENTS.md` | Behavioural rules. "Reply concisely." "Use tools when asked, don't preface." |
 | `SOUL.md`   | Voice / character. "I speak in short sentences. I have dry humour." |
+| `VOICE.md`  | Optional, and only for realtime calls: the spoken character, replacing the one derived from the files above. The rules that keep a call honest (ask before answering anything factual, never invent, never refuse work on your own authority) always stay. See [realtime-voice.md](realtime-voice.md). |
 | `USER.md`   | Static context about you. "User is Maria. Lives in Berlin. Two cats." |
 
 All three are concatenated into the system prompt. Edit them in place; the

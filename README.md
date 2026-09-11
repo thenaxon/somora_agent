@@ -84,6 +84,16 @@ Beyond chat and memory, briefly:
   continues in the same tab. Agents can share a profile and its logins;
   each still gets its own window, tabs and handoff. Off until `browser.enabled`. See
   [docs/browser.md](docs/browser.md).
+- **Talking to an agent (optional).** A standing, interruptible voice
+  call in the web client: a realtime model does the talking while the
+  agent does the knowing — everything factual, and every request to act,
+  is handed to the real agent with its persona, memory and tools, and
+  the answer is spoken back in its own words. Each agent has its own
+  voice, and a call can be handed over to another agent mid-
+  conversation. Needs a realtime-capable provider and its own key;
+  billed per minute of connection. Separate from the mic button and
+  spoken replies ([docs/voice.md](docs/voice.md)) — different feature,
+  different config. See [docs/realtime-voice.md](docs/realtime-voice.md).
 - **Projects (optional).** Bind a session to a real-world thing — a
   renovation, a research thread, a codebase — via a manifest of pointers
   the agent sees in its prompt. See [docs/projects.md](docs/projects.md).
@@ -395,7 +405,7 @@ Three files matter, all optional except `config.yaml`:
 | File | Scope | What it controls |
 |---|---|---|
 | `~/.somora/config.yaml` | Server-global | LLM providers, models, compaction, memory tuning, wiki settings, dream-phase Deep/Lucid models + cadence, agent-loop limits, SSH resources, web API keys, TUI display, TLS, attachments caps |
-| `~/.somora/agents/<name>/agent.yaml` | Per-agent | model + fallback, REM phase config (worker model, idle minutes, chunk sizes), workspace override, resource deny-list, per-agent tool + skill visibility (also editable in the web Abilities window) |
+| `~/.somora/agents/<name>/agent.yaml` | Per-agent | model + fallback, REM phase config (worker model, idle minutes, chunk sizes), workspace override, resource deny-list, per-agent tool + skill visibility (also editable in the web Abilities window), voice for spoken calls |
 | `~/.somora/agents/<name>/{AGENTS,SOUL,USER}.md` | Per-agent | Persona — behavioural rules (`AGENTS.md`), voice (`SOUL.md`), what the agent knows about you (`USER.md`) |
 
 See [docs/setup.md](docs/setup.md) for `config.yaml` reference,

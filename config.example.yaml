@@ -454,6 +454,30 @@ providers:
 #                              # (busy host, rate limit, reloading route) costs an attempt, not
 #                              # the compaction.
 
+# Realtime voice — talking to an agent (docs/realtime-voice.md).
+# A standing, interruptible call: a realtime model does the talking, the
+# agent does the knowing. NOT the same feature as stt/tts above, which
+# is press-to-talk dictation plus spoken replies — these two share
+# nothing but the word "voice" and can both be on.
+# realtimeVoice:
+#   enabled: true
+#   provider: openai            # openai | google | local (adapter per provider)
+#   model: gpt-realtime-2.1-mini
+#   apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE (chmod 600), never the key itself
+#   transport: websocket        # audio goes browser -> somora -> provider
+#   defaultVoice: alloy         # alloy ash ballad coral echo sage shimmer verse marin cedar
+#   consultPolicy: always       # auto | substantive | always — when the voice must ask the agent
+#   maxCallMinutes: 20          # hard stop; the meter runs while nobody speaks
+#   allowAgentSwitch: false     # let a call be handed to another agent mid-conversation
+#   turnDetection:              # how easily you can interrupt the agent
+#     threshold: 0.4            # lower = reacts to quieter speech
+#     prefixPaddingMs: 200      # run-up that counts as speech
+#     silenceDurationMs: 420    # pause that ends YOUR turn
+# Per agent, in agent.yaml:
+#   voice: { enabled: true, voice: ash, language: de, style: "trocken", consultPolicy: always, maxSpokenSentences: 4 }
+# Optional per agent: ~/.somora/agents/<name>/VOICE.md replaces the
+# character derived from the persona; the honesty rules always stay.
+
 # Memory-Layer tunables (DECISIONS #25–#27). All optional. Per-agent
 # overrides can live in agent.yaml later. (Phase 2-Stufe-B — not yet
 # wired into the runtime.)

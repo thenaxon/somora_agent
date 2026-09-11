@@ -1364,7 +1364,10 @@ Event types:
   running turn were shortened to keep the request inside the window —
   the turn continues, the model keeps the record that those tools already
   ran), `attachments_unsupported` (the engine cannot forward attachments,
-  grok-cli), `reasoning_effort_adjusted` and `sampling_dropped`
+  grok-cli), `voice_spoken` (what a voice call actually said out loud,
+  kept beside the agent's written answer — the text is the record, the
+  spoken form a rendering), `voice_handover` (a call was handed to or
+  from another agent), `reasoning_effort_adjusted` and `sampling_dropped`
   (backend rejected the parameter, turn retried without it). Each
   carries a human-readable `payload.text`.
 - `model_fallback` — `{requested, actual, reason, hops?}` (refs are
@@ -1921,6 +1924,75 @@ Clear the pin. Returns `{ agent, session, cleared: true, previousSlug }`.
 Also emits an SSE `project` event.
 
 ---
+
+## Realtime voice
+
+Talking to an agent: a standing, interruptible call where a realtime
+model speaks and the agent knows. Off unless `realtimeVoice.enabled`.
+Concept and configuration in [realtime-voice.md](realtime-voice.md);
+this is not the dictation/TTS path ([voice.md](voice.md)).
+
+### `GET /voice/status`
+
+```json
+{ "enabled": true, "provider": "openai", "model": "gpt-realtime-2.1-mini",
+  "maxCallMinutes": 20, "agents": ["hans", "lisa"], "calls": [] }
+```
+
+`agents` lists who may be called — realtime voice on, and the agent's
+`agent.yaml` carries `voice.enabled: true`. With the feature off the
+answer is `{ "enabled": false, "agents": [] }` (200, not an error: a
+client asks this to decide whether to show the tile at all).
+
+### `GET /voice/instructions?agent=<name>&session=<slug>`
+
+Exactly what the speaking model would be told, without starting a call:
+
+```json
+{ "agent": "hans", "session": "main", "text": "You are hans, speaking out loud …",
+  "chars": 1528, "source": "derived", "voice": "ash", "language": "de",
+  "consultPolicy": "always" }
+```
+
+`source` is `derived` (built from the persona plus `agent.yaml voice:`)
+or `VOICE.md` when the operator wrote one. The derived text exists only
+in memory — this is the only way to read it. `503` when voice is off,
+`404` when that agent has no voice.
+
+### `WS /voice/attach?agent=<name>&session=<slug>`
+
+The call itself. One JSON frame format in both directions; the browser
+holds no provider knowledge, no key, and never sees a tool call.
+
+Client → server:
+
+```json
+{ "type": "audio", "base64": "<PCM16 24 kHz mono>" }
+{ "type": "interrupt" }
+{ "type": "hangup" }
+```
+
+Keep sending audio while nobody speaks. The provider ends a turn on
+SILENCE, not on missing packets — a client that stops sending gets one
+"speech started" and then nothing at all.
+
+Server → client:
+
+```json
+{ "type": "ready", "call": { … }, "rateHz": 24000 }
+{ "type": "audio", "base64": "…", "rateHz": 24000 }
+{ "type": "state", "call": { "state": "consulting", "consults": 2, "target": { … } } }
+{ "type": "event", "event": { "kind": "user_transcript", "text": "…", "final": true }, "call": { … } }
+```
+
+`state` is `connecting | listening | consulting | speaking | closed`.
+`consulting` is somora running a real turn in the bound session — no
+provider event announces it. `target` changes when a call is handed to
+another agent, and the client follows it.
+
+Closing the socket ends the call: a standing connection bills by the
+minute. Work the agent already accepted keeps running — hanging up and
+cancelling are two different things.
 
 ## Attachments
 
