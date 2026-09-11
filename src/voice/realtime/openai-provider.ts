@@ -84,6 +84,23 @@ class OpenAiRealtimeSession implements RealtimeSession {
   private responseActive = false;
   private speakWhenFree = false;
 
+  /** Ask the model to speak, or remember to ask once it is free.
+   *
+   *  The flag is set the moment WE ask, not when the server confirms:
+   *  `response.created` comes back over the network, and between our
+   *  request and that echo a second request slips through. That gap is
+   *  how the error came back on 2026-09-11 even with a guard in place —
+   *  the filler for a lookup and the answer to it were sent
+   *  milliseconds apart. */
+  private requestResponse(payload?: Record<string, unknown>): void {
+    if (this.responseActive) {
+      this.speakWhenFree = true;
+      return;
+    }
+    this.responseActive = true;
+    this.send({ type: 'response.create', ...(payload ? { response: payload } : {}) });
+  }
+
   constructor(
     private readonly ws: WebSocketLike,
     private readonly req: RealtimeSessionRequest,
@@ -212,7 +229,7 @@ class OpenAiRealtimeSession implements RealtimeSession {
         this.responseActive = false;
         if (this.speakWhenFree) {
           this.speakWhenFree = false;
-          this.send({ type: 'response.create' });
+          this.requestResponse();
         }
         if (this.speaking) {
           this.speaking = false;
@@ -233,6 +250,15 @@ class OpenAiRealtimeSession implements RealtimeSession {
       case 'error': {
         const err = msg.error as { message?: unknown; type?: unknown } | undefined;
         const message = typeof err?.message === 'string' ? err.message : JSON.stringify(msg).slice(0, 300);
+        // The server knows better than our bookkeeping: if it says a
+        // response is running, one is. Remember to ask again when that
+        // response reports done, so the answer is not lost.
+        if (/active response in progress/i.test(message)) {
+          this.responseActive = true;
+          this.speakWhenFree = true;
+          this.push({ kind: 'error', ts, message, fatal: false });
+          break;
+        }
         // A session-level error kills the call; an item-level one (a
         // rejected tool argument, say) must not — the conversation is
         // still alive and the model can be told.
@@ -283,8 +309,7 @@ class OpenAiRealtimeSession implements RealtimeSession {
       type: 'conversation.item.create',
       item: { type: 'function_call_output', call_id: callId, output: result },
     });
-    if (this.responseActive) this.speakWhenFree = true;
-    else this.send({ type: 'response.create' });
+    this.requestResponse();
   }
 
   async updateInstructions(instructions: string): Promise<void> {
@@ -295,8 +320,11 @@ class OpenAiRealtimeSession implements RealtimeSession {
    *  session's own. Skipped while the model is already talking — the
    *  filler exists to fill a silence, not to talk over an answer. */
   async speak(instructions: string): Promise<void> {
+    // A filler only makes sense in a silence. If the model is talking,
+    // dropping it is right — unlike a tool answer, which must be spoken
+    // eventually and is therefore deferred rather than dropped.
     if (this.responseActive) return;
-    this.send({ type: 'response.create', response: { instructions } });
+    this.requestResponse({ instructions });
   }
 
   async interrupt(): Promise<void> {

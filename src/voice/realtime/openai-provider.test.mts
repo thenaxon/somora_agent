@@ -160,6 +160,54 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   check('it is requested when the model falls silent', sent.includes('response.create'), sent.join(','));
 }
 
+// ── two requests to speak, milliseconds apart ───────────────────────
+{
+  const { socket, session } = await openSession();
+  socket.server({ type: 'session.created' });
+  socket.sent.length = 0;
+  // The filler for a lookup and the answer to it, before the server has
+  // echoed a single response.created. With the flag set only on the
+  // echo, the second request went out and the API refused it — which is
+  // how the error came back on 2026-09-11 with a guard already in
+  // place.
+  await session.speak?.('say you are checking');
+  await session.sendToolResult('call_1', 'fertig');
+  const types = socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type);
+  check('only one response was requested', types.filter((t) => t === 'response.create').length === 1, types.join(','));
+  check('and the answer was still handed over', types.includes('conversation.item.create'));
+
+  socket.sent.length = 0;
+  socket.server({ type: 'response.done', response: {} });
+  await tick();
+  const after = socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type);
+  check('the deferred one goes out when it falls silent', after.includes('response.create'), after.join(','));
+}
+
+// ── the server's word beats our bookkeeping ─────────────────────────
+{
+  const { socket, session, events } = await openSession();
+  socket.server({ type: 'session.created' });
+  socket.server({
+    type: 'error',
+    error: { type: 'invalid_request_error', message: 'Conversation already has an active response in progress: resp_x.' },
+  });
+  await tick();
+  check('the refusal is reported but not fatal', events.some((e) => e.kind === 'error' && !e.fatal));
+  socket.sent.length = 0;
+  await session.sendToolResult('call_2', 'antwort');
+  check(
+    'and nothing new is requested while it runs',
+    !socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type).includes('response.create'),
+  );
+  socket.sent.length = 0;
+  socket.server({ type: 'response.done', response: {} });
+  await tick();
+  check(
+    'the answer is spoken once the model is free',
+    socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type).includes('response.create'),
+  );
+}
+
 // ── an item-level error must not end a living call ───────────────────
 {
   const { socket, events } = await openSession();
