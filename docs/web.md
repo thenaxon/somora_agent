@@ -299,7 +299,14 @@ archived copy at the next idle window.
   made. A turn with 21 tool rounds sends its context 21 times, so the
   sum runs far past the window and says nothing about how full it is —
   a real one read `▣ 62% Σ↑ 6.0M` against a 524k window. The TUI header
-  shows the same pair. When the last turn was
+  shows the same pair. On a CLI engine the window is the one the engine
+  reports for itself where it reports one (codex sends
+  `modelContextWindow` per thread), because the configured
+  `contextWindow` is somora's guess at a cap that engine enforces on its
+  own. If the last request was still bigger than the window somora knows,
+  the badge reads `▣ >100%` with the raw number rather than a percentage
+  that keeps climbing — a plain "300 %" said nothing a reader could act
+  on, and the tooltip names the cause (configured window too small). When the last turn was
   answered by the persona's `fallback:` model, a warn-coloured
   `⇄ <backup-model>` marker sits next to the model (tooltip: why the
   primary failed).

@@ -274,6 +274,17 @@ export type NormalizedEvent =
          * 507k (2026-09-10 report). Engines that can report it do.
          */
         context_tokens?: number;
+        /**
+         * The window the ENGINE says this model has, when it says so.
+         *
+         * For a CLI engine the configured `contextWindow` is somora's
+         * own guess at a session cap it does not control: codex reports
+         * `modelContextWindow` per thread (258,400 for gpt-6-astra on
+         * 2026-09-11, against 272,000 configured by hand), and that
+         * number is the one the CLI compacts against. Shown instead of
+         * the configured value when present.
+         */
+        context_window?: number;
       };
       /** Tool-call rounds the engine ran this turn (engines that count). */
       rounds?: number;

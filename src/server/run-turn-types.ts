@@ -65,6 +65,8 @@ export interface ChatTurnResult {
     tokens_out: number;
     tokens_in_cached?: number;
     tokens_out_reasoning?: number;
+    /** Window the engine reports for itself (CLI engines know theirs). */
+    context_window?: number;
   };
   contextWindow: number;
   provider: string;

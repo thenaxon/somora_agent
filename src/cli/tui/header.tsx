@@ -249,9 +249,12 @@ function renderTokenSegment(stats: TurnStats | null): ReactElement | null {
   // until the backend refused it (2026-09-10).
   const filled = stats.contextTokens;
   const ratio = filled !== null && window ? filled / window : null;
+  // Past the window the ratio stops being a scale: the TUI prints both
+  // numbers anyway, so an over-full context reads as "425k/272k" and
+  // says on its own that the configured window is too small.
   const contextSegment =
     filled !== null && window ? (
-      <Text color={ratio! > 0.9 ? 'red' : ratio! > 0.75 ? 'yellow' : 'gray'}>
+      <Text color={ratio! > 1 ? 'magenta' : ratio! > 0.9 ? 'red' : ratio! > 0.75 ? 'yellow' : 'gray'}>
         {' '}▣ {formatTokens(filled)}/{formatTokens(window)}
       </Text>
     ) : null;

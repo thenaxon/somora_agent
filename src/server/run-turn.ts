@@ -772,6 +772,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         tokens_out: number;
         tokens_in_cached?: number;
         tokens_out_reasoning?: number;
+        /** Window the engine reports for itself, when it does. */
+        context_window?: number;
       }
     | undefined;
   let finalText = '';
@@ -1262,7 +1264,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       data: {
         phase: 'end',
         ...(lastUsage ? { usage: lastUsage } : {}),
-        contextWindow: resolvedModel.model.contextWindow,
+        // A CLI engine knows its own window; the configured value is
+        // somora's guess at a cap it does not enforce (2026-09-11).
+        contextWindow: lastUsage?.context_window ?? resolvedModel.model.contextWindow,
         provider: actualRef?.provider ?? resolvedModel.providerName,
         model: actualRef?.model ?? resolvedModel.modelId,
         ...(thinkingPayload ? { thinking: thinkingPayload } : {}),
@@ -1307,7 +1311,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(filesWritten.length > 0 ? { files_written: filesWritten } : {}),
     ...(turnMedia.length > 0 ? { media: turnMedia } : {}),
     usage: lastUsage,
-    contextWindow: resolvedModel.model.contextWindow,
+    contextWindow: lastUsage?.context_window ?? resolvedModel.model.contextWindow,
     provider: actualForResult?.provider ?? resolvedModel.providerName,
     model: actualForResult?.model ?? resolvedModel.modelId,
     thinkingActive: modelSupportsReasoning && Boolean(effectiveThinking),

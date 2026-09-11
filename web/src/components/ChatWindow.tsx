@@ -1072,9 +1072,21 @@ export function ChatWindow({
                         ? 'var(--warn, #d29922)'
                         : 'var(--text-2)',
                 }}
-                title={`context filled: ${chat.usage.context_tokens.toLocaleString()} of ${chat.usage.contextWindow.toLocaleString()} tokens in the last request of this turn`}
+                title={
+                  chat.usage.context_tokens > chat.usage.contextWindow
+                    ? `the last request carried ${chat.usage.context_tokens.toLocaleString()} tokens — MORE than the ` +
+                      `${chat.usage.contextWindow.toLocaleString()} configured for this model. The number on the right is ` +
+                      `what the engine really sent, so the configured contextWindow is too small (see docs/models.md).`
+                    : `context filled: ${chat.usage.context_tokens.toLocaleString()} of ${chat.usage.contextWindow.toLocaleString()} tokens in the last request of this turn`
+                }
               >
-                ▣ {Math.round((chat.usage.context_tokens / chat.usage.contextWindow) * 100)}%
+                {/* Past the window the percentage stops being a scale and
+                    starts being noise — 300 % in red says nothing a reader
+                    can act on (Rene, 2026-09-11). Say "over the window"
+                    and show the number instead. */}
+                {chat.usage.context_tokens > chat.usage.contextWindow
+                  ? `▣ >100% (${formatTokens(chat.usage.context_tokens)})`
+                  : `▣ ${Math.round((chat.usage.context_tokens / chat.usage.contextWindow) * 100)}%`}
               </span>
             ) : null}
             {/* Σ, because this is a SUM: every request the turn made, not

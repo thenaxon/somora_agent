@@ -16,7 +16,7 @@ Related: [setup.md → Tunables](setup.md#tunables) (the knobs),
 | | who compacts | when | what you see |
 |---|---|---|---|
 | `openai-compatible` | **somora** | before a turn, when the prompt reaches `triggerRatio × inputBudget` (default 0.8; the budget is the window minus the answer, and the number is the one the provider measured last) | a `context compacted` row when the reactive path ran; otherwise nothing — the summary is invisible, the recent pairs are verbatim |
-| `claude-cli`, `codex-cli`, `grok-cli` | **the CLI itself**, inside its own session/thread | at the CLI's own threshold (codex: its server-delivered session cap) | nothing from somora; the engine's own compaction is opaque to it |
+| `claude-cli`, `codex-cli`, `grok-cli` | **the CLI itself**, inside its own session/thread | at the CLI's own threshold (codex: its server-delivered session cap) | nothing from somora; the engine's own compaction is opaque to it. The `▣` percentage still tells the truth: codex reports its own `modelContextWindow` per thread, and the prompt size it reports is the prompt, cached part included — adding `cachedInputTokens` to `inputTokens` counted that part twice and drove the badge past 100 % on long threads (fixed 2026-09-11). Anthropic counts the other way round, `input_tokens` EXCLUDES the cached part, so claude-cli sums. |
 
 somora's history file (`sessions/<id>.jsonl`) is never shortened by
 either. Compaction only changes what is *sent*; the JSONL stays the

@@ -90,6 +90,8 @@ interface UsageAcc {
   tokens_in: number;
   tokens_in_cached: number;
   context_tokens: number;
+  /** The window codex reports for this thread (`modelContextWindow`). */
+  context_window: number;
   tokens_out: number;
   tokens_out_reasoning: number;
   seen: boolean;
@@ -320,6 +322,7 @@ export const codexCliEngine: AgentEngine = {
       tokens_in: 0,
       tokens_in_cached: 0,
       context_tokens: 0,
+      context_window: 0,
       tokens_out: 0,
       tokens_out_reasoning: 0,
       seen: false,
@@ -447,7 +450,9 @@ export const codexCliEngine: AgentEngine = {
           break;
         }
         case 'thread/tokenUsage/updated': {
-          const tu = p.tokenUsage as { last?: Record<string, unknown> } | undefined;
+          const tu = p.tokenUsage as
+            | { last?: Record<string, unknown>; modelContextWindow?: unknown }
+            | undefined;
           const last = tu?.last;
           if (last) {
             const n = (k: string) => (typeof last[k] === 'number' ? (last[k] as number) : 0);
@@ -456,10 +461,27 @@ export const codexCliEngine: AgentEngine = {
             // Occupancy: this request's prompt, replaced not summed.
             // `tokens_in` above is what the turn cost across all of its
             // requests and is a multiple of the window on a long turn.
-            usage.context_tokens = n('inputTokens') + n('cachedInputTokens');
+            //
+            // `cachedInputTokens` is a SUBSET of `inputTokens`, not a
+            // second helping — measured against the app-server on
+            // 2026-09-11: inputTokens 16,235, cachedInputTokens 12,160,
+            // totalTokens 16,240 with 5 output tokens. Adding them
+            // counted the cached part twice, which is why a long codex
+            // chat climbed past 100 % and stayed red however often the
+            // CLI compacted: 425,581 shown against a 272,000 window on a
+            // conversation that never exceeded its real 258,400.
+            // (Anthropic counts the other way round — there input_tokens
+            // EXCLUDES the cached part, which is why claude-cli sums.)
+            usage.context_tokens = n('inputTokens');
             usage.tokens_out += n('outputTokens');
             usage.tokens_out_reasoning += n('reasoningOutputTokens');
             usage.seen = true;
+          }
+          // The window codex itself enforces for this thread. It is
+          // server-delivered per model and account, so it beats the
+          // hand-configured session cap in config.yaml.
+          if (typeof tu?.modelContextWindow === 'number' && tu.modelContextWindow > 0) {
+            usage.context_window = tu.modelContextWindow;
           }
           break;
         }
@@ -788,6 +810,7 @@ export const codexCliEngine: AgentEngine = {
             tokens_in_cached: usage.tokens_in_cached,
             tokens_out_reasoning: usage.tokens_out_reasoning,
             ...(usage.context_tokens > 0 ? { context_tokens: usage.context_tokens } : {}),
+            ...(usage.context_window > 0 ? { context_window: usage.context_window } : {}),
           },
         }
       : {};
@@ -846,6 +869,7 @@ export const codexCliEngine: AgentEngine = {
       tokens_in: usage.tokens_in,
       tokens_in_cached: usage.tokens_in_cached,
       context_tokens: usage.context_tokens,
+      context_window: usage.context_window || null,
       tokens_out: usage.tokens_out,
       tokens_out_reasoning: usage.tokens_out_reasoning,
       threadId,
