@@ -166,6 +166,7 @@ Three models, three vocabularies:
 | OpenAI o-series / gpt-5 | `none minimal low medium high xhigh` | 400 |
 | Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh` — no `high`; `none` = 0 reasoning tokens (verified 2026-09-05 on Qwen3.8-Flash-Next; unverified on 3.5-397B and 3.8-27B) | **400** — the template raises |
 | DeepSeek V4 | `low high max`; `none` and unset both = no reasoning (2026-09-05) | ignored |
+| DeepSeek V4.1 | `none low high max` — `none` is a real level here, so map `off: none` and `medium: high` (measured 2026-09-11 in four somora sessions: 0 / 55 / 48 / 92 reasoning tokens) | ignored |
 
 ‡ "Omitted" means the backend's own default. For a Qwen 3.x thinking
 model that default is *thinking on* — measured 2026-09-04: unset 60
