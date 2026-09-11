@@ -40,6 +40,11 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { logger } from '../../server/logger.ts';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
+import {
+  IMAGES_FIELD_DESCRIPTION,
+  MAX_IMAGES_PER_MESSAGE,
+  uploadLocalAttachments,
+} from './images.ts';
 import type { ToolDefinition } from '../types.ts';
 import { longTaskDefaultMs, longTaskMaxMs } from './long-task-timeouts.ts';
 
@@ -89,6 +94,11 @@ const AskInput = z
           '"fable" or "astra". Ignored with a note when the session already exists — changing ' +
           'the model of a running session is the user\'s call.',
       ),
+    images: z
+      .array(z.string().min(1))
+      .max(MAX_IMAGES_PER_MESSAGE)
+      .optional()
+      .describe(IMAGES_FIELD_DESCRIPTION),
     timeout_ms: z
       .number()
       .int()
@@ -192,6 +202,12 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           'Only with create_session: model alias or provider/id pinned on the NEW session. Ignored ' +
           'with a note when the session already exists.',
       },
+      images: {
+        type: 'array',
+        items: { type: 'string' },
+        maxItems: MAX_IMAGES_PER_MESSAGE,
+        description: IMAGES_FIELD_DESCRIPTION,
+      },
       timeout_ms: {
         type: 'integer',
         minimum: 1000,
@@ -283,6 +299,22 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     // JSONL anyway) or in-flight (which we don't cancel — letting the
     // turn finish keeps the conversation intact in the target's session
     // even if the caller stopped listening).
+    // Upload before the wait starts: a bad path should fail fast and
+    // loudly, not eat into the target's answer time.
+    const attachments =
+      input.images && input.images.length > 0
+        ? await uploadLocalAttachments(input.images, base)
+        : [];
+    if (attachments.length > 0) {
+      logger.info({
+        msg: 'agent_ask.attachments',
+        from: ctx.agent,
+        to: targetAgent,
+        call_id: callId,
+        files: attachments.map((a) => `${a.name} (${a.kind}, ${a.size}B)`),
+      });
+    }
+
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
 
@@ -294,6 +326,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           agent: targetAgent,
           session: targetSession,
           text: input.message,
+          ...(attachments.length > 0 ? { attachments } : {}),
           from_agent: ctx.agent,
           // from_session lets the target address a follow-up to the
           // session this question came from (header + reply-back default).

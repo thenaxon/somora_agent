@@ -3150,6 +3150,27 @@ app.post('/attachments', async (c) => {
   } catch {
     name = rawName;
   }
+  // A multipart body is stored verbatim by the streaming path below —
+  // envelope, boundaries and all — and comes back as a text attachment
+  // called "unnamed" with nobody the wiser (2026-09-11 report: a 790-byte
+  // PNG arrived as a 947-byte text file and the turn simply had no
+  // image). Raw bytes are deliberate here: multipart parsing pulls the
+  // whole upload into RAM and would cost the streaming size cap. So say
+  // so instead of silently storing the wrong thing.
+  const contentType = c.req.header('Content-Type') ?? '';
+  if (contentType.toLowerCase().includes('multipart/form-data')) {
+    return c.json(
+      {
+        error:
+          'multipart uploads are not supported — send the raw file bytes as the request body ' +
+          'with Content-Type set to the file type and the name in X-Somora-Filename ' +
+          '(curl --data-binary @file.png -H "Content-Type: image/png" ' +
+          '-H "X-Somora-Filename: file.png"). The response is ONE object; pass it in ' +
+          'attachments[] on /chat/send or /chat/send-sync.',
+      },
+      415,
+    );
+  }
   const body = c.req.raw.body;
   if (!body) {
     return c.json({ error: 'request body required' }, 400);
@@ -4858,6 +4879,13 @@ app.post('/chat/send-sync', async (c) => {
     /** Model (alias or provider/id) pinned on the session IF this call
      *  creates it. Ignored — with a note — when the session exists. */
     create_model?: string;
+    /** Refs from POST /attachments, same shape as on /chat/send. This
+     *  route is the A2A path, so it is how one agent hands another a
+     *  picture it must actually SEE — a path in the message text is
+     *  just text to a model (2026-09-11 report). A target whose model
+     *  has no eyes gets the vision worker's description instead, the
+     *  same as a chat attachment. */
+    attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
   };
   const agent = body.agent ?? (await defaultAgentFallback());
   if (!agent) {
@@ -5031,6 +5059,9 @@ app.post('/chat/send-sync', async (c) => {
         agent,
         session,
         text,
+        ...(body.attachments && body.attachments.length > 0
+          ? { attachments: body.attachments }
+          : {}),
         ...(fromAgent ? { fromAgent } : {}),
         ...(fromSession ? { fromSession } : {}),
         ...(agentAskCallId ? { agentAskCallId } : {}),
@@ -5080,6 +5111,9 @@ app.post('/spawn-async', async (c) => {
     model?: string;
     max_rounds?: number;
     attention?: boolean;
+    /** Refs from POST /attachments — a spawn brief may carry pictures
+     *  the sub has to look at (2026-09-11). */
+    attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
   };
   const agent = body.agent;
   const sessionRef = body.session;
@@ -5189,6 +5223,9 @@ app.post('/spawn-async', async (c) => {
         session,
         text,
         signal: abort.signal,
+        ...(body.attachments && body.attachments.length > 0
+          ? { attachments: body.attachments }
+          : {}),
         ...(fromAgent ? { fromAgent } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
         ...(modelOverride ? { modelOverride } : {}),

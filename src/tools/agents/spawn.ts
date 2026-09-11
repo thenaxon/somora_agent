@@ -39,6 +39,12 @@ import { runChatTurn } from '../../server/run-turn.ts';
 import { acquireSessionLock } from '../../server/session-queue.ts';
 import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
 import type { ToolDefinition } from '../types.ts';
+import {
+  IMAGES_FIELD_DESCRIPTION,
+  MAX_IMAGES_PER_MESSAGE,
+  uploadLocalAttachments,
+  type AttachmentRef,
+} from './images.ts';
 import { longTaskMaxMs } from './long-task-timeouts.ts';
 
 const MAX_SUBAGENT_DEPTH = parseInt(process.env.SOMORA_MAX_SUBAGENT_DEPTH ?? '3', 10) || 3;
@@ -139,6 +145,11 @@ const TaskSchema = z.object({
         'an automatic [subagent attention] wake turn (default). Pass false to opt out for ' +
         'subs whose results you will poll yourself or that need no follow-up.',
     ),
+  images: z
+    .array(z.string().min(1))
+    .max(MAX_IMAGES_PER_MESSAGE)
+    .optional()
+    .describe(IMAGES_FIELD_DESCRIPTION),
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -206,6 +217,12 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
           'Async spawns only: automatic [subagent attention] wake turn when the sub finishes ' +
           'unfetched (default true). Pass false to opt out.',
       },
+      images: {
+        type: 'array',
+        items: { type: 'string' },
+        maxItems: MAX_IMAGES_PER_MESSAGE,
+        description: IMAGES_FIELD_DESCRIPTION,
+      },
       wait: {
         type: 'boolean',
         description:
@@ -238,6 +255,7 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
         ...(input.model ? { model: input.model } : {}),
         ...(input.maxRounds ? { maxRounds: input.maxRounds } : {}),
         ...(input.attention !== undefined ? { attention: input.attention } : {}),
+        ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
       },
     });
     return result;
@@ -306,6 +324,12 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
                 'Async spawns only: automatic [subagent attention] wake turn when the sub ' +
                 'finishes unfetched (default true). Pass false to opt out.',
             },
+            images: {
+              type: 'array',
+              items: { type: 'string' },
+              maxItems: MAX_IMAGES_PER_MESSAGE,
+              description: IMAGES_FIELD_DESCRIPTION,
+            },
           },
           required: ['task'],
           additionalProperties: false,
@@ -361,6 +385,8 @@ interface OneSpawnArgs {
     maxRounds?: number;
     /** Attention-wake opt-out (async spawns). Default: wake. */
     attention?: boolean;
+    /** Absolute paths of images the sub has to look at. */
+    images?: string[];
   };
 }
 
@@ -426,6 +452,16 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
         `Available: ${describeModelRefs(ctx.config)}`,
     );
   }
+  // Pictures for the brief. Uploaded BEFORE a slot is reserved and a
+  // session created: a wrong path is the caller's typo, and it should
+  // cost neither. The refs then travel every dispatch path below, the
+  // same ones the task text travels (2026-09-11: an orchestrator could
+  // only name a file, and a path is just text to a model that sees).
+  const briefAttachments: AttachmentRef[] =
+    task.images && task.images.length > 0
+      ? await uploadLocalAttachments(task.images, spawnBase())
+      : [];
+
   // Concurrency — slot must be held across the full lifetime of the
   // sub-turn (sync + async both). reserveSpawnSlot also increments the
   // counters atomically; the matching releaseSpawnSlot lives in the
@@ -481,6 +517,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           modelOverride: task.model,
           maxRoundsOverride: task.maxRounds,
           attention: task.attention,
+          attachments: briefAttachments,
         });
       } else {
         // MCP-child HTTP path: the SERVER process owns the task lifetime
@@ -500,6 +537,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           modelOverride: task.model,
           maxRoundsOverride: task.maxRounds,
           attention: task.attention,
+          attachments: briefAttachments,
         });
         releaseSpawnSlot(targetPersona);
       }
@@ -577,6 +615,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           session: sessionId,
           text: task.task,
           subagentDepth: parentDepth + 1,
+          ...(briefAttachments.length > 0 ? { attachments: briefAttachments } : {}),
           ...(task.model ? { modelOverride: task.model } : {}),
           ...(task.maxRounds
             ? { agentLoopOverride: { maxRounds: task.maxRounds } }
@@ -588,6 +627,7 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           session: sessionId,
           text: task.task,
           subagentDepth: parentDepth + 1,
+          ...(briefAttachments.length > 0 ? { attachments: briefAttachments } : {}),
           ...(ctx.session
             ? { waiterAgent: ctx.agent, waiterSession: ctx.session }
             : {}),
@@ -642,6 +682,7 @@ async function spawnAsyncInProcess(args: {
   modelOverride?: string;
   maxRoundsOverride?: number;
   attention?: boolean;
+  attachments?: AttachmentRef[];
 }): Promise<string> {
   if (!injectedDeps) throw new Error('spawnAsyncInProcess called without injectedDeps');
   const task_id = newTaskId();
@@ -674,6 +715,9 @@ async function spawnAsyncInProcess(args: {
         text: args.taskText,
         subagentDepth: args.parentDepth + 1,
         signal: abort.signal,
+        ...(args.attachments && args.attachments.length > 0
+          ? { attachments: args.attachments }
+          : {}),
         ...(args.modelOverride ? { modelOverride: args.modelOverride } : {}),
         ...(args.maxRoundsOverride
           ? { agentLoopOverride: { maxRounds: args.maxRoundsOverride } }
@@ -711,6 +755,7 @@ async function spawnAsyncViaHttp(args: {
   modelOverride?: string;
   maxRoundsOverride?: number;
   attention?: boolean;
+  attachments?: AttachmentRef[];
 }): Promise<string> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
@@ -726,6 +771,9 @@ async function spawnAsyncViaHttp(args: {
         agent: args.targetAgent,
         session: args.targetSession,
         text: args.taskText,
+        ...(args.attachments && args.attachments.length > 0
+          ? { attachments: args.attachments }
+          : {}),
         // Deliberately NO from_agent: a spawn task brief is not an A2A
         // message. Labeling it would render a peer-agent bubble + fire
         // unread badges in the sub's session, and the sub's engine
@@ -767,6 +815,15 @@ async function spawnAsyncViaHttp(args: {
  * Server host/port from SOMORA_HOST + SOMORA_PORT env (set by the
  * parent server on launch). Falls back to 127.0.0.1:18737.
  */
+/** Loopback base for this process — same rules the HTTP fallbacks use:
+ *  SOMORA_HOST/PORT from the parent, https when the server runs TLS. */
+function spawnBase(): string {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  return `${scheme}://${host}:${port}`;
+}
+
 async function runChatTurnViaHttp(args: {
   agent: string;
   session: string;
@@ -780,6 +837,7 @@ async function runChatTurnViaHttp(args: {
   waiterSession?: string;
   modelOverride?: string;
   maxRounds?: number;
+  attachments?: AttachmentRef[];
 }): Promise<ChatTurnResult> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
@@ -799,6 +857,9 @@ async function runChatTurnViaHttp(args: {
         agent: args.agent,
         session: args.session,
         text: args.text,
+        ...(args.attachments && args.attachments.length > 0
+          ? { attachments: args.attachments }
+          : {}),
         subagent_depth: args.subagentDepth,
         ...(args.waiterAgent && args.waiterSession
           ? { waiter_agent: args.waiterAgent, waiter_session: args.waiterSession }

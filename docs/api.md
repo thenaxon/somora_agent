@@ -1125,8 +1125,16 @@ curl -X POST https://<host>:18737/chat/send-sync \
 ```
 
 Body fields: same as `/chat/send` (`agent`, `session`, `text`,
-`from_agent`, `agent_ask_call_id`), plus:
+`attachments`, `from_agent`, `agent_ask_call_id`), plus:
 
+- `attachments` (optional) — refs from `POST /attachments`, exactly as
+  on `/chat/send`. This is the route the A2A tools use, so it is also
+  how one agent hands another a picture the receiving model has to
+  actually see. A target whose model has no vision gets the vision
+  worker's description instead, the same as for a chat attachment.
+  Agents normally do not build this by hand: `agent_ask` and
+  `spawn_subagent` take `images: ["/absolute/path.png"]` and upload for
+  them (see [agents.md](agents.md)).
 - `from_session` (optional, A2A) — the session the asking agent wrote
   from (id or `main`). Persisted as `user_message.from_session` and
   shown to the target in the attribution header
@@ -1190,7 +1198,9 @@ created with the standard timestamped id; an exact id that is gone is
 a `404`), `text` (the task), optional `from_agent`, `parent_agent` +
 `parent_session` (who to report back to; default the caller),
 `subagent_depth`, `model` (override), `max_rounds`, `attention`
-(`false` suppresses the `[subagent attention]` wake of the parent).
+(`false` suppresses the `[subagent attention]` wake of the parent), and
+`attachments` (refs from `POST /attachments` — pictures that belong to
+the brief).
 
 Returns `202 {task_id}` at once; the turn runs in the background under
 the target session's lock. `429` when the per-agent concurrent spawn
@@ -1912,26 +1922,36 @@ travel via this two-step flow: upload first, then ref the hash on
 
 ### `POST /attachments`
 
-Multipart upload of one or more files. Content is stored once on
-disk, deduped by hash.
+Upload **one** file as the raw request body, with its name in the
+`X-Somora-Filename` header (URL-encoded, so spaces and non-ASCII
+survive). Content is stored once on disk, deduped by hash.
+
+Raw bytes rather than a form upload is deliberate: multipart parsing
+pulls the whole file into memory, while a raw body streams and keeps
+the size cap meaningful. A `multipart/form-data` request is refused
+with `415` — before 2026-09-11 it was stored verbatim, so the envelope
+itself became a text attachment called `unnamed` and the turn quietly
+had no image.
 
 ```bash
 curl -X POST https://<host>:18737/attachments \
-     -F "file=@./screenshot.png"
+     --data-binary @./screenshot.png \
+     -H "Content-Type: image/png" \
+     -H "X-Somora-Filename: screenshot.png"
 ```
 
-Returns:
+Returns one object (the type is sniffed from the bytes, not the name):
 ```json
-[
-  { "hash": "sha256-…",
-    "name": "screenshot.png",
-    "mime": "image/png",
-    "kind": "image",
-    "size": 184320 }
-]
+{ "hash": "sha256-…",
+  "name": "screenshot.png",
+  "mime": "image/png",
+  "kind": "image",
+  "size": 184320 }
 ```
 
-Pass the same shape under `attachments[]` on the next `/chat/send`.
+Collect the objects for as many files as you need and pass them as
+`attachments[]` on the next `/chat/send` or `/chat/send-sync`. The
+per-turn count and per-file size come from `config.attachments`.
 
 ### `GET /attachments/:hash`
 

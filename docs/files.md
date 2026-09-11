@@ -246,14 +246,22 @@ attach files directly to a chat turn. Pipeline:
    `~/.somora/attachments/<sha256>.<ext>`. Returns
    `{hash, mime, kind, size, name}`. Same content uploaded twice =
    same file on disk (sha256 dedup).
-2. `POST /chat/send` — body extension `attachments: [{hash, name,
-   mime, size}]`. Server resolves refs, validates the active model's
+2. `POST /chat/send` (and `/chat/send-sync`, `/spawn-async`) — body
+   extension `attachments: [{hash, name, mime, size}]`. Server resolves refs, validates the active model's
    capabilities, refuses with a clear error if the model lacks
    `image` / `pdf` cap.
 3. JSONL persists refs only on the `user_message` event — bytes never
    travel into JSONL or back out. History replay re-loads bytes from
    disk on demand.
-4. Each engine adapter builds its native multimodal user-message
+4. Agents use the same pipeline through their tools: `agent_ask` and
+   `spawn_subagent`/`spawn_subagents` take `images: ["/absolute/path"]`,
+   upload those files themselves and put the refs on the turn they
+   start. That is how an orchestrator hands a co-worker a graphic it
+   just generated — naming the path in the message text only gives the
+   receiving model a string (2026-09-11). A receiving model without
+   vision gets the vision worker's description, exactly as for a chat
+   attachment.
+5. Each engine adapter builds its native multimodal user-message
    shape: claude-cli inlines as `ContentBlockParam[]` with
    `ImageBlockParam` / `DocumentBlockParam`; codex-cli sends images as
    native `localImage` turn inputs and rasterises PDFs to per-page PNGs
