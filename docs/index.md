@@ -102,10 +102,13 @@ is the HTTP+SSE contract — same surface the built-in clients use.
 - **tools** — the things an agent can call. Memory reads, wiki edits,
   file I/O, shell exec, tmux sessions, web search/fetch, sub-agent
   spawning, etc. See [tools.md](tools.md).
-- **voice** — optional STT for mic input on web/mobile and optional
-  TTS for spoken replies, plus a generic `/voice/turn` audio-in/audio-
-  out endpoint. Both reuse the OpenAI-compatible audio shape, no
-  extra credentials. See [voice.md](voice.md).
+- **voice** — two separate features that share only the word. Dictation
+  and spoken replies: a mic button on web/mobile, optional TTS for the
+  answer, plus a generic `/voice/turn` audio-in/audio-out endpoint, all
+  on the OpenAI-compatible audio shape with no extra credentials
+  ([voice.md](voice.md)). And realtime voice: a standing, interruptible
+  call with an agent, where a second model does the talking and the
+  agent does the knowing ([realtime-voice.md](realtime-voice.md)).
 
 ## Where to next
 
@@ -145,7 +148,8 @@ high-value next steps in rough order:
 | [tmux.md](tmux.md) | Multi-turn shell sessions | Driving long-running CLIs from agents |
 | [web.md](web.md) | Browser client | Web-UI specifics + HTTPS notes |
 | [mobile.md](mobile.md) | Mobile PWA | iOS/Android install, scope |
-| [voice.md](voice.md) | STT + TTS + /voice/turn | Voice in, spoken replies, audio-in/audio-out endpoint |
+| [voice.md](voice.md) | Dictation + spoken replies | Press-to-talk in web/mobile, optional TTS answers |
+| [realtime-voice.md](realtime-voice.md) | Talking to an agent | A standing, interruptible call; the voice talks, the agent knows |
 | [imagegen.md](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
 | [videogen.md](videogen.md) | Text-to-video | Job-based renders, and how an agent gets its result without waiting |
 | [browser.md](browser.md) | Shared browser | A Chromium per agent profile that agents drive and you can take over for logins |

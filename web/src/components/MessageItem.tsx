@@ -34,6 +34,7 @@ import {
   Mic,
   CornerDownLeft,
   Volume2,
+  PhoneCall,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
@@ -136,7 +137,12 @@ export const MessageItem = memo(function MessageItem({
     return <AgentAnswerDivider text={msg.text} ts={msg.ts} />;
   }
 
+  // Two different features produce a spoken line and they get two
+  // different marks: the dictation button is a microphone, a live call
+  // is a call glyph (Rene, 2026-09-12 — "sind 2 ganz unterschiedliche
+  // konzepte"). Older messages carry no source and keep the mic.
   const spokenByUser = msg.role === 'user' && msg.inputModality === 'voice';
+  const spokenInCall = spokenByUser && msg.voiceSource === 'realtime';
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
   const peer = isPeer && msg.fromAgent ? peerAgents?.get(msg.fromAgent) : undefined;
   // Origin caption for A2A inbounds from a NON-main session: "naxon ·
@@ -178,7 +184,15 @@ export const MessageItem = memo(function MessageItem({
           >
             {/* Spoken, not typed: the same person, a different channel,
                 and worth seeing at a glance when reading a call back. */}
-            {isPeer ? (peerIcon ?? '🤖') : spokenByUser ? <Mic size={12} /> : <User size={12} />}
+            {isPeer ? (
+              (peerIcon ?? '🤖')
+            ) : spokenInCall ? (
+              <PhoneCall size={12} />
+            ) : spokenByUser ? (
+              <Mic size={12} />
+            ) : (
+              <User size={12} />
+            )}
           </div>
           <div className="chat-msg-meta-col">
             {msg.text && (

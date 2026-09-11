@@ -96,8 +96,11 @@ export type ChatMessage =
        *  subsystem (today: 'sentinel'). Renderer draws a centered
        *  system divider instead of a user-bubble. */
       fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
-      /** The human spoke this instead of typing it (voice call). */
+      /** The human spoke this instead of typing it. */
       inputModality?: 'text' | 'voice';
+      /** Which spoken path: the dictation button, or a live call. Two
+       *  separate features, never merged into one glyph. */
+      voiceSource?: 'stt' | 'realtime';
       attachments?: AttachmentDisplay[];
       /** Server turnId returned by POST /chat/send. Used to pair this
        *  optimistic bubble with later SSE events (turn_queued while

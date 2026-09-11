@@ -678,6 +678,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       ? {
           modality: 'voice' as const,
           transcribed: true,
+          // The dictation path, not a live call — the two are separate
+          // features and a reader must be able to tell them apart.
+          source: 'stt' as const,
           ...(sttProvider ? { sttProvider } : {}),
         }
       : undefined;

@@ -1,4 +1,20 @@
-# Voice
+# Voice (dictation and spoken replies)
+
+> **This page is not about calls.** somora has two separate voice
+> features and mixing them up leads to the wrong config and the wrong
+> expectations:
+>
+> - **This page** — press a button, talk, get text you can still edit
+>   before sending; optionally hear the answer read back. One recording,
+>   one message, one reply. Configured under `stt:` and `tts:`.
+> - **[realtime-voice.md](realtime-voice.md)** — a standing conversation
+>   with an agent: it listens while you speak, you can interrupt it, and
+>   it asks the real agent in the background. Configured under
+>   `realtimeVoice:`, and it needs a realtime-capable provider.
+>
+> They share nothing but the word "voice": different endpoints,
+> different config, different clients, different bills. Both can run at
+> the same time.
 
 Somora supports two voice flows:
 

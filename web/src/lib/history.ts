@@ -173,6 +173,9 @@ export function historyEventToMessages(e: HistoryEvent): ChatMessage[] {
         ...(e.from_agent && e.from_session ? { fromSession: e.from_session } : {}),
         ...(e.from_system ? { fromSystem: e.from_system } : {}),
         ...(e.input?.modality === 'voice' ? { inputModality: 'voice' as const } : {}),
+        ...(e.input?.source === 'realtime' || e.input?.source === 'stt'
+          ? { voiceSource: e.input.source }
+          : {}),
         ...(e.attachments && e.attachments.length > 0
           ? {
               attachments: e.attachments.map((a) => ({

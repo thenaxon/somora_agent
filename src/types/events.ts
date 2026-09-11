@@ -115,6 +115,16 @@ export type NormalizedEvent =
         transcribed?: boolean;
         /** Free-form tag for the STT path used, e.g. provider name. */
         sttProvider?: string;
+        /**
+         * WHICH spoken path this came from. Two different features
+         * write `modality: 'voice'` and they must not be read as one
+         * (Rene, 2026-09-12): `stt` is the microphone button — one
+         * recording becomes one message you can still edit before
+         * sending. `realtime` is a live call, where the sentence was
+         * spoken into a standing connection and is recorded after the
+         * fact.
+         */
+        source?: 'stt' | 'realtime';
       };
       /**
        * Per-turn client request: did the client (web / mobile / voice

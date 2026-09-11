@@ -459,7 +459,9 @@ export class VoiceCall {
       ts: this.now(),
       engine: 'voice',
       text,
-      input: { modality: 'voice' },
+      // A live call, not the dictation button: `source` keeps the two
+      // spoken paths apart everywhere they are read.
+      input: { modality: 'voice', source: 'realtime' },
     } as NormalizedEvent);
   }
 
