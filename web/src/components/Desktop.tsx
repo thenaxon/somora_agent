@@ -6,7 +6,7 @@
 // clicks + taskbar focus + per-window drag/resize all coordinate.
 
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, ScrollText, Square, Terminal, Users, Wrench } from 'lucide-react';
+import { Bell, BookOpen, Globe, ImagePlus, MessagesSquare, Mic, ScrollText, Square, Terminal, Users, Wrench } from 'lucide-react';
 import { DesktopIcons, type DesktopIcon } from './DesktopIcons';
 import { AgentTile } from './AgentTile';
 import { AgentContextMenu } from './AgentContextMenu';
@@ -39,6 +39,8 @@ import { useActivityStream } from '../hooks/useActivityStream';
 import { useWikiEnabled } from '../hooks/useWikiEnabled';
 import { useMediaEnabled } from '../hooks/useMediaEnabled';
 import { useBrowsers } from './BrowserProvider';
+import { useVoiceEnabled } from '../hooks/useVoiceEnabled';
+import { VoiceWindow } from './VoiceWindow';
 import { ActivityProvider } from './ActivityProvider';
 import type { AgentInfo } from '../lib/api';
 import { resolveAgentColor } from '../lib/colors';
@@ -51,6 +53,7 @@ export function Desktop() {
   const chatCtx = useChatContext();
   const wikiEnabled = useWikiEnabled();
   const media = useMediaEnabled();
+  const voice = useVoiceEnabled();
   const browserState = useBrowsers();
   const browserEnabled = browserState.enabled;
   const browserWaiting = browserState.browsers.filter((b) => b.handoff);
@@ -233,6 +236,23 @@ export function Desktop() {
         />
       ),
     },
+    // Realtime voice — hidden unless a provider is configured AND at
+    // least one agent may be called.
+    ...(voice.enabled
+      ? [
+          {
+            id: 'app:voice',
+            node: (
+              <AppTile
+                label="voice"
+                icon={<Mic size={26} />}
+                active={activeApps.has('voice')}
+                onClick={() => wm.openVoice()}
+              />
+            ),
+          },
+        ]
+      : []),
     // Shared browser (docs/browser.md) — hidden unless browser.enabled.
     ...(browserEnabled
       ? [
@@ -387,6 +407,22 @@ export function Desktop() {
                 onResize={wm.resize}
               >
                 <TmuxListWindow onAttach={(tmuxName) => wm.openTmuxTerm(tmuxName)} />
+              </Window>
+            );
+          }
+          if (win.kind === 'voice') {
+            return (
+              <Window
+                key={win.id}
+                win={win}
+                focused={wm.focusedId === win.id}
+                onFocus={wm.focus}
+                onClose={wm.close}
+                onMinimize={wm.minimize}
+                onMove={wm.move}
+                onResize={wm.resize}
+              >
+                <VoiceWindow agents={agents} />
               </Window>
             );
           }

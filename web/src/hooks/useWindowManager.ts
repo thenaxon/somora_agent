@@ -325,6 +325,30 @@ export function useWindowManager() {
     setFocusedId(id);
   }, [windows, zCounter, focus]);
 
+  /** Open or focus the voice window (singleton): one call at a time,
+   *  because a second standing audio connection is a second bill and a
+   *  second microphone nobody asked for. */
+  const openVoice = useCallback(() => {
+    const existing = windows.find((w) => w.kind === 'voice');
+    if (existing) {
+      focus(existing.id);
+      return;
+    }
+    const pos = randomPos(520, 620, zCounter + 1);
+    const id = `voice-${Date.now()}`;
+    const next: WindowState = {
+      id,
+      kind: 'voice',
+      title: 'voice',
+      icon: '🎙',
+      ...pos,
+      minimized: false,
+    };
+    setWindows((ws) => [...ws, next]);
+    setZCounter((z) => z + 1);
+    setFocusedId(id);
+  }, [windows, zCounter, focus]);
+
   /** Open or focus the server log window (singleton). Reading the log
    *  used to mean an ssh session and `tail` — which is not available at
    *  the moment something looks wrong (Rene 2026-09-10). */
@@ -669,6 +693,7 @@ export function useWindowManager() {
     openTmuxTerm,
     openBrowserList,
     openLogs,
+    openVoice,
     openBrowser,
     openShellTerm,
     openSessionsList,

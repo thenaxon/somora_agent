@@ -167,6 +167,7 @@ import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSock
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { runChatTurn } from './run-turn.ts';
+import { VoiceCallManager } from '../voice/realtime/manager.ts';
 import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
 import {
   acquireSessionLock,
@@ -3654,6 +3655,114 @@ app.get('/browser/status', async (c) => {
   return c.json({ enabled: true, headed: svc.headedPlan().mode, browsers, warnings: svc.warnings() });
 });
 
+// ─── Realtime voice ──────────────────────────────────────────────────
+// Three gates for an opt-in feature: the route says 503 when it is off,
+// the tile is not rendered, and an agent without `voice.enabled` never
+// appears in the picker.
+app.get('/voice/status', async (c) => {
+  const cfg = config.realtimeVoice;
+  if (!cfg?.enabled) return c.json({ enabled: false, agents: [] }, 200);
+  const names = (await listAgents()).map((a) => a.name);
+  const agents = await voiceCalls.callableAgents(names);
+  return c.json({
+    enabled: true,
+    provider: cfg.provider,
+    model: cfg.model,
+    maxCallMinutes: cfg.maxCallMinutes,
+    agents,
+    calls: voiceCalls.list(),
+  });
+});
+
+// The audio channel. Binary frames are microphone PCM16 going up and
+// the model's PCM16 coming down; JSON frames carry control and state.
+// The browser holds no provider knowledge, no key, and never sees a
+// tool call.
+app.get(
+  '/voice/attach',
+  upgradeWebSocket((c) => {
+    const agent = c.req.query('agent') ?? '';
+    const sessionRef = c.req.query('session') ?? 'main';
+    let callId: string | undefined;
+    let closed = false;
+    return {
+      async onOpen(_evt, ws) {
+        if (!config.realtimeVoice?.enabled) {
+          ws.close(1008, 'realtimeVoice.enabled is false');
+          return;
+        }
+        try {
+          const active = await voiceCalls.start({ agent, session: sessionRef });
+          callId = active.call.id;
+          ws.send(JSON.stringify({ type: 'ready', call: active.call.snapshot(), rateHz: 24000 }));
+          // Drive the call and forward everything the browser needs to
+          // show or play. Audio is sent as base64 inside a JSON frame:
+          // one format for the whole channel beats a binary/JSON split
+          // that every client has to get right.
+          void (async () => {
+            try {
+              for await (const ev of active.session.events()) {
+                if (closed) break;
+                if (ev.kind === 'audio') {
+                  ws.send(JSON.stringify({ type: 'audio', base64: ev.base64, rateHz: ev.rateHz }));
+                  continue;
+                }
+                ws.send(JSON.stringify({ type: 'event', event: ev, call: active.call.snapshot() }));
+                if (ev.kind === 'closed') break;
+              }
+            } catch (err) {
+              logger.warn({ msg: 'voice.stream_failed', err: (err as Error).message });
+            } finally {
+              if (!closed) ws.close(1000, 'call ended');
+            }
+          })();
+          // The call state machine runs alongside: it is what turns a
+          // tool call into a turn in the bound session.
+          void (async () => {
+            for await (const _snap of active.call.run()) {
+              /* snapshots are pushed through the event frames above */
+            }
+          })();
+        } catch (err) {
+          ws.close(1008, (err as Error).message.slice(0, 120));
+        }
+      },
+      async onMessage(evt, ws) {
+        const active = callId ? voiceCalls.get(callId) : undefined;
+        if (!active) return;
+        const data = evt.data;
+        if (typeof data !== 'string') return;
+        let msg: { type?: string; base64?: string };
+        try {
+          msg = JSON.parse(data) as typeof msg;
+        } catch {
+          return;
+        }
+        if (msg.type === 'audio' && typeof msg.base64 === 'string') {
+          await active.session.sendAudio?.({ base64: msg.base64, rateHz: 24000 });
+          return;
+        }
+        if (msg.type === 'interrupt') {
+          await active.session.interrupt();
+          return;
+        }
+        if (msg.type === 'hangup') {
+          await voiceCalls.stop(active.call.id, 'user hung up');
+          ws.close(1000, 'hung up');
+        }
+      },
+      async onClose() {
+        closed = true;
+        // Closing the tab ends the CALL — a standing audio connection
+        // is billed by the minute, so an orphan is a standing bill.
+        // Work the agent already accepted keeps running: hanging up and
+        // cancelling are two different things.
+        if (callId) await voiceCalls.stop(callId, 'client disconnected');
+      },
+    };
+  }),
+);
+
 // Authoritative snapshots restore pending handoffs on every reconnect.
 app.get('/browser/stream', (c) => streamSSEH2Safe(c, async (stream) => {
   let finish!: () => void;
@@ -5762,6 +5871,32 @@ const chatTurnDeps = {
   onActivity: (agent: string) => remWorker.resetActivity(agent),
 };
 configureSpawnTools({ chatTurnDeps });
+
+// Realtime voice — one manager owns every live call. The browser is a
+// dumb terminal on this feature (microphone in, speaker out, state on
+// screen); agent, session, provider, key and tool execution all live
+// here. Design: private/realtime-voice-design.md
+const voiceCalls = new VoiceCallManager({
+  get config() {
+    return config;
+  },
+  runConsult: async ({ agent, session, text }) => {
+    const result = await runChatTurn({
+      agent,
+      session,
+      text,
+      fromSystem: 'voice',
+      // A human watching the same session sees the question and the
+      // answer appear live, exactly like any other turn.
+      publishSse: (event) => publish(agent, session, event),
+      deps: chatTurnDeps,
+    });
+    return {
+      text: result.finalText,
+      ...(result.outcome ? { outcome: result.outcome } : {}),
+    };
+  },
+});
 // Sentinel scheduler — wire deps + boot the trigger loop. Same pattern
 // as configureSpawnTools: server boot owns the deps, sentinel imports
 // the runtime via the injected reference. `completedRetentionDays`
