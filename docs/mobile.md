@@ -55,6 +55,20 @@ own app switcher entry.
   supports `getUserMedia` + `MediaRecorder` (every modern phone
   browser does). The button is hidden when either prerequisite is
   missing.
+- **Keep the screen awake:** the top bar carries a `☀️`/`🌙` toggle.
+  With it on, the phone's display stays lit while the app is open —
+  no more falling asleep mid-conversation. The lock is re-taken every
+  time you come back to the app, because browsers drop it whenever the
+  page is hidden, and it is released when you leave. The setting is
+  sticky per browser and off by default.
+
+  **iOS needs 18.4 or newer.** Apple's Safari accepted the request
+  inside a home-screen web app long before it honoured it; the screen
+  slept anyway until the fix in Safari 18.4 (WebKit bug 254545). On an
+  older iPhone the toggle still switches, and its tooltip says the
+  system may ignore it — there is no other way to tell, since the
+  request itself succeeds. The button is hidden entirely in browsers
+  without the API.
 - **Spoken replies** (when TTS is configured in `tts.*`): the top-bar
   shows a `🔊`/`🔇` toggle. When on AND you submit a turn via the
   mic, the assistant's text reply is also played as audio. Toggle is
@@ -171,6 +185,7 @@ picture before failing.
 - Spoken replies via TTS (optional, gated by per-agent auto-play
   toggle; replay button on past bubbles when audio is cached)
 - Camera / photo-roll attachments via the native picker
+- Keeping the display awake while the app is open (iOS 18.4+)
 - A marker on any reply that produced media (a generated image, say):
   one line naming what exists, pointing at the web app. The PWA renders
   no images or video itself — but staying silent would make a turn that

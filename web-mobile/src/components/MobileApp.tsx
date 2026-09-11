@@ -12,6 +12,7 @@ import { useChatStream } from '../hooks/useChatStream';
 import { useDreamStates } from '../hooks/useDreamStates';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { Koala } from './Koala';
+import { useWakeLock } from '../hooks/useWakeLock';
 
 export function MobileApp() {
   const { agents, loading, error } = useAgents();
@@ -150,6 +151,11 @@ export function MobileApp() {
     return out;
   }
 
+  // Keep the screen awake while the app is open. Sticky per browser;
+  // the hook re-acquires the lock every time the app comes back to the
+  // foreground, because the browser drops it whenever the page hides.
+  const wakeLock = useWakeLock();
+
   return (
     <div className="mobile-shell">
       <header className="mobile-header">
@@ -160,6 +166,37 @@ export function MobileApp() {
           {activeAgent ?? 'somora'}
         </span>
         <span className="mobile-header-meta">main</span>
+        {!wakeLock.unsupported && (
+          <button
+            type="button"
+            onClick={() => wakeLock.setEnabled(!wakeLock.enabled)}
+            aria-label={wakeLock.enabled ? 'keep screen awake: on' : 'keep screen awake: off'}
+            title={
+              wakeLock.unreliable
+                ? 'keep the screen awake — your iOS is older than 18.4, where Apple fixed this for home-screen web apps, so it may sleep anyway'
+                : wakeLock.enabled
+                  ? wakeLock.active
+                    ? 'screen stays awake while this app is open'
+                    : 'screen stays awake once you touch the app'
+                  : 'screen sleeps as usual'
+            }
+            style={{
+              marginLeft: 'auto',
+              background: 'transparent',
+              border: '1px solid var(--border-2, #444)',
+              borderRadius: 6,
+              padding: '4px 8px',
+              color: wakeLock.enabled ? 'var(--accent, #6cf)' : 'var(--text-2, #888)',
+              opacity: wakeLock.enabled && wakeLock.unreliable ? 0.6 : 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 12,
+            }}
+          >
+            <span aria-hidden="true">{wakeLock.enabled ? '☀️' : '🌙'}</span>
+          </button>
+        )}
         {ttsEnabled && autoPlayAllowOverride && activeAgent && (
           <button
             type="button"
@@ -171,7 +208,7 @@ export function MobileApp() {
                 : 'voice auto-play off (mic input ⇒ text only)'
             }
             style={{
-              marginLeft: 'auto',
+              marginLeft: wakeLock.unsupported ? 'auto' : 6,
               background: 'transparent',
               border: '1px solid var(--border-2, #444)',
               borderRadius: 6,
