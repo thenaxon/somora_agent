@@ -56,6 +56,17 @@ export interface VoiceCallDeps {
    * audio. Anything that needs to watch a call subscribes here.
    */
   onEvent?(ev: RealtimeEvent, snapshot: VoiceCallSnapshot): void;
+  /**
+   * The call's own state, whenever it changes.
+   *
+   * Separate from `onEvent` because the interesting states are the ones
+   * NO provider event announces: "asking the agent" begins when somora
+   * decides to run a turn and ends when the turn returns. A watcher
+   * that only mirrors provider events sees connecting → listening →
+   * speaking and never learns why the pause in the middle happened
+   * (measured through the deployed server, 2026-09-11).
+   */
+  onState?(snapshot: VoiceCallSnapshot): void;
   log?(entry: Record<string, unknown>): void;
   now?(): number;
 }
@@ -102,6 +113,12 @@ export class VoiceCall {
 
   private now(): number {
     return this.deps.now ? this.deps.now() : Date.now();
+  }
+
+  private setState(next: VoiceCallState): void {
+    if (this.state === next) return;
+    this.state = next;
+    this.deps.onState?.(this.snapshot());
   }
 
   private log(entry: Record<string, unknown>): void {
@@ -157,11 +174,11 @@ export class VoiceCall {
       this.deps.onEvent?.(ev, this.snapshot());
       switch (ev.kind) {
         case 'ready':
-          this.state = 'listening';
+          this.setState('listening');
           yield this.snapshot();
           break;
         case 'model_speech':
-          this.state = ev.phase === 'start' ? 'speaking' : 'listening';
+          this.setState(ev.phase === 'start' ? 'speaking' : 'listening');
           yield this.snapshot();
           break;
         case 'user_transcript':
@@ -180,7 +197,7 @@ export class VoiceCall {
           yield this.snapshot();
           break;
         case 'interrupted':
-          this.state = 'listening';
+          this.setState('listening');
           this.log({ msg: 'voice.interrupted' });
           yield this.snapshot();
           break;
@@ -194,7 +211,7 @@ export class VoiceCall {
           }
           break;
         case 'closed':
-          this.state = 'closed';
+          this.setState('closed');
           this.clearDeadline();
           this.log({ msg: 'voice.call_end', reason: ev.reason, consults: this.consults, spokenTurns: this.spokenTurns });
           yield this.snapshot();
@@ -223,7 +240,7 @@ export class VoiceCall {
       await session.sendToolResult(callId, parsed.error);
       return;
     }
-    this.state = 'consulting';
+    this.setState('consulting');
     this.consults += 1;
     const startedAt = this.now();
     const text = renderConsultTurnText(parsed.args, 'the user');
@@ -256,7 +273,7 @@ export class VoiceCall {
       // into a silence the user has to interpret.
       await session.sendToolResult(callId, `asking ${this.persona.name} failed: ${message}`);
     } finally {
-      this.state = 'listening';
+      this.setState('listening');
     }
   }
 

@@ -23,6 +23,8 @@ export interface VoiceManagerDeps {
   /** Mirrors every provider event of every call to whoever is watching
    *  it — there is only one consumer of the provider stream. */
   watcher?(callId: string): ((ev: RealtimeEvent, snap: VoiceCallSnapshot) => void) | undefined;
+  /** Same, for state changes no provider event announces. */
+  stateWatcher?(callId: string): ((snap: VoiceCallSnapshot) => void) | undefined;
 }
 
 export interface StartCallInput {
@@ -103,6 +105,7 @@ export class VoiceCallManager {
         appendEvent,
         log: (entry) => logger.info(entry),
         onEvent: (ev, snap) => this.deps.watcher?.(snap.id)?.(ev, snap),
+        onState: (snap) => this.deps.stateWatcher?.(snap.id)?.(snap),
       },
     );
     const providerSession = await call.start();

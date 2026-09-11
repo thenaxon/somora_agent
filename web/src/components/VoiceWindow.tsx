@@ -105,7 +105,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
       );
       wsRef.current = ws;
       ws.onmessage = (evt) => {
-        let msg: { type?: string; base64?: string; event?: { kind?: string; text?: string; final?: boolean; message?: string }; call?: { consults?: number } };
+        let msg: { type?: string; base64?: string; event?: { kind?: string; text?: string; final?: boolean; message?: string }; call?: { consults?: number; state?: string } };
         try { msg = JSON.parse(String(evt.data)) as typeof msg; } catch { return; }
         if (msg.type === 'audio' && msg.base64) {
           playerRef.current?.play(msg.base64);
@@ -113,6 +113,13 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
         }
         if (msg.type === 'ready') {
           setState('listening');
+          return;
+        }
+        // The server's own state is the truth — "asking hans" is a
+        // state no provider event announces.
+        if (msg.type === 'state' && msg.call?.state) {
+          setState(msg.call.state as CallState);
+          if (typeof msg.call.consults === 'number') setConsults(msg.call.consults);
           return;
         }
         if (msg.call && typeof msg.call.consults === 'number') setConsults(msg.call.consults);

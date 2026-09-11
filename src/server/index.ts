@@ -3702,6 +3702,9 @@ app.get(
           // here would not mirror it, it would steal half of it — the
           // call machine got the tool call and the browser got neither
           // transcript nor audio (measured 2026-09-11).
+          voiceStateWatchers.set(active.call.id, (snap) => {
+            if (!closed) ws.send(JSON.stringify({ type: 'state', call: snap }));
+          });
           voiceWatchers.set(active.call.id, (ev, snap) => {
             if (closed) return;
             if (ev.kind === 'audio') {
@@ -3719,6 +3722,7 @@ app.get(
               logger.warn({ msg: 'voice.stream_failed', err: (err as Error).message });
             } finally {
               voiceWatchers.delete(active.call.id);
+              voiceStateWatchers.delete(active.call.id);
               if (!closed) ws.close(1000, 'call ended');
             }
           })();
@@ -5877,11 +5881,13 @@ configureSpawnTools({ chatTurnDeps });
 // here. Design: private/realtime-voice-design.md
 // One watcher per live call: the socket that is listening to it.
 const voiceWatchers = new Map<string, (ev: RealtimeEvent, snap: VoiceCallSnapshot) => void>();
+const voiceStateWatchers = new Map<string, (snap: VoiceCallSnapshot) => void>();
 const voiceCalls = new VoiceCallManager({
   get config() {
     return config;
   },
   watcher: (callId) => voiceWatchers.get(callId),
+  stateWatcher: (callId) => voiceStateWatchers.get(callId),
   runConsult: async ({ agent, session, text }) => {
     const result = await runChatTurn({
       agent,
