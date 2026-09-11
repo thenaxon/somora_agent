@@ -3755,11 +3755,13 @@ app.get(
           return;
         }
         if (msg.type === 'audio' && typeof msg.base64 === 'string') {
-          await active.session.sendAudio?.({ base64: msg.base64, rateHz: 24000 });
+          // Through the call, not the session it started with: after a
+          // handover that first session is closed (2026-09-12).
+          await active.call.sendAudio({ base64: msg.base64, rateHz: 24000 });
           return;
         }
         if (msg.type === 'interrupt') {
-          await active.session.interrupt();
+          await active.call.interrupt();
           return;
         }
         if (msg.type === 'hangup') {

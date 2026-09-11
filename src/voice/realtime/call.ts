@@ -147,6 +147,9 @@ export class VoiceCall {
   /** Set by the switch tool; the run loop picks it up when the old
    *  provider session ends. */
   private pendingSwitch: { agent: string; session?: string } | undefined;
+  /** When the human stopped speaking — the honest timestamp for what
+   *  they said, since the transcript lands later. */
+  private lastSpeechEndedAt: number | undefined;
   private consults = 0;
   private spokenTurns = 0;
   private lastError: string | undefined;
@@ -272,6 +275,13 @@ export class VoiceCall {
           this.setState(ev.phase === 'start' ? 'speaking' : 'listening');
           yield this.snapshot();
           break;
+        case 'user_speech':
+          // When the sentence ENDED, not when its transcription
+          // arrived: the text comes back after the lookup it triggered,
+          // and stamping it "now" put the user's own sentence below the
+          // answer to it in the session (2026-09-12).
+          if (ev.phase === 'end') this.lastSpeechEndedAt = ev.ts;
+          break;
         case 'user_transcript':
           if (ev.final && ev.text.trim().length > 0) {
             await this.persistSpoken(ev.text.trim());
@@ -344,6 +354,24 @@ export class VoiceCall {
       this.clearDeadline();
       return false;
     }
+  }
+
+  /**
+   * Microphone audio for whatever session the call is on RIGHT NOW.
+   *
+   * After a handover the provider session is a different object. The
+   * route used to hold the one it was given at the start, so once the
+   * call continued as another agent the microphone was still feeding a
+   * closed session: the window switched to lisa, lisa heard nothing,
+   * and the call had to be restarted (Rene, 2026-09-12). Anything that
+   * talks to the provider goes through the call, never around it.
+   */
+  async sendAudio(chunk: { base64: string; rateHz: number }): Promise<void> {
+    await this.session?.sendAudio?.(chunk);
+  }
+
+  async interrupt(): Promise<void> {
+    await this.session?.interrupt();
   }
 
   private async note(agent: string, session: string, text: string): Promise<void> {
@@ -454,9 +482,11 @@ export class VoiceCall {
    *  that is what makes the call continuable by keyboard afterwards. */
   private async persistSpoken(text: string): Promise<void> {
     this.spokenTurns += 1;
+    const spokenAt = this.lastSpeechEndedAt ?? this.now();
+    this.lastSpeechEndedAt = undefined;
     await this.deps.appendEvent(this.target.agent, this.target.session, {
       kind: 'user_message',
-      ts: this.now(),
+      ts: spokenAt,
       engine: 'voice',
       text,
       // A live call, not the dictation button: `source` keeps the two

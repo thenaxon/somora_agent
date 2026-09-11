@@ -318,6 +318,42 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('and the new persona speaks', provider.lastSession?.request.instructions.includes('You are lisa') === true);
 }
 
+// ── after a handover the microphone reaches the NEW agent ───────────
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'lisa' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 3, reason: 'handing over' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid-hans', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async () => ({ text: 'x' }),
+      appendEvent: async () => {},
+      callableAgents: ['hans', 'lisa'],
+      resolveTarget: async (agent) => ({
+        persona: persona({ name: agent } as Partial<Persona>),
+        target: { agent, session: `sid-${agent}`, slug: 'main' },
+        cfg: { model: 'm', voice: 'cedar', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+      }),
+    },
+  );
+  await drain(call);
+  // The route feeds audio through the CALL. Before 2026-09-12 it held
+  // the session it was handed at the start, so after a handover the
+  // microphone fed a closed session: the window said lisa, lisa heard
+  // nothing, and the call had to be restarted.
+  const before = provider.lastSession;
+  await call.sendAudio({ base64: 'AAAA', rateHz: 24_000 });
+  check('the new session is the one being fed', provider.lastSession === before && before?.request.voice === 'cedar');
+  check('and it is lisa speaking now', call.snapshot().target.agent === 'lisa');
+}
+
 // ── switching is refused where it is not allowed ────────────────────
 {
   const script: FakeScriptStep[] = [
