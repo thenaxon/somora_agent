@@ -18,7 +18,7 @@ import {
   consultToolSpec,
   parseConsultArgs,
   parseSwitchArgs,
-  renderConsultTurnText,
+  renderConsultTurn,
   statusToolSpec,
   switchToolSpec,
 } from './consult.ts';
@@ -72,8 +72,9 @@ export interface SessionWorkStatus {
 
 export interface VoiceCallDeps {
   provider: RealtimeProvider;
-  /** Runs ONE turn in the bound session, as `from_system: 'voice'`. */
-  runConsult(args: { agent: string; session: string; text: string }): Promise<ConsultResult>;
+  /** Runs ONE turn in the bound session, as `from_system: 'voice'`.
+   *  `prefix` is scaffolding the model sees and the record does not. */
+  runConsult(args: { agent: string; session: string; text: string; prefix?: string }): Promise<ConsultResult>;
   /**
    * Persists into the bound session's history AND puts it on the live
    * stream.
@@ -645,7 +646,7 @@ export class VoiceCall {
     this.setState('consulting');
     this.consults += 1;
     const startedAt = this.now();
-    const text = renderConsultTurnText(parsed.args, 'the user', this.recentTranscript());
+    const turn = renderConsultTurn(parsed.args, 'the user', this.recentTranscript());
     this.log({ msg: 'voice.consult_start', question: parsed.args.question.slice(0, 160) });
     // Fill the silence from here rather than asking the model to
     // announce its own lookup: told to do that, it announced and never
@@ -657,7 +658,8 @@ export class VoiceCall {
       const result = await this.deps.runConsult({
         agent: this.target.agent,
         session: this.target.session,
-        text,
+        text: turn.text,
+        prefix: turn.prefix,
       });
       const answer = result.text.trim();
       this.log({

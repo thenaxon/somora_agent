@@ -11,10 +11,10 @@
 // refused (409) instead of overwriting what the agent wrote.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Check, Eye, FileText, Lock, RefreshCw, Save, Undo2 } from 'lucide-react';
-import { api, type PersonaResponse, type PromptPreviewResponse, type SessionSummary } from '../lib/api';
+import { AlertTriangle, Check, Eye, FileText, Lock, PhoneCall, RefreshCw, Save, Undo2 } from 'lucide-react';
+import { api, type PersonaResponse, type PromptPreviewResponse, type SessionSummary, type VoiceInstructionsResponse } from '../lib/api';
 
-type Tab = 'AGENTS.md' | 'SOUL.md' | 'USER.md' | 'agent.yaml' | 'prompt';
+type Tab = 'AGENTS.md' | 'SOUL.md' | 'USER.md' | 'agent.yaml' | 'prompt' | 'voice';
 
 const mono: React.CSSProperties = { fontFamily: '"JetBrains Mono", monospace' };
 const label: React.CSSProperties = { ...mono, fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-2)' };
@@ -61,6 +61,11 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
   const [previewSession, setPreviewSession] = useState('main');
   const [preview, setPreview] = useState<PromptPreviewResponse | null>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
+  // The voice self lives nowhere on disk unless somebody wrote a
+  // VOICE.md, so this endpoint is the only way to read what the talking
+  // model is actually told. The tab appears only when this agent can be
+  // called at all.
+  const [voice, setVoice] = useState<VoiceInstructionsResponse | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -86,6 +91,15 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
     }
   }, [agentName, previewSession]);
   useEffect(() => { void loadPreview(); }, [loadPreview]);
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .voiceInstructions(agentName, previewSession)
+      .then((v) => { if (!cancelled) setVoice(v); })
+      // No voice for this agent, or calls are off entirely: no tab.
+      .catch(() => { if (!cancelled) setVoice(null); });
+    return () => { cancelled = true; };
+  }, [agentName, previewSession]);
 
   const fileByName = useMemo(() => new Map<string, PersonaResponse['files'][number]>((data?.files ?? []).map((f) => [f.name, f])), [data]);
   const isDirty = (name: string) => fileByName.has(name) && drafts[name] !== fileByName.get(name)!.content;
@@ -117,6 +131,7 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
     ...editable.map((f) => ({ id: f as Tab, title: f, icon: <FileText size={12} /> })),
     { id: 'agent.yaml', title: 'agent.yaml', icon: <Lock size={12} /> },
     { id: 'prompt', title: 'Full prompt', icon: <Eye size={12} /> },
+    ...(voice ? [{ id: 'voice' as Tab, title: 'Voice prompt', icon: <PhoneCall size={12} /> }] : []),
   ];
 
   return (
@@ -206,6 +221,51 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
             </>
           );
         })()}
+
+        {tab === 'voice' && voice && (
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }} data-testid="agent-voice-tab">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px', flexWrap: 'wrap' }}>
+              <span style={label}>what the talking model is told</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ ...mono, fontSize: 11, color: 'var(--text-3)' }}>
+                {fmt(voice.chars)} chars · ≈{fmt(estTokens(voice.chars))} tokens
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 12, padding: '0 12px 8px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+              <table style={{ ...mono, fontSize: 11, borderCollapse: 'collapse', color: 'var(--text-1)' }} data-testid="agent-voice-facts">
+                <tbody>
+                  <tr>
+                    <td style={{ padding: '1px 10px 1px 0', color: 'var(--text-2)' }}>character</td>
+                    <td style={{ padding: '1px 8px' }}>
+                      {voice.source === 'VOICE.md' ? 'VOICE.md (hand-written)' : 'derived from the persona'}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '1px 10px 1px 0', color: 'var(--text-2)' }}>voice</td>
+                    <td style={{ padding: '1px 8px' }}>{voice.voice}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '1px 10px 1px 0', color: 'var(--text-2)' }}>language</td>
+                    <td style={{ padding: '1px 8px' }}>{voice.language}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ padding: '1px 10px 1px 0', color: 'var(--text-2)' }}>asks the agent</td>
+                    <td style={{ padding: '1px 8px' }}>{voice.consultPolicy}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div style={{ fontSize: 11, color: 'var(--text-3)', maxWidth: 380, lineHeight: 1.45 }}>
+                {voice.source === 'VOICE.md'
+                  ? 'This agent has a VOICE.md, so the character below is yours and somora only adds the rules under it.'
+                  : 'No VOICE.md for this agent, so the character is derived from its persona. Write one to take it over; the rules under it stay.'}{' '}
+                This is the whole instruction for the talking model — what it knows about the work comes from the agent, live, during the call.
+              </div>
+            </div>
+            <pre data-testid="agent-voice-text" style={{ ...mono, margin: '0 12px 12px', padding: 10, fontSize: 11.5, lineHeight: 1.45, color: 'var(--text-1)', background: 'var(--bg-1)', border: '1px solid var(--bg-3)', borderRadius: 6, overflow: 'auto', flex: 1, whiteSpace: 'pre-wrap' }}>
+              {voice.text}
+            </pre>
+          </div>
+        )}
 
         {tab === 'prompt' && (
           <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }} data-testid="agent-prompt-tab">

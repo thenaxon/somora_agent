@@ -189,7 +189,41 @@ export function parseConsultArgs(raw: string): { ok: true; args: ConsultArgs } |
  * from the turn result. Rene, 2026-09-11: "er soll sich bewusst sein
  * das ist eine nachricht seines voice-ichs".
  */
-export function renderConsultTurnText(
+export interface ConsultTurn {
+  /**
+   * Scaffolding for the model: why this turn looks the way it does, and
+   * the last few lines of the call.
+   *
+   * Kept OUT of the message text on purpose. Everything stored as the
+   * turn's text is read later as if the human had written it — by the
+   * dream phase that learns from a session, by the search that builds a
+   * recall query from recent messages, by the compaction that summarises
+   * pairs. Half of every voice turn was this same boilerplate (measured
+   * across four agents on 2026-09-12: 12,312 characters of frame against
+   * 12,390 of content for one of them), which dilutes exactly the two
+   * things that are supposed to find the content.
+   *
+   * It travels in the same field somora already uses for the memory
+   * block, which every engine puts in front of the user message and
+   * which replays byte-identically — so the model sees no difference at
+   * all.
+   */
+  prefix: string;
+  /** What the caller actually wants. This is the record. */
+  text: string;
+}
+
+/**
+ * How the question reaches the agent.
+ *
+ * It arrives as a turn with `from_system: 'voice'`, NOT as agent mail:
+ * with A2A the agent believes someone is waiting for a reply addressed
+ * back to them, and answers accordingly. Here the agent simply answers
+ * into its own running chat, and the voice channel reads that answer
+ * from the turn result. Rene, 2026-09-11: "er soll sich bewusst sein
+ * das ist eine nachricht seines voice-ichs".
+ */
+export function renderConsultTurn(
   args: ConsultArgs,
   speaker: string,
   /**
@@ -197,13 +231,10 @@ export function renderConsultTurnText(
    *
    * Without them a question arrives stripped of everything around it:
    * "what time is it" says nothing about what the caller is actually
-   * doing, and the session it lands in reads like a riddle later.
-   * OpenClaw hands its consulting agent the same thing, and it is also
-   * what keeps the record honest now that the spoken lines themselves
-   * are not written any more.
+   * doing. OpenClaw hands its consulting agent the same thing.
    */
   transcript: ReadonlyArray<{ role: 'caller' | 'voice'; text: string }> = [],
-): string {
+): ConsultTurn {
   const lines = [
     `[${speaker} is on a voice call with you. Your voice channel asks — answer into this chat, ` +
       'briefly and in a form that can be read aloud. Do not address anyone else.]',
@@ -214,7 +245,6 @@ export function renderConsultTurnText(
       lines.push(`${entry.role === 'caller' ? speaker : 'you, out loud'}: ${entry.text}`);
     }
   }
-  lines.push('', args.question);
-  if (args.context) lines.push('', `(context: ${args.context})`);
-  return lines.join('\n');
+  const text = args.context ? `${args.question}\n\n(context: ${args.context})` : args.question;
+  return { prefix: lines.join('\n'), text };
 }

@@ -476,6 +476,18 @@ export interface PersonaResponse {
   budgets: PromptBudgets;
   totals: { personaChars: number };
 }
+export interface VoiceInstructionsResponse {
+  agent: string;
+  session: string;
+  text: string;
+  chars: number;
+  /** Hand-written VOICE.md, or derived from the persona. */
+  source: 'VOICE.md' | 'derived';
+  voice: string;
+  language: string;
+  consultPolicy: string;
+}
+
 export interface PromptPreviewResponse {
   agent: string;
   session: string;
@@ -597,6 +609,10 @@ export const api = {
   },
   promptPreview: (agent: string, session = 'main') =>
     getJson<PromptPreviewResponse>(`/agents/${encodeURIComponent(agent)}/prompt-preview?session=${encodeURIComponent(session)}`),
+  /** What the realtime voice model would be told for this agent.
+   *  404 when the agent has no voice, 503 when calls are off. */
+  voiceInstructions: (agent: string, session = 'main') =>
+    getJson<VoiceInstructionsResponse>(`/voice/instructions?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`),
   teamGet: () => getJson<TeamResponse>('/team'),
   teamPreview: (file: TeamFileDto, agent: string) =>
     getJson<TeamPreviewResponse>('/team/preview', {

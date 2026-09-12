@@ -5943,7 +5943,7 @@ const voiceCalls = new VoiceCallManager({
       ...(st.queueLength ? { queued: st.queueLength } : {}),
     };
   },
-  runConsult: async ({ agent, session, text }) => {
+  runConsult: async ({ agent, session, text, prefix }) => {
     // A conversation cannot wait on a build.
     //
     // Live 2026-09-11: the agent was asked to write a small game in a
@@ -5977,6 +5977,10 @@ const voiceCalls = new VoiceCallManager({
       agent,
       session,
       text,
+      // The framing and the last lines of the call travel beside the
+      // question, not inside it: the model reads both, the session
+      // records only what was asked.
+      ...(prefix ? { turnPrefix: prefix } : {}),
       fromSystem: 'voice',
       // A human watching the same session sees the question and the
       // answer appear live, exactly like any other turn.

@@ -42,6 +42,17 @@ and talks to it daily, so a recital of name and role is a wall in front
 of the first question. Handed a call, it says one short sentence that it
 is there and carries on.
 
+### Reading what the voice is told
+
+The voice self lives nowhere on disk unless you write a `VOICE.md`, so
+the web client shows it: right-click an agent, and the agent window has
+a **Voice prompt** tab next to the persona files. It shows the whole
+instruction the talking model gets, whether it came from `VOICE.md` or
+was derived from the persona, plus voice, language and consult policy.
+The tab appears only for agents that can actually be called.
+
+The same thing over HTTP: `GET /voice/instructions?agent=…&session=…`.
+
 ### What the agent sees
 
 The question arrives in the bound session as a normal turn with
@@ -54,11 +65,23 @@ The question carries the last few lines of the call with it. Asked *"how
 long does that take"*, an agent otherwise has no idea what you were
 talking about, and the session would read like a riddle a week later.
 
+The framing itself travels beside the question, not inside it — in the
+same field somora uses for the memory block, which every engine puts in
+front of the user message. The model reads both; the session records
+only what was asked. Half of every stored voice turn used to be that
+same boilerplate, and it is read later by the dream phase and by the
+recall search, which is exactly where it does damage.
+
 That turn is the whole record. A call leaves the same trace in a session
 that an agent-to-agent request leaves: the question that reached the
 agent, and the answer it gave. The talking around it — your sentences as
 you said them, the spoken rendering of the answer — lives for the length
 of the call and is not written.
+
+The voice self is told to pass on more than requests: a decision, a
+date, "that project is history" — a remark that changes what the agent
+should know goes over as a short note, so it lands in the record and the
+dream phase can learn it.
 
 That is deliberate. A spoken sentence that never became a question is
 not a turn: engines that resume their own session drop an unanswered

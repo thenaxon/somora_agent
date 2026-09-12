@@ -48,7 +48,7 @@ interface Harness {
   call: VoiceCall;
   provider: FakeRealtimeProvider;
   events: NormalizedEvent[];
-  consults: Array<{ agent: string; session: string; text: string }>;
+  consults: Array<{ agent: string; session: string; text: string; prefix?: string }>;
 }
 
 function harness(
@@ -58,7 +58,7 @@ function harness(
 ): Harness {
   const provider = new FakeRealtimeProvider(script);
   const events: NormalizedEvent[] = [];
-  const consults: Array<{ agent: string; session: string; text: string }> = [];
+  const consults: Array<{ agent: string; session: string; text: string; prefix?: string }> = [];
   const deps: VoiceCallDeps = {
     provider,
     runConsult: async (args) => {
@@ -96,8 +96,16 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('the question reached the agent', h.consults[0]?.text.includes('Wie weit ist der Umbau?') === true);
   check(
     'framed as the agent\'s own voice channel, not as agent mail',
-    /voice call/i.test(h.consults[0]?.text ?? '') && !/Message from agent/i.test(h.consults[0]?.text ?? ''),
-    h.consults[0]?.text.slice(0, 120),
+    /voice call/i.test(h.consults[0]?.prefix ?? '') && !/Message from agent/i.test(h.consults[0]?.prefix ?? ''),
+    h.consults[0]?.prefix?.slice(0, 120),
+  );
+  // The framing is scaffolding for the model and must not be part of
+  // what the session records — that text is read later by the dream
+  // phase and by the recall search.
+  check(
+    'and the framing is not part of the question itself',
+    !/voice call/i.test(h.consults[0]?.text ?? ''),
+    h.consults[0]?.text,
   );
   check(
     'the agent\'s answer went back to the talking model',
@@ -137,10 +145,12 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   await drain(h.call);
 
   const asked = h.consults[0]?.text ?? '';
+  const around = h.consults[0]?.prefix ?? '';
   check('the question itself is there', asked.includes('Wie spät ist es?'));
-  check('and what the caller was doing rides along', asked.includes('deploy von somora'), asked);
-  check('including what the voice already answered', asked.includes('sag bescheid'), asked);
-  check('the caller is named as the speaker', /the user: ich sitz/.test(asked), asked);
+  check('and it is the ONLY thing the session records', asked.trim() === 'Wie spät ist es?', asked);
+  check('what the caller was doing rides along beside it', around.includes('deploy von somora'), around);
+  check('including what the voice already answered', around.includes('sag bescheid'), around);
+  check('the caller is named as the speaker', /the user: ich sitz/.test(around), around);
   check('nothing of it was written into the session', h.events.length === 0, JSON.stringify(h.events));
 }
 
@@ -662,7 +672,8 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('and may not refuse a task itself', /never say you cannot do something/i.test(built.text));
   check('and may not announce a lookup instead of making it', /do not announce it/i.test(built.text));
   check('capabilities are not part of its self-knowledge', !/what you can or cannot do/i.test(built.text));
-  check('it stays inside the context budget', built.chars < 1900, `${built.chars} chars`);
+  check('it stays inside the context budget', built.chars < 1950, `${built.chars} chars`);
+  check('it forwards statements, not only requests', /state or correct/i.test(built.text));
 }
 
 // ── the clock does not restart on a move ────────────────────────────

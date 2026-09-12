@@ -23,8 +23,9 @@ import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.t
 
 export interface VoiceManagerDeps {
   config: Config;
-  /** Runs one turn in the bound session as `from_system: 'voice'`. */
-  runConsult(args: { agent: string; session: string; text: string }): Promise<ConsultResult>;
+  /** Runs one turn in the bound session as `from_system: 'voice'`.
+   *  `prefix` reaches the model but is not part of the record. */
+  runConsult(args: { agent: string; session: string; text: string; prefix?: string }): Promise<ConsultResult>;
   /** Is that session busy, and for how long? Answers without waiting. */
   sessionStatus?(agent: string, session: string): Promise<SessionWorkStatus>;
   /** Puts an event on the live SSE stream of that session. */

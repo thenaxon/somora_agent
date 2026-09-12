@@ -8,10 +8,11 @@
 // Length is a cost budget, not thrift. The instructions are sent once
 // when the session opens, but they sit in the realtime model's context
 // and are read again before every answer, so every line is paid for per
-// turn. The ceiling is ~1900 characters and the builder reports what it
-// produced. It was ~1500 until 2026-09-12, when the language and the
-// no-introduction rules were added: agents slipped into English
-// mid-call, and every call opened with a recital of the persona.
+// turn. The ceiling is ~1950 characters and the builder reports what it
+// produced. It was ~1500 until 2026-09-12, when three rules were added:
+// agents slipped into English mid-call, every call opened with a recital
+// of the persona, and what the caller merely stated was never passed on
+// and therefore never remembered.
 
 import type { Persona } from '../../persona/loader.ts';
 
@@ -131,7 +132,12 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
 
   const spoken = languageName(language);
   const parts = [
-    `Speak ${spoken}. These instructions are English, your speech is not — never switch language mid-call, not for a word. Tool and file names stay as written.`,
+    // The contrast only makes sense when the two differ. Told "these
+    // instructions are English, your speech is not" while speaking
+    // English, the line contradicts itself (Rene, 2026-09-12).
+    spoken === 'English'
+      ? `Speak English. Never switch language mid-call, not for a word.`
+      : `Speak ${spoken}. These instructions are English, your speech is not — never switch language mid-call, not for a word. Tool and file names stay as written.`,
     `You are ${persona.name}, speaking out loud — not an assistant for ${persona.name}, not a voice channel. Say "I", never talk about ${persona.name} as someone else.`,
     override ? override : personaEssence(persona),
     override || !style ? '' : `Tone: ${style}.`,
@@ -142,9 +148,15 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     // 2026-09-12: "die brauchen nicht immer eine lange intro davor").
     `Do not introduce yourself and do not list what you can do — they chose you and know you. Answer the first thing they say as if the call had been running. Who you are and how you talk needs no lookup: say it when asked, not before, and you are an agent in somora, not a human. Handed a call: one short sentence that you are here, then on.`,
     consultLine,
-    `What you can do is not yours to judge: never say you cannot do something, never claim a missing tool, never offer a workaround instead.`,
+    // What falls through otherwise. A call is not only requests: the
+    // sentence "die IXO Holding ist schon Vergangenheit" was a remark,
+    // not a question, and the dream phase turned it into a memory note
+    // that corrected three wiki pages. Since only what reaches the agent
+    // is recorded, a remark nobody forwards is gone (Rene, 2026-09-12).
+    `Pass on what they state or correct too — a decision, a date, "X is history" — as a short note, not only what they ask for.`,
+    `What you can do is not yours to judge: never say you cannot do something, never claim a missing tool, never offer a workaround.`,
     `Call the moment something is asked of you — do not announce it, do not ask whether you should, do not wait. You are looking it up, not asking someone else. Keep the request to one short sentence.`,
-    `Then answer in your own words, shortened for the ear, no lists or paths read aloud. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
+    `Then answer in your own words, shortened for the ear, no lists or paths read aloud. Never invent a fact, a name or a number, and never say you did something before you have.`,
     input.switchTo && input.switchTo.length > 0
       ? `You are in your session "${sessionSlug}". If they ask for someone else — ${input.switchTo.join(', ')} — or for another session of yours, move the call with the switch tool, never unasked. Pass a session only when they named one.`
       : `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,

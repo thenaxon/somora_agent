@@ -660,7 +660,11 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   controls), and **Full prompt**: the system prompt exactly as the next
   turn on a chosen session would send it, split into its parts with
   sizes, plus the tool-schema total and a note on what is *not* in that
-  text (memory recall, history, the engine's own instructions). Saving
+  text (memory recall, history, the engine's own instructions). Agents
+  that can be called by voice get one more tab, **Voice prompt**: the
+  whole instruction the talking model is given, whether it came from a
+  hand-written `VOICE.md` or was derived from the persona, with voice,
+  language and consult policy beside it. Saving
   is guarded: the agents edit these files themselves, so a save is
   refused when the file changed on disk since you loaded it, and you
   are asked to reload; the previous version is kept as a backup.

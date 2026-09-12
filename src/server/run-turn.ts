@@ -182,6 +182,18 @@ export interface RunChatTurnArgs {
    *  clients render the message as a centered system divider rather
    *  than a normal user-bubble. Mutually exclusive with fromAgent. */
   fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+  /**
+   * Scaffolding for THIS turn that the model sees and the record does
+   * not: why the turn looks the way it does, what was said around it.
+   *
+   * It joins the memory block in `ephemeral`, which every engine puts in
+   * front of the user message and which replays byte-identically, so
+   * nothing about caching changes. `text` stays what the human asked —
+   * and `text` is what the dream phase learns from, what the recall
+   * search is built from, and what a reader sees. Introduced for voice
+   * calls, whose framing was half of every stored turn (2026-09-12).
+   */
+  turnPrefix?: string;
   /** Media made before this turn that nevertheless belongs to it —
    *  a finished video announced by a wake-up. See publishTurnMedia. */
   attachMediaIds?: string[];
@@ -415,6 +427,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     fromAgent,
     fromSession,
     fromSystem,
+    turnPrefix,
     attachMediaIds,
     agentAskCallId,
     subagentDepth = 0,
@@ -547,6 +560,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     }
   } catch (err) {
     logger.warn({ msg: 'memory.inject_failed', turnId, agent, err: (err as Error).message });
+  }
+
+  // Turn scaffolding goes in front of everything injected for this
+  // turn — it explains the shape of the turn, so it is read first.
+  if (turnPrefix && turnPrefix.trim().length > 0) {
+    ephemeralContext = ephemeralContext ? `${turnPrefix}\n\n${ephemeralContext}` : turnPrefix;
   }
 
   // Loop-holder gets the active Lucid review block prepended to the
