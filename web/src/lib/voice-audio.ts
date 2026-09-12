@@ -106,6 +106,15 @@ export interface VoicePlayer {
   play(base64: string): void;
   /** Live level 0..1 of what is currently being spoken. */
   level(): number;
+  /**
+   * Milliseconds of audio still queued ahead of the speaker.
+   *
+   * Chunks arrive faster than real time, so when the server says a
+   * handover is done, the previous agent can still have seconds of
+   * speech waiting to be heard. Swapping name and colour at that moment
+   * shows the wrong agent saying the last sentence (Rene, 2026-09-12).
+   */
+  pendingMs(): number;
   /** Barge-in: drop everything not yet played. */
   stop(): void;
   close(): void;
@@ -146,6 +155,7 @@ export function createVoicePlayer(ctxIn?: AudioContext): VoicePlayer {
       sources.push(src);
       src.onended = () => { sources = sources.filter((s) => s !== src); };
     },
+    pendingMs: () => Math.max(0, (cursor - ctx.currentTime) * 1000),
     level: () => {
       analyser.getFloatTimeDomainData(buf);
       let peak = 0;

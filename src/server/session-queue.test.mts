@@ -85,5 +85,29 @@ await tick();
 check('rejected once, with DequeuedError', pdErr instanceof DequeuedError);
 holder();
 
+// ── first come, first served ────────────────────────────────────────
+// Human turns used to jump ahead of agent turns. A question asked in a
+// voice call runs as an agent turn, so the person at the microphone
+// waited behind another agent's errand while the person typing did not.
+// One queue, in arrival order (Rene, 2026-09-12).
+{
+  const S2 = 'sess-fifo';
+  const order: string[] = [];
+  const holder = await acquireSessionLock(A, S2, { priority: 'user', turnId: 'holder' });
+
+  // The agent turn arrives first, the typed one second.
+  const pFirst = acquireSessionLock(A, S2, { priority: 'agent', turnId: 'a-first', callId: 'c' })
+    .then((release) => { order.push('agent'); return release; });
+  await tick();
+  const pSecond = acquireSessionLock(A, S2, { priority: 'user', turnId: 'u-second' })
+    .then((release) => { order.push('user'); return release; });
+  await tick();
+
+  holder();
+  (await pFirst)();
+  (await pSecond)();
+  check('the one that arrived first runs first', order.join(',') === 'agent,user', order.join(','));
+}
+
 console.log(`session-queue: ${pass} passed, ${fail} failed`);
 assert.equal(fail, 0);

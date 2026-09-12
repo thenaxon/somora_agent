@@ -54,9 +54,19 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // tool rounds, so the oldest tool results were shortened to keep it
     // going. Nothing was re-run.
     context_trimmed: 'context trimmed',
-    // What the voice self actually SAID, kept apart from what the agent
-    // wrote. Without a label it showed up as the raw `voice_spoken`,
-    // looking like a tool call (Rene, 2026-09-12).
+  },
+  // Rows a realtime call writes. Keyed by 'voice' because that is the
+  // engine the call stamps them with — filed under openai-compatible
+  // until 2026-09-12, where they never resolved and every client outside
+  // the web window showed the raw item type.
+  voice: {
+    // The call moved to another agent. This is the only row a call
+    // writes today, and it is what explains why a session suddenly
+    // carries questions from a conversation that started elsewhere.
+    voice_handover: 'call handed over',
+    // Written until 2026-09-12: what the voice self said out loud. New
+    // calls keep their talking in the call, but sessions recorded before
+    // that still carry these rows and must still render.
     voice_spoken: 'spoken aloud',
   },
 };
@@ -110,7 +120,7 @@ export function summariseEngineMeta(
     }
     return undefined;
   }
-  if (itemType === 'voice_spoken') {
+  if (itemType === 'voice_spoken' || itemType === 'voice_handover') {
     const p = payload as { text?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : undefined;
   }

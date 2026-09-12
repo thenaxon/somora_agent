@@ -584,7 +584,7 @@ realtimeVoice:                # talking to an agent (docs/realtime-voice.md)
   defaultVoice: alloy         # ten exist: alloy ash ballad coral echo sage shimmer verse marin cedar
   consultPolicy: always       # when the speaking model must ask the real agent
   maxCallMinutes: 20          # hard stop; a standing call bills while nobody talks
-  allowAgentSwitch: false     # hand a call to another agent mid-conversation
+  allowAgentSwitch: false     # move a call to another agent or session mid-conversation
   turnDetection: { threshold: 0.4, prefixPaddingMs: 200, silenceDurationMs: 420 }
   # Separate from `stt`/`tts`: those are dictation and spoken replies
   # (docs/voice.md). A call needs a realtime-capable provider; a normal

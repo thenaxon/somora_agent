@@ -482,7 +482,12 @@ export function ChatWindow({
   // either case — toggling on restores the rows.
   const visibleMessages = useMemo(() => {
     return chat.messages.filter((m) => {
-      if (!showTools && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
+      // A call's own rows are not engine internals and do not hide with
+      // the tool toggle: with tools collapsed, a handover note would be
+      // invisible and a session would carry questions from a call
+      // nobody can see arriving (Rene, 2026-09-12).
+      const isVoiceRow = m.role === 'engine_meta' && m.meta.engine === 'voice';
+      if (!showTools && !isVoiceRow && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
       if (!showMemory && m.role === 'memory_inject') return false;
       return true;
     });

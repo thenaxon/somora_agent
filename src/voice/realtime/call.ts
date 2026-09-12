@@ -25,6 +25,13 @@ import {
 import { buildVoiceInstructions } from './persona.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
+/** How much of the conversation the call keeps in memory. */
+const TRANSCRIPT_MEMORY = 24;
+/** How much of it travels with a question to the agent. Six lines is
+ *  about two exchanges: enough for "and how long does that take", short
+ *  enough that it does not dominate the session it is written into. */
+const CONSULT_TRANSCRIPT_LINES = 6;
+
 export type VoiceCallState =
   | 'connecting'
   | 'listening'
@@ -72,9 +79,13 @@ export interface VoiceCallDeps {
    *
    * Both, or the chat window tells two different stories: during a call
    * it showed only what the consult turn published, and a reload then
-   * added the spoken lines that had been on disk all along (Rene,
-   * 2026-09-12: "es war vorher anders gerendert … erst nach einem
-   * browser reload so"). Whatever is written is published.
+   * added what had been on disk all along (Rene, 2026-09-12: "es war
+   * vorher anders gerendert … erst nach einem browser reload so").
+   * Whatever is written is published.
+   *
+   * Used for the handover note only. Everything the call says and hears
+   * stays in the call; what a session records is the question that
+   * reached the agent and the answer it gave.
    */
   appendEvent(agent: string, session: string, ev: NormalizedEvent): Promise<void>;
   /** Is the bound session busy, and for how long? Must not wait. */
@@ -135,8 +146,13 @@ export interface VoiceCallSnapshot {
   /** Consults asked and answered — the number that says whether the
    *  voice self is actually delegating. */
   consults: number;
-  /** Utterances persisted into the session. */
+  /** Sentences the caller has said in this call. Counted, not kept:
+   *  the session records the questions that reached the agent. */
   spokenTurns: number;
+  /** Set while a handover is in flight: who the call is moving to.
+   *  `target` still names the agent that is talking until the new one
+   *  is actually on the line. */
+  handoverTo?: string;
   lastError?: string;
 }
 
@@ -147,9 +163,34 @@ export class VoiceCall {
   /** Set by the switch tool; the run loop picks it up when the old
    *  provider session ends. */
   private pendingSwitch: { agent: string; session?: string } | undefined;
-  /** When the human stopped speaking — the honest timestamp for what
-   *  they said, since the transcript lands later. */
-  private lastSpeechEndedAt: number | undefined;
+  /**
+   * The conversation itself — kept here and nowhere else.
+   *
+   * Spoken sentences used to be appended into the agent's session as
+   * user messages, and what the voice said back as a meta row. That
+   * made three different readers stumble: the CLI engines drop a user
+   * turn that never got an answer, REM and recall saw every question
+   * twice (once as said, once as asked), and a sentence written outside
+   * the session lock could land inside a running turn and break its
+   * pair. Rene, 2026-09-12: "es ist viel viel wartbarer code".
+   *
+   * What a session records now is exactly what A2A records: the
+   * question this call put to the agent, and the agent's answer. The
+   * talking around it lives for the length of the call, the way
+   * OpenClaw keeps it on its call object.
+   */
+  private transcript: Array<{ role: 'caller' | 'voice'; text: string }> = [];
+  /**
+   * Who the window is showing. Lags `target` across a handover.
+   *
+   * The old agent's last sentence is still in the browser's playback
+   * queue when the new provider session opens. Announcing the new name
+   * at that moment makes lisa finish her sentence under hans's name and
+   * colour (Rene, 2026-09-12: "es spricht aber noch Lisa"). The call
+   * says who is on the line only once that is true; the browser adds
+   * its own queue to the same question.
+   */
+  private announced: VoiceCallTarget;
   private consults = 0;
   private spokenTurns = 0;
   private lastError: string | undefined;
@@ -163,6 +204,7 @@ export class VoiceCall {
     private readonly deps: VoiceCallDeps,
   ) {
     this.startedAt = this.now();
+    this.announced = { ...target };
   }
 
   private now(): number {
@@ -175,10 +217,42 @@ export class VoiceCall {
     this.deps.onState?.(this.snapshot());
   }
 
-  /** Who this call may be handed to: never itself, never an agent the
-   *  operator did not allow. */
+  /**
+   * Where this call may be moved: any agent the operator allowed —
+   * INCLUDING the one already on the line.
+   *
+   * Filtering itself out made a whole dimension unreachable: an agent
+   * has many sessions, and "put me into your cerebrocraft session" was
+   * impossible while the tool only offered other agents (Rene,
+   * 2026-09-12). Same agent plus a different session is a move like any
+   * other; the voice stays the same, the conversation does not.
+   */
   private switchable(): string[] {
-    return (this.deps.callableAgents ?? []).filter((a) => a !== this.target.agent);
+    return [...(this.deps.callableAgents ?? [])];
+  }
+
+  /**
+   * Did the caller actually name this session out loud?
+   *
+   * The voice self knows which session it is in, and it passes that name
+   * along on a handover unless something stops it — which is how asking
+   * for naxon landed in naxon's "cerebrocraft" because lisa had been in
+   * hers (Rene, 2026-09-12: "es muss nicht immer zwingend der fall sein
+   * das der andere agent überhaupt eine session hat die so benannt
+   * ist"). Nobody said that name, so it is not a wish, and an unasked-for
+   * session becomes main.
+   *
+   * Matched on letters and digits only: a name reaches the transcript
+   * the way speech recognition heard it, "Cerebro Craft" for
+   * "cerebrocraft".
+   */
+  private callerNamed(session: string): boolean {
+    const norm = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const needle = norm(session);
+    // Too short to be evidence of anything — "main" is the default and
+    // needs no proof.
+    if (needle.length < 4) return true;
+    return this.transcript.some((e) => e.role === 'caller' && norm(e.text).includes(needle));
   }
 
   private log(entry: Record<string, unknown>): void {
@@ -186,9 +260,11 @@ export class VoiceCall {
   }
 
   snapshot(): VoiceCallSnapshot {
+    const moving = this.announced.agent !== this.target.agent || this.announced.slug !== this.target.slug;
     return {
       id: this.id,
-      target: this.target,
+      target: this.announced,
+      ...(moving ? { handoverTo: this.target.agent } : {}),
       state: this.state,
       startedAt: this.startedAt,
       consults: this.consults,
@@ -207,7 +283,13 @@ export class VoiceCall {
       consultToolName: CONSULT_TOOL_NAME,
       sessionSlug: this.target.slug,
       ...(this.cfg.personaOverride ? { override: this.cfg.personaOverride } : {}),
-      ...(this.switchable().length > 0 ? { switchTo: this.switchable() } : {}),
+      // The instruction names the OTHERS — "ask for someone else" reads
+      // oddly with your own name in the list. The tool spec carries the
+      // full list, own name included, because moving to another session
+      // of yourself goes through the same call.
+      ...(this.switchable().filter((a) => a !== this.target.agent).length > 0
+        ? { switchTo: this.switchable().filter((a) => a !== this.target.agent) }
+        : {}),
     });
     this.log({
       msg: 'voice.call_start',
@@ -225,14 +307,21 @@ export class VoiceCall {
       tools: [
         consultToolSpec(this.persona.name),
         statusToolSpec(),
-        ...(this.switchable().length > 0 ? [switchToolSpec(this.switchable())] : []),
+        ...(this.switchable().length > 0 ? [switchToolSpec(this.switchable(), this.target.agent)] : []),
       ],
     });
     // The meter runs while nobody speaks, so the cap is wall-clock and
     // enforced here rather than left to whoever forgets the tab.
+    //
+    // Measured from the START of the call, not of this session: start()
+    // runs again on every move. Re-arming it with the full budget would
+    // make a handover a way to talk for as long as you like, and leaving
+    // the old timer in place left one ticking per move.
+    this.clearDeadline();
+    const budgetLeft = Math.max(0, this.cfg.maxCallMinutes * 60_000 - (this.now() - this.startedAt));
     this.deadlineTimer = setTimeout(
       () => void this.close('call time limit reached'),
-      this.cfg.maxCallMinutes * 60_000,
+      budgetLeft,
     );
     this.deadlineTimer.unref?.();
     return this.session;
@@ -268,29 +357,26 @@ export class VoiceCall {
       this.deps.onEvent?.(ev, this.snapshot());
       switch (ev.kind) {
         case 'ready':
+          // The new session is live, so the new name is now the honest
+          // one. Announced here rather than when the switch was decided.
+          this.announced = { ...this.target };
           this.setState('listening');
+          this.deps.onState?.(this.snapshot());
           yield this.snapshot();
           break;
         case 'model_speech':
           this.setState(ev.phase === 'start' ? 'speaking' : 'listening');
           yield this.snapshot();
           break;
-        case 'user_speech':
-          // When the sentence ENDED, not when its transcription
-          // arrived: the text comes back after the lookup it triggered,
-          // and stamping it "now" put the user's own sentence below the
-          // answer to it in the session (2026-09-12).
-          if (ev.phase === 'end') this.lastSpeechEndedAt = ev.ts;
-          break;
         case 'user_transcript':
           if (ev.final && ev.text.trim().length > 0) {
-            await this.persistSpoken(ev.text.trim());
+            this.remember('caller', ev.text.trim());
             yield this.snapshot();
           }
           break;
         case 'model_transcript':
           if (ev.final && ev.text.trim().length > 0) {
-            await this.persistSpokenAnswer(ev.text.trim());
+            this.remember('voice', ev.text.trim());
           }
           break;
         case 'tool_call':
@@ -329,9 +415,19 @@ export class VoiceCall {
     return true;
   }
 
-  /** Continue the same call as another agent, in a named session. */
+  /**
+   * Continue the same call somewhere else: another agent, or another
+   * session of the agent already on the line.
+   *
+   * A failure here used to end the call. It must not: the caller asked
+   * for a session that may not exist, and being hung up on for a typo
+   * is the worst possible answer. The call comes back as the agent it
+   * was and says so.
+   */
   private async performSwitch(request: { agent: string; session?: string }): Promise<boolean> {
     const from = { ...this.target };
+    const fromPersona = this.persona;
+    const fromCfg = this.cfg;
     try {
       const next = await this.deps.resolveTarget!(request.agent, request.session);
       await this.session?.close('handed over').catch(() => {});
@@ -340,19 +436,56 @@ export class VoiceCall {
       this.persona = next.persona;
       this.cfg = next.cfg;
       this.setState('connecting');
+      this.deps.onState?.(this.snapshot());
       await this.start();
       this.log({ msg: 'voice.switched', from: `${from.agent}/${from.slug}`, to: `${this.target.agent}/${this.target.slug}` });
+      const moved = from.agent !== this.target.agent;
       // A line in both places, so reading either conversation later
-      // shows where it went and where it came from.
-      await this.note(from.agent, from.session, `[voice] handed this call over to ${this.target.agent} (session "${this.target.slug}")`);
-      await this.note(this.target.agent, this.target.session, `[voice] took this call over from ${from.agent} (session "${from.slug}")`);
+      // shows where it went and where it came from. Moving between two
+      // sessions of the SAME agent writes the same pair — the agent is
+      // one, the conversations are two.
+      await this.note(
+        from.agent,
+        from.session,
+        moved
+          ? `[voice] handed this call over to ${this.target.agent} (session "${this.target.slug}")`
+          : `[voice] this call moved to the "${this.target.slug}" session`,
+      );
+      await this.note(
+        this.target.agent,
+        this.target.session,
+        moved
+          ? `[voice] took this call over from ${from.agent} (session "${from.slug}")`
+          : `[voice] this call came over from the "${from.slug}" session`,
+      );
       return true;
     } catch (err) {
       this.lastError = (err as Error).message;
-      this.log({ msg: 'voice.switch_failed', to: request.agent, err: this.lastError });
-      this.setState('closed');
-      this.clearDeadline();
-      return false;
+      this.log({ msg: 'voice.switch_failed', to: request.agent, session: request.session ?? 'main', err: this.lastError });
+      // Back to where we were. The old provider session is already
+      // closing (the switch tool ends it so the new voice can start),
+      // so this opens a fresh one for the same agent.
+      try {
+        this.target = from;
+        this.persona = fromPersona;
+        this.cfg = fromCfg;
+        this.announced = { ...from };
+        this.setState('connecting');
+        const recovered = await this.start();
+        void recovered
+          .speak?.(
+            'Say ONE short sentence that you could not put them through and that they are still with you. ' +
+              'Do not explain why.',
+          )
+          .catch(() => {});
+        this.log({ msg: 'voice.switch_recovered', agent: from.agent, session: from.slug });
+        return true;
+      } catch (recoveryErr) {
+        this.log({ msg: 'voice.switch_recovery_failed', err: (recoveryErr as Error).message });
+        this.setState('closed');
+        this.clearDeadline();
+        return false;
+      }
     }
   }
 
@@ -410,11 +543,32 @@ export class VoiceCall {
         );
         return;
       }
+      // A session nobody asked for is not a wish. Dropping it here puts
+      // the call in the target's main session, which is where "connect
+      // me to naxon" is supposed to land.
+      const wanted = parsed.args.session;
+      const asked = wanted !== undefined && this.callerNamed(wanted);
+      if (wanted !== undefined && !asked) {
+        this.log({ msg: 'voice.switch_session_dropped', to: parsed.args.agent, session: wanted });
+      }
+      const request = { agent: parsed.args.agent, ...(asked && wanted ? { session: wanted } : {}) };
+      if (request.agent === this.target.agent && (request.session ?? 'main') === this.target.slug) {
+        await session.sendToolResult(
+          callId,
+          'that is the conversation you are already in — say so, and ask which session they mean',
+        );
+        return;
+      }
       // Answer BEFORE the session goes away: the tool result has to
       // reach the model that asked, not its successor.
-      await session.sendToolResult(callId, `putting them through to ${parsed.args.agent} now`);
-      this.pendingSwitch = parsed.args;
-      this.log({ msg: 'voice.switch_requested', to: parsed.args.agent, session: parsed.args.session ?? 'main' });
+      await session.sendToolResult(
+        callId,
+        request.agent === this.target.agent
+          ? `moving you into the "${request.session ?? 'main'}" session now`
+          : `putting them through to ${request.agent} now`,
+      );
+      this.pendingSwitch = request;
+      this.log({ msg: 'voice.switch_requested', to: request.agent, session: request.session ?? 'main' });
       // Give the sentence a moment to be spoken, then end this session;
       // the run loop opens the next one.
       setTimeout(() => void session.close('handing over').catch(() => {}), 2_500).unref?.();
@@ -437,7 +591,7 @@ export class VoiceCall {
     this.setState('consulting');
     this.consults += 1;
     const startedAt = this.now();
-    const text = renderConsultTurnText(parsed.args, 'the user');
+    const text = renderConsultTurnText(parsed.args, 'the user', this.recentTranscript());
     this.log({ msg: 'voice.consult_start', question: parsed.args.question.slice(0, 160) });
     // Fill the silence from here rather than asking the model to
     // announce its own lookup: told to do that, it announced and never
@@ -478,33 +632,28 @@ export class VoiceCall {
     }
   }
 
-  /** The user's finalized utterance becomes a normal user message —
-   *  that is what makes the call continuable by keyboard afterwards. */
-  private async persistSpoken(text: string): Promise<void> {
-    this.spokenTurns += 1;
-    const spokenAt = this.lastSpeechEndedAt ?? this.now();
-    this.lastSpeechEndedAt = undefined;
-    await this.deps.appendEvent(this.target.agent, this.target.session, {
-      kind: 'user_message',
-      ts: spokenAt,
-      engine: 'voice',
-      text,
-      // A live call, not the dictation button: `source` keeps the two
-      // spoken paths apart everywhere they are read.
-      input: { modality: 'voice', source: 'realtime' },
-    } as NormalizedEvent);
+  /**
+   * One line of the conversation, held for the length of the call.
+   *
+   * Nothing here reaches disk. Its one job is to give the agent the
+   * couple of sentences around a question: asked "what time is it", the
+   * agent otherwise has no idea what the caller was talking about.
+   * OpenClaw hands its consulting agent the last twelve lines for the
+   * same reason.
+   */
+  private remember(role: 'caller' | 'voice', text: string): void {
+    if (role === 'caller') this.spokenTurns += 1;
+    this.transcript.push({ role, text });
+    if (this.transcript.length > TRANSCRIPT_MEMORY) {
+      this.transcript.splice(0, this.transcript.length - TRANSCRIPT_MEMORY);
+    }
   }
 
-  /** What was actually SAID, kept apart from what the agent wrote. The
-   *  spoken version is a rendering, not the record. */
-  private async persistSpokenAnswer(text: string): Promise<void> {
-    await this.deps.appendEvent(this.target.agent, this.target.session, {
-      kind: 'engine_meta',
-      ts: this.now(),
-      engine: 'voice',
-      itemType: 'voice_spoken',
-      payload: { text },
-    } as NormalizedEvent);
+  /** The tail of the conversation that travels with a question. Short
+   *  on purpose: it is written into the agent's session, so it is part
+   *  of the record and part of every later context. */
+  private recentTranscript(): Array<{ role: 'caller' | 'voice'; text: string }> {
+    return this.transcript.slice(-CONSULT_TRANSCRIPT_LINES);
   }
 
   private clearDeadline(): void {

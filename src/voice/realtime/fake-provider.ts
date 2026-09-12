@@ -82,10 +82,18 @@ export class FakeRealtimeSession implements RealtimeSession {
 export class FakeRealtimeProvider implements RealtimeProvider {
   readonly name = 'fake';
   lastSession: FakeRealtimeSession | undefined;
+  /** Every session this provider opened, in order. A call outlives its
+   *  provider session — a handover and a recovery each open a new one —
+   *  so "what happened" is a sequence, not a last value. */
+  readonly sessions: FakeRealtimeSession[] = [];
 
   constructor(
     private readonly script: FakeScriptStep[],
     private readonly caps: Partial<RealtimeCapabilities> = {},
+    /** What the sessions AFTER the first one play. Without it they
+     *  replay the same script, which is right for a handover test and
+     *  wrong for one where the second session should just sit there. */
+    private readonly laterScript?: FakeScriptStep[],
   ) {}
 
   capabilities(): RealtimeCapabilities {
@@ -103,7 +111,9 @@ export class FakeRealtimeProvider implements RealtimeProvider {
   }
 
   async open(req: RealtimeSessionRequest): Promise<RealtimeSession> {
-    const session = new FakeRealtimeSession(req, this.script);
+    const script = this.sessions.length === 0 ? this.script : (this.laterScript ?? this.script);
+    const session = new FakeRealtimeSession(req, script);
+    this.sessions.push(session);
     this.lastSession = session;
     return session;
   }

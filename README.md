@@ -88,9 +88,10 @@ Beyond chat and memory, briefly:
   call in the web client: a realtime model does the talking while the
   agent does the knowing — everything factual, and every request to act,
   is handed to the real agent with its persona, memory and tools, and
-  the answer is spoken back in its own words. Each agent has its own
-  voice, and a call can be handed over to another agent mid-
-  conversation. Needs a realtime-capable provider and its own key;
+  the answer is spoken back in its own words. What a call leaves in the
+  session is what an agent-to-agent request leaves: the question and the
+  answer. Each agent has its own voice, and a call can move to
+  another agent, or to another session, mid-conversation. Needs a realtime-capable provider and its own key;
   billed per minute of connection. Separate from the mic button and
   spoken replies ([docs/voice.md](docs/voice.md)) — different feature,
   different config. See [docs/realtime-voice.md](docs/realtime-voice.md).

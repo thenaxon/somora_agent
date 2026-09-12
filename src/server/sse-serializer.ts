@@ -108,3 +108,53 @@ export function createTurnSerializer() {
     }
   };
 }
+
+/**
+ * Serialize ONE event that was written into a session outside any turn.
+ *
+ * The realtime voice path appends straight into a session's history: the
+ * caller's spoken line, the line the voice self said back, and the note
+ * that a call changed hands. Those must reach every subscriber of that
+ * session in the same shape a turn produces, otherwise a client sees a
+ * frame it cannot read.
+ *
+ * Before this existed, the voice path handed `publish()` a raw
+ * NormalizedEvent through a cast. The SSE writer then stringified an
+ * undefined payload, threw, and `publish()` treated the throw as a dead
+ * subscriber and tore that stream down — so every spoken line kicked the
+ * chat window, the TUI and the phone off the session (85 evictions in one
+ * evening, 2026-09-12). The cast is gone; this function replaces it.
+ *
+ * `tool_call` / `tool_result` never travel this path: their correlation
+ * lives in a per-turn serializer, and a standalone one has no turn to
+ * correlate within. They return null rather than a half-correct frame.
+ */
+export function serializeSessionEvent(ev: NormalizedEvent): SseEvent | null {
+  if (ev.kind === 'tool_call' || ev.kind === 'tool_result') return null;
+  if (ev.kind === 'user_message') {
+    return {
+      event: 'user_message',
+      data: {
+        text: ev.text,
+        ts: ev.ts,
+        ...(ev.from_agent ? { from_agent: ev.from_agent } : {}),
+        ...(ev.from_agent && ev.from_session ? { from_session: ev.from_session } : {}),
+        ...(ev.from_system ? { from_system: ev.from_system } : {}),
+        // How it was said. Without this the live bubble and the one
+        // after a reload render differently: history carries `input`,
+        // the stream did not. Projected field by field — the stored
+        // shape also holds free-form STT provider tags that no client
+        // needs to see.
+        ...(ev.input
+          ? {
+              input: {
+                ...(ev.input.modality ? { modality: ev.input.modality } : {}),
+                ...(ev.input.source ? { source: ev.input.source } : {}),
+              },
+            }
+          : {}),
+      },
+    };
+  }
+  return createTurnSerializer()(ev);
+}

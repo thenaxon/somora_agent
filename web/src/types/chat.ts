@@ -264,6 +264,9 @@ export type StreamEvent =
         from_agent?: string;
         from_session?: string;
         from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+        /** How it was said, when it was not typed. `stt` is the
+         *  microphone button, `realtime` a sentence spoken in a call. */
+        input?: { modality?: 'text' | 'voice'; source?: 'stt' | 'realtime' };
       };
     }
   | {

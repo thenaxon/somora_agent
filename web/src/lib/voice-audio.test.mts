@@ -1,4 +1,5 @@
-// The format conversions the voice window depends on (2026-09-11).
+// The format conversions the voice window depends on (2026-09-11), and
+// how much speech is still waiting to be heard (2026-09-12).
 //
 // Run: cd web && npx tsx src/lib/voice-audio.test.mts
 //
@@ -8,7 +9,7 @@
 // went in, and clipping must clip rather than wrap around into noise.
 import assert from 'node:assert/strict';
 
-import { floatToPcm16Base64, pcm16Base64ToFloat, VOICE_RATE_HZ } from './voice-audio';
+import { createVoicePlayer, floatToPcm16Base64, pcm16Base64ToFloat, VOICE_RATE_HZ } from './voice-audio';
 
 let pass = 0;
 let fail = 0;
@@ -47,6 +48,63 @@ const check = (name: string, cond: boolean, detail = ''): void => {
   const oneSecond = new Float32Array(VOICE_RATE_HZ);
   const bytes = atob(floatToPcm16Base64(oneSecond)).length;
   check('one second is 48000 bytes of PCM16', bytes === VOICE_RATE_HZ * 2, String(bytes));
+}
+
+// ── how much is still queued ────────────────────────────────────────
+// A handover is announced by the server the moment the new session is
+// live. The browser can still be seconds behind: chunks arrive faster
+// than real time, so the previous agent's last sentence is sitting in
+// the queue. The window asks the player how far behind it is before it
+// changes name and colour — without that, lisa finishes her sentence
+// under hans's name (Rene, 2026-09-12).
+{
+  let now = 0;
+  const node = () => ({
+    buffer: null as unknown,
+    connect() {},
+    start() {},
+    stop() {},
+    onended: null as null | (() => void),
+  });
+  const fakeCtx = {
+    get currentTime() { return now; },
+    destination: {},
+    createAnalyser: () => ({
+      fftSize: 512,
+      connect() {},
+      getFloatTimeDomainData(b: Float32Array) { b.fill(0); },
+    }),
+    createBuffer: (_ch: number, length: number, rate: number) => ({
+      duration: length / rate,
+      getChannelData: () => new Float32Array(length),
+    }),
+    createBufferSource: node,
+    close() {},
+  };
+  const player = createVoicePlayer(fakeCtx as unknown as AudioContext);
+
+  check('an idle player has nothing queued', player.pendingMs() === 0, String(player.pendingMs()));
+
+  // One second of speech, handed over in one chunk.
+  const second = floatToPcm16Base64(new Float32Array(VOICE_RATE_HZ));
+  player.play(second);
+  check('after a second of speech, a second is queued', Math.round(player.pendingMs()) === 1000, String(player.pendingMs()));
+
+  now = 0.4;
+  check('it counts down as it plays', Math.round(player.pendingMs()) === 600, String(player.pendingMs()));
+
+  // Chunks queue behind each other rather than on top.
+  player.play(second);
+  check('a second chunk queues behind the first', Math.round(player.pendingMs()) === 1600, String(player.pendingMs()));
+
+  now = 2.0;
+  check('and it is empty once everything has been heard', player.pendingMs() === 0, String(player.pendingMs()));
+
+  // Barge-in drops what was not heard, so nothing keeps the window
+  // waiting for audio that will never play.
+  player.play(second);
+  player.stop();
+  check('an interruption empties the queue at once', player.pendingMs() === 0, String(player.pendingMs()));
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

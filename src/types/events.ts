@@ -462,6 +462,11 @@ export type SseEvent =
          *  as a centered system divider. */
         from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
         agent_ask_call_id?: string;
+        /** How the turn was said, when it was not typed. Mirrors the
+         *  `input` field on the stored event so the live bubble and the
+         *  one rebuilt from history render the same way — dictation and
+         *  a standing call look different, and both differ from text. */
+        input?: { modality?: 'text' | 'voice'; source?: 'stt' | 'realtime' };
       };
     }
   | {

@@ -38,11 +38,22 @@ agent answers into its own chat and addresses nobody back; the call
 reads that answer and speaks it. Both clients render the question as its
 own block, so a reader can tell it apart from something you typed.
 
-Your own spoken sentences land in the same session, marked as spoken in
-a call (`input.source: 'realtime'`), so a conversation can be read back
-later and continued from the keyboard. What was actually said out loud is
-kept beside the agent's written answer as a quiet aside — the written
-text is the record, the spoken version is a rendering.
+The question carries the last few lines of the call with it. Asked *"how
+long does that take"*, an agent otherwise has no idea what you were
+talking about, and the session would read like a riddle a week later.
+
+That turn is the whole record. A call leaves the same trace in a session
+that an agent-to-agent request leaves: the question that reached the
+agent, and the answer it gave. The talking around it — your sentences as
+you said them, the spoken rendering of the answer — lives for the length
+of the call and is not written.
+
+That is deliberate. A spoken sentence that never became a question is
+not a turn: engines that resume their own session drop an unanswered
+user message, the dream phases would learn every question twice, and a
+line written while a turn is running can break that turn's pair. One
+question, one answer, one place. Sessions recorded before somora
+2026.09.12 still carry the older spoken rows and still render them.
 
 ## The voice self
 
@@ -84,7 +95,7 @@ realtimeVoice:
   defaultVoice: alloy
   consultPolicy: always
   maxCallMinutes: 20          # the meter runs while nobody speaks
-  allowAgentSwitch: true      # hand a call to another agent mid-conversation
+  allowAgentSwitch: true      # move a call to another agent or session mid-conversation
   turnDetection:              # how easily you can interrupt
     threshold: 0.4            # lower = reacts to quieter speech
     prefixPaddingMs: 200      # how much run-up counts as speech
@@ -119,13 +130,31 @@ The browser stays dumb: microphone in, speaker out, state on screen. It
 holds no provider, no key, and never sees a tool call — the server owns
 all of it.
 
-## Handing the call to another agent
+## Moving the call
 
-With `allowAgentSwitch: true`, say who you want: *"put me through to
-lisa, in her projektA session"*. The call announces the handover, and
-continues as that agent, with that agent's voice and session. Both
-conversations keep a line saying where the call went and where it came
-from.
+With `allowAgentSwitch: true`, say where you want to go. Two directions
+work, and they are the same operation:
+
+- **another agent** — *"put me through to lisa"*
+- **another session of the agent you are talking to** — *"go into your
+  projektA session"*
+
+Both conversations keep a line saying where the call went and where it
+came from.
+
+Name a session and you land in it. Name none and you land in **main**,
+always. A session name is only carried over when you said it out loud in
+this call: the voice self knows which session it is in, and left to
+itself it passes that name along, so asking for another agent put you in
+a same-named session of theirs that need not even exist.
+
+The name in the window changes when the new agent is actually on the
+line — not when the handover is decided. The previous agent's last
+sentence can still be in your speakers at that moment, and a name that
+changes mid-sentence shows the wrong agent talking.
+
+If the move cannot be made, say because the session does not exist, the
+call comes back with the agent you had and says so. It does not hang up.
 
 Underneath it is a new connection, because a provider voice cannot be
 changed once a session has produced audio. That is a deliberate second
@@ -134,7 +163,10 @@ of transition rather than two agents that sound alike.
 ## What it costs, and what it does not do
 
 A call is billed per minute of connection, including silence — hence
-`maxCallMinutes`. The agent's own turns are billed as usual, separately.
+`maxCallMinutes`, which is measured from the start of the call and
+survives every move to another agent or session. One call runs at a
+time: a second window is refused, and told who is on the line. The
+agent's own turns are billed as usual, separately.
 A ChatGPT or Codex subscription does **not** cover the realtime API; it
 needs its own key.
 

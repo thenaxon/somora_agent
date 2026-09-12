@@ -718,6 +718,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ...(fromAgent && fromSession ? { from_session: fromSession } : {}),
         ...(fromSystem ? { from_system: fromSystem } : {}),
         ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
+        // Dictated, not typed. History carries this; without it here the
+        // live bubble loses its microphone until the page is reloaded.
+        ...(inputMeta ? { input: { modality: inputMeta.modality, source: inputMeta.source } } : {}),
       },
     });
   }

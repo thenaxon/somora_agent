@@ -962,6 +962,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           from_agent?: string;
           from_session?: string;
           from_system?: 'sentinel' | 'tmux';
+          input?: { modality?: 'text' | 'voice'; source?: 'stt' | 'realtime' };
         }>(ev as MessageEvent);
         if (!d) return;
         // Dedupe + append in a SINGLE setMessages updater so the
@@ -1023,6 +1024,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
                 ...(d.from_agent && d.from_session ? { fromSession: d.from_session } : {}),
                 ...(d.from_system ? { fromSystem: d.from_system } : {}),
+                // Spoken, not typed. The same two fields history.ts reads,
+                // so a line said in a call looks the same live as it does
+                // after a reload.
+                ...(d.input?.modality === 'voice' ? { inputModality: 'voice' as const } : {}),
+                ...(d.input?.source === 'realtime' || d.input?.source === 'stt'
+                  ? { voiceSource: d.input.source }
+                  : {}),
               },
             ],
           };

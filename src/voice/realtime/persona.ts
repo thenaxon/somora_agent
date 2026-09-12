@@ -102,7 +102,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     `Then answer in your own words, shortened for the ear, no lists or paths read aloud. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
     `Keep the lookup itself to one short sentence: the request, nothing about how to answer it.`,
     input.switchTo && input.switchTo.length > 0
-      ? `This conversation runs in your session "${sessionSlug}". If the user asks for someone else — ${input.switchTo.join(', ')} — hand the call over with the switch tool, in the session they name. Never do it unasked.`
+      ? `This conversation runs in your session "${sessionSlug}". If the user asks for someone else — ${input.switchTo.join(', ')} — or for a different session of yours, move the call with the switch tool. Name a session ONLY if they said its name out loud; "${sessionSlug}" is where YOU are, not where they asked to go. Never move the call unasked.`
       : `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,
   ].filter((p) => p.length > 0);
 

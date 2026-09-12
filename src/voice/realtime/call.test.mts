@@ -5,8 +5,9 @@
 // What is worth pinning here is not "audio works" — that needs a phone.
 // It is the contract between the talking model and the working agent:
 // the question reaches the RIGHT session as the agent's own voice
-// channel and not as agent mail, the spoken conversation is readable
-// afterwards, and every way the middle can break leaves the call alive.
+// channel and not as agent mail, it carries enough of the conversation
+// to be answerable, and every way the middle can break leaves the call
+// alive.
 import assert from 'node:assert/strict';
 
 import { VoiceCall, type ConsultResult, type VoiceCallDeps } from './call.ts';
@@ -103,15 +104,44 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
     h.provider.lastSession?.toolResults[0]?.result.includes('3 von 40') === true,
     JSON.stringify(h.provider.lastSession?.toolResults),
   );
-  const spoken = h.events.filter((e) => e.kind === 'user_message');
-  check('the spoken question is in the session', spoken.length === 1 && (spoken[0] as { text: string }).text === 'Wie weit ist der Umbau?');
+  // What a call leaves in a session is what A2A leaves: the question
+  // that reached the agent, and the answer it gave. The talking around
+  // it stays in the call — written as user messages it broke three
+  // readers at once (CLI replay, REM, the session lock).
+  check('nothing was written into the session besides the turn', h.events.length === 0, JSON.stringify(h.events));
   check(
-    'marked as voice, so a reader sees it was said, not typed',
-    (spoken[0] as unknown as { input?: { modality?: string } }).input?.modality === 'voice',
+    'what the caller said travels WITH the question instead',
+    h.consults[0]?.text.includes('Wie weit ist der Umbau?') === true,
+    h.consults[0]?.text,
   );
-  const said = h.events.filter((e) => e.kind === 'engine_meta');
-  check('what was SAID is kept apart from what the agent wrote', said.length === 1, String(said.length));
+  check('the call counted what was said to it', h.call.snapshot().spokenTurns === 1, String(h.call.snapshot().spokenTurns));
   check('the call counted its consults', h.call.snapshot().consults === 1);
+}
+
+// ── the question carries the conversation around it ──────────────────
+// "what time is it" is unanswerable without knowing what the caller is
+// doing. Since the spoken lines are not written into the session any
+// more, the few lines before a question travel with it — which is also
+// what makes the session readable afterwards.
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'ich sitz grad am deploy von somora', final: true } },
+    { emit: { kind: 'model_transcript', ts: 3, text: 'verstanden, sag bescheid wenn du was brauchst', final: true } },
+    { emit: { kind: 'user_transcript', ts: 4, text: 'wie spät ist es eigentlich', final: true } },
+    { emit: { kind: 'tool_call', ts: 5, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Wie spät ist es?' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 6, reason: 'hung up' } },
+  ];
+  const h = harness(script, async () => ({ text: 'Es ist 10:30, Mittwoch.' }));
+  await drain(h.call);
+
+  const asked = h.consults[0]?.text ?? '';
+  check('the question itself is there', asked.includes('Wie spät ist es?'));
+  check('and what the caller was doing rides along', asked.includes('deploy von somora'), asked);
+  check('including what the voice already answered', asked.includes('sag bescheid'), asked);
+  check('the caller is named as the speaker', /the user: ich sitz/.test(asked), asked);
+  check('nothing of it was written into the session', h.events.length === 0, JSON.stringify(h.events));
 }
 
 // ── a consult that fails must not kill the call ──────────────────────
@@ -278,15 +308,18 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
 }
 
 // ── handing the call to another agent ───────────────────────────────
+// The caller names the session out loud, so the call honours it.
 {
   const script: FakeScriptStep[] = [
     { emit: { kind: 'ready', ts: 1 } },
-    { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'lisa', session: 'projektA' }) } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'verbinde mich mit lisa in ihre ProjektA session', final: true } },
+    { emit: { kind: 'tool_call', ts: 3, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'lisa', session: 'projektA' }) } },
     { awaitToolResult: 'c1' },
-    { emit: { kind: 'closed', ts: 3, reason: 'handing over' } },
+    { emit: { kind: 'closed', ts: 4, reason: 'handing over' } },
   ];
   const provider = new FakeRealtimeProvider(script);
   const notes: Array<{ agent: string; session: string; text: string }> = [];
+  const states: Array<{ agent: string; to?: string }> = [];
   const lisa = persona({ name: 'lisa', description: 'Researcher.' } as Partial<Persona>);
   const call = new VoiceCall(
     { agent: 'hans', session: 'sid-hans', slug: 'main' },
@@ -300,6 +333,7 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
         if (payload?.text) notes.push({ agent, session, text: payload.text });
       },
       callableAgents: ['hans', 'lisa', 'naxon'],
+      onState: (snap) => { states.push({ agent: snap.target.agent, ...(snap.handoverTo ? { to: snap.handoverTo } : {}) }); },
       resolveTarget: async (agent, sessionRef) => ({
         persona: lisa,
         target: { agent, session: `sid-${agent}`, slug: sessionRef ?? 'main' },
@@ -311,11 +345,140 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
 
   const snap = call.snapshot();
   check('the call continues as the other agent', snap.target.agent === 'lisa', JSON.stringify(snap.target));
-  check('in the session that was named', snap.target.slug === 'projektA', snap.target.slug);
+  check('in the session the caller named out loud', snap.target.slug === 'projektA', snap.target.slug);
   check('the old session says where it went', notes.some((n) => n.agent === 'hans' && /handed this call over to lisa/.test(n.text)), JSON.stringify(notes));
   check('and the new one where it came from', notes.some((n) => n.agent === 'lisa' && /took this call over from hans/.test(n.text)));
   check('the new voice is used', provider.lastSession?.request.voice === 'cedar', String(provider.lastSession?.request.voice));
   check('and the new persona speaks', provider.lastSession?.request.instructions.includes('You are lisa') === true);
+  // The window must not put lisa's name on hans's last sentence: while
+  // the new session is opening, the old agent is still the one being
+  // heard (Rene, 2026-09-12: "es spricht aber noch Lisa").
+  check(
+    'while handing over, the call still names the agent that is talking',
+    states.some((st) => st.agent === 'hans' && st.to === 'lisa'),
+    JSON.stringify(states),
+  );
+  check(
+    'and only names the new one once it is on the line',
+    states.some((st) => st.agent === 'lisa' && st.to === undefined),
+    JSON.stringify(states),
+  );
+}
+
+// ── a session nobody asked for does not travel with the call ────────
+// Live on 2026-09-12: from lisa's cerebrocraft session, "connect me to
+// naxon" put the caller into naxon's cerebrocraft. The voice self knows
+// which session it is in and passes that name along; nobody asked for
+// it, and the other agent need not even have a session by that name.
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'verbinde mich weiter zu naxon', final: true } },
+    { emit: { kind: 'tool_call', ts: 3, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'naxon', session: 'cerebrocraft' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 4, reason: 'handing over' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  const asked: Array<string | undefined> = [];
+  const call = new VoiceCall(
+    { agent: 'lisa', session: 'sid-lisa-cc', slug: 'cerebrocraft' },
+    persona({ name: 'lisa' } as Partial<Persona>),
+    { model: 'm', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async () => ({ text: 'x' }),
+      appendEvent: async () => {},
+      callableAgents: ['lisa', 'naxon'],
+      resolveTarget: async (agent, sessionRef) => {
+        asked.push(sessionRef);
+        return {
+          persona: persona({ name: agent } as Partial<Persona>),
+          target: { agent, session: `sid-${agent}`, slug: sessionRef ?? 'main' },
+          cfg: { model: 'm', voice: 'cedar', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+        };
+      },
+    },
+  );
+  await drain(call);
+  check('the inherited session name was dropped', asked[0] === undefined, JSON.stringify(asked));
+  check('so the call lands in the new agent\'s main session', call.snapshot().target.slug === 'main', call.snapshot().target.slug);
+}
+
+// ── the same agent, a different session ─────────────────────────────
+// "I wanted your cerebrocraft session" had no answer at all: the tool
+// offered every agent except the one on the line (Rene, 2026-09-12).
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'geh mal in deine cerebrocraft session', final: true } },
+    { emit: { kind: 'tool_call', ts: 3, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'lisa', session: 'cerebrocraft' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 4, reason: 'handing over' } },
+  ];
+  const provider = new FakeRealtimeProvider(script);
+  const notes: Array<{ agent: string; session: string; text: string }> = [];
+  const call = new VoiceCall(
+    { agent: 'lisa', session: 'sid-lisa-main', slug: 'main' },
+    persona({ name: 'lisa' } as Partial<Persona>),
+    { model: 'm', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async () => ({ text: 'x' }),
+      appendEvent: async (agent, session, ev) => {
+        const payload = (ev as { payload?: { text?: string } }).payload;
+        if (payload?.text) notes.push({ agent, session, text: payload.text });
+      },
+      callableAgents: ['lisa', 'naxon'],
+      resolveTarget: async (agent, sessionRef) => ({
+        persona: persona({ name: agent } as Partial<Persona>),
+        target: { agent, session: `sid-${agent}-${sessionRef ?? 'main'}`, slug: sessionRef ?? 'main' },
+        cfg: { model: 'm', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+      }),
+    },
+  );
+  await drain(call);
+  const snap = call.snapshot();
+  check('the agent stays the same', snap.target.agent === 'lisa', snap.target.agent);
+  check('the session changed', snap.target.slug === 'cerebrocraft', snap.target.slug);
+  check('the tool offered the agent itself', provider.sessions[0]?.request.tools?.some((t) => t.name === 'somora_switch_agent' && t.description.includes('lisa')) === true);
+  check('both conversations record the move, not a handover', notes.length === 2 && notes.every((n) => /moved to|came over/.test(n.text)), JSON.stringify(notes));
+}
+
+// ── a move that cannot be made keeps the call alive ─────────────────
+// The caller asks for a session that does not exist. Ending the call on
+// a typo is the worst possible answer.
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'verbinde mich in die quartalsplanung session', final: true } },
+    { emit: { kind: 'tool_call', ts: 3, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'naxon', session: 'quartalsplanung' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 4, reason: 'handing over' } },
+  ];
+  // The session it comes back on does nothing but exist, then hangs up.
+  const backOnTheLine: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 5 } },
+    { emit: { kind: 'closed', ts: 6, reason: 'hung up' } },
+  ];
+  const provider = new FakeRealtimeProvider(script, {}, backOnTheLine);
+  const call = new VoiceCall(
+    { agent: 'hans', session: 'sid-hans', slug: 'main' },
+    persona(),
+    { model: 'm', voice: 'ash', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async () => ({ text: 'x' }),
+      appendEvent: async () => {},
+      callableAgents: ['hans', 'naxon'],
+      resolveTarget: async () => { throw new Error("naxon has no session 'quartalsplanung'"); },
+    },
+  );
+  await drain(call);
+  const snap = call.snapshot();
+  check('the call is still on the line', snap.state !== 'closed' || provider.sessions.length === 2, `${snap.state} / ${provider.sessions.length}`);
+  check('with the agent it had', snap.target.agent === 'hans', snap.target.agent);
+  check('in the session it had', snap.target.slug === 'main', snap.target.slug);
+  check('a second session was opened to come back on', provider.sessions.length === 2, String(provider.sessions.length));
 }
 
 // ── after a handover the microphone reaches the NEW agent ───────────
@@ -448,6 +611,59 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('and may not announce a lookup instead of making it', /do not announce it/i.test(built.text));
   check('capabilities are not part of its self-knowledge', !/what you can or cannot do/i.test(built.text));
   check('it is short enough to stay fast', built.chars < 1600, `${built.chars} chars`);
+}
+
+// ── the clock does not restart on a move ────────────────────────────
+// A new provider session opens on every move, and arming the cap again
+// there would make a handover a way to talk past maxCallMinutes.
+{
+  let now = 1_000_000;
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'user_transcript', ts: 2, text: 'verbinde mich mit lisa', final: true } },
+    { emit: { kind: 'tool_call', ts: 3, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'lisa' }) } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 4, reason: 'handing over' } },
+  ];
+  const provider = new FakeRealtimeProvider(script, {}, [
+    { emit: { kind: 'ready', ts: 5 } },
+    { emit: { kind: 'closed', ts: 6, reason: 'hung up' } },
+  ]);
+  const timers: number[] = [];
+  const realSetTimeout = globalThis.setTimeout;
+  // Only the call's own deadline is interesting; it is the one armed
+  // with minutes, everything else here is milliseconds.
+  (globalThis as { setTimeout: typeof setTimeout }).setTimeout = ((fn: () => void, ms?: number) => {
+    if ((ms ?? 0) > 10_000) timers.push(ms ?? 0);
+    return realSetTimeout(fn, ms);
+  }) as typeof setTimeout;
+  try {
+    const call = new VoiceCall(
+      { agent: 'hans', session: 'sid-hans', slug: 'main' },
+      persona(),
+      { model: 'm', voice: 'ash', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+      {
+        provider,
+        runConsult: async () => ({ text: 'x' }),
+        appendEvent: async () => {},
+        callableAgents: ['hans', 'lisa'],
+        now: () => now,
+        resolveTarget: async (agent, sessionRef) => {
+          now += 8 * 60_000; // eight minutes into the call
+          return {
+            persona: persona({ name: agent } as Partial<Persona>),
+            target: { agent, session: `sid-${agent}`, slug: sessionRef ?? 'main' },
+            cfg: { model: 'm', voice: 'cedar', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+          };
+        },
+      },
+    );
+    await drain(call);
+    check('the first session gets the whole budget', timers[0] === 20 * 60_000, String(timers[0]));
+    check('the one after the move gets what is left', timers[1] === 12 * 60_000, String(timers[1]));
+  } finally {
+    (globalThis as { setTimeout: typeof setTimeout }).setTimeout = realSetTimeout;
+  }
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

@@ -4,6 +4,7 @@ import { watchBrowserSnapshots } from '../browser/change-stream.ts';
 import { serve, upgradeWebSocket } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
+import { serializeSessionEvent } from './sse-serializer.ts';
 import { streamSSEH2Safe } from './sse-h2-safe.ts';
 import { destroySocketOf, installTransportLiveness, remoteOf, startSseHeartbeat } from './sse-liveness.ts';
 import { bridgeMcpTools } from '../mcp/hub/bridge.ts';
@@ -3022,7 +3023,12 @@ app.get('/chat/stream', async (c) => {
       agent,
       session,
       async (event) => {
-        await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
+        // `?? null` is a guard, not decoration: JSON.stringify(undefined)
+        // returns undefined, hono's SSE writer calls .split on it and
+        // throws, and publish() reads that throw as a dead subscriber and
+        // evicts this stream. One malformed event must degrade to an empty
+        // frame, never disconnect a watching client (2026-09-12).
+        await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data ?? null) });
       },
       () => {
         finish('evicted');
@@ -3066,7 +3072,12 @@ app.get('/activity/stream', async (c) => {
     const connectedAt = Date.now();
     logger.info({ msg: 'activity.connect', remote });
     const unsub = subscribeActivity(async (event) => {
-      await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data) });
+      // `?? null` is a guard, not decoration: JSON.stringify(undefined)
+      // returns undefined, hono's SSE writer calls .split on it and
+      // throws, and publish() reads that throw as a dead subscriber and
+      // evicts this stream. One malformed event must degrade to an empty
+      // frame, never disconnect a watching client (2026-09-12).
+      await stream.writeSSE({ event: event.event, data: JSON.stringify(event.data ?? null) });
     });
     await stream.writeSSE({ event: 'status', data: JSON.stringify({ msg: 'connected' }) });
     let done = false;
@@ -5913,8 +5924,17 @@ const voiceCalls = new VoiceCallManager({
   watcher: (callId) => voiceWatchers.get(callId),
   stateWatcher: (callId) => voiceStateWatchers.get(callId),
   listAgentNames: async () => (await listAgents()).map((a) => a.name),
-  publishEvent: (agent, session, ev) =>
-    publish(agent, session, ev as unknown as Parameters<typeof publish>[2]),
+  // A call writes into a session outside any turn. What it writes has to
+  // leave here in the SAME shape a turn produces: an earlier version
+  // pushed the raw event through a cast, the SSE writer threw on it, and
+  // publish() read the throw as a dead subscriber — so every spoken line
+  // disconnected the chat window, the TUI and the phone from that
+  // session (85 evictions on 2026-09-12).
+  publishEvent: (agent, session, ev) => {
+    const sse = serializeSessionEvent(ev);
+    if (!sse) return;
+    void publish(agent, session, sse);
+  },
   sessionStatus: async (agent, session) => {
     const st = getSessionLockStatus(agent, session);
     return {
@@ -6272,6 +6292,10 @@ async function shutdown(signal: string): Promise<void> {
   await remWorker.shutdown();
   deepWorker.shutdown();
   lucidWorker.shutdown();
+  // A standing call is a paid connection. Exiting without closing it
+  // leaves the provider to notice the dead socket in its own time, and
+  // the meter runs until it does.
+  await voiceCalls.stopAll(`server ${signal}`).catch(() => {});
   releaseLockfile();
   stopClaudeCredentialSyncWatcher();
   await shutdownMemoryRegistry();

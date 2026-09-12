@@ -468,7 +468,7 @@ providers:
 #   defaultVoice: alloy         # alloy ash ballad coral echo sage shimmer verse marin cedar
 #   consultPolicy: always       # auto | substantive | always — when the voice must ask the agent
 #   maxCallMinutes: 20          # hard stop; the meter runs while nobody speaks
-#   allowAgentSwitch: false     # let a call be handed to another agent mid-conversation
+#   allowAgentSwitch: false     # let a call move to another agent or session mid-conversation
 #   turnDetection:              # how easily you can interrupt the agent
 #     threshold: 0.4            # lower = reacts to quieter speech
 #     prefixPaddingMs: 200      # run-up that counts as speech

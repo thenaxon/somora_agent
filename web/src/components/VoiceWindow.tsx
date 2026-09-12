@@ -52,6 +52,20 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
   const wsRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicCapture | null>(null);
   const playerRef = useRef<VoicePlayer | null>(null);
+  /**
+   * Who the window is showing, readable from inside the socket handler.
+   *
+   * The handler is built once, when the call is connected, and closes
+   * over the `agent` of that render forever. Comparing against that
+   * value silently ignored a move BACK to the agent the call started
+   * with: hans → lisa → hans left the window on lisa (Rene, 2026-09-12:
+   * "es bleibt auf Lisa aber man spricht dann schon mit Hans").
+   */
+  const shownRef = useRef<{ agent: string; session: string }>({ agent: '', session: 'main' });
+  /** A handover the window has not applied yet, because the previous
+   *  agent is still being heard. */
+  const pendingIdentityRef = useRef<{ agent: string; session: string } | null>(null);
+  const [handoverTo, setHandoverTo] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,6 +114,10 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
   // does in the chat window — being yanked back mid-sentence is worse
   // than pressing End.
   useEffect(() => {
+    shownRef.current = { agent, session };
+  }, [agent, session]);
+
+  useEffect(() => {
     const box = transcriptRef.current;
     if (!box) return;
     const distanceFromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
@@ -113,6 +131,40 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
     const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
     return () => clearInterval(timer);
   }, [startedAt]);
+
+  /**
+   * Take on the identity the server reports — but not while the previous
+   * agent is still being heard.
+   *
+   * Two clocks disagree here. The server knows when the new session is
+   * live; the browser knows how much of the old agent's speech is still
+   * queued. Applying the change on the server's word alone put the new
+   * name and colour on the old agent's last sentence. So the window
+   * waits for its own queue to run dry, and shows "connecting" in the
+   * meantime.
+   */
+  const applyIdentity = useCallback((next: { agent: string; session: string }) => {
+    const shown = shownRef.current;
+    if (next.agent === shown.agent && next.session === shown.session) {
+      pendingIdentityRef.current = null;
+      return;
+    }
+    pendingIdentityRef.current = next;
+    const settle = () => {
+      const wanted = pendingIdentityRef.current;
+      if (!wanted) return;
+      const left = playerRef.current?.pendingMs() ?? 0;
+      if (left > 120) {
+        window.setTimeout(settle, Math.min(left, 400));
+        return;
+      }
+      pendingIdentityRef.current = null;
+      shownRef.current = wanted;
+      setAgent(wanted.agent);
+      setSession(wanted.session);
+    };
+    settle();
+  }, []);
 
   const connect = useCallback(async () => {
     setError(null);
@@ -133,7 +185,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
       );
       wsRef.current = ws;
       ws.onmessage = (evt) => {
-        let msg: { type?: string; base64?: string; event?: { kind?: string; text?: string; final?: boolean; message?: string }; call?: { consults?: number; state?: string; target?: { agent?: string; slug?: string } } };
+        let msg: { type?: string; base64?: string; event?: { kind?: string; text?: string; final?: boolean; message?: string }; call?: { consults?: number; state?: string; handoverTo?: string; target?: { agent?: string; slug?: string } } };
         try { msg = JSON.parse(String(evt.data)) as typeof msg; } catch { return; }
         if (msg.type === 'audio' && msg.base64) {
           playerRef.current?.play(msg.base64);
@@ -148,11 +200,13 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
         if (msg.type === 'state' && msg.call?.state) {
           setState(msg.call.state as CallState);
           if (typeof msg.call.consults === 'number') setConsults(msg.call.consults);
-          // The call can be handed to another agent mid-conversation,
-          // so the header follows the server rather than the picker.
+          setHandoverTo(msg.call.handoverTo ?? null);
+          // The call can be moved to another agent or another session
+          // mid-conversation, so the header follows the server rather
+          // than the picker. Applied against a ref: the value captured
+          // when this handler was built goes stale after the first move.
           const t = msg.call.target;
-          if (t?.agent && t.agent !== agent) setAgent(t.agent);
-          if (t?.slug && t.slug !== session) setSession(t.slug);
+          if (t?.agent && t?.slug) applyIdentity({ agent: t.agent, session: t.slug });
           return;
         }
         if (msg.call && typeof msg.call.consults === 'number') setConsults(msg.call.consults);
@@ -321,12 +375,21 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
       </div>
 
       <div data-testid="voice-state" style={{ textAlign: 'center', color: 'var(--text-2)', fontSize: 12, minHeight: 18 }}>
-        {state === 'idle' && 'ready to talk'}
-        {state === 'connecting' && 'connecting…'}
-        {state === 'listening' && 'listening'}
-        {state === 'consulting' && 'looking it up…'}
-        {state === 'speaking' && `${agent} is talking`}
-        {state === 'closed' && 'ended'}
+        {/* A move in progress is its own caption: the header still shows
+            who is talking, so the only place to say where the call is
+            going is here. */}
+        {handoverTo && state !== 'closed' ? (
+          `putting you through to ${handoverTo}…`
+        ) : (
+          <>
+            {state === 'idle' && 'ready to talk'}
+            {state === 'connecting' && 'connecting…'}
+            {state === 'listening' && 'listening'}
+            {state === 'consulting' && 'looking it up…'}
+            {state === 'speaking' && `${agent} is talking`}
+            {state === 'closed' && 'ended'}
+          </>
+        )}
         {consults > 0 && (
           <span style={{ opacity: 0.6 }} title={`${agent} looked something up ${consults} time(s) during this call`}>
             {' · '}

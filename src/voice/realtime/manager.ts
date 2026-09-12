@@ -192,6 +192,15 @@ export class VoiceCallManager {
   async start(input: StartCallInput): Promise<ActiveCall> {
     const cfg = this.cfg();
     if (!cfg?.enabled) throw new Error('realtime voice is off (realtimeVoice.enabled)');
+    // One person, one somora, one conversation. A second window used to
+    // open a second paid connection that wrote into the same session
+    // alongside the first; nothing stopped it, and nothing said so
+    // either (Rene, 2026-09-12). The running call keeps the line.
+    const running = [...this.calls.values()].find((c) => c.call.snapshot().state !== 'closed');
+    if (running) {
+      const t = running.call.snapshot().target;
+      throw new Error(`already on a call with ${t.agent} (${t.slug}) — hang that up first`);
+    }
     const persona = await loadPersona(input.agent);
     if (!persona) throw new Error(`agent '${input.agent}' not found`);
     if (!persona.voice?.enabled) throw new Error(`agent '${input.agent}' has no voice (agent.yaml voice.enabled)`);

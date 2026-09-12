@@ -102,11 +102,26 @@ export const MessageItem = memo(function MessageItem({
   if (msg.role === 'tool_result') {
     return <ToolResultBlock toolResult={msg.toolResult} />;
   }
+  if (msg.role === 'engine_meta' && msg.meta.itemType === 'voice_handover') {
+    // The call moved to or from another agent. Not an engine internal:
+    // without it, a session carries questions from a conversation that
+    // started somewhere else and nothing says so.
+    return (
+      <HandoverLine
+        text={
+          typeof msg.meta.payload === 'object' && msg.meta.payload && 'text' in msg.meta.payload
+            ? String((msg.meta.payload as { text?: unknown }).text ?? '')
+            : (msg.meta.summary ?? '')
+        }
+        ts={msg.ts}
+      />
+    );
+  }
   if (msg.role === 'engine_meta' && msg.meta.itemType === 'voice_spoken') {
-    // Spoken aloud by the voice self. It belongs in the record — it is
-    // what the human actually heard — but it is a rendering of the
-    // agent's own answer, not a second answer and not a tool call, so
-    // it reads as a quiet aside rather than a block.
+    // Spoken aloud by the voice self. Only sessions recorded before
+    // 2026-09-12 carry these: a call keeps its talking in the call now,
+    // and a session records the question that reached the agent. They
+    // still render, as the quiet aside they always were.
     return <SpokenAsideLine text={typeof msg.meta.payload === 'object' && msg.meta.payload && 'text' in msg.meta.payload ? String((msg.meta.payload as { text?: unknown }).text ?? '') : (msg.meta.summary ?? '')} ts={msg.ts} />;
   }
   if (msg.role === 'engine_meta') {
@@ -455,6 +470,19 @@ function SpokenAsideLine({ text, ts }: { text: string; ts: number }) {
   );
 }
 
+function HandoverLine({ text, ts }: { text: string; ts: number }) {
+  if (!text) return null;
+  // The lead-in is scaffolding for the log, not for a reader.
+  const said = text.replace(/^\[voice\]\s*/, '').trim();
+  return (
+    <div className="voice-spoken" aria-label="call handed over">
+      <PhoneCall size={11} />
+      <span className="voice-spoken-text">{said}</span>
+      <span className="voice-spoken-time">{formatBubbleTime(ts)}</span>
+    </div>
+  );
+}
+
 function AgentAnswerDivider({ text, ts }: { text: string; ts: number }) {
   // An agent this one ASKED has answered, after it had stopped waiting.
   // Its own divider, because rendering it as a sub-agent wake (which it
@@ -497,7 +525,9 @@ function VoiceDivider({ text, ts }: { text: string; ts: number }) {
   return (
     <div className="voice-note" aria-label="voice channel question">
       <div className="voice-note-head">
-        <Mic size={12} />
+        {/* A call, not the dictation button — two features, two glyphs
+            (Rene, 2026-09-12: "sind 2 ganz unterschiedliche konzepte"). */}
+        <PhoneCall size={12} />
         <span className="voice-note-label">voice</span>
         <span className="voice-note-time">{formatBubbleTime(ts)}</span>
       </div>

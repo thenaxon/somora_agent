@@ -1,15 +1,19 @@
-// Per-session lock with two-class priority queue. Used by /chat/send
+// Per-session lock with a FIFO queue. Used by /chat/send
 // and /chat/send-sync (and by extension agent_ask) so that two writers
 // to the same agent's session never run concurrent turns — JSONL stays
 // sane and the engine isn't double-driven.
 //
-// Two priority classes:
-//   user  — human-driven turn (POST /chat/send without from_agent)
-//   agent — A2A turn (agent_ask, POST /chat/send-sync with from_agent)
+// One queue, FIFO, no classes. The currently-running holder always
+// finishes; we never preempt mid-turn — that would corrupt JSONL and
+// confuse the engine.
 //
-// User entries jump ahead of any waiting agent entries. FIFO within
-// each class. The currently-running holder always finishes; we never
-// preempt mid-turn — that would corrupt JSONL and confuse the engine.
+// Turns still SAY where they come from:
+//   user  — human-driven turn (POST /chat/send without from_agent)
+//   agent — A2A turn, sentinel, job, or a question asked in a voice call
+// That label is diagnostics (/health, logs), not order. Until
+// 2026-09-12 user turns jumped the queue; a voice call broke the rule,
+// because a question asked out loud runs as an agent turn and so waited
+// behind errands that a typed question would have overtaken.
 //
 // In-memory only — server restart drops queued waiters with abort errors.
 // MVP scope; persistent queue is a FUTURE item if/when crash-recovery
@@ -91,15 +95,19 @@ class SessionLock {
         reject: (err) => reject(err),
         cancelled: false,
       };
-      // User entries insert before the first agent entry. User entries
-      // already in queue keep their FIFO order among themselves.
-      if (opts.priority === 'user') {
-        const firstAgentIdx = this.queue.findIndex((w) => w.priority === 'agent');
-        if (firstAgentIdx === -1) this.queue.push(waiter);
-        else this.queue.splice(firstAgentIdx, 0, waiter);
-      } else {
-        this.queue.push(waiter);
-      }
+      // First come, first served, whoever it is.
+      //
+      // Human turns used to jump ahead of agent turns. With a voice call
+      // in the picture that stopped being a clean rule: a spoken
+      // question runs as an agent turn, so the person at the microphone
+      // queued behind another agent's errand while the person typing did
+      // not — two humans, two answers (Rene, 2026-09-12: "alle haben die
+      // selbe prio wer als erster kommt mahlt zuerst das ist dann
+      // leichter zu warten").
+      //
+      // `priority` stays as a LABEL: /health shows who is waiting, and
+      // the logs say where a turn came from. It no longer decides order.
+      this.queue.push(waiter);
       if (opts.onQueued) {
         const idx = this.queue.indexOf(waiter);
         // ahead = waiters in front of us (idx) + the currently-running turn (1)

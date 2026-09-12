@@ -72,7 +72,8 @@ export function statusToolSpec(): RealtimeToolSpec {
 export const SWITCH_TOOL_NAME = 'somora_switch_agent';
 
 /**
- * Hand the call to another agent, in a named session.
+ * Move the call: to another agent, or to another session of the agent
+ * already on the line.
  *
  * The target is otherwise fixed for the length of a call, on purpose: a
  * model that can re-point itself can write into a conversation nobody
@@ -80,27 +81,44 @@ export const SWITCH_TOOL_NAME = 'somora_switch_agent';
  * human says "put me through to lisa", it is announced in both
  * sessions, and the picker in the window follows.
  *
+ * Both dimensions, because an agent is not one conversation. Offering
+ * only other agents left "put me into your cerebrocraft session"
+ * unanswerable, with no way for the agent to help (Rene, 2026-09-12).
+ * The caller's own agent therefore stays in the list.
+ *
  * It is a fresh provider session underneath: a voice cannot be changed
  * once a session has produced audio (measured 2026-09-11), and two
  * agents that sound alike would be worse than a second of silence.
  */
-export function switchToolSpec(callable: readonly string[]): RealtimeToolSpec {
+export function switchToolSpec(callable: readonly string[], current?: string): RealtimeToolSpec {
+  const others = callable.filter((a) => a !== current);
   return {
     name: SWITCH_TOOL_NAME,
     description:
-      'Hand this conversation over to another agent when the user asks for it. ' +
-      `Available: ${callable.join(', ')}. ` +
-      'Say one short sentence that you are putting them through, then call. ' +
+      'Move this conversation when the user asks for it: to another agent, ' +
+      'or to a different session of the agent they are already talking to. ' +
+      `Agents you can reach: ${callable.join(', ')}.` +
+      (current ? ` You are ${current} — pass your own name to stay with the user and change session.` : '') +
+      ' Say one short sentence that you are moving them, then call. ' +
       'Never switch on your own initiative, and never to look something up — for that you ask.',
     parameters: {
       type: 'object',
       properties: {
-        agent: { type: 'string', description: `Who to hand over to. One of: ${callable.join(', ')}.` },
+        agent: {
+          type: 'string',
+          description:
+            `Who continues the conversation. One of: ${callable.join(', ')}.` +
+            (current ? ` Use "${current}" to stay with yourself and only change session.` : '') +
+            (others.length > 0 ? ` Use one of ${others.join(', ')} to hand over.` : ''),
+        },
         session: {
           type: 'string',
           description:
-            'Which of that agent\'s sessions to talk in, by name (e.g. "main", "projektA"). ' +
-            'Omit for their main session. If the user named one, pass it exactly.',
+            'Which session to continue in, by name (e.g. "main", "projektA"). ' +
+            'Pass it ONLY when the user named a session out loud in this call, ' +
+            'and then exactly as they said it. Never pass the session you are ' +
+            'in now just because you are in it — every agent has a main session, ' +
+            'not every agent has yours. Omit it and they land in main.',
         },
       },
       required: ['agent'],
@@ -171,13 +189,32 @@ export function parseConsultArgs(raw: string): { ok: true; args: ConsultArgs } |
  * from the turn result. Rene, 2026-09-11: "er soll sich bewusst sein
  * das ist eine nachricht seines voice-ichs".
  */
-export function renderConsultTurnText(args: ConsultArgs, speaker: string): string {
+export function renderConsultTurnText(
+  args: ConsultArgs,
+  speaker: string,
+  /**
+   * The last few lines of the call, oldest first.
+   *
+   * Without them a question arrives stripped of everything around it:
+   * "what time is it" says nothing about what the caller is actually
+   * doing, and the session it lands in reads like a riddle later.
+   * OpenClaw hands its consulting agent the same thing, and it is also
+   * what keeps the record honest now that the spoken lines themselves
+   * are not written any more.
+   */
+  transcript: ReadonlyArray<{ role: 'caller' | 'voice'; text: string }> = [],
+): string {
   const lines = [
     `[${speaker} is on a voice call with you. Your voice channel asks — answer into this chat, ` +
       'briefly and in a form that can be read aloud. Do not address anyone else.]',
-    '',
-    args.question,
   ];
+  if (transcript.length > 0) {
+    lines.push('', 'Said so far:');
+    for (const entry of transcript) {
+      lines.push(`${entry.role === 'caller' ? speaker : 'you, out loud'}: ${entry.text}`);
+    }
+  }
+  lines.push('', args.question);
   if (args.context) lines.push('', `(context: ${args.context})`);
   return lines.join('\n');
 }

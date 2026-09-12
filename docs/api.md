@@ -1079,14 +1079,18 @@ acknowledges receipt.
 
 Sends on a `(agent, session)` that already has a turn running are
 **enqueued**, not rejected. The server holds a per-session lock with
-a two-class priority queue:
+one FIFO queue, in arrival order. Turns are labelled by where they came
+from, for diagnostics only:
 - `user` — direct human sends (no `from_agent`)
-- `agent` — A2A sends from `agent_ask` / sub-spawns
+- `agent` — A2A sends from `agent_ask` / sub-spawns, sentinel wakes, and
+  questions asked during a voice call
 
-User entries jump ahead of any waiting agent entries; FIFO within each
-class. The currently-running turn always finishes — preempting would
-corrupt JSONL — so a queued turn starts only after the lock holder
-releases.
+Until somora 2026.09.12 user entries jumped ahead of waiting agent
+entries. They no longer do: a question asked out loud runs as an agent
+turn, so the rule answered two humans differently depending on whether
+they typed or spoke. The currently-running turn always finishes —
+preempting would corrupt JSONL — so a queued turn starts only after the
+lock holder releases.
 
 Clients can opt into rendering a queue indicator by listening for the
 `turn_queued` SSE event (see below). UIs without it still work; the
@@ -1364,10 +1368,9 @@ Event types:
   running turn were shortened to keep the request inside the window —
   the turn continues, the model keeps the record that those tools already
   ran), `attachments_unsupported` (the engine cannot forward attachments,
-  grok-cli), `voice_spoken` (what a voice call actually said out loud,
-  kept beside the agent's written answer — the text is the record, the
-  spoken form a rendering), `voice_handover` (a call was handed to or
-  from another agent), `reasoning_effort_adjusted` and `sampling_dropped`
+  grok-cli), `voice_handover` (a call was handed to or
+  from another agent), `voice_spoken` (what a voice call said out loud —
+  written until somora 2026.09.12, kept for sessions recorded then), `reasoning_effort_adjusted` and `sampling_dropped`
   (backend rejected the parameter, turn retried without it). Each
   carries a human-readable `payload.text`.
 - `model_fallback` — `{requested, actual, reason, hops?}` (refs are
