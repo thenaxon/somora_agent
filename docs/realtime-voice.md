@@ -123,9 +123,10 @@ curl -s "http://127.0.0.1:18737/voice/instructions?agent=hans" | jq .
 ```yaml
 realtimeVoice:
   enabled: true
-  provider: openai            # openai | google | local (adapters)
+  provider: openai            # openai | local (same adapter) — google has no adapter yet
   model: gpt-realtime-2.1-mini
   apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE, not the key
+  # url: ws://127.0.0.1:8787/realtime   # where to connect; omitted = OpenAI
   transport: websocket
   defaultVoice: alloy
   consultPolicy: always
@@ -202,6 +203,36 @@ call comes back with the agent you had and says so. It does not hang up.
 Underneath it is a new connection, because a provider voice cannot be
 changed once a session has produced audio. That is a deliberate second
 of transition rather than two agents that sound alike.
+
+## Pointing it somewhere else
+
+`provider` names the protocol, not the vendor. `openai` and `local` are
+the same adapter: one talks to OpenAI, the other to a service of your
+own that speaks the same session and event language. Set `url` to that
+service and nothing else changes — the agents, the tools, the switching
+and the record all work the way they do here.
+
+```yaml
+realtimeVoice:
+  enabled: true
+  provider: local
+  url: ws://127.0.0.1:8787/realtime
+  model: my-voice-model
+```
+
+The model id is appended as `?model=…`, the way OpenAI expects it; a
+service that serves one model can ignore it. Without `apiKeyFile` the
+socket carries no `Authorization` header, so a service on your own
+machine needs no credential. `ws://` is allowed for exactly that case;
+anything reachable from outside should be `wss://`. OpenAI's own
+endpoint still refuses to connect without a key.
+
+What a service has to speak is the contract in
+`src/voice/realtime/types.ts`: a session that is configured once, audio
+in and out as PCM16, transcripts as they arrive, tool calls with results
+handed back, and the ability to cancel a response mid-sentence. A second
+adapter for a protocol somora already speaks would drift from this one
+within a week, which is why there is only one.
 
 ## What it costs, and what it does not do
 

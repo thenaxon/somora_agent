@@ -461,9 +461,14 @@ providers:
 # nothing but the word "voice" and can both be on.
 # realtimeVoice:
 #   enabled: true
-#   provider: openai            # openai | google | local (adapter per provider)
+#   provider: openai            # openai | local — the same adapter, one talks to OpenAI, the
+#                               # other to a service of your own that speaks the same protocol.
+#                               # google has no adapter yet (different protocol entirely).
 #   model: gpt-realtime-2.1-mini
 #   apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE (chmod 600), never the key itself
+#   # url: ws://127.0.0.1:8787/realtime   # where to connect. Omitted = OpenAI. Required for
+#                               # provider: local. The model id is appended as ?model=…, and a
+#                               # service without a credential needs no apiKeyFile.
 #   transport: websocket        # audio goes browser -> somora -> provider
 #   defaultVoice: alloy         # alloy ash ballad coral echo sage shimmer verse marin cedar
 #   consultPolicy: always       # auto | substantive | always — when the voice must ask the agent

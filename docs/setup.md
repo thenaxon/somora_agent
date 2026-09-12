@@ -581,6 +581,9 @@ realtimeVoice:                # talking to an agent (docs/realtime-voice.md)
   provider: openai            # openai | google | local
   model: gpt-realtime-2.1-mini
   apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE, chmod 600 — never the key in config
+  # url: ws://127.0.0.1:8787/realtime   # where to connect; omitted = OpenAI. Set it (and
+  #                             # provider: local) to use a service of your own that speaks
+  #                             # the same protocol — same adapter, no key needed on localhost
   defaultVoice: alloy         # ten exist: alloy ash ballad coral echo sage shimmer verse marin cedar
   consultPolicy: always       # when the speaking model must ask the real agent
   maxCallMinutes: 20          # hard stop; a standing call bills while nobody talks

@@ -134,5 +134,69 @@ const manager = (): VoiceCallManager =>
   check('and no call can be started', /realtime voice is off/.test(refusal), refusal);
 }
 
+// ── the endpoint is configuration, not a constant ───────────────────
+// The adapter is the protocol, not the vendor. A service of your own
+// that speaks the same session and event language plugs in here rather
+// than getting a second adapter (Rene, 2026-09-12).
+{
+  const { OpenAiRealtimeProvider } = await import('./openai-provider.ts');
+  const seen: string[] = [];
+  const headersSeen: Array<Record<string, string>> = [];
+  const fakeSocket = () => ({
+    on(event: string, cb: (...a: never[]) => void) { if (event === 'open') setTimeout(() => (cb as () => void)(), 0); },
+    send() {},
+    close() {},
+  });
+  const req = { model: 'my-voice-model', voice: 'marin', instructions: 'x', language: 'de', tools: [] } as never;
+
+  const local = new OpenAiRealtimeProvider({
+    url: 'ws://127.0.0.1:8787/realtime',
+    connect: (url: string, headers: Record<string, string>) => {
+      seen.push(url); headersSeen.push(headers); return fakeSocket() as never;
+    },
+  });
+  await local.open(req);
+  check('it connects where it was told', seen[0]?.startsWith('ws://127.0.0.1:8787/realtime') === true, seen[0]);
+  check('and still names the model', seen[0]?.includes('model=my-voice-model') === true, seen[0]);
+  // A service on localhost has no key to give, and demanding one would
+  // make the override useless.
+  check('no key, no Authorization header', Object.keys(headersSeen[0] ?? {}).length === 0, JSON.stringify(headersSeen[0]));
+
+  const withKey = new OpenAiRealtimeProvider({
+    url: 'wss://voice.example.internal/v1/realtime',
+    apiKey: 'secret',
+    connect: (url: string, headers: Record<string, string>) => {
+      seen.push(url); headersSeen.push(headers); return fakeSocket() as never;
+    },
+  });
+  await withKey.open(req);
+  check('a key is sent when there is one', headersSeen[1]?.Authorization === 'Bearer secret', JSON.stringify(headersSeen[1]));
+
+  // OpenAI's own endpoint still insists on a credential.
+  let refusal = '';
+  try {
+    await new OpenAiRealtimeProvider({ connect: () => fakeSocket() as never }).open(req);
+  } catch (err) {
+    refusal = (err as Error).message;
+  }
+  check('OpenAI without a key is still refused', /no realtime key/.test(refusal), refusal);
+}
+
+// ── a local provider needs to say where ─────────────────────────────
+{
+  const m = new VoiceCallManager({
+    config: { realtimeVoice: { ...config.realtimeVoice, provider: 'local' } } as never,
+    runConsult: async () => ({ text: 'x' }),
+    listAgentNames: async () => ['hans'],
+  } as never);
+  let refusal = '';
+  try {
+    await m.start({ agent: 'hans', session: 'main' });
+  } catch (err) {
+    refusal = (err as Error).message;
+  }
+  check('local without a url is refused, by name', /needs realtimeVoice\.url/.test(refusal), refusal);
+}
+
 console.log(`\n${pass} ok, ${fail} failed`);
 assert.equal(fail, 0);

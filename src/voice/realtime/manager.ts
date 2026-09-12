@@ -83,11 +83,21 @@ export class VoiceCallManager {
     if (this.deps.provider) return this.deps.provider;
     const cfg = this.cfg();
     if (!cfg) throw new Error('realtimeVoice is not configured');
-    if (cfg.provider !== 'openai') {
+    // 'local' is the same protocol somewhere else. It gets the same
+    // adapter on purpose: a second implementation of a protocol we
+    // already speak would drift from this one within a week. What makes
+    // it local is the endpoint, so that one is required.
+    if (cfg.provider === 'local' && !cfg.url) {
+      throw new Error("realtime voice provider 'local' needs realtimeVoice.url");
+    }
+    if (cfg.provider !== 'openai' && cfg.provider !== 'local') {
       throw new Error(`realtime voice provider '${cfg.provider}' has no adapter yet`);
     }
     return new OpenAiRealtimeProvider({
       ...(cfg.apiKeyFile ? { apiKeyFile: cfg.apiKeyFile } : {}),
+      // Same adapter, different service: the protocol is what this
+      // speaks, not the vendor.
+      ...(cfg.url ? { url: cfg.url } : {}),
     });
   }
 

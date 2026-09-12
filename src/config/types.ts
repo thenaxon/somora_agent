@@ -1000,7 +1000,16 @@ export const RealtimeVoiceConfigSchema = z
     /** Master toggle. Off (or omitted) means: routes answer 503, the
      *  /web tile is not rendered, no agent is callable. */
     enabled: z.boolean().default(false),
-    /** Which adapter speaks to which service. */
+    /**
+     * Which adapter, and therefore which protocol.
+     *
+     * `openai` and `local` are the SAME adapter: one talks to OpenAI,
+     * the other to a service of your own that speaks the same session
+     * and event language, named by `url` (required for `local`). A
+     * second implementation of a protocol we already speak would drift
+     * from this one within a week. `google` has no adapter yet — its
+     * realtime API speaks something else entirely.
+     */
     provider: z.enum(['openai', 'google', 'local']).default('openai'),
     /** Provider model id — never guessed, always configured. */
     model: z.string().min(1),
@@ -1009,6 +1018,25 @@ export const RealtimeVoiceConfigSchema = z
      *  minutes of billed audio, and config.yaml is read by more eyes
      *  than a 600 file. */
     apiKeyFile: z.string().min(1).optional(),
+    /**
+     * Where the adapter connects. Optional: each adapter knows its own
+     * service, and the OpenAI one defaults to
+     * `wss://api.openai.com/v1/realtime`.
+     *
+     * Set it to point the SAME adapter at a different service that
+     * speaks the same protocol — a local realtime server being the
+     * reason this exists. The model id is appended as a query
+     * parameter, as OpenAI expects it; a service that does not care can
+     * ignore it. `ws://` is accepted so a service on localhost needs no
+     * certificate; anything else must be `wss://`.
+     */
+    url: z
+      .string()
+      .min(1)
+      .refine((u) => /^wss?:\/\//.test(u), {
+        message: 'realtimeVoice.url must start with wss:// or ws://',
+      })
+      .optional(),
     /** Fallback: name of an existing `providers` entry to borrow the
      *  key from. Only for providers that use the same credential. */
     provider_ref: z.string().min(1).optional(),

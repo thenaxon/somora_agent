@@ -30,6 +30,12 @@ import type {
   RealtimeSessionRequest,
 } from './types.ts';
 
+/**
+ * Where OpenAI answers. Overridable per instance, because the adapter
+ * is the protocol and not the vendor: a local service that speaks the
+ * same session/event language plugs in here instead of getting a second
+ * adapter that would drift from this one (Rene, 2026-09-12).
+ */
 const REALTIME_URL = 'wss://api.openai.com/v1/realtime';
 /** OpenAI's realtime audio is PCM16; 24 kHz is what the session
  *  defaults to and what the browser side has to match. */
@@ -40,6 +46,8 @@ export interface OpenAiRealtimeOptions {
    *  billed minutes and config is read by more eyes than a 600 file. */
   apiKeyFile?: string;
   apiKey?: string;
+  /** Endpoint override. Defaults to OpenAI's. */
+  url?: string;
   /** Injectable for tests: anything that behaves like a ws socket. */
   connect?: (url: string, headers: Record<string, string>) => WebSocketLike;
 }
@@ -53,14 +61,26 @@ export interface WebSocketLike {
   close(): void;
 }
 
-function loadKey(opts: OpenAiRealtimeOptions): string {
+/**
+ * The credential, or nothing.
+ *
+ * A service of your own on localhost has no key to give, and demanding
+ * one would make the endpoint override useless. So: a key is required
+ * for OpenAI's own endpoint and optional everywhere else. Without one,
+ * the socket simply carries no Authorization header.
+ */
+function loadKey(opts: OpenAiRealtimeOptions): string | undefined {
   if (opts.apiKey) return opts.apiKey;
   if (opts.apiKeyFile) {
     const key = readFileSync(opts.apiKeyFile, 'utf8').trim();
     if (key.length === 0) throw new Error(`realtime key file ${opts.apiKeyFile} is empty`);
     return key;
   }
-  throw new Error('no realtime key: set realtimeVoice.apiKeyFile');
+  const endpoint = opts.url ?? REALTIME_URL;
+  if (endpoint.startsWith(REALTIME_URL)) {
+    throw new Error('no realtime key: set realtimeVoice.apiKeyFile');
+  }
+  return undefined;
 }
 
 class OpenAiRealtimeSession implements RealtimeSession {
@@ -382,8 +402,11 @@ export class OpenAiRealtimeProvider implements RealtimeProvider {
 
   async open(req: RealtimeSessionRequest): Promise<RealtimeSession> {
     const key = loadKey(this.opts);
-    const url = `${REALTIME_URL}?model=${encodeURIComponent(req.model)}`;
-    const headers = { Authorization: `Bearer ${key}` };
+    const base = this.opts.url ?? REALTIME_URL;
+    // The model travels as a query parameter, the way OpenAI wants it.
+    // A service that only serves one model can ignore the parameter.
+    const url = `${base}${base.includes('?') ? '&' : '?'}model=${encodeURIComponent(req.model)}`;
+    const headers: Record<string, string> = key ? { Authorization: `Bearer ${key}` } : {};
     const ws: WebSocketLike = this.opts.connect
       ? this.opts.connect(url, headers)
       : (new WebSocket(url, { headers }) as unknown as WebSocketLike);
