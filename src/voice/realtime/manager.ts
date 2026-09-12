@@ -125,12 +125,20 @@ export class VoiceCallManager {
     const override = await this.voiceOverride(agent);
     const consultPolicy = persona.voice.consultPolicy ?? cfg.consultPolicy;
     const language = persona.voice.language ?? this.deps.config.stt?.language ?? 'en';
+    // Including who the call could be handed to — without it the preview
+    // ends on "you cannot switch to another agent or session" while a
+    // real call is told the opposite. A preview that differs from the
+    // thing it previews is worse than none.
+    const switchTo = cfg.allowAgentSwitch
+      ? (await this.callableAgents((await this.deps.listAgentNames?.()) ?? [])).filter((a) => a !== agent)
+      : [];
     const built = buildVoiceInstructions({
       persona,
       consultPolicy,
       language,
       consultToolName: CONSULT_TOOL_NAME,
       sessionSlug,
+      ...(switchTo.length > 0 ? { switchTo } : {}),
       ...(override ? { override } : {}),
     });
     return {

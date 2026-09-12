@@ -378,7 +378,10 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
     { awaitToolResult: 'c1' },
     { emit: { kind: 'closed', ts: 4, reason: 'handing over' } },
   ];
-  const provider = new FakeRealtimeProvider(script);
+  const provider = new FakeRealtimeProvider(script, {}, [
+    { emit: { kind: 'ready', ts: 5 } },
+    { emit: { kind: 'closed', ts: 6, reason: 'hung up' } },
+  ]);
   const asked: Array<string | undefined> = [];
   const call = new VoiceCall(
     { agent: 'lisa', session: 'sid-lisa-cc', slug: 'cerebrocraft' },
@@ -402,6 +405,51 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   await drain(call);
   check('the inherited session name was dropped', asked[0] === undefined, JSON.stringify(asked));
   check('so the call lands in the new agent\'s main session', call.snapshot().target.slug === 'main', call.snapshot().target.slug);
+}
+
+// ── the sentence arrives after the tool call ────────────────────────
+// Transcription lands after the model has acted on what it heard. The
+// session name in a switch is checked against what the caller said, so
+// without a short wait the real live ordering would throw away exactly
+// the wish it is meant to protect.
+{
+  const script: FakeScriptStep[] = [
+    { emit: { kind: 'ready', ts: 1 } },
+    { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: 'somora_switch_agent', args: JSON.stringify({ agent: 'naxon', session: 'cerebrocraft' }) } },
+    // The caller's sentence catches up only now — as it does live.
+    { emit: { kind: 'user_transcript', ts: 3, text: 'bring mich zu naxon in die Cerebro Craft session', final: true } },
+    { awaitToolResult: 'c1' },
+    { emit: { kind: 'closed', ts: 4, reason: 'handing over' } },
+  ];
+  const provider = new FakeRealtimeProvider(script, {}, [
+    { emit: { kind: 'ready', ts: 5 } },
+    { emit: { kind: 'closed', ts: 6, reason: 'hung up' } },
+  ]);
+  const asked: Array<string | undefined> = [];
+  const call = new VoiceCall(
+    { agent: 'lisa', session: 'sid-lisa', slug: 'main' },
+    persona({ name: 'lisa' } as Partial<Persona>),
+    { model: 'm', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    {
+      provider,
+      runConsult: async () => ({ text: 'x' }),
+      appendEvent: async () => {},
+      callableAgents: ['lisa', 'naxon'],
+      resolveTarget: async (agent, sessionRef) => {
+        asked.push(sessionRef);
+        return {
+          persona: persona({ name: agent } as Partial<Persona>),
+          target: { agent, session: `sid-${agent}`, slug: sessionRef ?? 'main' },
+          cfg: { model: 'm', voice: 'cedar', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+        };
+      },
+    },
+  );
+  await drain(call);
+  check('the late sentence still counts as having asked', asked[0] === 'cerebrocraft', JSON.stringify(asked));
+  // "Cerebro Craft" as two words is what speech recognition produces for
+  // a slug written as one.
+  check('and the call lands there', call.snapshot().target.slug === 'cerebrocraft', call.snapshot().target.slug);
 }
 
 // ── the same agent, a different session ─────────────────────────────

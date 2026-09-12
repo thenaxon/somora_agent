@@ -191,6 +191,9 @@ export class VoiceCall {
    * its own queue to the same question.
    */
   private announced: VoiceCallTarget;
+  /** Session names that were asked for but never spoken by the caller.
+   *  Asking twice must not restart the line twice. */
+  private droppedSessions = new Set<string>();
   private consults = 0;
   private spokenTurns = 0;
   private lastError: string | undefined;
@@ -428,8 +431,23 @@ export class VoiceCall {
     const from = { ...this.target };
     const fromPersona = this.persona;
     const fromCfg = this.cfg;
+    // Decided HERE, not when the tool was called. What the caller said
+    // is transcribed after the model has acted on it, so at tool time
+    // the sentence naming the session is usually not in the transcript
+    // yet; by the time the old session has ended it is.
+    const wanted = request.session;
+    const session = wanted !== undefined && this.callerNamed(wanted) ? wanted : undefined;
+    if (wanted !== undefined && session === undefined) {
+      this.droppedSessions.add(`${request.agent}/${wanted}`);
+      this.log({ msg: 'voice.switch_session_dropped', to: request.agent, session: wanted });
+      // Same agent, and the only reason to move was a session nobody
+      // asked for: there is nowhere to go. Stay, and say so.
+      if (request.agent === this.target.agent) {
+        return this.stayPut('the session was never named');
+      }
+    }
     try {
-      const next = await this.deps.resolveTarget!(request.agent, request.session);
+      const next = await this.deps.resolveTarget!(request.agent, session);
       await this.session?.close('handed over').catch(() => {});
       this.session = undefined;
       this.target = next.target;
@@ -490,6 +508,34 @@ export class VoiceCall {
   }
 
   /**
+   * Come back on the line as the agent we already are.
+   *
+   * The switch tool ends its own provider session so the next voice can
+   * start, so "nothing to move to" is not a no-op: there is no session
+   * left to talk through. This opens a fresh one for the same target and
+   * has the voice say that the caller is still here.
+   */
+  private async stayPut(reason: string): Promise<boolean> {
+    this.log({ msg: 'voice.switch_stayed', agent: this.target.agent, session: this.target.slug, reason });
+    try {
+      this.announced = { ...this.target };
+      this.setState('connecting');
+      const recovered = await this.start();
+      void recovered
+        .speak?.(
+          'Say ONE short sentence that they are still with you and ask which session they meant. Keep it under ten words.',
+        )
+        .catch(() => {});
+      return true;
+    } catch (err) {
+      this.log({ msg: 'voice.stay_failed', err: (err as Error).message });
+      this.setState('closed');
+      this.clearDeadline();
+      return false;
+    }
+  }
+
+  /**
    * Microphone audio for whatever session the call is on RIGHT NOW.
    *
    * After a handover the provider session is a different object. The
@@ -543,16 +589,27 @@ export class VoiceCall {
         );
         return;
       }
-      // A session nobody asked for is not a wish. Dropping it here puts
-      // the call in the target's main session, which is where "connect
-      // me to naxon" is supposed to land.
-      const wanted = parsed.args.session;
-      const asked = wanted !== undefined && this.callerNamed(wanted);
-      if (wanted !== undefined && !asked) {
-        this.log({ msg: 'voice.switch_session_dropped', to: parsed.args.agent, session: wanted });
+      const request = parsed.args;
+      // Already established this one is not a wish: the caller never
+      // said that name, and a second attempt must not cost another
+      // session restart.
+      if (request.session !== undefined && this.droppedSessions.has(`${request.agent}/${request.session}`)) {
+        await session.sendToolResult(
+          callId,
+          `they never said "${request.session}" — ask which session they mean, or leave it out to reach the main one`,
+        );
+        return;
       }
-      const request = { agent: parsed.args.agent, ...(asked && wanted ? { session: wanted } : {}) };
-      if (request.agent === this.target.agent && (request.session ?? 'main') === this.target.slug) {
+      // Asking to go where you already are is a model slip, not a wish.
+      // Caught here because it is the one case decidable on the spot,
+      // and tearing a session down for it would be an audible pause for
+      // nothing.
+      const staying =
+        request.agent === this.target.agent &&
+        (request.session === undefined
+          ? this.target.slug === 'main'
+          : request.session === this.target.slug);
+      if (staying) {
         await session.sendToolResult(
           callId,
           'that is the conversation you are already in — say so, and ask which session they mean',
