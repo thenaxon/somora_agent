@@ -5,10 +5,13 @@
 // that lies. What lives in `agent.yaml voice:` is only what is specific
 // to SPEAKING: voice, language, tone, brevity.
 //
-// Length is a latency budget, not thrift. Everything in these
-// instructions sits in the realtime model's context and is re-read
-// before every answer, so the target is under ~1500 characters and the
-// builder reports what it produced.
+// Length is a cost budget, not thrift. The instructions are sent once
+// when the session opens, but they sit in the realtime model's context
+// and are read again before every answer, so every line is paid for per
+// turn. The ceiling is ~1900 characters and the builder reports what it
+// produced. It was ~1500 until 2026-09-12, when the language and the
+// no-introduction rules were added: agents slipped into English
+// mid-call, and every call opened with a recital of the persona.
 
 import type { Persona } from '../../persona/loader.ts';
 
@@ -40,6 +43,42 @@ export interface VoiceInstructionsInput {
   /** Agents this call may be handed over to. Empty = no switching, and
    *  the instruction says so instead of teasing an ability. */
   switchTo?: readonly string[];
+}
+
+/**
+ * What the language is CALLED, for a prompt that is otherwise English.
+ *
+ * "You speak de." is a two-letter code buried in an English paragraph,
+ * and the model followed the paragraph: agents slipped into English
+ * mid-call (Rene, 2026-09-12). The wiki already learned this — it keeps
+ * a `languageName` next to its code for exactly the same reason.
+ * Unknown codes fall through as themselves, which is no worse than
+ * before.
+ */
+const LANGUAGE_NAMES: Record<string, string> = {
+  de: 'German',
+  en: 'English',
+  fr: 'French',
+  es: 'Spanish',
+  it: 'Italian',
+  nl: 'Dutch',
+  pt: 'Portuguese',
+  pl: 'Polish',
+  tr: 'Turkish',
+  ru: 'Russian',
+  cs: 'Czech',
+  da: 'Danish',
+  sv: 'Swedish',
+  no: 'Norwegian',
+  fi: 'Finnish',
+  ja: 'Japanese',
+  ko: 'Korean',
+  zh: 'Chinese',
+};
+
+export function languageName(code: string): string {
+  const key = code.trim().toLowerCase().split(/[-_]/)[0] ?? '';
+  return LANGUAGE_NAMES[key] ?? code;
 }
 
 /** First paragraph of the persona's own description, trimmed. The
@@ -85,24 +124,29 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
   //    the one thing this whole design is about: it IS the agent.
   const consultLine =
     consultPolicy === 'always'
-      ? `Everything factual and every request to act goes through ${consultToolName}: work, projects, files, status, memory, opening a browser, starting, writing or sending something. Greeting, small talk, clarifying questions and who you are need no call.`
+      ? `Everything factual and every request to act goes through ${consultToolName}: work, projects, files, status, memory, opening a browser, starting, writing or sending something. Greeting, small talk and who you are need no call.`
       : consultPolicy === 'substantive'
         ? `Anything about your work, memory, files or projects, and every request to act, goes through ${consultToolName}. Small talk, clarifying questions and who you are need no call.`
         : `Call ${consultToolName} whenever the answer needs your files, tools or memory.`;
 
+  const spoken = languageName(language);
   const parts = [
-    `You are ${persona.name}, speaking out loud — not an assistant for ${persona.name}, not a voice channel. Say "I", never talk about ${persona.name} as someone else. You speak ${language}.`,
+    `Speak ${spoken}. These instructions are English, your speech is not — never switch language mid-call, not for a word. Tool and file names stay as written.`,
+    `You are ${persona.name}, speaking out loud — not an assistant for ${persona.name}, not a voice channel. Say "I", never talk about ${persona.name} as someone else.`,
     override ? override : personaEssence(persona),
     override || !style ? '' : `Tone: ${style}.`,
     `At most ${sentences} sentences per answer: a conversation, not a lecture, and interruptible.`,
-    `Who you are, your role and how you talk: you know that, answer it at once. Asked who you are: "Ich bin ${persona.name}" and what you do — you are an agent in somora and not a human, say that only when asked or when it plainly matters.`,
+    // The caller picked this agent by name in a picker and talks to it
+    // daily. An introduction is a wall in front of the first question,
+    // and jarvis, who is formal by persona, made it a ceremony (Rene,
+    // 2026-09-12: "die brauchen nicht immer eine lange intro davor").
+    `Do not introduce yourself and do not list what you can do — they chose you and know you. Answer the first thing they say as if the call had been running. Who you are and how you talk needs no lookup: say it when asked, not before, and you are an agent in somora, not a human. Handed a call: one short sentence that you are here, then on.`,
     consultLine,
     `What you can do is not yours to judge: never say you cannot do something, never claim a missing tool, never offer a workaround instead.`,
-    `Call the moment something is asked of you — do not announce it, do not ask whether you should, do not wait. You are looking it up, not asking someone else.`,
+    `Call the moment something is asked of you — do not announce it, do not ask whether you should, do not wait. You are looking it up, not asking someone else. Keep the request to one short sentence.`,
     `Then answer in your own words, shortened for the ear, no lists or paths read aloud. Never invent a fact, a result, a name or a number, and never say you did something before you have.`,
-    `Keep the lookup itself to one short sentence: the request, nothing about how to answer it.`,
     input.switchTo && input.switchTo.length > 0
-      ? `This conversation runs in your session "${sessionSlug}". If the user asks for someone else — ${input.switchTo.join(', ')} — or for a different session of yours, move the call with the switch tool. Name a session ONLY if they said its name out loud; "${sessionSlug}" is where YOU are, not where they asked to go. Never move the call unasked.`
+      ? `You are in your session "${sessionSlug}". If they ask for someone else — ${input.switchTo.join(', ')} — or for another session of yours, move the call with the switch tool, never unasked. Pass a session only when they named one.`
       : `This conversation runs in your session "${sessionSlug}". You cannot switch to another agent or session.`,
   ].filter((p) => p.length > 0);
 

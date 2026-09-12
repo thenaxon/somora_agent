@@ -23,6 +23,7 @@ import {
   switchToolSpec,
 } from './consult.ts';
 import { buildVoiceInstructions } from './persona.ts';
+import { normalizeSpokenName } from './session-match.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
 /** How much of the conversation the call keeps in memory. */
@@ -191,9 +192,15 @@ export class VoiceCall {
    * its own queue to the same question.
    */
   private announced: VoiceCallTarget;
-  /** Session names that were asked for but never spoken by the caller.
-   *  Asking twice must not restart the line twice. */
-  private droppedSessions = new Set<string>();
+  /**
+   * Targets that could not be reached, and what to say about them.
+   *
+   * Every switch attempt ends the provider session so the next voice can
+   * start, so a target that does not resolve costs a restart. Asking for
+   * the same impossible thing twice must not cost a second one — the
+   * answer is already known and goes straight back to the model.
+   */
+  private unreachable = new Map<string, string>();
   private consults = 0;
   private spokenTurns = 0;
   private lastError: string | undefined;
@@ -235,27 +242,23 @@ export class VoiceCall {
   }
 
   /**
-   * Did the caller actually name this session out loud?
+   * Is this name just the session the call is already in?
    *
-   * The voice self knows which session it is in, and it passes that name
-   * along on a handover unless something stops it — which is how asking
-   * for naxon landed in naxon's "cerebrocraft" because lisa had been in
-   * hers (Rene, 2026-09-12: "es muss nicht immer zwingend der fall sein
-   * das der andere agent überhaupt eine session hat die so benannt
-   * ist"). Nobody said that name, so it is not a wish, and an unasked-for
-   * session becomes main.
+   * The voice self knows which session it sits in, and on a handover it
+   * passes that name along unless something stops it — which is how
+   * asking for naxon landed in naxon's "cerebrocraft", because lisa had
+   * been in hers (Rene, 2026-09-12: "es muss nicht immer zwingend der
+   * fall sein das der andere agent überhaupt eine session hat die so
+   * benannt ist"). Nobody said that name, so it is not a wish.
    *
-   * Matched on letters and digits only: a name reaches the transcript
-   * the way speech recognition heard it, "Cerebro Craft" for
-   * "cerebrocraft".
+   * Anything ELSE the model passes did not come from itself, so it came
+   * from the caller and is taken at face value. An earlier version
+   * checked the name against the transcript instead and threw away a
+   * real wish: speech recognition wrote the session differently than the
+   * model did, and the two never matched.
    */
-  private callerNamed(session: string): boolean {
-    const norm = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const needle = norm(session);
-    // Too short to be evidence of anything — "main" is the default and
-    // needs no proof.
-    if (needle.length < 4) return true;
-    return this.transcript.some((e) => e.role === 'caller' && norm(e.text).includes(needle));
+  private isOwnSessionName(name: string): boolean {
+    return normalizeSpokenName(name) === normalizeSpokenName(this.target.slug);
   }
 
   private log(entry: Record<string, unknown>): void {
@@ -431,20 +434,13 @@ export class VoiceCall {
     const from = { ...this.target };
     const fromPersona = this.persona;
     const fromCfg = this.cfg;
-    // Decided HERE, not when the tool was called. What the caller said
-    // is transcribed after the model has acted on it, so at tool time
-    // the sentence naming the session is usually not in the transcript
-    // yet; by the time the old session has ended it is.
     const wanted = request.session;
-    const session = wanted !== undefined && this.callerNamed(wanted) ? wanted : undefined;
-    if (wanted !== undefined && session === undefined) {
-      this.droppedSessions.add(`${request.agent}/${wanted}`);
+    // Carried over rather than asked for: dropped, so the caller lands
+    // in the other agent's main session.
+    const inherited = wanted !== undefined && request.agent !== this.target.agent && this.isOwnSessionName(wanted);
+    const session = inherited ? undefined : wanted;
+    if (inherited) {
       this.log({ msg: 'voice.switch_session_dropped', to: request.agent, session: wanted });
-      // Same agent, and the only reason to move was a session nobody
-      // asked for: there is nowhere to go. Stay, and say so.
-      if (request.agent === this.target.agent) {
-        return this.stayPut('the session was never named');
-      }
     }
     try {
       const next = await this.deps.resolveTarget!(request.agent, session);
@@ -479,6 +475,7 @@ export class VoiceCall {
       return true;
     } catch (err) {
       this.lastError = (err as Error).message;
+      this.unreachable.set(`${request.agent}/${request.session ?? 'main'}`, this.lastError);
       this.log({ msg: 'voice.switch_failed', to: request.agent, session: request.session ?? 'main', err: this.lastError });
       // Back to where we were. The old provider session is already
       // closing (the switch tool ends it so the new voice can start),
@@ -490,10 +487,13 @@ export class VoiceCall {
         this.announced = { ...from };
         this.setState('connecting');
         const recovered = await this.start();
+        // The reason is the useful part: "there is main and cerebrocraft"
+        // is what lets the caller pick, where "that did not work" makes
+        // them guess again.
         void recovered
           .speak?.(
-            'Say ONE short sentence that you could not put them through and that they are still with you. ' +
-              'Do not explain why.',
+            'Say ONE short sentence, in the language of this conversation: the move did not work and they are ' +
+              `still with you. Put this into your own words, briefly: ${this.lastError ?? 'the target could not be reached'}`,
           )
           .catch(() => {});
         this.log({ msg: 'voice.switch_recovered', agent: from.agent, session: from.slug });
@@ -590,14 +590,11 @@ export class VoiceCall {
         return;
       }
       const request = parsed.args;
-      // Already established this one is not a wish: the caller never
-      // said that name, and a second attempt must not cost another
-      // session restart.
-      if (request.session !== undefined && this.droppedSessions.has(`${request.agent}/${request.session}`)) {
-        await session.sendToolResult(
-          callId,
-          `they never said "${request.session}" — ask which session they mean, or leave it out to reach the main one`,
-        );
+      // Already tried and already impossible: answer from memory rather
+      // than tearing the line down again.
+      const known = this.unreachable.get(`${request.agent}/${request.session ?? 'main'}`);
+      if (known) {
+        await session.sendToolResult(callId, known);
         return;
       }
       // Asking to go where you already are is a model slip, not a wish.

@@ -9,8 +9,9 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadPersona, type Persona } from '../../persona/loader.ts';
 import { SOMORA_HOME_DIR } from '../../server/logger.ts';
-import { resolveSessionId } from '../../storage/sessions.ts';
+import { listSessions, resolveSessionId } from '../../storage/sessions.ts';
 import { appendEvent } from '../../storage/sessions.ts';
+import { matchSpokenSession, normalizeSpokenName } from './session-match.ts';
 import { logger } from '../../server/logger.ts';
 import type { Config } from '../../config/types.ts';
 import { VoiceCall, type ConsultResult, type SessionWorkStatus, type VoiceCallSnapshot } from './call.ts';
@@ -151,6 +152,34 @@ export class VoiceCallManager {
     };
   }
 
+  /**
+   * Turn what the caller said into a session that exists.
+   *
+   * Rejects by throwing, with a sentence the voice can say out loud:
+   * the whole point is that a wrong guess lands the conversation in
+   * somebody else's work, so an unclear name becomes a question.
+   */
+  private async resolveSpokenSession(agent: string, spoken: string): Promise<string> {
+    const sessions = await listSessions(agent);
+    const slugs = sessions.map((s) => s.slug);
+    const match = matchSpokenSession(spoken, slugs);
+    if (match.kind === 'one') {
+      if (normalizeSpokenName(match.slug) !== normalizeSpokenName(spoken)) {
+        logger.info({ msg: 'voice.session_matched', agent, heard: spoken, slug: match.slug });
+      }
+      return match.slug;
+    }
+    if (match.kind === 'many') {
+      throw new Error(
+        `${agent} has more than one session that sounds like "${spoken}": ${match.candidates.join(', ')} — ask which one`,
+      );
+    }
+    // Naming a few real ones beats "not found": the caller usually knows
+    // the session by a word from it.
+    const shown = ['main', ...slugs.filter((s) => s !== 'main')].slice(0, 6);
+    throw new Error(`${agent} has no session like "${spoken}" — there is ${shown.join(', ')}`);
+  }
+
   /** Everything a call needs to continue as another agent. */
   private async buildTarget(agent: string, sessionRef: string | undefined): Promise<{
     persona: Persona;
@@ -170,7 +199,11 @@ export class VoiceCallManager {
     const persona = await loadPersona(agent);
     if (!persona) throw new Error(`agent '${agent}' not found`);
     if (!persona.voice?.enabled) throw new Error(`${agent} cannot be reached by voice`);
-    const slug = sessionRef ?? 'main';
+    // A name that came through a microphone is matched by sound-ish
+    // shape, not by spelling — see session-match.ts for why every
+    // attempt missed before. Only here: a typed session name anywhere
+    // else in somora must still mean exactly what it says.
+    const slug = sessionRef === undefined ? 'main' : await this.resolveSpokenSession(agent, sessionRef);
     const session = await resolveSessionId(agent, slug);
     if (!session) throw new Error(`${agent} has no session '${slug}'`);
     const personaOverride = await this.voiceOverride(agent);

@@ -646,7 +646,11 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('it is forbidden to invent', /never invent/i.test(built.text));
   check('it must ask before answering anything of substance', built.text.includes(CONSULT_TOOL_NAME));
   check('it knows it cannot change target', /cannot switch to another agent or session/i.test(built.text));
-  check('the name leads the answer', /Asked who you are: "Ich bin hans"/i.test(built.text));
+  check('it speaks the language by name, not by code', /Speak German\./.test(built.text), built.text.slice(0, 80));
+  check('and may not drift out of it mid-call', /never switch language mid-call/i.test(built.text));
+  check('no introductions', /do not introduce yourself/i.test(built.text));
+  check('and no recital of what it can do', /do not list what you can do/i.test(built.text));
+  check('identity still needs no lookup', /needs no lookup/i.test(built.text));
   // An instruction that comments on the answer gets spoken aloud by a
   // small model; describe behaviour, not the rule about it.
   check('no meta-commentary the model can read out', !/headline|footnote/i.test(built.text));
@@ -658,7 +662,7 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('and may not refuse a task itself', /never say you cannot do something/i.test(built.text));
   check('and may not announce a lookup instead of making it', /do not announce it/i.test(built.text));
   check('capabilities are not part of its self-knowledge', !/what you can or cannot do/i.test(built.text));
-  check('it is short enough to stay fast', built.chars < 1600, `${built.chars} chars`);
+  check('it stays inside the context budget', built.chars < 1900, `${built.chars} chars`);
 }
 
 // ── the clock does not restart on a move ────────────────────────────

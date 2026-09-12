@@ -30,6 +30,18 @@ That separation is why the voice can be quick without inventing things:
 the part that talks does not know anything, and the part that knows does
 not have to be fast at talking.
 
+### How it talks
+
+The voice speaks the language from `voice.language` on the agent, else
+`stt.language`, else English — named in full in its instructions, not as
+a language code, because a code inside an English paragraph is a weak
+signal and agents drifted into English mid-call.
+
+It does not introduce itself. The caller picked this agent in a picker
+and talks to it daily, so a recital of name and role is a wall in front
+of the first question. Handed a call, it says one short sentence that it
+is there and carries on.
+
 ### What the agent sees
 
 The question arrives in the bound session as a normal turn with
@@ -143,10 +155,18 @@ Both conversations keep a line saying where the call went and where it
 came from.
 
 Name a session and you land in it. Name none and you land in **main**,
-always. A session name is only carried over when you said it out loud in
-this call: the voice self knows which session it is in, and left to
-itself it passes that name along, so asking for another agent put you in
-a same-named session of theirs that need not even exist.
+always — the session the call is currently in is never carried over to
+another agent, which used to put you in a same-named session of theirs
+that need not even exist.
+
+Session names are matched by how they sound, not by how they are
+spelled. One call produced `Cerebokräft`, `craft` and `CerebroCraft` for
+a session called `cerebrocraft`, and `voice-check` for `voicecheck`:
+case, hyphens, spaces and umlauts are folded away, a fragment is enough,
+and a near miss still counts. Two sessions that sound equally close are
+a question, not a guess. **This applies to calls only.** A session name
+typed into a slash command or an API call still means exactly what it
+says.
 
 The name in the window changes when the new agent is actually on the
 line — not when the handover is decided. The previous agent's last
