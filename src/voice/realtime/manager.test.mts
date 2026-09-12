@@ -7,13 +7,17 @@
 // on, may this agent be called at all, and is somebody already on the
 // line. Each of those is a gate that costs money when it fails open — a
 // realtime connection is billed per minute of standing, not per word.
+//
+// The fixtures below are written into SOMORA_HOME. That import comes
+// first for a reason — see the file it points at.
+import { ISOLATED_HOME } from '../../testing/isolated-home.mts';
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { SOMORA_HOME_DIR } from '../../server/logger.ts';
-import { VoiceCallManager } from './manager.ts';
-import { FakeRealtimeProvider, type FakeScriptStep } from './fake-provider.ts';
+const { VoiceCallManager } = await import('./manager.ts');
+const { FakeRealtimeProvider } = await import('./fake-provider.ts');
+type FakeScriptStep = import('./fake-provider.ts').FakeScriptStep;
 
 let pass = 0;
 let fail = 0;
@@ -24,7 +28,7 @@ const check = (name: string, cond: boolean, detail = ''): void => {
 
 // Two agents on disk: one that may be called, one that may not.
 async function writeAgent(name: string, voice: boolean): Promise<void> {
-  const dir = join(SOMORA_HOME_DIR, 'agents', name);
+  const dir = join(ISOLATED_HOME, 'agents', name);
   await mkdir(dir, { recursive: true });
   await writeFile(
     join(dir, 'agent.yaml'),
@@ -60,7 +64,7 @@ const config = {
   },
 };
 
-const manager = (): VoiceCallManager =>
+const manager = (): InstanceType<typeof VoiceCallManager> =>
   new VoiceCallManager({
     config: config as never,
     provider: new FakeRealtimeProvider(idle),
