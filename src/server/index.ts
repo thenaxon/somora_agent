@@ -176,8 +176,8 @@ import { triggerChatAbort } from './chat-aborts.ts';
 import {
   acquireSessionLock,
   DequeuedError,
-  dequeueSessionTurn,
   listAllSessionLockStates,
+  listSessionWaiters,
   getSessionLockStatus,
 } from './session-queue.ts';
 import { findWaitCycle, registerWait } from './ask-wait-graph.ts';
@@ -192,27 +192,16 @@ import {
   completeAskCall,
   failAskCall,
   getAskCall,
-  configureAskAttention,
   markAskCallPending,
   markAskCallRunning,
   registerAskCall,
   waitForAskCall,
 } from './ask-calls.ts';
+import { configureWorkWake, dequeueWork, listWork, markFetched, openWork, pendingWakesFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
-import {
-  cancelTaskCascade,
-  completeTask,
-  configureSubagentAttention,
-  failTask,
-  getTask,
-  listTasksForAgent,
-  markResultFetched,
-  newTaskId,
-  registerTask,
-  waitForTaskCompletion,
-} from './async-tasks.ts';
+import { cancelTaskCascade, completeTask, failTask, getTask, listTasksForAgent, markResultFetched, newTaskId, registerTask, waitForTaskCompletion } from './async-tasks.ts';
 import { reserveSpawnSlot, releaseSpawnSlot } from '../tools/agents/spawn.ts';
 import { readSessionJsonlRaw, renderSessionMarkdown } from './session-export.ts';
 import { codexReasoningEffort, resolveOpenAiReasoning } from '../engine/thinking-params.ts';
@@ -680,6 +669,17 @@ app.get('/health', (c) => {
       queueLength: s.queueLength,
       userWaiting: s.userWaiting,
       agentWaiting: s.agentWaiting,
+      // Phase 2: the waiters by name — id, origin kind, a text preview.
+      queued: listSessionWaiters(s.agent, s.session).map((w) => {
+        const it = w.workId ? getWork(w.workId) : undefined;
+        return {
+          id: w.workId ?? w.turnId ?? null,
+          kind: it?.origin.kind ?? (w.priority === 'user' ? 'human' : 'agent'),
+          preview: it?.preview ?? '',
+          enqueuedAt: w.enqueuedAt,
+          position: w.position,
+        };
+      }),
       lastEngineEventAt: lastEvent ?? null,
       lastEngineEventAgoMs: lastEvent ? now - lastEvent : null,
       // SSE-broadcast diagnostics (added 2026-05-19). Helps spot a wedged
@@ -2921,6 +2921,58 @@ app.delete('/agents/:agent/sessions/:session/project', async (c) => {
   }
 });
 
+// GET /agents/:agent/sessions/:session/work — what this session is
+// doing, what waits behind it, what is about to arrive, and what it
+// started elsewhere (Phase 2, private/turn-dispatch-phase2-design.md
+// §2.1). Previews only: no prompts, no tool bodies, no secrets.
+app.get('/agents/:agent/sessions/:session/work', async (c) => {
+  const agent = c.req.param('agent');
+  const ref = c.req.param('session');
+  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const session = await resolveSessionId(agent, ref);
+  if (!session) return c.json({ error: `session '${ref}' not found for agent '${agent}'` }, 404);
+  const view = (it: ReturnType<typeof getWork>) =>
+    it
+      ? {
+          id: it.id,
+          kind: it.origin.kind,
+          ...(it.origin.kind === 'wake' ? { about: it.origin.about } : {}),
+          state: it.state,
+          preview: it.preview,
+          target: it.target,
+          ...(it.requester ? { requester: it.requester } : {}),
+          enqueuedAt: it.enqueuedAt,
+          ...(it.startedAt !== undefined ? { startedAt: it.startedAt } : {}),
+          ...(it.finishedAt !== undefined ? { finishedAt: it.finishedAt } : {}),
+          ...(it.turnId ? { turnId: it.turnId } : {}),
+          ...(it.error ? { error: it.error } : {}),
+        }
+      : null;
+  const lock = getSessionLockStatus(agent, session);
+  const active = lock.busy && lock.activeWorkId ? view(getWork(lock.activeWorkId)) : null;
+  const queued = listSessionWaiters(agent, session).map((w) => ({
+    ...(view(w.workId ? getWork(w.workId) : undefined) ?? { id: w.turnId ?? null, kind: w.priority === 'user' ? 'human' : 'agent', state: 'queued', preview: '' }),
+    position: w.position,
+    enqueuedAt: w.enqueuedAt,
+  }));
+  const here = { agent, session };
+  const pendingWakes = pendingWakesFor(here).map((it) => ({ ...view(it)!, about: it.origin.kind === 'agent' ? 'a2a' : it.origin.kind === 'subagent' ? 'subagent' : 'job' }));
+  const children = listWork({ requester: here, states: ['queued', 'running'] })
+    .filter((it) => it.origin.kind === 'subagent' || it.origin.kind === 'agent')
+    .map((it) => view(it));
+  return c.json({
+    asOf: Date.now(),
+    agent,
+    session,
+    busy: lock.busy,
+    ...(lock.busy && !active ? { activeTurnId: lock.activeTurnId ?? null } : {}),
+    active,
+    queued,
+    pendingWakes,
+    children,
+  });
+});
+
 app.get('/chat/history', async (c) => {
   const agent = c.req.query('agent');
   const sessionRef = c.req.query('session');
@@ -4553,72 +4605,53 @@ app.post('/voice/turn', async (c) => {
 // Rene's 2026-08-26 ask: "solange queued praktisch nochmal zurücknehmen
 // und umschreiben". Entries live only between POST /chat/send and the
 // moment the lock is granted; A2A and sentinel turns are never listed.
-const queuedUserTurns = new Map<
-  string,
-  {
-    agent: string;
-    session: string;
-    text: string;
-    attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
-    enqueuedAt: number;
-    /** Set once the lock was granted. The entry stays until the turn
-     *  finishes so a late DELETE answers 409 (it is running) instead
-     *  of 404 (never heard of it) — the client shows different things
-     *  for those. */
-    startedAt?: number;
-  }
->();
 
-// DELETE /chat/queue/:turnId — take a queued user turn back before it
-// starts. 200 with the original text (+ attachment refs) when it was
-// still waiting; 409 when the lock already went to it (use /chat/abort
-// for that); 404 when nothing is queued under that id. Nothing is
-// written to the session file — the message never became a turn.
-// Other open clients get `turn_dequeued`, and fresh `turn_queued`
-// counts for the waiters that moved up.
-app.delete('/chat/queue/:turnId', (c) => {
-  const turnId = c.req.param('turnId');
-  const entry = queuedUserTurns.get(turnId);
-  if (!entry) {
+// DELETE /chat/queue/:id — take a waiting turn back before it starts,
+// whoever queued it (Phase 2). `:id` is the work-ledger id: the turnId
+// of a human turn, the call_id of an agent_ask, the task_id of a spawn.
+// A person (no body) may remove anything; an agent (body
+// `{ requesting_agent }`) only what it asked for itself → 403 otherwise.
+// 200 with the original text (+ attachment refs) for a human turn, 409
+// when the lock already went to it (use /chat/abort for that), 404 when
+// nothing waits under that id. Nothing is written to the session — the
+// message never became a turn; the requester of an agent item reads
+// `failed` with the reason. Other open clients get `turn_dequeued`, and
+// fresh `turn_queued` counts for the human waiters that moved up.
+app.delete('/chat/queue/:turnId', async (c) => {
+  const id = c.req.param('turnId');
+  const body = (await c.req.json().catch(() => ({}))) as { requesting_agent?: unknown };
+  const by = typeof body.requesting_agent === 'string' && body.requesting_agent.length > 0 ? { agent: body.requesting_agent } : 'human';
+  const outcome = dequeueWork(id, by);
+  if (outcome.status === 'unknown') {
     return c.json(
-      {
-        ok: false,
-        reason: 'unknown',
-        error: `no queued user turn '${turnId}' — it already started, finished, or was never queued`,
-      },
+      { ok: false, reason: 'unknown', error: `no queued turn '${id}' — it already started, finished, or was never queued` },
       404,
     );
   }
-  const outcome = dequeueSessionTurn(entry.agent, entry.session, turnId);
-  if (outcome.status === 'removed') {
-    queuedUserTurns.delete(turnId);
-    void publish(entry.agent, entry.session, { event: 'turn_dequeued', data: { turnId } });
-    for (const w of outcome.remaining) {
-      void publish(entry.agent, entry.session, { event: 'turn_queued', data: w });
+  if (outcome.status === 'forbidden') {
+    return c.json({ ok: false, reason: 'forbidden', id, error: `'${id}' was not queued by ${(by as { agent: string }).agent}` }, 403);
+  }
+  if (outcome.status === 'running') {
+    return c.json({ ok: false, reason: 'already_started', turnId: id, id }, 409);
+  }
+  const item = outcome.item;
+  const { agent, session } = item.target;
+  void publish(agent, session, { event: 'turn_dequeued', data: { turnId: id, workId: id } });
+  for (const w of listSessionWaiters(agent, session)) {
+    if (w.priority === 'user' && w.turnId) {
+      void publish(agent, session, { event: 'turn_queued', data: { turnId: w.turnId, ahead: w.position, workId: w.workId ?? w.turnId, kind: 'human' } });
     }
-    logger.info({
-      msg: 'chat.queue.dequeued',
-      turnId,
-      agent: entry.agent,
-      session: entry.session,
-      waitedMs: Date.now() - entry.enqueuedAt,
-      remaining: outcome.remaining.length,
-    });
-    return c.json({
-      ok: true,
-      turnId,
-      agent: entry.agent,
-      session: entry.session,
-      text: entry.text,
-      attachments: entry.attachments ?? [],
-    });
   }
-  if (outcome.status === 'running' || entry.startedAt !== undefined) {
-    // Entry lives until the turn's finally — no delete here.
-    return c.json({ ok: false, reason: 'already_started', turnId }, 409);
-  }
-  queuedUserTurns.delete(turnId);
-  return c.json({ ok: false, reason: 'unknown', turnId }, 404);
+  logger.info({ msg: 'chat.queue.dequeued', id, kind: item.origin.kind, agent, session, by: by === 'human' ? 'human' : by.agent });
+  return c.json({
+    ok: true,
+    turnId: id,
+    id,
+    kind: item.origin.kind,
+    agent,
+    session,
+    ...(item.origin.kind === 'human' ? { text: item.text ?? '', attachments: item.attachments ?? [] } : {}),
+  });
 });
 
 app.post('/chat/send', async (c) => {
@@ -4705,18 +4738,6 @@ app.post('/chat/send', async (c) => {
   // call is acting as A2A and yields to actual user turns). Release in
   // the finally block — forgetting deadlocks future turns on the session.
   const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
-  // Keep the payload of a human turn reachable while it waits in line,
-  // so DELETE /chat/queue/:turnId can hand the text back. Removed the
-  // moment the lock is granted (or the waiter is dequeued).
-  if (priority === 'user') {
-    queuedUserTurns.set(turnId, {
-      agent,
-      session,
-      text,
-      ...(body.attachments && body.attachments.length > 0 ? { attachments: body.attachments } : {}),
-      enqueuedAt: Date.now(),
-    });
-  }
   // Who wrote this. A third-party client may post as another agent
   // (from_agent, optionally from_session + agent_ask_call_id — the
   // documented A2A shape of this route); a sub-agent depth makes it a
@@ -4734,6 +4755,10 @@ app.post('/chat/send', async (c) => {
   // An agent_ask call id posted here is a call like any other: register
   // it so agent_ask_result finds it in the registry, not only in the
   // target's history (birdseye L17).
+  // The ledger item: a human turn keeps its text while it waits (so
+  // DELETE /chat/queue can hand it back); an agent_ask call posted here
+  // is a call like any other.
+  const workId = agentAskCallId && fromAgent ? agentAskCallId : turnId;
   if (agentAskCallId && fromAgent) {
     registerAskCall({
       call_id: agentAskCallId,
@@ -4741,6 +4766,17 @@ app.post('/chat/send', async (c) => {
       ...(fromSession ? { from_session: fromSession } : {}),
       target_agent: agent,
       target_session: session,
+      text,
+    });
+  } else {
+    openWork({
+      id: turnId,
+      origin,
+      target: { agent, session },
+      requester: origin.kind === 'human' ? { human: true } : undefined,
+      text,
+      ...(body.attachments && body.attachments.length > 0 ? { attachments: body.attachments } : {}),
+      wake: 'never',
     });
   }
   void (async () => {
@@ -4751,6 +4787,7 @@ app.post('/chat/send', async (c) => {
         session,
         text,
         turnId,
+        workId,
         origin,
         // When the lock is busy and we have to wait, broadcast a
         // turn_queued SSE so any client that already accepted this
@@ -4761,12 +4798,10 @@ app.post('/chat/send', async (c) => {
         onQueued: (ahead) => {
           void publish(agent, session, {
             event: 'turn_queued',
-            data: { turnId, ahead },
+            data: { turnId, ahead, workId, kind: origin.kind },
           });
         },
         beforeRun: () => {
-          const queuedEntry = queuedUserTurns.get(turnId);
-          if (queuedEntry) queuedEntry.startedAt = Date.now();
           if (agentAskCallId && fromAgent) markAskCallRunning(agentAskCallId);
           return true;
         },
@@ -4795,8 +4830,6 @@ app.post('/chat/send', async (c) => {
       });
       if (agentAskCallId && fromAgent) failAskCall(agentAskCallId, (err as Error).message);
       void publish(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
-    } finally {
-      queuedUserTurns.delete(turnId);
     }
   })();
 
@@ -5025,6 +5058,10 @@ app.post('/chat/send-sync', async (c) => {
      *  has no eyes gets the vision worker's description instead, the
      *  same as a chat attachment. */
     attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
+    /** `agent_ask wait:false` (Phase 2): register the call, start the
+     *  turn in the background, answer 202 at once with the call_id. The
+     *  asker is woken when the answer lands. */
+    detach?: boolean;
   };
   const agent = body.agent ?? (await defaultAgentFallback());
   if (!agent) {
@@ -5177,6 +5214,7 @@ app.post('/chat/send-sync', async (c) => {
 
   // agent_ask round trips are tracked by call_id so a caller whose
   // wait timed out can pick the outcome up later (agent_ask_result).
+  const detach = body.detach === true && Boolean(agentAskCallId && fromAgent);
   if (agentAskCallId && fromAgent) {
     registerAskCall({
       call_id: agentAskCallId,
@@ -5184,17 +5222,22 @@ app.post('/chat/send-sync', async (c) => {
       ...(fromSession ? { from_session: fromSession } : {}),
       target_agent: agent,
       target_session: session,
+      text,
+      ...(detach ? { detached: true } : {}),
     });
     // The asker hanging up IS the signal that it stopped waiting:
     // agent_ask aborts its fetch when its own timeout fires. Only such
     // a call needs waking when the answer finally lands — one that is
     // still on the line gets the answer as its tool result.
     const askerGone = c.req.raw.signal;
-    if (askerGone) {
+    if (askerGone && !detach) {
       if (askerGone.aborted) markAskCallPending(agentAskCallId);
       else askerGone.addEventListener('abort', () => markAskCallPending(agentAskCallId), { once: true });
     }
   }
+  // Every other caller of this route (a sync sub, a direct client) gets
+  // an item too, so the queue can show it.
+  const workId = agentAskCallId && fromAgent ? agentAskCallId : randomUUID();
   // Who this turn is from: an agent asking (agent_ask), a spawned
   // sub working a brief (spawn_subagent wait:true over HTTP — the
   // waiter fields name its parent), or a client of this route acting
@@ -5208,29 +5251,53 @@ app.post('/chat/send-sync', async (c) => {
           ...(waiterAgent && waiterSession ? { parent: { agent: waiterAgent, session: waiterSession } } : {}),
         }
       : { kind: 'human', via: 'chat' };
-  try {
-    const result = await startTurn({
-      agent,
-      session,
-      text,
+  if (!(agentAskCallId && fromAgent)) {
+    openWork({
+      id: workId,
       origin,
-      beforeRun: () => {
-        if (agentAskCallId) markAskCallRunning(agentAskCallId);
-        return true;
-      },
-      ...(body.attachments && body.attachments.length > 0
-        ? { attachments: body.attachments }
-        : {}),
-      ...(modelOverride ? { modelOverride } : {}),
-      ...(maxRoundsOverride
-        ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
-        : {}),
-      // Streams to SSE subscribers too — a human watching this session
-      // sees A2A inbound user_messages and the assistant's reply appear
-      // live, not just on session refresh.
+      target: { agent, session },
+      ...(waiterAgent && waiterSession ? { requester: { agent: waiterAgent, session: waiterSession } } : {}),
+      text,
+      wake: 'never',
     });
+  }
+  const turnArgs = {
+    agent,
+    session,
+    text,
+    workId,
+    origin,
+    ...(body.attachments && body.attachments.length > 0
+      ? { attachments: body.attachments }
+      : {}),
+    ...(modelOverride ? { modelOverride } : {}),
+    ...(maxRoundsOverride
+      ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
+      : {}),
+    // Streams to SSE subscribers too — a human watching this session
+    // sees A2A inbound user_messages and the assistant's reply appear
+    // live, not just on session refresh.
+  };
+  if (detach) {
+    releaseWait?.();
+    void startTurn(turnArgs).catch((err) => {
+      logger.warn({ msg: 'a2a.detached_turn_failed', call_id: agentAskCallId, agent, session, err: (err as Error).message });
+    });
+    return c.json(
+      {
+        call_id: agentAskCallId,
+        state: 'pending',
+        session_id: session,
+        ...(sessionCreated ? { session_created: true } : {}),
+        ...(sessionModel ? { session_model: sessionModel } : {}),
+        ...(sessionNote ? { session_note: sessionNote } : {}),
+      },
+      202,
+    );
+  }
+  try {
+    const result = await startTurn(turnArgs);
     if (!result) throw new Error('turn did not start');
-    if (agentAskCallId) completeAskCall(agentAskCallId, result);
     return c.json({
       ...result,
       session_id: session,
@@ -5239,6 +5306,11 @@ app.post('/chat/send-sync', async (c) => {
       ...(sessionNote ? { session_note: sessionNote } : {}),
     });
   } catch (err) {
+    if (err instanceof DequeuedError) {
+      // Taken back by the person before it started. The asker reads a
+      // failed call with the reason — not a model failure to retry.
+      return c.json({ finalText: '', outcome: 'failed', error: REMOVED_BY_USER, dequeued: true, session_id: session });
+    }
     if (agentAskCallId) failAskCall(agentAskCallId, (err as Error).message);
     return c.json({ error: (err as Error).message }, 500);
   } finally {
@@ -5353,6 +5425,7 @@ app.post('/spawn-async', async (c) => {
     target_agent: agent,
     target_session: session,
     started_at: Date.now(),
+    text,
     ...(typeof body.attention === 'boolean' ? { attention: body.attention } : {}),
   });
 
@@ -5381,6 +5454,7 @@ app.post('/spawn-async', async (c) => {
         session,
         text,
         turnId: task_id,
+        workId: task_id,
         origin,
         ...(body.attachments && body.attachments.length > 0
           ? { attachments: body.attachments }
@@ -5921,6 +5995,16 @@ configureSpawnTools({ chatTurnDeps });
 // timer, woken by a watcher — starts through startTurn from here on:
 // one lock, one abort registration, one turn id, one SSE wiring.
 configureStartTurn({ chatTurnDeps, publish });
+{
+  const consult = config.realtimeVoice?.consult;
+  if (consult && (consult.lockPatienceMs !== undefined || consult.answerPatienceMs !== undefined)) {
+    logger.warn({
+      msg: 'config.retired_keys',
+      keys: ['realtimeVoice.consult.lockPatienceMs', 'realtimeVoice.consult.answerPatienceMs'],
+      hint: 'ignored since 2026-09-13 — a spoken question waits realtimeVoice.consult.quickAnswerMs, then is handed over',
+    });
+  }
+}
 
 // Realtime voice — one manager owns every live call. The browser is a
 // dumb terminal on this feature (microphone in, speaker out, state on
@@ -5960,88 +6044,78 @@ const voiceCalls = new VoiceCallManager({
     //
     // Live 2026-09-11: the agent was asked to write a small game in a
     // tmux session; its turn stayed open for minutes and the call had
-    // nothing to say for that whole time. So a lookup gets a short
-    // patience, in two places. It waits only briefly for the session
-    // lock — every other turn in somora takes that lock, and without it
-    // a spoken question and a typed one would write into the same
-    // history at once — and once running it waits only so long for an
-    // answer. Past either, the work keeps going and lands in the
-    // session; the voice gets a status it can say out loud. Both
-    // patiences are configuration (realtimeVoice.consult).
-    const patience = config.realtimeVoice?.consult ?? { lockPatienceMs: 5_000, answerPatienceMs: 60_000 };
-    const lockPatienceMs = patience.lockPatienceMs;
-    const answerPatienceMs = patience.answerPatienceMs;
+    // nothing to say for that whole time. Since 2026-09-13 a spoken
+    // question is queued like any other turn (no more giving up on a
+    // busy session) and the call waits ONE patience for the answer —
+    // for the session and for the turn together. Past it the voice
+    // says it handed the request over and keeps talking; the ledger
+    // brings the answer back to the call when it lands (deliver), or
+    // the voice fetches it when the user asks (consultResult).
+    const quickAnswerMs = config.realtimeVoice?.consult?.quickAnswerMs ?? 8_000;
     const consultId = randomUUID();
-    const before = getSessionLockStatus(agent, session);
-    const waiting = new AbortController();
-    const giveUp = setTimeout(() => waiting.abort(), lockPatienceMs);
-    // startTurn holds the lock wait and the turn in one promise. The
-    // consult needs to know WHEN the lock was granted (the answer
-    // patience starts there) and whether the wait was what failed.
-    let lockGranted!: () => void;
-    const granted = new Promise<'granted'>((resolve) => {
-      lockGranted = () => resolve('granted');
+    const origin: TurnOrigin = { kind: 'voice', consultId, ...(callId ? { callId } : {}) };
+    openWork({
+      id: consultId,
+      origin,
+      target: { agent, session },
+      ...(callId ? { requester: { voiceCall: callId } } : {}),
+      text,
+      waiting: true,
+      // Delivery goes through the call, never through a wake turn.
+      wake: 'never',
     });
     const turn = startTurn({
       agent,
       session,
       text,
       turnId: consultId,
-      origin: { kind: 'voice', consultId, ...(callId ? { callId } : {}) },
-      lockSignal: waiting.signal,
-      beforeRun: () => {
-        clearTimeout(giveUp);
-        lockGranted();
-        return true;
-      },
+      workId: consultId,
+      origin,
       // The framing and the last lines of the call travel beside the
       // question, not inside it: the model reads both, the session
       // records only what was asked.
       ...(prefix ? { turnPrefix: prefix } : {}),
       // A human watching the same session sees the question and the
       // answer appear live, exactly like any other turn.
+    }).catch((err) => {
+      logger.warn({ msg: 'voice.consult_turn_failed', consultId, agent, session, err: (err as Error).message });
+      return null;
     });
-    const first = await Promise.race([granted, turn.then(() => 'settled' as const, () => 'settled' as const)]);
-    if (first === 'settled') {
-      // Settled before the lock was granted: the wait was aborted by
-      // the patience timer (or the turn could not start at all).
-      let reason = 'busy';
-      try {
-        await turn;
-      } catch (err) {
-        reason = (err as Error).name === 'AbortError' ? 'busy' : (err as Error).message;
-      }
-      clearTimeout(giveUp);
-      if (reason !== 'busy') throw new Error(reason);
-      const minutes = before.activeSince ? Math.max(1, Math.round((Date.now() - before.activeSince) / 60_000)) : 0;
-      return {
-        text: `busy: you are still working on something you started ${minutes} minute(s) ago. Say that, and offer to look again in a moment.`,
-        pending: true,
-      };
-    }
-
     const timeout = Symbol('voice-consult-timeout');
     const raced = await Promise.race([
       turn,
-      new Promise<typeof timeout>((resolve) => setTimeout(() => resolve(timeout), answerPatienceMs)),
+      new Promise<typeof timeout>((resolve) => setTimeout(() => resolve(timeout), quickAnswerMs)),
     ]);
     if (raced === timeout) {
       // Deliberately NOT cancelled: the user asked for the work, and it
       // finishes into the session. Only the conversation moves on.
-      turn.catch((err) => logger.warn({ msg: 'voice.consult_late_failure', err: (err as Error).message }));
-      logger.info({ msg: 'voice.consult_pending', agent, session, consultId, afterMs: answerPatienceMs });
-      return {
-        text: 'still working on it — this is taking longer than a sentence. Say so, keep talking, and offer to check again.',
-        pending: true,
-        turnId: consultId,
-      };
+      setWaiting(consultId, false);
+      const position = listSessionWaiters(agent, session).find((w) => w.workId === consultId)?.position ?? 0;
+      logger.info({ msg: 'voice.consult_handed_over', agent, session, consultId, position, afterMs: quickAnswerMs });
+      return { text: 'handed over', pending: true, state: 'handed_over', consultId, position, turnId: consultId };
     }
     if (!raced) throw new Error('consult turn did not start');
     return {
       text: raced.finalText,
       ...(raced.outcome ? { outcome: raced.outcome } : {}),
       turnId: consultId,
+      state: 'answered',
+      consultId,
     };
+  },
+  consultResult: async (consultId) => {
+    const it = getWork(consultId);
+    if (!it || it.origin.kind !== 'voice') return null;
+    if (it.state === 'queued' || it.state === 'running') {
+      const position = listSessionWaiters(it.target.agent, it.target.session).find((w) => w.workId === consultId)?.position ?? 0;
+      return { state: 'pending', ...(position ? { position } : {}) };
+    }
+    markFetched(consultId);
+    if (it.state === 'done') return { state: 'done', text: it.result?.finalText ?? '' };
+    return { state: 'failed', error: it.error ?? 'unknown error' };
+  },
+  markConsultFetched: async (consultId) => {
+    markFetched(consultId);
   },
 });
 // Sentinel scheduler — wire deps + boot the trigger loop. Same pattern
@@ -6108,11 +6182,15 @@ const browserService = configureBrowserService(config.browser, {
   resolveSession: resolveBrowserSession,
   dispatchWakeTurn: async ({ agent, session, text, viewId, cause, handoffId }) => {
     session = await resolveBrowserSession(agent, session);
+    const origin: TurnOrigin = { kind: 'browser', viewId, cause, ...(handoffId ? { handoffId } : {}) };
+    const workId = `browser-${handoffId ?? randomUUID()}`;
+    openWork({ id: workId, origin, target: { agent, session }, text, waiting: false, wake: 'never' });
     await startTurn({
       agent,
       session,
       text,
-      origin: { kind: 'browser', viewId, cause, ...(handoffId ? { handoffId } : {}) },
+      workId,
+      origin,
       // The lock wait can be long; the session may have been archived
       // meanwhile. Re-check once the lock is held, before anything is
       // written.
@@ -6131,31 +6209,26 @@ const screencasts = new ScreencastRegistry(browserService);
 // 2026-09-12: hans asked lisa with the minimum timeout, stopped
 // waiting after a second, and never learned that her 208-second answer
 // existed.
-configureAskAttention({
-  graceMs: 3_000,
-  dispatchWakeTurn: async ({ agent, session, text, callId }) => {
+// One wake for every kind of finished work (Phase 2): a late agent_ask
+// answer, a background sub-agent, a rendered video. The grace is one
+// config value; the item's own origin says what the wake is about, so
+// the reader sees an agent answer as an agent answer and a sub-agent
+// as a sub-agent (Rene, 2026-09-12 — "war ja eine agent_ask message
+// oder?"). A sub-orchestrator is woken at ITS depth, so it keeps the
+// SUBAGENT framing and the depth cap it had when it spawned.
+configureWorkWake({
+  graceMs: config.agentLoop.wakeGraceMs,
+  dispatchWakeTurn: async ({ agent, session, text, about, ref, depth, mediaIds }) => {
+    const origin: TurnOrigin = { kind: 'wake', about, ref, ...(depth > 0 ? { depth } : {}) };
+    const workId = `wake-${ref}`;
+    openWork({ id: workId, origin, target: { agent, session }, text, waiting: false, wake: 'never' });
     await startTurn({
       agent,
       session,
       text,
-      // Its own origin, not 'subagent': the reader saw a sub-agent
-      // icon for an answer that came from a peer agent it had asked
-      // (Rene, 2026-09-12 — "war ja eine agent_ask message oder?").
-      origin: { kind: 'wake', about: 'a2a', ref: callId },
-    });
-  },
-});
-
-configureSubagentAttention({
-  graceMs: 2_000,
-  dispatchWakeTurn: async ({ agent, session, text, taskId, depth }) => {
-    await startTurn({
-      agent,
-      session,
-      text,
-      // A sub-orchestrator is woken at ITS depth, so it keeps the
-      // SUBAGENT framing and the depth cap it had when it spawned.
-      origin: { kind: 'wake', about: 'subagent', ref: taskId, ...(depth > 0 ? { depth } : {}) },
+      workId,
+      origin,
+      ...(mediaIds && mediaIds.length > 0 ? { attachMediaIds: mediaIds } : {}),
     });
   },
 });

@@ -300,6 +300,11 @@ export function openStream(
           turnId: data.turnId,
           ahead: data.ahead,
         };
+      case 'turn_dequeued': {
+        const id = typeof data.turnId === 'string' ? data.turnId : typeof data.workId === 'string' ? data.workId : null;
+        if (!id) return null;
+        return { kind: 'turn-dequeued', turnId: id };
+      }
       case 'project':
         return {
           kind: 'project',

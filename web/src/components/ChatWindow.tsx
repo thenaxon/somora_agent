@@ -35,6 +35,9 @@ import { ScreenshotCapture } from './ScreenshotCapture';
 import { MicCapture } from './MicCapture';
 import { ChatMenuPopover } from './ChatMenuPopover';
 import { ProjectChip } from './ProjectChip';
+import { WorkBadge, WorkQueuePopover } from './WorkQueuePopover';
+import { useSessionWork } from '../hooks/useSessionWork';
+import type { WorkItemDto } from '../lib/api';
 
 interface Props {
   onOpenBrowser?: (id: string, title: string) => void;
@@ -54,6 +57,10 @@ interface Props {
   onPin?: (note: import('../types/window').PinNote) => void;
   /** Close the pin-note window for a given message id. */
   onUnpin?: (msgId: string) => void;
+  /** Open (or focus) another agent's session — the queue popover's
+   *  "From here" rows use it to jump to a sub-agent or an asked agent,
+   *  the same way the sessions list opens a chat. */
+  onOpenSession?: (agent: string, session: string) => void;
 }
 
 function formatTokens(n: number | undefined | null): string {
@@ -72,6 +79,7 @@ export function ChatWindow({
   onPin,
   onUnpin,
   onOpenBrowser,
+  onOpenSession,
 }: Props) {
   const browsers = useBrowsers();
   const handoffs = browsers.browsers.filter((b) => b.handoff?.agent === agent.name && b.handoff.session === sessionId);
@@ -259,6 +267,12 @@ export function ChatWindow({
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuAnchorRect, setMenuAnchorRect] = useState<DOMRect | null>(null);
+  // Work-queue badge + popover (header). The snapshot comes from
+  // GET …/work; while the popover is open it re-reads every 3 s so
+  // the wait times keep counting.
+  const [workOpen, setWorkOpen] = useState(false);
+  const [workAnchorRect, setWorkAnchorRect] = useState<DOMRect | null>(null);
+  const { work, refresh: refreshWork } = useSessionWork(agent.name, sessionId, workOpen);
 
   // Keep the textarea height in sync with the current draft. Driving this
   // from a layout-effect — rather than from the onChange handler alone —
@@ -732,6 +746,37 @@ export function ChatWindow({
   // affordance). The server hands the text + attachment refs back;
   // attachments re-enter the tray as ready items (already uploaded,
   // same hashes), so a re-send carries them again without a re-upload.
+  // Put a taken-back message (text + already-uploaded attachments)
+  // into the composer — shared by the bubble's ⌛ "edit" and the
+  // queue popover's × on a human entry.
+  const restoreToComposer = useCallback(
+    (text: string, attachments: Array<{ hash: string; name: string; mime: string; size: number }>) => {
+      setDraft((cur) => (cur.trim() ? `${cur.replace(/\s+$/, '')}\n${text}` : text));
+      if (attachments.length > 0) {
+        const kindOf = (mime: string): 'image' | 'pdf' | 'text' =>
+          mime.startsWith('image/') ? 'image' : mime === 'application/pdf' ? 'pdf' : 'text';
+        setPendingAttachments((prev) => [
+          ...prev,
+          ...attachments.map((a) => ({
+            id: `recall-${a.hash}-${Date.now()}`,
+            state: 'ready' as const,
+            name: a.name,
+            size: a.size,
+            mimeHint: a.mime,
+            ref: { hash: a.hash, name: a.name, mime: a.mime, size: a.size, kind: kindOf(a.mime) },
+          })),
+        ]);
+      }
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      });
+    },
+    [],
+  );
+
   const onRecall = useCallback(
     (messageId: string) => {
       void (async () => {
@@ -744,28 +789,7 @@ export function ChatWindow({
             });
             return;
           }
-          setDraft((cur) => (cur.trim() ? `${cur.replace(/\s+$/, '')}\n${r.text}` : r.text));
-          if (r.attachments.length > 0) {
-            const kindOf = (mime: string): 'image' | 'pdf' | 'text' =>
-              mime.startsWith('image/') ? 'image' : mime === 'application/pdf' ? 'pdf' : 'text';
-            setPendingAttachments((prev) => [
-              ...prev,
-              ...r.attachments.map((a) => ({
-                id: `recall-${a.hash}-${Date.now()}`,
-                state: 'ready' as const,
-                name: a.name,
-                size: a.size,
-                mimeHint: a.mime,
-                ref: { hash: a.hash, name: a.name, mime: a.mime, size: a.size, kind: kindOf(a.mime) },
-              })),
-            ]);
-          }
-          requestAnimationFrame(() => {
-            const el = textareaRef.current;
-            if (!el) return;
-            el.focus();
-            el.setSelectionRange(el.value.length, el.value.length);
-          });
+          restoreToComposer(r.text, r.attachments);
         } catch (err) {
           setSystemNotice({
             text: `Could not take the message back: ${(err as Error).message}`,
@@ -774,7 +798,44 @@ export function ChatWindow({
         }
       })();
     },
-    [chat],
+    [chat, restoreToComposer],
+  );
+
+  // × on a waiting entry in the queue popover. A human turn that this
+  // window sent goes through chat.recall (drops the optimistic bubble
+  // and hands the text back); anything else — another client's message,
+  // an agent_ask, a spawn, a sentinel fire — is removed straight via
+  // DELETE /chat/queue/:id and, if it was a person's text, restored too.
+  // Resolves with the note the popover shows inline, or null.
+  const removeWorkItem = useCallback(
+    async (item: WorkItemDto): Promise<string | null> => {
+      if (!item.id) return 'This entry has no id — an older server queued it';
+      const id = item.id;
+      try {
+        if (item.kind === 'human') {
+          const row = chat.messages.find((m) => m.role === 'user' && m.turnId === id);
+          if (row) {
+            const r = await chat.recall(row.id);
+            if (!r) return 'That message already started — use Stop to interrupt it';
+            restoreToComposer(r.text, r.attachments);
+            return null;
+          }
+        }
+        const r = await api.dequeue(id);
+        if (!r.ok) {
+          return r.reason === 'already_started'
+            ? 'That entry already started — use Stop to interrupt it'
+            : 'Nothing waits under that id any more';
+        }
+        if (item.kind === 'human' && r.text) restoreToComposer(r.text, r.attachments);
+        return null;
+      } catch (err) {
+        return `Could not remove it: ${(err as Error).message}`;
+      } finally {
+        refreshWork();
+      }
+    },
+    [chat, restoreToComposer, refreshWork],
   );
 
   const onAbort = useCallback(() => {
@@ -928,6 +989,20 @@ export function ChatWindow({
                 streaming…
               </span>
             )}
+            <WorkBadge
+              work={work}
+              open={workOpen}
+              color={color}
+              onToggle={(rect) => {
+                if (workOpen) {
+                  setWorkOpen(false);
+                  return;
+                }
+                setWorkAnchorRect(rect);
+                setWorkOpen(true);
+                refreshWork();
+              }}
+            />
           </div>
           <div
             className="chat-header-meta"
@@ -1201,6 +1276,15 @@ export function ChatWindow({
         showThinking={showThinking}
         onToggleShowThinking={() => setShowThinking((v) => !v)}
         onSlash={dispatchSlash}
+      />
+      <WorkQueuePopover
+        open={workOpen}
+        onClose={() => setWorkOpen(false)}
+        anchorRect={workAnchorRect}
+        work={work}
+        onStop={onAbort}
+        onRemove={removeWorkItem}
+        onOpenSession={onOpenSession}
       />
 
       <div

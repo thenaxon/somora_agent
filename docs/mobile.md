@@ -150,10 +150,18 @@ queue serialises on the server side — turns execute in order, no
 preemption. See [api.md](api.md#queuing) for the lock semantics.
 
 While a bubble still shows the marker, **↩ edit** next to it takes the
-message back into the composer (`DELETE /chat/queue/:turnId`) so you
+message back into the composer (`DELETE /chat/queue/:id`) so you
 can change it and send again; it then joins the end of the queue. If
 the turn started meanwhile, the marker just clears and a notice says
 so.
+
+The header badge (`waiting 3 · running`, `2 sub-agents`) counts every
+turn on the session, whoever started it. Tap it for the same four
+sections the desktop shows — Running, Waiting, Arriving, From here —
+as a sheet. **×** on a waiting entry removes it, whoever queued it:
+your own message comes back into the composer, another agent's
+question is reported to that agent as failed with the reason, a
+sub-agent brief as cancelled, a sentinel fire as skipped.
 
 Stop (composer or bubble — same action) cancels the
 **currently-running** turn only, whatever started it — your message,

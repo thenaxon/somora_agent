@@ -8,6 +8,8 @@
 import type { FromSystem, TurnOrigin } from '../types/origin';
 import type { SamplingParams, SamplingPatch } from './sampling';
 export type { SamplingParams, SamplingPatch } from './sampling';
+import type { WorkRequester } from './origin';
+export type { WorkRequester } from './origin';
 
 export interface AgentInfo {
   name: string;
@@ -802,7 +804,15 @@ export const api = {
   dequeue: async (
     turnId: string,
   ): Promise<
-    | { ok: true; text: string; attachments: Array<{ hash: string; name: string; mime: string; size: number }> }
+    | {
+        ok: true;
+        /** The ledger's origin kind (Phase 2): `human` for a person's
+         *  turn, `agent` for an agent_ask, `subagent` for a spawn, … */
+        kind?: string;
+        /** Only a human turn hands its text back; '' otherwise. */
+        text: string;
+        attachments: Array<{ hash: string; name: string; mime: string; size: number }>;
+      }
     | { ok: false; reason: 'already_started' | 'unknown' }
   > => {
     const res = await fetch(`/chat/queue/${encodeURIComponent(turnId)}`, { method: 'DELETE' });
@@ -810,11 +820,25 @@ export const api = {
     if (res.status === 404) return { ok: false, reason: 'unknown' };
     if (!res.ok) throw new Error(`dequeue failed: HTTP ${res.status}`);
     const body = (await res.json()) as {
-      text: string;
+      kind?: string;
+      text?: string;
       attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
     };
-    return { ok: true, text: body.text, attachments: body.attachments ?? [] };
+    return {
+      ok: true,
+      ...(body.kind ? { kind: body.kind } : {}),
+      text: body.text ?? '',
+      attachments: body.attachments ?? [],
+    };
   },
+  /** What a session is doing right now, what waits behind it, what is
+   *  on its way back to it, and what it started elsewhere
+   *  (GET /agents/:agent/sessions/:session/work). Previews only. */
+  sessionWork: (agent: string, session: string, signal?: AbortSignal) =>
+    getJson<SessionWorkResponse>(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/work`,
+      signal ? { signal } : undefined,
+    ),
   send: async (
     agent: string,
     session: string,
@@ -1346,6 +1370,44 @@ export interface SentinelFireEntry {
   taskId?: string;
   catchUp?: boolean;
   testMode?: boolean;
+}
+
+/** One entry of a session's work queue (GET …/sessions/:session/work).
+ *  `id` is the ledger id — a human turn's turnId, an agent_ask's
+ *  call_id, a spawn's task_id; null only for a waiter the ledger does
+ *  not know (pre-Phase-2 servers), which then cannot be removed. */
+export interface WorkItemDto {
+  id: string | null;
+  /** Origin kind: human | agent | subagent | sentinel | tmux | browser | voice | wake. */
+  kind: string;
+  /** For a wake: what came back. */
+  about?: 'a2a' | 'subagent' | 'job';
+  state: string;
+  /** First 160 characters of the text — the only text the route sends. */
+  preview: string;
+  /** Where the work runs. */
+  target?: { agent: string; session: string };
+  requester?: WorkRequester;
+  enqueuedAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  turnId?: string;
+  /** 1 = next in line (queued entries only). */
+  position?: number;
+  error?: string;
+}
+
+export interface SessionWorkResponse {
+  /** Server clock when the snapshot was taken — elapsed times are
+   *  computed against it, not the browser's clock. */
+  asOf: number;
+  agent: string;
+  session: string;
+  busy: boolean;
+  active: WorkItemDto | null;
+  queued: WorkItemDto[];
+  pendingWakes: WorkItemDto[];
+  children: WorkItemDto[];
 }
 
 /** Row shape returned by GET /sessions (cross-agent). The web Sessions

@@ -358,6 +358,11 @@ export function Desktop() {
                   onPin={wm.openPinNote}
                   onUnpin={wm.unpinMessage}
                   onOpenBrowser={wm.openBrowser}
+                  onOpenSession={(agentName, sessionId) => {
+                    const target = agents.find((a) => a.name === agentName);
+                    if (!target) return;
+                    openAgentSession(target, sessionId, sessionId === 'main' ? 'main' : sessionId);
+                  }}
                 />
               </Window>
             );

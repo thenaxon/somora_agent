@@ -14,10 +14,12 @@ import { AgentBody, TurnView } from './turn-views.tsx';
 import { THINKING_TAIL_LINES, tailLines } from './thinking-text.ts';
 import { nextId, summarize } from './format.ts';
 import { rememberAgent } from './state.ts';
+import { formatWorkCounters } from './work-queue.ts';
 import type {
   AgentInfo,
   PendingQueuedTurn,
   ProjectInfo,
+  SessionWork,
   StreamEvent,
   Turn,
   TurnStats,
@@ -116,6 +118,25 @@ export function App({
   // /chat/send response returned the turnId. Keyed by turnId; drained
   // by handleSubmit once the id is known.
   const pendingQueuedBufferRef = useRef<Map<string, number>>(new Map());
+  // The session's work queue (GET …/work): drives the `⌛3 ▶1 🤖2`
+  // counters in the status line. Refetched on the turn lifecycle
+  // events (turn_queued, turn_dequeued, turn start/end), on /queue rm
+  // and on session switch — never polled while idle. The /queue
+  // command fetches its own fresh copy for the listing.
+  const [work, setWork] = useState<SessionWork | null>(null);
+  const workFetchSeq = useRef(0);
+  function refreshWork(forAgent = agent, forSession = session): void {
+    const seq = ++workFetchSeq.current;
+    apiRef.current
+      .fetchWork(forAgent, forSession)
+      .then((w) => {
+        // A later fetch (or a session switch) wins over a slow earlier one.
+        if (seq === workFetchSeq.current) setWork(w);
+      })
+      .catch(() => {
+        /* server unreachable — keep the previous counters */
+      });
+  }
   useEffect(() => {
     showMemoryRef.current = showMemory;
   }, [showMemory]);
@@ -344,6 +365,8 @@ export function App({
     setStats(null);
     setPendingQueued([]);
     pendingQueuedBufferRef.current.clear();
+    setWork(null);
+    refreshWork(agent, session);
     // Drop stale self-send entries from the previous (agent, session)
     // — a leftover text would silently swallow the SAME text sent by
     // another client on the new session's stream.
@@ -534,6 +557,7 @@ export function App({
         setConnected(true);
         return;
       case 'agent-start':
+        refreshWork(agent, session);
         setStreaming(true);
         setStreamingText('');
         setStreamingThinking('');
@@ -597,6 +621,7 @@ export function App({
         });
         setStreaming(false);
         setBusy(false);
+        refreshWork(agent, session);
         // Refresh wiki-review loop indicator after each turn — the
         // turn may have called dream_review({action:'start'|'end'}).
         apiRef.current.fetchLoopState().then((s) => {
@@ -776,6 +801,17 @@ export function App({
           next[idx] = { ...existing, queued: { ahead: ev.ahead } };
           return next;
         });
+        refreshWork(agent, session);
+        return;
+      }
+      case 'turn-dequeued': {
+        // A waiting entry was removed (from this TUI via /queue rm, or
+        // from another client). Our own pending-queued row for it —
+        // if it was ours — would otherwise sit there forever, since
+        // no user_message ever promotes it.
+        pendingQueuedBufferRef.current.delete(ev.turnId);
+        setPendingQueued((prev) => prev.filter((p) => p.turnId !== ev.turnId));
+        refreshWork(agent, session);
         return;
       }
       case 'project': {
@@ -935,6 +971,18 @@ export function App({
               .fetchSessionProject(agent, session)
               .then((info) => setProject(info.project))
               .catch(() => setProject(null));
+          } else if (a.kind === 'restoreInput') {
+            // /queue rm took a human turn back: its text returns to
+            // the input for a rewrite, and the pending-queued row it
+            // had (if this TUI sent it) goes away. The server's
+            // turn_dequeued does the latter too; doing it here keeps
+            // the row from flashing until the event lands.
+            pendingQueuedBufferRef.current.delete(a.turnId);
+            setPendingQueued((prev) => prev.filter((p) => p.turnId !== a.turnId));
+            setInput(a.text);
+            setHistoryIndex(null);
+          } else if (a.kind === 'workRefresh') {
+            refreshWork(agent, session);
           }
         }
       } catch (err) {
@@ -1103,6 +1151,7 @@ export function App({
         reviewLoop={reviewLoop}
         project={project}
         unreadOtherAgents={unreadOtherAgents}
+        workCounters={formatWorkCounters(work)}
       />
       <SlashAutocomplete matches={slashMatches} selectedIndex={safeAutocompleteIndex} />
       <Box>

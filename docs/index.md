@@ -159,6 +159,6 @@ high-value next steps in rough order:
 | [compaction.md](compaction.md) | Context management | When and how a session is summarised, which model does it, what `contextWindow` controls per engine |
 | [thinking.md](thinking.md) | Reasoning depth | Per-engine thinking levels, session overrides |
 | [sampling.md](sampling.md) | Sampling parameters | temperature, top_p and friends per model, agent and session |
-| [display.md](display.md) | TUI toggles | What the terminal client shows |
+| [display.md](display.md) | TUI toggles | What the terminal client shows, and `/queue` |
 | [cache-strategy.md](cache-strategy.md) | Prompt-cache mechanics | Why the system prompt is ordered the way it is |
 | [security.md](security.md) | Trust model | Network posture, sandbox stance |

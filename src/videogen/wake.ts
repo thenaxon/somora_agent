@@ -11,8 +11,8 @@
 // point of releasing the turn in the first place.
 
 import { logger } from '../server/logger.ts';
-import { startTurn } from '../server/start-turn.ts';
-import type { ChatTurnResolveDeps } from '../server/run-turn-types.ts';
+import type { ChatTurnResolveDeps, ChatTurnResult } from '../server/run-turn-types.ts';
+import { finishWork, getWork, markRunning, openWork } from '../server/work-ledger.ts';
 import { loadPersona } from '../persona/loader.ts';
 import type { VideoJob } from './jobs.ts';
 
@@ -75,18 +75,40 @@ export async function wakeForJob(job: VideoJob): Promise<void> {
   }
   const agent = job.agent;
   const session = job.session ?? 'main';
-  void startTurn({
-    agent,
-    session,
-    text: wakePrompt(job),
-    origin: { kind: 'wake', about: 'job', ref: job.id },
+  // The job has been in the work ledger since it started (generate.ts).
+  // Finishing it there schedules the one wake every kind of work gets:
+  // after the grace, unless the agent already looked (video_status).
+  // A job the ledger no longer knows (server restarted since the
+  // start) is opened again so the wake still comes.
+  if (!getWork(job.id)) {
+    openWork({
+      id: job.id,
+      origin: { kind: 'wake', about: 'job', ref: job.id },
+      target: { agent, session },
+      requester: { agent, session },
+      text: `video render (${job.modelName}): ${job.prompt}`,
+      waiting: false,
+    });
+    markRunning(job.id);
+  }
+  const result: ChatTurnResult = {
+    finalText: job.status === 'completed' ? (job.path ?? '') : '',
+    outcome: job.status === 'completed' ? 'completed' : 'failed',
+    tool_calls: 0,
+    contextWindow: 0,
+    provider: job.provider,
+    model: job.modelName,
+    thinkingActive: false,
+    ms: 0,
+    ...(job.status === 'completed' ? {} : { error: job.error ?? `render ${job.status}` }),
+  };
+  finishWork(job.id, result, {
+    wakeText: wakePrompt(job),
     // Without this the video never reaches the chat: the file was
-    // stored minutes before this turn began, so the turn's own time
-    // window — which is how media normally finds its bubble — does
-    // not reach back far enough to see it.
-    ...(job.mediaId ? { attachMediaIds: [job.mediaId] } : {}),
-    deps,
-  })
-    .then(() => logger.info({ msg: 'videogen.woke_agent', job: job.id, agent, status: job.status }))
-    .catch((err) => logger.warn({ msg: 'videogen.wake_failed', job: job.id, agent, err: (err as Error).message }));
+    // stored minutes before the wake turn begins, so the turn's own time
+    // window — which is how media normally finds its bubble — does not
+    // reach back far enough to see it.
+    ...(job.mediaId ? { wakeMediaIds: [job.mediaId] } : {}),
+  });
+  logger.info({ msg: 'videogen.job_finished_in_ledger', job: job.id, agent, status: job.status });
 }

@@ -520,8 +520,9 @@ export const subagentCancel: ToolDefinition<z.infer<typeof CancelInput>> = {
   name: 'subagent_cancel',
   toolset: 'agents',
   description:
-    'Cancel a running sub-agent task spawned with wait:false — INCLUDING any child-subs it ' +
-    'spawned itself (cascade over the whole spawn tree). The in-flight LLM call is aborted ' +
+    'Cancel a sub-agent task spawned with wait:false, running or still waiting in its ' +
+    'session queue — INCLUDING any child-subs it spawned itself (cascade over the whole spawn ' +
+    'tree). The in-flight LLM call is aborted ' +
     'via the same signal the Stop button uses; files the sub already wrote to disk stay ' +
     'untouched, and its session JSONL remains inspectable. Use this when a spawn turned out ' +
     'wrong (bad instructions, wrong model, cost concerns) instead of waiting it out or ' +

@@ -99,6 +99,16 @@ const AskInput = z
       .max(MAX_IMAGES_PER_MESSAGE)
       .optional()
       .describe(IMAGES_FIELD_DESCRIPTION),
+    wait: z
+      .boolean()
+      .optional()
+      .describe(
+        'Default true: wait for the reply (up to timeout_ms). false: hand the message over and ' +
+          'return at once with state:"pending" and a call_id — you are woken with an ' +
+          '[agent answer] turn when the reply lands, or read it with agent_ask_result. Use ' +
+          'false for work that may take minutes; the old trick of a 1-second timeout_ms is ' +
+          'no longer needed.',
+      ),
     timeout_ms: z
       .number()
       .int()
@@ -147,6 +157,9 @@ interface AskPendingResult {
   target_agent: string;
   target_session: string;
   session_inferred?: boolean;
+  session_created?: boolean;
+  session_model?: string;
+  session_note?: string;
   hint: string;
   ms: number;
 }
@@ -183,10 +196,12 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'session Y; otherwise to the target\'s main session. Pass `session` explicitly for a specific ' +
     'project session; add create_session:true (optionally with model:"<alias>") when the user ' +
     'wants the target in a project session it may not have yet — the session is created, the ' +
-    'model pinned on it, and the target told. Default timeout 5 min, cap 30 min — slow local ' +
-    'models routinely need minutes. On timeout: returns state:"pending" (NOT an error); the call ' +
-    'may still complete on the target side — fetch or wait for it with agent_ask_result ' +
-    '(call_id), never by re-sending the message. ' +
+    'model pinned on it, and the target told. Two ways to wait: wait:true (default) blocks up ' +
+    'to timeout_ms (5 min default, 30 min cap — slow local models routinely need minutes) and ' +
+    'returns state:"pending" (NOT an error) when time runs out; wait:false hands the message ' +
+    'over and returns pending at once. Either way a pending call still completes on the ' +
+    'target — you are woken with an [agent answer] turn when it does, or fetch it with ' +
+    'agent_ask_result(call_id); never re-send the message. ' +
     'IMPORTANT: cannot ask yourself — use spawn_subagent for self-clone tasks. ' +
     'Calls queue on the target session first come, first served, like typed turns. ' +
     'state:"failed" carries the reason: a model or engine error on the target, or ' +
@@ -231,6 +246,12 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         description:
           'Max wait in ms. Default agentLoop.longTaskDefaultTimeoutMs (5 min); ' +
           'capped at longTaskMaxTimeoutMs (30 min).',
+      },
+      wait: {
+        type: 'boolean',
+        description:
+          'Default true: wait for the reply. false: hand over and return pending at once; ' +
+          'you are woken when the reply lands, or read it with agent_ask_result.',
       },
     },
     required: ['agent', 'message'],
@@ -332,8 +353,11 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
       });
     }
 
+    const detach = input.wait === false;
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    // A detached call answers in milliseconds; the timer only guards the
+    // hand-over itself.
+    const timer = setTimeout(() => ac.abort(), detach ? 30_000 : timeoutMs);
 
     try {
       const res = await loopbackFetch(`${base}/chat/send-sync`, {
@@ -355,11 +379,33 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           // Missing ctx.session (shouldn't happen — MCP children get
           // SOMORA_SESSION per turn) just degrades to no detection for
           // this call.
-          ...(ctx.session ? { waiter_agent: ctx.agent, waiter_session: ctx.session } : {}),
+          ...(ctx.session && !detach ? { waiter_agent: ctx.agent, waiter_session: ctx.session } : {}),
           agent_ask_call_id: callId,
+          ...(detach ? { detach: true } : {}),
         }),
         signal: ac.signal,
       });
+
+      if (detach && res.status === 202) {
+        const handed = (await res.json()) as { call_id: string; session_id?: string; session_created?: boolean; session_model?: string; session_note?: string };
+        logger.info({ msg: 'agent_ask.handed_over', from: ctx.agent, to: targetAgent, call_id: callId, session: handed.session_id ?? targetSession });
+        return {
+          ok: false,
+          state: 'pending',
+          call_id: callId,
+          target_agent: targetAgent,
+          target_session: handed.session_id ?? targetSession,
+          ...(sessionInferred ? { session_inferred: true } : {}),
+          ...(handed.session_created ? { session_created: true } : {}),
+          ...(handed.session_model ? { session_model: handed.session_model } : {}),
+          ...(handed.session_note ? { session_note: handed.session_note } : {}),
+          hint:
+            `Handed over to ${targetAgent}/${handed.session_id ?? targetSession}. You will be woken with an ` +
+            `[agent answer] turn when the reply lands; agent_ask_result({ call_id: "${callId}" }) reads it ` +
+            'any time. Do NOT re-send the message.',
+          ms: Date.now() - start,
+        };
+      }
 
       if (!res.ok) {
         const body = await res.text().catch(() => '');

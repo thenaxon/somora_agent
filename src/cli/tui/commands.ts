@@ -16,6 +16,7 @@ import {
   parseSamplingValue,
 } from './sampling.ts';
 import type { SamplingPatch, SessionSamplingInfo } from './types.ts';
+import { formatWorkList, workLabel } from './work-queue.ts';
 
 export type ShowTarget = 'memory' | 'tools';
 export type VerboseTarget = 'tools' | 'memory' | 'system' | 'thinking';
@@ -30,7 +31,12 @@ export type CommandAction =
   // Project focus changed locally — App can refresh its project state
   // immediately without waiting for the SSE round-trip (which also
   // arrives, but feels snappier this way).
-  | { kind: 'projectFocusRefresh' };
+  | { kind: 'projectFocusRefresh' }
+  // A human entry was taken back out of the queue — put its text into
+  // the input so the user can rewrite and resend it.
+  | { kind: 'restoreInput'; text: string; turnId: string }
+  // The work queue changed locally (/queue rm) — refetch the counters.
+  | { kind: 'workRefresh' };
 
 export interface CommandMeta {
   name: string;   // the bare slash command (used for prefix-match)
@@ -57,6 +63,7 @@ export const COMMANDS: readonly CommandMeta[] = [
   { name: '/sampling', usage: '/sampling [key=value …|default]' },
   { name: '/temp', usage: '/temp <0–2>|default' },
   { name: '/export', usage: '/export [json|markdown] [path]' },
+  { name: '/queue', usage: '/queue [rm <n>]' },
   { name: '/projekt', usage: '/projekt [<slug>|unlink]' },
   { name: '/project', usage: '/project [<slug>|unlink]' },
   { name: '/projects', usage: '/projects' },
@@ -129,6 +136,8 @@ const HELP_TEXT_BASE = `Available commands:
   /export                     — export current session as markdown to ./<agent>-<session>.md
   /export json [path]         — export as raw JSONL (default path ./<agent>-<session>.jsonl)
   /export markdown [path]     — export as Markdown transcript
+  /queue                      — what this session runs, what waits behind it, what is arriving
+  /queue rm <n>               — remove the n-th waiting entry (a human entry's text returns to the input)
   /quit, /exit                — leave somora`;
 
 function helpText(featureFlags: FeatureFlags | undefined): string {
@@ -781,6 +790,60 @@ export async function runCommand(
       } catch (err) {
         out.push({ kind: 'notice', text: (err as Error).message, tone: 'error' });
       }
+      return out;
+    }
+
+    case '/queue': {
+      const sub = args[0];
+      if (!sub) {
+        const work = await ctx.api.fetchWork(ctx.agent, ctx.session);
+        out.push({ kind: 'notice', text: formatWorkList(work), tone: 'info' });
+        return out;
+      }
+      if (sub !== 'rm') {
+        out.push({ kind: 'notice', text: 'usage: /queue [rm <n>]', tone: 'warn' });
+        return out;
+      }
+      const n = Number(args[1]);
+      if (!Number.isInteger(n) || n < 1) {
+        out.push({ kind: 'notice', text: 'usage: /queue rm <n> — n is the number from /queue', tone: 'warn' });
+        return out;
+      }
+      const work = await ctx.api.fetchWork(ctx.agent, ctx.session);
+      if (!work) {
+        out.push({ kind: 'notice', text: 'queue: the server did not answer (older server without /work?)', tone: 'error' });
+        return out;
+      }
+      const entry = work.queued.find((it) => it.position === n) ?? work.queued[n - 1];
+      if (!entry) {
+        out.push({
+          kind: 'notice',
+          text: work.queued.length === 0 ? 'queue: nothing is waiting' : `queue: no entry #${n} (${work.queued.length} waiting)`,
+          tone: 'warn',
+        });
+        return out;
+      }
+      if (!entry.id) {
+        out.push({ kind: 'notice', text: `queue: entry #${n} has no id the server can remove`, tone: 'error' });
+        return out;
+      }
+      const r = await ctx.api.dequeue(entry.id);
+      const what = `#${n} ${workLabel(entry)}`;
+      switch (r.status) {
+        case 'removed':
+          out.push({ kind: 'notice', text: `queue: removed ${what}${r.text !== undefined ? ' — text is back in the input' : ''}`, tone: 'info' });
+          if (r.text !== undefined) out.push({ kind: 'restoreInput', text: r.text, turnId: entry.id });
+          break;
+        case 'already_started':
+          out.push({ kind: 'notice', text: `queue: ${what} already started — Esc aborts a running turn`, tone: 'warn' });
+          break;
+        case 'unknown':
+          out.push({ kind: 'notice', text: `queue: ${what} is no longer waiting (started or finished meanwhile)`, tone: 'warn' });
+          break;
+        default:
+          out.push({ kind: 'notice', text: `queue: could not remove ${what} — ${r.error}`, tone: 'error' });
+      }
+      out.push({ kind: 'workRefresh' });
       return out;
     }
 

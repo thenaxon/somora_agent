@@ -183,6 +183,46 @@ export interface PendingQueuedTurn {
 // information plus ids; old turns only have this word.
 export type FromSystemKind = 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a' | 'job';
 
+// One entry of GET /agents/:agent/sessions/:session/work — a preview of
+// a turn the session runs, waits for, is about to receive, or started
+// elsewhere. Shapes mirror the server's WorkItem view (no prompts, no
+// tool bodies); the TUI only formats them.
+export type WorkKind = TurnOrigin['kind'];
+
+export type WorkRequesterInfo =
+  | { agent: string; session: string }
+  | { human: true }
+  | { voiceCall: string };
+
+export interface WorkItemInfo {
+  /** Null only for a waiter the ledger does not know (older server). */
+  id: string | null;
+  kind: WorkKind;
+  /** Wake items: what finished (`a2a` answer, `subagent` result, `job` video). */
+  about?: 'a2a' | 'subagent' | 'job';
+  state: string;
+  preview: string;
+  target?: { agent: string; session: string };
+  requester?: WorkRequesterInfo;
+  enqueuedAt?: number;
+  startedAt?: number;
+  finishedAt?: number;
+  turnId?: string;
+  /** Waiting entries only: 1 = next to run. */
+  position?: number;
+}
+
+export interface SessionWork {
+  asOf: number;
+  agent: string;
+  session: string;
+  busy: boolean;
+  active: WorkItemInfo | null;
+  queued: WorkItemInfo[];
+  pendingWakes: WorkItemInfo[];
+  children: WorkItemInfo[];
+}
+
 // All Turn-kinds that the scrollback can render. Kept flat (discriminated
 // union) so React reducers don't need a class hierarchy.
 export type Turn =
@@ -351,6 +391,13 @@ export type StreamEvent =
       kind: 'turn-queued';
       turnId: string;
       ahead: number;
+    }
+  | {
+      // A waiting entry left the queue before it started (DELETE
+      // /chat/queue from any client). `turnId` is the entry's id; for
+      // a human turn it equals the turnId /chat/send returned.
+      kind: 'turn-dequeued';
+      turnId: string;
     }
   | {
       // Project focus change broadcast (HTTP-route initiated). MCP-routed

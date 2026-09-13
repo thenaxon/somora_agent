@@ -230,3 +230,111 @@ export const FROM_SYSTEM_VALUES: readonly FromSystem[] = [
   'voice',
   'a2a',
 ];
+
+// --- the work queue (GET …/work) --------------------------------------
+//
+// The same table, read from the other side: not "what arrived" but
+// "what waits, runs, or is about to arrive". `kind` is the ledger
+// item's origin kind; a `wake` carries `about`. Both clients draw the
+// queue badge, popover and sheet from these three helpers only.
+
+/** Which lucide icon web picks for a queue row; mobile draws `glyph`. */
+export type WorkIconKey = OriginRowKind | 'human' | 'agent';
+
+export interface WorkGlyphLabel {
+  glyph: string;
+  label: string;
+  icon: WorkIconKey;
+}
+
+/** Glyph + label for one queue entry by its origin kind (and `about`
+ *  for a wake). Unknown kinds fall back to the kind word itself so a
+ *  new server kind still renders instead of crashing the popover. */
+export function originGlyphLabel(kind: string, about?: string): WorkGlyphLabel {
+  switch (kind) {
+    case 'human':
+      return { glyph: '💬', label: 'message', icon: 'human' };
+    case 'agent':
+      return { glyph: '📨', label: 'agent ask', icon: 'agent' };
+    case 'subagent':
+      return { glyph: '🤖', label: 'sub-agent', icon: 'subagent' };
+    case 'sentinel':
+      return { glyph: '🔔', label: 'sentinel', icon: 'sentinel' };
+    case 'tmux':
+      return { glyph: '🖥', label: 'tmux', icon: 'tmux' };
+    case 'browser':
+      return { glyph: '🌐', label: 'browser', icon: 'browser' };
+    case 'voice':
+      return { glyph: '🎙', label: 'voice', icon: 'voice' };
+    case 'wake':
+      switch (about) {
+        case 'a2a':
+          return { glyph: '↩', label: 'agent answer', icon: 'a2a' };
+        case 'subagent':
+          return { glyph: '🤖', label: 'sub-agent result', icon: 'subagent' };
+        case 'job':
+          return { glyph: '🎬', label: 'video', icon: 'job' };
+        default:
+          return { glyph: '↩', label: 'wake', icon: 'a2a' };
+      }
+    default:
+      return { glyph: '•', label: kind || 'unknown', icon: 'human' };
+  }
+}
+
+/** Who asked for a queue entry, as the `/work` route reports it. */
+export type WorkRequester = { agent: string; session: string } | { human: true } | { voiceCall: string };
+
+/** "you" / "voice" / "from lisa" — the requester column of a row. */
+export function workRequesterLabel(requester: WorkRequester | undefined): string {
+  if (!requester) return '';
+  if ('human' in requester) return 'you';
+  if ('voiceCall' in requester) return 'voice';
+  return `from ${requester.agent}`;
+}
+
+/** The one-liner of the Arriving section: what is on its way back to
+ *  this session. `target` is where the work ran (the agent asked, the
+ *  sub-agent's own session, the video job). */
+export function workArrivingLabel(about: string | undefined, target: { agent: string } | undefined): string {
+  switch (about) {
+    case 'a2a':
+      return target ? `answer from ${target.agent} arriving` : 'agent answer arriving';
+    case 'subagent':
+      return 'sub-agent result arriving';
+    case 'job':
+      return 'video arriving';
+    default:
+      return 'result arriving';
+  }
+}
+
+/** `12s`, `3m 05s`, `2h 14m` — a wait or run time. Negative or
+ *  missing input reads as `0s`. */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor((Number.isFinite(ms) ? ms : 0) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+/** The badge text: `waiting 3 · running · 1 arriving · 2 sub-agents`,
+ *  or '' when there is nothing to say — the badge then hides. */
+export function workBadgeText(counts: {
+  waiting: number;
+  running: boolean;
+  arriving: number;
+  subagents: number;
+  asks: number;
+}): string {
+  const parts: string[] = [];
+  if (counts.waiting > 0) parts.push(`waiting ${counts.waiting}`);
+  if (counts.running) parts.push('running');
+  if (counts.arriving > 0) parts.push(`${counts.arriving} arriving`);
+  if (counts.subagents > 0) parts.push(counts.subagents === 1 ? '1 sub-agent' : `${counts.subagents} sub-agents`);
+  if (counts.asks > 0) parts.push(counts.asks === 1 ? '1 ask' : `${counts.asks} asks`);
+  return parts.join(' · ');
+}

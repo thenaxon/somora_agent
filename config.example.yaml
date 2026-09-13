@@ -476,10 +476,10 @@ providers:
 #   allowAgentSwitch: false     # let a call move to another agent or session mid-conversation
 #   consult:                    # how long a spoken question waits on the agent. It queues on
 #                               # the session like any turn, but a conversation cannot wait on
-#                               # a build: past either patience the work goes on in the session
-#                               # and the voice reports a status instead of an answer.
-#     lockPatienceMs: 5000      # wait for the session lock (500..120000)
-#     answerPatienceMs: 60000   # wait for the answer once the turn runs (1000..600000)
+#                               # a build: past this the voice says it handed the request over
+#                               # and keeps talking; the answer is read out when it lands, or
+#                               # fetched when the user asks.
+#     quickAnswerMs: 8000       # session lock + answer together (1000..120000)
 #   turnDetection:              # how easily you can interrupt the agent
 #     threshold: 0.4            # lower = reacts to quieter speech
 #     prefixPaddingMs: 200      # run-up that counts as speech
@@ -538,6 +538,16 @@ providers:
 #                                     # the background (capped by its own
 #                                     # agentLoop.maxRounds), so this is
 #                                     # really just a per-call ceiling.
+#
+#   wakeGraceMs: 3000                 # 3 sec — when work an agent started and
+#                                     # walked away from finishes (a late
+#                                     # agent_ask answer, a background
+#                                     # sub-agent, a rendered video), the
+#                                     # agent is woken in the session it asked
+#                                     # from — unless it fetched the result
+#                                     # (agent_ask_result, subagent_result,
+#                                     # video_status) within this grace.
+#                                     # 0..60000.
 #                                     # Raise for exceptionally slow setups
 #                                     # (CPU-only inference, huge models).
 #                                     # claudeCli.mcpToolTimeoutMs and

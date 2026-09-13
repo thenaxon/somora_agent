@@ -620,6 +620,11 @@ compaction:
 agentLoop:
   maxRounds: 8                # tool-call rounds per turn (openai-compatible)
   toolCallTimeoutMs: 30000    # per-tool-call timeout
+  wakeGraceMs: 3000           # when work an agent started and walked away from
+                              # finishes (a late agent_ask answer, a background
+                              # sub-agent, a rendered video), the agent is woken in
+                              # the session it asked from — unless it fetched the
+                              # result within this grace. 0..60000.
   toolUsageReminder: true     # short "call tools, don't narrate" block in the
                               # system prompt whenever the agent has tools.
                               # Tools reach the model through a separate API

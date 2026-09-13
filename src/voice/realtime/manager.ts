@@ -14,7 +14,8 @@ import { appendEvent } from '../../storage/sessions.ts';
 import { matchSpokenSession, normalizeSpokenName } from './session-match.ts';
 import { logger } from '../../server/logger.ts';
 import type { Config } from '../../config/types.ts';
-import { VoiceCall, type ConsultResult, type SessionWorkStatus, type VoiceCallSnapshot } from './call.ts';
+import { VoiceCall, type ConsultLookup, type ConsultResult, type SessionWorkStatus, type VoiceCallSnapshot } from './call.ts';
+import { onWorkFinished } from '../../server/work-ledger.ts';
 import { CONSULT_TOOL_NAME } from './consult.ts';
 import { buildVoiceInstructions } from './persona.ts';
 import { OpenAiRealtimeProvider } from './openai-provider.ts';
@@ -28,6 +29,9 @@ export interface VoiceManagerDeps {
   runConsult(args: { agent: string; session: string; text: string; prefix?: string; callId?: string }): Promise<ConsultResult>;
   /** Is that session busy, and for how long? Answers without waiting. */
   sessionStatus?(agent: string, session: string): Promise<SessionWorkStatus>;
+  /** A handed-over consult by id (Phase 2). */
+  consultResult?(consultId: string): Promise<ConsultLookup | null>;
+  markConsultFetched?(consultId: string): Promise<void>;
   /** Puts an event on the live SSE stream of that session. */
   publishEvent?(agent: string, session: string, ev: NormalizedEvent): void;
   /** Every agent on this instance — filtered to the callable ones. */
@@ -56,7 +60,24 @@ export interface ActiveCall {
 export class VoiceCallManager {
   private calls = new Map<string, ActiveCall>();
 
-  constructor(private readonly deps: VoiceManagerDeps) {}
+  constructor(private readonly deps: VoiceManagerDeps) {
+    // A consult that was handed over finishes in the work ledger; the
+    // call it belongs to reads it out. The ledger is the single place
+    // that knows when, so this is the single subscription.
+    onWorkFinished((it) => {
+      if (!it.requester || !('voiceCall' in it.requester)) return;
+      const active = this.calls.get(it.requester.voiceCall);
+      if (!active) return;
+      void active.call
+        .deliver({
+          consultId: it.id,
+          state: it.state === 'done' ? 'done' : 'failed',
+          ...(it.result?.finalText ? { text: it.result.finalText } : {}),
+          ...(it.error ? { error: it.error } : {}),
+        })
+        .catch((err: unknown) => logger.warn({ msg: 'voice.consult_delivery_failed', consultId: it.id, err: (err as Error).message }));
+    });
+  }
 
   private cfg() {
     return this.deps.config.realtimeVoice;
@@ -289,6 +310,8 @@ export class VoiceCallManager {
         ...(this.deps.sessionStatus
           ? { sessionStatus: (a: string, s: string) => this.deps.sessionStatus!(a, s) }
           : {}),
+        ...(this.deps.consultResult ? { consultResult: (id: string) => this.deps.consultResult!(id) } : {}),
+        ...(this.deps.markConsultFetched ? { markConsultFetched: (id: string) => this.deps.markConsultFetched!(id) } : {}),
         // Written AND published: a reload must not reveal lines the
         // live view never showed.
         appendEvent: async (a, sess, ev) => {

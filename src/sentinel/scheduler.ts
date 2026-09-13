@@ -34,6 +34,7 @@ import chokidar from 'chokidar';
 import { logger } from '../server/logger.ts';
 import { loopbackFetch } from '../server/loopback-fetch.ts';
 import { startTurn } from '../server/start-turn.ts';
+import { DequeuedError } from '../server/session-queue.ts';
 import type { ChatTurnResolveDeps } from '../server/run-turn-types.ts';
 import { newTaskId, registerTask, completeTask, failTask } from '../server/async-tasks.ts';
 import { resolveSessionId, createSession } from '../storage/sessions.ts';
@@ -390,6 +391,7 @@ export async function fireTrigger(
   }
 
   const taskId = newTaskId();
+  const prompt = buildFirePrompt(trigger, now, opts.catchUp);
   registerTask({
     task_id: taskId,
     parent_agent: 'sentinel',
@@ -397,6 +399,7 @@ export async function fireTrigger(
     target_agent: dispatch.agent,
     target_session: session,
     started_at: Date.now(),
+    text: prompt,
     // 'sentinel' is a synthetic parent (the scheduler itself), not a
     // persona. Without this opt-out the completion attention-wake
     // tries to dispatch a turn to it and logs
@@ -406,7 +409,6 @@ export async function fireTrigger(
     attention: false,
   });
 
-  const prompt = buildFirePrompt(trigger, now, opts.catchUp);
 
   // Fire-and-forget. Lock acquisition matches /spawn-async semantics.
   if (!injectedChatTurnDeps) {
@@ -438,6 +440,7 @@ export async function fireTrigger(
         session,
         text: prompt,
         turnId: taskId,
+        workId: taskId,
         origin: { kind: 'sentinel', triggerId: trigger.id, taskId },
         deps,
       });
@@ -481,6 +484,21 @@ export async function fireTrigger(
         await advanceNextFire(updated);
       }
     } catch (err) {
+      if (err instanceof DequeuedError) {
+        // The person took the waiting fire out of the queue: not an
+        // error of the trigger, a skipped fire with the reason.
+        await recordFire(trigger.id, {
+          firedAt: now.toISOString(),
+          scheduledFor,
+          outcome: 'skipped',
+          skipReason: 'removed from the queue by the user',
+          taskId,
+          ...(opts.catchUp ? { catchUp: true } : {}),
+          ...(opts.testMode ? { testMode: true } : {}),
+        });
+        await advanceNextFire(getTrigger(trigger.id) ?? trigger);
+        return;
+      }
       failTask(taskId, (err as Error).message);
       await markError(
         getTrigger(trigger.id) ?? trigger,

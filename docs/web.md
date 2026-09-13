@@ -518,11 +518,39 @@ finished user message, and the assistant's reply streams in below it.
 
 While the marker is showing, the message is still yours: the small
 **↩ edit** next to it takes the message back out of the queue and
-into the composer (`DELETE /chat/queue/:turnId`), attachments
+into the composer (`DELETE /chat/queue/:id`), attachments
 included, so you can add the thing you forgot and send again. The
 re-sent message joins the end of the queue. If the turn started in
 the meantime the bubble just loses its marker and a notice says so —
 Stop is the handle from then on.
+
+### The queue badge
+
+The window header says what the session is doing as a whole:
+`waiting 3 · running`, and `2 sub-agents` when the session has work
+out elsewhere. It counts every kind of turn, not only yours — a
+question from another agent, a sub-agent brief, a sentinel fire, a
+question from a call. Click it for the list:
+
+- **Running** — the turn holding the lock: where it came from, its
+  first line, since when, and Stop.
+- **Waiting** — the queue in order, each entry with its origin, a
+  preview and how long it has waited, and **×** to remove it, whoever
+  queued it. Your own message comes back into the composer as with
+  ↩ edit; another agent's question is reported to that agent as failed
+  with the reason, a sub-agent brief as cancelled, a sentinel fire as
+  skipped.
+- **Arriving** — answers on their way back into this session: a late
+  reply to an `agent_ask`, a finished background sub-agent, a rendered
+  video.
+- **From here** — the sub-agents and `agent_ask` calls this session
+  started that are still queued or running; a row opens the target
+  session.
+
+The list reads `GET /agents/:agent/sessions/:session/work`
+([api.md](api.md#get-agentsagentsessionssessionwork)) while it is open
+and refreshes on every queue event; the badge itself comes from the
+`/health` counters the session list loads anyway.
 
 Aborting (Stop button on the streaming bubble) cancels the
 **currently-running** turn only. Queued waiters keep their slots and
@@ -586,8 +614,8 @@ The web client listens for these named events on `/chat/stream`:
 |---|---|---|
 | `status` | `{msg}` | Connection state — initial `connected`, periodic keepalive |
 | `user_message` | `{text, ts, turnId?, origin?, from_agent?, from_session?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system` marks a system-trigger inbound: `sentinel`, `tmux` (attention watcher), `subagent` (finished task), `job` (video job), `browser` (hand-back), `voice` (question from a realtime call), `a2a` (late answer to an `agent_ask`). Each is drawn as a centered divider, not a bubble — in the web client, on mobile and in the TUI alike. `origin` carries the same information as one structured value (shape in [api.md](api.md#get-chatstream)); turns recorded before it existed have only the `from_*` fields. |
-| `turn_queued` | `{turnId, ahead}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. Drives the `⌛ queued` marker. Re-emitted for the waiters that move up after a dequeue. |
-| `turn_dequeued` | `{turnId}` | A queued message was taken back (↩ edit, from any client). The bubble is dropped. |
+| `turn_queued` | `{turnId, ahead, workId?, kind?}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. `workId` is the entry's id in the session's work queue (equals `turnId` for a typed turn) and `kind` its origin. Drives the `⌛ queued` marker. Re-emitted for the waiters that move up after a dequeue. |
+| `turn_dequeued` | `{turnId, workId}` | A waiting entry was taken back (↩ edit or × in the queue list, from any client). The bubble for a typed message is dropped; the queue list refreshes. |
 | `turn_started` | `{turnId}` | The engine's own turn id — stamped on the assistant bubble so `assistant_media` / `turn_error` pair to this turn. |
 | `turn_error` | `{turnId?, message, engine}` | The turn failed. Rendered as the **Turn failed** block inside the turn. |
 | `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider`/`model` are the model that ACTUALLY answered; `fallback` `{requested, actual, reason, hops?}` is set when that was a fallback model (same shape as `model_fallback`). |

@@ -283,7 +283,7 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   );
   await call.start();
   const names = provider.lastSession?.request.tools.map((t) => t.name) ?? [];
-  check('exactly the lookup and the status tool', names.join(',') === 'somora_agent_consult,somora_work_status', names.join(','));
+  check('exactly the lookup, the status tool and the result tool', names.join(',') === 'somora_agent_consult,somora_work_status,somora_consult_result', names.join(','));
 }
 
 // ── a watcher sees everything, and does not steal it ────────────────
@@ -613,7 +613,7 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   );
   await call.start();
   const names = provider.lastSession?.request.tools.map((t) => t.name) ?? [];
-  check('only the two working tools are offered', names.join(',') === 'somora_agent_consult,somora_work_status', names.join(','));
+  check('only the three working tools are offered', names.join(',') === 'somora_agent_consult,somora_work_status,somora_consult_result', names.join(','));
 }
 
 // ── a hand-written voice character replaces the derived one ─────────
@@ -727,6 +727,180 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   } finally {
     (globalThis as { setTimeout: typeof setTimeout }).setTimeout = realSetTimeout;
   }
+}
+
+
+// ── Phase 2 (2026-09-13): a consult that takes longer than a sentence ──
+//
+// The voice hands the request over instead of falling silent, keeps
+// hearing the caller meanwhile, fetches the answer when asked, and
+// reads it out on its own when it lands — once, on this line, for the
+// agent that was asked.
+import { RESULT_TOOL_NAME, STATUS_TOOL_NAME } from './consult.ts';
+import type { ConsultDelivery, ConsultLookup } from './call.ts';
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+interface Harness2 extends Harness {
+  lookups: string[];
+  fetched: string[];
+  setLookup: (id: string, v: ConsultLookup | ConsultLookup[]) => void;
+}
+
+function harness2(script: FakeScriptStep[], consult: (args: { text: string }) => Promise<ConsultResult>): Harness2 {
+  const provider = new FakeRealtimeProvider(script);
+  const events: NormalizedEvent[] = [];
+  const consults: Array<{ agent: string; session: string; text: string; prefix?: string }> = [];
+  const lookups: string[] = [];
+  const fetched: string[] = [];
+  const table = new Map<string, ConsultLookup | ConsultLookup[]>();
+  const deps: VoiceCallDeps = {
+    provider,
+    runConsult: async (args) => {
+      consults.push(args);
+      return consult(args);
+    },
+    appendEvent: async (_a, _s, ev) => { events.push(ev); },
+    consultResult: async (id) => {
+      lookups.push(id);
+      const v = table.get(id);
+      if (Array.isArray(v)) return v.length > 1 ? v.shift()! : (v[0] ?? null);
+      return v ?? null;
+    },
+    markConsultFetched: async (id) => { fetched.push(id); },
+  };
+  const call = new VoiceCall(
+    { agent: 'hans', session: '20260911-120000_projektA', slug: 'projektA' },
+    persona(),
+    { model: 'fake-realtime', voice: 'marin', language: 'de', consultPolicy: 'always', maxCallMinutes: 20 },
+    deps,
+  );
+  return { call, provider, events, consults, lookups, fetched, setLookup: (id, v) => table.set(id, v) };
+}
+
+// 1. handed over: the tool result says so, the pump kept hearing the caller meanwhile
+{
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Bau mir das Feature' }) } },
+      // The caller keeps talking while the consult is out: must be heard now, not after.
+      { emit: { kind: 'user_transcript', ts: 3, text: 'und sag mir dann Bescheid', final: true } },
+      { awaitToolResult: 'c1' },
+      { emit: { kind: 'closed', ts: 9, reason: 'user hung up' } },
+    ],
+    async () => {
+      await gate;
+      return { text: 'handed over', pending: true, state: 'handed_over', consultId: 'v-1', position: 2 };
+    },
+  );
+  const states: string[] = [];
+  const run = (async () => { for await (const snap of h.call.run()) states.push(`${snap.state}:${snap.spokenTurns}`); })();
+  await wait(50);
+  check('the caller was heard while the consult was still out', states.some((s) => s.endsWith(':1')), states.join(','));
+  release();
+  await run;
+  const result = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c1')?.result ?? '';
+  check('the tool result says handed over with the id and position', result.includes('handed over (consult v-1, position 2') && result.includes(RESULT_TOOL_NAME), result);
+  check('the call is back to listening afterwards', states.at(-1)?.startsWith('closed') === true);
+}
+
+// 2. the answer lands: read out once, at a pause, in the call's language, then marked fetched
+{
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Wie viele Tests laufen?' }) } },
+      { awaitToolResult: 'c1' },
+      { awaitToolResult: 'never' }, // keep the session open
+    ],
+    async () => ({ text: 'handed over', pending: true, state: 'handed_over', consultId: 'v-2', position: 0 }),
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(50);
+  const delivery: ConsultDelivery = { consultId: 'v-2', state: 'done', text: '178 Tests, alle grün.' };
+  await h.call.deliver(delivery);
+  const spoken = h.provider.lastSession?.spoken ?? [];
+  const announcement = spoken.find((s) => s.includes('178 Tests'));
+  check('the answer was read out', announcement !== undefined, spoken.join(' | '));
+  check('with an English instruction that names the language and the question', announcement?.includes('in de') === true && announcement?.includes('Wie viele Tests laufen?') === true, announcement);
+  check('marked fetched so nothing delivers it twice', h.fetched.includes('v-2'));
+  await h.call.deliver(delivery);
+  check('a second delivery is ignored', (h.provider.lastSession?.spoken ?? []).filter((s) => s.includes('178 Tests')).length === 1);
+  await h.call.close('test over');
+  await run;
+}
+
+// 3. the caller asks first: the result tool fetches, and the later delivery stays quiet
+{
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Status?' }) } },
+      { awaitToolResult: 'c1' },
+      { emit: { kind: 'tool_call', ts: 3, callId: 'c2', name: RESULT_TOOL_NAME, args: JSON.stringify({ consult_id: 'v-3' }) } },
+      { awaitToolResult: 'c2' },
+      { emit: { kind: 'tool_call', ts: 4, callId: 'c3', name: RESULT_TOOL_NAME, args: JSON.stringify({ consult_id: 'v-3' }) } },
+      { awaitToolResult: 'c3' },
+      { awaitToolResult: 'never' },
+    ],
+    async () => ({ text: 'handed over', pending: true, state: 'handed_over', consultId: 'v-3', position: 1 }),
+  );
+  // First lookup: still working. Second: done.
+  h.setLookup('v-3', [{ state: 'pending', position: 1 }, { state: 'done', text: 'Fertig, 3 Dateien geändert.' }]);
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(120);
+  const first = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c2')?.result ?? '';
+  check('asked too early: still working, with the position', first.includes('still working') && first.includes('position 1'), first);
+  const second = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c3')?.result ?? '';
+  check('asked again: the answer', second === 'Fertig, 3 Dateien geändert.', second);
+  await h.call.deliver({ consultId: 'v-3', state: 'done', text: 'Fertig, 3 Dateien geändert.' });
+  check('already fetched: nothing is read out', (h.provider.lastSession?.spoken ?? []).every((s) => !s.includes('Fertig')));
+  await h.call.close('test over');
+  await run;
+}
+
+// 4. a failed consult is announced as a failure; a closed call gets nothing
+{
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Deploy bitte' }) } },
+      { awaitToolResult: 'c1' },
+      { awaitToolResult: 'never' },
+    ],
+    async () => ({ text: 'handed over', pending: true, state: 'handed_over', consultId: 'v-4', position: 0 }),
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(50);
+  await h.call.deliver({ consultId: 'v-4', state: 'failed', error: 'stopped by the user' });
+  check('a failure is read out as one', (h.provider.lastSession?.spoken ?? []).some((s) => s.includes('could not answer: stopped by the user')));
+  await h.call.close('user hung up');
+  await run;
+  const before = (h.provider.lastSession?.spoken ?? []).length;
+  await h.call.deliver({ consultId: 'v-4', state: 'done', text: 'late' });
+  check('after hang-up nothing more is read out', (h.provider.lastSession?.spoken ?? []).length === before);
+}
+
+// 5. work status names the open consult
+{
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Mach die Doku fertig' }) } },
+      { awaitToolResult: 'c1' },
+      { emit: { kind: 'tool_call', ts: 3, callId: 'c2', name: STATUS_TOOL_NAME, args: '{}' } },
+      { awaitToolResult: 'c2' },
+      { emit: { kind: 'closed', ts: 9, reason: 'user hung up' } },
+    ],
+    async () => ({ text: 'handed over', pending: true, state: 'handed_over', consultId: 'v-5', position: 3 }),
+  );
+  h.setLookup('v-5', { state: 'pending', position: 3 });
+  for await (const _ of h.call.run()) { /* */ }
+  const status = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c2')?.result ?? '';
+  check('status lists the handed-over request with its position', status.includes('Mach die Doku fertig') && status.includes('position 3'), status);
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

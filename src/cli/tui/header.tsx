@@ -43,6 +43,9 @@ interface Props {
    *  activity. Renders as `📬 N` chip in the header so the user
    *  knows to /agent over to check. */
   unreadOtherAgents?: Set<string>;
+  /** Session work counters (`⌛3 ▶1 🤖2`), empty when idle. Text is
+   *  pre-formatted by work-queue.ts; /queue shows the list. */
+  workCounters?: string;
 }
 
 // Status line. Sits right above the input, NOT at the top of the terminal —
@@ -65,6 +68,7 @@ export function Header({
   reviewLoop,
   project,
   unreadOtherAgents,
+  workCounters,
 }: Props) {
   const tokenSegment = renderTokenSegment(stats);
   const agentTag = agentIcon ? `${agentIcon} ${agent}` : agent;
@@ -133,6 +137,12 @@ export function Header({
           <Text color="yellowBright" bold>
             📬 {unreadOtherAgents.size}
           </Text>
+        </>
+      ) : null}
+      {workCounters ? (
+        <>
+          <Text color="gray">{'   '}</Text>
+          <Text color="yellow">{workCounters}</Text>
         </>
       ) : null}
       {/* Connection / streaming indicator. Kept short on purpose:

@@ -25,6 +25,7 @@ import {
   resolveLocalPath,
 } from '../file/policy.ts';
 import { logger } from '../../server/logger.ts';
+import { markFetched } from '../../server/work-ledger.ts';
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ToolContext, ToolDefinition } from '../types.ts';
 
@@ -261,6 +262,10 @@ export const videoStatus: ToolDefinition<StatusArgs, { jobs: unknown[] }> = {
     const rows = input.job_id
       ? [await readJob(input.job_id)].filter(Boolean)
       : await listJobs(input.mine_only === false ? {} : { agent: ctx.agent });
+    // Looking counts as fetching: a finished render the agent has just
+    // seen here does not wake it again (in-process tool host; the MCP
+    // child's ledger is empty and this is a no-op there).
+    for (const j of rows) if (j && j.agent === ctx.agent && (j.status === 'completed' || j.status === 'failed')) markFetched(j.id);
     return {
       jobs: rows.map((j) => ({
         job_id: j!.id,

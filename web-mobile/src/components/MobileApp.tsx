@@ -13,6 +13,8 @@ import { useDreamStates } from '../hooks/useDreamStates';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { Koala } from './Koala';
 import { useWakeLock } from '../hooks/useWakeLock';
+import { WorkBadge, WorkSheet } from './WorkSheet';
+import { useSessionWork, type WorkItemDto } from '../hooks/useSessionWork';
 
 export function MobileApp() {
   const { agents, loading, error } = useAgents();
@@ -23,6 +25,24 @@ export function MobileApp() {
   // composer. MessageInput owns its draft state, so the hand-over is a
   // nonce'd prop rather than lifting the whole draft up.
   const [draftInject, setDraftInject] = useState<{ text: string; nonce: number } | null>(null);
+  // Work queue (header badge + bottom sheet): the /work snapshot of the
+  // active agent's main session, refetched on queue-moving SSE events
+  // and every 3 s while the sheet is open.
+  const [workOpen, setWorkOpen] = useState(false);
+  const { work, refresh: refreshWork } = useSessionWork(activeAgent, chat.subscribeTurnEvents, workOpen);
+  useEffect(() => {
+    setWorkOpen(false);
+  }, [activeAgent]);
+  // × on a waiting entry: any kind, by ledger id. A person's text goes
+  // back into the composer, as the bubble's "↩ edit" does.
+  const removeWorkItem = async (item: WorkItemDto): Promise<string | null> => {
+    if (!item.id) return 'This entry has no id — an older server queued it';
+    const r = await chat.dequeueWork(item.id);
+    refreshWork();
+    if (!r.ok) return r.note;
+    if (item.kind === 'human' && r.text) setDraftInject({ text: r.text, nonce: Date.now() });
+    return null;
+  };
   // Poll /dream-states every 30s for the avatar-row pulse + REM badge.
   // Empty defaults until the first response lands.
   const dreamStates = useDreamStates();
@@ -166,6 +186,10 @@ export function MobileApp() {
           {activeAgent ?? 'somora'}
         </span>
         <span className="mobile-header-meta">main</span>
+        <WorkBadge work={work} open={workOpen} onToggle={() => {
+          if (!workOpen) refreshWork();
+          setWorkOpen((v) => !v);
+        }} />
         {!wakeLock.unsupported && (
           <button
             type="button"
@@ -224,6 +248,22 @@ export function MobileApp() {
           </button>
         )}
       </header>
+
+      <WorkSheet
+        open={workOpen}
+        onClose={() => setWorkOpen(false)}
+        work={work}
+        onStop={() => void chat.abort()}
+        onRemove={removeWorkItem}
+        onOpenSession={(agentName, sessionId) => {
+          // The phone shows one session per agent (main): a child in
+          // another agent's main session is one tap away, anything
+          // else stays a line of text.
+          if (sessionId !== 'main' || !agents.some((a) => a.name === agentName)) return false;
+          switchAgent(agentName);
+          return true;
+        }}
+      />
 
       {error && <div className="banner error">{error}</div>}
       {loading && agents.length === 0 && (

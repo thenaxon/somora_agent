@@ -237,7 +237,9 @@ Day-of-week is 0=Sun...6=Sat (Vixie convention).
 Every fire runs as a **user-message turn** on the dispatched agent's
 own session, in-process, through the same entry every other turn takes
 — it waits in the session's queue in arrival order and the Stop button
-ends it like any other. The agent's session JSONL records it exactly
+ends it like any other. A fire a person removes from that queue before
+it starts is recorded in the trigger's history as `skipped` with the
+reason `removed from the queue by the user`. The agent's session JSONL records it exactly
 like a real user message, with `origin.kind: "sentinel"` naming the
 trigger and the fire. From the agent's perspective:
 

@@ -35,6 +35,7 @@ import { logger } from '../../server/logger.ts';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
 import { startTurn } from '../../server/start-turn.ts';
+import { openWork } from '../../server/work-ledger.ts';
 import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
 import type { ToolDefinition } from '../types.ts';
 import {
@@ -611,11 +612,23 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     // the abort controller, so the Stop button reaches a sync sub the
     // same way it reaches an async one (birdseye L8); the sub-session
     // streams live like its HTTP twin already did.
+    const syncWorkId = injectedDeps ? `sync-${sessionId}` : undefined;
+    if (syncWorkId) {
+      openWork({
+        id: syncWorkId,
+        origin: { kind: 'subagent', depth: parentDepth + 1, ...(ctx.session ? { parent: { agent: ctx.agent, session: ctx.session } } : {}) },
+        target: { agent: targetPersona, session: sessionId },
+        ...(ctx.session ? { requester: { agent: ctx.agent, session: ctx.session } } : {}),
+        text: task.task,
+        wake: 'never',
+      });
+    }
     const result: ChatTurnResult = injectedDeps
       ? await startSubTurn({
           agent: targetPersona,
           session: sessionId,
           text: task.task,
+          ...(syncWorkId ? { workId: syncWorkId } : {}),
           origin: {
             kind: 'subagent',
             depth: parentDepth + 1,
@@ -707,6 +720,7 @@ async function spawnAsyncInProcess(args: {
     target_agent: args.targetPersona,
     target_session: args.sessionId,
     started_at: Date.now(),
+    text: args.taskText,
     ...(args.attention !== undefined ? { attention: args.attention } : {}),
   });
   void (async () => {
@@ -720,6 +734,7 @@ async function spawnAsyncInProcess(args: {
         session: args.sessionId,
         text: args.taskText,
         turnId: task_id,
+        workId: task_id,
         origin: {
           kind: 'subagent',
           depth: args.parentDepth + 1,

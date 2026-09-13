@@ -316,19 +316,31 @@ agent_ask({ agent: "<other-agent>", message: "…", images: ["/abs/path.png"], t
 - **Queueing.** The call waits in the target session's queue in arrival
   order, like a typed message. It cannot ask yourself; a self-clone
   task is what `spawn_subagent` is for.
-- **Waiting.** `timeout_ms` defaults to `agentLoop.longTaskDefaultTimeoutMs`
+- **Waiting.** `wait: true` (the default) blocks until the reply.
+  `timeout_ms` defaults to `agentLoop.longTaskDefaultTimeoutMs`
   (5 minutes) and is capped at `longTaskMaxTimeoutMs` (30 minutes).
   When the target has not answered by then the call returns
   `state: "pending"` with a `call_id` — the target keeps working, and
   the message is never sent again.
+- **Handing over.** `wait: false` hands the message over and returns
+  `state: "pending"` with the `call_id` at once (plus `session_created`,
+  `session_model` or `session_note` when they apply). The rule: an
+  answer needed to go on with this turn → `wait: true`; a job that may
+  take its time → `wait: false`. Either way the reply reaches the asker
+  — see the wake below.
+- **Taking it back.** `agent_ask_cancel({ call_id })` removes a call of
+  your own that is still waiting in the target's queue: `removed`, or
+  `already_started` when the target is already answering (then it
+  finishes, or a person stops it), or `unknown`. Another agent's call
+  cannot be taken back.
 
 The result has one of three states:
 
 | `state` | What it carries | Meaning |
 |---|---|---|
 | `done` | `response`, `ms`, `usage`, `call_id`, `target_agent`, `target_session`, plus `session_inferred`, `session_created`, `session_model` or `session_note` when they apply | The target answered. |
-| `pending` | `call_id`, `hint` | The target is still queued or running. Fetch the outcome with `agent_ask_result`. |
-| `failed` | `error`, `hint` | The target's turn ran and failed — a model or engine error, or `stopped by the user` when a person pressed Stop on it. Not something to retry on your own. |
+| `pending` | `call_id`, `hint` | The target is still queued or running, or the call was sent with `wait: false`. Fetch the outcome with `agent_ask_result`, or wait to be woken. |
+| `failed` | `error`, `hint` | The target's turn ran and failed — a model or engine error, or `stopped by the user` when a person pressed Stop on it — or it never ran because a person took it out of the target's queue (`removed from the queue by the user before it started`). Not something to retry on your own. |
 
 `agent_ask_result({ call_id })` picks up a pending call: `done` with
 the reply, `failed` with the error, or `pending` with `phase` `queued`
@@ -337,11 +349,15 @@ finishes or `timeout_ms` passes, which is cheaper than polling. After a
 server restart, pass `agent` and `session` of the original call and the
 answer is read from the target's session.
 
-An asker that stopped waiting does not have to remember to poll. When
-the answer lands, the asker is woken in the session it asked from with
-an `[agent answer]` turn carrying the first lines and the `call_id`.
-Reading the result first, through the tool, cancels that wake; an asker
-still on the line never gets one.
+An asker that stopped waiting, or never waited, does not have to
+remember to poll. When the answer lands, the asker is woken in the
+session it asked from with an `[agent answer]` turn carrying the first
+lines and the `call_id`. The wake waits `agentLoop.wakeGraceMs`
+(default 3 seconds); reading the result through `agent_ask_result`
+inside that window cancels it, and an asker still on the line never
+gets one. The same wake, with the same grace, brings back a finished
+background sub-agent and a rendered video — one mechanism for
+everything an agent started and walked away from.
 
 Blocking waits are guarded against cycles. The server tracks who waits
 on whom and refuses a call that would close the loop — even through a
@@ -383,13 +399,16 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   the error; or `pending`. `subagent_list({ state?, limit? })` lists
   the caller's own tasks, newest first, from the server's in-memory
   registry (a restart empties it). `subagent_cancel({ task_id,
-  reason? })` aborts a running sub and every sub it spawned; files on
-  disk and the session stay.
+  reason? })` cancels a sub of your own — running, or still waiting in
+  its session's queue — and every sub it spawned; files on disk and the
+  session stay.
 - **Attention wake.** When a background sub finishes and its result has
   not been fetched, the parent is woken in the session it spawned from
   with a `[subagent attention]` turn naming state, outcome, files and
-  media, and the `task_id` to read the rest. `attention: false` opts a
-  spawn out of it.
+  media, and the `task_id` to read the rest. The wake waits
+  `agentLoop.wakeGraceMs` (default 3 seconds); a `subagent_result`
+  inside that window cancels it, and `attention: false` opts a spawn
+  out of it altogether.
 - **Limits.** Nesting is capped at depth 3. Each agent may run 4 subs
   at once and the whole server 16; subs spawned by subs count against
   the parent's 4 and may fill only 3 of them, so an orchestrator sub
@@ -397,8 +416,11 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   refused with the numbers.
 
 A sub's turn is a turn like any other: it waits in its session's
-queue, shows up in `/health`, and a person can stop it. The parent then
-sees the task as `failed` with `stopped by the user`.
+queue, shows up in `/health` and in the session's queue view, and a
+person can stop it — the parent then sees the task as `failed` with
+`stopped by the user` — or remove it from the queue before it starts,
+which the parent sees as `cancelled` with `removed from the queue by
+the user before it started`.
 
 ## Programmatic agent creation
 

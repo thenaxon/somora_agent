@@ -151,8 +151,10 @@ the request goes out.
    the real dimensions and duration read from the file's own header
    atoms (no ffmpeg).
 3. When an agent started the render, that agent is woken in the session
-   it asked from, one wake per finished video. Waiting to batch four
-   renders would defeat the point of releasing the turn. A render
+   it asked from, one wake per finished video. The wake waits
+   `agentLoop.wakeGraceMs` (default 3 seconds); an agent that looks in
+   with `video_status` inside that window is not woken. Waiting to
+   batch four renders would defeat the point of releasing the turn. A render
    started from the web client has no agent to wake; it lands in the
    Media window.
 4. The video appears in that wake turn's bubble, and in the Media

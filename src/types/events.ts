@@ -499,6 +499,9 @@ export type SseEvent =
       data: {
         turnId: string;
         ahead: number;
+        /** Phase 2: the ledger id and origin kind of the waiter. */
+        workId?: string;
+        kind?: string;
       };
     }
   | {
@@ -509,7 +512,9 @@ export type SseEvent =
       // text back in its composer. Followed by fresh `turn_queued`
       // events for the waiters that moved up.
       event: 'turn_dequeued';
-      data: { turnId: string };
+      /** `workId` (Phase 2): the work-ledger id — equals `turnId` for a
+       *  human turn, a call_id or task_id for anything else. */
+      data: { turnId: string; workId?: string };
     }
   | {
       // The engine opened a turn: its own turn id (`t-…`, the one

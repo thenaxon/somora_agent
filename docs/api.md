@@ -153,9 +153,14 @@ Returns:
       "activeAgeMs": 1024,
       "activeCallId": null,
       "activeTurnId": "b5b7a734-...",
-      "queueLength": 0,
+      "queueLength": 1,
       "userWaiting": 0,
-      "agentWaiting": 0,
+      "agentWaiting": 1,
+      "queued": [
+        { "id": "3f0c2b1e-…", "kind": "agent",
+          "preview": "Can you check whether the build log mentions …",
+          "enqueuedAt": 1778757040112, "position": 1 }
+      ],
       "lastEngineEventAt": 1778757036900,
       "lastEngineEventAgoMs": 571,
       "subscriberCount": 2,
@@ -171,7 +176,14 @@ per-session lock. `activeTurnId` is set for every running turn,
 whatever started it — a typed message, an `agent_ask`, a sub-agent
 brief, a sentinel fire, a tmux or browser wake, a voice consult or a
 wake-up — so a session that looks stuck can always be matched to a
-turn and stopped with `POST /chat/abort`. `lastEngineEventAgoMs` ticks up while the engine is
+turn and stopped with `POST /chat/abort`. `queued` names the waiters
+behind it in lock order: the entry's id (the `turnId` of a typed
+message, the `call_id` of an `agent_ask`, the `task_id` of a sub-agent
+brief or a sentinel fire), its origin `kind`, the first 160 characters
+of its text and its `position` (1 = next). Any of these ids can go to
+`DELETE /chat/queue/:id`; the per-session view
+`GET /agents/:agent/sessions/:session/work` adds what is arriving and
+what the session started elsewhere. `lastEngineEventAgoMs` ticks up while the engine is
 silent — if it climbs past a few minutes on a chat turn (vs. a long
 local-LLM job), the turn is wedged and the engine watchdog will abort
 it. See [setup.md](setup.md#tunables) `engineWatchdog` to tune
@@ -894,6 +906,98 @@ The reset returns immediately. The REM run continues in the
 background; check its progress via `GET /dream-states` or via
 the per-agent REM badge in the web AgentDock.
 
+### `GET /agents/:agent/sessions/:session/work`
+
+What this session is doing right now, what waits behind it, which
+answers are about to arrive, and what it started elsewhere. This is
+the data behind the queue badge in the web client, the sheet on mobile
+and `/queue` in the TUI. Previews only: the first 160 characters of
+each message, never a prompt, a tool body or a secret.
+
+```bash
+curl https://<host>:18737/agents/<your-agent>/sessions/main/work
+```
+
+```json
+{
+  "asOf": 1789300000000,
+  "agent": "<your-agent>",
+  "session": "20260913-101500_main",
+  "busy": true,
+  "active": {
+    "id": "1f3a…", "kind": "agent", "state": "running",
+    "preview": "Can you check whether the release notes mention …",
+    "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+    "requester": { "agent": "<other-agent>", "session": "20260910-083000_main" },
+    "enqueuedAt": 1789299990000, "startedAt": 1789299991000, "turnId": "1f3a…"
+  },
+  "queued": [
+    { "id": "b5b7…", "kind": "human", "state": "queued",
+      "preview": "and the changelog too",
+      "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+      "requester": { "human": true },
+      "enqueuedAt": 1789299995000, "position": 1 },
+    { "id": "task-…", "kind": "sentinel", "state": "queued",
+      "preview": "[sentinel] inbox digest …",
+      "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+      "enqueuedAt": 1789299998000, "position": 2 }
+  ],
+  "pendingWakes": [
+    { "id": "9d2c…", "kind": "agent", "about": "a2a", "state": "done",
+      "preview": "Which of the three drafts …",
+      "target": { "agent": "<other-agent>", "session": "20260910-083000_main" },
+      "requester": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+      "enqueuedAt": 1789299900000, "startedAt": 1789299901000, "finishedAt": 1789299999500 }
+  ],
+  "children": [
+    { "id": "task-…", "kind": "subagent", "state": "running",
+      "preview": "Summarise the three …",
+      "target": { "agent": "<your-agent>", "session": "sub-<your-agent>-20260913-101700" },
+      "requester": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+      "enqueuedAt": 1789299970000, "startedAt": 1789299971000 }
+  ]
+}
+```
+
+Every entry has the same shape:
+
+- `id` — the work id: the `turnId` of a typed message, the `call_id`
+  of an `agent_ask`, the `task_id` of a sub-agent brief or a sentinel
+  fire, the consult id of a question from a call, the job id of a
+  video render.
+- `kind` — where it came from: `human`, `agent`, `subagent`,
+  `sentinel`, `tmux`, `browser`, `voice` or `wake`; a `wake` also says
+  `about` (`a2a`, `subagent` or `job`).
+- `state` — `queued`, `running`, `done`, `failed`, `cancelled` or
+  `dequeued` (taken out of the queue before it started).
+- `preview` — the first 160 characters of the text, line breaks folded
+  to spaces. The only text exposed.
+- `target` — the `{agent, session}` the turn runs on.
+- `requester` — who asked for it: `{agent, session}` for an
+  `agent_ask`, a sub-agent brief or a wake; `{human: true}` for a typed
+  message; `{voiceCall}` for a question from a call. Absent for
+  sentinel, tmux and browser turns, which nobody waits on.
+- `enqueuedAt`, `startedAt?`, `finishedAt?` — epoch ms. `turnId?` once
+  the turn runs; `error?` for `failed`, `cancelled` and `dequeued`.
+
+The four lists:
+
+- `active` — the turn holding the session lock, or `null`. `busy` is
+  the lock itself; when a turn holds it without a ledger entry the
+  response carries `activeTurnId` instead.
+- `queued` — the waiters in lock order, each with `position` (1 =
+  next). Any of them can be removed with `DELETE /chat/queue/:id`.
+- `pendingWakes` — work this session asked for that has finished and
+  whose wake-up turn is scheduled (the grace is `agentLoop.wakeGraceMs`,
+  see [setup.md](setup.md#tunables)); `about` says what kind of answer
+  is on its way.
+- `children` — the sub-agents and `agent_ask` calls this session
+  started that are still queued or running, with their target so a
+  client can jump there.
+
+Everything here lives in memory and is gone after a restart, like the
+sub-agent registry. `404` for an unknown agent or session.
+
 ---
 
 ## Models & thinking
@@ -1105,29 +1209,58 @@ JSONL — so a queued turn starts only after the lock holder releases.
 Where a turn came from is recorded on its `user_message` as `origin`
 (see `GET /chat/stream`).
 
+Every turn is an entry in one work ledger, whoever started it.
+`GET /agents/:agent/sessions/:session/work` shows the running entry,
+the waiters in order, the answers about to arrive and the sub-agents
+and `agent_ask` calls the session started; `/health` lists the waiters
+of every session next to its counters; and `DELETE /chat/queue/:id`
+takes any waiting entry out again.
+
 Clients can opt into rendering a queue indicator by listening for the
 `turn_queued` SSE event (see below). UIs without it still work; the
 turn runs eventually, just without a visible "waiting" hint.
 
-### `DELETE /chat/queue/:turnId`
+### `DELETE /chat/queue/:id`
 
-Take a queued **user** turn back before it starts. `:turnId` is the id
-`POST /chat/send` returned. Nothing is written to the session — the
-message never became a turn.
+Take a waiting turn back before it starts, whoever queued it. `:id` is
+the work id the queue views show: the `turnId` that `POST /chat/send`
+returned for a typed message, the `call_id` of an `agent_ask`, the
+`task_id` of a sub-agent brief or a sentinel fire. Nothing is written
+to the session — the message never became a turn.
 
-- `200 {ok: true, turnId, agent, session, text, attachments: [{hash,
-  name, mime, size}]}` — the waiter is gone; the payload is handed
-  back so the client can put it into its composer (attachment refs
-  are still valid, no re-upload needed).
+Without a body the request acts as the person and may remove anything.
+With a body `{"requesting_agent": "<name>"}` it acts as that agent and
+may remove only entries that agent asked for itself; anything else is
+`403 {ok: false, reason: "forbidden"}`. This is what `agent_ask_cancel`
+sends.
+
+- `200 {ok: true, id, kind, agent, session, text?, attachments?}` —
+  the waiter is gone. For a typed message (`kind: "human"`) the payload
+  comes back with `text` and `attachments: [{hash, name, mime, size}]`,
+  so the client can put it into its composer (attachment refs are still
+  valid, no re-upload needed). `turnId` carries the same id for older
+  clients.
 - `409 {ok: false, reason: "already_started"}` — the lock went to this
   turn meanwhile; it is running. `POST /chat/abort` is the tool now.
-- `404 {ok: false, reason: "unknown"}` — nothing queued under that id
-  (finished, never queued here, or an A2A/sentinel turn — those are
-  not the human's to take back).
+- `404 {ok: false, reason: "unknown"}` — nothing waits under that id
+  (started, finished, or never queued here).
+
+Whoever asked for a removed entry is told:
+
+- an `agent_ask`, on the line or already pending, reads
+  `state: "failed"` with `error: "removed from the queue by the user
+  before it started"` — as its inline result, through
+  `agent_ask_result` and through `GET /a2a/ask-result`;
+- a sub-agent brief reads `cancelled` with the same error in
+  `subagent_status`, `subagent_result` and `/spawn-status`;
+- a sentinel fire is recorded in the trigger's history as `skipped`
+  with `skipReason: "removed from the queue by the user"`;
+- a wake-up turn is dropped quietly; the result it was bringing stays
+  readable.
 
 Side effects on success: a `turn_dequeued` SSE event for every open
 client on the session, followed by fresh `turn_queued` events for the
-waiters that moved up (their `ahead` shrank).
+typed messages that moved up (their `ahead` shrank).
 
 ### `POST /chat/send-sync`
 
@@ -1173,6 +1306,13 @@ Body fields: same as `/chat/send` (`agent`, `session`, `text`,
   is `400 {error, known_models}` and nothing is created. When the
   session already exists the model is ignored and the response
   carries `session_note` saying so.
+- `detach` (optional, with `from_agent` and `agent_ask_call_id`) —
+  hand the message over and return at once instead of waiting for the
+  reply: `202 {call_id, state: "pending", session_id,
+  session_created?, session_model?, session_note?}`. The turn queues and
+  runs as usual; the asker is woken with an `[agent answer]` turn when
+  the reply lands, or reads it with `GET /a2a/ask-result`. This is
+  `agent_ask` with `wait: false`. Ignored without the two A2A fields.
 
 The success response is the turn result plus `session_id` (the
 resolved id), `session_created: true` and `session_model` when this
@@ -1199,7 +1339,10 @@ deadlocking:
 ```
 
 Response on success: the full turn result (`finalText`, `usage`,
-`model`, `ms`, …).
+`model`, `ms`, …). A call that a person removes from the target's
+queue before it starts (`DELETE /chat/queue/:id`) answers `200` with
+`outcome: "failed"`, `dequeued: true` and `error: "removed from the
+queue by the user before it started"`.
 
 ### Sub-agent tasks — `/spawn-*`
 
@@ -1245,8 +1388,9 @@ and a cycle answers `409 {circular_wait: true, chain}`.
 #### `POST /spawn-cancel`
 
 Body: `task_id`, `requesting_agent` (must be the spawning agent —
-otherwise `403`), optional `reason`. Aborts the running turn and
-cascades to child spawns; returns `{cancelled: [task_ids],
+otherwise `403`), optional `reason`. Cancels the task — a running
+turn is aborted, a task still waiting in its session's queue is taken
+out of it — and cascades to child spawns; returns `{cancelled: [task_ids],
 skipped: [{task_id, state}]}` (tasks that were already terminal are
 skipped). Disk artifacts stay.
 
@@ -1277,7 +1421,10 @@ GET /a2a/ask-result?call_id=<uuid>&agent=<target>&session=<slug>    # after a re
 `state` is `queued` (behind another turn on the target session),
 `running`, `done` or `failed`. A `failed` call carries `error`; the
 value `stopped by the user` means a person pressed Stop on the target's
-turn — nothing to retry. The live registry is fed by `/chat/send-sync`
+turn, and `removed from the queue by the user before it started` that a
+person took the waiting call out of the target's queue — the target
+never saw it. Neither is something to retry on the agent's own. The
+live registry is fed by `/chat/send-sync`
 and by `/chat/send` when it carries an `agent_ask_call_id`; when it has
 no record (server restarted since the
 call) pass `agent` + `session` and the route reads the target's JSONL
@@ -1365,17 +1512,18 @@ Event types:
   (= `callId`); `sentinel`, `tmux`, `browser` and `voice` set
   `from_system` to the same word; `wake` sets `from_system` to its
   `about`; `human` and `subagent` set none of them.
-- `turn_queued` — `{turnId, ahead}` — fired when `POST /chat/send`
+- `turn_queued` — `{turnId, ahead, workId?, kind?}` — fired when `POST /chat/send`
   hit a busy lock and the turn had to wait. `ahead` is the number
   of turns this one must wait for (≥1, includes the currently-
   running one). Static snapshot at enqueue time, not updated as
-  the queue drains — except after a `DELETE /chat/queue/:turnId`,
+  the queue drains — except after a `DELETE /chat/queue/:id`,
   which re-emits it for the waiters that moved up. Clients render
   `"queued · N ahead"` until the matching `user_message` event
   arrives (= the turn is now actually running, lock acquired).
-- `turn_dequeued` — `{turnId}` — a queued user turn was taken back
-  via `DELETE /chat/queue/:turnId`. Clients drop the optimistic
-  bubble for that id.
+- `turn_dequeued` — `{turnId, workId}` — a waiting entry was taken
+  back via `DELETE /chat/queue/:id`, whoever queued it; both fields
+  carry the removed entry's id. Clients drop the optimistic bubble for
+  a typed message with that id and refresh their queue view.
 - `turn_started` — `{turnId}` — the engine opened the turn; this is
   the engine's own id (`t-…`), the one `assistant_media`,
   `assistant_audio`, `turn_error` and the session file's `turn_end`
@@ -1561,7 +1709,8 @@ Cancel an in-flight turn on a `(agent, session)`. The TUI fires it
 on ESC; web and mobile fire it from the Stop button overlaid on the
 streaming assistant bubble. Idempotent — returns `aborted: false`
 when no turn is running. Cancels the **currently-running** turn
-only; queued waiters keep their slots and still execute.
+only; queued waiters keep their slots and still execute — a waiting
+entry is removed with `DELETE /chat/queue/:id` instead.
 
 It stops whatever is running on the session, regardless of what
 started it: a typed message, an `agent_ask` from another agent, a
@@ -2331,7 +2480,10 @@ Newest-first fire log. `?limit=N` capped at 200, default 50.
 
 Outcomes: `success` / `error` (with `error: string`) / `skipped`
 (with `skipReason: string`). Plus optional `catchUp: true` (boot
-recovery fire) and `testMode: true` (fired via `/test`).
+recovery fire) and `testMode: true` (fired via `/test`). A fire that a
+person took out of the session's queue before it started is `skipped`
+with `skipReason: "removed from the queue by the user"`; one stopped
+while running is `error` with `stopped by the user`.
 
 ### `POST /sentinel/triggers/:id/pause`
 

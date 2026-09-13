@@ -102,6 +102,15 @@ interface ChatContextValue {
    *  caller decides whether to actually play it (typically gated by
    *  the per-session auto-play toggle in localStorage). */
   subscribeAudio: (agent: string, session: string, handler: (url: string) => void) => () => void;
+  /** Queue view: fires on every event that changes what a session's
+   *  work queue looks like — `turn_queued`, `turn_dequeued`,
+   *  `turn_started` and the end of a turn (`agent` phase end). The
+   *  handler gets the event name; the caller refetches `/work`. */
+  subscribeTurnEvents: (
+    agent: string,
+    session: string,
+    handler: (event: TurnQueueEvent) => void,
+  ) => () => void;
   abort: (
     agent: string,
     session: string,
@@ -138,6 +147,8 @@ interface ChatContextValue {
   refreshProject: (agent: string, session: string) => Promise<void>;
 }
 
+export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end';
+
 const ChatContext = createContext<ChatContextValue>({
   projectsEnabled: null,
   subscribe: () => () => {},
@@ -146,6 +157,7 @@ const ChatContext = createContext<ChatContextValue>({
   streamingKeys: [],
   send: async () => {},
   subscribeAudio: () => () => {},
+  subscribeTurnEvents: () => () => {},
   abort: async () => ({ aborted: false }),
   recall: async () => null,
   loadOlder: async () => false,
@@ -213,6 +225,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   // event arrives. ChatWindow registers one to optionally auto-play
   // the audio (gated by its own localStorage toggle).
   const audioListenersRef = useRef<Map<string, Set<(url: string) => void>>>(new Map());
+  // Queue view: per-session listeners for the events that move a
+  // session's work queue (see subscribeTurnEvents). Fired inline from
+  // the SSE handlers below; the ChatWindow's queue badge refetches.
+  const turnListenersRef = useRef<Map<string, Set<(event: TurnQueueEvent) => void>>>(new Map());
+  const emitTurnEvent = useCallback((key: string, event: TurnQueueEvent) => {
+    turnListenersRef.current.get(key)?.forEach((fn) => fn(event));
+  }, []);
   // Pending texts we just sent — used to dedupe the server's
   // user_message echo against our optimistic local-user message so
   // we don't render the same text twice.
@@ -636,6 +655,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (d.phase === 'start') {
           patchStream(key, { streaming: true, thinking: true, primaryRestored: null });
         } else if (d.phase === 'end') {
+          emitTurnEvent(key, 'turn_end');
           const fb = d.fallback ?? pendingFallbackRef.current.get(key) ?? null;
           pendingFallbackRef.current.delete(key);
           const prevFb = lastFallbackRef.current.get(key) ?? null;
@@ -842,6 +862,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         bump();
         const d = parse<{ turnId: string }>(ev as MessageEvent);
         if (!d || typeof d.turnId !== 'string') return;
+        emitTurnEvent(key, 'turn_started');
         currentTurnIdRef.current.set(key, d.turnId);
         // A bubble that started streaming before this arrived (it
         // shouldn't — turn_start is the engine's first event — but a
@@ -890,6 +911,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         bump();
         const d = parse<{ turnId: string }>(ev as MessageEvent);
         if (!d || typeof d.turnId !== 'string') return;
+        emitTurnEvent(key, 'turn_dequeued');
         // Another client (or this one, already handled in recall())
         // took a queued message back. Drop its bubble; the fresh
         // turn_queued events that follow fix the other waiters' counts.
@@ -1066,6 +1088,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         bump();
         const d = parse<{ turnId: string; ahead: number }>(ev as MessageEvent);
         if (!d || !d.turnId) return;
+        emitTurnEvent(key, 'turn_queued');
         // Find the optimistic bubble that owns this turnId and tag
         // it with the queued indicator. If the bubble hasn't been
         // tagged yet (HTTP response still in flight), stash the
@@ -1352,6 +1375,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const subscribeTurnEvents = useCallback<ChatContextValue['subscribeTurnEvents']>(
+    (agent, session, handler) => {
+      const key = sessionKey(agent, session);
+      let set = turnListenersRef.current.get(key);
+      if (!set) {
+        set = new Set();
+        turnListenersRef.current.set(key, set);
+      }
+      set.add(handler);
+      return () => {
+        const cur = turnListenersRef.current.get(key);
+        if (cur) {
+          cur.delete(handler);
+          if (cur.size === 0) turnListenersRef.current.delete(key);
+        }
+      };
+    },
+    [],
+  );
+
   const loadOlder = useCallback<ChatContextValue['loadOlder']>(
     async (agent, session) => {
       const key = sessionKey(agent, session);
@@ -1475,6 +1518,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       streamingKeys,
       send,
       subscribeAudio,
+      subscribeTurnEvents,
       abort,
       recall,
       loadOlder,
@@ -1490,6 +1534,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       streamingKeys,
       send,
       subscribeAudio,
+      subscribeTurnEvents,
       abort,
       recall,
       loadOlder,

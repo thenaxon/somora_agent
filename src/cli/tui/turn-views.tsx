@@ -148,7 +148,7 @@ function UserTurn({
 // and the structured `origin` name the same kinds; `wake` origins map
 // onto their `about` word (a2a / subagent / job) exactly like the
 // server derives from_system from them.
-const SYSTEM_LABELS: Record<FromSystemKind, string> = {
+export const SYSTEM_LABELS: Record<FromSystemKind, string> = {
   sentinel: '🔔 sentinel',
   subagent: '🤖 subagent',
   browser: '🌐 browser',

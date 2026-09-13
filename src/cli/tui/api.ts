@@ -21,6 +21,7 @@ import type {
   SessionProjectInfo,
   SessionSamplingInfo,
   SessionSummary,
+  SessionWork,
   SessionThinkingInfo,
   ThinkingLevel,
   TuiConfig,
@@ -216,6 +217,59 @@ export class Api {
     return { turnId: typeof body.turnId === 'string' ? body.turnId : '' };
   }
 
+  /** What the session is doing, what waits behind it, what is about to
+   *  arrive and what it started elsewhere. Null when the server does
+   *  not have the route (older server) or the session is unknown. */
+  async fetchWork(agent: string, session: string): Promise<SessionWork | null> {
+    try {
+      const res = await loopbackFetch(
+        `${this.base}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/work`,
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as Partial<SessionWork>;
+      if (!data || typeof data !== 'object') return null;
+      return {
+        asOf: typeof data.asOf === 'number' ? data.asOf : Date.now(),
+        agent: data.agent ?? agent,
+        session: data.session ?? session,
+        busy: Boolean(data.busy),
+        active: data.active ?? null,
+        queued: Array.isArray(data.queued) ? data.queued : [],
+        pendingWakes: Array.isArray(data.pendingWakes) ? data.pendingWakes : [],
+        children: Array.isArray(data.children) ? data.children : [],
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Take a waiting entry out of the queue before it starts. The id is
+   *  the work id (a human turn's turnId, an agent_ask call id, a spawn
+   *  task id). A human entry hands its text back. */
+  async dequeue(id: string): Promise<DequeueResult> {
+    const res = await loopbackFetch(`${this.base}/chat/queue/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      kind?: string;
+      text?: string;
+      reason?: string;
+      error?: string;
+    };
+    if (res.ok) {
+      return {
+        status: 'removed',
+        id,
+        kind: typeof body.kind === 'string' ? body.kind : 'human',
+        ...(typeof body.text === 'string' ? { text: body.text } : {}),
+      };
+    }
+    if (res.status === 409) return { status: 'already_started', id };
+    if (res.status === 404) return { status: 'unknown', id };
+    return { status: 'error', id, error: body.error ?? `dequeue ${res.status}` };
+  }
+
   streamUrl(agent: string, session: string): string {
     return `${this.base}/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`;
   }
@@ -366,6 +420,12 @@ export class Api {
     return await res.text();
   }
 }
+
+export type DequeueResult =
+  | { status: 'removed'; id: string; kind: string; text?: string }
+  | { status: 'already_started'; id: string }
+  | { status: 'unknown'; id: string }
+  | { status: 'error'; id: string; error: string };
 
 /**
  * Subset of the NormalizedEvent shape the history endpoint serves.

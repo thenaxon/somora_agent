@@ -34,8 +34,9 @@ import { registerChatAbort } from './chat-aborts.ts';
 import { logger } from './logger.ts';
 import { runChatTurn as runChatTurnReal, type RunChatTurnArgs } from './run-turn.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
-import { acquireSessionLock } from './session-queue.ts';
+import { acquireSessionLock, DequeuedError } from './session-queue.ts';
 import { originCallId, originKind, originLabel, originToLegacy, type TurnOrigin } from './turn-origin-kind.ts';
+import { failWork, finishWork, markRunning } from './work-ledger.ts';
 
 export interface StartTurnDeps {
   chatTurnDeps: ChatTurnResolveDeps;
@@ -73,6 +74,10 @@ export interface StartTurnArgs {
   /** Pre-minted when the caller logged it already (HTTP acceptance,
    *  spawn task id, sentinel task id); minted here otherwise. */
   turnId?: string;
+  /** The work-ledger item this turn runs for (Phase 2). startTurn marks
+   *  it running once the lock is held and finishes it with the result
+   *  (or the failure), so the caller only opens it. */
+  workId?: string;
   /** Abort the WAIT for the lock — never the running turn. A voice
    *  consult uses it as its patience; the caller gets an AbortError. */
   lockSignal?: AbortSignal;
@@ -108,16 +113,28 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
 
   logger.info({ msg: 'turn.dispatch', turnId, agent, session, origin: kind, textLen: text.length });
 
-  const release = await acquireSessionLock(agent, session, {
-    priority: originLabel(origin),
-    turnId,
-    ...(originCallId(origin) ? { callId: originCallId(origin) } : {}),
-    ...(args.lockSignal ? { signal: args.lockSignal } : {}),
-    ...(args.onQueued ? { onQueued: args.onQueued } : {}),
-  });
+  let release: () => void;
   try {
+    release = await acquireSessionLock(agent, session, {
+      priority: originLabel(origin),
+      turnId,
+      ...(originCallId(origin) ? { callId: originCallId(origin) } : {}),
+      ...(args.workId ? { workId: args.workId } : {}),
+      ...(args.lockSignal ? { signal: args.lockSignal } : {}),
+      ...(args.onQueued ? { onQueued: args.onQueued } : {}),
+    });
+  } catch (err) {
+    // Taken back before it started: the ledger already marked the item.
+    // Anything else (a voice patience that ran out, a lock failure) is
+    // the item's failure.
+    if (args.workId && !(err instanceof DequeuedError)) failWork(args.workId, (err as Error).message);
+    throw err;
+  }
+  try {
+    if (args.workId) markRunning(args.workId, turnId);
     if (args.beforeRun && !(await args.beforeRun())) {
       logger.info({ msg: 'turn.skipped_before_run', turnId, agent, session, origin: kind });
+      if (args.workId) failWork(args.workId, 'skipped before it started');
       return null;
     }
     // Registered only once the lock is held: the lock guarantees one
@@ -154,9 +171,15 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
         // and invite a blind retry; the text the engine produced stays
         // on the result and in the session.
         logger.info({ msg: 'turn.stopped', turnId, agent, session, origin: kind, engineOutcome: result.outcome, engineError: result.error ?? null });
-        return { ...result, outcome: 'failed', error: STOPPED_BY_USER };
+        const stopped: ChatTurnResult = { ...result, outcome: 'failed', error: STOPPED_BY_USER };
+        if (args.workId) finishWork(args.workId, stopped);
+        return stopped;
       }
+      if (args.workId) finishWork(args.workId, result);
       return result;
+    } catch (err) {
+      if (args.workId) failWork(args.workId, (err as Error).message);
+      throw err;
     } finally {
       abort.release();
     }

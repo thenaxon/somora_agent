@@ -22,6 +22,8 @@ export function consultToolSpec(agent: string): RealtimeToolSpec {
       'returns the result. Use it for anything factual AND for every request to act — opening a ' +
       'browser, starting a session, writing a file, sending something. This is the only way you do ' +
       'anything at all, so never decide for yourself that something is impossible. ' +
+      'If it comes back "handed over", the agent is still on it: tell the user you passed it on ' +
+      'and keep talking — the answer is read out to them when it arrives. ' +
       'ONE short sentence — what the user actually wants, nothing else. No instructions about how to ' +
       'answer, no "describe briefly", no lists of sub-questions: those make the question longer than ' +
       'the answer and are read by a human in the chat log.',
@@ -67,6 +69,45 @@ export function statusToolSpec(): RealtimeToolSpec {
       'you were busy.',
     parameters: { type: 'object', properties: {}, additionalProperties: false },
   };
+}
+
+export const RESULT_TOOL_NAME = 'somora_consult_result';
+
+/**
+ * "Is that done yet?" for a lookup that was handed over.
+ *
+ * A consult that takes longer than a sentence comes back as handed over
+ * with an id (2026-09-13); the answer is read out on its own when it
+ * lands. This is the other half: the user asks, the voice fetches.
+ * Reading it here also means it will not be read out a second time.
+ */
+export function resultToolSpec(): RealtimeToolSpec {
+  return {
+    name: RESULT_TOOL_NAME,
+    description:
+      'Fetch the answer to a request that came back "handed over". Use it when the user asks ' +
+      'whether it is done. "still working" means it is not — say so, never invent the answer.',
+    parameters: {
+      type: 'object',
+      properties: {
+        consult_id: { type: 'string', description: 'The id from the handed-over result.' },
+      },
+      required: ['consult_id'],
+      additionalProperties: false,
+    },
+  };
+}
+
+export function parseResultArgs(raw: string): { ok: true; consultId: string } | { ok: false; error: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'your call arrived incomplete — try again' };
+  }
+  const id = typeof (parsed as { consult_id?: unknown })?.consult_id === 'string' ? (parsed as { consult_id: string }).consult_id.trim() : '';
+  if (!id) return { ok: false, error: 'no consult id was passed — use the id from the handed-over result' };
+  return { ok: true, consultId: id };
 }
 
 export const SWITCH_TOOL_NAME = 'somora_switch_agent';

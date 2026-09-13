@@ -7,6 +7,7 @@
 // that go with it.
 
 import { Buffer } from 'node:buffer';
+import { markRunning, openWork } from '../server/work-ledger.ts';
 import type { Config, VideoModel } from '../config/types.ts';
 import { resolveVideoModel } from '../config/types.ts';
 import type { OpenAiCompatibleProvider } from '../config/types.ts';
@@ -237,6 +238,21 @@ export async function startVideoJob(input: StartInput, config: Config): Promise<
     ...(warnings.length > 0 ? { warnings } : {}),
   };
   await writeJob(job);
+  // In the work ledger from the start (Phase 2): the session that asked
+  // sees the render under "from here", and the wake when it is done
+  // goes through the same grace and the same suppression as every
+  // other finished piece of work.
+  if (job.agent) {
+    openWork({
+      id: job.id,
+      origin: { kind: 'wake', about: 'job', ref: job.id },
+      target: { agent: job.agent, session: job.session ?? 'main' },
+      requester: { agent: job.agent, session: job.session ?? 'main' },
+      text: `video render (${entry.name}): ${prompt}`,
+      waiting: false,
+    });
+    markRunning(job.id);
+  }
   logger.info({
     msg: 'videogen.job_started',
     job: job.id,

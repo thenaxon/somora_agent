@@ -13,6 +13,9 @@ import type { Persona } from '../../persona/loader.ts';
 import type { NormalizedEvent } from '../../types/events.ts';
 import {
   CONSULT_TOOL_NAME,
+  RESULT_TOOL_NAME,
+  parseResultArgs,
+  resultToolSpec,
   STATUS_TOOL_NAME,
   SWITCH_TOOL_NAME,
   consultToolSpec,
@@ -27,6 +30,10 @@ import { normalizeSpokenName } from './session-match.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
 /** How much of the conversation the call keeps in memory. */
+/** An announcement waits for this much quiet from the caller … */
+const ANNOUNCE_PAUSE_MS = 1_500;
+/** … but not forever. */
+const ANNOUNCE_MAX_WAIT_MS = 60_000;
 const TRANSCRIPT_MEMORY = 24;
 /** How much of it travels with a question to the agent. Six lines is
  *  about two exchanges: enough for "and how long does that take", short
@@ -60,6 +67,29 @@ export interface ConsultResult {
    * the work keeps running and lands in the session either way.
    */
   pending?: boolean;
+  /** Phase 2 (2026-09-13): `answered` came back inside the patience;
+   *  `handed_over` means the work goes on under `consultId` and the
+   *  answer is delivered to the call when it lands. */
+  state?: 'answered' | 'handed_over';
+  consultId?: string;
+  /** Place in the session's queue at hand-over (0 = already running). */
+  position?: number;
+}
+
+/** What a handed-over consult looks like when the voice asks for it. */
+export interface ConsultLookup {
+  state: 'pending' | 'done' | 'failed';
+  text?: string;
+  error?: string;
+  position?: number;
+}
+
+/** A finished consult, brought to the call by the work ledger. */
+export interface ConsultDelivery {
+  consultId: string;
+  state: 'done' | 'failed';
+  text?: string;
+  error?: string;
 }
 
 export interface SessionWorkStatus {
@@ -92,6 +122,10 @@ export interface VoiceCallDeps {
   appendEvent(agent: string, session: string, ev: NormalizedEvent): Promise<void>;
   /** Is the bound session busy, and for how long? Must not wait. */
   sessionStatus?(agent: string, session: string): Promise<SessionWorkStatus>;
+  /** A handed-over consult by id — reading it counts as fetched. */
+  consultResult?(consultId: string): Promise<ConsultLookup | null>;
+  /** The call read (or announced) a consult; no second delivery. */
+  markConsultFetched?(consultId: string): Promise<void>;
   /** Agents this call may be handed over to. Empty = switching off. */
   callableAgents?: readonly string[];
   /** Everything a call needs to continue as another agent. Rejects with
@@ -182,6 +216,16 @@ export class VoiceCall {
    * OpenClaw keeps it on its call object.
    */
   private transcript: Array<{ role: 'caller' | 'voice'; text: string }> = [];
+  /** Consults that came back handed over: what was asked, when, and
+   *  for whom — a result for a previous agent is not read out as this
+   *  one's after a switch. */
+  private openConsults = new Map<string, { question: string; startedAt: number; agent: string; fetched: boolean }>();
+  /** A result that landed before the hand-over was recorded (the turn
+   *  finished in the same tick the patience ran out). */
+  private earlyDeliveries = new Map<string, ConsultDelivery>();
+  /** When the caller last said something — an announcement waits for a
+   *  pause. */
+  private lastHeardAt = 0;
   /**
    * Who the window is showing. Lags `target` across a handover.
    *
@@ -314,6 +358,7 @@ export class VoiceCall {
       tools: [
         consultToolSpec(this.persona.name),
         statusToolSpec(),
+        resultToolSpec(),
         ...(this.switchable().length > 0 ? [switchToolSpec(this.switchable(), this.target.agent)] : []),
       ],
     });
@@ -376,6 +421,7 @@ export class VoiceCall {
           yield this.snapshot();
           break;
         case 'user_transcript':
+          this.lastHeardAt = this.now();
           if (ev.final && ev.text.trim().length > 0) {
             this.remember('caller', ev.text.trim());
             yield this.snapshot();
@@ -387,7 +433,13 @@ export class VoiceCall {
           }
           break;
         case 'tool_call':
-          await this.handleToolCall(session, ev.callId, ev.name, ev.args);
+          // Not awaited: a consult can take the whole patience, and the
+          // call must keep hearing the caller, honouring barge-in and
+          // taking the next question meanwhile (birdseye L10). The
+          // handler answers the tool call when it is done.
+          void this.handleToolCall(session, ev.callId, ev.name, ev.args).catch((err) => {
+            this.log({ msg: 'voice.tool_failed', tool: ev.name, err: (err as Error).message });
+          });
           yield this.snapshot();
           break;
         case 'interrupted':
@@ -568,11 +620,47 @@ export class VoiceCall {
     if (name === STATUS_TOOL_NAME) {
       const status = (await this.deps.sessionStatus?.(this.target.agent, this.target.session)) ?? { busy: false };
       const minutes = status.sinceMs ? Math.max(1, Math.round(status.sinceMs / 60_000)) : 0;
+      const own: string[] = [];
+      for (const [id, c] of this.openConsults) {
+        if (c.fetched) continue;
+        const look = await this.deps.consultResult?.(id).catch(() => null);
+        if (look?.state === 'done' || look?.state === 'failed') {
+          // Reading it here counts as fetched: it is answered on this line.
+          c.fetched = true;
+          own.push(`your request "${c.question.slice(0, 80)}" is finished — answer: ${look.state === 'done' ? (look.text ?? '') : `could not: ${look.error ?? 'unknown error'}`}`);
+        } else if (look) {
+          own.push(`your request "${c.question.slice(0, 80)}" is still ${look.position ? `waiting (position ${look.position})` : 'running'}`);
+        }
+      }
+      const base = status.busy
+        ? `still working on something you started ${minutes} minute(s) ago${status.queued ? `, ${status.queued} waiting behind it` : ''} — say so, and offer to look again in a moment`
+        : 'nothing running right now';
+      await session.sendToolResult(callId, own.length > 0 ? `${base}; ${own.join('; ')}` : base);
+      return;
+    }
+    if (name === RESULT_TOOL_NAME) {
+      const parsed = parseResultArgs(rawArgs);
+      if (!parsed.ok) {
+        await session.sendToolResult(callId, parsed.error);
+        return;
+      }
+      const open = this.openConsults.get(parsed.consultId);
+      const look = await this.deps.consultResult?.(parsed.consultId).catch(() => null);
+      if (!look) {
+        await session.sendToolResult(callId, 'nothing was handed over under that id — say so');
+        return;
+      }
+      if (look.state === 'pending') {
+        await session.sendToolResult(callId, `still working on it${look.position ? ` (position ${look.position} in the queue)` : ''} — say so, do not invent an answer`);
+        return;
+      }
+      if (open) open.fetched = true;
+      this.log({ msg: 'voice.consult_fetched', consultId: parsed.consultId, state: look.state });
       await session.sendToolResult(
         callId,
-        status.busy
-          ? `still working on something you started ${minutes} minute(s) ago${status.queued ? `, ${status.queued} waiting behind it` : ''} — say so, and offer to look again in a moment`
-          : 'nothing running right now',
+        look.state === 'done'
+          ? (look.text?.trim() || 'no answer this time — say so, do not invent one')
+          : `the agent could not answer: ${look.error ?? 'unknown error'}`,
       );
       return;
     }
@@ -662,6 +750,25 @@ export class VoiceCall {
         prefix: turn.prefix,
         callId: this.id,
       });
+      if (result.state === 'handed_over' && result.consultId) {
+        const id = result.consultId;
+        this.openConsults.set(id, { question: parsed.args.question, startedAt, agent: this.target.agent, fetched: false });
+        this.log({ msg: 'voice.consult_handed_over', consultId: id, position: result.position ?? 0, ms: this.now() - startedAt });
+        if (this.state !== 'closed' && session === this.session) {
+          await session.sendToolResult(
+            callId,
+            `handed over (consult ${id}${result.position ? `, position ${result.position} in the queue` : ''}). ` +
+              'Tell the user you passed it on and keep talking. The answer is read out to them when it ' +
+              `arrives; if they ask whether it is done, ${RESULT_TOOL_NAME} fetches it.`,
+          );
+        }
+        const early = this.earlyDeliveries.get(id);
+        if (early) {
+          this.earlyDeliveries.delete(id);
+          void this.deliver(early);
+        }
+        return;
+      }
       const answer = result.text.trim();
       this.log({
         msg: 'voice.consult_done',
@@ -670,6 +777,12 @@ export class VoiceCall {
         pending: result.pending ?? false,
         chars: answer.length,
       });
+      // The session may be gone or replaced by the time a long answer
+      // lands: never write into a closed line or the successor's.
+      if (this.state === 'closed' || session !== this.session) {
+        this.log({ msg: 'voice.consult_answer_after_session', ms: this.now() - startedAt });
+        return;
+      }
       await session.sendToolResult(
         callId,
         answer.length > 0
@@ -686,6 +799,62 @@ export class VoiceCall {
       await session.sendToolResult(callId, `asking ${this.persona.name} failed: ${message}`);
     } finally {
       this.setState('listening');
+    }
+  }
+
+  /**
+   * A handed-over consult finished. Read it out — once, on this line,
+   * for the agent that was asked, at a pause in the conversation.
+   * Anything else stays in the agent's chat where it landed.
+   */
+  async deliver(res: ConsultDelivery): Promise<void> {
+    const open = this.openConsults.get(res.consultId);
+    if (!open) {
+      // Finished before the hand-over was recorded: keep it for a moment.
+      this.earlyDeliveries.set(res.consultId, res);
+      setTimeout(() => this.earlyDeliveries.delete(res.consultId), 30_000).unref?.();
+      return;
+    }
+    if (open.fetched) return;
+    if (this.state === 'closed' || !this.session) {
+      this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call closed' });
+      return;
+    }
+    if (open.agent !== this.target.agent) {
+      this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call moved to another agent' });
+      return;
+    }
+    open.fetched = true;
+    await this.deps.markConsultFetched?.(res.consultId).catch(() => {});
+    await this.announce(open.question, res);
+  }
+
+  /** Wait for a pause (the model not speaking, the caller quiet for a
+   *  moment), then have the model read the answer. Never a fixed
+   *  sentence: the instruction is English, names the call's language,
+   *  and the wording is the model's (Rene, 2026-09-13). */
+  private async announce(question: string, res: ConsultDelivery): Promise<void> {
+    const deadline = this.now() + ANNOUNCE_MAX_WAIT_MS;
+    while (this.now() < deadline) {
+      if (this.state === 'closed') return;
+      const quiet = this.state === 'listening' && this.now() - this.lastHeardAt >= ANNOUNCE_PAUSE_MS;
+      if (quiet) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    if (this.state === 'closed' || !this.session) return;
+    const body = res.state === 'done'
+      ? (res.text?.trim() || 'the agent had no answer')
+      : `the agent could not answer: ${res.error ?? 'unknown error'}`;
+    const instruction =
+      `Read the user the answer to the question they asked earlier about "${question.slice(0, 120)}". ` +
+      `Start by saying, in ${this.cfg.language}, that this is the answer to that earlier question, ` +
+      'then give the answer as it is. Do not add anything else.\n' +
+      body;
+    try {
+      await this.session.speak?.(instruction);
+      this.log({ msg: 'voice.consult_announced', consultId: res.consultId, state: res.state, chars: body.length });
+    } catch (err) {
+      this.log({ msg: 'voice.consult_announce_failed', consultId: res.consultId, err: (err as Error).message });
     }
   }
 

@@ -21,9 +21,10 @@ you ──audio──► somora ──audio──► realtime model (talks)
 ```
 
 The realtime model runs the conversation: rhythm, listening,
-interrupting, speaking. It has no memory, no files and exactly two or
-three tools. Everything factual, and every request to act, it hands to
-the real agent — which answers in its own session with its own model and
+interrupting, speaking. It has no memory, no files and three or four
+tools: ask the agent, check on the work, fetch an answer that was
+handed over, and — when allowed — move the call. Everything factual,
+and every request to act, it hands to the real agent — which answers in its own session with its own model and
 its own tools. The spoken answer is that answer, shortened for the ear.
 
 That separation is why the voice can be quick without inventing things:
@@ -66,15 +67,20 @@ long does that take"*, an agent otherwise has no idea what you were
 talking about, and the session would read like a riddle a week later.
 
 A conversation cannot wait on a build. The question queues on the
-session like every other turn, but the call's patience is short and
-has two parts: it waits `realtimeVoice.consult.lockPatienceMs` (default
-5 seconds) for the session lock, and once the turn runs it waits
-`realtimeVoice.consult.answerPatienceMs` (default 60 seconds) for the
-answer. Past the first, the question is withdrawn from the queue and
-the voice says the agent is still busy with what it started earlier.
-Past the second, the turn keeps running and its answer lands in the
-session; the voice says it is taking longer and keeps talking. Nothing
-the agent was doing is cancelled either way.
+session like every other turn, and the call waits
+`realtimeVoice.consult.quickAnswerMs` (default 8 seconds) in total —
+for the session lock and for the answer together. An answer inside
+that window is spoken at once. Past it, the voice tells you it handed
+the request over and keeps talking; nothing the agent was doing is
+cancelled, and the question stays in the queue or keeps running. The
+answer then reaches you one of two ways: the call reads it out on its
+own at the next pause in the conversation — once, only in the call it
+belongs to, and only while that call still talks to the same agent —
+or the voice fetches it when you ask whether it is done
+(`somora_consult_result`). Asked how far along it is, the voice
+reports the running work and each handed-over request with its place
+in the queue (`somora_work_status`). A request that was stopped or
+removed on the way is announced the same way, with the reason.
 
 The framing itself travels beside the question, not inside it — in the
 same field somora uses for the memory block, which every engine puts in
@@ -144,8 +150,8 @@ realtimeVoice:
   maxCallMinutes: 20          # the meter runs while nobody speaks
   allowAgentSwitch: true      # move a call to another agent or session mid-conversation
   consult:                    # how long a spoken question waits on the agent
-    lockPatienceMs: 5000      # for the session lock; past it the voice reports "busy"
-    answerPatienceMs: 60000   # for the answer once running; past it the work goes on in the session
+    quickAnswerMs: 8000       # an answer inside this is spoken at once; past it the
+                              # request is handed over and read out when it lands
   turnDetection:              # how easily you can interrupt
     threshold: 0.4            # lower = reacts to quieter speech
     prefixPaddingMs: 200      # how much run-up counts as speech

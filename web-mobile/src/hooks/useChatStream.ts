@@ -29,7 +29,7 @@ import type { AttachmentRef } from '../components/AttachmentPicker';
 //   - 'turn_dequeued' { turnId }       — a queued user turn was taken back
 //   - 'assistant_media' { turnId, media } — paired to the row of THAT turn
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   countMedia,
   findTurnRow,
@@ -95,9 +95,24 @@ export interface ChatStream {
    *  null (with a statusNotice) when it already started or failed.
    *  The bubble is removed from the list on success. */
   recall: (messageId: string) => Promise<{ text: string } | null>;
+  /** Queue view: fires on every event that moves the session's work
+   *  queue — turn_queued, turn_dequeued, turn_started, and the end of a
+   *  turn (agent phase end). The header badge refetches /work on it.
+   *  Stable across renders (ref-backed). */
+  subscribeTurnEvents: (handler: (event: TurnQueueEvent) => void) => () => void;
+  /** Remove any waiting entry from the queue by its ledger id
+   *  (DELETE /chat/queue/:id, no body = the person may remove
+   *  anything). A human turn hands its text back for the composer;
+   *  its bubble is dropped locally. Never throws — the failure reason
+   *  comes back as `note`. */
+  dequeueWork: (
+    id: string,
+  ) => Promise<{ ok: true; kind?: string; text?: string } | { ok: false; note: string }>;
   /** Last connection error if the SSE link dropped. Null when healthy. */
   connectionError: string | null;
 }
+
+export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end';
 
 export function useChatStream(agent: string | null): ChatStream {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -110,6 +125,11 @@ export function useChatStream(agent: string | null): ChatStream {
   const agentRef = useRef<string | null>(agent);
   // Voice: subscribers waiting for assistant_audio events.
   const audioListenersRef = useRef<Set<(url: string) => void>>(new Set());
+  // Queue view: subscribers refetching /work on queue-moving events.
+  const turnListenersRef = useRef<Set<(event: TurnQueueEvent) => void>>(new Set());
+  const emitTurnEvent = (event: TurnQueueEvent) => {
+    turnListenersRef.current.forEach((fn) => fn(event));
+  };
   // Buffer of turn_queued events that arrived before the matching
   // POST /chat/send response landed (HTTP and SSE channels can race).
   // Keyed by turnId; consumed by send() when it gets its turnId back.
@@ -350,6 +370,7 @@ export function useChatStream(agent: string | null): ChatStream {
       if (d.phase === 'start') {
         setStreaming(true);
       } else if (d.phase === 'end') {
+        emitTurnEvent('turn_end');
         setStreaming(false);
         streamingIdRef.current = null;
         // Sweep leftover streaming flags (text cursor AND thinking
@@ -454,6 +475,7 @@ export function useChatStream(agent: string | null): ChatStream {
       let d: { turnId?: string } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || typeof d.turnId !== 'string') return;
+      emitTurnEvent('turn_started');
       const turnId = d.turnId;
       currentTurnIdRef.current = turnId;
       // A bubble that started streaming before this arrived (engines
@@ -500,6 +522,7 @@ export function useChatStream(agent: string | null): ChatStream {
       let d: { turnId?: string } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || typeof d.turnId !== 'string') return;
+      emitTurnEvent('turn_dequeued');
       const turnId = d.turnId;
       pendingQueuedRef.current.delete(turnId);
       // Another client (or this one, already handled in recall()) took
@@ -592,6 +615,7 @@ export function useChatStream(agent: string | null): ChatStream {
       let d: { turnId?: string; ahead?: number } | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
       if (!d || typeof d.turnId !== 'string' || typeof d.ahead !== 'number') return;
+      emitTurnEvent('turn_queued');
       const turnId = d.turnId;
       const ahead = d.ahead;
       // Find the optimistic bubble carrying this turnId and tag it.
@@ -840,5 +864,54 @@ export function useChatStream(agent: string | null): ChatStream {
     }
   };
 
-  return { messages, streaming, send, subscribeAudio, abort, recall, connectionError, statusNotice };
+  // Ref-backed and created once, so the queue hook's effect does not
+  // re-subscribe on every render of MobileApp.
+  const subscribeTurnEvents = useCallback<ChatStream['subscribeTurnEvents']>((handler) => {
+    turnListenersRef.current.add(handler);
+    return () => {
+      turnListenersRef.current.delete(handler);
+    };
+  }, []);
+
+  // × in the queue sheet. Same route as recall(), but by ledger id and
+  // for any kind — a message from another client, an agent_ask, a
+  // spawn, a sentinel fire. The bubble carrying that turnId (if this
+  // phone drew one) goes; turn_dequeued from the server covers the
+  // other clients.
+  const dequeueWork: ChatStream['dequeueWork'] = async (id) => {
+    try {
+      const res = await fetch(`/chat/queue/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (res.status === 409) return { ok: false, note: 'That entry already started — use Stop to interrupt it' };
+      if (res.status === 404) return { ok: false, note: 'Nothing waits under that id any more' };
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        return { ok: false, note: `Remove failed: ${res.status}${body ? ` ${body.slice(0, 120)}` : ''}` };
+      }
+      const body = (await res.json()) as { ok?: boolean; kind?: string; text?: string };
+      if (!body.ok) return { ok: false, note: 'Remove failed: unexpected server reply' };
+      pendingQueuedRef.current.delete(id);
+      setMessages((prev) => prev.filter((m) => !(m.role === 'user' && m.turnId === id)));
+      return {
+        ok: true,
+        ...(body.kind ? { kind: body.kind } : {}),
+        ...(typeof body.text === 'string' ? { text: body.text } : {}),
+      };
+    } catch (err) {
+      console.warn('[somora-mobile] /chat/queue delete failed:', err);
+      return { ok: false, note: `Remove failed: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  };
+
+  return {
+    messages,
+    streaming,
+    send,
+    subscribeAudio,
+    abort,
+    recall,
+    subscribeTurnEvents,
+    dequeueWork,
+    connectionError,
+    statusNotice,
+  };
 }

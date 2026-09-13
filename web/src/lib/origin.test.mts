@@ -143,3 +143,49 @@ for (const fs of ['sentinel', 'tmux', 'subagent', 'job', 'browser', 'voice', 'a2
 }
 
 console.log('origin.test: all assertions passed');
+
+// --- the work queue helpers --------------------------------------------
+import {
+  formatElapsed,
+  originGlyphLabel,
+  workArrivingLabel,
+  workBadgeText,
+  workRequesterLabel,
+} from './origin';
+
+assert.deepEqual(originGlyphLabel('human'), { glyph: '💬', label: 'message', icon: 'human' });
+assert.equal(originGlyphLabel('agent').label, 'agent ask');
+assert.equal(originGlyphLabel('subagent').icon, 'subagent');
+assert.equal(originGlyphLabel('sentinel').glyph, '🔔');
+assert.equal(originGlyphLabel('wake', 'a2a').label, 'agent answer');
+assert.equal(originGlyphLabel('wake', 'subagent').label, 'sub-agent result');
+assert.equal(originGlyphLabel('wake', 'job').label, 'video');
+assert.equal(originGlyphLabel('wake').label, 'wake');
+// A kind the client has never heard of still gets a row.
+assert.equal(originGlyphLabel('telepathy').label, 'telepathy');
+assert.equal(originGlyphLabel('').label, 'unknown');
+
+assert.equal(workRequesterLabel(undefined), '');
+assert.equal(workRequesterLabel({ human: true }), 'you');
+assert.equal(workRequesterLabel({ voiceCall: 'c1' }), 'voice');
+assert.equal(workRequesterLabel({ agent: 'lisa', session: 'main' }), 'from lisa');
+
+assert.equal(workArrivingLabel('a2a', { agent: 'lisa' }), 'answer from lisa arriving');
+assert.equal(workArrivingLabel('a2a', undefined), 'agent answer arriving');
+assert.equal(workArrivingLabel('subagent', { agent: 'hans' }), 'sub-agent result arriving');
+assert.equal(workArrivingLabel('job', undefined), 'video arriving');
+assert.equal(workArrivingLabel(undefined, undefined), 'result arriving');
+
+assert.equal(formatElapsed(0), '0s');
+assert.equal(formatElapsed(-5000), '0s');
+assert.equal(formatElapsed(Number.NaN), '0s');
+assert.equal(formatElapsed(12_400), '12s');
+assert.equal(formatElapsed(185_000), '3m 05s');
+assert.equal(formatElapsed(8_040_000), '2h 14m');
+
+assert.equal(workBadgeText({ waiting: 0, running: false, arriving: 0, subagents: 0, asks: 0 }), '');
+assert.equal(workBadgeText({ waiting: 3, running: true, arriving: 0, subagents: 0, asks: 0 }), 'waiting 3 · running');
+assert.equal(workBadgeText({ waiting: 0, running: false, arriving: 1, subagents: 2, asks: 1 }), '1 arriving · 2 sub-agents · 1 ask');
+assert.equal(workBadgeText({ waiting: 0, running: false, arriving: 0, subagents: 1, asks: 2 }), '1 sub-agent · 2 asks');
+
+console.log('origin.test (work queue): all assertions passed');

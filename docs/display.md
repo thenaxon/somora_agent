@@ -116,3 +116,25 @@ engines and models that surface thinking at all — see
 [thinking.md](thinking.md) for the engine matrix. The `🧠 thinking…`
 header badge and the reasoning token counter work regardless of this
 toggle.
+
+## `/queue` — what the session is doing
+
+The status line carries the session's work counters — `⌛3 ▶1 🤖2 ↩1`:
+waiting, running, started from here, arriving — and is empty when the
+session is idle. They count every kind of turn, not only what you
+typed: a question from another agent, a sub-agent brief, a sentinel
+fire, a question from a call.
+
+```
+/queue                      — the list: Running, Waiting (numbered), Arriving, From here
+/queue rm <n>               — remove the n-th waiting entry
+```
+
+Removing works on any waiting entry, whoever queued it: a message of
+your own comes back into the input, another agent's question is
+reported to that agent as failed with the reason, a sub-agent brief as
+cancelled, a sentinel fire as skipped. An entry that started meanwhile
+says so — Esc aborts a running turn. The list reads
+`GET /agents/:agent/sessions/:session/work` (see
+[api.md](api.md#get-agentsagentsessionssessionwork)); the counters come
+from `/health`.

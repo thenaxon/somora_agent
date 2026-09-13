@@ -47,6 +47,9 @@ interface Waiter {
   priority: Priority;
   enqueuedAt: number;
   callId: string | undefined;
+  /** The work-ledger item this waiter runs for (Phase 2). Lets the
+   *  ledger take any waiter back, not only a human one. */
+  workId: string | undefined;
   /** Turn-lifecycle id — carried through the queue so /health's
    *  activeTurnId is populated for queued-then-run turns too, not only
    *  for immediately-granted ones (Juni-Audit 2026-06). */
@@ -63,12 +66,14 @@ class SessionLock {
   private activePriority: Priority | null = null;
   private activeCallId: string | undefined = undefined;
   private activeTurnId: string | undefined = undefined;
+  private activeWorkId: string | undefined = undefined;
 
   acquire(opts: {
     priority: Priority;
     callId?: string;
     signal?: AbortSignal;
     turnId?: string;
+    workId?: string;
     /** Called synchronously AFTER the waiter has been pushed to the queue.
      *  `ahead` = number of turns this waiter must wait for, INCLUDING the
      *  currently-running one (1 = next in line). Used by /chat/send to
@@ -83,6 +88,7 @@ class SessionLock {
       this.activePriority = opts.priority;
       this.activeCallId = opts.callId;
       this.activeTurnId = opts.turnId;
+      this.activeWorkId = opts.workId;
       return Promise.resolve(() => this.release());
     }
     return new Promise<() => void>((resolve, reject) => {
@@ -91,6 +97,7 @@ class SessionLock {
         enqueuedAt: Date.now(),
         callId: opts.callId,
         turnId: opts.turnId,
+        workId: opts.workId,
         resolve: (release) => resolve(release),
         reject: (err) => reject(err),
         cancelled: false,
@@ -151,6 +158,33 @@ class SessionLock {
     return { status: 'unknown' };
   }
 
+  /** Take a waiter out by its work-ledger id — any priority. The
+   *  ledger decides who may (a person: anything; an agent: its own),
+   *  this only does it. Same atomicity as dequeue(). */
+  dequeueWork(workId: string): DequeueOutcome {
+    const idx = this.queue.findIndex((w) => w.workId === workId);
+    if (idx >= 0) {
+      const [waiter] = this.queue.splice(idx, 1);
+      waiter!.cancelled = true;
+      waiter!.reject(new DequeuedError(workId));
+      return { status: 'removed', remaining: this.waitingUserTurns() };
+    }
+    if (this.activeWorkId === workId) return { status: 'running' };
+    return { status: 'unknown' };
+  }
+
+  /** Every waiter in line, in order (Phase 2: the queue has names). */
+  waiting(): Array<{ workId?: string; turnId?: string; priority: Priority; enqueuedAt: number; position: number }> {
+    const out: Array<{ workId?: string; turnId?: string; priority: Priority; enqueuedAt: number; position: number }> = [];
+    let pos = 0;
+    for (const w of this.queue) {
+      if (w.cancelled) continue;
+      pos++;
+      out.push({ ...(w.workId ? { workId: w.workId } : {}), ...(w.turnId ? { turnId: w.turnId } : {}), priority: w.priority, enqueuedAt: w.enqueuedAt, position: pos });
+    }
+    return out;
+  }
+
   /** User turns still waiting, with their current `ahead` (same
    *  semantics as onQueued: waiters in front + the running turn). */
   waitingUserTurns(): Array<{ turnId: string; ahead: number }> {
@@ -166,6 +200,7 @@ class SessionLock {
     this.activePriority = null;
     this.activeCallId = undefined;
     this.activeTurnId = undefined;
+    this.activeWorkId = undefined;
     while (this.queue.length > 0) {
       const next = this.queue.shift()!;
       if (next.cancelled) continue;
@@ -175,6 +210,7 @@ class SessionLock {
       this.activePriority = next.priority;
       this.activeCallId = next.callId;
       this.activeTurnId = next.turnId;
+      this.activeWorkId = next.workId;
       next.resolve(() => this.release());
       return;
     }
@@ -190,6 +226,7 @@ class SessionLock {
     activePriority: Priority | null;
     activeCallId: string | undefined;
     activeTurnId: string | undefined;
+    activeWorkId: string | undefined;
   } {
     return {
       busy: this.busy,
@@ -200,6 +237,7 @@ class SessionLock {
       activePriority: this.activePriority,
       activeCallId: this.activeCallId,
       activeTurnId: this.activeTurnId,
+      activeWorkId: this.activeWorkId,
     };
   }
 }
@@ -229,6 +267,7 @@ export async function acquireSessionLock(
     callId?: string;
     signal?: AbortSignal;
     turnId?: string;
+    workId?: string;
     onQueued?: (ahead: number) => void;
   },
 ): Promise<() => void> {
@@ -286,7 +325,24 @@ export function getSessionLockStatus(agent: string, session: string): ReturnType
     activePriority: null,
     activeCallId: undefined,
     activeTurnId: undefined,
+    activeWorkId: undefined,
   };
+}
+
+/** Take any waiter back by its work-ledger id (see work-ledger.ts
+ *  dequeueWork for who may). */
+export function dequeueSessionWork(agent: string, session: string, workId: string): DequeueOutcome {
+  const lock = locks.get(key(agent, session));
+  if (!lock) return { status: 'unknown' };
+  const outcome = lock.dequeueWork(workId);
+  logger.info({ msg: 'session_queue.dequeue_work', agent, session, workId, status: outcome.status });
+  return outcome;
+}
+
+/** The waiters of a session, in order, with their work ids. */
+export function listSessionWaiters(agent: string, session: string): ReturnType<SessionLock['waiting']> {
+  const lock = locks.get(key(agent, session));
+  return lock ? lock.waiting() : [];
 }
 
 /**
@@ -306,6 +362,7 @@ export function listAllSessionLockStates(): Array<{
   activePriority: Priority | null;
   activeCallId: string | undefined;
   activeTurnId: string | undefined;
+  activeWorkId: string | undefined;
 }> {
   const out: ReturnType<typeof listAllSessionLockStates> = [];
   for (const [k, lock] of locks.entries()) {

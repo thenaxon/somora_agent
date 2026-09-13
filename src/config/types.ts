@@ -552,6 +552,13 @@ export const AgentLoopConfigSchema = z.object({
    */
   longTaskMaxTimeoutMs: z.number().int().positive().default(1_800_000),
   /**
+   * Grace before a finished piece of work (an agent_ask answer nobody
+   * waited for, a background sub-agent, a rendered video) wakes the
+   * agent that asked for it. A requester that fetches the result right
+   * away gets no wake. One value for every kind since 2026-09-13.
+   */
+  wakeGraceMs: z.number().int().min(0).max(60_000).default(3_000),
+  /**
    * Max concurrent background exec jobs PER agent. Prevents runaway
    * loops where a confused model fires off dozens of `exec` calls
    * with background:true and floods the host. 8 is the rough sweet
@@ -590,6 +597,7 @@ export const AgentLoopConfigSchema = z.object({
   toolCallTimeoutMs: 30_000,
   longTaskDefaultTimeoutMs: 300_000,
   longTaskMaxTimeoutMs: 1_800_000,
+  wakeGraceMs: 3_000,
   execMaxConcurrentPerAgent: 8,
   execMaxConcurrentGlobal: 32,
 });
@@ -1057,10 +1065,19 @@ export const RealtimeVoiceConfigSchema = z
      */
     consult: z
       .object({
-        lockPatienceMs: z.number().int().min(500).max(120_000).default(5_000),
-        answerPatienceMs: z.number().int().min(1_000).max(600_000).default(60_000),
+        /** How long a spoken question waits for its answer before the
+         *  call moves on (2026-09-13): the consult is queued like any
+         *  turn and waits this long in total — for the session and for
+         *  the answer. Past it the voice says it handed the request
+         *  over and keeps talking; the answer is read out when it
+         *  lands, or fetched when the user asks. */
+        quickAnswerMs: z.number().int().min(1_000).max(120_000).default(8_000),
+        /** Retired 2026-09-13 in favour of quickAnswerMs; read, warned
+         *  about, ignored. */
+        lockPatienceMs: z.number().int().optional(),
+        answerPatienceMs: z.number().int().optional(),
       })
-      .default({ lockPatienceMs: 5_000, answerPatienceMs: 60_000 }),
+      .default({ quickAnswerMs: 8_000 }),
     /** Hard stop for one call. The meter runs while nobody speaks, so
      *  an open tab is a standing bill. */
     maxCallMinutes: z.number().int().min(1).max(180).default(20),
