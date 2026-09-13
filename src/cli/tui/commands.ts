@@ -16,7 +16,7 @@ import {
   parseSamplingValue,
 } from './sampling.ts';
 import type { SamplingPatch, SessionSamplingInfo } from './types.ts';
-import { formatWorkList, workLabel } from './work-queue.ts';
+import { formatWorkList, queueEntryAt, workLabel } from './work-queue.ts';
 
 export type ShowTarget = 'memory' | 'tools';
 export type VerboseTarget = 'tools' | 'memory' | 'system' | 'thinking';
@@ -137,7 +137,8 @@ const HELP_TEXT_BASE = `Available commands:
   /export json [path]         — export as raw JSONL (default path ./<agent>-<session>.jsonl)
   /export markdown [path]     — export as Markdown transcript
   /queue                      — what this session runs, what waits behind it, what is arriving
-  /queue rm <n>               — remove the n-th waiting entry (a human entry's text returns to the input)
+  /queue rm <n>               — remove the n-th entry: a waiting one before it starts (a human entry's
+                                text returns to the input); a running one under "From here" is stopped
   /quit, /exit                — leave somora`;
 
 function helpText(featureFlags: FeatureFlags | undefined): string {
@@ -814,21 +815,38 @@ export async function runCommand(
         out.push({ kind: 'notice', text: 'queue: the server did not answer (older server without /work?)', tone: 'error' });
         return out;
       }
-      const entry = work.queued.find((it) => it.position === n) ?? work.queued[n - 1];
-      if (!entry) {
+      const found = queueEntryAt(work, n);
+      if (!found) {
+        const total = work.queued.length + work.children.length;
         out.push({
           kind: 'notice',
-          text: work.queued.length === 0 ? 'queue: nothing is waiting' : `queue: no entry #${n} (${work.queued.length} waiting)`,
+          text: total === 0 ? 'queue: nothing is waiting or running from here' : `queue: no entry #${n} (${work.queued.length} waiting, ${work.children.length} from here)`,
           tone: 'warn',
         });
         return out;
       }
+      const entry = found.item;
       if (!entry.id) {
         out.push({ kind: 'notice', text: `queue: entry #${n} has no id the server can remove`, tone: 'error' });
         return out;
       }
-      const r = await ctx.api.dequeue(entry.id);
       const what = `#${n} ${workLabel(entry)}`;
+      // A running entry under "From here": stop it — the sub-agent's task
+      // with everything it started, or the turn an agent_ask runs as.
+      if (found.where === 'children' && entry.state === 'running') {
+        if (entry.kind === 'subagent') {
+          const c = await ctx.api.cancelSpawn(entry.id);
+          out.push(c.ok ? { kind: 'notice', text: `queue: stopped ${what} and what it started`, tone: 'info' } : { kind: 'notice', text: `queue: could not stop ${what} — ${c.error}`, tone: 'error' });
+        } else if (entry.target) {
+          await ctx.api.abortTurn(entry.target.agent, entry.target.session);
+          out.push({ kind: 'notice', text: `queue: stopped ${what} on ${entry.target.agent}:${entry.target.session}`, tone: 'info' });
+        } else {
+          out.push({ kind: 'notice', text: `queue: ${what} has no target session to stop`, tone: 'error' });
+        }
+        out.push({ kind: 'workRefresh' });
+        return out;
+      }
+      const r = await ctx.api.dequeue(entry.id);
       switch (r.status) {
         case 'removed':
           out.push({ kind: 'notice', text: `queue: removed ${what}${r.text !== undefined ? ' — text is back in the input' : ''}`, tone: 'info' });

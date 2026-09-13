@@ -161,7 +161,10 @@ sections the desktop shows — Running, Waiting, Arriving, From here —
 as a sheet. **×** on a waiting entry removes it, whoever queued it:
 your own message comes back into the composer, another agent's
 question is reported to that agent as failed with the reason, a
-sub-agent brief as cancelled, a sentinel fire as skipped.
+sub-agent brief as cancelled, a sentinel fire as skipped. Under From
+here, **×** removes a sub-agent or question that has not started yet
+and **■** stops one that runs — the sub-agent with everything it
+started.
 
 Stop (composer or bubble — same action) cancels the
 **currently-running** turn only, whatever started it — your message,

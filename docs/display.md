@@ -126,8 +126,8 @@ typed: a question from another agent, a sub-agent brief, a sentinel
 fire, a question from a call.
 
 ```
-/queue                      — the list: Running, Waiting (numbered), Arriving, From here
-/queue rm <n>               — remove the n-th waiting entry
+/queue                      — the list: Running, Waiting (numbered), Arriving, From here (numbered on)
+/queue rm <n>               — remove the n-th waiting entry; a running entry under From here is stopped
 ```
 
 Removing works on any waiting entry, whoever queued it: a message of

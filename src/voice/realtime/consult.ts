@@ -24,9 +24,10 @@ export function consultToolSpec(agent: string): RealtimeToolSpec {
       'anything at all, so never decide for yourself that something is impossible. ' +
       'If it comes back "handed over", the agent is still on it: tell the user you passed it on ' +
       'and keep talking — the answer is read out to them when it arrives. ' +
-      'ONE short sentence — what the user actually wants, nothing else. No instructions about how to ' +
-      'answer, no "describe briefly", no lists of sub-questions: those make the question longer than ' +
-      'the answer and are read by a human in the chat log.',
+      'ONE short sentence — what the user actually wants, including whom they want involved (a ' +
+      'sub-agent, another agent) and whether they want to wait for it. No instructions about how to ' +
+      'phrase the answer, no "describe briefly", no lists of sub-questions: those make the question ' +
+      'longer than the answer and are read by a human in the chat log.',
     parameters: {
       type: 'object',
       properties: {
@@ -34,7 +35,8 @@ export function consultToolSpec(agent: string): RealtimeToolSpec {
           type: 'string',
           description:
             'The request itself, in ONE sentence, in the language of the conversation. ' +
-            'What the user wants — not how it should be answered, not why. Keep it under 200 characters.',
+            'What the user wants, including whom they want involved and whether to wait — not how the ' +
+            'answer should be phrased, not why. Keep it under 200 characters.',
         },
         context: {
           type: 'string',

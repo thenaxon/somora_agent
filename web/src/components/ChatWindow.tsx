@@ -838,6 +838,25 @@ export function ChatWindow({
     [chat, restoreToComposer, refreshWork],
   );
 
+  // Stop on a "From here" row (Phase 4, 2026-09-13): a sub-agent task
+  // through /spawn-cancel (cascades to its own children; the parent
+  // reads "stopped by the user"), an agent_ask through the abort of
+  // the turn it runs as on the target. Both existing routes.
+  const stopChildItem = useCallback(async (item: WorkItemDto): Promise<string | null> => {
+    if (!item.id) return 'This entry has no id — an older server queued it';
+    try {
+      if (item.kind === 'subagent') {
+        const r = await api.cancelSpawn(item.id);
+        return r.ok ? null : (r.error ?? 'could not stop the sub-agent');
+      }
+      if (!item.target) return 'This entry has no target session to stop';
+      const r = await api.abort(item.target.agent, item.target.session);
+      return r.aborted ? null : 'Nothing was running there any more';
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }, []);
+
   const onAbort = useCallback(() => {
     void (async () => {
       try {
@@ -1284,6 +1303,7 @@ export function ChatWindow({
         work={work}
         onStop={onAbort}
         onRemove={removeWorkItem}
+        onStopChild={stopChildItem}
         onOpenSession={onOpenSession}
       />
 

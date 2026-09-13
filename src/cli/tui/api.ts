@@ -270,6 +270,19 @@ export class Api {
     return { status: 'error', id, error: body.error ?? `dequeue ${res.status}` };
   }
 
+  /** Stop a sub-agent task this session started (POST /spawn-cancel,
+   *  no requesting_agent = the person). Cascades to its children. */
+  async cancelSpawn(taskId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const res = await loopbackFetch(`${this.base}/spawn-cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: taskId }),
+    });
+    if (res.ok) return { ok: true };
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, error: body.error ?? `spawn-cancel ${res.status}` };
+  }
+
   streamUrl(agent: string, session: string): string {
     return `${this.base}/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`;
   }

@@ -908,6 +908,21 @@ export const api = {
   /** Cancel in-flight turn. Returns server body so the UI can surface
    *  `aborted:false` (nothing running) instead of silently no-oping.
    *  Throws on network / non-2xx so callers can toast the failure. */
+  /** Stop a sub-agent task this session started (POST /spawn-cancel,
+   *  no requesting_agent = the person). Cascades to the sub's own
+   *  children; the parent reads "stopped by the user". */
+  cancelSpawn: async (taskId: string): Promise<{ ok: boolean; error?: string }> => {
+    const res = await fetch('/spawn-cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: taskId }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      return { ok: false, error: body.error ?? `spawn-cancel ${res.status}` };
+    }
+    return { ok: true };
+  },
   abort: async (
     agent: string,
     session: string,

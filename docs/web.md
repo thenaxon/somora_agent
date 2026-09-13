@@ -545,7 +545,11 @@ question from a call. Click it for the list:
   video.
 - **From here** — the sub-agents and `agent_ask` calls this session
   started that are still queued or running; a row opens the target
-  session.
+  session. **×** on one that has not started yet removes it from the
+  target's queue; **■** on a running one stops it — a sub-agent
+  together with everything it started, a question as the turn it runs
+  on the target. This session hears about it the way it would have
+  heard the result.
 
 The list reads `GET /agents/:agent/sessions/:session/work`
 ([api.md](api.md#get-agentsagentsessionssessionwork)) while it is open

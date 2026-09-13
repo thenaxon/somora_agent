@@ -43,6 +43,36 @@ export function MobileApp() {
     if (item.kind === 'human' && r.text) setDraftInject({ text: r.text, nonce: Date.now() });
     return null;
   };
+  // ■ on a running "From here" entry: a sub-agent task through
+  // /spawn-cancel (no requesting_agent = the person; cascades), an
+  // agent_ask through the abort of its target's turn.
+  const stopChildItem = async (item: WorkItemDto): Promise<string | null> => {
+    if (!item.id) return 'This entry has no id — an older server queued it';
+    try {
+      if (item.kind === 'subagent') {
+        const res = await fetch('/spawn-cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_id: item.id }),
+        });
+        refreshWork();
+        if (res.ok) return null;
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        return body.error ?? `Could not stop it (HTTP ${res.status})`;
+      }
+      if (!item.target) return 'This entry has no target session to stop';
+      const res = await fetch(
+        `/chat/abort?agent=${encodeURIComponent(item.target.agent)}&session=${encodeURIComponent(item.target.session)}`,
+        { method: 'POST' },
+      );
+      refreshWork();
+      if (!res.ok) return `Could not stop it (HTTP ${res.status})`;
+      const body = (await res.json().catch(() => ({}))) as { aborted?: boolean };
+      return body.aborted ? null : 'Nothing was running there any more';
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  };
   // Poll /dream-states every 30s for the avatar-row pulse + REM badge.
   // Empty defaults until the first response lands.
   const dreamStates = useDreamStates();
@@ -255,6 +285,7 @@ export function MobileApp() {
         work={work}
         onStop={() => void chat.abort()}
         onRemove={removeWorkItem}
+        onStopChild={stopChildItem}
         onOpenSession={(agentName, sessionId) => {
           // The phone shows one session per agent (main): a child in
           // another agent's main session is one tap away, anything

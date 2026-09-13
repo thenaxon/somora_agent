@@ -729,5 +729,26 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   check('7m naxon\'s follow-up = lisa\'s own wake answers only (noted + final), not the sub\'s internal one', followUps.length === 1 && followUps[0]?.text === 'noted\n\nfinal for naxon', JSON.stringify(followUps.map((f) => f.text)));
 }
 
+// 7n. attention:false does not count when someone else waits for the outcome
+{
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall(); // naxon asks lisa; lisa's turn is the running root
+  openWork({ id: 'S1', origin: { kind: 'subagent', parent: LISA, taskId: 'S1', depth: 1 }, target: { agent: 'lisa', session: 'sub-S1' }, requester: LISA, text: 't', waiting: false, wake: 'never', startedDuring: 'X' });
+  check('7n under an agent\'s question the wake stays on', getWork('S1')?.wake === 'auto');
+  openWork({ id: 'V', origin: { kind: 'voice', consultId: 'V', callId: 'call1' }, target: { agent: 'hans', session: 'main' }, requester: { voiceCall: 'call1' }, text: 'q', waiting: true, wake: 'never' });
+  markRunning('V');
+  openWork({ id: 'S2', origin: { kind: 'subagent', parent: { agent: 'hans', session: 'main' }, taskId: 'S2', depth: 1 }, target: { agent: 'hans', session: 'sub-S2' }, requester: { agent: 'hans', session: 'main' }, text: 't', waiting: false, wake: 'never', startedDuring: 'V' });
+  check('7n under a voice consult the wake stays on', getWork('S2')?.wake === 'auto');
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  markRunning('H');
+  openWork({ id: 'S3', origin: { kind: 'subagent', parent: LISA, taskId: 'S3', depth: 1 }, target: { agent: 'lisa', session: 'sub-S3' }, requester: LISA, text: 't', waiting: false, wake: 'never', startedDuring: 'H' });
+  check('7n under a person\'s turn attention:false is respected', getWork('S3')?.wake === 'never');
+  openWork({ id: 'S4', origin: { kind: 'subagent', taskId: 'S4', depth: 1 }, target: { agent: 'lisa', session: 'sub-S4' }, requester: LISA, text: 't', waiting: false, wake: 'never' });
+  check('7n started from nowhere: respected', getWork('S4')?.wake === 'never');
+  openWork({ id: 'W', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: LISA, text: 'w', waiting: false, wake: 'never' });
+  check('7n a wake item itself is never touched', getWork('W')?.wake === 'never');
+}
+
 console.log(`\n${pass} ok, ${fail} failed`);
 assert.equal(fail, 0);

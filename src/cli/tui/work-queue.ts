@@ -129,7 +129,10 @@ export function formatWorkList(work: SessionWork | null, now = Date.now()): stri
 
   if (work.children.length > 0) {
     lines.push(`From here (${work.children.length}):`);
-    for (const it of work.children) {
+    // Numbered on from the waiting entries, so /queue rm <n> reaches
+    // them too: a queued child is removed, a running one stopped.
+    work.children.forEach((it, i) => {
+      const n = String(work.queued.length + i + 1).padStart(2);
       const target = it.target ? `${it.target.agent}:${it.target.session}` : '?';
       const label = it.kind === 'agent' ? '💬 agent ask' : workLabel(it);
       const age =
@@ -138,10 +141,21 @@ export function formatWorkList(work: SessionWork | null, now = Date.now()): stri
           : it.state === 'queued' && it.enqueuedAt !== undefined
             ? `, waited ${formatAge(now - it.enqueuedAt)}`
             : '';
-      lines.push(`  ${label} → ${target}  ${preview(it)}  [${it.state}${age}]`);
-    }
+      lines.push(`  ${n}. ${label} → ${target}  ${preview(it)}  [${it.state}${age}]`);
+    });
   }
 
-  if (work.queued.length > 0) lines.push('/queue rm <n> removes a waiting entry.');
+  if (work.queued.length > 0 || work.children.length > 0) {
+    lines.push('/queue rm <n> removes a waiting entry; on a running entry under "From here" it stops it.');
+  }
   return lines.join('\n');
+}
+
+/** What /queue rm <n> points at: a waiting entry first, then the
+ *  children in list order. */
+export function queueEntryAt(work: SessionWork, n: number): { where: 'waiting' | 'children'; item: SessionWork['queued'][number] } | null {
+  const waiting = work.queued.find((it) => it.position === n) ?? (n <= work.queued.length ? work.queued[n - 1] : undefined);
+  if (waiting) return { where: 'waiting', item: waiting };
+  const child = work.children[n - work.queued.length - 1];
+  return child ? { where: 'children', item: child } : null;
 }

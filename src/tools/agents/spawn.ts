@@ -134,7 +134,7 @@ const TaskSchema = z.object({
     .optional()
     .describe(
       'Async spawns only: when the sub finishes and you have not fetched its result, you get ' +
-        'an automatic [subagent attention] wake turn (default). Pass false to opt out for ' +
+        'an automatic [subagent attention] wake turn (default). Ignored when you started the sub while answering another agent or a voice call. Pass false to opt out for ' +
         'subs whose results you will poll yourself or that need no follow-up.',
     ),
   images: z
@@ -209,7 +209,9 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
         type: 'boolean',
         description:
           'Async spawns only: automatic [subagent attention] wake turn when the sub finishes ' +
-          'unfetched (default true). Pass false to opt out.',
+          'unfetched (default true). Pass false to opt out. Ignored when you started the sub while ' +
+          'answering another agent or a voice call: they wait for the outcome and are told through ' +
+          'the follow-up, which needs that wake.',
       },
       images: {
         type: 'array',

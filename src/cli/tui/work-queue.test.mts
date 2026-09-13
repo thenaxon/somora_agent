@@ -4,7 +4,7 @@
 // Run: npx tsx src/cli/tui/work-queue.test.mts
 
 import assert from 'node:assert/strict';
-import { formatAge, formatWorkCounters, formatWorkList, workLabel } from './work-queue.ts';
+import { formatAge, formatWorkCounters, formatWorkList, queueEntryAt, workLabel } from './work-queue.ts';
 import type { SessionWork } from './types.ts';
 
 let pass = 0;
@@ -145,10 +145,21 @@ check('list: every section, numbered waiting entries with age', () => {
   assert.equal(lines[6], 'Arriving (1):');
   assert.equal(lines[7], '  ↩  agent answer  answer from lisa:main, 1s ago');
   assert.equal(lines[8], 'From here (2):');
-  assert.equal(lines[9], '  🤖 subagent → hans:sub-abc  "summarize the log"  [running, since 30s]');
-  assert.equal(lines[10], '  💬 agent ask → lisa:main  "is the DB up?"  [queued, waited 3s]');
-  assert.equal(lines[11], '/queue rm <n> removes a waiting entry.');
+  // numbered on from the waiting entries (2), so /queue rm 3 / rm 4 reach them
+  assert.equal(lines[9], '   3. 🤖 subagent → hans:sub-abc  "summarize the log"  [running, since 30s]');
+  assert.equal(lines[10], '   4. 💬 agent ask → lisa:main  "is the DB up?"  [queued, waited 3s]');
+  assert.equal(lines[11], '/queue rm <n> removes a waiting entry; on a running entry under "From here" it stops it.');
   assert.equal(lines.length, 12);
+});
+
+check('rm <n> resolves waiting entries first, then children in list order', () => {
+  const w = busyWork;
+  assert.equal(queueEntryAt(w, 1)?.where, 'waiting');
+  assert.equal(queueEntryAt(w, 2)?.where, 'waiting');
+  assert.equal(queueEntryAt(w, 3)?.where, 'children');
+  assert.equal(queueEntryAt(w, 3)?.item.state, 'running');
+  assert.equal(queueEntryAt(w, 4)?.item.state, 'queued');
+  assert.equal(queueEntryAt(w, 5), null);
 });
 
 check('list: no server answer', () => {

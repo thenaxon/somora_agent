@@ -156,6 +156,18 @@ export function openWork(input: OpenWorkInput): WorkItem {
   };
   const during = input.startedDuring ?? activeItemOf(input.requester);
   if (during && during !== it.id) it.startedDuring = during;
+  // attention:false says "do not wake ME". When the sub was started
+  // while answering someone else — a call, another agent — that someone
+  // is told through the follow-up, and the follow-up needs the wake
+  // turn. hans opted out twice on 2026-09-13 and the caller never heard
+  // the result; the flag does not count then.
+  if (it.wake === 'never' && it.origin.kind === 'subagent') {
+    const root = chainRootOf(it);
+    if (root && root.requester && !('human' in root.requester)) {
+      it.wake = 'auto';
+      logger.info({ msg: 'work.attention_overridden', id: it.id, root: root.id, root_kind: root.origin.kind, reason: 'someone is waiting for the outcome' });
+    }
+  }
   items.set(it.id, it);
   return it;
 }

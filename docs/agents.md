@@ -502,7 +502,10 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   the queue by the user before it started — there is no result.`).
   The wake waits `agentLoop.wakeGraceMs` (default 3 seconds); a
   `subagent_result` inside that window cancels it, and
-  `attention: false` opts a spawn out of it altogether.
+  `attention: false` opts a spawn out of it altogether — except when
+  the spawn happened while answering another agent or a voice call:
+  they wait for the outcome and hear it through the follow-up, which
+  needs that wake, so the flag does not count there.
 - **Follow-up wake.** A sub that starts sub-agents of its own is told
   in its system prompt not to hand in its report while they are still
   working: wait for them (`wait: true`, or `subagent_result` with

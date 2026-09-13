@@ -140,11 +140,15 @@ interface PopoverProps {
   /** Remove a waiting entry. Resolves with a short note to show inline
    *  (409 / 404 / transport), or null when it went through. */
   onRemove: (item: WorkItemDto) => Promise<string | null>;
+  /** Stop a running entry under "From here": a sub-agent task (with
+   *  everything it started) or an agent_ask running on its target.
+   *  Resolves with a note or null. */
+  onStopChild?: (item: WorkItemDto) => Promise<string | null>;
   /** Open the target session of a child the way the sessions list does. */
   onOpenSession?: ((agent: string, session: string) => void) | undefined;
 }
 
-export function WorkQueuePopover({ open, onClose, anchorRect, work, onStop, onRemove, onOpenSession }: PopoverProps) {
+export function WorkQueuePopover({ open, onClose, anchorRect, work, onStop, onRemove, onStopChild, onOpenSession }: PopoverProps) {
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
@@ -216,6 +220,19 @@ export function WorkQueuePopover({ open, onClose, anchorRect, work, onStop, onRe
     try {
       const err = await onRemove(item);
       setNote(err);
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  // Stop on a "From here" row: the sub-agent's task with its children,
+  // or the turn an agent_ask runs as on the target (Rene, 2026-09-13:
+  // "click and stop from here, not by opening the sub's session").
+  async function handleStopChild(item: WorkItemDto) {
+    if (!item.id || !onStopChild) return;
+    setRemoving(item.id);
+    try {
+      setNote(await onStopChild(item));
     } finally {
       setRemoving(null);
     }
@@ -393,6 +410,36 @@ export function WorkQueuePopover({ open, onClose, anchorRect, work, onStop, onRe
                   <span style={{ color: item.state === 'running' ? 'var(--accent)' : 'var(--text-3)', fontSize: 10, flexShrink: 0 }}>
                     {item.state}
                   </span>
+                  {item.id && item.state === 'queued' && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleRemove(item);
+                      }}
+                      disabled={removing === item.id}
+                      title="Remove it before it starts — this session is told it will not run"
+                      aria-label="Remove from the target's queue"
+                      style={{ ...iconButton, opacity: removing === item.id ? 0.4 : 1 }}
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                  {item.id && item.state === 'running' && onStopChild && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleStopChild(item);
+                      }}
+                      disabled={removing === item.id}
+                      title={item.kind === 'subagent' ? 'Stop this sub-agent and everything it started' : 'Stop the turn this question is running as'}
+                      aria-label="Stop"
+                      style={{ ...iconButton, color: 'var(--danger)', opacity: removing === item.id ? 0.4 : 1 }}
+                    >
+                      <Square size={11} fill="currentColor" />
+                    </button>
+                  )}
                 </div>
               );
             })}

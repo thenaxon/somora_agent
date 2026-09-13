@@ -63,12 +63,15 @@ interface SheetProps {
   onStop: () => void;
   /** Remove a waiting entry; resolves with an inline note or null. */
   onRemove: (item: WorkItemDto) => Promise<string | null>;
+  /** Stop a running entry under "From here" (sub-agent task or the
+   *  agent_ask turn on its target). Resolves with a note or null. */
+  onStopChild?: (item: WorkItemDto) => Promise<string | null>;
   /** Jump to a child's session. The phone only shows `main` per
    *  agent, so the caller decides which targets are reachable. */
   onOpenSession?: (agent: string, session: string) => boolean;
 }
 
-export function WorkSheet({ open, onClose, work, onStop, onRemove, onOpenSession }: SheetProps) {
+export function WorkSheet({ open, onClose, work, onStop, onRemove, onStopChild, onOpenSession }: SheetProps) {
   const [note, setNote] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
 
@@ -100,6 +103,15 @@ export function WorkSheet({ open, onClose, work, onStop, onRemove, onOpenSession
     setRemoving(item.id);
     try {
       setNote(await onRemove(item));
+    } finally {
+      setRemoving(null);
+    }
+  }
+  async function handleStopChild(item: WorkItemDto) {
+    if (!item.id || !onStopChild) return;
+    setRemoving(item.id);
+    try {
+      setNote(await onStopChild(item));
     } finally {
       setRemoving(null);
     }
@@ -195,19 +207,47 @@ export function WorkSheet({ open, onClose, work, onStop, onRemove, onOpenSession
                   <span className={`work-line-meta ${item.state === 'running' ? 'accent' : ''}`}>{item.state}</span>
                 </>
               );
-              return canOpen ? (
-                <button
-                  key={item.id ?? `c-${i}`}
-                  type="button"
-                  className="work-line tappable"
-                  onClick={() => {
-                    if (onOpenSession!(target!.agent, target!.session)) onClose();
-                  }}
-                >
-                  {body}
-                </button>
-              ) : (
-                <div key={item.id ?? `c-${i}`} className="work-line">{body}</div>
+              // The action sits beside the line, never inside the tap
+              // target that opens the session.
+              const action =
+                item.id && item.state === 'queued' ? (
+                  <button
+                    type="button"
+                    className="work-x"
+                    onClick={() => void handleRemove(item)}
+                    disabled={removing === item.id}
+                    aria-label="Remove from the target's queue"
+                  >
+                    ×
+                  </button>
+                ) : item.id && item.state === 'running' && onStopChild ? (
+                  <button
+                    type="button"
+                    className="work-stop"
+                    onClick={() => void handleStopChild(item)}
+                    disabled={removing === item.id}
+                    aria-label={item.kind === 'subagent' ? 'Stop this sub-agent' : 'Stop the turn this question runs as'}
+                  >
+                    ■
+                  </button>
+                ) : null;
+              return (
+                <div key={item.id ?? `c-${i}`} className="work-line-row">
+                  {canOpen ? (
+                    <button
+                      type="button"
+                      className="work-line tappable"
+                      onClick={() => {
+                        if (onOpenSession!(target!.agent, target!.session)) onClose();
+                      }}
+                    >
+                      {body}
+                    </button>
+                  ) : (
+                    <div className="work-line">{body}</div>
+                  )}
+                  {action}
+                </div>
               );
             })}
           </section>
