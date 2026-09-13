@@ -2,6 +2,9 @@
 // Kept in plain .ts so non-React code (api.ts, stream.ts) can import them
 // without dragging React into modules that don't need it.
 
+import type { TurnOrigin } from '../../types/turn-origin.ts';
+export type { TurnOrigin };
+
 export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high';
 
 export interface ThinkingState {
@@ -174,6 +177,12 @@ export interface PendingQueuedTurn {
   queued?: { ahead: number };
 }
 
+// Where a synthesized inbound came from — the legacy `from_system`
+// word. `job` = a finished video render (videogen wake). The
+// structured `origin` (src/types/turn-origin.ts) carries the same
+// information plus ids; old turns only have this word.
+export type FromSystemKind = 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a' | 'job';
+
 // All Turn-kinds that the scrollback can render. Kept flat (discriminated
 // union) so React reducers don't need a class hierarchy.
 export type Turn =
@@ -184,10 +193,13 @@ export type Turn =
       fromAgent?: string;
       /** A2A: session id (or 'main') the sender wrote from. */
       fromSession?: string;
-      /** Set on synthesized inbounds (today: 'sentinel'). TUI
+      /** Set on synthesized inbounds (sentinel, tmux, …). TUI
        *  renders the row as a compact system-trigger line instead
        *  of a user turn. */
-      fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a';
+      fromSystem?: FromSystemKind;
+      /** Structured origin (server ≥ 2026.09.13). Absent on old
+       *  turns — renderers fall back to the legacy fields above. */
+      origin?: TurnOrigin;
     }
   | { kind: 'agent'; id: string; text: string }
   | {
@@ -325,7 +337,8 @@ export type StreamEvent =
       turnId?: string;
       fromAgent?: string;
       fromSession?: string;
-      fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a';
+      fromSystem?: FromSystemKind;
+      origin?: TurnOrigin;
       callId?: string;
     }
   | {

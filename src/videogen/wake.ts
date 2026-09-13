@@ -11,11 +11,12 @@
 // point of releasing the turn in the first place.
 
 import { logger } from '../server/logger.ts';
-import { runChatTurn } from '../server/run-turn.ts';
-import { acquireSessionLock } from '../server/session-queue.ts';
+import { startTurn } from '../server/start-turn.ts';
+import type { ChatTurnResolveDeps } from '../server/run-turn-types.ts';
+import { loadPersona } from '../persona/loader.ts';
 import type { VideoJob } from './jobs.ts';
 
-type ChatTurnDeps = Parameters<typeof runChatTurn>[0]['deps'];
+type ChatTurnDeps = ChatTurnResolveDeps;
 type PublishEvent = (agent: string, session: string, event: unknown) => Promise<void> | void;
 
 let injectedDeps: ChatTurnDeps | null = null;
@@ -29,6 +30,8 @@ export function configureVideoWake(args: {
   publishEvent?: PublishEvent;
 }): void {
   injectedDeps = args.chatTurnDeps;
+  // publishEvent is accepted for compatibility; the wake streams through
+  // startTurn's boot-wired broadcast since 2026-09-13.
   if (args.publishEvent) injectedPublish = args.publishEvent;
 }
 
@@ -50,8 +53,16 @@ function wakePrompt(job: VideoJob): string {
   );
 }
 
-/** Start the turn that tells an agent about its video. Throws when the
- *  session is busy so the caller can try again on the next tick. */
+/**
+ * Start the turn that tells an agent about its video.
+ *
+ * Dispatches and returns: the wake queues behind whatever runs in the
+ * session, and the runner's tick must not wait for that (it used to —
+ * a busy session held every other job's poll, birdseye L6). Throws
+ * only for what a retry on the next tick can fix: the agent is gone.
+ * Once dispatched, the job counts as notified; the turn itself, once
+ * it starts, records its own outcome into the session like any other.
+ */
 export async function wakeForJob(job: VideoJob): Promise<void> {
   if (!job.agent) return;
   const deps = injectedDeps;
@@ -59,30 +70,23 @@ export async function wakeForJob(job: VideoJob): Promise<void> {
     logger.debug({ msg: 'videogen.wake_unconfigured', job: job.id });
     return;
   }
-  const session = job.session ?? 'main';
-  const release = await acquireSessionLock(job.agent, session, { priority: 'agent' });
-  try {
-    const publish = injectedPublish;
-    await runChatTurn({
-      agent: job.agent,
-      session,
-      text: wakePrompt(job),
-      fromSystem: 'job',
-      // Without this the video never reaches the chat: the file was
-      // stored minutes before this turn began, so the turn's own time
-      // window — which is how media normally finds its bubble — does
-      // not reach back far enough to see it.
-      ...(job.mediaId ? { attachMediaIds: [job.mediaId] } : {}),
-      deps,
-      ...(publish
-        ? {
-            publishSse: ((event: unknown) =>
-              publish(job.agent!, session, event)) as never,
-          }
-        : {}),
-    });
-    logger.info({ msg: 'videogen.woke_agent', job: job.id, agent: job.agent, status: job.status });
-  } finally {
-    release();
+  if (!(await loadPersona(job.agent))) {
+    throw new Error(`agent '${job.agent}' not found`);
   }
+  const agent = job.agent;
+  const session = job.session ?? 'main';
+  void startTurn({
+    agent,
+    session,
+    text: wakePrompt(job),
+    origin: { kind: 'wake', about: 'job', ref: job.id },
+    // Without this the video never reaches the chat: the file was
+    // stored minutes before this turn began, so the turn's own time
+    // window — which is how media normally finds its bubble — does
+    // not reach back far enough to see it.
+    ...(job.mediaId ? { attachMediaIds: [job.mediaId] } : {}),
+    deps,
+  })
+    .then(() => logger.info({ msg: 'videogen.woke_agent', job: job.id, agent, status: job.status }))
+    .catch((err) => logger.warn({ msg: 'videogen.wake_failed', job: job.id, agent, err: (err as Error).message }));
 }

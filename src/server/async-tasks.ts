@@ -35,6 +35,11 @@ export interface AsyncTaskEntry {
   error?: string;
   /** Attention-wake opt-out recorded at spawn time (default: wake). */
   attention?: boolean;
+  /** Nesting depth of the PARENT (0 = a top-level agent spawned this).
+   *  The completion wake runs on the parent at this depth, so a
+   *  sub-orchestrator keeps its SUBAGENT framing and its depth cap
+   *  across the wake (birdseye L7). */
+  parent_depth?: number;
   /** Set when subagent_result delivered the terminal state to the
    *  parent — suppresses the attention wake (nothing left to report). */
   result_fetched?: boolean;
@@ -196,6 +201,9 @@ interface AttentionDeps {
     agent: string;
     session: string;
     text: string;
+    taskId: string;
+    /** The parent's own nesting depth (see AsyncTaskEntry.parent_depth). */
+    depth: number;
   }) => Promise<void>;
   /** Grace period before the wake check — a parent blocking in
    *  wait_until_done fetches within ~200ms; don't wake for that. */
@@ -271,6 +279,8 @@ function scheduleAttentionWake(e: AsyncTaskEntry): void {
         agent: e.parent_agent,
         session: e.parent_session,
         text: wakePrompt(fresh),
+        taskId: e.task_id,
+        depth: e.parent_depth ?? 0,
       })
       .catch((err: unknown) => {
         logger.warn({

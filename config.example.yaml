@@ -474,6 +474,12 @@ providers:
 #   consultPolicy: always       # auto | substantive | always — when the voice must ask the agent
 #   maxCallMinutes: 20          # hard stop; the meter runs while nobody speaks
 #   allowAgentSwitch: false     # let a call move to another agent or session mid-conversation
+#   consult:                    # how long a spoken question waits on the agent. It queues on
+#                               # the session like any turn, but a conversation cannot wait on
+#                               # a build: past either patience the work goes on in the session
+#                               # and the voice reports a status instead of an answer.
+#     lockPatienceMs: 5000      # wait for the session lock (500..120000)
+#     answerPatienceMs: 60000   # wait for the answer once the turn runs (1000..600000)
 #   turnDetection:              # how easily you can interrupt the agent
 #     threshold: 0.4            # lower = reacts to quieter speech
 #     prefixPaddingMs: 200      # run-up that counts as speech

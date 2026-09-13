@@ -10,6 +10,9 @@
 // a turn carries the engine's turnId; media and errors go to a row of
 // the SAME turn or to a fresh row — never to another turn's.
 
+// Origin types are shared with the desktop client — one source.
+import type { FromSystem, TurnOrigin } from '../../../web/src/types/origin';
+
 /** Model reasoning attached to an agent row. Arrives over SSE
  *  (`thinking` event, cumulative deltas then a final) or from the
  *  `thinking_message` history row that precedes the turn's
@@ -47,9 +50,15 @@ export interface ChatMessage {
    *  swaps the user-bubble for a peer-agent bubble in the sender's
    *  color/icon. */
   fromAgent?: string;
-  /** Synthesized inbound marker. Today: 'sentinel'. Renderer draws a
-   *  centered system divider instead of a user-bubble. */
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
+  /** Synthesized inbound marker (sentinel fire, tmux/browser/subagent/
+   *  video wake, voice consult, late agent answer). Renderer draws a
+   *  centered system divider instead of a user-bubble. Legacy: derived
+   *  from `origin` on the server; the only marker on turns recorded
+   *  before 2026-09-13. */
+  fromSystem?: FromSystem;
+  /** Structured origin of the turn (since 2026-09-13). Absent on older
+   *  turns — renderers fall back to fromSystem/fromAgent. */
+  origin?: TurnOrigin;
   /** Voice: optional TTS audio URL produced for this turn. Set when an
    *  `assistant_audio` SSE event arrived after the message; drives the
    *  Play-button on the agent bubble. */
@@ -93,7 +102,10 @@ export interface HistoryEvent {
   truncated?: boolean;
   turnId?: string;
   from_agent?: string;
-  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
+  from_session?: string;
+  from_system?: FromSystem;
+  /** Structured origin of a `user_message` row (since 2026-09-13). */
+  origin?: TurnOrigin;
   audio?: { url: string; mime: string; durationMs?: number; cacheKey: string };
   media?: Array<{ type: string; id: string; filename: string; mime: string; url: string }>;
   /** `kind: 'model_fallback'` rows. */
@@ -131,6 +143,7 @@ export function eventToMessage(ev: HistoryEvent): ChatMessage | null {
       ts: ev.ts ?? 0,
       ...(ev.from_agent ? { fromAgent: ev.from_agent } : {}),
       ...(ev.from_system ? { fromSystem: ev.from_system } : {}),
+      ...(ev.origin ? { origin: ev.origin } : {}),
     };
   }
   if (ev.kind === 'assistant_message') {

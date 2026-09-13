@@ -17,10 +17,10 @@
 // a follow-up. An unknown session slug returns the target's existing
 // sessions instead of a bare 404.
 //
-// Lock + queue (src/server/session-queue.ts): an agent_ask call is
-// priority='agent' and yields to any concurrent human user turn on the
-// target's session — the user is never delayed by background A2A
-// traffic. FIFO within the agent priority class. Sub-spawns to fresh
+// Lock + queue (src/server/session-queue.ts): an agent_ask call queues
+// on the target session like every other turn — first come, first
+// served, no class jumps ahead (Rene, 2026-09-12). The 'agent' label it
+// carries is diagnostics for /health, not an order. Sub-spawns to fresh
 // sessions (spawn_subagent's sub-xxx-yyy) are uncontended; this lock
 // only matters when multiple flows hit the SAME session.
 //
@@ -151,7 +151,22 @@ interface AskPendingResult {
   ms: number;
 }
 
-type AskResult = AskDoneResult | AskPendingResult;
+/** The target's turn ran and failed — an engine error, or the person
+ *  stopped it. Until 2026-09-13 this came back as `done` with an empty
+ *  response, which read as "the target had nothing to say" (birdseye L3). */
+interface AskFailedResult {
+  ok: false;
+  state: 'failed';
+  call_id: string;
+  target_agent: string;
+  target_session: string;
+  session_inferred?: boolean;
+  error: string;
+  hint: string;
+  ms: number;
+}
+
+type AskResult = AskDoneResult | AskPendingResult | AskFailedResult;
 
 export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
   name: 'agent_ask',
@@ -173,7 +188,9 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'may still complete on the target side — fetch or wait for it with agent_ask_result ' +
     '(call_id), never by re-sending the message. ' +
     'IMPORTANT: cannot ask yourself — use spawn_subagent for self-clone tasks. ' +
-    'Concurrent human user turns on the target\'s session take priority over your A2A call. ' +
+    'Calls queue on the target session first come, first served, like typed turns. ' +
+    'state:"failed" carries the reason — "stopped by the user" means a person ended that turn; ' +
+    'do not re-send it. ' +
     'agent_ask is REQUEST-RESPONSE, not a message bus: if YOU received a question via agent_ask ' +
     '(a user_message with from_agent set), your answer is your normal turn output — the asking ' +
     'agent receives it automatically as the result of their pending call. Never agent_ask your ' +
@@ -410,7 +427,34 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         session_created?: boolean;
         session_model?: string;
         session_note?: string;
+        outcome?: string;
+        error?: string;
       };
+      if (data.error) {
+        logger.info({
+          msg: 'agent_ask.failed',
+          from: ctx.agent,
+          to: targetAgent,
+          call_id: callId,
+          ms: Date.now() - start,
+          err: data.error,
+        });
+        return {
+          ok: false,
+          state: 'failed',
+          call_id: callId,
+          target_agent: targetAgent,
+          target_session: targetSession,
+          ...(sessionInferred ? { session_inferred: true } : {}),
+          error: data.error,
+          hint:
+            `${targetAgent}'s turn ran and failed: ${data.error}. ` +
+            'If a person stopped it, they had a reason — tell your user, do not re-send. ' +
+            'For a model or engine error, agent_ask_result({ call_id }) shows the same failure; ' +
+            're-send only if the user wants a retry.',
+          ms: Date.now() - start,
+        };
+      }
       if (data.session_created) {
         logger.info({
           msg: 'agent_ask.session_created',

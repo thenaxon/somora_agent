@@ -49,7 +49,7 @@ The agent has access to one tool: `sentinel`. Action `create` shape:
 
 When the trigger fires at 08:00, the agent receives a user-message turn
 in session `morning-routine` (auto-created with timestamp prefix if
-not existing — see the Phase 0 `/spawn-async` fix). The body is the
+not existing). The body is the
 prompt above, prefixed with a structured **evidence block**:
 
 ```text
@@ -130,7 +130,7 @@ confirmation, but they cannot bypass these limits:
 | **Minimum interval** | 60 s | No sub-minute polling possible |
 | **Max active triggers per agent** | 50 | Prevents accidental fan-out |
 | **Max fires per trigger per day (UTC)** | 500 | Auto-pauses with status `paused` + reason `daily_cap`; auto-resumes when the UTC day rolls over |
-| **Auto-pause on consecutive errors** | 3 | Status → `error`, sticky until user resumes |
+| **Auto-pause on consecutive errors** | 3 | Status → `error`, sticky until user resumes. A fire whose agent turn ran and failed (engine error, or a person stopped it) is recorded as an `error` fire and counts toward the streak. |
 
 A **daily-cap** pause is temporary: the scheduler flips the trigger back
 to `active` automatically once the UTC day rolls over and its fire count
@@ -234,9 +234,12 @@ Day-of-week is 0=Sun...6=Sat (Vixie convention).
 
 ## What the agent receives
 
-Every fire is delivered to the dispatched agent as a **user-message
-turn** through `/spawn-async`. The agent's session JSONL records it
-exactly like a real user message. From the agent's perspective:
+Every fire runs as a **user-message turn** on the dispatched agent's
+own session, in-process, through the same entry every other turn takes
+— it waits in the session's queue in arrival order and the Stop button
+ends it like any other. The agent's session JSONL records it exactly
+like a real user message, with `origin.kind: "sentinel"` naming the
+trigger and the fire. From the agent's perspective:
 
 - A turn arrives with the structured evidence block at the top.
 - It can use any skill it has access to (`gog`, `gh`, `web_fetch`, …).

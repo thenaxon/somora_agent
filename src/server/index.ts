@@ -167,11 +167,12 @@ import { configureBrowserService, getBrowserService, BrowserOpError, processIdOf
 import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSocket } from '../browser/screencast.ts';
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
-import { runChatTurn } from './run-turn.ts';
+import { configureStartTurn, startTurn } from './start-turn.ts';
+import type { TurnOrigin } from './turn-origin-kind.ts';
 import { VoiceCallManager } from '../voice/realtime/manager.ts';
 import type { VoiceCallSnapshot } from '../voice/realtime/call.ts';
 import type { RealtimeEvent } from '../voice/realtime/types.ts';
-import { registerChatAbort, triggerChatAbort } from './chat-aborts.ts';
+import { triggerChatAbort } from './chat-aborts.ts';
 import {
   acquireSessionLock,
   DequeuedError,
@@ -4440,39 +4441,28 @@ app.post('/voice/turn', async (c) => {
   }
   logger.info({ msg: 'voice.turn.stt_done', turnId, chars: transcript.length });
 
-  // ── 2. Run normal agent turn (under the session lock) ──
-  let assistantText = '';
-  const release = await acquireSessionLock(agent, session, { priority: 'user', turnId });
-  const abort = registerChatAbort(agent, session);
-  try {
-    const collected: string[] = [];
-    await runChatTurn({
-      agent,
-      session,
-      text: transcript,
-      turnId,
-      signal: abort.signal,
-      inputModality: 'voice',
-      sttProvider: stt.provider,
-      // autoPlayRequested intentionally OFF — /voice/turn synthesizes
-      // synchronously below; we don't want the run-turn hook to fire
-      // a duplicate background TTS too.
-      publishSse: async (event) => {
-        if (event.event === 'chat' && event.data.state === 'final') {
-          collected.push(event.data.text);
-        }
-        // Live broadcast — without this, open web/mobile clients on
-        // the same session see the turn ONLY after a hard refresh.
-        // Same pattern as the sentinel-trigger SSE fix in .17.07.
-        await publish(agent, session, event);
-      },
-      deps: chatTurnDeps,
-    });
-    assistantText = collected.join('').trim();
-  } finally {
-    abort.release();
-    release();
-  }
+  // ── 2. Run normal agent turn (lock, abort, SSE: startTurn) ──
+  const collected: string[] = [];
+  await startTurn({
+    agent,
+    session,
+    text: transcript,
+    turnId,
+    origin: { kind: 'human', via: 'voice-stt' },
+    inputModality: 'voice',
+    sttProvider: stt.provider,
+    // autoPlayRequested intentionally OFF — /voice/turn synthesizes
+    // synchronously below; we don't want the run-turn hook to fire
+    // a duplicate background TTS too.
+    // The sink collects the final text; startTurn still broadcasts
+    // every event so open web/mobile clients see the turn live.
+    publish: (event) => {
+      if (event.event === 'chat' && event.data.state === 'final') {
+        collected.push(event.data.text);
+      }
+    },
+  });
+  const assistantText = collected.join('').trim();
 
   if (!assistantText) {
     return c.json({ error: 'agent produced empty reply' }, 502);
@@ -4643,9 +4633,12 @@ app.post('/chat/send', async (c) => {
      * agent's session. Persists in JSONL as user_message.from_agent.
      */
     from_agent?: string;
+    /** A2A: the session the writing agent wrote from (with from_agent).
+     *  Names the reply-back target for the receiver's agent_ask. */
+    from_session?: string;
     /** A2A correlation UUID. Persisted on user_message.agent_ask_call_id. */
     agent_ask_call_id?: string;
-    /** Sub-agent nesting depth (0 = top-level). Reserved for future spawn flow. */
+    /** Sub-agent nesting depth (0 = top-level). */
     subagent_depth?: number;
     /** Phase Y.B — files the user attached to this turn. Each entry is
      *  the response shape returned by POST /attachments. Bytes are NOT
@@ -4724,19 +4717,46 @@ app.post('/chat/send', async (c) => {
       enqueuedAt: Date.now(),
     });
   }
+  // Who wrote this. A third-party client may post as another agent
+  // (from_agent, optionally from_session + agent_ask_call_id — the
+  // documented A2A shape of this route); a sub-agent depth makes it a
+  // brief; everything else is a person typing (or dictating, when the
+  // client filled the box through its microphone).
+  const fromSession =
+    fromAgent && typeof body.from_session === 'string' && body.from_session.length > 0
+      ? body.from_session
+      : undefined;
+  const origin: TurnOrigin = fromAgent
+    ? { kind: 'agent', from: { agent: fromAgent, ...(fromSession ? { session: fromSession } : {}) }, ...(agentAskCallId ? { callId: agentAskCallId } : {}) }
+    : subagentDepth > 0
+      ? { kind: 'subagent', depth: subagentDepth }
+      : { kind: 'human', via: body.input_modality === 'voice' ? 'voice-stt' : 'chat' };
+  // An agent_ask call id posted here is a call like any other: register
+  // it so agent_ask_result finds it in the registry, not only in the
+  // target's history (birdseye L17).
+  if (agentAskCallId && fromAgent) {
+    registerAskCall({
+      call_id: agentAskCallId,
+      from_agent: fromAgent,
+      ...(fromSession ? { from_session: fromSession } : {}),
+      target_agent: agent,
+      target_session: session,
+    });
+  }
   void (async () => {
     logger.info({ msg: 'turn.queued', turnId, agent, session, priority });
-    let release: () => void;
     try {
-      release = await acquireSessionLock(agent, session, {
-        priority,
+      const result = await startTurn({
+        agent,
+        session,
+        text,
         turnId,
-        ...(agentAskCallId ? { callId: agentAskCallId } : {}),
+        origin,
         // When the lock is busy and we have to wait, broadcast a
         // turn_queued SSE so any client that already accepted this
         // turn's optimistic user-bubble (matched by turnId from the
         // HTTP response below) can tag the bubble with a "queued"
-        // marker until runChatTurn actually fires the user_message
+        // marker until the turn actually fires the user_message
         // event a few seconds later.
         onQueued: (ahead) => {
           void publish(agent, session, {
@@ -4744,9 +4764,21 @@ app.post('/chat/send', async (c) => {
             data: { turnId, ahead },
           });
         },
+        beforeRun: () => {
+          const queuedEntry = queuedUserTurns.get(turnId);
+          if (queuedEntry) queuedEntry.startedAt = Date.now();
+          if (agentAskCallId && fromAgent) markAskCallRunning(agentAskCallId);
+          return true;
+        },
+        ...(body.attachments && body.attachments.length > 0
+          ? { attachments: body.attachments }
+          : {}),
+        ...(body.input_modality === 'voice' ? { inputModality: 'voice' as const } : {}),
+        ...(body.stt_provider ? { sttProvider: body.stt_provider } : {}),
+        ...(body.auto_play_requested ? { autoPlayRequested: true } : {}),
       });
+      if (agentAskCallId && fromAgent && result) completeAskCall(agentAskCallId, result);
     } catch (err) {
-      queuedUserTurns.delete(turnId);
       if (err instanceof DequeuedError) {
         // Taken back by the user before it started — nothing ran,
         // nothing to persist. The route that dequeued it already
@@ -4755,52 +4787,16 @@ app.post('/chat/send', async (c) => {
         return;
       }
       logger.error({
-        msg: 'chat.send.lock_failed',
-        turnId,
-        agent,
-        session,
-        err: (err as Error).message,
-      });
-      void publish(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
-      return;
-    }
-    const queuedEntry = queuedUserTurns.get(turnId);
-    if (queuedEntry) queuedEntry.startedAt = Date.now();
-    // Register the per-session AbortController. /chat/abort looks this
-    // up to cancel the in-flight turn — typically from TUI ESC.
-    const abort = registerChatAbort(agent, session);
-    try {
-      await runChatTurn({
-        agent,
-        session,
-        text,
-        turnId,
-        signal: abort.signal,
-        ...(fromAgent ? { fromAgent } : {}),
-        ...(agentAskCallId ? { agentAskCallId } : {}),
-        ...(subagentDepth > 0 ? { subagentDepth } : {}),
-        ...(body.attachments && body.attachments.length > 0
-          ? { attachments: body.attachments }
-          : {}),
-        ...(body.input_modality === 'voice' ? { inputModality: 'voice' as const } : {}),
-        ...(body.stt_provider ? { sttProvider: body.stt_provider } : {}),
-        ...(body.auto_play_requested ? { autoPlayRequested: true } : {}),
-        publishSse: (event) => publish(agent, session, event),
-        deps: chatTurnDeps,
-      });
-    } catch (err) {
-      logger.error({
         msg: 'chat.send.run_failed',
         turnId,
         agent,
         session,
         err: (err as Error).message,
       });
+      if (agentAskCallId && fromAgent) failAskCall(agentAskCallId, (err as Error).message);
       void publish(agent, session, { event: 'status', data: { msg: `turn failed: ${(err as Error).message}` } });
     } finally {
       queuedUserTurns.delete(turnId);
-      abort.release();
-      release();
     }
   })();
 
@@ -4919,6 +4915,11 @@ app.get('/a2a/ask-result', async (c) => {
       } finally {
         releaseWait?.();
       }
+      // Waiting through to the answer IS fetching it — read it again
+      // through getAskCall so the late-answer wake stays off. Without
+      // this the asker got the answer here and, three seconds later,
+      // a wake about the same answer (birdseye L4).
+      if (entry.finished_at !== undefined) entry = getAskCall(callId) ?? entry;
     }
     return c.json({
       call_id: entry.call_id,
@@ -5174,7 +5175,6 @@ app.post('/chat/send-sync', async (c) => {
     releaseWait = registerWait(waitFrom, waitTo);
   }
 
-  const priority: 'user' | 'agent' = fromAgent ? 'agent' : 'user';
   // agent_ask round trips are tracked by call_id so a caller whose
   // wait timed out can pick the outcome up later (agent_ask_result).
   if (agentAskCallId && fromAgent) {
@@ -5195,45 +5195,49 @@ app.post('/chat/send-sync', async (c) => {
       else askerGone.addEventListener('abort', () => markAskCallPending(agentAskCallId), { once: true });
     }
   }
+  // Who this turn is from: an agent asking (agent_ask), a spawned
+  // sub working a brief (spawn_subagent wait:true over HTTP — the
+  // waiter fields name its parent), or a client of this route acting
+  // as the person.
+  const origin: TurnOrigin = fromAgent
+    ? { kind: 'agent', from: { agent: fromAgent, ...(fromSession ? { session: fromSession } : {}) }, ...(agentAskCallId ? { callId: agentAskCallId } : {}) }
+    : subagentDepth > 0
+      ? {
+          kind: 'subagent',
+          depth: subagentDepth,
+          ...(waiterAgent && waiterSession ? { parent: { agent: waiterAgent, session: waiterSession } } : {}),
+        }
+      : { kind: 'human', via: 'chat' };
   try {
-    const release = await acquireSessionLock(agent, session, {
-      priority,
-      ...(agentAskCallId ? { callId: agentAskCallId } : {}),
+    const result = await startTurn({
+      agent,
+      session,
+      text,
+      origin,
+      beforeRun: () => {
+        if (agentAskCallId) markAskCallRunning(agentAskCallId);
+        return true;
+      },
+      ...(body.attachments && body.attachments.length > 0
+        ? { attachments: body.attachments }
+        : {}),
+      ...(modelOverride ? { modelOverride } : {}),
+      ...(maxRoundsOverride
+        ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
+        : {}),
+      // Streams to SSE subscribers too — a human watching this session
+      // sees A2A inbound user_messages and the assistant's reply appear
+      // live, not just on session refresh.
     });
-    if (agentAskCallId) markAskCallRunning(agentAskCallId);
-    try {
-      const result = await runChatTurn({
-        agent,
-        session,
-        text,
-        ...(body.attachments && body.attachments.length > 0
-          ? { attachments: body.attachments }
-          : {}),
-        ...(fromAgent ? { fromAgent } : {}),
-        ...(fromSession ? { fromSession } : {}),
-        ...(agentAskCallId ? { agentAskCallId } : {}),
-        ...(subagentDepth > 0 ? { subagentDepth } : {}),
-        ...(modelOverride ? { modelOverride } : {}),
-        ...(maxRoundsOverride
-          ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
-          : {}),
-        // Publish to SSE subscribers too — a human watching this session
-        // sees A2A inbound user_messages and the assistant's reply appear
-        // live, not just on session refresh.
-        publishSse: (event) => publish(agent, session, event),
-        deps: chatTurnDeps,
-      });
-      if (agentAskCallId) completeAskCall(agentAskCallId, result);
-      return c.json({
-        ...result,
-        session_id: session,
-        ...(sessionCreated ? { session_created: true } : {}),
-        ...(sessionModel ? { session_model: sessionModel } : {}),
-        ...(sessionNote ? { session_note: sessionNote } : {}),
-      });
-    } finally {
-      release();
-    }
+    if (!result) throw new Error('turn did not start');
+    if (agentAskCallId) completeAskCall(agentAskCallId, result);
+    return c.json({
+      ...result,
+      session_id: session,
+      ...(sessionCreated ? { session_created: true } : {}),
+      ...(sessionModel ? { session_model: sessionModel } : {}),
+      ...(sessionNote ? { session_note: sessionNote } : {}),
+    });
   } catch (err) {
     if (agentAskCallId) failAskCall(agentAskCallId, (err as Error).message);
     return c.json({ error: (err as Error).message }, 500);
@@ -5340,10 +5344,12 @@ app.post('/spawn-async', async (c) => {
   }
 
   const task_id = newTaskId();
+  const parentDepth = subagentDepth > 0 ? subagentDepth - 1 : 0;
   registerTask({
     task_id,
     parent_agent,
     parent_session,
+    parent_depth: parentDepth,
     target_agent: agent,
     target_session: session,
     started_at: Date.now(),
@@ -5351,42 +5357,44 @@ app.post('/spawn-async', async (c) => {
   });
 
   // Fire-and-forget. Errors land in the task entry, not the HTTP
-  // response — the caller already got their task_id back. Background
-  // acquires the per-session lock so two parallel /spawn-async POSTs
-  // on the same (agent, session) serialize like /chat/send does — pre-
-  // audit they interleaved JSONL events and corrupted engine state.
+  // response — the caller already got their task_id back. startTurn
+  // takes the per-session lock (two parallel /spawn-async POSTs on the
+  // same session serialize) and registers the abort controller under
+  // the sub's (agent, session), so subagent_cancel and the Stop button
+  // cut the in-flight LLM call.
+  //
+  // A from_agent on this route labels the brief as A2A mail — the
+  // documented, if unusual, shape for an external caller. The spawn
+  // tool never sends one: a brief is neutral.
+  const origin: TurnOrigin = fromAgent
+    ? { kind: 'agent', from: { agent: fromAgent } }
+    : {
+        kind: 'subagent',
+        depth: subagentDepth,
+        taskId: task_id,
+        ...(parent_session !== '?' ? { parent: { agent: parent_agent, session: parent_session } } : {}),
+      };
   void (async () => {
-    const release = await acquireSessionLock(agent, session, {
-      priority: 'agent',
-      turnId: task_id,
-    });
-    // Abort controller for subagent_cancel — registered under the
-    // sub's (agent, session) like a normal /chat/send turn, so the
-    // cancel cascade can cut the in-flight LLM call.
-    const abort = registerChatAbort(agent, session);
     try {
-      const result = await runChatTurn({
+      const result = await startTurn({
         agent,
         session,
         text,
-        signal: abort.signal,
+        turnId: task_id,
+        origin,
         ...(body.attachments && body.attachments.length > 0
           ? { attachments: body.attachments }
           : {}),
-        ...(fromAgent ? { fromAgent } : {}),
-        ...(subagentDepth > 0 ? { subagentDepth } : {}),
         ...(modelOverride ? { modelOverride } : {}),
         ...(maxRoundsOverride
           ? { agentLoopOverride: { maxRounds: maxRoundsOverride } }
           : {}),
-        deps: chatTurnDeps,
       });
-      completeTask(task_id, result);
+      if (result) completeTask(task_id, result);
+      else failTask(task_id, 'turn did not start');
     } catch (err) {
       failTask(task_id, (err as Error).message);
     } finally {
-      abort.release();
-      release();
       releaseSpawnSlot(agent);
     }
   })();
@@ -5909,6 +5917,10 @@ const chatTurnDeps = {
   onActivity: (agent: string) => remWorker.resetActivity(agent),
 };
 configureSpawnTools({ chatTurnDeps });
+// Every turn — typed, dictated, asked by an agent, spawned, fired by a
+// timer, woken by a watcher — starts through startTurn from here on:
+// one lock, one abort registration, one turn id, one SSE wiring.
+configureStartTurn({ chatTurnDeps, publish });
 
 // Realtime voice — one manager owns every live call. The browser is a
 // dumb terminal on this feature (microphone in, speaker out, state on
@@ -5943,7 +5955,7 @@ const voiceCalls = new VoiceCallManager({
       ...(st.queueLength ? { queued: st.queueLength } : {}),
     };
   },
-  runConsult: async ({ agent, session, text, prefix }) => {
+  runConsult: async ({ agent, session, text, prefix, callId }) => {
     // A conversation cannot wait on a build.
     //
     // Live 2026-09-11: the agent was asked to write a small game in a
@@ -5954,58 +5966,81 @@ const voiceCalls = new VoiceCallManager({
     // a spoken question and a typed one would write into the same
     // history at once — and once running it waits only so long for an
     // answer. Past either, the work keeps going and lands in the
-    // session; the voice gets a status it can say out loud.
-    const LOCK_PATIENCE_MS = 5_000;
-    const ANSWER_PATIENCE_MS = 60_000;
+    // session; the voice gets a status it can say out loud. Both
+    // patiences are configuration (realtimeVoice.consult).
+    const patience = config.realtimeVoice?.consult ?? { lockPatienceMs: 5_000, answerPatienceMs: 60_000 };
+    const lockPatienceMs = patience.lockPatienceMs;
+    const answerPatienceMs = patience.answerPatienceMs;
+    const consultId = randomUUID();
     const before = getSessionLockStatus(agent, session);
     const waiting = new AbortController();
-    const giveUp = setTimeout(() => waiting.abort(), LOCK_PATIENCE_MS);
-    let release: (() => void) | undefined;
-    try {
-      release = await acquireSessionLock(agent, session, { priority: 'agent', signal: waiting.signal });
-    } catch {
+    const giveUp = setTimeout(() => waiting.abort(), lockPatienceMs);
+    // startTurn holds the lock wait and the turn in one promise. The
+    // consult needs to know WHEN the lock was granted (the answer
+    // patience starts there) and whether the wait was what failed.
+    let lockGranted!: () => void;
+    const granted = new Promise<'granted'>((resolve) => {
+      lockGranted = () => resolve('granted');
+    });
+    const turn = startTurn({
+      agent,
+      session,
+      text,
+      turnId: consultId,
+      origin: { kind: 'voice', consultId, ...(callId ? { callId } : {}) },
+      lockSignal: waiting.signal,
+      beforeRun: () => {
+        clearTimeout(giveUp);
+        lockGranted();
+        return true;
+      },
+      // The framing and the last lines of the call travel beside the
+      // question, not inside it: the model reads both, the session
+      // records only what was asked.
+      ...(prefix ? { turnPrefix: prefix } : {}),
+      // A human watching the same session sees the question and the
+      // answer appear live, exactly like any other turn.
+    });
+    const first = await Promise.race([granted, turn.then(() => 'settled' as const, () => 'settled' as const)]);
+    if (first === 'settled') {
+      // Settled before the lock was granted: the wait was aborted by
+      // the patience timer (or the turn could not start at all).
+      let reason = 'busy';
+      try {
+        await turn;
+      } catch (err) {
+        reason = (err as Error).name === 'AbortError' ? 'busy' : (err as Error).message;
+      }
+      clearTimeout(giveUp);
+      if (reason !== 'busy') throw new Error(reason);
       const minutes = before.activeSince ? Math.max(1, Math.round((Date.now() - before.activeSince) / 60_000)) : 0;
       return {
         text: `busy: you are still working on something you started ${minutes} minute(s) ago. Say that, and offer to look again in a moment.`,
         pending: true,
       };
-    } finally {
-      clearTimeout(giveUp);
     }
-
-    const turn = runChatTurn({
-      agent,
-      session,
-      text,
-      // The framing and the last lines of the call travel beside the
-      // question, not inside it: the model reads both, the session
-      // records only what was asked.
-      ...(prefix ? { turnPrefix: prefix } : {}),
-      fromSystem: 'voice',
-      // A human watching the same session sees the question and the
-      // answer appear live, exactly like any other turn.
-      publishSse: (event) => publish(agent, session, event),
-      deps: chatTurnDeps,
-    }).finally(() => release?.());
 
     const timeout = Symbol('voice-consult-timeout');
     const raced = await Promise.race([
       turn,
-      new Promise<typeof timeout>((resolve) => setTimeout(() => resolve(timeout), ANSWER_PATIENCE_MS)),
+      new Promise<typeof timeout>((resolve) => setTimeout(() => resolve(timeout), answerPatienceMs)),
     ]);
     if (raced === timeout) {
       // Deliberately NOT cancelled: the user asked for the work, and it
       // finishes into the session. Only the conversation moves on.
       turn.catch((err) => logger.warn({ msg: 'voice.consult_late_failure', err: (err as Error).message }));
-      logger.info({ msg: 'voice.consult_pending', agent, session, afterMs: ANSWER_PATIENCE_MS });
+      logger.info({ msg: 'voice.consult_pending', agent, session, consultId, afterMs: answerPatienceMs });
       return {
         text: 'still working on it — this is taking longer than a sentence. Say so, keep talking, and offer to check again.',
         pending: true,
+        turnId: consultId,
       };
     }
+    if (!raced) throw new Error('consult turn did not start');
     return {
       text: raced.finalText,
       ...(raced.outcome ? { outcome: raced.outcome } : {}),
+      turnId: consultId,
     };
   },
 });
@@ -6071,22 +6106,21 @@ if (config.videoGen?.enabled) {
 // subagent attention wake, so it streams live and respects the queue.
 const browserService = configureBrowserService(config.browser, {
   resolveSession: resolveBrowserSession,
-  dispatchWakeTurn: async ({ agent, session, text }) => {
+  dispatchWakeTurn: async ({ agent, session, text, viewId, cause, handoffId }) => {
     session = await resolveBrowserSession(agent, session);
-    const release = await acquireSessionLock(agent, session, { priority: 'agent' });
-    try {
-      await resolveBrowserSession(agent, session);
-      await runChatTurn({
-        agent,
-        session,
-        text,
-        fromSystem: 'browser',
-        deps: chatTurnDeps,
-        publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
-      });
-    } finally {
-      release();
-    }
+    await startTurn({
+      agent,
+      session,
+      text,
+      origin: { kind: 'browser', viewId, cause, ...(handoffId ? { handoffId } : {}) },
+      // The lock wait can be long; the session may have been archived
+      // meanwhile. Re-check once the lock is held, before anything is
+      // written.
+      beforeRun: async () => {
+        await resolveBrowserSession(agent, session);
+        return true;
+      },
+    });
   },
 });
 await browserService.init();
@@ -6099,42 +6133,30 @@ const screencasts = new ScreencastRegistry(browserService);
 // existed.
 configureAskAttention({
   graceMs: 3_000,
-  dispatchWakeTurn: async ({ agent, session, text }) => {
-    const release = await acquireSessionLock(agent, session, { priority: 'agent' });
-    try {
-      await runChatTurn({
-        agent,
-        session,
-        text,
-        // Its own origin, not 'subagent': the reader saw a sub-agent
-        // icon for an answer that came from a peer agent it had asked
-        // (Rene, 2026-09-12 — "war ja eine agent_ask message oder?").
-        fromSystem: 'a2a',
-        deps: chatTurnDeps,
-        publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
-      });
-    } finally {
-      release();
-    }
+  dispatchWakeTurn: async ({ agent, session, text, callId }) => {
+    await startTurn({
+      agent,
+      session,
+      text,
+      // Its own origin, not 'subagent': the reader saw a sub-agent
+      // icon for an answer that came from a peer agent it had asked
+      // (Rene, 2026-09-12 — "war ja eine agent_ask message oder?").
+      origin: { kind: 'wake', about: 'a2a', ref: callId },
+    });
   },
 });
 
 configureSubagentAttention({
   graceMs: 2_000,
-  dispatchWakeTurn: async ({ agent, session, text }) => {
-    const release = await acquireSessionLock(agent, session, { priority: 'agent' });
-    try {
-      await runChatTurn({
-        agent,
-        session,
-        text,
-        fromSystem: 'subagent',
-        deps: chatTurnDeps,
-        publishSse: (event) => publish(agent, session, event as Parameters<typeof publish>[2]),
-      });
-    } finally {
-      release();
-    }
+  dispatchWakeTurn: async ({ agent, session, text, taskId, depth }) => {
+    await startTurn({
+      agent,
+      session,
+      text,
+      // A sub-orchestrator is woken at ITS depth, so it keeps the
+      // SUBAGENT framing and the depth cap it had when it spawned.
+      origin: { kind: 'wake', about: 'subagent', ref: taskId, ...(depth > 0 ? { depth } : {}) },
+    });
   },
 });
 installTtsCacheGc(config);

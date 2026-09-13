@@ -42,6 +42,8 @@ import {
   type ThinkingContent,
 } from './history';
 
+import type { FromSystem, TurnOrigin } from '../../../web/src/types/origin';
+
 export type { ChatMessage, ThinkingContent } from './history';
 
 /** An aborted or errored turn may never send the thinking final —
@@ -519,7 +521,9 @@ export function useChatStream(agent: string | null): ChatStream {
             ts?: number;
             turnId?: string;
             from_agent?: string;
-            from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser';
+            from_session?: string;
+            from_system?: FromSystem;
+            origin?: TurnOrigin;
           }
         | null = null;
       try { d = JSON.parse(e.data); } catch { return; }
@@ -577,6 +581,7 @@ export function useChatStream(agent: string | null): ChatStream {
             ...(dd.turnId ? { turnId: dd.turnId } : {}),
             ...(dd.from_agent ? { fromAgent: dd.from_agent } : {}),
             ...(dd.from_system ? { fromSystem: dd.from_system } : {}),
+            ...(dd.origin ? { origin: dd.origin } : {}),
           },
         ];
       });

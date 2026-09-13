@@ -282,6 +282,124 @@ session:
 Overrides are stored in the session's meta-file and survive across server
 restarts.
 
+## Talking to another agent
+
+Agents talk to each other with `agent_ask`. The message lands in the
+target's **real** session as a user message, so the target answers with
+its full memory, persona and history, and the exchange stays visible
+there afterwards. The target sees a header
+`[Message from agent <name>, session <slug>]` and answers as it would
+answer you; that answer comes back to the asker as the tool result.
+It is request-response, not a message bus: an agent that received a
+question answers by finishing its turn, never by calling `agent_ask`
+back at its caller.
+
+```
+agent_ask({ agent: "<other-agent>", message: "…" })
+agent_ask({ agent: "<other-agent>", session: "projekt-a", create_session: true, model: "<alias>", message: "…" })
+agent_ask({ agent: "<other-agent>", message: "…", images: ["/abs/path.png"], timeout_ms: 120000 })
+```
+
+- **Where it lands.** Without `session`, a reply to the agent that
+  wrote to you (or to your spawning parent) goes back to the session
+  that message came from; anything else goes to the target's `main`.
+  An explicit `session` always wins. An unknown slug is an error that
+  lists the target's existing sessions.
+- **Creating a project session.** `create_session: true` creates a
+  named slug on the target when it does not exist yet (not `main`, not
+  ids, not `sub-…` sessions). `model` pins an alias or `provider/id`
+  on the session this call creates; on an existing session it is
+  ignored and the result says so in `session_note`.
+- **Pictures.** `images` takes absolute paths. somora uploads them and
+  puts them on the target's turn, so a model with vision sees them; a
+  target without vision gets the vision worker's description.
+- **Queueing.** The call waits in the target session's queue in arrival
+  order, like a typed message. It cannot ask yourself; a self-clone
+  task is what `spawn_subagent` is for.
+- **Waiting.** `timeout_ms` defaults to `agentLoop.longTaskDefaultTimeoutMs`
+  (5 minutes) and is capped at `longTaskMaxTimeoutMs` (30 minutes).
+  When the target has not answered by then the call returns
+  `state: "pending"` with a `call_id` — the target keeps working, and
+  the message is never sent again.
+
+The result has one of three states:
+
+| `state` | What it carries | Meaning |
+|---|---|---|
+| `done` | `response`, `ms`, `usage`, `call_id`, `target_agent`, `target_session`, plus `session_inferred`, `session_created`, `session_model` or `session_note` when they apply | The target answered. |
+| `pending` | `call_id`, `hint` | The target is still queued or running. Fetch the outcome with `agent_ask_result`. |
+| `failed` | `error`, `hint` | The target's turn ran and failed — a model or engine error, or `stopped by the user` when a person pressed Stop on it. Not something to retry on your own. |
+
+`agent_ask_result({ call_id })` picks up a pending call: `done` with
+the reply, `failed` with the error, or `pending` with `phase` `queued`
+or `running`. `wait_until_done: true` blocks server-side until the call
+finishes or `timeout_ms` passes, which is cheaper than polling. After a
+server restart, pass `agent` and `session` of the original call and the
+answer is read from the target's session.
+
+An asker that stopped waiting does not have to remember to poll. When
+the answer lands, the asker is woken in the session it asked from with
+an `[agent answer]` turn carrying the first lines and the `call_id`.
+Reading the result first, through the tool, cancels that wake; an asker
+still on the line never gets one.
+
+Blocking waits are guarded against cycles. The server tracks who waits
+on whom and refuses a call that would close the loop — even through a
+chain of three or more agents — with an error that says so, instead of
+letting both sessions hang. Sub-agents waiting on their parents are
+part of the same graph.
+
+## Sub-agents
+
+`spawn_subagent` delegates a sealed task. The sub runs in a **fresh**
+session of the target persona — `sub-<parent>-<timestamp>`, or
+`sub-self-…` for a clone of the caller — with normal memory, tools and
+thinking, and produces a final answer. Sub sessions stay visible in the
+target's session list with a "sub from" marker.
+
+```
+spawn_subagent({ task: "…" })                                   # clone of yourself, background
+spawn_subagent({ persona: "<other-agent>", task: "…", wait: true })
+spawn_subagent({ task: "…", model: "<alias>", maxRounds: 32, attention: false })
+spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "…" }] })
+```
+
+- **`wait: false`** (default) returns a `task_id` at once and the
+  caller's turn ends; the sub runs in the background. **`wait: true`**
+  blocks until the sub's final answer and returns it inline.
+- **`spawn_subagents`** runs up to eight tasks in parallel and returns
+  one result per task in the same order; `wait` applies to the batch.
+- **`model`** overrides the persona's default for this sub (an alias or
+  `provider/id` exactly as configured). **`maxRounds`** raises the
+  sub's tool-call round cap above `agentLoop.maxRounds` — orchestrator
+  subs that spawn and poll their own subs need it. **`images`** works
+  as for `agent_ask`.
+- **Follow-up tools.** `subagent_status({ task_id })` reports
+  `running`, `done`, `failed` or `cancelled` with target and
+  timestamps. `subagent_result({ task_id, wait_until_done?, timeout_ms? })`
+  returns `done` with the text, `usage`, the runtime verdict `outcome`
+  (`completed`, `partial`, `degraded`, `failed`) with `outcome_reason`,
+  `tool_calls`, `rounds`, `files_written` and `media`; `failed` with
+  the error; or `pending`. `subagent_list({ state?, limit? })` lists
+  the caller's own tasks, newest first, from the server's in-memory
+  registry (a restart empties it). `subagent_cancel({ task_id,
+  reason? })` aborts a running sub and every sub it spawned; files on
+  disk and the session stay.
+- **Attention wake.** When a background sub finishes and its result has
+  not been fetched, the parent is woken in the session it spawned from
+  with a `[subagent attention]` turn naming state, outcome, files and
+  media, and the `task_id` to read the rest. `attention: false` opts a
+  spawn out of it.
+- **Limits.** Nesting is capped at depth 3. Each agent may run 4 subs
+  at once and the whole server 16; subs spawned by subs count against
+  the parent's 4 and may fill only 3 of them, so an orchestrator sub
+  can never lock its own agent out. A spawn that finds a cap full is
+  refused with the numbers.
+
+A sub's turn is a turn like any other: it waits in its session's
+queue, shows up in `/health`, and a person can stop it. The parent then
+sees the task as `failed` with `stopped by the user`.
+
 ## Programmatic agent creation
 
 If you want to script agent creation, the directory layout is the contract.

@@ -165,7 +165,15 @@ export interface BrowserInfo {
 
 export interface ServiceDeps {
   /** Wake the agent in its session after "Hand back". */
-  dispatchWakeTurn?: (args: { agent: string; session: string; text: string }) => Promise<void>;
+  dispatchWakeTurn?: (args: {
+    agent: string;
+    session: string;
+    text: string;
+    /** Which window came back, and why the agent is woken. */
+    viewId: string;
+    cause: 'handoff' | 'activity';
+    handoffId?: string;
+  }) => Promise<void>;
   /** Resolve and validate a live session before binding a browser or waking it. */
   resolveSession?: (agent: string, ref: string) => Promise<string>;
 }
@@ -1163,11 +1171,14 @@ export class BrowserService {
       // Whom to wake: the requesting agent+session when a handoff was
       // pending; otherwise — only if the human actually did something —
       // the session of the last tab used IN THIS WINDOW (Rene 2026-09-10).
-      let wake: { agent: string; session: string; text: string } | null = null;
+      let wake: { agent: string; session: string; text: string; viewId: string; cause: 'handoff' | 'activity'; handoffId?: string } | null = null;
       if (handoff) {
         wake = {
           agent: handoff.agent,
           session: handoff.session,
+          viewId: id,
+          cause: 'handoff',
+          handoffId: handoff.id,
           text:
             `[browser] The user handed browser '${id}' back to you (handoff ${handoff.id}). ` +
             `Reason you asked for it: ${handoff.reason}. ` +
@@ -1180,6 +1191,8 @@ export class BrowserService {
           wake = {
             agent: last.agent,
             session: last.session,
+            viewId: id,
+            cause: 'activity',
             text:
               `[browser] The user took over browser '${id}', did something there (navigation, clicks or typing) and handed it back to you. ` +
               'If you still have work in this browser, take a fresh snapshot before acting — the page may have changed. Otherwise just acknowledge briefly.',

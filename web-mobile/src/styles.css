@@ -629,6 +629,54 @@ button { cursor: pointer; }
 .sentinel-name { color: var(--text-2); }
 .sentinel-time { color: var(--text-3); }
 .sentinel-sep { color: var(--line-2); }
+/* The divider shows one line; a tap opens the full wake text below. */
+.sentinel-wrap { display: flex; flex-direction: column; }
+.sentinel-divider.expandable { cursor: pointer; }
+.sentinel-chevron { color: var(--text-3); }
+.sentinel-full {
+  margin: 0 8px 6px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg-0);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+}
+/* Voice consult: the agent's own voice asking the agent during a call.
+ * A wrapping block, not a divider — the question can be 700 characters
+ * (same idiom as the desktop's .voice-note). */
+.voice-note {
+  margin: 8px 0 8px 8px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent, #6cf);
+  background: color-mix(in srgb, var(--accent, #6cf) 6%, transparent);
+  border-radius: 0 6px 6px 0;
+  max-width: 100%;
+}
+.voice-note-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-2);
+  margin-bottom: 3px;
+}
+.voice-note-label { color: var(--accent, #6cf); font-weight: 600; }
+.voice-note-time { margin-left: auto; letter-spacing: 0; text-transform: none; opacity: 0.7; }
+.voice-note-body {
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
 .msg-bubble p { margin: 0 0 6px 0; }
 .msg-bubble p:last-child { margin-bottom: 0; }
 .msg-bubble pre {

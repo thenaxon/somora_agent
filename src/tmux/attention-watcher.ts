@@ -17,8 +17,9 @@
 // Design: private/tmux-hooks-design.md §3.
 
 import { logger } from '../server/logger.ts';
-import { runChatTurn } from '../server/run-turn.ts';
-import { acquireSessionLock, getSessionLockStatus } from '../server/session-queue.ts';
+import { startTurn } from '../server/start-turn.ts';
+import type { ChatTurnResolveDeps } from '../server/run-turn-types.ts';
+import { getSessionLockStatus } from '../server/session-queue.ts';
 import type { TmuxAttentionConfig } from '../config/types.ts';
 import { tmuxLocalCapture, tmuxLocalList } from '../tools/tmux/local.ts';
 import { listTmuxOrigins, type TmuxOrigin } from './origin-store.ts';
@@ -32,7 +33,7 @@ import {
   type AttentionSessionState,
 } from './attention.ts';
 
-type ChatTurnDeps = Parameters<typeof runChatTurn>[0]['deps'];
+type ChatTurnDeps = ChatTurnResolveDeps;
 type PublishEvent = (agent: string, session: string, event: unknown) => Promise<void> | void;
 
 let injectedChatTurnDeps: ChatTurnDeps | null = null;
@@ -47,6 +48,8 @@ export function configureTmuxAttention(args: {
   publishEvent?: PublishEvent;
 }): void {
   injectedChatTurnDeps = args.chatTurnDeps;
+  // publishEvent is accepted for compatibility; the wake turn streams
+  // through startTurn's boot-wired broadcast since 2026-09-13.
   if (args.publishEvent) injectedPublishEvent = args.publishEvent;
 }
 
@@ -217,44 +220,36 @@ export class TmuxAttentionWatcher {
       });
       return;
     }
-    const publishSse = injectedPublishEvent
-      ? (event: unknown) => injectedPublishEvent!(origin.agent, session, event)
-      : undefined;
-    void (async () => {
-      const release = await acquireSessionLock(origin.agent, session, { priority: 'agent' });
-      try {
-        // The lock wait can be long — the origin's own turn typically
-        // holds it, and that turn is often the one that `tmux kill`s the
-        // session once the work is done. Waking for a session that no
-        // longer exists burns a turn and confuses the agent ("became
-        // ready" → `tmux list` → 0). Re-check liveness AFTER the wait.
-        if (!(await tmuxSessionExists(origin.name))) {
-          logger.info({
-            msg: 'tmux.attention_wake_stale',
-            name: origin.name,
-            origin: { agent: origin.agent, session },
-            reason: 'session gone before wake turn could start',
-          });
-          return;
-        }
-        await runChatTurn({
-          agent: origin.agent,
-          session,
-          text: wakePrompt(origin.name, origin.kind ?? 'shell'),
-          fromSystem: 'tmux',
-          deps,
-          ...(publishSse ? { publishSse: publishSse as never } : {}),
-        });
-      } catch (err) {
-        logger.warn({
-          msg: 'tmux.attention_wake_failed',
+    // Lock, abort registration, turn id and the SSE broadcast are
+    // startTurn's; the wake only says who, where and what.
+    void startTurn({
+      agent: origin.agent,
+      session,
+      text: wakePrompt(origin.name, origin.kind ?? 'shell'),
+      origin: { kind: 'tmux', tmuxSession: origin.name, ...(origin.kind ? { tmuxKind: origin.kind } : {}) },
+      deps,
+      // The lock wait can be long — the origin's own turn typically
+      // holds it, and that turn is often the one that `tmux kill`s the
+      // session once the work is done. Waking for a session that no
+      // longer exists burns a turn and confuses the agent ("became
+      // ready" → `tmux list` → 0). Re-check liveness AFTER the wait.
+      beforeRun: async () => {
+        if (await tmuxSessionExists(origin.name)) return true;
+        logger.info({
+          msg: 'tmux.attention_wake_stale',
           name: origin.name,
-          err: (err as Error).message,
+          origin: { agent: origin.agent, session },
+          reason: 'session gone before wake turn could start',
         });
-      } finally {
-        release();
-      }
-    })();
+        return false;
+      },
+    }).catch((err) => {
+      logger.warn({
+        msg: 'tmux.attention_wake_failed',
+        name: origin.name,
+        err: (err as Error).message,
+      });
+    });
   }
 }
 

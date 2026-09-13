@@ -150,8 +150,11 @@ the request goes out.
 2. Both are stored in the media directory and a record is written, with
    the real dimensions and duration read from the file's own header
    atoms (no ffmpeg).
-3. The agent that asked is woken, one wake per finished video. Waiting
-   to batch four renders would defeat the point of releasing the turn.
+3. When an agent started the render, that agent is woken in the session
+   it asked from, one wake per finished video. Waiting to batch four
+   renders would defeat the point of releasing the turn. A render
+   started from the web client has no agent to wake; it lands in the
+   Media window.
 4. The video appears in that wake turn's bubble, and in the Media
    window.
 

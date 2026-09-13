@@ -8,6 +8,7 @@
 // chat-delta / chat-final events. The web client decodes these into
 // ChatMessage rows below.
 
+import type { FromSystem, TurnOrigin } from './origin';
 export interface ToolCallPayload {
   callId?: string;
   tool: string;
@@ -93,9 +94,15 @@ export type ChatMessage =
        *  is not main. */
       fromSession?: string;
       /** Marks an inbound that the server synthesized via an internal
-       *  subsystem (today: 'sentinel'). Renderer draws a centered
-       *  system divider instead of a user-bubble. */
-      fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+       *  subsystem (sentinel fire, tmux/browser/subagent/video wake, a
+       *  voice consult, a late agent answer). Renderer draws a centered
+       *  system divider instead of a user-bubble. Legacy: derived from
+       *  `origin` on the server; the only marker on turns recorded
+       *  before 2026-09-13. */
+      fromSystem?: FromSystem;
+      /** Structured origin of the turn (since 2026-09-13). Absent on
+       *  older turns — renderers fall back to fromSystem/fromAgent. */
+      origin?: TurnOrigin;
       /** The human spoke this instead of typing it. */
       inputModality?: 'text' | 'voice';
       /** Which spoken path: the dictation button, or a live call. Two
@@ -263,7 +270,8 @@ export type StreamEvent =
         turnId?: string;
         from_agent?: string;
         from_session?: string;
-        from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+        from_system?: FromSystem;
+        origin?: TurnOrigin;
         /** How it was said, when it was not typed. `stt` is the
          *  microphone button, `realtime` a sentence spoken in a call. */
         input?: { modality?: 'text' | 'voice'; source?: 'stt' | 'realtime' };

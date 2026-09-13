@@ -65,6 +65,17 @@ The question carries the last few lines of the call with it. Asked *"how
 long does that take"*, an agent otherwise has no idea what you were
 talking about, and the session would read like a riddle a week later.
 
+A conversation cannot wait on a build. The question queues on the
+session like every other turn, but the call's patience is short and
+has two parts: it waits `realtimeVoice.consult.lockPatienceMs` (default
+5 seconds) for the session lock, and once the turn runs it waits
+`realtimeVoice.consult.answerPatienceMs` (default 60 seconds) for the
+answer. Past the first, the question is withdrawn from the queue and
+the voice says the agent is still busy with what it started earlier.
+Past the second, the turn keeps running and its answer lands in the
+session; the voice says it is taking longer and keeps talking. Nothing
+the agent was doing is cancelled either way.
+
 The framing itself travels beside the question, not inside it — in the
 same field somora uses for the memory block, which every engine puts in
 front of the user message. The model reads both; the session records
@@ -132,6 +143,9 @@ realtimeVoice:
   consultPolicy: always
   maxCallMinutes: 20          # the meter runs while nobody speaks
   allowAgentSwitch: true      # move a call to another agent or session mid-conversation
+  consult:                    # how long a spoken question waits on the agent
+    lockPatienceMs: 5000      # for the session lock; past it the voice reports "busy"
+    answerPatienceMs: 60000   # for the answer once running; past it the work goes on in the session
   turnDetection:              # how easily you can interrupt
     threshold: 0.4            # lower = reacts to quieter speech
     prefixPaddingMs: 200      # how much run-up counts as speech

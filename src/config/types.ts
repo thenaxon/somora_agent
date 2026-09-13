@@ -1047,6 +1047,20 @@ export const RealtimeVoiceConfigSchema = z
      *  answering anything of substance. `always` is the honest default
      *  for a system whose whole point is that the AGENT knows things. */
     consultPolicy: z.enum(['auto', 'substantive', 'always']).default('always'),
+    /**
+     * How long a spoken question waits on the agent. A conversation
+     * cannot wait on a build (live 2026-09-11): the consult waits
+     * `lockPatienceMs` for the session lock, then `answerPatienceMs`
+     * for the answer. Past either the work keeps running and lands in
+     * the session; the voice gets a status it can say out loud. The
+     * two constants moved here 2026-09-13 unchanged.
+     */
+    consult: z
+      .object({
+        lockPatienceMs: z.number().int().min(500).max(120_000).default(5_000),
+        answerPatienceMs: z.number().int().min(1_000).max(600_000).default(60_000),
+      })
+      .default({ lockPatienceMs: 5_000, answerPatienceMs: 60_000 }),
     /** Hard stop for one call. The meter runs while nobody speaks, so
      *  an open tab is a standing bill. */
     maxCallMinutes: z.number().int().min(1).max(180).default(20),

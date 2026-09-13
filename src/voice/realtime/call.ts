@@ -74,7 +74,7 @@ export interface VoiceCallDeps {
   provider: RealtimeProvider;
   /** Runs ONE turn in the bound session, as `from_system: 'voice'`.
    *  `prefix` is scaffolding the model sees and the record does not. */
-  runConsult(args: { agent: string; session: string; text: string; prefix?: string }): Promise<ConsultResult>;
+  runConsult(args: { agent: string; session: string; text: string; prefix?: string; callId?: string }): Promise<ConsultResult>;
   /**
    * Persists into the bound session's history AND puts it on the live
    * stream.
@@ -660,6 +660,7 @@ export class VoiceCall {
         session: this.target.session,
         text: turn.text,
         prefix: turn.prefix,
+        callId: this.id,
       });
       const answer = result.text.trim();
       this.log({

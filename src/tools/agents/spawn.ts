@@ -31,12 +31,10 @@ import {
   type AsyncTaskEntry,
 } from '../../server/async-tasks.ts';
 import { registerWait } from '../../server/ask-wait-graph.ts';
-import { registerChatAbort } from '../../server/chat-aborts.ts';
 import { logger } from '../../server/logger.ts';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
-import { runChatTurn } from '../../server/run-turn.ts';
-import { acquireSessionLock } from '../../server/session-queue.ts';
+import { startTurn } from '../../server/start-turn.ts';
 import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
 import type { ToolDefinition } from '../types.ts';
 import {
@@ -609,12 +607,20 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
       via: injectedDeps ? 'in-process' : 'http',
     });
 
+    // In-process: startTurn takes the sub-session's lock and registers
+    // the abort controller, so the Stop button reaches a sync sub the
+    // same way it reaches an async one (birdseye L8); the sub-session
+    // streams live like its HTTP twin already did.
     const result: ChatTurnResult = injectedDeps
-      ? await runChatTurn({
+      ? await startSubTurn({
           agent: targetPersona,
           session: sessionId,
           text: task.task,
-          subagentDepth: parentDepth + 1,
+          origin: {
+            kind: 'subagent',
+            depth: parentDepth + 1,
+            ...(ctx.session ? { parent: { agent: ctx.agent, session: ctx.session } } : {}),
+          },
           ...(briefAttachments.length > 0 ? { attachments: briefAttachments } : {}),
           ...(task.model ? { modelOverride: task.model } : {}),
           ...(task.maxRounds
@@ -667,8 +673,15 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   }
 }
 
+/** startTurn without a pre-flight never skips; a null here is a bug. */
+async function startSubTurn(args: Parameters<typeof startTurn>[0]): Promise<ChatTurnResult> {
+  const result = await startTurn(args);
+  if (!result) throw new Error('spawn_subagent: turn did not start');
+  return result;
+}
+
 /**
- * In-process async dispatch: register the task, kick off runChatTurn
+ * In-process async dispatch: register the task, kick off the turn
  * as a background promise, return the task_id. completeTask /
  * failTask write the result back into the shared task store.
  */
@@ -690,31 +703,29 @@ async function spawnAsyncInProcess(args: {
     task_id,
     parent_agent: args.parentAgent,
     parent_session: args.parentSession,
+    parent_depth: args.parentDepth,
     target_agent: args.targetPersona,
     target_session: args.sessionId,
     started_at: Date.now(),
     ...(args.attention !== undefined ? { attention: args.attention } : {}),
   });
   void (async () => {
-    // Hold the per-session lock so two parallel async-spawns on the
-    // same (agent, session) serialize like /chat/send does. Pre-audit
-    // 2026-05-16 they ran concurrently and interleaved JSONL events.
-    const release = await acquireSessionLock(args.targetPersona, args.sessionId, {
-      priority: 'agent',
-      turnId: task_id,
-    });
-    // Abort controller for subagent_cancel: registered under the sub's
-    // (agent, session) like a normal /chat/send turn, so the cancel
-    // cascade can cut the in-flight LLM call via triggerChatAbort —
-    // the same signal path the Stop button uses.
-    const abort = registerChatAbort(args.targetPersona, args.sessionId);
+    // startTurn holds the per-session lock (two parallel async-spawns
+    // on the same session serialize) and registers the abort controller
+    // under the sub's (agent, session), so subagent_cancel and the Stop
+    // button cut the in-flight LLM call through the same signal.
     try {
-      const result = await runChatTurn({
+      const result = await startSubTurn({
         agent: args.targetPersona,
         session: args.sessionId,
         text: args.taskText,
-        subagentDepth: args.parentDepth + 1,
-        signal: abort.signal,
+        turnId: task_id,
+        origin: {
+          kind: 'subagent',
+          depth: args.parentDepth + 1,
+          taskId: task_id,
+          ...(args.parentSession !== '?' ? { parent: { agent: args.parentAgent, session: args.parentSession } } : {}),
+        },
         ...(args.attachments && args.attachments.length > 0
           ? { attachments: args.attachments }
           : {}),
@@ -730,8 +741,6 @@ async function spawnAsyncInProcess(args: {
     } catch (err) {
       failTask(task_id, (err as Error).message);
     } finally {
-      abort.release();
-      release();
       // Release the concurrency slot reserved by runOneSpawn — the
       // background promise's lifetime IS the slot lifetime.
       releaseSpawnSlot(args.targetPersona);

@@ -1,0 +1,183 @@
+// The one way a turn starts.
+//
+// Fourteen places in somora start an agent turn: a person typing, a
+// person dictating, agent_ask, four flavours of spawn_subagent, the
+// sentinel timer, the tmux watcher, a browser hand-back, a voice
+// consult, and three wake-ups (late A2A answer, finished sub, rendered
+// video). Until 2026-09-13 each of them took the session lock, minted
+// or skipped a turn id, registered or skipped an abort controller,
+// chose its own SSE wiring and set its own subset of the origin
+// fields — and only four of the fourteen could be stopped from the
+// Stop button (private/turn-triggers-birdseye.md, L1).
+//
+// startTurn does the same six things for every caller, in the same
+// order:
+//   1. take the session lock (FIFO, label from the origin, turn id
+//      always set so /health and the tmux busy-check see the turn),
+//   2. run the caller's pre-flight once the lock is held (a tmux wake
+//      re-checks that the session still exists),
+//   3. register the abort controller — POST /chat/abort reaches EVERY
+//      turn from here on,
+//   4. run the turn with the origin's legacy fields derived once,
+//   5. mark a stopped turn as stopped, in words the asker understands,
+//   6. release everything, in reverse.
+//
+// What it does NOT do: decide whether a turn should start at all
+// (cooldowns, caps, dedup), pick the target session, or write the
+// text. That stays with the trigger — it is the part that should
+// differ between a sentinel fire and a browser hand-back.
+
+import { randomUUID } from 'node:crypto';
+
+import type { SseEvent } from '../types/events.ts';
+import { registerChatAbort } from './chat-aborts.ts';
+import { logger } from './logger.ts';
+import { runChatTurn as runChatTurnReal, type RunChatTurnArgs } from './run-turn.ts';
+import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
+import { acquireSessionLock } from './session-queue.ts';
+import { originCallId, originKind, originLabel, originToLegacy, type TurnOrigin } from './turn-origin-kind.ts';
+
+export interface StartTurnDeps {
+  chatTurnDeps: ChatTurnResolveDeps;
+  /** Broadcast into the session's SSE subscribers. */
+  publish: (agent: string, session: string, event: SseEvent) => Promise<void> | void;
+  /** Test seam: the turn runner. Defaults to runChatTurn. */
+  runTurn?: (args: RunChatTurnArgs) => Promise<ChatTurnResult>;
+}
+
+let injected: StartTurnDeps | null = null;
+
+/** Server boot wires this once. Callers that hold their own copy of
+ *  the deps (spawn tools, sentinel, tmux, video) may still pass `deps`
+ *  explicitly; the publisher always comes from here. */
+export function configureStartTurn(deps: StartTurnDeps): void {
+  injected = deps;
+}
+
+export function isStartTurnConfigured(): boolean {
+  return injected !== null;
+}
+
+/** What a stopped turn reports to whoever asked for it. The asker
+ *  (agent_ask, subagent_result, sentinel history) sees this as the
+ *  error and must not read it as a model failure worth a retry. */
+export const STOPPED_BY_USER = 'stopped by the user';
+
+export interface StartTurnArgs {
+  agent: string;
+  /** Canonical session id — resolve slugs BEFORE calling (the policies
+   *  for a missing session differ per trigger and stay with it). */
+  session: string;
+  text: string;
+  origin: TurnOrigin;
+  /** Pre-minted when the caller logged it already (HTTP acceptance,
+   *  spawn task id, sentinel task id); minted here otherwise. */
+  turnId?: string;
+  /** Abort the WAIT for the lock — never the running turn. A voice
+   *  consult uses it as its patience; the caller gets an AbortError. */
+  lockSignal?: AbortSignal;
+  /** Fires synchronously when the lock is busy and this turn queued. */
+  onQueued?: (ahead: number) => void;
+  /** Runs once the lock is held, before anything is written. Return
+   *  false to skip the turn: the lock is released, nothing persisted,
+   *  startTurn resolves null. */
+  beforeRun?: () => Promise<boolean> | boolean;
+  /** SSE: default — broadcast into the session. `false` — silent.
+   *  A function — the caller's sink, which also gets every event. */
+  publish?: boolean | ((event: SseEvent) => Promise<void> | void);
+  deps?: ChatTurnResolveDeps;
+  // Passed through to runChatTurn unchanged.
+  turnPrefix?: string;
+  attachments?: RunChatTurnArgs['attachments'];
+  modelOverride?: string;
+  agentLoopOverride?: RunChatTurnArgs['agentLoopOverride'];
+  attachMediaIds?: string[];
+  inputModality?: 'text' | 'voice';
+  sttProvider?: string;
+  autoPlayRequested?: boolean;
+}
+
+export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | null> {
+  const deps = args.deps ?? injected?.chatTurnDeps;
+  if (!deps) throw new Error('startTurn: not configured (configureStartTurn did not run)');
+  const runTurn = injected?.runTurn ?? runChatTurnReal;
+  const { agent, session, text, origin } = args;
+  const turnId = args.turnId ?? randomUUID();
+  const legacy = originToLegacy(origin);
+  const kind = originKind(origin);
+
+  logger.info({ msg: 'turn.dispatch', turnId, agent, session, origin: kind, textLen: text.length });
+
+  const release = await acquireSessionLock(agent, session, {
+    priority: originLabel(origin),
+    turnId,
+    ...(originCallId(origin) ? { callId: originCallId(origin) } : {}),
+    ...(args.lockSignal ? { signal: args.lockSignal } : {}),
+    ...(args.onQueued ? { onQueued: args.onQueued } : {}),
+  });
+  try {
+    if (args.beforeRun && !(await args.beforeRun())) {
+      logger.info({ msg: 'turn.skipped_before_run', turnId, agent, session, origin: kind });
+      return null;
+    }
+    // Registered only once the lock is held: the lock guarantees one
+    // turn per session, so the registry's "abort a still-registered
+    // prior controller" defence never fires on a live turn.
+    const abort = registerChatAbort(agent, session);
+    try {
+      const publishSse = resolvePublish(agent, session, args.publish);
+      const result = await runTurn({
+        agent,
+        session,
+        text,
+        turnId,
+        origin,
+        ...legacy,
+        signal: abort.signal,
+        ...(publishSse ? { publishSse } : {}),
+        ...(args.turnPrefix ? { turnPrefix: args.turnPrefix } : {}),
+        ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
+        ...(args.modelOverride ? { modelOverride: args.modelOverride } : {}),
+        ...(args.agentLoopOverride ? { agentLoopOverride: args.agentLoopOverride } : {}),
+        ...(args.attachMediaIds && args.attachMediaIds.length > 0 ? { attachMediaIds: args.attachMediaIds } : {}),
+        ...(args.inputModality ? { inputModality: args.inputModality } : {}),
+        ...(args.sttProvider ? { sttProvider: args.sttProvider } : {}),
+        ...(args.autoPlayRequested ? { autoPlayRequested: true } : {}),
+        deps,
+      });
+      if (abort.signal.aborted) {
+        // The signal is the authority, not the engine's verdict: the
+        // openai-compatible adapter ends a stopped turn "cleanly" with
+        // outcome completed and a marker text, claude-cli/codex-cli
+        // throw, and the asker must read the same thing in every case.
+        // "The operation was aborted" would look like a model failure
+        // and invite a blind retry; the text the engine produced stays
+        // on the result and in the session.
+        logger.info({ msg: 'turn.stopped', turnId, agent, session, origin: kind, engineOutcome: result.outcome, engineError: result.error ?? null });
+        return { ...result, outcome: 'failed', error: STOPPED_BY_USER };
+      }
+      return result;
+    } finally {
+      abort.release();
+    }
+  } finally {
+    release();
+  }
+}
+
+function resolvePublish(
+  agent: string,
+  session: string,
+  publish: StartTurnArgs['publish'],
+): ((event: SseEvent) => Promise<void>) | undefined {
+  if (publish === false) return undefined;
+  const broadcast = injected?.publish;
+  if (typeof publish === 'function') {
+    return async (event) => {
+      await publish(event);
+      if (broadcast) await broadcast(agent, session, event);
+    };
+  }
+  if (!broadcast) return undefined;
+  return (event) => Promise.resolve(broadcast(agent, session, event));
+}

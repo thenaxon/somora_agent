@@ -8,6 +8,28 @@
 // streaming is chunk-based and doesn't have an undici body timeout.
 
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
+import type { FromSystemKind, TurnOrigin } from './types.ts';
+
+const FROM_SYSTEM_KINDS: ReadonlySet<string> = new Set([
+  'sentinel',
+  'tmux',
+  'subagent',
+  'browser',
+  'voice',
+  'a2a',
+  'job',
+]);
+
+function isFromSystemKind(v: unknown): v is FromSystemKind {
+  return typeof v === 'string' && FROM_SYSTEM_KINDS.has(v);
+}
+
+// Shape check only — the union's per-kind fields are read defensively
+// by the renderer, so an unknown kind from a newer server is kept
+// rather than dropped.
+function isTurnOrigin(v: unknown): v is TurnOrigin {
+  return typeof v === 'object' && v !== null && typeof (v as { kind?: unknown }).kind === 'string';
+}
 import type { StreamEvent } from './types.ts';
 
 export interface StreamHandle {
@@ -264,9 +286,11 @@ export function openStream(
           ...(typeof data.from_agent === 'string' && typeof data.from_session === 'string'
             ? { fromSession: data.from_session }
             : {}),
-          ...(data.from_system === 'sentinel' || data.from_system === 'tmux' || data.from_system === 'subagent' || data.from_system === 'browser'
-            ? { fromSystem: data.from_system as 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a' }
-            : {}),
+          // Every from_system word passes through — a value the
+          // renderer doesn't know yet still beats rendering the
+          // synthesized prompt as a human turn.
+          ...(isFromSystemKind(data.from_system) ? { fromSystem: data.from_system } : {}),
+          ...(isTurnOrigin(data.origin) ? { origin: data.origin } : {}),
           callId: typeof data.agent_ask_call_id === 'string' ? data.agent_ask_call_id : undefined,
         };
       case 'turn_queued':

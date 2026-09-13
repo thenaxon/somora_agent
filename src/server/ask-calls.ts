@@ -54,7 +54,7 @@ export interface AskCallEntry {
  * learned it existed.
  */
 export interface AskAttentionDeps {
-  dispatchWakeTurn(args: { agent: string; session: string; text: string }): Promise<void>;
+  dispatchWakeTurn(args: { agent: string; session: string; text: string; callId: string }): Promise<void>;
   /** Grace period: an asker that polls right away needs no wake. */
   graceMs: number;
 }
@@ -92,7 +92,7 @@ function scheduleAskWake(e: AskCallEntry): void {
     const fresh = calls.get(e.call_id);
     if (!fresh || fresh.result_fetched) return;
     void deps
-      .dispatchWakeTurn({ agent: fresh.from_agent, session: fresh.from_session!, text: askWakePrompt(fresh) })
+      .dispatchWakeTurn({ agent: fresh.from_agent, session: fresh.from_session!, text: askWakePrompt(fresh), callId: fresh.call_id })
       .catch(() => {
         /* the asker's session may be gone; the result stays fetchable */
       });

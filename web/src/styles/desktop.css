@@ -1001,6 +1001,36 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .sentinel-divider-name { color: var(--text-2); }
 .sentinel-divider-time { color: var(--text-3); }
 .sentinel-divider-sep { color: var(--line-2); }
+/* Secondary id (a call id, a trigger id) — quieter than the name. */
+.sentinel-divider-detail {
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The divider shows one line; a click opens the full wake text
+ * underneath (same idiom as the memory-inject line). */
+.sentinel-divider-wrap { display: flex; flex-direction: column; }
+.sentinel-divider.expandable { cursor: pointer; }
+.sentinel-divider.expandable:hover .sentinel-divider-label { color: var(--text-1); }
+.sentinel-divider-chevron { display: inline-flex; color: var(--text-3); }
+.sentinel-divider-full {
+  margin: 0 12px 6px;
+  max-height: 220px;
+  overflow: auto;
+  background: var(--surface-1);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-1);
+}
 
 /* Tailwind preflight (@tailwind base in globals.css) strips browser
  * anchor styling (`a { color: inherit; text-decoration: inherit }`),

@@ -140,6 +140,7 @@ export function serializeSessionEvent(ev: NormalizedEvent): SseEvent | null {
         ...(ev.from_agent ? { from_agent: ev.from_agent } : {}),
         ...(ev.from_agent && ev.from_session ? { from_session: ev.from_session } : {}),
         ...(ev.from_system ? { from_system: ev.from_system } : {}),
+        ...(ev.origin ? { origin: ev.origin } : {}),
         // How it was said. Without this the live bubble and the one
         // after a reload render differently: history carries `input`,
         // the stream did not. Projected field by field — the stored

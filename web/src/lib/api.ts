@@ -5,6 +5,7 @@
 // All calls go to relative paths so they work both in dev (Vite
 // proxy → :18737) and in production (same-origin under :18737/web).
 
+import type { FromSystem, TurnOrigin } from '../types/origin';
 import type { SamplingParams, SamplingPatch } from './sampling';
 export type { SamplingParams, SamplingPatch } from './sampling';
 
@@ -211,7 +212,9 @@ export interface HistoryEvent {
   truncated?: boolean;
   from_agent?: string;
   from_session?: string;
-  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+  from_system?: FromSystem;
+  /** Structured origin of a `user_message` row (since 2026-09-13). */
+  origin?: TurnOrigin;
   attachments?: Array<{ hash: string; name: string; mime: string; size: number }>;
   /** Set on `kind: 'assistant_audio'` history rows. Tracks the
    *  generated TTS artifact so the client can re-render a Play-button

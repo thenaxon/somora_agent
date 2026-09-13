@@ -10,6 +10,7 @@
 // background. A per-session ChatWindow component subscribes on
 // mount, the provider lazy-opens / lazy-closes the SSE.
 
+import type { FromSystem, TurnOrigin } from '../types/origin';
 import {
   createContext,
   useCallback,
@@ -961,7 +962,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           turnId?: string;
           from_agent?: string;
           from_session?: string;
-          from_system?: 'sentinel' | 'tmux';
+          from_system?: FromSystem;
+          origin?: TurnOrigin;
           input?: { modality?: 'text' | 'voice'; source?: 'stt' | 'realtime' };
         }>(ev as MessageEvent);
         if (!d) return;
@@ -1024,6 +1026,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
                 ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
                 ...(d.from_agent && d.from_session ? { fromSession: d.from_session } : {}),
                 ...(d.from_system ? { fromSystem: d.from_system } : {}),
+                ...(d.origin ? { origin: d.origin } : {}),
                 // Spoken, not typed. The same two fields history.ts reads,
                 // so a line said in a call looks the same live as it does
                 // after a reload.

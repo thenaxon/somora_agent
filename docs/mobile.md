@@ -156,8 +156,9 @@ the turn started meanwhile, the marker just clears and a notice says
 so.
 
 Stop (composer or bubble — same action) cancels the
-**currently-running** turn only. Anything still queued behind it
-keeps its slot and executes when the lock frees.
+**currently-running** turn only, whatever started it — your message,
+another agent's, a sentinel fire or any other wake. Anything still
+queued behind it keeps its slot and executes when the lock frees.
 
 A turn that ends in an error shows a compact **⚠** block inside the
 turn (from the `turn_error` SSE event, and from `error` rows on

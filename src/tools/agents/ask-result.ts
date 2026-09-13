@@ -95,7 +95,8 @@ export const agentAskResult: ToolDefinition<InputT, AskResultOutcome> = {
   description:
     'Fetch the outcome of an agent_ask call by its call_id — use this when agent_ask returned ' +
     'state:"pending" (the target did not answer within timeout_ms). Returns "done" (with the ' +
-    'target\'s reply), "failed" (with the error — e.g. the target\'s model was unreachable), or ' +
+    'target\'s reply), "failed" (with the error — the target\'s model was unreachable, or ' +
+    '"stopped by the user": a person ended that turn, do not re-send), or ' +
     '"pending" (still queued behind another turn, or running). NEVER re-send the original ' +
     'message to "wait longer": the target is still working on it and would do the work twice. ' +
     'Pass `wait_until_done: true` to block server-side until it finishes — cheaper than polling, ' +

@@ -33,8 +33,8 @@ import { join } from 'node:path';
 import chokidar from 'chokidar';
 import { logger } from '../server/logger.ts';
 import { loopbackFetch } from '../server/loopback-fetch.ts';
-import { acquireSessionLock } from '../server/session-queue.ts';
-import { runChatTurn } from '../server/run-turn.ts';
+import { startTurn } from '../server/start-turn.ts';
+import type { ChatTurnResolveDeps } from '../server/run-turn-types.ts';
 import { newTaskId, registerTask, completeTask, failTask } from '../server/async-tasks.ts';
 import { resolveSessionId, createSession } from '../storage/sessions.ts';
 import { loadPersona } from '../persona/loader.ts';
@@ -63,7 +63,7 @@ import {
 // chatTurnDeps is owned by the server boot path and injected here so
 // sentinel can run an agent-turn without a network round-trip.
 // Same pattern as configureSpawnTools({ chatTurnDeps }).
-type ChatTurnDeps = Parameters<typeof runChatTurn>[0]['deps'];
+type ChatTurnDeps = ChatTurnResolveDeps;
 // `publishSse` mirrors what /chat/send + A2A spawn-async pass to
 // runChatTurn — without it, the woken agent's user_message + all
 // downstream deltas/tool-calls/replies are appended to the JSONL but
@@ -84,6 +84,8 @@ export function configureSentinel(args: {
   completedRetentionDays?: number;
 }): void {
   injectedChatTurnDeps = args.chatTurnDeps;
+  // publishEvent is accepted for compatibility; a fire streams through
+  // startTurn's boot-wired broadcast since 2026-09-13.
   if (args.publishEvent) injectedPublishEvent = args.publishEvent;
   if (typeof args.completedRetentionDays === 'number') {
     completedRetentionDays = args.completedRetentionDays;
@@ -421,34 +423,43 @@ export async function fireTrigger(
   }
 
   const deps = injectedChatTurnDeps;
-  // Bind a per-fire publishSse so the woken agent's user_message and
-  // every downstream agent event reach SSE-subscribed clients live —
-  // same as /chat/send and A2A spawn-async. Without this, the turn
-  // only lands in the JSONL and clients need a page-reload to see it.
-  const publishSse =
-    injectedPublishEvent !== null
-      ? (event: unknown) => injectedPublishEvent!(dispatch.agent, session, event)
-      : undefined;
+  // The woken agent's user_message and every downstream event reach
+  // SSE-subscribed clients live through startTurn's broadcast — same
+  // as /chat/send. Without it the turn only lands in the JSONL and
+  // clients need a page-reload to see it.
   // Mark in-flight BEFORE spawning the IIFE so pickNextDue can't re-
   // pick this trigger via a watcher-driven reschedule loop during
   // the fire. Cleared in the IIFE's finally.
   inflightFires.add(trigger.id);
   void (async () => {
-    const release = await acquireSessionLock(dispatch.agent, session, {
-      priority: 'agent',
-      turnId: taskId,
-    });
     try {
-      const result = await runChatTurn({
+      const result = await startTurn({
         agent: dispatch.agent,
         session,
         text: prompt,
         turnId: taskId,
-        fromSystem: 'sentinel',
+        origin: { kind: 'sentinel', triggerId: trigger.id, taskId },
         deps,
-        ...(publishSse ? { publishSse: publishSse as never } : {}),
       });
+      if (!result) throw new Error('turn did not start');
       completeTask(taskId, result);
+      // runChatTurn does not throw on an engine failure: it records the
+      // error into the session and returns outcome 'failed'. Until
+      // 2026-09-13 that counted as a successful fire, so a trigger
+      // whose engine kept failing never reached status 'error'
+      // (birdseye L2).
+      if (result.error) {
+        await markError(
+          getTrigger(trigger.id) ?? trigger,
+          result.error,
+          scheduledFor,
+          now,
+          opts.catchUp,
+          taskId,
+          opts.testMode,
+        );
+        return;
+      }
       const fresh = getTrigger(trigger.id);
       if (fresh) {
         const updated: Trigger = {
@@ -481,7 +492,6 @@ export async function fireTrigger(
         opts.testMode,
       );
     } finally {
-      release();
       releaseSpawnSlot(dispatch.agent);
       inflightFires.delete(trigger.id);
     }

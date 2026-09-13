@@ -167,7 +167,11 @@ Returns:
 ```
 
 `activeAgeMs` is how long the current turn has been holding the
-per-session lock. `lastEngineEventAgoMs` ticks up while the engine is
+per-session lock. `activeTurnId` is set for every running turn,
+whatever started it — a typed message, an `agent_ask`, a sub-agent
+brief, a sentinel fire, a tmux or browser wake, a voice consult or a
+wake-up — so a session that looks stuck can always be matched to a
+turn and stopped with `POST /chat/abort`. `lastEngineEventAgoMs` ticks up while the engine is
 silent — if it climbs past a few minutes on a chat turn (vs. a long
 local-LLM job), the turn is wedged and the engine watchdog will abort
 it. See [setup.md](setup.md#tunables) `engineWatchdog` to tune
@@ -1065,7 +1069,13 @@ Body fields:
   refs from prior `POST /attachments` calls
 - `from_agent` (optional, A2A) — when set, the turn is attributed to
   another agent (used by `agent_ask` tool)
-- `agent_ask_call_id` (optional, A2A) — correlation UUID
+- `from_session` (optional, A2A) — the session the asking agent wrote
+  from; ignored without `from_agent`. Same meaning as on
+  `/chat/send-sync`.
+- `agent_ask_call_id` (optional, A2A) — correlation UUID. A call id
+  posted here is registered like one from `/chat/send-sync`, so
+  `GET /a2a/ask-result` finds it while the turn is queued or running,
+  not only in the target's history afterwards.
 
 Response: `{ ok: true, turnId }`. The `turnId` is the server-issued
 identifier for the queued/running turn — clients echo it through to
@@ -1079,18 +1089,21 @@ acknowledges receipt.
 
 Sends on a `(agent, session)` that already has a turn running are
 **enqueued**, not rejected. The server holds a per-session lock with
-one FIFO queue, in arrival order. Turns are labelled by where they came
-from, for diagnostics only:
-- `user` — direct human sends (no `from_agent`)
-- `agent` — A2A sends from `agent_ask` / sub-spawns, sentinel wakes, and
-  questions asked during a voice call
+one FIFO queue, in arrival order, and every turn takes the same path
+into it: typed and dictated messages, `agent_ask` calls, sub-agent
+briefs, sentinel fires, tmux and browser wakes, voice consults and the
+wake-ups that bring a late answer, a finished sub-agent or a rendered
+video back. No origin jumps ahead of another. Turns are labelled by
+where they came from, for diagnostics only (`activePriority` in
+`/health`):
+- `user` — a person typing or dictating (no `from_agent`, no system
+  origin)
+- `agent` — everything else
 
-Until somora 2026.09.12 user entries jumped ahead of waiting agent
-entries. They no longer do: a question asked out loud runs as an agent
-turn, so the rule answered two humans differently depending on whether
-they typed or spoke. The currently-running turn always finishes —
-preempting would corrupt JSONL — so a queued turn starts only after the
-lock holder releases.
+The currently-running turn always finishes — preempting would corrupt
+JSONL — so a queued turn starts only after the lock holder releases.
+Where a turn came from is recorded on its `user_message` as `origin`
+(see `GET /chat/stream`).
 
 Clients can opt into rendering a queue indicator by listening for the
 `turn_queued` SSE event (see below). UIs without it still work; the
@@ -1262,8 +1275,11 @@ GET /a2a/ask-result?call_id=<uuid>&agent=<target>&session=<slug>    # after a re
 ```
 
 `state` is `queued` (behind another turn on the target session),
-`running`, `done` or `failed`. The live registry is fed by
-`/chat/send-sync`; when it has no record (server restarted since the
+`running`, `done` or `failed`. A `failed` call carries `error`; the
+value `stopped by the user` means a person pressed Stop on the target's
+turn — nothing to retry. The live registry is fed by `/chat/send-sync`
+and by `/chat/send` when it carries an `agent_ask_call_id`; when it has
+no record (server restarted since the
 call) pass `agent` + `session` and the route reads the target's JSONL
 (`user_message.agent_ask_call_id`) — `source: "history"`, and `state`
 becomes `unknown` when the turn never reached `turn_end`. With
@@ -1311,13 +1327,44 @@ Event types:
   prompt size of the turn's last request, and is the only one to compare
   against `contextWindow`. All three engines report it; a client should
   still treat it as optional.
-- `user_message` — `{text, ts, turnId?, from_agent?, from_session?,
-  from_system?, agent_ask_call_id?}` — broadcast when a turn's user_message is
-  written to JSONL. Self-typed sends, A2A inbounds, and system wakes
-  all flow through here; `from_system` is one of `sentinel`, `tmux`,
-  `subagent`, `job`, `browser`. `turnId` lets a sending client
-  match this event to the optimistic bubble it rendered after
-  `POST /chat/send` (which echoes the same id).
+- `user_message` — `{text, ts, turnId?, origin?, from_agent?,
+  from_session?, from_system?, agent_ask_call_id?}` — broadcast when a
+  turn's user_message is written to JSONL. Self-typed sends, A2A
+  inbounds, and system wakes all flow through here; `from_system` is
+  one of `sentinel`, `tmux`, `subagent`, `job`, `browser`, `voice`,
+  `a2a`, and web, mobile and TUI draw each of them as a divider rather
+  than a bubble. `turnId` lets a sending client match this event to
+  the optimistic bubble it rendered after `POST /chat/send` (which
+  echoes the same id).
+
+  `origin` says where the turn came from as one value. It is present on
+  the SSE event and on the stored `user_message` row of every turn
+  started since somora 2026.09.13; older rows have none, so a client
+  keeps reading `from_*` as the fallback.
+
+  ```ts
+  origin?:
+    | { kind: 'human';    via: 'chat' | 'voice-stt' }
+    | { kind: 'agent';    from: { agent: string; session?: string }; callId?: string }
+    | { kind: 'subagent'; parent?: { agent: string; session: string }; taskId?: string; depth: number }
+    | { kind: 'sentinel'; triggerId: string; taskId: string }
+    | { kind: 'tmux';     tmuxSession: string; tmuxKind?: string }
+    | { kind: 'browser';  viewId: string; cause: 'handoff' | 'activity'; handoffId?: string }
+    | { kind: 'voice';    callId?: string; consultId: string }
+    | { kind: 'wake';     about: 'a2a' | 'subagent' | 'job'; ref: string; depth?: number };
+  ```
+
+  `human` is a person typing (`chat`) or dictating (`voice-stt`).
+  `agent` is an `agent_ask`; `subagent` a sealed brief running in its
+  own `sub-…` session; `sentinel`, `tmux`, `browser` and `voice` the
+  four system triggers; `wake` brings something the agent started
+  earlier back to it — a late `agent_ask` answer (`ref` = call id), a
+  finished async sub-agent (`ref` = task id) or a rendered video
+  (`ref` = job id). The legacy fields stay and are derived from it:
+  `agent` fills `from_agent`, `from_session` and `agent_ask_call_id`
+  (= `callId`); `sentinel`, `tmux`, `browser` and `voice` set
+  `from_system` to the same word; `wake` sets `from_system` to its
+  `about`; `human` and `subagent` set none of them.
 - `turn_queued` — `{turnId, ahead}` — fired when `POST /chat/send`
   hit a busy lock and the turn had to wait. `ahead` is the number
   of turns this one must wait for (≥1, includes the currently-
@@ -1427,7 +1474,7 @@ Event types:
   - `chat:final` (assistant answer)
   - `user_message` with `from_agent` set (A2A peer wrote to us)
   - `user_message` with `from_system` set (`sentinel`, `tmux`,
-    `subagent`, `job` or `browser` woke us)
+    `subagent`, `job`, `browser`, `voice` or `a2a` woke us)
   Plain self-typed user messages, tool / memory / engine_meta events,
   and lifecycle (`agent:start`, `agent:end`) are excluded.
 - `seen` — `{agent, session, seenAt}` — broadcast when any client
@@ -1515,6 +1562,16 @@ on ESC; web and mobile fire it from the Stop button overlaid on the
 streaming assistant bubble. Idempotent — returns `aborted: false`
 when no turn is running. Cancels the **currently-running** turn
 only; queued waiters keep their slots and still execute.
+
+It stops whatever is running on the session, regardless of what
+started it: a typed message, an `agent_ask` from another agent, a
+sub-agent brief, a sentinel fire, a tmux or browser wake, a voice
+consult or a wake-up. Whoever asked for that turn learns why it ended:
+an `agent_ask` still on the line, `agent_ask_result` and
+`subagent_result` report `state: "failed"` with `error: "stopped by
+the user"`, and a sentinel fire is recorded with outcome `error` and
+the same text. The tool descriptions tell the asking agent not to
+retry that on its own.
 
 ```bash
 curl -X POST "https://<host>:18737/chat/abort?agent=<your-agent>&session=main"

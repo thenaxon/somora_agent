@@ -9,6 +9,7 @@
 // these at 5 minutes once HTTPS is the transport.
 
 import { loopbackFetch } from '../../server/loopback-fetch.ts';
+import type { FromSystemKind, TurnOrigin } from './types.ts';
 import type {
   AgentInfo,
   ModelInfo,
@@ -378,7 +379,8 @@ export interface HistoryEvent {
   text?: string;
   from_agent?: string;
   from_session?: string;
-  from_system?: 'sentinel' | 'tmux' | 'subagent' | 'voice' | 'a2a';
+  from_system?: FromSystemKind;
+  origin?: TurnOrigin;
   agent_ask_call_id?: string;
   // tool_call / tool_result
   callId?: string;

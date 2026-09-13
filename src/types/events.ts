@@ -1,5 +1,7 @@
 // Internal canonical event format. Persisted as JSONL (later in step 1b+).
 // Engine-agnostic — every adapter (anthropic, openai, ...) maps SDK events to this shape.
+import type { TurnOrigin } from './turn-origin.ts';
+
 export type NormalizedEvent =
   | {
       kind: 'user_message';
@@ -34,11 +36,11 @@ export type NormalizedEvent =
       /**
        * Marks a user_message that was synthesized by an internal
        * subsystem rather than typed by a human or sent by a peer
-       * agent. Today only `'sentinel'` (the trigger runtime) sets
-       * this — when a sentinel-trigger fires, the dispatcher injects
-       * a `[Sentinel trigger fired]…` prompt as the turn's text, and
-       * this marker lets clients render the inbound as a centered
-       * system divider instead of a regular user-bubble.
+       * agent: a sentinel fire, a tmux or browser wake, a voice
+       * consult, or a wake-up about a finished agent_ask (`a2a`),
+       * sub-agent (`subagent`) or background job (`job`). Clients
+       * render the inbound as a centered system divider instead of a
+       * regular user-bubble; `origin` below says the same with detail.
        *
        * Note: from_agent and from_system are mutually exclusive — an
        * inbound is either A2A (from another agent) OR system
@@ -52,6 +54,14 @@ export type NormalizedEvent =
        * kicked off is done", and video is only the first of those.
        */
       from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+      /**
+       * Where the turn came from, as one value (src/types/turn-origin.ts).
+       * Additive since 2026-09-13: from_agent / from_system above stay
+       * the fields every older reader uses; a client that knows this
+       * one renders glyph, label and subtitle from it instead of
+       * parsing the message text. Absent on turns recorded before.
+       */
+      origin?: TurnOrigin;
       /**
        * Correlation UUID for an `agent_ask` round-trip. Persisted on
        * BOTH sides: on the caller's side as a tool_call → tool_result
@@ -461,6 +471,8 @@ export type SseEvent =
          *  subsystem (today: 'sentinel'). Clients render the message
          *  as a centered system divider. */
         from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+        /** Same value as on the stored event — see NormalizedEvent. */
+        origin?: TurnOrigin;
         agent_ask_call_id?: string;
         /** How the turn was said, when it was not typed. Mirrors the
          *  `input` field on the stored event so the live bubble and the

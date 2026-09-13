@@ -6,7 +6,10 @@
 //   user            — neutral bubble right, plain text
 //   peer-agent      — A2A inbound: bubble right, sender's color+icon
 //                     (looked up via `peerAgents` prop)
-//   sentinel        — system-trigger inbound: centered divider
+//   origin divider  — system-originated inbound (sentinel, tmux,
+//                     browser, subagent, agent answer, video):
+//                     centered divider; voice consult: quiet note.
+//                     All driven by the table in lib/origin.ts.
 //   assistant       — bubble left, markdown content + streaming cursor
 //   tool_call/...   — block forms, no bubble
 
@@ -35,11 +38,14 @@ import {
   CornerDownLeft,
   Volume2,
   PhoneCall,
+  Clapperboard,
+  type LucideIcon,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { ToolCallBlock, ToolResultBlock } from './ToolBlocks';
 import { EngineMetaBlock } from './EngineMetaBlock';
+import { originPresentation, type OriginPresentation, type OriginRowKind } from '../lib/origin';
 
 interface PeerAgentInfo {
   color: string;
@@ -130,26 +136,26 @@ export const MessageItem = memo(function MessageItem({
   if (msg.role === 'memory_inject') {
     return <MemoryInjectLine memory={msg.memory} />;
   }
-  // System-triggered inbound (sentinel fire, tmux attention wake):
-  // centered divider, not a bubble. Sentinel keeps the `<Bell />` the
-  // AppDock uses; tmux wakes get a terminal glyph + session name.
-  if (msg.role === 'user' && msg.fromSystem === 'sentinel') {
-    return <SentinelDivider text={msg.text} ts={msg.ts} />;
-  }
-  if (msg.role === 'user' && msg.fromSystem === 'tmux') {
-    return <TmuxDivider text={msg.text} ts={msg.ts} />;
-  }
-  if (msg.role === 'user' && msg.fromSystem === 'subagent') {
-    return <SubagentDivider text={msg.text} ts={msg.ts} />;
-  }
-  if (msg.role === 'user' && msg.fromSystem === 'browser') {
-    return <BrowserDivider text={msg.text} ts={msg.ts} />;
-  }
-  if (msg.role === 'user' && msg.fromSystem === 'voice') {
-    return <VoiceDivider text={msg.text} ts={msg.ts} />;
-  }
-  if (msg.role === 'user' && msg.fromSystem === 'a2a') {
-    return <AgentAnswerDivider text={msg.text} ts={msg.ts} />;
+  // System-originated inbound (sentinel fire, tmux/browser/subagent/
+  // video wake, late agent answer, voice consult): a centered divider
+  // or a quiet note, not a bubble. Which one, and what it says, comes
+  // from ONE table (lib/origin.ts) fed by the structured `origin` —
+  // with the legacy from_system + text regexes for turns recorded
+  // before the server sent origins.
+  if (msg.role === 'user') {
+    const pres = originPresentation({
+      origin: msg.origin,
+      fromSystem: msg.fromSystem,
+      fromAgent: msg.fromAgent,
+      text: msg.text,
+    });
+    if (pres) {
+      return pres.kind === 'voice' ? (
+        <VoiceNote pres={pres} ts={msg.ts} />
+      ) : (
+        <OriginDivider pres={pres} ts={msg.ts} />
+      );
+    }
   }
 
   // Two different features produce a spoken line and they get two
@@ -396,67 +402,82 @@ function ThinkingBlock({ thinking, hasText }: { thinking: ThinkingContent; hasTe
   );
 }
 
-// Centered system-divider for sentinel-trigger inbounds. The
-// `text` is the synthesized trigger prompt (`[Sentinel trigger
-// fired]\ntrigger_id: …\nname: …`) — we surface the first non-
-// empty line after the leading marker as a one-liner; the rest
-// stays in JSONL for forensic recall but doesn't clutter the chat.
-function SentinelDivider({ text, ts }: { text: string; ts: number }) {
-  const summary = summarizeSentinelTriggerText(text);
+// Centered system divider for every system-originated inbound —
+// sentinel fire, tmux wake, browser hand-back, subagent finished,
+// agent answer, video ready. One component; the glyph, label and
+// subtitle come from the presentation table in lib/origin.ts, so a
+// new origin kind is a table row, not a component. Sentinel keeps the
+// `<Bell />` the AppDock uses, tmux the terminal glyph, and so on —
+// the icons users learned before the refactor (2026-09-13).
+//
+// The `text` behind the divider is the whole wake prompt (`[Sentinel
+// trigger fired]\ntrigger_id: …\nname: …`). The divider shows one
+// line; clicking it opens the full text underneath, the same way the
+// memory-inject line expands. The rest stays in JSONL either way.
+const ORIGIN_ICONS: Record<OriginRowKind, LucideIcon> = {
+  sentinel: Bell,
+  tmux: SquareTerminal,
+  browser: Globe,
+  subagent: Bot,
+  a2a: CornerDownLeft,
+  job: Clapperboard,
+  voice: PhoneCall,
+};
+
+function OriginDivider({ pres, ts }: { pres: OriginPresentation; ts: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const Icon = ORIGIN_ICONS[pres.kind];
   const time = formatBubbleTime(ts);
+  const canExpand = pres.body.length > 0;
   return (
-    <div className="sentinel-divider" aria-label="Sentinel trigger">
-      <span className="sentinel-divider-rule" />
-      <span className="sentinel-divider-body">
-        <Bell size={12} />
-        <span className="sentinel-divider-label">Sentinel</span>
-        {summary && (
-          <>
-            <span className="sentinel-divider-sep">·</span>
-            <span className="sentinel-divider-name">{summary}</span>
-          </>
-        )}
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-time">{time}</span>
-      </span>
-      <span className="sentinel-divider-rule" />
+    <div className="sentinel-divider-wrap">
+      <div
+        className={`sentinel-divider ${canExpand ? 'expandable' : ''}`}
+        aria-label={pres.ariaLabel}
+        {...(canExpand
+          ? {
+              role: 'button',
+              tabIndex: 0,
+              title: expanded ? 'Hide the full text' : 'Show the full text',
+              'aria-expanded': expanded,
+              onClick: () => setExpanded((v) => !v),
+              onKeyDown: (e: React.KeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setExpanded((v) => !v);
+                }
+              },
+            }
+          : {})}
+      >
+        <span className="sentinel-divider-rule" />
+        <span className="sentinel-divider-body">
+          <Icon size={12} />
+          <span className="sentinel-divider-label">{pres.label}</span>
+          {pres.subtitle && (
+            <>
+              <span className="sentinel-divider-sep">·</span>
+              <span className="sentinel-divider-name">{pres.subtitle}</span>
+            </>
+          )}
+          {pres.detail && (
+            <span className="sentinel-divider-detail" title={pres.detail}>
+              {pres.detail}
+            </span>
+          )}
+          <span className="sentinel-divider-sep">·</span>
+          <span className="sentinel-divider-time">{time}</span>
+          {canExpand && (
+            <span className="sentinel-divider-chevron">
+              {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+            </span>
+          )}
+        </span>
+        <span className="sentinel-divider-rule" />
+      </div>
+      {expanded && <pre className="sentinel-divider-full">{pres.body}</pre>}
     </div>
   );
-}
-
-// tmux attention wake — same divider chrome as Sentinel (shared CSS
-// classes), terminal glyph instead of the bell. `text` is the wake
-// prompt; we surface the quoted session name from its first line.
-function TmuxDivider({ text, ts }: { text: string; ts: number }) {
-  const summary = summarizeTmuxWakeText(text);
-  const time = formatBubbleTime(ts);
-  return (
-    <div className="sentinel-divider" aria-label="tmux attention wake">
-      <span className="sentinel-divider-rule" />
-      <span className="sentinel-divider-body">
-        <SquareTerminal size={12} />
-        <span className="sentinel-divider-label">tmux</span>
-        {summary && (
-          <>
-            <span className="sentinel-divider-sep">·</span>
-            <span className="sentinel-divider-name">{summary}</span>
-          </>
-        )}
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-time">{time}</span>
-      </span>
-      <span className="sentinel-divider-rule" />
-    </div>
-  );
-}
-
-// Subagent attention wake — same centered-divider language as
-// sentinel/tmux. Shows the finished task_id so the user can correlate
-// with subagent_list output at a glance.
-/** Browser id out of a hand-back wake text: "browser 'agent:naxon'" → "naxon". */
-export function summarizeBrowserWakeText(text: string): string {
-  const id = text.match(/browser '([^']+)'/)?.[1] ?? '';
-  return id.replace(/^agent:/, '').replace(/^profile:/, 'profile ');
 }
 
 function SpokenAsideLine({ text, ts }: { text: string; ts: number }) {
@@ -483,33 +504,7 @@ function HandoverLine({ text, ts }: { text: string; ts: number }) {
   );
 }
 
-function AgentAnswerDivider({ text, ts }: { text: string; ts: number }) {
-  // An agent this one ASKED has answered, after it had stopped waiting.
-  // Its own divider, because rendering it as a sub-agent wake (which it
-  // was until 2026-09-12) tells the reader the wrong story about where
-  // the answer came from.
-  const who = /^\[agent answer\]\s*(\w+)/.exec(text)?.[1] ?? '';
-  return (
-    <div className="sentinel-divider" aria-label="answer from an agent you asked">
-      <span className="sentinel-divider-rule" />
-      <span className="sentinel-divider-body">
-        <CornerDownLeft size={12} />
-        <span className="sentinel-divider-label">agent answer</span>
-        {who && (
-          <>
-            <span className="sentinel-divider-sep">·</span>
-            <span className="sentinel-divider-name">{who}</span>
-          </>
-        )}
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-time">{formatBubbleTime(ts)}</span>
-      </span>
-      <span className="sentinel-divider-rule" />
-    </div>
-  );
-}
-
-function VoiceDivider({ text, ts }: { text: string; ts: number }) {
+function VoiceNote({ pres, ts }: { pres: OriginPresentation; ts: number }) {
   // A question the agent's own voice channel asked while the user was
   // on a call. It is NOT a message from another agent — the agent
   // answers into this chat and addresses nobody back — and it is not
@@ -519,96 +514,20 @@ function VoiceDivider({ text, ts }: { text: string; ts: number }) {
   // A block, not a one-line divider: the first live call produced
   // questions of 400 to 750 characters that ran off the window in a
   // single unbroken line and could not be read at all (Rene,
-  // 2026-09-11). The lead-in for the agent is stripped — it is
-  // scaffolding for the model, not something a reader needs.
-  const question = text.replace(/^\[[^\]]*\]\s*/, '').trim();
+  // 2026-09-11). `pres.body` is the question with the lead-in for the
+  // agent stripped — scaffolding for the model, not for a reader.
   return (
-    <div className="voice-note" aria-label="voice channel question">
+    <div className="voice-note" aria-label={pres.ariaLabel}>
       <div className="voice-note-head">
         {/* A call, not the dictation button — two features, two glyphs
             (Rene, 2026-09-12: "sind 2 ganz unterschiedliche konzepte"). */}
         <PhoneCall size={12} />
-        <span className="voice-note-label">voice</span>
+        <span className="voice-note-label">{pres.label}</span>
         <span className="voice-note-time">{formatBubbleTime(ts)}</span>
       </div>
-      <div className="voice-note-body">{question}</div>
+      <div className="voice-note-body">{pres.body}</div>
     </div>
   );
-}
-
-function BrowserDivider({ text, ts }: { text: string; ts: number }) {
-  const name = summarizeBrowserWakeText(text);
-  const handoff = /handoff [a-z0-9]/i.test(text) ? 'handed back' : 'handed back after your changes';
-  const time = formatBubbleTime(ts);
-  return (
-    <div className="sentinel-divider" aria-label="browser hand-back wake">
-      <span className="sentinel-divider-rule" />
-      <span className="sentinel-divider-body">
-        <Globe size={12} />
-        <span className="sentinel-divider-label">browser</span>
-        {name && (
-          <>
-            <span className="sentinel-divider-sep">·</span>
-            <span className="sentinel-divider-name">{name}</span>
-          </>
-        )}
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-name">{handoff}</span>
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-time">{time}</span>
-      </span>
-      <span className="sentinel-divider-rule" />
-    </div>
-  );
-}
-
-function SubagentDivider({ text, ts }: { text: string; ts: number }) {
-  const taskId = summarizeSubagentWakeText(text);
-  const time = formatBubbleTime(ts);
-  return (
-    <div className="sentinel-divider" aria-label="subagent attention wake">
-      <span className="sentinel-divider-rule" />
-      <span className="sentinel-divider-body">
-        <Bot size={12} />
-        <span className="sentinel-divider-label">subagent</span>
-        {taskId && (
-          <>
-            <span className="sentinel-divider-sep">·</span>
-            <span className="sentinel-divider-name">{taskId}</span>
-          </>
-        )}
-        <span className="sentinel-divider-sep">·</span>
-        <span className="sentinel-divider-time">{time}</span>
-      </span>
-      <span className="sentinel-divider-rule" />
-    </div>
-  );
-}
-
-/** Pull the task id out of the `[subagent attention] Task 'task_x'…`
- *  wake prompt; empty string when the shape ever changes. */
-function summarizeSubagentWakeText(text: string): string {
-  const m = text.match(/Task '([^']+)'/);
-  return m?.[1] ?? '';
-}
-
-function summarizeTmuxWakeText(text: string): string {
-  // Wake prompts start with: [tmux attention] Session '<name>' (…
-  const match = text.match(/Session '([^']+)'/);
-  if (match && match[1]) return match[1];
-  return '';
-}
-
-function summarizeSentinelTriggerText(text: string): string {
-  // The dispatcher's buildFirePrompt emits a header block:
-  //   [Sentinel trigger fired]
-  //   trigger_id: <id>
-  //   name: <name>
-  //   …
-  // We surface just the name as the divider label.
-  const match = text.match(/^name:\s*(.+)$/im);
-  if (match && match[1]) return match[1].trim();
-  return '';
 }
 
 function BubbleTimestamp({

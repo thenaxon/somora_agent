@@ -16,7 +16,7 @@
 
 import { sessionSlugOf } from '../../engine/a2a.ts';
 import { Box, Text } from 'ink';
-import type { Turn } from './types.ts';
+import type { FromSystemKind, Turn, TurnOrigin } from './types.ts';
 import { renderInline } from './markdown.tsx';
 import { THINKING_MAX_LINES, capLines, hiddenLinesMarker } from './thinking-text.ts';
 
@@ -44,6 +44,7 @@ export function TurnView({
           {...(turn.fromAgent ? { fromAgent: turn.fromAgent } : {})}
           {...(turn.fromSession ? { fromSession: turn.fromSession } : {})}
           {...(turn.fromSystem ? { fromSystem: turn.fromSystem } : {})}
+          {...(turn.origin ? { origin: turn.origin } : {})}
         />
       );
     case 'agent':
@@ -84,48 +85,21 @@ function UserTurn({
   fromAgent,
   fromSession,
   fromSystem,
+  origin,
 }: {
   text: string;
   fromAgent?: string;
   fromSession?: string;
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a';
+  fromSystem?: FromSystemKind;
+  origin?: TurnOrigin;
 }) {
-  // System inbound (sentinel trigger / tmux attention wake):
+  // System inbound (sentinel trigger / tmux attention wake / …):
   // synthesized, not a real user message. Render as a one-line system
   // notice with a glyph + context so it's clearly distinguishable from
   // human and peer-agent turns in scrollback.
-  if (
-    fromSystem === 'sentinel' ||
-    fromSystem === 'tmux' ||
-    fromSystem === 'subagent' ||
-    fromSystem === 'browser' ||
-    fromSystem === 'voice' ||
-    fromSystem === 'a2a'
-  ) {
-    const name =
-      fromSystem === 'sentinel'
-        ? summarizeSentinelTriggerText(text)
-        : fromSystem === 'subagent'
-          ? (text.match(/Task '([^']+)'/)?.[1] ?? '')
-          : fromSystem === 'browser'
-            ? `${(text.match(/browser '([^']+)'/)?.[1] ?? '').replace(/^agent:/, '')} · handed back`
-            : fromSystem === 'voice'
-              ? text.replace(/^\[[^\]]*\]\s*/, '').slice(0, 80)
-              : fromSystem === 'a2a'
-                ? (text.match(/^\[agent answer\]\s*(\w+)/)?.[1] ?? 'answered')
-                : summarizeTmuxWakeText(text);
-    const label =
-      fromSystem === 'sentinel'
-        ? '🔔 sentinel'
-        : fromSystem === 'subagent'
-          ? '🤖 subagent'
-          : fromSystem === 'browser'
-            ? '🌐 browser'
-            : fromSystem === 'voice'
-              ? '🎙  voice'
-              : fromSystem === 'a2a'
-                ? '↩  agent answer'
-                : '🖥  tmux';
+  const notice = systemNoticeOf(text, fromSystem, origin);
+  if (notice) {
+    const { label, name } = notice;
     return (
       <Box marginTop={1}>
         <Text color="gray" bold>
@@ -168,6 +142,86 @@ function UserTurn({
       <Text>{text}</Text>
     </Box>
   );
+}
+
+// Glyph + label per system-inbound kind. The legacy `from_system` word
+// and the structured `origin` name the same kinds; `wake` origins map
+// onto their `about` word (a2a / subagent / job) exactly like the
+// server derives from_system from them.
+const SYSTEM_LABELS: Record<FromSystemKind, string> = {
+  sentinel: '🔔 sentinel',
+  subagent: '🤖 subagent',
+  browser: '🌐 browser',
+  voice: '🎙  voice',
+  a2a: '↩  agent answer',
+  tmux: '🖥  tmux',
+  job: '🎬 video',
+};
+
+function fromSystemOfOrigin(origin: TurnOrigin): FromSystemKind | undefined {
+  switch (origin.kind) {
+    case 'sentinel':
+    case 'tmux':
+    case 'browser':
+    case 'voice':
+      return origin.kind;
+    case 'wake':
+      return origin.about;
+    default:
+      return undefined;
+  }
+}
+
+// One-line context next to the glyph. Prefers the ids the structured
+// origin carries; falls back to the regex-over-prompt-text summaries
+// for turns stored before `origin` existed.
+export function systemNoticeOf(
+  text: string,
+  fromSystem: FromSystemKind | undefined,
+  origin: TurnOrigin | undefined,
+): { label: string; name: string } | null {
+  const kind = (origin && fromSystemOfOrigin(origin)) ?? fromSystem;
+  if (!kind) return null;
+  const label = SYSTEM_LABELS[kind];
+  switch (kind) {
+    case 'sentinel':
+      return { label, name: summarizeSentinelTriggerText(text) };
+    case 'tmux':
+      return {
+        label,
+        name: origin?.kind === 'tmux' ? origin.tmuxSession : summarizeTmuxWakeText(text),
+      };
+    case 'browser': {
+      if (origin?.kind === 'browser') {
+        const view = origin.viewId.replace(/^agent:/, '');
+        return { label, name: `${view} · ${origin.cause === 'handoff' ? 'handed back' : 'activity'}` };
+      }
+      const view = (text.match(/browser '([^']+)'/)?.[1] ?? '').replace(/^agent:/, '');
+      return { label, name: `${view} · handed back` };
+    }
+    case 'voice':
+      return { label, name: text.replace(/^\[[^\]]*\]\s*/, '').slice(0, 80) };
+    case 'a2a':
+      return { label, name: text.match(/^\[agent answer\]\s*(\w+)/)?.[1] ?? 'answered' };
+    case 'subagent':
+      return {
+        label,
+        name:
+          (origin?.kind === 'wake' ? origin.ref : undefined) ??
+          text.match(/Task '([^']+)'/)?.[1] ??
+          '',
+      };
+    case 'job':
+      return { label, name: summarizeVideoWakeText(text) };
+  }
+}
+
+// First line of the videogen wake prompt without its `[video]` marker
+// (`[video] Your render is ready: <path>` / `[video] The render you
+// started (…) failed: …`).
+function summarizeVideoWakeText(text: string): string {
+  const firstLine = text.split('\n', 1)[0] ?? '';
+  return firstLine.replace(/^\[video\]\s*/, '').trim();
 }
 
 // Pulls the trigger name out of the dispatcher's `buildFirePrompt`

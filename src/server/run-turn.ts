@@ -44,6 +44,7 @@ import { loadAttachment } from '../multimodal/load.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
+import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
 import { resolveAttachmentByHash } from '../attachments/store.ts';
@@ -176,12 +177,19 @@ export interface RunChatTurnArgs {
    *  agent_ask's reply-back default (src/server/turn-origin.ts). */
   fromSession?: string;
   /** Synthesized inbound marker: when set, this turn's text was
-   *  produced by an internal subsystem (today only 'sentinel' — the
-   *  trigger runtime injecting a `[Sentinel trigger fired]…` prompt).
-   *  Persists in user_message.from_system and on the SSE event, so
-   *  clients render the message as a centered system divider rather
-   *  than a normal user-bubble. Mutually exclusive with fromAgent. */
+   *  produced by an internal subsystem — a sentinel fire, a tmux or
+   *  browser wake, a voice consult, or a wake-up about a finished
+   *  agent_ask / sub-agent / video job. Persists in
+   *  user_message.from_system and on the SSE event, so clients render
+   *  the message as a centered system divider rather than a normal
+   *  user-bubble. Mutually exclusive with fromAgent. Derived from
+   *  `origin` when a caller goes through startTurn. */
   fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+  /** Where this turn came from, as one value (src/types/turn-origin.ts).
+   *  Persisted additively on user_message and the SSE event; the
+   *  legacy fields above stay what old sessions, clients and engines
+   *  read. Set by startTurn for every caller that goes through it. */
+  origin?: TurnOrigin;
   /**
    * Scaffolding for THIS turn that the model sees and the record does
    * not: why the turn looks the way it does, what was said around it.
@@ -218,12 +226,10 @@ export interface RunChatTurnArgs {
    *  (live chat/send case). When omitted, no events are published — the
    *  spawn_subagent / silent-runner case. */
   publishSse?: (event: SseEvent) => Promise<void>;
-  /** Optional abort signal. When the user presses ESC mid-turn the
-   *  TUI hits /chat/abort which triggers this signal; the engine
-   *  adapter (claude-cli/codex-cli/openai-compatible) honors it and
-   *  cuts the in-flight LLM call cleanly. spawn_subagent flows
-   *  don't pass this — they propagate parent-cancellation through
-   *  the depth chain via their own mechanism. */
+  /** Optional abort signal. POST /chat/abort (Stop button, TUI ESC,
+   *  subagent_cancel) triggers it; the engine adapter (claude-cli/
+   *  codex-cli/openai-compatible) honors it and cuts the in-flight LLM
+   *  call cleanly. startTurn registers one for every turn. */
   signal?: AbortSignal;
   /** User-attached files for this turn (Phase Y.B). Refs persisted on
    *  the user_message event in JSONL; resolved to absolute paths +
@@ -427,6 +433,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     fromAgent,
     fromSession,
     fromSystem,
+    origin,
     turnPrefix,
     attachMediaIds,
     agentAskCallId,
@@ -462,12 +469,11 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     subagentDepth,
     fromAgent: fromAgent ?? null,
     fromSession: fromSession ?? null,
+    fromSystem: fromSystem ?? null,
+    origin: origin ? originKind(origin) : null,
     textLen: text.length,
     attachmentCount: attachments?.length ?? 0,
   });
-  // Reply-back routing for agent_ask (see turn-origin.ts). Reset on
-  // every turn so a human turn following an A2A one never inherits it.
-  setTurnOrigin(agent, session, fromAgent && fromSession ? { agent: fromAgent, session: fromSession } : null);
 
   const persona = await loadPersona(agent);
   if (!persona) {
@@ -704,6 +710,14 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         }
       : undefined;
 
+  // Reply-back routing for agent_ask (see turn-origin.ts). Set here,
+  // after every pre-engine check has passed, so a turn that fails
+  // before it starts (persona missing, model unresolvable, attachment
+  // problem) cannot leave a stale A2A origin behind for the next turn.
+  // Reset with null on every non-A2A turn so a human turn following
+  // an A2A one never inherits it. Cleared again at the end.
+  setTurnOrigin(agent, session, fromAgent && fromSession ? { agent: fromAgent, session: fromSession } : null);
+
   await appendEvent(agent, session, {
     kind: 'user_message',
     ts: Date.now(),
@@ -713,6 +727,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     ...(fromAgent && fromSession ? { from_session: fromSession } : {}),
     ...(fromSystem ? { from_system: fromSystem } : {}),
     ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
+    ...(origin ? { origin } : {}),
     ...(ephemeralContext ? { ephemeral: ephemeralContext } : {}),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
     ...(inputMeta ? { input: inputMeta } : {}),
@@ -737,6 +752,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ...(fromAgent && fromSession ? { from_session: fromSession } : {}),
         ...(fromSystem ? { from_system: fromSystem } : {}),
         ...(agentAskCallId ? { agent_ask_call_id: agentAskCallId } : {}),
+        ...(origin ? { origin } : {}),
         // Dictated, not typed. History carries this; without it here the
         // live bubble loses its microphone until the page is reloaded.
         ...(inputMeta ? { input: { modality: inputMeta.modality, source: inputMeta.source } } : {}),
