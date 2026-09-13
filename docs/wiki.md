@@ -368,6 +368,7 @@ wiki:
     intervalDays: 7
     model: opus
     requireApproval: true
+    maxCallsPerTurn: 3                   # wiki_* calls per turn in a review loop
 
   search:
     boostWiki: 1.4                       # search-rank multiplier per source
@@ -402,13 +403,13 @@ which language Deep writes page prose in. It covers:
 - the instruction to the Deep worker to write titles, headings and
   prose in that language.
 
-`de` is the default because the wiki started German; an installation
-that never sets the key keeps producing pages that match its existing
-ones. Set `en` for an English wiki. Switching later changes only new
-scaffolding: Merge keeps the headings a page already has, existing
-pages are not translated, and memory notes and search are unaffected
-(they were language-neutral already). Names and terms are quoted as
-they appear in the memory, whatever the wiki language.
+`de` is the default; an installation that never sets the key keeps
+producing pages that match its existing ones. Set `en` for an English
+wiki. Switching later changes only new scaffolding: Merge keeps the
+headings a page already has, existing pages are not translated, and
+memory notes and search are language-neutral and unaffected. Names and
+terms are quoted as they appear in the memory, whatever the wiki
+language.
 
 ## Multi-agent participation
 

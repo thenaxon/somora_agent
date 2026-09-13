@@ -14,7 +14,8 @@ This doc summarises the defenses each engine adapter installs.
 
 ```
    you ──► CLI/HTTP ──► somora-server ──┬─► claude-cli engine ──► Claude Code binary ──► Anthropic API
-                                        ├─► codex-cli engine   ──► Codex CLI binary    ──► OpenAI API
+                                        ├─► codex-cli engine   ──► bundled Codex       ──► OpenAI API
+                                        ├─► grok-cli engine    ──► Grok Build CLI (ACP) ──► xAI API
                                         └─► openai-compatible  ──► fetch /v1/chat/...   ──► local LLM or cloud
 ```
 
@@ -32,7 +33,7 @@ auto-memory under `~/.claude/projects/<cwd>/memory/*`, settings files,
 CLAUDE.md walk-up, and so on. None of that should leak into a somora
 agent's prompt.
 
-Five-layer defense in [`src/engine/claude-cli.ts`](../src/engine/claude-cli.ts):
+Six-layer defense in [`src/engine/claude-cli.ts`](../src/engine/claude-cli.ts):
 
 1. `settingSources: []` — disables `settings.json` / `CLAUDE.md`
    loading from user / project / local scope.
@@ -44,18 +45,17 @@ Five-layer defense in [`src/engine/claude-cli.ts`](../src/engine/claude-cli.ts):
 4. `canUseTool` gate — a per-call permission callback that allows
    only `mcp__somora__*` tool names (plus `mcp__somora-<name>__*` for
    configured external-server proxies); everything else is denied.
-   The server was called `somora-memory` before v2026.09.03.05; a CLI
-   session recorded under the old name is restarted once on its next
-   turn, with the session history replayed, and shows a
-   `session restarted` engine row.
+   A CLI session recorded under an earlier MCP server name is restarted
+   once on its next turn, with the session history replayed, and shows
+   a `session restarted` engine row.
 5. `managedSettings: { autoMemoryEnabled: false }` — disables the
    project-memory auto-loader. Without this, `~/.claude/projects/<cwd>/memory/*`
    files leak into the system prompt.
 6. `strictMcpConfig: true` — only the MCP servers somora passes exist
-   for the session. The claude.ai account connectors (Gmail, Calendar,
-   Drive) no longer appear at all; before, they were listed as
-   "needs-auth" and mentioned to the model, with only their tools
-   denied (SDK 0.3.259 re-audit, 2026-09-03).
+   for the session. Without it the claude.ai account connectors (Gmail,
+   Calendar, Drive) are listed as "needs-auth" and mentioned to the
+   model even with their tools denied; with it they do not appear at
+   all.
 
 What the SDK's init message lists as `skills`, `slash_commands` and
 `agents` is SDK-side inventory: with a plain-string `systemPrompt` and
@@ -117,8 +117,7 @@ Defense in [`src/engine/codex-thread-config.ts`](../src/engine/codex-thread-conf
 
 `tool_search` and `tool_suggest` stay enabled on purpose — codex routes
 MCP tool calls through these meta-tools as the discovery/dispatch layer.
-Disabling them silently broke MCP tool calls before we figured out the
-distinction.
+Disabling them silently breaks every MCP tool call.
 
 ## openai-compatible adapter
 
@@ -167,10 +166,11 @@ memory directory through `memory_write`/`memory_edit`/`memory_delete`.
 - **Local filesystem access by tools.** `memory_*` tools read your own
   memory files; that's the design. If you write secrets into a memory
   note and then ask an agent about them, the model sees the secret.
-- **Network egress.** somora doesn't sandbox the spawned binaries
-  beyond what their own sandbox flags do (`--sandbox read-only` for
-  codex, none for claude-cli). If the binary phones home outside your
-  knowledge, somora won't catch it.
+- **Network egress.** somora doesn't sandbox the spawned binaries.
+  Codex threads run with `sandbox: danger-full-access` (somora's own
+  tool policies are the sandbox, see above), claude-cli has no sandbox
+  flag at all. If the binary phones home outside your knowledge, somora
+  won't catch it.
 - **Multi-tenant deployment.** somora binds to `127.0.0.1` and assumes
   you're its only user. Putting it behind a network reverse proxy
   without proper auth would expose your agents to anyone who can reach

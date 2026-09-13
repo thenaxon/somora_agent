@@ -35,8 +35,8 @@ not have to be fast at talking.
 
 The voice speaks the language from `voice.language` on the agent, else
 `stt.language`, else English — named in full in its instructions, not as
-a language code, because a code inside an English paragraph is a weak
-signal and agents drifted into English mid-call.
+a language code, because a two-letter code buried in an English
+paragraph is a weak signal — the voice would follow the paragraph.
 
 It does not introduce itself. The caller picked this agent in a picker
 and talks to it daily, so a recital of name and role is a wall in front
@@ -70,14 +70,22 @@ A conversation cannot wait on a build. The question queues on the
 session like every other turn, and the call waits
 `realtimeVoice.consult.quickAnswerMs` (default 8 seconds) in total —
 for the session lock and for the answer together. An answer inside
-that window is spoken at once. Past it, the voice tells you it handed
-the request over and keeps talking; nothing the agent was doing is
+that window is spoken at once — not read verbatim: it reaches the voice
+with an English instruction that names the language of the call and the
+persona's `maxSpokenSentences` budget (default 4) and asks for the
+substance, the names, facts and numbers as the agent gave them, without
+reading lists or paths aloud and without shrinking it to "it is done".
+Past it, the voice tells you it handed the request over and keeps
+talking; nothing the agent was doing is
 cancelled, and the question stays in the queue or keeps running. The
 answer then reaches you one of two ways: the call reads it out on its
 own at the next pause in the conversation — once, only in the call it
 belongs to, and only while that call still talks to the same agent;
 if the voice happens to be mid-sentence at that moment, the reading is
-kept and spoken as soon as it falls silent, never dropped —
+kept and spoken as soon as it falls silent, never dropped. That reading
+is an instruction too, never a canned sentence: say in the call's
+language that this is the answer to the earlier question, then give the
+answer as it is, nothing added —
 or the voice fetches it when you ask whether it is done
 (`somora_consult_result`). Asked how far along it is, the voice
 reports the running work and each handed-over request with its place
@@ -85,14 +93,16 @@ in the queue (`somora_work_status`). A request that was stopped or
 removed on the way is announced the same way, with the reason. Work
 the agent started for your question and finished only after its answer
 was read out — a sub-agent, a question to another agent — reaches you
-the same way, once, announced as a follow-up to that earlier question.
+the same way, once, opened as a follow-up to that earlier question and
+then given as it is; a follow-up for a question this call never asked,
+or for an agent the call has since left, is not read.
 
 The framing itself travels beside the question, not inside it — in the
 same field somora uses for the memory block, which every engine puts in
 front of the user message. The model reads both; the session records
-only what was asked. Half of every stored voice turn used to be that
-same boilerplate, and it is read later by the dream phase and by the
-recall search, which is exactly where it does damage.
+only what was asked. Stored inside the text, that boilerplate would be
+half of every voice turn, and it would be read later by the dream phase
+and by the recall search, which is exactly where it does damage.
 
 That turn is the whole record. A call leaves the same trace in a session
 that an agent-to-agent request leaves: the question that reached the
@@ -109,8 +119,7 @@ That is deliberate. A spoken sentence that never became a question is
 not a turn: engines that resume their own session drop an unanswered
 user message, the dream phases would learn every question twice, and a
 line written while a turn is running can break that turn's pair. One
-question, one answer, one place. Sessions recorded before somora
-2026.09.12 still carry the older spoken rows and still render them.
+question, one answer, one place.
 
 ## The voice self
 
@@ -137,7 +146,7 @@ on your own authority, speak in the first person — always stay.
 Read what a call would actually send:
 
 ```bash
-curl -s "http://127.0.0.1:18737/voice/instructions?agent=hans" | jq .
+curl -s "http://127.0.0.1:18737/voice/instructions?agent=<your-agent>" | jq .
 ```
 
 ## Configuration
@@ -145,11 +154,11 @@ curl -s "http://127.0.0.1:18737/voice/instructions?agent=hans" | jq .
 ```yaml
 realtimeVoice:
   enabled: true
-  provider: openai            # openai | local (same adapter) — google has no adapter yet
+  provider: openai            # openai | local (same adapter) — google has no adapter
   model: gpt-realtime-2.1-mini
   apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE, not the key
   # url: ws://127.0.0.1:8787/realtime   # where to connect; omitted = OpenAI
-  transport: websocket
+  transport: websocket        # default; the only transport somora drives
   defaultVoice: alloy
   consultPolicy: always
   maxCallMinutes: 20          # the meter runs while nobody speaks
@@ -166,8 +175,8 @@ realtimeVoice:
 The key lives in a file with `600` permissions, never in `config.yaml`:
 a realtime key buys billed minutes, and the config is read by more eyes.
 
-**Voices** (measured against the API, 2026-09-12): `alloy`, `ash`,
-`ballad`, `coral`, `echo`, `sage`, `shimmer`, `verse`, `marin`, `cedar`.
+**Voices** on OpenAI: `alloy`, `ash`, `ballad`, `coral`, `echo`,
+`sage`, `shimmer`, `verse`, `marin`, `cedar`.
 Anything else is refused with that list. They are not tied to a
 language — each speaks German too — but they sound noticeably different,
 so give agents different ones.
@@ -196,7 +205,7 @@ all of it.
 With `allowAgentSwitch: true`, say where you want to go. Two directions
 work, and they are the same operation:
 
-- **another agent** — *"put me through to lisa"*
+- **another agent** — *"put me through to <agent>"*
 - **another session of the agent you are talking to** — *"go into your
   projektA session"*
 
@@ -205,12 +214,11 @@ came from.
 
 Name a session and you land in it. Name none and you land in **main**,
 always — the session the call is currently in is never carried over to
-another agent, which used to put you in a same-named session of theirs
-that need not even exist.
+another agent: a same-named session of theirs need not even exist.
 
 Session names are matched by how they sound, not by how they are
-spelled. One call produced `Cerebokräft`, `craft` and `CerebroCraft` for
-a session called `cerebrocraft`, and `voice-check` for `voicecheck`:
+spelled. A transcript that renders a session called `projekt-alpha` as
+`Projekt Alpha`, `projektalpha` or just `alpha` still lands there:
 case, hyphens, spaces and umlauts are folded away, a fragment is enough,
 and a near miss still counts. Two sessions that sound equally close are
 a question, not a guess. **This applies to calls only.** A session name
@@ -269,7 +277,9 @@ agent's own turns are billed as usual, separately.
 A ChatGPT or Codex subscription does **not** cover the realtime API; it
 needs its own key.
 
-Not in this version: the mobile client, several calls at once, and a
-call without a bound session. The provider contract carries a second
-transport (WebRTC, audio straight from the browser) for later; today
-everything goes through somora so tool execution has exactly one path.
+The call lives in the web client only, one call at a time, and always
+bound to a session. Audio always travels browser → somora → provider
+over the websocket transport, so tool execution has exactly one path.
+`realtimeVoice.transport` defaults to `websocket`, the only transport
+somora drives; the key accepts `webrtc` for forward compatibility but
+nothing uses it.

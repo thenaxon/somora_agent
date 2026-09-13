@@ -242,8 +242,8 @@ Notes:
 
 - The session lock is `priority: user` — same as `/chat/send` (this is
   human input, just audio).
-- Timeout: 60s by default. Voice turns that take longer than that
-  break the UX premise — pick a fast model for voice agents.
+- No timeout of its own: the response waits for the whole turn. Long
+  voice turns break the UX premise — pick a fast model for voice agents.
 - Always generates TTS regardless of per-chat toggles. The endpoint is
   meant for display-less clients that need spoken output unconditionally.
 - The assistant text is also broadcast on the session's SSE stream and

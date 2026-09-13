@@ -16,12 +16,15 @@ are checked:
 
 - **the model's tool list** — `image_generate` and friends are not
   offered, so they cost no context and cannot be called;
-- **HTTP** — `/images/*` answers `503`;
+- **HTTP** — `GET /images/status` reports `enabled: false`; generate,
+  listing, catalog and capability routes answer `503`;
 - **the desktop** — the Media tile stays hidden, and the window says so
   rather than opening an empty form.
 
 The same applies per agent: `tools: deny: [toolset:image]` in an
-agent.yaml removes the tools for that agent on every engine.
+agent.yaml removes `image_generate` and `image_models` for that agent
+on every engine. `media_list` sits in its own `media` toolset, because a
+video-only install needs it too.
 
 ## What is verified, and what is not
 
@@ -31,7 +34,7 @@ Verified there end to end: both wire dialects, reference images as
 multipart, catalog-driven capabilities, the `503`-means-busy path, and
 the fallback chain.
 
-**OpenRouter verified live** (2026-09-01): catalog read, text-to-image
+**OpenRouter verified live**: catalog read, text-to-image
 and edits from reference images all work against `openrouter.ai`.
 
 **Not yet tested against a live hosted account.** The `openai` dialect
@@ -117,10 +120,10 @@ has no ratio field, and a router in front of a backend that does
 understand ratios forwards the unknown key on `/images/generations` but
 rebuilds the multipart body for `/images/edits` from a fixed whitelist
 — so a "16:9" edit with reference images came back 1024×1024 without a
-word (measured 2026-09-07 against LiteLLM). somora therefore translates
+word (measured against LiteLLM). somora therefore translates
 before sending: if the model's catalog says `size` also accepts named
-ratios (`supported_parameters.size.also_accepts`, as the cerebro
-visual-adapter publishes), the ratio string itself goes out as `size`
+ratios (`supported_parameters.size.also_accepts`, as a self-hosted
+visual adapter may publish), the ratio string itself goes out as `size`
 and the backend renders it exactly; else the listed size closest to
 the ratio; else OpenAI's own sizes (1792×1024 / 1024×1792 — 7:4, not
 16:9, and the result carries a warning saying so). An explicit `size`
@@ -181,8 +184,8 @@ back (`imagegen.aspect_ratio_substituted` in the log) — the case that
 would have stopped a series of accidental squares after the first
 one. This deliberately does not depend on the endpoint reporting it,
 because a strict OpenAI-shaped proxy in front of a backend drops any
-non-standard response field — measured against exactly such a router on
-2026-08-27. Dimensions are kept on the image record.
+non-standard response field — measured against exactly such a router.
+Dimensions are kept on the image record.
 
 Where a provider *does* report what it did differently, `ignored_params`
 (names it accepted but did not use) and `warnings` (free text) are read
@@ -223,23 +226,21 @@ made it. That single directory is what the gallery and the file-serving
 route index; resolving it per agent workspace would scatter images
 across several and leave the gallery blind to most of them.
 
-**One image, one place.** There is no second destination any more
-(2026-09-10). It produced two paths for the same bytes, one of them
-routinely a `<workspace>/<workspace>/…` folder that a relative path
-created by accident, and the gallery then listed the same picture under
-two names. An agent that needs the file uses the path in the tool
-result. `save_to` is still accepted by the tool and the route so an old
-persona line does not fail a generation; it is ignored, and the result
-says where the image actually is. Files written by earlier versions are
-left exactly where they are — they are simply no longer a second home,
-and the Media window shows the one canonical path.
+**One image, one place.** There is no second destination. Two paths for
+the same bytes — one of them routinely a `<workspace>/<workspace>/…`
+folder that a relative path creates by accident — would have the gallery
+list the same picture under two names. An agent that needs the file uses
+the path in the tool result. `save_to` is accepted by the tool and the
+route so a persona line that names one does not fail a generation; it is
+ignored, and the result says where the image actually is. The Media
+window shows the one canonical path.
 
 Filenames are `2026-08-26_143012_koala-im-weltraum.png`: chronologically
 sortable and recognizable without opening them.
 
-Metadata lives separately, one JSON file per image under
-`~/.somora/images/` — prompt, model, every spec, cost, timestamp, agent,
-paths. The images directory itself is something you browse and clean
+Metadata lives separately, one JSON file per item under
+`~/.somora/media/` (images and videos share the store) — prompt, model,
+every spec, cost, timestamp, agent, paths. The images directory itself is something you browse and clean
 out, and provenance shouldn't vanish with a file you dragged elsewhere.
 
 ## Tools
@@ -260,9 +261,10 @@ vision-capable model; without one, the error points at `analyze_file`,
 which dispatches to the configured `vision.worker`.
 
 `media_list` exists because a path in a tool result doesn't survive
-context compaction. "The koala one" has to stay findable. It was
-`image_list` until video arrived — and then returned videos, which a
-tool with that name has no business doing.
+context compaction. "The koala one" has to stay findable. It is named
+for the question, not for one medium: finding the thing made earlier is
+the same question for a picture and for a video, and the gallery behind
+it holds both.
 
 `image_models` exists because the `model` argument is a free string:
 with more than one model configured, nothing else tells the caller
@@ -318,7 +320,7 @@ failure mode of relying on that is "Done!" with nothing to look at.
 Mechanically it's an append-only `assistant_media` event paired to the
 bubble by `turnId`, exactly like `assistant_audio`, persisted to JSONL
 so a reloaded conversation still shows them. Each entry carries its own
-`type` (`image` today) rather than the event naming one medium: the
+`type` (`image` or `video`) rather than the event naming one medium: the
 kind string lives in session files forever, and a second, nearly
 identical event kind for the next medium would have to be understood by
 every reader from then on.
@@ -346,14 +348,14 @@ from there. That's what lets the images directory be user-chosen
 without the route becoming a way to read arbitrary files.
 
 `DELETE` removes the gallery entry only. Deleting user files from a
-one-click gallery button is the wrong default, and older images may
-still have a hardlink somewhere that somora cannot reliably reach.
+one-click gallery button is the wrong default, and an image may have a
+hardlink somewhere that somora cannot reliably reach.
 
 ## Known gaps
 
 - **Reference images** (image-to-image) work through the tool's
   `reference_images` argument, but the Media window has no picker for
-  them yet — the browser path accepts base64 only.
+  them — the browser path accepts base64 only.
 - **No progress streaming.** The endpoint can stream partial renders;
   somora waits for the finished image and shows a busy state.
 - **No automatic cleanup.** Generated images are work product, not a

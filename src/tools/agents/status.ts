@@ -182,7 +182,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   description:
     'Fetch the result of a sub-agent task. Returns one of three states: ' +
     '"done" (with result text + usage), "failed" (with error), or "pending" ' +
-    '(task still running). `result.follow_ups` lists texts that arrived AFTER the sub\'s report ' +
+    '(task still running). `follow_ups` lists texts that arrived AFTER the sub\'s report ' +
     '— the outcome of sub-agents the sub itself started and did not wait for; you are woken with a ' +
     '[subagent attention] follow-up when one lands. `outcome` is the runtime verdict, never read from the text: ' +
     '"completed" (the sub answered), "partial" (the engine had to force a finish at the ' +
@@ -324,6 +324,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
         ...(local.result?.fallback ? { fallback: local.result.fallback } : {}),
         ...(local.result?.files_written?.length ? { files_written: local.result.files_written } : {}),
         ...(local.result?.media?.length ? { media: local.result.media } : {}),
+        ...(local.result?.follow_ups?.length ? { follow_ups: local.result.follow_ups } : {}),
         usage: local.result?.usage,
         ms: local.result?.ms,
       };
@@ -368,6 +369,7 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
       ...(remote.result?.fallback ? { fallback: remote.result.fallback } : {}),
       ...(remote.result?.files_written?.length ? { files_written: remote.result.files_written } : {}),
       ...(remote.result?.media?.length ? { media: remote.result.media } : {}),
+      ...(remote.result?.follow_ups?.length ? { follow_ups: remote.result.follow_ups } : {}),
       usage: remote.result?.usage,
       ms: remote.result?.ms,
     };

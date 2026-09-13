@@ -59,7 +59,7 @@ systemctl --user restart somora
 
 `entities` is a **controlled vocabulary** — projects belong to one
 entity (e.g. "Privat" or "enovom"), and the agent must pick from this
-list at create time. See [Entities](#entities-the-controlled-vocabulary)
+list at create time. See [Entities](#entities--the-controlled-vocabulary)
 below for why this matters.
 
 When `projects.enabled` is `false` (or the block is missing
@@ -158,7 +158,7 @@ paths:
   - ref: /mnt/media/recordings/homecinema   # local
   - ref: https://drive.google.com/...     # url
   - ref: mac-studio:/Users/me/foo.log     # resource — must match config.resources
-  - ref: spiderman:/home/me/checkpoints   # resource
+  - ref: homeserver:/home/me/checkpoints   # resource
 ```
 
 For `resource` paths, the prefix before `:/` must match a slug in
@@ -313,7 +313,7 @@ Supported ops:
 | `archive` | `reason?` | Soft-delete. |
 | `unarchive` | — | Restore. |
 
-Slug and entity are **not mutable** in v1. To change either, delete
+Slug and entity are **not mutable**. To change either, delete
 the project file and recreate it (any pinned sessions just lose
 their pin — same as hard-delete).
 
@@ -363,11 +363,10 @@ All `/projects/*` routes return `503` when `projects.enabled` is
 false. Clients should probe `/projects/feature` once at boot to
 decide whether to surface the feature at all.
 
-## What's deliberately not in v1
+## Not part of projects
 
 - **Project create/edit in the web UI.** Agent-via-chat is the
-  intended authoring surface; the web is read + switch only. A form
-  builder may come in v1.x.
+  authoring surface; the web is read + switch only.
 - **Color picker / icon picker.** Set `color: "#..."` in the file
   directly or ask the agent to `project_update set_field color`.
 - **TODO list inside the project file.** Free-form notes belong in a

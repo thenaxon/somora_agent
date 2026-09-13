@@ -3,7 +3,8 @@
 somora can connect to external [MCP](https://modelcontextprotocol.io)
 servers and offer their tools to every agent, on every engine, right
 next to the built-in tools. One config entry, and `claude-cli`,
-`codex-cli` and `openai-compatible` agents all see the server's tools —
+`codex-cli`, `grok-cli` and `openai-compatible` agents all see the
+server's tools —
 namespaced, schema-sanitized, and individually gateable per agent.
 
 ```yaml
@@ -208,18 +209,12 @@ Claude login does not carry.
 
 **Which credential, and why the preset names two.** The preset asks for
 `designOauth` first and falls back to the ordinary `claudeAiOauth`,
-taking whichever key is actually in the file. That is not indecision —
-this has moved twice in four days:
-
-| | |
-|---|---|
-| until 2026-08-25 | the separate `/design-login` credential; then that flow broke on recent CLI versions |
-| 2026-08-25 | the ordinary login worked, verified against the live endpoint |
-| 2026-08-28 | Anthropic split out `user:design:*`; the ordinary token is refused and `/design-login` is required again |
-
-A list survives the next move in either direction without anyone editing
-config. The same applies to any server: `credentialKey` accepts an
-ordered list.
+taking whichever key is actually in the file. Anthropic has moved the
+Design endpoint between the two more than once — for a while the
+ordinary login was accepted, then the separate `user:design:*` scope
+became mandatory again. A list survives the next move in either
+direction without anyone editing config. The same applies to any
+server: `credentialKey` accepts an ordered list.
 
 **If it says `needs-auth`,** run `/design-login` again. A token that
 authenticates for everything else but lacks the design scope is refused
@@ -235,8 +230,7 @@ for the CLI to pick up. The refresh runs under a lockfile with a
 re-read, so an interactive Claude Code session that happens to rotate
 the same chain does not collide with it. `claudeAiOauth` stays the
 CLI's: somora never refreshes it (two refreshers on one rotating chain
-invalidate each other — that is how a Design credential got revoked on
-2026-08-25).
+invalidate each other and get the credential revoked).
 
 When a refresh is *rejected* (the refresh token itself expired or was
 revoked), the hub moves the dead entry aside as
@@ -248,7 +242,7 @@ editing `.credentials.json` by hand. After the login:
 `POST /mcp/servers/claude-design/reconnect`, or wait for the next
 re-probe.
 
-## What works today — and what doesn't (yet)
+## What can be added, and what cannot
 
 Before adding a server, classify it. Three questions decide everything:
 
@@ -275,8 +269,8 @@ Before adding a server, classify it. Three questions decide everything:
    dropped.
 
 If the answers are "HTTP + API key + tools", add it (see the
-step-by-step above) and check `/mcp/status`. Anything else: not yet —
-don't try to force it through the config.
+step-by-step above) and check `/mcp/status`. Anything else is not
+supported — don't try to force it through the config.
 
 ```yaml
 mcp:

@@ -1,8 +1,8 @@
 # Resources
 
-A resource is a named remote machine that file_* and (later) exec
-tools can act on via the `target` parameter. SSH-only for v1; the
-schema is set up so future transports (Docker host, k8s pod) slot in
+A resource is a named remote machine that the `file_*`, `exec` and
+`tmux` tools act on via the `target` parameter. SSH is the only
+transport; the schema carries a `type` so another one can be added
 without breaking config.
 
 ## Configuration
@@ -103,7 +103,7 @@ default.
 
 ```yaml
 resources:
-  spiderman:
+  homeserver:
     type: ssh
     host: 192.0.2.42
     user: agent-user
@@ -112,7 +112,7 @@ resources:
       Dedicated AI/GPU workstation. Somora-agents own routine
       maintenance here: system updates, kernel reboots, mount fixes.
     allowBlocked:
-      - sudo ~/bin/spiderman-system-update.sh
+      - sudo ~/bin/system-update.sh
       - sudo ~/bin/fix-nas-mount.sh
       - systemctl reboot
       - sudo                              # broad: any "sudo …" command
@@ -188,7 +188,7 @@ Every privileged-allowed execution appends one line to
 `~/.somora/audit/exec-privileged.jsonl`:
 
 ```json
-{"ts":1747500000000,"agent":"<your-agent>","session":"…","resource":"spiderman","command_head":"sudo ~/bin/spiderman-system-update.sh","matched_entry":"sudo ~/bin/spiderman-system-update.sh","blacklist_reason":"sudo (privilege escalation)","blacklist_pattern":"…"}
+{"ts":1747500000000,"agent":"<your-agent>","session":"…","resource":"homeserver","command_head":"sudo ~/bin/system-update.sh","matched_entry":"sudo ~/bin/system-update.sh","blacklist_reason":"sudo (privilege escalation)","blacklist_pattern":"…"}
 ```
 
 Append-only. Rotate by hand or via logrotate if it grows; Somora does
@@ -201,7 +201,7 @@ Somora host is telling the system "on this remote, these specific
 admin commands are normal operation." A few practical guidelines:
 
 - Prefer prepared scripts with fixed paths over broad shell patterns.
-  `sudo ~/bin/spiderman-system-update.sh` is far safer than a blanket
+  `sudo ~/bin/system-update.sh` is far safer than a blanket
   `sudo` entry, because the script itself can be defensive
   (`set -euo pipefail`, expected-path checks, logging).
 - Use a broad entry (`sudo` on its own) only when the resource is a
@@ -211,10 +211,3 @@ admin commands are normal operation." A few practical guidelines:
   entirely; the global blacklist is the right default there.
 - The audit JSONL is the after-the-fact review surface; check it if
   you ever wonder what your agents did with their elevated privileges.
-
-## What's NOT here yet (FUTURE)
-
-- Read-only resources (`readOnly: true` in config to allow `file_read`
-  + `exec` but block `file_write`/`patch`/`delete`).
-- Bastion / jump-host support.
-- Other transport types (Docker, k8s).

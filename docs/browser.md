@@ -91,37 +91,37 @@ version" and it uses this.
 ## Profiles and windows
 
 A Chromium profile is a cookie jar. Every agent gets its own under
-`~/.somora/browser/profiles/<agent>/`, so naxon being signed in to a
-site does not sign lisa in. A profile is one Chromium process; it
+`~/.somora/browser/profiles/<agent>/`, so one agent being signed in to
+a site does not sign another in. A profile is one Chromium process; it
 starts on the first `open` and stops after `idleStopMinutes` without a
-tool call — the profile, and with it the logins, stays on disk.
+tool call or viewer — the profile, and with it the logins, stays on disk.
 
 Agents that should share logins get a named profile:
 
 ```yaml
 browser:
   profiles:
-    firma:
-      agents: [naxon, hans]
+    shared:
+      agents: [<agent-a>, <agent-b>]
 ```
 
 Shared means shared cookies and one Chromium process — Chromium allows
 only one process per profile directory. It does **not** mean shared
 tabs: every agent gets its own **window** on that process.
 
-A window is `<browser id>@<agent>`, for example `profile:firma@hans`
-or `agent:loki@loki`. It is the unit for everything you and the agents
-touch:
+A window is `<browser id>@<agent>`, for example `profile:shared@<agent-a>`
+or `agent:<your-agent>@<your-agent>`. It is the unit for everything you
+and the agents touch:
 
 - Each window lists and drives only its own tabs. An agent cannot
   snapshot or click a tab in another agent's window, and `stop` closes
   its own window; the process ends when the last window is gone.
 - `maxTabsPerAgent` counts per window, not per process.
-- Control, handoff and take-over are per window. While you drive hans'
-  window, lisa keeps working in hers, on the same Chromium.
+- Control, handoff and take-over are per window. While you drive one
+  agent's window, the other keeps working in its own, on the same Chromium.
 - A login is still shared, because the cookie jar is. That is the point
-  of a shared profile: sign in once in hans' window and lisa is signed
-  in too.
+  of a shared profile: sign in once in one agent's window and the other
+  agent is signed in too.
 
 An agent not listed on a profile cannot touch it.
 
@@ -220,10 +220,10 @@ not to retry. The take-over buttons live in the browser window; the same
 switch is an HTTP route:
 
 ```bash
-curl -sk -X POST https://localhost:18737/browser/agent:naxon@naxon/control \
+curl -sk -X POST https://localhost:18737/browser/agent:<your-agent>@<your-agent>/control \
   -H 'Content-Type: application/json' -d '{"mode":"human"}'
 # … sign in …
-curl -sk -X POST https://localhost:18737/browser/agent:naxon@naxon/control \
+curl -sk -X POST https://localhost:18737/browser/agent:<your-agent>@<your-agent>/control \
   -H 'Content-Type: application/json' -d '{"mode":"agent","handoffId":"<id>"}'
 ```
 
@@ -308,7 +308,7 @@ that asked, and the direct ability gate. It uses
 temporary profiles and requires Chromium and permission to bind local
 ports; the running installation is not used.
 
-## What it does not do (yet)
+## What it does not do
 
 No upload/download UI, no passkeys or hardware keys (the remote
 browser cannot see your devices), no audio/video, no free JavaScript

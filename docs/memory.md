@@ -28,14 +28,14 @@ how vault binding works.
 ## Mental model — memory inbox
 
 ```
-~/.somora/agents/<name>/memory/
-├── *.md                          ← un-consolidated notes the agent has now
-│
+~/.somora/agents/<name>/
 ├── memory.db (+ -wal, -shm)      ← derived index of THIS agent's notes, rebuilt from .md if deleted
-├── .deep-skip-cache.json         ← Deep's hash-cache (skipped files)
-└── .dreams/                      ← REM extraction findings
-    ├── <id>.dream.md             ← pending review
-    └── processed/                ← resolved findings (audit trail)
+└── memory/
+    ├── *.md                      ← un-consolidated notes the agent has now
+    ├── .deep-skip-cache.json     ← Deep's hash-cache (skipped files)
+    └── .dreams/                  ← REM extraction findings
+        ├── <id>.dream.md         ← pending review
+        └── processed/            ← resolved findings (audit trail)
 ```
 
 The `.md` files are the source of truth. The SQLite index is derived —
@@ -49,19 +49,12 @@ agent, in `~/.somora/index/shared.db`. The index belongs to the source,
 not to the reader: every agent would embed exactly the same chunks, so
 one copy serves them all, and one file-watcher on the vault replaces
 one per agent. A new agent's first turn therefore costs nothing beyond
-its own notes (before this, a new agent embedded the whole vault on its
-first turn — 85 s on a 600-page vault). `shared.db` is derived too:
-delete it and the server rebuilds it, seeding from an existing agent DB
-when one holds the same embedding model, otherwise from disk.
-
-**Updating from a version before the shared index** needs nothing from
-you. On the first boot the server copies the vault/wiki rows out of the
-largest agent DB into `shared.db` (seconds, no model call), sweeps the
-vault in the background, and only then switches the agents over; until
-that moment they keep answering from their own DB, which still holds
-the old rows. Those old vault/wiki rows are left in place — they are
-never read again and cost only disk. `GET /health` → `sharedIndex`
-shows `building` during the switch and `ready` after
+its own notes. `shared.db` is derived too: delete it and the server
+rebuilds it. When an agent DB still holds vault/wiki rows for the same
+embedding model, those rows are copied over first (seconds, no model
+call) and the vault is swept in the background; agents keep answering
+from their own DB until the shared index is ready. `GET /health` →
+`sharedIndex` shows `building` during that phase and `ready` after
 ([api.md](api.md#get-health)).
 
 The inbox is **volatile by design**. Files come in via REM or
@@ -78,8 +71,11 @@ Two paths flow into every chat turn:
 The runtime builds an embedding query from the user's current message
 plus the last few turns, runs hybrid search over the agent's own
 memory index and the shared vault/wiki index as one candidate pool,
-takes the top-N hits above a configurable score threshold, and prepends
-them as a `<memory-context>` block to the system prompt.
+takes the top-N hits above a configurable score threshold, and hands
+them to the engine as a `<memory-context>` block. The block is
+per-turn context: every engine places it in front of the user message
+of that turn, not in the system prompt (see
+[cache-strategy.md](cache-strategy.md)).
 
 ```
 <memory-context>
@@ -102,14 +98,13 @@ rather than answering from these notes.
 </memory-context>
 ```
 
-The wording of that header is deliberate and load-bearing. An earlier
-version said the notes were retrieved "(no tool call required)" and
-called the wiki "authoritative". Measured 2026-07-22 on an identical
-request, that phrasing cut kimi-k3's tool-call rate from 85% to 55%:
-it reads as a general "you do not need tools here", and it puts recall
-above the actual state of the system. Framing the notes as recollection
-rather than observation restored the rate to 95%. If you customise this
-block, keep that distinction.
+The wording of that header is deliberate and load-bearing. Phrasing
+such as "no tool call required" or calling the wiki "authoritative"
+measurably lowers the tool-call rate of smaller models: it reads as a
+general "you do not need tools here", and it puts recall above the
+actual state of the system. Framing the notes as recollection rather
+than observation, with an explicit "never replaces a tool", keeps the
+rate up. If you customise this block, keep that distinction.
 
 
 The agent sees relevant notes (from any source) without having to call
@@ -127,9 +122,9 @@ When auto-injection isn't enough, the agent calls tools:
 ```
 memory_search(query, limit?, minScore?, source?)
 memory_get(reference)                              # full content of one item
-memory_list(filter?)                                # browse own memory
+memory_list(tag?, source?, pathPrefix?)             # browse own memory (or wiki/vault/all)
 memory_write(slug, content, frontmatter?)           # write to own inbox
-memory_edit(slug, content)                          # modify existing
+memory_edit(slug, content, frontmatter?)            # modify existing
 memory_delete(slug)                                 # remove
 ```
 
@@ -158,7 +153,7 @@ twice in the injected block.
   hybrid automatically once the model is present, and the next reindex
   backfills embeddings for anything indexed while it was unavailable.
   Whether the model is actually loaded is visible on `GET /health` as
-  `memoryEmbedder` (`state: ok | loading | failed`, plus the error);
+  `memoryEmbedder` (`state: idle | loading | ok | failed`, plus the error);
   a failed load is also logged once at boot as
   `memory.embedder_boot_failed`.
 - **BM25** — SQLite FTS5 over chunk text. Tokenizer drops punctuation,
@@ -195,14 +190,12 @@ memory:
     slugMatchBoost: 1.5      # page whose slug names a query word (1 = off)
 ```
 
-**How the query is built (since 2026-09-08).** The current message is
-the query. The previous `queryTurns - 1` turns are context: embedded
-separately and blended into the message embedding at
-`historyWeight` — so the question decides and the conversation nudges.
-Before, everything was one concatenated text, and a 46-character
-question after two long answers about something else recalled that
-something else. Two refinements, both measured on replayed real
-sessions:
+**How the query is built.** The current message is the query. The
+previous `queryTurns - 1` turns are context: embedded separately and
+blended into the message embedding at `historyWeight` — so the
+question decides and the conversation nudges. Concatenating everything
+into one text would let two long answers about something else outvote
+a short question. Refinements, measured on replayed real sessions:
 
 - The weight adapts to how much the message says. Three or more
   content words (everything that is not a filler word like "ok",
@@ -232,7 +225,7 @@ The BM25 side sees the message only, with filler words removed
 otherwise every page that says "was", "du" and "so" a lot outranked
 the one page that says "walter". `POST /agents/<name>/memory/recall-preview`
 runs exactly this path for a message plus a supplied history, which is
-how the change was measured ([api.md](api.md#post-agentsagentmemoryrecall-preview)).
+how recall tuning is measured ([api.md](api.md#post-agentsagentmemoryrecall-preview)).
 
 ## Writing memory
 
@@ -343,10 +336,13 @@ memory_search(query, limit?, minScore?, source?)
                               minScore defaults to 0 (agent gets best top-N).
 memory_get(reference)         full content of a hit; reference like
                               'memory/<slug>' or 'wiki/<path>'.
-memory_list(filter?)          list own memory inbox notes.
+memory_list(tag?, source?, pathPrefix?)
+                              list own memory inbox notes; source: wiki | vault | all
+                              browses the other layers.
 memory_write(slug, content, frontmatter?)
                               create or replace own-inbox note.
-memory_edit(slug, content)    modify existing inbox note; fails if missing.
+memory_edit(slug, content, frontmatter?)
+                              modify existing inbox note; fails if missing.
 memory_delete(slug)           remove inbox note (idempotent).
 ```
 

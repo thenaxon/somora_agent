@@ -12,10 +12,10 @@ that. Sentinel is for "your agent saw BTC drop, looked at the news, and
 wrote me a brief note about why" — the agent does work, you read its
 output.
 
-## Phase 1 scope
+## Sources
 
-Time-based triggers only. Other event sources (HTTP polling, shell
-command output) follow in Phase 2.
+Triggers are time-based. One source type, `time`, with five spec
+variants:
 
 | Source variant | Example use |
 |---|---|
@@ -144,8 +144,8 @@ confirmation, but they cannot bypass these limits:
 A **daily-cap** pause is temporary: the scheduler flips the trigger back
 to `active` automatically once the UTC day rolls over and its fire count
 resets — no manual action needed. An **error** pause is sticky: it stays
-paused until you fix the underlying cause (e.g. expired `gog login` for
-an exec-source in Phase 2) and click **resume**. Both are visible in the
+paused until you fix the underlying cause (e.g. an expired login for
+a CLI the prompt relies on) and click **resume**. Both are visible in the
 web-UI with a status icon and the reason.
 
 ## Completed-trigger retention (GC)
@@ -277,14 +277,6 @@ layers:
 user/sentinel → opens a turn for agent → agent loads skills as needed → tools execute
 ```
 
-## Coming in Phase 2 (not in v2026.05.17.xx)
-
-- `http_json` source — fetch a URL on interval, evaluate JSON
-- `exec` source — run a shell command (gog, gh, curl, …), evaluate
-  stdout / exit code
-- `expression` evaluator — `value < 50000`, regex matching
-- `rising_edge` policy — fire only on the value transition
-
-The integration model for Phase 2 is intentionally CLI-tool-based: you
-authenticate `gog` / `gh` / `aws-cli` / etc. once on the host, and
-sentinel uses `exec` to run them. somora doesn't own your OAuth.
+The integration model is CLI-tool-based: you authenticate `gog` /
+`gh` / `aws-cli` / etc. once on the host, and the woken agent runs
+them through its skills. somora doesn't own your OAuth.

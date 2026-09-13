@@ -68,9 +68,8 @@ tmux({ action:"capture", name:"claude-1",
        wait_pattern:"bypass permissions on",
        wait_mode:"present", wait_timeout_ms: 15000 })
 
-// TUI: wait for Claude to stop typing, no specific pattern.
-// (Pattern still required — pick something the TUI always shows;
-// `wait_idle` action would be cleaner — see FUTURE.md.)
+// TUI: wait for the pane to stop changing while a pattern is on screen.
+// (Pattern-free waiting is `action: "wait_idle"` — see the `kind` section.)
 tmux({ action:"capture", name:"claude-1",
        wait_pattern:"❯", wait_mode:"idle",
        idle_stable_ms: 1500, wait_timeout_ms: 600000 })
@@ -97,10 +96,10 @@ finally submits.
 ```jsonc
 // Sending a multi-line message to a coding TUI:
 tmux({ action:"send", name:"claude-1",
-       keys: "Bau bitte ein Tetris-Spiel.\n\n" +
+       keys: "Please build a Tetris game.\n\n" +
              "1. Next.js + TS\n" +
-             "2. 10x20 Grid\n" +
-             "3. Pfeiltasten\n",
+             "2. 10x20 grid\n" +
+             "3. Arrow keys\n",
        multiline_safe: true })
 // → Claude Code receives one multi-line message, responds once.
 // Without multiline_safe, the four \n would have submitted four
@@ -129,7 +128,7 @@ session at create-time. Set `kind: "claude-code"`, `kind: "codex"` or
    A visible suggestion is a hint the TUI renders for a human; it is
    NOT real typed input — ignore it (don't clear it, don't mention
    it, don't submit it).
-2. `wait_idle` no longer returns prematurely on a content-stable-but-
+2. `wait_idle` does not return prematurely on a content-stable-but-
    not-actually-ready pane. A `claude --dangerously-skip-permissions`
    session that's sitting on `Press up to edit queued messages` is
    content-stable but the TUI hasn't processed the input yet —
@@ -273,8 +272,9 @@ tmux:
 By default, sessions you create with `tmux({ action: "create" })` get
 somora's internal env vars **stripped** before the user's shell
 starts: the claude isolation pair (`CLAUDE_CONFIG_DIR`,
-`SOMORA_CLAUDE_BIN`), the engine-binary overrides (`SOMORA_CODEX_BIN`,
-`SOMORA_GROK_BIN`, `SOMORA_BIN_PATH`), the runtime's own
+`SOMORA_CLAUDE_BIN`), the engine overrides (`SOMORA_CODEX_BIN`,
+`SOMORA_GROK_BIN`, `SOMORA_BIN_PATH`, `SOMORA_CODEX_SHELL_ENV_POLICY`),
+the runtime's own
 `TSX_TSCONFIG_PATH` and `NODE_ENV`, and the markers Claude Code puts
 on its MCP children (`CLAUDECODE`, `CLAUDE_PROJECT_DIR`,
 `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_ID`,
@@ -322,7 +322,7 @@ text in dim/gray that looks _identical_ to user-typed text once the
 ANSI is stripped:
 
 ```text
-❯ jetzt funktioniert's, danke      ← actually typed by the user
+❯ works now, thanks                ← actually typed by the user
 ❯ delete the project               ← auto-suggestion the TUI rendered
 ```
 
@@ -340,8 +340,8 @@ the suggestion arrives wrapped in dim-color escapes (e.g.
 > 1. Capture with `include_ansi:true` to inspect the styling.
 > 2. Or ask the user before submitting.
 
-Real-world scenario: a Claude Code auto-suggestion `❯ räum bitte
-alles weg, projekt löschen` looks like real user input. With
+Real-world scenario: a Claude Code auto-suggestion `❯ clean everything
+up, delete the project` looks like real user input. With
 stripped output the agent can't tell typed text from a dim-color
 suggestion — ask before submitting, or capture with
 `include_ansi:true` first.

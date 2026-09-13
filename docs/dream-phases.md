@@ -35,7 +35,7 @@ incrementally in the background while you use somora normally.
    │  Session → Memory     │    │  Memory → Wiki         │    │  Wiki cleanup        │
    │  per-agent            │    │  platform-wide         │    │  platform-wide       │
    │  ~30 min idle         │    │  ~12 h scheduled       │    │  ~7 d scheduled      │
-   │  small/local model    │    │  strong model (opus)   │    │  strong model (opus) │
+   │  small/local model    │    │  strong model          │    │  strong model        │
    │  approval required    │    │  auto-applies          │    │  approval required   │
    └───────────────────────┘    └────────────────────────┘    └──────────────────────┘
                 │                            │                            │
@@ -82,8 +82,8 @@ watches each agent's chat activity. After `idleMinutes` of no chat
 2. Otherwise picks the most-recently-active session whose last activity
    is past its `dreamReadThroughTs` marker. **Archived sessions count**:
    filing a conversation away says you are done with it, not that it
-   should be forgotten, and a session archived before REM caught up used
-   to drop out of the selection with its last stretch unread.
+   should be forgotten, so a session archived before REM caught up still
+   gets its last stretch read.
 3. Runs an extraction over the delta range — minus any Lucid review
    loop inside it (`dream_review start` … `end`): facts the user
    clarifies there are written to the wiki directly, so REM skips that
@@ -115,23 +115,22 @@ Configured per-agent in `agent.yaml`:
 ```yaml
 rem:
   enabled: true
-  model: gemma4big           # alias from config.yaml or 'provider/modelId'
-  # fallback: deep4pro       # optional backup worker — see below
+  model: <alias>             # alias from config.yaml or 'provider/modelId'
+  # fallback: <alias>        # optional backup worker — see below
   idleMinutes: 30
   chunkTokens: 50000         # range-split for very long sessions
-  chunkTimeoutMs: 600000     # 10 min per chunk (gemma-friendly)
+  chunkTimeoutMs: 600000     # 10 min per chunk (room for local models)
   participate_in_wiki: true  # default true; false = REM only, never Deep
   # thinking: medium         # optional; off | low | medium | high
                              # only honored if the REM worker model has the
-                             # 'reasoning' capability — gemma does not, so
-                             # the knob is dormant by default. Set this only
-                             # if you switch the worker to gpt-5/o3/opus.
+                             # 'reasoning' capability — otherwise dormant.
 ```
 
-Default worker is small/local (`gemma4big` via mlx-omx, ~31B params).
-You can switch to opus/sonnet/gpt-5.5 — but REM runs often, so cost
-matters. Gemma is good enough for atomic-fact extraction with the right
-prompt.
+`model` is required when REM is enabled: there is no implicit default
+and REM never falls back to the agent's chat model, so a run can never
+silently land on an expensive model. A small local model (30B class)
+is good enough for atomic-fact extraction with the right prompt, and
+REM runs often, so cost matters. A strong hosted model works too.
 
 **`rem.fallback` — a backup worker.** A local worker is away whenever
 its box switches profiles, benchmarks or reboots. With `fallback:` set
@@ -216,7 +215,7 @@ wiki page, including genuinely new state. Two guardrails:
   the finding's fact, not merely its topic.
 
 Platform-wide tunables in `config.yaml` (defaults apply when the block
-is absent — existing configs keep working unchanged):
+is absent):
 
 ```yaml
 rem:
@@ -273,13 +272,17 @@ wiki:
   deep:
     enabled: true
     intervalHours: 12
-    model: opus              # opus by default; via Claude subscription
+    model: <alias>           # required — alias from config.yaml or 'provider/modelId'
     # thinking: medium       # optional; per-engine reasoning_effort. Honored
                              # when the worker model has the 'reasoning'
-                             # capability. Opus does — turning this on tends
-                             # to improve skip/promote/merge judgement at
-                             # the cost of more rate-limit budget.
+                             # capability. On a strong model this tends to
+                             # improve skip/promote/merge judgement at the
+                             # cost of more rate-limit budget.
 ```
+
+Without `model` Deep does not run: the scheduler logs
+`dream.deep.no_worker_model_configured` and returns without touching
+anything.
 
 ### Single-prompt logic (skip / promote / merge in one call)
 
@@ -346,9 +349,8 @@ it has outgrown full-body merges — split it into sub-pages.
 Skipped memory files get cached by body-hash in
 `~/.somora/agents/<name>/memory/.deep-skip-cache.json`. On the next Deep
 run, files whose hash matches the cached entry are skipped without an
-LLM call. Saves opus tokens dramatically when most memories are
-unchanged between runs (measured at 1500× speedup on a 56-file
-all-cached run).
+LLM call. When most memories are unchanged between runs, a Deep run
+costs no worker tokens at all.
 
 The cache invalidates automatically when:
 - Memory body changes (hash mismatch → re-evaluate)
@@ -391,9 +393,10 @@ objectively provable from the wiki content, surface a SHORT list (max
 
 Subjective polish (stylistic rewrites, "this could read better",
 "feels old") is **deliberately NOT in scope**. Those decisions belong
-in the review conversation, not pre-baked as findings. Three legacy
-kinds (`stale_claim`, `outdated`, `inconsistent_xref`) are retired
-from current runs but still parse for archived runs in `processed/`.
+in the review conversation, not pre-baked as findings. Three further
+kinds (`stale_claim`, `outdated`, `inconsistent_xref`) are accepted
+when a run file is read, so archived runs in `processed/` still parse,
+but no run produces them.
 
 ### Triggers
 
@@ -410,12 +413,9 @@ span subfolders (a contradiction between `personen/jane-doe` and
 
 This isn't just for scale — claude-cli's stdin-stream parser fails on
 single user-messages > ~50 KB. Per-subfolder batches stay safely under
-that limit. As a side-effect Opus reads each subfolder with full focus,
-which produces higher-quality findings than scanning everything at once.
-
-For very large wikis (>1500 pages), a future stage adds hierarchical
-clustering inside subfolders. Until then, subfolder-pass is the
-universal default.
+that limit. As a side-effect the worker reads each subfolder with full
+focus, which produces higher-quality findings than scanning everything
+at once.
 
 ### Worker model
 
@@ -426,13 +426,17 @@ wiki:
   lucid:
     enabled: true
     intervalDays: 7
-    model: opus
+    model: <alias>           # required — alias from config.yaml or 'provider/modelId'
     requireApproval: true
+    maxCallsPerTurn: 3       # wiki_* calls the loop holder may make per turn
     # thinking: medium       # optional; same semantics as wiki.deep.thinking.
                              # Lucid is judgement-heavy (consistency + dead-
                              # ref detection) so medium thinking is often
                              # the sweet spot on cost/quality.
 ```
+
+Without `model` a Lucid run fails with
+`no worker model configured for lucid`.
 
 ### Output
 
@@ -492,9 +496,9 @@ While the loop is active for an agent:
 - Other agents continue normal operation but cannot start their own
   loop until this one ends — somora-instance-global lock
 - The TUI status line shows `📝 wiki-review:<agent>`
-- Per-turn cap: max 3 wiki_* calls in a single turn so the agent
-  cannot batch-edit without checking in. Resets on every user
-  message.
+- Per-turn cap: max 3 wiki_* calls in a single turn
+  (`wiki.lucid.maxCallsPerTurn`) so the agent cannot batch-edit
+  without checking in. Resets on every user message.
 - Auto-expiry: 24h idle without activity → loop auto-closes as a
   safety net in case the agent forgot to call `action: 'end'`
 
@@ -519,7 +523,8 @@ auto-apply differs:
 Tools:
 
 ```
-dream_list                              List pending dreams (REM + Lucid)
+dream_list([include_processed])         List pending dreams (REM + Lucid);
+                                        include_processed:true adds resolved ones
 dream_get(dream_id)                     Show full content of a dream
 dream_apply(dream_id, finding_id)       Accept REM finding → applied
 dream_dismiss(dream_id, [finding_id],   Reject (one finding or whole run);
@@ -565,8 +570,8 @@ scribe> dream_review({dream_id, action: 'end', summary: 'F1 applied as edit X, F
    → loop closes, run archived
 ```
 
-`dream_apply` on a Lucid finding (which is always `no_op` now) marks
-it applied without writing anything — useful only as
+`dream_apply` on a Lucid finding (always `no_op`) marks it applied
+without writing anything — useful only as
 acknowledge-and-move-on if you don't want the loop. The actual fix
 path is the loop.
 
@@ -591,7 +596,12 @@ curl -X POST http://127.0.0.1:18737/dream/run-lucid  -d '{"wait":true}'
 
 `wait: true` blocks the request until the run finishes (returns full
 outcome). Default `wait: false` is fire-and-forget — agent gets a
-"started in background" reply, run completes on its own.
+"started in background" reply, run completes on its own. `force` is
+honoured by `run-deep` only.
+
+Two read-only routes expose the state: `GET /dream-states` (per-agent
+REM activity and pending counts plus the Deep/Lucid running flags) and
+`GET /dream/loop-state` (the active review loop, if any).
 
 ## Configuration cheat-sheet
 
@@ -604,7 +614,7 @@ wiki:
   deep:
     enabled: true
     intervalHours: 12
-    model: opus
+    model: <alias>                       # required
     # thinking: medium                   # optional; reasoning_effort for the
                                          # Deep worker LLM. Off by default.
     mergeShrinkGuard:
@@ -614,8 +624,9 @@ wiki:
   lucid:
     enabled: true
     intervalDays: 7
-    model: opus
+    model: <alias>                       # required
     requireApproval: true
+    maxCallsPerTurn: 3
     # thinking: medium                   # optional; reasoning_effort for the
                                          # Lucid worker LLM. Off by default.
   search:
@@ -628,14 +639,15 @@ wiki:
 # agent.yaml — per-agent
 rem:
   enabled: true
-  model: gemma4big
+  model: <alias>                         # required when enabled
+  # fallback: <alias>                    # optional backup worker
   idleMinutes: 30
   chunkTokens: 50000
   chunkTimeoutMs: 600000
   participate_in_wiki: true
   # thinking: medium                     # optional; dormant unless the REM
                                          # worker model has the 'reasoning'
-                                         # capability (gemma doesn't).
+                                         # capability.
 ```
 
 All three `thinking` fields are optional and unset = engine default
@@ -693,4 +705,4 @@ the wiki subfolder are yours, not somora's).
 - [memory.md](memory.md) — how the memory inbox indexes and retrieves
 - [wiki.md](wiki.md) — the shared long-term wiki layer
 - [agents.md](agents.md) — per-agent configuration including REM
-- [tools.md](tools.md) — full tool reference (`dream_*` is one of 12 toolsets)
+- [tools.md](tools.md) — full tool reference (`dream_*` is one toolset among the others)

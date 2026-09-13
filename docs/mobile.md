@@ -35,8 +35,7 @@ own app switcher entry.
   back into your last conversation.
 - **Chat area** shows the running history of the active agent's `main`
   session. Markdown rendering for code blocks, links, lists, etc.
-  Pinch-to-zoom is disabled; tap-to-zoom into a code block by scrolling
-  the block horizontally.
+  Pinch-to-zoom is disabled; a wide code block scrolls horizontally.
 - **Input bar** at the bottom: paperclip (attachments), mic (voice),
   textarea, send. Enter sends, Shift+Enter inserts a newline. The
   textarea stays editable while a turn is streaming — sending during
@@ -83,8 +82,8 @@ own app switcher entry.
   can send with attachments only (no text).
 - **Fallback marker:** a reply produced by the persona's `fallback:`
   model (or one of a fallback chain) carries a small `⇄ fallback ·
-  <model>` pill under the bubble; long-press shows which models failed
-  and why. Same data the desktop chip uses, so a reload keeps it.
+  <model>` pill under the bubble; its tooltip names the models that
+  failed and why. Same data the desktop chip uses, so a reload keeps it.
 - **Typing indicator:** when you've sent and the agent is still
   thinking / running tools, a three-dot pulse appears in an agent
   bubble. It's replaced by the actual streaming response as soon as
@@ -108,8 +107,7 @@ own app switcher entry.
   the EventSource; the banner clears once the stream is back, and the
   client then asks the server what it missed while it was away — the
   answer that was streaming during the drop is restored instead of
-  being lost (2026-09-09 report). The same reconciliation runs in the
-  web client.
+  being lost. The same reconciliation runs in the web client.
 - **Background sleep recovery.** iOS Safari aggressively freezes TCP
   sockets while the PWA is in the background — the stream looks alive
   but no bytes flow, and no error fires. When you return to the app,
@@ -155,8 +153,8 @@ can change it and send again; it then joins the end of the queue. If
 the turn started meanwhile, the marker just clears and a notice says
 so.
 
-The header badge (`waiting 3 · running`, `2 sub-agents`) counts every
-turn on the session, whoever started it. Tap it for the same four
+The header badge (`waiting 3 · running · 1 arriving`, `2 sub-agents`,
+`1 ask`) counts every turn on the session, whoever started it. Tap it for the same four
 sections the desktop shows — Running, Waiting, Arriving, From here —
 as a sheet. **×** on a waiting entry removes it, whoever queued it:
 your own message comes back into the composer, another agent's
@@ -178,7 +176,7 @@ picture before failing.
 
 ## Scope: what's in vs what's not
 
-**Currently shipped:**
+**In the mobile client:**
 - One agent at a time, one main session per agent
 - Live streaming of agent responses with a typing-cursor indicator
 - Streaming-state dot on **every** agent currently mid-turn (not just
@@ -208,12 +206,7 @@ picture before failing.
 - Background sleep recovery — reconnects automatically when the PWA
   returns from the home-screen after a long pause
 
-**Planned next:**
-- Maskable PNG icons, splash screens, theme polish
-- Web Push notifications for agent replies arriving while the PWA
-  is in the background
-
-**Not planned for the mobile client (use `/web` from a real screen):**
+**Not in the mobile client (use `/web` from a real screen):**
 - tmux session attach / shell terminal
 - File viewer windows
 - Pin-note windows
@@ -233,8 +226,9 @@ mobile:
                       # inject rows.
 ```
 
-Both flags read at server start and exposed via `GET /mobile-config`.
-Toggle either to `true` and restart somora to pick up the change.
+`GET /mobile-config` reports both flags; the mobile client does not
+render tool or memory rows, so they change nothing on the phone today —
+the desktop's `/show` and `/verbose` toggles are where that detail is.
 
 ## Authentication / security
 

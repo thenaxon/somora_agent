@@ -164,13 +164,13 @@ Three models, three vocabularies:
 | Model family | Accepted values | Unknown value → |
 |---|---|---|
 | OpenAI o-series / gpt-5 | `none minimal low medium high xhigh` | 400 |
-| Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh` — no `high`; `none` = 0 reasoning tokens (verified 2026-09-05 on Qwen3.8-Flash-Next; unverified on 3.5-397B and 3.8-27B) | **400** — the template raises |
-| DeepSeek V4 | `low high max`; `none` and unset both = no reasoning (2026-09-05) | ignored |
-| DeepSeek V4.1 | `none low high max` — `none` is a real level here, so map `off: none` and `medium: high` (measured 2026-09-11 in four somora sessions: 0 / 55 / 48 / 92 reasoning tokens) | ignored |
+| Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh` — no `high`; `none` = 0 reasoning tokens (verified on Qwen3.8-Flash-Next) | **400** — the template raises |
+| DeepSeek V4 | `low high max`; `none` and unset both = no reasoning | ignored |
+| DeepSeek V4.1 | `none low high max` — `none` is a real level here, so map `off: none` and `medium: high` (measured: 0 / 55 / 48 / 92 reasoning tokens for `none` / `low` / `high` / `max`) | ignored |
 
 ‡ "Omitted" means the backend's own default. For a Qwen 3.x thinking
-model that default is *thinking on* — measured 2026-09-04: unset 60
-reasoning tokens on a one-line arithmetic prompt, `low` 31, `none` 0.
+model that default is *thinking on* — measured: unset 60 reasoning
+tokens on a one-line arithmetic prompt, `low` 31, `none` 0.
 So `off` without a `levels` mapping does **not** switch Qwen off; map
 it (`off: none`, below) and give Qwen-based personas an explicit
 `thinking:` in `agent.yaml`, otherwise "nothing set" is silently the
@@ -240,14 +240,14 @@ stops costing a round-trip.
 **Behind a router or proxy the retry may never fire.** The retry needs
 the backend's 400 to reach somora. A parameter-normalising gateway in
 between — LiteLLM with `drop_params: true`, most OpenAI-compatible
-routers — typically swallows it. Measured 2026-09-02 against a Qwen
-route through LiteLLM *before* the route allowed the parameter through:
-every value (`low`, `high`, `xhigh`, `none`, unset) returned 200 with a
-completion, and the reasoning volume did not move with the value
-either — the router had dropped the parameter before the backend saw
-it. (After `allowed_openai_params: ["reasoning_effort"]` on that route
-the volume moves as expected: unset 60 / low 31 / none 0 reasoning
-tokens, 2026-09-04.) Two consequences for router-fronted models:
+routers — typically swallows it. Measured against a Qwen route
+through LiteLLM that does not let the parameter through: every value
+(`low`, `high`, `xhigh`, `none`, unset) returns 200 with a completion,
+and the reasoning volume does not move with the value either — the
+router dropped the parameter before the backend saw it. With
+`allowed_openai_params: ["reasoning_effort"]` on that route the volume
+moves as expected (unset 60 / low 31 / none 0 reasoning tokens). Two
+consequences for router-fronted models:
 
 - Neither the retry nor the `levels` mapping can help when the router
   drops the parameter; the model runs at its own default depth whatever
@@ -268,8 +268,8 @@ fine and safer for tooling that reads the file with a YAML 1.1 parser.
 One more vendor quirk worth knowing: DeepSeek V4 served by SGLang
 reasons **only when the request carries a `reasoning_effort`** — with
 the parameter omitted it answers without a thinking phase at all
-(measured 2026-09-02: `reasoning_tokens: 0`, the "thinking" lands in
-the visible text instead). On that model `off` really is off, and any
+(`reasoning_tokens: 0`, the "thinking" lands in the visible text
+instead). On that model `off` really is off, and any
 level switches thinking on.
 
 The badge shows the mapped word whenever it differs from the level:
@@ -285,17 +285,15 @@ forwards them as `tokens_out_reasoning` on the `agent-end` SSE event.
 Both the TUI and the Web client render the count next to total output
 tokens with a 🧠 glyph (`↓ 412 (1.2k 🧠)`).
 
-Per-engine support, today:
+Per-engine support:
 
 | Engine | Reasoning-token count surfaced? | How |
 |---|---|---|
-| `codex-cli` | ✓ | parsed from `reasoning_output_tokens` in codex's turn-completed JSON |
+| `codex-cli` | ✓ | parsed from `reasoningOutputTokens` in the app-server's `thread/tokenUsage/updated` notification |
 | `openai-compatible` | ✓ | parsed from `completion_tokens_details.reasoning_tokens` in the chat.completions usage chunk |
 | `claude-cli` | ✗ | Anthropic's `usage` object reports `input_tokens` / `output_tokens` / `cache_*` — thinking-tokens are rolled into `output_tokens`, no separate counter |
 
-If Anthropic later exposes thinking-tokens as a distinct field in the
-SDK usage block, somora will pick it up the same way — until then
-claude-cli turns show only the combined output count.
+claude-cli turns therefore show only the combined output count.
 
 Some OpenAI-compatible backends stream the reasoning text but report
 no `reasoning_tokens` in usage (SGLang, some router setups). For those
@@ -349,7 +347,7 @@ is present only when the value the engine sends differs from `level`
 
 ## HTTP API for clients
 
-Clients (TUI, future Orbit/web) drive the per-session override via:
+Clients (TUI, web) drive the per-session override via:
 
 | Method | Path                                                | Purpose                              |
 |--------|-----------------------------------------------------|--------------------------------------|
@@ -378,8 +376,8 @@ GET response example:
 
 ## Thinking content — seeing what the model thought
 
-Since v2026.09.03.01 the reasoning text itself is available, not only
-the badge and the token count. It travels as its own event, separate
+The reasoning text itself is available, not only the badge and the
+token count. It travels as its own event, separate
 from the reply, and is never sent back to a model or into memory.
 
 **Web:** every assistant bubble that carries thinking gets a collapsed
@@ -399,11 +397,11 @@ model thinks. See [display.md](display.md).
 
 | Engine | Thinking content | What you get | Status |
 |---|---|---|---|
-| `openai-compatible` | yes, when the backend streams `reasoning_content` (or `reasoning`) deltas | the full reasoning text as the model wrote it | verified end to end (SSE + history row) on DeepSeek V4 (SGLang, 893 chars) and Qwen 3.8 (vLLM, 440 chars) through a LiteLLM router, 2026-09-03 |
-| `openai-compatible`, inline `<think>` models (DeepSeek V4 on SGLang without a reasoning parser, R1, QwQ) | yes | somora splits an inline `<think>…</think>` block off the reply — also the DeepSeek shape where only the closing tag arrives because the template prefilled the opening one — and routes it to the thinking block; the visible reply and subagent results stay clean | verified on deepseek-v4-flash, 2026-09-05 |
-| `claude-cli` | placeholder only with the current SDK | The Claude Agent SDK carries thinking as its own blocks, but what those blocks contain depends on the SDK version, not on somora: with `@anthropic-ai/claude-agent-sdk` 0.3.258 every model measured (Fable, Opus 4.7, Sonnet 4.6) runs the thinking phase and delivers an **empty** block — somora shows one placeholder line. With SDK 0.3.215 Sonnet 4.6 streamed the text (280 chars on a short problem) while Fable and Opus 4.7 stayed empty. Explicitly redacted blocks get their own placeholder. | measured 2026-09-03 on both SDK versions |
-| `codex-cli` | summaries per thinking phase | Codex never streams the raw chain of thought; with `summary: auto` on `turn/start` (somora sets it while `thinkingContent.capture` is on) the app-server streams `item/reasoning/summaryTextDelta` per thinking phase — heading-like sentences, shown as the thinking block. | verified on gpt-5.6-terra, 2026-09-05 (app-server engine) |
-| `grok-cli` | wired, unverified | ACP `agent_thought_chunk` frames, cumulative like message chunks | nobody here has a Grok account — the mapping follows the ACP schema only |
+| `openai-compatible` | yes, when the backend streams `reasoning_content` (or `reasoning`) deltas | the full reasoning text as the model wrote it | verified end to end (SSE + history row) on DeepSeek V4 (SGLang) and Qwen 3.8 (vLLM) through a LiteLLM router |
+| `openai-compatible`, inline `<think>` models (DeepSeek V4 on SGLang without a reasoning parser, R1, QwQ) | yes | somora splits an inline `<think>…</think>` block off the reply — also the DeepSeek shape where only the closing tag arrives because the template prefilled the opening one — and routes it to the thinking block; the visible reply and subagent results stay clean | verified on DeepSeek V4 Flash |
+| `claude-cli` | placeholder only with the current SDK | The Claude Agent SDK carries thinking as its own blocks, but what those blocks contain depends on the SDK version, not on somora: with `@anthropic-ai/claude-agent-sdk` 0.3.258 every model measured (Fable, Opus 4.7, Sonnet 4.6) runs the thinking phase and delivers an **empty** block — somora shows one placeholder line. With SDK 0.3.215 Sonnet 4.6 streamed the text while Fable and Opus 4.7 stayed empty. Explicitly redacted blocks get their own placeholder. | measured on both SDK versions |
+| `codex-cli` | summaries per thinking phase | Codex never streams the raw chain of thought; with `summary: auto` on `turn/start` (somora sets it while `thinkingContent.capture` is on) the app-server streams `item/reasoning/summaryTextDelta` per thinking phase — heading-like sentences, shown as the thinking block. | verified on the app-server engine |
+| `grok-cli` | wired, unverified | ACP `agent_thought_chunk` frames, cumulative like message chunks | follows the ACP schema only — not verified against a live Grok session |
 
 The token counter and the badge are unchanged and work on every engine
 that reports reasoning at all; the content layer sits on top and is
@@ -444,9 +442,8 @@ R1, QwQ) get the block split off by the openai-compatible engine: the
 reasoning goes to the thinking block, the reply and any subagent
 `result` stay clean. Both shapes are handled — the full block, and the
 DeepSeek-on-SGLang shape where the chat template prefilled `<think>` in
-the prompt so only the closing tag arrives (measured 2026-09-03: a
-subagent result opened with 2.5k characters of reasoning and a bare
-`</think>`). Until the closing tag arrives the deltas may stream as
+the prompt so only the closing tag arrives. Until the closing tag
+arrives the deltas may stream as
 reply text; the final message is always clean. A `reasoning_effort`
 knob still only works where the backend honours it — for DeepSeek V4
 see [models.md](models.md).

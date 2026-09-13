@@ -78,8 +78,9 @@ npm install
 npm run dev
 # vite reads ~/.somora/certs automatically and serves
 # https://<host>.<tailnet>.ts.net:5173/web/  (HTTP/2)
-# proxies /agents /chat /dream /tools /tui-config /health to the
-# https somora server
+# proxies /agents /attachments /browser /chat /dream /files /health
+# /models /terminal /tmux /tools /tui-config /version to the https
+# somora server
 ```
 
 If `~/.somora/certs/<host>.{crt,key}` aren't present (`SOMORA_TLS_HOST`
@@ -97,10 +98,10 @@ from the same pool.
 HTTP/2-over-TLS multiplexes every stream over **one** TCP connection.
 The 6-limit becomes effectively unlimited, end of problem.
 
-Plus the secure-context bonus that the roadmap leans on — `getUserMedia`
+Plus the secure-context features the client relies on — `getUserMedia`
 (mic), `getDisplayMedia` (screenshare), Clipboard async, Service Workers
 (offline + push notifications), Web Push: all require HTTPS. You can
-build a chat app over plain HTTP, but you can't add voice or push
+serve a chat app over plain HTTP, but you can't have voice or push
 without it.
 
 ## Window manager
@@ -118,9 +119,10 @@ without it.
   most recently active other sessions (click one to open it in its
   own window), *New session…* (type a name — letters, digits, `-`,
   `_`; the field tells you what's wrong while you type — Enter creates
-  it and opens a new window, Esc cancels), and *All sessions…* (the
-  Sessions tool). This is the place agent-wide actions will collect;
-  per-chat settings stay in the chat's `•••` menu.
+  it and opens a new window, Esc cancels), *All sessions…* (the
+  Sessions tool) and *Configure…* (the Agent window, see "Features"
+  below). Agent-wide actions live here; per-chat settings stay in the
+  chat's `•••` menu.
   Each agent tile carries up to three live signals:
   - **Status dot** (bottom-right of the icon): green = idle,
     amber = streaming, violet = holds the dream review loop, grey =
@@ -138,11 +140,16 @@ without it.
 - **App tiles**: non-agent surfaces — `tmux`
   (attach to an existing tmux session), `terminal` (fresh shell in
   the somora workspace), `sessions` (cross-agent session browser
-  — see next section), `abilities` (per-agent visibility matrix
+  — see next section), `sentinel` (the proactive triggers: list,
+  detail with history, test / pause / resume / delete — see
+  [sentinel.md](sentinel.md)), `abilities` (per-agent visibility matrix
   for tools and skills plus external MCP server health — see
   [mcp.md](mcp.md) and [skills.md](skills.md)), `team` (the org
   chart editor for `team.yaml` — see [team.md](team.md)), and `log`
-  (the server's own log, see below). The `wiki`
+  (the server's own log, see below). Opt-in tiles appear with their
+  feature: `voice` (a call with an agent, see [voice.md](voice.md)),
+  `browser` (see below), `media` (the image-generation form and
+  gallery, see [imagegen.md](imagegen.md)) and `wiki`. The `wiki`
   tile carries a violet **Lucid badge** when completed lucid runs are
   waiting for review — lucid is platform-wide wiki cleanup, so its
   review backlog lives here rather than on any single agent. The
@@ -186,8 +193,8 @@ same two actions as `/reload` and `/restart YES`.
 - **Arrange** tiles every non-minimized window over the full desktop.
   Counts that don't fill a grid get a full-height *master* on the left
   with the rest stacked beside it (3 → one left, two right; likewise 5
-  and 7) instead of a grid with a hole in it; 1, 2, 4, 6 … tile as the
-  even grid they always did. Windows keep their left-to-right,
+  and 7) instead of a grid with a hole in it; 1, 2, 4, 6 … tile as an
+  even grid. Windows keep their left-to-right,
   top-to-bottom order, so the leftmost window becomes the master and
   arranging twice changes nothing. Icons are not worked around — they
   sit below windows, so Arrange uses the width right up to the left
@@ -268,7 +275,7 @@ archived copy at the next idle window.
 
 **Reload:** manual reload icon top-right, plus a 60-second auto-refresh toggle (default on). Stats are cached in each session's `<id>.meta.json` and invalidated by JSONL mtime, so reloads stay cheap.
 
-**Archive semantics (DECISION):** archive is **meta-flag based**, no file movement. `meta.archived = true` (with `archivedAt` + optional `archiveReason`) is the source of truth. The `<id>.jsonl` and `<id>.meta.json` files stay where they are. Default-filtering at `listSessions()` keeps archives out of the slash-popup, chat-window session picker, and the Active tab — they only surface in the Sessions tool. No hard-delete option, on purpose: archive is fully reversible, and you can always clean up `~/.somora/agents/<agent>/sessions/` by hand if you really want bytes gone.
+**Archive semantics:** archive is **meta-flag based**, no file movement. `meta.archived = true` (with `archivedAt` + optional `archiveReason`) is the source of truth. The `<id>.jsonl` and `<id>.meta.json` files stay where they are. Default-filtering at `listSessions()` keeps archives out of the slash-popup, chat-window session picker, and the Active tab — they only surface in the Sessions tool. No hard-delete option, on purpose: archive is fully reversible, and you can always clean up `~/.somora/agents/<agent>/sessions/` by hand if you really want bytes gone.
 
 **Why this exists:** sessions accumulate fast (REM idle-trigger, sub-agent spawns, `/reset` archives, debugging sessions). Without a place to see everything at once, slash-popups grow until they're useless and you can't tell which old sessions are still worth keeping. The Sessions tool is the housekeeping surface — search, filter, archive, see at a glance which sessions have unconsolidated memory waiting for REM.
 
@@ -348,8 +355,8 @@ archived copy at the next idle window.
 - **Peer origin caption**: a message another agent sent via `agent_ask`
   renders with that agent's icon and colour; when it was sent from one
   of the sender's non-main sessions, `<agent> · <session>` sits left of
-  the timestamp (e.g. `naxon · cerebrocraft`). Main-session traffic
-  shows no caption. The TUI shows the same as `↬ naxon/cerebrocraft`.
+  the timestamp. Main-session traffic shows no caption. The TUI shows
+  the same as `↬ <agent>/<session>`.
 - **Body**: pinned-to-bottom auto-scroll. Manually scroll up to read
   history; new messages won't yank you down. Scroll back to the
   bottom to re-pin.
@@ -527,8 +534,8 @@ Stop is the handle from then on.
 ### The queue badge
 
 The window header says what the session is doing as a whole:
-`waiting 3 · running`, and `2 sub-agents` when the session has work
-out elsewhere. It counts every kind of turn, not only yours — a
+`waiting 3 · running · 1 arriving`, and `2 sub-agents` / `1 ask` when
+the session has work out elsewhere. It counts every kind of turn, not only yours — a
 question from another agent, a sub-agent brief, a sentinel fire, a
 question from a call. Click it for the list:
 
@@ -551,10 +558,10 @@ question from a call. Click it for the list:
   on the target. This session hears about it the way it would have
   heard the result.
 
-The list reads `GET /agents/:agent/sessions/:session/work`
-([api.md](api.md#get-agentsagentsessionssessionwork)) while it is open
-and refreshes on every queue event; the badge itself comes from the
-`/health` counters the session list loads anyway.
+Badge and list both read `GET /agents/:agent/sessions/:session/work`
+([api.md](api.md#get-agentsagentsessionssessionwork)): refetched on
+every queue event, and every 3 s while the list is open so the wait
+times keep counting.
 
 Aborting (Stop button on the streaming bubble) cancels the
 **currently-running** turn only. Queued waiters keep their slots and
@@ -606,10 +613,6 @@ and a second web tab on the same chat will show it too. Self-echoes
 are deduped against the optimistic local-user message via a pending
 list, so you never see the same text twice.
 
-This is a behavioural change in `2026.05.10.1`: prior versions only
-echoed `user_message` for A2A (agent-to-agent) turns. Now it fires
-for self-typed turns too.
-
 ## SSE event vocabulary
 
 The web client listens for these named events on `/chat/stream`:
@@ -625,6 +628,7 @@ The web client listens for these named events on `/chat/stream`:
 | `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider`/`model` are the model that ACTUALLY answered; `fallback` `{requested, actual, reason, hops?}` is set when that was a fallback model (same shape as `model_fallback`). |
 | `model_fallback` | `{requested, actual, reason, hops?}` | The primary model failed before producing anything; a fallback model is answering this turn. `requested` is always the primary, `actual` the model now answering; `hops` lists every model that failed so far (chain). One event per hop, precedes the first `chat` delta of the model that answers. |
 | `chat` | `{state: 'delta'\|'final', text}` | Cumulative assistant text (each delta carries the full running text, not just the new chunk) |
+| `thinking` | `{state: 'delta'\|'final', text, truncated?}` | The model's reasoning text, cumulative like `chat`; `truncated` when the server cut it at its cap. Renders as the 🧠 thinking block above the reply (the "Show thinking in replies" switch in the `•••` menu, same as `/verbose thinking`). See [thinking.md](thinking.md). |
 | `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | Tool invocation lifecycle |
 | `engine_meta` | `{engine, itemType, label, summary?, payload}` | Engine-internal side-channel (e.g. codex `todo_list`). Renders under the tools toggle. |
 | `memory` | `{count, topScore, refs, fullText?}` | Memory auto-inject for this turn |
@@ -639,7 +643,7 @@ share a session id like `main` without leaking events across windows.
 
 Agents reference files by absolute path in chat (`[report.md](/home/…)`),
 and the web client's Markdown renderer turns those into links that open
-a FileView window. Nothing is refused for being the wrong type any more:
+a FileView window. Nothing is refused for being the wrong type:
 what the viewer cannot render, it describes.
 
 | The file is | You get |
@@ -774,6 +778,8 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
     detail per row. `/projekt unlink` is always the first row so
     clearing the pin doesn't require waiting for the list to load.
     Only present when the projects feature is enabled in `config.yaml`.
+  - `/reset YES` — archive this session and start fresh (same as the
+    Danger-zone action in the `•••` menu); `YES` is the confirmation.
 
   Arrow-keys navigate, Enter or Tab accepts, Escape dismisses. Note:
   `/agent` is intentionally *not* a slash-command — the agent dock on
@@ -837,7 +843,7 @@ web/
 │   │   ├── api.ts               ← typed wrappers around /agents, /chat/*, etc.
 │   │   └── colors.ts            ← per-agent gradient + role-tint resolver
 │   └── styles/
-│       ├── desktop.css          ← click-dummy CSS, ported verbatim
+│       ├── desktop.css          ← desktop chrome (windows, taskbar, tiles)
 │       ├── globals.css          ← Tailwind + targeted overrides
 │       └── tokens.css           ← CSS variables (theme)
 └── vite.config.ts               ← base: '/web/', proxy in dev mode

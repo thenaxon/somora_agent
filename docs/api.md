@@ -141,7 +141,7 @@ Returns:
     "path": "/home/me/.somora/index/shared.db",
     "files": 626,
     "chunks": 1466,
-    "built_by": "seed:buffet"
+    "built_by": "seed:<agent>"
   },
   "sessions": [
     {
@@ -290,7 +290,7 @@ The environment overrides the running server resolved at boot, one
 entry per variable: `{SOMORA_HOME, SOMORA_PORT, SOMORA_LOG_LEVEL,
 SOMORA_CLAUDE_BIN, SOMORA_CODEX_BIN, SOMORA_CODEX_TOOL_TIMEOUT_SEC,
 SOMORA_COMPACTION_TRIGGER_RATIO, SOMORA_COMPACTION_SAFETY_PAIRS,
-SOMORA_COMPACTION_MODEL}`, each `{value, isDefault, note?}` — `value`
+SOMORA_COMPACTION_MODEL, SOMORA_COMPACTION_WORKERS}`, each `{value, isDefault, note?}` — `value`
 is what is in force, `isDefault` says the variable was unset or
 invalid, `note` explains a fallback (e.g. "unset → uses config.yaml
 server.port"). Diagnostic; see [setup.md](setup.md).
@@ -304,7 +304,11 @@ Useful for clients that want to surface a tool catalog.
 curl https://<host>:18737/tools
 ```
 
-Returns an array of `{ name, toolset, description, jsonSchema }`.
+Returns `{ count, tools: [{ name, toolset, description, inputSchema,
+maxResultSizeChars, hasAvailabilityCheck }] }` — `inputSchema` is the
+tool's JSON Schema, `maxResultSizeChars` is `null` when the tool uses
+the default cap, `hasAvailabilityCheck` says the tool has a runtime
+probe and may be hidden from some agents.
 
 ### `GET /agents/:agent/skills` · `PUT /agents/:agent/skills`
 
@@ -324,6 +328,24 @@ allow-list, which the UI shows read-only.
 the file untouched; empty deny+allow removes the block). Names must
 be skill names (`[a-z0-9-]`). Takes effect on the agent's next turn.
 See [skills.md](skills.md#per-agent-visibility).
+
+### `GET /agents/:agent/tools` · `PUT /agents/:agent/tools`
+
+The tools half of the Abilities matrix (see [mcp.md](mcp.md)).
+
+`GET` returns `{ agent, gating, hasPatternRules, tools: [{ name,
+toolset, mcpServer?, description, visible, availableNow }] }` — every
+tool configured on the instance, built-in and imported from external
+MCP servers (`mcpServer` names the origin), with `visible` telling
+whether this agent's gating lets it through. `gating` is the agent's
+`tools:` section (`{deny, allow}`) or `null`; `hasPatternRules` is
+true when it carries an allow-list or a `toolset:`/glob deny rule,
+which the UI shows read-only.
+
+`PUT` takes `{ deny: string[], allow: string[] }` and rewrites only the
+`tools:` block of the agent's `agent.yaml`; `400` when the body has
+the wrong shape or the write fails. Returns `{ok: true}`; takes effect
+on the agent's next turn.
 
 ### `POST /agents/:agent/tools/:name`
 
@@ -357,15 +379,14 @@ Gallery listing, newest first. Query: `query` (prompt substring, case-
 insensitive), `model`, `agent`, `since`/`until` (`YYYY-MM-DD`), `limit`
 (default 60, max 200), `offset`.
 
-Returns `{total, offset, images: [ImageRecord], totalBytes}`. `total`
+Returns `{total, offset, items: [ImageRecord], totalBytes}`. `total`
 is the unpaged count.
 
 ### `GET /images/:id`
 
 One `ImageRecord`: prompt, model, specs, path, mime, bytes, cost,
-agent, session. `linkedTo` still exists on records written before
-2026-09-10, when an image could be hardlinked to a second location;
-nothing writes it any more and the clients show the one canonical path.
+agent, session. A record may carry a `linkedTo` field; nothing writes
+it, and the clients show the one canonical path.
 
 ### `GET /images/:id/file`
 
@@ -672,7 +693,7 @@ The system prompt exactly as the next turn on `?session=<slug|id>`
 session:
 
 ```json
-{ "agent": "hans", "session": "main", "text": "…", "chars": 16210,
+{ "agent": "<your-agent>", "session": "main", "text": "…", "chars": 16210,
   "parts": [{"key": "self", "label": "Self-pointer", "chars": 900},
             {"key": "persona", "label": "Persona (SOUL.md · AGENTS.md · USER.md)", "chars": 9340},
             {"key": "team", "label": "Team block", "chars": 2652}, …],
@@ -718,7 +739,7 @@ body (`400` otherwise). The previous version is kept as
 ## Team
 
 The org chart from `~/.somora/team.yaml` (see [team.md](team.md)).
-Read-only over HTTP in this phase; the file is edited by hand.
+Readable and writable over HTTP; the file can also be edited by hand.
 
 ### `GET /team`
 
@@ -815,8 +836,8 @@ keeps these in sync across clients.
 ### `GET /sessions`
 
 Cross-agent session list. Same data as the per-agent endpoint, but
-flattened across every agent, with each row carrying its agent name.
-Used by the web Sessions tool.
+flattened across every agent and wrapped as `{sessions: [...]}`, with
+each row carrying its agent name. Used by the web Sessions tool.
 
 ```bash
 curl https://<host>:18737/sessions
@@ -833,8 +854,8 @@ curl -X POST https://<host>:18737/agents/<your-agent>/sessions \
      -d '{"slug":"research-notes"}'
 ```
 
-Returns `{ id, slug }`. The slug must match `[A-Za-z0-9_-]+`. Cannot
-be the reserved string `main`.
+Returns `201 { id, slug, agent }`. The slug must match `[A-Za-z0-9_-]+`.
+Cannot be the reserved string `main` (`400`).
 
 ### `POST /agents/:agent/sessions/:session/archive`
 
@@ -886,7 +907,7 @@ curl https://<host>:18737/agents/<your-agent>/sessions/main/export?format=json \
 
 The web client surfaces this via per-row download icons in the
 Sessions tool (file-text icon = markdown, file-json icon = JSONL).
-The TUI has `/export [json|markdown] [path]` — see [tui.md](tui.md)
+The TUI has `/export [json|markdown] [path]` — see [display.md](display.md)
 for the slash-command reference.
 
 ### `POST /agents/:agent/sessions/:session/reset`
@@ -1166,11 +1187,21 @@ curl -X POST https://<host>:18737/chat/send \
 ```
 
 Body fields:
-- `agent` (required) — agent name
+- `agent` — agent name; when omitted the server falls back to the
+  alphabetically first configured agent, so pass it
 - `session` (optional) — defaults to `"main"`
 - `text` (required) — user message
 - `attachments` (optional) — array of `{hash, name, mime, size}` —
   refs from prior `POST /attachments` calls
+- `input_modality` (optional) — `"voice"` when the client filled the
+  text through its microphone (STT); recorded as
+  `user_message.input.modality` and a precondition for a spoken reply
+- `stt_provider` (optional) — free-form tag of the STT path used
+- `auto_play_requested` (optional) — the client wants a spoken reply
+  for this turn (`assistant_audio`); honoured only together with
+  `input_modality: "voice"`, see [voice.md](voice.md)
+- `subagent_depth` (optional) — nesting depth when the turn is a
+  sub-agent brief; the turn's `origin` becomes `{kind: "subagent"}`
 - `from_agent` (optional, A2A) — when set, the turn is attributed to
   another agent (used by `agent_ask` tool)
 - `from_session` (optional, A2A) — the session the asking agent wrote
@@ -1279,7 +1310,12 @@ curl -X POST https://<host>:18737/chat/send-sync \
 ```
 
 Body fields: same as `/chat/send` (`agent`, `session`, `text`,
-`attachments`, `from_agent`, `agent_ask_call_id`), plus:
+`attachments`, `from_agent`, `agent_ask_call_id`, `subagent_depth`),
+plus:
+
+- `model` (optional) — an alias or `provider/id` from config.yaml that
+  answers this one turn instead of the session's model.
+- `max_rounds` (optional) — per-turn override of `agentLoop.maxRounds`.
 
 - `attachments` (optional) — refs from `POST /attachments`, exactly as
   on `/chat/send`. This is the route the A2A tools use, so it is also
@@ -1292,7 +1328,7 @@ Body fields: same as `/chat/send` (`agent`, `session`, `text`,
 - `from_session` (optional, A2A) — the session the asking agent wrote
   from (id or `main`). Persisted as `user_message.from_session` and
   shown to the target in the attribution header
-  (`[Message from agent hans, session cerebrocraft]`) so it can address
+  (`[Message from agent <other-agent>, session <slug>]`) so it can address
   a follow-up. The server composes that header into the turn's frame
   (the stored row's `ephemeral`, see `user_message` under `GET
   /chat/stream`); the stored `text` is the message itself. Ignored
@@ -1336,8 +1372,8 @@ non-archived session slugs, so a caller that guessed wrong can correct
 itself instead of retreating to `main`:
 
 ```json
-{ "error": "session 'cerebro' not found for agent 'hans'",
-  "known_sessions": ["main", "cerebrocraft", "somora-dev"] }
+{ "error": "session 'reserch' not found for agent '<other-agent>'",
+  "known_sessions": ["main", "research", "somora-dev"] }
 ```
 
 When `waiter_*` are present and the request would close a wait cycle
@@ -1400,11 +1436,15 @@ Each one is announced to the parent with a `[subagent attention]`
 wake whose text says `Task '<task_id>' … has a follow-up: the work it
 started has finished. It begins: "…"` and whose frame reads `Fetch it
 with subagent_result({ task_id: "<task_id>" }) — the follow-up is in
-result.follow_ups — then continue whatever depended on it. If nothing
+its follow_ups field — then continue whatever depended on it. If nothing
 does, a short acknowledgement to the user is enough.` (see
-[agents.md](agents.md)). `wait_until_done=1` + `timeout_ms` block server-side; with
-`waiter_agent` / `waiter_session` the wait joins the deadlock guard
-and a cycle answers `409 {circular_wait: true, chain}`.
+[agents.md](agents.md)). A task still running answers
+`409 {task_id, state: "running", error}`. `wait_until_done=1` +
+`timeout_ms` block server-side (capped at
+`agentLoop.longTaskMaxTimeoutMs`); with `waiter_agent` /
+`waiter_session` the wait joins the deadlock guard and a cycle answers
+`409 {circular_wait: true, chain}`. Reading a terminal result here
+cancels the parent's pending `[subagent attention]` wake.
 
 #### `GET /spawn-list?parent_agent=…`
 
@@ -1413,8 +1453,10 @@ and a cycle answers `409 {circular_wait: true, chain}`.
 
 #### `POST /spawn-cancel`
 
-Body: `task_id`, `requesting_agent` (must be the spawning agent —
-otherwise `403`), optional `reason`. Cancels the task — a running
+Body: `task_id`, optional `requesting_agent` (an agent must be the
+spawning agent — otherwise `403`; without it the request acts as a
+person and the parent reads `stopped by the user`), optional `reason`.
+Cancels the task — a running
 turn is aborted, a task still waiting in its session's queue is taken
 out of it — and cascades to child spawns; returns `{cancelled: [task_ids],
 skipped: [{task_id, state}]}` (tasks that were already terminal are
@@ -1456,8 +1498,8 @@ GET /a2a/ask-result?call_id=<uuid>&agent=<target>&session=<slug>    # after a re
 ```
 
 ```json
-{ "call_id": "…", "state": "done", "target_agent": "hans",
-  "target_session": "20260906-172957_cerebrocraft", "started_at": 1788…,
+{ "call_id": "…", "state": "done", "target_agent": "<other-agent>",
+  "target_session": "20260906-172957_research", "started_at": 1788…,
   "finished_at": 1788…, "response": "…", "outcome": "completed", "source": "registry" }
 ```
 
@@ -1485,7 +1527,7 @@ asker (`from_agent`/`from_session` of the live turn) or, for a
 sub-agent session, the spawning parent from its spawn meta.
 
 ```json
-{ "origin": { "agent": "hans", "session": "20260906-172957_cerebrocraft", "kind": "a2a" } }
+{ "origin": { "agent": "<other-agent>", "session": "20260906-172957_research", "kind": "a2a" } }
 { "origin": null }
 ```
 
@@ -1517,9 +1559,13 @@ Event types:
   prompt size of the turn's last request, and is the only one to compare
   against `contextWindow`. All three engines report it; a client should
   still treat it as optional.
-- `user_message` — `{text, ts, turnId?, origin?, from_agent?,
+- `user_message` — `{text, ts, turnId?, origin?, input?, from_agent?,
   from_session?, from_system?, agent_ask_call_id?}` — broadcast when a
-  turn's user_message is written to JSONL. Self-typed sends, A2A
+  turn's user_message is written to JSONL. `input` is
+  `{modality?: 'text'|'voice', source?: 'stt'|'realtime'}` when the
+  turn was not typed — `stt` is the microphone button, `realtime` a
+  sentence from a standing call — so the live bubble and the one
+  rebuilt from history render the same way. Self-typed sends, A2A
   inbounds, and system wakes all flow through here; `from_system` is
   one of `sentinel`, `tmux`, `subagent`, `job`, `browser`, `voice`,
   `a2a`, and web, mobile and TUI draw each of them as a divider rather
@@ -1552,9 +1598,9 @@ Event types:
   `origin`; `ephemeral` is on the stored row only.
 
   `origin` says where the turn came from as one value. It is present on
-  the SSE event and on the stored `user_message` row of every turn
-  started since somora 2026.09.13; older rows have none, so a client
-  keeps reading `from_*` as the fallback.
+  the SSE event and on the stored `user_message` row of every turn;
+  rows recorded by earlier releases have none, so a client keeps
+  reading `from_*` as the fallback.
 
   ```ts
   origin?:
@@ -1587,7 +1633,7 @@ Event types:
   (`ref` = job id) — and, with `about: "subagent"`, a follow-up on a
   finished sub whose own work finished later (the text reads `Task
   '<id>' … has a follow-up: the work it started has finished. It
-  begins: "…"`, and the frame points at `result.follow_ups`). The
+  begins: "…"`, and the frame points at the `follow_ups` field of `subagent_result`). The
   legacy fields stay and are derived from it:
   `agent` fills `from_agent`, `from_session` and `agent_ask_call_id`
   (= `callId`); `sentinel`, `tmux`, `browser` and `voice` set
@@ -1646,7 +1692,7 @@ Event types:
   ran), `attachments_unsupported` (the engine cannot forward attachments,
   grok-cli), `voice_handover` (a call was handed to or
   from another agent), `voice_spoken` (what a voice call said out loud —
-  written until somora 2026.09.12, kept for sessions recorded then), `reasoning_effort_adjusted` and `sampling_dropped`
+  found in sessions recorded by earlier releases), `reasoning_effort_adjusted` and `sampling_dropped`
   (backend rejected the parameter, turn retried without it). Each
   carries a human-readable `payload.text`.
 - `model_fallback` — `{requested, actual, reason, hops?}` (refs are
@@ -1776,10 +1822,11 @@ Pagination: pass `?limit=200` to get the last 200 events plus a
 }
 ```
 
-Event kinds: `user_message`, `assistant_message`, `tool_call`,
-`tool_result`, `engine_meta`, `memory_inject`, `model_fallback`
-(precedes the assistant message the fallback model produced). Each carries `kind`,
-`ts`, and kind-specific fields. Tool names are normalised here too.
+Event kinds: `user_message`, `assistant_message`, `thinking_message`,
+`tool_call`, `tool_result`, `engine_meta`, `model_fallback` (precedes
+the assistant message the fallback model produced), `assistant_audio`,
+`assistant_media`, `project_switched`, `error`, `turn_start` and
+`turn_end`. Each carries `kind`, `ts`, and kind-specific fields. Tool names are normalised here too.
 `engine_meta` rows preserve the raw `itemType` + opaque `payload`;
 clients resolve the friendly label on render (see
 [setup.md](setup.md#engine-meta--codex-todo_list)).
@@ -2003,7 +2050,7 @@ web AgentDock pulse indicators and REM badges.
     "<agent-b>":  { "active": true,  "pendingCount": 0 }
   },
   "deep":  { "active": false },
-  "lucid": { "active": false }
+  "lucid": { "active": false, "pendingRuns": 0, "pendingFindings": 0 }
 }
 ```
 
@@ -2226,7 +2273,7 @@ this is not the dictation/TTS path ([voice.md](voice.md)).
 
 ```json
 { "enabled": true, "provider": "openai", "model": "gpt-realtime-2.1-mini",
-  "maxCallMinutes": 20, "agents": ["hans", "lisa"], "calls": [] }
+  "maxCallMinutes": 20, "agents": ["<your-agent>", "<other-agent>"], "calls": [] }
 ```
 
 `agents` lists who may be called — realtime voice on, and the agent's
@@ -2239,7 +2286,7 @@ client asks this to decide whether to show the tile at all).
 Exactly what the speaking model would be told, without starting a call:
 
 ```json
-{ "agent": "hans", "session": "main", "text": "You are hans, speaking out loud …",
+{ "agent": "<your-agent>", "session": "main", "text": "You are <your-agent>, speaking out loud …",
   "chars": 1528, "source": "derived", "voice": "ash", "language": "de",
   "consultPolicy": "always" }
 ```
@@ -2299,9 +2346,7 @@ survive). Content is stored once on disk, deduped by hash.
 Raw bytes rather than a form upload is deliberate: multipart parsing
 pulls the whole file into memory, while a raw body streams and keeps
 the size cap meaningful. A `multipart/form-data` request is refused
-with `415` — before 2026-09-11 it was stored verbatim, so the envelope
-itself became a text attachment called `unnamed` and the turn quietly
-had no image.
+with `415` rather than stored as an opaque text attachment.
 
 ```bash
 curl -X POST https://<host>:18737/attachments \
@@ -2433,7 +2478,7 @@ is refused (unknown browser or removed shared-profile configuration).
 
 ### `POST /browser/:id/control`
 
-`:id` is a window id (`profile:team@hans`); a bare browser id works
+`:id` is a window id (`profile:team@<your-agent>`); a bare browser id works
 while only one agent has a window on that process, and is otherwise
 refused as ambiguous. Body `{ mode: "human" | "agent", by?, handoffId? }`.
 `human` takes control of that window: its agent's ops are refused until
@@ -2533,7 +2578,7 @@ curl https://<host>:18737/sentinel/triggers?status=active
 
 ### `GET /sentinel/triggers/:id`
 
-Full trigger document for a single id. 404 if missing.
+`{trigger}` — the full trigger document for a single id. 404 if missing.
 
 ### `GET /sentinel/triggers/:id/history`
 
@@ -2623,8 +2668,8 @@ curl -X POST https://<host>:18737/agents/<your-agent>/tools/sentinel \
 ```
 
 The full `sentinel` tool surface (`create` / `list` / `get` /
-`pause` / `resume` / `delete` / `test` / `history`) is described in
-[sentinel.md](sentinel.md).
+`pause` / `resume` / `delete` / `test` / `history` / `purge_completed`)
+is described in [sentinel.md](sentinel.md).
 
 ---
 
@@ -2753,7 +2798,6 @@ Response:
 ```
 
 - Session lock priority: `user` (treated as human input).
-- 60s default timeout — voice UX dies past that.
 - Always generates audio, regardless of any per-chat auto-play
   toggle (those toggles only affect `/chat/send`).
 - 404 when `session=<exact-id>` doesn't exist; auto-creates for free-

@@ -27,7 +27,7 @@ quickstart — install prereqs, install somora from source, run `somora
 init` + `somora server start`, then `somora tui`. ~10 minutes.
 
 **I want to chat from the browser or my phone.** Read
-[setup.md → HTTPS via Tailscale](setup.md#https-tailscale-required-for-the-web-client-at-scale)
+[setup.md → HTTPS via Tailscale](setup.md#https-tailscale--required-for-the-web-client-at-scale)
 to get a real cert, then open `https://<your-tailnet>.ts.net:18737/web/`
 in the browser. The mobile PWA is the same URL with `/mobile/` — see
 [mobile.md](mobile.md).
@@ -52,7 +52,7 @@ visibility](skills.md#per-agent-visibility).
 render takes minutes, so the agent starts one and is woken when it is
 ready rather than holding its turn open. Off until `videoGen` is
 configured; verified against a self-hosted endpoint, the hosted
-providers not yet.
+providers are untested.
 
 **I want my agents to make images.** [imagegen.md](imagegen.md) —
 configure a model, then generate from the Media window or let an
@@ -73,10 +73,11 @@ is the HTTP+SSE contract — same surface the built-in clients use.
   model, and chat sessions. Lives at `~/.somora/agents/<name>/`.
 - **session** — a single chat thread with one agent. Persisted as JSONL,
   resumable, switchable mid-conversation.
-- **engine** — the adapter that talks to an LLM backend. Three exist:
-  `claude-cli` (Claude subscription), `codex-cli` (ChatGPT subscription),
-  `openai-compatible` (any `/v1/chat/completions` endpoint — OpenRouter,
-  Ollama, oMLX, LM Studio, …).
+- **engine** — the adapter that talks to an LLM backend. Four exist:
+  `claude-cli` (Claude subscription), `codex-cli` (ChatGPT subscription,
+  bundled), `grok-cli` (SuperGrok subscription), `openai-compatible`
+  (any `/v1/chat/completions` endpoint — OpenRouter, Ollama, oMLX,
+  LM Studio, …).
 - **provider / model / alias** — `config.yaml` declares providers (with
   baseUrl + apiKey if needed) and models on each. An `alias` lets you
   refer to a model by short nickname anywhere.

@@ -1,9 +1,9 @@
 # File tools
 
-`file_read`, `file_write`, `file_patch`, `file_search`, and
+`file_read`, `file_write`, `file_patch`, `file_search`, `file_list` and
 `analyze_file` work on the local filesystem by default and on any
 configured remote resource via the `target` parameter (where
-applicable — `analyze_file` is local-only in v1).
+applicable — `analyze_file` is local-only).
 
 ## The `target` parameter
 
@@ -27,9 +27,10 @@ host-key handling — those are all server-side.
   `config.workspace.default` which auto-creates `~/somoraworkspace` at
   first start).
 - **Absolute paths** pass through.
-- **`~/`** expands to `$HOME` on local; remote uses `~` literally
-  (interpreted by the remote shell on exec, by `resource.workspace` for
-  SFTP).
+- **`~/`** expands to `$HOME` on local. On a remote target `~` expands
+  to the SSH user's home (and wins over `resource.workspace`); a bare
+  relative path joins onto `resource.workspace`, or onto the SSH user's
+  home when the resource sets none.
 
 ## The path-blacklist (write side)
 
@@ -72,15 +73,16 @@ The read side has a smaller blacklist — only credential files and
 
 ## Steering the model away from `exec`
 
-Every file tool description ends with: "Use this INSTEAD of running
-`cat`/`echo`/`grep`/`sed` via exec — file_* paginates safely, has no
-quoting issues, works the same locally and over SSH (SFTP)." This is
-deliberate policy: in cross-engine tool design, the orchestrator
-prefers tools whose description tells it when to pick them.
+Every file tool description tells the model to use it instead of
+running `cat`, `echo`, `grep` or `sed` through exec: the file tools
+paginate safely, have no quoting issues, and work the same locally and
+over SSH (SFTP). This is deliberate policy: in cross-engine tool
+design, the orchestrator prefers tools whose description tells it when
+to pick them.
 
-The `exec` tool mirrors this in reverse: "use file_* for
-read/write/patch/search; exec is for things the file tools can't do
-(run a build, start a server, etc.)".
+The `exec` tool mirrors this in reverse — file_* for read, write,
+patch and search; exec for what the file tools cannot do (run a build,
+start a server, and the like).
 
 ## Multimodal: `file_read` polymorph + `analyze_file`
 
@@ -121,9 +123,7 @@ as images post-rasterization. The `pdf` capability is meaningful for
 It is a **substitute for models that cannot see**, and only those. The
 tool is not offered at all when the active model has the `image`
 capability: an agent that can look at the file itself should, and a tool
-it never sees is one it cannot pick by mistake. Before that gate, the
-live logs showed 142 dispatches from agents whose own model had vision,
-67 of them into a failing worker.
+it never sees is one it cannot pick by mistake.
 
 It appears when:
 - the active main model lacks `image` capability (text-only LLM) and you
@@ -160,8 +160,8 @@ vision:
 Two budgets, because one was not enough. `timeoutMs` bounds a single
 attempt and `totalBudgetMs` bounds the walk: each attempt gets whatever
 is left, and a worker that could not finish in the remaining time is not
-started. A chain of four workers used to spend four full timeouts back
-to back, measured at 176 s for one screenshot. `maxOutputTokens`
+started; without it a chain of four workers spends four full timeouts
+back to back. `maxOutputTokens`
 overrides the worker model's own cap, which is a chat cap — with 16k
 available, a reasoning worker thinks its way past the timeout while
 writing three lines about a screenshot. A worker that returns nothing
@@ -181,18 +181,15 @@ and lists the ones passed over when it wasn't the first.
 ### Switching to a model that can't see images
 
 History is packed for the model that will read it. A session that once
-carried an image replays that image on every later turn, so switching to
-a text-only model used to make the session permanently unusable: the
-endpoint rejects the content type, somora falls back, and the model you
-picked never actually answers.
-
-Attachments the active model cannot process are now replayed as a text
-marker naming the file, its type and its size, so the conversation keeps
-working and the model can still refer to what it cannot see
+carried an image would replay that image on every later turn, and a
+text-only endpoint rejects the content type — so attachments the active
+model cannot process are replayed as a text marker naming the file, its
+type and its size. The conversation keeps working and the model can
+still refer to what it cannot see
 (`[Image attachment "shot.png" (image/png, 1.2 MB) — not shown: …]`).
 The text of those turns is untouched.
 
-Sending a **new** attachment to such a model no longer fails the turn.
+Sending a **new** attachment to such a model does not fail the turn.
 somora hands the file to the configured vision worker and appends its
 description to the message the model receives, marked as a description
 rather than the file itself. The clients still show the original
@@ -209,7 +206,7 @@ attachable to a chat turn: no engine can put a video in a prompt, and
 accepting one would mean an attachment that vanishes silently while the
 turn is packed.
 
-Worker model **must be on `openai-compatible` engine** in v1 (use
+Worker model **must be on `openai-compatible` engine** (use
 openrouter or another openai-compatible proxy if you want a Claude or
 GPT model). Same constraint as Dream-Mode. At server startup, somora
 warn-checks worker capabilities and surfaces missing `image`/`pdf`
@@ -217,9 +214,9 @@ declarations clearly in the log — but does NOT hard-fail, so an
 image-only worker is still usable for image analysis (PDF requests
 will error per call instead).
 
-**Caps:** 5 MB per image, 32 MB / 100 pages per PDF (matches upstream
-provider ceilings). PDF render: max 20 pages by default, scale 1.5×
-(configurable in code).
+**Caps:** 5 MB per image, 32 MB per PDF (the upstream provider
+ceilings; providers additionally cap PDFs at 100 pages). PDF render:
+max 20 pages by default, scale 1.5× (configurable in code).
 
 **Engine support:**
 - claude-cli (Anthropic) — full polymorph support; images and rendered
@@ -258,7 +255,7 @@ attach files directly to a chat turn. Pipeline:
    upload those files themselves and put the refs on the turn they
    start. That is how an orchestrator hands a co-worker a graphic it
    just generated — naming the path in the message text only gives the
-   receiving model a string (2026-09-11). A receiving model without
+   receiving model a string. A receiving model without
    vision gets the vision worker's description, exactly as for a chat
    attachment.
 5. Each engine adapter builds its native multimodal user-message
@@ -317,25 +314,26 @@ cost of `native`. Pick `native` when the backend supports it.
 
 ### Garbage collection
 
-Out of scope for v1. Every uploaded file lands in `~/.somora/
+There is none. Every uploaded file lands in `~/.somora/
 attachments/<hash>.<ext>` and stays. After heavy use, orphaned
 files (referenced only by JSONL sessions that have since been reset
 or deleted) accumulate. Acceptable trade-off: disk is cheap, single-
-user setup. A sweep tool may land later.
+user setup.
 
 ## Limits
 
 | Tool | Cap | Notes |
 |---|---|---|
-| `file_read` | 200 000 chars per call | `offset`+`limit` are LINE counts (not bytes). When a result is truncated by line, the response includes `next_offset` — pass it as `offset` to continue. Byte-cap-truncated reads omit `next_offset` (the cut is mid-line). Missing files surface as `file_read: file_not_found at '<path>'`. Errors on binary, pointing at `analyze_file`. |
+| `file_read` | 200 000 chars per call | `offset`+`limit` are LINE counts (not bytes). When a result is truncated by line, the response includes `next_offset` — pass it as `offset` to continue. Byte-cap-truncated reads omit `next_offset` (the cut is mid-line). Missing files surface as `file_read: file_not_found at '<path>'`. Errors on binary files — images and PDFs point at `analyze_file`, other binaries at `exec`. |
 | `file_write` | none on input; 100 000 char result envelope | Atomic via tmp+rename. Over SSH the rename uses `posix-rename@openssh.com` so an existing target is replaced; servers without the extension get unlink+rename. |
 | `file_patch` | requires `old_string` to be unique unless `replace_all=true` | Match is byte-exact (no fuzzy). |
-| `file_search` | 50 hits default, 500 max; hit text is a ±200-char window around the first match (`col` = column, `truncated` marks a cut line); 100 000 chars of hit text per call, then `truncated: true` | Needs `rg` (ripgrep) on the target machine. Long lines (JSONL logs, minified bundles) no longer blow the result envelope. |
+| `file_search` | 50 hits default, 500 max; hit text is a ±200-char window around the first match (`col` = column, `truncated` marks a cut line); 100 000 chars of hit text per call, then `truncated: true` | Needs `rg` (ripgrep) on the target machine. Long lines (JSONL logs, minified bundles) stay within the result envelope. |
 | `file_list` | 5000 entries per call (default 200) | Path resolution + read-policy identical to `file_read`. Missing dirs surface as `file_list: file_not_found at '<path>'`. |
-| `analyze_file` | `attachments.maxImageBytes` (5 MB default) / `attachments.maxPdfBytes` (32 MB) | Local files only in v1; worker on openai-compatible engine. **Hidden from the model entirely when `config.vision.worker` is unset** (the same path-resolution + read-policy as `file_read` applies). |
+| `analyze_file` | `attachments.maxImageBytes` (5 MB default) / `attachments.maxPdfBytes` (32 MB) | Local files only; worker on openai-compatible engine. **Hidden from the model entirely when `config.vision.worker` is unset or the active model has the `image` capability itself** (the same path-resolution + read-policy as `file_read` applies). |
 
-`rg` not installed → clear error: "Install via brew/apt/dnf/pacman or
-set `$RG_BIN`." We deliberately don't ship a JS fallback walker —
+`rg` not installed → clear error: `file_search: ripgrep (rg) not found
+on PATH. Install via your package manager (brew/apt/dnf/pacman) or set
+$RG_BIN to a custom location.` We deliberately don't ship a JS fallback walker —
 parity with rg's defaults (.gitignore-respect, encoding handling) is
 worth the dependency.
 
@@ -347,10 +345,10 @@ worth the dependency.
 // → reads <workspace>/notes.md
 
 // Remote read
-{ "name": "file_read", "input": { "path": "/tmp/log.txt", "target": "mac-studio" } }
-// → SFTP read via the mac-studio resource
+{ "name": "file_read", "input": { "path": "/tmp/log.txt", "target": "<resource-name>" } }
+// → SFTP read via that resource
 
 // Remote search
-{ "name": "file_search", "input": { "pattern": "TODO", "path": "src/", "target": "mac-studio" } }
-// → ssh mac-studio 'rg --json --max-count 50 "TODO" /home/.../src/'
+{ "name": "file_search", "input": { "pattern": "TODO", "path": "src/", "target": "<resource-name>" } }
+// → ssh <resource-name> 'rg --json --max-count 50 "TODO" /home/.../src/'
 ```

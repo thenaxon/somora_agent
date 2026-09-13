@@ -168,9 +168,8 @@ systemctl --user cat somora.service | grep ExecStart
 # bad:   ExecStart=/home/<you>/somora/bin/somora.mjs ...   (← checkout, not global)
 ```
 
-`somora update` re-bakes the unit automatically. If you're stuck on a
-pre-`2026.05.12.8` install that doesn't have it, run the manual fix
-once:
+`somora update` re-bakes the unit automatically. If the unit still
+points at a checkout, run the manual fix once:
 
 ```bash
 "$(npm root -g)"/somora/bin/somora.mjs init
@@ -244,12 +243,13 @@ providers:
     models:
       - id: gpt-5.6-terra
         alias: terra
-        contextWindow: 272000        # Codex session cap, not the 1.05M API window
+        contextWindow: 258400        # the Codex session window, not the 1.05M API window
         capabilities: [text, image, pdf, reasoning]
 ```
 
-`contextWindow: 272000` is deliberate: Codex caps a GPT-5.6 session at
-272k tokens (server-delivered default since Codex 0.144.6), and on a
+`contextWindow: 258400` is deliberate: Codex runs a session against a
+window it delivers itself and reports on every turn
+(`modelContextWindow`, 258,400 for every model it offers), and on a
 CLI engine the value does not trigger somora's compaction anyway — it
 only decides whether the model is picked as a compaction worker and
 what the header percentage claims. See
@@ -306,7 +306,7 @@ the model the `reasoning` capability to activate it. Note there's no
 "disabled" state — `/thinking off` maps to `low`.
 
 **Tools.** somora's full MCP surface (memory, file_*, exec, wiki,
-subagents — 47 tools as of 2026-08) is handed to the ACP session via
+subagents, …) is handed to the ACP session via
 `session/new`'s `mcpServers` parameter, scoped to the current
 agent+session exactly like claude-cli and codex-cli. On top of that
 Grok Build brings its own file/shell tools, scoped to the working
@@ -585,7 +585,11 @@ realtimeVoice:                # talking to an agent (docs/realtime-voice.md)
   #                             # provider: local) to use a service of your own that speaks
   #                             # the same protocol — same adapter, no key needed on localhost
   defaultVoice: alloy         # ten exist: alloy ash ballad coral echo sage shimmer verse marin cedar
-  consultPolicy: always       # when the speaking model must ask the real agent
+  consultPolicy: always       # auto | substantive | always — when the speaking model must ask the real agent
+  consult:
+    quickAnswerMs: 8000       # how long a spoken question waits on the agent (1000..120000);
+                              # past it the voice says it handed the request over and keeps
+                              # talking, the answer is read out when it lands
   maxCallMinutes: 20          # hard stop; a standing call bills while nobody talks
   allowAgentSwitch: false     # move a call to another agent or session mid-conversation
   turnDetection: { threshold: 0.4, prefixPaddingMs: 200, silenceDurationMs: 420 }
@@ -619,7 +623,16 @@ compaction:
 
 agentLoop:
   maxRounds: 8                # tool-call rounds per turn (openai-compatible)
-  toolCallTimeoutMs: 30000    # per-tool-call timeout
+  toolCallTimeoutMs: 30000    # per-tool-call timeout for fast tools (memory, web, file, time)
+  longTaskDefaultTimeoutMs: 300000   # 5 min — slow A2A tools (agent_ask, subagent_result
+                              # wait_until_done) when the caller passes no timeout_ms;
+                              # also honoured inside the MCP child of the CLI engines
+  longTaskMaxTimeoutMs: 1800000      # 30 min — hard ceiling for those, even with an explicit
+                              # timeout_ms; past it the tool answers state "pending", the
+                              # work keeps running. claudeCli.mcpToolTimeoutMs and
+                              # codexCli.toolTimeoutSec must be >= this.
+  execMaxConcurrentPerAgent: 8       # background exec jobs one agent may hold
+  execMaxConcurrentGlobal: 32        # … across all agents
   wakeGraceMs: 3000           # when work an agent started and walked away from
                               # finishes (a late agent_ask answer, a background
                               # sub-agent, a rendered video), the agent is woken in
@@ -648,6 +661,7 @@ agentLoop:
 engineWatchdog:
   claudeCliIdleMs: 300000        # 5 min — subscription, fast first event
   codexCliIdleMs: 300000         # 5 min — subscription, fast first event
+  grokCliIdleMs: 300000          # 5 min — same class as the other CLIs
   openaiCompatibleIdleMs: 1200000 # 20 min — local LLMs can stream slowly;
                                   # raise if your backend regularly silences
                                   # for longer than 20 min mid-turn
@@ -674,6 +688,9 @@ sse:
                                   # (`sse.publish_evict_dead` in the log), socket
                                   # destroyed. Catches vanished tabs / stuck
                                   # TCP windows that never send FIN.
+  h2PingIntervalMs: 30000         # HTTP/2 PING per client session (TLS listener) …
+  h2PingTimeoutMs: 30000          # … no ACK within this → session destroyed
+  keepAliveDelayMs: 30000         # TCP keepalive on every socket
 
 memory:
   embedding:
@@ -739,9 +756,11 @@ records — they're available to:
   GitHub-style task lists.
 
 Mobile PWA hides engine_meta entirely (mobile is intentionally a
-text-only minimalist surface). Other engines (claude-cli, openai-
-compatible) don't currently emit engine_meta items; the mechanism is
-ready when they do.
+text-only minimalist surface). The other engines emit their own
+`engine_meta` rows through the same mechanism — a forced compaction,
+a dropped sampling key or an adjusted reasoning effort on
+`openai-compatible`, an undeliverable attachment on `grok-cli`, a
+restarted session on any CLI engine.
 
 Friendly labels live in
 [`src/engine/engine-meta-labels.ts`](../src/engine/engine-meta-labels.ts)
@@ -886,14 +905,14 @@ different acquisition.
    config survives `somora update`, unit env does not (the update rebakes
    the unit from a template). If you *do* need custom systemd env, put it in
    a drop-in (`~/.config/systemd/user/somora.service.d/*.conf`) — drop-ins
-   survive the rebake; `somora init` also now carries forward existing
+   survive the rebake; `somora init` also carries forward existing
    `Environment=`/`EnvironmentFile=` lines and prints what it preserved.
 
    `publicHost` MUST match the cert subject — strict TLS verification is
    on. Internal MCP-child callers (subagent fallback in
    `src/tools/agents/spawn.ts`) read this hostname from env at server
-   startup and use it for their own HTTPS callbacks; loopback bypasses
-   are gone now that everything goes through one secure listener.
+   startup and use it for their own HTTPS callbacks; there is no
+   loopback bypass, everything goes through the one secure listener.
 5. Restart somora. Connect with the full URL:
    `https://<your-host>.<your-tailnet>.ts.net:18737/web/`. The `:port`
    part is required because somora doesn't run on 443.
@@ -901,10 +920,10 @@ different acquisition.
 ### Cert renewal
 
 Tailscale certs are valid for ~90 days. Re-run
-`tailscale cert <fqdn>` to refresh. somora doesn't auto-reload —
-restart it after each renewal, or set up a systemd timer that
-re-issues + sends `SIGHUP` (current build doesn't handle `SIGHUP`
-yet, so the timer should `systemctl --user restart somora`).
+`tailscale cert <fqdn>` to refresh. somora reads the cert files at
+start only and does not reload them on a signal — restart it after
+each renewal, or set up a systemd timer that re-issues and then runs
+`systemctl --user restart somora`.
 
 ### Without Tailscale
 
@@ -962,10 +981,8 @@ agents never see the user's interactive-CLI state, and vice versa.
 - **Auto-update insulation.** Anthropic's launcher silently rolls
   forward the user's claude binary. If a release migrates the state
   schema, somora's spawn — which may run a different binary version —
-  no longer reads the migrated tree cleanly. The 2026-05-16 incident
-  (`2.1.143` regressed MCP tool registration for everything sharing
-  state with it) exposed this; the isolated dir makes somora resilient
-  against the next time it happens.
+  would no longer read the migrated tree cleanly. The isolated dir
+  keeps somora's state out of that path.
 - **Privacy + predictability.** The user's project conversations,
   installed plugins, and per-project skill caches never leak into
   agent context.
@@ -1006,18 +1023,17 @@ needed.
 
 Sharing one login between two config trees has a structural enemy:
 the claude CLI refreshes OAuth tokens with an atomic write (tmp file +
-rename). An earlier somora design symlinked the somora-side file to
-`~/.claude/.credentials.json`, but rename replaces the *symlink
-itself* — after the first token refresh the link silently materializes
-into a real file. From then on both trees rotate the same OAuth
-session independently, and whichever side refreshes later invalidates
-the other; the losing side eventually fails with `OAuth session
-expired and could not be refreshed` (in practice: forced re-logins
-almost daily).
+rename). A symlink from the somora-side file to
+`~/.claude/.credentials.json` would not survive that — rename replaces
+the *symlink itself*, so after the first token refresh the link would
+silently materialize into a real file. From then on both trees would
+rotate the same OAuth session independently, and whichever side
+refreshes later invalidates the other; the losing side eventually
+fails with `OAuth session expired and could not be refreshed`.
 
 somora therefore maintains the sharing as a *continuously reconciled
 content sync* (default `claudeCli.sharedUserCredentials: true` in
-`config.yaml`) instead of a symlink:
+`config.yaml`), never as a symlink:
 
 - **Filesystem watcher** on both parent directories plus a 60 s
   fallback poll — a token refresh (or fresh `claude login`) on either
@@ -1107,7 +1123,7 @@ Other useful scripts:
 
 Run tests through `npm test`, not `tsx --test` directly. The logger opens
 its file the moment it is imported, so a test started without an
-explicit `SOMORA_HOME` used to write into the running installation's log
+explicit `SOMORA_HOME` would write into the running installation's log
 and make its error count meaningless. The launcher sets a temporary home
 before anything loads and removes it afterwards; `SOMORA_TEST_HOME=/some/dir`
 keeps it when you want to read the test's own log. A file started by hand

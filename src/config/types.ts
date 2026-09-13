@@ -1048,7 +1048,9 @@ export const RealtimeVoiceConfigSchema = z
     /** Fallback: name of an existing `providers` entry to borrow the
      *  key from. Only for providers that use the same credential. */
     provider_ref: z.string().min(1).optional(),
-    transport: z.enum(['webrtc', 'websocket']).default('webrtc'),
+    // Only websocket is driven (audio browser → somora → provider);
+    // the value is accepted for forward compatibility.
+    transport: z.enum(['webrtc', 'websocket']).default('websocket'),
     /** Voice used when an agent names none. Provider-specific id. */
     defaultVoice: z.string().min(1).default('alloy'),
     /** How hard the voice self is held to asking the real agent before

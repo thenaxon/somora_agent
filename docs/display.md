@@ -137,4 +137,18 @@ cancelled, a sentinel fire as skipped. An entry that started meanwhile
 says so — Esc aborts a running turn. The list reads
 `GET /agents/:agent/sessions/:session/work` (see
 [api.md](api.md#get-agentsagentsessionssessionwork)); the counters come
-from `/health`.
+from the same route, refetched on every queue event, on `/queue rm`
+and on a session switch — never polled while idle.
+
+## `/export` — the session as a file
+
+```
+/export                     — write the session as Markdown to ./<agent>-<session>.md
+/export json [path]         — the raw event log as JSONL (one event per line)
+/export markdown [path]     — readable transcript; path optional
+```
+
+The TUI fetches the session from the server (`GET
+/agents/:agent/sessions/:session/export?format=…`, see
+[api.md](api.md#get-agentsagentsessionssessionexport)) and writes the
+file locally; the notice names the absolute path and the size.

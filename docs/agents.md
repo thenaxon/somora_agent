@@ -1,8 +1,7 @@
 # Agents
 
 An **agent** is a distinct personality somora can chat as. You can have
-many; each has its own memory, its own model preferences, and its own
-optional Obsidian vault binding.
+many; each has its own memory and its own model preferences.
 
 ## Anatomy
 
@@ -12,7 +11,7 @@ optional Obsidian vault binding.
 ├── SOUL.md                         ← optional. voice / personality
 ├── USER.md                         ← optional. what the agent knows about you
 ├── VOICE.md                        ← optional. hand-written character for spoken calls
-├── agent.yaml                      ← optional. operator-config (model, REM, vault)
+├── agent.yaml                      ← optional. operator-config (model, tools, voice, REM)
 ├── memory/                         ← per-agent memory inbox
 │   ├── *.md                        ← un-consolidated notes
 │   ├── memory.db (+ -wal, -shm)    ← derived index
@@ -65,6 +64,8 @@ restart needed.
 name: <your-agent>    # must match the directory name
 description: ...      # one-line — shown by `/agents`
 icon: 🌼              # optional emoji shown in CLI prompts and listings
+color: "#5cf2d6"      # optional hex display colour for the web client's agent tint
+role: Researcher      # optional short role tag shown under the name in the web dock
 ---
 ```
 
@@ -124,10 +125,17 @@ tools:
 
 # Optional: per-agent skill visibility, same shape and semantics as
 # tools: (deny beats allow, empty allow = all). The Abilities window
-# writes exact-name denies here; a plain list (`skills: [a, b]`) is the
-# older allow-list form and still works. See skills.md.
+# writes exact-name denies here; a plain list (`skills: [a, b]`) is
+# also accepted as an allow-list. See skills.md.
 skills:
   deny: ['instagram-downloader']
+
+# Optional: whether this agent looks at the images it generates.
+# `never` (default) returns path + metadata only; `always` also feeds the
+# image back into the agent's context so it can judge the result and
+# re-prompt on its own — roughly 2k tokens per image. Not a lock: the
+# agent can still set `return_image` per call.
+imageReview: never          # never | always
 
 # Optional: this agent's voice, for realtime calls (realtime-voice.md).
 # Only what SPEAKING needs — who the agent is comes from its persona
@@ -153,6 +161,9 @@ rem:
   chunkTokens: 50000        # range-split for very long sessions
   chunkTimeoutMs: 600000    # 10 min/chunk; gemma-friendly
   participate_in_wiki: true # default true; false = REM only, never Deep
+  # thinking: low           # optional reasoning depth (off|low|medium|high) for
+                            # the REM worker; applied only when that model has
+                            # the `reasoning` capability
 ```
 
 REM is the per-agent dream phase that watches sessions and proposes
@@ -171,8 +182,7 @@ and `agent.yaml` (operator config) is intentional but not enforced as a
 hard limit — the agent **can** edit `agent.yaml` via the `file_*` tools,
 the path-blacklist allows it. The convention is: persona-content evolves
 in the .md files, operator-config evolves in .yaml. Agents can self-edit
-both today; future Skills-layer guidance will steer them toward the right
-file for each kind of change.
+both.
 
 ### Seeing and editing the persona without a terminal
 
@@ -417,8 +427,8 @@ Nobody waits for this message, so taking it out of the queue wakes no
 one. There is no follow-up when the tree hangs under a person's turn
 (that session shows the wake itself) or under a turn nobody asked for
 (a sentinel fire, a tmux wake), when the call did not finish `done`,
-when the wake turn was stopped by a person, when the target already
-sent the asker a message of its own in that wake turn, or when the
+when the wake turn was stopped by a person, when the target has already
+sent the asker a message of its own since the call finished, or when the
 asker read the result with `agent_ask_result` during the grace. A wake
 turn that fails for another reason still produces one, saying the work
 finished but the turn reporting it failed, with the error. Like the
@@ -526,14 +536,14 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   ```
 
   Its frame: fetch it with `subagent_result({ task_id })` — the
-  follow-up is in `result.follow_ups` — then continue whatever
+  follow-up is in its `follow_ups` field — then continue whatever
   depended on it; if nothing does, a short acknowledgement to the user
   is enough. The sub's own wake turns (about its subs) carry the
   matching note — "What you answer in this turn is forwarded to your
   parent (<agent>, session <session>) as the follow-up to task
   '<task_id>' …" — so the sub writes them as its report. The text is
   the final text of that last wake turn;
-  `result.follow_ups` (also under `GET /spawn-result`) keeps every
+  `follow_ups` (`result.follow_ups` under `GET /spawn-result`) keeps every
   follow-up of a task, oldest first. A parent hears once, after the
   whole tree, not once per level, and work started inside a wake turn
   extends the tree. The follow-up waits the same grace, and a
@@ -550,10 +560,12 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
 
 A sub's turn is a turn like any other: it waits in its session's
 queue, shows up in `/health` and in the session's queue view, and a
-person can stop it — the parent then sees the task as `failed` with
-`stopped by the user` — or remove it from the queue before it starts,
+person can stop it — with Stop in the sub's own session the parent sees
+the task as `failed` with `stopped by the user`; with ■ under "From
+here" in the queue popover (or `/queue rm` in the TUI) as `cancelled`
+with the same reason — or remove it from the queue before it starts,
 which the parent sees as `cancelled` with `removed from the queue by
-the user before it started`.
+the user before it started`. Either way the parent is woken and told.
 
 ## Programmatic agent creation
 

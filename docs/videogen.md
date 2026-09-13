@@ -21,7 +21,8 @@ does. Three independent gates, all checked:
 
 - **the model's tool list** — `video_generate`, `video_status` and
   `video_models` are not offered;
-- **HTTP** — `/video/*` answers `503`;
+- **HTTP** — `POST /video/generate` answers `503`, and `GET /video/status`
+  reports `enabled: false`;
 - **the desktop** — the Media tile appears if *either* images or video
   is configured, and the window shows only the surfaces that exist. A
   video-only install gets a video form, not an empty image one.
@@ -174,7 +175,7 @@ find its own media does not reach back that far.
 ## Restarts
 
 Job state lives in `~/.somora/video-jobs/`, one JSON per job. somora
-gets redeployed several times on a busy day, and a render that finished
+may be restarted while a render runs, and a render that finished
 during a restart must not be lost: the provider keeps the file, so the
 loop simply resumes polling and collects it. Jobs that finished while
 nobody was listening still get their wake-up afterwards.

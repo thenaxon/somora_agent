@@ -16,7 +16,7 @@ Related: [setup.md → Tunables](setup.md#tunables) (the knobs),
 | | who compacts | when | what you see |
 |---|---|---|---|
 | `openai-compatible` | **somora** | before a turn, when the prompt reaches `triggerRatio × inputBudget` (default 0.8; the budget is the window minus the answer, and the number is the one the provider measured last) | a `context compacted` row when the reactive path ran; otherwise nothing — the summary is invisible, the recent pairs are verbatim |
-| `claude-cli`, `codex-cli`, `grok-cli` | **the CLI itself**, inside its own session/thread | at the CLI's own threshold (codex: its server-delivered session cap) | nothing from somora; the engine's own compaction is opaque to it. The `▣` percentage still tells the truth: codex reports its own `modelContextWindow` per thread, and the prompt size it reports is the prompt, cached part included — adding `cachedInputTokens` to `inputTokens` counted that part twice and drove the badge past 100 % on long threads (fixed 2026-09-11). Anthropic counts the other way round, `input_tokens` EXCLUDES the cached part, so claude-cli sums. |
+| `claude-cli`, `codex-cli`, `grok-cli` | **the CLI itself**, inside its own session/thread | at the CLI's own threshold (codex: its server-delivered session cap) | nothing from somora; the engine's own compaction is opaque to it. The `▣` percentage still tells the truth: codex reports its own `modelContextWindow` per thread, and the prompt size it reports is the prompt, cached part included, so somora does not add `cachedInputTokens` on top (that would count the cached part twice and drive the badge past 100 % on long threads). Anthropic counts the other way round, `input_tokens` EXCLUDES the cached part, so claude-cli sums. |
 
 somora's history file (`sessions/<id>.jsonl`) is never shortened by
 either. Compaction only changes what is *sent*; the JSONL stays the
@@ -35,20 +35,16 @@ full record, and REM reads it independently.
 
    That estimate is corrected by what the last request actually cost
    (`tokenRatio`, measured ÷ estimated). Prose runs near 4 characters
-   per token; code, JSON and markup near 2.5. Measured on 2026-09-10: an
-   estimate of 327,051 against a real 507,905.
-
-   Until 2026-09-10 the estimate counted chat text only. A session made
-   of tool traffic looked tiny — 25,982 tokens visible out of 615,329
-   actually sent — so it never triggered, ran to 97 % and died at the
-   wall.
+   per token; code, JSON and markup near 2.5. Tool traffic is counted
+   on purpose: a session made of tool calls can carry twenty times more
+   tokens than its visible chat text, and an estimate that only counts
+   chat never triggers on such a session.
 2. **Trigger.** `tokens >= triggerRatio × inputBudget`, where the input
    budget is `contextWindow − maxTokens` of the **model that will answer
    this turn**. The output reservation comes out of the same window, so
-   measuring against the full window lets a session walk into a provider
-   400 while every check says it fits: the request that died carried
-   507,905 input tokens against a 524,288 window — one token over the
-   input budget. Switching a long session from a 1M-window model to a
+   measuring against the full window would let a session walk into a
+   provider 400 while every check says it fits. Switching a long
+   session from a 1M-window model to a
    131k one triggers a compaction on the next turn; the measured number
    is dropped on a model switch because tokenizers differ.
 3. **Range.** Everything after the previous summary up to, but not
@@ -92,9 +88,9 @@ with the value to put in `config.yaml`.
 
 Steps 1 to 5 size the conversation *before* the turn. A turn with tools
 grows while it runs — every result, every image, and the tool schemas
-that travel with each request. Sizing it once is how a turn estimated at
-58k tokens reached the backend at over 507k against a 524k window, died
-on a raw 400, and lost its work (2026-09-10).
+that travel with each request. Sized once, a turn estimated at a few
+tens of thousands of tokens can reach the backend at ten times that,
+die on a raw 400, and lose its work.
 
 So before **every** request of a turn, somora measures what it is about
 to send: all messages, images counted as images rather than as their
@@ -122,10 +118,10 @@ that the model saw less than the full results.
 **Reading the numbers.** The chat header shows two different things.
 `▣` is occupancy: the prompt size of the turn's **last** request against
 the window. `Σ↑` is spend, and the Σ is the point — it sums every
-request the turn made. A measured example: 21 tool rounds on a 524k
-window read `▣ 62%` (322,878 tokens in the last request) and `Σ↑ 6.0M`
-(5,974,097 sent in total, because the context travels with every
-request). Both are correct; only the first one says how full it is.
+request the turn made. Example: 21 tool rounds on a 524k window read
+`▣ 62%` (about 323k tokens in the last request) and `Σ↑ 6.0M` (sent in
+total, because the context travels with every request). Both are
+correct; only the first one says how full it is.
 
 ## Which model summarises
 
@@ -135,7 +131,7 @@ first, and a model that is not on the list is never a worker:
 
 ```yaml
 compaction:
-  workers: [gemma4small, deep4flash, glm]
+  workers: [<small-local-alias>, <hosted-alias>]
 ```
 
 Listed entries are honoured as written, including their window: naming
@@ -167,7 +163,7 @@ Three consequences worth knowing:
 - The worker may be a **subscription-backed CLI model**. If the
   smallest fitting window belongs to a Claude or Codex model, the
   summary is produced through that CLI and counts against that
-  subscription. Nothing in the UI says so today. Set `workers` if you
+  subscription. Nothing in the UI says so. Set `workers` if you
   want the summariser kept to local models.
 - A `contextWindow` that is **too high** for what the engine can
   really take makes that model eligible for histories it cannot
@@ -195,9 +191,8 @@ native API window of the model:
 
 - **codex-cli**: Codex runs a session against a window it delivers
   itself and reports per thread as `modelContextWindow` — **258,400**
-  for every model it offers here, measured 2026-09-11 on codex 0.153.3
-  (`gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-terra`), although the model's
-  API window is 1.05M. somora uses that reported number for the header
+  for the GPT-5.6 and GPT-6 models, although the model's API window
+  is 1.05M. somora uses that reported number for the header
   as soon as the first turn reports it, so the configured value matters
   before the first turn and for the compaction-worker choice: configure
   `contextWindow: 258400`. A value of 400000 or 1000000 — the obvious
@@ -220,8 +215,8 @@ native API window of the model:
 compaction:
   triggerRatio: 0.8           # fraction of the input budget (openai-compatible only)
   safetyCushionPairs: 4       # most-recent exchanges never summarised
-  # workers: [gemma4small, deep4flash, glm]   # who may summarise, in the order they are tried
-  # modelOverride: gemma4big  # pin the summariser (any engine with a one-shot path)
+  # workers: [<small-local-alias>, <hosted-alias>]   # who may summarise, in the order they are tried
+  # modelOverride: <alias>    # pin the summariser (any engine with a one-shot path)
 ```
 
 Environment overrides `SOMORA_COMPACTION_*` are listed in

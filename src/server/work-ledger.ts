@@ -842,7 +842,7 @@ function maybeFollowUp(wake: WorkItem): void {
           `[subagent attention] Task '${root.id}' (sub-agent '${root.target.agent}', session '${root.target.session}') ` +
           `has a follow-up: the work it started has finished. It begins: "${head}"`,
         prefix:
-          `Fetch it with subagent_result({ task_id: "${root.id}" }) — the follow-up is in result.follow_ups — ` +
+          `Fetch it with subagent_result({ task_id: "${root.id}" }) — the follow-up is in its follow_ups field — ` +
           'then continue whatever depended on it. If nothing does, a short acknowledgement to the user is enough.' +
           (forwardingNoteFor(fresh) ? `\n\n${forwardingNoteFor(fresh)}` : ''),
         about,

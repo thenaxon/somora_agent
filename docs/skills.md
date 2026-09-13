@@ -108,10 +108,10 @@ Validation at scan time:
   use (cached per binary until it changes on disk) and marks the
   skill `unavailable` with the found version + path when the
   constraint fails. Finding the SAME binary at multiple paths raises
-  a warning naming every copy — two coexisting versions with
-  incompatible state is exactly how the 2026-07-24 gog v0.12/v0.34
-  keyring split-brain happened. Warnings show in `somora skill
-  list` / `skill check` and the server log (`skills.bin_warning`).
+  a warning naming every copy — two coexisting versions of a CLI with
+  incompatible state (a keyring, a config format) is a classic
+  split-brain. Warnings show in `somora skill list` / `skill check`
+  and the server log (`skills.bin_warning`).
 - `requires.config` checked against the loaded config; missing →
   same `unavailable` treatment.
 - `requires.env_vars` — availability-checked AND operational: set the
@@ -380,35 +380,29 @@ Many skills wrap CLIs that expect credentials in env vars
 internal secrets store — the right place for service-level
 credentials is the OS service manager:
 
-**Linux / systemd (recommended):**
+**`~/.somora/somora.env` (recommended):**
 
-1. Put the variables in `~/.config/systemd/user/somora.env` and
-   tighten permissions:
+1. Put the variables in `~/.somora/somora.env` and tighten
+   permissions:
 
    ```bash
-   cat > ~/.config/systemd/user/somora.env <<'EOF'
+   cat > ~/.somora/somora.env <<'EOF'
    MYSKILL_TOKEN=<your-token-here>
    MYSKILL_ACCOUNT=<you@example.com>
    EOF
-   chmod 600 ~/.config/systemd/user/somora.env
+   chmod 600 ~/.somora/somora.env
    ```
 
-2. Reference the file from the unit (the leading `-` makes the
-   service start cleanly when the file is missing — useful for
-   fresh setups):
+2. `systemctl --user restart somora` (or restart the foreground
+   server).
 
-   ```ini
-   # ~/.config/systemd/user/somora.service
-   [Service]
-   EnvironmentFile=-%h/.config/systemd/user/somora.env
-   ```
-
-3. `systemctl --user daemon-reload && systemctl --user restart somora`
-
-The somora process inherits these vars at startup and `exec`-spawned
-subprocesses inherit `process.env`, so every skill on every agent
-sees them automatically — no per-call boilerplate, no in-band
-secret-passing.
+somora loads that file into its own environment at server start
+(`SOMORA_ENV_FILE` points it elsewhere), and `exec`-spawned
+subprocesses inherit `process.env`, so every skill on every agent can
+see the values — scoped per skill as described below. No per-call
+boilerplate, no in-band secret-passing. A systemd `EnvironmentFile=`
+line in the unit works too; `somora init` and `somora update` carry
+such lines forward when they rebake the unit.
 
 **macOS / launchd** is the equivalent: drop the variables into your
 `~/Library/LaunchAgents/<somora>.plist`'s `EnvironmentVariables`
@@ -426,8 +420,9 @@ somora's own engine reads them. See `config.example.yaml` for the
 posture.)
 
 `requires.env_vars` in the skill frontmatter declares WHAT the skill
-needs. The `EnvironmentFile` / `~/.somora/somora.env` provides the
-actual values. From there, somora scopes them by program name:
+needs. `~/.somora/somora.env` (or the systemd `EnvironmentFile`)
+provides the actual values. From there, somora scopes them by program
+name:
 
 - Every env var declared by ANY skill is **stripped** from spawned
   local `exec` children by default.

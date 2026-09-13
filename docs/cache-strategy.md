@@ -19,8 +19,8 @@ The win is huge:
   A 20k-token system+history that hits cache costs ~$0.30 instead
   of ~$3.00 per turn on Opus.
 - **Local models (mlx-omx, ollama)** save the full pre-encode pass
-  on cached tokens. On gemma4big at 30-50 tok/s, a 20k-token cached
-  prefix means **6-10 seconds less time-to-first-token**.
+  on cached tokens. On a local 30B-class model at 30-50 tok/s, a
+  20k-token cached prefix means **6-10 seconds less time-to-first-token**.
 - **OpenAI** discounts cached input by 50% on supported models.
 
 **The trap:** cache works on **byte-identical prefix matching**. Any
@@ -60,16 +60,16 @@ question:
 | Changes per turn | memory hits for this query | `<memory-context>`, per turn |
 | Stable for the session | wiki topology overview, skills registry, persona | system prompt |
 
-Getting this wrong is expensive in a way that hides well. The wiki
-overview used to ride along in the per-turn memory block. It is
-byte-identical on every turn, so on `claude-cli`/`codex-cli` it was a
-duplicate per turn, and on `openai-compatible` — where `buildMessages`
-replays every past turn — it was re-sent once per turn *of history*:
-897 chars × 27 turns = 24 KB on every single request. Nothing about it
-had changed since turn 1.
+Getting this wrong is expensive in a way that hides well. Take the
+wiki overview: it is byte-identical on every turn. Carried in the
+per-turn memory block it is a duplicate per turn on
+`claude-cli`/`codex-cli`, and on `openai-compatible` — where
+`buildMessages` replays every past turn — it is re-sent once per turn
+*of history*: 900 chars × 27 turns = 24 KB on every single request,
+for something that has not changed since turn 1.
 
 The system-prompt version is measurably free after the first turn.
-Measured 2026-07-22, `claude-cli`, fresh session:
+`claude-cli`, fresh session:
 
 ```
 turn 1   tokens_in 9081   cached  878
@@ -93,13 +93,15 @@ engine handles it differently:
 ```ts
 // src/engine/claude-cli.ts
 const memoryBlock = ephemeralContext ? `${ephemeralContext}\n\n` : '';
-const effectiveUserMessage =
-  replayPrefix + memoryBlock + withFromAgentHeader(userMessage, fromAgent);
+const effectiveUserMessage = replayPrefix + memoryBlock + userMessage;
 
 // systemPromptForTurn = systemPrompt unchanged
 SDK.query({ systemPrompt, userMessage: effectiveUserMessage });
 ```
 
+`ephemeralContext` already carries the turn's frame (an A2A header,
+a sentinel evidence block) ahead of the recall block, composed by the
+server (`src/server/turn-framing.ts`); the adapter adds nothing.
 Memory lives at the **start of the new user-message text**. The SDK
 sends only the new turn to Anthropic; the persistent system prompt
 stays stable across turns; Anthropic's `cache_control` ephemeral
@@ -118,8 +120,8 @@ The system prompt travels as Codex *developer instructions* on every
 thread start/resume (stable across turns), the tool schemas as dynamic
 tools, and only the new turn as user input. Memory lands at the start of
 the user text. Codex keeps the thread and sends it to its OpenAI backend
-with the right cache shape. Hits ~70–85% cache (measured 2026-09-05:
-128k of 153k input cached on a six-tool turn).
+with the right cache shape. Hits ~70–85% cache (128k of 153k input
+cached on a six-tool turn).
 
 ### openai-compatible (stateless)
 
@@ -170,7 +172,7 @@ message per result.
 ```
 
 Flattening those turns to prose is not a neutral simplification. Measured
-2026-07-22 against a real session history, N=20 per cell: with tool turns
+against a real session history, N=20 per cell: with tool turns
 flattened, deepseek-chat produced **0/20** tool calls and deepseek-r1
 **1/20**; replaying the native shape lifted them to **14/20** and
 **10/20**. A model has no memory beyond what the rebuild hands it, so a
@@ -192,13 +194,13 @@ This is cache-safe: the reconstruction is deterministic over immutable
 JSONL events, so repeated rebuilds of the same history are byte-identical
 and the prefix match holds.
 
-### Why we tried "late-system" first and reverted
+### Why a late system message does not work
 
-A first-pass fix (commit `49c682a`) injected memory as a SECOND
-`role:'system'` message right before the latest user message,
-keeping the persistent system prompt stable. That works for stateful
-engines but **does not work for stateless openai-compatible** —
-verified via instrumented two-turn dump:
+The obvious alternative — inject memory as a SECOND `role:'system'`
+message right before the latest user message, keeping the persistent
+system prompt stable — works for stateful engines but **does not work
+for stateless openai-compatible**. An instrumented two-turn dump shows
+why:
 
 - Turn 1 sent: `[sys persona] [sys eph_v1] [user_eins]`
 - Turn 2 sent: `[sys persona] [user_eins] [asst_eins] [sys eph_v2] [user_zwei]`
@@ -212,33 +214,20 @@ message at that position next turn.
 the **very end** of the prompt sequence, with no per-turn-changing
 content earlier in the byte stream.
 
-The JSONL-persistence approach (commit `cb9f429`) was the actual
-fix — by persisting the memory block on each user_message, the
-"variable" content for prior turns becomes effectively stable
-(frozen at original send-time) on every subsequent reconstruction.
+JSONL persistence is what makes this hold: by persisting the memory
+block on each user_message, the "variable" content for prior turns
+becomes effectively stable (frozen at original send-time) on every
+subsequent reconstruction.
 
 ## Dream-worker cache
 
-The dream extractor (`src/dream/extract.ts`) runs the same problem
+The REM extractor (`src/dream/rem-extract.ts`) runs the same problem
 in miniature: per-chunk LLM calls send a stable system prompt + a
 user message containing transcript + memory + vault. Memory and
-vault are computed **once per dream run** (in `extractFromSession`)
-and reused across all chunks. Transcript varies per chunk.
+vault are computed **once per dream run** and reused across all
+chunks. Transcript varies per chunk.
 
-The original ordering was:
-
-```
-Agent name: <your-agent>
-<transcript>... per-chunk ...</transcript>     ← variable
-<existing_memory>... stable ...</existing_memory>
-<vault_referenced>... stable ...</vault_referenced>
-```
-
-Same anti-pattern: variable content shifts the stable blocks to
-different byte positions across chunks. Memory + vault (~4-15k
-tokens combined) re-encoded every chunk instead of cached.
-
-Fix (commit `19528a7`): reorder to stable-first.
+The user message is therefore built stable-first:
 
 ```
 Agent name: <your-agent>
@@ -246,6 +235,11 @@ Agent name: <your-agent>
 <vault_referenced>... stable ...</vault_referenced>   ← cached chunks 2..N
 <transcript>... per-chunk ...</transcript>            ← variable, end of prompt
 ```
+
+Transcript-first would be the same anti-pattern as above: variable
+content shifts the stable blocks to different byte positions across
+chunks, and memory + vault (~4-15k tokens combined) are re-encoded
+every chunk instead of cached.
 
 For long sessions that chunk into 5+ pieces on local models, this
 saves multiple seconds per chunk.
@@ -256,7 +250,7 @@ Per-provider on `openai-compatible` providers in `config.yaml`:
 
 ```yaml
 providers:
-  omlx:
+  local:
     engine: openai-compatible
     baseUrl: ...
     apiKey: ...
@@ -267,7 +261,7 @@ providers:
     engine: openai-compatible
     baseUrl: ...
     apiKey: ...
-    memoryInjectMode: system           # legacy fallback — concat-onto-system
+    memoryInjectMode: system           # fallback — concat-onto-system
     models: [...]
 ```
 
@@ -277,7 +271,7 @@ Two values:
   reconstructed byte-identical on every call. Cache-friendly. Works
   for any backend that accepts standard OpenAI Chat Completions
   message arrays.
-- `system` — legacy concat-onto-system-prompt. Cache-destructive.
+- `system` — concat-onto-system-prompt. Cache-destructive.
   Only set this if a backend mishandles embedded memory blocks
   inside user-message content (rare).
 
@@ -351,10 +345,10 @@ invalidated at that point and the fix isn't right yet.
    minified). Sometimes the right pattern is the one you build
    yourself.
 
-6. **Two iterations beat one wrong.** The first fix (late-system)
-   was structurally wrong but plausible — verified with the wrong
-   metric (`cached_tokens` from a single response). A 2-turn
-   position-dump comparison caught it on the second iteration.
+6. **Verify with a two-turn position dump.** A late-system layout
+   looks plausible and even passes when judged by `cached_tokens`
+   from a single response; only a 2-turn position-dump comparison
+   shows the wandering block.
 
 7. **Not every backend has a cache to protect.** Same session, same
    day, three consecutive turns: `claude-cli` reported 94% of the
@@ -372,7 +366,8 @@ invalidated at that point and the fix isn't right yet.
 | Reconstruct from history | `src/engine/openai-compatible.ts` (`buildMessages`) |
 | Memory placement claude-cli | `src/engine/claude-cli.ts` (effectiveUserMessage) |
 | Memory placement codex-cli | `src/engine/codex-cli.ts` (promptPayload) |
-| Dream worker stable-prefix | `src/dream/extract.ts` (`buildUserMessage`) |
-| Wiki-overview snapshot | `src/server/run-turn.ts` (`buildWikiOverviewBlock`) |
+| Turn frame ahead of the recall block | `src/server/turn-framing.ts` (`composeTurnPrefix`) |
+| REM worker stable-prefix | `src/dream/rem-extract.ts` (`buildUserMessage`) |
+| Wiki-overview snapshot | `src/server/prompt-assembly.ts` (`buildWikiOverviewBlock`) |
 | Wiki-overview shortener | `src/memory/manager.ts` (`renderWikiOverview`) |
 | `memoryInjectMode` schema | `src/config/types.ts` (`OpenAiCompatibleProviderSchema`) |

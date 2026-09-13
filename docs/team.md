@@ -27,7 +27,7 @@ agent to the file and everyone knows about it on their next turn.
 somora team init --principal "Ada"     # writes ~/.somora/team.yaml from the agents on disk
 $EDITOR ~/.somora/team.yaml            # set reports_to, involve_for, not_for
 somora team check                      # validates, warns, finds old team prose in personas
-somora team show hans                  # prints exactly what hans sees in its prompt
+somora team show finn                  # prints exactly what finn sees in its prompt
 ```
 
 `init` never overwrites an existing file. All agents start reporting to
@@ -60,12 +60,12 @@ agents:                        # every key must be a directory under ~/.somora/a
       - anything the principal asked the team for
     not_for:
       - hands-on coding
-  hans:
+  finn:
     reports_to: atlas
     involve_for: [code, builds, tests, driving coding CLIs in tmux, infrastructure]
     not_for: [deep web research, media]
     notes: Comes to the media agent when a design has to become code.   # optional free text
-  lisa:
+  nora:
     reports_to: atlas
     involve_for: [library docs, framework comparisons, investigative research]
 ```
@@ -99,7 +99,7 @@ there never was one, renders nothing) and logs `team.invalid` once.
 
 ## What an agent sees
 
-`somora team show hans` for the file above:
+`somora team show finn` for the file above:
 
 ```
 # Your team
@@ -107,16 +107,16 @@ there never was one, renders nothing) and logs `team.invalid` once.
 Org chart (you are marked with ←):
 Ada — Principal (human): Founder. Reads code herself; be honest about risks. Final say on everything.
 └── atlas — Chief of Staff
-    ├── hans — Engineer  ← you
-    └── lisa — Researcher
+    ├── finn — Engineer  ← you
+    └── nora — Researcher
 
 Your superior: atlas — escalate there first; atlas's briefings are authoritative inside your lane. The principal (Ada) has the final say over everyone.
-Your peers (same superior): lisa.
+Your peers (same superior): nora.
 Your reports: none.
 
 Who to involve — via agent_ask; their reply comes back to your session:
 - atlas (Chief of Staff): coordination across lanes; anything the principal asked the team for. Not for: hands-on coding.
-- lisa (Researcher): library docs; framework comparisons; investigative research.
+- nora (Researcher): library docs; framework comparisons; investigative research.
 
 Rules:
 - The principal's word is final. In any conflict with an agent, the principal wins.

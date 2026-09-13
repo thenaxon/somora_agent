@@ -90,7 +90,7 @@ deferred-namespace guessing — so every model Codex offers (gpt-5.5,
 the GPT-5.6 family, GPT-6) reaches the same tool set the other engines
 see. A global `codex` on the host is not used; `somora codex login`
 signs in with the bundled one, and an existing `codex login` is picked
-up automatically ([setup.md](setup.md#codex)).
+up automatically ([setup.md](setup.md#openai-via-codex-cli-subscription-no-api-key)).
 
 ```yaml
 providers:
@@ -125,12 +125,12 @@ providers:
 
 | model | contextWindow | notes | verified |
 |---|---|---|---|
-| `gpt-6-astra` | 258400 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. Every codex model here reports the same `modelContextWindow` of 258,400 (measured 2026-09-11 against codex 0.153.3; 272000 was a guess and read as an over-full context). Effort vocabulary is `low | medium | high | xhigh | max` — no `minimal`, so a persona without a thinking level (`off`) needs `reasoning: { levels: { "off": low } }`; without it codex-cli retries once with `low` after the 400 (2026-09-06). | 2026-09-05 (app-server engine) |
+| `gpt-6-astra` | 258400 | GPT-6 — hardest problems; code-mode-only like the 5.6 family. Every codex model here reports the same `modelContextWindow` of 258,400 (measured 2026-09-11 against codex 0.153.3; 272000 was a guess and read as an over-full context). Effort vocabulary is `low | medium | high | xhigh | max` — no `minimal`, so a persona without a thinking level (`off`) needs `reasoning: { levels: { "off": low } }`; without it codex-cli retries once with `low` after the 400. | 2026-09-05 (app-server engine) |
 | `gpt-5.6-sol` | 258400 | Flagship — complex coding, research, deepest reasoning. | 2026-09-03 |
 | `gpt-5.6-terra` | 258400 | Workhorse; OpenAI positions it as GPT-5.5-class at lower cost. | 2026-09-05 (app-server engine) |
 | `gpt-5.6-luna` | 258400 | Fast and cheap — extraction, classification, volume. | 2026-09-03 |
 | `gpt-5.5` | 258400 | Still listed by Codex; the one model here that does **not** run code-mode-only. Terra is the equivalent at lower cost. | 2026-09-05 (app-server engine) |
-| `gpt-5.4-mini`, `gpt-5.3-codex` | — | **Retired** for ChatGPT accounts (Codex answers with an error, seen 2026-08-31 as an `exit 1` compaction-worker crash). Remove them. | 2026-08-31 |
+| `gpt-5.4-mini`, `gpt-5.3-codex` | — | **Retired** for ChatGPT accounts — Codex answers with an error, which surfaces as a failed turn or a crashed compaction worker. Remove them. | 2026-08-31 |
 
 **Peculiarities of this engine**
 
@@ -305,8 +305,10 @@ providers:
   only place the default lives. SGLang does not do this.
 - Backends that stream reasoning but report no `reasoning_tokens` get
   an **estimated** 🧠 count with a tilde.
-- `analyze_file` (vision worker) and the dream workers use this engine
-  only — a CLI-engine model cannot be a vision worker.
+- `analyze_file` (vision worker) uses this engine only — a CLI-engine
+  model cannot be a vision worker. Dream and compaction workers may also
+  run on `claude-cli` and `codex-cli`; only `grok-cli` has no one-shot
+  path.
 
 ## openai-compatible — hosted via OpenRouter
 
@@ -361,16 +363,17 @@ expired`) is the only loud signal. Check the header, not just the reply.
 
 | field | openai-compatible | claude-cli | codex-cli | grok-cli |
 |---|---|---|---|---|
-| `contextWindow` | compaction trigger (`triggerRatio ×`), worker choice, display — use the **server's** limit | worker choice, display — native window is right | worker choice, display — use the **Codex session cap** (272k), not the API window | worker choice, display |
+| `contextWindow` | compaction trigger (`triggerRatio ×`), worker choice, display — use the **server's** limit | worker choice, display — native window is right | worker choice, display — use the **Codex session window** (258,400, what codex reports as `modelContextWindow`), not the API window | worker choice, display |
 | `capabilities` | gates attachments (`image`, `pdf`) and whether `thinking` is sent (`reasoning`) | same | same | same |
 | `reasoning.levels` | somora level → wire value (Qwen `xhigh`, DeepSeek `max`) | honoured (rarely needed) | honoured — `xhigh`/`max` for GPT-5.6 | honoured |
-| `reasoning.param` | `reasoning_effort` (default) or nested `reasoning` for OpenRouter | — | — | — |
+| `reasoning.param` | `reasoning_effort` (default), nested `reasoning` for OpenRouter, or `chat_template_kwargs` | — | — | — |
 | `sampling` | sent on every call, dropped once if the backend rejects a key | ignored (not exposed by the CLI) | ignored | ignored |
 | `maxTokens` | output cap on every call incl. dream workers | — | — | — |
 | `fallback` | availability chain on unreachable / 5xx | same | same | same |
 | `sendUserTag` (provider) | `user: "<agent>/<session>"` on every request, `<agent>/rem`, `<agent>/deep`, `lucid/<pass>`, `<agent>/compaction`, `<agent>/analyze_file` for workers — a gateway groups cost per agent and session (LiteLLM stores it in the `end_user` column of its spend logs, not `user`); default on, `false` to withhold | — | — | — |
 
-**Minimum versions** (from v2026.09.03.06 / .09): Node.js ≥ 22.13,
-Codex CLI ≥ 0.148, a current Claude Code. A CLI engine's tools and
-lock-down are re-audited after every CLI update
+**Minimum versions**: Node.js ≥ 22.13 (every `somora` command refuses
+an older Node), a current Claude Code. Codex needs no separate install
+— somora bundles the exact version pinned in its `package.json`. A CLI
+engine's tools and lock-down are re-audited after every CLI update
 ([security.md](security.md)).

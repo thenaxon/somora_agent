@@ -54,16 +54,12 @@ providers:
         contextWindow: 200000
         capabilities: [text, image, pdf]
 
-  # OpenAI via Codex CLI subscription. Uses the local `codex` binary;
-  # auth is handled by the binary itself via `codex login` (ChatGPT
-  # Plus/Pro/Business subscription preferred) or OPENAI_API_KEY env.
-  # No baseUrl / apiKey needed here. Override binary path with
-  # SOMORA_CODEX_BIN env if not at ~/.npm-global/bin/codex or on PATH.
-  # Codex CLI / OpenAI model IDs are subscription/provider-owned and
-  # change with codex-cli releases (e.g. 0.130 retired `gpt-5`/`o3`,
-  # renamed `gpt-5-codex` → `gpt-5.3-codex`). If you hit HTTP 400 from
-  # the backend, run `codex models list` (or check the codex release
-  # notes) for the current valid ids and update this block.
+  # OpenAI via the bundled Codex (ChatGPT Plus/Pro/Business
+  # subscription). Log in with `somora codex login`; an existing
+  # `codex login` on the machine is mirrored. No baseUrl / apiKey here.
+  # Model ids are provider-owned and change with Codex releases; on an
+  # HTTP 400 from the backend, take the current ids from docs/models.md
+  # and update this block.
   openai:
     engine: codex-cli
     models:
@@ -147,8 +143,8 @@ providers:
 # and returns its text analysis — useful when the active main model
 # lacks `image` capability or when you want a token-cheap description
 # instead of dropping image-bytes into main context. Worker must be on
-# `openai-compatible` engine in v1 (use openrouter to proxy Claude/
-# GPT, same constraint as Dream-Mode).
+# `openai-compatible` engine (reach Claude or GPT through a proxy such
+# as OpenRouter if you want them here).
 #
 # file_read polymorph (the workspace-drop UX) does NOT depend on this
 # — it uses the active main model's `image` capability directly. The
@@ -244,10 +240,9 @@ providers:
 #   # ~/.somora/agents/<name>/. The prefix flows into the cache key so
 #   # different speakers get different cached audio files.
 #   # agentVoices:
-#   #   naxon:  "[deep male voice] "
-#   #   hans:   "<|speaker:7|>[male voice] "
-#   #   lisa:   "<|speaker:2|>"
-#   #   jarvis: "[deep male voice] "
+#   #   <agent-a>: "[deep male voice] "
+#   #   <agent-b>: "<|speaker:7|>[male voice] "
+#   #   <agent-c>: "<|speaker:2|>"
 #   #
 #   cache:
 #     retentionDays: 7                          # 0 disables GC
@@ -768,7 +763,7 @@ providers:
 #       Bastion in the workshop. Ubuntu 24.04, Docker installed.
 #     workspace: /home/alice/work
 #     # hostKey: 'sha256:abc...'      # optional; TOFU when omitted
-#   spiderman:
+#   homeserver:
 #     type: ssh
 #     host: 192.0.2.42
 #     user: agent-user
@@ -777,8 +772,8 @@ providers:
 #       Dedicated AI/GPU workstation. Agents run routine maintenance
 #       here; reboot, system updates and mount fixes are normal ops.
 #     allowBlocked:
-#       - sudo ~/bin/spiderman-system-update.sh
-#       - sudo ~/bin/fix-naxon-mount-v2.sh
+#       - sudo ~/bin/system-update.sh
+#       - sudo ~/bin/fix-mount.sh
 #       - systemctl reboot
 #       - sudo                          # broad: any "sudo ..." command
 
