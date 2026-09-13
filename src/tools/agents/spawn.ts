@@ -276,7 +276,7 @@ const BatchInput = z
       .default(false)
       .describe(
         'Default false (fire-and-forget): each task gets its own task_id, all run in ' +
-          'parallel in the background, your turn ends immediately. true blocks until all ' +
+          'parallel in the background and the tool returns at once — your turn goes on. true blocks until all ' +
           'complete and returns results inline.',
       ),
   })
@@ -337,7 +337,7 @@ export const spawnSubagents: ToolDefinition<z.infer<typeof BatchInput>> = {
         type: 'boolean',
         description:
           'Default false (fire-and-forget): each task gets its own task_id, all run in ' +
-          'parallel in the background, your turn ends immediately. true blocks until all ' +
+          'parallel in the background and the tool returns at once — your turn goes on. true blocks until all ' +
           'complete and returns results inline.',
       },
     },

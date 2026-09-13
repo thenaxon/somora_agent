@@ -189,8 +189,8 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     '(call_id), never by re-sending the message. ' +
     'IMPORTANT: cannot ask yourself — use spawn_subagent for self-clone tasks. ' +
     'Calls queue on the target session first come, first served, like typed turns. ' +
-    'state:"failed" carries the reason — "stopped by the user" means a person ended that turn; ' +
-    'do not re-send it. ' +
+    'state:"failed" carries the reason: a model or engine error on the target, or ' +
+    '"stopped by the user" — a person ended that turn; do not re-send it. ' +
     'agent_ask is REQUEST-RESPONSE, not a message bus: if YOU received a question via agent_ask ' +
     '(a user_message with from_agent set), your answer is your normal turn output — the asking ' +
     'agent receives it automatically as the result of their pending call. Never agent_ask your ' +
