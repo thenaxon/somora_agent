@@ -294,6 +294,7 @@ export function cancelWork(id: string, reason: string): CancelOutcome | null {
     const dq = dequeueSessionWork(it.target.agent, it.target.session, it.id);
     const wasQueued = dq.status === 'removed';
     const abortDelivered = wasQueued ? false : triggerChatAbort(it.target.agent, it.target.session).aborted;
+    for (const l of finishListeners) l(it);
     logger.info({
       msg: 'work.cancelled',
       id: it.id,
@@ -352,6 +353,10 @@ export function dequeueWork(id: string, by: DequeueBy): DequeueWorkOutcome {
   // The text stays on the item until the caller has read it back
   // (DELETE /chat/queue returns it), then the item is a record only.
   for (const l of finishListeners) l(it);
+  // A requester that hung up learns about it the same way it would
+  // have learnt about the answer (Rene, 2026-09-13: naxon only found
+  // out that lisa's queue had been cleared when he went looking).
+  scheduleWake(it);
   return { status: 'removed', item: it };
 }
 
@@ -394,9 +399,9 @@ export function pendingWakesFor(requester: { agent: string; session: string }): 
 type FinishListener = (item: WorkItem) => void;
 const finishListeners: FinishListener[] = [];
 
-/** Hear every terminal transition (done, failed, cancelled by cascade is
- *  not announced — the canceller knows). The realtime voice manager
- *  listens for its consults. */
+/** Hear every terminal transition: done, failed, dequeued, cancelled.
+ *  The realtime voice manager listens for its consults; the server
+ *  publishes queue changes to the clients. */
 export function onWorkFinished(listener: FinishListener): () => void {
   finishListeners.push(listener);
   return () => {
@@ -431,6 +436,15 @@ function head(it: WorkItem, n: number): string {
  *  before the ledger (ask-calls.ts, async-tasks.ts, 2026-09-12/07). */
 export function wakeTextFor(it: WorkItem): string {
   if (it.wakeText) return it.wakeText;
+  if (it.state === 'dequeued') {
+    return it.origin.kind === 'agent'
+      ? `[agent answer] The question you sent to ${it.target.agent} (session '${it.target.session}') was removed ` +
+          `from the queue by the user before ${it.target.agent} saw it — it will not be answered ` +
+          `(call_id "${it.id}"). Ask again only if the user still wants it; otherwise tell your human in one line.`
+      : `[subagent attention] Task '${it.id}' (sub-agent '${it.target.agent}', session '${it.target.session}') was ` +
+          `removed from the queue by the user before it started — there is no result. Spawn it again only if ` +
+          `the user still wants it; otherwise tell your human in one line.`;
+  }
   if (it.origin.kind === 'agent') {
     const h = head(it, 200);
     return (
@@ -477,7 +491,7 @@ function scheduleWake(it: WorkItem): void {
   const deps = wakeDeps;
   if (!deps) return;
   if (it.wake !== 'auto') return;
-  if (it.state !== 'done' && it.state !== 'failed') return;
+  if (it.state !== 'done' && it.state !== 'failed' && it.state !== 'dequeued') return;
   if (it.waiting) return;
   const r = it.requester;
   if (!r || !('agent' in r) || !r.session || r.session === '?') return;

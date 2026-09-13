@@ -197,7 +197,7 @@ import {
   registerAskCall,
   waitForAskCall,
 } from './ask-calls.ts';
-import { configureWorkWake, dequeueWork, listWork, markFetched, openWork, pendingWakesFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
+import { configureWorkWake, dequeueWork, listWork, markFetched, onWorkFinished, openWork, pendingWakesFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
@@ -4636,7 +4636,6 @@ app.delete('/chat/queue/:turnId', async (c) => {
   }
   const item = outcome.item;
   const { agent, session } = item.target;
-  void publish(agent, session, { event: 'turn_dequeued', data: { turnId: id, workId: id } });
   for (const w of listSessionWaiters(agent, session)) {
     if (w.priority === 'user' && w.turnId) {
       void publish(agent, session, { event: 'turn_queued', data: { turnId: w.turnId, ahead: w.position, workId: w.workId ?? w.turnId, kind: 'human' } });
@@ -4789,18 +4788,9 @@ app.post('/chat/send', async (c) => {
         turnId,
         workId,
         origin,
-        // When the lock is busy and we have to wait, broadcast a
-        // turn_queued SSE so any client that already accepted this
-        // turn's optimistic user-bubble (matched by turnId from the
-        // HTTP response below) can tag the bubble with a "queued"
-        // marker until the turn actually fires the user_message
-        // event a few seconds later.
-        onQueued: (ahead) => {
-          void publish(agent, session, {
-            event: 'turn_queued',
-            data: { turnId, ahead, workId, kind: origin.kind },
-          });
-        },
+        // startTurn broadcasts `turn_queued` when the lock is busy, so a
+        // client that accepted this turn's optimistic bubble (matched by
+        // the turnId from the HTTP response below) tags it as queued.
         beforeRun: () => {
           if (agentAskCallId && fromAgent) markAskCallRunning(agentAskCallId);
           return true;
@@ -6216,6 +6206,14 @@ const screencasts = new ScreencastRegistry(browserService);
 // as a sub-agent (Rene, 2026-09-12 — "war ja eine agent_ask message
 // oder?"). A sub-orchestrator is woken at ITS depth, so it keeps the
 // SUBAGENT framing and the depth cap it had when it spawned.
+// Queue changes reach the clients from the ledger itself: an entry taken
+// back by a person or cancelled by its agent leaves the queue, and the
+// badge must follow at once, whoever removed it.
+onWorkFinished((it) => {
+  if (it.state !== 'dequeued' && it.state !== 'cancelled') return;
+  void publish(it.target.agent, it.target.session, { event: 'turn_dequeued', data: { turnId: it.id, workId: it.id } });
+});
+
 configureWorkWake({
   graceMs: config.agentLoop.wakeGraceMs,
   dispatchWakeTurn: async ({ agent, session, text, about, ref, depth, mediaIds }) => {

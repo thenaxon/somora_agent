@@ -112,6 +112,7 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
   const kind = originKind(origin);
 
   logger.info({ msg: 'turn.dispatch', turnId, agent, session, origin: kind, textLen: text.length });
+  const publishSse = resolvePublish(agent, session, args.publish);
 
   let release: () => void;
   try {
@@ -121,7 +122,16 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
       ...(originCallId(origin) ? { callId: originCallId(origin) } : {}),
       ...(args.workId ? { workId: args.workId } : {}),
       ...(args.lockSignal ? { signal: args.lockSignal } : {}),
-      ...(args.onQueued ? { onQueued: args.onQueued } : {}),
+      // Every waiter announces itself, whoever queued it: the queue
+      // badge in the clients refreshes on this event, and until
+      // 2026-09-13 only a typed turn sent it (Rene: the badge lagged
+      // behind an agent's question).
+      onQueued: (ahead) => {
+        if (publishSse) {
+          void publishSse({ event: 'turn_queued', data: { turnId, ahead, ...(args.workId ? { workId: args.workId } : {}), kind: origin.kind } });
+        }
+        args.onQueued?.(ahead);
+      },
     });
   } catch (err) {
     // Taken back before it started: the ledger already marked the item.
@@ -142,7 +152,6 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
     // prior controller" defence never fires on a live turn.
     const abort = registerChatAbort(agent, session);
     try {
-      const publishSse = resolvePublish(agent, session, args.publish);
       const result = await runTurn({
         agent,
         session,

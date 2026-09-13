@@ -1250,9 +1250,13 @@ Whoever asked for a removed entry is told:
 - an `agent_ask`, on the line or already pending, reads
   `state: "failed"` with `error: "removed from the queue by the user
   before it started"` — as its inline result, through
-  `agent_ask_result` and through `GET /a2a/ask-result`;
+  `agent_ask_result` and through `GET /a2a/ask-result`; an asker that
+  had already stopped waiting is woken with an `[agent answer]` turn
+  saying so, the same way it would have been woken with the answer;
 - a sub-agent brief reads `cancelled` with the same error in
-  `subagent_status`, `subagent_result` and `/spawn-status`;
+  `subagent_status`, `subagent_result` and `/spawn-status`, and its
+  parent is woken with a `[subagent attention]` turn saying there is
+  no result;
 - a sentinel fire is recorded in the trigger's history as `skipped`
   with `skipReason: "removed from the queue by the user"`;
 - a wake-up turn is dropped quietly; the result it was bringing stays

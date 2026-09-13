@@ -340,7 +340,7 @@ The result has one of three states:
 |---|---|---|
 | `done` | `response`, `ms`, `usage`, `call_id`, `target_agent`, `target_session`, plus `session_inferred`, `session_created`, `session_model` or `session_note` when they apply | The target answered. |
 | `pending` | `call_id`, `hint` | The target is still queued or running, or the call was sent with `wait: false`. Fetch the outcome with `agent_ask_result`, or wait to be woken. |
-| `failed` | `error`, `hint` | The target's turn ran and failed — a model or engine error, or `stopped by the user` when a person pressed Stop on it — or it never ran because a person took it out of the target's queue (`removed from the queue by the user before it started`). Not something to retry on your own. |
+| `failed` | `error`, `hint` | The target's turn ran and failed — a model or engine error, or `stopped by the user` when a person pressed Stop on it — or it never ran because a person took it out of the target's queue (`removed from the queue by the user before it started`). An asker that had stopped waiting is woken with an `[agent answer]` turn saying so. Not something to retry on your own. |
 
 `agent_ask_result({ call_id })` picks up a pending call: `done` with
 the reply, `failed` with the error, or `pending` with `phase` `queued`

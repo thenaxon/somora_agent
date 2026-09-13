@@ -198,6 +198,27 @@ configureWorkWake({
   check('lock free after holder', getSessionLockStatus(A, S).busy === false);
 }
 
+// ── 4b. take-back wakes the requester that hung up, never one on the line ──
+{
+  _resetWorkLedger();
+  wakes.length = 0;
+  const A = 'lisa';
+  const S = 'sess-dq2';
+  const holder = await acquireSessionLock(A, S, { priority: 'user', turnId: 'h', workId: 'h' });
+  openWork({ id: 'gone', origin: { kind: 'agent', from: { agent: 'naxon', session: 'main' }, callId: 'gone' }, target: { agent: A, session: S }, requester: { agent: 'naxon', session: 'main' }, text: 'q1', waiting: false });
+  const w1 = acquireSessionLock(A, S, { priority: 'agent', workId: 'gone' }).catch(() => {});
+  openWork({ id: 'online', origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: 'online' }, target: { agent: A, session: S }, requester: { agent: 'hans', session: 'main' }, text: 'q2' });
+  const w2 = acquireSessionLock(A, S, { priority: 'agent', workId: 'online' }).catch(() => {});
+  await delay(5);
+  dequeueWork('gone', 'human');
+  dequeueWork('online', 'human');
+  await Promise.all([w1, w2]);
+  await delay(80);
+  check('the requester that hung up is woken about the take-back', wakes.some((w) => w.ref === 'gone' && w.text.includes('removed from the queue') && w.text.includes('will not be answered')), wakes.map((w) => w.ref).join(','));
+  check('the requester still on the line is not (it got the failed result)', !wakes.some((w) => w.ref === 'online'));
+  holder();
+}
+
 // ── 5. cancel cascade over the requester tree, queued child taken out ──
 {
   _resetWorkLedger();
