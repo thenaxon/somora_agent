@@ -6225,15 +6225,23 @@ configureWorkWake({
     const origin: TurnOrigin = { kind: 'wake', about, ref, ...(depth > 0 ? { depth } : {}) };
     const workId = id ?? `wake-${ref}`;
     openWork({ id: workId, origin, target: { agent, session }, text, waiting: false, wake: 'never' });
-    await startTurn({
-      agent,
-      session,
-      text,
-      ...(prefix ? { turnPrefix: prefix } : {}),
-      workId,
-      origin,
-      ...(mediaIds && mediaIds.length > 0 ? { attachMediaIds: mediaIds } : {}),
-    });
+    try {
+      await startTurn({
+        agent,
+        session,
+        text,
+        ...(prefix ? { turnPrefix: prefix } : {}),
+        workId,
+        origin,
+        ...(mediaIds && mediaIds.length > 0 ? { attachMediaIds: mediaIds } : {}),
+      });
+    } catch (err) {
+      // Withdrawn while it waited (the requester read the result first,
+      // work-ledger.ts withdrawQueuedWake) or taken out by a person:
+      // nothing to run, nothing to report.
+      if (err instanceof DequeuedError) return;
+      throw err;
+    }
   },
   // A follow-up for an agent that asked (private/turn-dispatch-
   // followup-design.md §2): a normal A2A message from the target's

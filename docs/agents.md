@@ -387,8 +387,13 @@ so the sub-agents the target spawned while answering, the calls it
 made, and whatever those start in turn form a tree under the original
 call. When the last member of that tree has finished and the wake turn
 about it has run in the target's session, the asker hears about it
-exactly once — a follow-up carrying the final text of that last wake
-turn. So that this text is written for the asker and not as a note to
+exactly once — a follow-up carrying what the target wrote in its wake
+turns about this work, oldest first (the answers of all of them, not
+only the last: a summary given in the first wake turn is not lost to a
+"nothing new" in the second). A wake that is still waiting in the
+queue when the target reads that result itself is withdrawn, so a
+result fetched during another turn does not come back as a stale
+"finished" notice. So that this text is written for the asker and not as a note to
 self, every wake turn under such a call carries, beside the usual
 "fetch the result" frame, where its answer goes:
 

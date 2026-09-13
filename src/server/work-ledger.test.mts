@@ -25,6 +25,8 @@ import {
   onWorkFinished,
   onWorkFollowUp,
   openChainMembers,
+  WAKE_WITHDRAWN,
+  wakeAnswersFor,
   chainRootOf,
   openWork,
   pendingWakesFor,
@@ -380,7 +382,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   await delay(60);
   wakeTurn('S4', 'all four assembled');
   await delay(60);
-  check('7b exactly one follow-up, with the last wake turn\'s text', followUps.length === 1 && followUps[0]?.text === 'all four assembled', JSON.stringify(followUps.map((f) => f.text)));
+  check('7b exactly one follow-up, carrying every wake answer in order', followUps.length === 1 && followUps[0]?.text === 'noted S1\n\nnoted S2\n\nnoted S3\n\nall four assembled', JSON.stringify(followUps.map((f) => f.text)));
 }
 // 7c. a child started in the wake turn belongs to the chain
 {
@@ -402,7 +404,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   await delay(60);
   wakeTurn('S5', 'now really done');
   await delay(60);
-  check('7c the follow-up comes after S5, once', followUps.length === 1 && followUps[0]?.text === 'now really done');
+  check('7c the follow-up comes after S5, once, with both wake answers', followUps.length === 1 && followUps[0]?.text === 'started one more\n\nnow really done', JSON.stringify(followUps.map((f) => f.text)));
 }
 // 7d. no follow-up: root failed / dequeued / asked by a person / no requester
 {
@@ -528,7 +530,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   check('7g naxon nothing yet (lisa\'s follow-up wake has not run)', followUps.length === 0);
   wakeTurn('Y', 'final answer for naxon', 'wake-Y-fu1');
   await delay(60);
-  check('7g …then naxon exactly once, with lisa\'s final text', followUps.length === 1 && followUps[0]?.text === 'final answer for naxon', JSON.stringify(followUps));
+  check('7g …then naxon exactly once, with lisa\'s wake answers (not the sub\'s internal one)', followUps.length === 1 && followUps[0]?.text === 'noted, Y has a grandchild\n\nfinal answer for naxon', JSON.stringify(followUps.map((f) => f.text)));
 }
 // 7h. a second cycle after the first follow-up
 {
@@ -635,6 +637,96 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   check('7k note while the root is still running', forwardingNoteFor(getWork('S1')!)?.includes('forwarded to agent naxon') === true);
   failWork('X', 'model error');
   check('7k no note once the root failed', forwardingNoteFor(getWork('S1')!) === undefined);
+}
+
+// 7l. the grace lost its race: a wake already queued behind the requester's turn is withdrawn when the result is read
+{
+  _resetWorkLedger();
+  wireFollowUps();
+  const A = 'lisa';
+  const S = 'main';
+  // lisa's answering turn holds the lock (the root, naxon's call)
+  const release = await acquireSessionLock(A, S, { priority: 'agent', turnId: 'X', workId: 'X' });
+  rootCall();
+  sub('S1', 'X');
+  sub('S2', 'X');
+  // the dispatcher of this test: opens the wake item and queues it in the real lock, like the server does
+  const queuedWakes: Array<Promise<unknown>> = [];
+  configureWorkWake({
+    graceMs: 30,
+    dispatchWakeTurn: async (w) => {
+      wakes.push(w);
+      openWork({ id: w.id ?? `wake-${w.ref}`, origin: { kind: 'wake', about: 'subagent', ref: w.ref }, target: { agent: w.agent, session: w.session }, text: w.text, waiting: false, wake: 'never' });
+      queuedWakes.push(acquireSessionLock(w.agent, w.session, { priority: 'agent', turnId: `t-${w.ref}`, workId: w.id ?? `wake-${w.ref}` }).catch((e: unknown) => e));
+    },
+    dispatchFollowUpMessage: async (m) => {
+      followUps.push({ from: `${m.from.agent}/${m.from.session}`, to: `${m.to.agent}/${m.to.session}`, callId: m.callId, text: m.text, prefix: m.prefix, id: m.id });
+    },
+  });
+  finishWork('S1', ok('r1'));
+  finishWork('S2', ok('r2'));
+  await delay(60);
+  check('7l both wakes were dispatched and wait behind the running turn', wakes.filter((w) => w.ref === 'S1' || w.ref === 'S2').length === 2 && listSessionWaiters(A, S).length === 2);
+  // lisa, still in her answering turn, fetches S2 herself
+  markFetched('S2');
+  await delay(5);
+  check('7l the queued wake for S2 is withdrawn: out of the lock queue, item dequeued with the reason', listSessionWaiters(A, S).length === 1 && getWork('wake-S2')?.state === 'dequeued' && getWork('wake-S2')?.error === WAKE_WITHDRAWN, JSON.stringify(getWork('wake-S2')));
+  check('7l its lock waiter was rejected (DequeuedError), the S1 wake still waits', (await queuedWakes[1]) instanceof DequeuedError && listSessionWaiters(A, S)[0]?.workId === 'wake-S1');
+  // the root answers, the S1 wake runs and ends: the tree is closed (S2's wake is withdrawn, not open)
+  finishWork('X', ok('working on it'));
+  release();
+  await queuedWakes[0];
+  markRunning('wake-S1');
+  finishWork('wake-S1', ok('both results assembled: r1 + r2'));
+  await delay(60);
+  check('7l exactly one follow-up, with the assembled text — the withdrawn wake never spoke', followUps.length === 1 && followUps[0]?.text === 'both results assembled: r1 + r2', JSON.stringify(followUps));
+  // a wake that is already RUNNING is left alone
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall();
+  sub('S3', 'X');
+  finishWork('X', ok('w'));
+  finishWork('S3', ok('r3'));
+  await delay(60);
+  openWork({ id: 'wake-S3', origin: { kind: 'wake', about: 'subagent', ref: 'S3' }, target: LISA, text: 'wake', waiting: false, wake: 'never' });
+  markRunning('wake-S3');
+  markFetched('S3');
+  check('7l a running wake is not touched by a late fetch', getWork('wake-S3')?.state === 'running');
+}
+// 7m. the follow-up carries every wake answer the target wrote for this work, oldest first
+{
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall();
+  sub('S1', 'X');
+  sub('S2', 'X');
+  finishWork('X', ok('working'));
+  finishWork('S1', ok('r1'));
+  await delay(60);
+  wakeTurn('S1', 'Here are the three points: A, B, C.');
+  finishWork('S2', ok('r2'));
+  await delay(60);
+  wakeTurn('S2', 'Already handled in my previous turn — duplicate notice.');
+  await delay(60);
+  check('7m one follow-up with both answers, in order', followUps.length === 1 && followUps[0]?.text === 'Here are the three points: A, B, C.\n\nAlready handled in my previous turn — duplicate notice.', JSON.stringify(followUps.map((f) => f.text)));
+  check('7m wakeAnswersFor lists them', wakeAnswersFor(getWork('X')!).length === 2);
+  // the sub's own wake turns (in its session) are not part of lisa's answer
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall();
+  sub('Y', 'X');
+  finishWork('X', ok('delegated'));
+  sub('Z', 'Y', { agent: 'lisa', session: 'sub-Z' }, { agent: 'lisa', session: 'sub-Y' });
+  finishWork('Y', ok('started'));
+  await delay(60);
+  wakeTurn('Y', 'noted');
+  finishWork('Z', ok('gz'));
+  await delay(60);
+  wakeTurn('Z', 'sub-internal assembly', 'wake-Z', { agent: 'lisa', session: 'sub-Y' });
+  await delay(60);
+  wakeTurn('Y', 'final for naxon', 'wake-Y-fu1');
+  await delay(60);
+  check('7m naxon\'s follow-up = lisa\'s own wake answers only (noted + final), not the sub\'s internal one', followUps.length === 1 && followUps[0]?.text === 'noted\n\nfinal for naxon', JSON.stringify(followUps.map((f) => f.text)));
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

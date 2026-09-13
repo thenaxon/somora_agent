@@ -221,6 +221,8 @@ export function failWork(id: string, error: string, opts: FinishOptions = {}): W
   return it;
 }
 
+export const WAKE_WITHDRAWN = 'withdrawn: the requester read the result before the wake turn started';
+
 export function markFetched(id: string): void {
   const it = items.get(id);
   if (!it) return;
@@ -231,6 +233,28 @@ export function markFetched(id: string): void {
     clearTimeout(t);
     pendingWakes.delete(id);
   }
+  withdrawQueuedWake(id);
+}
+
+/**
+ * The grace lost its race: the wake was dispatched 0.6 s before the
+ * requester fetched the result, waited behind its running turn, and
+ * then told it what it already knew — twice in Rene's hand test
+ * (naxon's [agent answer], lisa's second [subagent attention],
+ * 2026-09-13). A wake that has not started yet is taken out of the
+ * queue when the result is read; one already running is left alone.
+ */
+function withdrawQueuedWake(ref: string): void {
+  const w = items.get(`wake-${ref}`);
+  if (!w || w.state !== 'queued') return;
+  const outcome = dequeueSessionWork(w.target.agent, w.target.session, w.id);
+  if (outcome.status !== 'removed') return;
+  w.state = 'dequeued';
+  w.error = WAKE_WITHDRAWN;
+  w.finishedAt = Date.now();
+  delete w.text;
+  logger.info({ msg: 'work.wake_withdrawn', wake: w.id, ref, target_agent: w.target.agent, target_session: w.target.session });
+  for (const l of finishListeners) l(w);
 }
 
 export function setWaiting(id: string, waiting: boolean): void {
@@ -661,6 +685,29 @@ export function openChainMembers(rootId: string): WorkItem[] {
   return out;
 }
 
+/** The final texts of the target's own wake turns for a root's work,
+ *  oldest first, empty and repeated ones dropped. */
+export function wakeAnswersFor(root: WorkItem): string[] {
+  const since = root.finishedAt ?? 0;
+  const turns = [...items.values()]
+    .filter(
+      (w) =>
+        w.origin.kind === 'wake' &&
+        w.state === 'done' &&
+        (w.finishedAt ?? 0) >= since &&
+        w.target.agent === root.target.agent &&
+        w.target.session === root.target.session &&
+        inTreeOf(w, root.id),
+    )
+    .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0));
+  const out: string[] = [];
+  for (const w of turns) {
+    const t = (w.result?.finalText ?? '').trim();
+    if (t && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
 export const FOLLOW_UP_PREFIX_A2A = (callId: string): string =>
   `[Follow-up on the question you sent earlier (call_id "${callId}"): the work it started has finished. ` +
   'Below is its result — treat it as the answer to that question. Continue whatever depended on it; ' +
@@ -705,7 +752,12 @@ function maybeFollowUp(wake: WorkItem): void {
     );
     if (self) return skip('self_reported');
   }
-  const body = wake.state === 'done' ? (wake.result?.finalText ?? '').trim() : '';
+  // What the target wrote about this work: the answers of ALL its wake
+  // turns in the tree since the root finished, in order — not only the
+  // last one. In Rene's hand test the three points stood in the first
+  // wake turn and the last one said "duplicate"; the asker got the
+  // duplicate.
+  const body = wakeAnswersFor(root).join('\n\n');
   const failed = wake.state === 'failed' ? (wake.error ?? 'unknown error') : undefined;
   if (!body && !failed) return skip('empty');
   const scheduledAt = Date.now();
@@ -716,7 +768,11 @@ function maybeFollowUp(wake: WorkItem): void {
     if (!fresh) return;
     if ((fresh.lastFetchedAt ?? 0) >= scheduledAt) return skip('fetched_meanwhile');
     logger.info({ msg: 'work.follow_up', root: root.id, wake: wake.id, kind: root.origin.kind, n, ...(failed ? { failed } : {}) });
-    const text = failed ? `The work started for this finished, but the turn reporting it failed: ${failed}` : body;
+    const text = failed
+      ? body
+        ? `${body}\n\n(The last turn reporting on this work failed: ${failed})`
+        : `The work started for this finished, but the turn reporting it failed: ${failed}`
+      : body;
     if (fresh.result) fresh.result = { ...fresh.result, follow_ups: [...(fresh.result.follow_ups ?? []), text] };
     if ('voiceCall' in r) {
       for (const l of followUpListeners) l(fresh, { text, ...(failed ? { failed } : {}) });
