@@ -492,12 +492,52 @@ function head(it: WorkItem, n: number): string {
 }
 
 /**
+ * Rene's hand test, 2026-09-13: the follow-up reached naxon on time and
+ * carried lisa's wake-turn answer — "leaving it, as ordered". Lisa did
+ * not know her answer was going anywhere. The wake turn's frame now
+ * says where it goes, so the model writes it for the receiver.
+ */
+export function forwardingNoteFor(it: WorkItem): string | undefined {
+  const root = chainRootOf(it);
+  // A quick sub finishes while the root is still answering: the wake is
+  // dispatched then and waits behind the root, so the note has to be
+  // written while the root still runs (scratch N1, 2026-09-13). Only a
+  // root that already ended without `done` gets none — no follow-up
+  // will come.
+  if (!root || (root.state !== 'done' && root.state !== 'running' && root.state !== 'queued')) return undefined;
+  const r = root.requester;
+  if (!r || 'human' in r) return undefined;
+  const when = 'once all the work you started for it has finished';
+  if ('voiceCall' in r) {
+    return `What you answer in this turn is read out to the caller as the follow-up to their earlier question ${when} — write it as that answer, with the results.`;
+  }
+  if (root.origin.kind === 'agent') {
+    return (
+      `What you answer in this turn is forwarded to agent ${r.agent} as the follow-up to the question they sent ` +
+      `(call_id "${root.id}") ${when} — write it as the answer to that question, with the results, not as a note to yourself.`
+    );
+  }
+  return (
+    `What you answer in this turn is forwarded to your parent (${r.agent}, session ${r.session}) as the follow-up to ` +
+    `task '${root.id}' ${when} — write it as the report, with the results.`
+  );
+}
+
+/**
  * The wake per finished kind: the record line (what happened) and the
- * frame beside it (what to do). The wording is the one each wake had
+ * frame beside it (what to do). Beside it, when the wake belongs to
+ * work someone else asked for, where the answer of this turn goes
+ * (forwardingNoteFor). The wording is the one each wake had
  * before the ledger (ask-calls.ts, async-tasks.ts, 2026-09-12/07),
  * split in two since 2026-09-13 (turn-framing.ts).
  */
 export function wakeTextFor(it: WorkItem): { text: string; prefix: string } {
+  const base = wakeTextBase(it);
+  const note = forwardingNoteFor(it);
+  return note ? { text: base.text, prefix: base.prefix ? `${base.prefix}\n\n${note}` : note } : base;
+}
+
+function wakeTextBase(it: WorkItem): { text: string; prefix: string } {
   if (it.wakeText) return { text: it.wakeText, prefix: it.wakePrefix ?? '' };
   if (it.state === 'dequeued') {
     return it.origin.kind === 'agent'
@@ -708,7 +748,8 @@ function maybeFollowUp(wake: WorkItem): void {
           `has a follow-up: the work it started has finished. It begins: "${head}"`,
         prefix:
           `Fetch it with subagent_result({ task_id: "${root.id}" }) — the follow-up is in result.follow_ups — ` +
-          'then continue whatever depended on it. If nothing does, a short acknowledgement to the user is enough.',
+          'then continue whatever depended on it. If nothing does, a short acknowledgement to the user is enough.' +
+          (forwardingNoteFor(fresh) ? `\n\n${forwardingNoteFor(fresh)}` : ''),
         about,
         ref: root.id,
         depth: fresh.parentDepth ?? 0,

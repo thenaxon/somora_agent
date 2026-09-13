@@ -17,6 +17,7 @@ import {
   failWork,
   finishWork,
   FOLLOW_UP_PREFIX_A2A,
+  forwardingNoteFor,
   getWork,
   listWork,
   markFetched,
@@ -583,6 +584,57 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   wakeTurn('S1', 'x');
   await delay(60);
   check('7j nothing', followUps.length === 0);
+}
+
+// 7k. the wake turn is told where its answer goes (Rene's hand test: lisa wrote "leaving it" and naxon got that)
+{
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall();
+  sub('S1', 'X');
+  finishWork('X', ok('working'));
+  finishWork('S1', ok('r1'));
+  await delay(60);
+  const w = wakes.find((x) => x.ref === 'S1');
+  check('7k the sub\'s wake frame says the answer is forwarded to naxon for call X', w?.prefix.includes('forwarded to agent naxon') === true && w?.prefix.includes('call_id "X"') === true && w?.prefix.includes('subagent_result') === true, w?.prefix);
+  check('7k the record line is untouched', w?.text.startsWith('[subagent attention]') === true && !w?.text.includes('forwarded'));
+  // a wake under a person's turn carries no such note
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  markRunning('H');
+  sub('S2', 'H');
+  finishWork('H', ok('a'));
+  finishWork('S2', ok('r2'));
+  await delay(60);
+  const w2 = wakes.find((x) => x.ref === 'S2');
+  check('7k no note under a person\'s turn', w2 !== undefined && !w2.prefix.includes('forwarded'), w2?.prefix);
+  // depth 3: the sub's own wake (about the grandchild) says its answer goes to lisa for task Y;
+  // lisa's follow-up wake about Y says its answer goes to naxon.
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall();
+  sub('Y', 'X');
+  finishWork('X', ok('delegated'));
+  sub('Z', 'Y', { agent: 'lisa', session: 'sub-Z' }, { agent: 'lisa', session: 'sub-Y' });
+  finishWork('Y', ok('started a grandchild'));
+  await delay(60);
+  wakeTurn('Y', 'noted');
+  finishWork('Z', ok('grandchild result'));
+  await delay(60);
+  const wz = wakes.find((x) => x.ref === 'Z');
+  check('7k the sub\'s wake about its grandchild: answer goes to the parent for task Y', wz?.prefix.includes("forwarded to your parent (lisa, session main) as the follow-up to task 'Y'") === true, wz?.prefix);
+  wakeTurn('Z', 'sub assembled', 'wake-Z', { agent: 'lisa', session: 'sub-Y' });
+  await delay(60);
+  const fu = wakes.find((x) => x.id === 'wake-Y-fu1');
+  check('7k lisa\'s follow-up wake about Y: answer goes to naxon for call X', fu?.prefix.includes('forwarded to agent naxon') === true && fu?.prefix.includes('call_id "X"') === true, fu?.prefix);
+  check('7k forwardingNoteFor is undefined for a root without requester', forwardingNoteFor(getWork('X')!) === undefined);
+  // the sub finishes while the root still answers: the note is there already; a failed root gets none
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall();
+  sub('S1', 'X');
+  check('7k note while the root is still running', forwardingNoteFor(getWork('S1')!)?.includes('forwarded to agent naxon') === true);
+  failWork('X', 'model error');
+  check('7k no note once the root failed', forwardingNoteFor(getWork('S1')!) === undefined);
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

@@ -388,7 +388,15 @@ made, and whatever those start in turn form a tree under the original
 call. When the last member of that tree has finished and the wake turn
 about it has run in the target's session, the asker hears about it
 exactly once — a follow-up carrying the final text of that last wake
-turn. Four subs are four wakes in the target's session and one
+turn. So that this text is written for the asker and not as a note to
+self, every wake turn under such a call carries, beside the usual
+"fetch the result" frame, where its answer goes:
+
+```text
+What you answer in this turn is forwarded to agent <asker> as the follow-up to the question they sent (call_id "<id>") once all the work you started for it has finished — write it as the answer to that question, with the results, not as a note to yourself.
+```
+
+Four subs are four wakes in the target's session and one
 follow-up to the asker, after the fourth. Work started inside a wake
 turn extends the tree, and grandchildren count. The follow-up is an
 ordinary message from the target agent — `origin.kind: "agent"` with
@@ -508,7 +516,11 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   Its frame: fetch it with `subagent_result({ task_id })` — the
   follow-up is in `result.follow_ups` — then continue whatever
   depended on it; if nothing does, a short acknowledgement to the user
-  is enough. The text is the final text of that last wake turn;
+  is enough. The sub's own wake turns (about its subs) carry the
+  matching note — "What you answer in this turn is forwarded to your
+  parent (<agent>, session <session>) as the follow-up to task
+  '<task_id>' …" — so the sub writes them as its report. The text is
+  the final text of that last wake turn;
   `result.follow_ups` (also under `GET /spawn-result`) keeps every
   follow-up of a task, oldest first. A parent hears once, after the
   whole tree, not once per level, and work started inside a wake turn
