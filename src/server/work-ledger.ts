@@ -67,6 +67,8 @@ export interface WorkItem {
   /** Text a finisher hands over for the wake, when the default per-kind
    *  template does not know the item's domain (video). */
   wakeText?: string;
+  /** Its frame — what to do about it — beside the text (turn-framing.ts). */
+  wakePrefix?: string;
   /** Media to attach to the wake turn (a finished video). */
   wakeMediaIds?: string[];
 }
@@ -150,6 +152,7 @@ export function markRunning(id: string, turnId?: string): void {
 
 export interface FinishOptions {
   wakeText?: string;
+  wakePrefix?: string;
   wakeMediaIds?: string[];
 }
 
@@ -164,6 +167,7 @@ export function finishWork(id: string, result: ChatTurnResult, opts: FinishOptio
   if (result.error) it.error = result.error;
   it.finishedAt = Date.now();
   if (opts.wakeText) it.wakeText = opts.wakeText;
+  if (opts.wakePrefix) it.wakePrefix = opts.wakePrefix;
   if (opts.wakeMediaIds && opts.wakeMediaIds.length > 0) it.wakeMediaIds = opts.wakeMediaIds;
   delete it.text;
   delete it.attachments;
@@ -179,6 +183,7 @@ export function failWork(id: string, error: string, opts: FinishOptions = {}): W
   it.error = error;
   it.finishedAt = Date.now();
   if (opts.wakeText) it.wakeText = opts.wakeText;
+  if (opts.wakePrefix) it.wakePrefix = opts.wakePrefix;
   delete it.text;
   delete it.attachments;
   settle(it);
@@ -365,7 +370,10 @@ export function dequeueWork(id: string, by: DequeueBy): DequeueWorkOutcome {
 export interface WakeDispatch {
   agent: string;
   session: string;
+  /** The record line: what happened. */
   text: string;
+  /** What to do about it — beside the text (turn-framing.ts). */
+  prefix: string;
   about: 'a2a' | 'subagent' | 'job';
   ref: string;
   depth: number;
@@ -432,28 +440,40 @@ function head(it: WorkItem, n: number): string {
   return (it.result?.finalText ?? it.error ?? '').replace(/\s+/g, ' ').slice(0, n);
 }
 
-/** The wake text per finished kind. The wording is the one each wake had
- *  before the ledger (ask-calls.ts, async-tasks.ts, 2026-09-12/07). */
-export function wakeTextFor(it: WorkItem): string {
-  if (it.wakeText) return it.wakeText;
+/**
+ * The wake per finished kind: the record line (what happened) and the
+ * frame beside it (what to do). The wording is the one each wake had
+ * before the ledger (ask-calls.ts, async-tasks.ts, 2026-09-12/07),
+ * split in two since 2026-09-13 (turn-framing.ts).
+ */
+export function wakeTextFor(it: WorkItem): { text: string; prefix: string } {
+  if (it.wakeText) return { text: it.wakeText, prefix: it.wakePrefix ?? '' };
   if (it.state === 'dequeued') {
     return it.origin.kind === 'agent'
-      ? `[agent answer] The question you sent to ${it.target.agent} (session '${it.target.session}') was removed ` +
-          `from the queue by the user before ${it.target.agent} saw it — it will not be answered ` +
-          `(call_id "${it.id}"). Ask again only if the user still wants it; otherwise tell your human in one line.`
-      : `[subagent attention] Task '${it.id}' (sub-agent '${it.target.agent}', session '${it.target.session}') was ` +
-          `removed from the queue by the user before it started — there is no result. Spawn it again only if ` +
-          `the user still wants it; otherwise tell your human in one line.`;
+      ? {
+          text:
+            `[agent answer] The question you sent to ${it.target.agent} (session '${it.target.session}') was removed ` +
+            `from the queue by the user before ${it.target.agent} saw it — it will not be answered (call_id "${it.id}").`,
+          prefix: 'Ask again only if the user still wants it; otherwise tell your human in one line.',
+        }
+      : {
+          text:
+            `[subagent attention] Task '${it.id}' (sub-agent '${it.target.agent}', session '${it.target.session}') was ` +
+            `removed from the queue by the user before it started — there is no result.`,
+          prefix: 'Spawn it again only if the user still wants it; otherwise tell your human in one line.',
+        };
   }
   if (it.origin.kind === 'agent') {
     const h = head(it, 200);
-    return (
-      `[agent answer] ${it.target.agent} has answered the question you sent to session ` +
-      `'${it.target.session}' — you had stopped waiting for it.` +
-      (h ? ` It begins: "${h}"` : '') +
-      `\nRead the whole answer with agent_ask_result({ call_id: "${it.id}" }), then do what ` +
-      `depended on it. If nothing does, tell your human in one line what came back.`
-    );
+    return {
+      text:
+        `[agent answer] ${it.target.agent} has answered the question you sent to session ` +
+        `'${it.target.session}' — you had stopped waiting for it.` +
+        (h ? ` It begins: "${h}"` : ''),
+      prefix:
+        `Read the whole answer with agent_ask_result({ call_id: "${it.id}" }), then do what ` +
+        'depended on it. If nothing does, tell your human in one line what came back.',
+    };
   }
   const h = head(it, 160);
   const media = it.result?.media ?? [];
@@ -467,17 +487,19 @@ export function wakeTextFor(it: WorkItem): string {
       (it.result?.rounds !== undefined ? `, ${it.result.rounds} rounds` : '') +
       '.'
     : '';
-  return (
-    `[subagent attention] Task '${it.id}' (sub-agent '${it.target.agent}', session ` +
-    `'${it.target.session}') finished with state '${it.state}'.` +
-    outcomeLine +
-    (h ? ` First line: "${h}"` : '') +
-    filesLine +
-    mediaLine +
-    `\nFetch the full answer with subagent_result({ task_id: "${it.id}" }), then continue ` +
-    `whatever depended on it (validate, report to the user, or chain the next step). If nothing ` +
-    `depends on it, a short acknowledgement to the user is enough.`
-  );
+  return {
+    text:
+      `[subagent attention] Task '${it.id}' (sub-agent '${it.target.agent}', session ` +
+      `'${it.target.session}') finished with state '${it.state}'.` +
+      outcomeLine +
+      (h ? ` First line: "${h}"` : '') +
+      filesLine +
+      mediaLine,
+    prefix:
+      `Fetch the full answer with subagent_result({ task_id: "${it.id}" }), then continue ` +
+      'whatever depended on it (validate, report to the user, or chain the next step). If nothing ' +
+      'depends on it, a short acknowledgement to the user is enough.',
+  };
 }
 
 /**
@@ -502,11 +524,13 @@ function scheduleWake(it: WorkItem): void {
     const fresh = items.get(it.id);
     if (!fresh || fresh.resultFetched) return;
     logger.info({ msg: 'work.wake', id: it.id, about, requester_agent: r.agent, requester_session: r.session, state: fresh.state });
+    const wake = wakeTextFor(fresh);
     void deps
       .dispatchWakeTurn({
         agent: r.agent,
         session: r.session,
-        text: wakeTextFor(fresh),
+        text: wake.text,
+        prefix: wake.prefix,
         about,
         ref: it.id,
         depth: fresh.parentDepth ?? 0,

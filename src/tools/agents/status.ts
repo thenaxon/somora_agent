@@ -36,7 +36,7 @@ async function fetchStatusViaHttp(task_id: string): Promise<AsyncTaskEntry | nul
   return (await res.json()) as AsyncTaskEntry;
 }
 
-async function fetchResultViaHttp(
+export async function fetchResultViaHttp(
   task_id: string,
   opts: {
     wait_until_done?: boolean;

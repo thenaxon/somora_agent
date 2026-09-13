@@ -169,6 +169,8 @@ export interface ServiceDeps {
     agent: string;
     session: string;
     text: string;
+    /** What to do about it — beside the text (turn-framing.ts). */
+    prefix: string;
     /** Which window came back, and why the agent is woken. */
     viewId: string;
     cause: 'handoff' | 'activity';
@@ -1171,7 +1173,7 @@ export class BrowserService {
       // Whom to wake: the requesting agent+session when a handoff was
       // pending; otherwise — only if the human actually did something —
       // the session of the last tab used IN THIS WINDOW (Rene 2026-09-10).
-      let wake: { agent: string; session: string; text: string; viewId: string; cause: 'handoff' | 'activity'; handoffId?: string } | null = null;
+      let wake: { agent: string; session: string; text: string; prefix: string; viewId: string; cause: 'handoff' | 'activity'; handoffId?: string } | null = null;
       if (handoff) {
         wake = {
           agent: handoff.agent,
@@ -1181,9 +1183,9 @@ export class BrowserService {
           handoffId: handoff.id,
           text:
             `[browser] The user handed browser '${id}' back to you (handoff ${handoff.id}). ` +
-            `Reason you asked for it: ${handoff.reason}. ` +
-            (handoff.resumeNote ? `Your note: ${handoff.resumeNote}. ` : '') +
-            'Take a fresh snapshot before acting — the page may have changed.',
+            `Reason you asked for it: ${handoff.reason}.` +
+            (handoff.resumeNote ? ` Your note: ${handoff.resumeNote}.` : ''),
+          prefix: 'Take a fresh snapshot before acting — the page may have changed while the user had it.',
         };
       } else if (touched) {
         const last = this.lastAgentTab(b, view.agent);
@@ -1193,9 +1195,8 @@ export class BrowserService {
             session: last.session,
             viewId: id,
             cause: 'activity',
-            text:
-              `[browser] The user took over browser '${id}', did something there (navigation, clicks or typing) and handed it back to you. ` +
-              'If you still have work in this browser, take a fresh snapshot before acting — the page may have changed. Otherwise just acknowledge briefly.',
+            text: `[browser] The user took over browser '${id}', did something there (navigation, clicks or typing) and handed it back to you.`,
+            prefix: 'If you still have work in this browser, take a fresh snapshot before acting — the page may have changed. Otherwise just acknowledge briefly.',
           };
         }
       }

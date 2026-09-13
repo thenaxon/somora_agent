@@ -192,9 +192,14 @@ buttons that matter:
   window, so the agent can use it afterwards.
 - **Hand back** — hands control back. If the agent had asked for
   you (`request_handoff`), it is woken once in the session it asked
-  from and told to take a fresh snapshot. If you took over on your own
+  from: `[browser] The user handed browser '<view>' back to you
+  (handoff <id>). Reason you asked for it: …` plus its own resume
+  note, and the advice to take a fresh snapshot first accompanies the
+  turn beside that text. If you took over on your own
   and did something (navigated, clicked, typed), the owner of this
-  window is woken, in the session of the last tab it used here.
+  window is woken, in the session of the last tab it used here:
+  `[browser] The user took over browser '<view>', did something there
+  (navigation, clicks or typing) and handed it back to you.`
   The window you worked in decides who is woken, never the busiest
   agent on the process. Looking and handing back unchanged wakes nobody. The wake shows up
   in the chat as a centered *browser · <agent> · handed back* divider
@@ -226,8 +231,12 @@ The path is the window id. A bare browser id still works while only one
 agent has a window on that process.
 
 Handing back schedules one wake for the requesting agent in the session it
-asked from (idempotent per handoff id) with the reason and its own
-resume note; the wake tells it to take a fresh snapshot first. A pending
+asked from (idempotent per handoff id). The wake's text records the
+hand-back with the reason and the agent's own resume note; the
+instruction to take a fresh snapshot before acting, because the page
+may have changed while the user had it, is the turn's frame beside
+that text (the same per-turn field that carries the memory-recall
+block). A pending
 handoff survives a server restart. It belongs to one window: another
 agent on the same profile neither sees the request nor the hand-back.
 

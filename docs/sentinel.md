@@ -49,8 +49,15 @@ The agent has access to one tool: `sentinel`. Action `create` shape:
 
 When the trigger fires at 08:00, the agent receives a user-message turn
 in session `morning-routine` (auto-created with timestamp prefix if
-not existing). The body is the
-prompt above, prefixed with a structured **evidence block**:
+not existing). The text of that turn is exactly the prompt above:
+
+```text
+Check inbox via the gog skill, group by topic, tell me what's important today.
+```
+
+Beside it — in the turn's frame, the same per-turn field that carries
+the memory-recall block, never in the stored text — the model sees a
+structured **evidence block**:
 
 ```text
 [Sentinel trigger fired]
@@ -60,15 +67,17 @@ created_by: <your-agent>
 source: time (daily 08:00)
 fired_at: 2026-05-18T08:00:00.000Z
 user_intent: Check inbox and tell me what's important today
-
----
-
-Check inbox via the gog skill, group by topic, tell me what's important today.
+The prompt below is what this trigger asks of you.
 ```
 
-The agent reads the header, understands it was woken (not user-asked),
+A catch-up fire adds `mode: catch-up (server was down at scheduled fire
+time)`, a trigger with a cooldown adds `policy: cooldown <n>s`. The
+agent reads the block, understands it was woken (not user-asked),
 loads its skills, does the work, writes its summary as a normal chat
 message. You see it next time you open that agent in the web/mobile UI.
+Because the stored text is the prompt alone, that is what the agent's
+memory and recall are built from; the evidence stays scaffolding for
+the one turn.
 
 ## Listing, pausing, deleting
 
@@ -240,16 +249,21 @@ own session, in-process, through the same entry every other turn takes
 ends it like any other. A fire a person removes from that queue before
 it starts is recorded in the trigger's history as `skipped` with the
 reason `removed from the queue by the user`. The agent's session JSONL records it exactly
-like a real user message, with `origin.kind: "sentinel"` naming the
-trigger and the fire. From the agent's perspective:
+like a real user message: the text is the trigger's `dispatch.prompt`,
+`origin.kind: "sentinel"` names the trigger (`triggerId`,
+`triggerName`) and the fire (`taskId`), and the evidence block sits in
+the row's `ephemeral` field beside the text. From the agent's
+perspective:
 
-- A turn arrives with the structured evidence block at the top.
+- A turn arrives whose text is the prompt, with the structured
+  evidence block beside it.
 - It can use any skill it has access to (`gog`, `gh`, `web_fetch`, …).
 - It writes its response. The response is a normal assistant message
   in the session, visible next time you open the chat.
 - The chat history mixes sentinel-triggered turns and your direct
-  questions seamlessly. The evidence-block prefix is what
-  distinguishes them.
+  questions seamlessly. The `origin` on the row — and the evidence
+  block the model sees — is what distinguishes them; clients draw a
+  sentinel turn as a divider, not a bubble.
 
 ## Comparison with skills
 

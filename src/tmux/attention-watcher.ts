@@ -57,15 +57,18 @@ export function configureTmuxAttention(args: {
  *  live in the TUI footer, 50 lines is generous. */
 const CAPTURE_LINES = 50;
 
-function wakePrompt(name: string, kind: string): string {
-  return (
-    `[tmux attention] Session '${name}' (${kind}) became ready — it was running and is now idle, ` +
-    `which means it finished or is waiting for input (e.g. a permission prompt). You started this ` +
-    `session earlier and your last look predates this. Inspect it now:\n` +
-    `1. Use the tmux tool (action: capture, name: "${name}") to read the output.\n` +
-    `2. Decide: reply into the session, handle a prompt, report the result to the user, or wrap up.\n` +
-    `Do not blindly send a new prompt — read first.`
-  );
+/** The record line and, beside it, what to do (turn-framing.ts). */
+function wakePrompt(name: string, kind: string): { text: string; prefix: string } {
+  return {
+    text: `[tmux attention] Session '${name}' (${kind}) became ready.`,
+    prefix:
+      `The tmux session named below was running and is now idle, which means it finished or is ` +
+      `waiting for input (e.g. a permission prompt). You started it earlier and your last look ` +
+      `predates this. Inspect it now:\n` +
+      `1. Use the tmux tool (action: capture, name: "${name}") to read the output.\n` +
+      `2. Decide: reply into the session, handle a prompt, report the result to the user, or wrap up.\n` +
+      `Do not blindly send a new prompt — read first.`,
+  };
 }
 
 async function tmuxSessionExists(name: string): Promise<boolean> {
@@ -222,10 +225,12 @@ export class TmuxAttentionWatcher {
     }
     // Lock, abort registration, turn id and the SSE broadcast are
     // startTurn's; the wake only says who, where and what.
+    const wake = wakePrompt(origin.name, origin.kind ?? 'shell');
     void startTurn({
       agent: origin.agent,
       session,
-      text: wakePrompt(origin.name, origin.kind ?? 'shell'),
+      text: wake.text,
+      turnPrefix: wake.prefix,
       origin: { kind: 'tmux', tmuxSession: origin.name, ...(origin.kind ? { tmuxKind: origin.kind } : {}) },
       deps,
       // The lock wait can be long — the origin's own turn typically

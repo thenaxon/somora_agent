@@ -37,6 +37,7 @@ import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { acquireSessionLock, DequeuedError } from './session-queue.ts';
 import { originCallId, originKind, originLabel, originToLegacy, type TurnOrigin } from './turn-origin-kind.ts';
 import { failWork, finishWork, markRunning } from './work-ledger.ts';
+import { composeTurnPrefix } from './turn-framing.ts';
 
 export interface StartTurnDeps {
   chatTurnDeps: ChatTurnResolveDeps;
@@ -110,6 +111,7 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
   const turnId = args.turnId ?? randomUUID();
   const legacy = originToLegacy(origin);
   const kind = originKind(origin);
+  const turnPrefix = composeTurnPrefix(origin, args.turnPrefix);
 
   logger.info({ msg: 'turn.dispatch', turnId, agent, session, origin: kind, textLen: text.length });
   const publishSse = resolvePublish(agent, session, args.publish);
@@ -161,7 +163,9 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
         ...legacy,
         signal: abort.signal,
         ...(publishSse ? { publishSse } : {}),
-        ...(args.turnPrefix ? { turnPrefix: args.turnPrefix } : {}),
+        // Provenance first (the A2A header), then the caller's frame —
+        // beside the text, never in it (turn-framing.ts).
+        ...(turnPrefix ? { turnPrefix } : {}),
         ...(args.attachments && args.attachments.length > 0 ? { attachments: args.attachments } : {}),
         ...(args.modelOverride ? { modelOverride: args.modelOverride } : {}),
         ...(args.agentLoopOverride ? { agentLoopOverride: args.agentLoopOverride } : {}),

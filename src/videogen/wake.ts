@@ -35,22 +35,25 @@ export function configureVideoWake(args: {
   if (args.publishEvent) injectedPublish = args.publishEvent;
 }
 
-function wakePrompt(job: VideoJob): string {
+/** The record line and, beside it, what to do (turn-framing.ts). */
+function wakePrompt(job: VideoJob): { text: string; prefix: string } {
   if (job.status === 'failed') {
-    return (
-      `[video] The render you started (${job.modelName}, "${job.prompt.slice(0, 120)}") failed: ` +
-      `${job.error ?? 'no reason given'}.\n` +
-      `Decide whether to retry with different settings or tell the user it did not work. ` +
-      `Do not retry the identical request blindly.`
-    );
+    return {
+      text:
+        `[video] The render you started (${job.modelName}, "${job.prompt.slice(0, 120)}") failed: ` +
+        `${job.error ?? 'no reason given'}.`,
+      prefix:
+        'Decide whether to retry with different settings or tell the user it did not work. ' +
+        'Do not retry the identical request blindly.',
+    };
   }
-  return (
-    `[video] Your render is ready: ${job.path}\n` +
-    `Model ${job.modelName}, prompt "${job.prompt.slice(0, 120)}".\n` +
-    `The user already sees the video in this conversation — you do not need to send it. ` +
-    `Say what it is, and continue whatever you were doing for them. If you want to judge it ` +
-    `yourself, analyze_file on the thumbnail beside it reads as an ordinary image.`
-  );
+  return {
+    text: `[video] Your render is ready: ${job.path}\nModel ${job.modelName}, prompt "${job.prompt.slice(0, 120)}".`,
+    prefix:
+      'The user already sees the video in this conversation — you do not need to send it. ' +
+      'Say what it is, and continue whatever you were doing for them. If you want to judge it ' +
+      'yourself, analyze_file on the thumbnail beside it reads as an ordinary image.',
+  };
 }
 
 /**
@@ -102,8 +105,10 @@ export async function wakeForJob(job: VideoJob): Promise<void> {
     ms: 0,
     ...(job.status === 'completed' ? {} : { error: job.error ?? `render ${job.status}` }),
   };
+  const wake = wakePrompt(job);
   finishWork(job.id, result, {
-    wakeText: wakePrompt(job),
+    wakeText: wake.text,
+    wakePrefix: wake.prefix,
     // Without this the video never reaches the chat: the file was
     // stored minutes before the wake turn begins, so the turn's own time
     // window — which is how media normally finds its bubble — does not

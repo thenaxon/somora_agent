@@ -24,7 +24,6 @@ import {
   type EngineLastSeen,
   capReplayDelta,
 } from './replay.ts';
-import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 import { claudeCliThinkingOptions } from './thinking-params.ts';
 import { buildAnthropicUserContent } from '../multimodal/user-content.ts';
@@ -160,14 +159,15 @@ export const claudeCliEngine: AgentEngine = {
     // (cross-engine catch-up summary).
     //
     // Order in the user-message string:
-    //   [replay-prefix? ][memory-recall? ][from_agent header? ][actual user text]
+    //   [replay-prefix? ][ephemeral: A2A header? + memory-recall? ][actual user text]
+    // (the A2A header travels in ephemeralContext since 2026-09-13 —
+    // src/server/turn-framing.ts — so this adapter adds nothing)
     //
     // claude-agent-sdk has no multi-system-message escape so we can't
     // do "second system message late" like openai-compatible — inline
     // is the structurally correct choice for this engine.
     const memoryBlock = ephemeralContext ? `${ephemeralContext}\n\n` : '';
-    const effectiveUserMessage =
-      replayPrefix + memoryBlock + withFromAgentHeader(userMessage, fromAgent, fromSession);
+    const effectiveUserMessage = replayPrefix + memoryBlock + userMessage;
     // Phase Y.B — when the user attached files to this turn, build the
     // multimodal content array. Image/PDF blocks come first, the
     // composed text block last (replay + memory + user text). Anthropic's

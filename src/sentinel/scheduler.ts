@@ -46,7 +46,7 @@ import {
   utcMidnightAfter,
   isDailyCapResumeDue,
 } from './schedule.ts';
-import { buildFirePrompt } from './dispatcher.ts';
+import { buildFireFrame } from './dispatcher.ts';
 import {
   countFiresToday,
   deleteTrigger,
@@ -391,7 +391,10 @@ export async function fireTrigger(
   }
 
   const taskId = newTaskId();
-  const prompt = buildFirePrompt(trigger, now, opts.catchUp);
+  // The record is the trigger's prompt; the evidence block travels
+  // beside it (turn-framing.ts).
+  const prompt = dispatch.prompt;
+  const frame = buildFireFrame(trigger, now, opts.catchUp);
   registerTask({
     task_id: taskId,
     parent_agent: 'sentinel',
@@ -441,7 +444,8 @@ export async function fireTrigger(
         text: prompt,
         turnId: taskId,
         workId: taskId,
-        origin: { kind: 'sentinel', triggerId: trigger.id, taskId },
+        origin: { kind: 'sentinel', triggerId: trigger.id, taskId, triggerName: trigger.name },
+        turnPrefix: frame,
         deps,
       });
       if (!result) throw new Error('turn did not start');

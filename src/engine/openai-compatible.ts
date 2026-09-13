@@ -404,7 +404,11 @@ export async function buildMessages(
       // A turn that never produced an assistant_message (crash, abort)
       // still has its tool activity replayed, ahead of the next user turn.
       flushToolTurn();
-      const headed = withFromAgentHeader(ev.text, ev.from_agent, ev.from_session);
+      // A turn recorded with an `origin` (2026-09-13 onwards) carries the
+      // header inside its stored ephemeral block; an older one never
+      // stored it anywhere, so it is added here as the engine added it
+      // live back then (src/server/turn-framing.ts).
+      const headed = ev.origin ? ev.text : withFromAgentHeader(ev.text, ev.from_agent, ev.from_session);
       // Memory-recall block (if any) was persisted on the event when
       // this turn was originally sent; reconstruct it here so the
       // byte sequence matches what the backend already cached. This

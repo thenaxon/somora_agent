@@ -36,7 +36,7 @@ export type TurnOrigin =
   | { kind: 'subagent'; parent?: TurnOriginRef; taskId?: string; depth: number }
   /** A sentinel timer fired. `taskId` is the fire's id in the task
    *  registry and in the trigger's history. */
-  | { kind: 'sentinel'; triggerId: string; taskId: string }
+  | { kind: 'sentinel'; triggerId: string; taskId: string; triggerName?: string }
   /** A tmux session the agent started went running → ready. */
   | { kind: 'tmux'; tmuxSession: string; tmuxKind?: string }
   /** The person handed a browser window back to the agent. */

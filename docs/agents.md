@@ -288,8 +288,13 @@ Agents talk to each other with `agent_ask`. The message lands in the
 target's **real** session as a user message, so the target answers with
 its full memory, persona and history, and the exchange stays visible
 there afterwards. The target sees a header
-`[Message from agent <name>, session <slug>]` and answers as it would
-answer you; that answer comes back to the asker as the tool result.
+`[Message from agent <name>, session <slug>]` ahead of the message and
+answers as it would answer you; that answer comes back to the asker as
+the tool result. The header is the turn's frame — the server composes
+it beside the message, in the same per-turn field that carries the
+memory-recall block — so the stored text of the turn is the message
+itself, and that is what the target's memory and recall are built
+from.
 It is request-response, not a message bus: an agent that received a
 question answers by finishing its turn, never by calling `agent_ask`
 back at its caller.
@@ -309,7 +314,10 @@ agent_ask({ agent: "<other-agent>", message: "…", images: ["/abs/path.png"], t
   named slug on the target when it does not exist yet (not `main`, not
   ids, not `sub-…` sessions). `model` pins an alias or `provider/id`
   on the session this call creates; on an existing session it is
-  ignored and the result says so in `session_note`.
+  ignored and the result says so in `session_note`. The target is
+  told, beside its first message in that session, `[Your session
+  '<slug>' was just created by <agent> for this conversation; it runs
+  on model <model>.]` — the stored text is the question.
 - **Pictures.** `images` takes absolute paths. somora uploads them and
   puts them on the target's turn, so a model with vision sees them; a
   target without vision gets the vision worker's description.
@@ -351,8 +359,20 @@ answer is read from the target's session.
 
 An asker that stopped waiting, or never waited, does not have to
 remember to poll. When the answer lands, the asker is woken in the
-session it asked from with an `[agent answer]` turn carrying the first
-lines and the `call_id`. The wake waits `agentLoop.wakeGraceMs`
+session it asked from with an `[agent answer]` turn. Its text is the
+record of what happened:
+
+```text
+[agent answer] <other-agent> has answered the question you sent to session 'main' — you had stopped waiting for it. It begins: "…"
+```
+
+The instruction that goes with it — read the whole answer with
+`agent_ask_result({ call_id })`, then do what depended on it —
+accompanies the turn as its frame, beside the text, so the record
+stays one line. A question a person took out of the target's queue
+wakes the asker the same way (`… was removed from the queue by the
+user before <other-agent> saw it — it will not be answered (call_id
+"…")`). The wake waits `agentLoop.wakeGraceMs`
 (default 3 seconds); reading the result through `agent_ask_result`
 inside that window cancels it, and an asker still on the line never
 gets one. The same wake, with the same grace, brings back a finished
@@ -380,9 +400,24 @@ spawn_subagent({ task: "…", model: "<alias>", maxRounds: 32, attention: false 
 spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "…" }] })
 ```
 
-- **`wait: false`** (default) returns a `task_id` at once and the
-  caller's turn ends; the sub runs in the background. **`wait: true`**
-  blocks until the sub's final answer and returns it inline.
+- **Every spawn is a background task.** `spawn_subagent` registers a
+  task and starts the sub in the background whichever way it is
+  called. **`wait: false`** (default) returns the `task_id` at once
+  and the caller's turn ends. **`wait: true`** waits for that same
+  task and returns the sub's final answer inline — the result, the
+  runtime verdict and the `task_id`. Because a synchronous sub is an
+  ordinary task, it appears in `subagent_list`, a person can stop it
+  with the Stop button, and `subagent_cancel` reaches it and every
+  sub it spawned while the parent is still waiting.
+- **When the wait runs out.** The wait is sized off
+  `agentLoop.longTaskMaxTimeoutMs` (default 30 minutes, minus a few
+  seconds). A sub still working by then does not fail: the tool
+  returns `ok: false, wait: "sync", state: "pending"` with the
+  `task_id` and a hint, the sub keeps running, and the parent is woken
+  with a `[subagent attention]` turn when it finishes — or fetches the
+  result itself with `subagent_result({ task_id })`. A sub that
+  finishes inside the wait does not wake the parent; the parent has
+  the result.
 - **`spawn_subagents`** runs up to eight tasks in parallel and returns
   one result per task in the same order; `wait` applies to the batch.
 - **`model`** overrides the persona's default for this sub (an alias or
@@ -404,11 +439,20 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   session stay.
 - **Attention wake.** When a background sub finishes and its result has
   not been fetched, the parent is woken in the session it spawned from
-  with a `[subagent attention]` turn naming state, outcome, files and
-  media, and the `task_id` to read the rest. The wake waits
-  `agentLoop.wakeGraceMs` (default 3 seconds); a `subagent_result`
-  inside that window cancels it, and `attention: false` opts a spawn
-  out of it altogether.
+  with a `[subagent attention]` turn. Its text is the record:
+
+  ```text
+  [subagent attention] Task '<task_id>' (sub-agent '<name>', session 'sub-…') finished with state 'done'. Outcome: completed, 7 tool calls, 3 rounds. First line: "…" Files written (1): … Generated media (1): …
+  ```
+
+  The instruction — fetch the full answer with `subagent_result({
+  task_id })`, then continue whatever depended on it — accompanies
+  the turn as its frame, beside the text. A brief a person removed
+  from the queue wakes the parent the same way (`… was removed from
+  the queue by the user before it started — there is no result.`).
+  The wake waits `agentLoop.wakeGraceMs` (default 3 seconds); a
+  `subagent_result` inside that window cancels it, and
+  `attention: false` opts a spawn out of it altogether.
 - **Limits.** Nesting is capped at depth 3. Each agent may run 4 subs
   at once and the whole server 16; subs spawned by subs count against
   the parent's 4 and may fill only 3 of them, so an orchestrator sub

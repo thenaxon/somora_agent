@@ -5098,6 +5098,7 @@ app.post('/chat/send-sync', async (c) => {
   let sessionCreated = false;
   let sessionModel: string | undefined;
   let sessionNote: string | undefined;
+  let creationNote: string | undefined;
   const createModel =
     typeof body.create_model === 'string' && body.create_model.length > 0 ? body.create_model : undefined;
   if (!session && body.create_session === true) {
@@ -5142,11 +5143,12 @@ app.post('/chat/send-sync', async (c) => {
       model: sessionModel ?? null,
     });
     // Tell the target what just happened — this is its first message
-    // in a session it did not know it had.
-    text =
+    // in a session it did not know it had. Beside the text, not in it
+    // (turn-framing.ts): the record is the question.
+    creationNote =
       `[Your session '${sessionRef}' was just created by ${fromAgent ?? 'the caller'} for this conversation` +
       (sessionModel ? `; it runs on model ${sessionModel}` : '') +
-      `.]\n\n${text}`;
+      '.]';
   } else if (session && createModel) {
     sessionNote = `session '${sessionRef}' already existed — create_model '${createModel}' ignored; switch models with PUT /agents/${agent}/sessions/${session}/model`;
   }
@@ -5255,6 +5257,7 @@ app.post('/chat/send-sync', async (c) => {
     agent,
     session,
     text,
+    ...(creationNote ? { turnPrefix: creationNote } : {}),
     workId,
     origin,
     ...(body.attachments && body.attachments.length > 0
@@ -6170,7 +6173,7 @@ if (config.videoGen?.enabled) {
 // subagent attention wake, so it streams live and respects the queue.
 const browserService = configureBrowserService(config.browser, {
   resolveSession: resolveBrowserSession,
-  dispatchWakeTurn: async ({ agent, session, text, viewId, cause, handoffId }) => {
+  dispatchWakeTurn: async ({ agent, session, text, prefix, viewId, cause, handoffId }) => {
     session = await resolveBrowserSession(agent, session);
     const origin: TurnOrigin = { kind: 'browser', viewId, cause, ...(handoffId ? { handoffId } : {}) };
     const workId = `browser-${handoffId ?? randomUUID()}`;
@@ -6179,6 +6182,7 @@ const browserService = configureBrowserService(config.browser, {
       agent,
       session,
       text,
+      turnPrefix: prefix,
       workId,
       origin,
       // The lock wait can be long; the session may have been archived
@@ -6216,7 +6220,7 @@ onWorkFinished((it) => {
 
 configureWorkWake({
   graceMs: config.agentLoop.wakeGraceMs,
-  dispatchWakeTurn: async ({ agent, session, text, about, ref, depth, mediaIds }) => {
+  dispatchWakeTurn: async ({ agent, session, text, prefix, about, ref, depth, mediaIds }) => {
     const origin: TurnOrigin = { kind: 'wake', about, ref, ...(depth > 0 ? { depth } : {}) };
     const workId = `wake-${ref}`;
     openWork({ id: workId, origin, target: { agent, session }, text, waiting: false, wake: 'never' });
@@ -6224,6 +6228,7 @@ configureWorkWake({
       agent,
       session,
       text,
+      ...(prefix ? { turnPrefix: prefix } : {}),
       workId,
       origin,
       ...(mediaIds && mediaIds.length > 0 ? { attachMediaIds: mediaIds } : {}),

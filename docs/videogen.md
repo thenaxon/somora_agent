@@ -151,7 +151,14 @@ the request goes out.
    the real dimensions and duration read from the file's own header
    atoms (no ffmpeg).
 3. When an agent started the render, that agent is woken in the session
-   it asked from, one wake per finished video. The wake waits
+   it asked from, one wake per finished video. The text of the wake is
+   the record: `[video] Your render is ready: <path>` with the model
+   and the prompt on the next line, or `[video] The render you started
+   (<model>, "<prompt>") failed: <reason>.` What to do with it — the
+   user already sees the video, say what it is and carry on; on a
+   failure decide between different settings and telling the user,
+   never the identical request again — accompanies the turn as its
+   frame, beside the text. The wake waits
    `agentLoop.wakeGraceMs` (default 3 seconds); an agent that looks in
    with `video_status` inside that window is not woken. Waiting to
    batch four renders would defeat the point of releasing the turn. A render

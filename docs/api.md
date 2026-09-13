@@ -1293,7 +1293,10 @@ Body fields: same as `/chat/send` (`agent`, `session`, `text`,
   from (id or `main`). Persisted as `user_message.from_session` and
   shown to the target in the attribution header
   (`[Message from agent hans, session cerebrocraft]`) so it can address
-  a follow-up. Ignored without `from_agent`.
+  a follow-up. The server composes that header into the turn's frame
+  (the stored row's `ephemeral`, see `user_message` under `GET
+  /chat/stream`); the stored `text` is the message itself. Ignored
+  without `from_agent`.
 - `waiter_agent` / `waiter_session` (optional, A2A) — identify the
   caller turn that blocks on this request. Used by `agent_ask` and
   `spawn_subagent` internally to register the wait in the server's
@@ -1302,8 +1305,10 @@ Body fields: same as `/chat/send` (`agent`, `session`, `text`,
   named slug that does not exist on the target yet, create it (with
   the standard timestamped id) and deliver the message into it. Only
   slugs: `main` always exists, exact ids and `sub-*` names answer
-  `400`. The target's first message is prefixed with a bracketed note
-  that the session was just created (and on which model).
+  `400`. The target is told beside its first message — in the turn's
+  frame, not in the stored text — that the session was just created
+  (`[Your session '<slug>' was just created by <agent> for this
+  conversation; it runs on model <model>.]`).
 - `create_model` (optional, with `create_session`) — alias or
   `provider/id` pinned on the session **if this call creates it**
   (same effect as `PUT …/sessions/:session/model`). An unknown model
@@ -1315,8 +1320,11 @@ Body fields: same as `/chat/send` (`agent`, `session`, `text`,
   reply: `202 {call_id, state: "pending", session_id,
   session_created?, session_model?, session_note?}`. The turn queues and
   runs as usual; the asker is woken with an `[agent answer]` turn when
-  the reply lands, or reads it with `GET /a2a/ask-result`. This is
-  `agent_ask` with `wait: false`. Ignored without the two A2A fields.
+  the reply lands (the record line names the target, the session and
+  the first words of the answer; the instruction to read the whole
+  answer with `agent_ask_result` accompanies it as the turn's frame),
+  or reads it with `GET /a2a/ask-result`. This is `agent_ask` with
+  `wait: false`. Ignored without the two A2A fields.
 
 The success response is the turn result plus `session_id` (the
 resolved id), `session_created: true` and `session_model` when this
@@ -1350,7 +1358,12 @@ queue by the user before it started"`.
 
 ### Sub-agent tasks — `/spawn-*`
 
-The HTTP twins of the `spawn_subagent` / `subagent_*` tools. Agents
+The HTTP twins of the `spawn_subagent` / `subagent_*` tools. Every
+spawn is one of these tasks, whether the tool was called with
+`wait: false` or `wait: true` — a synchronous spawn registers the task,
+runs it in the background and waits for it through the result route,
+which is why it is listed, stoppable and cancellable like any other
+task while the parent waits. Agents
 running in an MCP child (claude-cli, codex-cli) reach the task store
 this way; a custom client can use them to run a sealed background
 task in a fresh session and collect the result.
@@ -1488,6 +1501,28 @@ Event types:
   the optimistic bubble it rendered after `POST /chat/send` (which
   echoes the same id).
 
+  `text` is the record of the turn: what a person typed, what an agent
+  asked, what a trigger's prompt says, or the one-line statement of a
+  wake-up. It is what the dream phase learns from, what recall is
+  built from and what a reader sees. Everything the model is told
+  *about* the turn — who wrote it, why it arrives now, what to do with
+  it — is the turn's **frame**, and the frame travels in the stored
+  row's `ephemeral` field beside the memory-recall block (frame first,
+  then the recall block), never in `text`. Every engine puts
+  `ephemeral` in front of the user message, and it replays
+  byte-identically on later turns, so caching is unaffected. Per
+  origin the frame is: the `[Message from agent <name>, session
+  <slug>]` header and, for a session `agent_ask` created, the
+  `[Your session '<slug>' was just created by …]` note (`agent`); the
+  evidence block of a sentinel fire (`sentinel`); the inspect-now
+  instructions of a tmux wake (`tmux`); the take-a-fresh-snapshot
+  advice of a browser hand-back (`browser`); the call framing of a
+  voice consult (`voice`); and the "read the whole answer with
+  `agent_ask_result(…)`" / "fetch the full answer with
+  `subagent_result(…)`" instruction of a wake-up (`wake`). `human` and
+  `subagent` turns carry no frame. The SSE event carries `text` and
+  `origin`; `ephemeral` is on the stored row only.
+
   `origin` says where the turn came from as one value. It is present on
   the SSE event and on the stored `user_message` row of every turn
   started since somora 2026.09.13; older rows have none, so a client
@@ -1498,7 +1533,7 @@ Event types:
     | { kind: 'human';    via: 'chat' | 'voice-stt' }
     | { kind: 'agent';    from: { agent: string; session?: string }; callId?: string }
     | { kind: 'subagent'; parent?: { agent: string; session: string }; taskId?: string; depth: number }
-    | { kind: 'sentinel'; triggerId: string; taskId: string }
+    | { kind: 'sentinel'; triggerId: string; taskId: string; triggerName?: string }
     | { kind: 'tmux';     tmuxSession: string; tmuxKind?: string }
     | { kind: 'browser';  viewId: string; cause: 'handoff' | 'activity'; handoffId?: string }
     | { kind: 'voice';    callId?: string; consultId: string }

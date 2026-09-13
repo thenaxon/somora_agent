@@ -145,13 +145,13 @@ export function originPresentation(msg: OriginPresentationInput): OriginPresenta
 
   switch (kind) {
     case 'sentinel':
-      // The origin carries only the trigger id; the name a person
-      // recognises is on the prompt's `name:` line.
+      // The origin names the trigger since 2026-09-13; older turns carry
+      // the name on the prompt's `name:` line.
       return {
         kind,
         glyph: '🔔',
         label: 'Sentinel',
-        subtitle: sentinelNameFromText(text),
+        subtitle: (origin?.kind === 'sentinel' && origin.triggerName) || sentinelNameFromText(text),
         ...(origin?.kind === 'sentinel' ? { detail: origin.triggerId } : {}),
         ariaLabel: 'Sentinel trigger',
         body,

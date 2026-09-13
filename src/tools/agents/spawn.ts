@@ -22,20 +22,12 @@
 import { z } from 'zod';
 import { describeModelRefs, resolveAnyRef } from '../../config/types.ts';
 import { loadPersona } from '../../persona/loader.ts';
-import {
-  completeTask,
-  failTask,
-  getTask,
-  newTaskId,
-  registerTask,
-  type AsyncTaskEntry,
-} from '../../server/async-tasks.ts';
+import { completeTask, failTask, getTask, newTaskId, registerTask, type AsyncTaskEntry, markResultFetched, waitForTaskCompletion } from '../../server/async-tasks.ts';
 import { registerWait } from '../../server/ask-wait-graph.ts';
 import { logger } from '../../server/logger.ts';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
 import type { ChatTurnResolveDeps, ChatTurnResult } from '../../server/run-turn-types.ts';
 import { startTurn } from '../../server/start-turn.ts';
-import { openWork } from '../../server/work-ledger.ts';
 import { createSession, sessionMetaStore } from '../../storage/sessions.ts';
 import type { ToolDefinition } from '../types.ts';
 import {
@@ -45,6 +37,7 @@ import {
   type AttachmentRef,
 } from './images.ts';
 import { longTaskMaxMs } from './long-task-timeouts.ts';
+import { fetchResultViaHttp } from './status.ts';
 
 const MAX_SUBAGENT_DEPTH = parseInt(process.env.SOMORA_MAX_SUBAGENT_DEPTH ?? '3', 10) || 3;
 const MAX_CONCURRENT_PER_AGENT = 4;
@@ -392,6 +385,12 @@ interface OneSpawnArgs {
 interface OneSpawnSyncResult {
   ok: boolean;
   wait: 'sync';
+  /** Since 2026-09-13 every spawn is a task; wait:true awaits it. */
+  task_id: string;
+  /** `pending` when the wait ran out before the sub finished — it keeps
+   *  running, the parent is woken when it is done. */
+  state?: 'pending';
+  hint?: string;
   persona: string;
   agent_kind: 'self-clone' | 'named';
   session_slug: string;
@@ -494,102 +493,94 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
     },
   });
 
-  // ─── async path (wait: false) ─────────────────────────────────────
-  // Fire-and-forget: register the task, kick off the background work,
-  // return the task_id immediately so the parent's turn can finish.
-  // The slot reserved above is HELD by the background promise and
-  // released in its own finally — caller's `wait:false` is not the
-  // same as "free this slot".
-  if (!args.wait) {
-    try {
-      let task_id: string;
-      if (injectedDeps) {
-        // In-process: the background IIFE owns the slot for the task's
-        // whole lifetime and releases it in its own finally.
-        task_id = await spawnAsyncInProcess({
-          targetPersona,
-          sessionId,
-          taskText: task.task,
-          parentAgent: ctx.agent,
-          parentSession: ctx.session ?? '?',
-          parentDepth,
-          modelOverride: task.model,
-          maxRoundsOverride: task.maxRounds,
-          attention: task.attention,
-          attachments: briefAttachments,
-        });
-      } else {
-        // MCP-child HTTP path: the SERVER process owns the task lifetime
-        // and releases ITS own slot when the task finishes. The slot we
-        // reserved lives in THIS per-turn child process and has no
-        // lifetime to track here — release it now, or it leaks for the
-        // rest of the child's life and caps the orchestrator at the
-        // per-agent/global limit forever within the turn (Juni-Audit
-        // 2026-06).
-        task_id = await spawnAsyncViaHttp({
-          targetAgent: targetPersona,
-          targetSession: sessionId,
-          taskText: task.task,
-          parentAgent: ctx.agent,
-          parentSession: ctx.session ?? '?',
-          parentDepth,
-          modelOverride: task.model,
-          maxRoundsOverride: task.maxRounds,
-          attention: task.attention,
-          attachments: briefAttachments,
-        });
-        releaseSpawnSlot(targetPersona);
-      }
-      logger.info({
-        msg: 'spawn_subagent.async_started',
-        task_id,
-        parent_agent: ctx.agent,
-        target: targetPersona,
-        session: sessionId,
-        depth: parentDepth + 1,
-        via: injectedDeps ? 'in-process' : 'http',
+  // ─── one path: the sub is a background task; wait:true awaits it ──
+  //
+  // Until 2026-09-13 wait:true was its own code path: no task id, no
+  // lock, no abort registration, and after the tool's 30-minute wait the
+  // child kept running with a result nobody could fetch (birdseye L8,
+  // L9, L16). Now every spawn registers a task and starts it in the
+  // background — in-process or through /spawn-async — and wait:true
+  // simply waits for that task's result. Same tool, same result shape;
+  // but the sub is stoppable, subagent_cancel reaches it, and a sub that
+  // outlives the wait wakes its parent when it finishes.
+  //
+  // The slot reserved above belongs to the background task from here on
+  // (in-process: the IIFE releases it; HTTP: the server owns its own and
+  // the child's local reservation is released at once).
+  let task_id: string;
+  try {
+    if (injectedDeps) {
+      task_id = await spawnAsyncInProcess({
+        targetPersona,
+        sessionId,
+        taskText: task.task,
+        parentAgent: ctx.agent,
+        parentSession: ctx.session ?? '?',
+        parentDepth,
+        modelOverride: task.model,
+        maxRoundsOverride: task.maxRounds,
+        attention: task.attention,
+        attachments: briefAttachments,
       });
-      return {
-        ok: true,
-        wait: 'async',
-        task_id,
-        persona: targetPersona,
-        agent_kind: isSelfClone ? 'self-clone' : 'named',
-        session_slug: slug,
-        hint:
-          `Sub is running in the background. Check progress with subagent_status({ task_id: "${task_id}" }) ` +
-          `or fetch the answer with subagent_result({ task_id: "${task_id}" }).`,
-      };
-    } catch (err) {
-      // Slot release on synchronous setup failure — the background
-      // never actually started, so no IIFE finally will fire.
+    } else {
+      // MCP-child HTTP path: the SERVER process owns the task lifetime
+      // and releases ITS own slot when the task finishes. The slot we
+      // reserved lives in THIS per-turn child process and has no
+      // lifetime to track here — release it now, or it leaks for the
+      // rest of the child's life and caps the orchestrator at the
+      // per-agent/global limit forever within the turn (Juni-Audit
+      // 2026-06).
+      task_id = await spawnAsyncViaHttp({
+        targetAgent: targetPersona,
+        targetSession: sessionId,
+        taskText: task.task,
+        parentAgent: ctx.agent,
+        parentSession: ctx.session ?? '?',
+        parentDepth,
+        modelOverride: task.model,
+        maxRoundsOverride: task.maxRounds,
+        attention: task.attention,
+        attachments: briefAttachments,
+      });
       releaseSpawnSlot(targetPersona);
-      throw err;
     }
+  } catch (err) {
+    // Slot release on synchronous setup failure — the background
+    // never actually started, so no IIFE finally will fire.
+    releaseSpawnSlot(targetPersona);
+    throw err;
+  }
+  logger.info({
+    msg: args.wait ? 'spawn_subagent.start_sync' : 'spawn_subagent.async_started',
+    task_id,
+    parent_agent: ctx.agent,
+    parent_session: ctx.session,
+    target: targetPersona,
+    session: sessionId,
+    depth: parentDepth + 1,
+    via: injectedDeps ? 'in-process' : 'http',
+  });
+  if (!args.wait) {
+    return {
+      ok: true,
+      wait: 'async',
+      task_id,
+      persona: targetPersona,
+      agent_kind: isSelfClone ? 'self-clone' : 'named',
+      session_slug: slug,
+      hint:
+        `Sub is running in the background. Check progress with subagent_status({ task_id: "${task_id}" }) ` +
+        `or fetch the answer with subagent_result({ task_id: "${task_id}" }).`,
+    };
   }
 
-  // ─── sync path (wait: true) ───────────────────────────────────────
-  // The parent's turn now BLOCKS on the sub — that wait must be visible
-  // in the A2A wait-graph, or a cycle routed through this spawn
-  // (parent waits sub, sub asks X, X asks parent) is undetectable and
-  // deadlocks silently (see src/server/ask-wait-graph.ts).
-  //
-  // No cycle CHECK is needed here: the sub-session was created fresh a
-  // few lines up, so no edges into or out of it can exist yet — the
-  // registration can't close a cycle. Cycles only become possible once
-  // the sub itself starts waiting, and those later calls are checked at
-  // their own dispatch points.
-  //
-  // Two transports, two registration owners:
-  //   - in-process (injectedDeps set → we ARE the main server): register
-  //     directly. This module is also loaded by MCP children, but the
-  //     in-process branch never runs there, so the child's own (empty)
-  //     graph instance stays untouched.
-  //   - HTTP fallback (MCP child): the child process can't reach the
-  //     main server's graph; runChatTurnViaHttp sends waiter_* and the
-  //     /chat/send-sync route registers server-side.
-  // ctx.session missing (shouldn't happen) degrades to no edge — same
-  // graceful posture as agent_ask.
+  // ─── wait:true: block on the task ─────────────────────────────────
+  // The parent's turn BLOCKS on the sub — that wait must be visible in
+  // the A2A wait-graph, or a cycle routed through this spawn (parent
+  // waits sub, sub asks X, X asks parent) is undetectable and deadlocks
+  // silently (see src/server/ask-wait-graph.ts). In-process the edge is
+  // registered here; over HTTP, /spawn-result registers it from the
+  // waiter_* query. No cycle CHECK is needed: the sub-session is fresh.
   const releaseWait =
     injectedDeps && ctx.session
       ? registerWait(
@@ -597,92 +588,73 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
           { agent: targetPersona, session: sessionId },
         )
       : undefined;
+  // Answer before the engine's own race on this tool call (longTaskMax)
+  // would cut us off — a sub that needs longer keeps running and wakes
+  // the parent when it is done.
+  const budgetMs = Math.max(30_000, longTaskMaxMs() - 5_000);
+  const startedAt = Date.now();
   try {
-    logger.info({
-      msg: 'spawn_subagent.start_sync',
-      parent_agent: ctx.agent,
-      parent_session: ctx.session,
-      target: targetPersona,
-      session: sessionId,
-      depth: parentDepth + 1,
-      via: injectedDeps ? 'in-process' : 'http',
-    });
-
-    // In-process: startTurn takes the sub-session's lock and registers
-    // the abort controller, so the Stop button reaches a sync sub the
-    // same way it reaches an async one (birdseye L8); the sub-session
-    // streams live like its HTTP twin already did.
-    const syncWorkId = injectedDeps ? `sync-${sessionId}` : undefined;
-    if (syncWorkId) {
-      openWork({
-        id: syncWorkId,
-        origin: { kind: 'subagent', depth: parentDepth + 1, ...(ctx.session ? { parent: { agent: ctx.agent, session: ctx.session } } : {}) },
-        target: { agent: targetPersona, session: sessionId },
-        ...(ctx.session ? { requester: { agent: ctx.agent, session: ctx.session } } : {}),
-        text: task.task,
-        wake: 'never',
-      });
-    }
-    const result: ChatTurnResult = injectedDeps
-      ? await startSubTurn({
-          agent: targetPersona,
-          session: sessionId,
-          text: task.task,
-          ...(syncWorkId ? { workId: syncWorkId } : {}),
-          origin: {
-            kind: 'subagent',
-            depth: parentDepth + 1,
-            ...(ctx.session ? { parent: { agent: ctx.agent, session: ctx.session } } : {}),
-          },
-          ...(briefAttachments.length > 0 ? { attachments: briefAttachments } : {}),
-          ...(task.model ? { modelOverride: task.model } : {}),
-          ...(task.maxRounds
-            ? { agentLoopOverride: { maxRounds: task.maxRounds } }
-            : {}),
-          deps: injectedDeps.chatTurnDeps,
-        })
-      : await runChatTurnViaHttp({
-          agent: targetPersona,
-          session: sessionId,
-          text: task.task,
-          subagentDepth: parentDepth + 1,
-          ...(briefAttachments.length > 0 ? { attachments: briefAttachments } : {}),
-          ...(ctx.session
-            ? { waiterAgent: ctx.agent, waiterSession: ctx.session }
-            : {}),
-          ...(task.model ? { modelOverride: task.model } : {}),
-          ...(task.maxRounds ? { maxRounds: task.maxRounds } : {}),
+    const entry = injectedDeps
+      ? await waitForTaskCompletion(task_id, budgetMs)
+      : await fetchResultViaHttp(task_id, {
+          wait_until_done: true,
+          timeout_ms: budgetMs,
+          ...(ctx.session ? { waiter_agent: ctx.agent, waiter_session: ctx.session } : {}),
         });
-
+    const state = entry?.state;
+    if (!entry || state === 'running') {
+      logger.info({ msg: 'spawn_subagent.sync_timeout', task_id, target: targetPersona, session: sessionId, ms: Date.now() - startedAt });
+      return {
+        ok: false,
+        wait: 'sync',
+        state: 'pending',
+        task_id,
+        persona: targetPersona,
+        agent_kind: isSelfClone ? 'self-clone' : 'named',
+        session_slug: slug,
+        model: task.model ?? '',
+        hint:
+          `The sub is still working after ${Math.round(budgetMs / 60_000)} minutes. It keeps running; you are ` +
+          `woken when it finishes, or fetch it with subagent_result({ task_id: "${task_id}" }). Do not spawn it again.`,
+        ms: Date.now() - startedAt,
+        thinkingActive: false,
+      };
+    }
+    // The parent has the result in hand: no attention wake for it.
+    if (injectedDeps) markResultFetched(task_id);
+    const result: ChatTurnResult | undefined = entry.result;
+    const error = entry.error ?? result?.error;
     logger.info({
       msg: 'spawn_subagent.done',
+      task_id,
       target: targetPersona,
       session: sessionId,
-      ms: result.ms,
-      bytes: result.finalText.length,
+      state,
+      ms: Date.now() - startedAt,
+      bytes: result?.finalText.length ?? 0,
     });
     return {
-      ok: !result.error,
+      ok: state === 'done' && !error,
       wait: 'sync',
+      task_id,
       persona: targetPersona,
       agent_kind: isSelfClone ? 'self-clone' : 'named',
       session_slug: slug,
-      model: result.model,
-      result: result.finalText,
-      outcome: result.outcome,
-      ...(result.outcome_reason ? { outcome_reason: result.outcome_reason } : {}),
-      tool_calls: result.tool_calls,
-      ...(result.rounds !== undefined ? { rounds: result.rounds } : {}),
-      ...(result.fallback ? { fallback: result.fallback } : {}),
-      ...(result.files_written?.length ? { files_written: result.files_written } : {}),
-      ...(result.media?.length ? { media: result.media } : {}),
-      ...(result.error ? { error: result.error } : {}),
-      ms: result.ms,
-      thinkingActive: result.thinkingActive,
+      model: result?.model ?? task.model ?? '',
+      ...(result ? { result: result.finalText } : {}),
+      ...(result?.outcome ? { outcome: result.outcome } : state === 'cancelled' ? { outcome: 'failed' as const } : {}),
+      ...(result?.outcome_reason ? { outcome_reason: result.outcome_reason } : {}),
+      ...(result ? { tool_calls: result.tool_calls } : {}),
+      ...(result?.rounds !== undefined ? { rounds: result.rounds } : {}),
+      ...(result?.fallback ? { fallback: result.fallback } : {}),
+      ...(result?.files_written?.length ? { files_written: result.files_written } : {}),
+      ...(result?.media?.length ? { media: result.media } : {}),
+      ...(error ? { error } : {}),
+      ms: Date.now() - startedAt,
+      thinkingActive: result?.thinkingActive ?? false,
     };
   } finally {
     releaseWait?.();
-    releaseSpawnSlot(targetPersona);
   }
 }
 
@@ -784,7 +756,7 @@ async function spawnAsyncViaHttp(args: {
   const host = process.env.SOMORA_HOST || '127.0.0.1';
   const port = process.env.SOMORA_PORT || '18737';
   // SOMORA_TLS=1 → server is HTTP/2-over-TLS; loopback must use
-  // https://<publicHost> (see runChatTurnViaHttp below).
+  // https://<publicHost> (see spawnBase below).
   const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
   let res;
   try {
@@ -848,62 +820,4 @@ function spawnBase(): string {
   return `${scheme}://${host}:${port}`;
 }
 
-async function runChatTurnViaHttp(args: {
-  agent: string;
-  session: string;
-  text: string;
-  subagentDepth: number;
-  /** Parent turn blocked on this call — registered in the server's A2A
-   *  wait-graph for circular-wait detection. Deliberately NOT sent as
-   *  from_agent: that would relabel the sub's task text as an A2A
-   *  message in its session. */
-  waiterAgent?: string;
-  waiterSession?: string;
-  modelOverride?: string;
-  maxRounds?: number;
-  attachments?: AttachmentRef[];
-}): Promise<ChatTurnResult> {
-  const host = process.env.SOMORA_HOST || '127.0.0.1';
-  const port = process.env.SOMORA_PORT || '18737';
-  // SOMORA_TLS=1 means the parent server is on HTTP/2-over-TLS — the
-  // MCP child must reach back via https://<publicHost> rather than
-  // plain HTTP loopback, since the cert is bound to that hostname.
-  // SOMORA_HOST is rewritten to the publicHost FQDN by the parent at
-  // startup when TLS is on, so this is just a scheme switch.
-  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
-  const url = `${scheme}://${host}:${port}/chat/send-sync`;
-  let res;
-  try {
-    res = await loopbackFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent: args.agent,
-        session: args.session,
-        text: args.text,
-        ...(args.attachments && args.attachments.length > 0
-          ? { attachments: args.attachments }
-          : {}),
-        subagent_depth: args.subagentDepth,
-        ...(args.waiterAgent && args.waiterSession
-          ? { waiter_agent: args.waiterAgent, waiter_session: args.waiterSession }
-          : {}),
-        ...(args.modelOverride ? { model: args.modelOverride } : {}),
-        ...(args.maxRounds ? { max_rounds: args.maxRounds } : {}),
-      }),
-    });
-  } catch (err) {
-    const c = classifyFetchError(err);
-    throw new Error(
-      `spawn_subagent HTTP fallback [${c.category}${c.code ? '/' + c.code : ''}]: ${c.message}` +
-        (c.hint ? ` — hint: ${c.hint}` : ''),
-    );
-  }
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`spawn_subagent HTTP fallback ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const data = (await res.json()) as ChatTurnResult;
-  return data;
-}
 

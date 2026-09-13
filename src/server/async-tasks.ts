@@ -193,6 +193,7 @@ interface AttentionDeps {
 export function configureSubagentAttention(deps: AttentionDeps): void {
   configureWorkWake({
     graceMs: deps.graceMs,
-    dispatchWakeTurn: (w) => deps.dispatchWakeTurn({ agent: w.agent, session: w.session, text: w.text, taskId: w.ref, depth: w.depth }),
+    // The legacy shape carried the frame inside the text.
+    dispatchWakeTurn: (w) => deps.dispatchWakeTurn({ agent: w.agent, session: w.session, text: w.prefix ? `${w.text}\n${w.prefix}` : w.text, taskId: w.ref, depth: w.depth }),
   });
 }

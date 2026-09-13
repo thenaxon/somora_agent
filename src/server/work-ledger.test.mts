@@ -43,7 +43,7 @@ const ok = (text: string): ChatTurnResult =>
   ({ finalText: text, outcome: 'completed', tool_calls: 0, contextWindow: 1, provider: 'p', model: 'm', thinkingActive: false, ms: 1 }) as ChatTurnResult;
 const failed = (err: string): ChatTurnResult => ({ ...ok(''), outcome: 'failed', error: err }) as ChatTurnResult;
 
-const wakes: Array<{ agent: string; session: string; about: string; ref: string; depth: number; text: string }> = [];
+const wakes: Array<{ agent: string; session: string; about: string; ref: string; depth: number; text: string; prefix: string }> = [];
 configureWorkWake({
   graceMs: 30,
   dispatchWakeTurn: async (w) => {
@@ -124,7 +124,7 @@ configureWorkWake({
   const woke = wakes.map((w) => w.ref).sort();
   check('woke exactly the hung-up, unfetched, auto items (done and failed)', woke.join(',') === 'w-failed,w-ok', woke.join(','));
   check('wake carries about a2a + requester session', wakes.every((w) => w.about === 'a2a' && w.agent === 'hans' && w.session === 'main'));
-  check('wake text is the a2a template with the head', wakes.find((w) => w.ref === 'w-ok')?.text.includes('[agent answer] lisa has answered') === true && wakes.find((w) => w.ref === 'w-ok')?.text.includes('answer text') === true);
+  check('wake text is the a2a record line with the head; the fetch hint rides beside it', wakes.find((w) => w.ref === 'w-ok')?.text.includes('[agent answer] lisa has answered') === true && wakes.find((w) => w.ref === 'w-ok')?.text.includes('answer text') === true && wakes.find((w) => w.ref === 'w-ok')?.prefix.includes('agent_ask_result') === true);
   check('nothing pending after firing', pendingWakesFor({ agent: 'hans', session: 'main' }).length === 0);
 }
 
@@ -156,8 +156,8 @@ configureWorkWake({
   finishWork('task_s', ok('pong'));
   await delay(80);
   check('sub wake with depth 1 and about subagent', wakes.length === 1 && wakes[0]!.about === 'subagent' && wakes[0]!.depth === 1 && wakes[0]!.ref === 'task_a');
-  check('sub wake text names task, files, fetch hint', wakes[0]!.text.includes("Task 'task_a'") && wakes[0]!.text.includes('Files written (1)') && wakes[0]!.text.includes('subagent_result'));
-  check('wakeTextFor: override wins', wakeTextFor({ ...getWork('task_a')!, wakeText: 'custom' }) === 'custom');
+  check('sub wake text names task and files; the fetch hint rides beside it', wakes[0]!.text.includes("Task 'task_a'") && wakes[0]!.text.includes('Files written (1)') && !wakes[0]!.text.includes('subagent_result') && wakes[0]!.prefix.includes('subagent_result'));
+  check('wakeTextFor: override wins', wakeTextFor({ ...getWork('task_a')!, wakeText: 'custom', wakePrefix: 'do' }).text === 'custom' && wakeTextFor({ ...getWork('task_a')!, wakeText: 'custom', wakePrefix: 'do' }).prefix === 'do');
 }
 
 // ── 4. dequeue: permissions + the real lock waiter ──────────────────

@@ -32,7 +32,6 @@ import {
   type EngineLastSeen,
   capReplayDelta,
 } from './replay.ts';
-import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, TurnInput } from './types.ts';
 import { buildCodexAttachments } from '../multimodal/user-content.ts';
 import {
@@ -283,7 +282,8 @@ export const codexCliEngine: AgentEngine = {
     const { imagePaths, promptPrefix: attachmentPrefix } = await buildCodexAttachments(
       input.attachments ?? [],
     );
-    const taggedUserMessage = withFromAgentHeader(userMessage, fromAgent, fromSession);
+    // The A2A header travels in ephemeralContext (src/server/turn-framing.ts).
+    const taggedUserMessage = userMessage;
     const ephemeralBlock = ephemeralContext ? `${ephemeralContext}\n\n---\n\n` : '';
     const buildText = (resumed: boolean, replayPrefix: string): string => {
       const projectBlock = resumed && projectContext ? `${projectContext}\n\n---\n\n` : '';

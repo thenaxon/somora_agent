@@ -185,7 +185,7 @@ export function systemNoticeOf(
   const label = SYSTEM_LABELS[kind];
   switch (kind) {
     case 'sentinel':
-      return { label, name: summarizeSentinelTriggerText(text) };
+      return { label, name: (origin?.kind === 'sentinel' && origin.triggerName) || summarizeSentinelTriggerText(text) };
     case 'tmux':
       return {
         label,

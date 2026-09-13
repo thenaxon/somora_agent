@@ -18,9 +18,30 @@
 
 import type { Trigger } from './types.ts';
 
-/** Build the user-message body that the dispatched turn carries. The
- *  agent reads this as a user prompt, but the leading block makes the
- *  sentinel-origin explicit. */
+/** The evidence block a fire carries BESIDE its prompt (turnPrefix,
+ *  since 2026-09-13 — src/server/turn-framing.ts): the model reads it,
+ *  the session records only the trigger's prompt. */
+export function buildFireFrame(trigger: Trigger, firedAt: Date, catchUp: boolean): string {
+  return [
+    '[Sentinel trigger fired]',
+    `trigger_id: ${trigger.id}`,
+    `name: ${trigger.name}`,
+    `created_by: ${trigger.ownerAgent}`,
+    `source: ${describeSource(trigger)}`,
+    `fired_at: ${firedAt.toISOString()}`,
+    catchUp ? 'mode: catch-up (server was down at scheduled fire time)' : null,
+    trigger.policy?.cooldownMs
+      ? `policy: cooldown ${Math.round(trigger.policy.cooldownMs / 1000)}s`
+      : null,
+    trigger.intent ? `user_intent: ${trigger.intent}` : null,
+    'The prompt below is what this trigger asks of you.',
+  ]
+    .filter((x): x is string => x !== null)
+    .join('\n');
+}
+
+/** Frame + prompt in one string — how a fire was recorded before
+ *  2026-09-13. Kept for readers of older sessions and tests. */
 export function buildFirePrompt(trigger: Trigger, firedAt: Date, catchUp: boolean): string {
   const evidence = [
     '[Sentinel trigger fired]',

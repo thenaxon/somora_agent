@@ -224,9 +224,14 @@ session saw it happen:
   state, or a later `capture` saw it) → nothing. No duplicate nudge.
 - **The agent missed it** (its `wait_idle` timed out and its turn
   ended while the CLI kept working) → somora dispatches a wake turn to
-  the originating agent + session: *"tmux session X became ready —
-  read the output and continue."* The turn renders as a `tmux` system
-  divider in web/mobile/TUI, exactly like Sentinel triggers do.
+  the originating agent + session. The text of that turn is the
+  record, `[tmux attention] Session '<name>' (<kind>) became ready.`;
+  the instructions — it was running and is now idle, finished or
+  waiting for input, capture it with the tmux tool first, then decide
+  whether to reply, handle a prompt, report or wrap up, and never send
+  a new prompt blind — accompany the turn as its frame, beside the
+  text. The turn renders as a `tmux` system divider in
+  web/mobile/TUI, exactly like Sentinel triggers do.
 
 Rules that keep this calm:
 

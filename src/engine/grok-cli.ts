@@ -31,7 +31,6 @@ import {
 } from '../mcp/config.ts';
 import { logger } from '../server/logger.ts';
 import type { NormalizedEvent } from '../types/events.ts';
-import { withFromAgentHeader } from './a2a.ts';
 import { grokCliReasoningArgs } from './thinking-params.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 
@@ -633,7 +632,8 @@ export const grokCliEngine: AgentEngine = {
         const rendered = renderAttachments(attachments);
         if (rendered) parts.push(rendered);
       }
-      parts.push(withFromAgentHeader(input.userMessage, input.fromAgent, input.fromSession));
+      // The A2A header travels in ephemeralContext (src/server/turn-framing.ts).
+      parts.push(input.userMessage);
       const promptText = parts.join('\n\n---\n\n');
 
       const undelivered = attachments.filter((a) => a.mime.kind !== 'text');

@@ -124,7 +124,10 @@ with the right cache shape. Hits ~70–85% cache (measured 2026-09-05:
 ### openai-compatible (stateless)
 
 This is where it gets interesting. We persist the memory block on
-the `user_message` JSONL event:
+the `user_message` JSONL event — together with the turn's frame (an
+A2A header, a sentinel evidence block, the instructions beside a
+wake-up; see `user_message` in [api.md](api.md)), which goes in the
+same field ahead of the recall block:
 
 ```jsonc
 {"kind":"user_message","ts":..."text":"the user typed this","ephemeral":"<memory-context>...</memory-context>"}
@@ -137,7 +140,9 @@ prepends it to the message content:
 ```ts
 // src/engine/openai-compatible.ts:buildMessages()
 if (ev.kind === 'user_message') {
-  const headed = withFromAgentHeader(ev.text, ev.from_agent);
+  // A row with `origin` carries its A2A header inside `ephemeral`;
+  // an older row never stored it, so it is added here as before.
+  const headed = ev.origin ? ev.text : withFromAgentHeader(ev.text, ev.from_agent, ev.from_session);
   const composed = ev.ephemeral ? `${ev.ephemeral}\n\n${headed}` : headed;
   // → user message content is byte-identical to what was sent at turn N
 }

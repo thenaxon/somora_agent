@@ -19,7 +19,7 @@ export type TurnOrigin =
   /** A spawned sub-agent working a sealed brief in its own session. */
   | { kind: 'subagent'; parent?: TurnOriginRef; taskId?: string; depth: number }
   /** A sentinel timer fired. */
-  | { kind: 'sentinel'; triggerId: string; taskId: string }
+  | { kind: 'sentinel'; triggerId: string; taskId: string; triggerName?: string }
   /** A tmux session the agent started went running → ready. */
   | { kind: 'tmux'; tmuxSession: string; tmuxKind?: string }
   /** The person handed a browser window back to the agent. */
