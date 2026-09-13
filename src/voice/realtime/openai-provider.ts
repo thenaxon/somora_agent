@@ -20,6 +20,7 @@
 
 import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
+import type { SpeakOptions } from './types.ts';
 import type {
   RealtimeAudioChunk,
   RealtimeCapabilities,
@@ -103,6 +104,12 @@ class OpenAiRealtimeSession implements RealtimeSession {
    */
   private responseActive = false;
   private speakWhenFree = false;
+  /** Instructions that MUST be spoken (SpeakOptions.deliver), waiting
+   *  for the model to fall silent. Oldest first. */
+  private pendingDeliveries: string[] = [];
+  /** What the last response.create asked for, so a "response in
+   *  progress" refusal can put a delivery back in line. */
+  private lastRequest: { instructions?: string; deliver: boolean } | null = null;
 
   /** Ask the model to speak, or remember to ask once it is free.
    *
@@ -112,13 +119,30 @@ class OpenAiRealtimeSession implements RealtimeSession {
    *  how the error came back on 2026-09-11 even with a guard in place —
    *  the filler for a lookup and the answer to it were sent
    *  milliseconds apart. */
-  private requestResponse(payload?: Record<string, unknown>): void {
+  private requestResponse(payload?: Record<string, unknown>, deliver = false): void {
     if (this.responseActive) {
       this.speakWhenFree = true;
       return;
     }
     this.responseActive = true;
+    const instructions = typeof payload?.instructions === 'string' ? payload.instructions : undefined;
+    this.lastRequest = { ...(instructions !== undefined ? { instructions } : {}), deliver };
     this.send({ type: 'response.create', ...(payload ? { response: payload } : {}) });
+  }
+
+  /** The model fell silent: a kept delivery goes first, then whatever
+   *  was waiting to speak without words of its own. */
+  private speakNext(): void {
+    const next = this.pendingDeliveries.shift();
+    if (next !== undefined) {
+      this.speakWhenFree = false;
+      this.requestResponse({ instructions: next }, true);
+      return;
+    }
+    if (this.speakWhenFree) {
+      this.speakWhenFree = false;
+      this.requestResponse();
+    }
   }
 
   constructor(
@@ -260,10 +284,7 @@ class OpenAiRealtimeSession implements RealtimeSession {
         break;
       case 'response.done': {
         this.responseActive = false;
-        if (this.speakWhenFree) {
-          this.speakWhenFree = false;
-          this.requestResponse();
-        }
+        this.speakNext();
         if (this.speaking) {
           this.speaking = false;
           this.push({ kind: 'model_speech', ts, phase: 'end' });
@@ -297,7 +318,13 @@ class OpenAiRealtimeSession implements RealtimeSession {
         }
         if (/active response in progress/i.test(message)) {
           this.responseActive = true;
-          this.speakWhenFree = true;
+          // A refused delivery is not lost: back in line, first.
+          if (this.lastRequest?.deliver && this.lastRequest.instructions !== undefined) {
+            this.pendingDeliveries.unshift(this.lastRequest.instructions);
+          } else {
+            this.speakWhenFree = true;
+          }
+          this.lastRequest = null;
           this.push({ kind: 'error', ts, message, fatal: false });
           break;
         }
@@ -361,12 +388,18 @@ class OpenAiRealtimeSession implements RealtimeSession {
   /** One spoken line under a one-off instruction, without touching the
    *  session's own. Skipped while the model is already talking — the
    *  filler exists to fill a silence, not to talk over an answer. */
-  async speak(instructions: string): Promise<void> {
-    // A filler only makes sense in a silence. If the model is talking,
-    // dropping it is right — unlike a tool answer, which must be spoken
-    // eventually and is therefore deferred rather than dropped.
-    if (this.responseActive) return;
-    this.requestResponse({ instructions });
+  async speak(instructions: string, opts?: SpeakOptions): Promise<void> {
+    // A filler only makes sense in a silence: if the model is talking,
+    // dropping it is right. A delivery (the answer to a handed-over
+    // question, a follow-up) must be said — kept until the model falls
+    // silent. Until 2026-09-13 both were dropped, and the announcement
+    // of a late answer went silent whenever the voice self happened to
+    // be mid-sentence (its own "still working" after a status check).
+    if (this.responseActive) {
+      if (opts?.deliver) this.pendingDeliveries.push(instructions);
+      return;
+    }
+    this.requestResponse({ instructions }, opts?.deliver === true);
   }
 
   async interrupt(): Promise<void> {

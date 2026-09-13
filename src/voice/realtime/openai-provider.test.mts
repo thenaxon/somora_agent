@@ -175,6 +175,31 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   check('it is requested when the model falls silent', sent.includes('response.create'), sent.join(','));
 }
 
+// ── a delivery asked while the model talks is kept; a filler is dropped ──
+{
+  const { socket, session } = await openSession();
+  socket.server({ type: 'session.created' });
+  socket.server({ type: 'response.created' });
+  socket.sent.length = 0;
+  await session.speak?.('one moment, checking');
+  await session.speak?.('Read the user the answer: eins zwei drei', { deliver: true });
+  let types = socket.sent.map((x) => (JSON.parse(x) as { type?: string }).type);
+  check('nothing is requested while the model talks', !types.includes('response.create'), types.join(','));
+  socket.sent.length = 0;
+  socket.server({ type: 'response.done', response: {} });
+  await tick();
+  const creates = socket.sent.map((x) => JSON.parse(x) as { type?: string; response?: { instructions?: string } }).filter((m) => m.type === 'response.create');
+  check('when it falls silent, the delivery is spoken with its own words', creates.length === 1 && creates[0]?.response?.instructions?.includes('eins zwei drei') === true, JSON.stringify(creates));
+  check('the filler was dropped, not spoken late', !creates.some((m) => m.response?.instructions?.includes('one moment')));
+  // the API refuses because a response slipped in: the delivery goes back in line
+  socket.server({ type: 'error', error: { message: 'Conversation already has an active response in progress' } });
+  socket.sent.length = 0;
+  socket.server({ type: 'response.done', response: {} });
+  await tick();
+  const again = socket.sent.map((x) => String((JSON.parse(x) as { response?: { instructions?: string } }).response?.instructions ?? ''));
+  check('a refused delivery is asked again after the next silence', again.some((t) => t.includes('eins zwei drei')), again.join('|'));
+}
+
 // ── two requests to speak, milliseconds apart ───────────────────────
 {
   const { socket, session } = await openSession();

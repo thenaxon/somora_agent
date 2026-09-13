@@ -75,7 +75,9 @@ the request over and keeps talking; nothing the agent was doing is
 cancelled, and the question stays in the queue or keeps running. The
 answer then reaches you one of two ways: the call reads it out on its
 own at the next pause in the conversation — once, only in the call it
-belongs to, and only while that call still talks to the same agent —
+belongs to, and only while that call still talks to the same agent;
+if the voice happens to be mid-sentence at that moment, the reading is
+kept and spoken as soon as it falls silent, never dropped —
 or the voice fetches it when you ask whether it is done
 (`somora_consult_result`). Asked how far along it is, the voice
 reports the running work and each handed-over request with its place

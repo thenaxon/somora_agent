@@ -839,6 +839,7 @@ function harness2(script: FakeScriptStep[], consult: (args: { text: string }) =>
   check('the answer was read out', announcement !== undefined, spoken.join(' | '));
   check('with an English instruction that names the language and the question', announcement?.includes('in de') === true && announcement?.includes('Wie viele Tests laufen?') === true, announcement);
   check('marked fetched so nothing delivers it twice', h.fetched.includes('v-2'));
+  check('the announcement was asked as a delivery, not a filler (kept if the model is mid-sentence)', (h.provider.lastSession?.delivered ?? []).some((s) => s.includes('178 Tests')), (h.provider.lastSession?.delivered ?? []).join(' | '));
   await h.call.deliver(delivery);
   check('a second delivery is ignored', (h.provider.lastSession?.spoken ?? []).filter((s) => s.includes('178 Tests')).length === 1);
   await h.call.close('test over');

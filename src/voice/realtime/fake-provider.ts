@@ -33,6 +33,8 @@ export class FakeRealtimeSession implements RealtimeSession {
   readonly instructionUpdates: string[] = [];
   /** What somora asked the model to say out loud (filler, announcements). */
   readonly spoken: string[] = [];
+  /** Of those, the ones asked with deliver: true. */
+  delivered: string[] = [];
   closedWith: string | undefined;
   interrupts = 0;
   private resolvers = new Map<string, () => void>();
@@ -74,9 +76,10 @@ export class FakeRealtimeSession implements RealtimeSession {
     this.interrupts += 1;
   }
 
-  async speak(instructions: string): Promise<void> {
+  async speak(instructions: string, opts?: { deliver?: boolean }): Promise<void> {
     if (this.closedWith) throw new Error('session closed');
     this.spoken.push(instructions);
+    if (opts?.deliver) this.delivered.push(instructions);
   }
 
   async close(reason: string): Promise<void> {

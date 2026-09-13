@@ -897,7 +897,11 @@ export class VoiceCall {
         'then give the answer as it is. Do not add anything else.\n' +
         body;
     try {
-      await this.session.speak?.(instruction);
+      // deliver: the model may be mid-sentence (its own "still working"
+      // after a status check); the announcement is kept for the pause
+      // instead of dropped like a filler (2026-09-13, hans counting to
+      // forty went silent while the log said announced).
+      await this.session.speak?.(instruction, { deliver: true });
       this.log({ msg: 'voice.consult_announced', consultId: res.consultId, state: res.state, chars: body.length, ...(res.followUp ? { followUp: true } : {}) });
     } catch (err) {
       this.log({ msg: 'voice.consult_announce_failed', consultId: res.consultId, err: (err as Error).message });

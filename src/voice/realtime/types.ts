@@ -124,6 +124,15 @@ export interface RealtimeAudioChunk {
  * tool. The contract carries both so the faster one is an optimisation,
  * not a rewrite.
  */
+export interface SpeakOptions {
+  /** This must be said: if the model is talking right now, keep it and
+   *  say it as soon as the model falls silent. Without it a request
+   *  that arrives mid-response is dropped — right for a filler ("one
+   *  moment"), wrong for the answer to a handed-over question, which
+   *  went silent that way on 2026-09-13 while the log said announced. */
+  deliver?: boolean;
+}
+
 export interface RealtimeSession {
   readonly id: string;
   /** Provider events, in order. Ends when the session closes. */
@@ -144,7 +153,7 @@ export interface RealtimeSession {
    * "moment, ich schau nach" and waited for the user instead of making
    * the call. OpenClaw drives the same pattern from the host side.
    */
-  speak?(instructions: string): Promise<void>;
+  speak?(instructions: string, opts?: SpeakOptions): Promise<void>;
   /** Stop the model talking right now (barge-in, or the user hung up). */
   interrupt(): Promise<void>;
   close(reason: string): Promise<void>;
