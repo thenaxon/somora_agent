@@ -80,7 +80,10 @@ or the voice fetches it when you ask whether it is done
 (`somora_consult_result`). Asked how far along it is, the voice
 reports the running work and each handed-over request with its place
 in the queue (`somora_work_status`). A request that was stopped or
-removed on the way is announced the same way, with the reason.
+removed on the way is announced the same way, with the reason. Work
+the agent started for your question and finished only after its answer
+was read out — a sub-agent, a question to another agent — reaches you
+the same way, once, announced as a follow-up to that earlier question.
 
 The framing itself travels beside the question, not inside it — in the
 same field somora uses for the memory block, which every engine puts in

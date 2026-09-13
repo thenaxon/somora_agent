@@ -1393,7 +1393,16 @@ target_session, started_at, finished_at?, error?}` — `state` is
 
 Same fields plus `result` (the full turn result: `finalText`,
 `outcome`, `tool_calls`, `files_written`, `media`, `usage`, …) once
-terminal. `wait_until_done=1` + `timeout_ms` block server-side; with
+terminal. `result.follow_ups: string[]` (oldest first) holds texts
+that reached the parent after the sub's report: the outcome of work
+the sub started and did not wait for — its own subs, agents it asked.
+Each one is announced to the parent with a `[subagent attention]`
+wake whose text says `Task '<task_id>' … has a follow-up: the work it
+started has finished. It begins: "…"` and whose frame reads `Fetch it
+with subagent_result({ task_id: "<task_id>" }) — the follow-up is in
+result.follow_ups — then continue whatever depended on it. If nothing
+does, a short acknowledgement to the user is enough.` (see
+[agents.md](agents.md)). `wait_until_done=1` + `timeout_ms` block server-side; with
 `waiter_agent` / `waiter_session` the wait joins the deadlock guard
 and a cycle answers `409 {circular_wait: true, chain}`.
 
@@ -1422,6 +1431,23 @@ asker is woken in the session it asked from, with the first lines and
 the `call_id`. Reading the result — here or through the tool — cancels
 that wake, and a caller still on the line never gets one, because the
 answer reaches it as its tool result.
+
+A `done` call may be followed later by a **follow-up**: when the target
+answered "I am working on it and will report back" and the work it
+started while answering — sub-agents, calls of its own, and whatever
+those start — finishes after its reply, the asker receives the outcome
+once, as an ordinary message from the target into the session it asked
+from. That message is a normal turn with `origin: { kind: "agent",
+from: { agent, session }, callId }` where `callId` is this `call_id`
+and `text` is the follow-up; its frame is the `[Follow-up on the
+question you sent earlier (call_id "…"): …]` note quoted under
+`user_message` in `GET /chat/stream`. Nobody waits for it, so `DELETE
+/chat/queue/:id` on it wakes no one. It is not sent when the asker was
+a person, when the call did not finish `done`, when the target already
+wrote to the asker itself in the meantime, when the asker read this
+route during the wake grace, or after a server restart; a follow-up
+whose reporting turn failed says so, with the error, in place of the
+text.
 
 ```
 GET /a2a/ask-result?call_id=<uuid>
@@ -1513,7 +1539,9 @@ Event types:
   byte-identically on later turns, so caching is unaffected. Per
   origin the frame is: the `[Message from agent <name>, session
   <slug>]` header and, for a session `agent_ask` created, the
-  `[Your session '<slug>' was just created by …]` note (`agent`); the
+  `[Your session '<slug>' was just created by …]` note, or for a
+  follow-up on an earlier call the `[Follow-up on the question you
+  sent earlier (call_id "…"): …]` note (`agent`, see below); the
   evidence block of a sentinel fire (`sentinel`); the inspect-now
   instructions of a tmux wake (`tmux`); the take-a-fresh-snapshot
   advice of a browser hand-back (`browser`); the call framing of a
@@ -1541,12 +1569,26 @@ Event types:
   ```
 
   `human` is a person typing (`chat`) or dictating (`voice-stt`).
-  `agent` is an `agent_ask`; `subagent` a sealed brief running in its
-  own `sub-…` session; `sentinel`, `tmux`, `browser` and `voice` the
+  `agent` is an `agent_ask` — or a follow-up on one: when the target
+  answered and work it started while answering (sub-agents, calls of
+  its own) finishes later, the target's session sends the asker one
+  more turn with `origin.kind: "agent"` and `callId` = the original
+  call. Its `text` is the follow-up itself; its frame, beside the
+  `[Message from agent …]` header, is `[Follow-up on the question you
+  sent earlier (call_id "<id>"): the work it started has finished.
+  Below is its result — treat it as the answer to that question.
+  Continue whatever depended on it; if nothing does, tell your human
+  in one line.]`. It is broadcast as a `user_message` like any agent
+  turn; there is no separate event. `subagent` a sealed brief running
+  in its own `sub-…` session; `sentinel`, `tmux`, `browser` and `voice` the
   four system triggers; `wake` brings something the agent started
   earlier back to it — a late `agent_ask` answer (`ref` = call id), a
   finished async sub-agent (`ref` = task id) or a rendered video
-  (`ref` = job id). The legacy fields stay and are derived from it:
+  (`ref` = job id) — and, with `about: "subagent"`, a follow-up on a
+  finished sub whose own work finished later (the text reads `Task
+  '<id>' … has a follow-up: the work it started has finished. It
+  begins: "…"`, and the frame points at `result.follow_ups`). The
+  legacy fields stay and are derived from it:
   `agent` fills `from_agent`, `from_session` and `agent_ask_call_id`
   (= `callId`); `sentinel`, `tmux`, `browser` and `voice` set
   `from_system` to the same word; `wake` sets `from_system` to its

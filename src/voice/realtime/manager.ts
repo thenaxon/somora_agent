@@ -15,7 +15,7 @@ import { matchSpokenSession, normalizeSpokenName } from './session-match.ts';
 import { logger } from '../../server/logger.ts';
 import type { Config } from '../../config/types.ts';
 import { VoiceCall, type ConsultLookup, type ConsultResult, type SessionWorkStatus, type VoiceCallSnapshot } from './call.ts';
-import { onWorkFinished } from '../../server/work-ledger.ts';
+import { onWorkFinished, onWorkFollowUp } from '../../server/work-ledger.ts';
 import { CONSULT_TOOL_NAME } from './consult.ts';
 import { buildVoiceInstructions } from './persona.ts';
 import { OpenAiRealtimeProvider } from './openai-provider.ts';
@@ -80,6 +80,26 @@ export class VoiceCallManager {
           ...(it.error ? { error: it.error } : {}),
         })
         .catch((err: unknown) => logger.warn({ msg: 'voice.consult_delivery_failed', consultId: it.id, err: (err as Error).message }));
+    });
+    // Work a consult started (a sub, a question to another agent) that
+    // finished after the answer was read out: the call hears it as a
+    // follow-up (work-ledger.ts maybeFollowUp).
+    onWorkFollowUp((root, fu) => {
+      if (!root.requester || !('voiceCall' in root.requester)) return;
+      const active = this.calls.get(root.requester.voiceCall);
+      if (!active) {
+        logger.info({ msg: 'voice.consult_delivery_skipped', consultId: root.id, reason: 'call already gone (follow-up)' });
+        return;
+      }
+      void active.call
+        .deliver({
+          consultId: root.id,
+          state: fu.failed ? 'failed' : 'done',
+          text: fu.text,
+          ...(fu.failed ? { error: fu.failed } : {}),
+          followUp: true,
+        })
+        .catch((err: unknown) => logger.warn({ msg: 'voice.consult_delivery_failed', consultId: root.id, err: (err as Error).message }));
     });
   }
 

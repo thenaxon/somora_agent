@@ -98,7 +98,9 @@ export const agentAskResult: ToolDefinition<InputT, AskResultOutcome> = {
     'target\'s reply), "failed" (with the error — the target\'s model was unreachable, ' +
     '"stopped by the user": a person ended that turn, or "removed from the queue by the user": ' +
     'it never started; in both cases do not re-send), or ' +
-    '"pending" (still queued behind another turn, or running). NEVER re-send the original ' +
+    '"pending" (still queued behind another turn, or running). A "done" reply may be followed later ' +
+    'by a follow-up message from the target when work it started while answering finishes; it ' +
+    'arrives as a normal turn from that agent. NEVER re-send the original ' +
     'message to "wait longer": the target is still working on it and would do the work twice. ' +
     'Pass `wait_until_done: true` to block server-side until it finishes — cheaper than polling, ' +
     'since each poll costs one of your own tool-call rounds. Default timeout 5 min, cap 30 min. ' +

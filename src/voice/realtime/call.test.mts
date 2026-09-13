@@ -112,6 +112,18 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
     h.provider.lastSession?.toolResults[0]?.result.includes('3 von 40') === true,
     JSON.stringify(h.provider.lastSession?.toolResults),
   );
+  // Rene, 2026-09-13: handed the raw answer, the local voice model
+  // shrank 1239 characters of team structure to 25 spoken ones. The
+  // quick answer is framed like the hand-over announcement: English,
+  // the call's language by name, the persona's sentence budget, and
+  // "never just say that you have it".
+  check(
+    'framed for the ear: language by name, sentence budget, substance not acknowledgement',
+    /in German, in at most \d sentences/.test(h.provider.lastSession?.toolResults[0]?.result ?? '') &&
+      /Never replace it with saying that you have it/.test(h.provider.lastSession?.toolResults[0]?.result ?? '') &&
+      (h.provider.lastSession?.toolResults[0]?.result ?? '').endsWith('3 von 40 offen.'),
+    h.provider.lastSession?.toolResults[0]?.result,
+  );
   // What a call leaves in a session is what A2A leaves: the question
   // that reached the agent, and the answer it gave. The talking around
   // it stays in the call — written as user messages it broke three
@@ -833,6 +845,33 @@ function harness2(script: FakeScriptStep[], consult: (args: { text: string }) =>
   await run;
 }
 
+// 2b. a follow-up on a consult already read out: announced as a follow-up, even though the consult is fetched
+{
+  const h = harness2(
+    [
+      { emit: { kind: 'ready', ts: 1 } },
+      { emit: { kind: 'tool_call', ts: 2, callId: 'c1', name: CONSULT_TOOL_NAME, args: JSON.stringify({ question: 'Recherchier das bitte' }) } },
+      { awaitToolResult: 'c1' },
+      { awaitToolResult: 'never' },
+    ],
+    async () => ({ text: 'handed over', pending: true, state: 'handed_over', consultId: 'v-2b', position: 0 }),
+  );
+  const run = (async () => { for await (const _ of h.call.run()) { /* */ } })();
+  await wait(50);
+  await h.call.deliver({ consultId: 'v-2b', state: 'done', text: 'Ich habe zwei Subs gestartet und melde mich.' });
+  await h.call.deliver({ consultId: 'v-2b', state: 'done', text: 'Die Subs sind fertig: 3 Treffer.', followUp: true });
+  const spoken = h.provider.lastSession?.spoken ?? [];
+  const fu = spoken.find((s) => s.includes('3 Treffer'));
+  check('the follow-up was read out although the consult was already fetched', fu !== undefined, spoken.join(' | '));
+  check('as a follow-up to the earlier question, in the call language', fu?.includes('follow-up') === true && fu?.includes('in de') === true && fu?.includes('Recherchier das bitte') === true, fu);
+  await h.call.deliver({ consultId: 'unknown-id', state: 'done', text: 'lost', followUp: true });
+  check('a follow-up for a consult this call never had is skipped', (h.provider.lastSession?.spoken ?? []).every((s) => !s.includes('lost')));
+  await h.call.close('test over');
+  await run;
+  await h.call.deliver({ consultId: 'v-2b', state: 'done', text: 'too late', followUp: true });
+  check('nothing after the call closed', (h.provider.lastSession?.spoken ?? []).every((s) => !s.includes('too late')));
+}
+
 // 3. the caller asks first: the result tool fetches, and the later delivery stays quiet
 {
   const h = harness2(
@@ -855,7 +894,7 @@ function harness2(script: FakeScriptStep[], consult: (args: { text: string }) =>
   const first = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c2')?.result ?? '';
   check('asked too early: still working, with the position', first.includes('still working') && first.includes('position 1'), first);
   const second = h.provider.lastSession?.toolResults.find((r) => r.callId === 'c3')?.result ?? '';
-  check('asked again: the answer', second === 'Fertig, 3 Dateien geändert.', second);
+  check('asked again: the answer, framed for the ear', second.endsWith('Fertig, 3 Dateien geändert.') && second.includes('in German'), second);
   await h.call.deliver({ consultId: 'v-3', state: 'done', text: 'Fertig, 3 Dateien geändert.' });
   check('already fetched: nothing is read out', (h.provider.lastSession?.spoken ?? []).every((s) => !s.includes('Fertig')));
   await h.call.close('test over');

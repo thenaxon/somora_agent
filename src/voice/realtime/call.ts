@@ -25,7 +25,7 @@ import {
   statusToolSpec,
   switchToolSpec,
 } from './consult.ts';
-import { buildVoiceInstructions } from './persona.ts';
+import { languageName, buildVoiceInstructions } from './persona.ts';
 import { normalizeSpokenName } from './session-match.ts';
 import type { RealtimeEvent, RealtimeProvider, RealtimeSession } from './types.ts';
 
@@ -90,6 +90,10 @@ export interface ConsultDelivery {
   state: 'done' | 'failed';
   text?: string;
   error?: string;
+  /** Work the consult started finished after its answer (work-ledger
+   *  maybeFollowUp): read out as a follow-up, even though the consult
+   *  itself was already delivered. */
+  followUp?: boolean;
 }
 
 export interface SessionWorkStatus {
@@ -606,6 +610,27 @@ export class VoiceCall {
     await this.session?.interrupt();
   }
 
+  /**
+   * An answer that came back inside the patience goes to the talking
+   * model as a tool result. Handed the raw text, the small local model
+   * treated "shortened for the ear" as "leave it out": asked for the
+   * team structure, hans answered with 1239 characters and the voice
+   * spoke 25 (Rene, 2026-09-13). The hand-over announcement always
+   * carried an instruction; the quick path now does too — English,
+   * naming the call's language and the persona's sentence budget, the
+   * wording still the model's.
+   */
+  private frameAnswer(text: string): string {
+    const sentences = this.persona.voice?.maxSpokenSentences ?? 4;
+    return (
+      `The agent answered. Tell the user the substance of this answer in ${languageName(this.cfg.language)}, ` +
+      `in at most ${sentences} sentences: the names, facts and numbers in it, as the agent gave them, ` +
+      'without reading lists or paths aloud. Never replace it with saying that you have it, that it is ' +
+      'done, or that it is in the chat.\n' +
+      text
+    );
+  }
+
   private async note(agent: string, session: string, text: string): Promise<void> {
     await this.deps.appendEvent(agent, session, {
       kind: 'engine_meta',
@@ -659,7 +684,7 @@ export class VoiceCall {
       await session.sendToolResult(
         callId,
         look.state === 'done'
-          ? (look.text?.trim() || 'no answer this time — say so, do not invent one')
+          ? (look.text?.trim() ? this.frameAnswer(look.text.trim()) : 'no answer this time — say so, do not invent one')
           : `the agent could not answer: ${look.error ?? 'unknown error'}`,
       );
       return;
@@ -786,7 +811,7 @@ export class VoiceCall {
       await session.sendToolResult(
         callId,
         answer.length > 0
-          ? answer
+          ? this.frameAnswer(answer)
           : `no answer this time — say so, do not invent one`,
       );
     } catch (err) {
@@ -809,6 +834,22 @@ export class VoiceCall {
    */
   async deliver(res: ConsultDelivery): Promise<void> {
     const open = this.openConsults.get(res.consultId);
+    if (res.followUp) {
+      if (!open) {
+        this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'follow-up for a consult this call does not know' });
+        return;
+      }
+      if (this.state === 'closed' || !this.session) {
+        this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call closed' });
+        return;
+      }
+      if (open.agent !== this.target.agent) {
+        this.log({ msg: 'voice.consult_delivery_skipped', consultId: res.consultId, reason: 'call moved to another agent' });
+        return;
+      }
+      await this.announce(open.question, res);
+      return;
+    }
     if (!open) {
       // Finished before the hand-over was recorded: keep it for a moment.
       this.earlyDeliveries.set(res.consultId, res);
@@ -845,14 +886,19 @@ export class VoiceCall {
     const body = res.state === 'done'
       ? (res.text?.trim() || 'the agent had no answer')
       : `the agent could not answer: ${res.error ?? 'unknown error'}`;
-    const instruction =
-      `Read the user the answer to the question they asked earlier about "${question.slice(0, 120)}". ` +
-      `Start by saying, in ${this.cfg.language}, that this is the answer to that earlier question, ` +
-      'then give the answer as it is. Do not add anything else.\n' +
-      body;
+    const instruction = res.followUp
+      ? `The agent has a follow-up on the question the user asked earlier about "${question.slice(0, 120)}": ` +
+        'work it had started for that question has now finished. ' +
+        `Start by saying, in ${this.cfg.language}, that this is a follow-up to that earlier question, ` +
+        'then give it as it is. Do not add anything else.\n' +
+        body
+      : `Read the user the answer to the question they asked earlier about "${question.slice(0, 120)}". ` +
+        `Start by saying, in ${this.cfg.language}, that this is the answer to that earlier question, ` +
+        'then give the answer as it is. Do not add anything else.\n' +
+        body;
     try {
       await this.session.speak?.(instruction);
-      this.log({ msg: 'voice.consult_announced', consultId: res.consultId, state: res.state, chars: body.length });
+      this.log({ msg: 'voice.consult_announced', consultId: res.consultId, state: res.state, chars: body.length, ...(res.followUp ? { followUp: true } : {}) });
     } catch (err) {
       this.log({ msg: 'voice.consult_announce_failed', consultId: res.consultId, err: (err as Error).message });
     }

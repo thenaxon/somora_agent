@@ -182,7 +182,9 @@ export const subagentResult: ToolDefinition<z.infer<typeof ResultInput>> = {
   description:
     'Fetch the result of a sub-agent task. Returns one of three states: ' +
     '"done" (with result text + usage), "failed" (with error), or "pending" ' +
-    '(task still running). `outcome` is the runtime verdict, never read from the text: ' +
+    '(task still running). `result.follow_ups` lists texts that arrived AFTER the sub\'s report ' +
+    '— the outcome of sub-agents the sub itself started and did not wait for; you are woken with a ' +
+    '[subagent attention] follow-up when one lands. `outcome` is the runtime verdict, never read from the text: ' +
     '"completed" (the sub answered), "partial" (the engine had to force a finish at the ' +
     'round cap / tool budget and the sub then answered), "degraded" (the text is a somora ' +
     'marker — the sub looped or never answered; its tool work may still be intact, see ' +

@@ -198,6 +198,7 @@ import {
   waitForAskCall,
 } from './ask-calls.ts';
 import { configureWorkWake, dequeueWork, listWork, markFetched, onWorkFinished, openWork, pendingWakesFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
+import { sessionSlugOf as a2aSessionSlugOf } from '../engine/a2a.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
 import { SOMORA_VERSION } from '../version.ts';
@@ -6220,9 +6221,9 @@ onWorkFinished((it) => {
 
 configureWorkWake({
   graceMs: config.agentLoop.wakeGraceMs,
-  dispatchWakeTurn: async ({ agent, session, text, prefix, about, ref, depth, mediaIds }) => {
+  dispatchWakeTurn: async ({ agent, session, text, prefix, about, ref, depth, mediaIds, id }) => {
     const origin: TurnOrigin = { kind: 'wake', about, ref, ...(depth > 0 ? { depth } : {}) };
-    const workId = `wake-${ref}`;
+    const workId = id ?? `wake-${ref}`;
     openWork({ id: workId, origin, target: { agent, session }, text, waiting: false, wake: 'never' });
     await startTurn({
       agent,
@@ -6233,6 +6234,18 @@ configureWorkWake({
       origin,
       ...(mediaIds && mediaIds.length > 0 ? { attachMediaIds: mediaIds } : {}),
     });
+  },
+  // A follow-up for an agent that asked (private/turn-dispatch-
+  // followup-design.md §2): a normal A2A message from the target's
+  // session back to the asker, correlated by the original call id. No
+  // requester on the item — nobody waits for it and a take-back of it
+  // wakes no one; the receiver treats it like any message from that
+  // agent.
+  dispatchFollowUpMessage: async ({ from, to, callId, text, prefix, id }) => {
+    const origin: TurnOrigin = { kind: 'agent', from: { agent: from.agent, session: from.session }, callId };
+    openWork({ id, origin, target: to, text, waiting: false, wake: 'never' });
+    logger.info({ msg: 'a2a.follow_up', callId, from_agent: from.agent, from_session: a2aSessionSlugOf(from.session), to_agent: to.agent, to_session: to.session, id });
+    await startTurn({ agent: to.agent, session: to.session, text, turnPrefix: prefix, workId: id, origin });
   },
 });
 installTtsCacheGc(config);

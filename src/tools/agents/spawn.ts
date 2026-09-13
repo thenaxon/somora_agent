@@ -173,6 +173,8 @@ export const spawnSubagent: ToolDefinition<z.infer<typeof SingleInput>> = {
     'use subagent_status / subagent_result to check earlier, subagent_cancel to abort a ' +
     'running sub INCLUDING its child-spawns. ' +
     'Set wait:true for synchronous "I need the result NOW to write my reply" delegations. ' +
+    'Either way, if the sub itself started work that finishes after its report (its own subs), ' +
+    'that outcome reaches you later on its own as a follow-up wake — you never have to poll for it. ' +
     'Depth cap: 3 (a sub itself can spawn further subs up to that limit). ' +
     'Per-agent concurrent cap: 4 — NOTE: subs spawned by your subs count against YOUR cap ' +
     'too (child spawns may only fill 3 of the 4 slots; the last is reserved for you), and a ' +

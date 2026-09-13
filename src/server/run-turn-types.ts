@@ -60,6 +60,10 @@ export interface ChatTurnResult {
    *  configured. Independent of finalText: present even when the model
    *  failed to phrase an answer. */
   media?: ChatTurnMedia[];
+  /** Texts that reached the requester after this result was final: the
+   *  outcome of work the turn started and that finished later
+   *  (work-ledger.ts maybeFollowUp). Oldest first. */
+  follow_ups?: string[];
   usage?: {
     tokens_in: number;
     tokens_out: number;

@@ -209,7 +209,11 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     'agent_ask is REQUEST-RESPONSE, not a message bus: if YOU received a question via agent_ask ' +
     '(a user_message with from_agent set), your answer is your normal turn output — the asking ' +
     'agent receives it automatically as the result of their pending call. Never agent_ask your ' +
-    'caller back to deliver an answer; circular calls are rejected (deadlock guard).',
+    'caller back to deliver an answer; circular calls are rejected (deadlock guard). ' +
+    'If you answer "I am working on it with sub-agents and will report back", you do not have to: ' +
+    'when work you started while answering finishes later, somora sends its result to the asker ' +
+    'on its own as a follow-up message from you. Likewise, a target that told YOU it would report ' +
+    'back does so through such a follow-up turn — do not re-ask.',
   inputSchema: AskInput,
   jsonSchema: {
     type: 'object',

@@ -379,6 +379,41 @@ gets one. The same wake, with the same grace, brings back a finished
 background sub-agent and a rendered video — one mechanism for
 everything an agent started and walked away from.
 
+**Follow-ups.** A target may answer with "I am working on it with
+sub-agents and will report back". Its turn ends, and with it the call,
+while the work goes on. The asker does not have to come back for the
+rest. Every piece of work remembers during which turn it was started,
+so the sub-agents the target spawned while answering, the calls it
+made, and whatever those start in turn form a tree under the original
+call. When the last member of that tree has finished and the wake turn
+about it has run in the target's session, the asker hears about it
+exactly once — a follow-up carrying the final text of that last wake
+turn. Four subs are four wakes in the target's session and one
+follow-up to the asker, after the fourth. Work started inside a wake
+turn extends the tree, and grandchildren count. The follow-up is an
+ordinary message from the target agent — `origin.kind: "agent"` with
+the original `call_id`, the text stored as the message — so clients
+render it like any other. Its frame, beside the usual `[Message from
+agent …]` header, says what it is:
+
+```text
+[Follow-up on the question you sent earlier (call_id "<id>"): the work it started has finished. Below is its result — treat it as the answer to that question. Continue whatever depended on it; if nothing does, tell your human in one line.]
+```
+
+Nobody waits for this message, so taking it out of the queue wakes no
+one. There is no follow-up when the tree hangs under a person's turn
+(that session shows the wake itself) or under a turn nobody asked for
+(a sentinel fire, a tmux wake), when the call did not finish `done`,
+when the wake turn was stopped by a person, when the target already
+sent the asker a message of its own in that wake turn, or when the
+asker read the result with `agent_ask_result` during the grace. A wake
+turn that fails for another reason still produces one, saying the work
+finished but the turn reporting it failed, with the error. Like the
+rest of the ledger the tree lives in memory: after a server restart
+there is none, and no follow-up. So a target that says it will report
+back does — through such a follow-up turn — and the asker never asks
+again.
+
 Blocking waits are guarded against cycles. The server tracks who waits
 on whom and refuses a call that would close the loop — even through a
 chain of three or more agents — with an error that says so, instead of
@@ -425,12 +460,14 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   sub's tool-call round cap above `agentLoop.maxRounds` — orchestrator
   subs that spawn and poll their own subs need it. **`images`** works
   as for `agent_ask`.
-- **Follow-up tools.** `subagent_status({ task_id })` reports
+- **Checking on a sub.** `subagent_status({ task_id })` reports
   `running`, `done`, `failed` or `cancelled` with target and
   timestamps. `subagent_result({ task_id, wait_until_done?, timeout_ms? })`
   returns `done` with the text, `usage`, the runtime verdict `outcome`
   (`completed`, `partial`, `degraded`, `failed`) with `outcome_reason`,
-  `tool_calls`, `rounds`, `files_written` and `media`; `failed` with
+  `tool_calls`, `rounds`, `files_written`, `media` and
+  `follow_ups` (texts that arrived after the sub's report, oldest
+  first — see the follow-up wake below); `failed` with
   the error; or `pending`. `subagent_list({ state?, limit? })` lists
   the caller's own tasks, newest first, from the server's in-memory
   registry (a restart empties it). `subagent_cancel({ task_id,
@@ -453,6 +490,34 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   The wake waits `agentLoop.wakeGraceMs` (default 3 seconds); a
   `subagent_result` inside that window cancels it, and
   `attention: false` opts a spawn out of it altogether.
+- **Follow-up wake.** A sub that starts sub-agents of its own is told
+  in its system prompt not to hand in its report while they are still
+  working: wait for them (`wait: true`, or `subagent_result` with
+  `wait_until_done`) and fold their results in, because what it returns
+  is what its parent gets. A sub that reports early anyway does not
+  leave its parent without the rest. Whatever a sub starts is
+  remembered as started during its task — its own subs, the agents it
+  asks, and what those start in turn — and when the last of it has
+  finished and the wake about it has run in the sub's session, the
+  parent gets one more `[subagent attention]` turn:
+
+  ```text
+  [subagent attention] Task '<task_id>' (sub-agent '<name>', session 'sub-…') has a follow-up: the work it started has finished. It begins: "…"
+  ```
+
+  Its frame: fetch it with `subagent_result({ task_id })` — the
+  follow-up is in `result.follow_ups` — then continue whatever
+  depended on it; if nothing does, a short acknowledgement to the user
+  is enough. The text is the final text of that last wake turn;
+  `result.follow_ups` (also under `GET /spawn-result`) keeps every
+  follow-up of a task, oldest first. A parent hears once, after the
+  whole tree, not once per level, and work started inside a wake turn
+  extends the tree. The follow-up waits the same grace, and a
+  `subagent_result` inside it cancels it. There is none for a task a
+  person asked for, for one that did not finish `done`, for a wake turn
+  a person stopped, or after a server restart; a wake turn that failed
+  for another reason still sends one, saying the work finished but the
+  turn reporting it failed, with the error.
 - **Limits.** Nesting is capped at depth 3. Each agent may run 4 subs
   at once and the whole server 16; subs spawned by subs count against
   the parent's 4 and may fill only 3 of them, so an orchestrator sub
