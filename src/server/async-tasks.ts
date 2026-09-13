@@ -160,8 +160,8 @@ export interface CancelOutcome {
  * (wait:true) grand-children are not registry-visible and are NOT
  * reached until Phase 3.
  */
-export function cancelTaskCascade(task_id: string, reason: string): CancelOutcome | null {
-  const out = cancelWork(task_id, reason);
+export function cancelTaskCascade(task_id: string, reason: string, by: 'human' | 'agent' = 'agent'): CancelOutcome | null {
+  const out = cancelWork(task_id, reason, by);
   if (!out) return null;
   return {
     cancelled: out.cancelled,

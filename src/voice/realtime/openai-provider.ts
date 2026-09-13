@@ -20,6 +20,7 @@
 
 import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
+import { logger } from '../../server/logger.ts';
 import type { SpeakOptions } from './types.ts';
 import type {
   RealtimeAudioChunk,
@@ -325,7 +326,10 @@ class OpenAiRealtimeSession implements RealtimeSession {
             this.speakWhenFree = true;
           }
           this.lastRequest = null;
-          this.push({ kind: 'error', ts, message, fatal: false });
+          // Handled here: the request is asked again at the next silence.
+          // Shown to the person it read as a fault (red in the web call
+          // window, Rene 2026-09-13) — it belongs in the log.
+          logger.info({ msg: 'voice.response_in_progress', message, requeued: this.pendingDeliveries.length, speakWhenFree: this.speakWhenFree });
           break;
         }
         // A session-level error kills the call; an item-level one (a

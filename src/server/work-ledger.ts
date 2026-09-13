@@ -87,6 +87,11 @@ export interface WorkItem {
   lastFetchedAt?: number;
   /** Follow-ups sent for this item so far (ids of the turns that carried them). */
   followUpsSent?: number;
+  /** Who cancelled it: a person (the queue popover, /queue in the TUI)
+   *  wakes the requester like a take-back does — it did not do it
+   *  itself; the requesting agent (subagent_cancel) knows; a child
+   *  taken down with its parent (`cascade`) has no one left to tell. */
+  cancelledBy?: 'human' | 'agent' | 'cascade';
 }
 
 export type WorkItemView = Omit<WorkItem, 'text' | 'attachments' | 'result'>;
@@ -338,7 +343,7 @@ export function childrenOf(target: { agent: string; session: string }): WorkItem
  * button uses. Breadth-first over the requester tree. Disk artifacts
  * stay untouched.
  */
-export function cancelWork(id: string, reason: string): CancelOutcome | null {
+export function cancelWork(id: string, reason: string, by: 'human' | 'agent' = 'agent'): CancelOutcome | null {
   const root = items.get(id);
   if (!root) return null;
   const outcome: CancelOutcome = { cancelled: [], skipped: [] };
@@ -356,6 +361,7 @@ export function cancelWork(id: string, reason: string): CancelOutcome | null {
     it.state = 'cancelled';
     it.error = reason;
     it.finishedAt = Date.now();
+    it.cancelledBy = it.id === root.id ? by : 'cascade';
     delete it.text;
     delete it.attachments;
     // Ask the session queue, not the item: an item still waiting for the
@@ -377,8 +383,14 @@ export function cancelWork(id: string, reason: string): CancelOutcome | null {
       abort_delivered: abortDelivered,
       was_queued: wasQueued,
       reason,
+      by: it.cancelledBy,
     });
     outcome.cancelled.push(it.id);
+    // Stopped by a person from the requester's own queue popover (Rene,
+    // 2026-09-13, hand test 10: lisa never learnt her sub was stopped):
+    // the requester hears it like a take-back. Its own cancel, or a
+    // child taken down with its parent, wakes no one.
+    if (it.cancelledBy === 'human') scheduleWake(it);
   }
   return outcome;
 }
@@ -575,6 +587,21 @@ export function wakeTextFor(it: WorkItem): { text: string; prefix: string } {
 
 function wakeTextBase(it: WorkItem): { text: string; prefix: string } {
   if (it.wakeText) return { text: it.wakeText, prefix: it.wakePrefix ?? '' };
+  if (it.state === 'cancelled') {
+    return it.origin.kind === 'agent'
+      ? {
+          text:
+            `[agent answer] The question you sent to ${it.target.agent} (session '${it.target.session}') was stopped ` +
+            `by the user before it was answered (call_id "${it.id}").`,
+          prefix: 'Ask again only if the user still wants it; otherwise tell your human in one line.',
+        }
+      : {
+          text:
+            `[subagent attention] Task '${it.id}' (sub-agent '${it.target.agent}', session '${it.target.session}') was ` +
+            `stopped by the user before it finished — there is no result${it.error ? ` (${it.error})` : ''}.`,
+          prefix: 'Spawn it again only if the user still wants it; otherwise tell your human in one line.',
+        };
+  }
   if (it.state === 'dequeued') {
     return it.origin.kind === 'agent'
       ? {
@@ -839,7 +866,7 @@ function scheduleWake(it: WorkItem): void {
   const deps = wakeDeps;
   if (!deps) return;
   if (it.wake !== 'auto') return;
-  if (it.state !== 'done' && it.state !== 'failed' && it.state !== 'dequeued') return;
+  if (it.state !== 'done' && it.state !== 'failed' && it.state !== 'dequeued' && !(it.state === 'cancelled' && it.cancelledBy === 'human')) return;
   if (it.waiting) return;
   const r = it.requester;
   if (!r || !('agent' in r) || !r.session || r.session === '?') return;

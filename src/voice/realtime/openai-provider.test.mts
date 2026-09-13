@@ -232,7 +232,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     error: { type: 'invalid_request_error', message: 'Conversation already has an active response in progress: resp_x.' },
   });
   await tick();
-  check('the refusal is reported but not fatal', events.some((e) => e.kind === 'error' && !e.fatal));
+  check('the refusal is handled quietly — no error event reaches the person', !events.some((e) => e.kind === 'error'));
   socket.sent.length = 0;
   await session.sendToolResult('call_2', 'antwort');
   check(

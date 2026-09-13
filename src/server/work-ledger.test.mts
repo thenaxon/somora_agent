@@ -750,5 +750,45 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   check('7n a wake item itself is never touched', getWork('W')?.wake === 'never');
 }
 
+// 7o. a person stops a running sub from the requester's popover: the requester hears it; the agent's own cancel and a cascaded child wake no one
+{
+  _resetWorkLedger();
+  wireFollowUps();
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  markRunning('H');
+  sub('S1', 'H');
+  sub('G1', 'S1', { agent: 'lisa', session: 'sub-G1' }, { agent: 'lisa', session: 'sub-S1' }); // the sub's own child
+  const out = cancelWork('S1', 'stopped by the user', 'human');
+  check('7o both cancelled (cascade)', out?.cancelled.length === 2 && getWork('S1')?.cancelledBy === 'human' && getWork('G1')?.cancelledBy === 'cascade');
+  await delay(60);
+  const w = wakes.find((x) => x.ref === 'S1');
+  check('7o the requester is woken about the stop', w !== undefined && w.text.includes("Task 'S1'") && w.text.includes('was stopped by the user'), w?.text);
+  check('7o the cascaded child wakes nobody', !wakes.some((x) => x.ref === 'G1'));
+  _resetWorkLedger();
+  wireFollowUps();
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  markRunning('H');
+  sub('S2', 'H');
+  cancelWork('S2', 'cancelled by lisa: not needed');
+  await delay(60);
+  check('7o the agent\'s own cancel wakes nobody', !wakes.some((x) => x.ref === 'S2'));
+  // a person's cancel of a sub under naxon's call: lisa is woken, and naxon still gets one follow-up after the rest
+  _resetWorkLedger();
+  wireFollowUps();
+  rootCall();
+  sub('S3', 'X');
+  sub('S4', 'X');
+  finishWork('X', ok('two subs'));
+  cancelWork('S3', 'stopped by the user', 'human');
+  await delay(60);
+  check('7o under a call: lisa is woken about the stopped sub, with the forwarding note', wakes.some((x) => x.ref === 'S3' && x.prefix.includes('forwarded to agent naxon')));
+  wakeTurn('S3', 'one of two was stopped, continuing with the other');
+  finishWork('S4', ok('r4'));
+  await delay(60);
+  wakeTurn('S4', 'here is what the remaining sub found');
+  await delay(60);
+  check('7o naxon gets exactly one follow-up with both wake answers', followUps.length === 1 && followUps[0]?.text.includes('remaining sub found') === true && followUps[0]?.text.includes('one of two was stopped') === true, JSON.stringify(followUps.map((f) => f.text)));
+}
+
 console.log(`\n${pass} ok, ${fail} failed`);
 assert.equal(fail, 0);

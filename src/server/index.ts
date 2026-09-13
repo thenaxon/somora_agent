@@ -5603,7 +5603,7 @@ app.post('/spawn-cancel', async (c) => {
   // TUI): the parent reads "stopped by the user", like the Stop button.
   const who = body.requesting_agent ? `cancelled by ${body.requesting_agent}` : 'stopped by the user';
   const reason = body.reason?.trim() ? `${who}: ${body.reason.trim()}` : who;
-  const outcome = cancelTaskCascade(body.task_id, reason);
+  const outcome = cancelTaskCascade(body.task_id, reason, body.requesting_agent ? 'agent' : 'human');
   if (!outcome) return c.json({ error: `task '${body.task_id}' not found` }, 404);
   return c.json(outcome);
 });

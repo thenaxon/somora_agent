@@ -505,7 +505,11 @@ spawn_subagents({ tasks: [{ task: "…" }, { persona: "<other-agent>", task: "�
   `attention: false` opts a spawn out of it altogether — except when
   the spawn happened while answering another agent or a voice call:
   they wait for the outcome and hear it through the follow-up, which
-  needs that wake, so the flag does not count there.
+  needs that wake, so the flag does not count there. A sub a person
+  stops from the queue (■ under From here, `/queue rm` in the TUI)
+  wakes its parent the same way, with `was stopped by the user before
+  it finished — there is no result`; a sub the parent cancels itself,
+  and children taken down with their parent, wake no one.
 - **Follow-up wake.** A sub that starts sub-agents of its own is told
   in its system prompt not to hand in its report while they are still
   working: wait for them (`wait: true`, or `subagent_result` with
