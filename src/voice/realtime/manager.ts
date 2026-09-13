@@ -67,7 +67,11 @@ export class VoiceCallManager {
     onWorkFinished((it) => {
       if (!it.requester || !('voiceCall' in it.requester)) return;
       const active = this.calls.get(it.requester.voiceCall);
-      if (!active) return;
+      if (!active) {
+        // The call hung up before the answer landed; it stays in the chat.
+        logger.info({ msg: 'voice.consult_delivery_skipped', consultId: it.id, reason: 'call already gone' });
+        return;
+      }
       void active.call
         .deliver({
           consultId: it.id,
