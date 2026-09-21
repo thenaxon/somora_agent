@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { VoiceCall, type ConsultResult, type VoiceCallDeps } from './call.ts';
 import { CONSULT_TOOL_NAME } from './consult.ts';
 import { FakeRealtimeProvider, type FakeScriptStep } from './fake-provider.ts';
-import { buildVoiceInstructions } from './persona.ts';
+import { buildVoiceInstructions, userEssence } from './persona.ts';
 import type { Persona } from '../../persona/loader.ts';
 import type { NormalizedEvent } from '../../types/events.ts';
 
@@ -686,6 +686,47 @@ const drain = async (call: VoiceCall): Promise<void> => { for await (const _ of 
   check('capabilities are not part of its self-knowledge', !/what you can or cannot do/i.test(built.text));
   check('it stays inside the context budget', built.chars < 1950, `${built.chars} chars`);
   check('it forwards statements, not only requests', /state or correct/i.test(built.text));
+}
+
+// ── who is calling, and what day it is (report 2026-09-16) ───────────
+// Asked "who am I?", the voice self had nothing: the caller's name and
+// form of address live in USER.md, which it never saw, and it had no
+// date at all. Both come from what is already there — the agent's own
+// USER.md and the clock — never from a name in code or config.
+{
+  const base = { consultPolicy: 'always' as const, language: 'de', consultToolName: CONSULT_TOOL_NAME, sessionSlug: 'main' };
+  const now = new Date(2026, 8, 21, 14, 5);
+  const USER_MD = [
+    '# About the user',
+    '',
+    'The user is **Alex Example** — refer to them as "Boss".',
+    '',
+    '- Speaks German, switches to English where needed',
+    '- Partner: **Sam**',
+    '',
+    '## Work',
+    '',
+    '- SECRET-PROJECT details that belong to the real agent, not to the voice self',
+  ].join('\n');
+  const withUser = buildVoiceInstructions({ ...base, now, persona: { ...persona(), aboutUser: USER_MD } as never });
+  check('it knows who is calling, from USER.md', withUser.text.includes('Alex Example') && withUser.text.includes('"Boss"'), withUser.text);
+  check('markdown noise is gone', !/\*\*/.test(withUser.text) && !withUser.text.includes('# About the user'));
+  check('bullets read as one line', withUser.text.includes('switches to English where needed; Partner: Sam'), withUser.text);
+  check('only the opening: later sections stay with the agent', !withUser.text.includes('SECRET-PROJECT'));
+  check('and that this much needs no lookup', /yours to know — no lookup/.test(withUser.text));
+  check('it knows the day and the call start time', withUser.text.includes('Monday, 2026-09-21, 14:05'), withUser.text);
+  check('and that the time is the START, not now', /This call started/.test(withUser.text) && /exact time now, look it up/.test(withUser.text));
+  check('inside the context budget with both lines', withUser.chars < 2300, `${withUser.chars} chars`);
+
+  const without = buildVoiceInstructions({ ...base, now, persona: persona() });
+  check('no USER.md: no caller line, nothing invented', !/The person on this call/.test(without.text));
+  check('no USER.md: the date is still there', without.text.includes('2026-09-21'));
+
+  // A long opening is cut at a clause end and stays within its share.
+  const long = userEssence({ aboutUser: `# U\n\n${'The user likes long descriptions, very long ones. '.repeat(30)}` } as never);
+  check('long opening: capped', long.length <= 280, `${long.length}`);
+  check('long opening: ends at a clause, not mid-word', /[.,;]$/.test(long), long.slice(-20));
+  check('no file: empty', userEssence({} as never) === '');
 }
 
 // ── the clock does not restart on a move ────────────────────────────

@@ -284,7 +284,8 @@ async function collectCandidates(agent: string): Promise<PromotionCandidate[]> {
 
 // ─── per-candidate processing ───────────────────────────────────────
 
-async function processCandidate(args: {
+/** Exported for tests. */
+export async function processCandidate(args: {
   candidate: PromotionCandidate;
   ctx: ActionContext;
   mgr: MemoryManager;
@@ -346,28 +347,51 @@ async function processCandidate(args: {
   }
 
   // decision.kind === 'merge'
-  const wikiFileAbs = join(ctx.wikiAbs, `${decision.wikiPath}.md`);
-  const existing = await readWithMtime(wikiFileAbs);
-  if (!existing) {
-    // LLM picked a wikiPath that doesn't exist. Bail — next run sees
-    // no collision and may decide promote instead.
-    return {
-      kind: 'failed',
-      agent: candidate.agent,
-      memorySlug: candidate.slug,
-      error: `LLM merge target ${decision.wikiPath} does not exist`,
-    };
+  //
+  // A merge REPLACES the page body with what the model wrote. That is
+  // only safe when the model saw the whole, current page:
+  //  - loaded in full → write against the mtime captured when the page
+  //    was READ for the prompt. (It used to be read again here, after
+  //    the LLM call — an edit made during those up-to-120s looked
+  //    "unchanged" and was overwritten.)
+  //  - loaded shortened (pages over 8000 chars arrive cut to 6000), or
+  //    not loaded at all (the model picked it from index.md alone) →
+  //    the body it returned is built on a page it has not read. Ask
+  //    again with that one page in full. Live logs to 2026-09-21: 207
+  //    of 208 shrink-guard trips were on such pages, e.g. a 22788-char
+  //    page "rewritten" as 6 chars, 132 times over.
+  const target = normalizeWikiPath(decision.wikiPath);
+  const loaded = wikiCtx.relevantPages.find((p) => normalizeWikiPath(p.slug) === target);
+  if (loaded && !loaded.truncated) {
+    return applyMerge({
+      candidate,
+      decision,
+      ctx,
+      wikiPageMtimeMs: loaded.mtimeMs,
+    });
   }
-  return applyMerge({
+  return await mergeCollidingPage({
     candidate,
-    decision,
     ctx,
-    wikiPageMtimeMs: existing.mtimeMs,
+    mgr,
+    workerModel,
+    dispatcher,
+    wikiPath: decision.wikiPath,
+    why: loaded ? 'target was only seen shortened' : 'target was not in the loaded context',
+    timeoutMs,
+    ...(signal ? { signal } : {}),
+    ...(thinking ? { thinking } : {}),
   });
 }
 
-/** Promote returned 'failed' because the slug exists. Recover by
- *  asking the LLM to merge into the existing page instead. */
+function normalizeWikiPath(p: string): string {
+  return p.replace(/^\/+/, '').replace(/\.md$/i, '');
+}
+
+/** Ask the LLM again with exactly one page — in full, mtime captured
+ *  before the call — and merge into it. Used when promote collided
+ *  with an existing slug, and when a merge targeted a page the model
+ *  had not fully seen. */
 async function mergeCollidingPage(args: {
   candidate: PromotionCandidate;
   ctx: ActionContext;
@@ -375,6 +399,8 @@ async function mergeCollidingPage(args: {
   workerModel: ResolvedModel;
   dispatcher: PromotionDispatcher;
   wikiPath: string;
+  /** For the log. Default: promote collided with an existing slug. */
+  why?: string;
   timeoutMs: number;
   signal?: AbortSignal;
   thinking?: ThinkingLevel;
@@ -387,21 +413,26 @@ async function mergeCollidingPage(args: {
       kind: 'failed',
       agent: candidate.agent,
       memorySlug: candidate.slug,
-      error: `collision recovery failed: ${wikiPath} disappeared mid-run`,
+      error: args.why
+        ? `LLM merge target ${wikiPath} does not exist`
+        : `collision recovery failed: ${wikiPath} disappeared mid-run`,
     };
   }
   logger.info({
-    msg: 'dream.deep.collision_reroute_to_merge',
+    msg: args.why ? 'dream.deep.merge_reask_full_page' : 'dream.deep.collision_reroute_to_merge',
     agent: candidate.agent,
     memorySlug: candidate.slug,
     wikiPath,
+    ...(args.why ? { why: args.why, pageChars: existing.text.length } : {}),
   });
 
   // Re-call the LLM with the existing page now in the relevantPages
   // context, asking it to merge.
   const decision = await dispatcher.decideMemoryFate({
     candidate,
-    wikiIndex: '(collision recovery — single page focus)',
+    wikiIndex: args.why
+      ? '(single page focus — this is the complete current page, integrate into it)'
+      : '(collision recovery — single page focus)',
     relevantPages: [{ slug: wikiPath, markdown: existing.text }],
     workerModel,
     timeoutMs,

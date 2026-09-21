@@ -15,7 +15,7 @@
 // See `private/dream-system-v2.md`.
 
 import { DEFAULT_WIKI_SCHEMA, type WikiSchema } from '../wiki/language.ts';
-import { mkdir, unlink } from 'node:fs/promises';
+import { mkdir, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import matter from 'gray-matter';
@@ -277,6 +277,22 @@ async function deleteSourceMemory(
   via: 'promote' | 'merge',
 ): Promise<void> {
   try {
+    // Only delete the file we actually read. Candidates are collected
+    // at the start of a run and worked through one LLM call at a time —
+    // with 30 of them, minutes pass. A memory_edit in that window means
+    // the wiki got the OLD text; deleting now would throw the edit away
+    // unread. Keep it: the next run sees the newer note and merges it.
+    const st = await stat(candidate.path);
+    if (st.mtimeMs !== candidate.mtimeMs) {
+      logger.warn({
+        msg: 'dream.deep.memory_changed_not_deleted',
+        agent: candidate.agent,
+        slug: candidate.slug,
+        via,
+        hint: 'memory file was edited after Deep read it — kept for the next run',
+      });
+      return;
+    }
     await unlink(candidate.path);
     logger.debug({
       msg: 'dream.deep.memory_unlinked',

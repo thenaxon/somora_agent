@@ -17,7 +17,7 @@
 
 import type { MemoryManager } from '../memory/manager.ts';
 import { logger } from '../server/logger.ts';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import matter from 'gray-matter';
 
@@ -25,6 +25,14 @@ export interface ReferencedWikiPage {
   /** Wiki path without .md (e.g. 'personen/luca'). */
   slug: string;
   markdown: string;
+  /** mtime of the file when it was read for this context. Deep hands it
+   *  to the merge write, so an edit made WHILE the model was deciding
+   *  is detected instead of overwritten. */
+  mtimeMs: number;
+  /** True when `markdown` is a shortened copy of a large page. Such a
+   *  page is fine as reading context but must never be the basis of a
+   *  full-body rewrite — the model has not seen its tail. */
+  truncated: boolean;
 }
 
 export interface WikiContext {
@@ -95,8 +103,11 @@ async function recallTopWikiPages(args: {
       if (seen.has(h.slug)) continue;
       if (seen.size >= args.limit) break;
       try {
+        // stat BEFORE read: if the file changes in between, the older
+        // mtime makes the later write-check fail safe (skip + retry).
+        const st = await stat(h.filePath);
         const wikiRaw = await readFile(h.filePath, 'utf8');
-        seen.set(h.slug, { slug: h.slug, markdown: wikiRaw });
+        seen.set(h.slug, { slug: h.slug, markdown: wikiRaw, mtimeMs: st.mtimeMs, truncated: false });
       } catch (err) {
         logger.debug({
           msg: 'dream.wiki_ctx.recall_hit_read_failed',
@@ -115,6 +126,7 @@ async function recallTopWikiPages(args: {
       const parsed = matter(p.markdown);
       const truncated = parsed.content.slice(0, 6000) + '\n\n…(truncated)';
       p.markdown = matter.stringify(truncated, parsed.data);
+      p.truncated = true;
     }
   }
   return out;

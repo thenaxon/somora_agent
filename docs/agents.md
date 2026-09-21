@@ -356,7 +356,7 @@ The result has one of three states:
 
 | `state` | What it carries | Meaning |
 |---|---|---|
-| `done` | `response`, `ms`, `usage`, `call_id`, `target_agent`, `target_session`, plus `session_inferred`, `session_created`, `session_model` or `session_note` when they apply | The target answered. |
+| `done` | `response`, `ms`, `usage`, `call_id`, `target_agent`, `target_session`, `routing_reason` (`explicit`, `reply_to_origin` or `default_main`), plus `session_inferred`, `session_created`, `session_model`, `session_note` or `routing_note` when they apply | The target answered. `routing_note` appears when no session was named, there was no origin to reply to, and the caller is working in a non-main session: the message went to the target's `main`, which may not have that context. |
 | `pending` | `call_id`, `hint` | The target is still queued or running, or the call was sent with `wait: false`. Fetch the outcome with `agent_ask_result`, or wait to be woken. |
 | `failed` | `error`, `hint` | The target's turn ran and failed — a model or engine error, or `stopped by the user` when a person pressed Stop on it — or it never ran because a person took it out of the target's queue (`removed from the queue by the user before it started`). An asker that had stopped waiting is woken with an `[agent answer]` turn saying so. Not something to retry on your own. |
 

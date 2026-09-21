@@ -34,6 +34,7 @@ import {
 import { skillEnvScopeForCommand, skillEnvStripHint } from '../../skills/env-scope.ts';
 import { SOMORA_INTERNAL_ENV_SUMMARY } from './internal-env.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
+import { fitExecOutput } from './fit-output.ts';
 import {
   killRemoteJob,
   pollRemoteJob,
@@ -198,7 +199,10 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     'jq, python, node, rg etc. may be missing — probe first with `which <bin>` or `command -v` ' +
     'before relying on them, or pipe a JSON post-processor through stdin on the local side. ' +
     '\n\n' +
-    'Output cap: 256 KB per stream for sync results and process_log tail reads. If your command ' +
+    'Output: a sync result carries about 60 000 chars of stdout+stderr. Longer output comes back as ' +
+    'the first and last part of each stream with the cut marked in the text and truncated:true — ' +
+    'never guess the omitted middle; redirect to a file and file_read it, or narrow the command. ' +
+    'Capture cap: 256 KB per stream, also for process_log tail reads. If your command ' +
     'produces more output, write it to a file on the target (e.g. ./out.log) and use file_read ' +
     'with offset/limit to page through. ' +
     '\n\n' +
@@ -457,15 +461,18 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         ? 'Output truncated at 256 KB per stream. For full content, redirect the command\'s ' +
           'output to a file on the target and use file_read with offset/limit.'
         : undefined;
-      const hint = [stripHint, truncHint].filter(Boolean).join(' ');
+      const fitted = fitExecOutput(r.stdout, r.stderr);
+      const hint = [stripHint, truncHint, fitted.hint].filter(Boolean).join(' ');
       return {
         ok: r.exit_code === 0,
         background: false,
         target: 'local',
         exit_code: r.exit_code,
-        stdout: r.stdout,
-        stderr: r.stderr,
-        truncated: r.truncated,
+        stdout: fitted.stdout,
+        stderr: fitted.stderr,
+        // One flag for every way the text can be incomplete: the 256 KB
+        // capture cap AND the result budget (fit-output.ts).
+        truncated: r.truncated || fitted.shortened,
         ms: r.ms,
         ...(hint ? { hint } : {}),
       };
@@ -490,24 +497,28 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       timeoutMs: input.timeout_ms ?? 60_000,
       ...(input.pty ? { pty: true } : {}),
     });
+    const rfitted = fitExecOutput(rr.stdout, rr.stderr);
+    const rhint = [
+      rr.truncated
+        ? 'Output truncated at 256 KB per stream. For full content, redirect the command\'s ' +
+          'output to a file on the target and use file_read with target:"' +
+          input.target +
+          '" + offset/limit.'
+        : undefined,
+      rfitted.hint,
+    ]
+      .filter(Boolean)
+      .join(' ');
     return {
       ok: rr.exit_code === 0,
       background: false,
       target: input.target,
       exit_code: rr.exit_code,
-      stdout: rr.stdout,
-      stderr: rr.stderr,
-      truncated: rr.truncated,
+      stdout: rfitted.stdout,
+      stderr: rfitted.stderr,
+      truncated: rr.truncated || rfitted.shortened,
       ms: rr.ms,
-      ...(rr.truncated
-        ? {
-            hint:
-              'Output truncated at 256 KB per stream. For full content, redirect the command\'s ' +
-              'output to a file on the target and use file_read with target:"' +
-              input.target +
-              '" + offset/limit.',
-          }
-        : {}),
+      ...(rhint ? { hint: rhint } : {}),
     };
   },
 };

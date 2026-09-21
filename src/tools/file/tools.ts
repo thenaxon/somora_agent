@@ -215,6 +215,15 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
       //   - unknown → clear error explaining the situation
       // Remote reads skip this for now — would require an extra SFTP
       // round-trip + remote PDF rendering; v2 work.
+      // Read policy FIRST, outside the try below: the image/PDF branch
+      // returns file content without ever reaching localRead (which has
+      // its own check), so an image or PDF under a blocked directory
+      // used to be readable.
+      {
+        const { resolveLocalPath, assertReadAllowed } = await import('./policy.ts');
+        const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config);
+        await assertReadAllowed(absolute);
+      }
       try {
         const { detectMimeFromPath } = await import('../../multimodal/mime.ts');
         const { resolveLocalPath } = await import('./policy.ts');

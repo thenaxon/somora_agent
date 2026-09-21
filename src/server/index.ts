@@ -154,7 +154,7 @@ import {
   listDreams,
   recoverOrphanRunningDreams,
 } from '../dream/storage.ts';
-import { runDream } from '../dream/rem-runner.ts';
+import { dreamArchivedAfterReset } from '../dream/rem-reset-run.ts';
 import { RemWorker } from '../dream/rem-worker.ts';
 import { DeepWorker } from '../dream/deep-worker.ts';
 import { LucidWorker } from '../dream/lucid-worker.ts';
@@ -2172,6 +2172,14 @@ app.get('/sessions', async (c) => {
         ...(s.projectSlug !== undefined ? { projectSlug: s.projectSlug } : {}),
         unreadAt: s.unreadAt ?? null,
         seenAt: s.seenAt ?? null,
+        // Is a turn running there right now, and how many wait behind
+        // it — the question a person asks about a session they cannot
+        // see ("is anything still running at <agent>?"). Lives only in
+        // this process, so the session_list tool reads it from here.
+        ...(() => {
+          const lock = getSessionLockStatus(agentInfo.name, s.id);
+          return { busy: lock.busy, queueLength: lock.queueLength, activeSince: lock.activeSince };
+        })(),
       });
     }
   }
@@ -2318,6 +2326,15 @@ app.put('/agents/:agent/sessions/:session/model', async (c) => {
   }
   await sessionMetaStore.update(agent, session, (current) => ({ ...current, modelOverride: body.model }));
   logger.info({ msg: 'session.model_set', agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
+  // Tell every open client. The switch is often made from OUTSIDE the
+  // window showing the session (an orchestrator agent, another client,
+  // curl) — without this the header kept the old model until the
+  // window was reopened, and the person could not tell whether the
+  // switch had taken (report 2026-09-13).
+  await publish(agent, session, {
+    event: 'session_model',
+    data: { model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}`, source: 'session-override' },
+  });
   return c.json({ agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
 });
 
@@ -2367,28 +2384,11 @@ app.post('/agents/:agent/sessions/:session/reset', async (c) => {
     const remConfig = persona.rem;
     void (async () => {
       try {
-        // Only the part idle-REM has not seen yet. The archived meta
-        // carries the session's `dreamReadThroughTs` (resetSession moves
-        // the meta file along with the JSONL); rangeFromTs: 0 re-dreamed
-        // the WHOLE session — on 2026-09-03 that was 11,020 of 11,024
-        // events already extracted once, sent through the worker a
-        // second time (duplicate findings), and the recall query built
-        // from 900 messages froze the server (see rem-runner.ts).
-        const archivedMeta = await sessionMetaStore.get(agent, archivedId);
-        const rangeFromTs =
-          typeof archivedMeta.dreamReadThroughTs === 'number' ? archivedMeta.dreamReadThroughTs : 0;
-        logger.info({ msg: 'session.reset_dream_range', agent, archivedId, rangeFromTs });
         const mgr = await getMemoryManager(agent, { config: config.memory, wiki: config.wiki, obsidian: config.obsidian });
-        await runDream({
-          agent,
-          sourceSession: archivedId,
-          trigger: 'manual',
-          rangeFromTs,
-          rangeThroughTs: Date.now(),
-          rem: remConfig,
-          config,
-          mgr,
-        });
+        // Range + marker handling live in rem-reset-run.ts: a successful
+        // run must stamp the archive as read, or the idle worker dreams
+        // it again.
+        await dreamArchivedAfterReset({ agent, archivedId, rem: remConfig, config, mgr });
       } catch (err) {
         logger.error({
           msg: 'dream.manual_run_failed',
@@ -2419,6 +2419,7 @@ app.delete('/agents/:agent/sessions/:session/model', async (c) => {
     return rest;
   });
   logger.info({ msg: 'session.model_clear', agent, session });
+  await publish(agent, session, { event: 'session_model', data: { model: null, source: 'persona-default' } });
   return c.json({ agent, session, cleared: true });
 });
 

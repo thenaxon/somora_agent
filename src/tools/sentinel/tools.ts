@@ -69,7 +69,9 @@ const SourceSchema = z.object({
 
 const DispatchSchema = z.object({
   agent: z.string().min(1),
-  session: z.string().min(1).default('main'),
+  // Optional here (not `.default('main')`): left out means "the
+  // session I am in" for a trigger on yourself — resolved in the handler.
+  session: z.string().min(1).optional(),
   prompt: z.string().min(1),
 });
 
@@ -108,7 +110,7 @@ type SentinelInputT = z.infer<typeof SentinelInput>;
 // ─────────────────────────────────────────────────────────────────────
 
 type SentinelResult =
-  | { action: 'create'; ok: true; trigger: Trigger; hint: string }
+  | { action: 'create'; ok: true; trigger: Trigger; hint: string; /** Set when the session was left out and the trigger was bound to the caller's non-main session. */ session_note?: string }
   | { action: 'create'; ok: false; error: string }
   | {
       action: 'list';
@@ -272,7 +274,15 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
         description: 'create only — which agent wakes up in which session with what prompt.',
         properties: {
           agent: { type: 'string', description: 'Target agent. Must exist.' },
-          session: { type: 'string', description: 'Target session slug or "main". Auto-created with timestamp prefix if not existing.', default: 'main' },
+          session: {
+            type: 'string',
+            description:
+              'Target session: a slug or id, "main", or "current" = the session you are in right now ' +
+              '(only when dispatch.agent is you). Left out: a trigger on yourself fires in the session you ' +
+              'create it from (as a sub-agent: in "main"); a trigger on another agent fires in their "main". Say "main" explicitly when a ' +
+              'recurring job belongs there rather than in the conversation you happen to be in. ' +
+              'Auto-created with timestamp prefix if not existing.',
+          },
           prompt: { type: 'string', description: 'Agent receives this as a user-turn body, prefixed by a structured evidence block.' },
         },
         required: ['agent', 'prompt'],
@@ -347,6 +357,52 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
           return { action: 'create', ok: false, error: `unschedulable: ${(err as Error).message}` };
         }
 
+        // Where it fires. "current" is the caller's own session — the
+        // one thing an agent could not name before (2026-09-15: a
+        // resume trigger set from a working session fired in `main`
+        // and ran next to the work it was meant to resume).
+        let dispatchSession = dispatch.session ?? 'main';
+        let sessionNote: string | undefined;
+        // Left out + a trigger on yourself + created from inside a
+        // session → that session (Rene, 2026-09-21). "Wake me to go on
+        // with this" is what an agent means when it says nothing; `main`
+        // was a different conversation that then ran alongside the work.
+        // Another agent's trigger, or a call with no session context,
+        // keeps `main`.
+        //
+        // Not for a sub-agent turn: its session is a sealed work room
+        // nobody looks into once the task is handed in — a reminder
+        // fired there would be seen by no one. That keeps `main`, and
+        // says so.
+        const isSubTurn = (ctx.subagentDepth ?? 0) > 0;
+        if (dispatch.session === undefined && dispatch.agent === ownerAgent && ctx.session) {
+          if (isSubTurn) {
+            sessionNote = `dispatch.session was left out. You are a sub-agent in '${ctx.session}', which nobody watches after you finish, so this trigger fires in 'main'. Pass session: "current" if it really should come back to this sub-session.`;
+          } else {
+            dispatchSession = ctx.session;
+            if (ctx.session !== 'main') {
+              sessionNote = `dispatch.session was left out, so this trigger fires in the session you are in ('${ctx.session}'). Pass session: "main" if you meant your main session.`;
+            }
+          }
+        }
+        if (dispatchSession === 'current') {
+          if (dispatch.agent !== ownerAgent) {
+            return {
+              action: 'create',
+              ok: false,
+              error: `dispatch.session "current" means YOUR current session, but dispatch.agent is '${dispatch.agent}'. Name a session of that agent instead.`,
+            };
+          }
+          if (!ctx.session) {
+            return {
+              action: 'create',
+              ok: false,
+              error: 'dispatch.session "current" is not available here — this call is not running inside a session. Name the session explicitly.',
+            };
+          }
+          dispatchSession = ctx.session;
+        }
+
         const trigger: Trigger = {
           id: newTriggerId(name),
           name,
@@ -356,7 +412,7 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
           evaluator: { type: 'none' },
           dispatch: {
             agent: dispatch.agent,
-            session: dispatch.session ?? 'main',
+            session: dispatchSession,
             prompt: dispatch.prompt,
           },
           ...(input.policy ? { policy: input.policy } : {}),
@@ -380,11 +436,13 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
           action: 'create',
           ok: true,
           trigger,
+          ...(sessionNote ? { session_note: sessionNote } : {}),
           hint:
-            nextFireAt
+            (sessionNote ? `${sessionNote} ` : '') +
+            (nextFireAt
               ? `Trigger '${trigger.id}' active. Next fire at ${nextFireAt}. ` +
                 `Use sentinel({action:"test", id:"${trigger.id}"}) to fire now (bypasses cooldown).`
-              : `Trigger '${trigger.id}' created — but no future fire computed (one-shot moment already past?).`,
+              : `Trigger '${trigger.id}' created — but no future fire computed (one-shot moment already past?).`),
         };
       }
 

@@ -21,6 +21,7 @@ import matter from 'gray-matter';
 import type { Config, ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
+import { firstCompleteJson } from './json-salvage.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import type { Finding, FindingAction } from './types.ts';
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
@@ -100,7 +101,8 @@ export interface ExtractResult {
   totalChunks: number;
   /** True if the run completed all chunks; false if cancelled mid-way. */
   completed: boolean;
-  /** Chunks whose LLM call errored (backend reject, timeout, transport).
+  /** Chunks whose LLM call errored (backend reject, timeout, transport)
+   *  or whose answer stayed unreadable after one retry.
    *  The runner MUST NOT treat a run with failedChunks > 0 as a clean
    *  empty result — that would silently lose the session range (bug
    *  report 2026-07-24: 19 runs masked as "no findings" in 3 days). */
@@ -366,13 +368,30 @@ function buildUserMessage(args: {
   ].join('\n');
 }
 
+/** The worker answered, but not with a findings array we can read:
+ *  empty content (thinking ate the token budget), output cut off mid-
+ *  string, unescaped quotes inside a value. Thrown so the chunk lands
+ *  in `failedChunks` — an unreadable answer is NOT "no findings". */
+export class UnreadableFindingsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnreadableFindingsError';
+  }
+}
+
 /**
  * Validate + coerce a raw LLM output into a sanitized Finding[].
  * Findings with bad/missing fields are dropped (with a warn log) — we
  * never throw on a single bad finding because that would lose all good
  * findings in the same chunk.
+ *
+ * An answer that is not a readable array at all THROWS
+ * (UnreadableFindingsError). It used to return [] — which the caller
+ * counted as a clean chunk, the runner archived as "no findings", and
+ * the worker stamped as dreamed: 20 such answers in the live logs up to
+ * 2026-09-21, 16 of them carrying real findings that were lost for good.
  */
-function parseFindings(raw: string): Omit<Finding, 'id' | 'status' | 'resolved_at'>[] {
+export function parseFindings(raw: string): Omit<Finding, 'id' | 'status' | 'resolved_at'>[] {
   // Strip common fence patterns the model might emit despite the prompt.
   let text = raw.trim();
   if (text.startsWith('```')) {
@@ -381,16 +400,38 @@ function parseFindings(raw: string): Omit<Finding, 'id' | 'status' | 'resolved_a
       text = text.slice(text.indexOf('\n') + 1, fenceEnd).trim();
     }
   }
+  // A stray reasoning tail (`…</think>[]`): what follows is the answer.
+  const thinkEnd = text.lastIndexOf('</think>');
+  if (thinkEnd >= 0) text = text.slice(thinkEnd + '</think>'.length).trim();
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    logger.warn({ msg: 'dream.extract_parse_failed', err: (err as Error).message, sample: text.slice(0, 200) });
-    return [];
+    // Prose after (or before) a complete array is harmless — read the
+    // array. Anything else is unreadable.
+    const candidate = firstCompleteJson(text, '[');
+    let recovered: unknown;
+    if (candidate !== null) {
+      try {
+        recovered = JSON.parse(candidate);
+      } catch {
+        recovered = undefined;
+      }
+    }
+    if (!Array.isArray(recovered)) {
+      logger.warn({ msg: 'dream.extract_parse_failed', err: (err as Error).message, sample: text.slice(0, 200) });
+      throw new UnreadableFindingsError(
+        text.length === 0
+          ? 'worker returned empty content (no findings array)'
+          : `worker output is not a readable findings array: ${(err as Error).message}`,
+      );
+    }
+    logger.info({ msg: 'dream.extract_array_recovered', droppedChars: text.length - candidate!.length });
+    parsed = recovered;
   }
   if (!Array.isArray(parsed)) {
     logger.warn({ msg: 'dream.extract_not_array', got: typeof parsed });
-    return [];
+    throw new UnreadableFindingsError(`worker output is ${typeof parsed}, not a findings array`);
   }
   const out: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
   for (const item of parsed) {
@@ -471,6 +512,8 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
   const accumulated: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
   const startAt = ctx.startChunk ?? 0;
   let failedChunks = 0;
+  // Chunks already re-asked after an unreadable answer (one retry each).
+  const unreadableRetried = new Set<number>();
 
   for (let i = startAt; i < totalChunks; i++) {
     if (ctx.signal?.aborted) {
@@ -566,7 +609,31 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         throw new Error(`backend response has no choices — raw body: ${bodyPreview}`);
       }
       const text = choice.message.content ?? '';
-      const chunkFindings = parseFindings(text);
+      let chunkFindings: ReturnType<typeof parseFindings>;
+      try {
+        chunkFindings = parseFindings(text);
+      } catch (parseErr) {
+        // Unreadable output is a dice roll of sampling (an unescaped
+        // quote, a runaway thinking phase), so ask once more before
+        // giving the chunk up. A second miss falls through to the
+        // failed-chunk path below — never to "no findings".
+        if (parseErr instanceof UnreadableFindingsError && !unreadableRetried.has(i)) {
+          unreadableRetried.add(i);
+          logger.warn({
+            msg: 'dream.chunk_unreadable_retry',
+            agent: ctx.agent,
+            chunkIndex: i + 1,
+            totalChunks,
+            workerModel: `${model.providerName}/${model.modelId}`,
+            err: parseErr.message,
+            responseChars: text.length,
+            finishReason: choice.finish_reason,
+          });
+          i -= 1;
+          continue;
+        }
+        throw parseErr;
+      }
       accumulated.push(...chunkFindings);
       logger.info({
         msg: 'dream.chunk_done',
@@ -612,7 +679,12 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
       // per run, and only if the chunk produced nothing (it didn't —
       // findings are pushed after a successful parse). A 4xx is a
       // config error and must stay visible as a failed chunk.
-      if (ctx.fallbackModel && !workerSwitch && isAvailabilityError(err)) {
+      if (
+        ctx.fallbackModel &&
+        !workerSwitch &&
+        !(err instanceof UnreadableFindingsError) &&
+        isAvailabilityError(err)
+      ) {
         const from = `${model.providerName}/${model.modelId}`;
         const to = `${ctx.fallbackModel.providerName}/${ctx.fallbackModel.modelId}`;
         workerSwitch = { from, to, reason: (err as Error).message.slice(0, 300), atChunk: i + 1 };

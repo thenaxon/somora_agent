@@ -164,7 +164,7 @@ Three models, three vocabularies:
 | Model family | Accepted values | Unknown value → |
 |---|---|---|
 | OpenAI o-series / gpt-5 | `none minimal low medium high xhigh` | 400 |
-| Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh` — no `high`; `none` = 0 reasoning tokens (verified on Qwen3.8-Flash-Next) | **400** — the template raises |
+| Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh` — no `high`; `none` = 0 reasoning tokens (verified on Qwen3.8-Flash-Next), but about 1 reply in 8 then opens with planning text — see below | **400** — the template raises |
 | DeepSeek V4 | `low high max`; `none` and unset both = no reasoning | ignored |
 | DeepSeek V4.1 | `none low high max` — `none` is a real level here, so map `off: none` and `medium: high` (measured: 0 / 55 / 48 / 92 reasoning tokens for `none` / `low` / `high` / `max`) | ignored |
 
@@ -172,9 +172,21 @@ Three models, three vocabularies:
 model that default is *thinking on* — measured: unset 60 reasoning
 tokens on a one-line arithmetic prompt, `low` 31, `none` 0.
 So `off` without a `levels` mapping does **not** switch Qwen off; map
-it (`off: none`, below) and give Qwen-based personas an explicit
-`thinking:` in `agent.yaml`, otherwise "nothing set" is silently the
-most expensive behaviour.
+it (below) and give Qwen-based personas an explicit `thinking:` in
+`agent.yaml`, otherwise "nothing set" is silently the most expensive
+behaviour.
+
+**`none` is cheap, not clean.** Zero reasoning tokens does not mean the
+model stops planning — with no reasoning channel to plan in, a Qwen 3.x
+model sometimes plans in the answer: "The user asks what my persona
+says about me. I can answer that directly…" arrives as the reply, in
+front of the answer or instead of it. Measured on Qwen3.8-Flash-Next
+with an agent's real first turn (23k-char system prompt, 48 tools):
+`none` 13 of 108 replies opened with such planning text, `low` 0 of
+113. Tools and the memory block made no difference. `low` cost about
+110 extra tokens per reply, in the separate thinking channel where it
+belongs. For a Qwen-based agent that talks to people, map `off: low`;
+keep `off: none` for workers whose output is parsed, not read.
 
 somora's neutral `off | low | medium | high` fits none of them fully.
 Two things keep a thinking knob from killing a turn:
@@ -219,9 +231,11 @@ providers:
   default, which for Qwen 3.x under vLLM is *thinking on*. To make
   `off` really switch reasoning off, map it: `off: none` (verified on
   Qwen3.8-Flash-Next, 0 reasoning tokens; `chat_template_kwargs:
-  { enable_thinking: false }` is the template-level equivalent). On a
-  backend without `none` in its vocabulary, `off: low` is the floor.
-  somora does not guess this for you.
+  { enable_thinking: false }` is the template-level equivalent). That
+  is the right floor for a worker; for an agent people read, `off: low`
+  is the safer floor on Qwen 3.x — see "`none` is cheap, not clean"
+  above. On a backend without `none` in its vocabulary, `off: low` is
+  the floor anyway. somora does not guess this for you.
 
 **2. Retry on rejection.** With or without a block, when the backend
 answers a request with an error about the effort value, somora reads the

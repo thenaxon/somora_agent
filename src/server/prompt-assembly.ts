@@ -138,7 +138,31 @@ function renderWikiOverviewBlock(text: string): string {
   );
 }
 
-export type PromptPartKey = 'self' | 'persona' | 'team' | 'tools' | 'wiki' | 'skills' | 'project';
+export type PromptPartKey = 'self' | 'persona' | 'team' | 'tools' | 'wiki' | 'skills' | 'session' | 'project';
+
+/**
+ * Which session this is. Without it an agent cannot name the
+ * conversation it is working in — and every tool that takes a session
+ * falls back to `main`, a different conversation. Two incidents
+ * (2026-09-14/15): a resume trigger set from a working session fired in
+ * `main` and ran alongside the work it was meant to resume; a project
+ * report went to the orchestrator's `main` instead of its project
+ * session.
+ *
+ * Static for the life of a session, and placed after everything that
+ * sessions of one agent share (self-pointer … skills), so a backend
+ * with prefix caching keeps the shared prefix across sessions.
+ */
+export function buildSessionBlock(agent: string, session: string, sessionMeta: Record<string, unknown>): string {
+  const slug = typeof sessionMeta.slug === 'string' && sessionMeta.slug.length > 0 ? sessionMeta.slug : session;
+  const idNote = slug === session ? '' : ` (id \`${session}\`)`;
+  return [
+    '\n\n---\n',
+    '## This session',
+    `You are working in session \`${slug}\`${idNote} of agent \`${agent}\`. "Session" in somora means a chat session like this one — not a tmux session.`,
+    `When something should come back HERE — a sentinel trigger that resumes this work, an agent told where to report — name this session. A sentinel trigger you set on yourself fires here unless you name another session; \`agent_ask\` without a session goes to the target's \`main\`${slug === 'main' ? '' : ', which may not know this context'}.`,
+  ].join('\n');
+}
 
 export interface PromptPart {
   key: PromptPartKey;
@@ -196,6 +220,8 @@ export async function assembleSystemPrompt(args: {
   const allSkills = await loadAvailableSkills(freshConfig);
   const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillGating, freshConfig);
   const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
+  // Session — differs per session, static within one.
+  const sessionBlock = buildSessionBlock(agent, session, sessionMeta);
   // Project — most volatile (changes on a /project switch), so last.
   const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
 
@@ -206,6 +232,7 @@ export async function assembleSystemPrompt(args: {
     { key: 'tools', label: 'Tool reminder', text: toolsBlock },
     { key: 'wiki', label: 'Wiki overview (session snapshot)', text: wikiBlock },
     { key: 'skills', label: 'Skills', text: skillsBlock },
+    { key: 'session', label: 'This session', text: sessionBlock },
     { key: 'project', label: 'Project', text: projectBlock },
   ];
   return { text: parts.map((p) => p.text).join(''), parts, projectBlock };

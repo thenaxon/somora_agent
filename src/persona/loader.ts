@@ -292,6 +292,10 @@ export interface AgentInfo {
 
 export interface Persona {
   name: string;
+  /** Raw USER.md body, when the agent has one. Part of `systemPrompt`
+   *  too; kept separately for the voice self, which carries a short
+   *  excerpt of it instead of the whole persona. */
+  aboutUser?: string;
   description: string;
   icon: string | undefined;
   model: string | undefined;
@@ -434,6 +438,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
 
   return {
     name,
+    ...(userMd?.content ? { aboutUser: userMd.content } : {}),
     description: agentMd.data.description ?? '',
     icon: agentMd.data.icon,
     model: agentYaml.model,

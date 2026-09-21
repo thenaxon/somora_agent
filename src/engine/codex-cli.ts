@@ -192,6 +192,26 @@ class EventQueue {
   }
 }
 
+/**
+ * A codex `error` notification. The text sits in `error.message`, not
+ * in a top-level `message` — reading the latter stringified the whole
+ * object into the chat row and into the reasoning-effort check.
+ * Shape seen live (2026-09): `{ error: { message, codexErrorInfo,
+ * additionalDetails }, willRetry, threadId, turnId }`.
+ * Exported for tests.
+ */
+export function readCodexError(p: Record<string, unknown>): { message: string; willRetry: boolean } {
+  const err = p.error as { message?: unknown; additionalDetails?: unknown } | undefined;
+  const base =
+    typeof err?.message === 'string'
+      ? err.message
+      : typeof p.message === 'string'
+        ? p.message
+        : JSON.stringify(p).slice(0, 500);
+  const details = typeof err?.additionalDetails === 'string' && err.additionalDetails ? ` — ${err.additionalDetails}` : '';
+  return { message: `${base}${details}`.slice(0, 500), willRetry: p.willRetry === true };
+}
+
 export const codexCliEngine: AgentEngine = {
   name: ENGINE,
 
@@ -328,6 +348,7 @@ export const codexCliEngine: AgentEngine = {
       seen: false,
     };
     const streamErrors: string[] = [];
+    let reconnectNoted = false;
     let threadId: string | undefined = resumeId;
     let activeTurnId: string | undefined;
     let turnOutcome: { status: string; error?: string } | undefined;
@@ -486,7 +507,31 @@ export const codexCliEngine: AgentEngine = {
           break;
         }
         case 'error': {
-          const message = typeof p.message === 'string' ? p.message : JSON.stringify(p).slice(0, 500);
+          const { message, willRetry } = readCodexError(p);
+          // `willRetry: true` is codex telling us it is handling it —
+          // a dropped stream it reconnects (up to 5 tries, then its own
+          // fallback to HTTPS). The turn goes on. Each of these used to
+          // land in the chat as a red "codex error" row and in
+          // streamErrors: four rows per turn on image-heavy threads,
+          // for turns that then completed (report 2026-09-14). One
+          // neutral row per turn instead; the tries stay in the log.
+          if (willRetry) {
+            logger.info({ msg: 'engine.codex_retrying', ...logCtx, message: message.slice(0, 300) });
+            if (!reconnectNoted) {
+              reconnectNoted = true;
+              queue.push({
+                kind: 'engine_meta',
+                ts: ts(),
+                engine: ENGINE,
+                itemType: 'reconnecting',
+                payload: {
+                  text: 'connection to the model dropped — codex is reconnecting by itself; the turn continues',
+                  detail: message,
+                },
+              });
+            }
+            break;
+          }
           if (!effortRetried && effort && isReasoningEffortError(message)) {
             const supported = parseSupportedEfforts(message);
             const fallback = supported ? pickFallbackEffort(effort, supported) : null;
@@ -535,6 +580,24 @@ export const codexCliEngine: AgentEngine = {
         case 'configWarning':
         case 'deprecationNotice': {
           const text = String(p.message ?? p.summary ?? '');
+          // The end of the reconnect story above: codex gave up on the
+          // WebSocket and carries on over HTTPS. Until now only the log
+          // knew — the chat showed errors and then, unexplained, an
+          // answer.
+          if (/falling back from websockets? to https/i.test(text)) {
+            logger.warn({ msg: 'engine.codex_transport_fallback', ...logCtx, message: text.slice(0, 400) });
+            queue.push({
+              kind: 'engine_meta',
+              ts: ts(),
+              engine: ENGINE,
+              itemType: 'transport_fallback',
+              payload: {
+                text: 'codex switched from WebSocket to HTTPS for this turn — slower, nothing lost',
+                detail: text.slice(0, 400),
+              },
+            });
+            break;
+          }
           // Sandbox prerequisites are irrelevant: threads run with
           // danger-full-access (somora is the sandbox). Keep the log clean.
           if (/bubblewrap|sandbox prerequisites/i.test(text)) {

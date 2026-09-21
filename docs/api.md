@@ -704,6 +704,7 @@ session:
 
 `parts` concatenate to `text` (separators included), in prompt order:
 self-pointer, persona, team, tool reminder, wiki overview, skills,
+session (which session this is, so the agent can name it to tools),
 project. `tools` counts the tools this agent can see after gating and
 the size of their JSON schemas — they travel on the API tool channel,
 not in `text`, and engines load them direct or deferred. The list is
@@ -837,7 +838,10 @@ keeps these in sync across clients.
 
 Cross-agent session list. Same data as the per-agent endpoint, but
 flattened across every agent and wrapped as `{sessions: [...]}`, with
-each row carrying its agent name. Used by the web Sessions tool.
+each row carrying its agent name. Used by the web Sessions tool and
+by the `session_list` agent tool. Each row also says whether a turn is
+running in that session right now: `busy`, `queueLength` (turns waiting
+behind it) and `activeSince` (ms timestamp, `null` when idle).
 
 ```bash
 curl https://<host>:18737/sessions
@@ -1044,6 +1048,10 @@ curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/model
 The `model` field accepts an alias (`claude-opus-4-7`), a
 `<provider>/<id>` tuple (`anthropic/claude-opus-4-20250514`), or
 anything else resolvable by `GET /models`.
+
+A switch takes effect at the next turn: a turn that is already running
+keeps the model it started with. Every open client is told through the
+`session_model` SSE event.
 
 Switching models mid-session is safe on every engine. On codex-cli the
 thread simply continues under the new model (`thread/resume` takes the
@@ -1535,7 +1543,12 @@ sub-agent session, the spawning parent from its spawn meta.
 target is the origin agent, the message goes back to the origin
 session instead of `main` (logged as `agent_ask.session_inferred`,
 reported as `session_inferred: true` in the tool result). An explicit
-`session` always wins.
+`session` always wins. Every `agent_ask` result names the rule that
+applied as `routing_reason`: `explicit`, `reply_to_origin`, or
+`default_main` — the last with a `routing_note` when the caller sits in
+a non-main session, since a turn started by tmux, sentinel, a wake or a
+person has no origin and its report would land in the target's `main`
+unannounced.
 
 ### `GET /chat/stream`
 
@@ -1662,6 +1675,12 @@ Event types:
   event still carries the same text (`error: …` / `turn failed: …`)
   for older clients; this one adds the turn id so the failure can be
   rendered as a block inside the right turn.
+- `session_model` — `{model, resolved?, source}` — the session's model
+  override was set (`PUT …/model`) or cleared (`DELETE …/model`,
+  `model: null`, `source: "persona-default"`). Sent to every subscriber
+  of the session, because the switch is often made from outside the
+  window showing it (an orchestrator agent, another client). Clients
+  re-read `GET …/model` and update their header.
 - `tool` — `{phase: 'call'|'result'|'error', tool, summary?,
   details?, error?}` — tool-call events
 - `thinking` — `{state: 'delta'|'final', text, truncated?}` — the
@@ -1676,6 +1695,10 @@ Event types:
   and clients can optionally render them. `label` is server-resolved
   (e.g. `todo_list` → `"plan"`); unknown item-types fall back to the
   raw `itemType`. `payload` is the engine's original event, opaque.
+  Codex's own `error` notifications arrive as `error` — except those
+  codex marks `willRetry`: a dropped stream it reconnects by itself is
+  one `reconnecting` row per turn, and its switch to HTTPS after the
+  retries is a `transport_fallback` row; neither is a failure.
   Besides engine-native items, somora emits its own: `model_switch`
   (codex thread continued under a new model), `thread_recreated` (the
   Codex thread no longer existed; a fresh one was started with the

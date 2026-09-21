@@ -8,11 +8,13 @@
 // Length is a cost budget, not thrift. The instructions are sent once
 // when the session opens, but they sit in the realtime model's context
 // and are read again before every answer, so every line is paid for per
-// turn. The ceiling is ~1950 characters and the builder reports what it
+// turn. The ceiling is ~2300 characters and the builder reports what it
 // produced. It was ~1500 until 2026-09-12, when three rules were added:
 // agents slipped into English mid-call, every call opened with a recital
 // of the persona, and what the caller merely stated was never passed on
-// and therefore never remembered.
+// and therefore never remembered. 2026-09-21 added who is on the line
+// (an excerpt of the agent's USER.md, up to 280 chars) and the call's
+// start time: asked "who am I?", the voice self had nothing to go on.
 
 import type { Persona } from '../../persona/loader.ts';
 
@@ -38,6 +40,8 @@ export interface VoiceInstructionsInput {
   language: string;
   /** Name of the tool the voice self uses to reach the real agent. */
   consultToolName: string;
+  /** Call start; defaults to now. Test seam. */
+  now?: Date;
   /** Which session this call is bound to — the voice self may say
    *  where it is, and it must never imply it can switch. */
   sessionSlug: string;
@@ -95,13 +99,61 @@ function personaEssence(persona: Persona, limit = 420): string {
   return (firstPara ?? '').slice(0, limit);
 }
 
+/**
+ * Who the agent is talking to, from the agent's own USER.md: the
+ * opening of the file, up to the first `##` section. That is where
+ * every USER.md puts the name and how to address the person; the rest
+ * (work, family, projects) stays with the real agent and is a lookup.
+ * Nothing about any particular user lives in code or config — no
+ * USER.md, no line.
+ */
+export function userEssence(persona: Persona, limit = 280): string {
+  const raw = (persona.aboutUser ?? '').trim();
+  if (!raw) return '';
+  const opening = raw.split(/^##\s/m)[0] ?? '';
+  // Bullets and wrapped lines become one line for the ear. A wrapped
+  // line (indented, not a bullet of its own — or starting lower-case)
+  // continues the previous one; anything else is closed with "; "
+  // unless the previous line already ended a sentence.
+  let text = '';
+  for (const rawLine of opening.split('\n')) {
+    if (/^#\s/.test(rawLine)) continue; // the file's own title
+    const isBullet = /^\s*[-*]\s+/.test(rawLine);
+    const line = rawLine.replace(/^\s*[-*]\s+/, '').replace(/\*\*/g, '').trim();
+    if (!line) continue;
+    if (!text) {
+      text = line;
+      continue;
+    }
+    const continues = !isBullet && (/^\s+\S/.test(rawLine) || /^[a-zäöü(]/.test(line));
+    const closed = /[.;:!?,—–-]$/.test(text);
+    text += `${closed || continues ? ' ' : '; '}${line}`;
+  }
+  text = text.replace(/\s+/g, ' ');
+  if (text.length <= limit) return text;
+  // Cut at a sentence or clause end, not mid-word.
+  const cut = text.slice(0, limit);
+  const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('; '), cut.lastIndexOf(', '));
+  return (stop > limit * 0.5 ? cut.slice(0, stop + 1) : cut.slice(0, cut.lastIndexOf(' '))).trim();
+}
+
 export interface BuiltVoiceInstructions {
   text: string;
   chars: number;
 }
 
+/** "Monday, 2026-09-21, 14:32 (Europe/Vienna)" in the server's zone. */
+export function callStartStamp(now: Date): string {
+  const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(now);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  const date = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+  return `${weekday}, ${date}, ${p(now.getHours())}:${p(now.getMinutes())} (${zone})`;
+}
+
 export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoiceInstructions {
   const { persona, consultPolicy, language, consultToolName, sessionSlug } = input;
+  const caller = userEssence(persona);
   const override = input.override?.trim();
   const style = persona.voice?.style?.trim();
   const sentences = persona.voice?.maxSpokenSentences ?? 4;
@@ -141,6 +193,14 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     `You are ${persona.name}, speaking out loud — not an assistant for ${persona.name}, not a voice channel. Say "I", never talk about ${persona.name} as someone else.`,
     override ? override : personaEssence(persona),
     override || !style ? '' : `Tone: ${style}.`,
+    // Two things the voice self could not know and had to consult for
+    // (report 2026-09-16: "Wer bin ich?" / a wrong time of day): who is
+    // calling, and what day it is. The time is the call's START — a
+    // call runs up to maxCallMinutes, so it is said as such.
+    caller
+      ? `The person on this call, from your own notes: ${caller} That much is yours to know — no lookup for it; anything more about them is.`
+      : '',
+    `This call started ${callStartStamp(input.now ?? new Date())}. For the exact time now, look it up.`,
     `At most ${sentences} sentences per answer: a conversation, not a lecture, and interruptible.`,
     // The caller picked this agent by name in a picker and talks to it
     // daily. An introduction is a wall in front of the first question,

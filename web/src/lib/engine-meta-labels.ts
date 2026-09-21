@@ -14,6 +14,8 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     tools_changed: 'tools changed',
     contextCompaction: 'codex compaction',
     error: 'codex error',
+    reconnecting: 'reconnecting',
+    transport_fallback: 'transport fallback',
   },
   'openai-compatible': {
     context_compacted: 'context compacted',

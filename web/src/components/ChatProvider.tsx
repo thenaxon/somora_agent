@@ -147,7 +147,7 @@ interface ChatContextValue {
   refreshProject: (agent: string, session: string) => Promise<void>;
 }
 
-export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end';
+export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end' | 'session_model';
 
 const ChatContext = createContext<ChatContextValue>({
   projectsEnabled: null,
@@ -723,6 +723,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               /* leave previous state */
             });
         }
+      });
+
+      // The session's model was switched — possibly from outside this
+      // window (another agent, another client). Listeners re-read the
+      // session info so the header shows what the next turn will use.
+      es.addEventListener('session_model', () => {
+        bump();
+        emitTurnEvent(key, 'session_model');
       });
 
       es.addEventListener('project', () => {

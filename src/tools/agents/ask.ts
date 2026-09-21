@@ -134,6 +134,13 @@ interface AskDoneResult {
   /** True when `session` was omitted and the reply-back default picked
    *  the asker's source session instead of main. */
   session_inferred?: boolean;
+  /** Why the message went to `target_session`: named by the caller,
+   *  sent back to the session that started this turn, or left out and
+   *  therefore `main`. */
+  routing_reason?: RoutingReason;
+  /** Only with `default_main` from a non-main session: says that the
+   *  message went to `main` and how to address a specific session. */
+  routing_note?: string;
   /** True when this call created the target session (create_session). */
   session_created?: boolean;
   /** provider/modelId pinned on a session this call created. */
@@ -150,6 +157,41 @@ interface AskDoneResult {
   };
 }
 
+export type RoutingReason = 'explicit' | 'reply_to_origin' | 'default_main';
+
+/**
+ * Say where the message went and why. A left-out `session` means
+ * `main` unless this turn was started by the target (reply-back). That
+ * default is silent, and it is wrong whenever the caller is doing
+ * project work in a session of its own: turns started by tmux,
+ * sentinel, a wake or a person have no origin to reply to, so the
+ * report lands in the target's `main`, which has none of the context
+ * (2026-09-14: a project report answered by `main` with instructions
+ * that did not fit the project). The message is still delivered — the
+ * caller is told, so it can re-address instead of finding out later.
+ * Exported for tests.
+ */
+export function describeRouting(args: {
+  explicit: boolean;
+  inferred: boolean;
+  callerSession: string | undefined;
+  targetAgent: string;
+}): { routing_reason: RoutingReason; routing_note?: string } {
+  if (args.explicit) return { routing_reason: 'explicit' };
+  if (args.inferred) return { routing_reason: 'reply_to_origin' };
+  if (args.callerSession && args.callerSession !== 'main') {
+    return {
+      routing_reason: 'default_main',
+      routing_note:
+        `No session was named, so this went to ${args.targetAgent}'s 'main' — you are working in ` +
+        `'${args.callerSession}', and 'main' may not know that context. If this belongs to a specific ` +
+        `conversation of ${args.targetAgent} (a project session, the session that briefed you), pass ` +
+        `session: "<its slug>" next time; an unknown slug returns the list of existing ones.`,
+    };
+  }
+  return { routing_reason: 'default_main' };
+}
+
 interface AskPendingResult {
   ok: false;
   state: 'pending';
@@ -157,6 +199,13 @@ interface AskPendingResult {
   target_agent: string;
   target_session: string;
   session_inferred?: boolean;
+  /** Why the message went to `target_session`: named by the caller,
+   *  sent back to the session that started this turn, or left out and
+   *  therefore `main`. */
+  routing_reason?: RoutingReason;
+  /** Only with `default_main` from a non-main session: says that the
+   *  message went to `main` and how to address a specific session. */
+  routing_note?: string;
   session_created?: boolean;
   session_model?: string;
   session_note?: string;
@@ -174,6 +223,13 @@ interface AskFailedResult {
   target_agent: string;
   target_session: string;
   session_inferred?: boolean;
+  /** Why the message went to `target_session`: named by the caller,
+   *  sent back to the session that started this turn, or left out and
+   *  therefore `main`. */
+  routing_reason?: RoutingReason;
+  /** Only with `default_main` from a non-main session: says that the
+   *  message went to `main` and how to address a specific session. */
+  routing_note?: string;
   error: string;
   hint: string;
   ms: number;
@@ -322,6 +378,22 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
       }
     }
 
+    const routing = describeRouting({
+      explicit: input.session !== undefined,
+      inferred: sessionInferred,
+      callerSession: ctx.session,
+      targetAgent,
+    });
+    if (routing.routing_note) {
+      logger.warn({
+        msg: 'agent_ask.default_main_from_work_session',
+        from: ctx.agent,
+        from_session: ctx.session,
+        to: targetAgent,
+        call_id: callId,
+      });
+    }
+
     logger.info({
       msg: 'agent_ask.start',
       from: ctx.agent,
@@ -400,6 +472,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           target_agent: targetAgent,
           target_session: handed.session_id ?? targetSession,
           ...(sessionInferred ? { session_inferred: true } : {}),
+          ...routing,
           ...(handed.session_created ? { session_created: true } : {}),
           ...(handed.session_model ? { session_model: handed.session_model } : {}),
           ...(handed.session_note ? { session_note: handed.session_note } : {}),
@@ -496,6 +569,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           target_agent: targetAgent,
           target_session: targetSession,
           ...(sessionInferred ? { session_inferred: true } : {}),
+          ...routing,
           error: data.error,
           hint:
             `${targetAgent}'s turn ran and failed: ${data.error}. ` +
@@ -532,6 +606,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         target_agent: targetAgent,
         target_session: targetSession,
         ...(sessionInferred ? { session_inferred: true } : {}),
+          ...routing,
         ...(data.session_created ? { session_created: true } : {}),
         ...(data.session_model ? { session_model: data.session_model } : {}),
         ...(data.session_note ? { session_note: data.session_note } : {}),
@@ -565,6 +640,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
           target_agent: targetAgent,
           target_session: targetSession,
           ...(sessionInferred ? { session_inferred: true } : {}),
+          ...routing,
           hint:
             `${targetAgent} did not reply within timeout_ms (${timeoutMs}ms). ` +
             `The call is still queued or running on ${targetAgent}/${targetSession} — do NOT ` +

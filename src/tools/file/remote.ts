@@ -8,7 +8,7 @@ import type { SshResource } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { expandRemotePath, getConnection, getResourceHome, remoteExec } from '../../ssh/index.ts';
 import type { ListEntry, ListResult, ReadResult, SearchResult, SearchHit, WriteResult, PatchResult } from './local.ts';
-import { checkRemoteReadAllowed } from './policy.ts';
+import { checkRemoteReadAllowed, checkRemoteWriteAllowed } from './policy.ts';
 import { applyTextBudget, windowMatchLine, type RgSubmatch } from './search-window.ts';
 
 const READ_HARD_CAP = 200_000;
@@ -328,6 +328,14 @@ export async function remoteRead(args: {
   };
 }
 
+/** Remote write policy (see checkRemoteWriteAllowed). remoteWrite and
+ *  remotePatch ran none before 2026-09-21. */
+async function assertRemoteWriteAllowed(remotePath: string, resourceName: string, resource: SshResource): Promise<void> {
+  const remoteHome = await getResourceHome(resourceName, resource);
+  const policy = checkRemoteWriteAllowed(remotePath, remoteHome);
+  if (!policy.ok) throw new Error(policy.reason);
+}
+
 export async function remoteWrite(args: {
   resourceName: string;
   resource: SshResource;
@@ -337,6 +345,7 @@ export async function remoteWrite(args: {
 }): Promise<WriteResult> {
   const client = await getConnection(args.resourceName, args.resource);
   const remotePath = await resolveRemotePath(args.path, args.resourceName, args.resource);
+  await assertRemoteWriteAllowed(remotePath, args.resourceName, args.resource);
   const parent = posix.dirname(remotePath);
 
   await withSftp(client, async (sftp) => {
@@ -390,6 +399,7 @@ export async function remotePatch(args: {
 }): Promise<PatchResult> {
   const client = await getConnection(args.resourceName, args.resource);
   const remotePath = await resolveRemotePath(args.path, args.resourceName, args.resource);
+  await assertRemoteWriteAllowed(remotePath, args.resourceName, args.resource);
 
   return withSftp(client, async (sftp) => {
     const stats = await sftpStat(sftp, remotePath);

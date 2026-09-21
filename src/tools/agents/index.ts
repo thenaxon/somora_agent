@@ -4,10 +4,12 @@
 //     subagent_result / subagent_list  — Phase 6b
 //   Modus 2 (live messaging into target's existing session):
 //     agent_ask — Phase 6c
+//   Orientation: session_list — which chat sessions exist, what runs
 
 import { agentAsk } from './ask.ts';
 import { agentAskResult } from './ask-result.ts';
 import { agentAskCancel } from './ask-cancel.ts';
+import { sessionList } from './session-list.ts';
 import { spawnSubagent, spawnSubagents } from './spawn.ts';
 import { subagentCancel, subagentList, subagentResult, subagentStatus } from './status.ts';
 import type { ToolDefinition } from '../types.ts';
@@ -15,6 +17,7 @@ import type { ToolDefinition } from '../types.ts';
 export { agentAsk } from './ask.ts';
 export { agentAskResult } from './ask-result.ts';
 export { agentAskCancel } from './ask-cancel.ts';
+export { sessionList } from './session-list.ts';
 export { configureSpawnTools, spawnSubagent, spawnSubagents } from './spawn.ts';
 export { subagentCancel, subagentList, subagentResult, subagentStatus } from './status.ts';
 
@@ -29,5 +32,6 @@ export function agentTools(): ToolDefinition[] {
     agentAsk,
     agentAskResult,
     agentAskCancel,
+    sessionList,
   ] as ToolDefinition[];
 }

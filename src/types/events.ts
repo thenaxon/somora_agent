@@ -274,6 +274,12 @@ export type NormalizedEvent =
       ts: number;
       engine: string;
       turnId: string;
+      /** `<provider>/<modelId>` that actually produced this turn — the
+       *  fallback's when one took over. Stamped by run-turn when the
+       *  event is persisted (since 2026-09-21); absent on older turns.
+       *  Without it a session file could not answer "which model wrote
+       *  this?" once the session's model had been switched. */
+      model?: string;
       usage?: {
         tokens_in: number;
         tokens_out: number;
@@ -608,5 +614,20 @@ export type SseEvent =
         from: string | null;
         to: string | null;
         via: 'tool' | 'slash_command';
+      };
+    }
+  | {
+      // The session's model override was set or cleared (PUT/DELETE
+      // …/model). Often done from outside the window that shows the
+      // session — an orchestrator agent, another client — so clients
+      // re-read the session's model on this instead of showing the old
+      // one until reopened. `model: null` = override cleared, the
+      // persona default applies again. The running turn keeps the model
+      // it started with; the next turn uses the new one.
+      event: 'session_model';
+      data: {
+        model: string | null;
+        resolved?: string;
+        source: 'session-override' | 'persona-default';
       };
     };

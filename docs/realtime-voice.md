@@ -138,6 +138,14 @@ voice:
   maxSpokenSentences: 4
 ```
 
+The voice self carries a short character sketch, not the whole persona.
+Who is on the line comes from the agent's own `USER.md`: its opening —
+everything before the first `##` section, up to 280 characters — is
+carried along, so put the name and how to address the person there.
+Anything further about them is a lookup like any other fact. No
+`USER.md`, no such line. The voice self is also told the day and the
+time the call started; for the exact time later in a call it looks it up.
+
 For full control, write `~/.somora/agents/<name>/VOICE.md`: its text
 replaces the derived character. The rules that keep the call honest —
 ask before answering anything factual, never invent, never refuse work

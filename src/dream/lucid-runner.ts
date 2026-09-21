@@ -31,6 +31,7 @@ import { callOneShotLLM } from './deep-llm.ts';
 import { buildLucidSystemPrompt } from './lucid-prompt.ts';
 import { resolveWikiSchema } from '../wiki/language.ts';
 import { setRunStatus, writeLucidRun } from './lucid-storage.ts';
+import { firstCompleteJson } from './json-salvage.ts';
 import type {
   LucidFinding,
   LucidFindingKind,
@@ -105,10 +106,21 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
 
   const allFindings: LucidFinding[] = [];
   let nextId = 1;
+  // Coverage. A batch counts as failed when the LLM call errored OR its
+  // answer was unreadable — both used to vanish into "0 findings,
+  // completed", so a worker that was down for the whole run looked like
+  // a clean wiki until the next run a week later.
+  let batchesTotal = 0;
+  let batchesFailed = 0;
+  let aborted = false;
 
   // ─── Per-subfolder pass ────────────────────────────────────────────
   for (const [subfolder, pages] of bySubfolder) {
-    if (args.signal?.aborted) break;
+    if (args.signal?.aborted) {
+      aborted = true;
+      break;
+    }
+    batchesTotal++;
     const userMsg = buildSubfolderUserMessage(indexContent, subfolder, pages);
     logger.info({
       msg: 'dream.lucid.llm_request',
@@ -135,9 +147,18 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
         subfolder,
         err: (err as Error).message,
       });
+      if (args.signal?.aborted) {
+        aborted = true;
+        break;
+      }
+      batchesFailed++;
       continue; // partial results — proceed with other subfolders
     }
     const subFindings = parseLucidFindings(llmText, `${id}:${subfolder}`);
+    if (subFindings === null) {
+      batchesFailed++;
+      continue;
+    }
     for (const f of subFindings) {
       allFindings.push({ ...f, id: nextId++ });
     }
@@ -145,7 +166,9 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
 
   // ─── Cross-subfolder pass (headers only) ──────────────────────────
   // Catches findings that span subfolders without re-sending all bodies.
-  if (!args.signal?.aborted && bySubfolder.size > 1) {
+  if (args.signal?.aborted) aborted = true;
+  if (!aborted && bySubfolder.size > 1) {
+    batchesTotal++;
     const userMsg = buildCrossSubfolderUserMessage(indexContent, bySubfolder);
     logger.info({
       msg: 'dream.lucid.llm_request',
@@ -164,10 +187,13 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
         logCtx: { agent: 'lucid', op: 'cross', slug: id },
       });
       const xFindings = parseLucidFindings(llmText, `${id}:cross`);
-      for (const f of xFindings) {
+      if (xFindings === null) batchesFailed++;
+      for (const f of xFindings ?? []) {
         allFindings.push({ ...f, id: nextId++ });
       }
     } catch (err) {
+      if (args.signal?.aborted) aborted = true;
+      else batchesFailed++;
       logger.warn({
         msg: 'dream.lucid.cross_pass_failed',
         id,
@@ -177,6 +203,41 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
   }
 
   run.findings = allFindings;
+  run.batches_total = batchesTotal;
+  run.batches_failed = batchesFailed;
+
+  // Failed ≠ empty. An aborted run, or one where no batch produced a
+  // readable answer, audited nothing — it must not be booked as a
+  // completed run with zero findings. Partial findings stay in the run
+  // file for audit. A run where SOME batches failed is still reviewable
+  // and completes; the counters say how much of the wiki it covered.
+  const nothingRead = batchesTotal > 0 && batchesFailed === batchesTotal;
+  if (aborted || nothingRead) {
+    const error = aborted
+      ? `aborted after ${batchesTotal - batchesFailed} readable of ${batchesTotal} started batch(es) — wiki not fully audited`
+      : `all ${batchesTotal} batch(es) failed (worker error or unreadable answer) — wiki not audited`;
+    setRunStatus(run, 'failed', error);
+    await writeLucidRun(run);
+    logger.error({
+      msg: 'dream.lucid.failed',
+      id,
+      error,
+      aborted,
+      batchesTotal,
+      batchesFailed,
+      partialFindings: allFindings.length,
+    });
+    return {
+      runId: id,
+      findingsCount: allFindings.length,
+      pagesScanned,
+      durationMs: Date.now() - start,
+      status: 'failed',
+    };
+  }
+  if (batchesFailed > 0) {
+    logger.warn({ msg: 'dream.lucid.partial_coverage', id, batchesTotal, batchesFailed });
+  }
   setRunStatus(run, 'completed');
   await writeLucidRun(run);
 
@@ -186,6 +247,8 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
     trigger: args.trigger,
     findingsCount: allFindings.length,
     pagesScanned,
+    batchesTotal,
+    batchesFailed,
     durationMs: Date.now() - start,
     byKind: countByKind(allFindings),
   });
@@ -410,23 +473,44 @@ function stripFences(raw: string): string {
   return text;
 }
 
-function parseLucidFindings(raw: string, runId: string): LucidFinding[] {
+/** null = the answer was unreadable (not JSON, or no `findings` array);
+ *  the caller counts the batch as failed. [] = a readable "nothing found". */
+export function parseLucidFindings(raw: string, runId: string): LucidFinding[] | null {
   const text = stripFences(raw);
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch (err) {
-    logger.warn({
-      msg: 'dream.lucid.parse_failed',
-      runId,
-      err: (err as Error).message,
-      sample: text.slice(0, 300),
-    });
-    return [];
+    // A complete object with a sentence after it is still an answer
+    // (both parse failures in the live logs up to 2026-09-21 had this
+    // shape). A cut-off or broken object is not.
+    const candidate = firstCompleteJson(text, '{');
+    let recovered: unknown;
+    if (candidate !== null) {
+      try {
+        recovered = JSON.parse(candidate);
+      } catch {
+        recovered = undefined;
+      }
+    }
+    if (recovered === undefined) {
+      logger.warn({
+        msg: 'dream.lucid.parse_failed',
+        runId,
+        err: (err as Error).message,
+        sample: text.slice(0, 300),
+      });
+      return null;
+    }
+    logger.info({ msg: 'dream.lucid.answer_recovered', runId, droppedChars: text.length - candidate!.length });
+    parsed = recovered;
   }
-  if (!parsed || typeof parsed !== 'object') return [];
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as Record<string, unknown>).findings)) {
+    logger.warn({ msg: 'dream.lucid.parse_failed', runId, err: 'no findings array in answer', sample: text.slice(0, 300) });
+    return null;
+  }
   const obj = parsed as Record<string, unknown>;
-  const list = Array.isArray(obj.findings) ? obj.findings : [];
+  const list = obj.findings as unknown[];
   const out: LucidFinding[] = [];
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;

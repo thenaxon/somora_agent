@@ -51,6 +51,19 @@ When the trigger fires at 08:00, the agent receives a user-message turn
 in session `morning-routine` (auto-created with timestamp prefix if
 not existing). The text of that turn is exactly the prompt above:
 
+**Which session.** `dispatch.session` takes a slug or id, `"main"`, or
+`"current"` — the session the agent is in while it creates the trigger
+(only when `dispatch.agent` is the creating agent). Left out, a trigger
+an agent sets on itself fires in the session it was created from —
+"wake me to go on with this" is what leaving it out means, and `main`
+would be a different conversation running alongside the work. The create
+result then carries a `session_note` naming that session. A trigger on
+another agent, one created by a sub-agent (its session is a sealed work
+room nobody watches afterwards), or one created outside any session (the
+HTTP tool route), fires in `main`. Name `"main"` explicitly for a recurring job that
+belongs there.
+
+
 ```text
 Check inbox via the gog skill, group by topic, tell me what's important today.
 ```

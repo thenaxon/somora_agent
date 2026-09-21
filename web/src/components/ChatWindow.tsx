@@ -25,7 +25,7 @@ import { hasTechnicalId, sessionSlug } from '../lib/session-label';
 import { useSessionInfo } from '../hooks/useSessionInfo';
 import { useAgents } from '../hooks/useAgents';
 import { useChatZoom } from '../hooks/useChatZoom';
-import { useChatSessionFromContext } from './ChatProvider';
+import { useChatContext, useChatSessionFromContext } from './ChatProvider';
 import { useActivity } from './ActivityProvider';
 import { MessageItem } from './MessageItem';
 import { SlashCommandPopup, type SlashCommand } from './SlashCommandPopup';
@@ -89,6 +89,17 @@ export function ChatWindow({
     sessionId,
   );
   const chat = useChatSessionFromContext(agent.name, sessionId);
+  // Keep the header's model/thinking honest: re-read on a model switch
+  // made elsewhere, and around every turn (a turn is where the model is
+  // actually resolved — fallback, override, persona default).
+  const { subscribeTurnEvents } = useChatContext();
+  useEffect(
+    () =>
+      subscribeTurnEvents(agent.name, sessionId, (event) => {
+        if (event === 'session_model' || event === 'turn_started' || event === 'turn_end') refreshSessionInfo();
+      }),
+    [subscribeTurnEvents, agent.name, sessionId, refreshSessionInfo],
+  );
   const activity = useActivity();
   // Agent registry — used to resolve sender color+icon for A2A
   // inbound (user_message.from_agent). Single fetch shared with the

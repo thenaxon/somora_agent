@@ -74,7 +74,9 @@ async function scenario(bodyChars: number): Promise<{
     raw: 'irrelevant',
     frontmatter: {},
     body: 'Eine kleine neue Info.',
-    mtimeMs: 0,
+    // The mtime Deep saw when it read the note — deleteSourceMemory only
+    // removes the file if it still has it.
+    mtimeMs: (await stat(memFile)).mtimeMs,
   };
   return { ctx: { wikiAbs }, candidate, wikiFile, memFile, existingBody };
 }

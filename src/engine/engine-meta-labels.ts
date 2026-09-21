@@ -33,6 +33,10 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     // (happens on a model switch), and its `error` notifications.
     contextCompaction: 'codex compaction',
     error: 'codex error',
+    // somora-emitted from codex notifications that are NOT errors: a
+    // stream codex is reconnecting on its own, and its switch to HTTPS.
+    reconnecting: 'reconnecting',
+    transport_fallback: 'transport fallback',
   },
   'claude-cli': {
     mcp_server_renamed: MCP_SERVER_RENAMED,
@@ -119,6 +123,10 @@ export function summariseEngineMeta(
       return `reasoning effort '${p.requested}' rejected by the backend — sent ${typeof p.sent === 'string' ? `'${p.sent}'` : 'without the parameter'} instead`;
     }
     return undefined;
+  }
+  if (engine === 'codex-cli' && (itemType === 'reconnecting' || itemType === 'transport_fallback')) {
+    const p = payload as { text?: unknown } | null | undefined;
+    return typeof p?.text === 'string' ? p.text : undefined;
   }
   if (itemType === 'voice_spoken' || itemType === 'voice_handover') {
     const p = payload as { text?: unknown } | null | undefined;

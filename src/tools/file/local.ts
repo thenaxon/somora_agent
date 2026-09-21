@@ -6,6 +6,7 @@ import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promi
 import { basename, dirname, join, relative } from 'node:path';
 import { logger } from '../../server/logger.ts';
 import {
+  assertReadAllowed,
   checkReadAllowed,
   checkWriteAllowed,
   realpathSafeAncestor,
@@ -256,10 +257,27 @@ export async function localSearch(args: {
   const startPath = args.path
     ? (await resolveLocalPath(args.path, args.agent, args.config)).absolute
     : (await resolveLocalPath('.', args.agent, args.config)).absolute;
+  // Same read policy as file_read/file_list — search returns file
+  // content, so a blocked directory must not be searchable either.
+  await assertReadAllowed(startPath);
 
   // Try ripgrep first.
   const rg = await tryRipgrep(args.pattern, startPath, limit);
-  if (rg !== null) return rg;
+  if (rg !== null) {
+    // The start path was allowed; a hit below it may still not be (a
+    // search from `/etc` reaching `/etc/ssh`, a symlink into a blocked
+    // dir). Drop those hits rather than fail the whole search.
+    const hits: SearchHit[] = [];
+    for (const h of rg.hits) {
+      try {
+        await assertReadAllowed(h.path);
+        hits.push(h);
+      } catch {
+        /* blocked path — not returned */
+      }
+    }
+    return { ...rg, hits, count: hits.length };
+  }
 
   // Fallback: tell the user instead of building our own walker. The
   // user's stated direction is "all-own-tools but use what's there
@@ -538,9 +556,9 @@ function compileGlob(glob: string): CompiledGlob {
   const hasSlash = glob.includes('/');
   const escaped = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   const pattern = escaped
-    .replace(/\*\*/g, ' ')
+    .replace(/\*\*/g, '\u0000')
     .replace(/\*/g, '[^/]*')
-    .replace(/ /g, '.*')
+    .replace(/\u0000/g, '.*')
     .replace(/\?/g, '[^/]');
   return { re: new RegExp(`^${pattern}$`), hasSlash };
 }

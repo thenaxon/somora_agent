@@ -65,6 +65,35 @@ const META_KEY = 'dreamReadThroughTs';
  * that is down all afternoon does not turn into an all-afternoon loop.
  * Real chat activity resets the count.
  */
+/**
+ * Record that REM has read `session` through `throughTs`. Every path
+ * that runs a dream over a session must call this on success — the idle
+ * worker AND the /reset path (rem-reset-run.ts). A successful run that
+ * leaves the marker behind is read again by the next idle cycle.
+ */
+export async function markSessionDreamed(
+  agent: string,
+  session: string,
+  throughTs: number,
+): Promise<void> {
+  try {
+    // max() so a late-completing resume of an old dream can't rewind a
+    // marker a newer fresh run already advanced (rewind = re-dream =
+    // duplicate findings).
+    await sessionMetaStore.update(agent, session, (current) => ({
+      ...current,
+      [META_KEY]: Math.max(throughTs, Number(current[META_KEY]) || 0),
+    }));
+  } catch (err) {
+    logger.warn({
+      msg: 'dream.rem.marker_write_failed',
+      agent,
+      session,
+      err: (err as Error).message,
+    });
+  }
+}
+
 export function selfHealFactor(attempt: number): number | null {
   const MAX_ATTEMPTS = 4;
   if (attempt < 1 || attempt > MAX_ATTEMPTS) return null;
@@ -362,27 +391,8 @@ export class RemWorker {
     }
   }
 
-  private async markSessionDreamed(
-    agent: string,
-    session: string,
-    throughTs: number,
-  ): Promise<void> {
-    try {
-      // max() so a late-completing resume of an old dream can't rewind a
-      // marker a newer fresh run already advanced (rewind = re-dream =
-      // duplicate findings).
-      await sessionMetaStore.update(agent, session, (current) => ({
-        ...current,
-        [META_KEY]: Math.max(throughTs, Number(current[META_KEY]) || 0),
-      }));
-    } catch (err) {
-      logger.warn({
-        msg: 'dream.rem.marker_write_failed',
-        agent,
-        session,
-        err: (err as Error).message,
-      });
-    }
+  private markSessionDreamed(agent: string, session: string, throughTs: number): Promise<void> {
+    return markSessionDreamed(agent, session, throughTs);
   }
 
   private async findPausedDream(
@@ -423,8 +433,31 @@ export class RemWorker {
       const bT = Date.parse(b.lastActivity ?? b.createdAt ?? '');
       return (Number.isFinite(bT) ? bT : 0) - (Number.isFinite(aT) ? aT : 0);
     });
+    // Two kinds of session step aside (dream files are the evidence):
+    //  - `running`: a dream over it is in flight right now — the /reset
+    //    path dreams the archive it just made, outside this worker. A
+    //    second run over the same range would duplicate every finding.
+    //    (Orphaned `running` files are parked as paused at boot, so a
+    //    running file means a live run.)
+    //  - `failed`: its last attempt failed. It goes to the BACK of the
+    //    line instead of the front — one session whose range keeps
+    //    failing (say, a chunk the worker rejects every time) used to be
+    //    picked again on every cycle, being the newest, and every older
+    //    session with unread events waited behind it for good.
+    const inFlight = new Set<string>();
+    const lastFailed = new Set<string>();
+    try {
+      for (const d of await listDreams(agent)) {
+        if (d.meta.status === 'running') inFlight.add(d.meta.source_session);
+        else if (d.meta.status === 'failed') lastFailed.add(d.meta.source_session);
+      }
+    } catch (err) {
+      logger.debug({ msg: 'dream.rem.dream_list_failed', agent, err: (err as Error).message });
+    }
+    let failedCandidate: { id: string; dreamReadThroughTs: number } | null = null;
     for (const s of sessions) {
       try {
+        if (inFlight.has(s.id)) continue;
         const meta = await sessionMetaStore.get(agent, s.id);
         const marker = typeof meta[META_KEY] === 'number' ? (meta[META_KEY] as number) : 0;
         // Use the session's lastActivity timestamp as a proxy for "has new
@@ -432,6 +465,10 @@ export class RemWorker {
         // worth dreaming.
         const lastTs = s.lastActivity ? Date.parse(s.lastActivity) : 0;
         if (Number.isFinite(lastTs) && lastTs > marker) {
+          if (lastFailed.has(s.id)) {
+            failedCandidate ??= { id: s.id, dreamReadThroughTs: marker };
+            continue;
+          }
           return { id: s.id, dreamReadThroughTs: marker };
         }
       } catch (err) {
@@ -443,6 +480,6 @@ export class RemWorker {
         });
       }
     }
-    return null;
+    return failedCandidate;
   }
 }

@@ -1010,6 +1010,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
           }
         }
       }
+      if (ev.kind === 'turn_end' && !ev.model) {
+        ev.model = turnFallback?.actual ?? `${resolvedModel.providerName}/${resolvedModel.modelId}`;
+      }
       if (ev.kind !== 'assistant_delta' && ev.kind !== 'thinking_delta') {
         await appendEvent(agent, session, ev);
       }
@@ -1125,6 +1128,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ts: Date.now(),
         engine: lastSeenEngine,
         turnId: `t-${Date.now()}`,
+        model: turnFallback?.actual ?? `${resolvedModel.providerName}/${resolvedModel.modelId}`,
       });
     }
 
@@ -1235,6 +1239,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ts: Date.now(),
         engine: resolvedModel.provider.engine,
         turnId: `t-failed-${Date.now()}`,
+        model: `${resolvedModel.providerName}/${resolvedModel.modelId}`,
       });
     } catch (persistErr) {
       logger.error({

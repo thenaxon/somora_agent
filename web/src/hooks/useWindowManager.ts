@@ -27,6 +27,20 @@ export interface OpenChatArgs {
   agentIcon?: string;
 }
 
+/** One chat window per (agent, session): keep the first, drop later
+ *  twins. Applied to a layout restored from localStorage, which may
+ *  predate the rule. Exported for tests. */
+export function dedupeChatWindows<T extends { kind: string; agentName?: string; sessionId?: string }>(ws: T[]): T[] {
+  const seen = new Set<string>();
+  return ws.filter((w) => {
+    if (w.kind !== 'chat') return true;
+    const key = `${w.agentName} ${w.sessionId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export function useWindowManager() {
   const [windows, setWindows] = useState<WindowState[]>([]);
   const [zCounter, setZCounter] = useState(10);
@@ -40,7 +54,7 @@ export function useWindowManager() {
       if (raw) {
         const parsed = JSON.parse(raw) as PersistedLayout;
         if (Array.isArray(parsed.windows)) {
-          setWindows(parsed.windows);
+          setWindows(dedupeChatWindows(parsed.windows));
           setZCounter(parsed.zCounter || 10);
           setFocusedId(parsed.focusedId ?? null);
         }
@@ -120,13 +134,36 @@ export function useWindowManager() {
    *  the slash-command popup's `/session` and `/new` handlers — the
    *  ChatWindow then re-subscribes to the new session's SSE via
    *  ChatProvider, no remount required. */
-  const setWindowSession = useCallback((id: string, sessionId: string) => {
-    setWindows((ws) =>
-      ws.map((w) =>
-        w.id === id && w.kind === 'chat' ? { ...w, sessionId } : w,
-      ),
-    );
-  }, []);
+  const setWindowSession = useCallback(
+    (id: string, sessionId: string) => {
+      // One window per (agent, session) — the same rule openChat keeps.
+      // `/session main` typed into a project window while main was
+      // already open used to leave two windows on the same conversation,
+      // sharing one stream, with no telling which one a message went
+      // into. Bring the existing one forward instead.
+      const self = windows.find((w) => w.id === id);
+      const twin =
+        self && self.kind === 'chat'
+          ? windows.find(
+              (w) => w.id !== id && w.kind === 'chat' && w.agentName === self.agentName && w.sessionId === sessionId,
+            )
+          : undefined;
+      if (twin) {
+        focus(twin.id);
+        return;
+      }
+      setWindows((ws) => {
+        const me = ws.find((w) => w.id === id);
+        if (!me || me.kind !== 'chat') return ws;
+        // Re-check against the state the update actually applies to.
+        if (ws.some((w) => w.id !== id && w.kind === 'chat' && w.agentName === me.agentName && w.sessionId === sessionId)) {
+          return ws;
+        }
+        return ws.map((w) => (w.id === id ? { ...w, sessionId } : w));
+      });
+    },
+    [windows, focus],
+  );
 
   /** Open or focus the cross-agent Sessions list window. Singleton —
    *  only one Sessions tool exists at a time. */
@@ -500,7 +537,13 @@ export function useWindowManager() {
         ...pos,
         minimized: false,
       };
-      setWindows((ws) => [...ws, next]);
+      // Checked again inside the updater: `windows` above is this
+      // render's snapshot, and two opens in one tick would both pass it.
+      setWindows((ws) =>
+        ws.some((w) => w.kind === 'chat' && w.agentName === args.agentName && w.sessionId === args.sessionId)
+          ? ws
+          : [...ws, next],
+      );
       setZCounter((z) => z + 1);
       setFocusedId(id);
     },

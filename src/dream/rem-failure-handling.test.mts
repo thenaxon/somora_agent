@@ -16,6 +16,9 @@
 //      downgraded to memory_write (with content) or dropped (without);
 //      memory_delete against a non-existent slug is dropped; valid
 //      memory_edit passes through. Runs even with dedup disabled.
+//   3b. Unreadable worker output (empty content, broken JSON, cut-off
+//      array) → one retry, then failedChunks=1 — never a clean empty
+//      result. `[]` + prose and `</think>[]` are read as the array.
 //   5. storage: updateFindingStatus / dismissEntireDream record a
 //      resolution_note; pruneFailedDreams keeps only the requested id.
 
@@ -56,7 +59,11 @@ function check(name: string, cond: boolean, detail = ''): void {
 
 // ── Mock openai-compatible backend ────────────────────────────────────
 // mode switches per test: 'nochoices' | 'ok' | 'hang'
-let mode: 'nochoices' | 'ok' | 'hang' = 'nochoices';
+let mode: 'nochoices' | 'ok' | 'hang' | 'content' = 'nochoices';
+// mode 'content': answers are served from this queue, one per request;
+// the last entry repeats. `requests` counts calls per test.
+let contentQueue: string[] = [];
+let requests = 0;
 const hangingResponses: import('node:http').ServerResponse[] = [];
 const server = createServer((req, res) => {
   let body = '';
@@ -67,6 +74,12 @@ const server = createServer((req, res) => {
       return;
     }
     res.setHeader('content-type', 'application/json');
+    requests++;
+    if (mode === 'content') {
+      const content = contentQueue.length > 1 ? contentQueue.shift()! : contentQueue[0]!;
+      res.end(JSON.stringify({ id: 'cmpl-test', choices: [{ message: { role: 'assistant', content } }] }));
+      return;
+    }
     if (mode === 'nochoices') {
       // omlx guard-rejection shape: 200, JSON, no `choices`.
       res.end(
@@ -151,6 +164,42 @@ function extractCtx(signal?: AbortSignal) {
   check('abort: completed=false', result.completed === false);
   check('abort: failedChunks=0 (cancellation is not a failure)', result.failedChunks === 0, `${result.failedChunks}`);
   for (const res of hangingResponses.splice(0)) res.destroy();
+}
+
+// ── 3b. Unreadable worker output is a failed chunk, not "no findings" ──
+{
+  const GOOD = JSON.stringify([
+    { action: 'memory_write', slug: 'test-fact', proposed_content: 'x', reason: 'User stated it plainly.' },
+  ]);
+  // Real shape from the live logs: an unescaped quote inside a value.
+  const BROKEN_QUOTE =
+    '[\n  {\n    "action": "memory_write",\n    "slug": "a",\n    "proposed_content": "Rene said "no" here",\n    "reason": "r"\n  }\n]';
+  const CUT_OFF = '[\n  {\n    "action": "memory_write",\n    "slug": "a",\n    "proposed_content": "cut off mid sen';
+  const cases: Array<{ name: string; answers: string[]; failed: number; findings: number; calls: number }> = [
+    { name: 'empty content twice', answers: [''], failed: 1, findings: 0, calls: 2 },
+    { name: 'broken quote twice', answers: [BROKEN_QUOTE], failed: 1, findings: 0, calls: 2 },
+    { name: 'cut-off array twice', answers: [CUT_OFF], failed: 1, findings: 0, calls: 2 },
+    { name: 'object instead of array', answers: ['{"findings": []}'], failed: 1, findings: 0, calls: 2 },
+    { name: 'prose only', answers: ['Nothing worth keeping in this window.'], failed: 1, findings: 0, calls: 2 },
+    { name: 'broken then good (retry heals)', answers: [BROKEN_QUOTE, GOOD], failed: 0, findings: 1, calls: 2 },
+    { name: 'empty then good (retry heals)', answers: ['', GOOD], failed: 0, findings: 1, calls: 2 },
+    { name: 'valid empty array', answers: ['[]'], failed: 0, findings: 0, calls: 1 },
+    { name: '[] followed by prose', answers: ['[]\n\nThe transcript window contains only Sentinel firings.'], failed: 0, findings: 0, calls: 1 },
+    { name: 'stray think tail', answers: ['[]\n\n</think>[]'], failed: 0, findings: 0, calls: 1 },
+    { name: 'think tail then findings', answers: [`reasoning…</think>${GOOD}`], failed: 0, findings: 1, calls: 1 },
+    { name: 'fenced array', answers: ['```json\n' + GOOD + '\n```'], failed: 0, findings: 1, calls: 1 },
+    { name: 'array with bracket inside a string', answers: [JSON.stringify([{ action: 'memory_write', slug: 'b', proposed_content: 'list: [a] and "q" }', reason: 'r' }]) + ' trailing note'], failed: 0, findings: 1, calls: 1 },
+  ];
+  for (const c of cases) {
+    mode = 'content';
+    contentQueue = [...c.answers];
+    requests = 0;
+    const result = await extractFromSession(extractCtx() as never);
+    check(`unreadable/${c.name}: completed`, result.completed === true);
+    check(`unreadable/${c.name}: failedChunks=${c.failed}`, result.failedChunks === c.failed, `${result.failedChunks}`);
+    check(`unreadable/${c.name}: findings=${c.findings}`, result.findings.length === c.findings, `${result.findings.length}`);
+    check(`unreadable/${c.name}: requests=${c.calls}`, requests === c.calls, `${requests}`);
+  }
 }
 
 // ── 4. rem-dedup Stage-0 referential validation ───────────────────────

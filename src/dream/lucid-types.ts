@@ -107,6 +107,12 @@ export interface LucidRun {
   worker_model_ref: string;
   /** Total tokens estimated for the LLM call (in + out). */
   estimated_tokens?: number;
+  /** LLM batches started (one per subfolder + the cross pass) and how
+   *  many of them errored or answered unreadably. Absent on runs written
+   *  before 2026-09-21. `batches_failed > 0` on a completed run means
+   *  the findings cover only part of the wiki. */
+  batches_total?: number;
+  batches_failed?: number;
   /** All findings, ordered by id (insertion order). */
   findings: LucidFinding[];
 }

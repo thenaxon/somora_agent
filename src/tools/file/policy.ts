@@ -14,6 +14,15 @@
 //    fed to the model regardless of usefulness (private SSH keys,
 //    /etc/shadow). Other paths are readable.
 //
+// What this is NOT: a security boundary against an agent that means
+// harm. It is a guard rail against accidents and against feeding
+// secrets to a model by mistake. Symlinks are resolved; HARDLINKS are
+// not visible to realpath, and the check happens before the I/O, not on
+// the open file (reports 2026-09-15). Closing that here would buy
+// nothing while `exec` is available: whoever can run `ln` to set the
+// trick up can run `cp` without it. A real boundary has to start at
+// exec, not at file_*.
+//
 // Workspace resolution: relative paths resolve against the agent's
 // workspace dir (per-agent override > config.workspace.default).
 // Absolute paths pass through.
@@ -145,6 +154,38 @@ export function checkReadAllowed(absolute: string): PolicyResult {
     }
   }
   return { ok: true };
+}
+
+/**
+ * The full local read check in one call: the path as given AND where
+ * it really points (symlinks resolved). Throws the policy reason.
+ *
+ * Every local tool that returns file CONTENT must go through this.
+ * file_read and file_list did; file_search and the image/PDF branch of
+ * file_read did not (found 2026-09-21) — `file_search` with
+ * `path: "~/.ssh"` returned key lines, no exec and no trick needed.
+ */
+export async function assertReadAllowed(absolute: string): Promise<void> {
+  const policy = checkReadAllowed(absolute);
+  if (!policy.ok) throw new Error(policy.reason);
+  const real = await realpathSafeAncestor(absolute);
+  const policyReal = checkReadAllowed(real);
+  if (!policyReal.ok) throw new Error(policyReal.reason);
+}
+
+/**
+ * Write-blacklist for a REMOTE host: what may not be read there may not
+ * be written either (credential stores in the remote home, the system
+ * paths). Deliberately NOT the local WRITE_ONLY_BLOCK — editing /etc on
+ * a managed host is ordinary admin work for an agent with a root
+ * resource. Before 2026-09-21 remote write/patch ran no policy at all:
+ * `file_write({target, path:"~/.ssh/authorized_keys"})` went through
+ * while the same path was refused for reading.
+ */
+export function checkRemoteWriteAllowed(absolute: string, remoteHome: string): PolicyResult {
+  const read = checkRemoteReadAllowed(absolute, remoteHome);
+  if (read.ok) return read;
+  return { ok: false, reason: (read.reason ?? 'read blocked').replace(/^read blocked/, 'write blocked') };
 }
 
 /**
