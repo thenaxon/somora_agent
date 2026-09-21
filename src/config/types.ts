@@ -1647,12 +1647,20 @@ export const WikiDeepConfigSchema = z
     thinking: ThinkingLevelSchema.optional(),
     /** Anti-clobber guard on the MERGE write path. */
     mergeShrinkGuard: WikiMergeShrinkGuardSchema,
+    /** How long a cached "skip" stands for an UNCHANGED memory note.
+     *  The skip was decided against the wiki as it was that day — "too
+     *  thin for a page of its own" stops being true once the page
+     *  exists. After this many days the note is looked at again (one
+     *  LLM call; skipped again, it rests for another period). 0 = a
+     *  skip stands until the note changes. */
+    skipCacheDays: z.number().int().min(0).max(3650).default(30),
   })
   .default({
     enabled: true,
     intervalHours: 12,
     requireApproval: false,
     mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
+    skipCacheDays: 30,
   });
 
 export const WikiLucidConfigSchema = z
@@ -1743,6 +1751,7 @@ export const WikiConfigSchema = z
       intervalHours: 12,
       requireApproval: false,
       mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
+      skipCacheDays: 30,
     },
     lucid: {
       enabled: true,

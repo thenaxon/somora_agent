@@ -396,6 +396,13 @@ The cache invalidates automatically when:
 - Memory body changes (hash mismatch → re-evaluate)
 - Promote/merge consumed the file (entry pruned)
 - File is deleted (opportunistic cleanup on next loadCache)
+- The skip is older than `wiki.deep.skipCacheDays` (default 30; `0` =
+  never). A skip is a verdict against the wiki of that day — "too thin
+  for a page of its own" stops being true once the page exists, and the
+  note belongs on it. Expiry is spread over up to a quarter of the
+  period per note, and at most 10 expired notes per agent are looked at
+  again in one run, so a batch skipped on one day does not come back as
+  one expensive run. Skipped again, a note rests for another period.
 
 `dream_run({phase: 'deep', force: true})` ignores the cache for one run.
 
@@ -669,6 +676,8 @@ wiki:
       enabled: true                      # refuse merges that shrink a page
       minRatio: 0.5                      # newBody < 0.5 × existingBody → skip
       minExistingBytes: 2000             # smaller pages are never guarded
+    skipCacheDays: 30                    # a cached skip of an unchanged note is
+                                         # looked at again after this; 0 = never
   lucid:
     enabled: true
     intervalDays: 7

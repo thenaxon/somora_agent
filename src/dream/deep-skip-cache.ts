@@ -8,6 +8,11 @@
 //
 // Cache invalidates automatically:
 // - Memory body changed → hash mismatch → re-evaluate
+// - The skip is older than `wiki.deep.skipCacheDays` (default 30) →
+//   re-evaluate. A skip is a verdict against the wiki of THAT day: a
+//   note that was "too thin for a page of its own" belongs on the page
+//   that has been created since. Until 2026-09-21 a skip stood forever,
+//   and such notes sat in the inbox for good.
 // - Memory file deleted (promote/merge or manual rm) → entry pruned
 //   on next loadCache (lazy cleanup, no harm if it sticks around)
 //
@@ -117,12 +122,42 @@ export async function saveCache(agent: string, cache: Cache): Promise<void> {
   }
 }
 
-/** True iff the cached entry's hash matches the current body. */
-export function isCachedSkip(cache: Cache, slug: string, body: string): CacheEntry | null {
+/**
+ * The cached skip for this note, if it still stands: same body, and not
+ * older than `maxAgeDays` (0 = no expiry).
+ *
+ * Expiry is spread out per note — up to a quarter of the period later,
+ * derived from the slug — because skips are recorded in batches: forty
+ * notes skipped in one run would otherwise all come due in the same run
+ * a month later, forty LLM calls at once.
+ */
+export function isCachedSkip(
+  cache: Cache,
+  slug: string,
+  body: string,
+  maxAgeDays = 0,
+  now: number = Date.now(),
+): CacheEntry | null {
   const entry = cache[slug];
   if (!entry) return null;
   if (entry.hash !== bodyHash(body)) return null;
+  if (maxAgeDays > 0) {
+    const skippedAt = Date.parse(entry.skipped_at);
+    if (!Number.isFinite(skippedAt)) return null; // unreadable date → look again
+    const spread = (parseInt(createHash('sha256').update(slug).digest('hex').slice(0, 4), 16) / 0xffff) * 0.25;
+    const limitMs = maxAgeDays * (1 + spread) * 86_400_000;
+    if (now - skippedAt > limitMs) return null;
+  }
   return entry;
+}
+
+/** Same body, but the skip has outlived `maxAgeDays` — due for another
+ *  look. The runner rations these per run (see deep-runner.ts). */
+export function isExpiredSkip(cache: Cache, slug: string, body: string, maxAgeDays: number, now: number = Date.now()): CacheEntry | null {
+  if (maxAgeDays <= 0) return null;
+  const standsForever = isCachedSkip(cache, slug, body, 0, now);
+  if (!standsForever) return null;
+  return isCachedSkip(cache, slug, body, maxAgeDays, now) ? null : standsForever;
 }
 
 /** Update cache entry after a skip. Mutates the cache; caller is

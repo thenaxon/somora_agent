@@ -42,6 +42,7 @@ import {
   clearCache,
   clearSlug,
   isCachedSkip,
+  isExpiredSkip,
   loadCache,
   recordSkip,
   saveCache,
@@ -54,6 +55,10 @@ import type {
 } from '../wiki/types.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? `${process.env.HOME}/.somora`;
+
+/** Expired skip verdicts re-evaluated per agent in one run (see the
+ *  cache check in runDeep). */
+const MAX_EXPIRED_RECHECKS_PER_AGENT_RUN = 10;
 
 export interface RunDreamBArgs {
   config: Config;
@@ -128,12 +133,26 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
       if (args.force) await clearCache(agent.name);
       const skipCache = args.force ? ({} as Cache) : await loadCache(agent.name);
       let cacheDirty = false;
+      let expiredRechecks = 0;
 
       for (const c of candidates) {
         if (args.signal?.aborted) break;
 
         // Cache check before any LLM call. Hash matches → cached skip.
-        const cached = isCachedSkip(skipCache, c.slug, c.body);
+        const skipDays = args.config.wiki.deep.skipCacheDays ?? 30;
+        let cached = isCachedSkip(skipCache, c.slug, c.body, skipDays);
+        // An expired skip is looked at again — but rationed. The first
+        // run after the expiry was introduced found 83 notes overdue on
+        // one instance (up to 133 days old); unrationed that is 83 calls
+        // to the strong model in a single run. The rest keep their
+        // cached verdict and come up in the following runs.
+        if (!cached) {
+          const expired = isExpiredSkip(skipCache, c.slug, c.body, skipDays);
+          if (expired) {
+            if (expiredRechecks >= MAX_EXPIRED_RECHECKS_PER_AGENT_RUN) cached = expired;
+            else expiredRechecks++;
+          }
+        }
         if (cached) {
           cachedSkips++;
           allOutcomes.push({
