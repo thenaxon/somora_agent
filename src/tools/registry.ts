@@ -207,12 +207,33 @@ export class ToolRegistry {
         };
       }
     }
-    const parsed = tool.inputSchema.safeParse(rawInput);
+    let parsed = tool.inputSchema.safeParse(rawInput);
+    if (!parsed.success) {
+      // Rescue, only ever on input that would be rejected anyway: some
+      // models (Qwen 3.x through the hermes tool parser) send a nested
+      // object as its JSON TEXT — `"dispatch": "{\"agent\": …}"`.
+      // Measured 2026-09-21 on sentinel create: 9 of 20 calls with
+      // thinking off, and the agent cannot fix it by retrying — it sends
+      // the same shape again. Where the schema wants an object or array
+      // and got a string that parses to one, read it and validate again.
+      const rescued = unstringifyNested(rawInput, parsed.error.issues);
+      if (rescued) {
+        const second = tool.inputSchema.safeParse(rescued.value);
+        if (second.success) {
+          logger.info({ msg: 'tool.input_unstringified', name, agent: ctx.agent, paths: rescued.paths });
+        }
+        // Either way the second verdict is the useful one: on failure it
+        // names what is wrong INSIDE the object, not "received string".
+        parsed = second;
+      }
+    }
     if (!parsed.success) {
       const issues = parsed.error.issues
         .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
         .join('; ');
-      logger.debug({
+      // info, not debug: a tool an agent cannot call is otherwise
+      // invisible — the sentinel case above left no trace in any log.
+      logger.info({
         msg: 'tool.input_invalid',
         name,
         agent: ctx.agent,
@@ -346,4 +367,44 @@ function nearestToolNames(query: string, candidates: string[], n: number): strin
     .sort((a, b) => a.d - b.d || a.name.localeCompare(b.name))
     .slice(0, n)
     .map((s) => s.name);
+}
+
+/**
+ * For every "expected object/array, received string" issue: if the
+ * string at that path is JSON for an object/array, replace it. Returns
+ * null when nothing could be rescued. Never touches a value the schema
+ * accepts as a string. Exported for tests.
+ */
+export function unstringifyNested(
+  input: unknown,
+  issues: ReadonlyArray<{ code?: string; path: ReadonlyArray<PropertyKey>; message: string; expected?: unknown }>,
+): { value: unknown; paths: string[] } | null {
+  if (!input || typeof input !== 'object') return null;
+  const clone = JSON.parse(JSON.stringify(input)) as Record<string, unknown>;
+  const paths: string[] = [];
+  for (const issue of issues) {
+    const wants =
+      issue.expected === 'object' || issue.expected === 'array' || /expected (object|array), received string/.test(issue.message);
+    if (!wants || issue.path.length === 0) continue;
+    let holder: unknown = clone;
+    for (const key of issue.path.slice(0, -1)) {
+      holder = holder && typeof holder === 'object' ? (holder as Record<PropertyKey, unknown>)[key] : undefined;
+    }
+    const last = issue.path[issue.path.length - 1]!;
+    if (!holder || typeof holder !== 'object') continue;
+    const raw = (holder as Record<PropertyKey, unknown>)[last];
+    if (typeof raw !== 'string') continue;
+    const text = raw.trim();
+    if (!(text.startsWith('{') || text.startsWith('['))) continue;
+    try {
+      const value: unknown = JSON.parse(text);
+      if (value && typeof value === 'object') {
+        (holder as Record<PropertyKey, unknown>)[last] = value;
+        paths.push(issue.path.join('.'));
+      }
+    } catch {
+      /* not JSON — leave it; the original error stands */
+    }
+  }
+  return paths.length > 0 ? { value: clone, paths } : null;
 }
