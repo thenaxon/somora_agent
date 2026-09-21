@@ -93,10 +93,33 @@ function buildDeepUserMessage(
     pageBlocks,
     '</relevant_wiki_pages>',
     '',
+    memoryDates(c),
     '<memory_file>',
     c.body.trim(),
     '</memory_file>',
   ].join('\n');
+}
+
+/**
+ * When the memory's content was stated, for the recency rule in the
+ * prompt. `stated_at` (set when a REM finding is applied: the end of
+ * the conversation it came from) beats `created`/`updated`, which only
+ * say when the note file was written. Exported for tests.
+ */
+export function memoryDates(c: { frontmatter?: Record<string, unknown> }, now: Date = new Date()): string {
+  const fm = c.frontmatter ?? {};
+  const day = (v: unknown): string | null => {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+    return null;
+  };
+  const stated = day(fm.stated_at);
+  const written = day(fm.updated) ?? day(fm.created);
+  const lines = [`Today: ${now.toISOString().slice(0, 10)}`];
+  if (stated) lines.push(`Memory content was stated on: ${stated} (the conversation it came from)`);
+  if (written) lines.push(`Memory note was written on: ${written}${stated ? '' : ' — no statement date recorded; treat this as the best available date'}`);
+  if (!stated && !written) lines.push('Memory date: unknown');
+  return ['<memory_dates>', ...lines, '</memory_dates>', ''].join('\n');
 }
 
 // ─── Parser ─────────────────────────────────────────────────────────

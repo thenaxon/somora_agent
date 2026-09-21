@@ -66,7 +66,7 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
   description:
     'List pending dreams awaiting user review. Returns both per-agent memory dreams (REM phase: ' +
     'atomic findings from your sessions, scoped to YOUR agent) and global wiki-cleanup runs ' +
-    '(Lucid phase: contradictions / stale claims / wanted-pages / outdated content in the shared ' +
+    '(Lucid phase: contradictions, dead links, wanted pages and link suggestions in the shared ' +
     "wiki, same for every agent). Each entry has a `kind` field = 'memory' or 'wiki_lucid' so the " +
     'agent can describe them differently to the user. Pass include_processed=true to also see ' +
     'already-resolved entries. Use this first when the user asks "did you dream anything?" or ' +
@@ -272,6 +272,21 @@ async function dreamNotFoundResponse(agent: string, requestedId: string): Promis
   };
 }
 
+/**
+ * When the thing a REM finding records was SAID — the end of the
+ * conversation range the dream read, not the moment the finding is
+ * applied. A note's `created` is the apply time; for a conversation
+ * that was dreamed late (an archive from May read in September) that is
+ * months off, and Deep would take a May statement for September news.
+ */
+function statedAtOf(meta: { range_through_ts?: number; source_session?: string }): Record<string, unknown> {
+  if (typeof meta.range_through_ts !== 'number' || meta.range_through_ts <= 0) return {};
+  return {
+    stated_at: new Date(meta.range_through_ts).toISOString(),
+    ...(meta.source_session ? { stated_in: meta.source_session } : {}),
+  };
+}
+
 async function applyMemoryFinding(
   memFile: NonNullable<Awaited<ReturnType<typeof readDreamById>>>,
   dreamId: string,
@@ -308,10 +323,10 @@ async function applyMemoryFinding(
       if (!finding.proposed_content) {
         throw new Error(`finding ${findingId}: memory_write needs proposed_content`);
       }
-      const fm =
-        finding.frontmatter_tags && finding.frontmatter_tags.length > 0
-          ? { tags: finding.frontmatter_tags }
-          : undefined;
+      const fm = {
+        ...(finding.frontmatter_tags && finding.frontmatter_tags.length > 0 ? { tags: finding.frontmatter_tags } : {}),
+        ...statedAtOf(memFile.meta),
+      };
       await mgr.writeNote(slug, finding.proposed_content, fm);
       executed = { description: `wrote memory/${slug}.md${slugNote}` };
       break;
@@ -329,10 +344,10 @@ async function applyMemoryFinding(
       // dedup stage applies at extraction time.
       const existing = await mgr.getNote(slug).catch(() => null);
       if (existing) {
-        await mgr.writeNote(slug, finding.proposed_content, undefined, { mustExist: true });
+        await mgr.writeNote(slug, finding.proposed_content, statedAtOf(memFile.meta), { mustExist: true });
         executed = { description: `edited memory/${slug}.md${slugNote}` };
       } else {
-        await mgr.writeNote(slug, finding.proposed_content);
+        await mgr.writeNote(slug, finding.proposed_content, statedAtOf(memFile.meta));
         executed = {
           description:
             `memory/${slug}.md no longer existed (promoted to the wiki or deleted since extraction) — ` +
@@ -571,7 +586,7 @@ export function configureDreamRunTool(deps: DreamRunDeps): void {
 }
 
 const RunInput = z.object({
-  phase: z.enum(['deep', 'lucid']).optional(),
+  phase: z.enum(['deep', 'lucid', 'rem']).optional(),
   wait: z.boolean().optional(),
   force: z.boolean().optional(),
 });
@@ -587,13 +602,15 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     'as consolidated wiki pages with cross-references, deletes the source memory ' +
     'files after successful consolidation. Memory entries already covered in the ' +
     'wiki get merged into the existing page; transient/scratchpad entries get skipped.\n' +
-    "phase='lucid': Wiki cleanup — periodic health-check for contradictions, stale " +
-    'claims, broken links, orphans, refactor candidates. LLM-driven (Opus) with full ' +
-    'wiki context. Findings need user approval before any wiki edits apply.\n' +
-    '\n' +
-    'NOTE: REM (Session → Memory, per-agent) is NOT triggered via this tool. ' +
-    'Use /reset on a session to manually fire REM, or wait for the per-agent ' +
-    'idle-timeout auto-trigger.\n' +
+    "phase='lucid': Wiki cleanup — a periodic check for contradictions between pages, " +
+    'dead links, pages that are linked but missing, and links worth adding. It does NOT ' +
+    'judge whether a claim is out of date. Works through the wiki one subfolder at a time ' +
+    'plus one pass across folders that sees only the opening lines of each page. ' +
+    'Findings need user approval before any wiki edits apply.\n' +
+    "phase='rem': Session → Memory for YOUR agent — reads your conversations that REM has " +
+    'not covered yet (after a worker outage, or a long stretch without idle time) right ' +
+    'now instead of waiting for the idle timer. Runs in the background, one session after ' +
+    'another; chat activity pauses it as usual. Returns started / busy / nothing_to_do.\n' +
     '\n' +
     'CALLING CONVENTION — read carefully:\n' +
     '\n' +
@@ -623,9 +640,10 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     properties: {
       phase: {
         type: 'string',
-        enum: ['deep', 'lucid'],
+        enum: ['deep', 'lucid', 'rem'],
         description:
-          "Which dream phase to fire. Default 'deep' (Memory→Wiki). 'lucid' triggers wiki cleanup.",
+          "Which dream phase to fire. Default 'deep' (Memory→Wiki). 'lucid' triggers wiki cleanup. " +
+          "'rem' catches up YOUR unread conversations now (always in the background; wait/force do not apply).",
       },
       wait: {
         type: 'boolean',
@@ -650,6 +668,7 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
   },
   async handler(input, ctx) {
     const phase = input.phase ?? 'deep';
+    if (phase === 'rem') return runRemViaHttp(ctx.agent);
     const wait = input.wait ?? false;
     const force = input.force ?? false;
     if (!ctx.config.wiki.enabled) {
@@ -725,6 +744,22 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     return runDeepViaHttp(wait, force);
   },
 };
+
+/** REM lives in the main server process (idle timers, abort on chat
+ *  activity), so every engine reaches it over HTTP. */
+async function runRemViaHttp(agent: string): Promise<unknown> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  const res = await loopbackFetch(`${scheme}://${host}:${port}/agents/${encodeURIComponent(agent)}/dream/run-rem`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) throw new Error(`dream_run rem: ${String(data.error ?? `HTTP ${res.status}`)}`);
+  return { phase: 'rem', ...data };
+}
 
 async function runDeepViaHttp(wait: boolean, force: boolean): Promise<unknown> {
   const host = process.env.SOMORA_HOST || '127.0.0.1';

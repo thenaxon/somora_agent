@@ -202,6 +202,15 @@ function extractCtx(signal?: AbortSignal) {
   }
 }
 
+// ── 3c. who wrote a user_message ──────────────────────────────────────
+{
+  const { speakerLabel } = await import('./rem-extract.ts');
+  check('label: the person', speakerLabel({}) === 'USER');
+  check('label: another agent is not the user', speakerLabel({ from_agent: 'naxon' }) === 'OTHER-AGENT(naxon)');
+  check('label: a trigger is not the user', speakerLabel({ from_system: 'sentinel' }) === 'SYSTEM(sentinel)');
+  check('label: a voice consult IS the person, relayed', speakerLabel({ from_system: 'voice' }).startsWith('USER'));
+}
+
 // ── 4. rem-dedup Stage-0 referential validation ───────────────────────
 {
   const stubMgr = {

@@ -216,5 +216,35 @@ async function run(f: Finding, hits: FakeHit[]) {
   check('no hits → no flag', f?.likely_duplicate !== true && f?.matched_excerpt === undefined);
 }
 
+// ── a write onto an existing slug: duplicate, or a correction? ───────
+// The worker reuses the obvious slug when the person corrects a fact.
+// That used to be dropped as "exact slug collision" — the correction
+// never reached the review.
+{
+  const notes: Record<string, string> = {
+    'luca-alter': '---\nname: luca-alter\n---\nLuca ist **8 Jahre** alt.\n',
+  };
+  const mgr = { search: async () => [], getNote: async (slug: string) => (notes[slug] ? { path: `/x/${slug}.md`, markdown: notes[slug] } : null) };
+  const dedup = (findings: Finding[]) =>
+    applyRemDedup({ agent: 'test', dreamId: 'd2', findings, existingMemorySlugs: ['luca-alter'], loadedWikiSlugs: ['personen-root'], mgr: mgr as never, config: CONFIG });
+
+  const corrected = await dedup([finding(1, 'luca-alter', 'Luca ist seit dem 3. September 9 Jahre alt.')]);
+  check('correction on an existing slug is KEPT', corrected.findings.length === 1, JSON.stringify(corrected));
+  check('under its own slug, so nothing is overwritten', /^luca-alter-update-\d{8}$/.test(corrected.findings[0]?.slug ?? ''), corrected.findings[0]?.slug);
+  check('still a memory_write', corrected.findings[0]?.action === 'memory_write');
+  check('the reason says why', /already exists and says something else/.test(corrected.findings[0]?.reason ?? ''));
+  check('not counted as dropped', corrected.dropped === 0, `${corrected.dropped}`);
+
+  const repeat = await dedup([finding(2, 'luca-alter', 'Luca ist 8 Jahre alt.')]);
+  check('a real repeat is still dropped', repeat.findings.length === 0 && repeat.dropped === 1, JSON.stringify(repeat));
+
+  const two = await dedup([finding(3, 'luca-alter', 'Luca ist 9.'), finding(4, 'luca-alter', 'Luca geht in die 4. Klasse.')]);
+  const slugs = two.findings.map((f) => f.slug);
+  check('two corrections in one run get two different slugs', slugs.length === 2 && new Set(slugs).size === 2, slugs.join(', '));
+
+  const wiki = await dedup([finding(5, 'personen-root', 'Etwas anderes.')]);
+  check('a collision with a WIKI page is still dropped (unchanged)', wiki.findings.length === 0 && wiki.dropped === 1);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

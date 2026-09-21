@@ -790,5 +790,28 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   check('7o naxon gets exactly one follow-up with both wake answers', followUps.length === 1 && followUps[0]?.text.includes('remaining sub found') === true && followUps[0]?.text.includes('one of two was stopped') === true, JSON.stringify(followUps.map((f) => f.text)));
 }
 
+// ── 8. woken with an agent's answer: a reply goes back to the session that answered ──
+// hans (project session) asks naxon/kizilla with wait:false, is woken
+// with the answer and writes back without naming a session. The wake
+// turn has no from_agent, so it used to land in naxon/main.
+{
+  _resetWorkLedger();
+  const { wakeReplyTargetFor } = await import('./work-ledger.ts');
+  const hansProject = { agent: 'hans', session: '20260914-090000_kizilla-build' };
+  openWork({ id: 'call-1', origin: { kind: 'agent', from: { agent: 'hans', session: hansProject.session }, callId: 'call-1' }, target: { agent: 'naxon', session: '20260914-080000_kizilla' }, requester: hansProject, text: 'report', waiting: false, wake: 'never' });
+  check('8a no wake turn running: nothing to reply to', wakeReplyTargetFor(hansProject) === null);
+  openWork({ id: 'wake-call-1', origin: { kind: 'wake', about: 'a2a', ref: 'call-1' }, target: hansProject, text: '[agent answer] …', running: true, wake: 'never' });
+  const t = wakeReplyTargetFor(hansProject);
+  check('8b woken with the answer: reply target is the session that answered', t?.agent === 'naxon' && t?.session === '20260914-080000_kizilla', JSON.stringify(t));
+  check('8c only for the session that was woken', wakeReplyTargetFor({ agent: 'hans', session: 'main' }) === null);
+  // A sub-agent's session is a sealed room — a wake about a finished sub gives no reply target.
+  openWork({ id: 'task-9', origin: { kind: 'subagent', parent: { agent: 'hans', session: 'main' }, taskId: 'task-9' } as never, target: { agent: 'lisa', session: 'sub-hans-9' }, requester: { agent: 'hans', session: 'main' }, text: 'job', waiting: false, wake: 'never' });
+  openWork({ id: 'wake-task-9', origin: { kind: 'wake', about: 'subagent', ref: 'task-9' }, target: { agent: 'hans', session: 'main' }, text: '[subagent attention] …', running: true, wake: 'never' });
+  check('8d a wake about a SUB-agent is not a reply target', wakeReplyTargetFor({ agent: 'hans', session: 'main' }) === null);
+  // Once the wake turn is over, the target is gone again.
+  finishWork('wake-call-1', ok('done'));
+  check('8e after the wake turn ended: nothing', wakeReplyTargetFor(hansProject) === null);
+}
+
 console.log(`\n${pass} ok, ${fail} failed`);
 assert.equal(fail, 0);

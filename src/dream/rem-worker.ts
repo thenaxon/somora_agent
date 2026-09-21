@@ -41,7 +41,7 @@ interface AgentState {
   isWorking: boolean;
   /** In-flight run promise — shutdown() awaits these (bounded) so the
    *  paused/failed dream file lands on disk before process.exit. */
-  activeRun: Promise<void> | null;
+  activeRun: Promise<unknown> | null;
   /** Consecutive self-scheduled retries; reset by real activity. */
   selfHealAttempts: number;
 }
@@ -49,6 +49,8 @@ interface AgentState {
 export interface RemWorkerDeps {
   config: Config;
   getMemoryManager: (agent: string) => Promise<MemoryManager>;
+  /** Test seam: stands in for rem-runner's runDream. */
+  runDreamImpl?: typeof runDream;
 }
 
 /**
@@ -57,6 +59,8 @@ export interface RemWorkerDeps {
  * with `ts > dreamReadThroughTs`.
  */
 const META_KEY = 'dreamReadThroughTs';
+/** Sessions one cycle may dream over back to back (see fireIdle). */
+const MAX_SESSIONS_PER_CYCLE = 8;
 
 /**
  * Delay multiplier for self-scheduled retry `attempt` (1-based), or
@@ -178,7 +182,7 @@ export class RemWorker {
     for (const state of this.agents.values()) {
       if (state.idleTimer) clearTimeout(state.idleTimer);
       state.activeAbort?.abort();
-      if (state.activeRun) inFlight.push(state.activeRun.catch(() => {}));
+      if (state.activeRun) inFlight.push(state.activeRun.then(() => {}, () => {}));
     }
     if (inFlight.length > 0) {
       // Bounded — a wedged run must not block process exit forever.
@@ -251,6 +255,26 @@ export class RemWorker {
    * Is there anything left to dream for this agent — a paused run, or a
    * session (archived included) with events past its marker?
    */
+  /**
+   * Start a REM cycle for `agent` now instead of waiting for the idle
+   * timer — "catch up now" after an outage. Same cycle, same lock, same
+   * abort-on-activity as the timer path; nothing runs twice.
+   */
+  async runNow(agent: string): Promise<'started' | 'busy' | 'nothing_to_do' | 'not_registered'> {
+    const state = this.agents.get(agent);
+    if (!state || this.shuttingDown) return 'not_registered';
+    if (state.isWorking) return 'busy';
+    if (!(await this.workRemaining(agent))) return 'nothing_to_do';
+    if (state.idleTimer) {
+      clearTimeout(state.idleTimer);
+      state.idleTimer = null;
+    }
+    // A person asked for it: a fresh retry budget, like chat activity gives.
+    state.selfHealAttempts = 0;
+    void this.fireIdle(agent);
+    return 'started';
+  }
+
   async workRemaining(agent: string): Promise<boolean> {
     return Boolean((await this.findPausedDream(agent)) ?? (await this.findSessionWithDelta(agent)));
   }
@@ -294,22 +318,36 @@ export class RemWorker {
         }
         return;
       }
-      // 2. Otherwise pick a session with new delta to dream over.
-      const session = await this.findSessionWithDelta(agent);
-      if (!session) {
-        logger.debug({ msg: 'dream.rem.no_work', agent });
-        return;
-      }
-      const freshRun = this.runForAgent(state, {
-        kind: 'fresh',
-        sourceSession: session.id,
-        rangeFromTs: session.dreamReadThroughTs,
-      });
-      state.activeRun = freshRun;
-      try {
-        await freshRun;
-      } finally {
-        state.activeRun = null;
+      // 2. Otherwise dream over sessions with new delta — and keep
+      // going while that works. One session per idle interval meant a
+      // backlog of N sessions took N × idleMinutes of silence, and any
+      // chat message in between reset the clock: after a worker outage
+      // (18 failed runs across agents, 2026-09-16) catching up took
+      // days, for a busy agent it never finished. Stops at the first
+      // run that does not succeed (the backend is probably still down —
+      // the self-heal schedule takes it from there), when activity
+      // aborts the cycle, or at the cap.
+      for (let done = 0; done < MAX_SESSIONS_PER_CYCLE; done++) {
+        if (this.shuttingDown) break;
+        const session = await this.findSessionWithDelta(agent);
+        if (!session) {
+          if (done === 0) logger.debug({ msg: 'dream.rem.no_work', agent });
+          break;
+        }
+        const freshRun = this.runForAgent(state, {
+          kind: 'fresh',
+          sourceSession: session.id,
+          rangeFromTs: session.dreamReadThroughTs,
+        });
+        state.activeRun = freshRun;
+        let ok = false;
+        try {
+          ok = await freshRun;
+        } finally {
+          state.activeRun = null;
+        }
+        if (!ok) break;
+        if (done > 0) logger.info({ msg: 'dream.rem.backlog_drained_one', agent, session: session.id, inThisCycle: done + 1 });
       }
     } catch (err) {
       logger.error({
@@ -332,9 +370,10 @@ export class RemWorker {
     target:
       | { kind: 'fresh'; sourceSession: string; rangeFromTs: number }
       | { kind: 'resume'; dreamId: string; sourceSession: string },
-  ): Promise<void> {
+  ): Promise<boolean> {
     state.activeAbort = new AbortController();
     const signal = state.activeAbort.signal;
+    let succeeded = false;
     try {
       const mgr = await this.deps.getMemoryManager(state.agent);
       if (target.kind === 'fresh') {
@@ -342,7 +381,7 @@ export class RemWorker {
         // success. Stamping Date.now() after the run would mark events
         // that landed mid-dream as dreamed without ever analyzing them.
         const rangeThroughTs = Date.now();
-        const result = await runDream({
+        const result = await (this.deps.runDreamImpl ?? runDream)({
           agent: state.agent,
           sourceSession: target.sourceSession,
           trigger: 'auto',
@@ -358,6 +397,7 @@ export class RemWorker {
           // Progress, not a retry: draining a backlog of several sessions
           // must not run into the self-heal budget.
           state.selfHealAttempts = 0;
+          succeeded = true;
         }
       } else {
         // Resume path — runner.ts:resumeDream re-runs from scratch in v1
@@ -377,6 +417,7 @@ export class RemWorker {
         if (result.finalStatus === 'completed' || result.finalStatus === 'processed') {
           await this.markSessionDreamed(state.agent, target.sourceSession, result.rangeThroughTs);
           state.selfHealAttempts = 0;
+          succeeded = true;
         }
       }
     } catch (err) {
@@ -389,6 +430,7 @@ export class RemWorker {
     } finally {
       state.activeAbort = null;
     }
+    return succeeded && !signal.aborted;
   }
 
   private markSessionDreamed(agent: string, session: string, throughTs: number): Promise<void> {

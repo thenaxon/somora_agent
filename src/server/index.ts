@@ -27,7 +27,7 @@ import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig, primeFr
 import { diffConfigSections, restartRequiredFor, RESTART_REQUIRED_SECTIONS } from '../config/reload.ts';
 import { spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
 import { stat as statFile } from 'node:fs/promises';
-import { workerChain, type Config, resolveAnyRef, type ThinkingLevel, SamplingSchema,
+import { workerChain, type Config, resolveAnyRef, describeModelRefs, type ThinkingLevel, SamplingSchema,
   listAllModels,
 } from '../config/types.ts';
 import { mergeSampling, SAMPLING_KEYS } from '../engine/sampling.ts';
@@ -197,7 +197,7 @@ import {
   registerAskCall,
   waitForAskCall,
 } from './ask-calls.ts';
-import { configureWorkWake, dequeueWork, listWork, markFetched, onWorkFinished, openWork, pendingWakesFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
+import { configureWorkWake, dequeueWork, listWork, markFetched, onWorkFinished, openWork, pendingWakesFor, wakeReplyTargetFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
 import { sessionSlugOf as a2aSessionSlugOf } from '../engine/a2a.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
@@ -2312,19 +2312,48 @@ app.get('/agents/:agent/sessions/:session/model', async (c) => {
   });
 });
 
+/**
+ * A model switch made by an AGENT is written into the conversation it
+ * affects — a person reading that session must be able to see that the
+ * model changed, when, and who did it (Rene, 2026-09-21: agents may
+ * switch the model of a running session; it must not happen silently).
+ * A switch a person makes from their own client is already visible to
+ * them and leaves no row.
+ */
+async function noteSessionModelChange(
+  agent: string,
+  session: string,
+  change: { to: string | null; resolved?: string; previous: string | null; by?: string | undefined; bySession?: string | undefined },
+): Promise<void> {
+  if (!change.by) return;
+  const who = `agent ${change.by}${change.bySession ? ` (session ${change.bySession})` : ''}`;
+  const text =
+    change.to === null
+      ? `${who} cleared this session's model override${change.previous ? ` (was ${change.previous})` : ''} — the persona default applies from the next turn.`
+      : `${who} switched this session's model to ${change.to}${change.resolved ? ` (${change.resolved})` : ''}${change.previous ? `, was ${change.previous}` : ''} — takes effect with the next turn.`;
+  const ev = { kind: 'engine_meta', ts: Date.now(), engine: 'somora', itemType: 'session_model', payload: { text, to: change.to, previous: change.previous, by: change.by } } as NormalizedEvent;
+  await appendEvent(agent, session, ev);
+  const sse = serializeSessionEvent(ev);
+  if (sse) await publish(agent, session, sse);
+  logger.info({ msg: 'session.model_changed_by_agent', agent, session, by: change.by, by_session: change.bySession, to: change.to, previous: change.previous });
+}
+
 app.put('/agents/:agent/sessions/:session/model', async (c) => {
   const agent = c.req.param('agent');
   const sessionRef = c.req.param('session');
   if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
-  const body = (await c.req.json().catch(() => ({}))) as { model?: string };
+  const body = (await c.req.json().catch(() => ({}))) as { model?: string; by_agent?: string; by_session?: string };
   if (!body.model) return c.json({ error: 'body field "model" required' }, 400);
   const resolved = resolveAnyRef(config, body.model);
   if (!resolved) {
-    return c.json({ error: `model '${body.model}' not found in config.yaml` }, 400);
+    return c.json({ error: `model '${body.model}' not found in config.yaml. Known: ${describeModelRefs(config)}` }, 400);
   }
+  const before = await sessionMetaStore.get(agent, session);
+  const previous = typeof before.modelOverride === 'string' ? before.modelOverride : null;
   await sessionMetaStore.update(agent, session, (current) => ({ ...current, modelOverride: body.model }));
+  await noteSessionModelChange(agent, session, { to: body.model, resolved: `${resolved.providerName}/${resolved.modelId}`, previous, by: body.by_agent, bySession: body.by_session });
   logger.info({ msg: 'session.model_set', agent, session, model: body.model, resolved: `${resolved.providerName}/${resolved.modelId}` });
   // Tell every open client. The switch is often made from OUTSIDE the
   // window showing the session (an orchestrator agent, another client,
@@ -2414,10 +2443,16 @@ app.delete('/agents/:agent/sessions/:session/model', async (c) => {
   if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  const clearBody = (await c.req.json().catch(() => ({}))) as { by_agent?: string; by_session?: string };
+  const beforeClear = await sessionMetaStore.get(agent, session);
+  const previousOverride = typeof beforeClear.modelOverride === 'string' ? beforeClear.modelOverride : null;
   await sessionMetaStore.update(agent, session, (current) => {
     const { modelOverride: _drop, ...rest } = current;
     return rest;
   });
+  if (previousOverride !== null) {
+    await noteSessionModelChange(agent, session, { to: null, previous: previousOverride, by: clearBody.by_agent, bySession: clearBody.by_session });
+  }
   logger.info({ msg: 'session.model_clear', agent, session });
   await publish(agent, session, { event: 'session_model', data: { model: null, source: 'persona-default' } });
   return c.json({ agent, session, cleared: true });
@@ -5006,6 +5041,7 @@ app.get('/a2a/ask-result', async (c) => {
 // asker goes to the session the question came from. Two sources:
 //   - live A2A turn: run-turn registered from_agent/from_session
 //   - sub-agent session: spawn meta carries parent_agent/parent_session
+//   - wake turn about an agent's answer: the session that answered
 // Returns { origin: null } when the turn is a plain human/system turn.
 app.get('/a2a/turn-origin/:agent/:session', async (c) => {
   const agent = c.req.param('agent');
@@ -5020,6 +5056,10 @@ app.get('/a2a/turn-origin/:agent/:session', async (c) => {
   if (typeof pa === 'string' && typeof ps === 'string' && ps !== '?') {
     return c.json({ origin: { agent: pa, session: ps, kind: 'subagent' } });
   }
+  // Woken with another agent's answer: a reply belongs to the session
+  // that answer came from.
+  const woken = wakeReplyTargetFor({ agent, session });
+  if (woken) return c.json({ origin: { ...woken, kind: 'wake' } });
   return c.json({ origin: null });
 });
 
@@ -5152,7 +5192,7 @@ app.post('/chat/send-sync', async (c) => {
       (sessionModel ? `; it runs on model ${sessionModel}` : '') +
       '.]';
   } else if (session && createModel) {
-    sessionNote = `session '${sessionRef}' already existed — create_model '${createModel}' ignored; switch models with PUT /agents/${agent}/sessions/${session}/model`;
+    sessionNote = `session '${sessionRef}' already existed — create_model '${createModel}' ignored; to switch an existing session use the session_model tool (PUT /agents/${agent}/sessions/${session}/model)`;
   }
   if (!session) {
     // Name the sessions that DO exist so an agent that guessed a slug
@@ -5681,6 +5721,26 @@ app.get('/dream-states', async (c) => {
 
 // after firing the worker; wait=true awaits the run and returns
 // outcome counts.
+// Catch up one agent's unread conversations now — after a worker
+// outage the idle timer alone took days (one session per 30 silent
+// minutes, reset by every chat message). Same cycle as the timer path.
+app.post('/agents/:agent/dream/run-rem', async (c) => {
+  const agent = c.req.param('agent');
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  if (!persona.rem?.enabled) return c.json({ error: `REM is not enabled for agent '${agent}' (agent.yaml rem.enabled)` }, 400);
+  const outcome = await remWorker.runNow(agent);
+  logger.info({ msg: 'dream.rem.run_now', agent, outcome });
+  if (outcome === 'not_registered') return c.json({ error: `REM worker has no entry for '${agent}' — restart after enabling rem` }, 409);
+  const message =
+    outcome === 'started'
+      ? 'REM started in the background; it works through the unread sessions one after another. Findings appear in dream_list.'
+      : outcome === 'busy'
+        ? 'REM is already running for this agent.'
+        : 'Nothing to catch up — every session is read through.';
+  return c.json({ agent, outcome, started: outcome === 'started', message });
+});
+
 app.post('/dream/run-deep', async (c) => {
   if (!config.wiki.enabled) {
     return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);

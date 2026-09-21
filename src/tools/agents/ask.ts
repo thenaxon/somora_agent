@@ -91,8 +91,8 @@ const AskInput = z
       .optional()
       .describe(
         'Only with create_session: model (alias or provider/id) pinned on the NEW session, e.g. ' +
-          '"fable" or "astra". Ignored with a note when the session already exists — changing ' +
-          'the model of a running session is the user\'s call.',
+          '"fable" or "astra". Ignored with a note when the session already exists — to change ' +
+          'the model of an existing session use the session_model tool.',
       ),
     images: z
       .array(z.string().min(1))
@@ -340,8 +340,8 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
     if (input.model && !input.create_session) {
       throw new Error(
         `agent_ask: 'model' only applies together with create_session:true (it pins the model on a ` +
-          `session this call creates). To change the model of an existing session, ask the user — ` +
-          `that is done with /model or PUT /agents/<agent>/sessions/<session>/model.`,
+          `session this call creates). To change the model of an existing session, use ` +
+          `session_model({ agent: "${targetAgent}", session: "<slug>", model: "${input.model}" }).`,
       );
     }
     if (input.create_session && !input.session) {

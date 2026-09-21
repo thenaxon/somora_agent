@@ -1053,6 +1053,14 @@ A switch takes effect at the next turn: a turn that is already running
 keeps the model it started with. Every open client is told through the
 `session_model` SSE event.
 
+Both routes take optional `by_agent` / `by_session` in the body — sent
+by the `session_model` agent tool. A switch made by an agent is written
+into the affected conversation as an `engine_meta` row (`engine:
+"somora"`, `itemType: "session_model"`, label `model switched`) naming
+who switched to what, so a person reading that session sees it. A
+switch without `by_agent` — a person using their own client — leaves no
+row.
+
 Switching models mid-session is safe on every engine. On codex-cli the
 thread simply continues under the new model (`thread/resume` takes the
 model; Codex may compact the thread context once) and somora drops a
@@ -1531,8 +1539,11 @@ wait in the deadlock guard, and a cycle answers `409` with
 ### `GET /a2a/turn-origin/:agent/:session`
 
 Who started the turn currently running on `agent/session`: the A2A
-asker (`from_agent`/`from_session` of the live turn) or, for a
-sub-agent session, the spawning parent from its spawn meta.
+asker (`from_agent`/`from_session` of the live turn, `kind: "a2a"`),
+for a sub-agent session the spawning parent from its spawn meta
+(`kind: "subagent"`), or — when the turn is an `[agent answer]` wake —
+the agent and session whose answer woke it (`kind: "wake"`), so a reply
+written from the wake turn goes back to the conversation it belongs to.
 
 ```json
 { "origin": { "agent": "<other-agent>", "session": "20260906-172957_research", "kind": "a2a" } }
@@ -2101,6 +2112,21 @@ gets re-evaluated.
 ### `POST /dream/run-lucid`
 
 Same shape as `run-deep`, for the Lucid (wiki review) phase.
+
+### `POST /agents/:agent/dream/run-rem`
+
+Catch up one agent's unread conversations now: starts the REM cycle the
+idle timer would start — resume a paused dream, else read the sessions
+with unread events one after another — without waiting for silence.
+Always in the background; chat activity pauses it as usual.
+
+```json
+{ "agent": "<your-agent>", "outcome": "started", "started": true, "message": "…" }
+```
+
+`outcome` is `started`, `busy` (a cycle is already running) or
+`nothing_to_do`. `400` when REM is not enabled for the agent, `404` for
+an unknown agent, `409` when REM was enabled after the server started.
 
 ---
 

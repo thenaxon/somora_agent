@@ -63,6 +63,11 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   // engine the call stamps them with — filed under openai-compatible
   // until 2026-09-12, where they never resolved and every client outside
   // the web window showed the raw item type.
+  // Rows somora itself writes, independent of any engine.
+  somora: {
+    // An agent switched (or cleared) this session's model.
+    session_model: 'model switched',
+  },
   voice: {
     // The call moved to another agent. This is the only row a call
     // writes today, and it is what explains why a session suddenly
@@ -125,6 +130,10 @@ export function summariseEngineMeta(
     return undefined;
   }
   if (engine === 'codex-cli' && (itemType === 'reconnecting' || itemType === 'transport_fallback')) {
+    const p = payload as { text?: unknown } | null | undefined;
+    return typeof p?.text === 'string' ? p.text : undefined;
+  }
+  if (engine === 'somora' && itemType === 'session_model') {
     const p = payload as { text?: unknown } | null | undefined;
     return typeof p?.text === 'string' ? p.text : undefined;
   }

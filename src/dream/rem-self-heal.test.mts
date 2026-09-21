@@ -189,3 +189,61 @@ test('a session whose last attempt failed goes to the back, not the front', asyn
   assert.equal((await pick())?.id, newest, 'deferred, not forgotten');
   assert.equal(await worker.workRemaining(agent), true);
 });
+
+// ── catching up a backlog (2026-09-21) ──────────────────────────────
+// One session per idle interval meant N sessions took N × 30 silent
+// minutes. A cycle now keeps going while runs succeed; "run now" starts
+// that cycle on request.
+
+function backlogWorker(outcomes: Record<string, string>, seen: string[]) {
+  return new RemWorker({
+    config: {} as never,
+    getMemoryManager: (async () => ({})) as never,
+    runDreamImpl: (async (a: { sourceSession: string }) => {
+      seen.push(a.sourceSession);
+      await new Promise((r) => setTimeout(r, 5));
+      return { id: `d-${seen.length}`, finalStatus: outcomes[a.sourceSession] ?? 'processed' };
+    }) as never,
+  });
+}
+const settle = async (worker: InstanceType<typeof RemWorker>, agent: string): Promise<void> => {
+  for (let i = 0; i < 200; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+    if (!(worker as unknown as { agents: Map<string, { isWorking: boolean }> }).agents.get(agent)?.isWorking) return;
+  }
+};
+
+test('run now: a backlog of sessions is read in ONE cycle', async () => {
+  const agent = 'backlog-ok';
+  const ids = [];
+  for (const slug of ['a', 'b', 'c']) {
+    ids.push(await sessionWithOneMessage(agent, slug, Date.now() - 1000));
+    await new Promise((r) => setTimeout(r, 12));
+  }
+  const seen: string[] = [];
+  const worker = backlogWorker({}, seen);
+  assert.equal(await worker.runNow(agent), 'not_registered', 'an agent without REM cannot be run');
+  worker.register(agent, { idleMinutes: 30 } as never);
+  assert.equal(await worker.runNow(agent), 'started');
+  assert.equal(await worker.runNow(agent), 'busy', 'a second request does not start a second cycle');
+  await settle(worker, agent);
+  assert.deepEqual([...seen].sort(), [...ids].sort(), 'all three sessions, each exactly once');
+  assert.equal(await worker.workRemaining(agent), false);
+  assert.equal(await worker.runNow(agent), 'nothing_to_do');
+  await worker.shutdown();
+});
+
+test('a failing run ends the cycle — no hammering a backend that is down', async () => {
+  const agent = 'backlog-fail';
+  const older = await sessionWithOneMessage(agent, 'older', Date.now() - 60_000);
+  await new Promise((r) => setTimeout(r, 12));
+  const newest = await sessionWithOneMessage(agent, 'newest');
+  const seen: string[] = [];
+  const worker = backlogWorker({ [newest]: 'failed', [older]: 'failed' }, seen);
+  worker.register(agent, { idleMinutes: 30 } as never);
+  assert.equal(await worker.runNow(agent), 'started');
+  await settle(worker, agent);
+  assert.equal(seen.length, 1, `one attempt, then stop (saw ${seen.join(', ')})`);
+  assert.equal(await worker.workRemaining(agent), true, 'nothing was marked as read');
+  await worker.shutdown();
+});

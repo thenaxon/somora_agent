@@ -160,6 +160,35 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
       : wikiSlugs.has(f.slug)
         ? 'wiki'
         : null;
+    // A write onto an existing MEMORY note is not automatically a
+    // duplicate: the worker reuses the obvious slug when the person
+    // corrects something ("luca-alter" again, now with the new age),
+    // and dropping it threw the correction away unseen. If the note
+    // does not already say it, keep the finding under its own slug —
+    // nothing is overwritten, and Deep merges both next run.
+    if (slugHit === 'memory' && f.proposed_content && f.proposed_content.trim().length > 0) {
+      const existing = await readNoteText(args.mgr, f.slug);
+      if (existing !== null && !saysTheSame(existing, f.proposed_content)) {
+        const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        let fresh = `${f.slug}-update-${stamp}`;
+        for (let n = 2; memorySlugs.has(fresh) || kept.some((k) => k.slug === fresh); n++) fresh = `${f.slug}-update-${stamp}-${n}`;
+        logger.info({
+          msg: 'dream.rem.dedup_reslugged',
+          agent: args.agent,
+          dreamId: args.dreamId,
+          findingId: f.id,
+          from: f.slug,
+          to: fresh,
+          reason: 'existing note with this slug says something else — kept as a separate note',
+        });
+        kept.push({
+          ...f,
+          slug: fresh,
+          reason: `${f.reason} [a note '${f.slug}' already exists and says something else — kept separately as '${fresh}' so nothing is overwritten]`,
+        });
+        continue;
+      }
+    }
     if (slugHit) {
       dropped++;
       logger.info({
@@ -278,4 +307,27 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
     });
   }
   return { findings: kept, dropped, marked, downgraded };
+}
+
+async function readNoteText(mgr: { getNote?: (slug: string) => Promise<unknown> }, slug: string): Promise<string | null> {
+  try {
+    const note = (await mgr.getNote?.(slug)) as { content?: unknown; markdown?: unknown; body?: unknown } | string | null | undefined;
+    if (typeof note === 'string') return note;
+    if (!note) return null;
+    const text = note.content ?? note.markdown ?? note.body;
+    return typeof text === 'string' ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True when `existing` already carries what `proposed` says: equal, or
+ *  the proposed text contained in the note, ignoring case, markdown
+ *  emphasis and whitespace. Deliberately strict — when in doubt the
+ *  finding is kept and a person decides in the review. */
+function saysTheSame(existing: string, proposed: string): boolean {
+  const norm = (t: string): string => t.toLowerCase().replace(/[*_`#>-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const a = norm(existing);
+  const b = norm(proposed);
+  return b.length === 0 || a === b || a.includes(b);
 }

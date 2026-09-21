@@ -10,6 +10,7 @@ import { agentAsk } from './ask.ts';
 import { agentAskResult } from './ask-result.ts';
 import { agentAskCancel } from './ask-cancel.ts';
 import { sessionList } from './session-list.ts';
+import { sessionModel } from './session-model.ts';
 import { spawnSubagent, spawnSubagents } from './spawn.ts';
 import { subagentCancel, subagentList, subagentResult, subagentStatus } from './status.ts';
 import type { ToolDefinition } from '../types.ts';
@@ -18,6 +19,7 @@ export { agentAsk } from './ask.ts';
 export { agentAskResult } from './ask-result.ts';
 export { agentAskCancel } from './ask-cancel.ts';
 export { sessionList } from './session-list.ts';
+export { sessionModel } from './session-model.ts';
 export { configureSpawnTools, spawnSubagent, spawnSubagents } from './spawn.ts';
 export { subagentCancel, subagentList, subagentResult, subagentStatus } from './status.ts';
 
@@ -33,5 +35,6 @@ export function agentTools(): ToolDefinition[] {
     agentAskResult,
     agentAskCancel,
     sessionList,
+    sessionModel,
   ] as ToolDefinition[];
 }

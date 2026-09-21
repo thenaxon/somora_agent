@@ -659,6 +659,29 @@ function wakeTextBase(it: WorkItem): { text: string; prefix: string } {
 type FollowUpListener = (root: WorkItem, followUp: { text: string; failed?: string }) => void;
 const followUpListeners: FollowUpListener[] = [];
 
+/**
+ * A wake turn about an agent's answer is running on `here` — whose
+ * answer was it? That is who a reply from this turn belongs to.
+ *
+ * An agent asks `<other>/<project-session>` with wait:false, is woken
+ * with the answer, and writes back without naming a session. The wake
+ * turn carries no from_agent, so the reply-back default had nothing to
+ * go on and the message landed in `<other>/main` — a conversation that
+ * knew nothing about the project (report 2026-09-14; with wait:false
+ * and wakes this became the COMMON way into main). Only wakes about an
+ * A2A call: a sub-agent's session is a sealed room, not a place to
+ * write back to.
+ */
+export function wakeReplyTargetFor(here: { agent: string; session: string }): { agent: string; session: string } | null {
+  for (const it of items.values()) {
+    if (it.state !== 'running' || it.origin.kind !== 'wake' || it.origin.about !== 'a2a') continue;
+    if (it.target.agent !== here.agent || it.target.session !== here.session) continue;
+    const about = items.get(it.origin.ref);
+    if (about && about.origin.kind === 'agent') return { ...about.target };
+  }
+  return null;
+}
+
 /** Hear every follow-up whose root was asked by a voice call: the
  *  realtime manager reads it out. Agent and sub-agent follow-ups go
  *  through the wake deps instead. */

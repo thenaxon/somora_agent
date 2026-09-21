@@ -19,8 +19,8 @@ into long-term storage (noise) or rely on the agent to manually save
    pages — bigger consolidation runs across all agents, every ~12 h.
    Auto-applies (you'd be drowning in approvals otherwise) but the wiki
    stays editable in Obsidian.
-3. **Lucid** audits the wiki for contradictions, stale claims, dead
-   refs, missing pages — every ~7 d. Findings come back as proposals
+3. **Lucid** audits the wiki for contradictions, dead refs, missing
+   pages and links worth adding — every ~7 d. Findings come back as proposals
    you walk through with the agent in a `dream_review` loop.
 
 Each phase has its own LLM worker (small/cheap for REM, strong/expensive
@@ -42,7 +42,7 @@ incrementally in the background while you use somora normally.
                 ▼                            ▼                            ▼
    memory inbox grows           wiki gets new pages /         wiki gets fixed:
    with new facts the           merges of new content;        contradictions resolved,
-   agent should keep            consumed memory files         stale claims updated,
+   agent should keep            consumed memory files         dead links repaired,  
                                 are deleted                   missing pages created
 ```
 
@@ -65,12 +65,14 @@ the wiki), and surface them as `pending` findings for your approval.
 
 ### Triggers
 
-Two triggers, both per-agent:
+Three triggers, all per-agent:
 
 **Manual: `/reset YES`** — when you reset a session, somora archives the
 current `main.jsonl` to a timestamped name and starts a fresh `main`.
-If REM is enabled for the agent, it spawns a manual run over the
-archived range. Result lands in
+If REM is enabled for the agent, it spawns a manual run over the part of
+the archive REM has not read yet, and marks the archive as read when
+that run succeeds — so the idle worker does not read it a second time.
+Result lands in
 `~/.somora/agents/<name>/memory/.dreams/<id>.dream.md` and shows up in
 `dream_list`.
 
@@ -88,7 +90,17 @@ watches each agent's chat activity. After `idleMinutes` of no chat
    loop inside it (`dream_review start` … `end`): facts the user
    clarifies there are written to the wiki directly, so REM skips that
    window instead of re-extracting them as duplicate findings.
-4. On success, bumps the marker so the next idle cycle sees a fresh delta.
+4. On success, bumps the marker — and goes straight on to the next
+   unread session, up to eight in one cycle. A backlog is read in one
+   stretch of silence instead of one session per idle interval. The
+   cycle ends at the first run that does not succeed (the worker is
+   probably still down), and a session whose last attempt failed is
+   picked last, so it cannot hold up the others.
+
+**Catch up now: `dream_run({phase: 'rem'})`** or
+`POST /agents/:agent/dream/run-rem` — starts that same cycle at once
+instead of waiting for the idle timer, e.g. after a worker outage.
+Answers `started`, `busy` or `nothing_to_do`.
 
 **It comes back on its own.** When a cycle ends with work still left —
 a run that failed, a paused dream, a session nobody has read yet — the
@@ -162,6 +174,16 @@ Each REM run feeds the worker:
 - Vault-recall snippets (if vault is configured)
 - The REM system prompt (in `src/dream/rem-extract.ts`)
 
+The transcript says who wrote each message. Not every `user_message` is
+the person: another agent's `agent_ask`, a sentinel trigger's prompt, a
+tmux or job wake arrive the same way. They are labelled
+`OTHER-AGENT(<name>)` and `SYSTEM(<kind>)`; only `USER` lines (a voice
+consult counts, it is the person relayed) are the person speaking. A
+stable fact another agent passed on may still become a finding — often
+it is the only way an orchestrated agent learns it — but it is recorded
+with its source ("Laut <name>: …"), never as something the user said.
+Trigger text is never a source of facts.
+
 The wiki context is critical: REM dedupes against the **wiki**, not just
 memory. New facts that contradict the wiki get surfaced as
 `memory_write` so Deep can later merge them in.
@@ -190,9 +212,14 @@ instruction — recurring sessions (weekly sentinels) can produce the same
 findings run after run. A code-level filter runs after extraction,
 before findings are stored:
 
-- **Exact slug collision** with an existing memory note or loaded wiki
-  page → the finding is dropped silently (logged as
-  `dream.rem.dedup_dropped`).
+- **Exact slug collision** with a loaded wiki page → the finding is
+  dropped (logged as `dream.rem.dedup_dropped`). With an existing
+  **memory note** it depends on what the note says: if the note already
+  carries the finding's content it is a repeat and dropped; if it says
+  something else — the worker reuses the obvious slug when the person
+  corrects a fact — the finding is kept under a slug of its own
+  (`<slug>-update-<date>`, logged as `dream.rem.dedup_reslugged`), so
+  the correction reaches the review and nothing is overwritten.
 - **High content similarity** (hybrid search against memory + wiki) →
   the finding is kept but marked `likely_duplicate` with a
   `duplicate_of` pointer plus a `matched_excerpt` showing the text the
@@ -289,10 +316,23 @@ anything.
 Per memory file, Deep does ONE LLM call that decides skip/promote/merge.
 The worker sees:
 
-- The memory file (frontmatter + body)
+- The memory file's body, and when its content was stated: a note that
+  came from a REM finding carries `stated_at` (the end of the
+  conversation it was read from) — not the day the finding was applied,
+  which for a conversation dreamed late can be months off
 - Wiki index.md (topology header)
-- Top-8 relevant wiki pages (full bodies, embedding-matched against
-  the memory body)
+- Top-8 relevant wiki pages, embedding-matched against the memory
+  body. A page over 8000 characters arrives shortened to its first
+  6000 — good enough to decide with, not to rewrite from: a merge into
+  a page the worker saw shortened, or did not see at all, is asked
+  again with that one page in full, and the write is refused if the
+  page changed while the worker was deciding
+
+When the memory contradicts a fact on the page, Deep compares dates
+before touching it: a memory that is clearly newer updates the fact and
+notes the revision in the timeline; one that is older than the page's
+statement — or whose order cannot be told — leaves the current fact
+alone and is added to the timeline as a dated earlier entry.
 
 Returns a structured `MemoryFateDecision`:
 
@@ -382,7 +422,8 @@ auto-edits the wiki.
 
 Walk the wiki (subfolder by subfolder), identify issues that are
 objectively provable from the wiki content, surface a SHORT list (max
-8 per run). Lucid is intentionally narrow:
+8 per batch — one batch per subfolder plus the cross pass). Lucid is
+intentionally narrow:
 
 | Finding kind | What it means |
 |---|---|
@@ -407,9 +448,11 @@ but no run produces them.
 ### Cluster strategy
 
 Lucid walks the wiki by subfolder, one LLM call per subfolder. Then a
-final cross-subfolder pass with page-headers only catches issues that
-span subfolders (a contradiction between `personen/jane-doe` and
-`projekte/familie-luca-podcast`, for example).
+final cross-subfolder pass looks across folders — but it sees only the
+opening of each page (three lines, 200 characters). That is enough for
+a dead link or a missing page that spans folders; a contradiction
+between the body of `personen/jane-doe` and the body of
+`projekte/familie-luca-podcast` is out of its sight.
 
 This isn't just for scale — claude-cli's stdin-stream parser fails on
 single user-messages > ~50 KB. Per-subfolder batches stay safely under
@@ -440,8 +483,12 @@ Without `model` a Lucid run fails with
 
 ### Output
 
-A `LucidRun` JSON file in `~/.somora/wiki-lucid/<run-id>.json` with up
-to 8 findings. Each finding is **informational only** — `fix.kind:
+A `LucidRun` JSON file in `~/.somora/wiki-lucid/<run-id>.json`. The cap
+of 8 findings applies to each batch (one per subfolder, plus the cross
+pass), so a run over six folders can return more than 8. The file also
+records `batches_total` and `batches_failed`: a run in which every batch
+failed, or that was aborted, is `failed` — not a clean wiki with zero
+findings. Each finding is **informational only** — `fix.kind:
 'no_op'` with the description of the issue. The actual editing happens
 in a `dream_review` loop (next section), not via `dream_apply`.
 
@@ -577,11 +624,12 @@ path is the loop.
 
 ## Triggering manually
 
-REM runs are user-initiated only via `/reset YES` (TUI) or organic via
-idle-timer. There's no `dream_run({phase:'rem'})` because REM is
-per-agent and per-session.
+REM is per-agent: `/reset YES` reads the session it archives,
+`dream_run({phase: 'rem'})` (or `POST /agents/:agent/dream/run-rem`)
+catches up every unread session of the calling agent, and the idle
+timer does the same on its own.
 
-Deep and Lucid are platform-wide and triggerable:
+Deep and Lucid are platform-wide:
 
 ```
 # In any agent's chat:
@@ -687,7 +735,7 @@ independently:
 - REM runs often → cheap local model is fine for atomic-fact extraction.
 - Deep runs occasionally → strong model is worth it for quality consolidation.
 - Lucid runs rarely → strong model definitely worth it for finding
-  contradictions / stale claims.
+  contradictions.
 
 Each phase has its own approval policy so you control surface area:
 

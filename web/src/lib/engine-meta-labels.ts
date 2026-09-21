@@ -17,6 +17,9 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
     reconnecting: 'reconnecting',
     transport_fallback: 'transport fallback',
   },
+  somora: {
+    session_model: 'model switched',
+  },
   'openai-compatible': {
     context_compacted: 'context compacted',
   },

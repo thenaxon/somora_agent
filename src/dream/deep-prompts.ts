@@ -54,7 +54,9 @@ For PROMOTE: pick subfolder (${subdirs} / ... — invent a new one if no existin
 - write the FULL updated page body integrating the new content (no frontmatter — that's handled by the caller; caller refreshes \`updated\` field)
 - preserve existing page structure
 - keep the page's language and section headings as they are (a page may predate the current wiki language)
-- when new info contradicts existing facts, treat new as more recent and note revision in the timeline section ("## ${sec.timeline}" on new pages)
+- when the memory contradicts a fact on the page, COMPARE DATES before you touch that fact: the memory's date is in <memory_dates> (the "stated on" date when present), the page's is its frontmatter \`updated\` and the dates in its timeline. A memory is not newer just because it arrives now — a conversation can be processed months late.
+  · memory clearly NEWER than the page's statement → update the fact and note the revision, with the memory's date, in the timeline section ("## ${sec.timeline}" on new pages)
+  · memory OLDER than the page's statement, or the order cannot be told → leave the page's current fact as it is; add the memory's statement to the timeline as a dated earlier entry. If that adds nothing the page does not already say → SKIP
 - when new info only confirms existing facts → return SKIP instead, not MERGE
 - one-line logSummary in ${s.languageName}: ${s.text.logSummaryExample}
 
