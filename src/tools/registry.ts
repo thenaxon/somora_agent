@@ -12,6 +12,7 @@
 
 import { isLoopHolder } from '../dream/loop-state.ts';
 import { logger } from '../server/logger.ts';
+import { saveToolOutput } from './tool-output.ts';
 import {
   DEFAULT_MAX_RESULT_SIZE_CHARS,
   isMultimodalToolResult,
@@ -261,6 +262,19 @@ export class ToolRegistry {
       }
       const cap = tool.maxResultSizeChars ?? DEFAULT_MAX_RESULT_SIZE_CHARS;
       const capped = enforceResultCap(data, cap);
+      if (capped.truncated && capped.json) {
+        // Keep the whole thing on disk so the model can page through it
+        // with file_read instead of re-running a tighter call blind.
+        const file = await saveToolOutput(ctx.agent, name, capped.json, 'json');
+        if (file) {
+          const marker = capped.value as { full_output_file?: string; hint?: string };
+          marker.full_output_file = file;
+          marker.hint =
+            `Result exceeded the tool's size cap. The complete result (${capped.originalChars} chars of JSON) ` +
+            `is saved at ${file} — read a part of it with file_read offset/limit or search inside it with ` +
+            `file_search — or re-run with a tighter query, lower limit, or paginated read.`;
+        }
+      }
       logger.info({
         msg: 'tool.invoked',
         name,
@@ -289,6 +303,8 @@ interface CapResult {
   value: unknown;
   truncated: boolean;
   originalChars: number;
+  /** The full JSON when truncated — for the on-disk copy. */
+  json?: string;
 }
 
 /**
@@ -321,6 +337,7 @@ function enforceResultCap(value: unknown, cap: number): CapResult {
     },
     truncated: true,
     originalChars: json.length,
+    json,
   };
 }
 

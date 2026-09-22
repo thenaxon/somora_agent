@@ -10,8 +10,10 @@
 //   2. applyTextBudget — an overall character budget across all hits.
 
 /** Chars kept on each side of the first submatch. The match text itself
- *  is kept up to the same length, so a window is at most 3× this. */
-export const SEARCH_WINDOW_CHARS = 200;
+ *  is kept up to the same length, so a window is at most 3× this. Lines
+ *  up to this length come back whole; 500 covers ordinary source lines,
+ *  and only log/minified lines get windowed. */
+export const SEARCH_WINDOW_CHARS = 500;
 
 /** Total `text` chars across all hits of one file_search result. */
 export const SEARCH_TEXT_BUDGET_CHARS = 100_000;
@@ -93,6 +95,111 @@ export function windowMatchLine(
 
   const text = (start > 0 ? ELLIPSIS : '') + line.slice(start, end) + (end < line.length ? ELLIPSIS : '');
   return { text, col, truncated: true };
+}
+
+/** One file_search hit as parsed from `rg --json`. */
+export interface RgHit {
+  path: string;
+  line: number;
+  /** Windowed text (see windowMatchLine), not necessarily the full line. */
+  text: string;
+  /** 1-based column of the match start in the original line. */
+  col?: number;
+  /** Only present (true) when `text` was windowed. */
+  truncated?: boolean;
+  /** Context lines before/after (only with `context > 0`), windowed the
+   *  same way, without line numbers — they are consecutive. */
+  before?: string[];
+  after?: string[];
+}
+
+interface RgEvent {
+  type: string;
+  data?: {
+    path?: { text?: string };
+    line_number?: number;
+    lines?: { text?: string };
+    submatches?: RgSubmatch[];
+  };
+}
+
+/**
+ * Parse `rg --json` output into hits, attaching `context` events to the
+ * match they belong to: lines before a match (consecutive, immediately
+ * preceding) go to `before`, lines after it to `after`. Stops after
+ * `limit` hits and reports whether it did.
+ */
+export function parseRgJson(
+  out: string,
+  limit: number,
+  windowChars: number = SEARCH_WINDOW_CHARS,
+): { hits: RgHit[]; hitLimitReached: boolean } {
+  const hits: RgHit[] = [];
+  let pending: Array<{ line: number; text: string }> = [];
+  let last: RgHit | null = null;
+  let hitLimitReached = false;
+  const cut = (t: string): string => windowMatchLine(t, null, windowChars).text;
+  for (const raw of out.split('\n')) {
+    if (!raw.trim()) continue;
+    let ev: RgEvent;
+    try {
+      ev = JSON.parse(raw) as RgEvent;
+    } catch {
+      continue;
+    }
+    if (ev.type === 'begin') {
+      pending = [];
+      last = null;
+      continue;
+    }
+    if (ev.type === 'end') {
+      pending = [];
+      last = null;
+      continue;
+    }
+    if (!ev.data) continue;
+    const lineNo = ev.data.line_number ?? 0;
+    const lineText = (ev.data.lines?.text ?? '').replace(/\r?\n$/, '');
+    if (ev.type === 'context') {
+      // Consecutive lines right after a match are its "after"; a gap
+      // means rg moved on to the context BEFORE the next match.
+      if (last && lineNo === last.line + (last.after?.length ?? 0) + 1) {
+        (last.after ??= []).push(cut(lineText));
+      } else {
+        last = null;
+        pending.push({ line: lineNo, text: cut(lineText) });
+      }
+      continue;
+    }
+    if (ev.type !== 'match') continue;
+    if (hits.length >= limit) {
+      hitLimitReached = true;
+      break;
+    }
+    const win = windowMatchLine(lineText, ev.data.submatches, windowChars);
+    const hit: RgHit = {
+      path: ev.data.path?.text ?? '',
+      line: lineNo,
+      text: win.text,
+      col: win.col,
+      ...(win.truncated ? { truncated: true } : {}),
+    };
+    // Only the pending lines that run straight up to this match are its
+    // "before"; older ones belonged to a previous match's "after" window
+    // that rg already emitted there.
+    const before: string[] = [];
+    let expect = lineNo - 1;
+    for (let i = pending.length - 1; i >= 0; i--) {
+      if (pending[i]!.line !== expect) break;
+      before.unshift(pending[i]!.text);
+      expect--;
+    }
+    if (before.length > 0) hit.before = before;
+    pending = [];
+    hits.push(hit);
+    last = hit;
+  }
+  return { hits, hitLimitReached };
 }
 
 /**

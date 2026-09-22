@@ -148,16 +148,15 @@ const ReadInput = z
       .int()
       .min(0)
       .optional()
-      .describe('Skip the first N lines (0-indexed). Use with `limit` to page through large files.'),
+      .describe('Skip the first N lines (0-based): offset=2000 starts at line 2001. Use the `next_offset` a truncated read returns.'),
     limit: z
       .number()
       .int()
       .min(1)
       .optional()
       .describe(
-        'Max number of LINES to return (not bytes). Omit to read the whole file up to ' +
-          'the 200k-char byte cap. When the result truncates, the response includes ' +
-          '`next_offset` — pass that as `offset` on the next call to continue paging.',
+        'Max number of LINES to return (not bytes). Default 2000. When the result truncates, ' +
+          'the response includes `next_offset` — pass that as `offset` on the next call to continue paging.',
       ),
   })
   .strict();
@@ -166,11 +165,16 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
   name: 'file_read',
   toolset: 'file',
   description:
-    'Read a file from the local filesystem or a remote resource. Polymorphic — text files ' +
-    'return content paginated; images and PDFs return as native content blocks the model ' +
-    'can see directly (when the active model has `image` capability). Relative paths resolve ' +
-    'against the agent\'s workspace dir; absolute paths pass through. Use offset+limit to ' +
-    'page through large text files (single read caps at 200k chars). ' +
+    'Read a file from the local filesystem or a remote resource. Text comes back with every ' +
+    'line prefixed by its 1-based number as `12: text` — cite locations as path:line, and when ' +
+    'you copy lines into file_patch, copy only the text AFTER the `N: ` prefix. Reads up to ' +
+    '2000 lines per call (set `limit` for more or less); a line longer than 2000 chars is cut ' +
+    'with a marker. The result ends with `summary`: "End of file (N lines)." when you have seen ' +
+    'everything, or "Showing lines a-b of N. Continue with offset=b." — then call again with ' +
+    'that offset. A missing file names the closest existing names in its directory. ' +
+    'Images and PDFs return as native content blocks the model can see directly (when the ' +
+    'active model has `image` capability). Relative paths resolve against the agent\'s ' +
+    'workspace dir; absolute paths pass through. ' +
     'Use this INSTEAD of running `cat`, `head`, or `tail` via exec — file_read paginates safely, ' +
     'enforces the read-blacklist, and never gets caught by shell quoting. ' +
     '\n\n' +
@@ -190,12 +194,16 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
     properties: {
       path: { type: 'string', description: 'File path (relative to workspace, or absolute).' },
       target: { type: 'string', description: 'local (default) or a resource name from resource_list.', default: 'local' },
-      offset: { type: 'integer', minimum: 0, description: 'Skip the first N lines (0-indexed).' },
+      offset: {
+        type: 'integer',
+        minimum: 0,
+        description: 'Skip the first N lines (0-based): offset=2000 starts at line 2001. Use the `next_offset` a truncated read returns.',
+      },
       limit: {
         type: 'integer',
         minimum: 1,
         description:
-          'Max LINES (not bytes). Omit for whole file up to 200k chars. When the response is truncated, use the returned `next_offset` to page.',
+          'Max LINES (not bytes), default 2000. When the response is truncated, use the returned `next_offset` to page.',
       },
     },
     required: ['path'],
@@ -356,8 +364,11 @@ const PatchInput = z
     old_string: z
       .string()
       .min(1)
-      .describe('Exact text to find. Must be unique in the file unless replace_all=true. Include surrounding context to disambiguate.'),
-    new_string: z.string().describe('Replacement text. Empty string deletes the matched range.'),
+      .describe(
+        'The text to replace, copied from the file as file_read shows it but WITHOUT the `N: ` line-number prefix. ' +
+          'Must be unique in the file unless replace_all=true — include surrounding lines to disambiguate.',
+      ),
+    new_string: z.string().describe('Replacement text (must differ from old_string). Empty string deletes the matched range.'),
     replace_all: z.boolean().default(false),
   })
   .strict();
@@ -366,9 +377,13 @@ export const filePatch: ToolDefinition<z.infer<typeof PatchInput>> = {
   name: 'file_patch',
   toolset: 'file',
   description:
-    'Find-and-replace edit on a text file. Finds `old_string` and replaces with `new_string`. ' +
-    'Match must be byte-exact (whitespace counts). When `old_string` appears more than once, ' +
-    'either include enough surrounding context to make it unique, or pass `replace_all=true`. ' +
+    'Replace `old_string` with `new_string` in a text file. Read the file first and copy the ' +
+    'lines exactly, keeping their indentation and WITHOUT the `N: ` line-number prefix file_read ' +
+    'adds. An exact match always wins; when the text differs only in whitespace, indentation, ' +
+    'line endings or escaped characters, the closest unique block is used and the result says ' +
+    'so (`strategy`, `note`). The result carries a `diff` of the changed lines with their line ' +
+    'numbers — check it. Fails when old_string is not found, matches more than one place (add ' +
+    'context or pass `replace_all=true`), or the closest match spans far more than old_string. ' +
     'Atomic write. Use this INSTEAD of `sed -i` via exec — no regex-quoting issues, no risk ' +
     'of partial-write corruption, no platform-specific sed flags.',
   inputSchema: PatchInput,
@@ -377,8 +392,12 @@ export const filePatch: ToolDefinition<z.infer<typeof PatchInput>> = {
     properties: {
       path: { type: 'string', description: 'File to edit.' },
       target: { type: 'string', description: 'local (default) or resource name.', default: 'local' },
-      old_string: { type: 'string', description: 'Exact text to find. Must be unique unless replace_all=true.' },
-      new_string: { type: 'string', description: 'Replacement text. Empty deletes the match.' },
+      old_string: {
+        type: 'string',
+        description:
+          'Text to replace, copied from the file WITHOUT the `N: ` line-number prefix. Must be unique unless replace_all=true.',
+      },
+      new_string: { type: 'string', description: 'Replacement text (must differ). Empty deletes the match.' },
       replace_all: { type: 'boolean', description: 'Replace every occurrence. Default false.' },
     },
     required: ['path', 'old_string', 'new_string'],
@@ -418,8 +437,25 @@ const SearchInput = z
     path: z
       .string()
       .optional()
-      .describe('Search root. Relative paths resolve against workspace; default is the workspace itself.'),
+      .describe('Search root (directory or single file). Relative paths resolve against workspace; default is the workspace itself.'),
     limit: z.number().int().min(1).max(500).optional(),
+    include: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Only search files matching this glob, e.g. "*.ts", "*.{ts,tsx}", "src/**", "!*.test.*" (ripgrep -g).'),
+    case_insensitive: z.boolean().optional().describe('Ignore case (default false).'),
+    context: z
+      .number()
+      .int()
+      .min(0)
+      .max(5)
+      .optional()
+      .describe('Lines of context before and after each hit (0-5, default 0) — returned as `before`/`after` on the hit.'),
+    files_only: z
+      .boolean()
+      .optional()
+      .describe('Return only the paths of files that contain a match (`files`), no lines. Cheap way to find where something lives.'),
   })
   .strict();
 
@@ -427,12 +463,13 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   name: 'file_search',
   toolset: 'file',
   description:
-    'Search file contents recursively for a regex pattern. Powered by ripgrep — fast, ' +
-    'respects .gitignore by default. Returns hits with path/line/col/text. `text` is a window ' +
-    'of ~200 chars around the first match on that line (`…` marks the cut edges, `col` is the ' +
-    '1-based column of the match), NOT necessarily the full line — use file_read with ' +
-    'offset/limit to see the whole line. Long results are truncated (hit count via `limit`, ' +
-    'plus an overall text budget); `truncated: true` tells you there was more. ' +
+    'Search file contents recursively for a regex pattern (ripgrep, respects .gitignore). ' +
+    'Filter with `include` (glob like "*.ts" or "src/**"), `case_insensitive`, and get ' +
+    '`context` lines around each hit or `files_only` for just the paths. Each hit has ' +
+    'path, line (1-based), col and `text` — the whole line up to ~500 chars, longer lines ' +
+    'windowed around the match (`…` marks the cut, `truncated: true`). Results stop at `limit` ' +
+    'hits (default 50) and an overall text budget; `truncated: true` means there was more — ' +
+    'narrow the pattern, path or include. ' +
     'Use this INSTEAD of `grep -r`, `find ... -exec grep`, or piping through exec — file_search ' +
     'gives structured results, caps output safely, and works the same locally and over SSH. ' +
     'Requires `rg` on the target machine (install via brew/apt/dnf if missing).',
@@ -440,24 +477,39 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
   jsonSchema: {
     type: 'object',
     properties: {
-      pattern: { type: 'string', description: 'Regex pattern.' },
+      pattern: { type: 'string', description: 'Regex pattern (ripgrep / Rust syntax).' },
       target: { type: 'string', description: 'local (default) or resource name.', default: 'local' },
-      path: { type: 'string', description: 'Search root (default: workspace).' },
+      path: { type: 'string', description: 'Search root: directory or single file (default: workspace).' },
       limit: {
         type: 'integer',
         minimum: 1,
         maximum: 500,
-        description:
-          'Max hits (default 50). Each hit\'s `text` is a ~200-char window around the match ' +
-          '(`col` = column), and the total text across hits is budgeted — the result carries ' +
-          '`truncated: true` when either cap was hit.',
+        description: 'Max hits (default 50). `truncated: true` when this or the text budget was reached.',
       },
+      include: {
+        type: 'string',
+        description: 'Only files matching this glob: "*.ts", "*.{ts,tsx}", "src/**", "!*.test.*".',
+      },
+      case_insensitive: { type: 'boolean', description: 'Ignore case. Default false.' },
+      context: {
+        type: 'integer',
+        minimum: 0,
+        maximum: 5,
+        description: 'Context lines before/after each hit (0-5). Returned as `before`/`after` arrays.',
+      },
+      files_only: { type: 'boolean', description: 'Only return matching file paths in `files`.' },
     },
     required: ['pattern'],
     additionalProperties: false,
   },
   maxResultSizeChars: 200_000,
   async handler(input, ctx) {
+    const opts = {
+      include: input.include,
+      caseInsensitive: input.case_insensitive,
+      context: input.context,
+      filesOnly: input.files_only,
+    };
     if (input.target === 'local') {
       return localSearch({
         pattern: input.pattern,
@@ -465,6 +517,7 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
         config: ctx.config,
         path: input.path,
         limit: input.limit,
+        ...opts,
       });
     }
     const resource = await resolveSshTarget({ ctx, target: input.target });
@@ -474,6 +527,7 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
       pattern: input.pattern,
       path: input.path,
       limit: input.limit,
+      ...opts,
     });
   },
 };
@@ -509,6 +563,10 @@ const ListInput = z
       .min(1)
       .optional()
       .describe('Filter pattern. Supports *, **, ?. Without `/` matches against basename; with `/` matches against path relative to listing root. e.g. "*.md" or "**/notes/*.md".'),
+    respect_gitignore: z
+      .boolean()
+      .default(true)
+      .describe('Recursive walks skip paths excluded by .gitignore/.ignore (node_modules, build output). Set false to see everything.'),
   })
   .strict();
 
@@ -519,7 +577,9 @@ export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
     'List directory contents with type/size/mtime/ctime per entry. Use this to answer questions ' +
     'like "what is the newest file in X?" (sortBy: mtime), "find recently changed configs", ' +
     '"are there empty files in this dir?", "which days between N and M have a daily-note?" — anything ' +
-    'that needs a directory enumeration rather than content search. ' +
+    'that needs a directory enumeration rather than content search. To find files by name pattern ' +
+    'in a codebase use `recursive: true` with a `glob` like "**/*.test.ts" — ignored paths ' +
+    '(node_modules, build output, per .gitignore) are skipped unless `respect_gitignore: false`. ' +
     'Output is structured (NOT shell-formatted ls -l): each entry has path, type (file/dir/other), ' +
     'size in bytes, mtime+ctime as ms-since-epoch. ' +
     'Use this INSTEAD of running `ls`, `find`, or `stat` via exec — file_list is path-blacklist-aware ' +
@@ -534,7 +594,12 @@ export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
       recursive: { type: 'boolean', default: false, description: 'Walk subdirectories.' },
       sortBy: { type: 'string', enum: ['mtime', 'name', 'size'], default: 'name' },
       limit: { type: 'integer', minimum: 1, maximum: 5000, default: 200 },
-      glob: { type: 'string', description: 'Filter pattern. *, **, ? supported.' },
+      glob: { type: 'string', description: 'Filter pattern. *, **, ? supported. Without `/` matches basenames, with `/` relative paths.' },
+      respect_gitignore: {
+        type: 'boolean',
+        default: true,
+        description: 'Recursive walks skip .gitignore/.ignore\'d paths (node_modules, build output). false = list everything.',
+      },
     },
     required: ['path'],
     additionalProperties: false,
@@ -549,6 +614,7 @@ export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
         recursive: input.recursive,
         sortBy: input.sortBy,
         limit: input.limit,
+        respectGitignore: input.respect_gitignore,
         ...(input.glob ? { glob: input.glob } : {}),
       });
     }
@@ -560,6 +626,7 @@ export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
       recursive: input.recursive,
       sortBy: input.sortBy,
       limit: input.limit,
+      respectGitignore: input.respect_gitignore,
       ...(input.glob ? { glob: input.glob } : {}),
     });
   },

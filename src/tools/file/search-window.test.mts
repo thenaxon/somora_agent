@@ -6,9 +6,11 @@ import assert from 'node:assert/strict';
 import {
   applyTextBudget,
   byteOffsetToCharOffset,
+  parseRgJson,
   windowMatchLine,
   SEARCH_TEXT_BUDGET_CHARS,
   SEARCH_WINDOW_CHARS,
+  type RgHit,
 } from './search-window.ts';
 
 let pass = 0;
@@ -48,7 +50,7 @@ check('long line windowed both sides', () => {
   assert.equal(r.col, 5001);
   assert.ok(r.text.startsWith('…'), 'left marker');
   assert.ok(r.text.endsWith('…'), 'right marker');
-  assert.equal(r.text, '…' + 'a'.repeat(200) + 'NEEDLE' + 'b'.repeat(200) + '…');
+  assert.equal(r.text, '…' + 'a'.repeat(SEARCH_WINDOW_CHARS) + 'NEEDLE' + 'b'.repeat(SEARCH_WINDOW_CHARS) + '…');
   assert.ok(r.text.length <= 3 * SEARCH_WINDOW_CHARS + 2 + 6);
 });
 
@@ -67,7 +69,7 @@ check('match at start, marker only right', () => {
   assert.equal(r.col, 1);
   assert.ok(!r.text.startsWith('…'), 'no left marker');
   assert.ok(r.text.endsWith('…'), 'right marker');
-  assert.equal(r.text, 'NEEDLE' + 'z'.repeat(200) + '…');
+  assert.equal(r.text, 'NEEDLE' + 'z'.repeat(SEARCH_WINDOW_CHARS) + '…');
 });
 
 check('match at end, marker only left', () => {
@@ -77,7 +79,7 @@ check('match at end, marker only left', () => {
   assert.equal(r.col, 10_001);
   assert.ok(r.text.startsWith('…'));
   assert.ok(!r.text.endsWith('…'));
-  assert.equal(r.text, '…' + 'z'.repeat(200) + 'NEEDLE');
+  assert.equal(r.text, '…' + 'z'.repeat(SEARCH_WINDOW_CHARS) + 'NEEDLE');
 });
 
 // ── no submatches → window from start ───────────────────────────────
@@ -87,7 +89,7 @@ check('no submatches windows from start', () => {
     const r = windowMatchLine(line, sub as never);
     assert.equal(r.col, 1);
     assert.equal(r.truncated, true);
-    assert.equal(r.text, 'q'.repeat(200) + '…');
+    assert.equal(r.text, 'q'.repeat(SEARCH_WINDOW_CHARS) + '…');
   }
 });
 
@@ -168,6 +170,69 @@ check('budget: empty list', () => {
   const r = applyTextBudget([]);
   assert.equal(r.hits.length, 0);
   assert.equal(r.truncated, false);
+});
+
+// ── rg --json parser with context grouping ──────────────────────────
+const ev = (type: string, path: string, line: number, text: string, sub?: [number, number]) =>
+  JSON.stringify({
+    type,
+    data: {
+      path: { text: path },
+      line_number: line,
+      lines: { text: `${text}\n` },
+      ...(sub ? { submatches: [{ start: sub[0], end: sub[1], match: { text: text.slice(sub[0], sub[1]) } }] } : {}),
+    },
+  });
+
+check('parser: context before/after attach to the right hit', () => {
+  const out = [
+    JSON.stringify({ type: 'begin', data: { path: { text: 'a.ts' } } }),
+    ev('context', 'a.ts', 8, 'before-8'),
+    ev('context', 'a.ts', 9, 'before-9'),
+    ev('match', 'a.ts', 10, 'const hit = 1;', [6, 9]),
+    ev('context', 'a.ts', 11, 'after-11'),
+    ev('context', 'a.ts', 12, 'after-12'),
+    // gap: line 20's context does not belong to the hit at 10
+    ev('context', 'a.ts', 29, 'before-29'),
+    ev('match', 'a.ts', 30, 'hit again', [0, 3]),
+    JSON.stringify({ type: 'end', data: {} }),
+    JSON.stringify({ type: 'begin', data: { path: { text: 'b.ts' } } }),
+    ev('match', 'b.ts', 1, 'hit in b', [0, 3]),
+    JSON.stringify({ type: 'end', data: {} }),
+    'not json',
+  ].join('\n');
+  const r = parseRgJson(out, 50);
+  assert.equal(r.hitLimitReached, false);
+  assert.equal(r.hits.length, 3);
+  const [h1, h2, h3] = r.hits as [RgHit, RgHit, RgHit];
+  assert.equal(h1.path, 'a.ts');
+  assert.equal(h1.line, 10);
+  assert.equal(h1.col, 7);
+  assert.equal(h1.text, 'const hit = 1;');
+  assert.deepEqual(h1.before, ['before-8', 'before-9']);
+  assert.deepEqual(h1.after, ['after-11', 'after-12']);
+  assert.deepEqual(h2.before, ['before-29']);
+  assert.equal(h2.after, undefined);
+  assert.equal(h3.path, 'b.ts');
+  assert.equal(h3.before, undefined);
+});
+
+check('parser: limit stops and reports', () => {
+  const out = [ev('match', 'a', 1, 'x', [0, 1]), ev('match', 'a', 2, 'x', [0, 1]), ev('match', 'a', 3, 'x', [0, 1])].join('\n');
+  const r = parseRgJson(out, 2);
+  assert.equal(r.hits.length, 2);
+  assert.equal(r.hitLimitReached, true);
+});
+
+check('parser: long line windowed, short line whole', () => {
+  const long = 'a'.repeat(3000) + 'NEEDLE' + 'b'.repeat(3000);
+  const out = ev('match', 'a', 1, long, [3000, 3006]);
+  const r = parseRgJson(out, 5);
+  assert.equal(r.hits[0]!.truncated, true);
+  assert.ok(r.hits[0]!.text.includes('NEEDLE'));
+  assert.ok(r.hits[0]!.text.length <= SEARCH_WINDOW_CHARS * 3 + 2);
+  const short = parseRgJson(ev('match', 'a', 1, 'x'.repeat(400), [0, 1]), 5);
+  assert.equal(short.hits[0]!.truncated, undefined);
 });
 
 console.log(`search-window: ${pass} passed, ${fail} failed`);

@@ -167,6 +167,7 @@ import { configureBrowserService, getBrowserService, BrowserOpError, processIdOf
 import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSocket } from '../browser/screencast.ts';
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
+import { startToolOutputSweeper } from '../tools/tool-output.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
 import { VoiceCallManager } from '../voice/realtime/manager.ts';
@@ -6020,6 +6021,10 @@ try {
 } catch (err) {
   logger.warn({ msg: 'exec.jobs_recovery_failed', err: String(err) });
 }
+
+// Full copies of shortened tool outputs (exec, capped results) live under
+// each agent's tool-output/ for seven days — sweep at boot and hourly.
+startToolOutputSweeper(async () => (await listAgents()).map((a) => a.name));
 
 // Auto-Dream-Worker: per-agent idle-trigger that picks up dream-enabled
 // agents and runs background extractions. Registers each enabled agent

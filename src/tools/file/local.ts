@@ -9,13 +9,14 @@ import {
   assertReadAllowed,
   checkReadAllowed,
   checkWriteAllowed,
+  isSomoraInternalPath,
   realpathSafeAncestor,
   resolveLocalPath,
 } from './policy.ts';
-import { applyTextBudget, windowMatchLine, type RgSubmatch } from './search-window.ts';
+import { applyTextBudget, parseRgJson, type RgHit } from './search-window.ts';
+import { formatRead, nearestNames } from './read-format.ts';
+import { diffSnippet, replaceInContent, ReplaceError, type Strategy } from './replace.ts';
 import type { Config } from '../../config/types.ts';
-
-const READ_HARD_CAP = 200_000; // chars
 
 /** Build a per-call unique temp filename next to the target. The previous
  *  `<path>.somora-tmp-<pid>` was shared by every concurrent writer in the
@@ -32,13 +33,18 @@ export interface ReadResult {
   path: string;
   workspace_relative: string | null;
   bytes: number;
+  /** Total lines in the file. */
   lines: number;
+  /** Numbered lines: `12: text` (see read-format.ts). */
   content: string;
+  /** 1-based inclusive line range held in `content`. */
+  range: { from: number; to: number };
   truncated: boolean;
   truncated_reason?: string;
-  /** When `truncated` is true and the cut was line-based (not byte-cap mid-line),
-   *  this is the line offset at which a follow-up read should resume. */
+  /** When `truncated` is true, the `offset` to continue with. */
   next_offset?: number;
+  /** "End of file (N lines)." or "Showing lines a-b of N. Continue with offset=b." */
+  summary: string;
 }
 
 export async function localRead(args: {
@@ -61,40 +67,33 @@ export async function localRead(args: {
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === 'ENOENT') {
-      throw new Error(`file_read: file_not_found at '${absolute}'`);
+      throw new Error(`file_read: file_not_found at '${absolute}'${await didYouMean(absolute)}`);
     }
     if (e.code === 'EISDIR') {
       throw new Error(`file_read: '${absolute}' is a directory (use file_list for directories)`);
     }
     throw err;
   }
-  const all = buf.toString('utf8');
-  const lines = all.split('\n');
-  const offset = Math.max(0, args.offset ?? 0);
-  const limit = args.limit ?? lines.length;
-  const slice = lines.slice(offset, offset + limit);
-  let content = slice.join('\n');
-  let truncated = offset + slice.length < lines.length;
-  let truncatedReason = truncated ? `more lines available (offset=${offset + slice.length})` : undefined;
-  let nextOffset: number | undefined = truncated ? offset + slice.length : undefined;
-  if (content.length > READ_HARD_CAP) {
-    content = content.slice(0, READ_HARD_CAP) + '\n[…content truncated at 200k chars]';
-    truncated = true;
-    truncatedReason = `byte cap (${READ_HARD_CAP} chars)`;
-    // Byte-cap truncation cuts mid-line, so a line-based next_offset
-    // would skip the cut-off content. Drop the hint rather than mislead.
-    nextOffset = undefined;
-  }
+  const formatted = formatRead(buf.toString('utf8'), args.offset, args.limit);
   return {
     path: absolute,
     workspace_relative: relative(workspace, absolute) || '.',
     bytes: buf.length,
-    lines: lines.length,
-    content,
-    truncated,
-    ...(truncatedReason ? { truncated_reason: truncatedReason } : {}),
-    ...(nextOffset !== undefined ? { next_offset: nextOffset } : {}),
+    ...formatted,
   };
+}
+
+/** " Did you mean: a.ts, b.ts?" for a missing file, from its directory's
+ *  entries — a model that misremembers a name gets the fix in the error
+ *  instead of a second round of file_list. */
+async function didYouMean(absolute: string): Promise<string> {
+  try {
+    const names = await readdir(dirname(absolute));
+    const near = nearestNames(basename(absolute), names);
+    return near.length > 0 ? `. Did you mean: ${near.join(', ')}?` : '';
+  } catch {
+    return '';
+  }
 }
 
 export interface WriteResult {
@@ -169,6 +168,50 @@ export interface PatchResult {
   path: string;
   replacements: number;
   bytes: number;
+  /** How old_string was located: `exact`, or a tolerant strategy. */
+  strategy: Strategy;
+  /** 1-based line range of the (first) replaced span in the original. */
+  lines: { from: number; to: number };
+  /** `-`/`+` view of the changed region with original line numbers. */
+  diff: string;
+  /** Present when a tolerant strategy or prefix-stripping was needed. */
+  note?: string;
+}
+
+/** Shared by the local and the SFTP path: locate, replace, describe. */
+export function applyPatch(
+  original: string,
+  oldString: string,
+  newString: string,
+  replaceAll: boolean,
+  allowFuzzy: boolean,
+  label: string,
+): { updated: string } & Omit<PatchResult, 'path' | 'bytes'> {
+  let outcome;
+  try {
+    outcome = replaceInContent(original, oldString, newString, { replaceAll, allowFuzzy });
+  } catch (err) {
+    if (err instanceof ReplaceError) throw new Error(`file_patch: ${err.message} (${label})`);
+    throw err;
+  }
+  const notes: string[] = [];
+  if (outcome.lineNumbersStripped) {
+    notes.push('old_string carried `N: ` line-number prefixes from file_read; they were stripped before matching.');
+  }
+  if (outcome.strategy !== 'exact') {
+    notes.push(
+      `old_string did not match the file text exactly; it was located with tolerance (${outcome.strategy}) — ` +
+        'check the diff, and copy lines exactly next time.',
+    );
+  }
+  return {
+    updated: outcome.updated,
+    replacements: outcome.count,
+    strategy: outcome.strategy,
+    lines: outcome.firstSpanLines,
+    diff: diffSnippet(original, outcome.updated),
+    ...(notes.length > 0 ? { note: notes.join(' ') } : {}),
+  };
 }
 
 export async function localPatch(args: {
@@ -190,61 +233,68 @@ export async function localPatch(args: {
   }
 
   const original = await readFile(absolute, 'utf8');
-  if (!original.includes(args.oldString)) {
-    throw new Error(`file_patch: 'old_string' not found in '${args.path}' — match must be exact`);
-  }
-  let count = 0;
-  let updated: string;
-  if (args.replaceAll) {
-    updated = original.split(args.oldString).join(args.newString);
-    count = (original.length - updated.length) / (args.oldString.length - args.newString.length || 1);
-    count = original.split(args.oldString).length - 1;
-  } else {
-    const occurrences = original.split(args.oldString).length - 1;
-    if (occurrences > 1) {
-      throw new Error(
-        `file_patch: 'old_string' appears ${occurrences} times in '${args.path}'. ` +
-          'Either include enough surrounding context to make it unique, or pass replace_all=true.',
-      );
-    }
-    updated = original.replace(args.oldString, args.newString);
-    count = 1;
-  }
+  // Tolerant matching everywhere except somora's own home: a match one
+  // block off in config.yaml or a persona file is the worst-case edit.
+  const { updated, ...described } = applyPatch(
+    original,
+    args.oldString,
+    args.newString,
+    args.replaceAll,
+    !isSomoraInternalPath(real),
+    `in '${args.path}'`,
+  );
 
   const tmp = uniqueTmpPath(absolute);
   await writeFile(tmp, updated, 'utf8');
   await rename(tmp, absolute);
+  if (described.strategy !== 'exact') {
+    logger.info({ msg: 'tool.file_patch.tolerant_match', agent: args.agent, path: absolute, strategy: described.strategy });
+  }
 
   // Length of what we wrote, not a stat() after the rename: on CIFS
   // mounts (cache=strict) the stat right after an atomic rename can
   // report 0 while the file is complete — `bytes: 0` looks like data
   // loss to the caller (2026-09-03 report).
-  return { path: absolute, replacements: count, bytes: Buffer.byteLength(updated, 'utf8') };
+  return { path: absolute, bytes: Buffer.byteLength(updated, 'utf8'), ...described };
 }
 
-export interface SearchHit {
-  path: string;
-  line: number;
-  /** Window around the match (see search-window.ts), not necessarily
-   *  the full line. */
-  text: string;
-  /** 1-based column of the match start in the original line. */
-  col?: number;
-  /** Only present (true) when `text` was windowed. */
-  truncated?: boolean;
-}
+export type SearchHit = RgHit;
 
 export interface SearchResult {
   count: number;
   truncated: boolean;
   hits: SearchHit[];
+  /** Only with `files_only`: the matching file paths (hits is empty). */
+  files?: string[];
+}
+
+export interface SearchOptions {
+  /** ripgrep glob for files to search, e.g. `*.ts` or `src/**` or `*.{ts,tsx}`. */
+  include?: string;
+  caseInsensitive?: boolean;
+  /** Lines of context before and after each hit (0-5). */
+  context?: number;
+  /** Return only the paths of files with a match. */
+  filesOnly?: boolean;
+}
+
+/** ripgrep argument list shared by the local spawn and the SSH exec. */
+export function rgArgs(pattern: string, limit: number, opts: SearchOptions): string[] {
+  const args: string[] = ['--no-messages', '--no-require-git'];
+  if (opts.filesOnly) args.push('--files-with-matches');
+  else args.push('--json', '--max-count', String(limit));
+  if (opts.include) args.push('--glob', opts.include);
+  if (opts.caseInsensitive) args.push('--ignore-case');
+  const ctx = Math.max(0, Math.min(5, Math.floor(opts.context ?? 0)));
+  if (ctx > 0 && !opts.filesOnly) args.push('--context', String(ctx));
+  args.push('--regexp', pattern);
+  return args;
 }
 
 /**
- * Content search via ripgrep when available (much faster + richer
- * defaults like .gitignore-respect), falling back to a simple
- * recursive walk + regex match. Output is stable JSON across both
- * paths so the model never sees the difference.
+ * Content search via ripgrep (fast, .gitignore-aware). Output is stable
+ * JSON for the local and the SSH path so the model never sees the
+ * difference.
  */
 export async function localSearch(args: {
   pattern: string;
@@ -252,7 +302,7 @@ export async function localSearch(args: {
   config: Config;
   path?: string;
   limit?: number;
-}): Promise<SearchResult> {
+} & SearchOptions): Promise<SearchResult> {
   const limit = args.limit ?? 50;
   const startPath = args.path
     ? (await resolveLocalPath(args.path, args.agent, args.config)).absolute
@@ -262,11 +312,23 @@ export async function localSearch(args: {
   await assertReadAllowed(startPath);
 
   // Try ripgrep first.
-  const rg = await tryRipgrep(args.pattern, startPath, limit);
+  const rg = await tryRipgrep(args.pattern, startPath, limit, args);
   if (rg !== null) {
     // The start path was allowed; a hit below it may still not be (a
     // search from `/etc` reaching `/etc/ssh`, a symlink into a blocked
     // dir). Drop those hits rather than fail the whole search.
+    if (rg.files) {
+      const files: string[] = [];
+      for (const f of rg.files) {
+        try {
+          await assertReadAllowed(f);
+          files.push(f);
+        } catch {
+          /* blocked path — not returned */
+        }
+      }
+      return { ...rg, files, count: files.length };
+    }
     const hits: SearchHit[] = [];
     for (const h of rg.hits) {
       try {
@@ -294,20 +356,11 @@ function tryRipgrep(
   pattern: string,
   cwd: string,
   limit: number,
+  opts: SearchOptions,
 ): Promise<SearchResult | null> {
   return new Promise((resolve) => {
     const rg = process.env.RG_BIN ?? 'rg';
-    const child = spawn(
-      rg,
-      [
-        '--json',
-        '--max-count', String(limit),
-        '--no-messages',
-        pattern,
-        cwd,
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    const child = spawn(rg, [...rgArgs(pattern, limit, opts), '--', cwd], { stdio: ['ignore', 'pipe', 'pipe'] });
     const stdoutChunks: Buffer[] = [];
     let truncated = false;
     let bytesSeen = 0;
@@ -330,46 +383,58 @@ function tryRipgrep(
     child.on('close', () => {
       try {
         const out = Buffer.concat(stdoutChunks).toString('utf8');
-        const hits: SearchHit[] = [];
-        for (const line of out.split('\n')) {
-          if (!line.trim()) continue;
-          try {
-            const ev = JSON.parse(line) as {
-              type: string;
-              data?: {
-                path?: { text?: string };
-                line_number?: number;
-                lines?: { text?: string };
-                submatches?: RgSubmatch[];
-              };
-            };
-            if (ev.type === 'match' && ev.data) {
-              const win = windowMatchLine(ev.data.lines?.text ?? '', ev.data.submatches);
-              hits.push({
-                path: ev.data.path?.text ?? '',
-                line: ev.data.line_number ?? 0,
-                text: win.text,
-                col: win.col,
-                ...(win.truncated ? { truncated: true } : {}),
-              });
-              if (hits.length >= limit) {
-                truncated = true;
-                break;
-              }
-            }
-          } catch {
-            // malformed JSON line — skip
-          }
+        if (opts.filesOnly) {
+          const all = out.split('\n').filter((l) => l.trim() !== '');
+          const files = all.slice(0, limit);
+          resolve({ count: files.length, truncated: truncated || all.length > limit, hits: [], files });
+          return;
         }
-        const budgeted = applyTextBudget(hits);
+        const parsed = parseRgJson(out, limit);
+        const budgeted = applyTextBudget(parsed.hits);
         resolve({
           count: budgeted.hits.length,
-          truncated: truncated || budgeted.truncated,
+          truncated: truncated || parsed.hitLimitReached || budgeted.truncated,
           hits: budgeted.hits,
         });
       } catch {
         resolve(null);
       }
+    });
+  });
+}
+
+/** `rg --files` under `root`: paths of non-ignored, non-hidden files
+ *  relative to root, or null when rg is unavailable. Exported for tests. */
+export function rgFiles(root: string): Promise<string[] | null> {
+  return new Promise((resolve) => {
+    const rg = process.env.RG_BIN ?? 'rg';
+    const child = spawn(rg, ['--files', '--no-messages', '--no-require-git', '--', root], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    child.stdout.on('data', (d: Buffer) => {
+      bytes += d.byteLength;
+      if (bytes > 8 * 1024 * 1024) {
+        try {
+          child.kill();
+        } catch {
+          /* best-effort */
+        }
+        return;
+      }
+      chunks.push(d);
+    });
+    child.on('error', () => resolve(null));
+    child.on('close', (code) => {
+      if (code !== 0 && code !== 1 && chunks.length === 0) return resolve(null);
+      resolve(
+        Buffer.concat(chunks)
+          .toString('utf8')
+          .split('\n')
+          .filter((l) => l !== '')
+          .map((p) => relative(root, p)),
+      );
     });
   });
 }
@@ -413,6 +478,9 @@ export async function localList(args: {
   sortBy?: 'mtime' | 'name' | 'size';
   limit?: number;
   glob?: string;
+  /** Default true: a recursive walk skips what .gitignore/.ignore
+   *  exclude (node_modules, build output) — via `rg --files`. */
+  respectGitignore?: boolean;
 }): Promise<ListResult> {
   const { absolute, workspace } = await resolveLocalPath(args.path, args.agent, args.config);
   const policy = checkReadAllowed(absolute);
@@ -441,7 +509,15 @@ export async function localList(args: {
   const recursive = Boolean(args.recursive);
 
   const collected: ListEntry[] = [];
-  await walkDir(absolute, absolute, recursive, collected, matchGlob);
+  let ignored = false;
+  if (recursive && args.respectGitignore !== false) {
+    const files = await rgFiles(absolute);
+    if (files !== null) {
+      ignored = true;
+      await collectFromFileList(absolute, files, collected, matchGlob);
+    }
+  }
+  if (!ignored) await walkDir(absolute, absolute, recursive, collected, matchGlob);
 
   collected.sort((a, b) => {
     if (sortBy === 'mtime') return b.mtime - a.mtime; // newest first
@@ -472,6 +548,55 @@ export async function localList(args: {
 interface CompiledGlob {
   re: RegExp;
   hasSlash: boolean;
+}
+
+/**
+ * Build entries from an `rg --files` listing (paths relative to root):
+ * the files themselves plus every directory on the way to them, so a
+ * recursive listing still shows the tree — minus what .gitignore hides.
+ * Glob semantics are the walker's: basename without `/`, relative path
+ * with `/`; a glob also filters directories.
+ */
+export async function collectFromFileList(
+  root: string,
+  files: string[],
+  out: ListEntry[],
+  glob: { re: RegExp; hasSlash: boolean } | null,
+): Promise<void> {
+  const dirs = new Set<string>();
+  for (const rel of files) {
+    let parent = dirname(rel);
+    while (parent && parent !== '.' && !dirs.has(parent)) {
+      dirs.add(parent);
+      parent = dirname(parent);
+    }
+  }
+  const candidates: Array<{ rel: string; type: ListEntry['type'] }> = [
+    ...[...dirs].map((rel) => ({ rel, type: 'dir' as const })),
+    ...files.map((rel) => ({ rel, type: 'file' as const })),
+  ];
+  for (const c of candidates) {
+    if (glob) {
+      const target = glob.hasSlash ? c.rel : basename(c.rel);
+      if (!glob.re.test(target)) continue;
+    }
+    const full = join(root, c.rel);
+    let st;
+    try {
+      st = await stat(full);
+    } catch {
+      continue;
+    }
+    out.push({
+      path: full,
+      workspace_relative: null,
+      type: st.isDirectory() ? 'dir' : st.isFile() ? 'file' : 'other',
+      size: st.size,
+      mtime: st.mtimeMs,
+      ctime: st.ctimeMs,
+    });
+    if (out.length >= LIST_HARD_CAP) return;
+  }
 }
 
 async function walkDir(
@@ -548,7 +673,7 @@ async function walkDir(
  * so walkDir can decide between basename matching (no slash) and
  * relative-path matching (with slash) — see CompiledGlob doc for why.
  */
-function compileGlob(glob: string): CompiledGlob {
+export function compileGlob(glob: string): CompiledGlob {
   // hasSlash captures the user's intent BEFORE we expand the pattern
   // — walkDir uses it to decide basename vs relative-path matching.
   // Inspecting the compiled regex source for `/` is unreliable because

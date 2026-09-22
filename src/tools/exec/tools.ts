@@ -35,6 +35,40 @@ import { skillEnvScopeForCommand, skillEnvStripHint } from '../../skills/env-sco
 import { SOMORA_INTERNAL_ENV_SUMMARY } from './internal-env.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
 import { fitExecOutput } from './fit-output.ts';
+import { saveToolOutput } from '../tool-output.ts';
+
+/**
+ * When a stream was shortened for the result (or capped at capture),
+ * keep the captured text on disk and tell the model where. The captured
+ * text is the full output up to the 256 KB capture cap.
+ */
+async function saveShortenedStreams(
+  agent: string,
+  r: { stdout: string; stderr: string; truncated: boolean },
+  shortened: boolean,
+): Promise<{ files: { stdout_file?: string; stderr_file?: string }; hint?: string }> {
+  if (!shortened && !r.truncated) return { files: {} };
+  const files: { stdout_file?: string; stderr_file?: string } = {};
+  if (r.stdout.length > 0) {
+    const f = await saveToolOutput(agent, 'exec-stdout', r.stdout);
+    if (f) files.stdout_file = f;
+  }
+  if (r.stderr.length > 0) {
+    const f = await saveToolOutput(agent, 'exec-stderr', r.stderr);
+    if (f) files.stderr_file = f;
+  }
+  if (!files.stdout_file && !files.stderr_file) return { files };
+  const parts: string[] = [];
+  if (files.stdout_file) parts.push(`stdout (${r.stdout.length} chars) → ${files.stdout_file}`);
+  if (files.stderr_file) parts.push(`stderr (${r.stderr.length} chars) → ${files.stderr_file}`);
+  const capNote = r.truncated ? ' (capture stopped at 256 KB per stream)' : '';
+  return {
+    files,
+    hint:
+      `Full captured output saved${capNote}: ${parts.join('; ')}. ` +
+      `Read a part with file_read offset/limit or search in it with file_search instead of re-running the command.`,
+  };
+}
 import {
   killRemoteJob,
   pollRemoteJob,
@@ -457,12 +491,9 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
           vars: skillScope?.stripVars.filter((v) => !(v in (skillScope?.injectEnv ?? {}))),
         });
       }
-      const truncHint = r.truncated
-        ? 'Output truncated at 256 KB per stream. For full content, redirect the command\'s ' +
-          'output to a file on the target and use file_read with offset/limit.'
-        : undefined;
       const fitted = fitExecOutput(r.stdout, r.stderr);
-      const hint = [stripHint, truncHint, fitted.hint].filter(Boolean).join(' ');
+      const saved = await saveShortenedStreams(ctx.agent, r, fitted.shortened);
+      const hint = [stripHint, fitted.hint, saved.hint].filter(Boolean).join(' ');
       return {
         ok: r.exit_code === 0,
         background: false,
@@ -474,6 +505,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         // capture cap AND the result budget (fit-output.ts).
         truncated: r.truncated || fitted.shortened,
         ms: r.ms,
+        ...saved.files,
         ...(hint ? { hint } : {}),
       };
     }
@@ -498,17 +530,8 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       ...(input.pty ? { pty: true } : {}),
     });
     const rfitted = fitExecOutput(rr.stdout, rr.stderr);
-    const rhint = [
-      rr.truncated
-        ? 'Output truncated at 256 KB per stream. For full content, redirect the command\'s ' +
-          'output to a file on the target and use file_read with target:"' +
-          input.target +
-          '" + offset/limit.'
-        : undefined,
-      rfitted.hint,
-    ]
-      .filter(Boolean)
-      .join(' ');
+    const rsaved = await saveShortenedStreams(ctx.agent, rr, rfitted.shortened);
+    const rhint = [rfitted.hint, rsaved.hint].filter(Boolean).join(' ');
     return {
       ok: rr.exit_code === 0,
       background: false,
@@ -518,6 +541,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       stderr: rfitted.stderr,
       truncated: rr.truncated || rfitted.shortened,
       ms: rr.ms,
+      ...rsaved.files,
       ...(rhint ? { hint: rhint } : {}),
     };
   },

@@ -324,11 +324,30 @@ user setup.
 
 | Tool | Cap | Notes |
 |---|---|---|
-| `file_read` | 200 000 chars per call | `offset`+`limit` are LINE counts (not bytes). When a result is truncated by line, the response includes `next_offset` — pass it as `offset` to continue. Byte-cap-truncated reads omit `next_offset` (the cut is mid-line). Missing files surface as `file_read: file_not_found at '<path>'`. Errors on binary files — images and PDFs point at `analyze_file`, other binaries at `exec`. |
+| `file_read` | 2000 lines per call by default (`limit`), 200 000 chars hard cap, 2000 chars per line | Text comes back numbered: every line is `N: text` with its 1-based line number, so the model can cite `path:line` and copy exact lines into `file_patch` (without the prefix). `offset` is the number of lines to skip (0-based), `limit` the number of lines. The result carries `range` (first/last line shown), `lines` (total) and a `summary`: `End of file (N lines).` or `Showing lines a-b of N. Continue with offset=b.` — plus `next_offset` while there is more. A line longer than 2000 chars is cut with `… [line cut at 2000 chars]`. Missing files surface as `file_read: file_not_found at '<path>'. Did you mean: a.ts, b.ts?` with up to three near names from the same directory. Errors on binary files — images and PDFs point at `analyze_file`, other binaries at `exec`. |
 | `file_write` | none on input; 100 000 char result envelope | Atomic via tmp+rename. Over SSH the rename uses `posix-rename@openssh.com` so an existing target is replaced; servers without the extension get unlink+rename. |
-| `file_patch` | requires `old_string` to be unique unless `replace_all=true` | Match is byte-exact (no fuzzy). |
-| `file_search` | 50 hits default, 500 max; hit text is a ±200-char window around the first match (`col` = column, `truncated` marks a cut line); 100 000 chars of hit text per call, then `truncated: true` | Needs `rg` (ripgrep) on the target machine. Long lines (JSONL logs, minified bundles) stay within the result envelope. |
-| `file_list` | 5000 entries per call (default 200) | Path resolution + read-policy identical to `file_read`. Missing dirs surface as `file_list: file_not_found at '<path>'`. |
+| `file_patch` | requires `old_string` to be unique unless `replace_all=true` | Exact match first; when the file differs from `old_string` only in whitespace, indentation, line endings, escaped characters or a copied `N: ` line-number prefix, the closest *unique* block is used (see "Tolerant matching" below). The result carries `strategy`, the replaced `lines` range, a `diff` of the changed lines with original line numbers, and a `note` whenever tolerance was needed. |
+| `file_search` | 50 hits default, 500 max; hit text is the whole line up to ~500 chars, longer lines windowed ±500 chars around the first match (`col` = column, `truncated` marks a cut line); 100 000 chars of hit text per call, then `truncated: true` | Needs `rg` (ripgrep) on the target machine. `include` narrows to a glob (`*.ts`, `*.{ts,tsx}`, `src/**`, `!*.test.*`), `case_insensitive` ignores case, `context` (0-5) adds `before`/`after` line arrays to each hit, `files_only` returns just `files` (the matching paths). `path` may be a directory or a single file. |
+| `file_list` | 5000 entries per call (default 200) | Path resolution + read-policy identical to `file_read`. Recursive listings skip what `.gitignore`/`.ignore` exclude (`node_modules`, build output) by way of `rg --files`; `respect_gitignore: false` lists everything. Directories on the way to a kept file are still listed. Missing dirs surface as `file_list: file_not_found at '<path>'`. |
+
+### Tolerant matching in `file_patch`
+
+A model's `old_string` is a reconstruction of what it read, and small models reconstruct badly: a level of indentation missing, a tab for four spaces, `\n` sent as two characters, or the `12: ` prefix copied from a numbered read. Byte-exact matching turned each of those into "not found" and a retry with the same mistake. `file_patch` now locates `old_string` with a chain of matchers, in this order, and uses the first one that yields exactly one match (or any number with `replace_all`):
+
+1. `exact` — byte-exact, always tried first and always wins when it matches.
+2. `line_trimmed` — lines compared without leading/trailing whitespace.
+3. `block_anchor` — for blocks of three or more lines: first and last line identical (trimmed), the block may be up to a quarter longer or shorter, middle lines compared by edit-distance similarity (threshold 0.65); with several candidates the clearly most similar one.
+4. `whitespace_normalized` — runs of whitespace treated as one; for a single-line `old_string` also as a substring of a line.
+5. `indentation_flexible` — common leading indentation removed on both sides.
+6. `escape_normalized` — `\n`, `\t`, `\"`, `\\` and friends in `old_string` unescaped.
+7. `trimmed_boundary` — leading/trailing whitespace of the whole `old_string` ignored.
+8. `context_aware` — anchors at both ends, same length, at least half of the non-empty middle lines identical.
+
+Before the chain runs on an `old_string` whose lines all start like `12: `, the prefixes are stripped (`note` says so). Two brakes: a tolerant match whose span is far larger than `old_string` (≥ twice the lines, or +3 lines, or ×4 the characters) is refused with a request to re-read and pass the exact text; and inside somora's own home (`~/.somora` — config, persona files, memory) only `exact` runs, because a wrong-place edit there costs the most. CRLF files are matched on LF and written back as CRLF. When several matchers see more than one candidate and none sees exactly one, the error says so and asks for more context or `replace_all`.
+
+### Full copies of shortened output
+
+When a tool result is shortened — `exec` output beyond its ~60 000-char budget (or the 256 KB capture cap), or any result over its size cap — the full text is written under `~/.somora/agents/<agent>/tool-output/` and the result names the file (`stdout_file`, `stderr_file`, `full_output_file`) with a hint to `file_read` a window of it or `file_search` inside it instead of re-running the command. Files older than seven days are removed (sweep at boot and hourly).
 | `analyze_file` | `attachments.maxImageBytes` (5 MB default) / `attachments.maxPdfBytes` (32 MB) | Local files only; worker on openai-compatible engine. **Hidden from the model entirely when `config.vision.worker` is unset or the active model has the `image` capability itself** (the same path-resolution + read-policy as `file_read` applies). |
 
 `rg` not installed → clear error: `file_search: ripgrep (rg) not found

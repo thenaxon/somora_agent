@@ -7,11 +7,20 @@ import type { Client, SFTPWrapper, Stats } from 'ssh2';
 import type { SshResource } from '../../config/types.ts';
 import { logger } from '../../server/logger.ts';
 import { expandRemotePath, getConnection, getResourceHome, remoteExec } from '../../ssh/index.ts';
-import type { ListEntry, ListResult, ReadResult, SearchResult, SearchHit, WriteResult, PatchResult } from './local.ts';
+import {
+  applyPatch,
+  rgArgs,
+  type ListEntry,
+  type ListResult,
+  type PatchResult,
+  type ReadResult,
+  type SearchOptions,
+  type SearchResult,
+  type WriteResult,
+} from './local.ts';
 import { checkRemoteReadAllowed, checkRemoteWriteAllowed } from './policy.ts';
-import { applyTextBudget, windowMatchLine, type RgSubmatch } from './search-window.ts';
-
-const READ_HARD_CAP = 200_000;
+import { formatRead } from './read-format.ts';
+import { applyTextBudget, parseRgJson } from './search-window.ts';
 
 /** Per-call unique remote tmp filename — same reasoning as local.ts'
  *  uniqueTmpPath. Two parallel writes to the same remote path used to
@@ -304,27 +313,12 @@ export async function remoteRead(args: {
   const policy = checkRemoteReadAllowed(remotePath, remoteHome);
   if (!policy.ok) throw new Error(policy.reason);
   const buf = await withSftp(client, (sftp) => sftpReadFile(sftp, remotePath));
-  const all = buf.toString('utf8');
-  const lines = all.split('\n');
-  const offset = Math.max(0, args.offset ?? 0);
-  const limit = args.limit ?? lines.length;
-  const slice = lines.slice(offset, offset + limit);
-  let content = slice.join('\n');
-  let truncated = offset + slice.length < lines.length;
-  let truncatedReason = truncated ? `more lines available (offset=${offset + slice.length})` : undefined;
-  if (content.length > READ_HARD_CAP) {
-    content = content.slice(0, READ_HARD_CAP) + '\n[…content truncated at 200k chars]';
-    truncated = true;
-    truncatedReason = `byte cap (${READ_HARD_CAP} chars)`;
-  }
+  const formatted = formatRead(buf.toString('utf8'), args.offset, args.limit);
   return {
     path: remotePath,
     workspace_relative: null, // remote workspace not tracked the same way
     bytes: buf.length,
-    lines: lines.length,
-    content,
-    truncated,
-    ...(truncatedReason ? { truncated_reason: truncatedReason } : {}),
+    ...formatted,
   };
 }
 
@@ -405,29 +399,18 @@ export async function remotePatch(args: {
     const stats = await sftpStat(sftp, remotePath);
     if (!stats) throw new Error(`file_patch: '${args.path}' does not exist on '${args.resourceName}'`);
     const original = (await sftpReadFile(sftp, remotePath)).toString('utf8');
-    if (!original.includes(args.oldString)) {
-      throw new Error(`file_patch: 'old_string' not found in '${args.path}' on '${args.resourceName}'`);
-    }
-    let updated: string;
-    let count: number;
-    if (args.replaceAll) {
-      count = original.split(args.oldString).length - 1;
-      updated = original.split(args.oldString).join(args.newString);
-    } else {
-      const occurrences = original.split(args.oldString).length - 1;
-      if (occurrences > 1) {
-        throw new Error(
-          `file_patch: 'old_string' appears ${occurrences} times in '${args.path}'. ` +
-            'Add context for uniqueness or pass replace_all=true.',
-        );
-      }
-      updated = original.replace(args.oldString, args.newString);
-      count = 1;
-    }
+    const { updated, ...described } = applyPatch(
+      original,
+      args.oldString,
+      args.newString,
+      args.replaceAll,
+      true,
+      `in '${args.path}' on '${args.resourceName}'`,
+    );
     const tmp = uniqueRemoteTmp(remotePath);
     await sftpWriteFile(sftp, tmp, updated);
     await sftpRename(sftp, tmp, remotePath, { op: 'file_patch', resource: args.resourceName });
-    return { path: remotePath, replacements: count, bytes: Buffer.byteLength(updated, 'utf8') };
+    return { path: remotePath, bytes: Buffer.byteLength(updated, 'utf8'), ...described };
   });
 }
 
@@ -442,7 +425,7 @@ export async function remoteSearch(args: {
   pattern: string;
   path?: string;
   limit?: number;
-}): Promise<SearchResult> {
+} & SearchOptions): Promise<SearchResult> {
   const client = await getConnection(args.resourceName, args.resource);
   const limit = args.limit ?? 50;
   // file_search routes through ssh-exec'd ripgrep, which runs in a
@@ -463,12 +446,12 @@ export async function remoteSearch(args: {
     const policy = checkRemoteReadAllowed(remotePath, remoteHome);
     if (!policy.ok) throw new Error(policy.reason);
   }
-  const cmd = `rg --json --max-count ${limit} --no-messages ${shQ(args.pattern)} ${shQ(remotePath)}`;
+  const cmd = `rg ${rgArgs(args.pattern, limit, args).map(shQ).join(' ')} -- ${shQ(remotePath)}`;
   const result = await remoteExec(client, cmd, { timeoutMs: 30_000 });
   if (result.code !== 0 && result.stdout === '') {
     // rg returns 1 when no matches — empty hits, not an error.
     if (result.code === 1) {
-      return { count: 0, truncated: false, hits: [] };
+      return { count: 0, truncated: false, hits: [], ...(args.filesOnly ? { files: [] } : {}) };
     }
     // 127 = command not found
     if (result.code === 127 || result.stderr.includes('command not found') || result.stderr.includes('No such file')) {
@@ -483,38 +466,16 @@ export async function remoteSearch(args: {
     }
     throw new Error(`file_search on '${args.resourceName}': rg exited ${result.code}: ${result.stderr.slice(0, 300)}`);
   }
-  const hits: SearchHit[] = [];
-  for (const line of result.stdout.split('\n')) {
-    if (!line.trim()) continue;
-    try {
-      const ev = JSON.parse(line) as {
-        type: string;
-        data?: {
-          path?: { text?: string };
-          line_number?: number;
-          lines?: { text?: string };
-          submatches?: RgSubmatch[];
-        };
-      };
-      if (ev.type === 'match' && ev.data) {
-        const win = windowMatchLine(ev.data.lines?.text ?? '', ev.data.submatches);
-        hits.push({
-          path: ev.data.path?.text ?? '',
-          line: ev.data.line_number ?? 0,
-          text: win.text,
-          col: win.col,
-          ...(win.truncated ? { truncated: true } : {}),
-        });
-        if (hits.length >= limit) break;
-      }
-    } catch {
-      // skip malformed
-    }
+  if (args.filesOnly) {
+    const all = result.stdout.split('\n').filter((l) => l.trim() !== '');
+    const files = all.slice(0, limit);
+    return { count: files.length, truncated: result.truncated || all.length > limit, hits: [], files };
   }
-  const budgeted = applyTextBudget(hits);
+  const parsed = parseRgJson(result.stdout, limit);
+  const budgeted = applyTextBudget(parsed.hits);
   return {
     count: budgeted.hits.length,
-    truncated: result.truncated || hits.length >= limit || budgeted.truncated,
+    truncated: result.truncated || parsed.hitLimitReached || budgeted.truncated,
     hits: budgeted.hits,
   };
 }
@@ -538,6 +499,9 @@ export async function remoteList(args: {
   sortBy?: 'mtime' | 'name' | 'size';
   limit?: number;
   glob?: string;
+  /** Default true: recursive listings skip .gitignore'd paths via
+   *  `rg --files` on the remote when rg is there; otherwise SFTP walk. */
+  respectGitignore?: boolean;
 }): Promise<ListResult> {
   const fullPath = await resolveRemotePath(args.path, args.resourceName, args.resource);
   // Block listing inside remote credential stores — directory listings
@@ -559,6 +523,13 @@ export async function remoteList(args: {
     const realRoot = await new Promise<string>((res, rej) => {
       sftp.realpath(fullPath, (err, p) => (err ? rej(err) : res(p)));
     });
+    if (recursive && args.respectGitignore !== false) {
+      const files = await remoteRgFiles(conn, realRoot);
+      if (files !== null) {
+        await collectFromRemoteFileList(sftp, realRoot, files, collected, matchGlob);
+        return;
+      }
+    }
     await walkSftp(sftp, realRoot, realRoot, recursive, collected, matchGlob);
   });
 
@@ -636,6 +607,61 @@ async function walkSftp(
     if (type === 'dir' && recursive) {
       await walkSftp(sftp, root, full, recursive, out, glob);
     }
+  }
+}
+
+/** `rg --files` on the remote host — relative paths, or null when rg is
+ *  missing there (the SFTP walk then takes over, without ignore rules). */
+async function remoteRgFiles(client: Client, root: string): Promise<string[] | null> {
+  const result = await remoteExec(
+    client,
+    `rg --files --no-messages --no-require-git -- ${shQ(root)}`,
+    { timeoutMs: 30_000 },
+  );
+  if (result.code === 127 || result.stderr.includes('command not found')) return null;
+  if (result.code !== 0 && result.code !== 1 && result.stdout === '') return null;
+  return result.stdout
+    .split('\n')
+    .filter((l) => l !== '')
+    .map((p) => posix.relative(root, p));
+}
+
+async function collectFromRemoteFileList(
+  sftp: SFTPWrapper,
+  root: string,
+  files: string[],
+  out: ListEntry[],
+  glob: CompiledGlob | null,
+): Promise<void> {
+  const dirs = new Set<string>();
+  for (const rel of files) {
+    let parent = posix.dirname(rel);
+    while (parent && parent !== '.' && !dirs.has(parent)) {
+      dirs.add(parent);
+      parent = posix.dirname(parent);
+    }
+  }
+  const candidates = [
+    ...[...dirs].map((rel) => ({ rel, type: 'dir' as const })),
+    ...files.map((rel) => ({ rel, type: 'file' as const })),
+  ];
+  for (const c of candidates) {
+    if (glob) {
+      const target = glob.hasSlash ? c.rel : posix.basename(c.rel);
+      if (!glob.re.test(target)) continue;
+    }
+    const full = posix.join(root, c.rel);
+    const st = await sftpStat(sftp, full);
+    if (!st) continue;
+    out.push({
+      path: full,
+      workspace_relative: null,
+      type: c.type,
+      size: st.size,
+      mtime: st.mtime * 1000,
+      ctime: st.mtime * 1000,
+    });
+    if (out.length >= REMOTE_LIST_HARD_CAP) return;
   }
 }
 

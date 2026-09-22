@@ -252,6 +252,14 @@ export function checkWriteAllowed(absolute: string, _agent: string): PolicyResul
   return { ok: true };
 }
 
+/** True for paths inside somora's own home (~/.somora): config, persona
+ *  files, memory. file_patch runs exact-only there — a tolerant match
+ *  landing one block off in agent.yaml or config.yaml is the costliest
+ *  wrong edit there is. */
+export function isSomoraInternalPath(absolute: string): boolean {
+  return isUnder(absolute, SOMORA_HOME);
+}
+
 function isUnder(path: string, root: string): boolean {
   const p = normalize(path);
   const r = normalize(root);
