@@ -26,6 +26,7 @@ import {
   FileText,
   File as FileIcon,
   Hourglass,
+  Zap,
   Pause,
   Pin,
   Play,
@@ -247,6 +248,7 @@ export const MessageItem = memo(function MessageItem({
             <BubbleTimestamp
               ts={msg.ts}
               queued={msg.queued}
+              {...(msg.steer ? { steer: msg.pending ? 'pending' : 'applied' } : {})}
               {...(peerOrigin ? { origin: peerOrigin } : {})}
               {...(msg.queued && !isPeer && onRecall
                 ? { onRecall: () => onRecall(msg.id) }
@@ -533,24 +535,41 @@ function VoiceNote({ pres, ts }: { pres: OriginPresentation; ts: number }) {
 function BubbleTimestamp({
   ts,
   queued,
+  steer,
   origin,
   onRecall,
 }: {
   ts: number;
   queued?: { ahead: number };
+  /** Steering: handed into the running turn — `pending` until the
+   *  model read it, `applied` afterwards. */
+  steer?: 'pending' | 'applied';
   /** A2A origin caption ("naxon · cerebrocraft"), left of the time. */
   origin?: string;
   /** Present only while queued: takes the message back into the
    *  composer for another edit before it starts. */
   onRecall?: () => void;
 }) {
-  if (!ts && !queued && !origin) return null;
+  if (!ts && !queued && !origin && !steer) return null;
   // queued marker sits to the LEFT of the time, same row, dimmed.
   // We surface "queued" alone when ahead<=1 (just the currently-
   // running turn to wait for), and "queued · N ahead" when there
   // are other waiters in front.
   return (
     <span className="chat-msg-time">
+      {steer && (
+        <span
+          className="chat-msg-queued chat-msg-steer"
+          title={
+            steer === 'pending'
+              ? 'Handed to the running turn — delivered before its next step'
+              : 'Delivered into the running turn, before its next step'
+          }
+        >
+          <Zap size={10} />
+          <span>{steer === 'pending' ? 'steering…' : 'steered'}</span>
+        </span>
+      )}
       {queued && (
         <span className="chat-msg-queued" title="Waiting for the previous turn to finish">
           <Hourglass size={10} />

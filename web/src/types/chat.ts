@@ -119,6 +119,13 @@ export type ChatMessage =
        *   - cleared back to undefined when matching user_message arrives
        *  Sentinel and A2A inbounds never carry this. */
       queued?: { ahead: number };
+      /** Steering: this message went (or is going) INTO the turn that
+       *  was running, before its next step, instead of starting one.
+       *  While `pending` is also set it has not reached the model yet. */
+      steer?: boolean;
+      /** Pairs the optimistic bubble with the server's `user_message`
+       *  (steer_id) once the engine hands the message to the model. */
+      steerId?: string;
       /** True from the moment the optimistic bubble is rendered until
        *  the server's user_message SSE event for the matching turnId
        *  arrives (which signals "this turn is now actually running").

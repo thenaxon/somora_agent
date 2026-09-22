@@ -361,12 +361,43 @@ export const codexCliEngine: AgentEngine = {
     const IDLE_TIMEOUT_MS = input.idleTimeoutMs ?? 300_000;
     const TOOL_IDLE_TIMEOUT_MS = Math.max(input.toolIdleTimeoutMs ?? 0, IDLE_TIMEOUT_MS);
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let steerPoll: ReturnType<typeof setInterval> | undefined;
     const finish = (): void => {
       if (finished) return;
       finished = true;
       if (idleTimer) clearTimeout(idleTimer);
+      if (steerPoll) clearInterval(steerPoll);
       queue.finish();
     };
+    // Steering: the app-server takes input for a running turn through
+    // `turn/steer` (expectedTurnId guards against a turn that already
+    // ended). What arrives in the session's letterbox is forwarded as
+    // text input; the record for the session file is queued once the
+    // request was accepted, and put back into the letterbox when it was
+    // refused so nothing is lost.
+    if (input.steer) {
+      const steer = input.steer;
+      steerPoll = setInterval(() => {
+        if (finished || !client || !threadId || !activeTurnId) return;
+        const msgs = steer.drain();
+        if (msgs.length === 0) return;
+        const c = client;
+        const params = {
+          threadId,
+          expectedTurnId: activeTurnId,
+          input: msgs.map((m) => ({ type: 'text' as const, text: steer.frame(m) })),
+        };
+        c.request('turn/steer', params, { timeoutMs: 5_000 })
+          .then(() => {
+            queue.push({ kind: 'steer_applied', ts: ts(), engine: ENGINE, messages: msgs });
+          })
+          .catch((err: unknown) => {
+            logger.warn({ msg: 'engine.steer_refused', ...logCtx, err: String((err as Error)?.message ?? err) });
+            steer.requeue(msgs);
+          });
+      }, 300);
+      steerPoll.unref?.();
+    }
     const armIdleTimer = (): void => {
       if (idleTimer) clearTimeout(idleTimer);
       const threshold = pendingToolCalls > 0 ? TOOL_IDLE_TIMEOUT_MS : IDLE_TIMEOUT_MS;

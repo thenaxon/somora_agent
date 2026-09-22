@@ -168,6 +168,7 @@ import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSock
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { startToolOutputSweeper } from '../tools/tool-output.ts';
+import { pushSteer, steerableTurn } from './steer-inbox.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
 import { VoiceCallManager } from '../voice/realtime/manager.ts';
@@ -4724,6 +4725,11 @@ app.post('/chat/send', async (c) => {
      *  Driven by the per-session "auto-play" toggle in the chat header.
      *  Only honored together with `input_modality === 'voice'`. */
     auto_play_requested?: boolean;
+    /** Steering — hand the text to the turn that is running right now
+     *  (see steer-inbox.ts) instead of queuing a turn of its own. Falls
+     *  back to queuing when nothing steerable runs; the response says
+     *  which happened (`steered`). */
+    steer?: boolean;
   };
   const agent = body.agent ?? (await defaultAgentFallback());
   if (!agent) {
@@ -4789,6 +4795,30 @@ app.post('/chat/send', async (c) => {
     : subagentDepth > 0
       ? { kind: 'subagent', depth: subagentDepth }
       : { kind: 'human', via: body.input_modality === 'voice' ? 'voice-stt' : 'chat' };
+  // Steering: with `steer: true` and a turn running that can read its
+  // letterbox, the text goes INTO that turn (before its next step)
+  // instead of waiting behind it. Otherwise it queues as usual and the
+  // response says so (`steered: false`). agent_ask calls never steer:
+  // their answer must come from a turn of their own.
+  if (body.steer === true && !agentAskCallId) {
+    const running = steerableTurn(agent, session);
+    if (running) {
+      const m = pushSteer(agent, session, {
+        text,
+        origin,
+        ...(fromAgent ? { from_agent: fromAgent } : {}),
+        ...(fromAgent && fromSession ? { from_session: fromSession } : {}),
+      });
+      logger.info({ msg: 'chat.steer', steerId: m.id, agent, session, turnId: running.turnId, engine: running.engine });
+      void publish(agent, session, {
+        event: 'steer_queued',
+        data: { steerId: m.id, text, ts: m.ts, turnId: running.turnId, origin },
+      });
+      remWorker.resetActivity(agent);
+      return c.json({ ok: true, steered: true, steerId: m.id, turnId: running.turnId }, 202);
+    }
+  }
+
   // An agent_ask call id posted here is a call like any other: register
   // it so agent_ask_result finds it in the registry, not only in the
   // target's history (birdseye L17).
@@ -4871,8 +4901,9 @@ app.post('/chat/send', async (c) => {
   // they just rendered with future SSE events (turn_queued while
   // waiting, user_message once the lock is acquired and the turn
   // actually starts). Used by the queue-indicator UX added with
-  // 2026.05.23.x.
-  return c.json({ ok: true, turnId }, 202);
+  // 2026.05.23.x. `steered: false` only when steering was asked for
+  // and nothing steerable was running.
+  return c.json({ ok: true, turnId, ...(body.steer === true ? { steered: false } : {}) }, 202);
 });
 
 // /chat/abort — cancel an in-flight turn for (agent, session). Triggered

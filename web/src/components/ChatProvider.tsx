@@ -96,6 +96,8 @@ interface ChatContextValue {
     text: string,
     attachments?: AttachmentRef[],
     voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
+    /** Hand the message into the running turn instead of queuing it. */
+    steer?: boolean,
   ) => Promise<void>;
   /** Voice: subscribe to assistant_audio arrivals for one session.
    *  Returns the unsubscribe fn. The handler receives the audio URL;
@@ -984,6 +986,38 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         ls?.forEach((fn) => fn(d.url));
       });
 
+      // Steering: another window on this session learns of a message
+      // handed into the running turn. The sender itself already has
+      // its optimistic bubble (tagged by steerId from the response).
+      es.addEventListener('steer_queued', (ev) => {
+        bump();
+        const d = parse<{ steerId: string; text: string; ts: number; turnId: string; origin?: TurnOrigin }>(
+          ev as MessageEvent,
+        );
+        if (!d || !d.steerId) return;
+        setMessages((prev) => {
+          const list = prev[key] ?? [];
+          if (list.some((m) => m.role === 'user' && (m.steerId === d.steerId || (m.pending && m.steer && m.text === d.text))))
+            return prev;
+          return {
+            ...prev,
+            [key]: [
+              ...list,
+              {
+                id: newId('um'),
+                role: 'user',
+                ts: d.ts ?? Date.now(),
+                text: d.text,
+                steer: true,
+                steerId: d.steerId,
+                pending: true,
+                ...(d.origin ? { origin: d.origin } : {}),
+              },
+            ],
+          };
+        });
+      });
+
       es.addEventListener('user_message', (ev) => {
         bump();
         const d = parse<{
@@ -994,9 +1028,56 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           from_session?: string;
           from_system?: FromSystem;
           origin?: TurnOrigin;
+          steer?: true;
+          steer_id?: string;
           input?: { modality?: 'text' | 'voice'; source?: 'stt' | 'realtime' };
         }>(ev as MessageEvent);
         if (!d) return;
+        if (d.steer) {
+          // The running turn's model has read the steered message: clear
+          // the bubble's pending state (or append one for a window that
+          // never saw the steer_queued event).
+          setMessages((prev) => {
+            const list = prev[key] ?? [];
+            let idx = d.steer_id ? list.findIndex((m) => m.role === 'user' && m.steerId === d.steer_id) : -1;
+            if (idx < 0) idx = list.findIndex((m) => m.role === 'user' && m.pending && m.steer && m.text === d.text);
+            if (idx >= 0) {
+              const cur = list[idx]!;
+              if (cur.role !== 'user') return prev;
+              const { pending: _p, queued: _q, ...rest } = cur;
+              const next = list.slice();
+              next[idx] = { ...rest, steer: true, ts: d.ts ?? cur.ts } as ChatMessage;
+              return { ...prev, [key]: next };
+            }
+            return {
+              ...prev,
+              [key]: [
+                ...list,
+                {
+                  id: newId('um'),
+                  role: 'user',
+                  ts: d.ts ?? Date.now(),
+                  text: d.text,
+                  steer: true,
+                  ...(d.steer_id ? { steerId: d.steer_id } : {}),
+                  ...(d.turnId ? { turnId: d.turnId } : {}),
+                  ...(d.from_agent ? { fromAgent: d.from_agent } : {}),
+                  ...(d.from_agent && d.from_session ? { fromSession: d.from_session } : {}),
+                  ...(d.origin ? { origin: d.origin } : {}),
+                },
+              ],
+            };
+          });
+          if (!d.from_agent) {
+            const pending = pendingSelfSendsRef.current.get(key) ?? [];
+            const textIdx = pending.indexOf(d.text);
+            if (textIdx >= 0) {
+              pending.splice(textIdx, 1);
+              pendingSelfSendsRef.current.set(key, pending);
+            }
+          }
+          return;
+        }
         // Dedupe + append in a SINGLE setMessages updater so the
         // decision is atomic. An earlier version kept `cleared` in
         // a closure outside the updater and then called appendMessage
@@ -1228,7 +1309,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   const send = useCallback<ChatContextValue['send']>(
-    async (agent, session, text, attachments, voice) => {
+    async (agent, session, text, attachments, voice, steer) => {
       if (!text.trim() && (!attachments || attachments.length === 0)) return;
       const key = sessionKey(agent, session);
       // Track the text so we can dedupe the server's user_message
@@ -1253,6 +1334,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         ts: Date.now(),
         text,
         pending: true,
+        ...(steer ? { steer: true } : {}),
         ...(attachments && attachments.length > 0
           ? {
               attachments: attachments.map((a) => ({
@@ -1266,7 +1348,31 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           : {}),
       });
       try {
-        const { turnId } = await api.send(agent, session, text, attachments, voice);
+        const { turnId, steered, steerId } = await api.send(agent, session, text, attachments, voice, steer);
+        if (steer && steered && steerId) {
+          // Went into the running turn. The bubble keeps `pending` until
+          // the user_message with this steer_id says the model read it.
+          setMessages((prev) => {
+            const list = prev[key];
+            if (!list) return prev;
+            return {
+              ...prev,
+              [key]: list.map((m) => (m.id === localId && m.role === 'user' ? { ...m, steer: true, steerId } : m)),
+            };
+          });
+          return;
+        }
+        if (steer && !steered) {
+          // Nothing steerable was running: it queued as a normal turn.
+          setMessages((prev) => {
+            const list = prev[key];
+            if (!list) return prev;
+            return {
+              ...prev,
+              [key]: list.map((m) => (m.id === localId && m.role === 'user' ? { ...m, steer: false } : m)),
+            };
+          });
+        }
         // Tag the optimistic bubble with the server-issued turnId so
         // future SSE events (turn_queued, user_message) can find it.
         // If turn_queued already arrived (race), drain the buffer and
@@ -1572,7 +1678,8 @@ export function useChatSessionFromContext(agent: string, session: string) {
       text: string,
       attachments?: AttachmentRef[],
       voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
-    ) => ctx.send(agent, session, text, attachments, voice),
+      steer?: boolean,
+    ) => ctx.send(agent, session, text, attachments, voice, steer),
     abort: () => ctx.abort(agent, session),
     recall: (messageId: string) => ctx.recall(agent, session, messageId),
     loadOlder: () => ctx.loadOlder(agent, session),

@@ -12,6 +12,7 @@ import {
   Paperclip,
   Send,
   Square,
+  Zap,
   Volume2,
   VolumeX,
   Wrench,
@@ -183,6 +184,10 @@ export function ChatWindow({
   const [ttsAvailable, setTtsAvailable] = useState<boolean>(false);
   const [autoPlayAllowOverride, setAutoPlayAllowOverride] = useState<boolean>(true);
   const [autoPlay, setAutoPlay] = useState<boolean>(false);
+  // Steering: while a turn runs, send the next message INTO it (before
+  // its next step) instead of queuing it behind. Default from the
+  // agent's `steering:` setting; flipped per message with the bolt.
+  const [steerNext, setSteerNext] = useState<boolean>(agent.steering === true);
   useEffect(() => {
     let cancelled = false;
     fetch('/tts/config')
@@ -735,7 +740,7 @@ export function ChatWindow({
             }
           : undefined;
       chat
-        .send(text, readyAttachments.length > 0 ? readyAttachments : undefined, voice)
+        .send(text, readyAttachments.length > 0 ? readyAttachments : undefined, voice, chat.streaming && steerNext)
         .catch((err: Error) => {
           // eslint-disable-next-line no-console
           console.error('[somora-web] send failed', err.message);
@@ -746,7 +751,7 @@ export function ChatWindow({
           setDraft((cur) => cur || text);
         });
     },
-    [draft, chat, pendingAttachments, ttsAvailable, autoPlay],
+    [draft, chat, pendingAttachments, ttsAvailable, autoPlay, steerNext],
   );
 
   // Abort the in-flight turn. Lives on the composer primary button
@@ -1570,6 +1575,22 @@ export function ChatWindow({
         {/* Stop is ADDITIVE next to Send while streaming — Send stays
          *  live so queued sends (server session queue) keep working
          *  from the button, not just via Enter. */}
+        {chat.streaming && (
+          <button
+            type="button"
+            className="chat-send chat-send-steer"
+            title={
+              steerNext
+                ? 'Steering on: the next message goes into the running turn before its next step. Click to queue instead.'
+                : 'Queue: the next message waits until this turn is done. Click to steer it into the running turn.'
+            }
+            aria-label={steerNext ? 'Steering on' : 'Steering off'}
+            aria-pressed={steerNext}
+            onClick={() => setSteerNext((v) => !v)}
+          >
+            <Zap size={14} />
+          </button>
+        )}
         {chat.streaming && (
           <button
             type="button"

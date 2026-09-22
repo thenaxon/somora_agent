@@ -44,6 +44,7 @@ import { loadAttachment } from '../multimodal/load.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
+import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
@@ -900,6 +901,9 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       historyEvents: history.length,
       memoryInjectedCount,
     });
+    // From here on a message posted with `steer: true` reaches this turn
+    // instead of the queue (engines that read the letterbox only).
+    markSteerable(agent, session, resolvedModel.provider.engine, turnId);
 
     const stream = runTurnWithFallback({
       primary: resolvedModel,
@@ -920,6 +924,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ...(fromAgent && fromSession ? { fromSession } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
         history,
+        // Steering: the engine reads the session's letterbox between steps.
+        steer: {
+          drain: () => drainSteer(agent, session),
+          frame: frameSteerMessage,
+          requeue: (msgs) => requeueSteer(agent, session, msgs),
+        },
         metaStore: deps.sessionMetaStore,
         availableModels: listAllModels(deps.config),
         compactionConfig: resolveCompactionConfig(deps.config),
@@ -1012,6 +1022,42 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       }
       if (ev.kind === 'turn_end' && !ev.model) {
         ev.model = turnFallback?.actual ?? `${resolvedModel.providerName}/${resolvedModel.modelId}`;
+      }
+      if (ev.kind === 'steer_applied') {
+        // Each steered message becomes an ordinary user_message record at
+        // the point in the turn where the model actually read it, and
+        // every open window sees it land there.
+        for (const m of ev.messages) {
+          const record = {
+            kind: 'user_message' as const,
+            ts: ev.ts,
+            engine: ev.engine,
+            text: m.text,
+            steer: true as const,
+            steer_id: m.id,
+            origin: m.origin,
+            ...(m.from_agent ? { from_agent: m.from_agent } : {}),
+            ...(m.from_agent && m.from_session ? { from_session: m.from_session } : {}),
+          };
+          await appendEvent(agent, session, record);
+          logger.info({ msg: 'turn.steered', turnId, agent, session, steerId: m.id, engine: ev.engine });
+          if (publishSse) {
+            await publishSse({
+              event: 'user_message',
+              data: {
+                text: m.text,
+                ts: ev.ts,
+                turnId,
+                steer: true,
+                steer_id: m.id,
+                origin: m.origin,
+                ...(m.from_agent ? { from_agent: m.from_agent } : {}),
+                ...(m.from_agent && m.from_session ? { from_session: m.from_session } : {}),
+              },
+            });
+          }
+        }
+        continue;
       }
       if (ev.kind !== 'assistant_delta' && ev.kind !== 'thinking_delta') {
         await appendEvent(agent, session, ev);

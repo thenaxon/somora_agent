@@ -63,6 +63,15 @@ export type NormalizedEvent =
        */
       origin?: TurnOrigin;
       /**
+       * Steering (since 2026-09-23): this message was sent while a turn
+       * was running and handed to the model inside that turn, before
+       * its next step — it did not start a turn of its own. `steer_id`
+       * is the id the client got back from `POST /chat/send` with
+       * `steer: true`, so it can pair the record with its bubble.
+       */
+      steer?: true;
+      steer_id?: string;
+      /**
        * Correlation UUID for an `agent_ask` round-trip. Persisted on
        * BOTH sides: on the caller's side as a tool_call → tool_result
        * pair (the call_id is in the tool_call payload), and on the
@@ -269,6 +278,25 @@ export type NormalizedEvent =
       payload: unknown;
     }
   | { kind: 'turn_start'; ts: number; engine: string; turnId: string }
+  /**
+   * Engine-internal: steer messages (src/server/steer-inbox.ts) were
+   * handed to the model at a step boundary, in this order. run-turn
+   * turns each into a persisted `user_message` with `steer: true`; the
+   * event itself is never written to the session file.
+   */
+  | {
+      kind: 'steer_applied';
+      ts: number;
+      engine: string;
+      messages: Array<{
+        id: string;
+        text: string;
+        ts: number;
+        origin: TurnOrigin;
+        from_agent?: string;
+        from_session?: string;
+      }>;
+    }
   | {
       kind: 'turn_end';
       ts: number;
@@ -480,6 +508,11 @@ export type SseEvent =
         /** Same value as on the stored event — see NormalizedEvent. */
         origin?: TurnOrigin;
         agent_ask_call_id?: string;
+        /** Steering: this message was handed to the running turn (the
+         *  `turnId` here) before its next step; `steer_id` pairs it with
+         *  the `steer_queued` event / the POST /chat/send response. */
+        steer?: true;
+        steer_id?: string;
         /** How the turn was said, when it was not typed. Mirrors the
          *  `input` field on the stored event so the live bubble and the
          *  one rebuilt from history render the same way — dictation and
@@ -509,6 +542,17 @@ export type SseEvent =
         workId?: string;
         kind?: string;
       };
+    }
+  /**
+   * A message was accepted for steering into the running turn `turnId`
+   * (POST /chat/send with `steer: true`). It is not in the session file
+   * yet: the matching `user_message` with the same `steer_id` follows
+   * when the engine hands it to the model. Other windows on the session
+   * render a pending bubble from this.
+   */
+  | {
+      event: 'steer_queued';
+      data: { steerId: string; text: string; ts: number; turnId: string; origin: TurnOrigin };
     }
   | {
       // A queued user turn was taken back before it started

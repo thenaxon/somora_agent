@@ -891,6 +891,20 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   color: var(--line-2);
   font-style: normal;
 }
+/* Steering marker — same dim family as "queued"; the bolt says the
+ * message went into the running turn instead of waiting behind it. */
+.chat-msg-steer > svg {
+  opacity: 0.85;
+}
+/* Composer toggle while a turn runs: steer the next message into it
+ * (pressed) or queue it (unpressed). */
+.chat-send-steer {
+  opacity: 0.55;
+}
+.chat-send-steer[aria-pressed='true'] {
+  opacity: 1;
+  color: var(--accent, #d9a400);
+}
 /* "edit" next to the queued marker — takes the message back into the
  * composer while it is still waiting in line. Same dim italic family
  * as the marker; underline on hover so it reads as an action. */

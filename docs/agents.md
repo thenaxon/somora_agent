@@ -94,6 +94,15 @@ fallback: gpt55       # used when primary fails before producing any output
 # the `reasoning` capability — see thinking.md.
 thinking: medium
 
+# Optional: steering default for the web client. true = a message typed
+# while a turn is running is handed INTO that turn before its next step
+# (the model reads it between two tool calls); false (default) = it waits
+# in the session queue and becomes its own turn. The bolt next to Send
+# flips it per message either way. Works on the openai-compatible,
+# claude-cli and codex-cli engines; other engines always queue. See the
+# `steer` field of POST /chat/send in api.md.
+steering: false
+
 # Optional: sampling defaults for openai-compatible models (temperature,
 # top_p, top_k, …). Override the model's own defaults per key; per-session
 # via /sampling and /temp. Dormant on claude-cli / codex-cli — see sampling.md.

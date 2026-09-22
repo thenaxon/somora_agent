@@ -28,13 +28,52 @@ import type { AgentEngine, TurnInput } from './types.ts';
 import { claudeCliThinkingOptions } from './thinking-params.ts';
 import { buildAnthropicUserContent } from '../multimodal/user-content.ts';
 
-async function* userInputStream(
-  content: SDKUserMessage['message']['content'],
-): AsyncIterable<SDKUserMessage> {
-  yield {
-    type: 'user',
-    parent_tool_use_id: null,
-    message: { role: 'user', content },
+/**
+ * The SDK's prompt input for one turn. Streaming-input mode: the first
+ * user message goes out at once; the iterable then stays open so a
+ * steer message (src/server/steer-inbox.ts) can be pushed while the
+ * turn runs, and is closed when the turn's `result` arrives so the
+ * child exits as before.
+ */
+interface SteerableInput {
+  iterable: AsyncIterable<SDKUserMessage>;
+  push: (msg: SDKUserMessage) => void;
+  close: () => void;
+}
+
+function createSteerableInput(first: SDKUserMessage): SteerableInput {
+  const queue: SDKUserMessage[] = [first];
+  let closed = false;
+  let notify: (() => void) | undefined;
+  const wake = (): void => {
+    const n = notify;
+    notify = undefined;
+    n?.();
+  };
+  return {
+    iterable: {
+      async *[Symbol.asyncIterator]() {
+        while (true) {
+          if (queue.length > 0) {
+            yield queue.shift()!;
+            continue;
+          }
+          if (closed) return;
+          await new Promise<void>((resolve) => {
+            notify = resolve;
+          });
+        }
+      },
+    },
+    push: (msg) => {
+      if (closed) return;
+      queue.push(msg);
+      wake();
+    },
+    close: () => {
+      closed = true;
+      wake();
+    },
   };
 }
 
@@ -220,6 +259,11 @@ export const claudeCliEngine: AgentEngine = {
     // where the throw came from.
     const sdkAbortController = new AbortController();
     const onUpstreamAbort = () => sdkAbortController.abort();
+    // Steering (see createSteerableInput): the open input stream, the
+    // letterbox poll, and records waiting to be yielded from the loop.
+    let steerInput: SteerableInput | undefined;
+    let steerPoll: ReturnType<typeof setInterval> | undefined;
+    const pendingSteerEvents: NormalizedEvent[] = [];
     if (signal) {
       if (signal.aborted) sdkAbortController.abort();
       else signal.addEventListener('abort', onUpstreamAbort, { once: true });
@@ -307,8 +351,34 @@ export const claudeCliEngine: AgentEngine = {
       // the sync module logs if it actually had to heal.
       reconcileClaudeCredentials();
 
+      steerInput = createSteerableInput({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { role: 'user', content: userContent },
+      });
+      // Steering: poll the session's letterbox and push what arrives as
+      // further user messages on the open input stream. The SDK hands
+      // them to the model at its next step; the record for the session
+      // file is yielded from the main loop (pendingSteerEvents).
+      if (input.steer) {
+        const steer = input.steer;
+        const target = steerInput;
+        steerPoll = setInterval(() => {
+          const msgs = steer.drain();
+          if (msgs.length === 0) return;
+          for (const m of msgs) {
+            target.push({
+              type: 'user',
+              parent_tool_use_id: null,
+              message: { role: 'user', content: steer.frame(m) },
+            });
+          }
+          pendingSteerEvents.push({ kind: 'steer_applied', ts: Date.now(), engine: ENGINE, messages: msgs });
+        }, 300);
+        steerPoll.unref?.();
+      }
       const stream = query({
-        prompt: userInputStream(userContent),
+        prompt: steerInput.iterable,
         options: {
           model: resolvedModel.modelId,
           systemPrompt: systemPromptForTurn,
@@ -450,6 +520,7 @@ export const claudeCliEngine: AgentEngine = {
         if (next.done) break;
         const msg = next.value;
         armIdleTimer();
+        while (pendingSteerEvents.length > 0) yield pendingSteerEvents.shift()!;
         if ('session_id' in msg && typeof msg.session_id === 'string') {
           lastSdkSessionId = msg.session_id;
         }
@@ -568,6 +639,14 @@ export const claudeCliEngine: AgentEngine = {
             }
           }
         } else if (msg.type === 'result') {
+          // The turn is over: close the input so the SDK child exits;
+          // a steer message that arrives from now on becomes a normal
+          // turn (start-turn.ts).
+          steerInput?.close();
+          if (steerPoll) {
+            clearInterval(steerPoll);
+            steerPoll = undefined;
+          }
           if (msg.subtype === 'success') {
             // `msg.result` from claude-agent-sdk only carries the final
             // assistant text block — for multi-block turns that
@@ -827,6 +906,8 @@ export const claudeCliEngine: AgentEngine = {
       }
     } finally {
       disarmIdleTimer();
+      if (steerPoll) clearInterval(steerPoll);
+      steerInput?.close();
       if (signal) signal.removeEventListener('abort', onUpstreamAbort);
     }
   },

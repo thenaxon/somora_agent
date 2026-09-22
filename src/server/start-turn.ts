@@ -36,7 +36,8 @@ import { runChatTurn as runChatTurnReal, type RunChatTurnArgs } from './run-turn
 import type { ChatTurnResolveDeps, ChatTurnResult } from './run-turn-types.ts';
 import { acquireSessionLock, DequeuedError } from './session-queue.ts';
 import { originCallId, originKind, originLabel, originToLegacy, type TurnOrigin } from './turn-origin-kind.ts';
-import { failWork, finishWork, markRunning } from './work-ledger.ts';
+import { failWork, finishWork, markRunning, openWork } from './work-ledger.ts';
+import { drainSteer, unmarkSteerable } from './steer-inbox.ts';
 import { composeTurnPrefix } from './turn-framing.ts';
 
 export interface StartTurnDeps {
@@ -197,7 +198,30 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
       abort.release();
     }
   } finally {
+    // Steer messages that arrived too late for the engine to read (the
+    // turn was already finishing) are not lost: they become ordinary
+    // turns, queued in the order they came, once the lock is free.
+    unmarkSteerable(agent, session, turnId);
+    const leftover = drainSteer(agent, session);
     release();
+    for (const m of leftover) {
+      const lateTurnId = randomUUID();
+      logger.info({ msg: 'steer.late_as_turn', agent, session, steerId: m.id, turnId: lateTurnId });
+      openWork({
+        id: lateTurnId,
+        origin: m.origin,
+        target: { agent, session },
+        requester: m.origin.kind === 'human' ? { human: true } : undefined,
+        text: m.text,
+        wake: 'never',
+      });
+      void startTurn({ agent, session, text: m.text, origin: m.origin, turnId: lateTurnId, workId: lateTurnId }).catch(
+        (err: unknown) => {
+          if (err instanceof DequeuedError) return;
+          logger.error({ msg: 'steer.late_turn_failed', agent, session, err: (err as Error).message });
+        },
+      );
+    }
   }
 }
 

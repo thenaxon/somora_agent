@@ -23,6 +23,9 @@ export interface AgentInfo {
    *  ("Orchestrator", "Coder", "Researcher" etc.). Falls back to
    *  the literal "agent" when unset. */
   role?: string;
+  /** agent.yaml `steering:` — default for a message typed while a turn
+   *  runs: true = hand it into the running turn, false = queue. */
+  steering?: boolean;
 }
 
 export interface SessionSummary {
@@ -845,7 +848,8 @@ export const api = {
     text: string,
     attachments?: AttachmentRef[],
     voice?: { inputModality?: 'voice'; autoPlayRequested?: boolean; sttProvider?: string },
-  ): Promise<{ turnId: string }> => {
+    steer?: boolean,
+  ): Promise<{ turnId: string; steered: boolean; steerId?: string }> => {
     const res = await fetch('/chat/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -853,6 +857,7 @@ export const api = {
         agent,
         session,
         text,
+        ...(steer ? { steer: true } : {}),
         ...(attachments && attachments.length > 0
           ? {
               attachments: attachments.map(({ hash, name, mime, size }) => ({
@@ -876,8 +881,12 @@ export const api = {
     // optimistic user-bubble for matching with future SSE events
     // (turn_queued, user_message). Older servers don't return it —
     // empty string is the safe fallback (no queue indicator possible).
-    const body = (await res.json().catch(() => ({}))) as { turnId?: string };
-    return { turnId: typeof body.turnId === 'string' ? body.turnId : '' };
+    const body = (await res.json().catch(() => ({}))) as { turnId?: string; steered?: boolean; steerId?: string };
+    return {
+      turnId: typeof body.turnId === 'string' ? body.turnId : '',
+      steered: body.steered === true,
+      ...(typeof body.steerId === 'string' ? { steerId: body.steerId } : {}),
+    };
   },
   uploadAttachment: async (file: File): Promise<AttachmentRef> => {
     // Stream raw bytes — multipart parsing on the server pulls

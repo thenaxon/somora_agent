@@ -180,6 +180,13 @@ const AgentYamlSchema = z
      */
     sampling: SamplingSchema.optional(),
     /**
+     * Steering default for the web client: `true` = a message typed
+     * while a turn runs is handed INTO that turn (before its next step)
+     * instead of queuing behind it. `false` (default) = queue. The
+     * person can flip it per message in the composer either way.
+     */
+    steering: z.boolean().optional(),
+    /**
      * Per-agent workspace override. When set, file_* tools default to
      * this dir instead of the server-global `workspace.default`. Path
      * is auto-created (mkdir -p) at server start. ~ expands.
@@ -288,6 +295,9 @@ export interface AgentInfo {
   color: string | undefined;
   /** Optional short role label from AGENTS.md frontmatter. */
   role: string | undefined;
+  /** agent.yaml `steering:` — the web client's default for a message
+   *  typed while a turn runs (true = steer into it, false = queue). */
+  steering: boolean;
 }
 
 export interface Persona {
@@ -304,6 +314,8 @@ export interface Persona {
   thinking: ThinkingLevel | undefined;
   /** agent.yaml `sampling:` block, see docs/sampling.md. */
   sampling: SamplingConfig | undefined;
+  /** agent.yaml `steering:` — web default for messages typed mid-turn. */
+  steering: boolean;
   /**
    * Optional per-agent workspace override (resolved absolute path with
    * ~ expanded). When undefined, file_* tools fall back to the server-
@@ -409,12 +421,14 @@ export async function listAgents(): Promise<AgentInfo[]> {
     if (!s.isDirectory()) continue;
     const agentMd = await readMd(join(dir, 'AGENTS.md'));
     if (!agentMd) continue;
+    const yaml = await readAgentYaml(join(dir, 'agent.yaml'));
     out.push({
       name: entry,
       description: agentMd.data.description ?? '',
       icon: agentMd.data.icon,
       color: agentMd.data.color,
       role: agentMd.data.role,
+      steering: yaml.steering === true,
     });
   }
   return out;
@@ -445,6 +459,7 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     fallback: normaliseFallbackChain(agentYaml.model, agentYaml.fallback, name),
     thinking: agentYaml.thinking,
     sampling: agentYaml.sampling,
+    steering: agentYaml.steering === true,
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
     skillGating: normalizeSkillGating(agentYaml.skills),

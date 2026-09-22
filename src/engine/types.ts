@@ -2,6 +2,7 @@ import type { CompactionConfig } from '../compaction/types.ts';
 import type { AgentLoopConfig, ResolvedModel, ThinkingLevel, SamplingConfig } from '../config/types.ts';
 import type { ToolInvoker } from '../tools/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
+import type { SteerMessage } from '../server/steer-inbox.ts';
 import type { DetectedMime } from '../multimodal/mime.ts';
 
 /**
@@ -106,6 +107,23 @@ export interface TurnInput {
   projectContext?: string;
   userMessage: string;
   history: NormalizedEvent[];
+  /**
+   * Steering: messages sent to this session while the turn runs. An
+   * engine that supports it calls `drain()` at each step boundary
+   * (before the next model call), feeds every message to the model as
+   * a user message framed by `frame()`, and yields one `steer_applied`
+   * event so run-turn persists them in order. Engines that cannot take
+   * input mid-turn ignore this; run-turn then never marks the turn as
+   * steerable and the message queues as a normal turn.
+   */
+  steer?: {
+    drain: () => SteerMessage[];
+    frame: (m: SteerMessage) => string;
+    /** Put messages back (in front) when the engine could not deliver
+     *  them — e.g. a `turn/steer` request refused; they then reach the
+     *  model on a later step or become a normal turn at the end. */
+    requeue: (msgs: SteerMessage[]) => void;
+  };
   metaStore: SessionMetaStore;
   resolvedModel: ResolvedModel;
   /**

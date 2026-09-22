@@ -971,6 +971,17 @@ export const openAiCompatibleEngine: AgentEngine = {
         roundsStarted = round;
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
 
+        // Steering: what the person (or an agent) sent while the previous
+        // round ran reaches the model now, before the next call, as user
+        // messages. run-turn persists them from the event, in this order.
+        const steered = input.steer?.drain() ?? [];
+        if (steered.length > 0) {
+          for (const m of steered) {
+            loopMessages.push({ role: 'user', content: input.steer!.frame(m) });
+          }
+          yield { kind: 'steer_applied', ts: ts(), engine: ENGINE, messages: steered };
+        }
+
         // Does what we are about to send still fit? The pre-turn
         // compaction sized the conversation before any tool ran, and a
         // turn grows with every round: tool results, images, the tool

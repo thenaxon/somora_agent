@@ -1227,14 +1227,55 @@ Body fields:
   posted here is registered like one from `/chat/send-sync`, so
   `GET /a2a/ask-result` finds it while the turn is queued or running,
   not only in the target's history afterwards.
+- `steer` (optional, default false) — hand the text to the turn that is
+  running on this session right now instead of queuing a turn of its
+  own; see *Steering* below. Ignored together with `agent_ask_call_id`.
 
 Response: `{ ok: true, turnId }`. The `turnId` is the server-issued
 identifier for the queued/running turn — clients echo it through to
 match later SSE events (`turn_queued`, `user_message`) back to the
-optimistic bubble they rendered locally.
+optimistic bubble they rendered locally. With `steer: true` the response
+is `{ ok: true, steered: true, steerId, turnId }` when the message went
+into the running turn (`turnId` is that turn's), or `{ ok: true, turnId,
+steered: false }` when nothing steerable was running and it queued as
+usual.
 
 Streaming responses arrive via `/chat/stream`; this endpoint just
 acknowledges receipt.
+
+#### Steering
+
+A message for a session whose turn is still running can be handed
+**into** that turn instead of waiting behind it: `steer: true`. The
+server keeps it in a per-session letterbox; the engine reads the
+letterbox at its next step boundary — after the tools of the current
+round returned, before the next model call — and gives the model the
+text as a user message framed as "sent while you were working, delivered
+before your next step". The model then changes course, stops, or carries
+on as told. A running tool call is never interrupted; the message lands
+after it returns.
+
+What a client sees: the `202` response carries `steerId`; a
+`steer_queued` SSE event tells the other windows on the session; and
+when the engine has handed the text to the model, a `user_message` event
+(and a session record) with `steer: true` and the same `steer_id`
+follows — that is the moment the bubble stops being "pending". The
+record sits in the session file exactly where the model read it, between
+the tool results of one round and the next assistant step.
+
+Engines: `openai-compatible` (somora's own loop), `claude-cli`
+(streamed input) and `codex-cli` (`turn/steer`) take steer messages;
+any other engine does not, and the request queues instead (`steered:
+false`). A message that arrives when the turn is already finishing, too
+late for the engine to read it, becomes an ordinary queued turn of its
+own — nothing is dropped. Sub-agent and voice turns are steerable like
+any other; `agent_ask` calls are not steered (their answer must come
+from a turn of their own).
+
+The web composer shows a bolt next to Send while a turn runs: pressed =
+the next message steers, unpressed = it queues. The agent's
+`steering:` setting in `agent.yaml` is the default position (see
+[agents.md](agents.md)).
 
 #### Queuing
 
@@ -1584,8 +1625,11 @@ Event types:
   against `contextWindow`. All three engines report it; a client should
   still treat it as optional.
 - `user_message` — `{text, ts, turnId?, origin?, input?, from_agent?,
-  from_session?, from_system?, agent_ask_call_id?}` — broadcast when a
-  turn's user_message is written to JSONL. `input` is
+  from_session?, from_system?, agent_ask_call_id?, steer?, steer_id?}`
+  — broadcast when a turn's user_message is written to JSONL. `steer:
+  true` marks a message that was handed into the running turn `turnId`
+  (see *Steering* under `POST /chat/send`); `steer_id` pairs it with the
+  `steer_queued` event and the send response. `input` is
   `{modality?: 'text'|'voice', source?: 'stt'|'realtime'}` when the
   turn was not typed — `stt` is the microphone button, `realtime` a
   sentence from a standing call — so the live bubble and the one
@@ -1663,6 +1707,12 @@ Event types:
   (= `callId`); `sentinel`, `tmux`, `browser` and `voice` set
   `from_system` to the same word; `wake` sets `from_system` to its
   `about`; `human` and `subagent` set none of them.
+- `steer_queued` — `{steerId, text, ts, turnId, origin}` — fired when
+  `POST /chat/send` with `steer: true` accepted a message for the turn
+  `turnId` that is running. Not yet in the session file: the matching
+  `user_message` with `steer: true` and the same `steer_id` follows
+  once the engine has handed the text to the model. Other windows on
+  the session render a pending bubble from this.
 - `turn_queued` — `{turnId, ahead, workId?, kind?}` — fired when `POST /chat/send`
   hit a busy lock and the turn had to wait. `ahead` is the number
   of turns this one must wait for (≥1, includes the currently-
