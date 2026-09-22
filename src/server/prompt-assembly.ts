@@ -275,7 +275,9 @@ async function assembleBuilderPrompt(args: {
     isGitRepo: await isGitRepo(workdir),
     platform: `${process.platform} ${process.arch}`,
     modelRef: `${persona.model ?? 'default model'}`,
-    today: new Date().toISOString().slice(0, 10),
+    // Local calendar date, not UTC: at 00:40 CEST the ISO date still
+    // says yesterday.
+    today: new Date().toLocaleDateString('en-CA'),
   });
   const helperNote =
     subagentDepth > 0

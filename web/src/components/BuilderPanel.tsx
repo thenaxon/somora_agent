@@ -3,16 +3,74 @@
 // list the builder keeps with todo_write, and the question it asked
 // with ask_user — answered here with buttons or free text.
 
-import { useEffect, useState } from 'react';
-import { Check, Circle, CircleDot, Play, Zap } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, ChevronLeft, ChevronRight, Circle, CircleDot, Play, Zap } from 'lucide-react';
 import { api, type BuilderQuestionDto, type BuilderStateDto } from '../lib/api';
 import { useBuilderSession } from '../hooks/useBuilderSession';
+
+/** Below this chat-window width the panel collapses on its own. */
+const NARROW_PX = 640;
 
 export function BuilderPanel({ agent, session }: { agent: string; session: string }) {
   const { data, refresh } = useBuilderSession(agent, session, true);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const state = data?.state ?? null;
+  const ref = useRef<HTMLElement | null>(null);
+  // Collapsed by hand (remembered per agent) or because the window is
+  // narrow. The host `.chat` gets `panel-collapsed` so it reserves only
+  // the strip; the chat column itself is never touched.
+  const collapseKey = `somora.web.builderPanel.collapsed.${agent}`;
+  const [userCollapsed, setUserCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem(collapseKey) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const host = ref.current?.parentElement;
+    if (!host || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => setNarrow(host.clientWidth < NARROW_PX));
+    ro.observe(host);
+    setNarrow(host.clientWidth < NARROW_PX);
+    return () => ro.disconnect();
+  }, []);
+  const collapsed = userCollapsed || narrow;
+  useEffect(() => {
+    const host = ref.current?.parentElement;
+    if (!host) return;
+    host.classList.toggle('panel-collapsed', collapsed);
+    return () => host.classList.remove('panel-collapsed');
+  }, [collapsed]);
+  const toggleCollapsed = () => {
+    setUserCollapsed((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem(collapseKey, next ? '1' : '0');
+      } catch {
+        /* storage unavailable */
+      }
+      return next;
+    });
+  };
+  if (collapsed) {
+    const open = state?.todos.filter((t) => t.status !== 'completed' && t.status !== 'cancelled').length ?? 0;
+    return (
+      <aside ref={ref} className="builder-panel is-collapsed" aria-label="Builder panel (collapsed)">
+        <button
+          type="button"
+          className="builder-panel-toggle"
+          title={narrow && !userCollapsed ? 'Window too narrow for the panel — widen it' : `Show the builder panel${open ? ` (${open} open task${open === 1 ? '' : 's'})` : ''}`}
+          onClick={toggleCollapsed}
+        >
+          <ChevronLeft size={14} />
+        </button>
+        {data?.question && <Zap size={12} style={{ color: 'var(--accent, #d9a400)', marginTop: 6 }} />}
+      </aside>
+    );
+  }
 
   const patch = async (p: { mode?: 'attended' | 'unattended'; phase?: 'plan' | 'build' }) => {
     setBusy('patch');
@@ -44,10 +102,15 @@ export function BuilderPanel({ agent, session }: { agent: string; session: strin
   }, [notice]);
 
   return (
-    <aside className="builder-panel" aria-label="Builder panel">
+    <aside ref={ref} className="builder-panel" aria-label="Builder panel">
       <div className="builder-panel-head">
-        <div className="builder-panel-title">
-          <Zap size={12} /> Builder
+        <div className="builder-panel-topline">
+          <div className="builder-panel-title">
+            <Zap size={12} /> Builder
+          </div>
+          <button type="button" className="builder-panel-toggle" title="Hide the builder panel" onClick={toggleCollapsed}>
+            <ChevronRight size={14} />
+          </button>
         </div>
         {state ? (
           <div className="builder-panel-switches">

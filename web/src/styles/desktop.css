@@ -1902,21 +1902,24 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .voice-spoken-time { margin-left: auto; opacity: 0.6; font-style: normal; }
 
 /* ── Builder panel (docs/builder.md) ─────────────────────────────────
- * Docked to the right of a builder's chat window: the chat keeps its
- * column layout in the first grid column, the panel spans every row of
- * the second. */
+ * Docked to the right of a builder's chat window. The chat keeps its
+ * flex-column layout untouched and only reserves room on the right;
+ * the panel sits absolutely in that room (`.chat` is position:
+ * relative). Collapsed — by the person or automatically when the
+ * window is narrow — it shrinks to a 28px strip with a toggle. */
 .chat.chat-with-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  padding-right: 300px;
 }
-.chat.chat-with-panel > *:not(.builder-panel) {
-  grid-column: 1;
-  min-width: 0;
+.chat.chat-with-panel.panel-collapsed {
+  padding-right: 28px;
 }
 .builder-panel {
-  grid-column: 2;
-  grid-row: 1 / -1;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  box-sizing: border-box;
   border-left: 1px solid var(--agent-line, var(--line));
   background: var(--panel-2, var(--panel, transparent));
   display: flex;
@@ -1926,6 +1929,31 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   overflow-y: auto;
   font-size: 12px;
   min-width: 0;
+}
+.builder-panel.is-collapsed {
+  width: 28px;
+  padding: 8px 0;
+  gap: 0;
+  align-items: center;
+  overflow: hidden;
+}
+.builder-panel-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+}
+.builder-panel-toggle:hover {
+  color: var(--text);
+}
+.builder-panel-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 .builder-panel-head {
   display: flex;
