@@ -142,7 +142,12 @@ export function AgentTile({
       </div>
       <div className="agent-icon-label">{agent.name}</div>
       <div className="agent-icon-sub">
-        {(agent.kind === 'builder' ? `builder${agent.role ? ` · ${agent.role}` : ''}` : (agent.role ?? 'agent')).toLowerCase()}
+        {(agent.kind === 'builder'
+          ? agent.role && agent.role.trim().toLowerCase() !== 'builder'
+            ? `builder · ${agent.role}`
+            : 'builder'
+          : (agent.role ?? 'agent')
+        ).toLowerCase()}
       </div>
     </div>
   );
