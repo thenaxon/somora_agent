@@ -230,6 +230,11 @@ const CreateInput = z
     tags: z.array(z.string().min(1)).default([]),
     expires: z.string().nullable().optional().describe('ISO date string for soft-expiry, or null.'),
     paths: z.array(ProjectPathSchema).default([]).describe('Initial pointer list (can be empty).'),
+    workdir: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('The project\'s working directory (its repository), absolute or ~/…. Pinning the project to a session makes it the session\'s working directory: relative file paths and exec\'s default cwd resolve there; a builder agent works in it.'),
   })
   .strict();
 
@@ -269,6 +274,7 @@ export const projectCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
           additionalProperties: false,
         },
       },
+      workdir: { type: 'string', description: 'Working directory (repository) of the project, absolute or ~/…; becomes the session working directory when pinned.' },
     },
     required: ['slug', 'name', 'entity'],
     additionalProperties: false,
@@ -295,6 +301,7 @@ export const projectCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
       ...(input.expires !== undefined ? { expires: input.expires } : {}),
       archived: false,
       paths: input.paths,
+      ...(input.workdir !== undefined ? { workdir: input.workdir } : {}),
     });
     await writeProject(project);
     logger.info({
@@ -315,7 +322,7 @@ export const projectCreate: ToolDefinition<z.infer<typeof CreateInput>> = {
 // not stored — the on-disk shape is always the frontmatter snapshot.
 const SetFieldOp = z.object({
   op: z.literal('set_field'),
-  field: z.enum(['name', 'description', 'color', 'expires']),
+  field: z.enum(['name', 'description', 'color', 'expires', 'workdir']),
   value: z.string().nullable(),
 });
 const AddPathOp = z.object({
@@ -381,6 +388,12 @@ function applyOps(
             delete next.description;
           } else {
             next.description = op.value;
+          }
+        } else if (op.field === 'workdir') {
+          if (op.value === null || op.value.trim().length === 0) {
+            delete next.workdir;
+          } else {
+            next.workdir = op.value.trim();
           }
         } else if (op.field === 'color') {
           if (op.value === null) {
@@ -480,7 +493,7 @@ export const projectUpdate: ToolDefinition<z.infer<typeof UpdateInput>> = {
               description: 'Replace a top-level frontmatter field. `value: null` clears optional fields (cannot clear name).',
               properties: {
                 op: { const: 'set_field' },
-                field: { enum: ['name', 'description', 'color', 'expires'] },
+                field: { enum: ['name', 'description', 'color', 'expires', 'workdir'] },
                 value: { type: ['string', 'null'] },
               },
               required: ['op', 'field', 'value'],

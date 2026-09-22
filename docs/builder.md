@@ -134,19 +134,36 @@ next to Send; `steering: true` in agent.yaml makes that the default)
 
 ## Handing over a brief
 
-From another agent (an orchestrator) the hand-over is one message into
-a builder session — with `agent_ask` and `create_session: true` when the
-session does not exist yet:
+From another agent (an orchestrator) the hand-over is one call:
+`builder_dispatch` creates a fresh session on the builder, pins the
+project (its `workdir` becomes the working directory), sets the session
+to unattended + build and sends the order; the caller returns at once
+and is woken with the builder's report (an `[agent answer]` wake, read
+with `agent_ask_result`). Without a project, name the repository in the
+order. The order itself, in `task` (plus `plan_path`, `done_criteria`,
+`report_path`):
 
 > Read the plan at `<path>`. Implement it. Done means: `<criterion,
 > e.g. tests green and feature X usable>`. Write the report to `<path>`
 > at the end. Decide open questions yourself and list them in the
 > report.
 
-Then wait for the answer (the report) — no interim check-ins, no
-corrections into running work; a correction is a new message, which
+Then wait for the report — no interim check-ins, no corrections into
+running work; a correction is a new message into that session, which
 steers into the running turn or starts the next one. The session opened
-this way starts **unattended** and in **build**.
+this way starts **unattended** and in **build**. Every colleague's team
+block says the same about a builder, so an orchestrator on any model
+sees the rule.
+
+## Working directory
+
+A builder works where its session points: the folder of the pinned
+project (`workdir`, see [projects.md](projects.md)), else the agent's
+workspace. Without a pinned project folder the prompt tells an attended
+builder to ask for the repository or create and pin the project itself
+(`project_create` with `workdir`, `project_focus`), and an unattended
+one to report that no project folder was given. Helpers it spawns
+inherit the pin and the folder.
 
 ## Limits and loop
 

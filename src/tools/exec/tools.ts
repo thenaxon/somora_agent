@@ -259,7 +259,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       cwd: {
         type: 'string',
         description:
-          'Working directory. Absolute, "~/..." or relative-to-target-home; must exist.',
+          'Working directory. Absolute, "~/..." or relative-to-target-home; must exist. Default: the folder of the project pinned to this session (when it has a workdir), else the server process cwd.',
       },
       env: { type: 'object', additionalProperties: { type: 'string' } },
       background: { type: 'boolean', default: false },

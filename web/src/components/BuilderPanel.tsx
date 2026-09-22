@@ -45,8 +45,11 @@ export function BuilderPanel({
     if (!host || typeof ResizeObserver === 'undefined') return;
     let ro: ResizeObserver | undefined;
     try {
-      ro = new ResizeObserver((entries) => {
-        const w = entries[0]?.contentRect.width ?? host.clientWidth;
+      // Border-box width: the content box shrinks by the room the panel
+      // reserves, so measuring it made collapse and expand chase each
+      // other around the threshold (flicker, 2026-09-23).
+      ro = new ResizeObserver(() => {
+        const w = host.getBoundingClientRect().width;
         setNarrow(w < NARROW_PX);
       });
       ro.observe(host);
