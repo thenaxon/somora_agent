@@ -28,6 +28,59 @@ export function matchesToolPattern(pattern: string, name: string, toolset: Tools
   return pattern === name;
 }
 
+/**
+ * What a Builder agent (agent.yaml `kind: builder`) sees by default: the
+ * coding harness set — files, shell, task list, questions, helpers,
+ * consulting colleagues, skills, the web page it was pointed at, the
+ * project it is pinned to, and read-only memory. Everything else
+ * (memory writes, dreaming, sentinel, browser, media, tmux, docs, wiki,
+ * external MCP servers) is off unless the agent's own `tools.allow`
+ * names it. A short list is the point: a local model that is offered 48
+ * tools (~19k tokens of schema per request) stops using any of them
+ * well; a coding harness offers ten to twenty.
+ */
+export const BUILDER_TOOL_ALLOW: readonly string[] = [
+  'file_read',
+  'file_write',
+  'file_patch',
+  'file_search',
+  'file_list',
+  'exec',
+  'process',
+  'todo_write',
+  'ask_user',
+  'plan_write',
+  'spawn_subagent',
+  'subagent_result',
+  'agent_ask',
+  'agent_ask_result',
+  'skill',
+  'skill_list',
+  'web_fetch',
+  'project_get',
+  'project_list',
+  'project_create',
+  'project_focus',
+  'memory_search',
+  'memory_get',
+  'time_now',
+];
+
+export type AgentKind = 'chat' | 'builder';
+
+/**
+ * The gating a persona's turn actually runs with: the kind's defaults
+ * merged with what agent.yaml says. Chat agents: agent.yaml as is.
+ * Builders: allow = kind list ∪ agent.yaml allow, deny = agent.yaml
+ * deny — so an operator adds a tool by naming it in `allow` and removes
+ * one by naming it in `deny`, and the matrix in the web shows the result.
+ */
+export function effectiveToolGating(kind: AgentKind, own: ToolGating | undefined): ToolGating | undefined {
+  if (kind !== 'builder') return own;
+  const allow = [...BUILDER_TOOL_ALLOW, ...(own?.allow ?? [])];
+  return { deny: own?.deny ?? [], allow: [...new Set(allow)] };
+}
+
 export function isToolAllowed(
   name: string,
   toolset: Toolset | undefined,

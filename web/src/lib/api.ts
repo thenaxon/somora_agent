@@ -26,6 +26,9 @@ export interface AgentInfo {
   /** agent.yaml `steering:` — default for a message typed while a turn
    *  runs: true = hand it into the running turn, false = queue. */
   steering?: boolean;
+  /** agent.yaml `kind:` — `chat` (default) or `builder` (a coding
+   *  harness: no persona prose, short tool set, long turns). */
+  kind?: 'chat' | 'builder';
 }
 
 export interface SessionSummary {
@@ -837,6 +840,42 @@ export const api = {
   /** What a session is doing right now, what waits behind it, what is
    *  on its way back to it, and what it started elsewhere
    *  (GET /agents/:agent/sessions/:session/work). Previews only. */
+  /** Builder session state: mode, phase, plan path, task list, open question. */
+  builderSession: (agent: string, session: string, signal?: AbortSignal) =>
+    getJson<BuilderSessionResponse>(
+      `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/builder`,
+      signal ? { signal } : undefined,
+    ),
+  patchBuilder: async (
+    agent: string,
+    session: string,
+    patch: { mode?: 'attended' | 'unattended'; phase?: 'plan' | 'build'; planPath?: string | null },
+  ): Promise<{ state: BuilderStateDto }> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/builder`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`builder ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    return (await res.json()) as { state: BuilderStateDto };
+  },
+  builderGo: async (agent: string, session: string, note?: string): Promise<{ state: BuilderStateDto; turnId: string }> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/builder/go`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(note ? { note } : {}),
+    });
+    if (!res.ok) throw new Error(`builder/go ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    return (await res.json()) as { state: BuilderStateDto; turnId: string };
+  },
+  answerQuestion: async (agent: string, session: string, questionId: string, answers: string[], text?: string): Promise<void> => {
+    const res = await fetch(`/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/answer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ questionId, answers, ...(text ? { text } : {}) }),
+    });
+    if (!res.ok) throw new Error(`answer ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  },
   sessionWork: (agent: string, session: string, signal?: AbortSignal) =>
     getJson<SessionWorkResponse>(
       `/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/work`,
@@ -1419,6 +1458,35 @@ export interface WorkItemDto {
   /** 1 = next in line (queued entries only). */
   position?: number;
   error?: string;
+}
+
+/** Builder sessions (docs/builder.md): GET …/builder. */
+export interface BuilderTodo {
+  content: string;
+  status: string;
+  priority?: string;
+}
+export interface BuilderStateDto {
+  mode: 'attended' | 'unattended';
+  phase: 'plan' | 'build';
+  planPath: string | null;
+  todos: BuilderTodo[];
+}
+export interface BuilderQuestionDto {
+  questionId: string;
+  question: string;
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  multiple: boolean;
+  askedAt: number;
+  expiresAt: number;
+}
+export interface BuilderSessionResponse {
+  agent: string;
+  session: string;
+  kind: 'chat' | 'builder';
+  state: BuilderStateDto | null;
+  question: BuilderQuestionDto | null;
 }
 
 export interface SessionWorkResponse {

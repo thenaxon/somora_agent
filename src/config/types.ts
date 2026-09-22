@@ -516,6 +516,15 @@ export const AgentLoopConfigSchema = z.object({
    */
   maxToolCallsPerTurn: z.number().int().positive().max(500).default(30),
   /**
+   * Wall-clock cap for one turn of the openai-compatible loop, in ms.
+   * Unset = no time cap (only rounds and calls bound the turn). A
+   * builder agent sets this per agent (agent.yaml `agentLoop.maxTurnMs`,
+   * default 8 h) so a night build cannot run into the next day unseen.
+   * When it fires the model is asked for a final summary, like at the
+   * round cap.
+   */
+  maxTurnMs: z.number().int().positive().optional(),
+  /**
    * Per-tool-call timeout in milliseconds for FAST tools that don't
    * declare their own (memory_search, web_fetch, time_now, file_read,
    * obsidian_*). 30s is plenty for everything that hits a local DB,

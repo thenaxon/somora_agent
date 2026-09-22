@@ -1900,3 +1900,175 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .voice-spoken svg { flex: 0 0 auto; opacity: 0.7; align-self: center; }
 .voice-spoken-text { overflow-wrap: anywhere; }
 .voice-spoken-time { margin-left: auto; opacity: 0.6; font-style: normal; }
+
+/* ── Builder panel (docs/builder.md) ─────────────────────────────────
+ * Docked to the right of a builder's chat window: the chat keeps its
+ * column layout in the first grid column, the panel spans every row of
+ * the second. */
+.chat.chat-with-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+.chat.chat-with-panel > *:not(.builder-panel) {
+  grid-column: 1;
+  min-width: 0;
+}
+.builder-panel {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  border-left: 1px solid var(--agent-line, var(--line));
+  background: var(--panel-2, var(--panel, transparent));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+  font-size: 12px;
+  min-width: 0;
+}
+.builder-panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.builder-panel-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.builder-panel-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.builder-switch,
+.builder-go,
+.builder-option {
+  border: 1px solid var(--line-2, var(--line));
+  background: var(--panel, transparent);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.builder-switch.is-on,
+.builder-switch.is-build {
+  border-color: var(--accent, #d9a400);
+  color: var(--accent, #d9a400);
+}
+.builder-switch.is-plan {
+  font-style: italic;
+}
+.builder-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent, #d9a400);
+  border-color: var(--accent, #d9a400);
+  color: #111;
+  font-weight: 600;
+}
+.builder-go:disabled,
+.builder-switch:disabled,
+.builder-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.builder-panel-muted {
+  color: var(--text-3);
+  font-size: 11px;
+}
+.builder-panel-notice {
+  color: var(--warn);
+  font-size: 11px;
+}
+.builder-section-title {
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.builder-todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.builder-todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.35;
+}
+.builder-todo > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+.builder-todo.is-in_progress > svg {
+  color: var(--accent, #d9a400);
+}
+.builder-todo.is-completed {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.builder-todo.is-cancelled {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+.builder-question {
+  border: 1px solid var(--accent, #d9a400);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.builder-question-text {
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+.builder-question-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.builder-option {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.builder-option small {
+  color: var(--text-3);
+}
+.builder-option.is-chosen {
+  border-color: var(--accent, #d9a400);
+  color: var(--accent, #d9a400);
+}
+.builder-question-free {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--line-2, var(--line));
+  border-radius: 6px;
+  background: var(--panel, transparent);
+  color: var(--text);
+  padding: 6px;
+  resize: vertical;
+}
+.builder-question-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}

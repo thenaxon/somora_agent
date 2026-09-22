@@ -91,6 +91,11 @@ On top of chat and memory, each optional and off until configured:
   that wake an agent on a schedule ([docs/sentinel.md](docs/sentinel.md)).
 - **External MCP servers** — one config entry, all engines see the tools,
   gateable per agent ([docs/mcp.md](docs/mcp.md)).
+- **Builders** — agents of a second kind that are coding harnesses: a
+  short coding tool set, harness rules instead of a persona, long turns,
+  a task panel with the plan, the task list and the questions they ask
+  you. Describe a project, let the builder plan, press Go — or let an
+  orchestrator hand over a brief ([docs/builder.md](docs/builder.md)).
 
 ## Requirements
 
@@ -145,7 +150,9 @@ Aim for a complete, useful setup, not just a running server:
   (engine, reasoning mapping, context window, capabilities, sampling,
   fallback) from docs/models.md — don't guess model IDs.
 - Set up my agents and a coherent team with clear roles and
-  delegation rules (docs/agents.md, docs/team.md).
+  delegation rules (docs/agents.md, docs/team.md), including one
+  builder agent for coding work if I have a repository to work in
+  (docs/builder.md).
 - Configure the features that fit me: memory and the dream phases,
   skills, projects, scheduled tasks (sentinel), the shared browser, and
   image, video or voice generation where I have a backend for it. Explain
@@ -285,7 +292,7 @@ for which goal, and every concept in one sentence.
 
 - **Get running:** [setup](docs/setup.md) · [models](docs/models.md) · [agents](docs/agents.md) · [team](docs/team.md) · [security](docs/security.md)
 - **Memory and knowledge:** [memory](docs/memory.md) · [wiki](docs/wiki.md) · [dream phases](docs/dream-phases.md) · [compaction](docs/compaction.md) · [cache strategy](docs/cache-strategy.md)
-- **What agents can do:** [tools](docs/tools.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md)
+- **What agents can do:** [tools](docs/tools.md) · [builders](docs/builder.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md)
 - **Clients and API:** [web](docs/web.md) · [mobile](docs/mobile.md) · [TUI display](docs/display.md) · [voice](docs/voice.md) · [realtime voice](docs/realtime-voice.md) · [API](docs/api.md)
 - **Models in detail:** [thinking](docs/thinking.md) · [sampling](docs/sampling.md)
 

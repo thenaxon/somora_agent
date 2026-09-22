@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { ThinkingLevelSchema, type ThinkingLevel, SamplingSchema, type SamplingConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
 import { normalizeSkillGating, type SkillGating } from '../skills/gating.ts';
+import { effectiveToolGating, type AgentKind, type ToolGating } from '../tools/gating.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const AGENTS_DIR = join(SOMORA_HOME, 'agents');
@@ -157,6 +158,29 @@ const RemConfigSchema = z.object({
 
 const AgentYamlSchema = z
   .object({
+    /**
+     * What kind of agent this is — fixed at creation, never switched:
+     *   chat    (default) a persona with SOUL/AGENTS/USER, memory recall,
+     *           the full tool surface it is configured for.
+     *   builder a coding harness: harness prompt instead of persona
+     *           prose, a short coding tool set (src/tools/gating.ts
+     *           BUILDER_TOOL_ALLOW), no memory injection, long turns.
+     *           See docs/builder.md.
+     */
+    kind: z.enum(['chat', 'builder']).optional(),
+    /**
+     * Per-agent loop limits (openai-compatible engine): override the
+     * server's agentLoop caps for this agent. A builder's defaults are
+     * generous (500 rounds, 2000 calls, 8 h); a chat agent inherits the
+     * server config unless set here.
+     */
+    agentLoop: z
+      .object({
+        maxRounds: z.number().int().positive().optional(),
+        maxToolCallsPerTurn: z.number().int().positive().optional(),
+        maxTurnMs: z.number().int().positive().optional(),
+      })
+      .optional(),
     model: z.string().optional(),
     /**
      * Ordered fallback chain: one ref or a list (`fallback: sonnet` or
@@ -298,6 +322,8 @@ export interface AgentInfo {
   /** agent.yaml `steering:` — the web client's default for a message
    *  typed while a turn runs (true = steer into it, false = queue). */
   steering: boolean;
+  /** agent.yaml `kind:` — `chat` (default) or `builder`. */
+  kind: AgentKind;
 }
 
 export interface Persona {
@@ -316,6 +342,14 @@ export interface Persona {
   sampling: SamplingConfig | undefined;
   /** agent.yaml `steering:` — web default for messages typed mid-turn. */
   steering: boolean;
+  /** agent.yaml `kind:` — chat (default) or builder. Fixed for life. */
+  kind: AgentKind;
+  /** agent.yaml `agentLoop:` — per-agent loop caps (undefined = server config). */
+  agentLoop: { maxRounds?: number; maxToolCallsPerTurn?: number; maxTurnMs?: number } | undefined;
+  /** The `tools:` block exactly as written in agent.yaml — what the
+   *  abilities window edits. `toolGating` below is what a turn runs
+   *  with (kind defaults merged in for builders). */
+  toolGatingRaw: ToolGating | undefined;
   /**
    * Optional per-agent workspace override (resolved absolute path with
    * ~ expanded). When undefined, file_* tools fall back to the server-
@@ -429,6 +463,7 @@ export async function listAgents(): Promise<AgentInfo[]> {
       color: agentMd.data.color,
       role: agentMd.data.role,
       steering: yaml.steering === true,
+      kind: yaml.kind ?? 'chat',
     });
   }
   return out;
@@ -442,6 +477,10 @@ export async function loadPersona(name: string): Promise<Persona | null> {
   const soulMd = await readMd(join(dir, 'SOUL.md'));
   const userMd = await readMd(join(dir, 'USER.md'));
   const agentYaml = await readAgentYaml(join(dir, 'agent.yaml'));
+  const kind: AgentKind = agentYaml.kind ?? 'chat';
+  const toolGatingRaw: ToolGating | undefined = agentYaml.tools
+    ? { deny: agentYaml.tools.deny ?? [], allow: agentYaml.tools.allow ?? [] }
+    : undefined;
 
   const sections: string[] = [];
   if (soulMd?.content) sections.push(soulMd.content);
@@ -460,12 +499,13 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     thinking: agentYaml.thinking,
     sampling: agentYaml.sampling,
     steering: agentYaml.steering === true,
+    kind,
+    agentLoop: agentYaml.agentLoop,
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
     skillGating: normalizeSkillGating(agentYaml.skills),
-    toolGating: agentYaml.tools
-      ? { deny: agentYaml.tools.deny ?? [], allow: agentYaml.tools.allow ?? [] }
-      : undefined,
+    toolGatingRaw,
+    toolGating: effectiveToolGating(kind, toolGatingRaw),
     rem: agentYaml.rem,
     imageReview: agentYaml.imageReview,
     voice: agentYaml.voice,

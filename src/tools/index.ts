@@ -20,6 +20,7 @@ import { sentinelTools } from './sentinel/index.ts';
 import { imageTools } from './image/index.ts';
 import { videoTools } from './video/index.ts';
 import { browserTools } from './browser/index.ts';
+import { builderTools } from './builder/tools.ts';
 
 export { ToolRegistry } from './registry.ts';
 export type { ToolContext, ToolDefinition, ToolInvoker, ToolResult } from './types.ts';
@@ -91,4 +92,8 @@ export function registerAllTools(registry: ToolRegistry): void {
   registry.registerMany(videoTools());
   // Shared browser: self-gates on config.browser.enabled via `available`.
   registry.registerMany(browserTools());
+  // Builder tools (task list, questions, plan): registered for everyone,
+  // offered to builders by their kind allow-list (gating.ts) — a chat
+  // agent sees them only when its agent.yaml allows them.
+  registry.registerMany(builderTools());
 }

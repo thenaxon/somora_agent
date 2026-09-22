@@ -26,7 +26,7 @@ import { WebSocketServer } from 'ws';
 import { applyClaudeCliSdkEnv, applyCodexCliEnv, configPath, loadConfig, primeFreshConfig } from '../config/loader.ts';
 import { diffConfigSections, restartRequiredFor, RESTART_REQUIRED_SECTIONS } from '../config/reload.ts';
 import { spawn as spawnChild, spawnSync as spawnSyncChild } from 'node:child_process';
-import { stat as statFile } from 'node:fs/promises';
+import { mkdir as mkdirFs, rename as renameFs, stat as statFile, writeFile as writeFileFs } from 'node:fs/promises';
 import { workerChain, type Config, resolveAnyRef, describeModelRefs, type ThinkingLevel, SamplingSchema,
   listAllModels,
 } from '../config/types.ts';
@@ -51,8 +51,8 @@ import {
 import { detectMimeFromPath } from '../multimodal/mime.ts';
 import { existsSync } from 'node:fs';
 import { readFile as fsReadFile, stat as statFs, readFile as readFileFs } from 'node:fs/promises';
-import { isAbsolute, normalize } from 'node:path';
-import { checkReadAllowed, expandHome, realpathSafeAncestor } from '../tools/file/policy.ts';
+import { dirname, isAbsolute, join as joinPath, normalize } from 'node:path';
+import { checkReadAllowed, checkWriteAllowed, expandHome, realpathSafeAncestor } from '../tools/file/policy.ts';
 import {
   buildTree,
   extractLinkTargets,
@@ -86,7 +86,7 @@ import { getEffectiveEnv } from './env.ts';
 import { loadSomoraEnvFile } from './env-file.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 import { shortToolName } from './tool-format.ts';
-import { ensureWorkspaceDirs } from './workspace.ts';
+import { ensureWorkspaceDirs, effectiveWorkspace } from './workspace.ts';
 import {
   ensureDefaultAgent,
   listAgents,
@@ -169,6 +169,8 @@ import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { startToolOutputSweeper } from '../tools/tool-output.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
+import { DEFAULT_PLAN_FILE, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
+import { answerQuestion, askQuestion, pendingQuestion } from './builder-questions.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
 import { VoiceCallManager } from '../voice/realtime/manager.ts';
@@ -1199,14 +1201,19 @@ app.get('/agents/:agent/tools', async (c) => {
   const agent = c.req.param('agent');
   const persona = await loadPersona(agent);
   if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  // What the turn runs with (kind defaults merged in for a builder) —
+  // this decides `visible`. The pattern check below looks at the block
+  // as WRITTEN in agent.yaml: a builder's kind allow-list is not
+  // hand-written policy and must not lock the matrix.
   const gating = persona.toolGating ?? null;
+  const raw = persona.toolGatingRaw ?? null;
   // Toggling in the matrix only manipulates exact-name denies. Pattern
   // rules (globs, toolset:, allow-lists) are hand-written policy — the
   // UI shows them read-only instead of guessing how to edit them.
   const hasPatternRules =
-    gating !== null &&
-    (gating.allow.length > 0 ||
-      gating.deny.some((p) => p.includes('*') || p.startsWith('toolset:')));
+    raw !== null &&
+    (raw.allow.length > 0 ||
+      raw.deny.some((p) => p.includes('*') || p.startsWith('toolset:')));
   const ctx: ToolContext = {
     agent,
     getMemoryManager: () =>
@@ -1229,6 +1236,7 @@ app.get('/agents/:agent/tools', async (c) => {
   const configured = await tools.listConfigured(ctx);
   return c.json({
     agent,
+    kind: persona.kind,
     gating,
     hasPatternRules,
     tools: configured.map((t) => ({
@@ -2964,6 +2972,187 @@ app.delete('/agents/:agent/sessions/:session/project', async (c) => {
 // doing, what waits behind it, what is about to arrive, and what it
 // started elsewhere (Phase 2, private/turn-dispatch-phase2-design.md
 // §2.1). Previews only: no prompts, no tool bodies, no secrets.
+// ── Builder sessions (docs/builder.md) ──────────────────────────────
+// Mode, phase, plan file, task list and the open question of a builder
+// session. The task panel in the web reads GET …/builder and listens to
+// `builder_state`, `todo_updated`, `question_asked` and
+// `question_answered`; the builder's tools (todo_write, ask_user,
+// plan_write) write through PUT …/todos, POST …/ask and PUT …/plan.
+
+async function builderSessionOf(c: Context): Promise<{ agent: string; session: string; persona: Persona } | Response> {
+  const agent = c.req.param('agent') ?? '';
+  const sessionRef = c.req.param('session') ?? '';
+  const persona = await loadPersona(agent);
+  if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const session = await resolveSessionId(agent, sessionRef);
+  if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
+  return { agent, session, persona };
+}
+
+app.get('/agents/:agent/sessions/:session/builder', async (c) => {
+  const r = await builderSessionOf(c);
+  if (r instanceof Response) return r;
+  const meta = await sessionMetaStore.get(r.agent, r.session);
+  const state = readBuilderState(meta as Record<string, unknown>);
+  const q = pendingQuestion(r.agent, r.session);
+  return c.json({
+    agent: r.agent,
+    session: r.session,
+    kind: r.persona.kind,
+    state,
+    question: q
+      ? { questionId: q.id, question: q.question, header: q.header, options: q.options, multiple: q.multiple, askedAt: q.askedAt, expiresAt: q.expiresAt }
+      : null,
+  });
+});
+
+app.patch('/agents/:agent/sessions/:session/builder', async (c) => {
+  const r = await builderSessionOf(c);
+  if (r instanceof Response) return r;
+  const body = (await c.req.json().catch(() => ({}))) as { mode?: string; phase?: string; planPath?: string | null };
+  const patch: { mode?: BuilderMode; phase?: BuilderPhase; planPath?: string | null } = {};
+  if (body.mode !== undefined) {
+    if (body.mode !== 'attended' && body.mode !== 'unattended') return c.json({ error: 'mode must be attended | unattended' }, 400);
+    patch.mode = body.mode;
+  }
+  if (body.phase !== undefined) {
+    if (body.phase !== 'plan' && body.phase !== 'build') return c.json({ error: 'phase must be plan | build' }, 400);
+    patch.phase = body.phase;
+  }
+  if (body.planPath !== undefined) {
+    if (body.planPath !== null && (typeof body.planPath !== 'string' || !isAbsolute(expandHome(body.planPath)))) {
+      return c.json({ error: 'planPath must be an absolute path or null' }, 400);
+    }
+    patch.planPath = body.planPath === null ? null : normalize(expandHome(body.planPath));
+  }
+  const state = await patchBuilderState(sessionMetaStore, r.agent, r.session, patch);
+  logger.info({ msg: 'builder.state_patched', agent: r.agent, session: r.session, ...patch });
+  await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state.mode, phase: state.phase, planPath: state.planPath } });
+  return c.json({ agent: r.agent, session: r.session, state });
+});
+
+// Go: the plan is approved — switch to build and tell the builder.
+app.post('/agents/:agent/sessions/:session/builder/go', async (c) => {
+  const r = await builderSessionOf(c);
+  if (r instanceof Response) return r;
+  const body = (await c.req.json().catch(() => ({}))) as { note?: string };
+  const state = await patchBuilderState(sessionMetaStore, r.agent, r.session, { phase: 'build' });
+  await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state.mode, phase: state.phase, planPath: state.planPath } });
+  const text =
+    `The plan${state.planPath ? ` at ${state.planPath}` : ''} is approved — GO. Execute it now: read the plan first, keep the task list with todo_write, ` +
+    `verify each step, and end with the report.${body.note ? `\n\n${body.note.trim()}` : ''}`;
+  const turnId = randomUUID();
+  const origin: TurnOrigin = { kind: 'human', via: 'chat' };
+  openWork({ id: turnId, origin, target: { agent: r.agent, session: r.session }, requester: { human: true }, text, wake: 'never' });
+  void startTurn({ agent: r.agent, session: r.session, text, origin, turnId, workId: turnId }).catch((err: unknown) => {
+    if (err instanceof DequeuedError) return;
+    logger.error({ msg: 'builder.go_turn_failed', agent: r.agent, session: r.session, err: (err as Error).message });
+  });
+  logger.info({ msg: 'builder.go', agent: r.agent, session: r.session, turnId });
+  return c.json({ agent: r.agent, session: r.session, state, turnId }, 202);
+});
+
+app.put('/agents/:agent/sessions/:session/todos', async (c) => {
+  const r = await builderSessionOf(c);
+  if (r instanceof Response) return r;
+  const body = (await c.req.json().catch(() => null)) as { todos?: unknown; by_agent?: string } | null;
+  if (!body || !Array.isArray(body.todos)) return c.json({ error: 'body must be { todos: [...] }' }, 400);
+  const todos: TodoItem[] = [];
+  for (const t of body.todos as unknown[]) {
+    if (!t || typeof t !== 'object') continue;
+    const o = t as { content?: unknown; status?: unknown; priority?: unknown };
+    if (typeof o.content !== 'string' || o.content.trim().length === 0) continue;
+    todos.push({
+      content: o.content.trim().slice(0, 500),
+      status: typeof o.status === 'string' && o.status.trim() ? o.status.trim().toLowerCase() : 'pending',
+      ...(typeof o.priority === 'string' && o.priority.trim() ? { priority: o.priority.trim().toLowerCase() } : {}),
+    });
+    if (todos.length >= 100) break;
+  }
+  const state = await patchBuilderState(sessionMetaStore, r.agent, r.session, { todos });
+  await publish(r.agent, r.session, { event: 'todo_updated', data: { todos: state.todos, ...(body.by_agent ? { by: body.by_agent } : {}) } });
+  return c.json({ agent: r.agent, session: r.session, todos: state.todos });
+});
+
+app.put('/agents/:agent/sessions/:session/plan', async (c) => {
+  const r = await builderSessionOf(c);
+  if (r instanceof Response) return r;
+  const body = (await c.req.json().catch(() => null)) as { content?: unknown } | null;
+  if (!body || typeof body.content !== 'string') return c.json({ error: 'body must be { content: string }' }, 400);
+  const meta = await sessionMetaStore.get(r.agent, r.session);
+  const state = readBuilderState(meta as Record<string, unknown>);
+  const planPath = state?.planPath ?? joinPath(effectiveWorkspace(r.persona, config), DEFAULT_PLAN_FILE);
+  const policy = checkWriteAllowed(planPath, r.agent);
+  if (!policy.ok) return c.json({ error: policy.reason }, 400);
+  await mkdirFs(dirname(planPath), { recursive: true });
+  const tmp = `${planPath}.somora-tmp.${process.pid}.${Date.now().toString(36)}`;
+  await writeFileFs(tmp, body.content, 'utf8');
+  await renameFs(tmp, planPath);
+  if (!state?.planPath) await patchBuilderState(sessionMetaStore, r.agent, r.session, { planPath });
+  logger.info({ msg: 'builder.plan_written', agent: r.agent, session: r.session, path: planPath, bytes: Buffer.byteLength(body.content) });
+  await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state?.mode ?? 'attended', phase: state?.phase ?? 'plan', planPath } });
+  return c.json({ path: planPath, bytes: Buffer.byteLength(body.content, 'utf8') });
+});
+
+// ask_user: blocks until the person answers (POST …/answer) or the wait
+// runs out. The tool's own timeout is a little longer than `timeout_ms`.
+app.post('/agents/:agent/sessions/:session/ask', async (c) => {
+  const r = await builderSessionOf(c);
+  if (r instanceof Response) return r;
+  const body = (await c.req.json().catch(() => null)) as {
+    question?: unknown;
+    header?: unknown;
+    options?: unknown;
+    multiple?: unknown;
+    timeout_ms?: unknown;
+  } | null;
+  if (!body || typeof body.question !== 'string' || !Array.isArray(body.options)) {
+    return c.json({ error: 'body must be { question, options: [{label, description?}], multiple?, timeout_ms? }' }, 400);
+  }
+  const options = (body.options as unknown[])
+    .map((o) => {
+      if (!o || typeof o !== 'object') return null;
+      const x = o as { label?: unknown; description?: unknown };
+      if (typeof x.label !== 'string' || !x.label.trim()) return null;
+      return { label: x.label.trim().slice(0, 80), ...(typeof x.description === 'string' ? { description: x.description.slice(0, 300) } : {}) };
+    })
+    .filter((o): o is { label: string; description?: string } => o !== null)
+    .slice(0, 6);
+  if (options.length < 2) return c.json({ error: 'at least two options with a label' }, 400);
+  const answer = await askQuestion(
+    {
+      agent: r.agent,
+      session: r.session,
+      question: body.question.trim().slice(0, 2000),
+      ...(typeof body.header === 'string' && body.header.trim() ? { header: body.header.trim().slice(0, 40) } : {}),
+      options,
+      multiple: body.multiple === true,
+      ...(typeof body.timeout_ms === 'number' ? { timeoutMs: body.timeout_ms } : {}),
+    },
+    (q) => {
+      void publish(r.agent, r.session, {
+        event: 'question_asked',
+        data: { questionId: q.id, question: q.question, ...(q.header ? { header: q.header } : {}), options: q.options, multiple: q.multiple, expiresAt: q.expiresAt },
+      });
+    },
+  );
+  return c.json(answer);
+});
+
+app.post('/agents/:agent/sessions/:session/answer', async (c) => {
+  const r = await builderSessionOf(c);
+  if (r instanceof Response) return r;
+  const body = (await c.req.json().catch(() => null)) as { questionId?: unknown; answers?: unknown; text?: unknown } | null;
+  if (!body || typeof body.questionId !== 'string') return c.json({ error: 'body must be { questionId, answers?: string[], text?: string }' }, 400);
+  const ok = answerQuestion(r.agent, r.session, body.questionId, {
+    ...(Array.isArray(body.answers) ? { answers: (body.answers as unknown[]).filter((a): a is string => typeof a === 'string') } : {}),
+    ...(typeof body.text === 'string' ? { text: body.text } : {}),
+  });
+  if (!ok) return c.json({ error: 'no open question with that id on this session' }, 404);
+  await publish(r.agent, r.session, { event: 'question_answered', data: { questionId: body.questionId, answered: true } });
+  return c.json({ ok: true });
+});
+
 app.get('/agents/:agent/sessions/:session/work', async (c) => {
   const agent = c.req.param('agent');
   const ref = c.req.param('session');

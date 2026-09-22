@@ -554,6 +554,24 @@ export type SseEvent =
       event: 'steer_queued';
       data: { steerId: string; text: string; ts: number; turnId: string; origin: TurnOrigin };
     }
+  /** Builder sessions (docs/builder.md): the task list changed. */
+  | { event: 'todo_updated'; data: { todos: Array<{ content: string; status: string; priority?: string }>; by?: string } }
+  /** Builder: the agent asked the person a question (ask_user); answer via POST …/answer. */
+  | {
+      event: 'question_asked';
+      data: {
+        questionId: string;
+        question: string;
+        header?: string;
+        options: Array<{ label: string; description?: string }>;
+        multiple: boolean;
+        expiresAt: number;
+      };
+    }
+  /** Builder: the open question was answered or withdrawn. */
+  | { event: 'question_answered'; data: { questionId: string; answered: boolean } }
+  /** Builder: mode / phase / plan path changed. */
+  | { event: 'builder_state'; data: { mode: 'attended' | 'unattended'; phase: 'plan' | 'build'; planPath: string | null } }
   | {
       // A queued user turn was taken back before it started
       // (DELETE /chat/queue/:turnId). `turnId` is the same server-

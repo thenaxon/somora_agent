@@ -94,6 +94,21 @@ fallback: gpt55       # used when primary fails before producing any output
 # the `reasoning` capability — see thinking.md.
 thinking: medium
 
+# Optional: the kind of agent — chat (default) or builder. Fixed at
+# creation. A builder is a coding harness: harness rules instead of
+# SOUL/USER prose, a short coding tool set, no memory recall block, long
+# turns, a task panel in the web. See builder.md.
+kind: chat
+
+# Optional: per-agent loop caps for the openai-compatible engine
+# (override the server's agentLoop). Builders default to 500 rounds,
+# 2000 tool calls and 8 hours per turn; chat agents inherit the server
+# config unless set here.
+agentLoop:
+  maxRounds: 50
+  maxToolCallsPerTurn: 200
+  maxTurnMs: 3600000
+
 # Optional: steering default for the web client. true = a message typed
 # while a turn is running is handed INTO that turn before its next step
 # (the model reads it between two tool calls); false (default) = it waits

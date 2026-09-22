@@ -966,10 +966,27 @@ export const openAiCompatibleEngine: AgentEngine = {
       let totalToolCalls = 0;
       let hitToolBudget = false;
       let softWarned = false;
+      // Wall-clock cap (agentLoop.maxTurnMs, builders): a night build
+      // must end with a report, not run into the next day unseen.
+      const maxTurnMs = input.agentLoopConfig?.maxTurnMs;
+      const turnStartedAt = Date.now();
+      let hitTimeCap = false;
+      // Doom loop: the same round of tool calls (names + arguments)
+      // repeated back to back. Three times → a notice the model can act
+      // on; five times → stop and ask for the report instead of burning
+      // the budget on identical results.
+      let lastRoundSig = '';
+      let repeatRounds = 0;
+      let hitDoomLoop = false;
       while (round < maxRounds) {
         round++;
         roundsStarted = round;
         if (effectiveSignal.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (maxTurnMs && Date.now() - turnStartedAt > maxTurnMs) {
+          hitTimeCap = true;
+          round--;
+          break;
+        }
 
         // Steering: what the person (or an agent) sent while the previous
         // round ran reaches the model now, before the next call, as user
@@ -1538,6 +1555,19 @@ export const openAiCompatibleEngine: AgentEngine = {
           continue;
         }
 
+        // Doom-loop check BEFORE the assistant message is appended: a
+        // stop here leaves the history consistent (the previous round's
+        // tool results are the last messages), so the forced final
+        // answer below can run.
+        const roundSig = calls.map((c) => `${c.call.function.name}:${c.call.function.arguments}`).join('\n');
+        repeatRounds = roundSig === lastRoundSig ? repeatRounds + 1 : 1;
+        lastRoundSig = roundSig;
+        if (repeatRounds >= 5) {
+          hitDoomLoop = true;
+          logger.warn({ msg: 'engine.doom_loop_stop', engine: ENGINE, agent, session, round, calls: calls.map((c) => c.call.function.name) });
+          break;
+        }
+
         loopMessages.push({
           role: 'assistant',
           // OpenAI accepts content=null when only tool_calls are present.
@@ -1701,6 +1731,16 @@ export const openAiCompatibleEngine: AgentEngine = {
         // three-digit total. Once the budget is spent, stop and force a
         // clean final answer (below) instead of executing more.
         totalToolCalls += toolCallsForApi.length;
+        if (repeatRounds === 3) {
+          logger.info({ msg: 'engine.doom_loop_notice', engine: ENGINE, agent, session, round });
+          loopMessages.push({
+            role: 'user',
+            content:
+              '[somora] You have now made the same tool call(s) with the same arguments three times in a row. ' +
+              'The result will not change. Do something different — a different query, another file, a different ' +
+              'command — or stop and explain what is blocking you. Two more identical rounds end this turn.',
+          } as ChatMessage);
+        }
         // Soft warning at ~75 % of either budget, once per turn: the
         // model cannot see the caps, so a "read N things and summarise"
         // task ran straight into the hard stop and then into the
@@ -1784,25 +1824,37 @@ export const openAiCompatibleEngine: AgentEngine = {
       // accumulated text and force the same clean no-tools finish.
       const scaffoldLeak =
         sawScaffoldLeak || containsScaffold(cumulative) || looksRepetitive(cumulative);
-      const forcedByCap = (round >= maxRounds && lastRoundHadTools) || hitToolBudget;
+      const forcedByCap = (round >= maxRounds && lastRoundHadTools) || hitToolBudget || hitTimeCap || hitDoomLoop;
       if (forcedByCap || scaffoldLeak) {
         cumulative = '';
-        forcedFinalReason = scaffoldLeak ? 'scaffold_leak' : hitToolBudget ? 'tool_budget' : 'round_cap';
+        forcedFinalReason = scaffoldLeak
+          ? 'scaffold_leak'
+          : hitDoomLoop
+            ? 'doom_loop'
+            : hitTimeCap
+              ? 'time_cap'
+              : hitToolBudget
+                ? 'tool_budget'
+                : 'round_cap';
         logger.warn({
           msg: 'engine.force_final_answer',
           engine: ENGINE,
           agent,
           session,
           rounds: round,
-          reason: scaffoldLeak ? 'scaffold_leak' : hitToolBudget ? 'tool_budget' : 'round_cap',
+          reason: forcedFinalReason,
         });
         // The stop reason, spelled out: the old text always said
         // "maximum number of tool-call rounds (maxRounds)" even when the
         // TOOL-CALL BUDGET fired (2026-09-04: "cap of 50" reported on
         // sessions with 30 calls — a diagnosis detour).
-        const capDescription = hitToolBudget
-          ? `the tool-call budget of ${maxToolCallsPerTurn} calls for this turn (agentLoop.maxToolCallsPerTurn)`
-          : `the agent-loop cap of ${maxRounds} tool-call rounds for this turn (agentLoop.maxRounds)`;
+        const capDescription = hitDoomLoop
+          ? 'a loop: the same tool call(s) with the same arguments five times in a row'
+          : hitTimeCap
+            ? `the time cap of ${Math.round((maxTurnMs ?? 0) / 60_000)} minutes for this turn (agentLoop.maxTurnMs)`
+            : hitToolBudget
+              ? `the tool-call budget of ${maxToolCallsPerTurn} calls for this turn (agentLoop.maxToolCallsPerTurn)`
+              : `the agent-loop cap of ${maxRounds} tool-call rounds for this turn (agentLoop.maxRounds)`;
         // USER role, not a trailing `system` entry: strict chat templates
         // (vLLM + Qwen 3.x behind LiteLLM) reject any system message
         // after index 0 with 400 "System message must be at the

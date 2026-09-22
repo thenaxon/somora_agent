@@ -45,6 +45,9 @@ import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
 import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
+import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
+import { builderSessionAllows, ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
+import { effectiveWorkspace as effectiveWorkspaceOf } from './workspace.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
@@ -481,7 +484,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     throw new Error(`agent '${agent}' not found`);
   }
 
-  const sessionMeta = await deps.sessionMetaStore.get(agent, session);
+  let sessionMeta = await deps.sessionMetaStore.get(agent, session);
   const effectiveMetaForResolve = modelOverride
     ? { ...sessionMeta, modelOverride }
     : sessionMeta;
@@ -539,6 +542,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   let ephemeralContext: string | undefined;
   let memoryHits: Array<{ source: string; slug: string; score: number }> = [];
   let memoryInjectedCount = 0;
+  // A builder gets no recall block: its context is the repository, and
+  // the block competes with code for the window (and, measured, with
+  // tool calls — feedback 2026-08). It still has memory_search as a tool.
+  if (persona.kind === 'builder') {
+    logger.debug({ msg: 'memory.inject_skipped_builder', turnId, agent });
+  } else
   try {
     const mgr = await getMemoryManager(agent, {
       config: deps.config.memory,
@@ -867,8 +876,23 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     // just-denied tool failing mid-turn would be more confusing than
     // letting it finish. The MCP child applies the same filter for the
     // CLI engines (src/tools/gating.ts is the single matcher).
-    const availableTools = (await deps.tools.listAvailable(toolCtx)).filter((t) =>
-      isToolAllowed(t.name, t.toolset, persona.toolGating),
+    // A builder session also carries mode and phase (builder-session.ts):
+    // set on its first turn from where that turn came from, then a
+    // switch in the task panel. They hide ask_user (unattended) and the
+    // repository-changing tools (plan phase) from the list.
+    let builderState: BuilderSessionState | null = null;
+    if (persona.kind === 'builder') {
+      builderState = await ensureBuilderState(
+        deps.sessionMetaStore,
+        agent,
+        session,
+        origin ?? { kind: 'human', via: 'chat' },
+        effectiveWorkspaceOf(persona, deps.config),
+      );
+      sessionMeta = await deps.sessionMetaStore.get(agent, session);
+    }
+    const availableTools = (await deps.tools.listAvailable(toolCtx)).filter(
+      (t) => isToolAllowed(t.name, t.toolset, persona.toolGating) && builderSessionAllows(builderState, t.name),
     );
     const toolInvoker = {
       list: () => availableTools,
@@ -941,9 +965,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         externalMcpServers: Object.entries(deps.config.mcp.servers)
           .filter(([, cfg]) => cfg.enabled)
           .map(([name, cfg]) => ({ name, timeoutMs: cfg.timeoutMs })),
-        agentLoopConfig: agentLoopOverride
-          ? { ...deps.config.agentLoop, ...agentLoopOverride }
-          : deps.config.agentLoop,
+        // Loop caps, most specific last: server config → the kind's
+        // defaults (a builder turn is a build, not a chat) → the agent's
+        // own agentLoop block → what this one call asked for.
+        agentLoopConfig: {
+          ...deps.config.agentLoop,
+          ...(persona.kind === 'builder' ? BUILDER_LOOP_DEFAULTS : {}),
+          ...(persona.agentLoop ?? {}),
+          ...(agentLoopOverride ?? {}),
+        },
         idleTimeoutMs: pickIdleTimeoutForEngine(
           deps.config.engineWatchdog,
           resolvedModel.provider.engine,

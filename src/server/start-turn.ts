@@ -38,6 +38,7 @@ import { acquireSessionLock, DequeuedError } from './session-queue.ts';
 import { originCallId, originKind, originLabel, originToLegacy, type TurnOrigin } from './turn-origin-kind.ts';
 import { failWork, finishWork, markRunning, openWork } from './work-ledger.ts';
 import { drainSteer, unmarkSteerable } from './steer-inbox.ts';
+import { dropQuestions } from './builder-questions.ts';
 import { composeTurnPrefix } from './turn-framing.ts';
 
 export interface StartTurnDeps {
@@ -202,6 +203,8 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
     // turn was already finishing) are not lost: they become ordinary
     // turns, queued in the order they came, once the lock is free.
     unmarkSteerable(agent, session, turnId);
+    // A question the builder asked and nobody answered: nobody waits now.
+    dropQuestions(agent, session);
     const leftover = drainSteer(agent, session);
     release();
     for (const m of leftover) {

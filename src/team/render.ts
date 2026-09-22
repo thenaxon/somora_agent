@@ -48,6 +48,31 @@ function involveLine(a: ResolvedTeamAgent): string | null {
 }
 
 /**
+ * The short form a builder gets: who to consult, one line each, and the
+ * team rules. No org chart, no superior prose — a builder takes orders
+ * from whoever handed it the task and consults colleagues for their
+ * specialty (see src/server/builder-prompt.ts).
+ */
+export function renderTeamBlockCompact(team: ResolvedTeam, self: string): string | null {
+  const colleagues = team.order.filter((n) => n !== self && team.agents[n]!.active);
+  if (colleagues.length === 0 && team.rules.length === 0) return null;
+  const out: string[] = ['# Your team', '', `Principal (human): ${team.principal.name}${team.principal.title ? `, ${team.principal.title}` : ''}.`];
+  if (colleagues.length > 0) {
+    out.push('Colleagues you can consult with agent_ask (a question in their specialty, not a hand-off):');
+    for (const n of colleagues) {
+      const a = team.agents[n]!;
+      const what = a.involveFor.length > 0 ? joinPhrases(a.involveFor) : '';
+      out.push(`- ${n} (${a.title})${what ? `: ${what}` : ''}`);
+    }
+  }
+  if (team.rules.length > 0) {
+    out.push('', 'Rules:');
+    for (const r of team.rules) out.push(`- ${r}`);
+  }
+  return out.join('\n').trimEnd();
+}
+
+/**
  * The block for `self`. Returns null only when the team is empty. An
  * agent that exists but is not in the file still gets the full
  * picture, plus a line saying it is not placed yet.

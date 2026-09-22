@@ -24,7 +24,16 @@ import { buildTeamBlock } from '../team/store.ts';
 import { logger } from './logger.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 import type { ChatTurnResolveDeps } from './run-turn-types.ts';
-import { buildSelfPointer } from './workspace.ts';
+import { buildSelfPointer, effectiveWorkspace } from './workspace.ts';
+import { readBuilderState, renderBuilderSessionBlock } from './builder-session.ts';
+import {
+  BUILDER_HARNESS_PROMPT,
+  isGitRepo,
+  readRepoInstructions,
+  renderBuilderEnvBlock,
+  renderBuilderIdentity,
+  renderRepoInstructionsBlock,
+} from './builder-prompt.ts';
 
 export const TOOL_USAGE_REMINDER = [
   '## Tools',
@@ -198,6 +207,9 @@ export async function assembleSystemPrompt(args: {
   // config.resources + persona.resourceDeny + paths only, so it stays
   // stable across turns within a session (prefix-cache impact nil).
   const freshConfig = await getFreshConfig();
+  if (persona.kind === 'builder') {
+    return assembleBuilderPrompt({ ...args, freshConfig });
+  }
   const selfPointer = buildSelfPointer(persona, freshConfig, SOMORA_HOME_DIR);
   const subContextNote =
     subagentDepth > 0
@@ -231,6 +243,62 @@ export async function assembleSystemPrompt(args: {
     { key: 'team', label: 'Team block', text: teamBlock },
     { key: 'tools', label: 'Tool reminder', text: toolsBlock },
     { key: 'wiki', label: 'Wiki overview (session snapshot)', text: wikiBlock },
+    { key: 'skills', label: 'Skills', text: skillsBlock },
+    { key: 'session', label: 'This session', text: sessionBlock },
+    { key: 'project', label: 'Project', text: projectBlock },
+  ];
+  return { text: parts.map((p) => p.text).join(''), parts, projectBlock };
+}
+
+/**
+ * The builder variant (agent.yaml `kind: builder`): harness rules,
+ * environment, the repository's own instructions, a compact team, the
+ * tool reminder, skills, session and project. No persona prose, no wiki
+ * map — see src/server/builder-prompt.ts. Same part keys as the chat
+ * prompt so the web Agent window and the prompt-preview route render
+ * it unchanged.
+ */
+async function assembleBuilderPrompt(args: {
+  agent: string;
+  session: string;
+  persona: Persona;
+  sessionMeta: Record<string, unknown>;
+  deps: ChatTurnResolveDeps;
+  subagentDepth: number;
+  toolCount: number;
+  freshConfig: Config;
+}): Promise<AssembledPrompt> {
+  const { agent, session, persona, sessionMeta, deps, subagentDepth, toolCount, freshConfig } = args;
+  const workdir = effectiveWorkspace(persona, freshConfig);
+  const env = renderBuilderEnvBlock({
+    workdir,
+    isGitRepo: await isGitRepo(workdir),
+    platform: `${process.platform} ${process.arch}`,
+    modelRef: `${persona.model ?? 'default model'}`,
+    today: new Date().toISOString().slice(0, 10),
+  });
+  const helperNote =
+    subagentDepth > 0
+      ? `\n\nNote: this is a HELPER turn (depth=${subagentDepth}), started by another agent for one sealed sub-task. Do the task, return the result, stop.`
+      : '';
+  const identity = renderBuilderIdentity(persona);
+  const repo = await readRepoInstructions(workdir);
+  const teamText = await buildTeamBlock(agent, 'compact');
+  const toolsBlock =
+    deps.config.agentLoop.toolUsageReminder && toolCount > 0 ? `\n\n---\n\n${TOOL_USAGE_REMINDER}` : '';
+  const allSkills = await loadAvailableSkills(freshConfig);
+  const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillGating, freshConfig);
+  const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
+  const modeBlock = renderBuilderSessionBlock(readBuilderState(sessionMeta));
+  const sessionBlock = buildSessionBlock(agent, session, sessionMeta) + (modeBlock ? `\n\n${modeBlock}` : '');
+  const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
+
+  const parts: PromptPart[] = [
+    { key: 'self', label: 'Identity + environment', text: `${identity}\n\n${env}${helperNote}` },
+    { key: 'persona', label: 'Builder harness rules', text: `\n\n---\n\n${BUILDER_HARNESS_PROMPT}` },
+    { key: 'team', label: 'Team (compact)', text: teamText ? `\n\n---\n\n${teamText}` : '' },
+    { key: 'tools', label: 'Tool reminder', text: toolsBlock },
+    { key: 'wiki', label: 'Repository instructions', text: repo ? `\n\n---\n\n${renderRepoInstructionsBlock(repo)}` : '' },
     { key: 'skills', label: 'Skills', text: skillsBlock },
     { key: 'session', label: 'This session', text: sessionBlock },
     { key: 'project', label: 'Project', text: projectBlock },

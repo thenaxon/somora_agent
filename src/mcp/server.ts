@@ -29,6 +29,8 @@ import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts'
 import { loadPersona } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { isToolAllowed } from '../tools/gating.ts';
+import { builderSessionAllows, readBuilderState } from '../server/builder-session.ts';
+import { sessionMetaStore } from '../storage/sessions.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import { configureExecConcurrencyCaps } from '../tools/exec/index.ts';
 import { registerAllTools, ToolRegistry } from '../tools/index.ts';
@@ -244,6 +246,12 @@ async function main(): Promise<void> {
   // codex-cli see exactly the gated set the openai-compat path sees.
   const persona = await loadPersona(agent);
   const toolGating = persona?.toolGating;
+  // Builder sessions: mode and phase hide tools too (builder-session.ts),
+  // the same way run-turn hides them for the openai-compatible engine.
+  const builderState =
+    persona?.kind === 'builder' && session
+      ? readBuilderState((await sessionMetaStore.get(agent, session)) as Record<string, unknown>)
+      : null;
 
   // ...and the same availability probe, for the same reason. run-turn
   // builds the model's list from listAvailable(ctx); this used to walk
@@ -259,7 +267,7 @@ async function main(): Promise<void> {
   // passes SOMORA_ACTIVE_MODEL per turn — so this tracks config
   // changes at the same rate the openai-compatible path does.
   for (const tool of await registry.listAvailable(ctx)) {
-    if (!isToolAllowed(tool.name, tool.toolset, toolGating)) {
+    if (!isToolAllowed(tool.name, tool.toolset, toolGating) || !builderSessionAllows(builderState, tool.name)) {
       logger.debug({ msg: 'mcp.tool_gated', agent, tool: tool.name });
       continue;
     }

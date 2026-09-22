@@ -37,6 +37,7 @@ import { MicCapture } from './MicCapture';
 import { ChatMenuPopover } from './ChatMenuPopover';
 import { ProjectChip } from './ProjectChip';
 import { WorkBadge, WorkQueuePopover } from './WorkQueuePopover';
+import { BuilderPanel } from './BuilderPanel';
 import { useSessionWork } from '../hooks/useSessionWork';
 import type { WorkItemDto } from '../lib/api';
 
@@ -923,9 +924,10 @@ export function ChatWindow({
   // not conversation (Rene 2026-09-03). `/sampling` reports it on
   // demand, same as the TUI.
 
+  const isBuilder = agent.kind === 'builder';
   return (
     <div
-      className="chat"
+      className={isBuilder ? 'chat chat-with-panel' : 'chat'}
       onMouseDown={(e) => focusTextareaIfPossible(e.target)}
       onDragEnter={(e) => {
         if (Array.from(e.dataTransfer.types).includes('Files')) {
@@ -1612,6 +1614,7 @@ export function ChatWindow({
           <Send size={14} />
         </button>
       </form>
+      {isBuilder && <BuilderPanel agent={agent.name} session={sessionId} />}
     </div>
   );
 }

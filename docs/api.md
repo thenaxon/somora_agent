@@ -931,6 +931,41 @@ The reset returns immediately. The REM run continues in the
 background; check its progress via `GET /dream-states` or via
 the per-agent REM badge in the web AgentDock.
 
+### Builder sessions
+
+Agents of kind `builder` (see [builder.md](builder.md)) carry mode,
+phase, plan file and task list per session, plus at most one open
+question. The web task panel reads and writes these; the builder's own
+tools (`todo_write`, `ask_user`, `plan_write`) call the same routes.
+
+- `GET /agents/:agent/sessions/:session/builder` → `{agent, session,
+  kind, state, question}` — `state` is `{mode: "attended"|"unattended",
+  phase: "plan"|"build", planPath, todos: [{content, status,
+  priority?}]}` or `null` before the session's first turn; `question`
+  is `{questionId, question, header?, options: [{label,
+  description?}], multiple, askedAt, expiresAt}` or `null`.
+- `PATCH /agents/:agent/sessions/:session/builder` `{mode?, phase?,
+  planPath?}` → `{agent, session, state}`. Publishes `builder_state`.
+- `POST /agents/:agent/sessions/:session/builder/go` `{note?}` →
+  `202 {agent, session, state, turnId}` — sets the phase to build and
+  starts a turn telling the builder the plan is approved (`note` is
+  appended to that message).
+- `PUT /agents/:agent/sessions/:session/todos` `{todos: [{content,
+  status, priority?}], by_agent?}` → `{agent, session, todos}` — replaces
+  the whole list (max 100 items). Publishes `todo_updated`.
+- `PUT /agents/:agent/sessions/:session/plan` `{content}` → `{path,
+  bytes}` — writes the session's plan file (`state.planPath`, default
+  `<workspace>/PLAN.md`), atomically, under the file write policy.
+- `POST /agents/:agent/sessions/:session/ask` `{question, header?,
+  options: [{label, description?}] (2-6), multiple?, timeout_ms?}` —
+  **blocks** until the person answers or the wait runs out (default 30
+  min, max 4 h) and returns `{answered, answers: string[], text?}`.
+  Publishes `question_asked` when the question opens. A second question
+  on the same session supersedes the first (which returns unanswered).
+- `POST /agents/:agent/sessions/:session/answer` `{questionId,
+  answers?: string[], text?}` → `{ok: true}`, or `404` when no such
+  question is open. Publishes `question_answered`.
+
 ### `GET /agents/:agent/sessions/:session/work`
 
 What this session is doing right now, what waits behind it, which
@@ -1713,6 +1748,16 @@ Event types:
   `user_message` with `steer: true` and the same `steer_id` follows
   once the engine has handed the text to the model. Other windows on
   the session render a pending bubble from this.
+- `builder_state` — `{mode, phase, planPath}` — a builder session's
+  mode or phase changed, or its plan file was set (see *Builder
+  sessions*).
+- `todo_updated` — `{todos: [{content, status, priority?}], by?}` — the
+  builder replaced its task list (`todo_write`).
+- `question_asked` — `{questionId, question, header?, options, multiple,
+  expiresAt}` — the builder is waiting for the person (`ask_user`);
+  answer with `POST …/answer`.
+- `question_answered` — `{questionId, answered}` — the open question
+  was answered.
 - `turn_queued` — `{turnId, ahead, workId?, kind?}` — fired when `POST /chat/send`
   hit a busy lock and the turn had to wait. `ahead` is the number
   of turns this one must wait for (≥1, includes the currently-

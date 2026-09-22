@@ -136,6 +136,7 @@ high-value next steps in rough order:
 |---|---|---|
 | [setup.md](setup.md) | Operator runbook | First install; adding providers; HTTPS; mobile; ops |
 | [agents.md](agents.md) | Persona + agent.yaml reference | Creating an agent; per-agent model, REM, tool/skill visibility |
+| [builder.md](builder.md) | The builder kind | An agent that is a coding harness: plan → Go → build, task panel, questions, hand-over from an orchestrator |
 | [api.md](api.md) | HTTP/SSE contract | Building a third-party client; debugging streaming |
 | [tools.md](tools.md) | Tool catalog overview | Wondering what an agent can do |
 | [mcp.md](mcp.md) | External MCP servers | Plugging third-party MCP tools into your agents |

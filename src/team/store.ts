@@ -10,7 +10,7 @@ import { load as parseYaml } from 'js-yaml';
 import { logger } from '../server/logger.ts';
 import { listAgents } from '../persona/loader.ts';
 import { parseTeamFile, resolveTeam } from './resolve.ts';
-import { renderTeamBlock } from './render.ts';
+import { renderTeamBlock, renderTeamBlockCompact } from './render.ts';
 import { TEAM_FILE_NAME, type ResolvedTeam, type TeamAgentInfo, type TeamFile, type TeamIssue } from './types.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -117,8 +117,8 @@ export async function getResolvedTeam(): Promise<ResolvedTeam | null> {
 }
 
 /** The `# Your team` block for one agent, or '' when the feature is off. */
-export async function buildTeamBlock(agent: string): Promise<string> {
+export async function buildTeamBlock(agent: string, variant: 'full' | 'compact' = 'full'): Promise<string> {
   const team = await getResolvedTeam();
   if (!team) return '';
-  return renderTeamBlock(team, agent) ?? '';
+  return (variant === 'compact' ? renderTeamBlockCompact(team, agent) : renderTeamBlock(team, agent)) ?? '';
 }
