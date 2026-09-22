@@ -80,6 +80,7 @@ export function resolveTeam(file: TeamFile, onDisk: TeamAgentInfo[]): ResolvedTe
     agents[name] = {
       name,
       title: titleFor(name, a.title, infoByName.get(name)),
+      ...(infoByName.get(name)?.kind ? { kind: infoByName.get(name)!.kind } : {}),
       reportsTo: effectiveParent(name),
       involveFor: a.involve_for ?? [],
       notFor: a.not_for ?? [],
@@ -106,7 +107,7 @@ export function resolveTeam(file: TeamFile, onDisk: TeamAgentInfo[]): ResolvedTe
 
   const unlisted = onDisk
     .filter((a) => !(a.name in file.agents))
-    .map((a) => ({ name: a.name, title: titleFor(a.name, undefined, a) }));
+    .map((a) => ({ name: a.name, title: titleFor(a.name, undefined, a), ...(a.kind ? { kind: a.kind } : {}) }));
   for (const u of unlisted) warnings.push(`${u.name} exists but is not in team.yaml — shown under "Not in the org chart"`);
 
   return {

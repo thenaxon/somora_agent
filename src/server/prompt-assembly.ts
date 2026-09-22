@@ -24,7 +24,8 @@ import { buildTeamBlock } from '../team/store.ts';
 import { logger } from './logger.ts';
 import { SOMORA_HOME_DIR } from './logger.ts';
 import type { ChatTurnResolveDeps } from './run-turn-types.ts';
-import { buildSelfPointer, effectiveWorkspace } from './workspace.ts';
+import { buildSelfPointer } from './workspace.ts';
+import { workdirFromMeta } from './session-workdir.ts';
 import { readBuilderState, renderBuilderSessionBlock } from './builder-session.ts';
 import {
   BUILDER_HARNESS_PROMPT,
@@ -269,7 +270,8 @@ async function assembleBuilderPrompt(args: {
   freshConfig: Config;
 }): Promise<AssembledPrompt> {
   const { agent, session, persona, sessionMeta, deps, subagentDepth, toolCount, freshConfig } = args;
-  const workdir = effectiveWorkspace(persona, freshConfig);
+  const wd = workdirFromMeta(sessionMeta, persona, freshConfig);
+  const workdir = wd.path;
   const env = renderBuilderEnvBlock({
     workdir,
     isGitRepo: await isGitRepo(workdir),
@@ -291,7 +293,7 @@ async function assembleBuilderPrompt(args: {
   const allSkills = await loadAvailableSkills(freshConfig);
   const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillGating, freshConfig);
   const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
-  const modeBlock = renderBuilderSessionBlock(readBuilderState(sessionMeta));
+  const modeBlock = renderBuilderSessionBlock(readBuilderState(sessionMeta), { projectFolder: wd.source === 'project' });
   const sessionBlock = buildSessionBlock(agent, session, sessionMeta) + (modeBlock ? `\n\n${modeBlock}` : '');
   const projectBlock = await buildProjectBlock(sessionMeta, deps.config);
 

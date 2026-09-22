@@ -47,7 +47,7 @@ import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
 import { builderSessionAllows, ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
-import { effectiveWorkspace as effectiveWorkspaceOf } from './workspace.ts';
+import { workdirFromMeta } from './session-workdir.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
@@ -887,7 +887,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         agent,
         session,
         origin ?? { kind: 'human', via: 'chat' },
-        effectiveWorkspaceOf(persona, deps.config),
+        workdirFromMeta(sessionMeta as Record<string, unknown>, persona, deps.config).path,
       );
       sessionMeta = await deps.sessionMetaStore.get(agent, session);
     }

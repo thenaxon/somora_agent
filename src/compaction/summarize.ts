@@ -39,6 +39,29 @@ import { estimateTokens } from './policy.ts';
 
 const HEADROOM_FACTOR = 1.3;
 
+/** Total chars a turn's tool trail may take in the summary input. */
+const TOOL_TRAIL_MAX_CHARS = 1500;
+
+/** One tool call as a short token: the path, command or query it
+ *  worked on — enough to recall what happened, never the full payload. */
+export function describeToolInput(input: unknown): string {
+  if (!input || typeof input !== 'object') return '';
+  const o = input as Record<string, unknown>;
+  for (const k of ['path', 'command', 'pattern', 'query', 'slug', 'message', 'task', 'question', 'name', 'url']) {
+    const v = o[k];
+    if (typeof v === 'string' && v.length > 0) return v.length > 80 ? `${v.slice(0, 77)}…` : v;
+  }
+  return '';
+}
+
+export function renderToolTrail(trail: string[]): string {
+  const joined = trail.join('; ');
+  if (joined.length <= TOOL_TRAIL_MAX_CHARS) return joined;
+  const head = trail.slice(0, 8).join('; ');
+  const tail = trail.slice(-8).join('; ');
+  return `${head}; … (${trail.length - 16} more) …; ${tail}`.slice(0, TOOL_TRAIL_MAX_CHARS + 60);
+}
+
 interface ExtractRangeResult {
   pairs: ReplayPair[];
   throughTs: number;
@@ -61,6 +84,19 @@ export function extractCompactionRange(
 
   const pairs: { ts: number; user: string; assistant: string }[] = [];
   let pendingUser: { ts: number; text: string } | undefined;
+  // What the turn DID, beside what it said: tool calls and whether they
+  // succeeded, appended to the assistant side of the pair. A builder's
+  // state lives almost entirely in this trail (which file was patched,
+  // which test went red); without it the summary knew only the prose.
+  let trail: string[] = [];
+  const callNames = new Map<string, string>();
+  const flushTrail = (assistant: string): string => {
+    if (trail.length === 0) return assistant;
+    const t = renderToolTrail(trail);
+    trail = [];
+    callNames.clear();
+    return `${assistant}\n\n[tools used in this turn: ${t}]`;
+  };
   for (const ev of history) {
     if (ev.ts <= sinceTs) continue;
     if (ev.kind === 'user_message') {
@@ -73,12 +109,20 @@ export function extractCompactionRange(
         pairs.push({
           ts: pendingUser.ts,
           user: pendingUser.text,
-          assistant: '[no assistant reply — the turn ended without an answer]',
+          assistant: flushTrail('[no assistant reply — the turn ended without an answer]'),
         });
       }
+      trail = [];
+      callNames.clear();
       pendingUser = { ts: ev.ts, text: ev.text };
+    } else if (ev.kind === 'tool_call' && pendingUser !== undefined) {
+      callNames.set(ev.callId, ev.tool);
+      trail.push(`${ev.tool}(${describeToolInput(ev.input)})`);
+    } else if (ev.kind === 'tool_result' && pendingUser !== undefined) {
+      const last = trail.length - 1;
+      if (last >= 0 && callNames.has(ev.callId)) trail[last] = `${trail[last]} ${ev.error ? '→ ERROR ' + String(ev.error).slice(0, 80) : '→ ok'}`;
     } else if (ev.kind === 'assistant_message' && pendingUser !== undefined) {
-      pairs.push({ ts: ev.ts, user: pendingUser.text, assistant: ev.text });
+      pairs.push({ ts: ev.ts, user: pendingUser.text, assistant: flushTrail(ev.text) });
       pendingUser = undefined;
     }
   }

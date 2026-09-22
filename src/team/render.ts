@@ -38,8 +38,15 @@ function chartLines(team: ResolvedTeam, self: string): string[] {
   return lines;
 }
 
+/** What every colleague is told about a builder (docs/builder.md). */
+export const BUILDER_HANDOVER_HINT =
+  'Builder — hand over a COMPLETE order in one message (builder_dispatch: repository or project with its folder, ' +
+  'what to build, what done means, where the report goes) and wait for the report; no interim check-ins, no ' +
+  'corrections into running work — a correction is a new message into its session.';
+
 function involveLine(a: ResolvedTeamAgent): string | null {
   const parts: string[] = [];
+  if (a.kind === 'builder') parts.push(BUILDER_HANDOVER_HINT);
   if (a.involveFor.length > 0) parts.push(joinPhrases(a.involveFor) + '.');
   if (a.notFor.length > 0) parts.push(`Not for: ${joinPhrases(a.notFor)}.`);
   if (a.notes) parts.push(a.notes.replace(/\s+/g, ' ').trim());
@@ -86,6 +93,9 @@ export function renderTeamBlock(team: ResolvedTeam, self: string): string | null
   if (team.unlisted.length > 0) {
     const list = team.unlisted.map((u) => (u.name === self ? `${u.name} (${u.title}) ← you` : `${u.name} (${u.title})`));
     out.push(`Not in the org chart yet: ${list.join(', ')}.`);
+    for (const u of team.unlisted) {
+      if (u.kind === 'builder' && u.name !== self) out.push(`- ${u.name}: ${BUILDER_HANDOVER_HINT}`);
+    }
   }
   out.push('');
 

@@ -36,6 +36,7 @@ import { SOMORA_INTERNAL_ENV_SUMMARY } from './internal-env.ts';
 import { killLocalJob, localExecBackground, localExecSync } from './local.ts';
 import { fitExecOutput } from './fit-output.ts';
 import { saveToolOutput } from '../tool-output.ts';
+import { pinnedWorkdir } from '../../server/session-workdir.ts';
 
 /**
  * When a stream was shortened for the result (or capped at capture),
@@ -471,9 +472,12 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
           vars: Object.keys(skillScope.injectEnv),
         });
       }
+      // Default cwd: the folder of the project pinned to this session,
+      // when it has one (docs/projects.md `workdir`); else the server's.
+      const localCwd = input.cwd ?? (await pinnedWorkdir(ctx.agent, ctx.session)) ?? undefined;
       const r = await localExecSync({
         command: input.command,
-        ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(localCwd ? { cwd: localCwd } : {}),
         ...(input.env ? { env: input.env } : {}),
         timeoutMs: input.timeout_ms ?? 60_000,
         pty: input.pty,

@@ -70,23 +70,6 @@ export function BuilderPanel({
       return next;
     });
   };
-  if (collapsed) {
-    const open = state?.todos.filter((t) => t.status !== 'completed' && t.status !== 'cancelled').length ?? 0;
-    return (
-      <aside className="builder-panel is-collapsed" aria-label="Builder panel (collapsed)">
-        <button
-          type="button"
-          className="builder-panel-toggle"
-          title={narrow && !userCollapsed ? 'Window too narrow for the panel — widen it' : `Show the builder panel${open ? ` (${open} open task${open === 1 ? '' : 's'})` : ''}`}
-          onClick={toggleCollapsed}
-        >
-          <ChevronLeft size={14} />
-        </button>
-        {data?.question && <Zap size={12} style={{ color: 'var(--accent, #d9a400)', marginTop: 6 }} />}
-      </aside>
-    );
-  }
-
   const patch = async (p: { mode?: 'attended' | 'unattended'; phase?: 'plan' | 'build' }) => {
     setBusy('patch');
     try {
@@ -115,6 +98,27 @@ export function BuilderPanel({
     const t = setTimeout(() => setNotice(null), 6000);
     return () => clearTimeout(t);
   }, [notice]);
+
+  // Every hook above this line, whatever is rendered: an early return
+  // before a hook changes the hook order between renders and takes the
+  // whole app down (React #300 — the black screen of 2026-09-23).
+  if (collapsed) {
+    const open = state?.todos.filter((t) => t.status !== 'completed' && t.status !== 'cancelled').length ?? 0;
+    return (
+      <aside className="builder-panel is-collapsed" aria-label="Builder panel (collapsed)">
+        <button
+          type="button"
+          className="builder-panel-toggle"
+          title={narrow && !userCollapsed ? 'Window too narrow for the panel — widen it' : `Show the builder panel${open ? ` (${open} open task${open === 1 ? '' : 's'})` : ''}`}
+          onClick={toggleCollapsed}
+        >
+          <ChevronLeft size={14} />
+        </button>
+        {data?.question && <Zap size={12} style={{ color: 'var(--accent, #d9a400)', marginTop: 6 }} />}
+      </aside>
+    );
+  }
+
 
   return (
     <aside className="builder-panel" aria-label="Builder panel">

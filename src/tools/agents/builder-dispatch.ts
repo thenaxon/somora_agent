@@ -1,0 +1,155 @@
+// builder_dispatch — hand a build order to a builder agent in one call.
+//
+// What an orchestrator used to assemble by hand (create a session, pin
+// the project, brief, then poll a terminal) is one tool: a fresh session
+// on the builder, the project pinned (its folder becomes the working
+// directory), the session set to unattended + build, and the order sent
+// as an agent_ask with wait:false — so the caller is woken with the
+// builder's report when it lands, exactly like any other agent answer,
+// and reads it with agent_ask_result. Nothing in between: no interim
+// check-ins, no corrections into running work. A correction is a new
+// message into that session (steer or next turn).
+
+import { z } from 'zod';
+import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
+import { loadPersona } from '../../persona/loader.ts';
+import type { ToolDefinition } from '../types.ts';
+import { agentAsk } from './ask.ts';
+
+const Input = z
+  .object({
+    builder: z.string().min(1).describe('Name of the builder agent (kind: builder).'),
+    task: z
+      .string()
+      .min(1)
+      .describe(
+        'The complete order: what to build or change, in which repository, what "done" means, where to write the report. ' +
+          'The builder sees nothing of your conversation — give it everything.',
+      ),
+    project: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Project slug to pin on the builder session. A project with `workdir` makes that folder the working directory.'),
+    plan_path: z.string().min(1).optional().describe('Absolute path of an already written plan file the builder must read first.'),
+    done_criteria: z.string().min(1).optional().describe('What "done" means, e.g. "tests green and the CLI prints the new column". Appended to the order.'),
+    report_path: z.string().min(1).optional().describe('Absolute path the builder writes its report to at the end (besides answering).'),
+    mode: z
+      .enum(['attended', 'unattended'])
+      .optional()
+      .describe('Default unattended: the builder decides open points itself. attended: it may ask the person via ask_user.'),
+    session: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Slug for the new builder session (default: build-<project or ts>-<rand>).'),
+    timeout_ms: z.number().int().min(1_000).max(7_200_000).optional().describe('Passed to agent_ask (wait:false — the wake comes when the report lands).'),
+  })
+  .strict();
+
+function baseUrl(): string {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  return `${scheme}://${host}:${port}`;
+}
+
+async function call<T>(method: string, path: string, body: unknown): Promise<T> {
+  let res;
+  try {
+    res = await loopbackFetch(`${baseUrl()}${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    const c = classifyFetchError(err);
+    throw new Error(`builder_dispatch [${c.category}${c.code ? '/' + c.code : ''}]: ${c.message}`);
+  }
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(`builder_dispatch: ${data.error ?? `HTTP ${res.status}`}`);
+  return data;
+}
+
+export function composeBuildOrder(input: { task: string; plan_path?: string; done_criteria?: string; report_path?: string }): string {
+  const parts: string[] = [];
+  if (input.plan_path) parts.push(`Read the plan at ${input.plan_path} first and follow it.`);
+  parts.push(input.task.trim());
+  if (input.done_criteria) parts.push(`Done means: ${input.done_criteria.trim()}`);
+  if (input.report_path) parts.push(`At the end write your report to ${input.report_path} with file_write, and give the same report as your answer.`);
+  parts.push('Decide open questions yourself and list every decision in the report. Do not stop for approval.');
+  return parts.join('\n\n');
+}
+
+export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
+  name: 'builder_dispatch',
+  toolset: 'agents',
+  description:
+    'Hand a build order to a builder agent (kind: builder) in one call: creates a fresh session on it, pins the ' +
+    'project (its folder becomes the working directory), sets the session to unattended + build, and sends the ' +
+    'order. Returns at once with a call_id; you are woken with the builder\'s report when it is done (read it with ' +
+    'agent_ask_result). Give the COMPLETE order — repository or project, what to build, what done means, where the ' +
+    'report goes; the builder sees nothing of this conversation. Do not check in on it or send corrections into ' +
+    'running work: wait for the report, then send a new message into that session if something must change.',
+  inputSchema: Input,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      builder: { type: 'string', description: 'Builder agent name (kind: builder).' },
+      task: { type: 'string', description: 'The complete order — everything the builder needs.' },
+      project: { type: 'string', description: 'Project slug to pin (its `workdir` becomes the working directory).' },
+      plan_path: { type: 'string', description: 'Absolute path of a plan file to read first.' },
+      done_criteria: { type: 'string', description: 'What "done" means.' },
+      report_path: { type: 'string', description: 'Absolute path for the written report.' },
+      mode: { type: 'string', enum: ['attended', 'unattended'], description: 'Default unattended.' },
+      session: { type: 'string', description: 'Slug for the new builder session.' },
+      timeout_ms: { type: 'integer', description: 'Passed to agent_ask.' },
+    },
+    required: ['builder', 'task'],
+    additionalProperties: false,
+  },
+  defaultTimeoutMs: 60_000,
+  async handler(input, ctx) {
+    const persona = await loadPersona(input.builder);
+    if (!persona) throw new Error(`builder_dispatch: agent '${input.builder}' not found`);
+    if (persona.kind !== 'builder') {
+      throw new Error(`builder_dispatch: '${input.builder}' is a ${persona.kind} agent, not a builder — use agent_ask for it`);
+    }
+    const rand = Math.random().toString(36).slice(2, 6);
+    const slug = (input.session ?? `build-${input.project ?? new Date().toISOString().slice(0, 10)}-${rand}`).replace(/[^A-Za-z0-9_-]/g, '-');
+    const b = encodeURIComponent(input.builder);
+    const created = await call<{ id: string }>('POST', `/agents/${b}/sessions`, { slug });
+    const sid = encodeURIComponent(created.id);
+    if (input.project) {
+      await call('POST', `/agents/${b}/sessions/${sid}/project`, { slug: input.project });
+    }
+    await call('PATCH', `/agents/${b}/sessions/${sid}/builder`, {
+      mode: input.mode ?? 'unattended',
+      phase: 'build',
+      ...(input.plan_path ? { planPath: input.plan_path } : {}),
+    });
+    const order = composeBuildOrder(input);
+    const ask = await agentAsk.handler(
+      {
+        agent: input.builder,
+        message: order,
+        session: created.id,
+        wait: false,
+        ...(input.timeout_ms ? { timeout_ms: input.timeout_ms } : {}),
+      } as Parameters<typeof agentAsk.handler>[0],
+      ctx,
+    );
+    return {
+      ok: true,
+      builder: input.builder,
+      session: created.id,
+      slug,
+      ...(input.project ? { project: input.project } : {}),
+      mode: input.mode ?? 'unattended',
+      dispatch: ask,
+      note:
+        'The builder works in its own session; you will be woken with its report ([agent answer]). ' +
+        'Read it with agent_ask_result(call_id). Corrections go as a new message into that session.',
+    };
+  },
+};

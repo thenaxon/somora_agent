@@ -72,11 +72,14 @@ export interface TeamAgentInfo {
   name: string;
   role?: string | undefined;
   description?: string | undefined;
+  /** agent.yaml `kind` — a builder is handed complete orders, not consulted. */
+  kind?: 'chat' | 'builder' | undefined;
 }
 
 export interface ResolvedTeamAgent {
   name: string;
   title: string;
+  kind?: 'chat' | 'builder' | undefined;
   /** 'principal' or an agent name. */
   reportsTo: string;
   involveFor: string[];
@@ -96,7 +99,7 @@ export interface ResolvedTeam {
   /** Pre-order walk of the tree from the principal — the rendering order. */
   order: string[];
   /** Agents that exist on disk but are not in the file. */
-  unlisted: Array<{ name: string; title: string }>;
+  unlisted: Array<{ name: string; title: string; kind?: 'chat' | 'builder' | undefined }>;
   /** Agents in the file that do not exist on disk (skipped). */
   missing: string[];
   warnings: string[];

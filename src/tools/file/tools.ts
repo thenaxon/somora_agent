@@ -229,13 +229,13 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
       // used to be readable.
       {
         const { resolveLocalPath, assertReadAllowed } = await import('./policy.ts');
-        const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config);
+        const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config, ctx.session);
         await assertReadAllowed(absolute);
       }
       try {
         const { detectMimeFromPath } = await import('../../multimodal/mime.ts');
         const { resolveLocalPath } = await import('./policy.ts');
-        const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config);
+        const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config, ctx.session);
         const mime = await detectMimeFromPath(absolute);
         if (mime.kind === 'image') {
           return await readImageAsContentBlock(absolute, mime.mimeType, ctx);
@@ -265,6 +265,7 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
       return localRead({
         path: input.path,
         agent: ctx.agent,
+        session: ctx.session,
         config: ctx.config,
         offset: input.offset,
         limit: input.limit,
@@ -338,6 +339,7 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
         path: input.path,
         content: input.content,
         agent: ctx.agent,
+        session: ctx.session,
         config: ctx.config,
         mode: input.mode,
       });
@@ -408,6 +410,7 @@ export const filePatch: ToolDefinition<z.infer<typeof PatchInput>> = {
       return localPatch({
         path: input.path,
         agent: ctx.agent,
+        session: ctx.session,
         config: ctx.config,
         oldString: input.old_string,
         newString: input.new_string,
@@ -514,6 +517,7 @@ export const fileSearch: ToolDefinition<z.infer<typeof SearchInput>> = {
       return localSearch({
         pattern: input.pattern,
         agent: ctx.agent,
+        session: ctx.session,
         config: ctx.config,
         path: input.path,
         limit: input.limit,
@@ -610,6 +614,7 @@ export const fileList: ToolDefinition<z.infer<typeof ListInput>> = {
       return localList({
         path: input.path,
         agent: ctx.agent,
+        session: ctx.session,
         config: ctx.config,
         recursive: input.recursive,
         sortBy: input.sortBy,

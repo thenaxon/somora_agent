@@ -33,6 +33,7 @@ import { basename, dirname, isAbsolute, normalize, resolve, sep } from 'node:pat
 import type { Config } from '../../config/types.ts';
 import { loadPersona } from '../../persona/loader.ts';
 import { effectiveWorkspace } from '../../server/workspace.ts';
+import { pinnedWorkdir } from '../../server/session-workdir.ts';
 
 const HOME = homedir();
 const SOMORA_HOME = process.env.SOMORA_HOME ?? `${HOME}/.somora`;
@@ -103,13 +104,16 @@ export async function resolveLocalPath(
   rawPath: string,
   agent: string,
   config: Config,
+  /** The calling session: a project pinned there with a `workdir`
+   *  makes that folder the root for relative paths (session-workdir.ts). */
+  session?: string,
 ): Promise<ResolvedPath> {
   if (!rawPath || rawPath.trim().length === 0) {
     throw new Error('file path is empty');
   }
   const persona = await loadPersona(agent);
   if (!persona) throw new Error(`agent '${agent}' not found`);
-  const workspace = effectiveWorkspace(persona, config);
+  const workspace = (await pinnedWorkdir(agent, session)) ?? effectiveWorkspace(persona, config);
 
   const expanded = expandHome(rawPath);
   const wasRelative = !isAbsolute(expanded);

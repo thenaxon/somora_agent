@@ -127,9 +127,16 @@ export function builderSessionAllows(state: BuilderSessionState | null, toolName
 }
 
 /** The lines the builder prompt adds for the session's mode and phase. */
-export function renderBuilderSessionBlock(state: BuilderSessionState | null): string {
+export function renderBuilderSessionBlock(state: BuilderSessionState | null, opts: { projectFolder?: boolean } = {}): string {
   if (!state) return '';
   const lines: string[] = ['## Mode and phase', ''];
+  if (opts.projectFolder === false) {
+    lines.push(
+      state.mode === 'attended'
+        ? '- No project folder is pinned to this session: the working directory above is the general workspace. Before building, find out which repository or folder the work belongs to — ask the person, or create the project with project_create (give it `workdir`) and pin it with project_focus; a pinned project makes its folder the working directory.'
+        : '- No project folder is pinned to this session: the working directory above is the general workspace. Do not build there. Report that no project folder was given and stop.',
+    );
+  }
   if (state.mode === 'attended') {
     lines.push(
       '- Mode: ATTENDED. A person is watching this session. For a real fork in the road use ask_user (one question, clear options); for everything routine decide yourself and continue.',

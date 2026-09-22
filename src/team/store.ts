@@ -65,8 +65,8 @@ async function roster(): Promise<{ agents: TeamAgentInfo[]; key: string }> {
   const now = Date.now();
   if (rosterCache && now - rosterCache.at < ROSTER_TTL_MS) return rosterCache;
   const list = await listAgents();
-  const agents: TeamAgentInfo[] = list.map((a) => ({ name: a.name, role: a.role, description: a.description }));
-  const key = agents.map((a) => `${a.name}:${a.role ?? ''}:${a.description}`).join('|');
+  const agents: TeamAgentInfo[] = list.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind }));
+  const key = agents.map((a) => `${a.name}:${a.role ?? ''}:${a.kind ?? ''}:${a.description}`).join('|');
   rosterCache = { at: now, agents, key };
   return rosterCache;
 }

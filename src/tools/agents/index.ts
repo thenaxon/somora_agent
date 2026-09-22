@@ -13,6 +13,7 @@ import { sessionList } from './session-list.ts';
 import { sessionModel } from './session-model.ts';
 import { spawnSubagent, spawnSubagents } from './spawn.ts';
 import { subagentCancel, subagentList, subagentResult, subagentStatus } from './status.ts';
+import { builderDispatch } from './builder-dispatch.ts';
 import type { ToolDefinition } from '../types.ts';
 
 export { agentAsk } from './ask.ts';
@@ -36,5 +37,6 @@ export function agentTools(): ToolDefinition[] {
     agentAskCancel,
     sessionList,
     sessionModel,
+    builderDispatch,
   ] as ToolDefinition[];
 }

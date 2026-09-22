@@ -24,7 +24,7 @@ export function buildSummaryPrompt({
     'turn as a pseudo system message — stay factual, neutral, compact.',
     'Write it in the language the conversation is held in.',
     '',
-    'Format: exactly five Markdown sections with the headings below.',
+    'Format: exactly seven Markdown sections with the headings below.',
     'Prefer verbatim quotes from the history over paraphrase.',
     'Invent nothing that is not in the history.',
     '',
@@ -46,6 +46,16 @@ export function buildSummaryPrompt({
     '## Open Questions',
     'What was unclear or unanswered at the time of compaction? Bullets;',
     'empty if nothing is open.',
+    '',
+    '## Work State',
+    'Only when the history shows work on files, commands or tasks (the',
+    '"tools used" trails): Completed / Active / Blocked as three short',
+    'bullet groups — what was changed and verified, what was in progress,',
+    'what failed and why. Otherwise "(none)".',
+    '',
+    '## Relevant Files',
+    'Files and commands that matter for continuing, one per bullet with',
+    'why (exact paths). "(none)" when the history has no such work.',
   ].join('\n');
 
   const userParts: string[] = [];
@@ -74,7 +84,7 @@ export function buildSummaryPrompt({
   }
   userParts.push('</conversation-to-summarize>');
   userParts.push('');
-  userParts.push('Write the five sections now.');
+  userParts.push('Write the seven sections now.');
 
   return { system, user: userParts.join('\n') };
 }

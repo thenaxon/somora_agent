@@ -50,11 +50,12 @@ export interface ReadResult {
 export async function localRead(args: {
   path: string;
   agent: string;
+  session?: string;
   config: Config;
   offset?: number;
   limit?: number;
 }): Promise<ReadResult> {
-  const { absolute, workspace } = await resolveLocalPath(args.path, args.agent, args.config);
+  const { absolute, workspace } = await resolveLocalPath(args.path, args.agent, args.config, args.session);
   const policy = checkReadAllowed(absolute);
   if (!policy.ok) throw new Error(policy.reason);
   const real = await realpathSafeAncestor(absolute);
@@ -110,6 +111,7 @@ export async function localWrite(args: {
   path: string;
   content: string;
   agent: string;
+  session?: string;
   config: Config;
   mode: 'create' | 'overwrite' | 'append';
 }): Promise<WriteResult> {
@@ -217,12 +219,13 @@ export function applyPatch(
 export async function localPatch(args: {
   path: string;
   agent: string;
+  session?: string;
   config: Config;
   oldString: string;
   newString: string;
   replaceAll: boolean;
 }): Promise<PatchResult> {
-  const { absolute } = await resolveLocalPath(args.path, args.agent, args.config);
+  const { absolute } = await resolveLocalPath(args.path, args.agent, args.config, args.session);
   const policy = checkWriteAllowed(absolute, args.agent);
   if (!policy.ok) throw new Error(policy.reason);
   const real = await realpathSafeAncestor(absolute);
@@ -299,14 +302,15 @@ export function rgArgs(pattern: string, limit: number, opts: SearchOptions): str
 export async function localSearch(args: {
   pattern: string;
   agent: string;
+  session?: string;
   config: Config;
   path?: string;
   limit?: number;
 } & SearchOptions): Promise<SearchResult> {
   const limit = args.limit ?? 50;
   const startPath = args.path
-    ? (await resolveLocalPath(args.path, args.agent, args.config)).absolute
-    : (await resolveLocalPath('.', args.agent, args.config)).absolute;
+    ? (await resolveLocalPath(args.path, args.agent, args.config, args.session)).absolute
+    : (await resolveLocalPath('.', args.agent, args.config, args.session)).absolute;
   // Same read policy as file_read/file_list — search returns file
   // content, so a blocked directory must not be searchable either.
   await assertReadAllowed(startPath);
@@ -473,6 +477,7 @@ const LIST_HARD_CAP = 5_000;
 export async function localList(args: {
   path: string;
   agent: string;
+  session?: string;
   config: Config;
   recursive?: boolean;
   sortBy?: 'mtime' | 'name' | 'size';
@@ -482,7 +487,7 @@ export async function localList(args: {
    *  exclude (node_modules, build output) — via `rg --files`. */
   respectGitignore?: boolean;
 }): Promise<ListResult> {
-  const { absolute, workspace } = await resolveLocalPath(args.path, args.agent, args.config);
+  const { absolute, workspace } = await resolveLocalPath(args.path, args.agent, args.config, args.session);
   const policy = checkReadAllowed(absolute);
   if (!policy.ok) throw new Error(policy.reason);
   const real = await realpathSafeAncestor(absolute);
