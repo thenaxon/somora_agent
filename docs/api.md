@@ -2321,9 +2321,14 @@ Body:
   "paths": [
     { "ref": "~/code/heimkino", "label": "Sourcecode" },
     { "ref": "https://drive.google.com/..." }
-  ]
+  ],
+  "workdir": "~/code/heimkino"
 }
 ```
+
+`workdir` (optional) is the project's working directory — pinning the
+project to a session makes it that session's working directory (see
+[projects.md](projects.md)).
 
 Validation:
 - `slug` must match `[a-z0-9_-]+` and be unique (`409` on collision)

@@ -2713,6 +2713,7 @@ app.post('/projects', async (c) => {
     tags?: string[];
     expires?: string | null;
     paths?: Array<{ ref: string; label?: string }>;
+    workdir?: string;
   };
   const body = (await c.req.json().catch(() => ({}))) as CreateBody;
   if (!body.slug || !body.name || !body.entity) {
@@ -2752,6 +2753,7 @@ app.post('/projects', async (c) => {
     ...(body.expires !== undefined ? { expires: body.expires } : {}),
     archived: false,
     paths,
+    ...(typeof body.workdir === 'string' && body.workdir.trim() ? { workdir: body.workdir.trim() } : {}),
   });
   await writeProject(project);
   logger.info({
@@ -2799,7 +2801,7 @@ app.patch('/projects/:slug', async (c) => {
         case 'set_field': {
           const field = String(opRaw.field);
           const value = opRaw.value as string | null;
-          if (!['name', 'description', 'color', 'expires'].includes(field)) {
+          if (!['name', 'description', 'color', 'expires', 'workdir'].includes(field)) {
             return c.json({ error: `set_field: unknown field '${field}'` }, 400);
           }
           if (field === 'name') {
@@ -2807,6 +2809,9 @@ app.patch('/projects/:slug', async (c) => {
               return c.json({ error: 'set_field name: value must be non-empty string' }, 400);
             }
             next.name = value;
+          } else if (field === 'workdir') {
+            if (value === null || String(value).trim() === '') delete next.workdir;
+            else next.workdir = String(value).trim();
           } else if (field === 'description') {
             if (value === null) delete next.description;
             else next.description = String(value);
