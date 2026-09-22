@@ -61,5 +61,13 @@ export const ProjectFrontmatterSchema = z.object({
   archiveReason: z.string().optional(),
   /** Pointer list. Type is scheme-inferred at use time. */
   paths: z.array(ProjectPathSchema).default([]),
+  /**
+   * The project's working directory (a repository, usually). When a
+   * session pins this project, the folder becomes the session's working
+   * directory: relative paths in the file tools and exec's default cwd
+   * resolve there, and a builder agent works in it (docs/builder.md).
+   * Absolute or `~/…`.
+   */
+  workdir: z.string().min(1).optional(),
 });
 export type ProjectFrontmatter = z.infer<typeof ProjectFrontmatterSchema>;

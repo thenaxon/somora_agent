@@ -487,8 +487,26 @@ async function runOneSpawn(args: OneSpawnArgs): Promise<OneSpawnResult> {
   // Attach the spawn meta block so /sessions can label this entry
   // "sub from <parent>" without re-deriving from the slug.
   const existingMeta = await sessionMetaStore.get(targetPersona, sessionId);
+  // A helper works where its parent works: the pinned project (and its
+  // folder) carries over. A builder helper runs unattended and builds —
+  // it has a sealed task, nobody to ask, no plan phase of its own.
+  const targetKind = personaCheck.kind;
+  const parentMeta = ctx.session ? ((await sessionMetaStore.get(ctx.agent, ctx.session)) as Record<string, unknown>) : {};
+  const inherited: Record<string, unknown> = {};
+  if (typeof parentMeta.workdir === 'string') inherited.workdir = parentMeta.workdir;
+  if (typeof parentMeta.projectSlug === 'string') {
+    inherited.projectSlug = parentMeta.projectSlug;
+    inherited.projectLinkedAt = new Date().toISOString();
+  }
+  if (targetKind === 'builder') {
+    inherited.builderMode = 'unattended';
+    inherited.builderPhase = 'build';
+    inherited.builderInitializedAt = Date.now();
+    if (typeof parentMeta.builderPlanPath === 'string') inherited.builderPlanPath = parentMeta.builderPlanPath;
+  }
   await sessionMetaStore.set(targetPersona, sessionId, {
     ...existingMeta,
+    ...inherited,
     spawn: {
       kind: isSelfClone ? 'self-sub' : 'sub',
       parent_agent: ctx.agent,

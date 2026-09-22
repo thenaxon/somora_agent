@@ -3,7 +3,7 @@
 // list the builder keeps with todo_write, and the question it asked
 // with ask_user — answered here with buttons or free text.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Circle, CircleDot, Play, Zap } from 'lucide-react';
 import { api, type BuilderQuestionDto, type BuilderStateDto } from '../lib/api';
 import { useBuilderSession } from '../hooks/useBuilderSession';
@@ -11,15 +11,26 @@ import { useBuilderSession } from '../hooks/useBuilderSession';
 /** Below this chat-window width the panel collapses on its own. */
 const NARROW_PX = 640;
 
-export function BuilderPanel({ agent, session }: { agent: string; session: string }) {
+export function BuilderPanel({
+  agent,
+  session,
+  hostRef,
+  onCollapsedChange,
+}: {
+  agent: string;
+  session: string;
+  /** The chat window's root element — observed for width. */
+  hostRef: React.RefObject<HTMLElement | null>;
+  /** Tells the chat window to reserve the strip instead of the column. */
+  onCollapsedChange: (collapsed: boolean) => void;
+}) {
   const { data, refresh } = useBuilderSession(agent, session, true);
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const state = data?.state ?? null;
-  const ref = useRef<HTMLElement | null>(null);
   // Collapsed by hand (remembered per agent) or because the window is
-  // narrow. The host `.chat` gets `panel-collapsed` so it reserves only
-  // the strip; the chat column itself is never touched.
+  // narrow. The chat window owns the class that reserves the room — the
+  // panel only reports; it never touches the DOM outside itself.
   const collapseKey = `somora.web.builderPanel.collapsed.${agent}`;
   const [userCollapsed, setUserCollapsed] = useState<boolean>(() => {
     try {
@@ -30,20 +41,24 @@ export function BuilderPanel({ agent, session }: { agent: string; session: strin
   });
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
-    const host = ref.current?.parentElement;
+    const host = hostRef.current;
     if (!host || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => setNarrow(host.clientWidth < NARROW_PX));
-    ro.observe(host);
-    setNarrow(host.clientWidth < NARROW_PX);
-    return () => ro.disconnect();
-  }, []);
+    let ro: ResizeObserver | undefined;
+    try {
+      ro = new ResizeObserver((entries) => {
+        const w = entries[0]?.contentRect.width ?? host.clientWidth;
+        setNarrow(w < NARROW_PX);
+      });
+      ro.observe(host);
+    } catch {
+      /* no observer — the person can still collapse by hand */
+    }
+    return () => ro?.disconnect();
+  }, [hostRef]);
   const collapsed = userCollapsed || narrow;
   useEffect(() => {
-    const host = ref.current?.parentElement;
-    if (!host) return;
-    host.classList.toggle('panel-collapsed', collapsed);
-    return () => host.classList.remove('panel-collapsed');
-  }, [collapsed]);
+    onCollapsedChange(collapsed);
+  }, [collapsed, onCollapsedChange]);
   const toggleCollapsed = () => {
     setUserCollapsed((v) => {
       const next = !v;
@@ -58,7 +73,7 @@ export function BuilderPanel({ agent, session }: { agent: string; session: strin
   if (collapsed) {
     const open = state?.todos.filter((t) => t.status !== 'completed' && t.status !== 'cancelled').length ?? 0;
     return (
-      <aside ref={ref} className="builder-panel is-collapsed" aria-label="Builder panel (collapsed)">
+      <aside className="builder-panel is-collapsed" aria-label="Builder panel (collapsed)">
         <button
           type="button"
           className="builder-panel-toggle"
@@ -102,7 +117,7 @@ export function BuilderPanel({ agent, session }: { agent: string; session: strin
   }, [notice]);
 
   return (
-    <aside ref={ref} className="builder-panel" aria-label="Builder panel">
+    <aside className="builder-panel" aria-label="Builder panel">
       <div className="builder-panel-head">
         <div className="builder-panel-topline">
           <div className="builder-panel-title">
@@ -157,7 +172,7 @@ export function BuilderPanel({ agent, session }: { agent: string; session: strin
         )}
         {state?.planPath && (
           <div className="builder-panel-muted" title={state.planPath}>
-            plan: <a href={state.planPath}>{state.planPath.split('/').slice(-2).join('/')}</a>
+            plan: <code>{state.planPath.split('/').slice(-2).join('/')}</code>
           </div>
         )}
       </div>

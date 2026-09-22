@@ -189,6 +189,10 @@ export function ChatWindow({
   // its next step) instead of queuing it behind. Default from the
   // agent's `steering:` setting; flipped per message with the bolt.
   const [steerNext, setSteerNext] = useState<boolean>(agent.steering === true);
+  // Builder panel (kind builder): the root ref it observes for width and
+  // whether it is collapsed (then only a strip is reserved on the right).
+  const chatRootRef = useRef<HTMLDivElement | null>(null);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetch('/tts/config')
@@ -927,7 +931,8 @@ export function ChatWindow({
   const isBuilder = agent.kind === 'builder';
   return (
     <div
-      className={isBuilder ? 'chat chat-with-panel' : 'chat'}
+      ref={chatRootRef}
+      className={isBuilder ? `chat chat-with-panel${panelCollapsed ? ' panel-collapsed' : ''}` : 'chat'}
       onMouseDown={(e) => focusTextareaIfPossible(e.target)}
       onDragEnter={(e) => {
         if (Array.from(e.dataTransfer.types).includes('Files')) {
@@ -1614,7 +1619,7 @@ export function ChatWindow({
           <Send size={14} />
         </button>
       </form>
-      {isBuilder && <BuilderPanel agent={agent.name} session={sessionId} />}
+      {isBuilder && <BuilderPanel agent={agent.name} session={sessionId} hostRef={chatRootRef} onCollapsedChange={setPanelCollapsed} />}
     </div>
   );
 }

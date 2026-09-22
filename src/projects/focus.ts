@@ -17,7 +17,23 @@
 import { appendEvent } from '../storage/sessions.ts';
 import type { SessionMetaStore } from '../engine/types.ts';
 import { logger } from '../server/logger.ts';
-import { projectExists } from './store.ts';
+import { projectExists, readProject } from './store.ts';
+import { homedir } from 'node:os';
+import { isAbsolute, join, normalize } from 'node:path';
+
+/** The project's working directory, expanded, or null when it has none
+ *  or the value is not an absolute path after expansion. */
+export async function projectWorkdir(slug: string): Promise<string | null> {
+  const project = await readProject(slug);
+  const raw = project?.workdir;
+  if (!raw) return null;
+  const expanded = raw === '~' ? homedir() : raw.startsWith('~/') ? join(homedir(), raw.slice(2)) : raw;
+  if (!isAbsolute(expanded)) {
+    logger.warn({ msg: 'project.workdir_not_absolute', slug, workdir: raw });
+    return null;
+  }
+  return normalize(expanded);
+}
 
 export interface FocusArgs {
   agent: string;
@@ -65,14 +81,21 @@ export async function focusProject(args: FocusArgs): Promise<FocusResult> {
   // A plain set() of the turn-start snapshot would revert their fields —
   // and projectSlug itself was the field lost in the 2026-05-13 incident.
   // update() re-reads fresh under the per-session lock (Juni-Audit 2026-06).
+  // A project with a `workdir` makes that folder the session's working
+  // directory (file tools, exec default cwd, builder environment);
+  // clearing the pin or pinning a project without one drops it.
+  const workdir = slug === null ? null : await projectWorkdir(slug);
   await metaStore.update(agent, session, (current) => {
     const next = { ...current } as Record<string, unknown>;
     if (slug === null) {
       delete next.projectSlug;
       delete next.projectLinkedAt;
+      delete next.workdir;
     } else {
       next.projectSlug = slug;
       next.projectLinkedAt = new Date(ts).toISOString();
+      if (workdir) next.workdir = workdir;
+      else delete next.workdir;
     }
     return next as typeof current;
   });
