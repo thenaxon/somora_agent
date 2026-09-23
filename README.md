@@ -67,6 +67,29 @@ question from another agent, a sub-agent, a scheduled trigger, a voice
 call — goes through one queue per session that you can see and take back
 from in every client.
 
+## Two kinds of agents
+
+Every agent is one of two kinds, chosen when it is created and never
+changed. Most of your agents are **chat agents**. A **builder** is the
+one you give a repository to.
+
+| | Chat agent | Builder |
+|---|---|---|
+| **What it is for** | Talking, thinking, remembering, orchestrating: the assistant you ask, the analyst, the coordinator | Building software in a repository: plan, edit, run, test, report |
+| **Its prompt** | Its persona (`AGENTS.md`, `SOUL.md`, `USER.md`), your team, the wiki map, memory recall | Harness rules, an environment block, the repository's own `AGENTS.md`/`CLAUDE.md`; no persona, no memory recall |
+| **Tools** | The whole programme, gated per agent | A short coding set: files, shell, task list, questions, helpers, colleagues, search |
+| **Turns** | A few rounds; the loop stops at 30 tool calls | Hours; hundreds of rounds, compaction mid-turn, a task list you watch |
+| **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it; does not dream |
+| **Works in** | Its workspace | The pinned project's folder, and only there |
+| **Window** | Chat | Chat plus a task panel: mode, plan → Go, tasks, questions, running time |
+| **Made how** | `somora agent create`, or an agent creates one | The same, with `kind: builder` — fixed for life |
+
+You can talk to a builder directly — describe the project, let it plan,
+press Go — or let a chat agent hand it the order in one call and be
+woken with the report. The hand-over procedure ships as a skill. Details
+in [docs/builder.md](docs/builder.md); chat agents in
+[docs/agents.md](docs/agents.md).
+
 On top of chat and memory, each optional and off until configured:
 
 - **Skills** — Markdown how-tos an agent can activate, with declared

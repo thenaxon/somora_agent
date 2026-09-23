@@ -3,6 +3,27 @@
 An **agent** is a distinct personality somora can chat as. You can have
 many; each has its own memory and its own model preferences.
 
+## Two kinds: chat agents and builders
+
+Every agent has a kind, set in `agent.yaml` when it is created and never
+changed afterwards. This page describes **chat agents**, the default
+kind. A **builder** (`kind: builder`) shares the server, the sessions,
+the team and the API, but is a coding harness rather than a persona:
+
+| | Chat agent | Builder |
+|---|---|---|
+| **What it is for** | Talking, thinking, remembering, orchestrating: the assistant you ask, the analyst, the coordinator | Building software in a repository: plan, edit, run, test, report |
+| **Its prompt** | Its persona (`AGENTS.md`, `SOUL.md`, `USER.md`), your team, the wiki map, memory recall | Harness rules, an environment block, the repository's own `AGENTS.md`/`CLAUDE.md`; no persona, no memory recall |
+| **Tools** | The whole programme, gated per agent | A short coding set: files, shell, task list, questions, helpers, colleagues, search |
+| **Turns** | A few rounds; the loop stops at 30 tool calls | Hours; hundreds of rounds, compaction mid-turn, a task list you watch |
+| **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it; does not dream |
+| **Works in** | Its workspace | The pinned project's folder, and only there |
+| **Window** | Chat | Chat plus a task panel: mode, plan → Go, tasks, questions, running time |
+| **Made how** | `somora agent create`, or an agent creates one | The same, with `kind: builder` — fixed for life |
+
+Everything below applies to chat agents; where a builder differs, the
+line says so, and [builder.md](builder.md) has the whole picture.
+
 ## Anatomy
 
 ```

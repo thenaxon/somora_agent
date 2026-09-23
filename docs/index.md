@@ -11,7 +11,11 @@ ownership of the chat log, the memory layer, or your knowledge base.
 ## What is somora — in one paragraph
 
 You define **agents** (personas with their own model, memory inbox, and
-session). You talk to them from the TUI, the browser, or your phone.
+session). They come in two kinds: **chat agents** — the ones you talk
+to, that remember and coordinate — and **builders**, coding harnesses
+that take a repository, plan, build, test and report
+([builder.md](builder.md)). You talk to both from the TUI, the browser,
+or your phone.
 The server orchestrates the actual LLM call against the engine you
 configured (subscription or API), persists every message as JSONL,
 and runs a three-phase background **dream system** that turns raw
