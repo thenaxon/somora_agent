@@ -79,3 +79,10 @@ console.log('builder-prompt.test: ok');
   assert.equal(readBuilderState({ builderMode: 'attended', builderPhase: 'plan' })!.orderer, undefined);
   assert.equal(readBuilderState({ builderMode: 'attended', builderPhase: 'plan', builderOrderer: { agent: '' } })!.orderer, undefined);
 }
+
+// Helpers: wait, do not poll or message them mid-work.
+{
+  const { BUILDER_HARNESS_PROMPT } = await import('./builder-prompt.ts');
+  assert.match(BUILDER_HARNESS_PROMPT, /Never message a running helper/);
+  assert.match(BUILDER_HARNESS_PROMPT, /subagent_result with wait:true/);
+}

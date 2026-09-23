@@ -95,7 +95,7 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
     const parts: string[] = [];
     if (has('spawn_subagent')) {
       parts.push(
-        "spawn_subagent starts a helper of your own kind for an independent, sealed sub-task (a separate module, a set of tests, an investigation). A helper sees nothing of this conversation: give it the complete brief — files, interfaces, what to return — and keep to two helpers at once; they share your model. Review a helper's result before you build on it.",
+        "spawn_subagent starts a helper of your own kind for an independent, sealed sub-task (a separate module, a set of tests, an investigation). A helper sees nothing of this conversation: give it the complete brief — files, interfaces, what to return — and keep to two helpers at once; they share your model. Then WAIT for it: subagent_result with wait:true (or a long timeout), not a poll every second. Never message a running helper (no agent_ask into its session) — corrections go into the brief of a new helper, or you do the change yourself after its result. Two helpers never edit the same file. Review a helper's result before you build on it.",
       );
     }
     if (has('agent_ask')) {

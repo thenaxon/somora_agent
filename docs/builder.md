@@ -192,7 +192,13 @@ workspace. Without a pinned project folder the prompt tells an attended
 builder to ask for the repository or create and pin the project itself
 (`project_create` with `workdir`, `project_focus`), and an unattended
 one to report that no project folder was given. Helpers it spawns
-inherit the pin and the folder.
+inherit the pin and the folder, the mode and the build phase, and run on
+the builder's own model (a helper is a clone of the agent, not of the
+session's model override). The harness tells the builder to wait for a
+helper (`subagent_result` with `wait:true`), never to message one while
+it works, and never to let two helpers edit the same file — measured on
+a Codex-driven build: 34 one-second polls and a note into a running
+helper's session before the rule.
 
 ## Where a builder may write
 
