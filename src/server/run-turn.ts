@@ -49,6 +49,7 @@ import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
 import { builderSessionAllows, ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { workdirFromMeta } from './session-workdir.ts';
+import { claimWorkdir } from './builder-busy.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
@@ -891,6 +892,10 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         workdirFromMeta(sessionMeta as Record<string, unknown>, persona, deps.config).path,
       );
       sessionMeta = await deps.sessionMetaStore.get(agent, session);
+      // One builder per folder: this turn claims its working directory
+      // (released in start-turn's finally). Dispatch and Go refuse a
+      // claimed folder before they get here.
+      claimWorkdir({ agent, session, turnId, workdir: workdirFromMeta(sessionMeta as Record<string, unknown>, persona, deps.config).path });
     }
     const availableTools = (await deps.tools.listAvailable(toolCtx))
       .filter((t) => isToolAllowed(t.name, t.toolset, persona.toolGating) && builderSessionAllows(builderState, t.name))

@@ -948,13 +948,21 @@ tools (`todo_write`, `ask_user`, `plan_write`) call the same routes.
   planPath?, orderer?}` → `{agent, session, state}`. Publishes
   `builder_state`. `orderer` `{agent, session?}` names the agent that
   handed the order over (`builder_dispatch` sets it).
+- `GET /builders` → `{builders: [{name, role, description, busy: [{session,
+  workdir, since}]}]}` — the agents of kind builder and the folders each
+  is working in right now.
+- `GET /builders/busy?workdir=<path>` → `{workdir, busy: {agent, session,
+  turnId, workdir, since, reason} | null}` — whether a builder's running
+  turn claims that folder (or a parent/child of it). Without `workdir`:
+  `{claims: [...]}`.
 - `POST /agents/:agent/sessions/:session/builder/go` `{note?}` →
   `202 {agent, session, state, turnId, callId?, wakes?}` — sets the phase
   to build and starts a turn telling the builder the plan is approved
   (`note` is appended to that message). With an `orderer` in the state
   the turn runs as that agent's detached ask (`callId` = `turnId`,
   `wakes` = the orderer): it is woken with the report like after
-  `agent_ask` with `wait:false`.
+  `agent_ask` with `wait:false`. `409 {error, busy}` when another
+  builder's turn is working in the session's folder right now.
 - `PUT /agents/:agent/sessions/:session/todos` `{todos: [{content,
   status, priority?}], by_agent?}` → `{agent, session, todos}` — replaces
   the whole list (max 100 items). Publishes `todo_updated`.

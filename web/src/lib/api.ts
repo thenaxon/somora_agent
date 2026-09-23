@@ -866,7 +866,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(note ? { note } : {}),
     });
-    if (!res.ok) throw new Error(`builder/go ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? `builder/go ${res.status}`);
+    }
     return (await res.json()) as { state: BuilderStateDto; turnId: string };
   },
   answerQuestion: async (agent: string, session: string, questionId: string, answers: string[], text?: string): Promise<void> => {

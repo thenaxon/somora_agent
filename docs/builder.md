@@ -148,7 +148,17 @@ ready", the person presses Go) and sends the order; the caller returns at once
 and is woken with the builder's report (an `[agent answer]` wake, read
 with `agent_ask_result`). The builder's final answer is that report: an
 order must not ask it to message the caller back. Without a project, name
-the repository in the order. The order itself, in `task` (plus `plan_path`, `done_criteria`,
+the repository in the order. `builder` may be left out when exactly one
+builder exists; with several, the caller names one, chosen by the team
+description each builder carries (its role and what it is for).
+
+**One builder per folder.** A builder's running turn claims its working
+directory. A hand-over into a project whose folder is claimed — by any
+builder, the same one in another session included — is refused with the
+name of who works there; so is Go. Nested folders count as the same
+folder. Orders into different folders run side by side; the claim ends
+with the turn. `GET /builders` lists the builders and where each is
+working, `GET /builders/busy?workdir=…` answers for one folder. The order itself, in `task` (plus `plan_path`, `done_criteria`,
 `report_path`):
 
 > Read the plan at `<path>`. Implement it. Done means: `<criterion,

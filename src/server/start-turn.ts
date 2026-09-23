@@ -38,6 +38,7 @@ import { acquireSessionLock, DequeuedError } from './session-queue.ts';
 import { originCallId, originKind, originLabel, originToLegacy, type TurnOrigin } from './turn-origin-kind.ts';
 import { failWork, finishWork, markRunning, openWork } from './work-ledger.ts';
 import { drainSteer, unmarkSteerable } from './steer-inbox.ts';
+import { releaseWorkdir } from './builder-busy.ts';
 import { dropQuestions } from './builder-questions.ts';
 import { composeTurnPrefix } from './turn-framing.ts';
 
@@ -205,6 +206,8 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
     unmarkSteerable(agent, session, turnId);
     // A question the builder asked and nobody answered: nobody waits now.
     dropQuestions(agent, session);
+    // A builder's folder is free again.
+    releaseWorkdir(turnId);
     const leftover = drainSteer(agent, session);
     release();
     for (const m of leftover) {

@@ -171,6 +171,7 @@ import { startToolOutputSweeper } from '../tools/tool-output.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
 import { DEFAULT_PLAN_FILE, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
 import { workdirFromMeta } from './session-workdir.ts';
+import { describeClaim, listWorkdirClaims, workdirClaimedBy } from './builder-busy.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from './builder-questions.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
@@ -3060,11 +3061,43 @@ app.patch('/agents/:agent/sessions/:session/builder', async (c) => {
   return c.json({ agent: r.agent, session: r.session, state });
 });
 
+// The builders of this somora (for an orchestrator choosing one) and
+// who is working where right now (one builder per folder).
+app.get('/builders', async (c) => {
+  const agents = (await listAgents()).filter((a) => a.kind === 'builder');
+  const claims = listWorkdirClaims();
+  return c.json({
+    builders: agents.map((a) => ({
+      name: a.name,
+      role: a.role ?? null,
+      description: a.description,
+      busy: claims.filter((cl) => cl.agent === a.name).map((cl) => ({ session: cl.session, workdir: cl.workdir, since: cl.since })),
+    })),
+  });
+});
+app.get('/builders/busy', async (c) => {
+  const workdir = c.req.query('workdir');
+  if (!workdir) return c.json({ claims: listWorkdirClaims() });
+  const claim = workdirClaimedBy(expandHome(workdir));
+  return c.json({ workdir, busy: claim ? { ...claim, reason: describeClaim(claim) } : null });
+});
+
 // Go: the plan is approved — switch to build and tell the builder.
 app.post('/agents/:agent/sessions/:session/builder/go', async (c) => {
   const r = await builderSessionOf(c);
   if (r instanceof Response) return r;
   const body = (await c.req.json().catch(() => ({}))) as { note?: string };
+  {
+    // Another builder in this folder right now: the build would edit
+    // its working copy under it. Refuse with the name; the person (or
+    // the orderer) presses Go again after that report.
+    const meta = await sessionMetaStore.get(r.agent, r.session);
+    const folder = workdirFromMeta(meta as Record<string, unknown>, r.persona, config).path;
+    const claim = workdirClaimedBy(folder);
+    if (claim && !(claim.agent === r.agent && claim.session === r.session)) {
+      return c.json({ error: `folder busy: ${describeClaim(claim)}`, busy: claim }, 409);
+    }
+  }
   const state = await patchBuilderState(sessionMetaStore, r.agent, r.session, { phase: 'build' });
   await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state.mode, phase: state.phase, planPath: state.planPath } });
   const text =

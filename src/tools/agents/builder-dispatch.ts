@@ -12,13 +12,18 @@
 
 import { z } from 'zod';
 import { classifyFetchError, loopbackFetch } from '../../server/loopback-fetch.ts';
-import { loadPersona } from '../../persona/loader.ts';
+import { listAgents, loadPersona } from '../../persona/loader.ts';
+import { projectWorkdir } from '../../projects/focus.ts';
 import type { ToolDefinition } from '../types.ts';
 import { agentAsk } from './ask.ts';
 
 const Input = z
   .object({
-    builder: z.string().min(1).describe('Name of the builder agent (kind: builder).'),
+    builder: z
+      .string()
+      .min(1)
+      .optional()
+      .describe('Name of the builder agent (kind: builder). Optional when exactly one builder exists; with several, choose by their team description (the result of a missing name lists them).'),
     task: z
       .string()
       .min(1)
@@ -75,6 +80,30 @@ async function call<T>(method: string, path: string, body: unknown): Promise<T> 
   return data;
 }
 
+async function get<T>(path: string): Promise<T> {
+  let res;
+  try {
+    res = await loopbackFetch(`${baseUrl()}${path}`);
+  } catch (err) {
+    const c = classifyFetchError(err);
+    throw new Error(`builder_dispatch [${c.category}${c.code ? '/' + c.code : ''}]: ${c.message}`);
+  }
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(`builder_dispatch: ${data.error ?? `HTTP ${res.status}`}`);
+  return data;
+}
+
+/** The builder to use: the named one, or the only one there is. With
+ *  several and no name, the error lists them so the caller can choose. */
+export async function resolveBuilderName(named: string | undefined): Promise<string> {
+  if (named) return named;
+  const builders = (await listAgents()).filter((a) => a.kind === 'builder');
+  if (builders.length === 1) return builders[0]!.name;
+  if (builders.length === 0) throw new Error('builder_dispatch: no builder agent exists (an agent with kind: builder in its agent.yaml)');
+  const list = builders.map((b) => `${b.name}${b.role ? ` (${b.role})` : ''}: ${b.description.split('\n')[0]?.slice(0, 120) ?? ''}`).join('; ');
+  throw new Error(`builder_dispatch: several builders exist — name one in \`builder\`, chosen by its team description: ${list}`);
+}
+
 export function composeBuildOrder(input: { task: string; plan_path?: string; done_criteria?: string; report_path?: string; phase?: 'plan' | 'build' }): string {
   const parts: string[] = [];
   if (input.phase === 'plan') {
@@ -104,12 +133,14 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
     'order. Returns at once with a call_id; you are woken with the builder\'s report when it is done (read it with ' +
     'agent_ask_result). Give the COMPLETE order — repository or project, what to build, what done means, where the ' +
     'report goes; the builder sees nothing of this conversation. Do not check in on it or send corrections into ' +
-    'running work: wait for the report, then send a new message into that session if something must change.',
+    'running work: wait for the report, then send a new message into that session if something must change. ' +
+    'One builder per project folder at a time: a folder another builder is working in is refused (wait for that report). ' +
+    'Several builders: choose by their team description; two orders to different folders may run at the same time.',
   inputSchema: Input,
   jsonSchema: {
     type: 'object',
     properties: {
-      builder: { type: 'string', description: 'Builder agent name (kind: builder).' },
+      builder: { type: 'string', description: 'Builder agent name (kind: builder). Optional when exactly one builder exists.' },
       task: { type: 'string', description: 'The complete order — everything the builder needs.' },
       project: { type: 'string', description: 'Project slug to pin (its `workdir` becomes the working directory).' },
       plan_path: { type: 'string', description: 'Absolute path of a plan file to read first.' },
@@ -120,19 +151,29 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
       session: { type: 'string', description: 'Slug for the new builder session.' },
       timeout_ms: { type: 'integer', description: 'Passed to agent_ask.' },
     },
-    required: ['builder', 'task'],
+    required: ['task'],
     additionalProperties: false,
   },
   defaultTimeoutMs: 60_000,
   async handler(input, ctx) {
-    const persona = await loadPersona(input.builder);
-    if (!persona) throw new Error(`builder_dispatch: agent '${input.builder}' not found`);
+    const builderName = await resolveBuilderName(input.builder);
+    const persona = await loadPersona(builderName);
+    if (!persona) throw new Error(`builder_dispatch: agent '${builderName}' not found`);
     if (persona.kind !== 'builder') {
-      throw new Error(`builder_dispatch: '${input.builder}' is a ${persona.kind} agent, not a builder — use agent_ask for it`);
+      throw new Error(`builder_dispatch: '${builderName}' is a ${persona.kind} agent, not a builder — use agent_ask for it`);
+    }
+    // One builder per folder: a project whose folder another builder is
+    // working in right now is refused before anything is created.
+    if (input.project) {
+      const folder = await projectWorkdir(input.project);
+      if (folder) {
+        const q = await get<{ busy: { agent: string; session: string; reason: string } | null }>(`/builders/busy?workdir=${encodeURIComponent(folder)}`);
+        if (q.busy) throw new Error(`builder_dispatch: folder busy — ${q.busy.reason}`);
+      }
     }
     const rand = Math.random().toString(36).slice(2, 6);
     const slug = (input.session ?? `build-${input.project ?? new Date().toISOString().slice(0, 10)}-${rand}`).replace(/[^A-Za-z0-9_-]/g, '-');
-    const b = encodeURIComponent(input.builder);
+    const b = encodeURIComponent(builderName);
     const created = await call<{ id: string }>('POST', `/agents/${b}/sessions`, { slug });
     const sid = encodeURIComponent(created.id);
     if (input.project) {
@@ -149,7 +190,7 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
     const order = composeBuildOrder({ ...input, phase });
     const ask = await agentAsk.handler(
       {
-        agent: input.builder,
+        agent: builderName,
         message: order,
         session: created.id,
         wait: false,
@@ -159,7 +200,7 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
     );
     return {
       ok: true,
-      builder: input.builder,
+      builder: builderName,
       session: created.id,
       slug,
       ...(input.project ? { project: input.project } : {}),
