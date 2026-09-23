@@ -222,8 +222,11 @@ its own temp folder (`~/.somora/agents/<agent>/tmp/`). `file_write` and
   write there passes), *deny*. No answer within five minutes counts as
   deny.
 
-Chat agents and a builder without a pinned folder keep the old rule (the
-blacklist alone). The shell is not gated: `exec` can still write
+The pin itself holds while the builder works: unpinning or switching the
+project during a running builder turn is refused (the scope and the
+working directory would move under it); a first pin is allowed. Chat agents
+and a builder without a pinned folder keep the old rule (the blacklist
+alone). The shell is not gated: `exec` can still write
 anywhere, which is what command approvals would cover.
 
 ## Limits and loop

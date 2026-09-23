@@ -18,6 +18,7 @@ import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
 import type { MultimodalToolResult, ToolContext, ToolDefinition } from '../types.ts';
 import { localList, localPatch, localRead, localSearch, localWrite } from './local.ts';
 import { lspAfterWrite, lspTouch } from './lsp-hook.ts';
+import { WRITE_SCOPE_QUESTION_TIMEOUT_MS } from './write-scope.ts';
 import { remoteList, remotePatch, remoteRead, remoteSearch, remoteWrite } from './remote.ts';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -318,6 +319,9 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
     '(~/.somora/config.yaml) are writable — use this to self-edit. ' +
     'Use this INSTEAD of `echo > file` or heredoc-via-exec — file_write is binary-safe, ' +
     'has no quoting issues, and works the same locally and over SSH (via SFTP).',
+  // Long enough for the write-scope question a builder's write may raise
+  // in attended mode (docs/builder.md): the person has five minutes.
+  defaultTimeoutMs: WRITE_SCOPE_QUESTION_TIMEOUT_MS + 30_000,
   inputSchema: WriteInput,
   jsonSchema: {
     type: 'object',
@@ -394,6 +398,9 @@ export const filePatch: ToolDefinition<z.infer<typeof PatchInput>> = {
     'context or pass `replace_all=true`), or the closest match spans far more than old_string. ' +
     'Atomic write. Use this INSTEAD of `sed -i` via exec — no regex-quoting issues, no risk ' +
     'of partial-write corruption, no platform-specific sed flags.',
+  // Long enough for the write-scope question a builder's write may raise
+  // in attended mode (docs/builder.md): the person has five minutes.
+  defaultTimeoutMs: WRITE_SCOPE_QUESTION_TIMEOUT_MS + 30_000,
   inputSchema: PatchInput,
   jsonSchema: {
     type: 'object',

@@ -18,6 +18,24 @@ import { appendEvent } from '../storage/sessions.ts';
 import type { SessionMetaStore } from '../engine/types.ts';
 import { logger } from '../server/logger.ts';
 import { projectExists, readProject } from './store.ts';
+import { loadPersona } from '../persona/loader.ts';
+import { loopbackFetch } from '../server/loopback-fetch.ts';
+
+/** Is a turn running on the session? Asked over loopback so the answer is
+ *  the same in the server and in the MCP child. Unreachable = not busy. */
+async function sessionBusy(agent: string, session: string): Promise<boolean> {
+  const host = process.env.SOMORA_HOST || '127.0.0.1';
+  const port = process.env.SOMORA_PORT || '18737';
+  const scheme = process.env.SOMORA_TLS === '1' ? 'https' : 'http';
+  try {
+    const res = await loopbackFetch(`${scheme}://${host}:${port}/agents/${encodeURIComponent(agent)}/sessions/${encodeURIComponent(session)}/work`);
+    if (!res.ok) return false;
+    const d = (await res.json()) as { busy?: boolean };
+    return d.busy === true;
+  } catch {
+    return false;
+  }
+}
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize } from 'node:path';
 import { mkdir, stat } from 'node:fs/promises';
@@ -85,6 +103,17 @@ export async function focusProject(args: FocusArgs): Promise<FocusResult> {
 
   const meta = await metaStore.get(agent, session);
   const previousSlug = typeof meta.projectSlug === 'string' ? meta.projectSlug : null;
+
+  // A builder's write scope and working directory follow the pin. Taking
+  // the pin away or switching it while its turn runs moved the next write
+  // into the agent workspace (hardening test 2026-09-23) — so a running
+  // builder turn keeps the pin it has; a first pin is still allowed.
+  if (previousSlug !== null && slug !== previousSlug) {
+    const persona = await loadPersona(agent);
+    if (persona?.kind === 'builder' && (await sessionBusy(agent, session))) {
+      throw new Error(`the builder is working in project '${previousSlug}' right now — stop the turn before unpinning or switching the project`);
+    }
+  }
 
   // Noop short-circuit: same slug requested as already active.
   // Skip both the write AND the JSONL event so spam-clicking the same

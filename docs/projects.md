@@ -41,7 +41,9 @@ restores the agent's workspace. Sub-agents spawned from the session
 inherit the pin and the folder. Set it with `project_create` or
 `project_update` (`set_field workdir`). A folder that does not exist yet
 is created when the project is pinned, so a new repository can be
-named before its first file exists.
+named before its first file exists. A builder session keeps its pin
+while a turn runs there: unpinning or switching is refused until the
+turn is over ([builder.md](builder.md)).
 
 ## Why
 

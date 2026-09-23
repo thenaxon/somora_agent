@@ -2786,6 +2786,8 @@ person took out of the session's queue before it started is `skipped`
 with `skipReason: "removed from the queue by the user"`; one stopped
 while running is `error` with `stopped by the user`.
 
+`404` once the trigger is deleted (its history file goes with it).
+
 ### `POST /sentinel/triggers/:id/pause`
 
 Set status to `paused`. Trigger stops firing until explicitly resumed.

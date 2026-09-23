@@ -119,6 +119,9 @@ async function listBuiltinSlugs(): Promise<string[]> {
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     if (RESERVED_FOLDERS.has(e.name)) continue;
+    // A backup someone parked next to a skill (`<slug>.bak-2026…`) is
+    // not a skill and not worth a warning on every load.
+    if (/\.bak(?:[.-]|$)/i.test(e.name)) continue;
     if (!SLUG_RE.test(e.name)) {
       logger.warn({ msg: 'skills.bootstrap_skip_invalid_dir', slug: e.name });
       continue;

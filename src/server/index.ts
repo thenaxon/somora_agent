@@ -1089,6 +1089,8 @@ app.get('/sentinel/triggers/:id', async (c) => {
 
 app.get('/sentinel/triggers/:id/history', async (c) => {
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50', 10), 200);
+  await sentinelStore.loadTriggers();
+  if (!sentinelStore.getTrigger(c.req.param('id'))) return c.json({ error: 'trigger not found' }, 404);
   const entries = await sentinelStore.getHistory(c.req.param('id'), limit);
   return c.json({ count: entries.length, entries });
 });
