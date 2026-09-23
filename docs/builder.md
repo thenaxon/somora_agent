@@ -87,7 +87,7 @@ Tools by default (`src/tools/gating.ts` `BUILDER_TOOL_ALLOW`):
 `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`,
 `exec`, `process`, `todo_write`, `ask_user`, `plan_write`,
 `spawn_subagent`, `subagent_result`, `agent_ask`, `agent_ask_result`,
-`skill`, `skill_list`, `web_fetch`, `project_get`, `project_list`,
+`skill`, `skill_list`, `web_fetch`, `web_search`, `project_get`, `project_list`,
 `project_create`, `project_focus`, `memory_search`, `memory_get`,
 `time_now`. Everything else is off until `tools.allow` names it.
 
@@ -140,7 +140,8 @@ next to Send; `steering: true` in agent.yaml makes that the default)
 From another agent (an orchestrator) the hand-over is one call:
 `builder_dispatch` creates a fresh session on the builder, pins the
 project (its `workdir` becomes the working directory), sets the session
-to unattended + build and sends the order; the caller returns at once
+to unattended + build (or `phase: "plan"`: plan first, stop with "Plan
+ready", the person presses Go) and sends the order; the caller returns at once
 and is woken with the builder's report (an `[agent answer]` wake, read
 with `agent_ask_result`). Without a project, name the repository in the
 order. The order itself, in `task` (plus `plan_path`, `done_criteria`,

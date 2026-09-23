@@ -57,6 +57,7 @@ export const BUILDER_TOOL_ALLOW: readonly string[] = [
   'skill',
   'skill_list',
   'web_fetch',
+  'web_search',
   'project_get',
   'project_list',
   'project_create',

@@ -58,6 +58,7 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   skill: 'Load a skill named in your prompt: returns its instructions and files.',
   skill_list: 'List the skills available to you.',
   web_fetch: 'Fetch a URL and return its readable text (Markdown), capped by max_chars.',
+  web_search: 'Search the web (Brave) for a query: titles, URLs, snippets. For library docs, error messages, release notes — then web_fetch the page you need.',
   project_get: 'Read a project by slug: name, description, pointer paths, working directory.',
   project_list: 'List projects (slug, name, entity, tags).',
   project_create:
