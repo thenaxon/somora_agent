@@ -37,6 +37,10 @@ export interface BuilderSessionState {
   /** Absolute path of the plan file (plan_write writes here). */
   planPath: string | null;
   todos: TodoItem[];
+  /** The agent (and its session) that handed the order over with
+   *  builder_dispatch — Go wakes it with the report. Absent when a
+   *  person opened the session. */
+  orderer?: { agent: string; session?: string };
   /** When the defaults were chosen (absent = not a builder session yet). */
   initializedAt?: number;
 }
@@ -45,6 +49,13 @@ export const DEFAULT_PLAN_FILE = 'PLAN.md';
 
 /** Tools that change the repository — hidden while the phase is plan. */
 const BUILD_ONLY_TOOLS: ReadonlySet<string> = new Set(['file_write', 'file_patch', 'process', 'spawn_subagent', 'subagent_result']);
+
+function readOrderer(raw: unknown): { agent: string; session?: string } | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.agent !== 'string' || !o.agent) return null;
+  return { agent: o.agent, ...(typeof o.session === 'string' && o.session ? { session: o.session } : {}) };
+}
 
 export function readBuilderState(meta: Record<string, unknown>): BuilderSessionState | null {
   const mode = meta.builderMode;
@@ -55,6 +66,7 @@ export function readBuilderState(meta: Record<string, unknown>): BuilderSessionS
     phase: phase === 'plan' ? 'plan' : 'build',
     planPath: typeof meta.builderPlanPath === 'string' ? meta.builderPlanPath : null,
     todos: Array.isArray(meta.todos) ? (meta.todos as TodoItem[]) : [],
+    ...(readOrderer(meta.builderOrderer) ? { orderer: readOrderer(meta.builderOrderer)! } : {}),
     ...(typeof meta.builderInitializedAt === 'number' ? { initializedAt: meta.builderInitializedAt } : {}),
   };
 }
@@ -106,7 +118,7 @@ export async function patchBuilderState(
   store: SessionMetaStore,
   agent: string,
   session: string,
-  patch: Partial<Pick<BuilderSessionState, 'mode' | 'phase' | 'planPath' | 'todos'>>,
+  patch: Partial<Pick<BuilderSessionState, 'mode' | 'phase' | 'planPath' | 'todos' | 'orderer'>>,
 ): Promise<BuilderSessionState> {
   const next = await store.update(agent, session, (current) => ({
     ...current,
@@ -114,6 +126,7 @@ export async function patchBuilderState(
     ...(patch.phase ? { builderPhase: patch.phase } : {}),
     ...(patch.planPath !== undefined ? { builderPlanPath: patch.planPath } : {}),
     ...(patch.todos ? { todos: patch.todos } : {}),
+    ...(patch.orderer ? { builderOrderer: patch.orderer } : {}),
     ...(typeof (current as Record<string, unknown>).builderInitializedAt === 'number' ? {} : { builderInitializedAt: Date.now() }),
     ...((current as Record<string, unknown>).builderMode ? {} : { builderMode: patch.mode ?? 'attended' }),
     ...((current as Record<string, unknown>).builderPhase ? {} : { builderPhase: patch.phase ?? 'build' }),

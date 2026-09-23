@@ -3024,8 +3024,22 @@ app.get('/agents/:agent/sessions/:session/builder', async (c) => {
 app.patch('/agents/:agent/sessions/:session/builder', async (c) => {
   const r = await builderSessionOf(c);
   if (r instanceof Response) return r;
-  const body = (await c.req.json().catch(() => ({}))) as { mode?: string; phase?: string; planPath?: string | null };
-  const patch: { mode?: BuilderMode; phase?: BuilderPhase; planPath?: string | null } = {};
+  const body = (await c.req.json().catch(() => ({}))) as {
+    mode?: string;
+    phase?: string;
+    planPath?: string | null;
+    orderer?: { agent?: unknown; session?: unknown };
+  };
+  const patch: { mode?: BuilderMode; phase?: BuilderPhase; planPath?: string | null; orderer?: { agent: string; session?: string } } = {};
+  if (body.orderer !== undefined) {
+    if (!body.orderer || typeof body.orderer.agent !== 'string' || !body.orderer.agent) {
+      return c.json({ error: 'orderer must be { agent, session? }' }, 400);
+    }
+    patch.orderer = {
+      agent: body.orderer.agent,
+      ...(typeof body.orderer.session === 'string' && body.orderer.session ? { session: body.orderer.session } : {}),
+    };
+  }
   if (body.mode !== undefined) {
     if (body.mode !== 'attended' && body.mode !== 'unattended') return c.json({ error: 'mode must be attended | unattended' }, 400);
     patch.mode = body.mode;
@@ -3057,6 +3071,30 @@ app.post('/agents/:agent/sessions/:session/builder/go', async (c) => {
     `The plan${state.planPath ? ` at ${state.planPath}` : ''} is approved — GO. Execute it now: read the plan first, keep the task list with todo_write, ` +
     `verify each step, and end with the report.${body.note ? `\n\n${body.note.trim()}` : ''}`;
   const turnId = randomUUID();
+  // An order that came from another agent (builder_dispatch with
+  // phase: plan) has an orderer waiting for the result. The Go turn
+  // then runs as that agent's detached ask — exactly what agent_ask
+  // wait:false registers — so the orderer is woken with the report
+  // when the build ends, instead of never hearing of it.
+  const orderer = state.orderer;
+  if (orderer) {
+    registerAskCall({
+      call_id: turnId,
+      from_agent: orderer.agent,
+      ...(orderer.session ? { from_session: orderer.session } : {}),
+      target_agent: r.agent,
+      target_session: r.session,
+      text,
+      detached: true,
+    });
+    const origin: TurnOrigin = { kind: 'agent', from: { agent: orderer.agent, ...(orderer.session ? { session: orderer.session } : {}) }, callId: turnId };
+    void startTurn({ agent: r.agent, session: r.session, text, origin, turnId, workId: turnId }).catch((err: unknown) => {
+      if (err instanceof DequeuedError) return;
+      logger.error({ msg: 'builder.go_turn_failed', agent: r.agent, session: r.session, err: (err as Error).message });
+    });
+    logger.info({ msg: 'builder.go', agent: r.agent, session: r.session, turnId, wakes: orderer });
+    return c.json({ agent: r.agent, session: r.session, state, turnId, callId: turnId, wakes: orderer }, 202);
+  }
   const origin: TurnOrigin = { kind: 'human', via: 'chat' };
   openWork({ id: turnId, origin, target: { agent: r.agent, session: r.session }, requester: { human: true }, text, wake: 'never' });
   void startTurn({ agent: r.agent, session: r.session, text, origin, turnId, workId: turnId }).catch((err: unknown) => {

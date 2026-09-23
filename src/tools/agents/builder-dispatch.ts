@@ -143,6 +143,8 @@ export const builderDispatch: ToolDefinition<z.infer<typeof Input>> = {
       mode: input.mode ?? 'unattended',
       phase,
       ...(input.plan_path ? { planPath: input.plan_path } : {}),
+      // Go (after a plan phase) wakes this agent with the report.
+      orderer: { agent: ctx.agent, ...(ctx.session ? { session: ctx.session } : {}) },
     });
     const order = composeBuildOrder({ ...input, phase });
     const ask = await agentAsk.handler(

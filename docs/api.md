@@ -945,11 +945,16 @@ tools (`todo_write`, `ask_user`, `plan_write`) call the same routes.
   is `{questionId, question, header?, options: [{label,
   description?}], multiple, askedAt, expiresAt}` or `null`.
 - `PATCH /agents/:agent/sessions/:session/builder` `{mode?, phase?,
-  planPath?}` → `{agent, session, state}`. Publishes `builder_state`.
+  planPath?, orderer?}` → `{agent, session, state}`. Publishes
+  `builder_state`. `orderer` `{agent, session?}` names the agent that
+  handed the order over (`builder_dispatch` sets it).
 - `POST /agents/:agent/sessions/:session/builder/go` `{note?}` →
-  `202 {agent, session, state, turnId}` — sets the phase to build and
-  starts a turn telling the builder the plan is approved (`note` is
-  appended to that message).
+  `202 {agent, session, state, turnId, callId?, wakes?}` — sets the phase
+  to build and starts a turn telling the builder the plan is approved
+  (`note` is appended to that message). With an `orderer` in the state
+  the turn runs as that agent's detached ask (`callId` = `turnId`,
+  `wakes` = the orderer): it is woken with the report like after
+  `agent_ask` with `wait:false`.
 - `PUT /agents/:agent/sessions/:session/todos` `{todos: [{content,
   status, priority?}], by_agent?}` → `{agent, session, todos}` — replaces
   the whole list (max 100 items). Publishes `todo_updated`.

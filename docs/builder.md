@@ -108,7 +108,10 @@ where that turn came from and changed any time in the task panel
 to build and sends the builder a message: the plan is approved, execute
 it, keep the task list, end with the report. So a project can start
 directly with the builder — describe it, let it plan, press Go — with
-no orchestrator in between.
+no orchestrator in between. When the order came from another agent
+(`builder_dispatch` with `phase: "plan"`), Go runs the build as that
+agent's detached ask: it is woken with the report when the build ends,
+the same way it was woken with the plan.
 
 ## The task panel
 
@@ -184,11 +187,12 @@ the model after three). The forced final answer names the reason
 ## Routes
 
 - `GET /agents/:agent/sessions/:session/builder` → `{agent, session,
-  kind, state: {mode, phase, planPath, todos} | null, question | null}`
-- `PATCH …/builder` `{mode?, phase?, planPath?}` → `{state}`; publishes
-  `builder_state`
-- `POST …/builder/go` `{note?}` → `{state, turnId}` (202): phase build +
-  the Go message as a new turn
+  kind, state: {mode, phase, planPath, todos, orderer?} | null, question | null}`
+- `PATCH …/builder` `{mode?, phase?, planPath?, orderer?}` → `{state}`;
+  publishes `builder_state`
+- `POST …/builder/go` `{note?}` → `{state, turnId, callId?, wakes?}`
+  (202): phase build + the Go message as a new turn; with an `orderer`
+  the turn is its detached ask (`callId`) and it is woken with the report
 - `PUT …/todos` `{todos: [{content, status, priority?}]}` → `{todos}`;
   publishes `todo_updated` (what `todo_write` calls)
 - `PUT …/plan` `{content}` → `{path, bytes}` (what `plan_write` calls)

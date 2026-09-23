@@ -70,3 +70,12 @@ console.log('builder-prompt.test: ok');
   assert.match(BUILDER_HARNESS_PROMPT, /Your final answer IS the report/);
   assert.match(BUILDER_HARNESS_PROMPT, /Never send it with agent_ask/);
 }
+
+// The orderer survives the meta round trip and is absent for a person's session.
+{
+  const { readBuilderState } = await import('./builder-session.ts');
+  const st = readBuilderState({ builderMode: 'unattended', builderPhase: 'plan', builderOrderer: { agent: 'naxon', session: 's1' } })!;
+  assert.deepEqual(st.orderer, { agent: 'naxon', session: 's1' });
+  assert.equal(readBuilderState({ builderMode: 'attended', builderPhase: 'plan' })!.orderer, undefined);
+  assert.equal(readBuilderState({ builderMode: 'attended', builderPhase: 'plan', builderOrderer: { agent: '' } })!.orderer, undefined);
+}
