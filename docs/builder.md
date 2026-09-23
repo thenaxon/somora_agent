@@ -271,6 +271,10 @@ that a chat turn never needs:
   the compaction. The session file keeps every record. The chat shows
   an `engine_meta` row `context_compacted`. When no worker answers, the
   old tool-result shortening applies as for chat agents.
+- **A stale task list** — no `todo_write` for twelve tool rounds while
+  items are open — gets one line asking for an update, with the item
+  that is in progress named; measured, a model deep in its work stops
+  writing the list otherwise, and the list is what the person watches.
 - **Checkpoints.** Every 100 tool rounds the builder is told to refresh
   its task list and append a short status to its report file, so a
   crash late in a long night loses minutes.

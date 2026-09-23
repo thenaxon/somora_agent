@@ -56,6 +56,9 @@ const MAX_ARG_REROLLS = 2;
 // cut off while thinking (the output cap; routers do not say so). It gets
 // this many nudges per turn before the empty answer stands.
 const MAX_REASONING_ONLY_NUDGES = 2;
+// A builder that has not touched its task list for this many tool rounds
+// while items are open is reminded (the person watches that list).
+const TODO_STALE_ROUNDS = 12;
 /** Rounds of a builder turn kept verbatim when it compacts itself. */
 const MIDTURN_KEEP_ROUNDS = 6;
 
@@ -887,6 +890,7 @@ export const openAiCompatibleEngine: AgentEngine = {
     /** Quiet retries spent on malformed tool arguments this turn. */
     let argRerolls = 0;
     let reasoningOnlyNudges = 0;
+    let lastTodoRound = 1;
 
     const tools = input.tools;
     const toolList = tools ? tools.list() : [];
@@ -1024,6 +1028,28 @@ export const openAiCompatibleEngine: AgentEngine = {
               'append a short status (done / in progress / next) to your report file with file_write mode append if the task named one, ' +
               'then continue where you were.',
           } as ChatMessage);
+        }
+
+        // A stale task list: the list is what the person watches, and a
+        // model deep in its work stops writing it (measured 2026-09-23:
+        // one todo_write at round 1, none in the next 80 rounds, five
+        // compactions with the list in the block did not change that).
+        // Every TODO_STALE_ROUNDS rounds without a todo_write while items
+        // are open, one line asks for it.
+        if (isBuilderTurn && round - lastTodoRound >= TODO_STALE_ROUNDS && toolList.some((t) => t.name === 'todo_write')) {
+          lastTodoRound = round;
+          const todosNow = ((await metaStore.get(agent, session)) as { todos?: { content?: string; status?: string }[] }).todos;
+          const open = Array.isArray(todosNow) ? todosNow.filter((t) => t.status === 'pending' || t.status === 'in_progress') : [];
+          if (open.length > 0) {
+            logger.info({ msg: 'engine.todo_stale_nudge', engine: ENGINE, agent, session, round, open: open.length });
+            loopMessages.push({
+              role: 'user',
+              content:
+                `[somora] Your task list has not changed for ${TODO_STALE_ROUNDS} tool rounds and ${open.length} item(s) are still open ` +
+                `(in progress: ${open.filter((t) => t.status === 'in_progress').map((t) => t.content).join('; ') || 'none'}). ` +
+                'Bring it up to date with todo_write now — completed for what is verified, in_progress for the step you are on — then continue.',
+            } as ChatMessage);
+          }
         }
 
         // Does what we are about to send still fit? The pre-turn
@@ -1746,6 +1772,7 @@ export const openAiCompatibleEngine: AgentEngine = {
           // Timeout → error-shaped result the model can retry against.
           // Abort → AbortError so the turn ends without waiting out the
           // full tool budget (stop-button felt broken during long exec).
+          if (call.function.name === 'todo_write') lastTodoRound = round;
           const result = await raceToolInvoke(tools.invoke(call.function.name, parsedArgs), {
             timeoutMs: toolTimeoutMs,
             signal: effectiveSignal,
