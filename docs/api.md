@@ -859,6 +859,10 @@ curl -X POST https://<host>:18737/agents/<your-agent>/sessions \
 ```
 
 Returns `201 { id, slug, agent }`. The slug must match `[A-Za-z0-9_-]+`.
+One live session per slug: when a non-archived session already carries
+the name, the answer is `409 { error, id, slug, agent, exists: true }`
+with that session's id — the web and TUI simply switch to it. Archiving
+or resetting the session frees the name.
 Cannot be the reserved string `main` (`400`).
 
 ### `POST /agents/:agent/sessions/:session/archive`

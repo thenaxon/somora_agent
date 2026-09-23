@@ -168,7 +168,9 @@ directory. A hand-over into a project whose folder is claimed — by any
 builder, the same one in another session included — is refused with the
 name of who works there; so is Go. Nested folders count as the same
 folder. Orders into different folders run side by side; the claim ends
-with the turn. `GET /builders` lists the builders and where each is
+with the turn. A message typed straight into a builder session whose
+folder another builder holds is refused the same way (the turn fails
+with `folder busy: …` naming who works there). `GET /builders` lists the builders and where each is
 working, `GET /builders/busy?workdir=…` answers for one folder. The order itself, in `task` (plus `plan_path`, `done_criteria`,
 `report_path`):
 

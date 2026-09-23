@@ -81,6 +81,10 @@ export class Api {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug }),
     });
+    if (res.status === 409) {
+      const taken = (await res.json().catch(() => ({}))) as { id?: string };
+      if (taken.id) return taken.id;
+    }
     if (!res.ok) throw new Error(await res.text());
     const data = (await res.json()) as { id: string };
     return data.id;

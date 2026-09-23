@@ -320,6 +320,17 @@ files (referenced only by JSONL sessions that have since been reset
 or deleted) accumulate. Acceptable trade-off: disk is cheap, single-
 user setup.
 
+## Persona files: never without a backup
+
+A persona file of any agent — `AGENTS.md`, `SOUL.md`, `USER.md`,
+`VOICE.md`, `agent.yaml` under `~/.somora/agents/<name>/` — stays
+writable through `file_write` and `file_patch` (agents edit themselves
+and, by design, each other), but the current file is copied to
+`<file>.bak-<timestamp>` first and the result names that copy in
+`backup`; the last five backups are kept, like the web editor does. A
+chat agent once overwrote another agent's `AGENTS.md` with one byte in a
+test, and the persona was gone.
+
 ## Limits
 
 A builder agent pinned to a project folder may write only there and in

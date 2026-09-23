@@ -488,6 +488,15 @@ chain of three or more agents — with an error that says so, instead of
 letting both sessions hang. Sub-agents waiting on their parents are
 part of the same graph.
 
+## Persona files change only with a backup
+
+Agents may edit their own persona files and each other's (self-edit and
+collaborative editing are by design), but never without a copy: every
+`file_write` or `file_patch` on `AGENTS.md`, `SOUL.md`, `USER.md`,
+`VOICE.md` or `agent.yaml` first writes `<file>.bak-<timestamp>` (last
+five kept), the same way the web editor does. See
+[files.md](files.md#persona-files-never-without-a-backup).
+
 ## What a server restart does to running turns
 
 A restart cuts every turn that is running. At the next boot somora

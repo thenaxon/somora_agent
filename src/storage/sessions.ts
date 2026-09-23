@@ -195,6 +195,40 @@ export async function resolveSessionId(agent: string, ref: string): Promise<stri
   return matches[0]!.replace(/\.jsonl$/, '');
 }
 
+/** A live session already carries this slug (finding F2, 2026-09-23). */
+export class SessionSlugTakenError extends Error {
+  constructor(
+    readonly agent: string,
+    readonly slug: string,
+    readonly existingId: string,
+  ) {
+    super(`session slug '${slug}' already exists for agent '${agent}' (id ${existingId}); archive or reset it, or pick another name`);
+  }
+}
+
+/** The live (non-archived) session ids that carry `slug`, oldest first. */
+export async function findLiveSessionsBySlug(agent: string, slug: string): Promise<string[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(sessionDir(agent));
+  } catch (err) {
+    if (isEnoent(err)) return [];
+    throw err;
+  }
+  const re = new RegExp(`^\\d{8}-\\d{6}_${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:-\\d+)?$`);
+  const out: string[] = [];
+  for (const f of entries.sort()) {
+    if (!f.endsWith('.jsonl')) continue;
+    const id = f.slice(0, -'.jsonl'.length);
+    if (!re.test(id)) continue;
+    const meta = await sessionMetaStore.get(agent, id);
+    if (metaIsArchived(id, meta)) continue;
+    if ((meta.slug ?? id.replace(/^\d{8}-\d{6}_/, '')) !== slug) continue;
+    out.push(id);
+  }
+  return out;
+}
+
 export async function createSession(agent: string, slug: string): Promise<string> {
   if (!VALID_SLUG.test(slug)) {
     throw new Error(`invalid slug: ${JSON.stringify(slug)}; must match [A-Za-z0-9_-]+`);
@@ -203,6 +237,10 @@ export async function createSession(agent: string, slug: string): Promise<string
     throw new Error('cannot create session with reserved slug "main"');
   }
   await ensureDir(agent);
+  // One live session per slug: `/session x` in one window and the sessions
+  // list would otherwise end up on two conversations of the same name.
+  const taken = await findLiveSessionsBySlug(agent, slug);
+  if (taken.length > 0) throw new SessionSlugTakenError(agent, slug, taken[taken.length - 1]!);
   const baseId = `${timestampForFilename()}_${slug}`;
   // Collision retry: when two callers create sessions with the same
   // slug in the same second (parallel subagent spawns are the common

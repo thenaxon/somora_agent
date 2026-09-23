@@ -101,8 +101,7 @@ import {
   unarchiveSession,
   resetSession,
   resolveSessionId,
-  sessionMetaStore,
-} from '../storage/sessions.ts';
+  sessionMetaStore, SessionSlugTakenError } from '../storage/sessions.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import { focusProject } from '../projects/focus.ts';
 import {
@@ -2324,6 +2323,9 @@ app.post('/agents/:agent/sessions', async (c) => {
     logger.info({ msg: 'session.create', agent, id, slug: body.slug });
     return c.json({ id, slug: body.slug, agent }, 201);
   } catch (err) {
+    if (err instanceof SessionSlugTakenError) {
+      return c.json({ error: err.message, id: err.existingId, slug: body.slug, agent, exists: true }, 409);
+    }
     return c.json({ error: (err as Error).message }, 400);
   }
 });

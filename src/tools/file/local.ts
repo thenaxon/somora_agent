@@ -14,6 +14,7 @@ import {
   resolveLocalPath,
 } from './policy.ts';
 import { enforceWriteScope } from './write-scope.ts';
+import { backupPersonaFile } from './persona-guard.ts';
 import { applyTextBudget, parseRgJson, type RgHit } from './search-window.ts';
 import { formatRead, nearestNames } from './read-format.ts';
 import { diffSnippet, replaceInContent, ReplaceError, type Strategy } from './replace.ts';
@@ -106,6 +107,9 @@ export interface WriteResult {
   /** Set when the path looked like a home-relative spelling of a
    *  workspace path (leading `<workspace-basename>/`). */
   warning?: string;
+  /** A persona file (AGENTS.md, SOUL.md, …) is copied aside before every
+   *  write: the path of that copy. */
+  backup?: string;
 }
 
 export async function localWrite(args: {
@@ -135,6 +139,7 @@ export async function localWrite(args: {
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
   await enforceWriteScope({ absolute, real, agent: args.agent, session: args.session, config: args.config });
+  const personaBackup = await backupPersonaFile(real, args.agent);
 
   const exists = await fileExists(absolute);
   if (args.mode === 'create' && exists) {
@@ -166,6 +171,7 @@ export async function localWrite(args: {
     mode: args.mode,
     bytes: finalSize,
     ...(warning ? { warning } : {}),
+    ...(personaBackup ? { backup: personaBackup } : {}),
   };
 }
 
@@ -181,6 +187,8 @@ export interface PatchResult {
   diff: string;
   /** Present when a tolerant strategy or prefix-stripping was needed. */
   note?: string;
+  /** A persona file is copied aside before every patch: the copy's path. */
+  backup?: string;
 }
 
 /** Shared by the local and the SFTP path: locate, replace, describe. */
@@ -235,6 +243,7 @@ export async function localPatch(args: {
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
   await enforceWriteScope({ absolute, real, agent: args.agent, session: args.session, config: args.config });
+  const personaBackup = await backupPersonaFile(real, args.agent);
   if (!(await fileExists(absolute))) {
     throw new Error(`file_patch: '${args.path}' does not exist`);
   }
@@ -262,7 +271,7 @@ export async function localPatch(args: {
   // mounts (cache=strict) the stat right after an atomic rename can
   // report 0 while the file is complete — `bytes: 0` looks like data
   // loss to the caller (2026-09-03 report).
-  return { path: absolute, bytes: Buffer.byteLength(updated, 'utf8'), ...described };
+  return { path: absolute, bytes: Buffer.byteLength(updated, 'utf8'), ...described, ...(personaBackup ? { backup: personaBackup } : {}) };
 }
 
 export type SearchHit = RgHit;

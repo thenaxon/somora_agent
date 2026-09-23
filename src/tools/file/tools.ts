@@ -314,7 +314,8 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
     'Modes: `create` (refuses if exists), `overwrite` (default — replaces fully), `append` ' +
     '(adds to existing, creates if missing). Parent dirs auto-created. ' +
     'Path-blacklist blocks system dirs (/etc, /usr, /sys, ...), credential stores ' +
-    '(~/.ssh, ~/.gnupg, ~/.aws), other agents\' dirs, and somora\'s own session/index files. ' +
+    '(~/.ssh, ~/.gnupg, ~/.aws) and somora\'s own session/index files. A persona file of any agent ' +
+    '(AGENTS.md, SOUL.md, USER.md, VOICE.md, agent.yaml) is copied to a timestamped backup before every write. ' +
     'The agent\'s OWN persona files (~/.somora/agents/<self>/) and the global config ' +
     '(~/.somora/config.yaml) are writable — use this to self-edit. ' +
     'Use this INSTEAD of `echo > file` or heredoc-via-exec — file_write is binary-safe, ' +

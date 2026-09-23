@@ -49,7 +49,7 @@ import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
 import { builderSessionAllows, ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { workdirFromMeta } from './session-workdir.ts';
-import { claimWorkdir, noteToolCall } from './builder-busy.ts';
+import { claimWorkdir, describeClaim, noteToolCall, workdirClaimedBy } from './builder-busy.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
@@ -896,7 +896,15 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       // One builder per folder: this turn claims its working directory
       // (released in start-turn's finally). Dispatch and Go refuse a
       // claimed folder before they get here.
-      claimWorkdir({ agent, session, turnId, workdir: workdirFromMeta(sessionMeta as Record<string, unknown>, persona, deps.config).path });
+      const folder = workdirFromMeta(sessionMeta as Record<string, unknown>, persona, deps.config).path;
+      // A direct message (composer, POST /chat/send) used to bypass the
+      // folder claim that dispatch and Go respect: two builders in one
+      // working copy. Refuse here, where every builder turn passes.
+      const held = workdirClaimedBy(folder, { exceptTurnId: turnId });
+      if (held && !(held.agent === agent && held.session === session)) {
+        throw new Error(`folder busy: ${describeClaim(held)}`);
+      }
+      claimWorkdir({ agent, session, turnId, workdir: folder });
     }
     const availableTools = (await deps.tools.listAvailable(toolCtx))
       .filter((t) => isToolAllowed(t.name, t.toolset, persona.toolGating) && builderSessionAllows(builderState, t.name))

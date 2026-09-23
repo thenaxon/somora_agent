@@ -717,6 +717,11 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slug }),
     });
+    if (res.status === 409) {
+      // The name is taken by a live session: that session is the answer.
+      const body = (await res.json().catch(() => ({}))) as { id?: string; slug?: string };
+      if (body.id) return { id: body.id, slug: body.slug ?? slug };
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       throw new Error(`create-session ${res.status}: ${body.slice(0, 200)}`);
