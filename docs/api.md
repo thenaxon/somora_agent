@@ -1602,7 +1602,8 @@ question you sent earlier (call_id "…"): …]` note quoted under
 /chat/queue/:id` on it wakes no one. It is not sent when the asker was
 a person, when the call did not finish `done`, when the target already
 wrote to the asker itself in the meantime, when the asker read this
-route during the wake grace, or after a server restart; a follow-up
+route during the wake grace, or after a server restart (a restart
+instead wakes the asker once with a failure note, see agents.md); a follow-up
 whose reporting turn failed says so, with the error, in place of the
 text.
 

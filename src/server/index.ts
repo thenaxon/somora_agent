@@ -168,6 +168,7 @@ import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSock
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { startToolOutputSweeper } from '../tools/tool-output.ts';
+import { reconcileInterruptedTurns, restartParentWakeText, restartWakeText } from './restart-reconcile.ts';
 import { getLspManager, shutdownLsp } from '../lsp/index.ts';
 import { findBinary, LSP_SERVERS } from '../lsp/registry.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
@@ -6387,6 +6388,30 @@ try {
   await recoverOrphanedJobs(agentList.map((a) => a.name));
 } catch (err) {
   logger.warn({ msg: 'exec.jobs_recovery_failed', err: String(err) });
+}
+
+// Turns the last process died in the middle of: close them with a marker
+// and tell whoever was waiting for them (restart-reconcile.ts).
+try {
+  const interrupted = await reconcileInterruptedTurns(agentList.map((a) => a.name));
+  for (const t of interrupted) {
+    const wakes: Array<{ agent: string; session: string; text: string; ref: string }> = [];
+    if (t.fromAgent && t.fromSession && t.callId) wakes.push({ agent: t.fromAgent, session: t.fromSession, text: restartWakeText(t), ref: t.callId });
+    if (t.parent) wakes.push({ agent: t.parent.agent, session: t.parent.session, text: restartParentWakeText(t), ref: t.turnId });
+    for (const w of wakes) {
+      const about = t.parent && w.ref === t.turnId ? ('subagent' as const) : ('a2a' as const);
+      const origin: TurnOrigin = { kind: 'wake', about, ref: w.ref };
+      const workId = `restart-wake-${w.ref}`;
+      openWork({ id: workId, origin, target: { agent: w.agent, session: w.session }, text: w.text, waiting: false, wake: 'never' });
+      void startTurn({ agent: w.agent, session: w.session, text: w.text, workId, origin }).catch((err: unknown) => {
+        if (err instanceof DequeuedError) return;
+        logger.warn({ msg: 'restart.wake_failed', agent: w.agent, session: w.session, err: (err as Error).message });
+      });
+      logger.info({ msg: 'restart.wake_sent', to: `${w.agent}/${w.session}`, about, ref: w.ref });
+    }
+  }
+} catch (err) {
+  logger.warn({ msg: 'restart.reconcile_failed', err: String(err) });
 }
 
 // Full copies of shortened tool outputs (exec, capped results) live under

@@ -488,6 +488,19 @@ chain of three or more agents — with an error that says so, instead of
 letting both sessions hang. Sub-agents waiting on their parents are
 part of the same graph.
 
+## What a server restart does to running turns
+
+A restart cuts every turn that is running. At the next boot somora
+reads each session's tail: a turn without an end gets an `error`
+(`[somora] This turn was interrupted by a server restart…`) and a
+`turn_end`, so the window stops showing it as running and the model's
+history is whole again. Whoever was waiting for that turn is told: an
+agent that asked with `agent_ask` (waiting or not) or with
+`builder_dispatch` is woken with `[agent answer] … was cut off by a
+server restart before an answer came` and the `call_id`, the parent of a
+helper with a `[subagent attention]` note. Nothing is re-run on its own;
+the asker sends again if it still needs the answer.
+
 ## Sub-agents
 
 `spawn_subagent` delegates a sealed task. The sub runs in a **fresh**
