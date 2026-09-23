@@ -746,8 +746,9 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   thread's tool set for its lifetime.
 - **Builder windows** — an agent of kind `builder`
   ([builder.md](builder.md)) has a grey outline and a *builder* label on
-  its tile, and its chat window carries the **task panel** docked on the
-  right: mode (attended / unattended) and phase (plan / build) switches,
+  its tile, and its chat window opens wider than a chat window (960 × 620,
+  so the panel is not folded from the start) and carries the **task panel**
+  docked on the right: mode (attended / unattended) and phase (plan / build) switches,
   the **Go** button that approves the plan and starts the build, the
   plan file's path, the task list the builder keeps with `todo_write`,
   and any question it asks with `ask_user`, answered right there. The
