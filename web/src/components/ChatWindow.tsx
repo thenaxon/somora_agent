@@ -13,6 +13,7 @@ import {
   Send,
   Square,
   Zap,
+  Hourglass,
   Volume2,
   VolumeX,
   Wrench,
@@ -1595,7 +1596,8 @@ export function ChatWindow({
             aria-pressed={steerNext}
             onClick={() => setSteerNext((v) => !v)}
           >
-            <Zap size={14} />
+            {steerNext ? <Zap size={13} /> : <Hourglass size={13} />}
+            <span>{steerNext ? 'steer' : 'queue'}</span>
           </button>
         )}
         {chat.streaming && (

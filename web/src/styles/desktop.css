@@ -898,12 +898,33 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 }
 /* Composer toggle while a turn runs: steer the next message into it
  * (pressed) or queue it (unpressed). */
-.chat-send-steer {
-  opacity: 0.55;
+/* Steer / queue toggle next to Send while a turn runs. A labelled pill,
+ * not a bare icon: "queue" (off — the message waits its turn) or
+ * "steer" (on — it goes into the running turn). The on state used to
+ * paint the bolt in the accent colour ON the accent background, so the
+ * button read as a blank green square (2026-09-23). */
+.chat-send.chat-send-steer {
+  width: auto;
+  padding: 0 10px;
+  gap: 5px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: transparent;
+  color: var(--text-2);
+  border: 1px solid var(--line-2);
+  cursor: pointer;
 }
-.chat-send-steer[aria-pressed='true'] {
-  opacity: 1;
-  color: var(--accent, #d9a400);
+.chat-send.chat-send-steer:hover {
+  color: var(--text-1);
+  border-color: var(--text-2);
+}
+.chat-send.chat-send-steer[aria-pressed='true'] {
+  background: var(--accent);
+  color: #07090d;
+  border-color: var(--accent);
 }
 /* "edit" next to the queued marker — takes the message back into the
  * composer while it is still waiting in line. Same dim italic family

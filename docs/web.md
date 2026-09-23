@@ -376,12 +376,13 @@ archived copy at the next idle window.
   while a turn is streaming — pressing Send during a running turn
   enqueues the message rather than blocking it (see "Queueing &
   Stop" below).
-- **Steer toggle** (bolt, next to Send, while a turn runs): with the
-  bolt on, what you type goes *into* the running turn instead of behind
-  it — the model reads it at its next step and changes course; the
+- **Steer / queue toggle** (next to Send, while a turn runs): a small
+  labelled pill reading **queue** (hourglass, off) or **steer** (bolt,
+  on). With steer on, what you type goes *into* the running turn instead
+  of behind it — the model reads it at its next step and changes course; the
   bubble shows `steering…` until the engine has taken it and `steered`
-  after. With the bolt off the message queues as before. The agent's
-  `steering:` in agent.yaml sets which way the bolt starts; a steer the
+  after. With queue the message waits as before. The agent's
+  `steering:` in agent.yaml sets which way the toggle starts; a steer the
   turn ends before reading becomes an ordinary queued turn. Works on
   every engine; see [api.md → Steering](api.md#steering) and
   [agents.md](agents.md).
