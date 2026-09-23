@@ -68,3 +68,14 @@ const none = await compactTurnMidway({
 });
 assert.equal(none, null);
 console.log('midturn.test: ok');
+
+// The task list travels with the compaction block.
+{
+  const { renderTodoReminder } = await import('./midturn.ts');
+  assert.equal(renderTodoReminder(undefined), '');
+  assert.equal(renderTodoReminder([]), '');
+  const t = renderTodoReminder([{ content: 'write tests', status: 'in_progress' }, { content: 'README', status: 'pending' }]);
+  assert.match(t, /\[in_progress\] write tests/);
+  assert.match(t, /\[pending\] README/);
+  assert.match(t, /rewrite it with todo_write/);
+}

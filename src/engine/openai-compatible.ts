@@ -1050,6 +1050,9 @@ export const openAiCompatibleEngine: AgentEngine = {
         // fallback, and the only path for chat agents.
         if (estimated > budget && isBuilderTurn && round > 1) {
           try {
+            // The task list is read fresh: todo_write updated the meta
+            // during this very turn.
+            const todosNow = ((await metaStore.get(agent, session)) as { todos?: unknown }).todos;
             const c = await compactTurnMidway({
               messages: loopMessages as LoopMessage[],
               turnStartIdx,
@@ -1058,6 +1061,7 @@ export const openAiCompatibleEngine: AgentEngine = {
               availableModels: input.availableModels,
               config: input.compactionConfig,
               agent,
+              ...(Array.isArray(todosNow) ? { todos: todosNow as { content: string; status: string }[] } : {}),
             });
             if (c) {
               loopMessages.splice(0, loopMessages.length, ...(c.messages as ChatMessage[]));

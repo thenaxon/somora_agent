@@ -251,8 +251,10 @@ that a chat turn never needs:
   worker into a work-state block — objective, details, completed /
   active / blocked, next move, relevant files — and replaced by one
   message carrying it; the last six rounds stay verbatim and the turn
-  continues. The session file keeps every record. The chat shows an
-  `engine_meta` row `context_compacted`. When no worker answers, the
+  continues; the task list as last written with `todo_write` travels
+  with that block verbatim, so the builder keeps ticking it off after
+  the compaction. The session file keeps every record. The chat shows
+  an `engine_meta` row `context_compacted`. When no worker answers, the
   old tool-result shortening applies as for chat agents.
 - **Checkpoints.** Every 100 tool rounds the builder is told to refresh
   its task list and append a short status to its report file, so a

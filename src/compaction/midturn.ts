@@ -117,6 +117,11 @@ export interface MidturnCompactionInput {
   availableModels: ResolvedModel[];
   config: CompactionConfig;
   agent: string;
+  /** The builder's task list as last written with todo_write. It goes
+   *  into the block verbatim: a summary tends to drop it, and a model
+   *  that no longer sees its list stops keeping it (observed 2026-09-23:
+   *  one todo_write before the compaction, none after). */
+  todos?: ReadonlyArray<{ content: string; status: string; priority?: string }>;
   /** Test seam. */
   summarize?: (worker: ResolvedModel, system: string, user: string) => Promise<{ text: string }>;
 }
@@ -133,6 +138,17 @@ export interface MidturnCompactionResult {
  * summary. Returns null when there is nothing to compact yet (fewer
  * than keepRounds + 1 rounds) or no worker fits.
  */
+/** The task list, appended to the compaction block so the model keeps it. */
+export function renderTodoReminder(todos: MidturnCompactionInput['todos']): string {
+  if (!todos || todos.length === 0) return '';
+  const lines = todos.map((t) => `- [${t.status}] ${t.content}`);
+  return (
+    '\n\nYour task list as last written with todo_write (the person sees it):\n' +
+    lines.join('\n') +
+    '\nKeep it current: mark what is done completed, the step you take next in_progress, and rewrite it with todo_write as you go.'
+  );
+}
+
 export async function compactTurnMidway(input: MidturnCompactionInput): Promise<MidturnCompactionResult | null> {
   const { messages, turnStartIdx, keepRounds } = input;
   const cutAt = lastRoundsStart(messages, turnStartIdx + 1, keepRounds);
@@ -179,7 +195,8 @@ export async function compactTurnMidway(input: MidturnCompactionInput): Promise<
     content:
       '[somora] The earlier part of this turn was compacted to keep the conversation inside the model\'s context window. ' +
       'The tools listed there already ran — do not run them again. Continue from "Next Move".\n\n' +
-      summary,
+      summary +
+      renderTodoReminder(input.todos),
   };
   const next = [...messages.slice(0, turnStartIdx), original, block, ...messages.slice(cutAt)];
   return { messages: next, summary, compactedMessages: older.length - 1, worker: workerName };
