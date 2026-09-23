@@ -13,6 +13,7 @@ import {
   realpathSafeAncestor,
   resolveLocalPath,
 } from './policy.ts';
+import { enforceWriteScope } from './write-scope.ts';
 import { applyTextBudget, parseRgJson, type RgHit } from './search-window.ts';
 import { formatRead, nearestNames } from './read-format.ts';
 import { diffSnippet, replaceInContent, ReplaceError, type Strategy } from './replace.ts';
@@ -133,6 +134,7 @@ export async function localWrite(args: {
   const real = await realpathSafeAncestor(absolute);
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
+  await enforceWriteScope({ absolute: real, agent: args.agent, session: args.session, config: args.config });
 
   const exists = await fileExists(absolute);
   if (args.mode === 'create' && exists) {
@@ -232,6 +234,7 @@ export async function localPatch(args: {
   const real = await realpathSafeAncestor(absolute);
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
+  await enforceWriteScope({ absolute: real, agent: args.agent, session: args.session, config: args.config });
   if (!(await fileExists(absolute))) {
     throw new Error(`file_patch: '${args.path}' does not exist`);
   }

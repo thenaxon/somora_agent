@@ -194,6 +194,24 @@ builder to ask for the repository or create and pin the project itself
 one to report that no project folder was given. Helpers it spawns
 inherit the pin and the folder.
 
+## Where a builder may write
+
+A builder session pinned to a project folder writes only there and in
+its own temp folder (`~/.somora/agents/<agent>/tmp/`). `file_write` and
+`file_patch` check it after the path blacklist, on every engine:
+
+- **unattended** — the write is refused; the message names the two
+  allowed folders and tells the builder to use a path inside the project
+  or explain in its report why a file is needed elsewhere.
+- **attended** — a question appears in the task panel: *allow once*,
+  *allow this folder for the session* (kept on the session, so the next
+  write there passes), *deny*. No answer within five minutes counts as
+  deny.
+
+Chat agents and a builder without a pinned folder keep the old rule (the
+blacklist alone). The shell is not gated: `exec` can still write
+anywhere, which is what command approvals would cover.
+
 ## Limits and loop
 
 A builder's turn on the openai-compatible engine runs with `maxRounds`

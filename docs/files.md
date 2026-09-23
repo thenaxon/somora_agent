@@ -322,6 +322,9 @@ user setup.
 
 ## Limits
 
+A builder agent pinned to a project folder may write only there and in
+its temp folder; see [builder.md](builder.md#where-a-builder-may-write).
+
 | Tool | Cap | Notes |
 |---|---|---|
 | `file_read` | 2000 lines per call by default (`limit`), 200 000 chars hard cap, 2000 chars per line | Text comes back numbered: every line is `N: text` with its 1-based line number, so the model can cite `path:line` and copy exact lines into `file_patch` (without the prefix). `offset` is the number of lines to skip (0-based), `limit` the number of lines. The result carries `range` (first/last line shown), `lines` (total) and a `summary`: `End of file (N lines).` or `Showing lines a-b of N. Continue with offset=b.` — plus `next_offset` while there is more. A line longer than 2000 chars is cut with `… [line cut at 2000 chars]`. Missing files surface as `file_read: file_not_found at '<path>'. Did you mean: a.ts, b.ts?` with up to three near names from the same directory. Errors on binary files — images and PDFs point at `analyze_file`, other binaries at `exec`. |
