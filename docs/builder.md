@@ -203,6 +203,16 @@ the model after three). The forced final answer names the reason
 (`turn_end.forced_final`: `round_cap`, `tool_budget`, `time_cap`,
 `doom_loop`, `scaffold_leak`).
 
+A round that produced reasoning but neither text nor a tool call was cut
+off while thinking — the model's output cap (`maxTokens`, which includes
+reasoning) ended the response inside the plan it was making, and the
+stop reason cannot be trusted because routers rewrite it. The engine
+does not take that silence as the answer: it tells the model its response
+was cut off and to continue with shorter thinking, twice per turn at
+most (`engine.reasoning_only_round` in the log). This applies to every
+agent on the engine, not only builders; a chat agent that used to get an
+empty reply gets the nudge instead.
+
 ## Routes
 
 - `GET /agents/:agent/sessions/:session/builder` → `{agent, session,

@@ -52,6 +52,10 @@ const ENGINE = 'openai-compatible';
  *  Hermes Agent retries twice before telling the model; a cut-off call is
  *  never retried this way, it comes back identical. */
 const MAX_ARG_REROLLS = 2;
+// A round that produced reasoning but neither text nor a tool call was
+// cut off while thinking (the output cap; routers do not say so). It gets
+// this many nudges per turn before the empty answer stands.
+const MAX_REASONING_ONLY_NUDGES = 2;
 /** Rounds of a builder turn kept verbatim when it compacts itself. */
 const MIDTURN_KEEP_ROUNDS = 6;
 
@@ -882,6 +886,7 @@ export const openAiCompatibleEngine: AgentEngine = {
     let lastCompletionTokens: number | undefined;
     /** Quiet retries spent on malformed tool arguments this turn. */
     let argRerolls = 0;
+    let reasoningOnlyNudges = 0;
 
     const tools = input.tools;
     const toolList = tools ? tools.list() : [];
@@ -1495,6 +1500,36 @@ export const openAiCompatibleEngine: AgentEngine = {
 
         lastRoundHadTools = roundToolCalls.size > 0;
         if (roundToolCalls.size === 0) {
+          // Nothing visible and nothing to run, but the model was
+          // thinking: the output cap ended the response inside the
+          // reasoning (DeepSeek on a builder task, 2026-09-23: seven
+          // rounds of reading, then 8k tokens of planning and silence).
+          // The stop reason cannot be trusted (routers rewrite it), so
+          // the test is structural. Ending the turn here would present
+          // the silence as the answer; a nudge lets it continue.
+          if (!roundContent && roundReasoningChars > 0 && reasoningOnlyNudges < MAX_REASONING_ONLY_NUDGES) {
+            reasoningOnlyNudges++;
+            logger.warn({
+              msg: 'engine.reasoning_only_round',
+              engine: ENGINE,
+              agent,
+              session,
+              round,
+              attempt: reasoningOnlyNudges,
+              reasoningChars: roundReasoningChars,
+              finishReason,
+              outputTokens: lastCompletionTokens,
+              outputCap: resolvedModel.model.maxTokens,
+            });
+            loopMessages.push({
+              role: 'user',
+              content:
+                '[somora] Your last response ended while you were still thinking: it contained no answer and no tool call ' +
+                '(the output limit cut it off). Continue from where you were — keep the thinking short, then call the ' +
+                'next tool or write the answer.',
+            });
+            continue;
+          }
           // No tools requested — model gave its final answer this round.
           break;
         }
