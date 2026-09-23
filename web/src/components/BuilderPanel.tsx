@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Circle, CircleDot, Play, Zap } from 'lucide-react';
-import { api, type BuilderQuestionDto, type BuilderStateDto } from '../lib/api';
+import { api, type BuilderQuestionDto, type BuilderStateDto, type BuilderTurnDto } from '../lib/api';
 import { useBuilderSession } from '../hooks/useBuilderSession';
 
 /** Below this chat-window width the panel collapses on its own. */
@@ -134,6 +134,7 @@ export function BuilderPanel({
             <ChevronRight size={14} />
           </button>
         </div>
+        {data?.turn && <TurnProgress turn={data.turn} />}
         {state ? (
           <div className="builder-panel-switches">
             <button
@@ -283,3 +284,35 @@ function QuestionCard({
 }
 
 export type { BuilderStateDto };
+
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+/** "running for 4:32 · 23 tool calls · exec" — ticks every second while
+ *  the server says a turn runs; the counts come with the 2 s poll. */
+function TurnProgress({ turn }: { turn: BuilderTurnDto }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const idleMs = turn.lastToolAt ? now - turn.lastToolAt : 0;
+  return (
+    <div className="builder-panel-progress" title={`Turn ${turn.turnId}`}>
+      <span className="builder-panel-progress-dot" />
+      running for {formatElapsed(now - turn.startedAt)} · {turn.toolCalls} tool call{turn.toolCalls === 1 ? '' : 's'}
+      {turn.lastTool && (
+        <>
+          {' · '}
+          <code>{turn.lastTool}</code>
+          {idleMs > 60_000 && <span className="builder-panel-progress-idle"> {formatElapsed(idleMs)} ago</span>}
+        </>
+      )}
+    </div>
+  );
+}

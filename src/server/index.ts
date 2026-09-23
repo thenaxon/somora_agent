@@ -171,7 +171,7 @@ import { startToolOutputSweeper } from '../tools/tool-output.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
 import { DEFAULT_PLAN_FILE, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
 import { workdirFromMeta } from './session-workdir.ts';
-import { describeClaim, listWorkdirClaims, workdirClaimedBy } from './builder-busy.ts';
+import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from './builder-busy.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from './builder-questions.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
@@ -3011,6 +3011,10 @@ app.get('/agents/:agent/sessions/:session/builder', async (c) => {
   const meta = await sessionMetaStore.get(r.agent, r.session);
   const state = readBuilderState(meta as Record<string, unknown>);
   const q = pendingQuestion(r.agent, r.session);
+  // The running turn, for the panel's "running for 4:32 · 23 tool calls"
+  // line: a builder turn is long, and a chat window's streaming pill says
+  // nothing about how long or how far.
+  const turn = claimOfSession(r.agent, r.session);
   return c.json({
     agent: r.agent,
     session: r.session,
@@ -3018,6 +3022,9 @@ app.get('/agents/:agent/sessions/:session/builder', async (c) => {
     state,
     question: q
       ? { questionId: q.id, question: q.question, header: q.header, options: q.options, multiple: q.multiple, askedAt: q.askedAt, expiresAt: q.expiresAt }
+      : null,
+    turn: turn
+      ? { turnId: turn.turnId, startedAt: turn.since, toolCalls: turn.toolCalls, ...(turn.lastTool ? { lastTool: turn.lastTool, lastToolAt: turn.lastToolAt } : {}) }
       : null,
   });
 });

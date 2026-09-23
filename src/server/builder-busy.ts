@@ -20,6 +20,10 @@ export interface WorkdirClaim {
   turnId: string;
   workdir: string;
   since: number;
+  /** Live progress of the claiming turn — the task panel shows it. */
+  toolCalls: number;
+  lastTool?: string;
+  lastToolAt?: number;
 }
 
 const claims = new Map<string, WorkdirClaim>(); // by turnId
@@ -46,10 +50,25 @@ export function workdirClaimedBy(workdir: string, opts: { exceptTurnId?: string 
 /** Register a builder turn as working in `workdir`. Never refuses: the
  *  checks happen before the turn is started (dispatch, Go); a turn that
  *  reached this point runs. */
-export function claimWorkdir(entry: Omit<WorkdirClaim, 'since' | 'workdir'> & { workdir: string }): WorkdirClaim {
-  const claim: WorkdirClaim = { ...entry, workdir: norm(entry.workdir), since: Date.now() };
+export function claimWorkdir(entry: Pick<WorkdirClaim, 'agent' | 'session' | 'turnId'> & { workdir: string }): WorkdirClaim {
+  const claim: WorkdirClaim = { ...entry, workdir: norm(entry.workdir), since: Date.now(), toolCalls: 0 };
   claims.set(entry.turnId, claim);
   return claim;
+}
+
+/** Count a tool call on the claiming turn (no-op for a chat turn). */
+export function noteToolCall(turnId: string, tool: string): void {
+  const c = claims.get(turnId);
+  if (!c) return;
+  c.toolCalls += 1;
+  c.lastTool = tool;
+  c.lastToolAt = Date.now();
+}
+
+/** The running builder turn of a session, or null. */
+export function claimOfSession(agent: string, session: string): WorkdirClaim | null {
+  for (const c of claims.values()) if (c.agent === agent && c.session === session) return c;
+  return null;
 }
 
 export function releaseWorkdir(turnId: string): void {

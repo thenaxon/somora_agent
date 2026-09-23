@@ -13,3 +13,18 @@ assert.match(describeClaim(workdirClaimedBy('/x/repo')!), /rudi is working in \/
 releaseWorkdir('t1');
 assert.equal(workdirClaimedBy('/x/repo'), null, 'released with the turn');
 console.log('builder-busy.test: ok');
+
+// Live progress rides on the claim; a chat turn (no claim) is a no-op.
+{
+  const { claimOfSession, noteToolCall } = await import('./builder-busy.ts');
+  claimWorkdir({ agent: 'rudi', session: 's2', turnId: 't2', workdir: '/y/repo' });
+  noteToolCall('t2', 'file_read');
+  noteToolCall('t2', 'exec');
+  noteToolCall('nope', 'exec');
+  const c = claimOfSession('rudi', 's2')!;
+  assert.equal(c.toolCalls, 2);
+  assert.equal(c.lastTool, 'exec');
+  assert.equal(claimOfSession('rudi', 'other'), null);
+  releaseWorkdir('t2');
+  assert.equal(claimOfSession('rudi', 's2'), null);
+}

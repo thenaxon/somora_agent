@@ -117,6 +117,10 @@ the same way it was woken with the plan.
 
 A builder's chat window has a panel docked on the right:
 
+- **Running for** — while a turn runs: elapsed time, the number of
+  tool calls so far and the last tool, ticking every second; when the
+  last call is more than a minute old the age is shown too, so a stuck
+  turn is visible at a glance.
 - **Mode** and **phase** switches, **Go** while planning, the plan
   file's path.
 - **Tasks** — the list the builder keeps with `todo_write`: one item
@@ -202,7 +206,8 @@ the model after three). The forced final answer names the reason
 ## Routes
 
 - `GET /agents/:agent/sessions/:session/builder` → `{agent, session,
-  kind, state: {mode, phase, planPath, todos, orderer?} | null, question | null}`
+  kind, state: {mode, phase, planPath, todos, orderer?} | null, question | null,
+  turn: {turnId, startedAt, toolCalls, lastTool?, lastToolAt?} | null}`
 - `PATCH …/builder` `{mode?, phase?, planPath?, orderer?}` → `{state}`;
   publishes `builder_state`
 - `POST …/builder/go` `{note?}` → `{state, turnId, callId?, wakes?}`

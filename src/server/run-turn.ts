@@ -49,7 +49,7 @@ import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
 import { builderSessionAllows, ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { workdirFromMeta } from './session-workdir.ts';
-import { claimWorkdir } from './builder-busy.ts';
+import { claimWorkdir, noteToolCall } from './builder-busy.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
@@ -1147,6 +1147,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       }
       if (ev.kind === 'tool_call') {
         toolCallCount += 1;
+        noteToolCall(turnId, ev.tool);
         if (ev.tool === 'file_write' || ev.tool === 'file_patch') {
           const inp = ev.input as { path?: unknown; target?: unknown } | null;
           if (inp && typeof inp.path === 'string') {

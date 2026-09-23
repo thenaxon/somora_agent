@@ -1490,12 +1490,21 @@ export interface BuilderQuestionDto {
   askedAt: number;
   expiresAt: number;
 }
+export interface BuilderTurnDto {
+  turnId: string;
+  startedAt: number;
+  toolCalls: number;
+  lastTool?: string;
+  lastToolAt?: number;
+}
 export interface BuilderSessionResponse {
   agent: string;
   session: string;
   kind: 'chat' | 'builder';
   state: BuilderStateDto | null;
   question: BuilderQuestionDto | null;
+  /** The running turn, or null when the session is idle. */
+  turn: BuilderTurnDto | null;
 }
 
 export interface SessionWorkResponse {

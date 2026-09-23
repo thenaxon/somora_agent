@@ -1970,6 +1970,32 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   font-size: 11px;
   color: var(--text-2);
 }
+.builder-panel-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.builder-panel-progress code {
+  font-size: 10px;
+  color: var(--text-1);
+}
+.builder-panel-progress-idle {
+  color: var(--warn, #d9a400);
+}
+.builder-panel-progress-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #d9a400);
+  animation: builder-pulse 1.4s ease-in-out infinite;
+}
+@keyframes builder-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
 .builder-panel-switches {
   display: flex;
   flex-wrap: wrap;

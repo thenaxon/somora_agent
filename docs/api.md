@@ -939,7 +939,9 @@ question. The web task panel reads and writes these; the builder's own
 tools (`todo_write`, `ask_user`, `plan_write`) call the same routes.
 
 - `GET /agents/:agent/sessions/:session/builder` → `{agent, session,
-  kind, state, question}` — `state` is `{mode: "attended"|"unattended",
+  kind, state, question, turn}` — `turn` is `{turnId, startedAt,
+  toolCalls, lastTool?, lastToolAt?}` while a turn runs on the session,
+  else `null`; `state` is `{mode: "attended"|"unattended",
   phase: "plan"|"build", planPath, todos: [{content, status,
   priority?}]}` or `null` before the session's first turn; `question`
   is `{questionId, question, header?, options: [{label,
