@@ -68,7 +68,7 @@ interface StartOutput {
 async function readReferences(input: GenerateArgs, ctx: ToolContext) {
   const out = [];
   for (const ref of input.reference_images ?? []) {
-    const { absolute } = await resolveLocalPath(ref, ctx.agent, ctx.config);
+    const { absolute } = await resolveLocalPath(ref, ctx.agent, ctx.config, ctx.session);
     for (const candidate of [absolute, await realpathSafeAncestor(absolute)]) {
       const verdict = checkReadAllowed(candidate);
       if (!verdict.ok) throw new Error(`video_generate: reference_images ${verdict.reason}`);

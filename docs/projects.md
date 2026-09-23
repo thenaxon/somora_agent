@@ -33,8 +33,8 @@ workdir: ~/code/wetterstation
 
 Pinning such a project to a session makes that folder the session's
 working directory: relative paths in `file_read`/`file_write`/
-`file_patch`/`file_search`/`file_list` resolve there instead of the
-agent's workspace, `exec` runs there unless the call names a `cwd`, and
+`file_patch`/`file_search`/`file_list`/`analyze_file` (and image or
+video references) resolve there instead of the agent's workspace, `exec` runs there unless the call names a `cwd`, and
 a builder agent (see [builder.md](builder.md)) shows it in its
 environment block and writes its plan file there. Clearing the pin
 restores the agent's workspace. Sub-agents spawned from the session

@@ -230,7 +230,7 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
     // is what keeps base64 out of the agent's context entirely.
     const references = [];
     for (const ref of input.reference_images ?? []) {
-      const { absolute } = await resolveLocalPath(ref, ctx.agent, ctx.config);
+      const { absolute } = await resolveLocalPath(ref, ctx.agent, ctx.config, ctx.session);
       const verdict = checkReadAllowed(absolute);
       if (!verdict.ok) {
         throw new Error(`image_generate: reference_images ${verdict.reason}`);

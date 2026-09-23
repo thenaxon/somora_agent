@@ -115,11 +115,12 @@ export async function localWrite(args: {
   config: Config;
   mode: 'create' | 'overwrite' | 'append';
 }): Promise<WriteResult> {
-  const { absolute, workspace, warning } = await resolveLocalPath(
-    args.path,
-    args.agent,
-    args.config,
-  );
+  // The session decides the root of a relative path (a pinned project's
+  // folder) — the same call file_read/file_patch/file_search/file_list
+  // make. Missing here until 2026-09-23: a builder's relative file_write
+  // landed in the agent workspace while its file_read of the same
+  // relative path read the repository.
+  const { absolute, workspace, warning } = await resolveLocalPath(args.path, args.agent, args.config, args.session);
   const policy = checkWriteAllowed(absolute, args.agent);
   if (!policy.ok) throw new Error(policy.reason);
   if (warning) {

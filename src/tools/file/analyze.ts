@@ -134,7 +134,7 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
     // and apply the read-blacklist + realpath ancestor check. Without
     // this, `analyze_file` was the lone file-touching tool that ignored
     // the policy layer — it could see paths file_read would block.
-    const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config);
+    const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config, ctx.session);
     const policy = checkReadAllowed(absolute);
     if (!policy.ok) throw new Error(policy.reason);
     const real = await realpathSafeAncestor(absolute);
