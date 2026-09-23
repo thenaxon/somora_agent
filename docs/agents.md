@@ -112,8 +112,8 @@ agentLoop:
 # Optional: steering default for the web client. true = a message typed
 # while a turn is running is handed INTO that turn before its next step
 # (the model reads it between two tool calls); false (default) = it waits
-# in the session queue and becomes its own turn. The bolt next to Send
-# flips it per message either way. Works on the openai-compatible,
+# in the session queue and becomes its own turn. The steer / queue
+# toggle next to Send flips it per message either way. Works on the openai-compatible,
 # claude-cli and codex-cli engines; other engines always queue. See the
 # `steer` field of POST /chat/send in api.md.
 steering: false

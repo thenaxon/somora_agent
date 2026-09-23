@@ -1322,8 +1322,8 @@ own — nothing is dropped. Sub-agent and voice turns are steerable like
 any other; `agent_ask` calls are not steered (their answer must come
 from a turn of their own).
 
-The web composer shows a bolt next to Send while a turn runs: pressed =
-the next message steers, unpressed = it queues. The agent's
+The web composer shows a **steer / queue** toggle next to Send while a
+turn runs: "steer" = the next message steers, "queue" = it queues. The agent's
 `steering:` setting in `agent.yaml` is the default position (see
 [agents.md](agents.md)).
 

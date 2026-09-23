@@ -138,8 +138,9 @@ every two seconds; the SSE events `builder_state`, `todo_updated`,
 ## Steering
 
 A builder's turns are long. A message typed while it works goes into
-the running turn before its next step when steering is on (the bolt
-next to Send; `steering: true` in agent.yaml makes that the default)
+the running turn before its next step when steering is on (the
+**steer / queue** toggle next to Send; `steering: true` in agent.yaml
+makes steer the default)
 — see the *Steering* section of [api.md](api.md).
 
 ## Handing over a brief
