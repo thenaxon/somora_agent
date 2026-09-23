@@ -312,7 +312,9 @@ value in the error message.
 ### Updating a built-in skill
 
 somora ships some skills bundled in its own package — currently
-`skill-author` (the Skill-for-Skills). On server start, the
+`skill-author` (the Skill-for-Skills) and `builder-handover` (how an
+orchestrating agent hands a coding task to a builder agent, see
+[builder.md](builder.md)). On server start, the
 content-hash bootstrap seeds these into `~/.somora/skills/<slug>/`
 the first time, then on each restart compares the on-disk SHA-256
 against the recorded seeded-hash in

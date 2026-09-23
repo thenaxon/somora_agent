@@ -140,6 +140,11 @@ next to Send; `steering: true` in agent.yaml makes that the default)
 
 ## Handing over a brief
 
+The bundled skill `builder-handover` (seeded into `~/.somora/skills/`
+on start, see [skills.md](skills.md)) is the procedure for the agent
+that plans with the person and hands the implementation over: switch it
+on for that agent in its abilities. In short:
+
 From another agent (an orchestrator) the hand-over is one call:
 `builder_dispatch` creates a fresh session on the builder, pins the
 project (its `workdir` becomes the working directory), sets the session
