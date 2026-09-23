@@ -291,8 +291,14 @@ export function TeamWindow() {
           marginLeft: 14 + depth * 22, marginBottom: 6, padding: '6px 8px', borderRadius: 8, cursor: 'pointer',
           display: 'flex', alignItems: 'center', gap: 8, opacity: inactive ? 0.5 : 1,
           background: isSel ? 'var(--bg-3)' : 'var(--bg-2)',
-          border: `1px solid ${isSel ? (info?.color ?? 'var(--accent)') : 'var(--bg-3)'}`,
+          // Selection as an outline, not by changing the `border`
+          // shorthand: React re-applies only the changed key, and a
+          // changed shorthand reset the 3px colour bar on the left to
+          // 1px — the mark "vanished" on the first click (2026-09-23).
+          border: '1px solid var(--bg-3)',
           borderLeft: `3px solid ${info?.color ?? 'var(--bg-3)'}`,
+          outline: isSel ? `1px solid ${info?.color ?? 'var(--accent)'}` : 'none',
+          outlineOffset: -1,
         }}
       >
         <GripVertical size={12} style={{ color: 'var(--text-3)' }} />

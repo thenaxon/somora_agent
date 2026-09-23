@@ -169,7 +169,7 @@ import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { startToolOutputSweeper } from '../tools/tool-output.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
-import { DEFAULT_PLAN_FILE, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
+import { DEFAULT_PLAN_FILE, builderSessionAllows, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
 import { workdirFromMeta } from './session-workdir.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from './builder-busy.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from './builder-questions.ts';
@@ -191,7 +191,9 @@ import { getTurnOrigin } from './turn-origin.ts';
 import { readPersonaFiles, writePersonaFile } from '../persona/files.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import { getResolvedTeam, loadTeamFile, teamFilePath } from '../team/store.ts';
-import { renderTeamBlock } from '../team/render.ts';
+import { renderTeamBlock, renderTeamBlockCompact } from '../team/render.ts';
+import type { ResolvedTeam } from '../team/types.ts';
+import type { AgentKind } from '../tools/gating.ts';
 import { parseTeamFile, resolveTeam } from '../team/resolve.ts';
 import { initialTeamFile, writeTeamFile } from '../team/write.ts';
 import {
@@ -1836,7 +1838,13 @@ app.get('/agents/:agent/prompt-preview', async (c) => {
     contentBlocks: [],
     ...(previewModel ? { activeModel: previewModel } : {}),
   };
-  const available = (await tools.listAvailable(toolCtx)).filter((t) => isToolAllowed(t.name, t.toolset, persona.toolGating));
+  // The same two filters the turn applies: the persona's gating and, for a
+  // builder, the session's mode and phase (ask_user off when unattended,
+  // the repository-changing tools off while planning).
+  const previewBuilderState = persona.kind === 'builder' ? readBuilderState(sessionMeta as Record<string, unknown>) : null;
+  const available = (await tools.listAvailable(toolCtx)).filter(
+    (t) => isToolAllowed(t.name, t.toolset, persona.toolGating) && builderSessionAllows(previewBuilderState, t.name),
+  );
   const toolSchemaChars = available.reduce(
     (n, t) => n + JSON.stringify({ name: t.name, description: t.description, parameters: t.jsonSchema }).length,
     0,
@@ -1928,6 +1936,13 @@ app.post('/team/init', async (c) => {
 
 // Render a DRAFT (unsaved) document for one agent — the editor's live
 // preview. Validation errors come back as issues, nothing is written.
+// The block an agent really gets: a builder carries the compact version
+// (names, titles, rules), everyone else the full one — the preview and
+// the check must say the same as the prompt.
+function teamBlockFor(team: ResolvedTeam, agent: string, kind: AgentKind | undefined): string | null {
+  return kind === 'builder' ? renderTeamBlockCompact(team, agent) : renderTeamBlock(team, agent);
+}
+
 app.post('/team/preview', async (c) => {
   const body = (await c.req.json().catch(() => null)) as { file?: unknown; agent?: string } | null;
   if (!body || typeof body.agent !== 'string') return c.json({ error: 'body {file, agent} required' }, 400);
@@ -1935,25 +1950,27 @@ app.post('/team/preview', async (c) => {
   if (!parsed.file) return c.json({ agent: body.agent, valid: false, issues: parsed.issues, block: '' });
   const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description }));
   const team = resolveTeam(parsed.file, agents);
-  const block = renderTeamBlock(team, body.agent) ?? '';
+  const block = teamBlockFor(team, body.agent, (await loadPersona(body.agent))?.kind) ?? '';
   return c.json({ agent: body.agent, valid: true, issues: [], warnings: team.warnings, block, chars: block.length, softMaxChars: config.promptBudgets.teamBlockChars });
 });
 
 app.get('/team/preview/:agent', async (c) => {
   const agent = c.req.param('agent');
-  if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
+  const previewPersona = await loadPersona(agent);
+  if (!previewPersona) return c.json({ error: `agent '${agent}' not found` }, 404);
   const team = await getResolvedTeam();
   if (!team) return c.json({ agent, enabled: false, block: '' });
-  const block = renderTeamBlock(team, agent) ?? '';
+  const block = teamBlockFor(team, agent, previewPersona.kind) ?? '';
   return c.json({ agent, enabled: true, block, chars: block.length, softMaxChars: config.promptBudgets.teamBlockChars });
 });
 
 app.get('/team/check', async (c) => {
   const load = await loadTeamFile();
   const team = await getResolvedTeam();
+  const kindByName = new Map((await listAgents()).map((a) => [a.name, a.kind] as const));
   const blocks = team
     ? team.order.map((name) => {
-        const chars = (renderTeamBlock(team, name) ?? '').length;
+        const chars = (teamBlockFor(team, name, kindByName.get(name)) ?? '').length;
         return { agent: name, chars, overSoftMax: chars > config.promptBudgets.teamBlockChars };
       })
     : [];
