@@ -184,7 +184,9 @@ export function renderBuilderIdentity(persona: Persona): string {
 /** The AGENTS.md body of a builder: its own rules, below the harness. */
 export function renderBuilderRulesBlock(rules: string): string {
   const t = rules.trim();
-  return t ? `# Rules for this builder\n\n${t}` : '';
+  if (!t) return '';
+  // The body may open with its own heading (rudi's does): keep that one.
+  return t.startsWith('# ') ? t : `# Rules for this builder\n\n${t}`;
 }
 
 export async function isGitRepo(dir: string): Promise<boolean> {

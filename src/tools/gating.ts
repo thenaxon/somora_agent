@@ -68,6 +68,9 @@ export const BUILDER_TOOL_ALLOW: readonly string[] = [
 
 export type AgentKind = 'chat' | 'builder';
 
+/** Tools of the `builder` toolset — hidden from chat agents by default. */
+export const BUILDER_ONLY_TOOLS: ReadonlySet<string> = new Set(['todo_write', 'ask_user', 'plan_write']);
+
 /**
  * The gating a persona's turn actually runs with: the kind's defaults
  * merged with what agent.yaml says. Chat agents: agent.yaml as is.
@@ -76,7 +79,14 @@ export type AgentKind = 'chat' | 'builder';
  * one by naming it in `deny`, and the matrix in the web shows the result.
  */
 export function effectiveToolGating(kind: AgentKind, own: ToolGating | undefined): ToolGating | undefined {
-  if (kind !== 'builder') return own;
+  if (kind !== 'builder') {
+    // The builder-only tools (task list, question, plan file) need the
+    // task panel and the builder phases; a chat agent never sees them
+    // unless its own allow-list names one explicitly.
+    const namesBuilderTool = (own?.allow ?? []).some((p) => BUILDER_ONLY_TOOLS.has(p));
+    if (namesBuilderTool) return own;
+    return { deny: [...(own?.deny ?? []), 'toolset:builder'], allow: own?.allow ?? [] };
+  }
   const allow = [...BUILDER_TOOL_ALLOW, ...(own?.allow ?? [])];
   return { deny: own?.deny ?? [], allow: [...new Set(allow)] };
 }

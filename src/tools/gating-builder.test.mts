@@ -3,9 +3,14 @@
 import assert from 'node:assert/strict';
 import { BUILDER_TOOL_ALLOW, effectiveToolGating, isToolAllowed } from './gating.ts';
 
-// chat agents: unchanged
-assert.equal(effectiveToolGating('chat', undefined), undefined);
-assert.deepEqual(effectiveToolGating('chat', { deny: ['browser'], allow: [] }), { deny: ['browser'], allow: [] });
+// chat agents: their own block plus the builder toolset denied
+const chat = effectiveToolGating('chat', undefined)!;
+assert.equal(isToolAllowed('todo_write', 'builder', chat), false, 'builder-only tools hidden from chat agents');
+assert.equal(isToolAllowed('file_read', 'file', chat), true);
+assert.deepEqual(effectiveToolGating('chat', { deny: ['browser'], allow: [] }), { deny: ['browser', 'toolset:builder'], allow: [] });
+// …unless the agent names one explicitly
+const chatAllow = effectiveToolGating('chat', { deny: [], allow: ['todo_write'] })!;
+assert.equal(isToolAllowed('todo_write', 'builder', chatAllow), true);
 
 // builder without own block: exactly the kind list
 const g = effectiveToolGating('builder', undefined)!;
