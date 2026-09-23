@@ -85,6 +85,8 @@ export function Desktop() {
     return merged;
   }, [chatCtx.streamingKeys, activity.streamingAgents]);
 
+  /** Chat + task panel side by side: the panel folds below 640 px. */
+  const BUILDER_WINDOW_SIZE = { w: 960, h: 620 };
   function openAgentSession(agent: AgentInfo, sessionId: string, label: string) {
     wm.openChat({
       agentName: agent.name,
@@ -92,6 +94,7 @@ export function Desktop() {
       agentLabel: `${agent.name} · ${label}`,
       ...(agent.role ? { agentMeta: agent.role.toLowerCase() } : {}),
       ...(agent.icon ? { agentIcon: agent.icon } : {}),
+      ...(agent.kind === 'builder' ? { size: BUILDER_WINDOW_SIZE } : {}),
     });
   }
 
@@ -532,6 +535,7 @@ export function Desktop() {
                       agentLabel,
                       ...(agentInfo?.role ? { agentMeta: agentInfo.role.toLowerCase() } : {}),
                       ...(agentInfo?.icon ? { agentIcon: agentInfo.icon } : {}),
+                      ...(agentInfo?.kind === 'builder' ? { size: BUILDER_WINDOW_SIZE } : {}),
                     });
                   }}
                 />

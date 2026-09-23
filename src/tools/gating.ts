@@ -53,6 +53,7 @@ export const BUILDER_TOOL_ALLOW: readonly string[] = [
   'plan_write',
   'spawn_subagent',
   'subagent_result',
+  'subagent_cancel',
   'agent_ask',
   'agent_ask_result',
   'skill',

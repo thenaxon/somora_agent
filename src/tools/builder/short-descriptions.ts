@@ -53,6 +53,7 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
     'brief — it sees nothing of this conversation. Returns a task_id; fetch the outcome with subagent_result ' +
     '(or wait:true to block).',
   subagent_result: 'Fetch or wait for a helper\'s result by task_id.',
+  subagent_cancel: 'Stop a helper of yours that is still running or waiting (task_id). Its files stay.',
   agent_ask:
     'Ask a colleague from the team a question in their specialty and get the answer back (wait:true) or a ' +
     'call_id (wait:false). A consultation, not a hand-off.',

@@ -25,6 +25,10 @@ export interface OpenChatArgs {
   agentLabel: string;
   agentMeta?: string;
   agentIcon?: string;
+  /** A builder window opens wide enough for the task panel (it folds
+   *  under 640 px — the 520 px chat default opened every builder with
+   *  the panel collapsed, hardening test 2026-09-23). */
+  size?: { w: number; h: number };
 }
 
 /** One chat window per (agent, session): keep the first, drop later
@@ -537,7 +541,7 @@ export function useWindowManager() {
         focus(existing.id);
         return;
       }
-      const pos = randomPos(520, 460, zCounter + 1);
+      const pos = randomPos(args.size?.w ?? 520, args.size?.h ?? 460, zCounter + 1);
       const id = `chat-${args.agentName}-${args.sessionId}-${Date.now()}`;
       const next: WindowState = {
         id,
