@@ -52,9 +52,11 @@ export const LSP_SERVERS: readonly LspServerDef[] = [
       if (e === '.jsx') return 'javascriptreact';
       return e.startsWith('.j') || e === '.mjs' || e === '.cjs' ? 'javascript' : 'typescript';
     },
-    initializationOptions: () => ({
-      // Prefer the project's own typescript (tsserver picks it up from
-      // node_modules); fall back to the one installed next to the server.
+    initializationOptions: (root) => ({
+      // The server needs a tsserver: the project's own typescript when it
+      // has one (its version, its lib), else the one installed next to
+      // the server by `somora lsp install`.
+      tsserver: { path: tsserverFor(root) },
       preferences: { includeCompletionsForModuleExports: false },
     }),
     firstWaitMs: 8000,
@@ -73,6 +75,17 @@ export const LSP_SERVERS: readonly LspServerDef[] = [
     firstWaitMs: 10000,
   },
 ];
+
+/** The project's `node_modules/typescript/lib/tsserver.js`, else somora's own. */
+export function tsserverFor(root: string): string {
+  const own = join(root, 'node_modules', 'typescript', 'lib', 'tsserver.js');
+  try {
+    accessSync(own, constants.R_OK);
+    return own;
+  } catch {
+    return join(LSP_INSTALL_PREFIX, 'node_modules', 'typescript', 'lib', 'tsserver.js');
+  }
+}
 
 /** `<root>/.venv/bin/python` when the project has one, else python3. */
 export function pythonFor(root: string): string {
