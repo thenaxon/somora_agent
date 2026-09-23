@@ -36,7 +36,7 @@ language gets a plain result, as before.
 
 | id | files | server | install |
 |---|---|---|---|
-| `typescript` | `.ts .tsx .js .jsx .mjs .cjs .mts .cts` | `typescript-language-server` (with `typescript`) | `somora lsp install typescript` |
+| `typescript` | `.ts .tsx .js .jsx .mjs .cjs .mts .cts` | `typescript-language-server` (with `typescript@5`) | `somora lsp install typescript` |
 | `pyright` | `.py .pyi` | `pyright-langserver` | `somora lsp install pyright` |
 
 `somora lsp install` (no id) installs both; `somora lsp status` shows

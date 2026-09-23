@@ -45,7 +45,9 @@ export const LSP_SERVERS: readonly LspServerDef[] = [
     rootMarkers: ['tsconfig.json', 'jsconfig.json', 'package.json', '.git'],
     bin: 'typescript-language-server',
     args: ['--stdio'],
-    npmPackages: ['typescript-language-server', 'typescript'],
+    // typescript 7 is the Go compiler without lib/tsserver.js; the
+    // language server needs the classic 5.x tsserver.
+    npmPackages: ['typescript-language-server', 'typescript@5'],
     languageId: (file) => {
       const e = extname(file);
       if (e === '.tsx') return 'typescriptreact';
