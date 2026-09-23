@@ -6391,25 +6391,11 @@ try {
 }
 
 // Turns the last process died in the middle of: close them with a marker
-// and tell whoever was waiting for them (restart-reconcile.ts).
+// now; whoever waited for them is woken further down, once startTurn and
+// the work ledger are wired (restart-reconcile.ts).
+let interruptedTurns: Awaited<ReturnType<typeof reconcileInterruptedTurns>> = [];
 try {
-  const interrupted = await reconcileInterruptedTurns(agentList.map((a) => a.name));
-  for (const t of interrupted) {
-    const wakes: Array<{ agent: string; session: string; text: string; ref: string }> = [];
-    if (t.fromAgent && t.fromSession && t.callId) wakes.push({ agent: t.fromAgent, session: t.fromSession, text: restartWakeText(t), ref: t.callId });
-    if (t.parent) wakes.push({ agent: t.parent.agent, session: t.parent.session, text: restartParentWakeText(t), ref: t.turnId });
-    for (const w of wakes) {
-      const about = t.parent && w.ref === t.turnId ? ('subagent' as const) : ('a2a' as const);
-      const origin: TurnOrigin = { kind: 'wake', about, ref: w.ref };
-      const workId = `restart-wake-${w.ref}`;
-      openWork({ id: workId, origin, target: { agent: w.agent, session: w.session }, text: w.text, waiting: false, wake: 'never' });
-      void startTurn({ agent: w.agent, session: w.session, text: w.text, workId, origin }).catch((err: unknown) => {
-        if (err instanceof DequeuedError) return;
-        logger.warn({ msg: 'restart.wake_failed', agent: w.agent, session: w.session, err: (err as Error).message });
-      });
-      logger.info({ msg: 'restart.wake_sent', to: `${w.agent}/${w.session}`, about, ref: w.ref });
-    }
-  }
+  interruptedTurns = await reconcileInterruptedTurns(agentList.map((a) => a.name));
 } catch (err) {
   logger.warn({ msg: 'restart.reconcile_failed', err: String(err) });
 }
@@ -6715,6 +6701,23 @@ configureWorkWake({
     await startTurn({ agent: to.agent, session: to.session, text, turnPrefix: prefix, workId: id, origin });
   },
 });
+
+// The askers of the turns the last process died in (see boot above).
+for (const t of interruptedTurns) {
+  const wakes: Array<{ agent: string; session: string; text: string; ref: string; about: 'a2a' | 'subagent' }> = [];
+  if (t.fromAgent && t.fromSession && t.callId) wakes.push({ agent: t.fromAgent, session: t.fromSession, text: restartWakeText(t), ref: t.callId, about: 'a2a' });
+  if (t.parent) wakes.push({ agent: t.parent.agent, session: t.parent.session, text: restartParentWakeText(t), ref: t.turnId, about: 'subagent' });
+  for (const w of wakes) {
+    const origin: TurnOrigin = { kind: 'wake', about: w.about, ref: w.ref };
+    const workId = `restart-wake-${w.ref}`;
+    openWork({ id: workId, origin, target: { agent: w.agent, session: w.session }, text: w.text, waiting: false, wake: 'never' });
+    void startTurn({ agent: w.agent, session: w.session, text: w.text, workId, origin }).catch((err: unknown) => {
+      if (err instanceof DequeuedError) return;
+      logger.warn({ msg: 'restart.wake_failed', agent: w.agent, session: w.session, err: (err as Error).message });
+    });
+    logger.info({ msg: 'restart.wake_sent', to: `${w.agent}/${w.session}`, about: w.about, ref: w.ref });
+  }
+}
 installTtsCacheGc(config);
 configureLongTaskTimeouts(config);
 setMaxWikiCallsPerTurn(config.wiki.lucid.maxCallsPerTurn);
