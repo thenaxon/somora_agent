@@ -44,6 +44,11 @@ export interface ToolContext {
    * agent out permanently.
    */
   turnId?: string;
+  /** The turn's abort signal (Stop button, TUI ESC, POST /chat/abort).
+   *  A tool that runs something long (exec) ends it on abort instead
+   *  of finishing behind the turn's back. In-process engines set it;
+   *  MCP-served calls have none and rely on the child's shutdown. */
+  signal?: AbortSignal;
   /**
    * Nesting depth of the current turn. 0 = top-level user turn.
    * Increments when spawn_subagent kicks off a sub. Used for the

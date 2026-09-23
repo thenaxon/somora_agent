@@ -145,6 +145,26 @@ export interface LocalSyncOptions {
    *  re-inject). Computed by the exec dispatcher via
    *  skillEnvScopeForCommand(); absent = legacy full inheritance. */
   skillEnvScope?: SkillEnvScope;
+  /** The turn's abort signal: Stop kills the command's process group
+   *  instead of letting it run to its natural end (or its timeout)
+   *  while the turn is already over. */
+  signal?: AbortSignal;
+}
+
+/** Killers of the foreground commands running in this process, so a
+ *  process that is going away (the MCP child when the CLI turn is
+ *  stopped) can take its commands with it. */
+const runningForeground = new Set<(signal: NodeJS.Signals) => void>();
+
+/** Kill every foreground exec still running in this process. Returns
+ *  how many were signalled. */
+export function killRunningLocalExecs(signal: NodeJS.Signals = 'SIGTERM'): number {
+  let n = 0;
+  for (const kill of runningForeground) {
+    kill(signal);
+    n += 1;
+  }
+  return n;
 }
 
 /**
@@ -222,6 +242,7 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
     });
 
     let timedOut = false;
+    let aborted = false;
     const killGroup = (signal: NodeJS.Signals) => {
       // Negative pid → process group (set up by `detached: true`).
       // Falls back to the leader if the group kill rejects.
@@ -249,14 +270,32 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
         }
       }, 2000);
     }, timeoutMs);
+    // Stop (POST /chat/abort) or the process going away: the command
+    // dies with the turn. Measured 2026-09-23: a stopped turn left its
+    // `sleep 91` running to the end.
+    const onAbort = () => {
+      if (child.exitCode !== null) return;
+      aborted = true;
+      killGroup('SIGTERM');
+      setTimeout(() => {
+        if (child.exitCode === null) killGroup('SIGKILL');
+      }, 2000);
+    };
+    if (opts.signal?.aborted) onAbort();
+    else opts.signal?.addEventListener('abort', onAbort, { once: true });
+    runningForeground.add(onAbort as (signal: NodeJS.Signals) => void);
 
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
+      runningForeground.delete(onAbort as (signal: NodeJS.Signals) => void);
       const stdout = Buffer.concat(stdoutChunks).toString('utf8');
       const stderr = Buffer.concat(stderrChunks).toString('utf8');
       const finalStderr = timedOut
         ? stderr + `\n[somora] killed: timeout after ${timeoutMs}ms`
-        : stderr;
+        : aborted
+          ? stderr + '\n[somora] killed: the turn was stopped'
+          : stderr;
       resolve({
         exit_code: code,
         stdout,
@@ -276,6 +315,8 @@ export async function localExecSync(opts: LocalSyncOptions): Promise<LocalSyncRe
 
     child.on('error', (err) => {
       clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
+      runningForeground.delete(onAbort as (signal: NodeJS.Signals) => void);
       resolve({
         exit_code: null,
         stdout: Buffer.concat(stdoutChunks).toString('utf8'),
@@ -349,8 +390,8 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
     });
 
     let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
+    let aborted = false;
+    const killTerm = () => {
       try {
         term.kill('SIGTERM');
         // 2s grace then SIGKILL.
@@ -364,12 +405,27 @@ async function localExecSyncPty(opts: LocalSyncOptions): Promise<LocalSyncResult
       } catch {
         /* already dead */
       }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTerm();
     }, timeoutMs);
+    // Stop kills the pty command like the pipe path's process group.
+    const onAbort = () => {
+      if (aborted || timedOut) return;
+      aborted = true;
+      killTerm();
+    };
+    if (opts.signal?.aborted) onAbort();
+    else opts.signal?.addEventListener('abort', onAbort, { once: true });
+    runningForeground.add(onAbort as (signal: NodeJS.Signals) => void);
 
     term.onExit(({ exitCode, signal }) => {
       clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onAbort);
+      runningForeground.delete(onAbort as (signal: NodeJS.Signals) => void);
       const out = Buffer.concat(outChunks).toString('utf8');
-      const stderrTail = timedOut ? `[somora] killed: timeout after ${timeoutMs}ms` : '';
+      const stderrTail = timedOut ? `[somora] killed: timeout after ${timeoutMs}ms` : aborted ? '[somora] killed: the turn was stopped' : '';
       resolve({
         exit_code: exitCode,
         stdout: out,

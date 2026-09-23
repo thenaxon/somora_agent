@@ -483,7 +483,8 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
         pty: input.pty,
         stripSomoraInternalEnv: !input.inherit_agent_env,
         ...(skillScope ? { skillEnvScope: skillScope } : {}),
-      });
+              ...(ctx.signal ? { signal: ctx.signal } : {}),
+});
       // A stripped skill var named in a failed command's output is
       // almost always an indirect bin call — say so, or the agent reads
       // the bin's "set VAR" message as a broken bootstrap.

@@ -859,6 +859,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       session,
       turnId,
       subagentDepth,
+      ...(args.signal ? { signal: args.signal } : {}),
       getMemoryManager: () =>
         getMemoryManager(agent, {
           config: deps.config.memory,

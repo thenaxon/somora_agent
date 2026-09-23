@@ -30,6 +30,7 @@ import { loadPersona } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { isToolAllowed } from '../tools/gating.ts';
 import { builderSessionAllows, readBuilderState } from '../server/builder-session.ts';
+import { killRunningLocalExecs } from '../tools/exec/local.ts';
 import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { sessionMetaStore } from '../storage/sessions.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
@@ -155,7 +156,7 @@ async function proxyMain(agent: string, proxyServer: string): Promise<void> {
   });
 
   const shutdown = async (signal: string) => {
-    logger.info({ msg: 'mcp.proxy_shutdown', agent, server: proxyServer, signal });
+    logger.info({ msg: 'mcp.proxy_shutdown', agent, server: proxyServer, signal, killedExecs: killRunningLocalExecs() });
     await server.close().catch(() => {});
     process.exit(0);
   };
@@ -349,7 +350,8 @@ async function main(): Promise<void> {
   // agent's MCP just lost its peer. Without the tag, an engine-subprocess
   // crash is ambiguous across agents (jarvis 2026-05-13 incident).
   const shutdown = async (signal: string) => {
-    logger.info({ msg: 'mcp.server_shutdown', agent, signal });
+    // A stopped CLI turn ends this child; its foreground commands go too.
+    logger.info({ msg: 'mcp.server_shutdown', agent, signal, killedExecs: killRunningLocalExecs() });
     await server.close().catch(() => {});
     await shutdownMemoryRegistry();
     process.exit(0);

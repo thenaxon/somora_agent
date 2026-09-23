@@ -1993,7 +1993,10 @@ only; queued waiters keep their slots and still execute — a waiting
 entry is removed with `DELETE /chat/queue/:id` instead.
 
 It stops whatever is running on the session, regardless of what
-started it: a typed message, an `agent_ask` from another agent, a
+started it — a command the turn is running through `exec` is killed with
+it (process group, `SIGTERM` then `SIGKILL`), on the in-process engine and
+in the MCP child alike, and its result says `killed: the turn was
+stopped`: a typed message, an `agent_ask` from another agent, a
 sub-agent brief, a sentinel fire, a tmux or browser wake, a voice
 consult or a wake-up. Whoever asked for that turn learns why it ended:
 an `agent_ask` still on the line, `agent_ask_result` and
