@@ -120,7 +120,9 @@ On top of chat and memory, each optional and off until configured:
   you. Describe a project, let the builder plan, press Go — or let
   another agent hand over the order in one call and be woken with the
   report; one builder per folder at a time, and the hand-over procedure
-  ships as a skill ([docs/builder.md](docs/builder.md)).
+  ships as a skill ([docs/builder.md](docs/builder.md)). With a
+language server installed, every write comes back with the compiler's
+errors for the file ([docs/lsp.md](docs/lsp.md)).
 - **Steering** — type into a running turn instead of behind it: the
   model reads your message at its next step and changes course, on every
   engine ([docs/api.md → Steering](docs/api.md#steering)).
@@ -320,7 +322,7 @@ for which goal, and every concept in one sentence.
 
 - **Get running:** [setup](docs/setup.md) · [models](docs/models.md) · [agents](docs/agents.md) · [team](docs/team.md) · [security](docs/security.md)
 - **Memory and knowledge:** [memory](docs/memory.md) · [wiki](docs/wiki.md) · [dream phases](docs/dream-phases.md) · [compaction](docs/compaction.md) · [cache strategy](docs/cache-strategy.md)
-- **What agents can do:** [tools](docs/tools.md) · [builders](docs/builder.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md)
+- **What agents can do:** [tools](docs/tools.md) · [builders](docs/builder.md) · [language servers](docs/lsp.md) · [files](docs/files.md) · [tmux](docs/tmux.md) · [resources](docs/resources.md) · [skills](docs/skills.md) · [MCP servers](docs/mcp.md) · [projects](docs/projects.md) · [sentinel](docs/sentinel.md) · [browser](docs/browser.md) · [image generation](docs/imagegen.md) · [video generation](docs/videogen.md)
 - **Clients and API:** [web](docs/web.md) · [mobile](docs/mobile.md) · [TUI display](docs/display.md) · [voice](docs/voice.md) · [realtime voice](docs/realtime-voice.md) · [API](docs/api.md)
 - **Models in detail:** [thinking](docs/thinking.md) · [sampling](docs/sampling.md)
 

@@ -200,6 +200,14 @@ it works, and never to let two helpers edit the same file — measured on
 a Codex-driven build: 34 one-second polls and a note into a running
 helper's session before the rule.
 
+## Errors after every write
+
+With a language server installed (`somora lsp install`), every
+`file_write` and `file_patch` result of a builder carries the errors the
+server found in that file, and in other files this write broke — see
+[lsp.md](lsp.md). The builder's environment block says which servers
+are there.
+
 ## Where a builder may write
 
 A builder session pinned to a project folder writes only there and in

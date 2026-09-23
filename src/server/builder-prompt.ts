@@ -107,6 +107,8 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
     '',
     '# When you are done',
     '',
+    'A write or patch result may carry `errors` from the language server (and `errors_in_other_files`): fix them before moving on — they are the compiler\'s word, not a guess. When it says "No errors in this file", believe it and continue.',
+    '',
     'Finish with a short report: what was built (files, behaviour), what was verified and how (commands, results), what was left open and why, decisions you took on your own. When the task names a report file, write the report there' +
       (has('file_write') ? ' with file_write' : '') +
       ' as well. Then stop. Your final answer IS the report: whoever gave you the order receives it automatically when you stop. Never send it with agent_ask, never message the orderer, never ask whether you may finish. No summary of the process, no pleasantries.',
@@ -123,6 +125,8 @@ export interface BuilderEnv {
   platform: string;
   modelRef: string;
   today: string;
+  /** e.g. "typescript ✓, pyright — not installed (somora lsp install pyright)". */
+  languageServers?: string;
 }
 
 export function renderBuilderEnvBlock(env: BuilderEnv): string {
@@ -134,6 +138,7 @@ export function renderBuilderEnvBlock(env: BuilderEnv): string {
     `- Platform: ${env.platform}`,
     `- Model: ${env.modelRef}`,
     `- Today: ${env.today}`,
+    ...(env.languageServers ? [`- Language servers (errors after each write): ${env.languageServers}`] : []),
   ].join('\n');
 }
 

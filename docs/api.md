@@ -952,6 +952,12 @@ tools (`todo_write`, `ask_user`, `plan_write`) call the same routes.
   planPath?, orderer?}` → `{agent, session, state}`. Publishes
   `builder_state`. `orderer` `{agent, session?}` names the agent that
   handed the order over (`builder_dispatch` sets it).
+- `POST /lsp/diagnostics` `{agent, session, path, touch?}` →
+  `{diagnostics: {server, errors, errors_in_other_files} | null}` — the
+  language server's verdict on a file a builder just wrote (what
+  `file_write`/`file_patch` call; see [lsp.md](lsp.md)); `touch: true`
+  only starts the server. `GET /lsp/status` → the servers found, the
+  config and the running instances.
 - `GET /builders` → `{builders: [{name, role, description, busy: [{session,
   workdir, since}]}]}` — the agents of kind builder and the folders each
   is working in right now.

@@ -1823,6 +1823,25 @@ export type TlsConfig = z.infer<typeof TlsConfigSchema>;
 // in config; nobody who runs against Anthropic ever has to lower
 // them. maxPerTurn is a UX-sanity cap well under any engine's
 // hard limit (Anthropic 100, OpenAI ~50, codex/omlx undocumented).
+/** Language servers for builder agents (docs/lsp.md): after file_write /
+ *  file_patch the server's errors ride on the tool result. */
+export const LspServerConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** Executable to run instead of the one found under ~/.somora/lsp or PATH. */
+    command: z.string().min(1).optional(),
+  })
+  .strict();
+export const LspConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** How long a write waits for the server's verdict (ms). The first
+     *  verdict of a project waits longer (the server loads the project). */
+    waitMs: z.number().int().min(200).max(60_000).default(3000),
+    servers: z.record(z.string(), LspServerConfigSchema).default({}),
+  })
+  .default({ enabled: true, waitMs: 3000, servers: {} });
+
 export const AttachmentsConfigSchema = z
   .object({
     maxImageBytes: z.number().int().positive().default(5 * 1024 * 1024),
@@ -2068,6 +2087,7 @@ export const ConfigSchema = z.object({
   obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
   attachments: AttachmentsConfigSchema,
+  lsp: LspConfigSchema,
   mcp: McpConfigSchema,
 });
 export type Config = z.infer<typeof ConfigSchema>;

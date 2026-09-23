@@ -17,6 +17,7 @@ import type { ContentBlock } from '../../multimodal/blocks.ts';
 import { resolveVisibleResourceFresh } from '../resources/visibility.ts';
 import type { MultimodalToolResult, ToolContext, ToolDefinition } from '../types.ts';
 import { localList, localPatch, localRead, localSearch, localWrite } from './local.ts';
+import { lspAfterWrite, lspTouch } from './lsp-hook.ts';
 import { remoteList, remotePatch, remoteRead, remoteSearch, remoteWrite } from './remote.ts';
 
 // ─────────────────────────────────────────────────────────────────────
@@ -230,6 +231,8 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
       {
         const { resolveLocalPath, assertReadAllowed } = await import('./policy.ts');
         const { absolute } = await resolveLocalPath(input.path, ctx.agent, ctx.config, ctx.session);
+        // Pre-warm the language server for a builder's read (docs/lsp.md).
+        lspTouch(ctx, absolute);
         await assertReadAllowed(absolute);
       }
       try {
@@ -335,7 +338,7 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
   },
   async handler(input, ctx) {
     if (input.target === 'local') {
-      return localWrite({
+      const result = await localWrite({
         path: input.path,
         content: input.content,
         agent: ctx.agent,
@@ -343,6 +346,9 @@ export const fileWrite: ToolDefinition<z.infer<typeof WriteInput>> = {
         config: ctx.config,
         mode: input.mode,
       });
+      // A builder gets the language server's verdict on the file (docs/lsp.md).
+      const lsp = await lspAfterWrite(ctx, result.path);
+      return lsp ? { ...result, ...lsp } : result;
     }
     const resource = await resolveSshTarget({ ctx, target: input.target });
     return remoteWrite({
@@ -407,7 +413,7 @@ export const filePatch: ToolDefinition<z.infer<typeof PatchInput>> = {
   },
   async handler(input, ctx) {
     if (input.target === 'local') {
-      return localPatch({
+      const result = await localPatch({
         path: input.path,
         agent: ctx.agent,
         session: ctx.session,
@@ -416,6 +422,8 @@ export const filePatch: ToolDefinition<z.infer<typeof PatchInput>> = {
         newString: input.new_string,
         replaceAll: input.replace_all,
       });
+      const lsp = await lspAfterWrite(ctx, result.path);
+      return lsp ? { ...result, ...lsp } : result;
     }
     const resource = await resolveSshTarget({ ctx, target: input.target });
     return remotePatch({

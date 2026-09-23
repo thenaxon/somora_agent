@@ -871,3 +871,18 @@ providers:
 #     tools: false
 #     memory: false
 #     system: false
+
+# ── Language servers for builder agents (docs/lsp.md) ─────────────────
+# After file_write / file_patch a builder's result carries the errors
+# the language server found in that file. Servers are installed with
+# `somora lsp install` into ~/.somora/lsp; nothing is downloaded during
+# a turn. Chat agents are not affected.
+# lsp:
+#   enabled: true
+#   waitMs: 3000                 # wait for the verdict after a write (ms)
+#   servers:
+#     typescript:
+#       enabled: true
+#       # command: /path/to/typescript-language-server   # instead of ~/.somora/lsp or PATH
+#     pyright:
+#       enabled: true

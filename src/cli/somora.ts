@@ -57,6 +57,8 @@ Usage:
                                      \`somora codex debug models\`); somora mirrors the login
   somora team init|check|show <a>    team.yaml: bootstrap from the agents on disk, validate,
                                      print the "# Your team" block an agent sees
+  somora lsp status|install [id…]    language servers for builder agents (docs/lsp.md):
+                                     what is installed, install with npm into ~/.somora/lsp
   somora update [<version>|--edge]   install + rebake systemd + restart
                                      (run \`somora update --help\` for options)
   somora --version                   show version
@@ -608,6 +610,10 @@ async function main(): Promise<number> {
     case 'team': {
       const { runTeamCli } = await import('./team.ts');
       return await runTeamCli(rest);
+    }
+    case 'lsp': {
+      const { runLspCli } = await import('./lsp.ts');
+      return await runLspCli(rest);
     }
     default:
       process.stderr.write(`unknown command: ${cmd}\n${usage()}`);

@@ -26,6 +26,22 @@ import { SOMORA_HOME_DIR } from './logger.ts';
 import type { ChatTurnResolveDeps } from './run-turn-types.ts';
 import { buildSelfPointer } from './workspace.ts';
 import { workdirFromMeta } from './session-workdir.ts';
+import { findBinary, LSP_SERVERS } from '../lsp/registry.ts';
+
+/** "typescript ✓, pyright — not installed (somora lsp install pyright)"
+ *  for the builder's environment block; nothing when lsp is off. */
+async function languageServersLine(config: Config): Promise<{ languageServers?: string }> {
+  if (!config.lsp.enabled) return {};
+  const parts = await Promise.all(
+    LSP_SERVERS.map(async (def) => {
+      const own: { enabled?: boolean; command?: string } = config.lsp.servers[def.id] ?? {};
+      if (own.enabled === false) return `${def.id} — off`;
+      const bin = await findBinary(def, own.command);
+      return bin.command ? `${def.id} ✓` : `${def.id} — not installed (somora lsp install ${def.id})`;
+    }),
+  );
+  return { languageServers: parts.join(', ') };
+}
 import { readBuilderState, renderBuilderSessionBlock } from './builder-session.ts';
 import {
   buildBuilderHarnessPrompt,
@@ -286,6 +302,7 @@ async function assembleBuilderPrompt(args: {
     // Local calendar date, not UTC: at 00:40 CEST the ISO date still
     // says yesterday.
     today: new Date().toLocaleDateString('en-CA'),
+    ...(await languageServersLine(freshConfig)),
   });
   const helperNote =
     subagentDepth > 0

@@ -168,6 +168,8 @@ import { ScreencastRegistry, applyViewerInput, isBrowserOpError, type ViewerSock
 import { runBrowserOp, type BrowserOp } from '../tools/browser/ops.ts';
 import { logger } from './logger.ts';
 import { startToolOutputSweeper } from '../tools/tool-output.ts';
+import { getLspManager, shutdownLsp } from '../lsp/index.ts';
+import { findBinary, LSP_SERVERS } from '../lsp/registry.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
 import { DEFAULT_PLAN_FILE, builderSessionAllows, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
 import { workdirFromMeta } from './session-workdir.ts';
@@ -3083,6 +3085,39 @@ app.patch('/agents/:agent/sessions/:session/builder', async (c) => {
   logger.info({ msg: 'builder.state_patched', agent: r.agent, session: r.session, ...patch });
   await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state.mode, phase: state.phase, planPath: state.planPath } });
   return c.json({ agent: r.agent, session: r.session, state });
+});
+
+// Language servers (docs/lsp.md). The file tools call this after a
+// builder's write — in-process and from the MCP child alike — and get
+// the server's errors for the file back; nothing when no server serves
+// the file, none is installed, or the verdict does not come in time.
+app.post('/lsp/diagnostics', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { agent?: string; session?: string; path?: string; touch?: boolean } | null;
+  if (!body || typeof body.agent !== 'string' || typeof body.session !== 'string' || typeof body.path !== 'string' || !isAbsolute(body.path)) {
+    return c.json({ error: 'body must be { agent, session, path (absolute), touch? }' }, 400);
+  }
+  const persona = await loadPersona(body.agent);
+  if (!persona) return c.json({ error: `agent '${body.agent}' not found` }, 404);
+  if (persona.kind !== 'builder' || !config.lsp.enabled) return c.json({ diagnostics: null, reason: persona.kind !== 'builder' ? 'not a builder' : 'disabled' });
+  const meta = await sessionMetaStore.get(body.agent, body.session);
+  const workdir = workdirFromMeta(meta as Record<string, unknown>, persona, config).path;
+  const mgr = getLspManager(() => config);
+  if (body.touch) {
+    mgr.touch(workdir, body.path);
+    return c.json({ diagnostics: null, touched: true });
+  }
+  const diagnostics = await mgr.diagnosticsAfterWrite(workdir, body.path);
+  return c.json({ diagnostics });
+});
+app.get('/lsp/status', async (c) => {
+  const servers = await Promise.all(
+    LSP_SERVERS.map(async (def) => {
+      const own: { enabled?: boolean; command?: string } = config.lsp.servers[def.id] ?? {};
+      const bin = await findBinary(def, own.command);
+      return { id: def.id, title: def.title, extensions: def.extensions, enabled: own.enabled !== false, command: bin.command, source: bin.source };
+    }),
+  );
+  return c.json({ enabled: config.lsp.enabled, waitMs: config.lsp.waitMs, servers, running: getLspManager(() => config).status() });
 });
 
 // The builders of this somora (for an orchestrator choosing one) and
@@ -6810,6 +6845,7 @@ async function shutdown(signal: string): Promise<void> {
   // aborted dream lands as `paused` on disk — exiting earlier archived
   // it as empty-processed instead (report 2026-07-25, restart-kills).
   await remWorker.shutdown();
+  await shutdownLsp();
   deepWorker.shutdown();
   lucidWorker.shutdown();
   // A standing call is a paid connection. Exiting without closing it
