@@ -134,7 +134,7 @@ export async function localWrite(args: {
   const real = await realpathSafeAncestor(absolute);
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
-  await enforceWriteScope({ absolute: real, agent: args.agent, session: args.session, config: args.config });
+  await enforceWriteScope({ absolute, real, agent: args.agent, session: args.session, config: args.config });
 
   const exists = await fileExists(absolute);
   if (args.mode === 'create' && exists) {
@@ -234,7 +234,7 @@ export async function localPatch(args: {
   const real = await realpathSafeAncestor(absolute);
   const policyReal = checkWriteAllowed(real, args.agent);
   if (!policyReal.ok) throw new Error(policyReal.reason);
-  await enforceWriteScope({ absolute: real, agent: args.agent, session: args.session, config: args.config });
+  await enforceWriteScope({ absolute, real, agent: args.agent, session: args.session, config: args.config });
   if (!(await fileExists(absolute))) {
     throw new Error(`file_patch: '${args.path}' does not exist`);
   }

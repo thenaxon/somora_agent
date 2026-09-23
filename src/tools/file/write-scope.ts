@@ -140,7 +140,15 @@ async function askPerson(agent: string, session: string, absolute: string, roots
 }
 
 /** The gate file_write and file_patch pass through after the blacklist. */
-export async function enforceWriteScope(args: { absolute: string; agent: string; session?: string; config: Config }): Promise<void> {
+export async function enforceWriteScope(args: {
+  /** The path as resolved from the call (may not exist yet) — what the message names. */
+  absolute: string;
+  /** Its realpath (nearest existing ancestor resolved) — a symlink must not lead outside. */
+  real?: string;
+  agent: string;
+  session?: string;
+  config: Config;
+}): Promise<void> {
   if (!args.session || !isAbsolute(args.absolute)) return;
   const persona = await loadPersona(args.agent);
   if (!persona || persona.kind !== 'builder') return;
@@ -157,7 +165,15 @@ export async function enforceWriteScope(args: { absolute: string; agent: string;
     agent: args.agent,
     sessionGrants: grants,
   });
-  if (verdict.kind === 'unscoped' || verdict.kind === 'inside') return;
+  if (verdict.kind === 'unscoped') return;
+  if (verdict.kind === 'inside') {
+    // Inside by name, but a symlink on the way leads out of the folder.
+    if (args.real && !isWithinRoots(args.real, writeScopeRoots(args.agent, workdir, grants))) {
+      logger.info({ msg: 'builder.write_scope_refused', agent: args.agent, session: args.session, path: args.absolute, real: args.real, workdir, via: 'symlink' });
+      throw new Error(`write refused: '${args.absolute}' resolves to '${args.real}', outside the project folder ${workdir}.`);
+    }
+    return;
+  }
   if (verdict.kind === 'refused') {
     logger.info({ msg: 'builder.write_scope_refused', agent: args.agent, session: args.session, path: args.absolute, workdir });
     throw new Error(verdict.reason);
