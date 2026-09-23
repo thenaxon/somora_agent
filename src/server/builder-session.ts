@@ -81,7 +81,15 @@ export async function ensureBuilderState(
 ): Promise<BuilderSessionState> {
   const meta = await store.get(agent, session);
   const existing = readBuilderState(meta as Record<string, unknown>);
-  if (existing) return existing;
+  if (existing) {
+    // Set over HTTP (builder_dispatch, the panel) before the first turn:
+    // mode and phase are there, the plan path is not. It belongs in the
+    // session's working directory, not the agent's workspace.
+    if (existing.planPath) return existing;
+    const planPath = `${workdir.replace(/\/+$/, '')}/${DEFAULT_PLAN_FILE}`;
+    await store.update(agent, session, (current) => ({ ...current, builderPlanPath: planPath }));
+    return { ...existing, planPath };
+  }
   const fresh = defaultBuilderState(origin, workdir);
   await store.update(agent, session, (current) => ({
     ...current,

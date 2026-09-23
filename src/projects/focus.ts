@@ -20,6 +20,7 @@ import { logger } from '../server/logger.ts';
 import { projectExists, readProject } from './store.ts';
 import { homedir } from 'node:os';
 import { isAbsolute, join, normalize } from 'node:path';
+import { mkdir, stat } from 'node:fs/promises';
 
 /** The project's working directory, expanded, or null when it has none
  *  or the value is not an absolute path after expansion. */
@@ -33,6 +34,23 @@ export async function projectWorkdir(slug: string): Promise<string | null> {
     return null;
   }
   return normalize(expanded);
+}
+
+/** Create the project's working directory when it is missing (mkdir -p). */
+export async function ensureWorkdirExists(workdir: string, slug: string): Promise<void> {
+  try {
+    const st = await stat(workdir);
+    if (!st.isDirectory()) logger.warn({ msg: 'project.workdir_not_a_directory', slug, workdir });
+    return;
+  } catch {
+    /* missing — create */
+  }
+  try {
+    await mkdir(workdir, { recursive: true });
+    logger.info({ msg: 'project.workdir_created', slug, workdir });
+  } catch (err) {
+    logger.warn({ msg: 'project.workdir_create_failed', slug, workdir, err: err instanceof Error ? err.message : String(err) });
+  }
 }
 
 export interface FocusArgs {
@@ -85,6 +103,11 @@ export async function focusProject(args: FocusArgs): Promise<FocusResult> {
   // directory (file tools, exec default cwd, builder environment);
   // clearing the pin or pinning a project without one drops it.
   const workdir = slug === null ? null : await projectWorkdir(slug);
+  // A project declared with a folder that is not there yet (a new
+  // repository the builder is about to start) gets the folder created
+  // now: every tool of the session runs there from this moment, and an
+  // exec whose cwd does not exist fails on every call.
+  if (workdir) await ensureWorkdirExists(workdir, slug!);
   await metaStore.update(agent, session, (current) => {
     const next = { ...current } as Record<string, unknown>;
     if (slug === null) {

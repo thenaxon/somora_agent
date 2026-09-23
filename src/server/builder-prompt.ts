@@ -109,7 +109,7 @@ export function buildBuilderHarnessPrompt(visible: ReadonlySet<string> | null = 
     '',
     'Finish with a short report: what was built (files, behaviour), what was verified and how (commands, results), what was left open and why, decisions you took on your own. When the task names a report file, write the report there' +
       (has('file_write') ? ' with file_write' : '') +
-      ' as well. Then stop. No summary of the process, no pleasantries.',
+      ' as well. Then stop. Your final answer IS the report: whoever gave you the order receives it automatically when you stop. Never send it with agent_ask, never message the orderer, never ask whether you may finish. No summary of the process, no pleasantries.',
   );
   return lines.join('\n');
 }

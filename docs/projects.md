@@ -39,7 +39,9 @@ a builder agent (see [builder.md](builder.md)) shows it in its
 environment block and writes its plan file there. Clearing the pin
 restores the agent's workspace. Sub-agents spawned from the session
 inherit the pin and the folder. Set it with `project_create` or
-`project_update` (`set_field workdir`).
+`project_update` (`set_field workdir`). A folder that does not exist yet
+is created when the project is pinned, so a new repository can be
+named before its first file exists.
 
 ## Why
 

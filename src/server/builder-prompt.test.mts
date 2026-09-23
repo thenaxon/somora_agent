@@ -63,3 +63,10 @@ for (const must of [
 assert.equal(BUILDER_LOOP_DEFAULTS.maxRounds, 500);
 assert.equal(BUILDER_LOOP_DEFAULTS.maxTurnMs, 8 * 60 * 60 * 1000);
 console.log('builder-prompt.test: ok');
+
+// The report rule: the answer is the report, no message back to the orderer.
+{
+  const { BUILDER_HARNESS_PROMPT } = await import('./builder-prompt.ts');
+  assert.match(BUILDER_HARNESS_PROMPT, /Your final answer IS the report/);
+  assert.match(BUILDER_HARNESS_PROMPT, /Never send it with agent_ask/);
+}

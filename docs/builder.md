@@ -143,8 +143,9 @@ project (its `workdir` becomes the working directory), sets the session
 to unattended + build (or `phase: "plan"`: plan first, stop with "Plan
 ready", the person presses Go) and sends the order; the caller returns at once
 and is woken with the builder's report (an `[agent answer]` wake, read
-with `agent_ask_result`). Without a project, name the repository in the
-order. The order itself, in `task` (plus `plan_path`, `done_criteria`,
+with `agent_ask_result`). The builder's final answer is that report: an
+order must not ask it to message the caller back. Without a project, name
+the repository in the order. The order itself, in `task` (plus `plan_path`, `done_criteria`,
 `report_path`):
 
 > Read the plan at `<path>`. Implement it. Done means: `<criterion,

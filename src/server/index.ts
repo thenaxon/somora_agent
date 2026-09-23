@@ -170,6 +170,7 @@ import { logger } from './logger.ts';
 import { startToolOutputSweeper } from '../tools/tool-output.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
 import { DEFAULT_PLAN_FILE, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
+import { workdirFromMeta } from './session-workdir.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from './builder-questions.ts';
 import { configureStartTurn, startTurn } from './start-turn.ts';
 import type { TurnOrigin } from './turn-origin-kind.ts';
@@ -3095,7 +3096,7 @@ app.put('/agents/:agent/sessions/:session/plan', async (c) => {
   if (!body || typeof body.content !== 'string') return c.json({ error: 'body must be { content: string }' }, 400);
   const meta = await sessionMetaStore.get(r.agent, r.session);
   const state = readBuilderState(meta as Record<string, unknown>);
-  const planPath = state?.planPath ?? joinPath(effectiveWorkspace(r.persona, config), DEFAULT_PLAN_FILE);
+  const planPath = state?.planPath ?? joinPath(workdirFromMeta(meta as Record<string, unknown>, r.persona, config).path, DEFAULT_PLAN_FILE);
   const policy = checkWriteAllowed(planPath, r.agent);
   if (!policy.ok) return c.json({ error: policy.reason }, 400);
   await mkdirFs(dirname(planPath), { recursive: true });
