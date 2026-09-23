@@ -32,6 +32,8 @@ export const BUILDER_SHORT_DESCRIPTIONS: Readonly<Record<string, string>> = {
   file_list:
     'List a directory (type, size, mtime per entry). `recursive` with a `glob` like "**/*.test.ts" finds ' +
     'files by name; ignored paths (node_modules, build output) are skipped.',
+  analyze_file:
+    'Describe an image or PDF through the vision worker (offered only when your own model cannot see). Returns text.',
   exec:
     'Run a shell command in the working directory (or `cwd`). Returns exit_code, stdout, stderr. Long output ' +
     'is shortened and the full text saved to a file the result names. `background:true` for servers and ' +

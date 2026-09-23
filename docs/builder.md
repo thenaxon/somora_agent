@@ -85,7 +85,8 @@ unless `rem.enabled` is set in its `agent.yaml`.
 
 Tools by default (`src/tools/gating.ts` `BUILDER_TOOL_ALLOW`):
 `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`,
-`exec`, `process`, `todo_write`, `ask_user`, `plan_write`,
+`analyze_file` (offered only when the builder's model cannot see
+images), `exec`, `process`, `todo_write`, `ask_user`, `plan_write`,
 `spawn_subagent`, `subagent_result`, `agent_ask`, `agent_ask_result`,
 `skill`, `skill_list`, `web_fetch`, `web_search`, `project_get`, `project_list`,
 `project_create`, `project_focus`, `memory_search`, `memory_get`,

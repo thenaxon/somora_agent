@@ -45,6 +45,7 @@ export const BUILDER_TOOL_ALLOW: readonly string[] = [
   'file_patch',
   'file_search',
   'file_list',
+  'analyze_file',
   'exec',
   'process',
   'todo_write',
