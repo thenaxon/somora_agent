@@ -168,6 +168,14 @@ without it.
   Nothing is rearranged and nothing grows back when the browser gets
   bigger again: use **Save/Restore layout** in the taskbar for that.
 
+
+One chat window per conversation: opening a session that is already
+on the desktop — from the dock, the sessions tool, a link in another
+chat, or `/session` typed into a window — brings that window forward
+instead of adding a second one. The rule sees through the two spellings
+of a session (its slug and its dated id), so `/session main` and the
+sessions list never end up on separate windows of the same stream.
+
 ## Taskbar gear: reload config, restart
 
 The gear left of **Arrange** opens a small server menu:

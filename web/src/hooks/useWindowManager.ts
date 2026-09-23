@@ -30,13 +30,26 @@ export interface OpenChatArgs {
 /** One chat window per (agent, session): keep the first, drop later
  *  twins. Applied to a layout restored from localStorage, which may
  *  predate the rule. Exported for tests. */
+/**
+ * The same conversation under two spellings: the sessions list opens a
+ * window with the canonical id (`20260923-130655_cockpit-final-0923`),
+ * `/session <slug>` typed into a window stores the slug
+ * (`cockpit-final-0923`), and `main` is both. One window per session
+ * means comparing both ways (2026-09-23: the same session was open in
+ * two windows, sharing one stream).
+ */
+export function sameSession(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return a.endsWith(`_${b}`) || b.endsWith(`_${a}`);
+}
+
 export function dedupeChatWindows<T extends { kind: string; agentName?: string; sessionId?: string }>(ws: T[]): T[] {
-  const seen = new Set<string>();
+  const kept: T[] = [];
   return ws.filter((w) => {
     if (w.kind !== 'chat') return true;
-    const key = `${w.agentName} ${w.sessionId}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    if (kept.some((k) => k.agentName === w.agentName && sameSession(k.sessionId, w.sessionId))) return false;
+    kept.push(w);
     return true;
   });
 }
@@ -145,7 +158,7 @@ export function useWindowManager() {
       const twin =
         self && self.kind === 'chat'
           ? windows.find(
-              (w) => w.id !== id && w.kind === 'chat' && w.agentName === self.agentName && w.sessionId === sessionId,
+              (w) => w.id !== id && w.kind === 'chat' && w.agentName === self.agentName && sameSession(w.sessionId, sessionId),
             )
           : undefined;
       if (twin) {
@@ -156,7 +169,7 @@ export function useWindowManager() {
         const me = ws.find((w) => w.id === id);
         if (!me || me.kind !== 'chat') return ws;
         // Re-check against the state the update actually applies to.
-        if (ws.some((w) => w.id !== id && w.kind === 'chat' && w.agentName === me.agentName && w.sessionId === sessionId)) {
+        if (ws.some((w) => w.id !== id && w.kind === 'chat' && w.agentName === me.agentName && sameSession(w.sessionId, sessionId))) {
           return ws;
         }
         return ws.map((w) => (w.id === id ? { ...w, sessionId } : w));
@@ -518,7 +531,7 @@ export function useWindowManager() {
   const openChat = useCallback(
     (args: OpenChatArgs) => {
       const existing = windows.find(
-        (w) => w.kind === 'chat' && w.agentName === args.agentName && w.sessionId === args.sessionId,
+        (w) => w.kind === 'chat' && w.agentName === args.agentName && sameSession(w.sessionId, args.sessionId),
       );
       if (existing) {
         focus(existing.id);
@@ -540,7 +553,7 @@ export function useWindowManager() {
       // Checked again inside the updater: `windows` above is this
       // render's snapshot, and two opens in one tick would both pass it.
       setWindows((ws) =>
-        ws.some((w) => w.kind === 'chat' && w.agentName === args.agentName && w.sessionId === args.sessionId)
+        ws.some((w) => w.kind === 'chat' && w.agentName === args.agentName && sameSession(w.sessionId, args.sessionId))
           ? ws
           : [...ws, next],
       );
