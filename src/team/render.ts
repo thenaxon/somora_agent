@@ -65,12 +65,10 @@ export function renderTeamBlockCompact(team: ResolvedTeam, self: string): string
   if (colleagues.length === 0 && team.rules.length === 0) return null;
   const out: string[] = ['# Your team', '', `Principal (human): ${team.principal.name}${team.principal.title ? `, ${team.principal.title}` : ''}.`];
   if (colleagues.length > 0) {
-    out.push('Colleagues you can consult with agent_ask (a question in their specialty, not a hand-off):');
-    for (const n of colleagues) {
-      const a = team.agents[n]!;
-      const what = a.involveFor.length > 0 ? joinPhrases(a.involveFor) : '';
-      out.push(`- ${n} (${a.title})${what ? `: ${what}` : ''}`);
-    }
+    out.push(
+      'Colleagues you can consult with agent_ask — a question in their specialty, not a hand-off; the agent or person who gave you the task is your client:',
+    );
+    out.push(colleagues.map((n) => `${n} (${team.agents[n]!.title})`).join(', ') + '.');
   }
   if (team.rules.length > 0) {
     out.push('', 'Rules:');

@@ -26,6 +26,15 @@
 export interface SkillGating {
   deny: string[];
   allow: string[];
+  /** Builders: nothing is offered unless `allow` names it — an empty
+   *  allow list means NONE here, not "everything" as for chat agents. */
+  defaultDeny?: boolean;
+}
+
+/** The gating a builder runs with: its own allow/deny, and no skill at
+ *  all when it allows none. */
+export function builderSkillGating(own: SkillGating | undefined): SkillGating {
+  return { deny: own?.deny ?? [], allow: own?.allow ?? [], defaultDeny: true };
 }
 
 /** agent.yaml `skills:` — legacy allow-list, or the tools-style object. */
@@ -57,6 +66,6 @@ export function normalizeSkillGating(raw: RawSkillGating): SkillGating | undefin
 export function isSkillAllowed(name: string, gating: SkillGating | undefined): boolean {
   if (!gating) return true;
   if (gating.deny.includes(name)) return false;
-  if (gating.allow.length === 0) return true;
+  if (gating.allow.length === 0) return !gating.defaultDeny;
   return gating.allow.includes(name);
 }

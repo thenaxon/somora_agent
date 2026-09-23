@@ -196,10 +196,26 @@ export function ToolsWindow() {
     if (agent) void refresh(agent);
   }, [agent, refresh]);
 
+  const isBuilder = data?.kind === 'builder';
+  const kindDefaults = useMemo(() => new Set(data?.kindDefaults ?? []), [data]);
   const groups = useMemo(() => {
     if (!data) return [];
+    // Two views by kind. A builder: its own set (the kind's defaults) as
+    // one group, everything else under "more" — off until switched on,
+    // and switching on writes the name into agent.yaml `tools.allow`. A
+    // chat agent: the full programme grouped by toolset, minus the three
+    // builder-only tools (task list, question, plan file).
+    if (isBuilder) {
+      const own = data.tools.filter((t) => kindDefaults.has(t.name));
+      const more = data.tools.filter((t) => !kindDefaults.has(t.name));
+      return [
+        ['builder tools', own] as [string, typeof data.tools],
+        ['more (off unless switched on)', more] as [string, typeof data.tools],
+      ];
+    }
     const byKey = new Map<string, typeof data.tools>();
     for (const t of data.tools) {
+      if (t.toolset === 'builder') continue;
       const key = t.mcpServer ? `mcp: ${t.mcpServer}` : t.toolset;
       const list = byKey.get(key);
       if (list) list.push(t);
@@ -211,17 +227,25 @@ export function ToolsWindow() {
       const bm = b.startsWith('mcp: ') ? 1 : 0;
       return am - bm || a.localeCompare(b);
     });
-  }, [data]);
+  }, [data, isBuilder, kindDefaults]);
 
   /** Write a tool deny-list and reload. One request however many names
    *  changed — a group of 60 MCP tools is a single PUT, not 60. */
   const writeTools = useCallback(
     async (rows: AbilityRow[]) => {
       if (!agent || !data || data.hasPatternRules || saving) return;
-      const deny = toggleGroupVisibility(data.gating?.deny ?? [], rows);
+      // A builder's own tools switch off via deny (as for a chat agent);
+      // a tool from "more" switches on via allow, off by dropping it.
+      const ownRows = isBuilder ? rows.filter((r) => kindDefaults.has(r.name)) : rows;
+      const moreRows = isBuilder ? rows.filter((r) => !kindDefaults.has(r.name)) : [];
+      const deny = toggleGroupVisibility(data.gating?.deny ?? [], ownRows);
+      let allow = data.gating?.allow ?? [];
+      for (const r of moreRows) {
+        allow = r.visible ? allow.filter((n) => n !== r.name) : allow.includes(r.name) ? allow : [...allow, r.name];
+      }
       setSaving(true);
       try {
-        await api.setAgentTools(agent, { deny, allow: data.gating?.allow ?? [] });
+        await api.setAgentTools(agent, { deny, allow });
         await refresh(agent);
       } catch (err) {
         setError((err as Error).message);
@@ -229,7 +253,7 @@ export function ToolsWindow() {
         setSaving(false);
       }
     },
-    [agent, data, saving, refresh],
+    [agent, data, saving, refresh, isBuilder, kindDefaults],
   );
 
   const toggle = useCallback(
@@ -246,10 +270,20 @@ export function ToolsWindow() {
   const writeSkills = useCallback(
     async (rows: AbilityRow[]) => {
       if (!agent || !skills || skills.hasPatternRules || saving) return;
-      const deny = toggleGroupVisibility(skills.gating?.deny ?? [], rows);
+      // A builder sees no skill unless allowed: its switches edit the
+      // allow-list. A chat agent's switches edit denies, as before.
+      let deny = skills.gating?.deny ?? [];
+      let allow = skills.gating?.allow ?? [];
+      if (skills.kind === 'builder') {
+        for (const r of rows) {
+          allow = r.visible ? allow.filter((n) => n !== r.name) : allow.includes(r.name) ? allow : [...allow, r.name];
+        }
+      } else {
+        deny = toggleGroupVisibility(deny, rows);
+      }
       setSaving(true);
       try {
-        await api.setAgentSkills(agent, { deny, allow: skills.gating?.allow ?? [] });
+        await api.setAgentSkills(agent, { deny, allow });
         await refresh(agent);
       } catch (err) {
         setError((err as Error).message);

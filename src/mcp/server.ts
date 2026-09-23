@@ -30,6 +30,7 @@ import { loadPersona } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { isToolAllowed } from '../tools/gating.ts';
 import { builderSessionAllows, readBuilderState } from '../server/builder-session.ts';
+import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { sessionMetaStore } from '../storage/sessions.ts';
 import { configureLongTaskTimeouts } from '../tools/agents/long-task-timeouts.ts';
 import { configureExecConcurrencyCaps } from '../tools/exec/index.ts';
@@ -279,7 +280,7 @@ async function main(): Promise<void> {
     server.registerTool(
       tool.name,
       {
-        description: tool.description,
+        description: persona?.kind === 'builder' ? builderToolDescription(tool.name, tool.description) : tool.description,
         inputSchema: inputShape,
       },
       async (args: unknown) => {

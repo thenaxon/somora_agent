@@ -107,6 +107,9 @@ export interface TurnInput {
   projectContext?: string;
   userMessage: string;
   history: NormalizedEvent[];
+  /** chat (default) or builder — a builder turn compacts its own rounds
+   *  mid-turn and gets a checkpoint notice every 100 rounds. */
+  agentKind?: 'chat' | 'builder';
   /**
    * Steering: messages sent to this session while the turn runs. An
    * engine that supports it calls `drain()` at each step boundary

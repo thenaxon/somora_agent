@@ -103,7 +103,10 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
 
   const fileByName = useMemo(() => new Map<string, PersonaResponse['files'][number]>((data?.files ?? []).map((f) => [f.name, f])), [data]);
   const isDirty = (name: string) => fileByName.has(name) && drafts[name] !== fileByName.get(name)!.content;
-  const editable = (['AGENTS.md', 'SOUL.md', 'USER.md'] as const);
+  // A builder (agent.yaml kind: builder) reads only AGENTS.md — its
+  // prompt is the harness, not SOUL/USER prose — so those two are not
+  // offered: an edit there would change nothing.
+  const editable = (data?.kind === 'builder' ? ['AGENTS.md'] : ['AGENTS.md', 'SOUL.md', 'USER.md']) as readonly ('AGENTS.md' | 'SOUL.md' | 'USER.md')[];
   const personaDraftChars = editable.reduce((n, f) => n + (drafts[f]?.length ?? 0), 0);
 
   const save = async (name: string) => {
@@ -138,7 +141,7 @@ export function AgentConfigWindow({ agentName }: { agentName: string }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }} data-testid="agent-config-window">
       {/* Budget strip */}
       <div style={{ display: 'flex', gap: 18, padding: '10px 14px', borderBottom: '1px solid var(--bg-3)', flexWrap: 'wrap' }}>
-        <Meter testId="meter-persona" title="Persona (3 files)" value={personaDraftChars} cap={b.personaTotalChars} hint="AGENTS + SOUL + USER, as drafted here" />
+        <Meter testId="meter-persona" title={data?.kind === 'builder' ? 'Builder rules (AGENTS.md)' : 'Persona (3 files)'} value={personaDraftChars} cap={b.personaTotalChars} hint="AGENTS + SOUL + USER, as drafted here" />
         <Meter testId="meter-team" title="Team block" value={teamPart?.chars ?? 0} cap={b.teamBlockChars} hint="from team.yaml" />
         <Meter testId="meter-prompt" title="Full prompt" value={preview?.chars ?? 0} hint={`everything somora sends as instructions · session ${previewSession}`} />
         <Meter testId="meter-tools" title={`Tool schemas (${preview?.tools.count ?? 0})`} value={preview?.tools.schemaChars ?? 0} hint="API tool channel, not in the prompt text" />

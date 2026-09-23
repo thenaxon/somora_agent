@@ -2100,3 +2100,15 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   justify-content: space-between;
   align-items: center;
 }
+
+/* Builder tiles (agent.yaml kind: builder) — a grey frame around the
+ * glyph so the kind is visible at a glance, before reading the label. */
+.agent-icon.is-builder .agent-icon-glyph {
+  outline: 2px solid rgba(160, 160, 170, 0.55);
+  outline-offset: 3px;
+  border-radius: 18px;
+}
+.agent-icon.is-builder .agent-icon-sub {
+  color: rgba(170, 170, 180, 0.9);
+  letter-spacing: 0.03em;
+}

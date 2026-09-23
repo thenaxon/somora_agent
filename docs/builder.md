@@ -50,9 +50,12 @@ harness rules come from somora; a repository's own AGENTS.md or
 CLAUDE.md is read from the working directory.
 ```
 
-The dock shows the kind under the name; the Abilities window shows the
-builder's tool set (the kind's defaults plus whatever `tools:` adds or
-removes).
+The dock shows the kind under the name and frames the tile grey. The
+Abilities window has two views by kind: a builder's own set as one group
+(switch off = `tools.deny`) and everything else under "more" (switch on
+= `tools.allow`); a chat agent's full programme minus the three
+builder-only tools. Skills the same way: a builder's switches edit the
+allow-list, a chat agent's the denies.
 
 ## What a builder sees
 
@@ -192,3 +195,44 @@ the model after three). The forced final answer names the reason
   publishes `question_asked`
 - `POST …/answer` `{questionId, answers?, text?}` → `{ok}`; publishes
   `question_answered`
+
+## What keeps the builder's prompt small
+
+Everything below hangs on `kind: builder`; chat agents are untouched:
+
+- **Tool descriptions.** A builder's model sees a short description per
+  tool (`src/tools/builder/short-descriptions.ts`), a few lines of what
+  the tool takes and returns; the policy ("use file_read instead of
+  cat", when to ask) lives in the harness rules instead. A hidden tool
+  sends no description at all, and the harness section that names it
+  (task list, questions, helpers) is left out too. When a tool's
+  parameters change, the short text must follow — one file, one place.
+- **Skills.** A builder sees no skill unless its `agent.yaml` allows it
+  (the Abilities window adds them one by one); a chat agent sees all but
+  the denied ones.
+- **Team.** The compact team block names the principal and the
+  colleagues with their titles; the org chart and the involve-for lists
+  are for orchestrators.
+- **No tool reminder, no wiki map, no memory recall block.**
+- **Own rules.** The body of the builder's `AGENTS.md` (below the
+  frontmatter) is its "Rules for this builder" section, after the
+  harness rules. SOUL.md and USER.md are not read — the Agent window
+  does not offer them for a builder.
+
+## Long turns
+
+Two things happen inside a builder turn on the openai-compatible engine
+that a chat turn never needs:
+
+- **Mid-turn compaction.** When the next request would not fit the
+  context window, the older rounds of the running turn (from its user
+  message up to the last six rounds) are summarised by a compaction
+  worker into a work-state block — objective, details, completed /
+  active / blocked, next move, relevant files — and replaced by one
+  message carrying it; the last six rounds stay verbatim and the turn
+  continues. The session file keeps every record. The chat shows an
+  `engine_meta` row `context_compacted`. When no worker answers, the
+  old tool-result shortening applies as for chat agents.
+- **Checkpoints.** Every 100 tool rounds the builder is told to refresh
+  its task list and append a short status to its report file, so a
+  crash late in a long night loses minutes.

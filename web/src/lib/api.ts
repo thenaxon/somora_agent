@@ -483,6 +483,7 @@ export interface PromptBudgets {
 }
 export interface PersonaResponse {
   agent: string;
+  kind?: 'chat' | 'builder';
   files: PersonaFileDto[];
   budgets: PromptBudgets;
   totals: { personaChars: number };
@@ -1286,6 +1287,7 @@ export interface AgentToolInfo {
 
 export interface AgentSkillsResponse {
   agent: string;
+  kind?: 'chat' | 'builder';
   gating: { deny: string[]; allow: string[] } | null;
   /** True when agent.yaml carries a hand-written allow-list — the
    *  matrix goes read-only then (same rule as tools). */
@@ -1302,6 +1304,10 @@ export interface AgentSkillsResponse {
 
 export interface AgentToolsResponse {
   agent: string;
+  /** chat (default) or builder. */
+  kind?: 'chat' | 'builder';
+  /** A builder's own tool set (the kind's defaults); null for chat agents. */
+  kindDefaults?: string[] | null;
   gating: { deny: string[]; allow: string[] } | null;
   /** True when agent.yaml carries hand-written pattern rules (globs,
    *  toolset:, allow-list) — the matrix goes read-only then. */

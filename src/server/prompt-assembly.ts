@@ -28,8 +28,9 @@ import { buildSelfPointer } from './workspace.ts';
 import { workdirFromMeta } from './session-workdir.ts';
 import { readBuilderState, renderBuilderSessionBlock } from './builder-session.ts';
 import {
-  BUILDER_HARNESS_PROMPT,
+  buildBuilderHarnessPrompt,
   isGitRepo,
+  renderBuilderRulesBlock,
   readRepoInstructions,
   renderBuilderEnvBlock,
   renderBuilderIdentity,
@@ -201,6 +202,9 @@ export async function assembleSystemPrompt(args: {
   toolCount: number;
   /** false = preview: never write the wiki snapshot into the session. */
   persistWikiSnapshot?: boolean;
+  /** Names of the tools this turn offers — a builder's harness text
+   *  leaves out sections about tools that are hidden. */
+  toolNames?: readonly string[];
 }): Promise<AssembledPrompt> {
   const { agent, session, persona, sessionMeta, deps, subagentDepth, toolCount } = args;
   // Self-pointer from FRESH config so newly-added resources appear on the
@@ -209,7 +213,7 @@ export async function assembleSystemPrompt(args: {
   // stable across turns within a session (prefix-cache impact nil).
   const freshConfig = await getFreshConfig();
   if (persona.kind === 'builder') {
-    return assembleBuilderPrompt({ ...args, freshConfig });
+    return assembleBuilderPrompt({ ...args, freshConfig, ...(args.toolNames ? { toolNames: args.toolNames } : {}) });
   }
   const selfPointer = buildSelfPointer(persona, freshConfig, SOMORA_HOME_DIR);
   const subContextNote =
@@ -268,8 +272,10 @@ async function assembleBuilderPrompt(args: {
   subagentDepth: number;
   toolCount: number;
   freshConfig: Config;
+  toolNames?: readonly string[];
 }): Promise<AssembledPrompt> {
-  const { agent, session, persona, sessionMeta, deps, subagentDepth, toolCount, freshConfig } = args;
+  const { agent, session, persona, sessionMeta, deps, subagentDepth, freshConfig } = args;
+  const visible = args.toolNames ? new Set(args.toolNames) : null;
   const wd = workdirFromMeta(sessionMeta, persona, freshConfig);
   const workdir = wd.path;
   const env = renderBuilderEnvBlock({
@@ -288,8 +294,8 @@ async function assembleBuilderPrompt(args: {
   const identity = renderBuilderIdentity(persona);
   const repo = await readRepoInstructions(workdir);
   const teamText = await buildTeamBlock(agent, 'compact');
-  const toolsBlock =
-    deps.config.agentLoop.toolUsageReminder && toolCount > 0 ? `\n\n---\n\n${TOOL_USAGE_REMINDER}` : '';
+  // No separate tool reminder: the harness rules say it, in context.
+  const rulesBlock = renderBuilderRulesBlock(persona.rules);
   const allSkills = await loadAvailableSkills(freshConfig);
   const skillsRegistry = buildSkillsRegistry(allSkills, persona.skillGating, freshConfig);
   const skillsBlock = skillsRegistry.text ? `\n\n---\n\n${skillsRegistry.text}` : '';
@@ -299,9 +305,9 @@ async function assembleBuilderPrompt(args: {
 
   const parts: PromptPart[] = [
     { key: 'self', label: 'Identity + environment', text: `${identity}\n\n${env}${helperNote}` },
-    { key: 'persona', label: 'Builder harness rules', text: `\n\n---\n\n${BUILDER_HARNESS_PROMPT}` },
+    { key: 'persona', label: 'Builder harness rules', text: `\n\n---\n\n${buildBuilderHarnessPrompt(visible)}` },
     { key: 'team', label: 'Team (compact)', text: teamText ? `\n\n---\n\n${teamText}` : '' },
-    { key: 'tools', label: 'Tool reminder', text: toolsBlock },
+    { key: 'tools', label: 'Rules for this builder (AGENTS.md)', text: rulesBlock ? `\n\n---\n\n${rulesBlock}` : '' },
     { key: 'wiki', label: 'Repository instructions', text: repo ? `\n\n---\n\n${renderRepoInstructionsBlock(repo)}` : '' },
     { key: 'skills', label: 'Skills', text: skillsBlock },
     { key: 'session', label: 'This session', text: sessionBlock },

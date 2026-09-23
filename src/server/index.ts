@@ -142,7 +142,7 @@ import {
   ToolRegistry,
 } from '../tools/index.ts';
 import type { ToolContext } from '../tools/types.ts';
-import { isToolAllowed } from '../tools/gating.ts';
+import { BUILDER_TOOL_ALLOW, isToolAllowed } from '../tools/gating.ts';
 import { writeAgentToolGating } from '../persona/tool-gating-store.ts';
 import { writeAgentSkillGating } from '../persona/skill-gating-store.ts';
 import { isSkillAllowed } from '../skills/gating.ts';
@@ -1237,6 +1237,9 @@ app.get('/agents/:agent/tools', async (c) => {
   return c.json({
     agent,
     kind: persona.kind,
+    // The kind's own list — the web shows a builder these as its set and
+    // everything else under "more".
+    kindDefaults: persona.kind === 'builder' ? [...BUILDER_TOOL_ALLOW] : null,
     gating,
     hasPatternRules,
     tools: configured.map((t) => ({
@@ -1289,10 +1292,13 @@ app.get('/agents/:agent/skills', async (c) => {
   const persona = await loadPersona(agent);
   if (!persona) return c.json({ error: `agent '${agent}' not found` }, 404);
   const gating = persona.skillGating ?? null;
-  const hasPatternRules = gating !== null && gating.allow.length > 0;
+  // A builder's allow-list is the matrix itself (default none, each
+  // switch adds a name), so it never locks the window.
+  const hasPatternRules = gating !== null && gating.allow.length > 0 && persona.kind !== 'builder';
   const skills = await loadAvailableSkills(config);
   return c.json({
     agent,
+    kind: persona.kind,
     gating,
     hasPatternRules,
     skills: skills
@@ -1769,8 +1775,10 @@ app.get('/agents/:agent/persona', async (c) => {
   if (!(await loadPersona(agent))) return c.json({ error: `agent '${agent}' not found` }, 404);
   const files = await readPersonaFiles(agent);
   const personaChars = files.filter((f) => !f.readOnly).reduce((n, f) => n + f.chars, 0);
+  const kind = (await loadPersona(agent))?.kind ?? 'chat';
   return c.json({
     agent,
+    kind,
     files,
     budgets: config.promptBudgets,
     totals: { personaChars },
@@ -1839,6 +1847,7 @@ app.get('/agents/:agent/prompt-preview', async (c) => {
     deps: chatTurnDeps,
     subagentDepth: 0,
     toolCount: available.length,
+    toolNames: available.map((t) => t.name),
     persistWikiSnapshot: false,
   });
   return c.json({

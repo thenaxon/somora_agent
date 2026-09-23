@@ -95,7 +95,7 @@ export function AgentTile({
     <div
       role="button"
       tabIndex={0}
-      className={`agent-icon ${active ? 'active' : ''}`}
+      className={`agent-icon ${active ? 'active' : ''}${agent.kind === 'builder' ? ' is-builder' : ''}`}
       onClick={() => onClick(agent)}
       {...(onContextMenu ? { onContextMenu: (e: React.MouseEvent) => onContextMenu(agent, e) } : {})}
       onKeyDown={(e) => {

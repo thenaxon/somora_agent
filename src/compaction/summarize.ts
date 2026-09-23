@@ -210,7 +210,7 @@ export function rankCompactionModels(
 
 // ──── per-engine summarize dispatchers ────
 
-interface SummarizeViaInput {
+export interface SummarizeViaInput {
   systemPrompt: string;
   userPrompt: string;
   resolvedModel: ResolvedModel;
@@ -218,7 +218,7 @@ interface SummarizeViaInput {
   agent?: string;
 }
 
-interface SummarizeViaResult {
+export interface SummarizeViaResult {
   text: string;
   tokensIn?: number;
   tokensOut?: number;
@@ -472,7 +472,7 @@ export const SUMMARIZE_ENGINES: ReadonlySet<string> = new Set([
   'codex-cli',
 ]);
 
-async function summarizeViaEngine(
+export async function summarizeViaEngine(
   engineName: string,
   input: SummarizeViaInput,
 ): Promise<SummarizeViaResult> {

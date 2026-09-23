@@ -47,6 +47,7 @@ import { clearTurnOrigin, setTurnOrigin } from './turn-origin.ts';
 import { drainSteer, frameSteerMessage, markSteerable, requeueSteer, unmarkSteerable } from './steer-inbox.ts';
 import { BUILDER_LOOP_DEFAULTS } from './builder-prompt.ts';
 import { builderSessionAllows, ensureBuilderState, type BuilderSessionState } from './builder-session.ts';
+import { builderToolDescription } from '../tools/builder/short-descriptions.ts';
 import { workdirFromMeta } from './session-workdir.ts';
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
@@ -891,9 +892,12 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       );
       sessionMeta = await deps.sessionMetaStore.get(agent, session);
     }
-    const availableTools = (await deps.tools.listAvailable(toolCtx)).filter(
-      (t) => isToolAllowed(t.name, t.toolset, persona.toolGating) && builderSessionAllows(builderState, t.name),
-    );
+    const availableTools = (await deps.tools.listAvailable(toolCtx))
+      .filter((t) => isToolAllowed(t.name, t.toolset, persona.toolGating) && builderSessionAllows(builderState, t.name))
+      // A builder's model sees the short descriptions (its harness prompt
+      // carries the policy); the registry and every chat agent keep the
+      // long ones.
+      .map((t) => (persona.kind === 'builder' ? { ...t, description: builderToolDescription(t.name, t.description) } : t));
     const toolInvoker = {
       list: () => availableTools,
       invoke: (name: string, input: unknown) => deps.tools.invoke(name, input, toolCtx),
@@ -910,6 +914,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       deps,
       subagentDepth,
       toolCount: availableTools.length,
+      toolNames: availableTools.map((t) => t.name),
     });
     const projectBlock = assembled.projectBlock;
     const systemPromptForTurn = assembled.text;
@@ -948,6 +953,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         ...(fromAgent && fromSession ? { fromSession } : {}),
         ...(subagentDepth > 0 ? { subagentDepth } : {}),
         history,
+        agentKind: persona.kind,
         // Steering: the engine reads the session's letterbox between steps.
         steer: {
           drain: () => drainSteer(agent, session),

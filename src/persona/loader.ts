@@ -19,7 +19,7 @@ import { load as parseYaml } from 'js-yaml';
 import { z } from 'zod';
 import { ThinkingLevelSchema, type ThinkingLevel, SamplingSchema, type SamplingConfig } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
-import { normalizeSkillGating, type SkillGating } from '../skills/gating.ts';
+import { builderSkillGating, normalizeSkillGating, type SkillGating } from '../skills/gating.ts';
 import { effectiveToolGating, type AgentKind, type ToolGating } from '../tools/gating.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -344,6 +344,10 @@ export interface Persona {
   steering: boolean;
   /** agent.yaml `kind:` — chat (default) or builder. Fixed for life. */
   kind: AgentKind;
+  /** The AGENTS.md body (below the frontmatter): a chat agent's behaviour
+   *  rules (already inside `systemPrompt`); a builder's own rules, which
+   *  the builder prompt renders as its own section. */
+  rules: string;
   /** agent.yaml `agentLoop:` — per-agent loop caps (undefined = server config). */
   agentLoop: { maxRounds?: number; maxToolCallsPerTurn?: number; maxTurnMs?: number } | undefined;
   /** The `tools:` block exactly as written in agent.yaml — what the
@@ -500,10 +504,14 @@ export async function loadPersona(name: string): Promise<Persona | null> {
     sampling: agentYaml.sampling,
     steering: agentYaml.steering === true,
     kind,
+    rules: agentMd.content?.trim() ?? '',
     agentLoop: agentYaml.agentLoop,
     workspace: agentYaml.workspace?.path ? expandHome(agentYaml.workspace.path) : undefined,
     resourceDeny: agentYaml.resources?.deny ?? [],
-    skillGating: normalizeSkillGating(agentYaml.skills),
+    // A builder sees no skills unless its agent.yaml allows them (the
+    // Abilities window adds them one by one); a chat agent sees all but
+    // the denied ones, as before.
+    skillGating: kind === 'builder' ? builderSkillGating(normalizeSkillGating(agentYaml.skills)) : normalizeSkillGating(agentYaml.skills),
     toolGatingRaw,
     toolGating: effectiveToolGating(kind, toolGatingRaw),
     rem: agentYaml.rem,

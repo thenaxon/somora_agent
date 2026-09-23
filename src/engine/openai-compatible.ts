@@ -26,6 +26,7 @@ import {
   type Compaction,
 } from '../compaction/index.ts';
 import { logger } from '../server/logger.ts';
+import { compactTurnMidway, type LoopMessage } from '../compaction/midturn.ts';
 import {
   calibratedEstimate,
   estimateRequestTokens,
@@ -51,6 +52,8 @@ const ENGINE = 'openai-compatible';
  *  Hermes Agent retries twice before telling the model; a cut-off call is
  *  never retried this way, it comes back identical. */
 const MAX_ARG_REROLLS = 2;
+/** Rounds of a builder turn kept verbatim when it compacts itself. */
+const MIDTURN_KEEP_ROUNDS = 6;
 
 // Hard fallbacks if the server forgot to pass an agent-loop config.
 // Should never fire in practice — `config.agentLoop` is non-optional in
@@ -890,6 +893,12 @@ export const openAiCompatibleEngine: AgentEngine = {
     const openAiTools: ChatTool[] | undefined = advertised && advertised.length > 0 ? advertised : undefined;
     const toolByName = new Map(toolList.map((t) => [t.name, t]));
     const loopMessages = [...messages]; // mutable copy; tool rounds append
+    // Where this turn begins in loopMessages: its user message (the
+    // last one built) — the mid-turn compaction of a builder turn keeps
+    // everything before it and summarises the rounds after it.
+    let turnStartIdx = loopMessages.length - 1;
+    while (turnStartIdx > 0 && loopMessages[turnStartIdx]?.role !== 'user') turnStartIdx--;
+    const isBuilderTurn = input.agentKind === 'builder';
     const maxRounds = input.agentLoopConfig?.maxRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
     const maxToolCallsPerTurn =
       input.agentLoopConfig?.maxToolCallsPerTurn ?? DEFAULT_MAX_TOOL_CALLS_PER_TURN;
@@ -998,6 +1007,19 @@ export const openAiCompatibleEngine: AgentEngine = {
           }
           yield { kind: 'steer_applied', ts: ts(), engine: ENGINE, messages: steered };
         }
+        // Builder checkpoint: every 100 rounds the model refreshes its task
+        // list and appends a short status to its report file, so a crash
+        // in hour six loses minutes, not the night.
+        if (isBuilderTurn && round > 1 && round % 100 === 1 && toolList.some((t) => t.name === 'todo_write')) {
+          logger.info({ msg: 'engine.builder_checkpoint', engine: ENGINE, agent, session, round });
+          loopMessages.push({
+            role: 'user',
+            content:
+              `[somora] Checkpoint after ${round - 1} tool rounds: refresh your task list with todo_write (what is done, what is next), ` +
+              'append a short status (done / in progress / next) to your report file with file_write mode append if the task named one, ' +
+              'then continue where you were.',
+          } as ChatMessage);
+        }
 
         // Does what we are about to send still fit? The pre-turn
         // compaction sized the conversation before any tool ran, and a
@@ -1019,9 +1041,46 @@ export const openAiCompatibleEngine: AgentEngine = {
           // deserves more room under it.
           ...(meta.providerOmitsUsage === true ? { safetyRatio: 0.15 } : {}),
         });
-        const rawEstimate = estimateRequestTokens(loopMessages, openAiTools);
-        const estimated = calibratedEstimate(rawEstimate, tokenRatio);
+        let rawEstimate = estimateRequestTokens(loopMessages, openAiTools);
+        let estimated = calibratedEstimate(rawEstimate, tokenRatio);
         estimateInFlight = rawEstimate;
+        // A builder turn compacts its own older rounds first (a work-state
+        // summary from a worker model, the last rounds verbatim —
+        // compaction/midturn.ts); the tool-result trim below stays the
+        // fallback, and the only path for chat agents.
+        if (estimated > budget && isBuilderTurn && round > 1) {
+          try {
+            const c = await compactTurnMidway({
+              messages: loopMessages as LoopMessage[],
+              turnStartIdx,
+              keepRounds: MIDTURN_KEEP_ROUNDS,
+              resolvedModel,
+              availableModels: input.availableModels,
+              config: input.compactionConfig,
+              agent,
+            });
+            if (c) {
+              loopMessages.splice(0, loopMessages.length, ...(c.messages as ChatMessage[]));
+              rawEstimate = estimateRequestTokens(loopMessages, openAiTools);
+              estimated = calibratedEstimate(rawEstimate, tokenRatio);
+              estimateInFlight = rawEstimate;
+              logger.info({ msg: 'engine.midturn_compacted', engine: ENGINE, agent, session, round, replaced: c.compactedMessages, worker: c.worker, estimated, budget });
+              yield {
+                kind: 'engine_meta',
+                ts: ts(),
+                engine: ENGINE,
+                itemType: 'context_compacted',
+                payload: {
+                  text: `Earlier rounds of this turn were summarised into a work-state block (${c.compactedMessages} messages, worker ${c.worker}) to stay inside the context window.`,
+                  replaced: c.compactedMessages,
+                  worker: c.worker,
+                },
+              };
+            }
+          } catch (err) {
+            logger.warn({ msg: 'engine.midturn_compaction_failed', engine: ENGINE, agent, session, round, err: (err as Error).message });
+          }
+        }
         if (estimated > budget) {
           const trim = trimToolResults(loopMessages, {
             budget,
