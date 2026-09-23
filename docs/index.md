@@ -36,6 +36,11 @@ in the browser. The mobile PWA is the same URL with `/mobile/` — see
 providers](setup.md#6-configuring-providers) plus the comment block in
 [`config.example.yaml`](../config.example.yaml) is the full reference.
 
+**I want an agent to build software.** Create one of kind `builder`
+([builder.md](builder.md)): it plans in a repository, you press Go, it
+builds, tests and reports; another agent can hand it the order with the
+bundled `builder-handover` skill.
+
 **I want my agent to do real work** — read files, run commands, search
 the web, edit notes. The [tools overview](tools.md) lists the tool
 families. [files.md](files.md), [resources.md](resources.md), and

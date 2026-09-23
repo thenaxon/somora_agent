@@ -129,6 +129,14 @@ transport, last error, and a reconnect button per server. Below the
 tools sits the same matrix for **skills** — which markdown how-tos this
 agent may see and activate; see [skills.md](skills.md#per-agent-visibility).
 
+The matrix knows the agent's kind ([builder.md](builder.md)). A chat
+agent sees every toolset except `builder` (task list, question, plan
+file — those need the task panel and the builder phases). A builder
+sees a **builder tools** group first — its coding set, on by default —
+and below it **more**, every other built-in and external tool, off
+unless switched on; switching one on writes it into the builder's
+`tools.allow`, switching a default off writes it into `tools.deny`.
+
 Every group — each built-in toolset, each MCP server, and the skills
 section — is a collapsible block, closed by default; the header shows
 how many abilities it holds and how many of those are hidden, and which

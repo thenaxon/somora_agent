@@ -199,6 +199,11 @@ skills:
 means no restriction. Names that don't match any skill on disk are
 warn-logged and ignored — typos don't break the agent.
 
+A **builder** agent ([builder.md](builder.md)) starts the other way
+round: no skill is offered until its `allow` names one, so its prompt
+does not carry a skill list it will never use. The Abilities window
+shows the same — every skill off for a builder, click to allow.
+
 Hidden is hidden everywhere: the skill is missing from the agent's
 `<available_skills>` registry, from `skill_list`, and `skill` refuses
 to activate it ("exists but is not allowed for agent …") — also when

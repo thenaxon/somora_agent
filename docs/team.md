@@ -123,6 +123,14 @@ Rules:
 - …
 ```
 
+A **builder** in the roster ([builder.md](builder.md)) is listed like
+anyone else, with one difference in its "Who to involve" line: it says
+the builder takes a complete order in one message (`builder_dispatch`)
+and reports when done — no interim check-ins. A builder's own prompt
+gets a compact version of the block: names, titles and the rules, no
+org chart and no involve lines, because a builder consults colleagues
+rarely and its context belongs to the repository.
+
 The block sits right after the persona (`SOUL.md`, `AGENTS.md`,
 `USER.md`) and before the tool, wiki, skills and project blocks. It is
 byte-stable until `team.yaml` or the agent roster changes, so it does

@@ -115,6 +115,25 @@ not fit:
 A trimmed turn leaves a `context trimmed` engine row, so it is visible
 that the model saw less than the full results.
 
+A **builder** turn ([builder.md](builder.md#long-turns)) goes one step
+further before trimming: when the turn's own traffic passes the trigger
+mid-way, the rounds so far are summarised into a work-state block (what
+was done, what the files look like now, what is left) and the last six
+rounds stay verbatim, then the turn continues on the smaller context.
+Chat agents keep the trimming above; nothing changes for them.
+
+### What a summary keeps
+
+The summary a compaction writes follows a fixed template — the goal,
+what was done, decisions and their reasons, the work state, the
+relevant files, open points, and the tone of the conversation — and
+the pairs after it stay verbatim. Tool calls are not flattened into
+prose: each summarised pair carries its **tool trail** (the tool, the
+essential argument such as a path or a command, and whether it
+succeeded), so a model that continues after the compaction knows which
+file it already wrote and which command already ran, instead of
+repeating them.
+
 **Reading the numbers.** The chat header shows two different things.
 `▣` is occupancy: the prompt size of the turn's **last** request against
 the window. `Σ↑` is spend, and the Σ is the point — it sums every

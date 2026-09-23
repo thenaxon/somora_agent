@@ -213,6 +213,9 @@ picture before failing.
 - Multi-window layout, drag/resize
 - Dream-runner-controls UI (manually triggering REM / DEEP / LUCID)
 - Project switcher (still works if you preset projects server-side)
+- The builder task panel (plan, Go, task list, questions) and the steer
+  toggle — a builder can be chatted with from the phone, but its plan is
+  approved and its questions answered in the web client
 
 ## Configuration
 

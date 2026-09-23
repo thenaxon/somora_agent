@@ -509,6 +509,13 @@ providers:
 #                                     # 8 is defensive headroom against
 #                                     # runaway models.
 #
+#   maxTurnMs: 28800000               # optional wall-clock cap per turn (ms).
+#                                     # Unset = none. Builder agents (agent.yaml
+#                                     # kind: builder) default to 500 rounds,
+#                                     # 2000 tool calls and 8 h per turn and
+#                                     # may override all three per agent
+#                                     # (agent.yaml agentLoop, docs/builder.md).
+#
 #   toolCallTimeoutMs: 30000          # 30 sec — fast tools (memory_search,
 #                                     # web_fetch, time_now, file_read,
 #                                     # obsidian_*). Plenty for anything

@@ -376,6 +376,15 @@ archived copy at the next idle window.
   while a turn is streaming — pressing Send during a running turn
   enqueues the message rather than blocking it (see "Queueing &
   Stop" below).
+- **Steer toggle** (bolt, next to Send, while a turn runs): with the
+  bolt on, what you type goes *into* the running turn instead of behind
+  it — the model reads it at its next step and changes course; the
+  bubble shows `steering…` until the engine has taken it and `steered`
+  after. With the bolt off the message queues as before. The agent's
+  `steering:` in agent.yaml sets which way the bolt starts; a steer the
+  turn ends before reading becomes an ordinary queued turn. Works on
+  every engine; see [api.md → Steering](api.md#steering) and
+  [agents.md](agents.md).
 - **Stop buttons** (two, same abort): while a turn is in flight a
   red Stop appears **in the composer next to Send** and on the
   **streaming assistant bubble** (in the slot where copy/pin sit on
@@ -506,7 +515,9 @@ original message stays in chat history.
 You don't have to wait for a turn to finish before typing the next
 one. Submits during a running turn flow into the per-session queue
 on the server (see [api.md](api.md#queuing)) and execute in order
-once the lock frees.
+once the lock frees. The alternative is the steer toggle in the
+composer: a message steered into the running turn is read by the
+model mid-work instead of after it (see "Chat window anatomy").
 
 The optimistic user-bubble shows up immediately with a small
 hourglass marker next to its timestamp:
@@ -716,11 +727,26 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   with any media it produced under it.
 - **Abilities window** — per-agent matrix for tools *and* skills, plus
   external MCP server health. See [mcp.md](mcp.md#the-abilities-window)
-  and [skills.md](skills.md#per-agent-visibility). A toggle takes effect
+  and [skills.md](skills.md#per-agent-visibility). The matrix follows the
+  agent's kind: a chat agent sees the whole programme minus the three
+  builder-only tools, a builder sees its coding set on top and every
+  other tool under *more*, off unless switched on. A toggle takes effect
   on the agent's next turn on every engine; on codex-cli the Codex
   thread is restarted with the session history carried over (a
   `tools changed` marker appears in the chat), because Codex keeps a
   thread's tool set for its lifetime.
+- **Builder windows** — an agent of kind `builder`
+  ([builder.md](builder.md)) has a grey outline and a *builder* label on
+  its tile, and its chat window carries the **task panel** docked on the
+  right: mode (attended / unattended) and phase (plan / build) switches,
+  the **Go** button that approves the plan and starts the build, the
+  plan file's path, the task list the builder keeps with `todo_write`,
+  and any question it asks with `ask_user`, answered right there. The
+  panel folds to a strip when the window is narrower than about 640 px
+  and unfolds again with the window. The agent window shows only
+  `AGENTS.md` for a builder (no `SOUL.md` / `USER.md`: the harness rules
+  replace the persona), and the Full prompt tab shows the harness prompt
+  with its parts.
 - **Team window** — the org chart editor for `~/.somora/team.yaml`
   ([team.md](team.md)): drag an agent card onto its new superior (or
   onto you), edit title, "involve for" / "not for" chips, notes and the

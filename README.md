@@ -60,9 +60,9 @@ same local server, the same agents, the same memory.
 
 A small server you run on your machine that hosts your agents. You chat
 with them from the terminal, the browser, or your phone; they remember
-things across sessions; they use the same typed tools — memory, files,
-web, shell, tmux, attachments, sub-agents — regardless of which LLM you
-point them at. Everything an agent is asked to do — a question from you, a
+things across sessions; they use the same typed tools — memory, files
+(numbered reads, tolerant patches, filtered search), web, shell, tmux,
+attachments, sub-agents — regardless of which LLM you point them at. Everything an agent is asked to do — a question from you, a
 question from another agent, a sub-agent, a scheduled trigger, a voice
 call — goes through one queue per session that you can see and take back
 from in every client.
@@ -94,8 +94,13 @@ On top of chat and memory, each optional and off until configured:
 - **Builders** — agents of a second kind that are coding harnesses: a
   short coding tool set, harness rules instead of a persona, long turns,
   a task panel with the plan, the task list and the questions they ask
-  you. Describe a project, let the builder plan, press Go — or let an
-  orchestrator hand over a brief ([docs/builder.md](docs/builder.md)).
+  you. Describe a project, let the builder plan, press Go — or let
+  another agent hand over the order in one call and be woken with the
+  report; one builder per folder at a time, and the hand-over procedure
+  ships as a skill ([docs/builder.md](docs/builder.md)).
+- **Steering** — type into a running turn instead of behind it: the
+  model reads your message at its next step and changes course, on every
+  engine ([docs/api.md → Steering](docs/api.md#steering)).
 
 ## Requirements
 
