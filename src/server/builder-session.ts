@@ -16,6 +16,8 @@
 // unattended + build (the plan is in the brief). Both are switches in
 // the task panel and fields of PATCH …/builder.
 
+import { access, mkdir, rename } from 'node:fs/promises';
+import { basename, dirname, extname } from 'node:path';
 import type { SessionMetaStore } from '../engine/types.ts';
 import type { ToolGating } from '../tools/gating.ts';
 import type { TurnOrigin } from '../types/turn-origin.ts';
@@ -99,7 +101,7 @@ export async function ensureBuilderState(
     // session's working directory, not the agent's workspace.
     if (existing.planPath) return existing;
     const planPath = `${workdir.replace(/\/+$/, '')}/${DEFAULT_PLAN_FILE}`;
-    await store.update(agent, session, (current) => ({ ...current, builderPlanPath: planPath }));
+    await store.update(agent, session, (current) => ({ ...current, builderPlanPath: planPath, builderPlanPathDefault: true }));
     return { ...existing, planPath };
   }
   const fresh = defaultBuilderState(origin, workdir);
@@ -108,6 +110,7 @@ export async function ensureBuilderState(
     builderMode: fresh.mode,
     builderPhase: fresh.phase,
     builderPlanPath: fresh.planPath,
+    builderPlanPathDefault: true,
     todos: fresh.todos,
     builderInitializedAt: fresh.initializedAt,
   }));
@@ -124,7 +127,7 @@ export async function patchBuilderState(
     ...current,
     ...(patch.mode ? { builderMode: patch.mode } : {}),
     ...(patch.phase ? { builderPhase: patch.phase } : {}),
-    ...(patch.planPath !== undefined ? { builderPlanPath: patch.planPath } : {}),
+    ...(patch.planPath !== undefined ? { builderPlanPath: patch.planPath, builderPlanPathDefault: false } : {}),
     ...(patch.todos ? { todos: patch.todos } : {}),
     ...(patch.orderer ? { builderOrderer: patch.orderer } : {}),
     ...(typeof (current as Record<string, unknown>).builderInitializedAt === 'number' ? {} : { builderInitializedAt: Date.now() }),
@@ -169,7 +172,7 @@ export function renderBuilderSessionBlock(state: BuilderSessionState | null, opt
   }
   if (state.phase === 'plan') {
     lines.push(
-      `- Phase: PLAN. Read, search and run read-only commands to understand the repository and the task; ask what you must. The only file you write in this phase is the plan, with plan_write (it lands at ${state.planPath ?? DEFAULT_PLAN_FILE}). No other file changes, no builds that write, no commits. The plan lists goal, steps in order, files to touch, how to verify, open risks. When it is complete say "Plan ready" and stop — the person presses Go, and the session switches to BUILD.`,
+      `- Phase: PLAN. Read, search and run read-only commands to understand the repository and the task; ask what you must. The only file you write in this phase is the plan, with plan_write (it lands at ${state.planPath ?? DEFAULT_PLAN_FILE}). If a plan file already exists there from earlier work, read it first; plan_write archives it beside the new one as PLAN-<date>-<session>.md — say in the new plan what of the old one still stands. No other file changes, no builds that write, no commits. The plan lists goal, steps in order, files to touch, how to verify, open risks. When it is complete say "Plan ready" and stop — the person presses Go, and the session switches to BUILD.`,
     );
   } else {
     lines.push(
@@ -186,4 +189,61 @@ export function builderToolPredicate(
   state: BuilderSessionState | null,
 ): (name: string, toolset: string | undefined) => boolean {
   return (name, toolset) => gatingCheck(name, toolset, gating) && builderSessionAllows(state, name);
+}
+
+/**
+ * The plan follows the pin: a session that started without a project
+ * has its plan at the workspace default; when a project with a folder
+ * is pinned later, the plan path moves into that folder and an already
+ * written plan file moves with it (Rene, 2026-09-23: "kann er nur im
+ * somora workdir anlegen?!"). A path set explicitly (PATCH, dispatch
+ * plan_path) is never moved.
+ */
+export async function movePlanToWorkdir(
+  store: SessionMetaStore,
+  agent: string,
+  session: string,
+  workdir: string,
+): Promise<{ from: string; to: string; moved: boolean } | null> {
+  const meta = (await store.get(agent, session)) as Record<string, unknown>;
+  const from = typeof meta.builderPlanPath === 'string' ? meta.builderPlanPath : null;
+  if (!from || meta.builderPlanPathDefault !== true) return null;
+  const to = `${workdir.replace(/\/+$/, '')}/${DEFAULT_PLAN_FILE}`;
+  if (from === to) return null;
+  let moved = false;
+  try {
+    await access(from);
+    try {
+      await access(to);
+    } catch {
+      await mkdir(dirname(to), { recursive: true });
+      await rename(from, to);
+      moved = true;
+    }
+  } catch {
+    /* no plan written yet */
+  }
+  await store.update(agent, session, (current) => ({ ...current, builderPlanPath: to }));
+  return { from, to, moved };
+}
+
+/**
+ * Where an older plan goes when a session writes its first plan over
+ * it: `PLAN-<date>-<session-slug>.md` beside it (`-2`, `-3` … when
+ * taken). The current plan stays PLAN.md; the history stays readable.
+ */
+export async function archiveNameFor(planPath: string, sessionId: string, now = new Date()): Promise<string> {
+  const dir = dirname(planPath);
+  const base = basename(planPath, extname(planPath));
+  const slug = sessionId.replace(/^\d{8}-\d{6}_/, '').replace(/[^A-Za-z0-9_-]/g, '-');
+  const date = now.toLocaleDateString('en-CA');
+  for (let n = 1; n < 100; n++) {
+    const candidate = `${dir}/${base}-${date}-${slug}${n === 1 ? '' : `-${n}`}${extname(planPath) || '.md'}`;
+    try {
+      await access(candidate);
+    } catch {
+      return candidate;
+    }
+  }
+  return `${dir}/${base}-${date}-${slug}-${Date.now().toString(36)}${extname(planPath) || '.md'}`;
 }

@@ -105,6 +105,14 @@ where that turn came from and changed any time in the task panel
 | **plan** | a person opened the session | read, search, run read-only commands, ask; the only file written is the plan (`plan_write`). `file_write`, `file_patch`, `process`, `spawn_subagent` are hidden. Ends with **Go**. |
 | **build** | an agent handed over a brief | edit, run, test, report. The plan file, if there is one, is approved. |
 
+**The plan file** is `PLAN.md` in the pinned project's folder (the agent's
+workspace when no project is pinned; the path moves into the folder as
+soon as a project is pinned, an already written plan with it). A plan
+file that is already there when a session writes its first plan — an
+earlier build's, or one a person wrote — is not overwritten: it moves
+aside as `PLAN-<date>-<session>.md`, the new plan becomes `PLAN.md`,
+and the builder is told to say what of the old plan still stands.
+
 **Go** (the button in the panel, `POST …/builder/go`) switches the phase
 to build and sends the builder a message: the plan is approved, execute
 it, keep the task list, end with the report. So a project can start

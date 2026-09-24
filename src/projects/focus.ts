@@ -19,6 +19,7 @@ import type { SessionMetaStore } from '../engine/types.ts';
 import { logger } from '../server/logger.ts';
 import { projectExists, readProject } from './store.ts';
 import { loadPersona } from '../persona/loader.ts';
+import { movePlanToWorkdir } from '../server/builder-session.ts';
 import { loopbackFetch } from '../server/loopback-fetch.ts';
 
 /** Is a turn running on the session? Asked over loopback so the answer is
@@ -151,6 +152,15 @@ export async function focusProject(args: FocusArgs): Promise<FocusResult> {
     }
     return next as typeof current;
   });
+
+  // A builder's plan follows the pin (builder-session.ts movePlanToWorkdir).
+  if (workdir) {
+    const persona = await loadPersona(agent);
+    if (persona?.kind === 'builder') {
+      const moved = await movePlanToWorkdir(metaStore, agent, session, workdir);
+      if (moved) logger.info({ msg: 'builder.plan_path_followed_pin', agent, session, ...moved });
+    }
+  }
 
   // Forensic marker. The engine field is `'somora'` as a sentinel —
   // not engine-emitted. See NormalizedEvent.project_switched.

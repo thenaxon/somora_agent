@@ -171,7 +171,7 @@ import { reconcileInterruptedTurns, restartParentWakeText, restartWakeText } fro
 import { getLspManager, shutdownLsp } from '../lsp/index.ts';
 import { findBinary, LSP_SERVERS } from '../lsp/registry.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
-import { DEFAULT_PLAN_FILE, builderSessionAllows, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
+import { DEFAULT_PLAN_FILE, archiveNameFor, builderSessionAllows, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
 import { workdirFromMeta } from './session-workdir.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from './builder-busy.ts';
 import { answerQuestion, askQuestion, pendingQuestion } from './builder-questions.ts';
@@ -3235,13 +3235,29 @@ app.put('/agents/:agent/sessions/:session/plan', async (c) => {
   const policy = checkWriteAllowed(planPath, r.agent);
   if (!policy.ok) return c.json({ error: policy.reason }, 400);
   await mkdirFs(dirname(planPath), { recursive: true });
+  // A plan file that is already there and was not written by this
+  // session (an earlier build's plan, a person's own) is history, not a
+  // draft: it moves aside as PLAN-<date>-<session>.md before the new
+  // plan takes its place.
+  let archived: string | null = null;
+  const writtenTs = typeof (meta as Record<string, unknown>).builderPlanWrittenTs === 'number' ? ((meta as Record<string, unknown>).builderPlanWrittenTs as number) : null;
+  try {
+    const st = await statFs(planPath);
+    if (writtenTs === null || st.mtimeMs > writtenTs + 2000) {
+      archived = await archiveNameFor(planPath, r.session);
+      await renameFs(planPath, archived);
+      logger.info({ msg: 'builder.plan_archived', agent: r.agent, session: r.session, from: planPath, to: archived });
+    }
+  } catch {
+    /* no plan there yet */
+  }
   const tmp = `${planPath}.somora-tmp.${process.pid}.${Date.now().toString(36)}`;
   await writeFileFs(tmp, body.content, 'utf8');
   await renameFs(tmp, planPath);
-  if (!state?.planPath) await patchBuilderState(sessionMetaStore, r.agent, r.session, { planPath });
-  logger.info({ msg: 'builder.plan_written', agent: r.agent, session: r.session, path: planPath, bytes: Buffer.byteLength(body.content) });
+  await sessionMetaStore.update(r.agent, r.session, (current) => ({ ...current, builderPlanWrittenTs: Date.now(), ...(state?.planPath ? {} : { builderPlanPath: planPath }) }));
+  logger.info({ msg: 'builder.plan_written', agent: r.agent, session: r.session, path: planPath, bytes: Buffer.byteLength(body.content), archived });
   await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state?.mode ?? 'attended', phase: state?.phase ?? 'plan', planPath } });
-  return c.json({ path: planPath, bytes: Buffer.byteLength(body.content, 'utf8') });
+  return c.json({ path: planPath, bytes: Buffer.byteLength(body.content, 'utf8'), ...(archived ? { archived, note: 'An earlier plan was there; it was moved beside the new one. Say in your plan what of it still stands.' } : {}) });
 });
 
 // ask_user: blocks until the person answers (POST …/answer) or the wait

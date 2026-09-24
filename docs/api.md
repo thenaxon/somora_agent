@@ -980,9 +980,12 @@ tools (`todo_write`, `ask_user`, `plan_write`) call the same routes.
 - `PUT /agents/:agent/sessions/:session/todos` `{todos: [{content,
   status, priority?}], by_agent?}` → `{agent, session, todos}` — replaces
   the whole list (max 100 items). Publishes `todo_updated`.
-- `PUT /agents/:agent/sessions/:session/plan` `{content}` → `{path,
-  bytes}` — writes the session's plan file (`state.planPath`, default
-  `<workspace>/PLAN.md`), atomically, under the file write policy.
+- `PUT /agents/:agent/sessions/:session/plan` `{content}` → `{path, bytes,
+  archived?, note?}` (what `plan_write` calls); `archived` names where a
+  plan file that was already there and not written by this session was
+  moved: `PLAN-<date>-<session>.md` beside it. The path is the session's
+  plan path (the pinned project's `PLAN.md`, else `<workspace>/PLAN.md`),
+  written atomically under the file write policy.
 - `POST /agents/:agent/sessions/:session/ask` `{question, header?,
   options: [{label, description?}] (2-6), multiple?, timeout_ms?}` —
   **blocks** until the person answers or the wait runs out (default 30
