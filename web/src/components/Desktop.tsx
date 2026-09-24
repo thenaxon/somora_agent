@@ -30,7 +30,7 @@ import { MediaWindow } from './MediaWindow';
 import { PinNoteWindow } from './PinNoteWindow';
 import { FileViewWindow } from './FileViewWindow';
 import { FileViewProvider } from './FileViewContext';
-import { useChatContext } from './ChatProvider';
+import { useStreamingKeys } from './ChatProvider';
 import { useAgents } from '../hooks/useAgents';
 import { useDreamStates } from '../hooks/useDreamStates';
 import { useLoopState } from '../hooks/useLoopState';
@@ -50,7 +50,7 @@ export function Desktop() {
   const loopState = useLoopState();
   const dreamStates = useDreamStates();
   const wm = useWindowManager();
-  const chatCtx = useChatContext();
+  const streamingKeys = useStreamingKeys();
   const wikiEnabled = useWikiEnabled();
   const media = useMediaEnabled();
   const voice = useVoiceEnabled();
@@ -79,11 +79,11 @@ export function Desktop() {
   // activity SSE (covers sentinel-fired turns on closed-window
   // sessions). Either signal lights the dock dot.
   const streamingAgents = useMemo(() => {
-    const own = chatCtx.streamingKeys.map((k) => k.split('::')[0]!);
+    const own = streamingKeys.map((k) => k.split('::')[0]!);
     const merged = new Set<string>(own);
     for (const a of activity.streamingAgents) merged.add(a);
     return merged;
-  }, [chatCtx.streamingKeys, activity.streamingAgents]);
+  }, [streamingKeys, activity.streamingAgents]);
 
   /** Chat + task panel side by side: the panel folds below 640 px. */
   const BUILDER_WINDOW_SIZE = { w: 960, h: 620 };

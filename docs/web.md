@@ -788,7 +788,12 @@ answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
   to the last 100 events; scrolling near the top auto-fetches the
   next 100, anchoring the visible position so you stay where you
   were reading. There's also an explicit "↑ load older" button
-  for clarity.
+  for clarity. A window left open on a busy session does not grow
+  without bound either: past 400 rows it keeps the newest 300 once
+  the running turn has ended, and the older rows come back through
+  the same "load older" path. Each window redraws only for events
+  of its own session, so several streaming windows side by side stay
+  responsive.
 
 - **Memory-inject banner** — per-turn `🧠 memory · N hits · refs…` line
   in the chat flow, mirrors the TUI's `◇ memory · …` row. Brain icon in

@@ -16,9 +16,11 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react';
 import { api, type AttachmentRef, type ProjectInfo } from '../lib/api';
@@ -84,12 +86,21 @@ interface ChatContextValue {
    *  slash commands). */
   projectsEnabled: boolean | null;
   subscribe: (agent: string, session: string) => () => void;
+  /** Read the current rows / stream state of one session. Plain reads
+   *  — they do not make the caller re-render. A component that wants
+   *  to follow a session pairs them with `subscribeSession` +
+   *  `getSessionVersion` (useChatSessionFromContext does), so only the
+   *  windows of the session that changed re-render, not every open
+   *  window on every delta of every session (2026-09-24: five
+   *  streaming sessions made the desktop crawl). */
   getMessages: (agent: string, session: string) => ChatMessage[];
   getStream: (agent: string, session: string) => SessionStreamState;
-  /** All session-keys (agent::session) that are currently streaming.
-   *  Drives the dock's per-agent streaming dot — Desktop derives a
-   *  Set<agentName> from this snapshot. */
-  streamingKeys: string[];
+  /** Fires `cb` whenever this session's rows, stream state or paging
+   *  cursor changed. Returns the unsubscribe fn. */
+  subscribeSession: (agent: string, session: string, cb: () => void) => () => void;
+  /** Monotonic per-session counter, bumped on every change — the
+   *  snapshot for useSyncExternalStore. */
+  getSessionVersion: (agent: string, session: string) => number;
   send: (
     agent: string,
     session: string,
@@ -156,7 +167,8 @@ const ChatContext = createContext<ChatContextValue>({
   subscribe: () => () => {},
   getMessages: () => [],
   getStream: () => initialStreamState,
-  streamingKeys: [],
+  subscribeSession: () => () => {},
+  getSessionVersion: () => 0,
   send: async () => {},
   subscribeAudio: () => () => {},
   subscribeTurnEvents: () => () => {},
@@ -170,9 +182,32 @@ const ChatContext = createContext<ChatContextValue>({
 
 const INITIAL_HISTORY_LIMIT = 100;
 const OLDER_PAGE_SIZE = 100;
+/** A window keeps at most this many rows in memory. Rows arrive with
+ *  every event of a running turn and were never dropped again, so a
+ *  window left open on a busy session grew to thousands of rendered
+ *  rows (2026-09-24: 8000 in the memory run). Past the ceiling the
+ *  window re-reads the newest `LIVE_ROWS_KEEP` rows from the server
+ *  once the turn has ended (see compactRows) — the older ones come
+ *  back through "load older" like any history. */
+export const LIVE_ROWS_MAX = 400;
+export const LIVE_ROWS_KEEP = 300;
+/** Wait this long after a turn's end before compacting, so the last
+ *  rows of the turn are persisted and the history read has them. */
+const COMPACT_DELAY_MS = 1000;
+
+/** All session-keys (agent::session) that are currently streaming.
+ *  Drives the dock's per-agent streaming dot — Desktop derives a
+ *  Set<agentName> from this snapshot. Its own context, so it changes
+ *  only at turn start/end, and the chat context value stays constant
+ *  across deltas. */
+const StreamingKeysContext = createContext<string[]>([]);
 
 export function useChatContext(): ChatContextValue {
   return useContext(ChatContext);
+}
+
+export function useStreamingKeys(): string[] {
+  return useContext(StreamingKeysContext);
 }
 
 export function ChatProvider({ children }: { children: ReactNode }) {
@@ -182,6 +217,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const [streams, setStreams] = useState<Record<string, SessionStreamState>>({});
+  const streamsRef = useRef(streams);
+  streamsRef.current = streams;
+  // Per-session change listeners (useChatSessionFromContext) and the
+  // version each session is at. The layout effect below compares the
+  // committed state with the previous commit per key and notifies only
+  // the sessions whose rows, stream state or paging cursor moved.
+  const sessionListenersRef = useRef<Map<string, Set<() => void>>>(new Map());
+  const sessionVersionsRef = useRef<Map<string, number>>(new Map());
+  const notifySession = useCallback((key: string) => {
+    sessionVersionsRef.current.set(key, (sessionVersionsRef.current.get(key) ?? 0) + 1);
+    sessionListenersRef.current.get(key)?.forEach((fn) => fn());
+  }, []);
   // Feature-flag for projects — one boot-time probe, then all UI
   // surfaces (chip in ChatWindow, column in SessionsWindow, slash
   // commands in SlashCommandPopup) read this. Starts null so they
@@ -311,6 +358,59 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       });
     },
     [],
+  );
+
+  // Row ceiling (LIVE_ROWS_MAX). Runs a beat after a turn ended: when
+  // the session holds more rows than the ceiling and no new turn has
+  // started, the newest LIVE_ROWS_KEEP rows are re-read from the server
+  // and replace the list (mergeHistorySnapshot keeps rows newer than
+  // the newest persisted one — a queued user bubble stays). The paging
+  // cursor comes from that response, so "load older" walks back into
+  // the dropped rows exactly like it walks into history. Done at turn
+  // end and not per delta so a streaming bubble is never cut away
+  // under the model, and with server timestamps rather than the local
+  // clock the live rows carry.
+  const compactingRef = useRef<Set<string>>(new Set());
+  const compactRows = useCallback((agent: string, session: string) => {
+    const key = sessionKey(agent, session);
+    const entry = sourcesRef.current.get(key);
+    if (!entry || !entry.loaded) return;
+    if ((messagesRef.current[key]?.length ?? 0) <= LIVE_ROWS_MAX) return;
+    if (streamsRef.current[key]?.streaming) return;
+    if (compactingRef.current.has(key)) return;
+    compactingRef.current.add(key);
+    api
+      .history(agent, session, { limit: LIVE_ROWS_KEEP, signal: entry.ac.signal })
+      .then((res) => {
+        if (!sourcesRef.current.get(key)) return;
+        // A turn started while we were reading — its rows are not in
+        // the snapshot; try again after that turn.
+        if (streamsRef.current[key]?.streaming) return;
+        setMessages((prev) => ({
+          ...prev,
+          [key]: mergeHistorySnapshot(historyEventsToMessages(res.events), prev[key] ?? []),
+        }));
+        paginationRef.current.set(key, {
+          hasMore: Boolean(res.hasMore),
+          oldestTs: typeof res.oldestTs === 'number' ? res.oldestTs : null,
+          inFlight: false,
+        });
+        setPaginationTick((t) => t + 1);
+      })
+      .catch((err: Error) => {
+        if (err.name === 'AbortError') return;
+        // eslint-disable-next-line no-console
+        console.warn('[somora-web] row compaction failed', key, err.message);
+      })
+      .finally(() => compactingRef.current.delete(key));
+  }, []);
+  const scheduleCompact = useCallback(
+    (agent: string, session: string) => {
+      const key = sessionKey(agent, session);
+      if ((messagesRef.current[key]?.length ?? 0) <= LIVE_ROWS_MAX) return;
+      setTimeout(() => compactRows(agent, session), COMPACT_DELAY_MS);
+    },
+    [compactRows],
   );
 
   const openStream = useCallback(
@@ -712,6 +812,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             return { ...prev, [key]: next };
           });
           streamingIdRef.current.delete(key);
+          scheduleCompact(agent, session);
           // Refetch project — tool-path focus changes (project_focus
           // called inside an MCP child for claude-cli / codex-cli)
           // don't reach SSE because the child has no broadcaster.
@@ -1209,7 +1310,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         });
       });
     },
-    [patchStream, appendMessage, insertBeforeStreaming, updateAssistantText],
+    [patchStream, appendMessage, insertBeforeStreaming, updateAssistantText, scheduleCompact],
   );
 
   const closeStream = useCallback((agent: string, session: string) => {
@@ -1298,14 +1399,42 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [openStream, closeStream],
   );
 
+  // Plain reads off the mirrors — no state in the deps, so the context
+  // value never changes because rows moved. Re-rendering is the job of
+  // subscribeSession/getSessionVersion (notified from the layout effect
+  // below), not of the context.
   const getMessages = useCallback<ChatContextValue['getMessages']>(
-    (agent, session) => messages[sessionKey(agent, session)] ?? [],
-    [messages],
+    (agent, session) => messagesRef.current[sessionKey(agent, session)] ?? [],
+    [],
   );
 
   const getStream = useCallback<ChatContextValue['getStream']>(
-    (agent, session) => streams[sessionKey(agent, session)] ?? initialStreamState,
-    [streams],
+    (agent, session) => streamsRef.current[sessionKey(agent, session)] ?? initialStreamState,
+    [],
+  );
+
+  const subscribeSession = useCallback<ChatContextValue['subscribeSession']>(
+    (agent, session, cb) => {
+      const key = sessionKey(agent, session);
+      let set = sessionListenersRef.current.get(key);
+      if (!set) {
+        set = new Set();
+        sessionListenersRef.current.set(key, set);
+      }
+      set.add(cb);
+      return () => {
+        const cur = sessionListenersRef.current.get(key);
+        if (!cur) return;
+        cur.delete(cb);
+        if (cur.size === 0) sessionListenersRef.current.delete(key);
+      };
+    },
+    [],
+  );
+
+  const getSessionVersion = useCallback<ChatContextValue['getSessionVersion']>(
+    (agent, session) => sessionVersionsRef.current.get(sessionKey(agent, session)) ?? 0,
+    [],
   );
 
   const send = useCallback<ChatContextValue['send']>(
@@ -1554,12 +1683,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   );
 
   const getHasMore = useCallback<ChatContextValue['getHasMore']>(
-    (agent, session) => {
-      // paginationTick is read so React re-runs this when state moves.
-      void paginationTick;
-      return paginationRef.current.get(sessionKey(agent, session))?.hasMore ?? false;
-    },
-    [paginationTick],
+    // A paginationTick bump notifies every subscribed session (layout
+    // effect below), so a window re-reads this when its cursor moved.
+    (agent, session) => paginationRef.current.get(sessionKey(agent, session))?.hasMore ?? false,
+    [],
   );
 
   const clearMessages = useCallback<ChatContextValue['clearMessages']>(
@@ -1615,13 +1742,41 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     [patchStream],
   );
 
-  const streamingKeys = useMemo(
-    () =>
-      Object.entries(streams)
-        .filter(([, s]) => s.streaming)
-        .map(([k]) => k),
-    [streams],
-  );
+  // Kept as a list whose identity only changes when the SET of
+  // streaming sessions changes — a delta patches usage/thinking on the
+  // stream record without touching this.
+  const streamingKeysRef = useRef<string[]>([]);
+  const streamingKeys = useMemo(() => {
+    const next = Object.entries(streams)
+      .filter(([, s]) => s.streaming)
+      .map(([k]) => k);
+    const prev = streamingKeysRef.current;
+    if (prev.length === next.length && prev.every((k, i) => k === next[i])) return prev;
+    streamingKeysRef.current = next;
+    return next;
+  }, [streams]);
+
+  // Per-session notification: after every commit, find the sessions
+  // whose rows or stream record changed since the previous commit and
+  // wake their subscribers. A paging change (paginationTick) has no
+  // per-key state, so it wakes every subscribed session — rare.
+  const prevCommitRef = useRef<{
+    messages: Record<string, ChatMessage[]>;
+    streams: Record<string, SessionStreamState>;
+    paginationTick: number;
+  }>({ messages: {}, streams: {}, paginationTick: 0 });
+  useLayoutEffect(() => {
+    const prev = prevCommitRef.current;
+    prevCommitRef.current = { messages, streams, paginationTick };
+    const pagingMoved = prev.paginationTick !== paginationTick;
+    const changed = new Set<string>();
+    for (const key of sessionListenersRef.current.keys()) {
+      if (pagingMoved || prev.messages[key] !== messages[key] || prev.streams[key] !== streams[key]) {
+        changed.add(key);
+      }
+    }
+    for (const key of changed) notifySession(key);
+  }, [messages, streams, paginationTick, notifySession]);
 
   const value = useMemo<ChatContextValue>(
     () => ({
@@ -1629,7 +1784,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       subscribe,
       getMessages,
       getStream,
-      streamingKeys,
+      subscribeSession,
+      getSessionVersion,
       send,
       subscribeAudio,
       subscribeTurnEvents,
@@ -1645,7 +1801,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       subscribe,
       getMessages,
       getStream,
-      streamingKeys,
+      subscribeSession,
+      getSessionVersion,
       send,
       subscribeAudio,
       subscribeTurnEvents,
@@ -1658,11 +1815,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+  return (
+    <ChatContext.Provider value={value}>
+      <StreamingKeysContext.Provider value={streamingKeys}>{children}</StreamingKeysContext.Provider>
+    </ChatContext.Provider>
+  );
 }
 
 /** Convenience reader for a specific (agent, session). Subscribes on
- *  mount, unsubscribes on unmount, returns the live snapshot. */
+ *  mount, unsubscribes on unmount, returns the live snapshot. The
+ *  component re-renders when THIS session changes and for nothing
+ *  else the provider holds. */
 export function useChatSessionFromContext(agent: string, session: string) {
   const ctx = useChatContext();
   useEffect(() => {
@@ -1670,6 +1833,10 @@ export function useChatSessionFromContext(agent: string, session: string) {
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, session]);
+  useSyncExternalStore(
+    useCallback((cb: () => void) => ctx.subscribeSession(agent, session, cb), [ctx, agent, session]),
+    () => ctx.getSessionVersion(agent, session),
+  );
 
   return {
     messages: ctx.getMessages(agent, session),
