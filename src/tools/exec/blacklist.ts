@@ -55,8 +55,31 @@ export function splitCommandSegments(command: string): string[] {
   const SEP = /&&|\|\||;|\||\r?\n|(?<![>&\d])&(?![>&])/g;
   return command
     .split(SEP)
-    .map((s) => s.trim())
+    .map((s) => stripSegmentWrapping(s.trim()))
     .filter((s) => s.length > 0);
+}
+
+/**
+ * Peel what wraps a segment's command without changing which command
+ * runs: subshell/group openers and closers (`( … )`, `{ …; }`), a
+ * leading `!`, and plain environment assignments in front (`LANG=C
+ * sudo …`). Both the per-segment blacklist and the allowBlocked match
+ * then see the same head — before 2026-09-24 the blacklist caught
+ * `(sudo …` (its pattern allows `(` in front) while the allow-match
+ * wanted the segment to START with `sudo`, so a granted sudo inside a
+ * group was refused (hans). An assignment whose value carries `$(` or
+ * a backtick is left alone: that is command substitution, which the
+ * allow-match refuses on purpose (allowlist.ts).
+ */
+export function stripSegmentWrapping(segment: string): string {
+  let s = segment;
+  for (;;) {
+    const before = s;
+    s = s.replace(/^[({!\s]+/, '').replace(/[)}\s;]+$/, '');
+    const env = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^'`]*'|"[^"`$]*"|[^\s'"`$]*)(?:\s+|$)/;
+    if (env.test(s)) s = s.replace(env, '');
+    if (s === before) return s;
+  }
 }
 
 // System halt/shutdown — matched on COMMAND POSITION only (per segment).
@@ -122,7 +145,9 @@ const HARD_BLACKLIST: ReadonlyArray<BlacklistEntry> = [
   { pattern: /\bshred\s+-/, reason: 'shred (overwrite + delete)' },
 
   // ── Privilege escalation ──
-  { pattern: /(^|[\s|;&(])sudo(\s|$)/, reason: 'sudo (privilege escalation)' },
+  // Backtick in the boundary: `X=\`sudo id\`` runs sudo in a substitution
+  // and used to slip past (2026-09-24).
+  { pattern: /(^|[\s|;&(`])sudo(\s|$)/, reason: 'sudo (privilege escalation)' },
   { pattern: /(^|[\s|;&(])doas(\s|$)/, reason: 'doas (privilege escalation)' },
   { pattern: /(^|[\s|;&(])su(\s+-?\s*$|\s+-)/, reason: 'su (switch user)' },
 

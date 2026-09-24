@@ -92,6 +92,11 @@ export interface WorkItem {
    *  itself; the requesting agent (subagent_cancel) knows; a child
    *  taken down with its parent (`cascade`) has no one left to tell. */
   cancelledBy?: 'human' | 'agent' | 'cascade';
+  /** The requester took a RUNNING call back (withdrawWork): the target
+   *  was asked to stop through its steer inbox, the result — whatever
+   *  the target still delivers — wakes no one. */
+  withdrawnBy?: string;
+  withdrawnAt?: number;
 }
 
 export type WorkItemView = Omit<WorkItem, 'text' | 'attachments' | 'result'>;
@@ -393,6 +398,47 @@ export function cancelWork(id: string, reason: string, by: 'human' | 'agent' = '
     if (it.cancelledBy === 'human') scheduleWake(it);
   }
   return outcome;
+}
+
+// ── withdraw (running) ────────────────────────────────────────────────
+
+export type WithdrawWorkOutcome =
+  | { status: 'withdrawn'; item: WorkItem }
+  | { status: 'forbidden'; item: WorkItem }
+  | { status: 'not_running'; item: WorkItem }
+  | { status: 'unknown' };
+
+/**
+ * The soft take-back of a call that already runs (Rene, 2026-09-24:
+ * "bei 2 den weichen Weg"): only the requester may do it, only for a
+ * running item. The item stays running — the target's turn goes on
+ * until it stops by itself — but its outcome wakes no one, and the
+ * caller (the route) drops a stop message into the target's steer
+ * inbox. A hard stop of another agent's turn stays with the person.
+ * agent_ask_cancel could only take back a QUEUED call, and a free
+ * target starts a call within milliseconds, so the take-back never
+ * fit the case it was for: "I delegated, the user changed course"
+ * (hans, 2026-09-24).
+ */
+export function withdrawWork(id: string, by: { agent: string }): WithdrawWorkOutcome {
+  const it = items.get(id);
+  if (!it) return { status: 'unknown' };
+  const r = it.requester;
+  if (!r || !('agent' in r) || r.agent !== by.agent) return { status: 'forbidden', item: it };
+  if (it.state !== 'running') return { status: 'not_running', item: it };
+  it.wake = 'never';
+  it.withdrawnBy = by.agent;
+  it.withdrawnAt = Date.now();
+  logger.info({
+    msg: 'work.withdrawn',
+    id: it.id,
+    kind: it.origin.kind,
+    target_agent: it.target.agent,
+    target_session: it.target.session,
+    by: by.agent,
+    ranMs: it.startedAt ? Date.now() - it.startedAt : undefined,
+  });
+  return { status: 'withdrawn', item: it };
 }
 
 // ── dequeue (waiting) ─────────────────────────────────────────────────

@@ -210,5 +210,70 @@ check(
   JSON.stringify(splitCommandSegments('cmd &> /tmp/log')),
 );
 
+// ── segment wrapping: groups, subshells, env assignments (hans 2026-09-24) ──
+check(
+  'granted sudo inside a subshell group is cleared',
+  evaluateExecPolicy('(sudo -n true && echo ok)', ['sudo']).allowed,
+  JSON.stringify(evaluateExecPolicy('(sudo -n true && echo ok)', ['sudo'])),
+);
+check(
+  'granted sudo inside a brace group is cleared',
+  evaluateExecPolicy('{ sudo -n true && echo ok; }', ['sudo']).allowed,
+  JSON.stringify(evaluateExecPolicy('{ sudo -n true && echo ok; }', ['sudo'])),
+);
+check(
+  'the report command: hostname; (sudo … | tail -3); apt list',
+  evaluateExecPolicy('hostname; (sudo -n apt-get update -qq 2>&1 | tail -3); apt list --upgradable', ['sudo']).allowed,
+  JSON.stringify(evaluateExecPolicy('hostname; (sudo -n apt-get update -qq 2>&1 | tail -3); apt list --upgradable', ['sudo'])),
+);
+check(
+  'env assignment in front does not hide a granted sudo',
+  evaluateExecPolicy('LANG=C sudo apt-get update', ['sudo']).allowed,
+  JSON.stringify(evaluateExecPolicy('LANG=C sudo apt-get update', ['sudo'])),
+);
+check(
+  'env assignment in front does not hide an UNgranted sudo either',
+  !evaluateExecPolicy('LANG=C sudo apt-get update', []).allowed,
+  JSON.stringify(evaluateExecPolicy('LANG=C sudo apt-get update', [])),
+);
+check(
+  'a subshell without a grant stays blocked',
+  !evaluateExecPolicy('(sudo -n true)', []).allowed,
+  JSON.stringify(evaluateExecPolicy('(sudo -n true)', [])),
+);
+check(
+  'command substitution is still never cleared, and says why',
+  !evaluateExecPolicy('X=$(sudo echo sub)', ['sudo']).allowed &&
+    /command substitution/.test(evaluateExecPolicy('X=$(sudo echo sub)', ['sudo']).hint ?? ''),
+  JSON.stringify(evaluateExecPolicy('X=$(sudo echo sub)', ['sudo'])),
+);
+check(
+  'backtick substitution in an assignment is caught',
+  !evaluateExecPolicy('FOO=`sudo id` echo hi', ['sudo']).allowed,
+  JSON.stringify(evaluateExecPolicy('FOO=`sudo id` echo hi', ['sudo'])),
+);
+check(
+  'a wrapper in front of a granted entry is refused with a hint',
+  !evaluateExecPolicy('echo x | nice sudo -n true', ['sudo']).allowed &&
+    /starts with it/.test(evaluateExecPolicy('echo x | nice sudo -n true', ['sudo']).hint ?? ''),
+  JSON.stringify(evaluateExecPolicy('echo x | nice sudo -n true', ['sudo'])),
+);
+check(
+  'no hint when no granted entry is in the segment',
+  evaluateExecPolicy('sudo -n true', ['systemctl reboot']).hint === undefined,
+  JSON.stringify(evaluateExecPolicy('sudo -n true', ['systemctl reboot'])),
+);
+check(
+  'splitter peels groups and assignments',
+  JSON.stringify(splitCommandSegments('hostname; (sudo -n apt-get update -qq 2>&1 | tail -3); LANG=C X=1 apt list')) ===
+    JSON.stringify(['hostname', 'sudo -n apt-get update -qq 2>&1', 'tail -3', 'apt list']),
+  JSON.stringify(splitCommandSegments('hostname; (sudo -n apt-get update -qq 2>&1 | tail -3); LANG=C X=1 apt list')),
+);
+check(
+  'splitter leaves an assignment with $( alone',
+  JSON.stringify(splitCommandSegments('X=$(sudo echo sub)')) === JSON.stringify(['X=$(sudo echo sub']),
+  JSON.stringify(splitCommandSegments('X=$(sudo echo sub)')),
+);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

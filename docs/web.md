@@ -392,7 +392,9 @@ archived copy at the next idle window.
   after. With queue the message waits as before. The agent's
   `steering:` in agent.yaml sets which way the toggle starts; a steer the
   turn ends before reading becomes an ordinary queued turn. Works on
-  every engine; see [api.md → Steering](api.md#steering) and
+  every engine; a Claude turn keeps its channel to somora open until
+  every steered message has been answered, so tools keep working in the
+  steered part of the turn; see [api.md → Steering](api.md#steering) and
   [agents.md](agents.md).
 - **Stop buttons** (two, same abort): while a turn is in flight a
   red Stop appears **in the composer next to Send** and on the

@@ -346,6 +346,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
           reason: policy.reason ?? block.reason,
           pattern: policy.pattern ?? block.pattern,
           ...(policy.segment ? { blocked_segment: policy.segment } : {}),
+          ...(policy.hint ? { hint: policy.hint } : {}),
           // Surface the resource's allowBlocked entries (if any) so the
           // agent can see why none of them cleared this command instead
           // of having to reverse-engineer the matcher (2026-07-27

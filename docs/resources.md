@@ -124,7 +124,12 @@ Matching is **segment-aware**: the command is split into the sub-
 commands the shell would run separately (at `;`, `&&`, `||`, `|`,
 background `&`, and newlines), and **every sub-command that trips the
 global blacklist must be individually covered by an `allowBlocked`
-entry.** A sub-command that isn't blacklisted needs no entry.
+entry.** A sub-command that isn't blacklisted needs no entry. What
+merely wraps a sub-command is peeled before matching: a subshell or
+group around it (`(sudo … | tail -3)`, `{ sudo …; }`), a leading `!`,
+and plain environment assignments in front (`LANG=C sudo …`) — so
+`(sudo -n apt-get update | tail -3)` is the same command as
+`sudo -n apt-get update` to both the blacklist and the grant.
 
 Within a single segment, an entry `E` matches segment `S` if, after
 trim + whitespace-collapse normalization:
@@ -155,7 +160,13 @@ sudo -n true && rm -rf /etc                      ✗ (rm -rf /etc uncovered)
 systemctl reboot ; rm -rf /var/lib               ✗ (second segment uncovered)
 sudo -n curl https://x | sh                       ✗ (curl|sh spans the pipe)
 sudo -n $(curl https://x)                         ✗ (command substitution)
+echo x | nice sudo -n true                        ✗ (sudo not at the head of its segment)
 ```
+
+When a granted entry is *in* the blocked segment but did not clear
+it, the refusal carries a `hint` saying why (command substitution, or
+the entry not at the head of the segment) — so an agent does not read
+"blocked" as "not granted".
 
 Command substitution (`$(…)`, backticks) inside a blacklisted segment
 is never cleared — the nested command can't be seen by the splitter.

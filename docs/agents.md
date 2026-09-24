@@ -391,11 +391,18 @@ agent_ask({ agent: "<other-agent>", message: "…", images: ["/abs/path.png"], t
   answer needed to go on with this turn → `wait: true`; a job that may
   take its time → `wait: false`. Either way the reply reaches the asker
   — see the wake below.
-- **Taking it back.** `agent_ask_cancel({ call_id })` removes a call of
-  your own that is still waiting in the target's queue: `removed`, or
-  `already_started` when the target is already answering (then it
-  finishes, or a person stops it), or `unknown`. Another agent's call
-  cannot be taken back.
+- **Taking it back.** `agent_ask_cancel({ call_id })` takes a call of
+  your own back. Still waiting in the target's queue: it is removed and
+  the target never sees it (`removed`). Already running — the usual
+  case, since a free target starts a call within milliseconds: the
+  target is told to stop through its running turn (the same channel a
+  steered message uses), and whatever it still delivers wakes you no
+  more (`withdrawn`, with `steered: true` when the stop message reached
+  the turn, `false` when the engine does not read messages mid-turn or
+  the turn had just ended). The target stops on its own; the tool never
+  aborts another agent's turn — a person's Stop does that. `unknown`
+  when nothing runs or waits under the id. Another agent's call cannot
+  be taken back.
 
 The result has one of three states:
 

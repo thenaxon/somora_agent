@@ -207,7 +207,7 @@ import {
   registerAskCall,
   waitForAskCall,
 } from './ask-calls.ts';
-import { configureWorkWake, dequeueWork, listWork, markFetched, onWorkFinished, openWork, pendingWakesFor, wakeReplyTargetFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
+import { configureWorkWake, dequeueWork, withdrawWork, listWork, markFetched, onWorkFinished, openWork, pendingWakesFor, wakeReplyTargetFor, REMOVED_BY_USER, getWork, setWaiting } from './work-ledger.ts';
 import { sessionSlugOf as a2aSessionSlugOf } from '../engine/a2a.ts';
 import { readLockfile } from './lockfile.ts';
 import { acquireLockfile, LockfileBusy, releaseLockfile } from './lockfile.ts';
@@ -5022,7 +5022,7 @@ app.post('/voice/turn', async (c) => {
 // fresh `turn_queued` counts for the human waiters that moved up.
 app.delete('/chat/queue/:turnId', async (c) => {
   const id = c.req.param('turnId');
-  const body = (await c.req.json().catch(() => ({}))) as { requesting_agent?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { requesting_agent?: unknown; withdraw_running?: unknown };
   const by = typeof body.requesting_agent === 'string' && body.requesting_agent.length > 0 ? { agent: body.requesting_agent } : 'human';
   const outcome = dequeueWork(id, by);
   if (outcome.status === 'unknown') {
@@ -5035,6 +5035,52 @@ app.delete('/chat/queue/:turnId', async (c) => {
     return c.json({ ok: false, reason: 'forbidden', id, error: `'${id}' was not queued by ${(by as { agent: string }).agent}` }, 403);
   }
   if (outcome.status === 'running') {
+    // The soft take-back of a running call by the agent that made it
+    // (`withdraw_running: true`, what agent_ask_cancel sends): the
+    // outcome wakes no one, and the target is told to stop through its
+    // steer inbox when its turn reads one. The turn itself is not
+    // aborted — that stays the person's Stop.
+    if (by !== 'human' && body.withdraw_running === true) {
+      const w = withdrawWork(id, by);
+      if (w.status === 'forbidden') {
+        return c.json({ ok: false, reason: 'forbidden', id, error: `'${id}' was not sent by ${by.agent}` }, 403);
+      }
+      if (w.status === 'withdrawn') {
+        const { agent, session } = w.item.target;
+        const running = steerableTurn(agent, session);
+        const steerable = !!running && (!w.item.turnId || running.turnId === w.item.turnId);
+        let steerId: string | undefined;
+        if (running && steerable) {
+          const text =
+            `${by.agent} takes back the request it sent you (call ${id}) — it is no longer needed. ` +
+            'Stop working on it now: deliver no result for it, leave nothing half-done, cancel any ' +
+            'sub-agents you started for it (subagent_cancel), and end your turn with one short line ' +
+            'saying you stopped.';
+          const m = pushSteer(agent, session, {
+            text,
+            origin: { kind: 'agent', from: { agent: by.agent }, callId: id },
+            from_agent: by.agent,
+          });
+          steerId = m.id;
+          logger.info({ msg: 'chat.steer', steerId: m.id, agent, session, turnId: running.turnId, engine: running.engine, withdraw: id });
+          void publish(agent, session, {
+            event: 'steer_queued',
+            data: { steerId: m.id, text, ts: m.ts, turnId: running.turnId, origin: { kind: 'agent', from: { agent: by.agent }, callId: id } },
+          });
+        }
+        return c.json({
+          ok: true,
+          state: 'withdrawn',
+          id,
+          turnId: w.item.turnId ?? null,
+          agent,
+          session,
+          steered: !!steerId,
+          ...(steerId ? { steerId } : {}),
+          ranMs: w.item.startedAt ? Date.now() - w.item.startedAt : null,
+        });
+      }
+    }
     return c.json({ ok: false, reason: 'already_started', turnId: id, id }, 409);
   }
   const item = outcome.item;

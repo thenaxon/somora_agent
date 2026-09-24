@@ -34,6 +34,7 @@ import {
   setWaiting,
   wakeTextFor,
   waitForWork,
+  withdrawWork,
 } from './work-ledger.ts';
 
 let pass = 0;
@@ -811,6 +812,25 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   // Once the wake turn is over, the target is gone again.
   finishWork('wake-call-1', ok('done'));
   check('8e after the wake turn ended: nothing', wakeReplyTargetFor(hansProject) === null);
+}
+
+// ── 9. withdraw: the soft take-back of a running call (2026-09-24) ──
+{
+  _resetWorkLedger();
+  wakes.length = 0;
+  openWork({ id: 'w-1', origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: 'w-1' }, target: { agent: 'lisa', session: 'main' }, requester: { agent: 'hans', session: 'main' }, text: 'research this', waiting: false });
+  check('9a a queued call is not withdrawable (dequeue is the tool for it)', withdrawWork('w-1', { agent: 'hans' }).status === 'not_running');
+  markRunning('w-1', 'turn-w1');
+  check('9b another agent may not withdraw it', withdrawWork('w-1', { agent: 'naxon' }).status === 'forbidden');
+  const w = withdrawWork('w-1', { agent: 'hans' });
+  check('9c the requester withdraws a running call', w.status === 'withdrawn');
+  const it = getWork('w-1')!;
+  check('9d it keeps running, wakes no one, records who took it back', it.state === 'running' && it.wake === 'never' && it.withdrawnBy === 'hans' && typeof it.withdrawnAt === 'number');
+  check('9e unknown id', withdrawWork('nope', { agent: 'hans' }).status === 'unknown');
+  finishWork('w-1', ok('here is the research anyway'));
+  await delay(60);
+  check('9f the late result wakes nobody', wakes.length === 0 && pendingWakesFor({ agent: 'hans', session: 'main' }).length === 0, JSON.stringify(wakes));
+  check('9g the result is still readable for agent_ask_result', getWork('w-1')?.state === 'done' && getWork('w-1')?.result?.finalText === 'here is the research anyway');
 }
 
 console.log(`\n${pass} ok, ${fail} failed`);

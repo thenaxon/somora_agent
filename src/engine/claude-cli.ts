@@ -32,8 +32,15 @@ import { buildAnthropicUserContent } from '../multimodal/user-content.ts';
  * The SDK's prompt input for one turn. Streaming-input mode: the first
  * user message goes out at once; the iterable then stays open so a
  * steer message (src/server/steer-inbox.ts) can be pushed while the
- * turn runs, and is closed when the turn's `result` arrives so the
- * child exits as before.
+ * turn runs. The SDK answers EVERY user message on the input with a
+ * `result` of its own (verified 2026-09-24: two messages, two results),
+ * so the input is closed only once a result has arrived for the first
+ * message and for each steer that was pushed — closing it at the first
+ * result left a steer pushed moments earlier running on a closed
+ * stream, where every somora tool failed its permission request with
+ * "AbortError: Stream closed" (hans, 2026-09-24). No new steer is
+ * pushed after the first result; from then on a message becomes a
+ * normal turn (start-turn.ts).
  */
 interface SteerableInput {
   iterable: AsyncIterable<SDKUserMessage>;
@@ -78,6 +85,17 @@ function createSteerableInput(first: SDKUserMessage): SteerableInput {
 }
 
 const ENGINE = 'claude-cli';
+
+/** The text of a tool_result block's content, whatever shape it has. */
+function toolResultText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((b) => (b && typeof b === 'object' && 'text' in b ? String((b as { text: unknown }).text) : ''))
+      .join(' ');
+  }
+  return '';
+}
 // Legacy sessions tagged with `engine: 'anthropic'` still resume cleanly:
 // we now resume on `sdkSessionId` presence alone, regardless of the
 // `engine` field, so no special-case is needed.
@@ -263,6 +281,10 @@ export const claudeCliEngine: AgentEngine = {
     // letterbox poll, and records waiting to be yielded from the loop.
     let steerInput: SteerableInput | undefined;
     let steerPoll: ReturnType<typeof setInterval> | undefined;
+    // Messages handed to the SDK beyond the first, and results seen:
+    // the input closes when results === 1 + pushedSteers.
+    let pushedSteers = 0;
+    let resultsSeen = 0;
     const pendingSteerEvents: NormalizedEvent[] = [];
     if (signal) {
       if (signal.aborted) sdkAbortController.abort();
@@ -372,6 +394,7 @@ export const claudeCliEngine: AgentEngine = {
               parent_tool_use_id: null,
               message: { role: 'user', content: steer.frame(m) },
             });
+            pushedSteers += 1;
           }
           pendingSteerEvents.push({ kind: 'steer_applied', ts: Date.now(), engine: ENGINE, messages: msgs });
         }, 300);
@@ -628,6 +651,20 @@ export const claudeCliEngine: AgentEngine = {
               // Tool finished — drop back toward the normal idle threshold
               // once no tools are outstanding (re-armed below at loop top).
               if (pendingToolCalls > 0) pendingToolCalls--;
+              // A permission request the SDK could not deliver (the
+              // input stream was closed under the turn) surfaces only
+              // as the tool's error text — make it visible in the log.
+              if (block.is_error && /Tool permission request failed/i.test(toolResultText(block.content))) {
+                logger.warn({
+                  msg: 'engine.permission_request_failed',
+                  engine: ENGINE,
+                  agent,
+                  session,
+                  turnId,
+                  callId: String(block.tool_use_id),
+                  detail: toolResultText(block.content).slice(0, 200),
+                });
+              }
               yield {
                 kind: 'tool_result',
                 ts: ts(),
@@ -639,13 +676,31 @@ export const claudeCliEngine: AgentEngine = {
             }
           }
         } else if (msg.type === 'result') {
-          // The turn is over: close the input so the SDK child exits;
-          // a steer message that arrives from now on becomes a normal
-          // turn (start-turn.ts).
-          steerInput?.close();
+          // One result per user message on the input. No further steer
+          // is pushed from here on (a message that arrives now becomes
+          // a normal turn, start-turn.ts); the input closes — so the
+          // SDK child exits — once every pushed steer has its result.
+          // Closing earlier left the steer's leg without a control
+          // channel: every tool permission request failed (hans,
+          // 2026-09-24). Should a result never come, the idle timer
+          // below ends the turn as for any silent child.
+          resultsSeen += 1;
           if (steerPoll) {
             clearInterval(steerPoll);
             steerPoll = undefined;
+          }
+          if (resultsSeen >= 1 + pushedSteers) {
+            steerInput?.close();
+          } else {
+            logger.info({
+              msg: 'engine.steer_leg_pending',
+              engine: ENGINE,
+              agent,
+              session,
+              turnId,
+              results: resultsSeen,
+              pushed_steers: pushedSteers,
+            });
           }
           if (msg.subtype === 'success') {
             // `msg.result` from claude-agent-sdk only carries the final

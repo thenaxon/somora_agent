@@ -1395,6 +1395,14 @@ sends.
   clients.
 - `409 {ok: false, reason: "already_started"}` — the lock went to this
   turn meanwhile; it is running. `POST /chat/abort` is the tool now.
+  With a body `{"requesting_agent": "<name>", "withdraw_running": true}`
+  (what `agent_ask_cancel` sends) a running call of that agent's own is
+  instead **withdrawn**: `200 {ok: true, state: "withdrawn", id, turnId,
+  agent, session, steered, steerId?, ranMs}` — its outcome wakes the
+  requester no more, and when the target's turn reads its steer inbox
+  (`steered: true`) a stop message is put there with a `steer_queued`
+  SSE event like any steered message; the turn is not aborted. `403`
+  when the call is not that agent's.
 - `404 {ok: false, reason: "unknown"}` — nothing waits under that id
   (started, finished, or never queued here).
 

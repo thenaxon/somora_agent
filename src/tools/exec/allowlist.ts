@@ -15,7 +15,7 @@ import { appendFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { blacklistReasons, checkBlacklist, splitCommandSegments } from './blacklist.ts';
+import { blacklistReasons, checkBlacklist, splitCommandSegments, stripSegmentWrapping } from './blacklist.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const AUDIT_DIR = join(SOMORA_HOME, 'audit');
@@ -49,7 +49,7 @@ function hasCommandSubstitution(s: string): boolean {
 
 // The segment splitter lives in ./blacklist.ts (shared with the
 // per-segment blacklist entries); re-exported for callers and tests.
-export { splitCommandSegments };
+export { splitCommandSegments, stripSegmentWrapping };
 
 /**
  * Match a SINGLE command segment against the allowBlocked entries.
@@ -81,12 +81,32 @@ function matchAllowBlockedSegment(
   return null;
 }
 
+/**
+ * A granted entry is IN the segment but did not clear it: say why in
+ * one line. Only the two ways that can happen after the segment
+ * splitter peeled wrappers (stripSegmentWrapping): command
+ * substitution, or the entry not at the head of the segment.
+ */
+function allowBlockedHint(segment: string, entries: ReadonlyArray<string>): string | undefined {
+  const c = normalize(segment);
+  const present = entries.map(normalize).find((e) => e.length > 0 && new RegExp(`(^|[\\s(\`])${e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`).test(c));
+  if (!present) return undefined;
+  if (hasCommandSubstitution(segment)) {
+    return `allowBlocked entry '${present}' is granted, but a segment with command substitution ($(…) or backticks) is never cleared — run '${present} …' as a plain command instead`;
+  }
+  return `allowBlocked entry '${present}' is granted, but an entry only clears a segment that starts with it — put '${present} …' at the head of the segment, without a wrapper like env/nice/time/nohup in front`;
+}
+
 export interface ExecPolicyDecision {
   allowed: boolean;
   /** Blacklist reason of the offending segment (when blocked). */
   reason?: string;
   /** Blacklist pattern source (when blocked). */
   pattern?: string;
+  /** Why a granted allowBlocked entry did not clear the segment, when
+   *  one of them appears in it — so the agent does not read "blocked"
+   *  as "not granted" (hans, 2026-09-24). */
+  hint?: string;
   /** The exact shell segment that caused the block (when a single
    *  segment is attributable). The splitter is quote-unaware, so a
    *  string argument carrying a separator (`echo "a; sudo b"`) can
@@ -149,11 +169,13 @@ export function evaluateExecPolicy(
     for (const r of blacklistReasons(seg)) segmentReasons.add(r);
     // This segment is dangerous on its own → it needs an override.
     if (hasCommandSubstitution(seg)) {
-      return { allowed: false, reason: b.reason, pattern: b.pattern, segment: seg };
+      const hint = allowBlockedHint(seg, entries);
+      return { allowed: false, reason: b.reason, pattern: b.pattern, segment: seg, ...(hint ? { hint } : {}) };
     }
     const m = matchAllowBlockedSegment(seg, entries);
     if (!m) {
-      return { allowed: false, reason: b.reason, pattern: b.pattern, segment: seg };
+      const hint = allowBlockedHint(seg, entries);
+      return { allowed: false, reason: b.reason, pattern: b.pattern, segment: seg, ...(hint ? { hint } : {}) };
     }
     overrides.push(m.entry);
   }
