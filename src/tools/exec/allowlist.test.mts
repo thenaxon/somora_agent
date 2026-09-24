@@ -275,5 +275,67 @@ check(
   JSON.stringify(splitCommandSegments('X=$(sudo echo sub)')),
 );
 
+// ── follow-up (hans 2026-09-24 evening): quotes, lookups, loop keywords ──
+check(
+  'a | inside a quoted grep pattern is not a pipe',
+  evaluateExecPolicy("grep -n -i -E 'docker compose|restart|reboot|recreate' RUNBOOK.md", []).allowed,
+  JSON.stringify(evaluateExecPolicy("grep -n -i -E 'docker compose|restart|reboot|recreate' RUNBOOK.md", [])),
+);
+check(
+  'double quotes too',
+  evaluateExecPolicy('grep -E "a; poweroff" x.md', []).allowed,
+  JSON.stringify(evaluateExecPolicy('grep -E "a; poweroff" x.md', [])),
+);
+check(
+  'an open quote falls back to the strict split',
+  !evaluateExecPolicy("grep -E 'restart|reboot x.md", []).allowed,
+  JSON.stringify(evaluateExecPolicy("grep -E 'restart|reboot x.md", [])),
+);
+check(
+  'a real pipe after a quoted argument still splits',
+  JSON.stringify(splitCommandSegments("grep 'a|b' f | wc -l")) === JSON.stringify(["grep 'a|b' f", 'wc -l']),
+  JSON.stringify(splitCommandSegments("grep 'a|b' f | wc -l")),
+);
+check(
+  'command -v sudo only looks sudo up',
+  evaluateExecPolicy('command -v sudo', []).allowed && evaluateExecPolicy('which sudo', []).allowed && evaluateExecPolicy('type sudo', []).allowed,
+  JSON.stringify(evaluateExecPolicy('command -v sudo', [])),
+);
+check(
+  'command -v does not launder a later sudo',
+  !evaluateExecPolicy('command -v sudo && sudo -n true', []).allowed,
+  JSON.stringify(evaluateExecPolicy('command -v sudo && sudo -n true', [])),
+);
+check(
+  'sudo inside a for loop body is cleared by the grant',
+  evaluateExecPolicy('for p in $P; do sudo -n dpkg-repack $p; done', ['sudo']).allowed,
+  JSON.stringify(evaluateExecPolicy('for p in $P; do sudo -n dpkg-repack $p; done', ['sudo'])),
+);
+check(
+  'sudo inside a for loop body stays blocked without a grant',
+  !evaluateExecPolicy('for p in $P; do sudo -n dpkg-repack $p; done', []).allowed,
+  JSON.stringify(evaluateExecPolicy('for p in $P; do sudo -n dpkg-repack $p; done', [])),
+);
+check(
+  'if sudo …; then … is cleared by the grant',
+  evaluateExecPolicy('if sudo -n true; then echo y; fi', ['sudo']).allowed,
+  JSON.stringify(evaluateExecPolicy('if sudo -n true; then echo y; fi', ['sudo'])),
+);
+check(
+  'rm -rf on a system path inside sh -c stays blocked',
+  !evaluateExecPolicy("sh -c 'rm -rf /etc; echo done'", []).allowed,
+  JSON.stringify(evaluateExecPolicy("sh -c 'rm -rf /etc; echo done'", [])),
+);
+check(
+  'quoted halt word is not the halt command',
+  evaluateExecPolicy('echo "poweroff done"', []).allowed,
+  JSON.stringify(evaluateExecPolicy('echo "poweroff done"', [])),
+);
+check(
+  'splitter keeps 2>&1 and splits a background &',
+  JSON.stringify(splitCommandSegments('a 2>&1 & b')) === JSON.stringify(['a 2>&1', 'b']),
+  JSON.stringify(splitCommandSegments('a 2>&1 & b')),
+);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

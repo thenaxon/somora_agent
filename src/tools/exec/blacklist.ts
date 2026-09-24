@@ -32,6 +32,13 @@ interface BlacklistEntry {
    * string argument) is not mistaken for `poweroff` (the command).
    */
   perSegment?: boolean;
+  /**
+   * A segment this matches is NOT a hit — the pattern's word appears
+   * as an argument of a command that only looks things up. `command -v
+   * sudo` / `which sudo` / `type sudo` ask where sudo is, they do not
+   * run it (hans, 2026-09-24).
+   */
+  unless?: RegExp;
 }
 
 /**
@@ -53,10 +60,76 @@ export function splitCommandSegments(command: string): string[] {
   // (`2>&1`, `&>`, `&&` already consumed): not preceded by `>`/`&`/digit
   // and not followed by `>`/`&`.
   const SEP = /&&|\|\||;|\||\r?\n|(?<![>&\d])&(?![>&])/g;
-  return command
-    .split(SEP)
-    .map((s) => stripSegmentWrapping(s.trim()))
-    .filter((s) => s.length > 0);
+  const parts = splitOutsideQuotes(command) ?? command.split(SEP);
+  return parts.map((s) => stripSegmentWrapping(s.trim())).filter((s) => s.length > 0);
+}
+
+/**
+ * Split at the shell operators, but not inside '…' or "…" — a `|` in
+ * a grep pattern is not a pipe (`grep -E 'restart|reboot' RUNBOOK.md`
+ * used to leave a segment `reboot` for the halt rule to trip on; hans,
+ * 2026-09-24). A backslash escapes the next character outside single
+ * quotes. Returns null when a quote is left open: then the old, purely
+ * textual split applies — the stricter reading for a string whose
+ * quoting we cannot follow.
+ */
+function splitOutsideQuotes(command: string): string[] | null {
+  const out: string[] = [];
+  let cur = '';
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]!;
+    if (quote) {
+      cur += ch;
+      if (ch === '\\' && quote === '"' && i + 1 < command.length) {
+        cur += command[++i]!;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      cur += ch;
+      continue;
+    }
+    if (ch === '\\' && i + 1 < command.length) {
+      cur += ch + command[++i]!;
+      continue;
+    }
+    const two = command.slice(i, i + 2);
+    if (two === '&&' || two === '||') {
+      out.push(cur);
+      cur = '';
+      i++;
+      continue;
+    }
+    if (ch === ';' || ch === '|' || ch === '\n') {
+      out.push(cur);
+      cur = '';
+      continue;
+    }
+    if (ch === '\r' && command[i + 1] === '\n') {
+      out.push(cur);
+      cur = '';
+      i++;
+      continue;
+    }
+    if (ch === '&') {
+      // A lone `&` backgrounds; `2>&1`, `&>`, `>&` are redirects.
+      const prev = command[i - 1] ?? '';
+      const next = command[i + 1] ?? '';
+      if (!/[>&\d]/.test(prev) && !/[>&]/.test(next)) {
+        out.push(cur);
+        cur = '';
+        continue;
+      }
+    }
+    cur += ch;
+  }
+  if (quote) return null;
+  out.push(cur);
+  return out;
 }
 
 /**
@@ -76,6 +149,10 @@ export function stripSegmentWrapping(segment: string): string {
   for (;;) {
     const before = s;
     s = s.replace(/^[({!\s]+/, '').replace(/[)}\s;]+$/, '');
+    // Shell keywords that open a body: `for …; do sudo …; done` leaves
+    // a segment `do sudo …`, `if sudo …; then` one `if sudo …`. The
+    // command after the keyword is what runs (hans, 2026-09-24).
+    s = s.replace(/^(?:do|then|else|elif|if|while|until)\s+/, '');
     const env = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^'`]*'|"[^"`$]*"|[^\s'"`$]*)(?:\s+|$)/;
     if (env.test(s)) s = s.replace(env, '');
     if (s === before) return s;
@@ -147,7 +224,12 @@ const HARD_BLACKLIST: ReadonlyArray<BlacklistEntry> = [
   // ── Privilege escalation ──
   // Backtick in the boundary: `X=\`sudo id\`` runs sudo in a substitution
   // and used to slip past (2026-09-24).
-  { pattern: /(^|[\s|;&(`])sudo(\s|$)/, reason: 'sudo (privilege escalation)' },
+  {
+    pattern: /(^|[\s|;&(`])sudo(\s|$)/,
+    reason: 'sudo (privilege escalation)',
+    perSegment: true,
+    unless: /^(?:command\s+-[vV]|which|type|whereis|hash)\s/,
+  },
   { pattern: /(^|[\s|;&(])doas(\s|$)/, reason: 'doas (privilege escalation)' },
   { pattern: /(^|[\s|;&(])su(\s+-?\s*$|\s+-)/, reason: 'su (switch user)' },
 
@@ -221,7 +303,7 @@ function normalize(s: string): string {
  * and the command-position anchor would never see `shutdown`.
  */
 function entryMatches(entry: BlacklistEntry, normalized: string, segments: string[]): boolean {
-  if (entry.perSegment) return segments.some((seg) => entry.pattern.test(seg));
+  if (entry.perSegment) return segments.some((seg) => !entry.unless?.test(seg) && entry.pattern.test(seg));
   return entry.pattern.test(normalized);
 }
 

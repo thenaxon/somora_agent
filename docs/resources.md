@@ -129,7 +129,13 @@ merely wraps a sub-command is peeled before matching: a subshell or
 group around it (`(sudo … | tail -3)`, `{ sudo …; }`), a leading `!`,
 and plain environment assignments in front (`LANG=C sudo …`) — so
 `(sudo -n apt-get update | tail -3)` is the same command as
-`sudo -n apt-get update` to both the blacklist and the grant.
+`sudo -n apt-get update` to both the blacklist and the grant. The same
+goes for the shell keywords that open a body (`for …; do sudo …; done`,
+`if sudo …; then`). Operators inside quotes do not split: a `|` in a
+grep pattern is not a pipe (an unclosed quote falls back to the plain
+textual split, the stricter reading). And a command that only looks
+sudo up — `command -v sudo`, `which sudo`, `type sudo` — does not
+count as running it.
 
 Within a single segment, an entry `E` matches segment `S` if, after
 trim + whitespace-collapse normalization:
