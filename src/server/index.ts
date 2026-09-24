@@ -3240,7 +3240,10 @@ app.put('/agents/:agent/sessions/:session/plan', async (c) => {
   // draft: it moves aside as PLAN-<date>-<session>.md before the new
   // plan takes its place.
   let archived: string | null = null;
-  const writtenTs = typeof (meta as Record<string, unknown>).builderPlanWrittenTs === 'number' ? ((meta as Record<string, unknown>).builderPlanWrittenTs as number) : null;
+  const m = meta as Record<string, unknown>;
+  // "Written by this session" is a path and a time: after the plan path
+  // moved with a pin, the file at the new path is somebody else's.
+  const writtenTs = typeof m.builderPlanWrittenTs === 'number' && m.builderPlanWrittenPath === planPath ? (m.builderPlanWrittenTs as number) : null;
   try {
     const st = await statFs(planPath);
     if (writtenTs === null || st.mtimeMs > writtenTs + 2000) {
@@ -3254,7 +3257,13 @@ app.put('/agents/:agent/sessions/:session/plan', async (c) => {
   const tmp = `${planPath}.somora-tmp.${process.pid}.${Date.now().toString(36)}`;
   await writeFileFs(tmp, body.content, 'utf8');
   await renameFs(tmp, planPath);
-  await sessionMetaStore.update(r.agent, r.session, (current) => ({ ...current, builderPlanWrittenTs: Date.now(), ...(state?.planPath ? {} : { builderPlanPath: planPath }) }));
+  await sessionMetaStore.update(r.agent, r.session, (current) => ({
+    ...current,
+    builderPlanWrittenTs: Date.now(),
+    builderPlanWrittenPath: planPath,
+    // A path chosen here by default may still follow a later pin.
+    ...(state?.planPath ? {} : { builderPlanPath: planPath, builderPlanPathDefault: true }),
+  }));
   logger.info({ msg: 'builder.plan_written', agent: r.agent, session: r.session, path: planPath, bytes: Buffer.byteLength(body.content), archived });
   await publish(r.agent, r.session, { event: 'builder_state', data: { mode: state?.mode ?? 'attended', phase: state?.phase ?? 'plan', planPath } });
   return c.json({ path: planPath, bytes: Buffer.byteLength(body.content, 'utf8'), ...(archived ? { archived, note: 'An earlier plan was there; it was moved beside the new one. Say in your plan what of it still stands.' } : {}) });
