@@ -232,6 +232,7 @@ export class SharedIndex {
     const first = this.state !== 'ready';
     this.state = 'ready';
     mgr.startWatcher();
+    mgr.startRescan();
     logger.info({
       msg: 'memory.shared_index_ready',
       built_by: this.builtBy,

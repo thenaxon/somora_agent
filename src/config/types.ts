@@ -317,11 +317,21 @@ export const MemoryConfigSchema = z.object({
   chunking: MemoryChunkingConfigSchema,
   autoInject: MemoryAutoInjectConfigSchema,
   hybrid: MemoryHybridConfigSchema,
+  /**
+   * Minutes between full sweeps of the vault/wiki index (0 = off). The
+   * file-watcher sees what is written on THIS machine; a file that an
+   * editor on another machine saves onto a network share arrives
+   * without an event, and used to be indexed only at the next server
+   * start (2026-09-25). The sweep skips unchanged files by hash, so it
+   * is cheap. Default 10.
+   */
+  rescanMinutes: z.number().int().min(0).max(24 * 60).default(10),
 }).default({
   embedding: { provider: 'local', model: 'all-MiniLM-L6-v2' },
   chunking: { targetTokens: 400, overlapTokens: 80 },
   autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5 },
   hybrid: { vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5 },
+  rescanMinutes: 10,
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 

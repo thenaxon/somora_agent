@@ -33,6 +33,7 @@ import {
   upsertFile,
   type MemoryDb,
 } from './storage.ts';
+import { RescanLoop } from './rescan.ts';
 import { MarkdownWatcher, type FileEvent } from './watcher.ts';
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
@@ -231,6 +232,7 @@ export class MemoryManager {
   private memDb: MemoryDb | null = null;
   private embedder: EmbeddingProvider | null = null;
   private watcher: MarkdownWatcher | null = null;
+  private rescan: RescanLoop | null = null;
   private agent: string;
   private cfg: MemoryConfig;
   private obsidian?: ObsidianSource;
@@ -304,6 +306,24 @@ export class MemoryManager {
     // agent) is the shared index's job.
     await this.reindexAll();
     this.startWatcher();
+    this.startRescan();
+  }
+
+  /** Periodic full sweep (memory.rescanMinutes) for the manager that
+   *  owns the vault/wiki rows: catches files written on another
+   *  machine, which arrive on a network share without a watcher event.
+   *  Idempotent; a no-op for agent managers (their notes are local and
+   *  watched) and when the interval is 0. */
+  startRescan(): void {
+    if (this.rescan || !this.indexVault) return;
+    const minutes = this.cfg.rescanMinutes ?? 0;
+    if (minutes <= 0) return;
+    this.rescan = new RescanLoop({
+      intervalMs: minutes * 60_000,
+      run: () => this.reindexAll(),
+      logCtx: { agent: this.agent, roots: this.walkRoots() },
+    });
+    this.rescan.start();
   }
 
   /** Watch this manager's roots for changes. Idempotent. */
@@ -354,6 +374,10 @@ export class MemoryManager {
   }
 
   async close(): Promise<void> {
+    if (this.rescan) {
+      this.rescan.stop();
+      this.rescan = null;
+    }
     if (this.watcher) {
       await this.watcher.stop();
       this.watcher = null;

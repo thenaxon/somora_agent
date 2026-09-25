@@ -184,6 +184,11 @@ memory:
     historyWeightEmpty: 0.8  # … when it has none ("das solltest du wissen oder?")
     historyTurnChars: 800    # head of each turn that goes into the blend
     shortQueryBm25Weight: 0.5 # BM25 share for a 1–2-word question (null = hybrid default)
+  rescanMinutes: 10          # full sweep of the vault/wiki index every N minutes
+                             # (0 = off) — catches files saved from another
+                             # machine onto a network share, which the file-
+                             # watcher cannot see; unchanged files are skipped
+                             # by hash, so a sweep of ~1000 files takes ~1 s
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3
@@ -235,6 +240,17 @@ Three ways content lands in the memory inbox:
    chokidar file-watcher re-indexes within ~1.5 s of save. The agent
    sees your edit on the next turn. Works with `vim`, VSCode, Obsidian,
    any editor that does atomic-rename writes.
+
+   The same watcher covers the vault and the wiki — with one limit: it
+   only sees writes made on the somora host. A vault on a network share
+   (SMB/NFS) that you edit from another machine gets no file events
+   here, so those files are picked up by the periodic sweep instead
+   (`memory.rescanMinutes`, default every 10 minutes) and, as before, by
+   the full sweep at every server start. When the share is unreachable
+   while the server boots, the watcher retries on its own with a growing
+   delay (30 s, 60 s, … up to 10 min) instead of staying silent until the
+   next restart (`memory.watcher_retry` / `memory.watcher_recovered` in
+   the log).
 
 2. **The agent writes it via tool.** `memory_write` (create or replace),
    `memory_edit` (modify existing, fail if missing), `memory_delete`
