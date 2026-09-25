@@ -352,16 +352,43 @@ export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 // vs a one-line paraphrase can drop to ~0.6 — that finding then simply
 // shows up unmarked, the conservative failure. Tune down if repeats
 // still get through, up if contradicting facts get flagged.
+// The coverage judge (2026-09-25, private/dream-judge/): after the
+// cosine pass a model reads the WHOLE pages of the closest candidates
+// and answers one question — is the finding's substance already stated
+// there, or does it add something? Measured on 100 hand-labelled
+// findings: cosine at 0.85 found 5 duplicates, the question found 93
+// at 91 % precision. Off by default; `model` empty = the REM worker
+// of the agent whose dream is running.
+export const RemJudgeConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** Alias or `provider/modelId`; absent = the agent's REM worker model. */
+  model: z.string().min(1).optional(),
+  /** Distinct candidate pages the judge reads per finding. */
+  candidates: z.number().int().min(1).max(10).default(4),
+  /** Each candidate page is cut to this many characters. */
+  maxPageChars: z.number().int().min(500).max(60000).default(6000),
+  /** A `covered` verdict below this confidence (0–100) marks nothing. */
+  minConfidence: z.number().int().min(0).max(100).default(80),
+  /** Findings judged per dream run; the rest stay unjudged (logged once). */
+  maxPerRun: z.number().int().min(0).default(60),
+  timeoutMs: z.number().int().positive().default(120_000),
+  /** Optional thinking level, honoured when the judge model can reason. */
+  thinking: ThinkingLevelSchema.optional(),
+});
+export type RemJudgeConfig = z.infer<typeof RemJudgeConfigSchema>;
+const REM_JUDGE_DEFAULTS: RemJudgeConfig = { enabled: false, candidates: 4, maxPageChars: 6000, minConfidence: 80, maxPerRun: 60, timeoutMs: 120_000 };
+
 export const RemDedupConfigSchema = z.object({
   enabled: z.boolean().default(true),
   similarityThreshold: z.number().min(0).max(1).default(0.85),
-}).default({ enabled: true, similarityThreshold: 0.85 });
+  judge: RemJudgeConfigSchema.default(REM_JUDGE_DEFAULTS),
+}).default({ enabled: true, similarityThreshold: 0.85, judge: REM_JUDGE_DEFAULTS });
 
 export type RemDedupConfig = z.infer<typeof RemDedupConfigSchema>;
 
 export const RemGlobalConfigSchema = z.object({
   dedup: RemDedupConfigSchema,
-}).default({ dedup: { enabled: true, similarityThreshold: 0.85 } });
+}).default({ dedup: { enabled: true, similarityThreshold: 0.85, judge: REM_JUDGE_DEFAULTS } });
 export type RemGlobalConfig = z.infer<typeof RemGlobalConfigSchema>;
 
 // Engine watchdog tunables (Phase A2 — 2026-05-14). Idle-event timeout

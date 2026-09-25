@@ -21,6 +21,7 @@ import {
 } from './storage.ts';
 import { extractFromSession, resolveDreamModel } from './rem-extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
+import { resolveJudgeModel } from './judge.ts';
 import { applyRemDedup } from './rem-dedup.ts';
 import { loadWikiContext } from './wiki-context.ts';
 import { excludeReviewWindows } from './review-window.ts';
@@ -220,8 +221,14 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   // an explicit model when enabled, no fallback).
   let workerModel: ResolvedModel;
   let fallbackModel: ResolvedModel | undefined;
+  // The coverage judge's model (rem.dedup.judge): the worker unless a
+  // ref is named; validated here so a typo fails the run at its start.
+  let judgeModel: ResolvedModel | undefined;
   try {
     workerModel = resolveDreamModel(args.config, args.rem.model);
+    if (args.config.rem.dedup.judge.enabled) {
+      judgeModel = resolveJudgeModel(args.config, args.config.rem.dedup.judge.model, workerModel);
+    }
     // The backup is validated up front too: a typo in `rem.fallback`
     // must surface now, not on the day the primary is down.
     if (args.rem.fallback) {
@@ -458,6 +465,15 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       loadedWikiSlugs: referencedWiki.map((w) => w.slug),
       mgr: args.mgr,
       config: args.config.rem.dedup,
+      ...(judgeModel
+        ? {
+            judge: {
+              model: judgeModel,
+              config: args.config.rem.dedup.judge,
+              ...(args.config.rem.dedup.judge.thinking ? { thinking: args.config.rem.dedup.judge.thinking } : {}),
+            },
+          }
+        : {}),
     });
 
     meta.findings = dedup.findings;

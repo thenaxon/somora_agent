@@ -70,6 +70,19 @@ export interface Finding {
    *  topic matches (status change, new count, new date). Findings
    *  with novel_details should not be batch-dismissed. */
   novel_details?: boolean;
+  /** The coverage judge's verdict (rem.dedup.judge): `covered` — the
+   *  finding's substance is already stated in `judge_by`; `adds_new` —
+   *  it adds at least one fact none of the candidate pages state.
+   *  Absent when the judge is off, had no candidates, ran out of its
+   *  per-run budget, or failed for this finding. */
+  judge_verdict?: 'covered' | 'adds_new';
+  /** 0–100, the judge's own confidence in the verdict. */
+  judge_confidence?: number;
+  /** The judge's one-sentence reason (English, like every model-facing
+   *  text somora produces). */
+  judge_reason?: string;
+  /** `memory:<slug>` / `wiki:<slug>` the judge named as covering it. */
+  judge_by?: string;
 }
 
 export interface DreamMeta {

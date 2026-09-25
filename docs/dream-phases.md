@@ -258,6 +258,63 @@ rem:
                               # ~0.6-0.8. Lower = mark more.
 ```
 
+### Coverage judge
+
+Similarity finds topic overlap; it cannot say whether the *fact* is
+already written. On a hundred hand-reviewed findings the cosine flag
+caught five real duplicates. The coverage judge asks a model instead:
+it reads the whole pages of the closest candidates (memory notes and
+wiki pages the similarity search returned) and answers one question —
+is every substantive element of this finding already stated there
+(`covered`), or does it add at least one fact, number, date, decision
+or conclusion none of them state (`adds_new`)? On the same hundred
+findings the question caught 93, with 91 % of its marks right.
+
+What the verdict does — nothing is deleted, the finding stays in the
+review either way:
+
+- `covered` at or above `minConfidence` → the finding is marked
+  `likely_duplicate` like a similarity hit, `duplicate_of` names the
+  page as `<source>:<slug>@judge` (when similarity had already marked
+  it, its pointer and number stay), and `matched_excerpt` shows the
+  paragraph of that page that carries the finding's numbers or dates.
+- `adds_new` → no mark; if similarity had marked the finding, it is
+  additionally flagged `novel_details`, the review's "do not
+  batch-dismiss" signal.
+- Every judged finding carries `judge_verdict`, `judge_confidence`
+  (0–100), `judge_reason` (the model's one sentence, in English like
+  every model-facing text somora produces) and, for `covered`,
+  `judge_by`. `dream_list` / `dream_get` show them beside
+  `matched_excerpt`.
+
+A finding without candidates is not judged; a call that fails or
+replies unreadably leaves the finding without a verdict (logged as
+`dream.rem.judge_failed` / `judge_unreadable`); past `maxPerRun` the
+rest of the run goes unjudged and the log says so once. The run's
+`dream.rem.dedup_summary` line carries `judged`, `judge_marked`,
+`judge_cleared`, `judge_failed`, `judge_skipped` and `judge_model`.
+
+Off by default. The model is the REM worker of the agent whose dream
+is running unless `model` names another one — a smaller, cheaper
+model does fine, the question is easier than the extraction. A named
+model is validated when the run starts, like `rem.fallback`. Cost:
+one call per finding with candidates, a few thousand input tokens each
+(the pages), so on a hosted model keep `maxPerRun` in mind.
+
+```yaml
+rem:
+  dedup:
+    judge:
+      enabled: false          # default false
+      # model: <alias>        # default: the agent's REM worker (rem.model)
+      candidates: 4           # distinct pages the judge reads per finding
+      maxPageChars: 6000      # each page is cut to this
+      minConfidence: 80       # a `covered` verdict below this marks nothing
+      maxPerRun: 60           # findings judged per run; the rest go unjudged
+      timeoutMs: 120000
+      # thinking: low         # optional; honoured when the model can reason
+```
+
 ## Phase Deep — Memory → Wiki
 
 Deep consolidates **all agents' memory inboxes** into the shared wiki.
@@ -690,6 +747,17 @@ wiki:
     boostWiki: 1.4                       # wiki hits rank above memory
     boostMemory: 0.85
     boostVault: 0.65
+rem:
+  dedup:
+    enabled: true                        # mechanical dedup after extraction
+    similarityThreshold: 0.85
+    judge:
+      enabled: false                     # coverage judge (see REM → Coverage judge)
+      # model: <alias>                   # default: the agent's REM worker
+      candidates: 4
+      maxPageChars: 6000
+      minConfidence: 80
+      maxPerRun: 60
 ```
 
 ```yaml

@@ -34,11 +34,30 @@
 // NOT visible here — that would be the deferred `memory.sourceOfTruth`
 // design (option (c) in the report). This pass covers memory + wiki.
 
-import type { RemDedupConfig } from '../config/types.ts';
+import { readFileSync } from 'node:fs';
+
+import type { RemDedupConfig, RemJudgeConfig, ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
+import type { Hit } from '../memory/retrieval.ts';
 import { cosineFromVecScore } from '../memory/retrieval.ts';
 import { logger } from '../server/logger.ts';
+import { askJudge as askJudgeLive, buildCoverageQuestion, type AskJudge, type CoverageText } from './judge.ts';
 import type { Finding } from './types.ts';
+
+/**
+ * Stage 2b — the coverage judge (rem.dedup.judge, design in
+ * private/dream-judge/). Passed by the runner only when enabled; the
+ * model is resolved there (fail-loud at run start, like the worker).
+ */
+export interface RemJudgeArgs {
+  model: ResolvedModel;
+  config: RemJudgeConfig;
+  thinking?: ThinkingLevel;
+  /** Test seam — the live judge otherwise. */
+  ask?: AskJudge;
+  /** Test seam — reads the candidate's whole page; the file otherwise. */
+  readPage?: (hit: Hit) => string | null;
+}
 
 export interface RemDedupArgs {
   agent: string;
@@ -52,6 +71,7 @@ export interface RemDedupArgs {
   loadedWikiSlugs: string[];
   mgr: MemoryManager;
   config: RemDedupConfig;
+  judge?: RemJudgeArgs;
 }
 
 export interface RemDedupResult {
@@ -61,6 +81,35 @@ export interface RemDedupResult {
   /** memory_edit findings whose slug doesn't exist as a memory note,
    *  converted to memory_write (Stage 0 referential validation). */
   downgraded: number;
+  /** Stage 2b counters — all zero when the judge is off. */
+  judged: number;
+  /** `covered` at or above minConfidence → marked likely_duplicate. */
+  judgeMarked: number;
+  /** `adds_new` → the finding reads as new (novel_details) even when
+   *  the cosine pass had marked it. */
+  judgeCleared: number;
+  /** Calls that failed or replied unreadably — those findings carry no verdict. */
+  judgeFailed: number;
+  /** Findings past maxPerRun, left unjudged. */
+  judgeSkipped: number;
+}
+
+/** A candidate's whole page, frontmatter off, for the judge. */
+function readPageFile(hit: Hit): string | null {
+  try {
+    return readFileSync(hit.filePath, 'utf8').replace(/^---\n[\s\S]*?\n---\n?/, '');
+  } catch {
+    return null;
+  }
+}
+
+/** The paragraph of `page` that carries one of the finding's hard
+ *  tokens — what the reviewer should look at — else the page's head. */
+function excerptFor(page: string, findingText: string): string {
+  const tokens = hardTokens(findingText);
+  const paragraphs = page.split(/\n\s*\n/);
+  const hitPara = tokens.length > 0 ? paragraphs.find((p) => tokens.some((t) => p.includes(t))) : undefined;
+  return excerptOf(hitPara ?? page);
 }
 
 /** Trim a matched chunk to a reviewable excerpt (~240 chars, single
@@ -141,12 +190,21 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
   }
 
   if (!args.config.enabled) {
-    return { findings: validated, dropped: droppedInvalid, marked: 0, downgraded };
+    return { findings: validated, dropped: droppedInvalid, marked: 0, downgraded, judged: 0, judgeMarked: 0, judgeCleared: 0, judgeFailed: 0, judgeSkipped: 0 };
   }
   const kept: Finding[] = [];
   let dropped = droppedInvalid;
   let marked = 0;
   let warnedNoVector = false;
+  const judge = args.judge && args.judge.config.enabled ? args.judge : undefined;
+  const ask = judge?.ask ?? askJudgeLive;
+  const readPage = judge?.readPage ?? readPageFile;
+  let judged = 0;
+  let judgeMarked = 0;
+  let judgeCleared = 0;
+  let judgeFailed = 0;
+  let judgeSkipped = 0;
+  let warnedBudget = false;
 
   for (const f of validated) {
     if (f.action !== 'memory_write') {
@@ -280,6 +338,107 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
             ...(novel.length > 0 ? { novelTokens: novel.slice(0, 8) } : {}),
           });
         }
+
+        // Stage 2b — the coverage judge: a model reads the WHOLE pages
+        // of the closest candidates and says whether the finding's
+        // substance is already there. Cosine keeps its marks and its
+        // number; the judge adds its verdict beside them, and marks on
+        // its own when cosine did not (design: both signals visible).
+        if (judge && candidates.length > 0) {
+          if (judged >= judge.config.maxPerRun) {
+            judgeSkipped++;
+            if (!warnedBudget) {
+              warnedBudget = true;
+              logger.warn({
+                msg: 'dream.rem.judge_budget_exhausted',
+                agent: args.agent,
+                dreamId: args.dreamId,
+                maxPerRun: judge.config.maxPerRun,
+                hint: 'further findings of this run carry no judge verdict — raise rem.dedup.judge.maxPerRun if this is regular',
+              });
+            }
+          } else {
+            const seen = new Set<string>();
+            const pages: Array<{ id: string; hit: Hit; text: string }> = [];
+            for (const h of candidates) {
+              const id = `${h.source}:${h.slug}`;
+              if (seen.has(id)) continue;
+              seen.add(id);
+              const page = readPage(h) ?? h.text;
+              pages.push({ id, hit: h, text: page.slice(0, judge.config.maxPageChars) });
+              if (pages.length >= judge.config.candidates) break;
+            }
+            const question = buildCoverageQuestion(
+              { reason: f.reason, content: f.proposed_content ?? '' },
+              pages.map((p): CoverageText => ({ id: p.id, text: p.text })),
+              { maxPageChars: judge.config.maxPageChars },
+            );
+            judged++;
+            try {
+              const a = await ask({
+                model: judge.model,
+                question,
+                timeoutMs: judge.config.timeoutMs,
+                logCtx: { agent: args.agent, op: 'rem:judge', dreamId: args.dreamId, findingId: f.id, slug: f.slug },
+                ...(judge.thinking ? { thinking: judge.thinking } : {}),
+              });
+              if (a.answer === null) {
+                judgeFailed++;
+                logger.warn({
+                  msg: 'dream.rem.judge_unreadable',
+                  agent: args.agent,
+                  dreamId: args.dreamId,
+                  findingId: f.id,
+                  raw: a.raw.slice(0, 200),
+                });
+              } else {
+                const cited = a.by && a.by >= 1 && a.by <= pages.length ? pages[a.by - 1] : undefined;
+                f.judge_verdict = a.answer as Finding['judge_verdict'];
+                f.judge_confidence = a.confidence;
+                if (a.why) f.judge_reason = a.why;
+                if (a.answer === 'covered') {
+                  if (cited) f.judge_by = cited.id;
+                  if (a.confidence >= judge.config.minConfidence) {
+                    judgeMarked++;
+                    if (!f.likely_duplicate) {
+                      marked++;
+                      f.likely_duplicate = true;
+                      const target = cited ?? pages[0]!;
+                      f.duplicate_of = `${target.id}@judge`;
+                      f.matched_excerpt = excerptFor(target.text, text);
+                    }
+                  }
+                } else {
+                  judgeCleared++;
+                  // "Adds new" is the judge's word for what novel_details
+                  // guesses from numbers: do not batch-dismiss this one.
+                  if (f.likely_duplicate) f.novel_details = true;
+                }
+                logger.info({
+                  msg: 'dream.rem.judge_verdict',
+                  agent: args.agent,
+                  dreamId: args.dreamId,
+                  findingId: f.id,
+                  slug: f.slug,
+                  verdict: a.answer,
+                  confidence: a.confidence,
+                  ...(cited ? { by: cited.id } : {}),
+                  cosineMarked: !!top,
+                  pages: pages.map((p) => p.id),
+                });
+              }
+            } catch (err) {
+              judgeFailed++;
+              logger.warn({
+                msg: 'dream.rem.judge_failed',
+                agent: args.agent,
+                dreamId: args.dreamId,
+                findingId: f.id,
+                err: (err as Error).message,
+              });
+            }
+          }
+        }
       } catch (err) {
         // Search failure must never cost the user a finding — degrade to
         // unmarked, same posture as the rest of the dream pipeline.
@@ -295,7 +454,7 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
     kept.push(f);
   }
 
-  if (dropped > 0 || marked > 0 || downgraded > 0) {
+  if (dropped > 0 || marked > 0 || downgraded > 0 || judged > 0) {
     logger.info({
       msg: 'dream.rem.dedup_summary',
       agent: args.agent,
@@ -304,9 +463,19 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
       dropped,
       marked,
       downgraded,
+      ...(judge
+        ? {
+            judge_model: `${judge.model.providerName}/${judge.model.modelId}`,
+            judged,
+            judge_marked: judgeMarked,
+            judge_cleared: judgeCleared,
+            judge_failed: judgeFailed,
+            judge_skipped: judgeSkipped,
+          }
+        : {}),
     });
   }
-  return { findings: kept, dropped, marked, downgraded };
+  return { findings: kept, dropped, marked, downgraded, judged, judgeMarked, judgeCleared, judgeFailed, judgeSkipped };
 }
 
 async function readNoteText(mgr: { getNote?: (slug: string) => Promise<unknown> }, slug: string): Promise<string | null> {

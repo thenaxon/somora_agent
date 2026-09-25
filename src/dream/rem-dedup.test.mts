@@ -10,7 +10,7 @@
 //
 // Run: npx tsx src/dream/rem-dedup.test.mts
 
-import { applyRemDedup, hardTokens } from './rem-dedup.ts';
+import { applyRemDedup, hardTokens, type RemJudgeArgs } from './rem-dedup.ts';
 import { cosineFromVecScore, vecScoreFromCosine } from '../memory/retrieval.ts';
 import type { Finding } from './types.ts';
 
@@ -24,7 +24,8 @@ function check(name: string, cond: boolean, detail = ''): void {
   }
 }
 
-const CONFIG = { enabled: true, similarityThreshold: 0.85 };
+const JUDGE_OFF = { enabled: false, candidates: 4, maxPageChars: 6000, minConfidence: 80, maxPerRun: 60, timeoutMs: 1000 };
+const CONFIG = { enabled: true, similarityThreshold: 0.85, judge: JUDGE_OFF };
 
 interface FakeHit {
   chunkId: number;
@@ -244,6 +245,83 @@ async function run(f: Finding, hits: FakeHit[]) {
 
   const wiki = await dedup([finding(5, 'personen-root', 'Etwas anderes.')]);
   check('a collision with a WIKI page is still dropped (unchanged)', wiki.findings.length === 0 && wiki.dropped === 1);
+}
+
+// ── Stage 2b: the coverage judge (2026-09-25) ────────────────────────
+{
+  type Ask = NonNullable<RemJudgeArgs['ask']>;
+  const model = { providerName: 'p', provider: { engine: 'openai-compatible' }, modelId: 'm', model: {} } as never;
+  const calls: Array<{ user: string; pages: number }> = [];
+  const judgeWith = (reply: Partial<Awaited<ReturnType<Ask>>> | Error, cfg: Partial<typeof JUDGE_OFF> = {}): RemJudgeArgs => ({
+    model,
+    config: { ...JUDGE_OFF, enabled: true, ...cfg },
+    ask: async (a) => {
+      calls.push({ user: a.question.user, pages: (a.question.user.match(/^\[\d+\] /gm) ?? []).length });
+      if (reply instanceof Error) throw reply;
+      return { answer: null, confidence: 0, why: '', raw: '', ...reply };
+    },
+    readPage: (h) => `PAGE ${h.slug}\n\nRoot-Passwort auf vision geändert (2026-08-20). Weitere Absätze.`,
+  });
+  const dedup = (f: Finding, hits: FakeHit[], judge: RemJudgeArgs | undefined) =>
+    applyRemDedup({ agent: 'test', dreamId: 'd3', findings: [f], existingMemorySlugs: [], loadedWikiSlugs: [], mgr: mgrWith(hits) as never, config: CONFIG, ...(judge ? { judge } : {}) });
+  const lowCosHit = hit('wiki', 'hosts/vision', 'chunk text', 0.6);
+
+  // judge off → untouched, no call
+  calls.length = 0;
+  let r = await dedup(finding(20, 'vision-pw', 'Root-Passwort auf vision geändert.'), [lowCosHit], { ...judgeWith({ answer: 'covered', confidence: 99 }), config: JUDGE_OFF });
+  check('judge off: no call, no verdict', calls.length === 0 && r.findings[0]?.judge_verdict === undefined && r.judged === 0);
+
+  // covered, confident, cosine had NOT marked → judge marks on its own
+  calls.length = 0;
+  r = await dedup(finding(21, 'vision-pw', 'Root-Passwort auf vision geändert (2026-08-20).'), [lowCosHit], judgeWith({ answer: 'covered', confidence: 95, by: 1, why: 'same fact' }));
+  let f = r.findings[0]!;
+  check('covered → likely_duplicate', f.likely_duplicate === true, JSON.stringify(f));
+  check('… duplicate_of names the page @judge', f.duplicate_of === 'wiki:hosts/vision@judge', f.duplicate_of ?? '');
+  check('… judge fields set', f.judge_verdict === 'covered' && f.judge_confidence === 95 && f.judge_reason === 'same fact' && f.judge_by === 'wiki:hosts/vision', JSON.stringify(f));
+  check('… excerpt comes from the whole page, at the paragraph with the token', (f.matched_excerpt ?? '').startsWith('Root-Passwort auf vision geändert (2026-08-20)'), f.matched_excerpt ?? '');
+  check('… counted', r.judged === 1 && r.judgeMarked === 1 && r.marked === 1, JSON.stringify(r));
+  check('… the judge saw the whole page, not the chunk', calls[0]!.user.includes('Weitere Absätze') && calls[0]!.pages === 1);
+
+  // covered but below minConfidence → verdict recorded, nothing marked
+  r = await dedup(finding(22, 'vision-pw', 'Root-Passwort auf vision geändert.'), [lowCosHit], judgeWith({ answer: 'covered', confidence: 60, by: 1 }));
+  f = r.findings[0]!;
+  check('low confidence: verdict kept, not marked', f.judge_verdict === 'covered' && f.likely_duplicate !== true && r.judgeMarked === 0, JSON.stringify(f));
+
+  // adds_new while cosine HAD marked → cosine mark stays, novel_details set
+  r = await dedup(finding(23, 'vision-pw', 'Root-Passwort auf vision geändert, neu: 2026-09-25.'), [hit('memory', 'vision-root-passwort', 'Root-Passwort auf vision geändert (2026-08-20).', 0.92)], judgeWith({ answer: 'adds_new', confidence: 90, why: 'new date' }));
+  f = r.findings[0]!;
+  check('adds_new: cosine mark stays', f.likely_duplicate === true && f.duplicate_of === 'memory:vision-root-passwort@0.92', JSON.stringify(f));
+  check('… but novel_details says do not batch-dismiss', f.novel_details === true && f.judge_verdict === 'adds_new' && r.judgeCleared === 1);
+
+  // adds_new without any cosine mark → nothing marked, verdict recorded
+  r = await dedup(finding(24, 'vision-pw', 'Etwas ganz Neues.'), [lowCosHit], judgeWith({ answer: 'adds_new', confidence: 85 }));
+  f = r.findings[0]!;
+  check('adds_new alone: no mark, verdict only', f.likely_duplicate !== true && f.novel_details !== true && f.judge_verdict === 'adds_new');
+
+  // no candidates → no call
+  calls.length = 0;
+  r = await dedup(finding(25, 'x', 'Text.'), [], judgeWith({ answer: 'covered', confidence: 99 }));
+  check('no candidates: no call', calls.length === 0 && r.judged === 0 && r.findings[0]?.judge_verdict === undefined);
+
+  // unreadable reply → failed, finding untouched
+  r = await dedup(finding(26, 'x', 'Text.'), [lowCosHit], judgeWith({ answer: null, raw: 'garbage' }));
+  check('unreadable: counted failed, no verdict', r.judgeFailed === 1 && r.findings[0]?.judge_verdict === undefined && r.findings[0]?.likely_duplicate !== true);
+
+  // thrown error → failed, finding kept
+  r = await dedup(finding(27, 'x', 'Text.'), [lowCosHit], judgeWith(new Error('timeout')));
+  check('error: counted failed, finding kept', r.judgeFailed === 1 && r.findings.length === 1 && r.findings[0]?.judge_verdict === undefined);
+
+  // budget: maxPerRun 1 with two findings → second skipped
+  calls.length = 0;
+  const two = await applyRemDedup({ agent: 'test', dreamId: 'd4', findings: [finding(28, 'a', 'A.'), finding(29, 'b', 'B.')], existingMemorySlugs: [], loadedWikiSlugs: [], mgr: mgrWith([lowCosHit]) as never, config: CONFIG, judge: judgeWith({ answer: 'covered', confidence: 99, by: 1 }, { maxPerRun: 1 }) });
+  check('budget: one judged, one skipped', two.judged === 1 && two.judgeSkipped === 1 && calls.length === 1, JSON.stringify(two));
+  check('… the skipped one carries no verdict', two.findings[1]?.judge_verdict === undefined);
+
+  // distinct pages, capped at `candidates`
+  calls.length = 0;
+  const many = [hit('wiki', 'a', 'x', 0.6), hit('wiki', 'a', 'x2', 0.6), hit('wiki', 'b', 'y', 0.6), hit('memory', 'c', 'z', 0.6), hit('memory', 'd', 'w', 0.6)];
+  await dedup(finding(30, 'x', 'Text.'), many, judgeWith({ answer: 'adds_new', confidence: 80 }, { candidates: 2 }));
+  check('distinct pages, capped at candidates', calls[0]!.pages === 2, String(calls[0]!.pages));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
