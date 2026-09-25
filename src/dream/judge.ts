@@ -74,7 +74,10 @@ export function parseJudgeReply(raw: string, options: readonly string[]): JudgeA
     obj = null;
   }
   if (!obj) return { answer: null, confidence: 0, why: 'unparsable reply', raw };
-  const answerRaw = typeof obj.answer === 'string' ? obj.answer.trim().toLowerCase() : '';
+  // Either a named option (`answer`) or, for the coverage question, the
+  // boolean `covered` mapped onto its two options.
+  let answerRaw = typeof obj.answer === 'string' ? obj.answer.trim().toLowerCase() : '';
+  if (!answerRaw && typeof obj.covered === 'boolean' && options.length === 2) answerRaw = obj.covered ? options[0]!.toLowerCase() : options[1]!.toLowerCase();
   const answer = options.find((o) => o.toLowerCase() === answerRaw) ?? null;
   const confNum = typeof obj.confidence === 'number' ? obj.confidence : Number(obj.confidence);
   const confidence = Number.isFinite(confNum) ? Math.max(0, Math.min(100, Math.round(confNum))) : 0;
@@ -143,17 +146,20 @@ export function buildCoverageQuestion(
   texts: CoverageText[],
   limits: { maxPageChars: number } = { maxPageChars: 6000 },
 ): JudgeQuestion {
+  // Verbatim the wording of measurement run 3 (93 of 100 at 91 %): a
+  // boolean "covered" in the reply. Naming the alternative ("adds_new")
+  // as an option of its own tilted the same model towards it — run 5:
+  // 98 % precision, 69 % recall. The parser maps the boolean onto the
+  // options.
   const system =
-    'You judge whether a note that a background process wants to save is ALREADY COVERED by existing texts. ' +
-    'Read the note and every existing text in full.\n' +
-    'Answer "covered" when the substantive facts and claims of the note are already stated in one of the existing texts ' +
-    '(wording may differ; the texts may say more).\n' +
-    'Answer "adds_new" when the note adds facts, decisions, numbers or conclusions that none of the existing texts state.\n' +
-    'Reply with JSON only: {"answer": "covered" | "adds_new", "confidence": 0-100, "by": <number of the covering text, or null>, "why": "<one sentence naming the decisive fact>"}';
+    'You judge whether a note a background process wants to save is ALREADY COVERED by existing texts. ' +
+    'Covered means: the substantive facts and claims of the note are already stated in one of the existing texts (wording may differ). ' +
+    'Not covered means: the note adds facts, decisions, numbers or conclusions that none of the existing texts state. ' +
+    'Answer with JSON only.';
   const user =
     `NOTE TO SAVE\nWhy it was extracted: ${cut(finding.reason, 1500)}\nContent:\n${cut(finding.content || '(no content — only the reason above)', 4000)}\n\n` +
     `EXISTING TEXTS\n` +
     texts.map((t, i) => `[${i + 1}] ${t.id}\n${cut(t.text, limits.maxPageChars)}`).join('\n\n') +
-    '\n\nJSON answer:';
+    '\n\nAnswer as JSON: {"covered": true|false, "confidence": 0-100, "by": "<number of the covering text or null>", "why": "<one sentence>"}';
   return { system, user, options: COVERAGE_OPTIONS };
 }

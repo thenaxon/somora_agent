@@ -28,8 +28,12 @@ check('missing confidence → 0', a.answer === 'covered' && a.confidence === 0);
 
 // ── buildCoverageQuestion ──
 const q = buildCoverageQuestion({ reason: 'user said so', content: 'A'.repeat(5000) }, [{ id: 'wiki:x', text: 'B'.repeat(10000) }, { id: 'memory:y', text: 'short' }], { maxPageChars: 6000 });
-check('English, JSON-only instruction, both options named', /JSON only/.test(q.system) && /"covered"/.test(q.system) && /"adds_new"/.test(q.system));
-check('adds_new is defined by facts none of the texts state', /none of the existing texts state/.test(q.system));
+check('English, JSON-only instruction, covered/not covered defined', /JSON only/.test(q.system) && /Covered means/.test(q.system) && /Not covered means/.test(q.system));
+check('not covered is defined by facts none of the texts state', /none of the existing texts state/.test(q.system));
+check('reply shape asks for the boolean', /"covered": true\|false/.test(q.user));
+const b = parseJudgeReply('{"covered": false, "confidence": 90, "by": null, "why": "new"}', COVERAGE_OPTIONS);
+check('boolean covered maps onto the options', b.answer === 'adds_new' && b.confidence === 90);
+check('boolean true → covered', parseJudgeReply('{"covered": true, "confidence": 95, "by": "2"}', COVERAGE_OPTIONS).answer === 'covered');
 check('texts numbered with their ids', /\[1\] wiki:x/.test(q.user) && /\[2\] memory:y/.test(q.user));
 check('content capped at 4000, page at maxPageChars', q.user.indexOf('A'.repeat(4001)) < 0 && q.user.indexOf('B'.repeat(6001)) < 0 && q.user.includes('B'.repeat(6000)));
 check('options are the coverage pair', q.options.join(',') === 'covered,adds_new');
