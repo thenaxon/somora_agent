@@ -51,12 +51,13 @@ export interface ExtractContext {
   relevantWikiPages?: Array<{ slug: string; markdown: string }>;
   /** The resolved dream worker model. */
   workerModel: ResolvedModel;
-  /** Optional backup worker (`rem.fallback`). Taken over for the rest
-   *  of the run when `workerModel` is unreachable — connection
-   *  refused, 5xx, timeout — never on a 4xx rejection. The chunk that
-   *  hit the outage is retried once on the backup; nothing of it was
-   *  persisted, so the retry cannot double findings. */
-  fallbackModel?: ResolvedModel;
+  /** Optional backup workers (`rem.fallback`), in order. The next one
+   *  takes over for the rest of the run when the current worker is
+   *  unreachable — connection refused, 5xx, timeout — never on a 4xx
+   *  rejection. The chunk that hit the outage is retried on the
+   *  backup; nothing of it was persisted, so the retry cannot double
+   *  findings. When the chain is exhausted the chunk fails as before. */
+  fallbackModels?: ResolvedModel[];
   /** Per-chunk LLM-call timeout. */
   chunkTimeoutMs: number;
   /** Roughly tokens per chunk; events are packed up to this size. */
@@ -536,6 +537,8 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
   let client = buildClient(model);
   let reasoning = openAiReasoningState(ctx.thinking, model.model);
   let workerSwitch: WorkerSwitch | undefined;
+  // Position in the fallback chain: the next backup to try.
+  let fallbackIdx = 0;
   const accumulated: Omit<Finding, 'id' | 'status' | 'resolved_at'>[] = [];
   const startAt = ctx.startChunk ?? 0;
   let failedChunks = 0;
@@ -706,14 +709,15 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
       // per run, and only if the chunk produced nothing (it didn't —
       // findings are pushed after a successful parse). A 4xx is a
       // config error and must stay visible as a failed chunk.
+      const nextBackup = ctx.fallbackModels?.[fallbackIdx];
       if (
-        ctx.fallbackModel &&
-        !workerSwitch &&
+        nextBackup &&
         !(err instanceof UnreadableFindingsError) &&
         isAvailabilityError(err)
       ) {
+        fallbackIdx += 1;
         const from = `${model.providerName}/${model.modelId}`;
-        const to = `${ctx.fallbackModel.providerName}/${ctx.fallbackModel.modelId}`;
+        const to = `${nextBackup.providerName}/${nextBackup.modelId}`;
         workerSwitch = { from, to, reason: (err as Error).message.slice(0, 300), atChunk: i + 1 };
         logger.warn({
           msg: 'dream.worker_fallback',
@@ -724,17 +728,17 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
           to,
           reason: workerSwitch.reason,
         });
-        if (ctx.fallbackModel.model.contextWindow < ctx.chunkTokens * 1.2) {
+        if (nextBackup.model.contextWindow < ctx.chunkTokens * 1.2) {
           logger.warn({
             msg: 'dream.worker_fallback_small_window',
             agent: ctx.agent,
             to,
-            contextWindow: ctx.fallbackModel.model.contextWindow,
+            contextWindow: nextBackup.model.contextWindow,
             chunkTokens: ctx.chunkTokens,
             hint: 'rem.chunkTokens is close to the backup worker\'s window — chunks may overflow on the backup',
           });
         }
-        model = ctx.fallbackModel;
+        model = nextBackup;
         client = buildClient(model);
         reasoning = openAiReasoningState(ctx.thinking, model.model);
         if (ctx.onWorkerSwitch) await ctx.onWorkerSwitch(workerSwitch);

@@ -22,6 +22,8 @@ export const ENGINE_META_LABELS: Record<string, Record<string, string>> = {
   },
   'openai-compatible': {
     context_compacted: 'context compacted',
+    doom_loop_notice: 'loop noticed',
+    doom_loop_stop: 'loop stopped',
   },
 };
 

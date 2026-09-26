@@ -1690,6 +1690,20 @@ export const openAiCompatibleEngine: AgentEngine = {
         if (repeatRounds >= 5) {
           hitDoomLoop = true;
           logger.warn({ msg: 'engine.doom_loop_stop', engine: ENGINE, agent, session, round, calls: calls.map((c) => c.call.function.name) });
+          // Persisted like the notice, so the record shows WHY the turn
+          // was cut short, not only that it was (hardening test 2026-09-23).
+          yield {
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'doom_loop_stop',
+            payload: {
+              text: `Stopped after ${repeatRounds} identical tool rounds (${calls.map((c) => c.call.function.name).join(', ')}); the turn is forced to a final answer.`,
+              round,
+              repeats: repeatRounds,
+              calls: calls.map((c) => c.call.function.name),
+            },
+          };
           break;
         }
 
@@ -1859,6 +1873,19 @@ export const openAiCompatibleEngine: AgentEngine = {
         totalToolCalls += toolCallsForApi.length;
         if (repeatRounds === 3) {
           logger.info({ msg: 'engine.doom_loop_notice', engine: ENGINE, agent, session, round });
+          // The nudge the model gets is also written to the session, so
+          // a reviewer sees that the loop was noticed and what was said.
+          yield {
+            kind: 'engine_meta',
+            ts: ts(),
+            engine: ENGINE,
+            itemType: 'doom_loop_notice',
+            payload: {
+              text: `Same tool call(s) three rounds in a row (${calls.map((c) => c.call.function.name).join(', ')}); the model was told to change course — two more identical rounds end the turn.`,
+              round,
+              calls: calls.map((c) => c.call.function.name),
+            },
+          };
           loopMessages.push({
             role: 'user',
             content:

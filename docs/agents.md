@@ -202,6 +202,7 @@ rem:
   model: gemma4big          # required when enabled — never inherits the chat model
   # fallback: deep4pro      # optional backup worker, used only when `model`
                             # is unreachable (connection refused, 5xx, timeout)
+  # fallback: [glm, deep41flash]  # or an ordered chain, tried in turn
   idleMinutes: 30           # auto-trigger after N min idle
   chunkTokens: 50000        # range-split for very long sessions
   chunkTimeoutMs: 600000    # 10 min/chunk; gemma-friendly

@@ -109,8 +109,11 @@ const RemConfigSchema = z.object({
    * chat fallback: REM must stay on a model you chose for its cost.
    * A 4xx (bad request, auth, unsupported parameter) is a config
    * problem and does NOT switch — the dream fails visibly instead.
+   * One ref or an ordered chain (`[glm, deep41flash]`), tried in turn
+   * like the chat `fallback` (Rene, 2026-09-26: a GPU profile that
+   * swaps models leaves one backup down together with the primary).
    */
-  fallback: z.string().min(1).optional(),
+  fallback: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
   /**
    * Idle minutes before the auto-REM-trigger fires. Reset on every
    * chat.send to this agent. Default 30.

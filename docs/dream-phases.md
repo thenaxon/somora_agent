@@ -128,7 +128,7 @@ Configured per-agent in `agent.yaml`:
 rem:
   enabled: true
   model: <alias>             # alias from config.yaml or 'provider/modelId'
-  # fallback: <alias>        # optional backup worker — see below
+  # fallback: <alias>        # optional backup worker — or [a, b], tried in turn
   idleMinutes: 30
   chunkTokens: 50000         # range-split for very long sessions
   chunkTimeoutMs: 600000     # 10 min per chunk (room for local models)
@@ -144,14 +144,17 @@ silently land on an expensive model. A small local model (30B class)
 is good enough for atomic-fact extraction with the right prompt, and
 REM runs often, so cost matters. A strong hosted model works too.
 
-**`rem.fallback` — a backup worker.** A local worker is away whenever
-its box switches profiles, benchmarks or reboots. With `fallback:` set
-to a second model (typically a cheap hosted one on a *different*
-provider), a run whose primary is unreachable — connection refused,
-5xx, timeout, 429 after the SDK's retries — continues on the backup
-from the chunk that hit the outage; chunks the primary already
-finished are kept, the failed chunk is retried once on the backup, and
-the backup stays in charge for the rest of that run. What does NOT
+**`rem.fallback` — a backup worker, or a chain of them.** A local
+worker is away whenever its box switches profiles, benchmarks or
+reboots. With `fallback:` set to a second model (typically a cheap
+hosted one on a *different* provider) — or to an ordered list,
+`fallback: [glm, deep41flash]`, like the chat `fallback` — a run whose
+current worker is unreachable — connection refused, 5xx, timeout, 429
+after the SDK's retries — continues on the next backup from the chunk
+that hit the outage; chunks already finished are kept, the failed chunk
+is retried on the backup, and the backup stays in charge until it is
+unreachable itself, when the next one in the chain takes over. When the
+chain is exhausted the chunk fails as it would without a backup. What does NOT
 switch: a 4xx rejection (bad parameter, unsupported reasoning level,
 auth) — that is a config problem and the dream fails visibly; and a
 run paused by user activity — that pauses as before. The agent's chat

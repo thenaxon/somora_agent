@@ -237,7 +237,9 @@ project during a running builder turn is refused (the scope and the
 working directory would move under it); a first pin is allowed. Chat agents
 and a builder without a pinned folder keep the old rule (the blacklist
 alone). The shell is not gated: `exec` can still write
-anywhere, which is what command approvals would cover.
+anywhere, which is what command approvals would cover — and deleting
+inside the project folder, `rm -rf` of its subfolders included, stays
+allowed on purpose: the folder is the builder's to rebuild.
 
 ## Limits and loop
 

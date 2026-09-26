@@ -220,7 +220,8 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   // Resolve worker model first — fail-loud per design (RemConfig requires
   // an explicit model when enabled, no fallback).
   let workerModel: ResolvedModel;
-  let fallbackModel: ResolvedModel | undefined;
+  // The fallback chain in config order, primary and duplicates dropped.
+  const fallbackModels: ResolvedModel[] = [];
   // The coverage judge's model (rem.dedup.judge): the worker unless a
   // ref is named; validated here so a typo fails the run at its start.
   let judgeModel: ResolvedModel | undefined;
@@ -231,15 +232,16 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     }
     // The backup is validated up front too: a typo in `rem.fallback`
     // must surface now, not on the day the primary is down.
-    if (args.rem.fallback) {
-      fallbackModel = resolveDreamModel(args.config, args.rem.fallback);
-      if (
-        fallbackModel.providerName === workerModel.providerName &&
-        fallbackModel.modelId === workerModel.modelId
-      ) {
-        logger.warn({ msg: 'dream.worker_fallback_is_primary', agent: args.agent, ref: args.rem.fallback });
-        fallbackModel = undefined;
+    const refs = args.rem.fallback ? (Array.isArray(args.rem.fallback) ? args.rem.fallback : [args.rem.fallback]) : [];
+    for (const ref of refs) {
+      const m = resolveDreamModel(args.config, ref);
+      const same = (a: ResolvedModel, b: ResolvedModel) => a.providerName === b.providerName && a.modelId === b.modelId;
+      if (same(m, workerModel)) {
+        logger.warn({ msg: 'dream.worker_fallback_is_primary', agent: args.agent, ref });
+        continue;
       }
+      if (fallbackModels.some((f) => same(f, m))) continue;
+      fallbackModels.push(m);
     }
   } catch (err) {
     logger.error({
@@ -394,8 +396,8 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     chunks_done: 0,
     chunks_total: 0,
     worker_model_ref: `${workerModel.providerName}/${workerModel.modelId}`,
-    ...(fallbackModel
-      ? { worker_fallback_ref: `${fallbackModel.providerName}/${fallbackModel.modelId}` }
+    ...(fallbackModels.length > 0
+      ? { worker_fallback_ref: fallbackModels.map((f) => `${f.providerName}/${f.modelId}`).join(', ') }
       : {}),
     findings: [],
   };
@@ -431,7 +433,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       wikiIndex,
       relevantWikiPages: referencedWiki,
       workerModel,
-      ...(fallbackModel ? { fallbackModel } : {}),
+      ...(fallbackModels.length > 0 ? { fallbackModels } : {}),
       chunkTimeoutMs: args.rem.chunkTimeoutMs,
       chunkTokens: args.rem.chunkTokens,
       thinking: args.rem.thinking,
@@ -471,7 +473,10 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
               // The judge follows the worker: when the run switched to
               // rem.fallback, the primary is unreachable for the judge
               // too — unless the config names a judge model of its own.
-              model: meta.worker_switch && fallbackModel && !args.config.rem.dedup.judge.model ? fallbackModel : judgeModel,
+              model:
+                meta.worker_switch && !args.config.rem.dedup.judge.model
+                  ? (fallbackModels.find((f) => `${f.providerName}/${f.modelId}` === meta.worker_switch!.to) ?? judgeModel)
+                  : judgeModel,
               config: args.config.rem.dedup.judge,
               ...(args.config.rem.dedup.judge.thinking ? { thinking: args.config.rem.dedup.judge.thinking } : {}),
             },
