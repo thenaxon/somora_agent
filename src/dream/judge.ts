@@ -160,6 +160,9 @@ export function buildCoverageQuestion(
     `NOTE TO SAVE\nWhy it was extracted: ${cut(finding.reason, 1500)}\nContent:\n${cut(finding.content || '(no content — only the reason above)', 4000)}\n\n` +
     `EXISTING TEXTS\n` +
     texts.map((t, i) => `[${i + 1}] ${t.id}\n${cut(t.text, limits.maxPageChars)}`).join('\n\n') +
-    '\n\nAnswer as JSON: {"covered": true|false, "confidence": 0-100, "by": "<number of the covering text or null>", "why": "<one sentence>"}';
+    // `why` before `covered`: the model commits to its reason first and
+    // the verdict follows from it (2026-09-26: a "covered, 97" whose
+    // reason said the page does NOT mention the fact).
+    '\n\nAnswer as JSON: {"why": "<one sentence naming the decisive fact>", "by": "<number of the covering text or null>", "covered": true|false, "confidence": 0-100}';
   return { system, user, options: COVERAGE_OPTIONS };
 }

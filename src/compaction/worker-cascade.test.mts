@@ -154,5 +154,21 @@ const config = { triggerRatio: 0.8, safetyCushionPairs: 4 } as CompactionConfig;
   check('only the listed worker is asked', asked.join(',') === 'mid', asked.join(','));
 }
 
+// ── preferSessionModel: the session's own model goes first (2026-09-26) ──
+{
+  const small = model('small', 32_000);
+  const mid = model('mid', 128_000);
+  const session = model('deep41flash', 700_000);
+  const ranked = rankCompactionModels(20_000, [small, mid, session], { workers: ['mid', 'small'], sessionModel: session });
+  check('session model first, then the workers as written', refs(ranked).join(',') === 'deep41flash,mid,small', refs(ranked).join(','));
+  const tooSmall = model('tiny', 8_000);
+  const r2 = rankCompactionModels(20_000, [small, mid, tooSmall], { workers: ['mid'], sessionModel: tooSmall });
+  check('a session model whose window does not fit is skipped', refs(r2).join(',') === 'mid', refs(r2).join(','));
+  const r3 = rankCompactionModels(20_000, [small, mid], { workers: ['mid'] });
+  check('without the option nothing changes', refs(r3).join(',') === 'mid', refs(r3).join(','));
+  const r4 = rankCompactionModels(20_000, [small, mid, session], { override: small, workers: ['mid'], sessionModel: session });
+  check('an override still goes before the session model', refs(r4).join(',') === 'small,deep41flash,mid', refs(r4).join(','));
+}
+
 console.log(`\nworker-cascade: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

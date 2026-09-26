@@ -240,6 +240,16 @@ export const CompactionConfigSchema = z
     modelOverride: z.string().min(1).optional(),
     /** Models allowed to summarize, in the order they should be tried. */
     workers: z.array(z.string().min(1)).optional(),
+    /**
+     * Try the session's own model first — the one that is loaded and
+     * answering right now — before `workers` (naxon, 2026-09-26: a
+     * session on a model outside the list waited for workers that were
+     * not loaded and ended on a weaker one). Only when its engine can
+     * summarize and its window fits; `workers` stay the cascade behind
+     * it. Default false: a session on a hosted subscription model would
+     * otherwise start paying for summaries.
+     */
+    preferSessionModel: z.boolean().optional(),
   })
   .optional();
 export type CompactionConfigSchema = z.infer<typeof CompactionConfigSchema>;

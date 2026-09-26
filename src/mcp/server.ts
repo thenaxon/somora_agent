@@ -26,6 +26,7 @@ import { MCP_SERVER_NAME } from './config.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { setMaxWikiCallsPerTurn } from '../dream/loop-state.ts';
 import { getMemoryManager, shutdownMemoryRegistry } from '../memory/registry.ts';
+import { mcpInputSchemaFor } from './tool-schema.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { logger } from '../server/logger.ts';
 import { isToolAllowed } from '../tools/gating.ts';
@@ -273,16 +274,14 @@ async function main(): Promise<void> {
       logger.debug({ msg: 'mcp.tool_gated', agent, tool: tool.name });
       continue;
     }
-    // Each tool's inputSchema is a `z.object({...})`; the high-level MCP
-    // server wants the raw shape (z's internal `.shape` accessor), not the
-    // wrapping ZodObject. Extract it without losing types we care about.
-    const inputShape = (tool.inputSchema as unknown as ZodObject<ZodRawShape>).shape;
+    // The full schema, strict for objects — see src/mcp/tool-schema.ts.
+    const inputSchema = mcpInputSchemaFor(tool);
 
     server.registerTool(
       tool.name,
       {
         description: persona?.kind === 'builder' ? builderToolDescription(tool.name, tool.description) : tool.description,
-        inputSchema: inputShape,
+        inputSchema,
       },
       async (args: unknown) => {
         const result = await registry.invoke(tool.name, args, ctx);

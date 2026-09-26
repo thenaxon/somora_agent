@@ -468,7 +468,10 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       ...(judgeModel
         ? {
             judge: {
-              model: judgeModel,
+              // The judge follows the worker: when the run switched to
+              // rem.fallback, the primary is unreachable for the judge
+              // too — unless the config names a judge model of its own.
+              model: meta.worker_switch && fallbackModel && !args.config.rem.dedup.judge.model ? fallbackModel : judgeModel,
               config: args.config.rem.dedup.judge,
               ...(args.config.rem.dedup.judge.thinking ? { thinking: args.config.rem.dedup.judge.thinking } : {}),
             },

@@ -297,7 +297,9 @@ rest of the run goes unjudged and the log says so once. The run's
 Off by default. The model is the REM worker of the agent whose dream
 is running unless `model` names another one — a smaller, cheaper
 model does fine, the question is easier than the extraction. A named
-model is validated when the run starts, like `rem.fallback`. Cost:
+model is validated when the run starts, like `rem.fallback`; without
+one the judge follows the worker, so when a run switched to
+`rem.fallback` the judge asks the fallback too. Cost:
 one call per finding with candidates, a few thousand input tokens each
 (the pages), so on a hosted model keep `maxPerRun` in mind.
 

@@ -77,6 +77,11 @@ export interface HubCallResult {
 
 const KEEPALIVE_INTERVAL_MS = 180_000;
 const KEEPALIVE_SWEEP_MS = 60_000;
+/** A server that does not declare tools.listChanged (a stateless HTTP
+ *  server like networth never can) gets its tool list read again this
+ *  often; a changed catalog is announced like a notification would be
+ *  (naxon, 2026-09-26). */
+const RELIST_INTERVAL_MS = 300_000;
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;
 const PARKED_REPROBE_MS = 300_000;
@@ -97,6 +102,10 @@ interface ServerRuntime {
   client: Client | null;
   transportKind?: 'streamable-http' | 'sse';
   tools: DiscoveredTool[];
+  /** Whether the server declared tools.listChanged at handshake. */
+  listChanged?: boolean;
+  /** Last periodic tools/list for a server without listChanged. */
+  lastRelistAt?: number;
   lastError?: string;
   lastConnectedAt?: number;
   lastActivityAt: number;
@@ -456,6 +465,8 @@ export class McpHubManager {
 
       // listChanged only when the server declares the capability.
       const caps = client.getServerCapabilities();
+      s.listChanged = Boolean(caps?.tools?.listChanged);
+      s.lastRelistAt = Date.now();
       if (caps?.tools?.listChanged) {
         client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
           logger.info({ msg: 'mcp.hub.list_changed', server: s.name });
@@ -662,6 +673,25 @@ export class McpHubManager {
         void this.ensureConnected(s.name).catch(() => {});
         this.emitCatalogChange();
         continue;
+      }
+      if (!s.listChanged && now - (s.lastRelistAt ?? 0) >= RELIST_INTERVAL_MS) {
+        s.lastRelistAt = now;
+        try {
+          const fresh = await this.discoverTools(s, s.client);
+          if (JSON.stringify(fresh) !== JSON.stringify(s.tools)) {
+            logger.info({ msg: 'mcp.hub.relist_changed', server: s.name, before: s.tools.length, after: fresh.length });
+            s.tools = fresh;
+            this.emitCatalogChange();
+          }
+          s.lastActivityAt = Date.now();
+          continue;
+        } catch (err) {
+          logger.warn({
+            msg: 'mcp.hub.relist_failed',
+            server: s.name,
+            error: scrubCredentials(String((err as Error)?.message ?? err)),
+          });
+        }
       }
       if (now - s.lastActivityAt < KEEPALIVE_INTERVAL_MS) continue;
       try {

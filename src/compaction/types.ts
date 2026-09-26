@@ -52,6 +52,8 @@ export interface CompactionConfig {
    * somora has no price data, the operator does.
    */
   workers?: string[];
+  /** Try the session's own model before `workers` (see config docs). */
+  preferSessionModel?: boolean;
 }
 
 function parsePositiveFloat(raw: string | undefined): number | undefined {
@@ -90,6 +92,7 @@ export function resolveCompactionConfig(
       safetyCushionPairs?: number;
       modelOverride?: string;
       workers?: string[];
+      preferSessionModel?: boolean;
     };
   },
 ): CompactionConfig {
@@ -113,6 +116,7 @@ export function resolveCompactionConfig(
     workers:
       (envWorkers && envWorkers.length > 0 ? envWorkers : undefined)
       ?? (cfg.workers && cfg.workers.length > 0 ? cfg.workers : undefined),
+    ...(cfg.preferSessionModel ? { preferSessionModel: true } : {}),
   };
 }
 

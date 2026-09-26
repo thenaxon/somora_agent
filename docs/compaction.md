@@ -158,6 +158,15 @@ a model means you meant it. An entry that matches no configured alias
 or `provider/modelId` is skipped with a `compaction.workers_unresolved`
 warning.
 
+`compaction.preferSessionModel: true` puts the session's own model —
+the one answering right now, session override included — in front of
+the list, provided its engine can summarise and its window fits the
+summary with headroom; the list stays the cascade behind it. Off by
+default: a session on a hosted subscription model would otherwise start
+paying for its own summaries. Use it when sessions run on models that
+are loaded and answering while the listed workers may not be (a GPU
+profile that swaps models).
+
 Without the list, somora picks automatically **from every configured
 model on every engine that has a one-shot path** (claude-cli,
 codex-cli, openai-compatible), in this order:

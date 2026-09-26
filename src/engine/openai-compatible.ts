@@ -1047,7 +1047,8 @@ export const openAiCompatibleEngine: AgentEngine = {
               content:
                 `[somora] Your task list has not changed for ${TODO_STALE_ROUNDS} tool rounds and ${open.length} item(s) are still open ` +
                 `(in progress: ${open.filter((t) => t.status === 'in_progress').map((t) => t.content).join('; ') || 'none'}). ` +
-                'Bring it up to date with todo_write now — completed for what is verified, in_progress for the step you are on — then continue.',
+                'Bring it up to date with todo_write now — completed for what is verified, in_progress for the step you are on — then continue, ' +
+                'and from here on update the list in the round an item changes, not in a batch later.',
             } as ChatMessage);
           }
         }

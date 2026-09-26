@@ -166,7 +166,10 @@ export async function compactTurnMidway(input: MidturnCompactionInput): Promise<
   ].join('\n');
   const estimate = Math.ceil((WORK_STATE_TEMPLATE.length + user.length) / 4);
   const candidates = input.availableModels.filter((m) => SUMMARIZE_ENGINES.has(m.provider.engine));
-  const ranked = rankCompactionModels(estimate, candidates, { workers: input.config.workers });
+  const ranked = rankCompactionModels(estimate, candidates, {
+    workers: input.config.workers,
+    ...(input.config.preferSessionModel ? { sessionModel: input.resolvedModel } : {}),
+  });
   let summary: string | null = null;
   let workerName = '';
   for (const worker of ranked.slice(0, 3)) {

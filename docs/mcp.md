@@ -315,3 +315,18 @@ after a few seconds, then with exponential backoff up to a minute, and
 every 5 min once the error looks permanent (`needs-auth`, missing env
 var). Manual `reconnect` resets the backoff and retries immediately. `/mcp/call` exists as a loopback-only
 dispatch endpoint for debugging a tool without an LLM in the loop.
+
+A tool that changes upstream — its description or its input schema —
+reaches every engine without a somora restart: a server that declares
+`tools.listChanged` pushes the change, and a server that cannot (a
+stateless HTTP server never can) has its tool list read again every
+5 minutes by the keepalive sweep (`mcp.hub.relist_changed` in the log
+when something differs); the bridge registers a changed tool anew
+(`mcp.bridge_tool_updated`).
+
+somora's own tools, when they run through the MCP child (claude-cli,
+codex-cli), refuse a call with a parameter the tool does not know —
+`exec({resource: "cerebro"})` instead of `target` fails with an input
+validation error naming `resource`, instead of silently dropping it and
+running on the local host. Bridged tools of other MCP servers keep
+taking whatever the model sends; validation is that server's job.

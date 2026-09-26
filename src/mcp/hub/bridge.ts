@@ -9,6 +9,7 @@
 // don't need a registry-remove primitive.
 
 import { z } from 'zod';
+import { logger } from '../../server/logger.ts';
 import type { ToolRegistry } from '../../tools/registry.ts';
 import type { ToolDefinition } from '../../tools/types.ts';
 import type { HubCallResult, McpHubManager } from './manager.ts';
@@ -19,20 +20,35 @@ import type { HubCallResult, McpHubManager } from './manager.ts';
 const PASSTHROUGH_INPUT = z.object({}).passthrough();
 
 export function bridgeMcpTools(manager: McpHubManager, registry: ToolRegistry): void {
-  const registered = new Set<string>();
+  // fullName → fingerprint of what the model sees. A tool whose
+  // description or input schema changed upstream is registered again
+  // (ToolRegistry.register replaces on name); until 2026-09-26 a known
+  // name was skipped for good, so a changed tool reached the in-process
+  // engines only after a somora restart (naxon's networth report).
+  const registered = new Map<string, string>();
 
   const refresh = (): void => {
     for (const [server, tools] of manager.connectedTools()) {
       for (const tool of tools) {
-        if (registered.has(tool.fullName)) continue;
-        registered.add(tool.fullName);
+        const fingerprint = toolFingerprint(tool);
+        const before = registered.get(tool.fullName);
+        if (before === fingerprint) continue;
+        registered.set(tool.fullName, fingerprint);
         registry.register(buildDefinition(manager, server, tool.rawName, tool.fullName, tool));
+        if (before !== undefined) {
+          logger.info({ msg: 'mcp.bridge_tool_updated', server, tool: tool.fullName });
+        }
       }
     }
   };
 
   manager.addCatalogListener(refresh);
   refresh();
+}
+
+/** What the model sees of a tool — the bridge re-registers when it changes. */
+export function toolFingerprint(tool: { description: string; inputSchema: Record<string, unknown> }): string {
+  return JSON.stringify([tool.description, tool.inputSchema]);
 }
 
 function buildDefinition(

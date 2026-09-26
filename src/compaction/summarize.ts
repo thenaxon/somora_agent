@@ -188,13 +188,24 @@ function matchesRef(m: ResolvedModel, ref: string): boolean {
 export function rankCompactionModels(
   estimatedTokens: number,
   candidates: ResolvedModel[],
-  opts: { override?: ResolvedModel; workers?: readonly string[] } = {},
+  opts: { override?: ResolvedModel; workers?: readonly string[]; sessionModel?: ResolvedModel } = {},
 ): ResolvedModel[] {
   const ordered: ResolvedModel[] = [];
   const push = (m: ResolvedModel | undefined): void => {
     if (m && !ordered.includes(m)) ordered.push(m);
   };
   push(opts.override);
+  // compaction.preferSessionModel: the session's own model goes before
+  // the workers when it can summarize and its window fits — with the
+  // same headroom the auto-pick uses, an operator's `workers` entries
+  // are trusted as written but the session model was not chosen for
+  // summaries, so it is checked.
+  if (opts.sessionModel) {
+    const m = opts.sessionModel;
+    const same = candidates.find((c) => c.providerName === m.providerName && c.modelId === m.modelId) ?? m;
+    const required = Math.ceil(estimatedTokens * HEADROOM_FACTOR);
+    if (SUMMARIZE_ENGINES.has(same.provider.engine) && same.model.contextWindow >= required) push(same);
+  }
   if (opts.workers && opts.workers.length > 0) {
     for (const ref of opts.workers) push(candidates.find((c) => matchesRef(c, ref)));
     return ordered;
@@ -571,6 +582,7 @@ export async function runCompaction(
   const ranked = rankCompactionModels(tokensBefore, availableModels, {
     override,
     workers: config.workers,
+    ...(config.preferSessionModel ? { sessionModel: resolvedModel } : {}),
   });
   if (ranked.length === 0) {
     logger.warn({

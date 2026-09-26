@@ -588,6 +588,10 @@ export class MemoryManager {
       const firstChunk = memDb.db
         .prepare(`SELECT id FROM chunks WHERE file_path = ? LIMIT 1`)
         .get(path) as { id: number } | undefined;
+      // An empty page (two 0-byte vault stubs, 2026-09-26) has no chunk
+      // row by design — without this it counted as "indexed" on every
+      // ten-minute sweep.
+      if (!firstChunk && chunkMarkdown(buf.toString('utf8'), this.cfg.chunking).length === 0) return 'skipped';
       if (firstChunk) {
         // Second self-heal: chunks indexed while the embedder was down
         // (or before one was configured) have no vec rows. Hash-match

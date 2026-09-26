@@ -30,4 +30,7 @@ const unattended = buildBuilderHarnessPrompt(new Set(['file_read', 'file_patch',
 assert.ok(unattended.includes('# Task list'));
 assert.ok(unattended.includes('agent_ask reaches a colleague'));
 assert.ok(!unattended.includes('spawn_subagent starts'));
+// todo_write's short text carries the rules that keep the panel honest (naxon, 2026-09-26)
+assert.ok(/never a batch/.test(BUILDER_SHORT_DESCRIPTIONS.todo_write!), 'todo_write short description forbids batch completions');
+assert.ok(/in the round it is verified/.test(BUILDER_SHORT_DESCRIPTIONS.todo_write!));
 console.log('short-descriptions.test: ok');
