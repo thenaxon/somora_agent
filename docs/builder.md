@@ -248,9 +248,11 @@ A builder's turn on the openai-compatible engine runs with `maxRounds`
 `agentLoop:` overrides). Two brakes end a turn early with a request for
 the report: the wall-clock cap, and a **doom loop** — the same tool
 calls with the same arguments five rounds in a row (a notice goes to
-the model after three). The forced final answer names the reason
-(`turn_end.forced_final`: `round_cap`, `tool_budget`, `time_cap`,
-`doom_loop`, `scaffold_leak`).
+the model after three). Both leave a trace in the session — engine
+rows "loop noticed" and "loop stopped" naming the repeated calls — so a
+reviewer sees why a turn was cut short, not only that it was. The
+forced final answer names the reason (`turn_end.forced_final`:
+`round_cap`, `tool_budget`, `time_cap`, `doom_loop`, `scaffold_leak`).
 
 A round that produced reasoning but neither text nor a tool call was cut
 off while thinking — the model's output cap (`maxTokens`, which includes
