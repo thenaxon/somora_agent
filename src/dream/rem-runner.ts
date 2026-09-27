@@ -21,6 +21,7 @@ import {
 } from './storage.ts';
 import { extractFromSession, resolveDreamModel } from './rem-extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
+import { modelRef, modelUnavailable, unavailableReason } from '../engine/model-availability.ts';
 import { resolveJudgeModel } from './judge.ts';
 import { applyRemDedup } from './rem-dedup.ts';
 import { loadWikiContext } from './wiki-context.ts';
@@ -222,6 +223,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
   let workerModel: ResolvedModel;
   // The fallback chain in config order, primary and duplicates dropped.
   const fallbackModels: ResolvedModel[] = [];
+  let startSwitch: { from: string; to: string; reason: string; at_chunk: number } | undefined;
   // The coverage judge's model (rem.dedup.judge): the worker unless a
   // ref is named; validated here so a typo fails the run at its start.
   let judgeModel: ResolvedModel | undefined;
@@ -242,6 +244,22 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
       }
       if (fallbackModels.some((f) => same(f, m))) continue;
       fallbackModels.push(m);
+    }
+    // A worker marked unavailable (model-availability.ts) is not knocked
+    // on again: the run starts on the first backup that is not marked,
+    // recorded as a switch at chunk 0 so the file and the judge follow.
+    const startMark = modelUnavailable(modelRef(workerModel));
+    if (startMark) {
+      const idx = fallbackModels.findIndex((m) => !modelUnavailable(modelRef(m)));
+      if (idx >= 0) {
+        const to = fallbackModels[idx]!;
+        startSwitch = { from: modelRef(workerModel), to: modelRef(to), reason: unavailableReason(startMark), at_chunk: 0 };
+        logger.info({ msg: 'dream.worker_start_on_fallback', agent: args.agent, ...startSwitch });
+        const rest = fallbackModels.slice(idx + 1);
+        fallbackModels.length = 0;
+        fallbackModels.push(...rest);
+        workerModel = to;
+      }
     }
   } catch (err) {
     logger.error({
@@ -399,6 +417,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
     ...(fallbackModels.length > 0
       ? { worker_fallback_ref: fallbackModels.map((f) => `${f.providerName}/${f.modelId}`).join(', ') }
       : {}),
+    ...(startSwitch ? { worker_switch: startSwitch } : {}),
     findings: [],
   };
   let file: DreamFile = {

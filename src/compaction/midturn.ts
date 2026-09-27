@@ -17,8 +17,10 @@
 // untouched — this shapes the request, not the record.
 
 import type { ResolvedModel } from '../config/types.ts';
+import { isAvailabilityError } from '../engine/availability.ts';
+import { markModelAvailable, markModelUnavailable } from '../engine/model-availability.ts';
 import { logger } from '../server/logger.ts';
-import { rankCompactionModels, summarizeViaEngine, SUMMARIZE_ENGINES } from './summarize.ts';
+import { dropUnavailable, rankCompactionModels, summarizeViaEngine, SUMMARIZE_ENGINES } from './summarize.ts';
 import type { CompactionConfig } from './types.ts';
 
 /** Any chat message shape the engine keeps in its loop. */
@@ -172,7 +174,7 @@ export async function compactTurnMidway(input: MidturnCompactionInput): Promise<
   });
   let summary: string | null = null;
   let workerName = '';
-  for (const worker of ranked.slice(0, 3)) {
+  for (const worker of dropUnavailable(ranked).slice(0, 3)) {
     try {
       const r = input.summarize
         ? await input.summarize(worker, WORK_STATE_TEMPLATE, user)
@@ -185,9 +187,11 @@ export async function compactTurnMidway(input: MidturnCompactionInput): Promise<
       if (r.text.trim()) {
         summary = r.text.trim();
         workerName = `${worker.providerName}/${worker.modelId}`;
+        markModelAvailable(workerName);
         break;
       }
     } catch (err) {
+      if (isAvailabilityError(err)) markModelUnavailable(`${worker.providerName}/${worker.modelId}`, (err as Error).message);
       logger.warn({ msg: 'compaction.midturn_worker_failed', agent: input.agent, worker: `${worker.providerName}/${worker.modelId}`, err: (err as Error).message });
     }
   }

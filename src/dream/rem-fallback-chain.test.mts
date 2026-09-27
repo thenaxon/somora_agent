@@ -11,6 +11,7 @@ const home = join(tmpdir(), `somora-rem-chain-${process.pid}`);
 mkdirSync(home, { recursive: true });
 process.env.SOMORA_HOME = home;
 const { extractFromSession } = await import('./rem-extract.ts');
+const { markModelUnavailable, modelUnavailable, resetModelAvailability } = await import('../engine/model-availability.ts');
 
 let pass = 0;
 let fail = 0;
@@ -75,6 +76,25 @@ const r2 = await extractFromSession({
   onWorkerSwitch: async (sw: unknown) => { switches2.push(sw); },
 } as never);
 check('exhausted chain: chunk fails, one switch recorded', r2.failedChunks === 1 && switches2.length === 1, JSON.stringify({ failed: r2.failedChunks, switches: switches2.length }));
+
+// a marked backup is skipped when a later one is free; the dead primary is marked
+resetModelAvailability();
+const switches3: Array<{ from: string; to: string }> = [];
+markModelUnavailable('fake/backup-1', 'down earlier');
+const r3 = await extractFromSession({
+  agent: 'testagent',
+  events: [{ ts: 1000, kind: 'user_message', text: 'remember the chain fact' }] as never[],
+  existingMemory: [],
+  referencedVault: [],
+  workerModel: model('primary', await closedPort()),
+  fallbackModels: [model('backup-1', await closedPort()), model('backup-2', goodPort)],
+  chunkTimeoutMs: 20_000,
+  chunkTokens: 50_000,
+  onWorkerSwitch: async (sw: { from: string; to: string }) => { switches3.push(sw); },
+} as never);
+check('marked backup skipped: one switch straight to backup-2', r3.completed === true && switches3.length === 1 && switches3[0]!.to === 'fake/backup-2', JSON.stringify(switches3));
+check('the dead primary got a mark, the answering backup has none', modelUnavailable('fake/primary') !== null && modelUnavailable('fake/backup-2') === null);
+resetModelAvailability();
 
 await new Promise<void>((r) => good.close(() => r()));
 rmSync(home, { recursive: true, force: true });

@@ -158,6 +158,8 @@ a model means you meant it. An entry that matches no configured alias
 or `provider/modelId` is skipped with a `compaction.workers_unresolved`
 warning.
 
+Workers that are currently marked unreachable (see `fallback.retryUnavailableMinutes` in [setup.md](setup.md#tunables) — the note the chat fallback and REM share) are left out of the cascade, unless that would leave nothing to try.
+
 `compaction.preferSessionModel: true` puts the session's own model —
 the one answering right now, session override included — in front of
 the list, provided its engine can summarise and its window fits the

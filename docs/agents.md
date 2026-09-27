@@ -102,6 +102,14 @@ fallback: gpt55       # used when primary fails before producing any output
                       # output or tool call. Put at least one entry on a
                       # different host/provider than the primary: two
                       # models on the same GPU box go down together.
+                      # A model that was unreachable is remembered as such
+                      # (config `fallback.retryUnavailableMinutes`, default
+                      # 60): the next turns start on the working backup
+                      # right away instead of knocking on the dead primary
+                      # again, still with the fallback chip on the turn
+                      # (its reason then reads "not tried — marked
+                      # unavailable since …"). After the hour the primary
+                      # is tried once more; a success drops the note.
 #
 # One exception to "before producing any output": some providers stream
 # their refusal AS assistant text and only then report the error — a

@@ -15,6 +15,8 @@
 //     for histories larger than any single model is Phase 3.
 
 import { existsSync, mkdirSync } from 'node:fs';
+import { isAvailabilityError } from '../engine/availability.ts';
+import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable } from '../engine/model-availability.ts';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -185,6 +187,13 @@ function matchesRef(m: ResolvedModel, ref: string): boolean {
  * summary prompt with headroom, smallest window first, so a summary does
  * not burn the biggest model in the house.
  */
+/** Drop models marked unavailable (model-availability.ts) from a ranked
+ *  list — unless that would leave nothing, then the list stays. */
+export function dropUnavailable(ranked: ResolvedModel[]): ResolvedModel[] {
+  const kept = ranked.filter((m) => modelUnavailable(modelRef(m)) === null);
+  return kept.length > 0 ? kept : ranked;
+}
+
 export function rankCompactionModels(
   estimatedTokens: number,
   candidates: ResolvedModel[],
@@ -613,7 +622,7 @@ export async function runCompaction(
   // and the whole turn fell through to another chat model. somora cannot
   // know which machine sits behind which route — so it does not guess,
   // it just asks the next one.
-  const cascade = ranked.slice(0, MAX_WORKER_ATTEMPTS);
+  const cascade = dropUnavailable(ranked).slice(0, MAX_WORKER_ATTEMPTS);
   const summarize = input.summarize ?? ((worker: ResolvedModel) =>
     summarizeViaEngine(worker.provider.engine, {
       systemPrompt: system,
@@ -639,9 +648,11 @@ export async function runCompaction(
     try {
       summaryResult = await summarize(candidate);
       worker = candidate;
+      markModelAvailable(modelRef(candidate));
       break;
     } catch (err) {
       const message = String((err as Error)?.message ?? err);
+      if (isAvailabilityError(err)) markModelUnavailable(modelRef(candidate), message);
       failures.push(`${candidate.providerName}/${candidate.modelId}: ${message}`);
       logger.warn({
         msg: 'compaction.worker_failed',

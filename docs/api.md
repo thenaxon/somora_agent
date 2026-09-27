@@ -1192,6 +1192,18 @@ Status and control of the MCP hub (`mcp.servers` in config.yaml, see
 [mcp.md](mcp.md)). All three answer `503` when no external server is
 configured.
 
+
+Each entry carries `unavailable: {since, until, reason}` (epoch ms)
+while the model is marked unreachable — a cascade (chat fallback, REM
+worker chain, compaction) hit a host error on it within the last
+`fallback.retryUnavailableMinutes`; cascades start past such models.
+
+### `POST /models/availability/reset`
+
+Forget every "unavailable" mark, so the next cascade tries the primaries
+again. `200 {ok: true, cleared, retryUnavailableMinutes}`. A config
+reload does the same as a side effect.
+
 ### `GET /mcp/status`
 
 `{enabled: true, servers: {<name>: {state, toolCount, transport?,

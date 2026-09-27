@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { engineRegistry } from '../engine/registry.ts';
 import { runTurnWithFallback } from './run-turn-fallback.ts';
+import { listUnavailableModels, markModelUnavailable, modelUnavailable, resetModelAvailability } from '../engine/model-availability.ts';
 
 const mk = (id: string): any => ({ id, alias: id, contextWindow: 1000, capabilities: ['text'] });
 const config: any = {
@@ -147,4 +148,66 @@ test('a user abort is not a provider failure', async () => {
     out.push(ev);
   }
   assert.equal(out.filter((e) => e.kind === 'model_fallback').length, 0, 'the user stopped it, do not spend another model');
+});
+
+// ── unavailable marks (2026-09-27): the dead primary is not knocked on every turn ──
+test('a primary that died with a host error is marked, and the next turn starts on the backup', async () => {
+  resetModelAvailability();
+  behaviour.set('m1', 'die'); behaviour.set('m2', 'ok');
+  // 'm1 down' is not a host error by wording; make it one
+  (engineRegistry as any)['openai-compatible'].runTurn = async function* (input: any) {
+    const id = input.resolvedModel.modelId;
+    yield { kind: 'turn_start', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
+    if (behaviour.get(id) === 'die') {
+      yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: `500 litellm.InternalServerError: OpenAIException - Connection error (${id})` };
+      yield { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
+      return;
+    }
+    yield { kind: 'assistant_message', ts: 1, engine: 'openai-compatible', text: `hi from ${id}` };
+    yield { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
+  };
+  const first = await run(['m2', 'm3']);
+  assert.equal(first.filter((e) => e.kind === 'model_fallback').length, 1);
+  assert.ok(modelUnavailable('a/m1') !== null, 'm1 marked after the host error');
+  assert.equal(modelUnavailable('a/m2'), null, 'm2 answered, no mark');
+  const second = await run(['m2', 'm3']);
+  const fb = second.filter((e) => e.kind === 'model_fallback');
+  assert.equal(fb.length, 1, 'still one fallback event — the chip stays');
+  assert.match(fb[0].reason, /not tried — marked unavailable since/);
+  assert.equal(fb[0].actual, 'a/m2');
+  assert.ok(!second.some((e) => e.kind === 'turn_start' && e.turnId === 't-m1'), 'm1 was not started at all');
+  assert.ok(second.some((e) => e.kind === 'assistant_message' && e.text === 'hi from m2'));
+});
+test('when every model in the chain is marked, the chain runs as before', async () => {
+  resetModelAvailability();
+  markModelUnavailable('a/m1', 'x'); markModelUnavailable('a/m2', 'y'); markModelUnavailable('a/m3', 'z');
+  behaviour.set('m1', 'ok');
+  const out = await run(['m2', 'm3']);
+  assert.ok(out.some((e) => e.kind === 'turn_start' && e.turnId === 't-m1'), 'm1 tried despite the mark');
+  assert.equal(out.filter((e) => e.kind === 'model_fallback').length, 0);
+  assert.equal(modelUnavailable('a/m1'), null, 'm1 answered → mark dropped');
+});
+test('a marked backup is skipped when a later one is free', async () => {
+  resetModelAvailability();
+  behaviour.set('m1', 'die'); behaviour.set('m2', 'ok'); behaviour.set('m3', 'ok');
+  markModelUnavailable('a/m2', 'y');
+  const out = await run(['m2', 'm3']);
+  const fb = out.filter((e) => e.kind === 'model_fallback');
+  assert.equal(fb.length, 1);
+  assert.equal(fb[0].actual, 'a/m3');
+  assert.equal(fb[0].hops.length, 2, 'the skipped backup is listed in the hops');
+  assert.match(fb[0].hops[1].reason, /not tried/);
+  assert.equal(listUnavailableModels().map((m) => m.ref).sort().join(','), 'a/m1,a/m2');
+});
+test('a plain refusal (4xx wording) marks nothing', async () => {
+  resetModelAvailability();
+  (engineRegistry as any)['openai-compatible'].runTurn = async function* (input: any) {
+    const id = input.resolvedModel.modelId;
+    yield { kind: 'turn_start', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
+    if (id === 'm1') { yield { kind: 'error', ts: 1, engine: 'openai-compatible', message: '400 unsupported parameter reasoning_effort' }; yield { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-m1' }; return; }
+    yield { kind: 'assistant_message', ts: 1, engine: 'openai-compatible', text: `hi from ${id}` };
+    yield { kind: 'turn_end', ts: 1, engine: 'openai-compatible', turnId: 't-' + id };
+  };
+  await run(['m2']);
+  assert.equal(modelUnavailable('a/m1'), null, 'a 400 is a config problem, not an outage');
 });

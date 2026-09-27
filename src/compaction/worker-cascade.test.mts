@@ -10,7 +10,8 @@
 
 import assert from 'node:assert/strict';
 
-import { MAX_WORKER_ATTEMPTS, rankCompactionModels, runCompaction } from './summarize.ts';
+import { dropUnavailable, MAX_WORKER_ATTEMPTS, rankCompactionModels, runCompaction } from './summarize.ts';
+import { markModelUnavailable, resetModelAvailability } from '../engine/model-availability.ts';
 import type { CompactionConfig } from './types.ts';
 import type { ResolvedModel } from '../config/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -168,6 +169,17 @@ const config = { triggerRatio: 0.8, safetyCushionPairs: 4 } as CompactionConfig;
   check('without the option nothing changes', refs(r3).join(',') === 'mid', refs(r3).join(','));
   const r4 = rankCompactionModels(20_000, [small, mid, session], { override: small, workers: ['mid'], sessionModel: session });
   check('an override still goes before the session model', refs(r4).join(',') === 'small,deep41flash,mid', refs(r4).join(','));
+}
+
+// ── unavailable marks skip workers (2026-09-27) ──
+{
+  resetModelAvailability();
+  const a = model('wa', 100_000), b = model('wb', 100_000), c = model('wc', 100_000);
+  markModelUnavailable('local/wa', 'Connection error');
+  check('a marked worker is dropped from the cascade', refs(dropUnavailable([a, b, c])).join(',') === 'wb,wc', refs(dropUnavailable([a, b, c])).join(','));
+  markModelUnavailable('local/wb', 'x'); markModelUnavailable('local/wc', 'y');
+  check('all marked → the list stays (something has to try)', refs(dropUnavailable([a, b, c])).join(',') === 'wa,wb,wc');
+  resetModelAvailability();
 }
 
 console.log(`\nworker-cascade: ${pass} passed, ${fail} failed`);

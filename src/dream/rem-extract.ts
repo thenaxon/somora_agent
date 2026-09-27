@@ -27,6 +27,7 @@ import type { Finding, FindingAction } from './types.ts';
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
 import { samplingBody } from '../engine/sampling.ts';
 import { isAvailabilityError } from '../engine/availability.ts';
+import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable } from '../engine/model-availability.ts';
 import { normalizeSlug } from '../memory/slug.ts';
 
 export interface ExtractContext {
@@ -665,6 +666,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         throw parseErr;
       }
       accumulated.push(...chunkFindings);
+      markModelAvailable(modelRef(model));
       logger.info({
         msg: 'dream.chunk_done',
         agent: ctx.agent,
@@ -709,7 +711,17 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
       // per run, and only if the chunk produced nothing (it didn't —
       // findings are pushed after a successful parse). A 4xx is a
       // config error and must stay visible as a failed chunk.
-      const nextBackup = ctx.fallbackModels?.[fallbackIdx];
+      if (!(err instanceof UnreadableFindingsError) && isAvailabilityError(err)) {
+        markModelUnavailable(modelRef(model), (err as Error).message);
+      }
+      // Next backup in the chain that is not itself marked unavailable
+      // (a marked one is skipped unless nothing after it is free).
+      let nextBackup = ctx.fallbackModels?.[fallbackIdx];
+      while (nextBackup && modelUnavailable(modelRef(nextBackup)) && ctx.fallbackModels!.slice(fallbackIdx + 1).some((m) => !modelUnavailable(modelRef(m)))) {
+        logger.info({ msg: 'dream.worker_fallback_skip_unavailable', agent: ctx.agent, model: modelRef(nextBackup) });
+        fallbackIdx += 1;
+        nextBackup = ctx.fallbackModels?.[fallbackIdx];
+      }
       if (
         nextBackup &&
         !(err instanceof UnreadableFindingsError) &&

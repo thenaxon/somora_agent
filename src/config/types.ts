@@ -2109,6 +2109,16 @@ export const ConfigSchema = z.object({
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,
   rem: RemGlobalConfigSchema,
+  /**
+   * Model outages are remembered for every cascade (chat fallback, REM
+   * workers, compaction workers): a model that was unreachable is not
+   * tried again for this many minutes; a success clears the note early
+   * (naxon/Rene, 2026-09-27 — a swapped GPU profile keeps models away
+   * for hours, and every turn paid the dead hops again).
+   */
+  fallback: z
+    .object({ retryUnavailableMinutes: z.number().int().min(1).max(24 * 60).default(60) })
+    .default({ retryUnavailableMinutes: 60 }),
   agentLoop: AgentLoopConfigSchema,
   promptBudgets: PromptBudgetsSchema,
   engineWatchdog: EngineWatchdogConfigSchema,

@@ -30,6 +30,19 @@ const NETWORK_CODES = new Set([
 ]);
 const NETWORK_MESSAGE = /timed out|timeout|fetch failed|socket hang up|\bterminated\b|connection error|other side closed/i;
 
+/** The chat chain sees failures as TEXT (the engine's error event), not
+ *  as an Error object: classify the message the same way. A 5xx / 429 /
+ *  408 status in the text or a network phrase means "the host was not
+ *  there", a plain 4xx means "the host said no". */
+export function isAvailabilityMessage(message: string): boolean {
+  if (!message) return false;
+  if (NETWORK_MESSAGE.test(message)) return true;
+  for (const code of NETWORK_CODES) if (message.includes(code)) return true;
+  const status = message.match(/\b(5\d\d|429|408)\b/);
+  if (status) return true;
+  return false;
+}
+
 export function isAvailabilityError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const e = err as { name?: unknown; status?: unknown; code?: unknown; message?: unknown; cause?: unknown };

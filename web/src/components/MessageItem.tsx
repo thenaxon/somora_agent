@@ -328,7 +328,7 @@ export const MessageItem = memo(function MessageItem({
                       'before producing anything:\n' +
                       msg.fallback.hops.map((h, i) => `${i + 1}. ${h.model}: ${h.reason}`).join('\n')
                     : `Answered by the fallback model ${msg.fallback.actual} — the primary ` +
-                      `${msg.fallback.requested} failed before producing anything: ${msg.fallback.reason}`
+                      `${msg.fallback.requested}: ${msg.fallback.reason}`
                 }
               >
                 ⇄ fallback · {shortModelRef(msg.fallback.actual)}

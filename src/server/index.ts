@@ -171,6 +171,7 @@ import { reconcileInterruptedTurns, restartParentWakeText, restartWakeText } fro
 import { getLspManager, shutdownLsp } from '../lsp/index.ts';
 import { findBinary, LSP_SERVERS } from '../lsp/registry.ts';
 import { pushSteer, steerableTurn } from './steer-inbox.ts';
+import { configureModelAvailability, modelUnavailable, resetModelAvailability } from '../engine/model-availability.ts';
 import { DEFAULT_PLAN_FILE, archiveNameFor, builderSessionAllows, patchBuilderState, readBuilderState, type BuilderMode, type BuilderPhase, type TodoItem } from './builder-session.ts';
 import { workdirFromMeta } from './session-workdir.ts';
 import { claimOfSession, describeClaim, listWorkdirClaims, workdirClaimedBy } from './builder-busy.ts';
@@ -479,6 +480,7 @@ async function configFileMtime(): Promise<number> {
 try {
   config = await loadConfig();
   configLoadedMtimeMs = await configFileMtime();
+  configureModelAvailability(config.fallback.retryUnavailableMinutes);
 } catch (err) {
   // pino's worker transport can swallow the error during fast crash; print
   // directly to stderr so the operator sees what's wrong with their config.
@@ -1645,6 +1647,10 @@ app.post('/config/reload', async (c) => {
   configLoadedAt = new Date().toISOString();
   configLoadedMtimeMs = await configFileMtime();
   primeFreshConfig(next, configLoadedMtimeMs);
+  // A reload is also the operator's "try the models again": every
+  // unavailable mark is dropped and the TTL re-read.
+  configureModelAvailability(next.fallback.retryUnavailableMinutes);
+  resetModelAvailability();
   logger.info({ msg: 'config.reloaded', changed, restartRequired });
   return c.json({ ok: true, changed, restartRequired, loadedAt: configLoadedAt });
 });
@@ -1999,9 +2005,13 @@ app.get('/models', (c) => {
     contextWindow: number;
     capabilities: string[];
     ref: string;
+    /** Set while the model is marked unreachable (model-availability.ts):
+     *  since/until as epoch ms, the failure that caused the mark. */
+    unavailable?: { since: number; until: number; reason: string };
   }> = [];
   for (const [providerName, provider] of Object.entries(config.providers)) {
     for (const model of provider.models) {
+      const mark = modelUnavailable(`${providerName}/${model.id}`);
       list.push({
         provider: providerName,
         id: model.id,
@@ -2010,10 +2020,18 @@ app.get('/models', (c) => {
         contextWindow: model.contextWindow,
         capabilities: model.capabilities,
         ref: model.alias ?? `${providerName}/${model.id}`,
+        ...(mark ? { unavailable: { since: mark.since, until: mark.until, reason: mark.reason } } : {}),
       });
     }
   }
   return c.json(list);
+});
+
+// Forget every "model unavailable" mark: the next cascade tries the
+// primaries again. What a config reload does as a side effect, on its own.
+app.post('/models/availability/reset', (c) => {
+  const cleared = resetModelAvailability();
+  return c.json({ ok: true, cleared, retryUnavailableMinutes: config.fallback.retryUnavailableMinutes });
 });
 
 // Tool catalog + invocation endpoints (DECISION #31). 127.0.0.1-only,

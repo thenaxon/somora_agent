@@ -17,6 +17,8 @@
 // second time. Better a visible error than a silent double-execution.
 
 import { resolveAnyRef, type Config, type ResolvedModel } from '../config/types.ts';
+import { isAvailabilityMessage } from '../engine/availability.ts';
+import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable, unavailableReason } from '../engine/model-availability.ts';
 import { engineRegistry } from '../engine/registry.ts';
 import type { TurnInput } from '../engine/types.ts';
 import type { NormalizedEvent } from '../types/events.ts';
@@ -106,9 +108,34 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
   const onFail = (m: string): void => {
     failed.message = m;
   };
+  // A failure that says "the host was not there" is written down for
+  // every other cascade (model-availability.ts); a model that answers
+  // has its mark dropped.
+  const noteOutcome = (m: ResolvedModel, failure: string | null): void => {
+    if (failure === null) markModelAvailable(modelRef(m));
+    else if (isAvailabilityMessage(failure)) markModelUnavailable(modelRef(m), failure);
+  };
 
-  for await (const ev of attempt(current, { ...baseInput, resolvedModel: current }, onFail)) {
-    yield ev;
+  // The primary is not knocked on while it is marked unavailable and a
+  // fallback exists that is not: the turn starts on that fallback, with
+  // the same model_fallback event the person already knows — the reason
+  // says "not tried". When EVERY model in the chain is marked, the marks
+  // are ignored and the chain runs as before (something has to answer).
+  const primaryMark = config && fallbackRefs.length > 0 ? modelUnavailable(modelRef(primary)) : null;
+  const anyOtherAvailable =
+    primaryMark !== null &&
+    fallbackRefs.some((ref) => {
+      const c = resolveAnyRef(config!, ref);
+      return c !== null && modelRef(c) !== modelRef(primary) && modelUnavailable(modelRef(c)) === null;
+    });
+  if (primaryMark && anyOtherAvailable) {
+    failed.message = unavailableReason(primaryMark);
+    logger.info({ msg: 'engine.fallback_skip_unavailable', model: label(primary), since: primaryMark.since, reason: primaryMark.reason });
+  } else {
+    for await (const ev of attempt(current, { ...baseInput, resolvedModel: current }, onFail)) {
+      yield ev;
+    }
+    noteOutcome(primary, failed.message);
   }
   if (failed.message === null) return;
   hops.push({ model: label(primary), reason: failed.message.slice(0, REASON_MAX) });
@@ -145,6 +172,19 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
       continue;
     }
     tried.add(label(candidate));
+    // Skip a backup that is marked unavailable while a later one is not.
+    const mark = modelUnavailable(modelRef(candidate));
+    if (mark) {
+      const laterAvailable = fallbackRefs.slice(hop + 1).some((r) => {
+        const c = resolveAnyRef(config, r);
+        return c !== null && !tried.has(label(c)) && modelUnavailable(modelRef(c)) === null;
+      });
+      if (laterAvailable) {
+        logger.info({ msg: 'engine.fallback_skip_unavailable', hop: hop + 1, model: label(candidate), since: mark.since });
+        hops.push({ model: label(candidate), reason: unavailableReason(mark) });
+        continue;
+      }
+    }
     if (!engineRegistry[candidate.provider.engine]) {
       logger.warn({ msg: 'engine.fallback_engine_missing', hop: hop + 1, ref, engine: candidate.provider.engine });
       hops.push({ model: label(candidate), reason: `engine '${candidate.provider.engine}' not registered` });
@@ -191,6 +231,7 @@ export async function* runTurnWithFallback(args: Args): AsyncGenerator<Normalize
     // Read through a call: after the `= null` above TypeScript keeps
     // the property narrowed to null and cannot see the callback write.
     const hopFailure = readFailure(failed);
+    noteOutcome(candidate, hopFailure);
     if (hopFailure === null) return;
     hops.push({ model: label(candidate), reason: hopFailure.slice(0, REASON_MAX) });
     logger.error({

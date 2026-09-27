@@ -658,6 +658,15 @@ agentLoop:
 # long-blocking tool (agent_ask, subagent_result wait_until_done)
 # isn't cut off by the much shorter idle window — a genuinely dead
 # child is still caught at the tool-timeout horizon.
+# How long a model that was unreachable stays out of every cascade —
+# the chat fallback chain, the REM worker chain and the compaction
+# workers. The first cascade that hits the outage writes the model
+# down; later turns start past it instead of paying the dead hop
+# (~30 s each) again. A success clears the note early; a config
+# reload or POST /models/availability/reset clears all of them.
+fallback:
+  retryUnavailableMinutes: 60
+
 engineWatchdog:
   claudeCliIdleMs: 300000        # 5 min — subscription, fast first event
   codexCliIdleMs: 300000         # 5 min — subscription, fast first event

@@ -154,7 +154,11 @@ after the SDK's retries — continues on the next backup from the chunk
 that hit the outage; chunks already finished are kept, the failed chunk
 is retried on the backup, and the backup stays in charge until it is
 unreachable itself, when the next one in the chain takes over. When the
-chain is exhausted the chunk fails as it would without a backup. What does NOT
+chain is exhausted the chunk fails as it would without a backup. A
+worker that is currently marked unreachable (the note every cascade
+shares, `fallback.retryUnavailableMinutes`, default 60 min) is not
+tried: the run starts on the first backup that is not marked, recorded
+in the dream file as a switch at chunk 0. What does NOT
 switch: a 4xx rejection (bad parameter, unsupported reasoning level,
 auth) — that is a config problem and the dream fails visibly; and a
 run paused by user activity — that pauses as before. The agent's chat
