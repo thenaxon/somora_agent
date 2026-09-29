@@ -254,3 +254,38 @@ if (fail > 0) process.exit(1);
 }
 console.log(`wiki-map (sub-topic): ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
+
+// ── size guard: a page over the limit gets a sub-page, not more content ─
+{
+  await mkdir(join(wikiAbs, 'projekte'), { recursive: true });
+  await writeFile(join(wikiAbs, 'projekte/somora.md'), `---\nslug: projekte/somora\ntype: projekt\n---\n# somora\n\n## Aktueller Stand\n${'Viel Text. '.repeat(1200)}\n\n## Zeitleiste\n- 2026-01-01: Start\n`);
+  const memFile = join(root, 'mem-big.md');
+  await writeFile(memFile, '---\nname: mem-big\n---\nDie Traum-Pipeline von somora hat jetzt einen Judge.\n');
+  const cand = { agent: 'testagent', slug: 'mem-big', path: memFile, raw: 'x', frontmatter: {}, body: 'Die Traum-Pipeline hat jetzt einen Judge.', mtimeMs: (await stat(memFile)).mtimeMs };
+  const seen: string[] = [];
+  const disp = {
+    decideMemoryFate: async (a: { wikiMap: string; relevantPages: Array<{ slug: string; markdown: string }> }) => {
+      seen.push(a.wikiMap);
+      if (seen.length === 1) return { kind: 'merge' as const, wikiPath: 'projekte/somora', body: '## Aktueller Stand\nx\n', logSummary: 'x' };
+      return { kind: 'promote' as const, subfolder: 'projekte/somora', slug: 'projekte/somora/traum-pipeline', type: 'projekt', title: 'Traum-Pipeline', body: '## Aktueller Stand\nJudge aktiv.\n\n## Zeitleiste\n- 2026-09-29: Judge\n' };
+    },
+  };
+  const mgr = { search: async () => [{ slug: 'projekte/somora', filePath: join(wikiAbs, 'projekte/somora.md') }] };
+  const wiki = await loadDeepWikiState(wikiAbs, 'de');
+  const out = await processCandidate({ candidate: cand as never, ctx: { wikiAbs, schema: DE_WIKI_SCHEMA, maxPageChars: 5000 }, mgr: mgr as never, workerModel: {} as never, dispatcher: disp as never, wiki, timeoutMs: 1000 });
+  check('merge into an oversized page → second call → sub-page created', out.kind === 'promoted' && out.wikiPath === 'projekte/somora/traum-pipeline' && seen.length === 2 && seen[1]!.includes('takes no more content'), JSON.stringify(out));
+  check('parent page untouched', (await readFile(join(wikiAbs, 'projekte/somora.md'), 'utf8')).includes('- 2026-01-01: Start') && !(await readFile(join(wikiAbs, 'projekte/somora.md'), 'utf8')).includes('Judge'));
+  check('sub-page folder described in the structure file', wiki.structure.folders.find((f) => f.path === 'projekte/somora')?.origin === 'deep' && /Unterseiten/.test(wiki.structure.folders.find((f) => f.path === 'projekte/somora')?.purpose ?? ''));
+  // the model insists on merging → note waits
+  const disp2 = { decideMemoryFate: async () => ({ kind: 'merge' as const, wikiPath: 'projekte/somora', body: 'x', logSummary: 'x' }) };
+  await writeFile(memFile, '---\nname: mem-big\n---\nNoch ein Satz zur Traum-Pipeline.\n');
+  const out2 = await processCandidate({ candidate: { ...cand, mtimeMs: (await stat(memFile)).mtimeMs } as never, ctx: { wikiAbs, schema: DE_WIKI_SCHEMA, maxPageChars: 5000 }, mgr: mgr as never, workerModel: {} as never, dispatcher: disp2 as never, wiki, timeoutMs: 1000 });
+  check('model insists on merge → transient skip, nothing written', out2.kind === 'skipped' && out2.transient === true && /size limit/.test(out2.reason));
+  // without a limit the merge goes through as before
+  const disp3 = { decideMemoryFate: async (a: { relevantPages: Array<{ slug: string; markdown: string }> }) => ({ kind: 'merge' as const, wikiPath: 'projekte/somora', body: a.relevantPages[0]!.markdown.replace(/^---[\s\S]*?---\n/, '') + '- 2026-09-29: ohne Limit\n', logSummary: 'x' }) };
+  await writeFile(memFile, '---\nname: mem-big\n---\nNoch ein Satz zur Traum-Pipeline.\n');
+  const out3 = await processCandidate({ candidate: { ...cand, mtimeMs: (await stat(memFile)).mtimeMs } as never, ctx: { wikiAbs, schema: DE_WIKI_SCHEMA }, mgr: mgr as never, workerModel: {} as never, dispatcher: disp3 as never, wiki, timeoutMs: 1000 });
+  check('no limit configured → merge as before', out3.kind === 'merged' || out3.kind === 'skipped', JSON.stringify(out3).slice(0, 200));
+}
+console.log(`wiki-map (size guard): ${pass} passed, ${fail} failed`);
+if (fail > 0) process.exit(1);

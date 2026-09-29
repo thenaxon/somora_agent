@@ -1710,6 +1710,11 @@ export const WikiDeepConfigSchema = z
      *  LLM call; skipped again, it rests for another period). 0 = a
      *  skip stands until the note changes. */
     skipCacheDays: z.number().int().min(0).max(3650).default(30),
+    /** A page this large is not merged into any more: Deep files the
+     *  note as a sub-page under it instead (Rene, 2026-09-29: "so große
+     *  Seiten sollten nie entstehen" — the migration had folded 97
+     *  reports into one 100 KB page). */
+    maxPageChars: z.number().int().min(5_000).default(50_000),
   })
   .default({
     enabled: true,
@@ -1717,6 +1722,7 @@ export const WikiDeepConfigSchema = z
     requireApproval: false,
     mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
     skipCacheDays: 30,
+    maxPageChars: 50_000,
   });
 
 export const WikiLucidConfigSchema = z
@@ -1834,6 +1840,7 @@ export const WikiConfigSchema = z
       requireApproval: false,
       mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
       skipCacheDays: 30,
+    maxPageChars: 50_000,
     },
     lucid: {
       enabled: true,

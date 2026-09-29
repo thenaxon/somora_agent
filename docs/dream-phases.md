@@ -417,8 +417,13 @@ Returns a structured `MemoryFateDecision`:
   "logSummary": "familie-klein aktualisiert: ..." }
 ```
 
-Deep applies the decision verbatim — after two checks against the
-wiki map. A promote into a folder that neither exists nor is proposed
+Deep applies the decision verbatim — after three checks against the
+wiki. A page over `wiki.deep.maxPageChars` (default 50 000) takes no
+more content: instead of merging, Deep is asked once more to write the
+note as a sub-page under it (`projekte/somora/traum-pipeline`, its own
+current state and timeline) — the migration had folded 97 reports into
+one 100 KB page, and pages like that are never to grow again. Then two
+checks against the wiki map. A promote into a folder that neither exists nor is proposed
 by the template is refused unless the model gave the folder a purpose
 (then the folder is created and described in the structure file); a
 folder deeper than one subfolder is refused. And the page name is

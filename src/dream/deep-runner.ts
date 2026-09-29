@@ -121,7 +121,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   for (const [vaultPath, agentsInVault] of byVault) {
     if (args.signal?.aborted) break;
     const wikiAbs = join(vaultPath, wikiSubfolder);
-    const ctx: ActionContext = { wikiAbs, mergeShrinkGuard: args.config.wiki.deep.mergeShrinkGuard, schema };
+    const ctx: ActionContext = { wikiAbs, mergeShrinkGuard: args.config.wiki.deep.mergeShrinkGuard, schema, maxPageChars: args.config.wiki.deep.maxPageChars };
     // The map Deep files against: once per vault and run, kept current
     // in memory as pages are created; the structure file is written
     // back at the end when a folder was described or a twin was noted.
@@ -417,6 +417,9 @@ export async function processCandidate(args: {
           return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: again.reason, ...(again.transient ? { transient: true as const } : {}) };
         }
         if (again.kind === 'merge') {
+          if (ctx.maxPageChars && entity.text.length > ctx.maxPageChars) {
+            return subPageInstead({ candidate, ctx, workerModel, dispatcher, wiki, target: check.target, targetText: entity.text, timeoutMs, ...(signal ? { signal } : {}), ...(thinking ? { thinking } : {}) });
+          }
           return applyMerge({ candidate, decision: { ...again, wikiPath: check.target }, ctx, wikiPageMtimeMs: entity.mtimeMs });
         }
         // The model insists on a page of its own: take its second
@@ -452,6 +455,7 @@ export async function processCandidate(args: {
         mgr,
         workerModel,
         dispatcher,
+        wiki,
         wikiPath: check.target,
         why: `a page named like ${decision.slug} already exists at ${check.target}`,
         timeoutMs,
@@ -501,6 +505,7 @@ export async function processCandidate(args: {
       mgr,
       workerModel,
       dispatcher,
+      wiki,
       wikiPath: decision.slug,
       timeoutMs,
       ...(signal ? { signal } : {}),
@@ -524,6 +529,10 @@ export async function processCandidate(args: {
   //    page "rewritten" as 6 chars, 132 times over.
   const target = normalizeWikiPath(decision.wikiPath);
   const loaded = wikiCtx.relevantPages.find((p) => normalizeWikiPath(p.slug) === target);
+  const tooBig = await pageTooBig(ctx, target);
+  if (tooBig) {
+    return subPageInstead({ candidate, ctx, workerModel, dispatcher, wiki, target, targetText: tooBig.text, timeoutMs, ...(signal ? { signal } : {}), ...(thinking ? { thinking } : {}) });
+  }
   if (loaded && !loaded.truncated) {
     return applyMerge({
       candidate,
@@ -538,6 +547,7 @@ export async function processCandidate(args: {
     mgr,
     workerModel,
     dispatcher,
+    wiki,
     wikiPath: decision.wikiPath,
     why: loaded ? 'target was only seen shortened' : 'target was not in the loaded context',
     timeoutMs,
@@ -548,6 +558,82 @@ export async function processCandidate(args: {
 
 function normalizeWikiPath(p: string): string {
   return p.replace(/^\/+/, '').replace(/\.md$/i, '');
+}
+
+/** The page's text when it is over `maxPageChars`, else null. */
+async function pageTooBig(ctx: ActionContext, wikiPath: string): Promise<{ text: string } | null> {
+  if (!ctx.maxPageChars) return null;
+  const page = await readWithMtime(join(ctx.wikiAbs, `${wikiPath}.md`));
+  if (!page || page.text.length <= ctx.maxPageChars) return null;
+  return { text: page.text };
+}
+
+/**
+ * The size guard (Rene, 2026-09-29: "so große Seiten sollten nie
+ * entstehen"). A page over `wiki.deep.maxPageChars` takes no more
+ * content: Deep is asked once more to write the note as a SUB-PAGE
+ * under the page — `<page>/<sub-topic>` with its own current state and
+ * timeline — and the folder `<page>/` is described in the structure
+ * file the first time. A model that still answers merge leaves the
+ * note for the next run.
+ */
+async function subPageInstead(args: {
+  candidate: PromotionCandidate;
+  ctx: ActionContext;
+  workerModel: ResolvedModel;
+  dispatcher: PromotionDispatcher;
+  wiki: DeepWikiState;
+  target: string;
+  targetText: string;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  thinking?: ThinkingLevel;
+}): Promise<CandidateOutcome> {
+  const { candidate, ctx, workerModel, dispatcher, wiki, target, timeoutMs, signal, thinking } = args;
+  const kb = Math.round(args.targetText.length / 1024);
+  const existingSubs = wiki.map.folders.find((f) => f.path === target);
+  logger.info({ msg: 'dream.deep.sub_page_instead', agent: candidate.agent, memorySlug: candidate.slug, target, kb, limitKb: Math.round((ctx.maxPageChars ?? 0) / 1024), subPages: existingSubs?.pages ?? 0 });
+  const head = args.targetText.slice(0, 6000);
+  const decision = await dispatcher.decideMemoryFate({
+    candidate,
+    wikiMap: `${wiki.map.text}
+
+NOTE: the page ${target} is ${kb} KB and takes no more content (limit ${Math.round((ctx.maxPageChars ?? 0) / 1024)} KB). Write this note as a SUB-PAGE under it instead: answer "promote" with "subfolder": "${target}" and a slug "${target}/<sub-topic>" — the sub-topic this note is about (a component, a phase, a device, a decision), with its own current state and timeline. Reuse an existing sub-page name when the map lists one under ${target}/ that fits (then answer "merge" into THAT sub-page). Only the opening of ${target} is shown below.`,
+    relevantPages: [{ slug: target, markdown: head }, ...wiki.map.folders.filter((f) => f.path === target).length ? [] : []],
+    workerModel,
+    timeoutMs,
+    ...(signal ? { signal } : {}),
+    ...(thinking ? { thinking } : {}),
+  });
+  if (decision.kind === 'skip') {
+    return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: decision.reason, ...(decision.transient ? { transient: true as const } : {}) };
+  }
+  if (decision.kind === 'merge') {
+    const sub = normalizeWikiPath(decision.wikiPath);
+    if (sub.startsWith(target + '/')) {
+      const page = await readWithMtime(join(ctx.wikiAbs, `${sub}.md`));
+      if (page && page.text.length <= (ctx.maxPageChars ?? Infinity)) return applyMerge({ candidate, decision: { ...decision, wikiPath: sub }, ctx, wikiPageMtimeMs: page.mtimeMs });
+    }
+    return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: `refused: ${target} is over the size limit (${kb} KB) and the model still wanted to merge into ${sub}`, transient: true };
+  }
+  const slug = normalizeWikiPath(decision.slug);
+  if (!slug.startsWith(target + '/') || slug.split('/').length !== target.split('/').length + 1) {
+    return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: `refused: sub-page expected under ${target}/, got ${slug}`, transient: true };
+  }
+  const check = checkPromoteTarget(wiki.map, { ...decision, slug, subfolder: target, newFolder: { path: target, purpose: `Unterseiten von ${target.split('/').pop()}: Teilthemen mit eigener Zeitleiste` } }, { ignoreSubTopic: true });
+  if (check.kind === 'sameName') {
+    return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: `refused: a page named like ${slug} exists at ${check.target}`, transient: true };
+  }
+  if (check.kind !== 'ok') {
+    return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: `refused: ${check.kind} for ${slug}`, transient: true };
+  }
+  const r = await applyPromote({ candidate, decision: { ...decision, slug, subfolder: target }, ctx });
+  if (r.kind === 'promoted') {
+    if (check.describe && describeFolder(wiki.structure, check.describe)) wiki.dirty = true;
+    noteNewPage(wiki.map, r.wikiPath, check.describe);
+    logger.info({ msg: 'dream.deep.sub_page_created', agent: candidate.agent, memorySlug: candidate.slug, wikiPath: r.wikiPath, parent: target });
+  }
+  return r;
 }
 
 /** Ask the LLM again with exactly one page — in full, mtime captured
@@ -563,6 +649,8 @@ async function mergeCollidingPage(args: {
   wikiPath: string;
   /** For the log. Default: promote collided with an existing slug. */
   why?: string;
+  /** The run's map — needed for the size guard's sub-page path. */
+  wiki?: DeepWikiState;
   timeoutMs: number;
   signal?: AbortSignal;
   thinking?: ThinkingLevel;
@@ -570,6 +658,9 @@ async function mergeCollidingPage(args: {
   const { candidate, ctx, mgr, workerModel, dispatcher, wikiPath, timeoutMs, signal, thinking } = args;
   const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
   const existing = await readWithMtime(wikiFileAbs);
+  if (existing && args.wiki && ctx.maxPageChars && existing.text.length > ctx.maxPageChars) {
+    return subPageInstead({ candidate, ctx, workerModel, dispatcher, wiki: args.wiki, target: normalizeWikiPath(wikiPath), targetText: existing.text, timeoutMs, ...(signal ? { signal } : {}), ...(thinking ? { thinking } : {}) });
+  }
   if (!existing) {
     return {
       kind: 'failed',

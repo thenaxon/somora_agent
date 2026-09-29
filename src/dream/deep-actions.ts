@@ -57,6 +57,9 @@ export interface ActionContext {
   /** Wiki language set — wording of generated log lines. Optional so
    *  older callers compile; defaults to German like the config does. */
   schema?: WikiSchema;
+  /** `wiki.deep.maxPageChars`: above this a page gets sub-pages instead
+   *  of more content. Optional; absent = no limit (older callers). */
+  maxPageChars?: number;
 }
 
 /** Fallback when no config was threaded in. Mirrors the Zod defaults in
