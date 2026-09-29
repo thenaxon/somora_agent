@@ -1,6 +1,6 @@
 // The judge's reply parsing, the coverage question and model resolution.
 // Run: npx tsx src/dream/judge.test.mts
-import { buildCoverageQuestion, COVERAGE_OPTIONS, parseJudgeReply, resolveJudgeModel } from './judge.ts';
+import { buildCoverageQuestion, COVERAGE_OPTIONS, effectiveJudgeModel, parseJudgeReply, resolveJudgeModel } from './judge.ts';
 
 let pass = 0;
 let fail = 0;
@@ -50,6 +50,15 @@ try {
   threw = (e as Error).message;
 }
 check('bad ref → throws naming the ref', /no-such-alias/.test(threw), threw);
+
+// ── effectiveJudgeModel: the judge follows the worker that answers ──
+const mk = (id: string) => ({ providerName: 'c', modelId: id, provider: { engine: 'openai-compatible' }, model: {} }) as never;
+const primary = mk('v4'), b1 = mk('glm'), b2 = mk('v41');
+check('no switch → current worker', effectiveJudgeModel(undefined, undefined, primary, [b1, b2]) === primary);
+check('mid-run switch → the backup named', effectiveJudgeModel(undefined, 'c/v41', primary, [b1, b2]) === b2);
+check('switch at chunk 0 (backup became the worker, list shrank) → the worker, not the dead primary', effectiveJudgeModel(undefined, 'c/v41', b2, []) === b2);
+check('a configured judge model always wins', effectiveJudgeModel(b1, 'c/v41', primary, [b1, b2]) === b1);
+check('unknown ref → current worker', effectiveJudgeModel(undefined, 'c/nope', b2, [b1]) === b2);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

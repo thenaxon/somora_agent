@@ -63,6 +63,26 @@ export function resolveJudgeModel(config: Config, ref: string | undefined, phase
   return resolveDreamModel(config, ref);
 }
 
+/**
+ * The model the judge uses after a REM worker switch: without a
+ * configured judge model it follows the worker that is answering now —
+ * `switchTo` looked up among the run's models (the current worker
+ * first: after a switch at chunk 0 the chosen backup IS the worker and
+ * is no longer in the fallback list — 2026-09-29: six judge calls went
+ * to the dead primary because the lookup searched the list only).
+ */
+export function effectiveJudgeModel(
+  configuredJudge: ResolvedModel | undefined,
+  switchTo: string | undefined,
+  currentWorker: ResolvedModel,
+  fallbacks: ResolvedModel[],
+): ResolvedModel {
+  if (configuredJudge) return configuredJudge;
+  if (!switchTo) return currentWorker;
+  const ref = (m: ResolvedModel): string => `${m.providerName}/${m.modelId}`;
+  return [currentWorker, ...fallbacks].find((m) => ref(m) === switchTo) ?? currentWorker;
+}
+
 /** Parse the model's reply into an answer. Exported for tests. */
 export function parseJudgeReply(raw: string, options: readonly string[]): JudgeAnswer {
   const json = firstCompleteJson(raw, '{') ?? raw;

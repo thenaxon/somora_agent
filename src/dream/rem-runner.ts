@@ -22,7 +22,7 @@ import {
 import { extractFromSession, resolveDreamModel } from './rem-extract.ts';
 import type { DreamFile, DreamMeta, DreamTriggerKind } from './types.ts';
 import { modelRef, modelUnavailable, unavailableReason } from '../engine/model-availability.ts';
-import { resolveJudgeModel } from './judge.ts';
+import { effectiveJudgeModel, resolveJudgeModel } from './judge.ts';
 import { applyRemDedup } from './rem-dedup.ts';
 import { loadWikiContext } from './wiki-context.ts';
 import { excludeReviewWindows } from './review-window.ts';
@@ -492,10 +492,12 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
               // The judge follows the worker: when the run switched to
               // rem.fallback, the primary is unreachable for the judge
               // too — unless the config names a judge model of its own.
-              model:
-                meta.worker_switch && !args.config.rem.dedup.judge.model
-                  ? (fallbackModels.find((f) => `${f.providerName}/${f.modelId}` === meta.worker_switch!.to) ?? judgeModel)
-                  : judgeModel,
+              model: effectiveJudgeModel(
+                args.config.rem.dedup.judge.model ? judgeModel : undefined,
+                meta.worker_switch?.to,
+                workerModel,
+                fallbackModels,
+              ),
               config: args.config.rem.dedup.judge,
               ...(args.config.rem.dedup.judge.thinking ? { thinking: args.config.rem.dedup.judge.thinking } : {}),
             },
