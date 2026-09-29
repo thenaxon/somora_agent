@@ -27,6 +27,7 @@ export function usage(): string {
     '  dry-run <id>         walk the approved steps, write dry-run.md, touch nothing',
     '  run <id> --confirm "move my wiki"   full copy of the wiki first, then the approved steps',
     '  undo <id> [--yes]    put the backup of that plan back over the wiki',
+    '  relink <id>          second pass: point links and related: at the moved pages (for runs before .07)',
     '',
     'options: --url <server>   (default: from config — https://<publicHost>:<port> or http://127.0.0.1:<port>)',
     '',
@@ -379,6 +380,11 @@ export async function runWikiCli(argv: string[], deps: { api?: Api; out?: Out; a
       case 'run':
         await stepRun(api, needId(), p.confirm ?? '', out, deps.pollMs);
         return 0;
+      case 'relink': {
+        const r = await api.post(`/wiki/migration/plans/${needId()}/relink`, {});
+        out(`Relinked: ${r.refsRewritten} references in ${r.pagesTouched} pages (${r.renames} renames from the run)`);
+        return 0;
+      }
       case 'undo': {
         const id = needId();
         const st = await api.get('/wiki/status').catch(() => ({} as Record<string, unknown>));

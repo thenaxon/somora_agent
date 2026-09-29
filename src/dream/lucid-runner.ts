@@ -31,6 +31,10 @@ import { callOneShotLLM } from './deep-llm.ts';
 import { buildLucidSystemPrompt } from './lucid-prompt.ts';
 import { resolveWikiSchema } from '../wiki/language.ts';
 import { setRunStatus, writeLucidRun } from './lucid-storage.ts';
+import { batchLabel, pageOpening, planLucidBatches, siblingList, type LucidPage } from './lucid-batches.ts';
+import { capFindings, structuralFindings } from './lucid-structure.ts';
+import { buildWikiMap } from '../wiki/map.ts';
+import { loadStructureFile } from '../wiki/structure-file.ts';
 import { firstCompleteJson } from './json-salvage.ts';
 import type {
   LucidFinding,
@@ -67,7 +71,7 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
     return failedRun(id, args.trigger, start, 0, `worker model '${ref}' did not resolve`);
   }
   const thinking = args.config.wiki.lucid.thinking;
-  const lucidPrompt = buildLucidSystemPrompt(resolveWikiSchema(args.config.wiki));
+  let lucidPrompt = buildLucidSystemPrompt(resolveWikiSchema(args.config.wiki));
 
   // Resolve wiki root.
   const obs = resolveObsidianSource(args.config.obsidian);
@@ -76,19 +80,35 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
   }
   const wikiAbs = join(obs.vaultPath, args.config.wiki.vaultSubfolder);
 
-  // Load wiki grouped by subfolder + index.md.
-  const { indexContent, bySubfolder, pagesScanned } = await loadWikiBySubfolder(wikiAbs);
+  // Load every page, then cut into calls by size (lucid-batches.ts).
+  const { bySubfolder, pagesScanned } = await loadWikiBySubfolder(wikiAbs);
+  const allPages: LucidPage[] = [...bySubfolder.values()].flat();
 
   if (pagesScanned === 0) {
     return failedRun(id, args.trigger, start, 0, 'wiki is empty — no pages to lucid-scan');
   }
+
+  // What every call sees beside its pages: the wiki map (folders, what
+  // lives in each, page counts) instead of the whole index.md — the
+  // index of a thousand-page wiki is 70 KB on its own.
+  const language = args.config.wiki.language ?? 'de';
+  const structure = await loadStructureFile(wikiAbs, language);
+  const map = await buildWikiMap({ wikiAbs, language, structure });
+  const migrated = structure.template_version > 0;
+  lucidPrompt = buildLucidSystemPrompt(resolveWikiSchema(args.config.wiki), { migrated });
+  const batches = planLucidBatches(allPages, args.config.wiki.lucid.batchChars);
 
   logger.info({
     msg: 'dream.lucid.start',
     id,
     trigger: args.trigger,
     pagesScanned,
-    subfolders: [...bySubfolder.keys()],
+    folders: bySubfolder.size,
+    batches: batches.length,
+    batchChars: args.config.wiki.lucid.batchChars,
+    largest: Math.max(...batches.map((b) => b.chars)),
+    migrated,
+    templateVersion: structure.template_version,
     workerModel: `${workerModel.providerName}/${workerModel.modelId}`,
   });
 
@@ -106,6 +126,12 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
 
   const allFindings: LucidFinding[] = [];
   let nextId = 1;
+  // Structure: facts of the file system, no model needed — or the one
+  // hint that the template is not applied here.
+  for (const f of structuralFindings(allPages, { migrated, templateVersion: structure.template_version, oversizedChars: args.config.wiki.lucid.oversizedChars }, nextId)) {
+    allFindings.push(f);
+    nextId = f.id + 1;
+  }
   // Coverage. A batch counts as failed when the LLM call errored OR its
   // answer was unreadable — both used to vanish into "0 findings,
   // completed", so a worker that was down for the whole run looked like
@@ -114,19 +140,22 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
   let batchesFailed = 0;
   let aborted = false;
 
-  // ─── Per-subfolder pass ────────────────────────────────────────────
-  for (const [subfolder, pages] of bySubfolder) {
+  // ─── Per-batch pass ────────────────────────────────────────────────
+  for (const batch of batches) {
     if (args.signal?.aborted) {
       aborted = true;
       break;
     }
     batchesTotal++;
-    const userMsg = buildSubfolderUserMessage(indexContent, subfolder, pages);
+    const subfolder = batchLabel(batch);
+    const userMsg = buildBatchUserMessage(map.text, batch, allPages);
     logger.info({
       msg: 'dream.lucid.llm_request',
       id,
       subfolder,
-      pagesInSubfolder: pages.length,
+      pagesInBatch: batch.pages.length,
+      batchChars: batch.chars,
+      messageChars: userMsg.length,
       estimatedTokensIn: Math.ceil((lucidPrompt.length + userMsg.length) / 4),
     });
     let llmText: string;
@@ -154,7 +183,7 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
       batchesFailed++;
       continue; // partial results — proceed with other subfolders
     }
-    const subFindings = parseLucidFindings(llmText, `${id}:${subfolder}`);
+    const subFindings = parseLucidFindings(llmText, `${id}:${subfolder}`, { migrated });
     if (subFindings === null) {
       batchesFailed++;
       continue;
@@ -169,11 +198,12 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
   if (args.signal?.aborted) aborted = true;
   if (!aborted && bySubfolder.size > 1) {
     batchesTotal++;
-    const userMsg = buildCrossSubfolderUserMessage(indexContent, bySubfolder);
+    const userMsg = buildCrossSubfolderUserMessage(map.text, bySubfolder, args.config.wiki.lucid.batchChars * 2);
     logger.info({
       msg: 'dream.lucid.llm_request',
       id,
       subfolder: '(cross)',
+      messageChars: userMsg.length,
       estimatedTokensIn: Math.ceil((lucidPrompt.length + userMsg.length) / 4),
     });
     try {
@@ -186,7 +216,7 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
         ...(thinking ? { thinking } : {}),
         logCtx: { agent: 'lucid', op: 'cross', slug: id },
       });
-      const xFindings = parseLucidFindings(llmText, `${id}:cross`);
+      const xFindings = parseLucidFindings(llmText, `${id}:cross`, { migrated });
       if (xFindings === null) batchesFailed++;
       for (const f of xFindings ?? []) {
         allFindings.push({ ...f, id: nextId++ });
@@ -202,7 +232,11 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
     }
   }
 
-  run.findings = allFindings;
+  const capped = capFindings(allFindings, args.config.wiki.lucid.maxFindings);
+  if (Object.keys(capped.dropped).length > 0 || capped.duplicates > 0) {
+    logger.info({ msg: 'dream.lucid.run_capped', id, found: allFindings.length, kept: capped.kept.length, duplicates: capped.duplicates, dropped: capped.dropped, maxFindings: args.config.wiki.lucid.maxFindings });
+  }
+  run.findings = capped.kept.map((f, i) => ({ ...f, id: i + 1 }));
   run.batches_total = batchesTotal;
   run.batches_failed = batchesFailed;
 
@@ -293,20 +327,9 @@ function failedRun(
 // ─── wiki loading ───────────────────────────────────────────────────
 
 async function loadWikiBySubfolder(wikiAbs: string): Promise<{
-  indexContent: string;
   bySubfolder: Map<string, Array<{ wikiPath: string; markdown: string }>>;
   pagesScanned: number;
 }> {
-  let indexContent = '';
-  try {
-    indexContent = await readFile(join(wikiAbs, 'index.md'), 'utf8');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      logger.warn({ msg: 'dream.lucid.index_read_failed', err: (err as Error).message });
-    }
-    indexContent = '(no index.md)';
-  }
-
   const bySubfolder = new Map<string, Array<{ wikiPath: string; markdown: string }>>();
   let total = 0;
 
@@ -315,24 +338,36 @@ async function loadWikiBySubfolder(wikiAbs: string): Promise<{
     topLevel = await readdir(wikiAbs, { withFileTypes: true });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { indexContent, bySubfolder, pagesScanned: 0 };
+      return { bySubfolder, pagesScanned: 0 };
     }
     throw err;
   }
 
   for (const e of topLevel) {
-    if (e.name.startsWith('.') || e.name === 'logs' || e.name === 'index.md') continue;
-    if (!e.isDirectory()) continue;
-    const subfolder = e.name;
-    const pages: Array<{ wikiPath: string; markdown: string }> = [];
-    await walkPages(wikiAbs, subfolder, pages);
-    if (pages.length > 0) {
-      bySubfolder.set(subfolder, pages);
-      total += pages.length;
+    if (e.name.startsWith('.') || e.name === 'logs' || e.name === 'index.md' || e.name.startsWith('_')) continue;
+    if (e.isDirectory()) {
+      const subfolder = e.name;
+      const pages: Array<{ wikiPath: string; markdown: string }> = [];
+      await walkPages(wikiAbs, subfolder, pages);
+      if (pages.length > 0) {
+        bySubfolder.set(subfolder, pages);
+        total += pages.length;
+      }
+    } else if (e.isFile() && e.name.endsWith('.md')) {
+      // Pages in the wiki root — a grown wiki has them.
+      try {
+        const md = await readFile(join(wikiAbs, e.name), 'utf8');
+        const list = bySubfolder.get('(root)') ?? [];
+        list.push({ wikiPath: e.name.replace(/\.md$/, ''), markdown: md });
+        bySubfolder.set('(root)', list);
+        total++;
+      } catch (err) {
+        logger.warn({ msg: 'dream.lucid.page_unreadable', path: join(wikiAbs, e.name), err: (err as Error).message });
+      }
     }
   }
 
-  return { indexContent, bySubfolder, pagesScanned: total };
+  return { bySubfolder, pagesScanned: total };
 }
 
 async function walkPages(
@@ -372,46 +407,48 @@ async function walkPages(
 
 // ─── prompt-building ────────────────────────────────────────────────
 
-function buildSubfolderUserMessage(
-  indexContent: string,
-  subfolder: string,
-  pages: Array<{ wikiPath: string; markdown: string }>,
-): string {
-  const indexBlock = `<wiki_index>\n${indexContent.trim()}\n</wiki_index>`;
-  const pageBlocks = pages
-    .map(
-      (p) =>
-        `<wiki_page slug="${p.wikiPath}">\n${p.markdown.trim()}\n</wiki_page>`,
-    )
+/** Exported for tests. */
+export function buildBatchUserMessage(mapText: string, batch: import('./lucid-batches.ts').LucidBatch, all: LucidPage[]): string {
+  const pageBlocks = batch.pages
+    .map((p) => `<wiki_page slug="${p.wikiPath}">\n${p.markdown.trim()}\n</wiki_page>`)
     .join('\n\n');
+  const siblings = siblingList(batch, all);
   return [
-    `Subfolder under review: ${subfolder}/`,
-    `Pages in this subfolder: ${pages.length}`,
-    'Focus your findings on issues WITHIN this subfolder. Cross-subfolder',
-    'issues will be checked in a separate pass — do not surface them here.',
+    `Folder under review: ${batch.folder}/${batch.of > 1 ? ` — part ${batch.part} of ${batch.of}` : ''}`,
+    `Pages in this part: ${batch.pages.length}`,
+    'Focus your findings on issues WITHIN these pages. Issues that span',
+    'folders will be checked in a separate pass — do not surface them here.',
     '',
-    indexBlock,
+    mapText,
     '',
+    ...(siblings ? [`<sibling_pages folder="${batch.folder === '(root)' ? '(root)' : batch.folder.split('/')[0]}">`, siblings, '</sibling_pages>', ''] : []),
     pageBlocks,
   ].join('\n');
 }
 
-function buildCrossSubfolderUserMessage(
-  indexContent: string,
+/** Exported for tests. Headers only; `maxChars` shortens the openings
+ *  when a thousand pages would not fit. */
+export function buildCrossSubfolderUserMessage(
+  mapText: string,
   bySubfolder: Map<string, Array<{ wikiPath: string; markdown: string }>>,
+  maxChars = 200_000,
 ): string {
   // Headers + first-section summary per page; not full bodies. This
   // pass catches contradictions / wanted_pages / dead_refs that span
   // subfolders without re-shipping all bodies.
-  const indexBlock = `<wiki_index>\n${indexContent.trim()}\n</wiki_index>`;
-  const summaryBlocks: string[] = [];
-  for (const [subfolder, pages] of bySubfolder) {
-    const lines: string[] = [`### ${subfolder}/`];
-    for (const p of pages) {
-      const firstSection = extractFirstSection(p.markdown);
-      lines.push(`- [[${p.wikiPath}]] — ${firstSection}`);
+  const build = (chars: number): string => {
+    const summaryBlocks: string[] = [];
+    for (const [subfolder, pages] of bySubfolder) {
+      const lines: string[] = [`### ${subfolder}/`];
+      for (const p of pages) lines.push(`- [[${p.wikiPath}]] — ${pageOpening(p.markdown, chars)}`);
+      summaryBlocks.push(lines.join('\n'));
     }
-    summaryBlocks.push(lines.join('\n'));
+    return summaryBlocks.join('\n\n');
+  };
+  let summaries = build(200);
+  for (const chars of [120, 80, 40]) {
+    if (summaries.length + mapText.length <= maxChars) break;
+    summaries = build(chars);
   }
   return [
     `Cross-subfolder pass — ${bySubfolder.size} subfolders, page-headers only.`,
@@ -424,10 +461,10 @@ function buildCrossSubfolderUserMessage(
     'with a "findings" array. No prose, no narration, no commentary.',
     'If no cross-subfolder findings, return {"findings": []}.',
     '',
-    indexBlock,
+    mapText,
     '',
     '<page_headers>',
-    summaryBlocks.join('\n\n'),
+    summaries,
     '</page_headers>',
   ].join('\n');
 }
@@ -456,7 +493,12 @@ const VALID_KINDS = new Set<LucidFindingKind>([
   'dead_ref',
   'wanted_page',
   'link_suggestion',
+  'duplicate_page',
+  'misfiled_page',
 ]);
+
+/** Kinds the model may only produce in a wiki on the template. */
+const STRUCTURE_KINDS = new Set<LucidFindingKind>(['misfiled_page']);
 
 /** Hard cap matching the prompt instruction. If the LLM emits more we
  *  truncate to keep the user-review surface manageable. */
@@ -475,7 +517,7 @@ function stripFences(raw: string): string {
 
 /** null = the answer was unreadable (not JSON, or no `findings` array);
  *  the caller counts the batch as failed. [] = a readable "nothing found". */
-export function parseLucidFindings(raw: string, runId: string): LucidFinding[] | null {
+export function parseLucidFindings(raw: string, runId: string, opts: { migrated?: boolean } = { migrated: true }): LucidFinding[] | null {
   const text = stripFences(raw);
   let parsed: unknown;
   try {
@@ -517,6 +559,7 @@ export function parseLucidFindings(raw: string, runId: string): LucidFinding[] |
     const f = item as Record<string, unknown>;
     const kind = f.kind;
     if (typeof kind !== 'string' || !VALID_KINDS.has(kind as LucidFindingKind)) continue;
+    if (!opts.migrated && STRUCTURE_KINDS.has(kind as LucidFindingKind)) continue;
     const reason = typeof f.reason === 'string' ? f.reason : '';
     if (!reason) continue;
     const affectedPages = Array.isArray(f.affected_pages)

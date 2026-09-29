@@ -26,6 +26,17 @@ export type LucidFindingKind =
   | 'dead_ref'
   | 'wanted_page'
   | 'link_suggestion'
+  /** Two pages about the same thing under different names (the
+   *  migration unites only same-name pages). Since 2026-09-29. */
+  | 'duplicate_page'
+  /** A page whose kind does not match its folder's purpose — only in a
+   *  wiki on the template (structure file with a template version). */
+  | 'misfiled_page'
+  /** A page over `wiki.lucid.oversizedChars` — deterministic, only in
+   *  a wiki on the template. */
+  | 'oversized_page'
+  /** One per run in a wiki without the template: the migration exists. */
+  | 'not_migrated'
   | 'stale_claim'
   | 'outdated'
   | 'inconsistent_xref';

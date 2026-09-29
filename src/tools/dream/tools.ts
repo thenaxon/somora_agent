@@ -66,7 +66,7 @@ export const dreamList: ToolDefinition<z.infer<typeof ListInput>> = {
   description:
     'List pending dreams awaiting user review. Returns both per-agent memory dreams (REM phase: ' +
     'atomic findings from your sessions, scoped to YOUR agent) and global wiki-cleanup runs ' +
-    '(Lucid phase: contradictions, dead links, wanted pages and link suggestions in the shared ' +
+    '(Lucid phase: contradictions, dead links, wanted pages, link suggestions, duplicate pages — and, in a wiki on the folder template, misfiled and oversized pages — in the shared ' +
     "wiki, same for every agent). Each entry has a `kind` field = 'memory' or 'wiki_lucid' so the " +
     'agent can describe them differently to the user. Pass include_processed=true to also see ' +
     'already-resolved entries. Use this first when the user asks "did you dream anything?" or ' +

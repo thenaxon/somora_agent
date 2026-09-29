@@ -388,6 +388,46 @@ export const wikiDelete: ToolDefinition<z.infer<typeof DeleteInput>> = {
   },
 };
 
+const MoveInput = z.object({
+  wikiPath: z.string().min(1),
+  newPath: z.string().min(1),
+  logSummary: z.string().optional(),
+});
+
+export const wikiMove: ToolDefinition<z.infer<typeof MoveInput>> = {
+  name: 'wiki_move',
+  toolset: 'wiki',
+  description:
+    'Move or rename a wiki page. ONLY available while you hold the active dream_review loop. ' +
+    'The file moves, its frontmatter slug follows, and every [[link]] in the wiki that named the old ' +
+    'path is rewritten to the new one. The target folder must be one the wiki map lists — an existing ' +
+    'folder or one the template proposes; a folder the map does not know is refused. Use it for a ' +
+    'misfiled_page finding, or to give a page the name of the thing it describes.',
+  inputSchema: MoveInput,
+  jsonSchema: {
+    type: 'object',
+    properties: {
+      wikiPath: { type: 'string', description: 'Current wiki path without .md, e.g. "wissen/cameras".' },
+      newPath: { type: 'string', description: 'New wiki path without .md, e.g. "infrastruktur/geraete/reolink-kameras". Lowercase, kebab-case.' },
+      logSummary: { type: 'string', description: 'One-line summary for the audit log. Optional.' },
+    },
+    required: ['wikiPath', 'newPath'],
+    additionalProperties: false,
+  },
+  available: HOLDER_GATE,
+  async handler(input, ctx) {
+    enforcePerTurnCap('wiki_move');
+    refreshLoopActivity(ctx.agent);
+    const wikiAbs = resolveWikiAbs(ctx);
+    const from = validateWikiPath(input.wikiPath);
+    const to = validateWikiPath(input.newPath);
+    const { movePage } = await import('../../wiki/move-page.ts');
+    const r = await movePage({ wikiAbs, language: ctx.config.wiki.language ?? 'de', from, to });
+    logger.info({ msg: 'wiki.move_via_review', agent: ctx.agent, from: r.from, to: r.to, linksRewritten: r.linksRewritten, pagesTouched: r.pagesTouched, summary: input.logSummary });
+    return { ...r, status: 'moved' };
+  },
+};
+
 export function wikiTools(): ToolDefinition[] {
-  return [wikiEdit, wikiCreate, wikiDelete] as ToolDefinition[];
+  return [wikiEdit, wikiCreate, wikiDelete, wikiMove] as ToolDefinition[];
 }

@@ -93,6 +93,7 @@ const api = {
       return { started: true, message: 'bg' };
     }
     if (p === '/wiki/migration/reindex') return { indexed: 3, skipped: 400 };
+    if (p === '/wiki/migration/plans/P1/relink') return { id: 'P1', renames: 5, refsRewritten: 7, pagesTouched: 3 };
     throw new Error(`POST ${p} → 404`);
   },
 };
@@ -127,6 +128,8 @@ check('run without the words refused before any call', (await runWikiCli(['migra
 reset();
 check('run with the words polls to the end', (await runWikiCli(['migrate', 'run', 'P1', '--confirm', 'move my wiki'], { api, out, pollMs: 1 })) === 0 && lines.some((l) => l.startsWith('Done.')) && (calls.find((c) => c.p.endsWith('/execute'))!.b as { dryRun: boolean }).dryRun === false);
 reset();
+reset();
+check('relink', (await runWikiCli(['migrate', 'relink', 'P1'], { api, out })) === 0 && lines[0] === 'Relinked: 7 references in 3 pages (5 renames from the run)');
 check('missing id', (await runWikiCli(['migrate', 'status'], { api, out })) === 1);
 check('unknown step', (await runWikiCli(['migrate', 'fly', 'P1'], { api, out })) === 2);
 check('wrong subcommand', (await runWikiCli(['prune'], { api, out })) === 2);

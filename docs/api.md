@@ -2316,6 +2316,18 @@ One full sweep of the shared search index now (`somora wiki migrate
 undo` calls it after putting a backup back). Returns `{ indexed,
 skipped }`; **503** while the index is still building.
 
+### `POST /wiki/migration/plans/:id/relink`
+
+A second pass over every page with the renames a finished run of this
+plan recorded: `[[links]]` and frontmatter `related:` entries that
+still name a moved, folded or united page are pointed at its new
+place. Idempotent. `{"dryRun": true}` only counts. Runs before
+v2026.09.29.07 left `related:` untouched — this is the repair.
+
+```json
+{ "id": "…", "dryRun": false, "renames": 819, "refsRewritten": 393, "pagesTouched": 224 }
+```
+
 ### `POST /wiki/migration/plans/:id/approve`
 
 Mark groups of the refined plan. Body: `groups` (group keys such as

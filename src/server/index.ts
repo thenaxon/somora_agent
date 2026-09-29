@@ -6462,6 +6462,32 @@ app.post('/wiki/migration/reindex', async (c) => {
   }
 });
 
+// A second pass over links and `related:` with the renames a finished
+// run recorded — for wikis migrated before the frontmatter was covered.
+app.post('/wiki/migration/plans/:id/relink', async (c) => {
+  const id = c.req.param('id');
+  if (!/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'bad id' }, 400);
+  if (!config.wiki.enabled) return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { dryRun?: unknown };
+  const obs = resolveObsidianSource(config.obsidian);
+  if (!obs?.vaultPath) return c.json({ error: 'no vault configured' }, 400);
+  const wikiAbs = joinPath(obs.vaultPath, config.wiki.vaultSubfolder);
+  const { readExecutions } = await import('../wiki/migration/store.ts');
+  const { renamesFromExecution, relinkWiki } = await import('../wiki/migration/execute.ts');
+  const runs = await readExecutions(id);
+  if (runs.length === 0) return c.json({ error: `plan ${id} has no finished run` }, 404);
+  const renames = new Map<string, string>();
+  const vanished = new Map<string, string>();
+  for (const r of runs) {
+    const x = renamesFromExecution(r);
+    for (const [k, v] of x.renames) renames.set(k, v);
+    for (const [k, v] of x.vanished) vanished.set(k, v);
+  }
+  const res = await relinkWiki(wikiAbs, renames, vanished, body.dryRun === true);
+  logger.info({ msg: 'wiki.migration.relink', id, dryRun: body.dryRun === true, renames: renames.size, ...res });
+  return c.json({ id, dryRun: body.dryRun === true, renames: renames.size, refsRewritten: res.refs, pagesTouched: res.pages });
+});
+
 app.get('/wiki/migration/plans/:id', async (c) => {
   const id = c.req.param('id');
   if (!/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'bad id' }, 400);

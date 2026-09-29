@@ -99,7 +99,9 @@ async function run(steps: typeof script, signal?: AbortSignal) {
 {
   const { result, stored } = await run([GOOD, '{"findings": []}', '{"findings": []}']);
   check('healthy: completed', result.status === 'completed', result.status);
-  check('healthy: one finding', result.findingsCount === 1, `${result.findingsCount}`);
+  // The fake wiki carries no structure file → one `not_migrated` hint
+  // comes with every run beside the model's finding.
+  check('healthy: one finding + the not-migrated hint', Boolean(result.findingsCount === 2 && stored?.findings.some((f) => f.kind === 'not_migrated')), `${result.findingsCount}`);
   check('healthy: 3 batches, 0 failed', stored?.batches_total === 3 && stored?.batches_failed === 0, `${stored?.batches_total}/${stored?.batches_failed}`);
   check('healthy: stored completed', stored?.status === 'completed');
 }
@@ -117,12 +119,12 @@ async function run(steps: typeof script, signal?: AbortSignal) {
 {
   const { result, stored } = await run(['error', GOOD, '{"findings": []}']);
   check('partial: completed', result.status === 'completed', result.status);
-  check('partial: finding kept', result.findingsCount === 1);
+  check('partial: finding kept', result.findingsCount === 2);
   check('partial: batches_failed=1 of 3', stored?.batches_total === 3 && stored?.batches_failed === 1, `${stored?.batches_total}/${stored?.batches_failed}`);
 }
 {
   const { result } = await run([GOOD + '\n\nLet me know if you want more detail.', '{"findings": []}', '{"findings": []}']);
-  check('trailing prose: completed, finding read', result.status === 'completed' && result.findingsCount === 1, `${result.status}/${result.findingsCount}`);
+  check('trailing prose: completed, finding read', result.status === 'completed' && result.findingsCount === 2, `${result.status}/${result.findingsCount}`);
 }
 {
   const ac = new AbortController();
@@ -130,7 +132,7 @@ async function run(steps: typeof script, signal?: AbortSignal) {
   const { result, stored } = await run([GOOD, 'hang'], ac.signal);
   check('abort: failed, not completed', result.status === 'failed', result.status);
   check('abort: error says aborted', /aborted/.test(stored?.error ?? ''), stored?.error);
-  check('abort: partial finding kept for audit', (stored?.findings.length ?? 0) === 1, `${stored?.findings.length}`);
+  check('abort: partial finding kept for audit', (stored?.findings.length ?? 0) === 2, `${stored?.findings.length}`);
   for (const r of hanging.splice(0)) r.destroy();
 }
 {

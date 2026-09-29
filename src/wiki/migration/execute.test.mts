@@ -187,3 +187,31 @@ if (fail > 0) process.exit(1);
 }
 console.log(`migration execute (survivor): ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
+
+// ── frontmatter related: rewritten too, and the relink pass ───────────
+{
+  const { rewritePageRefs, renamesFromExecution, relinkWiki } = await import('./execute.ts');
+  const raw = '---\nslug: a/x\ntype: t\ncreated: 2026-01-01\nupdated: 2026-01-01\nrelated:\n  - hardware/proxmox\n  - Hardware/Rack\n  - proxmox\n  - keep/me\n---\n# x\n\nSee [[hardware/rack]].\n';
+  const r = rewritePageRefs(raw, new Map([['hardware/proxmox', 'infrastruktur/proxmox'], ['hardware/rack', 'infrastruktur/geraete/rack']]), new Map([['proxmox', 'infrastruktur/proxmox']]));
+  check('related: rewritten by path (case-insensitive) and vanished basename, duplicates collapsed, others kept', r.count === 4 && r.text.includes('related:\n  - infrastruktur/proxmox\n  - infrastruktur/geraete/rack\n  - keep/me\n') && r.text.includes('[[infrastruktur/geraete/rack]]'), r.text);
+  const none = rewritePageRefs(raw, new Map([['z/z', 'y/y']]), new Map());
+  check('untouched page returned verbatim', none.count === 0 && none.text === raw);
+  const ren = renamesFromExecution({ items: [
+    { kind: 'move', page: 'a/one', target: 'b/one', status: 'done' },
+    { kind: 'fold', page: 'a/two', target: 'b/one', status: 'done' },
+    { kind: 'unite', page: 'c/x + d/x', target: 'e/x', status: 'done' },
+    { kind: 'move', page: 'a/failed', target: 'b/failed', status: 'failed' },
+  ] });
+  check('renames from a run: done items only, folds and unions vanish by basename', ren.renames.get('a/one') === 'b/one' && ren.renames.get('a/two') === 'b/one' && ren.renames.get('c/x') === 'e/x' && ren.renames.get('d/x') === 'e/x' && !ren.renames.has('a/failed') && ren.vanished.get('two') === 'b/one' && ren.vanished.get('x') === 'e/x');
+  // relink pass on the migrated test wiki: a page still naming the old paths in related:
+  await writeFile(join(wikiAbs, 'wissen/alt.md'), '---\nslug: wissen/alt\ntype: t\ncreated: 2026-01-01\nupdated: 2026-01-01\nrelated:\n  - hardware/rack\n  - agenten/hans/somora-deploy-2026-09-16\n---\n# alt\n\n[[hardware/rack]]\n');
+  const rr = renamesFromExecution(res);
+  const dry = await relinkWiki(wikiAbs, rr.renames, rr.vanished, true);
+  check('relink dry run counts, writes nothing', dry.refs >= 3 && (await readFile(join(wikiAbs, 'wissen/alt.md'), 'utf8')).includes('- hardware/rack'));
+  const real = await relinkWiki(wikiAbs, rr.renames, rr.vanished);
+  const alt = await readFile(join(wikiAbs, 'wissen/alt.md'), 'utf8');
+  check('relink real: related and link fixed', real.refs === dry.refs && alt.includes('- infrastruktur/geraete/rack') && alt.includes('- projekte/somora') && alt.includes('[[infrastruktur/geraete/rack]]'), alt);
+  check('relink idempotent', (await relinkWiki(wikiAbs, rr.renames, rr.vanished)).refs === 0);
+}
+console.log(`migration execute (relink): ${pass} passed, ${fail} failed`);
+if (fail > 0) process.exit(1);

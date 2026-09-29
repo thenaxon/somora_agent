@@ -79,7 +79,7 @@ refs, missing pages, link suggestions) — max 8 findings per run. Each
 finding is **informational only** — the actual editing happens in a
 conversational `dream_review` loop where you walk the findings with
 one of your agents and the agent writes changes via loop-scoped
-`wiki_edit` / `wiki_create` / `wiki_delete` tools after you OK each
+`wiki_edit` / `wiki_create` / `wiki_delete` / `wiki_move` tools after you OK each
 step. Outside the loop, no agent can write to the wiki.
 
 See [dream-phases.md](dream-phases.md#phase-lucid--wiki-cleanup) for
@@ -303,6 +303,8 @@ somora wiki migrate dry-run <id>    step 4a, writes dry-run.md, touches nothing
 somora wiki migrate run <id> --confirm "move my wiki"
 somora wiki migrate undo <id>       the backup back over the wiki (the current
                                     wiki is moved aside, nothing is deleted)
+somora wiki migrate relink <id>     point links and related: at the moved pages
+                                    again (runs before .07 missed related:)
 ```
 
 The words "move my wiki" are the one thing an agent must not supply on

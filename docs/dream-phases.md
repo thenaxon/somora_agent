@@ -511,6 +511,10 @@ intentionally narrow:
 | Finding kind | What it means |
 |---|---|
 | `contradiction` | Two pages assert mutually exclusive facts about the same subject. Cite specific text from each. |
+| `duplicate_page` | Two pages describe the same thing under different names — the migration unites only same-name pages. The page that should survive comes first. |
+| `misfiled_page` | A page plainly not of its folder's kind, judged against the wiki map. Only in a wiki on the folder template; the reason names the folder it belongs in. |
+| `oversized_page` | A page over `wiki.lucid.oversizedChars` (default 50 000). Found without a model, only in a wiki on the template; the review can split it into sub-pages (`wiki_create` + `wiki_edit` + `wiki_move`). |
+| `not_migrated` | One per run in a wiki without the template: Lucid checks content only here, `somora wiki migrate` is available. Dismiss it once to keep the wiki as it is. |
 | `dead_ref` | `[[wiki-path]]` references a page that doesn't exist. |
 | `wanted_page` | Topic referenced by ≥3 wiki pages but missing its own page. |
 | `link_suggestion` | A page mentions a named entity in prose AND a wiki page exists with that name AND there is no `[[wikilink]]` from one to the other. Strict: only for clearly identifiable named entities, not generic words. |
@@ -530,18 +534,25 @@ but no run produces them.
 
 ### Cluster strategy
 
-Lucid walks the wiki by subfolder, one LLM call per subfolder. Then a
-final cross-subfolder pass looks across folders — but it sees only the
-opening of each page (three lines, 200 characters). That is enough for
-a dead link or a missing page that spans folders; a contradiction
-between the body of `personen/jane-doe` and the body of
-`projekte/familie-luca-podcast` is out of its sight.
+Lucid cuts the wiki into calls by size: one call carries as many pages
+of one folder (subfolders are folders of their own) as fit
+`wiki.lucid.batchChars` (default 100 000 characters); a page larger
+than that travels alone; a big folder goes in numbered parts. A grown
+wiki with seventy small folders gets seventy small calls, a wiki on
+the template with three big folders gets those in parts — the same
+rule for both. Beside its pages every call sees the wiki map (the
+folders and what lives in each) and the other pages of its top folder
+as one line each, not the whole `index.md`. Then a final
+cross-folder pass looks across folders — but it sees only the opening
+line of each page. That is enough for a dead link or a missing page
+that spans folders; a contradiction between the body of
+`personen/jane-doe` and the body of `projekte/familie-luca-podcast` is
+out of its sight.
 
-This isn't just for scale — claude-cli's stdin-stream parser fails on
-single user-messages > ~50 KB. Per-subfolder batches stay safely under
-that limit. As a side-effect the worker reads each subfolder with full
-focus, which produces higher-quality findings than scanning everything
-at once.
+The size limit is not only for scale — claude-cli's stdin-stream
+parser fails on very large single user-messages. As a side-effect the
+worker reads each part with full focus, which produces higher-quality
+findings than scanning everything at once.
 
 ### Worker model
 
@@ -555,6 +566,10 @@ wiki:
     model: <alias>           # required — alias from config.yaml or 'provider/modelId'
     requireApproval: true
     maxCallsPerTurn: 3       # wiki_* calls the loop holder may make per turn
+    batchChars: 100000       # page text per Lucid call; a bigger folder goes in parts
+    oversizedChars: 50000    # pages above this are reported (template wikis only)
+    maxFindings: 60          # kept per run: contradictions, dead refs, duplicates,
+                             # misfiled/oversized, wanted pages first; link suggestions last
     # thinking: medium       # optional; same semantics as wiki.deep.thinking.
                              # Lucid is judgement-heavy (consistency + dead-
                              # ref detection) so medium thinking is often
@@ -567,8 +582,13 @@ Without `model` a Lucid run fails with
 ### Output
 
 A `LucidRun` JSON file in `~/.somora/wiki-lucid/<run-id>.json`. The cap
-of 8 findings applies to each batch (one per subfolder, plus the cross
-pass), so a run over six folders can return more than 8. The file also
+of 8 findings applies to each call (one per batch, plus the cross
+pass); a run over ninety batches could return hundreds, so
+`wiki.lucid.maxFindings` (default 60) keeps the weighty ones —
+contradictions, dead refs, duplicates, misfiled and oversized pages,
+wanted pages — and fills the rest with link suggestions; a pair filed
+by two calls counts once; what was dropped is logged
+(`dream.lucid.run_capped`). The file also
 records `batches_total` and `batches_failed`: a run in which every batch
 failed, or that was aborted, is `failed` — not a clean wiki with zero
 findings. Each finding is **informational only** — `fix.kind:
@@ -608,7 +628,7 @@ scribe:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
 
 While the loop is active for an agent:
 
-- The agent gets `wiki_edit` / `wiki_create` / `wiki_delete` (loop-scoped)
+- The agent gets `wiki_edit` / `wiki_create` / `wiki_delete` / `wiki_move` (loop-scoped)
 - Read-only file tools (`file_read`, `file_search`, `file_list`,
   `analyze_file`) stay available so the agent can look up source
   material before proposing an edit. `file_write` / `file_patch` are

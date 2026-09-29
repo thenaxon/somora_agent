@@ -193,6 +193,83 @@ export function rewriteLinks(body: string, renames: Map<string, string>, vanishe
   return { body: out, count };
 }
 
+/**
+ * Rewrite a whole page: the [[links]] in its text AND the paths in its
+ * frontmatter `related:` list (2026-09-29: the first live migration
+ * rewrote 1683 links and left 393 `related:` entries pointing at moved
+ * pages — Lucid found them as dead refs the same evening). Returns the
+ * new text and how many references changed; the text is rebuilt only
+ * when something changed.
+ */
+export function rewritePageRefs(raw: string, renames: Map<string, string>, vanishedBases: Map<string, string>): { text: string; count: number } {
+  const lower = new Map([...renames].map(([k, v]) => [k.toLowerCase(), v]));
+  const links = rewriteLinks(raw, renames, vanishedBases);
+  let count = links.count;
+  let text = links.body;
+  const page = parseWikiPage(text);
+  if (page.frontmatter.related?.length) {
+    const next: string[] = [];
+    let changed = 0;
+    for (const r of page.frontmatter.related) {
+      const key = norm(String(r)).toLowerCase();
+      let to = lower.get(key);
+      if (!to && !key.includes('/')) to = vanishedBases.get(key);
+      if (to && to !== r) changed++;
+      const v = to ?? String(r);
+      if (!next.includes(v)) next.push(v);
+    }
+    if (changed > 0 || next.length !== page.frontmatter.related.length) {
+      count += changed;
+      page.frontmatter.related = next;
+      text = buildWikiPage(page);
+    }
+  }
+  return { text, count };
+}
+
+/** The renames a finished run recorded, for a second pass over the links. */
+export function renamesFromExecution(r: Pick<ExecutionResult, 'items'>): { renames: Map<string, string>; vanished: Map<string, string> } {
+  const renames = new Map<string, string>();
+  const vanished = new Map<string, string>();
+  for (const it of r.items) {
+    if (it.status !== 'done') continue;
+    if (it.kind === 'move') renames.set(it.page, it.target);
+    else if (it.kind === 'fold') {
+      renames.set(it.page, it.target);
+      vanished.set(baseOf(it.page).toLowerCase(), it.target);
+    } else if (it.kind === 'unite') {
+      for (const d of it.page.split(' + ')) {
+        renames.set(d, it.target);
+        vanished.set(baseOf(d).toLowerCase(), it.target);
+      }
+    }
+  }
+  return { renames, vanished };
+}
+
+/** One pass over every page: links and `related:` pointed at the new
+ *  places. Used at the end of a run and by `relink` afterwards. */
+export async function relinkWiki(wikiAbs: string, renames: Map<string, string>, vanished: Map<string, string>, dryRun = false): Promise<{ refs: number; pages: number }> {
+  let refs = 0;
+  let pages = 0;
+  if (renames.size === 0) return { refs, pages };
+  for (const rel of await listPages(wikiAbs)) {
+    const file = join(wikiAbs, `${rel}.md`);
+    let raw: string;
+    try {
+      raw = await readFile(file, 'utf8');
+    } catch {
+      continue;
+    }
+    const r = rewritePageRefs(raw, renames, vanished);
+    if (r.count === 0) continue;
+    refs += r.count;
+    pages++;
+    if (!dryRun) await writeAtomic(file, r.text);
+  }
+  return { refs, pages };
+}
+
 // ── page text helpers ────────────────────────────────────────────────
 
 /** Append `entry` at the end of the `## heading` section, or add the section. */
@@ -415,25 +492,10 @@ export async function executeMigration(args: ExecuteArgs): Promise<ExecutionResu
     progress(it);
   }
 
-  // 4. Links across the whole wiki.
-  let linksRewritten = 0;
-  let pagesWithLinksRewritten = 0;
-  if (renames.size > 0) {
-    for (const rel of await listPages(wikiAbs)) {
-      const file = join(wikiAbs, `${rel}.md`);
-      let raw: string;
-      try {
-        raw = await readFile(file, 'utf8');
-      } catch {
-        continue;
-      }
-      const r = rewriteLinks(raw, renames, vanished);
-      if (r.count === 0) continue;
-      linksRewritten += r.count;
-      pagesWithLinksRewritten++;
-      if (!dryRun) await writeAtomic(file, r.body);
-    }
-  }
+  // 4. Links and `related:` across the whole wiki.
+  const relinked = await relinkWiki(wikiAbs, renames, vanished, dryRun);
+  const linksRewritten = relinked.refs;
+  const pagesWithLinksRewritten = relinked.pages;
 
   // 5. Empty folders.
   const foldersRemoved: string[] = [];

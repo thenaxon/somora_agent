@@ -1740,12 +1740,29 @@ export const WikiLucidConfigSchema = z
      *  plans and find the default of 3 cuts off legitimate work;
      *  lower if you want stricter check-in-with-user enforcement. */
     maxCallsPerTurn: z.number().int().positive().default(3),
+    /** How much page text one Lucid call carries at most (characters;
+     *  a page larger than this travels alone). One call per folder used
+     *  to be the rule; after a migration onto the template the big
+     *  folders are cut into parts of this size. */
+    batchChars: z.number().int().min(10_000).default(100_000),
+    /** Pages over this many characters are reported as `oversized_page`
+     *  (only in a wiki on the template). */
+    oversizedChars: z.number().int().min(5_000).default(50_000),
+    /** How many findings a run keeps for review at most. Every call may
+     *  answer with up to 8; with the wiki cut into ninety calls that is
+     *  more than a person walks through. Kept by weight: contradictions,
+     *  dead refs, duplicates, misfiled and oversized pages, wanted pages
+     *  first — link suggestions fill what is left. */
+    maxFindings: z.number().int().min(8).default(60),
   })
   .default({
     enabled: true,
     intervalDays: 7,
     requireApproval: true,
     maxCallsPerTurn: 3,
+    batchChars: 100_000,
+    oversizedChars: 50_000,
+    maxFindings: 60,
   });
 
 export const WikiSearchConfigSchema = z
@@ -1814,6 +1831,9 @@ export const WikiConfigSchema = z
       intervalDays: 7,
       requireApproval: true,
       maxCallsPerTurn: 3,
+      batchChars: 100_000,
+      oversizedChars: 50_000,
+      maxFindings: 60,
     },
     search: {
       // Keep in lockstep with WikiSearchConfigSchema's defaults above —

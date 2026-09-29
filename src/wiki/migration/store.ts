@@ -75,6 +75,26 @@ export async function writeExecution(id: string, r: ExecutionResult, language: W
   return { markdown };
 }
 
+/** Every finished real run of a plan, oldest first. */
+export async function readExecutions(id: string): Promise<ExecutionResult[]> {
+  const dir = join(MIGRATION_ROOT, id);
+  let names: string[];
+  try {
+    names = (await (await import('node:fs/promises')).readdir(dir)).filter((n) => /^execution-.*\.json$/.test(n)).sort();
+  } catch {
+    return [];
+  }
+  const out: ExecutionResult[] = [];
+  for (const n of names) {
+    try {
+      out.push(JSON.parse(await readFile(join(dir, n), 'utf8')) as ExecutionResult);
+    } catch {
+      /* unreadable run file */
+    }
+  }
+  return out;
+}
+
 export function backupDirFor(id: string, now = new Date()): string {
   return join(MIGRATION_ROOT, id, `backup-${now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')}`);
 }
