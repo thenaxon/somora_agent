@@ -87,7 +87,7 @@ const api = {
     }
     if (p === '/wiki/migration/plans/P1/execute') {
       const body = b as { dryRun: boolean; confirm?: string; wait?: boolean };
-      if (body.dryRun) return { report: '/x/dry-run.md', counts: { move: 47, fold: 96, unite: 1, failed: 0, skipped: 0 }, linksRewritten: 300 };
+      if (body.dryRun) return { report: '/x/dry-run.md', steps: 144, counts: { move: 0, fold: 0, unite: 0, failed: 0, skipped: 0 }, linksRewritten: 300 };
       if (body.confirm !== 'move my wiki') throw new Error('a real run needs confirm');
       state.execute = { done: 0, total: 144, dryRun: false };
       return { started: true, message: 'bg' };

@@ -113,7 +113,7 @@ function renderMap(folders: MapFolder[], planned: Array<{ path: string; purpose:
     '- At most one level of subfolders.',
   );
   lines.push(
-    '- File a page into an existing or proposed folder above. Only when none fits, create a new one: give "subfolder" the new path and add "newFolder": {"path": "<the same path>", "purpose": "<one sentence, in the wiki language, what kind of page lives there>"} — the description is kept and shown here from the next run on. A new folder without a purpose is refused.',
+    '- File a page into a DESCRIBED folder above (existing with a description, or proposed). A folder marked "(no description yet)" is not a home: file into the template folder for that kind instead, or describe the folder. Only when none fits, create a new one: give "subfolder" the new path and add "newFolder": {"path": "<the same path>", "purpose": "<one sentence, in the wiki language, what kind of page lives there>"} — the description is kept and shown here from the next run on. A new folder without a purpose is refused.',
   );
   lines.push('</wiki_map>');
   return lines.join('\n');
@@ -199,10 +199,15 @@ export function checkPromoteTarget(map: WikiMap, decision: { slug: string; subfo
   if (!folder) return { kind: 'ok', folder };
   const existing = map.folders.find((f) => f.path === folder);
   if (existing) {
-    // An existing folder nobody has described yet: the model's purpose,
-    // when it gave one for exactly this folder, fills the gap.
-    if (!existing.purpose && decision.newFolder && decision.newFolder.path === folder) {
-      return { kind: 'ok', folder, describe: { path: folder, purpose: decision.newFolder.purpose, origin: 'deep' } };
+    // An existing folder nobody has described yet is no home either
+    // (2026-09-29, Conny's wiki: Deep filed a new pet page into the
+    // grown `tiere/` although the template has `privat/` for pets) —
+    // unless the model describes it, which fills the gap for good.
+    if (!existing.purpose) {
+      if (decision.newFolder && decision.newFolder.path === folder && decision.newFolder.purpose.trim()) {
+        return { kind: 'ok', folder, describe: { path: folder, purpose: decision.newFolder.purpose.trim(), origin: 'deep' } };
+      }
+      return { kind: 'unknownFolder', folder };
     }
     return { kind: 'ok', folder };
   }

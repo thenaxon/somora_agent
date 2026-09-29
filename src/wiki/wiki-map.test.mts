@@ -98,6 +98,8 @@ await writeFile(join(wikiAbs, 'logs/2026-09.md'), '- log\n');
 
   // promote target check
   check('existing folder ok', checkPromoteTarget(map, { slug: 'personen/bert', subfolder: 'personen' }).kind === 'ok');
+  check('existing but undescribed folder is no home', checkPromoteTarget(map, { slug: 'infrastruktur/hosts/rack', subfolder: 'infrastruktur/hosts' }).kind === 'ok' && checkPromoteTarget({ ...map, folders: [...map.folders, { path: 'tiere', pages: 1, purpose: '', origin: 'unknown' }] }, { slug: 'tiere/lara', subfolder: 'tiere' }).kind === 'unknownFolder');
+  check('…unless the model describes it', checkPromoteTarget({ ...map, folders: [...map.folders, { path: 'tiere', pages: 1, purpose: '', origin: 'unknown' }] }, { slug: 'tiere/lara', subfolder: 'tiere', newFolder: { path: 'tiere', purpose: 'Haustiere.' } }).kind === 'ok');
   const planned = checkPromoteTarget(map, { slug: 'projekte/haus', subfolder: 'projekte' });
   check('planned folder ok with template purpose', planned.kind === 'ok' && planned.describe?.origin === 'template' && planned.describe.path === 'projekte');
   check('unknown folder without purpose refused', checkPromoteTarget(map, { slug: 'fahrzeuge/vw-bus', subfolder: 'fahrzeuge' }).kind === 'unknownFolder');

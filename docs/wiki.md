@@ -256,8 +256,9 @@ memory search skip it.
 
 On every run Deep is shown the **wiki map**: every folder that exists
 with its purpose and page count, then the template folders that do not
-exist yet, then the rules. It files a new page into one of those. Only
-when no kind fits may it create a folder, and then it has to say in one
+exist yet, then the rules. It files a new page into one of the
+described ones — a grown folder nobody has described is not a home
+until someone describes it. Only when no kind fits may it create a folder, and then it has to say in one
 sentence what kind of page lives there — that sentence lands in the
 structure file and in every later map. A new folder without a purpose,
 or one deeper than a subfolder, is refused and the memory note waits

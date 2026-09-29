@@ -174,8 +174,10 @@ export async function stepApprove(api: Api, id: string, sel: { actions: string[]
 
 export async function stepDryRun(api: Api, id: string, out: Out): Promise<Record<string, unknown>> {
   const r = await api.post(`/wiki/migration/plans/${id}/execute`, { dryRun: true, wait: true });
-  const c = (r.counts ?? {}) as Record<string, number | undefined>;
-  const steps = ['move', 'fold', 'unite', 'failed', 'skipped'].reduce((n, k) => n + (c[k] ?? 0), 0);
+  // A dry run plans every step and does none — the counts are all
+  // zero, so the number of steps is the item count (2026-09-29: the
+  // first real dry run said "0 steps planned").
+  const steps = typeof r.steps === 'number' ? r.steps : 0;
   out(`Dry run: ${steps} steps planned, ${r.linksRewritten} links would change — nothing written`);
   out(`  report: ${r.report}`);
   return r;

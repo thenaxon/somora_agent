@@ -6449,7 +6449,7 @@ app.post('/wiki/migration/plans/:id/execute', async (c) => {
   });
   if (!body.wait) return c.json({ id, dryRun, started: true, message: 'Execute started in background. GET /wiki/migration/plans/:id for progress.' });
   const r = await run;
-  return c.json({ id, dryRun, report: r.markdown, counts: r.result.counts, linksRewritten: r.result.linksRewritten, foldersRemoved: r.result.foldersRemoved.length, backupDir: r.result.backupDir, reindex: r.result.reindex ?? null });
+  return c.json({ id, dryRun, report: r.markdown, steps: r.result.items.length, counts: r.result.counts, linksRewritten: r.result.linksRewritten, foldersRemoved: r.result.foldersRemoved.length, backupDir: r.result.backupDir, reindex: r.result.reindex ?? null });
 });
 
 // One sweep of the search index now — after `somora wiki migrate undo`

@@ -295,9 +295,9 @@ async function collectCandidates(agent: string): Promise<PromotionCandidate[]> {
       logger.warn({ msg: 'dream.deep.candidate_unreadable', agent, path, err: (err as Error).message });
       continue;
     }
-    const parsed = matter(raw);
+    const parsed = parseMemoryNote(raw, path);
     const slug = e.name.replace(/\.md$/, '');
-    const fm = (parsed.data ?? {}) as Record<string, unknown>;
+    const fm = parsed.data;
 
     // Opt-out marker: memory file with `wiki_promote: false` stays in
     // memory, never gets evaluated by Deep.
@@ -342,6 +342,36 @@ export async function loadDeepWikiState(wikiAbs: string, language: StructureFile
     twins: [...map.sameName.values()].filter((v) => v.length > 1).length,
   });
   return { map, structure, dirty };
+}
+
+/**
+ * A memory note's frontmatter and body, tolerant of a header the YAML
+ * parser rejects (2026-09-29, a note on a second installation failed
+ * every Deep run for weeks with "end of the stream or a document
+ * separator is expected"): the first `---` block is read with the
+ * strict parser, then leniently line by line (`key: value` only), and
+ * as a last resort the note goes to the model with an empty header and
+ * its full text — Deep then promotes or skips it like any other, which
+ * is how the note heals. Exported for tests.
+ */
+export function parseMemoryNote(raw: string, path: string): { data: Record<string, unknown>; content: string } {
+  try {
+    const parsed = matter(raw);
+    return { data: (parsed.data ?? {}) as Record<string, unknown>, content: parsed.content };
+  } catch (err) {
+    const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
+    const data: Record<string, unknown> = {};
+    let content = raw;
+    if (m) {
+      content = raw.slice(m[0].length);
+      for (const line of m[1]!.split(/\r?\n/)) {
+        const kv = /^([A-Za-z_][\w-]*):\s*(.*)$/.exec(line);
+        if (kv && kv[2] && !/^[>|]/.test(kv[2])) data[kv[1]!] = kv[2].replace(/^['"]|['"]$/g, '');
+      }
+    }
+    logger.warn({ msg: 'dream.deep.frontmatter_unreadable', path, err: (err as Error).message.split('\n')[0], keptKeys: Object.keys(data), hint: 'note is processed with a lenient header' });
+    return { data, content };
+  }
 }
 
 // ─── per-candidate processing ───────────────────────────────────────
