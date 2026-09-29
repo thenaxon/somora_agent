@@ -2310,6 +2310,12 @@ when it exists.
                "groups": [ { "action": "move", "target": "regeln", "pages": 50 }, … ] } }
 ```
 
+### `POST /wiki/migration/reindex`
+
+One full sweep of the shared search index now (`somora wiki migrate
+undo` calls it after putting a backup back). Returns `{ indexed,
+skipped }`; **503** while the index is still building.
+
 ### `POST /wiki/migration/plans/:id/approve`
 
 Mark groups of the refined plan. Body: `groups` (group keys such as

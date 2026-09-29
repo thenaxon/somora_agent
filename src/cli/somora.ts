@@ -59,6 +59,8 @@ Usage:
                                      print the "# Your team" block an agent sees
   somora lsp status|install [id…]    language servers for builder agents (docs/lsp.md):
                                      what is installed, install with npm into ~/.somora/lsp
+  somora wiki migrate [step] [id]    move a grown wiki onto the folder template (docs/wiki.md):
+                                     guided, or plan|judge|status|approve|dry-run|run|undo
   somora update [<version>|--edge]   install + rebake systemd + restart
                                      (run \`somora update --help\` for options)
   somora --version                   show version
@@ -614,6 +616,10 @@ async function main(): Promise<number> {
     case 'lsp': {
       const { runLspCli } = await import('./lsp.ts');
       return await runLspCli(rest);
+    }
+    case 'wiki': {
+      const { runWikiCli } = await import('./wiki.ts');
+      return await runWikiCli(rest);
     }
     default:
       process.stderr.write(`unknown command: ${cmd}\n${usage()}`);

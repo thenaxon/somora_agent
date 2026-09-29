@@ -286,7 +286,28 @@ only changes where **new** pages go. Moving the existing pages onto
 the template is a separate, deliberate process that nothing starts by
 itself — you trigger it, you read what it would do, you approve it in
 groups, and it takes a full copy of the wiki before it moves a file.
-Four steps, all over HTTP ([api.md](api.md#post-wikimigrationplan)):
+Four steps, from the shell on the somora host — `somora wiki migrate`
+walks you through them, and each is also a subcommand with flags so a
+script, or an agent that read this page, can drive it — or over HTTP
+([api.md](api.md#post-wikimigrationplan)), which is what the command
+calls:
+
+```
+somora wiki migrate                 guided: plan → judge → approve → dry run → run
+somora wiki migrate plan            step 1, prints the plan id
+somora wiki migrate judge <id>      step 2, waits for the model, lists the groups
+somora wiki migrate status <id>     the groups and what is approved
+somora wiki migrate approve <id> --action move --action fold --twins
+somora wiki migrate approve <id> --group fold:projekte/somora --dismiss
+somora wiki migrate dry-run <id>    step 4a, writes dry-run.md, touches nothing
+somora wiki migrate run <id> --confirm "move my wiki"
+somora wiki migrate undo <id>       the backup back over the wiki (the current
+                                    wiki is moved aside, nothing is deleted)
+```
+
+The words "move my wiki" are the one thing an agent must not supply on
+its own: it may plan, judge, read the groups out and record your
+approvals, and it starts the real run only after you said the words.
 
 1. **Plan** — `POST /wiki/migration/plan` reads the wiki and writes a
    plan under `~/.somora/wiki-migration/<id>/plan.md`: folders a rule
@@ -326,9 +347,10 @@ Four steps, all over HTTP ([api.md](api.md#post-wikimigrationplan)):
    index swept. Every step is recorded with its outcome in
    `execution-<time>.md`; a failed step never stops the others.
 
-To undo a run, copy the backup folder back over the wiki. The plan and
-its files stay under `~/.somora/wiki-migration/` for as long as you
-keep them.
+To undo a run: `somora wiki migrate undo <id>` moves the current wiki
+folder aside (`<wiki>.before-undo-<time>`), copies the backup to the
+wiki's place and sweeps the search index. The plan and its files stay
+under `~/.somora/wiki-migration/` for as long as you keep them.
 
 ## How agents read the wiki
 

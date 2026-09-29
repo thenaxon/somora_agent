@@ -6450,6 +6450,18 @@ app.post('/wiki/migration/plans/:id/execute', async (c) => {
   return c.json({ id, dryRun, report: r.markdown, counts: r.result.counts, linksRewritten: r.result.linksRewritten, foldersRemoved: r.result.foldersRemoved.length, backupDir: r.result.backupDir, reindex: r.result.reindex ?? null });
 });
 
+// One sweep of the search index now — after `somora wiki migrate undo`
+// put a backup back, so nobody waits for the 10-minute rescan.
+app.post('/wiki/migration/reindex', async (c) => {
+  if (!config.wiki.enabled) return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  try {
+    const r = await getSharedIndex({ config: config.memory, obsidian: config.obsidian, wiki: config.wiki }).sweepNow();
+    return c.json(r);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 503);
+  }
+});
+
 app.get('/wiki/migration/plans/:id', async (c) => {
   const id = c.req.param('id');
   if (!/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'bad id' }, 400);
