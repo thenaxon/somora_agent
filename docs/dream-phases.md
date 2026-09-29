@@ -511,13 +511,13 @@ intentionally narrow:
 | Finding kind | What it means |
 |---|---|
 | `contradiction` | Two pages assert mutually exclusive facts about the same subject. Cite specific text from each. |
-| `duplicate_page` | Two pages describe the same thing under different names — the migration unites only same-name pages. The page that should survive comes first. |
-| `misfiled_page` | A page plainly not of its folder's kind, judged against the wiki map. Only in a wiki on the folder template; the reason names the folder it belongs in. |
+| `duplicate_page` | Two pages describe the same thing under different names — the migration unites only same-name pages. The page that should survive comes first; `dream_apply` unites them (the model writes the merged body, the other page goes to the report archive, links follow). |
+| `misfiled_page` | A page plainly not of its folder's kind, judged against the wiki map. Only in a wiki on the folder template; the finding names the folder, `dream_apply` moves the page there. |
 | `oversized_page` | A page over `wiki.lucid.oversizedChars` (default 50 000). Found without a model, only in a wiki on the template; the review can split it into sub-pages (`wiki_create` + `wiki_edit` + `wiki_move`). |
 | `not_migrated` | One per run in a wiki without the template: Lucid checks content only here, `somora wiki migrate` is available. Dismiss it once to keep the wiki as it is. |
 | `dead_ref` | `[[wiki-path]]` references a page that doesn't exist. |
 | `wanted_page` | Topic referenced by ≥3 wiki pages but missing its own page. |
-| `link_suggestion` | A page mentions a named entity in prose AND a wiki page exists with that name AND there is no `[[wikilink]]` from one to the other. Strict: only for clearly identifiable named entities, not generic words. |
+| `link_suggestion` (set by Lucid itself, see below) | A page mentions a named entity in prose AND a wiki page exists with that name AND there is no `[[wikilink]]` from one to the other. Strict: only for clearly identifiable named entities, not generic words. |
 
 Subjective polish (stylistic rewrites, "this could read better",
 "feels old") is **deliberately NOT in scope**. Those decisions belong
@@ -568,8 +568,11 @@ wiki:
     maxCallsPerTurn: 3       # wiki_* calls the loop holder may make per turn
     batchChars: 100000       # page text per Lucid call; a bigger folder goes in parts
     oversizedChars: 50000    # pages above this are reported (template wikis only)
-    maxFindings: 60          # kept per run: contradictions, dead refs, duplicates,
-                             # misfiled/oversized, wanted pages first; link suggestions last
+    maxFindings: 12          # kept per run for review, weighted: contradictions, dead refs,
+                             # duplicates, misfiled/oversized, wanted pages
+    autoLinks: true          # link suggestions are set by Lucid, not reviewed
+    autoLinksPerRun: 30
+    seenDays: 90             # a dismissed finding is not filed again for this long
     # thinking: medium       # optional; same semantics as wiki.deep.thinking.
                              # Lucid is judgement-heavy (consistency + dead-
                              # ref detection) so medium thinking is often
@@ -586,9 +589,17 @@ of 8 findings applies to each call (one per batch, plus the cross
 pass); a run over ninety batches could return hundreds, so
 `wiki.lucid.maxFindings` (default 60) keeps the weighty ones —
 contradictions, dead refs, duplicates, misfiled and oversized pages,
-wanted pages — and fills the rest with link suggestions; a pair filed
-by two calls counts once; what was dropped is logged
-(`dream.lucid.run_capped`). The file also
+wanted pages; a pair filed by two calls counts once; what was dropped
+is logged (`dream.lucid.run_capped`). Link suggestions are not
+reviewed at all: Lucid sets them itself — the first plain mention of
+the name becomes a `[[link]]` — up to `wiki.lucid.autoLinksPerRun`
+(30) per run, and records each as `applied` or, when the phrase was
+not found as plain text, `dismissed` with the reason (`autoLinks:
+false` turns this off). A finding a person dismissed is not filed
+again for `wiki.lucid.seenDays` (90). And while a run still has
+findings waiting, no new run starts — the scheduler looks again six
+hours later, `dream_run({phase:'lucid', force:true})` runs anyway. The
+file also
 records `batches_total` and `batches_failed`: a run in which every batch
 failed, or that was aborted, is `failed` — not a clean wiki with zero
 findings. Each finding is **informational only** — `fix.kind:
@@ -623,7 +634,10 @@ scribe:    wiki_edit({...})   ← writes the page
 
 > you:    good, wrap it up
 scribe:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
-         loop is archived to processed/, normal tools come back
+         findings you did not get to stay open; the run is archived only
+         when none are left (or with dismiss_rest: true); a later loop
+         continues where this one stopped, and Lucid runs no new scan
+         while findings wait
 ```
 
 While the loop is active for an agent:

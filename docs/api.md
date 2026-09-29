@@ -2260,7 +2260,9 @@ gets re-evaluated.
 
 ### `POST /dream/run-lucid`
 
-Same shape as `run-deep`, for the Lucid (wiki review) phase.
+Same shape as `run-deep`, for the Lucid (wiki review) phase. While a
+previous run still has findings waiting for review, no new run starts
+(the response names that run); `{"force": true}` runs anyway.
 
 ### `POST /wiki/migration/plan`
 

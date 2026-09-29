@@ -223,9 +223,7 @@ export const wikiEdit: ToolDefinition<z.infer<typeof EditInput>> = {
     fmNext.updated = today;
     const bodyOut =
       typeof input.newBody === 'string'
-        ? input.newBody.startsWith('\n')
-          ? input.newBody
-          : `\n${input.newBody}`
+        ? keepTitle(parsed.body, input.newBody)
         : parsed.body;
     const updatedPage = buildWikiPage({
       // applyFrontmatterOps preserves all unknown fields, builder
@@ -427,6 +425,20 @@ export const wikiMove: ToolDefinition<z.infer<typeof MoveInput>> = {
     return { ...r, status: 'moved' };
   },
 };
+
+/**
+ * The page's "# Title" line survives a body replacement: the tool asks
+ * for a body WITHOUT the H1 and promised the title stays — until
+ * 2026-09-29 it did not (a review rewrote a page and its title was
+ * gone). A new body that brings its own H1 wins. Exported for tests.
+ */
+export function keepTitle(existingBody: string, newBody: string): string {
+  const body = newBody.startsWith('\n') ? newBody : `\n${newBody}`;
+  if (/^\s*#\s/.test(newBody)) return body;
+  const title = /^\s*(#\s[^\n]+)/.exec(existingBody)?.[1];
+  if (!title) return body;
+  return `\n${title}\n${body}`;
+}
 
 export function wikiTools(): ToolDefinition[] {
   return [wikiEdit, wikiCreate, wikiDelete, wikiMove] as ToolDefinition[];

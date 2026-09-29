@@ -80,7 +80,15 @@ export type LucidFix =
       kind: 'no_op';
       /** Informational finding — no apply action, dismiss-only. */
       note: string;
-    };
+    }
+  /** link_suggestion since 2026-09-29: Lucid sets the link itself
+   *  (first plain mention of `phrase` in `wikiPath` → [[target|phrase]]). */
+  | { kind: 'add_link'; wikiPath: string; phrase: string; target: string }
+  /** duplicate_page: the model writes the merged body of `keep`, the
+   *  others go to the report archive, links follow. */
+  | { kind: 'unite_pages'; keep: string; drop: string[] }
+  /** misfiled_page: move to the folder the model named. */
+  | { kind: 'move_page'; from: string; to: string };
 
 export interface LucidFinding {
   id: number;

@@ -19,9 +19,12 @@ export interface StructureContext {
   oversizedChars: number;
 }
 
-/** What is kept when a run has more findings than `maxFindings`: the
- *  objective and actionable kinds first, link suggestions last. Within
- *  a kind the order of discovery stays (earlier folders first). */
+/** What is kept when a run has more findings than `maxFindings`: one
+ *  of each kind in turn, weightiest kind first, round after round —
+ *  so a run with 12 contradictions and 17 duplicates yields a mix,
+ *  not twelve contradictions and no duplicate (2026-09-29, the first
+ *  capped run did exactly that). Within a kind the order of discovery
+ *  stays (earlier folders first). */
 const KEEP_ORDER: readonly LucidFinding['kind'][] = ['not_migrated', 'contradiction', 'dead_ref', 'duplicate_page', 'misfiled_page', 'oversized_page', 'wanted_page', 'link_suggestion', 'stale_claim', 'outdated', 'inconsistent_xref'];
 
 export function capFindings(findings: LucidFinding[], max: number): { kept: LucidFinding[]; dropped: Record<string, number>; duplicates: number } {
@@ -45,10 +48,23 @@ export function capFindings(findings: LucidFinding[], max: number): { kept: Luci
     const i = KEEP_ORDER.indexOf(k);
     return i < 0 ? KEEP_ORDER.length : i;
   };
-  const sorted = [...unique].sort((a, b) => rank(a.kind) - rank(b.kind) || a.id - b.id);
-  const kept = sorted.slice(0, max).sort((a, b) => a.id - b.id);
+  const queues = new Map<number, LucidFinding[]>();
+  for (const f of [...unique].sort((a, b) => a.id - b.id)) {
+    const r = rank(f.kind);
+    queues.set(r, [...(queues.get(r) ?? []), f]);
+  }
+  const order = [...queues.keys()].sort((a, b) => a - b);
+  const picked: LucidFinding[] = [];
+  while (picked.length < max && order.some((r) => (queues.get(r)?.length ?? 0) > 0)) {
+    for (const r of order) {
+      const q = queues.get(r)!;
+      if (q.length === 0 || picked.length >= max) continue;
+      picked.push(q.shift()!);
+    }
+  }
+  const kept = picked.sort((a, b) => a.id - b.id);
   const dropped: Record<string, number> = {};
-  for (const f of sorted.slice(max)) dropped[f.kind] = (dropped[f.kind] ?? 0) + 1;
+  for (const r of order) for (const f of queues.get(r)!) dropped[f.kind] = (dropped[f.kind] ?? 0) + 1;
   return { kept, dropped, duplicates };
 }
 

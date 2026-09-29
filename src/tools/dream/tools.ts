@@ -31,6 +31,7 @@ import {
   updateLucidFindingStatus,
   writeLucidRun,
 } from '../../dream/lucid-storage.ts';
+import { resolveAnyRef } from '../../config/types.ts';
 import type { LucidFinding, LucidRun } from '../../dream/lucid-types.ts';
 import { applyLucidFinding } from '../../dream/lucid-actions.ts';
 import {
@@ -408,7 +409,14 @@ async function applyLucidFindingFromRun(
     throw new Error('lucid apply: no obsidian vault configured');
   }
   const wikiAbs = join(obs.vaultPath, ctx.config.wiki.vaultSubfolder);
-  const outcome = await applyLucidFinding(finding, { wikiAbs });
+  const lucidRef = ctx.config.wiki.lucid.model ?? ctx.config.wiki.deep.model;
+  const model = lucidRef ? resolveAnyRef(ctx.config, lucidRef) : null;
+  const outcome = await applyLucidFinding(finding, {
+    wikiAbs,
+    language: ctx.config.wiki.language ?? 'de',
+    ...(model ? { model } : {}),
+    ...(ctx.config.wiki.lucid.thinking ? { thinking: ctx.config.wiki.lucid.thinking } : {}),
+  });
   if (outcome.kind === 'failed') {
     throw new Error(`lucid apply failed: ${outcome.error}`);
   }
@@ -630,7 +638,10 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     'Manual triggers are for "I just added several substantial memory notes and want ' +
     'them in the wiki now" or "let me cleanup the wiki right now".\n' +
     '\n' +
-    "* force:true (phase='deep' only) bypasses the per-agent skip-cache so every " +
+    "* force:true — phase='deep': bypasses the per-agent skip-cache so every " +
+    "memory file is re-evaluated; phase='lucid': runs although a previous run still has open findings " +
+    '(otherwise Lucid waits until that run was reviewed).\n' +
+    "* (deep detail) force:true bypasses the per-agent skip-cache so every " +
     'memory file gets re-evaluated with a fresh LLM call. Use when a memory note ' +
     "should have ended up in the wiki but didn't, or after a Deep prompt change. " +
     'Costs extra tokens (no cached skips), so reach for it deliberately.',
@@ -677,7 +688,7 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
     if (phase === 'lucid') {
       if (injectedDreamRunDeps) {
         if (!wait) {
-          void injectedDreamRunDeps.lucidWorker.runNow().catch(() => {
+          void injectedDreamRunDeps.lucidWorker.runNow({ force }).catch(() => {
             /* errors logged in worker */
           });
           return {
@@ -690,7 +701,7 @@ export const dreamRun: ToolDefinition<z.infer<typeof RunInput>> = {
             via: 'in-process',
           };
         }
-        const result = await injectedDreamRunDeps.lucidWorker.runNow();
+        const result = await injectedDreamRunDeps.lucidWorker.runNow({ force });
         return {
           phase: 'lucid',
           wait: true,
@@ -803,6 +814,7 @@ const ReviewInput = z.object({
   dream_id: DreamIdSchema,
   action: z.enum(['start', 'end']),
   summary: z.string().optional(),
+  dismiss_rest: z.boolean().optional(),
 });
 
 const SOMORA_HOME = process.env.SOMORA_HOME ?? `${process.env.HOME}/.somora`;
@@ -825,9 +837,11 @@ export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
     "action='start': begin the loop for the named Lucid run id. Each Lucid finding will be " +
     "surfaced in the system context every turn until you call action='end'. Only ONE loop can " +
     'be active per somora instance — concurrent start fails.\n' +
-    "action='end': close the loop, archive the Lucid run to processed/, and clear the active " +
-    'lock. REQUIRES `summary` arg covering what happened to each finding (applied as edit X, ' +
-    'dismissed as no-op, deferred for later — be explicit, no silent drops).\n' +
+    "action='end': close the loop and clear the active lock. Findings still pending STAY pending " +
+    '(the run is archived only when none are left, or with dismiss_rest:true) — a later loop continues ' +
+    'where this one stopped, and no new Lucid run starts while findings wait. REQUIRES `summary` arg ' +
+    'covering what happened to each finding you touched (applied as edit X, dismissed as no-op, deferred — ' +
+    'be explicit, no silent drops).\n' +
     '\n' +
     'Use this when the user asks "schau dir das Lucid-Ergebnis an" or similar — open the loop, ' +
     "walk the findings as a conversation, write changes through wiki_*, close with action='end' " +
@@ -841,6 +855,10 @@ export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
         type: 'string',
         enum: ['start', 'end'],
         description: "'start' opens the loop, 'end' closes it.",
+      },
+      dismiss_rest: {
+        type: 'boolean',
+        description: "action='end' only: also dismiss every finding still pending and archive the run. Only when the person said so.",
       },
       summary: {
         type: 'string',
@@ -927,15 +945,22 @@ export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
     // captured in the summary). User can re-open by triggering Lucid
     // anew.
     const now = new Date().toISOString();
+    // Open findings stay open unless the caller says dismiss_rest — a
+    // review that handled two of sixty must not throw the other 58
+    // away (2026-09-29). The run is archived only when nothing waits.
     let stillPending = 0;
+    let dismissedRest = 0;
     for (const f of run.findings) {
-      if (f.status === 'pending') {
+      if (f.status !== 'pending') continue;
+      if (input.dismiss_rest === true) {
         f.status = 'dismissed';
         f.resolved_at = now;
-        stillPending++;
-      }
+        f.resolution_note = 'dismissed with the rest at review end';
+        dismissedRest++;
+      } else stillPending++;
     }
-    setRunStatus(run, 'processed');
+    const archive = stillPending === 0;
+    if (archive) setRunStatus(run, 'processed');
     // Stash the loop summary into the run record itself so the audit
     // trail in processed/ is self-contained.
     (run as unknown as Record<string, unknown>).loop_summary = summary;
@@ -943,13 +968,15 @@ export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
     (run as unknown as Record<string, unknown>).loop_started_at = existing.startedAt;
     (run as unknown as Record<string, unknown>).loop_ended_at = now;
     await writeLucidRun(run);
-    try {
-      await rename(runFilePath(run.id, false), runFilePath(run.id, true));
-    } catch (err) {
-      // ENOENT is fine — could already be archived; otherwise surface.
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code !== 'ENOENT') {
-        throw err;
+    if (archive) {
+      try {
+        await rename(runFilePath(run.id, false), runFilePath(run.id, true));
+      } catch (err) {
+        // ENOENT is fine — could already be archived; otherwise surface.
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          throw err;
+        }
       }
     }
     clearLoopState();
@@ -957,11 +984,13 @@ export const dreamReview: ToolDefinition<z.infer<typeof ReviewInput>> = {
       action: 'end',
       dream_id: input.dream_id,
       agent: ctx.agent,
-      auto_dismissed_pending: stillPending,
+      still_pending: stillPending,
+      dismissed_rest: dismissedRest,
+      archived: archive,
       summary,
-      message:
-        'Loop closed, run archived to processed/, lock released. Wiki tools and the hidden ' +
-        'toolsets revert to normal on the next turn.',
+      message: archive
+        ? 'Loop closed, run archived to processed/, lock released. Wiki tools and the hidden toolsets revert to normal on the next turn.'
+        : `Loop closed, lock released; ${stillPending} finding(s) stay open in this run — start the loop again to continue, or end with dismiss_rest:true to close them. No new Lucid run starts while they wait.`,
     };
   },
 };

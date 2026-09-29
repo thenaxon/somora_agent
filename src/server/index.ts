@@ -6252,14 +6252,16 @@ app.post('/dream/run-lucid', async (c) => {
     return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
   }
   let wait = false;
+  let force = false;
   try {
     const body = await c.req.json().catch(() => ({}));
     wait = Boolean((body as { wait?: unknown }).wait);
+    force = Boolean((body as { force?: unknown }).force);
   } catch {
     /* empty body */
   }
   if (!wait) {
-    void lucidWorker.runNow().catch(() => {
+    void lucidWorker.runNow({ force }).catch(() => {
       /* errors logged */
     });
     return c.json({
@@ -6268,7 +6270,7 @@ app.post('/dream/run-lucid', async (c) => {
       message: 'Lucid started in background.',
     });
   }
-  const result = await lucidWorker.runNow();
+  const result = await lucidWorker.runNow({ force });
   return c.json({
     wait: true,
     runId: result.runId,

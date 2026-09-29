@@ -130,6 +130,57 @@ export async function pendingLucidSummary(): Promise<PendingLucidSummary> {
   };
 }
 
+/** Active AND processed runs, newest first. */
+export async function listAllLucidRuns(): Promise<LucidRun[]> {
+  const active = await listLucidRuns();
+  const out = [...active];
+  let entries: string[] = [];
+  try {
+    entries = await readdir(LUCID_PROCESSED);
+  } catch {
+    return out;
+  }
+  for (const name of entries) {
+    if (!name.endsWith('.json')) continue;
+    try {
+      out.push(JSON.parse(await readFile(join(LUCID_PROCESSED, name), 'utf8')) as LucidRun);
+    } catch {
+      /* unreadable archive */
+    }
+  }
+  return out.sort((a, b) => b.id.localeCompare(a.id));
+}
+
+/** The newest run that still has findings waiting for a person, or null. */
+export async function pendingLucidRun(): Promise<LucidRun | null> {
+  const runs = await listLucidRuns();
+  return runs.find((r) => r.status === 'completed' && r.findings.some((f) => f.status === 'pending')) ?? null;
+}
+
+/** The key under which a finding is remembered: kind + the pages it names. */
+export const findingKey = (f: Pick<LucidFinding, 'kind' | 'affected_pages'>): string => `${f.kind}|${[...new Set(f.affected_pages.map((p) => p.toLowerCase()))].sort().join(',')}`;
+
+/**
+ * Findings a person dismissed within `days` — filed again they would be
+ * the same question twice (Rene, 2026-09-29: "es wurden oft doppelte
+ * Dinge gefunden"). Resolved findings are not remembered: the pages
+ * changed, a new finding on them is a new question.
+ */
+export async function recentlyDismissedKeys(days: number, now = Date.now()): Promise<Set<string>> {
+  const keys = new Set<string>();
+  if (days <= 0) return keys;
+  const since = now - days * 86_400_000;
+  for (const run of await listAllLucidRuns()) {
+    for (const f of run.findings) {
+      if (f.status !== 'dismissed' || !f.resolved_at) continue;
+      if (new Date(f.resolved_at).getTime() < since) continue;
+      if (f.affected_pages.length === 0) continue;
+      keys.add(findingKey(f));
+    }
+  }
+  return keys;
+}
+
 /** Mutate a finding's status by id. Persists the run. Returns the
  *  updated run (or null if id-not-found). */
 export async function updateLucidFindingStatus(

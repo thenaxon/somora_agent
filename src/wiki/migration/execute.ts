@@ -607,7 +607,7 @@ async function removeEmptyFolders(wikiAbs: string, rel: string, removed: string[
   return empty;
 }
 
-async function archivePage(wikiAbs: string, reports: string, page: string, raw: string, mergedInto: string, date: string): Promise<void> {
+export async function archivePage(wikiAbs: string, reports: string, page: string, raw: string, mergedInto: string, date: string): Promise<void> {
   const parsed = parseWikiPage(raw);
   parsed.frontmatter.merged_into = mergedInto;
   parsed.frontmatter.original_path = page;

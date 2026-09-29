@@ -16,6 +16,7 @@
 
 import type { Config } from '../config/types.ts';
 import { logger } from '../server/logger.ts';
+import { pendingLucidRun } from './lucid-storage.ts';
 import { runLucid, type RunLucidResult } from './lucid-runner.ts';
 import {
   nextDelayMs,
@@ -56,8 +57,8 @@ export class LucidWorker {
     await this.scheduleNext('startup');
   }
 
-  async runNow(): Promise<RunLucidResult> {
-    return this.fire('manual');
+  async runNow(opts: { force?: boolean } = {}): Promise<RunLucidResult> {
+    return this.fire('manual', opts.force === true);
   }
 
   isRunning(): boolean {
@@ -121,7 +122,26 @@ export class LucidWorker {
     });
   }
 
-  private async fire(trigger: 'auto' | 'manual'): Promise<RunLucidResult> {
+  private async fire(trigger: 'auto' | 'manual', force = false): Promise<RunLucidResult> {
+    // A run whose findings nobody has looked at yet is not followed by
+    // another one — that made the same findings pile up twice (Rene,
+    // 2026-09-29). `force` (dream_run / POST /dream/run-lucid) overrides.
+    if (!force) {
+      const waiting = await pendingLucidRun();
+      if (waiting) {
+        const open = waiting.findings.filter((f) => f.status === 'pending').length;
+        logger.info({ msg: 'dream.lucid.skip_pending', trigger, waitingRun: waiting.id, openFindings: open, hint: 'review or dismiss that run first; force:true runs anyway' });
+        if (trigger === 'auto' && !this.shuttingDown) {
+          // Look again in six hours — the cadence state is untouched, so
+          // the regular schedule would fire right away and skip again.
+          if (this.timer) clearTimeout(this.timer);
+          this.timer = setTimeout(() => {
+            void this.fire('auto');
+          }, 6 * 60 * 60_000);
+        }
+        return { runId: waiting.id, findingsCount: open, pagesScanned: 0, durationMs: 0, status: 'completed' };
+      }
+    }
     if (this.shuttingDown) {
       return {
         runId: '(shutdown)',

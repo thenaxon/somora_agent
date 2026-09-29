@@ -1753,7 +1753,13 @@ export const WikiLucidConfigSchema = z
      *  more than a person walks through. Kept by weight: contradictions,
      *  dead refs, duplicates, misfiled and oversized pages, wanted pages
      *  first — link suggestions fill what is left. */
-    maxFindings: z.number().int().min(8).default(60),
+    maxFindings: z.number().int().min(1).default(12),
+    /** Link suggestions are set by Lucid itself (first plain mention →
+     *  [[link]]) instead of waiting for review; at most this many per run. */
+    autoLinks: z.boolean().default(true),
+    autoLinksPerRun: z.number().int().min(0).default(30),
+    /** A finding a person dismissed is not filed again for this many days. */
+    seenDays: z.number().int().min(0).default(90),
   })
   .default({
     enabled: true,
@@ -1762,7 +1768,10 @@ export const WikiLucidConfigSchema = z
     maxCallsPerTurn: 3,
     batchChars: 100_000,
     oversizedChars: 50_000,
-    maxFindings: 60,
+    maxFindings: 12,
+    autoLinks: true,
+    autoLinksPerRun: 30,
+    seenDays: 90,
   });
 
 export const WikiSearchConfigSchema = z
@@ -1833,7 +1842,10 @@ export const WikiConfigSchema = z
       maxCallsPerTurn: 3,
       batchChars: 100_000,
       oversizedChars: 50_000,
-      maxFindings: 60,
+      maxFindings: 12,
+      autoLinks: true,
+      autoLinksPerRun: 30,
+      seenDays: 90,
     },
     search: {
       // Keep in lockstep with WikiSearchConfigSchema's defaults above —

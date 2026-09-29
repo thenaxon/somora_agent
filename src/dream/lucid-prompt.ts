@@ -32,11 +32,11 @@ Finding kinds (only these — no others allowed):
 
 — WANTED_PAGE — a topic referenced by ≥3 wiki pages via [[wiki-path]] links but missing its own page. Reason must list the referencing pages.
 
-— LINK_SUGGESTION — a page mentions an entity (person, project, concept) by name in prose, AND another wiki page exists with that exact name as its slug or title, AND there is no [[wikilink]] from the first page to the second. Reason must cite the literal phrase in the source page and the exact target slug. Only file when the connection is OBVIOUSLY useful (named entity, not a generic word).
+— LINK_SUGGESTION — a page mentions an entity (person, project, concept) by name in prose, AND another wiki page exists with that exact name as its slug or title, AND there is no [[wikilink]] from the first page to the second. Add "phrase": the literal text as it stands in the page (exact characters, no quotes around it), and "target": the exact slug of the page to link. Lucid sets the link itself, nobody reviews it — so only file when the connection is OBVIOUSLY right (named entity, not a generic word), and only for prose, never inside code or an existing link.
 
-— DUPLICATE_PAGE — two pages describe the SAME thing under different names (a release and its announcement, a device and its setup note, "voice-agent-latenz" and "voice-agent-latenz-benchmarks" when both hold the same measurements). Both must be in what you see. Name the page that should survive first in affected_pages; the reason says what the other adds. Two pages that merely share a topic are NOT duplicates.
+— DUPLICATE_PAGE — two pages describe the SAME thing under different names (a release and its announcement, a device and its setup note, "voice-agent-latenz" and "voice-agent-latenz-benchmarks" when both hold the same measurements). Both must be in what you see. Name the page that should survive FIRST in affected_pages — on approval the others are merged into it by a model and archived; the reason says what the other adds. Two pages that merely share a topic are NOT duplicates.
 ${migrated ? `
-— MISFILED_PAGE — this wiki is on the folder template: the wiki map names every folder and what KIND of page lives in it (a person, a company, a project, a device, a rule …). File this kind only when a page is plainly not of its folder's kind — a dated work report among device pages, a person page under projects, a rule under knowledge. affected_pages = [the page]; the reason names the folder it belongs in, taken from the map. Do NOT file it for pages whose folder merely has no description, and never propose a folder the map does not list.
+— MISFILED_PAGE — this wiki is on the folder template: the wiki map names every folder and what KIND of page lives in it (a person, a company, a project, a device, a rule …). File this kind only when a page is plainly not of its folder's kind — a dated work report among device pages, a person page under projects, a rule under knowledge. affected_pages = [the page]; add "target": the folder it belongs in, exactly as the map lists it (on approval the page is moved there). Do NOT file it for pages whose folder merely has no description, and never name a folder the map does not list.
 ` : ''}
 DO NOT:
 - File stale_claim, outdated, or inconsistent_xref findings — those kinds are retired. If you would have proposed one, just skip it.
@@ -68,6 +68,8 @@ Output: ONE JSON object — no commentary, no markdown fences:
     {
       "kind": "link_suggestion",
       "affected_pages": ["${pr}/internal-cms"],
+      "phrase": "Sarah Klein",
+      "target": "${pp}/sarah-klein",
       "reason": "${pr}/internal-cms paragraph 3 mentions 'Sarah Klein' as the project owner in plain prose. The page ${pp}/sarah-klein exists. No [[${pp}/sarah-klein]] link from internal-cms to the ${pp} page."
     }
   ]

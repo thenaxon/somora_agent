@@ -30,7 +30,8 @@ import { logger } from '../server/logger.ts';
 import { callOneShotLLM } from './deep-llm.ts';
 import { buildLucidSystemPrompt } from './lucid-prompt.ts';
 import { resolveWikiSchema } from '../wiki/language.ts';
-import { setRunStatus, writeLucidRun } from './lucid-storage.ts';
+import { findingKey, recentlyDismissedKeys, setRunStatus, writeLucidRun } from './lucid-storage.ts';
+import { applyLucidFinding } from './lucid-actions.ts';
 import { batchLabel, pageOpening, planLucidBatches, siblingList, type LucidPage } from './lucid-batches.ts';
 import { capFindings, structuralFindings } from './lucid-structure.ts';
 import { buildWikiMap } from '../wiki/map.ts';
@@ -232,11 +233,21 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
     }
   }
 
-  const capped = capFindings(allFindings, args.config.wiki.lucid.maxFindings);
-  if (Object.keys(capped.dropped).length > 0 || capped.duplicates > 0) {
-    logger.info({ msg: 'dream.lucid.run_capped', id, found: allFindings.length, kept: capped.kept.length, duplicates: capped.duplicates, dropped: capped.dropped, maxFindings: args.config.wiki.lucid.maxFindings });
+  // What a person dismissed lately is not asked again.
+  const seen = await recentlyDismissedKeys(args.config.wiki.lucid.seenDays);
+  const fresh = allFindings.filter((f) => f.affected_pages.length === 0 || !seen.has(findingKey(f)));
+  if (fresh.length < allFindings.length) {
+    logger.info({ msg: 'dream.lucid.seen_dropped', id, dropped: allFindings.length - fresh.length, seenDays: args.config.wiki.lucid.seenDays });
   }
-  run.findings = capped.kept.map((f, i) => ({ ...f, id: i + 1 }));
+  // Links are set, not reviewed: they live outside the review cap.
+  const links = fresh.filter((f) => f.kind === 'link_suggestion');
+  const reviewable = fresh.filter((f) => f.kind !== 'link_suggestion');
+  const capped = capFindings(reviewable, args.config.wiki.lucid.maxFindings);
+  if (Object.keys(capped.dropped).length > 0 || capped.duplicates > 0) {
+    logger.info({ msg: 'dream.lucid.run_capped', id, found: reviewable.length, kept: capped.kept.length, duplicates: capped.duplicates, dropped: capped.dropped, maxFindings: args.config.wiki.lucid.maxFindings });
+  }
+  const linked = await autoApplyLinks(links, { wikiAbs, enabled: args.config.wiki.lucid.autoLinks, max: args.config.wiki.lucid.autoLinksPerRun, id });
+  run.findings = [...capped.kept, ...linked].map((f, i) => ({ ...f, id: i + 1 }));
   run.batches_total = batchesTotal;
   run.batches_failed = batchesFailed;
 
@@ -405,6 +416,48 @@ async function walkPages(
   }
 }
 
+/**
+ * Set the suggested links right away. A link is mechanical — first plain
+ * mention of a name becomes [[target|name]] — and nobody wants to
+ * approve seventy of them by hand (2026-09-29: 75 of 124 findings were
+ * link suggestions). Each one stays in the run as `applied` or, when it
+ * could not be set, `dismissed` with the reason, for the audit; none
+ * waits for review. Exported for tests.
+ */
+export async function autoApplyLinks(links: LucidFinding[], opts: { wikiAbs: string; enabled: boolean; max: number; id: string; apply?: typeof applyLucidFinding }): Promise<LucidFinding[]> {
+  const apply = opts.apply ?? applyLucidFinding;
+  const now = new Date().toISOString();
+  const out: LucidFinding[] = [];
+  let applied = 0;
+  let skipped = 0;
+  const dedup = new Set<string>();
+  for (const f of links) {
+    const key = f.fix.kind === 'add_link' ? `${f.fix.wikiPath}|${f.fix.target}` : findingKey(f);
+    if (dedup.has(key)) continue;
+    dedup.add(key);
+    if (!opts.enabled || f.fix.kind !== 'add_link') {
+      out.push({ ...f, status: 'dismissed', resolved_at: now, resolution_note: !opts.enabled ? 'auto links off (wiki.lucid.autoLinks)' : 'no phrase/target given — cannot set the link' });
+      skipped++;
+      continue;
+    }
+    if (applied >= opts.max) {
+      out.push({ ...f, status: 'dismissed', resolved_at: now, resolution_note: `auto-link budget of ${opts.max} per run reached` });
+      skipped++;
+      continue;
+    }
+    const r = await apply(f, { wikiAbs: opts.wikiAbs });
+    if (r.kind === 'applied') {
+      applied++;
+      out.push({ ...f, status: 'applied', resolved_at: now, resolution_note: r.detail });
+    } else {
+      skipped++;
+      out.push({ ...f, status: 'dismissed', resolved_at: now, resolution_note: r.kind === 'skipped' ? r.reason : r.error });
+    }
+  }
+  if (links.length > 0) logger.info({ msg: 'dream.lucid.links_applied', id: opts.id, suggested: links.length, applied, skipped });
+  return out;
+}
+
 // ─── prompt-building ────────────────────────────────────────────────
 
 /** Exported for tests. */
@@ -571,7 +624,7 @@ export function parseLucidFindings(raw: string, runId: string, opts: { migrated?
     // tools. Legacy fix shapes (update_page etc.) are still parsed if
     // present so old archived runs continue to render correctly, but
     // current runs default to no_op.
-    const fix: LucidFix = parseFix(f.fix) ?? {
+    const fix: LucidFix = parseFix(f.fix) ?? fixFromFields(kind as LucidFindingKind, affectedPages, f) ?? {
       kind: 'no_op',
       note: reason,
     };
@@ -594,6 +647,31 @@ export function parseLucidFindings(raw: string, runId: string, opts: { migrated?
     }
   }
   return out;
+}
+
+/** The actionable fix a finding's own fields describe: a link to set,
+ *  pages to unite, a page to move. Null when the fields are missing —
+ *  the finding is then informational. Exported for tests. */
+export function fixFromFields(kind: LucidFindingKind, pages: string[], f: Record<string, unknown>): LucidFix | null {
+  const norm = (p: string): string => p.replace(/^\/+|\/+$/g, '').replace(/\.md$/i, '');
+  if (kind === 'link_suggestion') {
+    const phrase = typeof f.phrase === 'string' ? f.phrase.trim() : '';
+    const target = typeof f.target === 'string' ? norm(f.target.trim()) : '';
+    if (!phrase || !target || pages.length === 0) return null;
+    return { kind: 'add_link', wikiPath: norm(pages[0]!), phrase, target };
+  }
+  if (kind === 'duplicate_page') {
+    const uniq = [...new Set(pages.map(norm))];
+    if (uniq.length < 2) return null;
+    return { kind: 'unite_pages', keep: uniq[0]!, drop: uniq.slice(1) };
+  }
+  if (kind === 'misfiled_page') {
+    const target = typeof f.target === 'string' ? norm(f.target.trim()) : '';
+    if (!target || pages.length === 0) return null;
+    const from = norm(pages[0]!);
+    return { kind: 'move_page', from, to: `${target}/${from.split('/').pop()!}` };
+  }
+  return null;
 }
 
 function parseFix(raw: unknown): LucidFix | null {
