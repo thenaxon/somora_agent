@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 process.env.SOMORA_HOME = await mkdtemp(join(tmpdir(), 'somora-refine-home-'));
 const { analyzeWiki } = await import('./analyze.ts');
-const { refinePlan, parseRefineReply, pagesToJudge, entityIndex, groupDecisions, renderRefinedPlan, buildRefineSystemPrompt } = await import('./refine.ts');
+const { refinePlan, parseRefineReply, pagesToJudge, entityIndex, groupDecisions, renderRefinedPlan, buildRefineSystemPrompt, parseTwinReply } = await import('./refine.ts');
 const { readInventory } = await import('./analyze.ts');
 const { writePlan, writeRefinedPlan, readRefinedPlan } = await import('./store.ts');
 const { emptyStructure } = await import('../structure-file.ts');
@@ -41,13 +41,15 @@ await page('agenten/hans', 'agent', 'Steckbrief.');
 await page('agenten/hans/somora-deploy-2026-09-16', 'bericht', 'Deploy lief.');
 await page('wissen/gpt-6', 'konzept', 'Ein Modell.');
 await page('wissen/enovom-bilanz-2025', 'konzept', 'Bilanz der Firma.');
+await page('hardware/proxmox', 'hardware', 'Der Proxmox-Host, 32 GB.');
+await page('infrastruktur/proxmox', 'infrastruktur', 'Proxmox-Host, Netz 10.0.0.1.');
 
 const structure = emptyStructure('de');
 const plan = await analyzeWiki({ wikiAbs, language: 'de', structure });
 const inv = await readInventory(wikiAbs);
 const judged = pagesToJudge(plan, new Map(inv.pages.map((p) => [p.path, p])));
 const paths = judged.map((j) => j.page.path).sort();
-check('pages to judge: every page but the agent profile', paths.join(',') === ['agenten/hans/somora-deploy-2026-09-16', 'hardware/rack-umzug-2026', 'hardware/valve-index', 'personen/anna', 'projekte/somora', 'unternehmen/enovom', 'wissen/enovom-bilanz-2025', 'wissen/gpt-6'].join(','), paths.join(','));
+check('pages to judge: every page but the agent profile', paths.join(',') === ['agenten/hans/somora-deploy-2026-09-16', 'hardware/proxmox', 'hardware/rack-umzug-2026', 'hardware/valve-index', 'infrastruktur/proxmox', 'personen/anna', 'projekte/somora', 'unternehmen/enovom', 'wissen/enovom-bilanz-2025', 'wissen/gpt-6'].join(','), paths.join(','));
 check('proposals carried', judged.find((j) => j.page.path === 'hardware/valve-index')?.proposed.target === 'infrastruktur/geraete' && judged.find((j) => j.page.path === 'agenten/hans/somora-deploy-2026-09-16')?.proposed.action === 'fold');
 const ent = entityIndex(inv.pages);
 check('entity index lists entity pages only', ent.includes('unternehmen/: enovom') && ent.includes('projekte/: somora') && !ent.includes('gpt-6') && !ent.includes('somora-deploy'));
@@ -86,18 +88,23 @@ const refined = await refinePlan({
   plan, planId: 'test-2', wikiAbs, language: 'de', map, model: { providerName: 'fake', modelId: 'judge' } as never, batchSize: 3,
   ask: async ({ user }) => {
     calls.push(user);
+    if (user.includes('<pairs>')) return JSON.stringify([{ name: 'proxmox', same: true, keep: 'hardware/proxmox', why: 'same host' }]);
     const pages = [...user.matchAll(/<page path="([^"]+)"/g)].map((m) => m[1]!);
     if (calls.length === 2) throw new Error('model down');
     return JSON.stringify(pages.map((p) => ({ page: p, action: 'keep', why: 'fine' })));
   },
 });
-check('three batches, one failed, every page answered', refined.batchesTotal === 3 && refined.batchesFailed === 1 && refined.pagesJudged === 8 && refined.decisions.filter((x) => x.corrected === 'batch failed').length === 3);
-check('prompt carries the map, the entity names and the first lines', calls[0]!.includes('<wiki_map>') && calls[0]!.includes('<entity_pages>') && calls[0]!.includes('Ein VR-Headset.') && calls[0]!.includes('proposal="move → infrastruktur/geraete"'));
-check('twins carried over', Array.isArray(refined.twins));
+check('four page batches + one twin batch, one failed, every page answered', refined.batchesTotal === 5 && refined.batchesFailed === 1 && refined.pagesJudged === 10 && refined.decisions.filter((x) => x.corrected === 'batch failed').length === 3, JSON.stringify({ bt: refined.batchesTotal, bf: refined.batchesFailed, pj: refined.pagesJudged }));
+check('twin confirmed by the model, survivor as the model said', refined.twins.length === 1 && refined.twins[0]!.keep === 'hardware/proxmox' && refined.twins[0]!.drop[0] === 'infrastruktur/proxmox' && refined.twinVerdicts[0]!.same === true);
+const tv = parseTwinReply('[{"name":"Proxmox","same":false,"why":"an agent and a host"},{"name":"x","same":true}]', [{ name: 'proxmox', keep: 'a/proxmox', drop: ['b/proxmox'] }, { name: 'lara', keep: 'a/lara', drop: ['b/lara'] }]);
+check('twin verdicts: name matched case-insensitively, missing pair = apart, keep falls back', tv[0]!.same === false && tv[1]!.same === false && /no answer/.test(tv[1]!.why) && tv[0]!.keep === 'a/proxmox');
+check('markdown lists pairs kept apart', renderRefinedPlan({ ...refined, twinVerdicts: [{ name: 'naxon', pages: ['agenten/naxon', 'infrastruktur/naxon'], same: false, keep: 'agenten/naxon', why: 'agent vs host' }] }, 'de').includes('## Gleichnamig, aber nicht dasselbe'));
+check('prompt carries the map, the entity names and the first lines', calls[0]!.includes('<wiki_map>') && calls[0]!.includes('<entity_pages>') && calls.some((c) => c.includes('Ein VR-Headset.') && c.includes('proposal="move → infrastruktur/geraete"')));
+check('refined result carries verdicts', Array.isArray(refined.twinVerdicts));
 await writePlan(plan, 'test-2');
 const w = await writeRefinedPlan('test-2', refined, 'de');
 const back = await readRefinedPlan('test-2');
-check('refined plan round trip', back?.pagesJudged === 8 && w.markdown.endsWith('refined.md'));
+check('refined plan round trip', back?.pagesJudged === 10 && w.markdown.endsWith('refined.md'));
 const md = renderRefinedPlan(refined, 'de');
 check('markdown lists the failed batch and the keeps by folder', md.includes('(1 fehlgeschlagen)') && md.includes('## Bleibt in') && md.includes('## Unklar'));
 const top = (await readdir(wikiAbs)).filter((n) => n.startsWith('_') || n.startsWith('.'));

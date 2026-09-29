@@ -157,6 +157,9 @@ export async function pendingLucidRun(): Promise<LucidRun | null> {
   return runs.find((r) => r.status === 'completed' && r.findings.some((f) => f.status === 'pending')) ?? null;
 }
 
+/** Notes the software writes when it closes a finding on its own. */
+const AUTO_NOTES = ['dismissed with the rest at review end', 'auto links off', 'no phrase/target given', 'auto-link budget', 'target page ', 'page ', 'phrase "', 'linked "'];
+
 /** The key under which a finding is remembered: kind + the pages it names. */
 export const findingKey = (f: Pick<LucidFinding, 'kind' | 'affected_pages'>): string => `${f.kind}|${[...new Set(f.affected_pages.map((p) => p.toLowerCase()))].sort().join(',')}`;
 
@@ -173,6 +176,11 @@ export async function recentlyDismissedKeys(days: number, now = Date.now()): Pro
   for (const run of await listAllLucidRuns()) {
     for (const f of run.findings) {
       if (f.status !== 'dismissed' || !f.resolved_at) continue;
+      // Only a person's verdict counts: dream_dismiss records a reason.
+      // Findings closed by the loop end (with or without the old
+      // auto-dismiss) or by the auto-link step carry no such reason —
+      // 2026-09-29: 68 real findings were hidden for 90 days that way.
+      if (!f.resolution_note || AUTO_NOTES.some((n) => f.resolution_note!.startsWith(n))) continue;
       if (new Date(f.resolved_at).getTime() < since) continue;
       if (f.affected_pages.length === 0) continue;
       keys.add(findingKey(f));

@@ -92,12 +92,14 @@ check('move into an unknown folder → failed', r8.kind === 'failed' && /neither
 // dismissed memory + pending run
 const now = new Date();
 await writeLucidRun({ id: '20260901-000000_auto_lucid', status: 'processed', created_at: now.toISOString(), trigger: 'auto', pages_scanned: 1, worker_model_ref: 'x', findings: [
-  { id: 1, kind: 'contradiction', status: 'dismissed', affected_pages: ['B/x', 'a/y'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString() },
-  { id: 2, kind: 'contradiction', status: 'dismissed', affected_pages: ['old/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: new Date(now.getTime() - 100 * 86_400_000).toISOString() },
+  { id: 1, kind: 'contradiction', status: 'dismissed', affected_pages: ['B/x', 'a/y'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString(), resolution_note: 'Rene: both dates are right, different events' },
+  { id: 2, kind: 'contradiction', status: 'dismissed', affected_pages: ['old/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: new Date(now.getTime() - 100 * 86_400_000).toISOString(), resolution_note: 'Rene: no' },
+  { id: 4, kind: 'contradiction', status: 'dismissed', affected_pages: ['auto/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString() },
+  { id: 5, kind: 'contradiction', status: 'dismissed', affected_pages: ['auto/2'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString(), resolution_note: 'dismissed with the rest at review end' },
   { id: 3, kind: 'contradiction', status: 'resolved_manually', affected_pages: ['done/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString() },
 ] });
 const keys = await recentlyDismissedKeys(90, now.getTime());
-check('dismissed within 90 days remembered, older and resolved not', keys.has(findingKey({ kind: 'contradiction', affected_pages: ['a/y', 'b/X'] })) && keys.size === 1);
+check('remembered: a person\'s dismissal with a reason within 90 days — not older, not resolved, not closed by the software', keys.has(findingKey({ kind: 'contradiction', affected_pages: ['a/y', 'b/X'] })) && keys.size === 1, [...keys].join(' | '));
 check('no pending run yet', (await pendingLucidRun()) === null);
 await writeLucidRun({ id: '20260902-000000_auto_lucid', status: 'completed', created_at: now.toISOString(), trigger: 'auto', pages_scanned: 1, worker_model_ref: 'x', findings: [{ id: 1, kind: 'contradiction', status: 'pending', affected_pages: ['q'], reason: 'r', fix: { kind: 'no_op', note: '' } }] });
 check('a run with open findings is the pending run', (await pendingLucidRun())?.id === '20260902-000000_auto_lucid' && (await listAllLucidRuns()).length === 2);

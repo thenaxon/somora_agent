@@ -47,6 +47,14 @@ export interface DecisionGroup {
   pages: string[];
 }
 
+export interface TwinVerdict {
+  name: string;
+  pages: string[];
+  same: boolean;
+  keep: string;
+  why: string;
+}
+
 export interface RefinedPlan {
   planId: string;
   createdAt: string;
@@ -56,8 +64,13 @@ export interface RefinedPlan {
   pagesJudged: number;
   decisions: PageDecision[];
   groups: DecisionGroup[];
-  /** Carried over from the plan: twins are decided at execution. */
+  /** Same-name pairs the model confirmed as the SAME thing — only these
+   *  can be united. (2026-09-29: the first migration united an agent's
+   *  profile with the host of the same name and two people's Instagram
+   *  accounts; a name is not an identity.) */
   twins: Array<Extract<PlanItem, { kind: 'unite_twins' }>>;
+  /** Every pair with the model's verdict, for the report. */
+  twinVerdicts: TwinVerdict[];
 }
 
 /** One model call — injectable for tests. */
@@ -114,6 +127,36 @@ export function entityIndex(pages: InventoryPage[]): string {
     by.set(p.folder, [...(by.get(p.folder) ?? []), p.base]);
   }
   return [...by.entries()].sort().map(([f, names]) => `${f}/: ${names.sort().join(', ')}`).join('\n');
+}
+
+export function buildTwinSystemPrompt(language: WikiLanguage): string {
+  return `You judge pairs of wiki pages (a personal wiki kept in ${language === 'de' ? 'German' : 'English'}) that carry the SAME file name in different folders. For each pair decide whether they describe the SAME thing — the same person, company, project, device, event — or merely share a name: an agent and the machine it runs on, two people's accounts with the same service, the same section title under two different projects. Same thing: they will be merged into one page. Not the same: both stay.
+
+Answer with JSON only: an array with one object per pair, in the order given:
+[{"name": "<name as given>", "same": true|false, "keep": "<path of the page that should survive when same>", "why": "<one short sentence>"}]`;
+}
+
+/** Exported for tests. Unknown pairs and unreadable answers count as NOT the same. */
+export function parseTwinReply(raw: string, twins: Array<{ name: string; keep: string; drop: string[] }>): TwinVerdict[] {
+  const json = firstCompleteJson(raw, '[') ?? raw;
+  let arr: unknown;
+  try {
+    arr = JSON.parse(json);
+  } catch {
+    arr = null;
+  }
+  const byName = new Map<string, Record<string, unknown>>();
+  if (Array.isArray(arr)) for (const o of arr) if (o && typeof o === 'object' && typeof (o as Record<string, unknown>).name === 'string') byName.set(String((o as Record<string, unknown>).name).toLowerCase(), o as Record<string, unknown>);
+  const norm = (s: string): string => s.replace(/^\/+|\/+$/g, '').replace(/\.md$/i, '');
+  return twins.map((t) => {
+    const pages = [t.keep, ...t.drop];
+    const o = byName.get(t.name.toLowerCase());
+    if (!o) return { name: t.name, pages, same: false, keep: t.keep, why: 'no answer for this pair — left apart' };
+    const same = o.same === true;
+    const wanted = typeof o.keep === 'string' ? norm(o.keep) : '';
+    const keep = pages.find((p) => p.toLowerCase() === wanted.toLowerCase()) ?? t.keep;
+    return { name: t.name, pages, same, keep, why: typeof o.why === 'string' ? o.why.trim() : '' };
+  });
 }
 
 export function buildRefineSystemPrompt(language: WikiLanguage): string {
@@ -264,16 +307,46 @@ export async function refinePlan(args: RefineArgs): Promise<RefinedPlan> {
     }
     args.onProgress?.(b + 1, batches.length);
   }
+  // Same-name pairs: the model says whether they are the same thing.
+  const plannedTwins = args.plan.items.filter((i): i is Extract<PlanItem, { kind: 'unite_twins' }> => i.kind === 'unite_twins');
+  const twinVerdicts: TwinVerdict[] = [];
+  let twinBatches = 0;
+  for (let i = 0; i < plannedTwins.length && !args.signal?.aborted; i += 10) {
+    const group = plannedTwins.slice(i, i + 10);
+    twinBatches++;
+    const blocks: string[] = [];
+    for (const t of group) {
+      const parts: string[] = [];
+      for (const p of [t.keep, ...t.drop]) parts.push(`<page path="${p}">\n${await firstLines(args.wikiAbs, p, 600)}\n</page>`);
+      blocks.push(`<pair name="${t.name}">\n${parts.join('\n')}\n</pair>`);
+    }
+    const user = `${args.map.text}\n\n<pairs>\n${blocks.join('\n\n')}\n</pairs>\n\nAnswer as JSON: one object per pair, ${group.length} in all.`;
+    try {
+      const raw = await ask({ system: buildTwinSystemPrompt(args.language), user, logCtx: { op: 'wiki-migration-twins', planId: args.planId, batch: twinBatches } });
+      twinVerdicts.push(...parseTwinReply(raw, group));
+    } catch (err) {
+      failed++;
+      logger.warn({ msg: 'wiki.migration.twins_batch_failed', planId: args.planId, err: (err as Error).message });
+      for (const t of group) twinVerdicts.push({ name: t.name, pages: [t.keep, ...t.drop], same: false, keep: t.keep, why: `model call failed: ${(err as Error).message}` });
+    }
+  }
+  const confirmed = plannedTwins.flatMap((t) => {
+    const v = twinVerdicts.find((x) => x.name === t.name);
+    if (!v || !v.same) return [];
+    return [{ ...t, keep: v.keep, drop: v.pages.filter((p) => p !== v.keep), why: v.why || t.why }];
+  });
+  if (plannedTwins.length > 0) logger.info({ msg: 'wiki.migration.twins_judged', planId: args.planId, pairs: plannedTwins.length, same: confirmed.length, apart: plannedTwins.length - confirmed.length });
   const out: RefinedPlan = {
     planId: args.planId,
     createdAt: new Date().toISOString(),
     model: modelRef,
-    batchesTotal: batches.length,
+    batchesTotal: batches.length + twinBatches,
     batchesFailed: failed,
     pagesJudged: decisions.length,
     decisions,
     groups: groupDecisions(decisions),
-    twins: args.plan.items.filter((i): i is Extract<PlanItem, { kind: 'unite_twins' }> => i.kind === 'unite_twins'),
+    twins: confirmed,
+    twinVerdicts,
   };
   logger.info({ msg: 'wiki.migration.refine_done', planId: args.planId, pages: decisions.length, batchesFailed: failed, groups: out.groups.length, ms: Date.now() - t0 });
   return out;
@@ -317,8 +390,13 @@ export function renderRefinedPlan(r: RefinedPlan, language: WikiLanguage): strin
     }
   }
   if (r.twins.length > 0) {
-    L.push('', de ? '## Gleichnamige Seiten vereinen (Inhalt wird beim Ausführen zusammengeführt)' : '## Unite same-name pages (content is merged when executed)', '');
-    for (const t of r.twins) L.push(`- **${t.name}**: ${de ? 'behalten' : 'keep'} \`${t.keep}\`, ${de ? 'einarbeiten' : 'fold in'} ${t.drop.map((d) => `\`${d}\``).join(', ')}`);
+    L.push('', de ? '## Gleichnamige Seiten vereinen (vom Modell als dasselbe bestätigt)' : '## Unite same-name pages (confirmed by the model as the same thing)', '');
+    for (const t of r.twins) L.push(`- **${t.name}**: ${de ? 'behalten' : 'keep'} \`${t.keep}\`, ${de ? 'einarbeiten' : 'fold in'} ${t.drop.map((d) => `\`${d}\``).join(', ')} — ${t.why}`);
+  }
+  const apart = (r.twinVerdicts ?? []).filter((v) => !v.same);
+  if (apart.length > 0) {
+    L.push('', de ? '## Gleichnamig, aber nicht dasselbe (bleiben getrennt)' : '## Same name, not the same thing (stay apart)', '');
+    for (const v of apart) L.push(`- **${v.name}**: ${v.pages.map((p) => `\`${p}\``).join(', ')} — ${v.why}`);
   }
   return L.join('\n') + '\n';
 }

@@ -253,7 +253,7 @@ export async function relinkWiki(wikiAbs: string, renames: Map<string, string>, 
   let refs = 0;
   let pages = 0;
   if (renames.size === 0) return { refs, pages };
-  for (const rel of await listPages(wikiAbs)) {
+  for (const rel of await listPages(wikiAbs, '', true)) {
     const file = join(wikiAbs, `${rel}.md`);
     let raw: string;
     try {
@@ -557,7 +557,10 @@ async function countFiles(dir: string): Promise<number> {
   return n;
 }
 
-async function listPages(wikiAbs: string, rel = ''): Promise<string[]> {
+/** Every .md under the wiki — the archive and the monthly logs included
+ *  when `includeLogs` (the link pass: a dead link in the archive is a
+ *  dead link in Obsidian too; 2026-09-29: 1 489 of them). */
+async function listPages(wikiAbs: string, rel = '', includeLogs = false): Promise<string[]> {
   const out: string[] = [];
   let entries;
   try {
@@ -569,8 +572,8 @@ async function listPages(wikiAbs: string, rel = ''): Promise<string[]> {
     if (e.name.startsWith('.')) continue;
     const r = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) {
-      if (!rel && e.name === 'logs') continue;
-      out.push(...(await listPages(wikiAbs, r)));
+      if (!rel && e.name === 'logs' && !includeLogs) continue;
+      out.push(...(await listPages(wikiAbs, r, includeLogs)));
     } else if (e.name.endsWith('.md')) out.push(r.slice(0, -3));
   }
   return out;

@@ -141,9 +141,19 @@ function extractFirstSentence(body: string): string {
     if (!t) continue;
     if (t.startsWith('#')) continue;
     if (t.startsWith('---')) continue;
-    return t.length > 120 ? t.slice(0, 120) + '…' : t;
+    return cutDescription(t, 120);
   }
   return '';
+}
+
+/** Cut a description without leaving half a [[link]] behind (2026-09-29:
+ *  the index carried `[[infr…` as a dead link). Exported for tests. */
+export function cutDescription(t: string, max: number): string {
+  if (t.length <= max) return t;
+  let cut = max;
+  const open = t.lastIndexOf('[[', cut);
+  if (open >= 0 && t.indexOf(']]', open) >= cut - 1) cut = open;
+  return t.slice(0, cut).replace(/\s+$/, '') + '…';
 }
 
 function capitalize(s: string): string {
