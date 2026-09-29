@@ -13,6 +13,9 @@
 
 import { createHash } from 'node:crypto';
 import { isStructureFileName } from '../wiki/structure-file.ts';
+
+/** `reportsFolder()` in src/wiki/migration/execute.ts, per language. */
+const REPORT_ARCHIVE_DIRS = ['berichte', 'reports'];
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -367,6 +370,7 @@ export class MemoryManager {
             // .obsidian/, .trash/, .git/, …)
             if (parts.some((c) => c.startsWith('.'))) return true;
             if (isStructureFileName(parts[parts.length - 1]!)) return true;
+            if (this.isArchivedReport(path)) return true;
             return false;
           }
         }
@@ -492,6 +496,15 @@ export class MemoryManager {
     }
   }
 
+  /** The wiki migration keeps the pages it folded into others under
+   *  `<wiki>/logs/berichte/` (`logs/reports/`): their substance now
+   *  lives in the target pages, so the archive stays out of the search
+   *  index — otherwise every fact would come back twice. */
+  private isArchivedReport(path: string): boolean {
+    if (!this.wiki) return false;
+    return REPORT_ARCHIVE_DIRS.some((d) => path.startsWith(join(this.wiki!.absPath, 'logs', d) + '/'));
+  }
+
   /** Walk a directory and yield .md file paths. */
   private async *walkMarkdown(root: string): AsyncGenerator<string> {
     let entries;
@@ -508,6 +521,7 @@ export class MemoryManager {
         yield* this.walkMarkdown(full);
       } else if (e.isFile() && e.name.endsWith('.md')) {
         if (isStructureFileName(e.name)) continue; // the wiki's folder map, not a note
+        if (this.isArchivedReport(full)) continue;
         yield full;
       }
     }

@@ -315,7 +315,9 @@ Four steps, all over HTTP ([api.md](api.md#post-wikimigrationplan)):
    carries the page's substance into the target (a timeline line for a
    dated report, a few lines under the fitting heading for a detail),
    the original is kept in full under `logs/berichte/` (`logs/reports/`
-   with `en`) with `merged_into` in its frontmatter; the approved unions
+   with `en`) with `merged_into` in its frontmatter — that archive is
+   left out of the search index, its substance now lives in the target
+   pages; the approved unions
    of same-name pages — the copy the model gave a home survives, the
    model writes its merged body, the other copy goes to the same
    archive; every `[[link]]` in the wiki pointed at the new places;
