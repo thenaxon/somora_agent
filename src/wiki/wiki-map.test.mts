@@ -184,3 +184,73 @@ await writeFile(join(wikiAbs, 'logs/2026-09.md'), '- log\n');
 
 console.log(`wiki-map: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
+
+// ── structure file: the table is the source ───────────────────────────
+{
+  const { parseStructureFile } = await import('./structure-file.ts');
+  const legacy = `---\nlanguage: de\ntemplate_version: 0\nfolders:\n  - path: personen\n    purpose: Menschen.\n    origin: template\n    since: '2026-09-29'\nduplicates:\n  - name: proxmox\n    paths: [hardware/proxmox, infrastruktur/hosts/proxmox]\n    noted: '2026-09-29'\n---\n# Struktur dieses Wikis\n\nText ohne Tabelle.\n`;
+  const l = parseStructureFile(legacy, 'de');
+  check('legacy frontmatter format still read', l.folders.length === 1 && l.folders[0]!.purpose === 'Menschen.' && l.duplicates[0]!.paths.length === 2);
+  const edited = `---\nlanguage: de\ntemplate_version: 1\n---\n# Struktur dieses Wikis\n\nIntro | mit Strich.\n\n| Ordner | Zweck | Herkunft | seit |\n|---|---|---|---|\n| hardware | Meine Geräte, von Hand. | user | 2026-09-29 |\n| personen | Menschen. | template | 2026-09-29 |\n| neu | | | |\n\n## Gleichnamige Seiten in mehreren Ordnern\n\n- proxmox: hardware/proxmox, infrastruktur/hosts/proxmox (2026-09-29)\n- lara: haustiere/lara, personen/lara\n`;
+  const e = parseStructureFile(edited, 'de');
+  check('table rows parsed', e.folders.length === 3 && e.folders.find((f) => f.path === 'hardware')?.purpose === 'Meine Geräte, von Hand.' && e.folders.find((f) => f.path === 'hardware')?.origin === 'user');
+  check('row a person added without origin', e.folders.find((f) => f.path === 'neu')?.origin === 'user' && e.template_version === 1);
+  check('duplicates parsed with and without date', e.duplicates.length === 2 && e.duplicates[1]!.paths[1] === 'personen/lara' && e.duplicates[0]!.noted === '2026-09-29');
+  await saveStructureFile(wikiAbs, e);
+  const text = await readFile(join(wikiAbs, '_struktur.md'), 'utf8');
+  check('frontmatter holds scalars only', /^---\nlanguage: de\ntemplate_version: 1\n---\n/.test(text) && !text.includes('folders:'));
+  const back = await loadStructureFile(wikiAbs, 'de');
+  check('round trip through the table', back.folders.length === 3 && back.folders.find((f) => f.path === 'hardware')?.purpose === 'Meine Geräte, von Hand.' && back.duplicates.length === 2);
+  check('purpose with a pipe survives', (() => { describeFolder(back, { path: 'x', purpose: 'a | b', origin: 'deep' }); return true; })());
+  await saveStructureFile(wikiAbs, back);
+  const again = await loadStructureFile(wikiAbs, 'de');
+  check('pipe replaced, row count kept', again.folders.find((f) => f.path === 'x')?.purpose === 'a / b' && again.folders.length === 4);
+}
+console.log(`wiki-map (structure table): ${pass} passed, ${fail} failed`);
+if (fail > 0) process.exit(1);
+
+// ── sub-topic: a name that extends an entity page's name ──────────────
+{
+  const { subTopicOf } = await import('./map.ts');
+  const structure = await loadStructureFile(wikiAbs, 'de');
+  await mkdir(join(wikiAbs, 'unternehmen'), { recursive: true });
+  await mkdir(join(wikiAbs, 'wissen'), { recursive: true });
+  await writeFile(join(wikiAbs, 'unternehmen/enovom.md'), '---\nslug: unternehmen/enovom\n---\n# enovom\n## Zeitleiste\n- 2026-01-01: gegründet\n');
+  await writeFile(join(wikiAbs, 'wissen/gpt.md'), '# GPT\n');
+  const map = await buildWikiMap({ wikiAbs, language: 'de', structure });
+  check('sub-topic of an entity page found', subTopicOf(map, 'projekte/enovom-kapitalruecklage-2026')?.target === 'unternehmen/enovom');
+  check('a knowledge page is no entity', subTopicOf(map, 'wissen/gpt-6-astra') === null);
+  check('short prefixes ignored', subTopicOf(map, 'projekte/ana-lyse') === null);
+  check('exact name is a twin, not a sub-topic', checkPromoteTarget(map, { slug: 'projekte/enovom', subfolder: 'projekte' }).kind === 'sameName');
+  const c = checkPromoteTarget(map, { slug: 'projekte/enovom-kapitalruecklage', subfolder: 'projekte' });
+  check('promote check reports subTopic', c.kind === 'subTopic' && c.target === 'unternehmen/enovom');
+  check('subTopic can be switched off for the re-check', checkPromoteTarget(map, { slug: 'projekte/enovom-kapitalruecklage', subfolder: 'projekte' }, { ignoreSubTopic: true }).kind === 'ok');
+
+  // Deep: re-ask with the entity page, merge wins
+  const memFile = join(root, 'mem-enovom.md');
+  await writeFile(memFile, '---\nname: mem-enovom\n---\nenovom bucht die Gesellschafterfinanzierung in die Kapitalrücklage um.\n');
+  const cand = { agent: 'testagent', slug: 'mem-enovom', path: memFile, raw: 'x', frontmatter: {}, body: 'enovom bucht um.', mtimeMs: (await stat(memFile)).mtimeMs };
+  const seen: Array<{ map: string; pages: string[] }> = [];
+  const disp = {
+    decideMemoryFate: async (a: { wikiMap: string; relevantPages: Array<{ slug: string; markdown: string }> }) => {
+      seen.push({ map: a.wikiMap, pages: a.relevantPages.map((p) => p.slug) });
+      if (seen.length === 1) return { kind: 'promote' as const, subfolder: 'projekte', slug: 'projekte/enovom-kapitalruecklage', type: 'projekt', title: 'x', body: '## Stand\nx' };
+      const page = a.relevantPages[0]!;
+      return { kind: 'merge' as const, wikiPath: page.slug, body: page.markdown.replace(/^---[\s\S]*?---\n/, '') + '- 2026-09-29: Kapitalrücklage\n', logSummary: 'enovom ergänzt' };
+    },
+  };
+  const wiki = await loadDeepWikiState(wikiAbs, 'de');
+  const out = await processCandidate({ candidate: cand as never, ctx: { wikiAbs, schema: DE_WIKI_SCHEMA }, mgr: { search: async () => [] } as never, workerModel: {} as never, dispatcher: disp as never, wiki, timeoutMs: 1000 });
+  check('sub-topic → second call with the entity page in full → merged into it', out.kind === 'merged' && seen.length === 2 && seen[1]!.pages[0] === 'unternehmen/enovom' && seen[1]!.map.includes('named after the existing entity page unternehmen/enovom'));
+  check('no page under projekte', await stat(join(wikiAbs, 'projekte/enovom-kapitalruecklage.md')).then(() => false, () => true));
+  check('entity page got the entry', (await readFile(join(wikiAbs, 'unternehmen/enovom.md'), 'utf8')).includes('Kapitalrücklage'));
+
+  // Deep: the model insists on its own page → promoted
+  await writeFile(memFile, '---\nname: mem-enovom\n---\nenovom-akademie ist ein eigenes Vorhaben.\n');
+  const cand2 = { ...cand, body: 'enovom-akademie ist ein eigenes Vorhaben.', mtimeMs: (await stat(memFile)).mtimeMs };
+  const disp2 = { decideMemoryFate: async () => ({ kind: 'promote' as const, subfolder: 'projekte', slug: 'projekte/enovom-akademie', type: 'projekt', title: 'enovom Akademie', body: '## Stand\neigenes Vorhaben' }) };
+  const out2 = await processCandidate({ candidate: cand2 as never, ctx: { wikiAbs, schema: DE_WIKI_SCHEMA }, mgr: { search: async () => [] } as never, workerModel: {} as never, dispatcher: disp2 as never, wiki, timeoutMs: 1000 });
+  check('model insists → own page created', out2.kind === 'promoted' && (await stat(join(wikiAbs, 'projekte/enovom-akademie.md')).then(() => true, () => false)));
+}
+console.log(`wiki-map (sub-topic): ${pass} passed, ${fail} failed`);
+if (fail > 0) process.exit(1);

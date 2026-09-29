@@ -269,9 +269,41 @@ exists in another folder, Deep merges into it instead of creating a
 twin. Names that already exist in several folders are noted in the
 structure file for the migration.
 
+A page whose name extends an entity page's name — a note filed as
+`enovom-kapitalruecklage` while `unternehmen/enovom` exists — is
+usually a detail of that entity: Deep is asked again with the entity
+page in full and merges the note into it, unless it insists the page
+is a thing of its own.
+
 `wiki.defaultSubdirs` from earlier versions is still read, but only
 shapes the example slugs in the prompts; the template above replaces
 the list.
+
+### Migrating a grown wiki
+
+A wiki that grew before the template keeps working as it is: the map
+only changes where **new** pages go. Moving the existing pages onto
+the template is a separate, deliberate process that nothing starts by
+itself — you trigger it, you read what it would do, you approve it in
+groups, and it takes a backup before it moves a file. Today the first
+two steps exist, and neither touches the wiki:
+
+1. `POST /wiki/migration/plan` reads the wiki and writes a plan under
+   `~/.somora/wiki-migration/<id>/`: folders a rule would move (a
+   folder named `aktien` belongs in `finanzen/depot`), page names that
+   exist in several folders, dated work reports and the project they
+   seem to belong to, and the folders whose pages need a look one by
+   one.
+2. `POST /wiki/migration/refine` has the model look at every one of
+   those pages — with the map and the names of the entity pages in
+   front of it — and answer per page: keep, move, fold into an existing
+   page, or unclear. The answers are grouped by what would happen, so
+   you approve "move 12 pages to infrastruktur/geraete", not 500 lines.
+   No page moves on a folder name alone.
+
+The step that executes an approved plan — backup, moves, folding,
+link rewriting, re-indexing — follows in a later release and will be
+described here before it ships.
 
 ## How agents read the wiki
 

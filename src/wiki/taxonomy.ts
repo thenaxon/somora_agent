@@ -38,6 +38,10 @@ export interface WikiTaxonomy {
   /** Bumped when the template changes in a way a migration should notice. */
   version: number;
   folders: readonly TaxonomyFolder[];
+  /** Folder names grown wikis commonly have, and the template folder
+   *  their pages belong in — the migration's rule-based moves. Anything
+   *  not listed here is judged page by page. */
+  aliases: Readonly<Record<string, string>>;
 }
 
 const DE: WikiTaxonomy = {
@@ -72,6 +76,15 @@ const DE: WikiTaxonomy = {
     { path: 'agenten', purpose: 'Nur Steckbriefe: was ein Agent ist, kann und darf. Keine Arbeitsberichte.', rationale: 'Ein Agent ist eine Entität; seine Arbeit gehört zu den Projekten, an denen er arbeitet.' },
     { path: 'privat', purpose: 'Interessen, Hobbys, Haustiere, Gesundheit, Wohnen — das Leben abseits von Arbeit und Geld.', rationale: 'Persönliches braucht einen eigenen Ort, damit es weder unter Wissen noch unter Projekte rutscht.' },
   ],
+  aliases: {
+    hardware: 'infrastruktur/geraete', geraete: 'infrastruktur/geraete', hosts: 'infrastruktur/hosts', server: 'infrastruktur/hosts', homelab: 'infrastruktur', netzwerk: 'infrastruktur', dienste: 'infrastruktur/dienste', konten: 'infrastruktur/konten', zugaenge: 'infrastruktur/konten',
+    aktien: 'finanzen/depot', depot: 'finanzen/depot', portfolio: 'finanzen/depot', watchlist: 'finanzen/depot', investments: 'finanzen/depot', investment: 'finanzen/depot', krypto: 'finanzen/krypto', immobilien: 'finanzen/immobilien', kredite: 'finanzen/kredite',
+    haustiere: 'privat', tiere: 'privat', interessen: 'privat', hobbys: 'privat', wohnen: 'privat', gesundheit: 'privat',
+    reisen: 'ereignisse', vorfaelle: 'ereignisse', vorfall: 'ereignisse', sicherheit: 'ereignisse', termine: 'ereignisse',
+    praeferenzen: 'regeln', vorgaben: 'regeln', rechtliches: 'regeln', recht: 'regeln', vereinbarungen: 'regeln',
+    konzepte: 'wissen/konzepte', anleitungen: 'wissen/anleitungen', runbooks: 'wissen/anleitungen', howto: 'wissen/anleitungen', skills: 'wissen/anleitungen', vergleiche: 'wissen/vergleiche', werkzeuge: 'wissen', tools: 'wissen',
+    firmen: 'unternehmen', kontakte: 'personen', leute: 'personen', menschen: 'personen', standorte: 'orte', fahrzeuge: 'besitz', autos: 'besitz',
+  },
 };
 
 const EN: WikiTaxonomy = {
@@ -106,6 +119,15 @@ const EN: WikiTaxonomy = {
     { path: 'agents', purpose: 'Profiles only: what an agent is, can and may do. No work reports.', rationale: 'An agent is an entity; its work belongs to the projects it works on.' },
     { path: 'personal', purpose: 'Interests, hobbies, pets, health, living — life apart from work and money.', rationale: 'Personal matters need a place of their own so they slide neither under knowledge nor under projects.' },
   ],
+  aliases: {
+    hardware: 'infrastructure/devices', devices: 'infrastructure/devices', hosts: 'infrastructure/hosts', servers: 'infrastructure/hosts', homelab: 'infrastructure', network: 'infrastructure', services: 'infrastructure/services', accounts: 'infrastructure/accounts',
+    stocks: 'finances/portfolio', portfolio: 'finances/portfolio', watchlist: 'finances/portfolio', investments: 'finances/portfolio', crypto: 'finances/crypto', 'real-estate': 'finances/real-estate', property: 'finances/real-estate', loans: 'finances/loans',
+    pets: 'personal', interests: 'personal', hobbies: 'personal', living: 'personal', health: 'personal',
+    travel: 'events', trips: 'events', incidents: 'events', security: 'events', appointments: 'events',
+    preferences: 'rules', legal: 'rules', agreements: 'rules',
+    concepts: 'knowledge/concepts', 'how-tos': 'knowledge/how-tos', howto: 'knowledge/how-tos', runbooks: 'knowledge/how-tos', skills: 'knowledge/how-tos', comparisons: 'knowledge/comparisons', tools: 'knowledge',
+    firms: 'companies', contacts: 'people', locations: 'places', vehicles: 'possessions', cars: 'possessions',
+  },
 };
 
 export function taxonomyFor(language: WikiLanguage): WikiTaxonomy {

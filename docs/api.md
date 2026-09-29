@@ -2262,6 +2262,50 @@ gets re-evaluated.
 
 Same shape as `run-deep`, for the Lucid (wiki review) phase.
 
+### `POST /wiki/migration/plan`
+
+Step one of moving a grown wiki onto the folder template
+([wiki.md](wiki.md#migrating-a-grown-wiki)): read the whole wiki and
+write down what a migration would do — nothing in the wiki is touched.
+The plan lands under `~/.somora/wiki-migration/<id>/plan.md` (and
+`plan.json`). **400** when the wiki layer is off.
+
+```json
+{ "id": "20260929-104047", "plan": "/home/you/.somora/wiki-migration/20260929-104047/plan.md",
+  "pagesTotal": 991, "foldersTotal": 71,
+  "summary": { "move_folder": { "items": 19, "pages": 40 }, "unite_twins": { "items": 19, "pages": 38 },
+               "fold_report": { "items": 190, "pages": 190 }, "review_pages": { "items": 37, "pages": 447 },
+               "describe_folder": { "items": 0, "pages": 0 }, "unclear": { "items": 0, "pages": 0 } },
+  "durationMs": 1830 }
+```
+
+### `POST /wiki/migration/refine`
+
+Step two: the Lucid model (falling back to the Deep model) judges every
+page the plan is unsure about, and every page a rule would move — keep,
+move to a folder, fold into an existing page, or unclear — in batches
+of 25 pages. Body `{ "id": "<plan id>", "wait": false, "batchSize": 25 }`.
+Runs in the background by default and writes `refined.md` /
+`refined.json` next to the plan; `wait: true` returns the result inline.
+Still no write into the wiki. **404** for an unknown plan, **409** while
+a refine for that plan is running.
+
+```json
+{ "id": "20260929-104047", "started": true, "message": "Refine started in background. GET /wiki/migration/plans/:id for progress." }
+```
+
+### `GET /wiki/migration/plans/:id`
+
+The plan's summary, the running refine's progress (`done` / `total`
+batches), and the refined result's groups when it exists.
+
+```json
+{ "id": "20260929-104047", "dir": "…/wiki-migration/20260929-104047",
+  "plan": { "pagesTotal": 991, "foldersTotal": 71, "summary": { … }, "createdAt": "…" },
+  "refine": { "started": "…", "done": 12, "total": 27 },
+  "refined": null }
+```
+
 ### `POST /agents/:agent/dream/run-rem`
 
 Catch up one agent's unread conversations now: starts the REM cycle the

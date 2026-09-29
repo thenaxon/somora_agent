@@ -181,16 +181,21 @@ export function noteNewPage(map: WikiMap, wikiPath: string, purposeIfNew?: { pur
 export type PromoteTargetCheck =
   | { kind: 'ok'; folder: string; describe?: { path: string; purpose: string; origin: 'template' | 'deep' } }
   | { kind: 'sameName'; target: string; others: string[] }
+  /** The new name extends an entity page's name (`enovom-kapitalruecklage`
+   *  next to `unternehmen/enovom`): usually a detail of that entity. */
+  | { kind: 'subTopic'; target: string; prefix: string }
   | { kind: 'unknownFolder'; folder: string }
   | { kind: 'tooDeep'; folder: string };
 
-export function checkPromoteTarget(map: WikiMap, decision: { slug: string; subfolder: string; newFolder?: { path: string; purpose: string } }): PromoteTargetCheck {
+export function checkPromoteTarget(map: WikiMap, decision: { slug: string; subfolder: string; newFolder?: { path: string; purpose: string } }, opts: { ignoreSubTopic?: boolean } = {}): PromoteTargetCheck {
   const rel = decision.slug.replace(/^\/+/, '').replace(/\.md$/i, '');
   const parts = rel.split('/');
   const folder = parts.slice(0, -1).join('/');
   if (parts.length > 3) return { kind: 'tooDeep', folder };
   const same = sameNamePages(map, rel, decision.subfolder);
   if (same) return { kind: 'sameName', target: same.target, others: same.others };
+  const sub = opts.ignoreSubTopic ? null : subTopicOf(map, rel);
+  if (sub) return { kind: 'subTopic', target: sub.target, prefix: sub.prefix };
   if (!folder) return { kind: 'ok', folder };
   const existing = map.folders.find((f) => f.path === folder);
   if (existing) {
@@ -207,6 +212,29 @@ export function checkPromoteTarget(map: WikiMap, decision: { slug: string; subfo
     return { kind: 'ok', folder, describe: { path: folder, purpose: decision.newFolder.purpose.trim(), origin: 'deep' } };
   }
   return { kind: 'unknownFolder', folder };
+}
+
+/** Folders whose pages are entities a detail can belong to. */
+const ENTITY_TOPS = new Set(['personen', 'people', 'unternehmen', 'companies', 'projekte', 'projects', 'orte', 'places', 'infrastruktur', 'infrastructure', 'besitz', 'possessions', 'agenten', 'agents']);
+
+/**
+ * An entity page whose name the new page's name extends: `<name>-…`
+ * with `<name>` at least four characters (2026-09-29, Rene: the note
+ * on enovom's capital reserve became `projekte/enovom-kapitalruecklage-…`
+ * while `unternehmen/enovom` existed). The longest such name wins. Null
+ * when there is none — a page in a knowledge or event folder never
+ * counts, its name is a topic, not an entity.
+ */
+export function subTopicOf(map: Pick<WikiMap, 'sameName'>, targetPath: string): { target: string; prefix: string } | null {
+  const base = targetPath.replace(/^\/+/, '').replace(/\.md$/i, '').split('/').pop()!.toLowerCase();
+  let best: { target: string; prefix: string } | null = null;
+  for (const [name, paths] of map.sameName) {
+    if (name.length < 4 || !base.startsWith(name + '-')) continue;
+    const entity = paths.find((p) => ENTITY_TOPS.has(p.split('/')[0] ?? '') && p.split('/').length >= 2);
+    if (!entity) continue;
+    if (!best || name.length > best.prefix.length) best = { target: entity, prefix: name };
+  }
+  return best;
 }
 
 /**

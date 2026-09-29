@@ -397,7 +397,45 @@ export async function processCandidate(args: {
     // Where the page would land, checked against the whole wiki — not
     // only the exact path (2026-09-29: `hardware` and `homelab` folders
     // reinvented, 15 page names living in several folders at once).
-    const check = checkPromoteTarget(wiki.map, decision);
+    let check = checkPromoteTarget(wiki.map, decision);
+    if (check.kind === 'subTopic') {
+      // Ask once more with the entity page in full: merge as a detail
+      // of it, or — when it really is a thing of its own — promote.
+      const entity = await readWithMtime(join(ctx.wikiAbs, `${check.target}.md`));
+      if (entity) {
+        logger.info({ msg: 'dream.deep.sub_topic_reask', agent: candidate.agent, memorySlug: candidate.slug, wanted: decision.slug, entity: check.target, prefix: check.prefix });
+        const again = await dispatcher.decideMemoryFate({
+          candidate,
+          wikiMap: `${wiki.map.text}\n\nNOTE: the page you wanted to create, ${decision.slug}, is named after the existing entity page ${check.target} (shown below in full). A detail, decision, event or status of that entity belongs INTO its page — answer "merge" with the full updated body (add it to the timeline or the fitting section). Answer "promote" again only when this is a thing of its own that merely shares the name.`,
+          relevantPages: [{ slug: check.target, markdown: entity.text }],
+          workerModel,
+          timeoutMs,
+          ...(signal ? { signal } : {}),
+          ...(thinking ? { thinking } : {}),
+        });
+        if (again.kind === 'skip') {
+          return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: again.reason, ...(again.transient ? { transient: true as const } : {}) };
+        }
+        if (again.kind === 'merge') {
+          return applyMerge({ candidate, decision: { ...again, wikiPath: check.target }, ctx, wikiPageMtimeMs: entity.mtimeMs });
+        }
+        // The model insists on a page of its own: take its second
+        // answer through the ordinary checks, sub-topic excluded.
+        const second = checkPromoteTarget(wiki.map, again, { ignoreSubTopic: true });
+        if (second.kind === 'ok') {
+          const r = await applyPromote({ candidate, decision: again, ctx });
+          if (r.kind === 'promoted') {
+            if (second.describe && describeFolder(wiki.structure, second.describe)) wiki.dirty = true;
+            noteNewPage(wiki.map, r.wikiPath, second.describe);
+            logger.info({ msg: 'dream.deep.sub_topic_kept_own_page', agent: candidate.agent, memorySlug: candidate.slug, wikiPath: r.wikiPath, entity: check.target });
+          }
+          return r;
+        }
+        return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: `refused after sub-topic re-ask: ${second.kind}`, transient: true };
+      }
+      // The entity page vanished mid-run: judge the target without it.
+      check = checkPromoteTarget(wiki.map, decision, { ignoreSubTopic: true });
+    }
     if (check.kind === 'sameName') {
       if (check.others.length > 0 && noteDuplicate(wiki.structure, decision.slug.split('/').pop()!, [check.target, ...check.others])) wiki.dirty = true;
       logger.info({
@@ -439,6 +477,11 @@ export async function processCandidate(args: {
           : `refused: ${check.folder} is not a folder of this wiki and no purpose was given for it`,
         transient: true,
       };
+    }
+    if (check.kind !== 'ok') {
+      // Only reachable when the sub-topic re-check found a twin — rare
+      // enough to leave for the next run.
+      return { kind: 'skipped', agent: candidate.agent, memorySlug: candidate.slug, reason: `refused: ${check.kind} after re-check`, transient: true };
     }
     const promoteResult = await applyPromote({ candidate, decision, ctx });
     if (promoteResult.kind === 'promoted') {

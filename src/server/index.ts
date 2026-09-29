@@ -6279,6 +6279,100 @@ app.post('/dream/run-lucid', async (c) => {
   });
 });
 
+// Wiki migration, step one: the plan. Reads the whole wiki, writes what
+// the migration WOULD do under ~/.somora/wiki-migration/<id>/ and
+// returns the summary. No file in the wiki is touched.
+app.post('/wiki/migration/plan', async (c) => {
+  if (!config.wiki.enabled) {
+    return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  }
+  const obs = resolveObsidianSource(config.obsidian);
+  if (!obs?.vaultPath) return c.json({ error: 'no vault configured' }, 400);
+  const wikiAbs = joinPath(obs.vaultPath, config.wiki.vaultSubfolder);
+  const language = config.wiki.language ?? 'de';
+  const { loadStructureFile } = await import('../wiki/structure-file.ts');
+  const { analyzeWiki } = await import('../wiki/migration/analyze.ts');
+  const { writePlan } = await import('../wiki/migration/store.ts');
+  const t0 = Date.now();
+  const structure = await loadStructureFile(wikiAbs, language);
+  const plan = await analyzeWiki({ wikiAbs, language, structure });
+  const written = await writePlan(plan);
+  logger.info({ msg: 'wiki.migration.plan_written', id: written.id, pages: plan.pagesTotal, folders: plan.foldersTotal, summary: plan.summary, ms: Date.now() - t0 });
+  return c.json({ id: written.id, plan: written.markdown, pagesTotal: plan.pagesTotal, foldersTotal: plan.foldersTotal, summary: plan.summary, durationMs: Date.now() - t0 });
+});
+
+// Step two: the model judges every page the plan is unsure about (and
+// every page a rule would move). Runs in the background — 20 to 40
+// calls to the Lucid model — and writes refined.md next to the plan.
+const migrationRefineRuns = new Map<string, { started: string; done: number; total: number; finished?: string; error?: string }>();
+app.post('/wiki/migration/refine', async (c) => {
+  if (!config.wiki.enabled) return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { id?: unknown; wait?: unknown; batchSize?: unknown };
+  const id = typeof body.id === 'string' ? body.id : '';
+  if (!id || !/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'id (a plan id from POST /wiki/migration/plan) is required' }, 400);
+  const { readPlan, writeRefinedPlan } = await import('../wiki/migration/store.ts');
+  const plan = await readPlan(id);
+  if (!plan) return c.json({ error: `no plan ${id}` }, 404);
+  if (migrationRefineRuns.get(id) && !migrationRefineRuns.get(id)!.finished) return c.json({ error: `refine for ${id} is already running`, progress: migrationRefineRuns.get(id) }, 409);
+  const ref = config.wiki.lucid.model ?? config.wiki.deep.model;
+  const model = ref ? resolveAnyRef(config, ref) : null;
+  if (!model) return c.json({ error: `no model: wiki.lucid.model / wiki.deep.model unresolved (${ref ?? 'unset'})` }, 400);
+  const obs = resolveObsidianSource(config.obsidian);
+  if (!obs?.vaultPath) return c.json({ error: 'no vault configured' }, 400);
+  const wikiAbs = joinPath(obs.vaultPath, config.wiki.vaultSubfolder);
+  const language = config.wiki.language ?? 'de';
+  const progress: { started: string; done: number; total: number; finished?: string; error?: string } = { started: new Date().toISOString(), done: 0, total: 0 };
+  migrationRefineRuns.set(id, progress);
+  const run = (async () => {
+    const { loadStructureFile } = await import('../wiki/structure-file.ts');
+    const { buildWikiMap } = await import('../wiki/map.ts');
+    const { refinePlan } = await import('../wiki/migration/refine.ts');
+    const structure = await loadStructureFile(wikiAbs, language);
+    const map = await buildWikiMap({ wikiAbs, language, structure });
+    const refined = await refinePlan({
+      plan,
+      planId: id,
+      wikiAbs,
+      language,
+      map,
+      model,
+      ...(config.wiki.lucid.thinking ? { thinking: config.wiki.lucid.thinking } : {}),
+      ...(typeof body.batchSize === 'number' ? { batchSize: body.batchSize } : {}),
+      onProgress: (done, total) => {
+        progress.done = done;
+        progress.total = total;
+      },
+    });
+    const w = await writeRefinedPlan(id, refined, language);
+    progress.finished = new Date().toISOString();
+    return { refined, markdown: w.markdown };
+  })();
+  run.catch((err) => {
+    progress.error = (err as Error).message;
+    progress.finished = new Date().toISOString();
+    logger.error({ msg: 'wiki.migration.refine_failed', id, err: (err as Error).message });
+  });
+  if (!body.wait) return c.json({ id, started: true, message: 'Refine started in background. GET /wiki/migration/plans/:id for progress.' });
+  const r = await run;
+  return c.json({ id, refined: r.markdown, pagesJudged: r.refined.pagesJudged, batchesTotal: r.refined.batchesTotal, batchesFailed: r.refined.batchesFailed, groups: r.refined.groups.map((g) => ({ action: g.action, target: g.target, pages: g.pages.length })) });
+});
+
+app.get('/wiki/migration/plans/:id', async (c) => {
+  const id = c.req.param('id');
+  if (!/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'bad id' }, 400);
+  const { readPlan, readRefinedPlan, MIGRATION_ROOT } = await import('../wiki/migration/store.ts');
+  const plan = await readPlan(id);
+  if (!plan) return c.json({ error: `no plan ${id}` }, 404);
+  const refined = await readRefinedPlan(id);
+  return c.json({
+    id,
+    dir: joinPath(MIGRATION_ROOT, id),
+    plan: { pagesTotal: plan.pagesTotal, foldersTotal: plan.foldersTotal, summary: plan.summary, createdAt: plan.createdAt },
+    refine: migrationRefineRuns.get(id) ?? null,
+    refined: refined ? { model: refined.model, pagesJudged: refined.pagesJudged, batchesTotal: refined.batchesTotal, batchesFailed: refined.batchesFailed, createdAt: refined.createdAt, groups: refined.groups.map((g) => ({ action: g.action, target: g.target, pages: g.pages.length })) } : null,
+  });
+});
+
 const port = Number(process.env.SOMORA_PORT ?? config.server.port);
 // Pin the resolved port back into the env so child processes (MCP
 // servers spawned by claude-cli/codex-cli) inherit it for their HTTP
