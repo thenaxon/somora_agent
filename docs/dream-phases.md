@@ -386,7 +386,9 @@ The worker sees:
   came from a REM finding carries `stated_at` (the end of the
   conversation it was read from) — not the day the finding was applied,
   which for a conversation dreamed late can be months off
-- Wiki index.md (topology header)
+- The wiki map: every folder with what kind of page lives in it and
+  how many, the template folders not created yet, and the filing
+  rules (see [wiki.md](wiki.md#folders-kind-not-topic))
 - Top-8 relevant wiki pages, embedding-matched against the memory
   body. A page over 8000 characters arrives shortened to its first
   6000 — good enough to decide with, not to rewrite from: a merge into
@@ -407,15 +409,23 @@ Returns a structured `MemoryFateDecision`:
 
 { "kind": "promote", "subfolder": "personen", "slug": "personen/jane-doe",
   "type": "person", "title": "Jane Doe",
-  "body": "## Aktueller Stand\n…", "related": [...] }
+  "body": "## Aktueller Stand\n…", "related": [...],
+  "newFolder": { "path": "…", "purpose": "…" } }   // only for a folder the map lacks
 
 { "kind": "merge", "wikiPath": "personen/familie-klein",
   "body": "...full updated body...",
   "logSummary": "familie-klein aktualisiert: ..." }
 ```
 
-Deep applies the decision verbatim. No second LLM call at apply-time —
-with one exception, the merge guard below.
+Deep applies the decision verbatim — after two checks against the
+wiki map. A promote into a folder that neither exists nor is proposed
+by the template is refused unless the model gave the folder a purpose
+(then the folder is created and described in the structure file); a
+folder deeper than one subfolder is refused. And the page name is
+checked across all folders: when a page of that name already exists
+elsewhere, the promote becomes a merge into that page, asked again
+with the page in full. No second LLM call otherwise — with one
+exception, the merge guard below.
 
 ### Merge guard (anti-clobber)
 

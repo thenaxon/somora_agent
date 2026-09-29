@@ -33,7 +33,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
 
   async decideMemoryFate(args: {
     candidate: PromotionCandidate;
-    wikiIndex: string;
+    wikiMap: string;
     relevantPages: Array<{ slug: string; markdown: string }>;
     workerModel: import('../config/types.ts').ResolvedModel;
     timeoutMs: number;
@@ -42,7 +42,7 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
   }): Promise<MemoryFateDecision> {
     const userMsg = buildDeepUserMessage(
       args.candidate,
-      args.wikiIndex,
+      args.wikiMap,
       args.relevantPages,
     );
     let text: string;
@@ -69,11 +69,27 @@ export class DefaultPromotionDispatcher implements PromotionDispatcher {
   }
 }
 
+/** `newFolder: {path, purpose}` on a promote — the path defaults to the
+ *  chosen subfolder when the model gave only the purpose; a string is
+ *  read as the purpose. Exported for tests. */
+export function parseNewFolder(v: unknown, subfolder: string): { path: string; purpose: string } | undefined {
+  if (!v) return undefined;
+  if (typeof v === 'string') {
+    const purpose = v.trim();
+    return purpose ? { path: subfolder, purpose } : undefined;
+  }
+  if (typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  const purpose = typeof o.purpose === 'string' ? o.purpose.trim() : '';
+  const path = (typeof o.path === 'string' ? o.path.trim() : '').replace(/^\/+|\/+$/g, '') || subfolder;
+  return purpose ? { path, purpose } : undefined;
+}
+
 // ─── User-message builder ───────────────────────────────────────────
 
 function buildDeepUserMessage(
   c: PromotionCandidate,
-  wikiIndex: string,
+  wikiMap: string,
   relevantPages: Array<{ slug: string; markdown: string }>,
 ): string {
   const pageBlocks = relevantPages.length === 0
@@ -85,9 +101,9 @@ function buildDeepUserMessage(
     `Agent: ${c.agent}`,
     `Memory slug: ${c.slug}`,
     '',
-    '<wiki_index>',
-    wikiIndex.trim() || '(empty)',
-    '</wiki_index>',
+    '<wiki_map>',
+    wikiMap.trim() || '(empty)',
+    '</wiki_map>',
     '',
     '<relevant_wiki_pages>',
     pageBlocks,
@@ -135,7 +151,8 @@ function stripFences(raw: string): string {
   return text;
 }
 
-function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
+/** Exported for tests. */
+export function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
   const text = stripFences(raw);
   let parsed: unknown;
   try {
@@ -179,6 +196,7 @@ function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
     const related = Array.isArray(obj.related)
       ? obj.related.filter((r): r is string => typeof r === 'string')
       : undefined;
+    const newFolder = parseNewFolder(obj.newFolder, subfolder);
     return {
       kind: 'promote',
       subfolder,
@@ -187,6 +205,7 @@ function parseDeepDecision(raw: string, slug: string): MemoryFateDecision {
       title,
       body,
       ...(related && related.length > 0 ? { related } : {}),
+      ...(newFolder ? { newFolder } : {}),
     };
   }
 

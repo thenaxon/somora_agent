@@ -60,13 +60,15 @@ test('deep prompt: headings, subfolders, types, prose language and examples foll
   const de = buildDeepSystemPrompt(wikiSchemaFor('de'));
   const en = buildDeepSystemPrompt(wikiSchemaFor('en'));
   assert.match(de, /"## Aktueller Stand" \/ "## Eigenschaften" \/ "## Zeitleiste" \/ "## Notizen"/);
-  assert.match(de, /personen \/ projekte \/ wissen \/ orte \/ infrastruktur/);
+  assert.match(de, /pick the subfolder from the wiki map/);
+  assert.match(de, /"newFolder"/);
+  assert.doesNotMatch(de, /invent a new one/);
   assert.match(de, /person \/ projekt \/ konzept \/ ort \/ werkzeug/);
   assert.match(de, /prose in German/);
   assert.match(de, /logSummary in German: "X aktualisiert: <was>"/);
   assert.match(de, /"slug": "personen\/luca"/);
   assert.match(en, /"## Current state" \/ "## Properties" \/ "## Timeline" \/ "## Notes"/);
-  assert.match(en, /people \/ projects \/ knowledge \/ places \/ infrastructure/);
+  assert.match(en, /vehicles\/vw-bus/);
   assert.match(en, /person \/ project \/ concept \/ place \/ tool/);
   assert.match(en, /prose in English/);
   assert.match(en, /logSummary in English: "X updated: <what>"/);
@@ -76,7 +78,6 @@ test('deep prompt: headings, subfolders, types, prose language and examples foll
   assert.doesNotMatch(de, ENGLISH_HEADINGS);
   // an explicit subdir override reaches the prompt
   const custom = buildDeepSystemPrompt(resolveWikiSchema({ language: 'en', defaultSubdirs: ['folks', 'work'] }));
-  assert.match(custom, /pick subfolder \(folks \/ work \/ places \/ infrastructure/);
   assert.match(custom, /"slug": "folks\/luca"/);
   // merge keeps whatever a page already has
   assert.match(en, /keep the page's language and section headings as they are/);

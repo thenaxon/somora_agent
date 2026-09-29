@@ -12,6 +12,7 @@
 // agent on first reference and caches it.
 
 import { createHash } from 'node:crypto';
+import { isStructureFileName } from '../wiki/structure-file.ts';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -365,6 +366,7 @@ export class MemoryManager {
             // Skip dot-prefixed components below the root (.dreams, .cache,
             // .obsidian/, .trash/, .git/, …)
             if (parts.some((c) => c.startsWith('.'))) return true;
+            if (isStructureFileName(parts[parts.length - 1]!)) return true;
             return false;
           }
         }
@@ -505,6 +507,7 @@ export class MemoryManager {
       if (e.isDirectory()) {
         yield* this.walkMarkdown(full);
       } else if (e.isFile() && e.name.endsWith('.md')) {
+        if (isStructureFileName(e.name)) continue; // the wiki's folder map, not a note
         yield full;
       }
     }

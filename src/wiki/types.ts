@@ -57,6 +57,9 @@ export type MemoryFateDecision =
       body: string;
       /** Optional cross-reference targets (wiki paths without .md). */
       related?: string[];
+      /** A folder the model created for this page, with the one-sentence
+       *  purpose the structure file keeps (src/wiki/map.ts rules). */
+      newFolder?: { path: string; purpose: string };
     }
   | {
       kind: 'merge';
@@ -113,8 +116,10 @@ export type CandidateOutcome =
 export interface PromotionDispatcher {
   decideMemoryFate(args: {
     candidate: PromotionCandidate;
-    /** Wiki topology (index.md content). Always present. */
-    wikiIndex: string;
+    /** The wiki map (src/wiki/map.ts): folders, what kind of page lives
+     *  in each, page counts, the template's proposals — or a one-line
+     *  note in the single-page recovery calls. Always present. */
+    wikiMap: string;
     /** Full bodies of N most-relevant existing wiki pages
      *  (embedding-matched against the candidate's memory body). */
     relevantPages: Array<{ slug: string; markdown: string }>;

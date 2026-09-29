@@ -7,6 +7,7 @@
 // See `private/wiki-design.md` § "index.md-Format".
 
 import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { isStructureFileName } from './structure-file.ts';
 import { join, relative } from 'node:path';
 
 import { logger } from '../server/logger.ts';
@@ -104,6 +105,7 @@ async function walk(
     if (e.name.startsWith('.')) continue;
     if (e.name === 'logs' && current === root) continue; // skip logs dir
     if (e.name === 'index.md' && current === root) continue; // skip index itself
+    if (isStructureFileName(e.name) && current === root) continue; // the folder map, not a page
     const full = join(current, e.name);
     if (e.isDirectory()) {
       await walk(root, full, out);

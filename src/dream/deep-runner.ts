@@ -38,6 +38,8 @@ import { regenerateIndex } from '../wiki/index-builder.ts';
 import { appendLogEntries, outcomeToLogEntry, type LogEntry } from '../wiki/log-builder.ts';
 import { readWithMtime } from '../wiki/conflict.ts';
 import { loadWikiContext } from './wiki-context.ts';
+import { buildWikiMap, checkPromoteTarget, noteNewPage, syncStructureWithMap, type WikiMap } from '../wiki/map.ts';
+import { describeFolder, loadStructureFile, noteDuplicate, saveStructureFile, type StructureFile } from '../wiki/structure-file.ts';
 import {
   clearCache,
   clearSlug,
@@ -120,6 +122,10 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
     if (args.signal?.aborted) break;
     const wikiAbs = join(vaultPath, wikiSubfolder);
     const ctx: ActionContext = { wikiAbs, mergeShrinkGuard: args.config.wiki.deep.mergeShrinkGuard, schema };
+    // The map Deep files against: once per vault and run, kept current
+    // in memory as pages are created; the structure file is written
+    // back at the end when a folder was described or a twin was noted.
+    const wiki = await loadDeepWikiState(wikiAbs, schema.language);
 
     for (const agent of agentsInVault) {
       if (args.signal?.aborted) break;
@@ -171,6 +177,7 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
             mgr,
             workerModel,
             dispatcher,
+            wiki,
             timeoutMs: 120_000,
             signal: args.signal,
             ...(thinking ? { thinking } : {}),
@@ -225,7 +232,15 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
       }
     }
 
-    // Per-vault: append logs + regenerate index.
+    // Per-vault: structure file, append logs + regenerate index.
+    if (wiki.dirty) {
+      try {
+        await saveStructureFile(wikiAbs, wiki.structure);
+        logger.info({ msg: 'dream.deep.structure_file_saved', wikiAbs, folders: wiki.structure.folders.length, duplicates: wiki.structure.duplicates.length });
+      } catch (err) {
+        logger.error({ msg: 'dream.deep.structure_file_save_failed', err: (err as Error).message });
+      }
+    }
     if (allLogEntries.length > 0) {
       try {
         await appendLogEntries({ wikiAbs, entries: allLogEntries, schema });
@@ -301,6 +316,34 @@ async function collectCandidates(agent: string): Promise<PromotionCandidate[]> {
   return out;
 }
 
+// ─── the wiki map for a run ─────────────────────────────────────────
+
+/** What Deep files against during one run on one vault (see
+ *  src/wiki/map.ts): the map, the structure file, and whether the
+ *  latter must be written back. */
+export interface DeepWikiState {
+  map: WikiMap;
+  structure: StructureFile;
+  dirty: boolean;
+}
+
+/** Exported for tests. Reads the structure file, walks the wiki, and
+ *  records folders on disk the structure file does not know yet. */
+export async function loadDeepWikiState(wikiAbs: string, language: StructureFile['language']): Promise<DeepWikiState> {
+  const structure = await loadStructureFile(wikiAbs, language);
+  const map = await buildWikiMap({ wikiAbs, language, structure });
+  const dirty = syncStructureWithMap(structure, map, (e) => describeFolder(structure, e));
+  logger.info({
+    msg: 'dream.deep.wiki_map_built',
+    wikiAbs,
+    folders: map.folders.length,
+    undescribed: map.folders.filter((f) => !f.purpose).length,
+    planned: map.planned.length,
+    twins: [...map.sameName.values()].filter((v) => v.length > 1).length,
+  });
+  return { map, structure, dirty };
+}
+
 // ─── per-candidate processing ───────────────────────────────────────
 
 /** Exported for tests. */
@@ -310,13 +353,16 @@ export async function processCandidate(args: {
   mgr: MemoryManager;
   workerModel: ResolvedModel;
   dispatcher: PromotionDispatcher;
+  /** The run's map; built on the spot when a caller (tests) has none. */
+  wiki?: DeepWikiState;
   timeoutMs: number;
   signal?: AbortSignal;
   thinking?: ThinkingLevel;
 }): Promise<CandidateOutcome> {
   const { candidate, ctx, mgr, workerModel, dispatcher, timeoutMs, signal, thinking } = args;
+  const wiki = args.wiki ?? (await loadDeepWikiState(ctx.wikiAbs, ctx.schema?.language ?? 'de'));
 
-  // 1. Load wiki context: index + top-N relevant pages.
+  // 1. Load wiki context: top-N relevant pages.
   const wikiCtx = await loadWikiContext({
     mgr,
     query: candidate.body,
@@ -326,7 +372,7 @@ export async function processCandidate(args: {
   // 2. Single LLM call: skip / promote / merge.
   const decision = await dispatcher.decideMemoryFate({
     candidate,
-    wikiIndex: wikiCtx.indexSummary,
+    wikiMap: wiki.map.text,
     relevantPages: wikiCtx.relevantPages.map((p) => ({
       slug: p.slug,
       markdown: p.markdown,
@@ -348,7 +394,61 @@ export async function processCandidate(args: {
   }
 
   if (decision.kind === 'promote') {
+    // Where the page would land, checked against the whole wiki — not
+    // only the exact path (2026-09-29: `hardware` and `homelab` folders
+    // reinvented, 15 page names living in several folders at once).
+    const check = checkPromoteTarget(wiki.map, decision);
+    if (check.kind === 'sameName') {
+      if (check.others.length > 0 && noteDuplicate(wiki.structure, decision.slug.split('/').pop()!, [check.target, ...check.others])) wiki.dirty = true;
+      logger.info({
+        msg: 'dream.deep.same_name_reroute_to_merge',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        wanted: decision.slug,
+        existing: check.target,
+        ...(check.others.length > 0 ? { alsoAt: check.others } : {}),
+      });
+      return await mergeCollidingPage({
+        candidate,
+        ctx,
+        mgr,
+        workerModel,
+        dispatcher,
+        wikiPath: check.target,
+        why: `a page named like ${decision.slug} already exists at ${check.target}`,
+        timeoutMs,
+        ...(signal ? { signal } : {}),
+        ...(thinking ? { thinking } : {}),
+      });
+    }
+    if (check.kind === 'unknownFolder' || check.kind === 'tooDeep') {
+      logger.warn({
+        msg: check.kind === 'tooDeep' ? 'dream.deep.promote_folder_too_deep' : 'dream.deep.promote_folder_without_purpose',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        wanted: decision.slug,
+        folder: check.folder,
+        ...(decision.newFolder ? { newFolder: decision.newFolder } : {}),
+      });
+      return {
+        kind: 'skipped',
+        agent: candidate.agent,
+        memorySlug: candidate.slug,
+        reason: check.kind === 'tooDeep'
+          ? `refused: ${check.folder} is deeper than one subfolder level`
+          : `refused: ${check.folder} is not a folder of this wiki and no purpose was given for it`,
+        transient: true,
+      };
+    }
     const promoteResult = await applyPromote({ candidate, decision, ctx });
+    if (promoteResult.kind === 'promoted') {
+      if (check.describe && describeFolder(wiki.structure, check.describe)) wiki.dirty = true;
+      noteNewPage(wiki.map, promoteResult.wikiPath, check.describe);
+      if (check.describe) {
+        logger.info({ msg: 'dream.deep.folder_described', folder: check.describe.path, origin: check.describe.origin, purpose: check.describe.purpose });
+      }
+      return promoteResult;
+    }
     if (promoteResult.kind !== 'failed') return promoteResult;
     // Collision (LLM picked a slug that already exists despite our
     // wiki-context). Fall back to merge with the existing page.
@@ -449,8 +549,8 @@ async function mergeCollidingPage(args: {
   // context, asking it to merge.
   const decision = await dispatcher.decideMemoryFate({
     candidate,
-    wikiIndex: args.why
-      ? '(single page focus — this is the complete current page, integrate into it)'
+    wikiMap: args.why
+      ? `(single page focus — this is the complete current page, integrate into it: ${args.why})`
       : '(collision recovery — single page focus)',
     relevantPages: [{ slug: wikiPath, markdown: existing.text }],
     workerModel,

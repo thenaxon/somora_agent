@@ -27,7 +27,8 @@ and contribute to via the Deep dream phase.
     ├── wissen/
     │   ├── runpod.md
     │   └── …
-    ├── orte/, infrastruktur/, …       ← subfolders Deep invents on demand
+    ├── infrastruktur/, orte/, …       ← the shipped template, see "Folders"
+    ├── _struktur.md                   ← the folders and what lives in them
     └── logs/
         └── YYYY-MM.md                 ← monthly Deep audit log
 ```
@@ -207,30 +208,70 @@ The index is the **topology header** Lucid and REM see — they know what
 subfolders exist and what slugs are taken without loading every page
 body.
 
-## Subfolders Deep uses by default
+## Folders: kind, not topic
 
-`personen/`, `projekte/`, `wissen/` with `wiki.language: de`;
-`people/`, `projects/`, `knowledge/` with `en`. Your own set replaces
-either:
+A folder says what **kind** of page lives in it — a person, a project,
+a device, a rule — never what a page is about. Topics live in the page
+body, in its `[[links]]` and in `index.md`. Kept this way, a wiki with
+a thousand pages still has a dozen folders; without the rule, five
+months of Deep runs produced 40 folders, a 300-page `wissen/` catch-all
+and the same page name living in several folders at once.
 
-```yaml
-wiki:
-  defaultSubdirs: ['people', 'work', 'reference']
-```
+somora ships one folder template per wiki language. Deep proposes it,
+your wiki's real folders win: a folder you or Deep created is listed as
+it is, the template only fills the gaps.
 
-Plus on-demand subfolders Deep invents when a topic doesn't fit
-(`orte/` and `infrastruktur/` are the German examples the prompt gives,
-`places/` and `infrastructure/` the English ones):
+| `de` | `en` | What lives there |
+|---|---|---|
+| `personen/` | `people/` | one page per human |
+| `unternehmen/` | `companies/` | one page per company, firm, supplier |
+| `projekte/` | `projects/` | one page per bounded undertaking; dated work reports are timeline entries on it, not pages |
+| `infrastruktur/` | `infrastructure/` | devices, hosts, services, provider accounts — subfolders `geraete/hosts/dienste/konten` (`devices/hosts/services/accounts`) |
+| `finanzen/` | `finances/` | accounts, portfolio, crypto, real estate as investment, loans — one subfolder per kind |
+| `besitz/` | `possessions/` | things owned that are not investments |
+| `orte/` | `places/` | houses, sites, cities, destinations |
+| `ereignisse/` | `events/` | what happened when |
+| `wissen/` | `knowledge/` | subject knowledge tied to no person or company — `konzepte/anleitungen/vergleiche` (`concepts/how-tos/comparisons`) |
+| `regeln/` | `rules/` | directives, preferences, agreements |
+| `agenten/` | `agents/` | agent profiles only, no work reports |
+| `privat/` | `personal/` | interests, hobbies, pets, health, living |
 
-- `orte/` — physical places (gardens, houses, addresses)
-- `infrastruktur/` — hardware, network nodes
-- `agenten/` — agents themselves (when they get their own page)
-- `skills/` — documented capabilities
-- whatever else makes sense for a given topic
+At most one level of subfolders. The template with its rationale per
+folder lives in `src/wiki/taxonomy.ts`; adding a language means adding
+an entry there.
 
-You can pre-create subfolders too — Deep walks the existing layout when
-it builds the wiki summary, so existing structure influences future
-Promote decisions.
+### The structure file
+
+`_struktur.md` (`_structure.md` with `en`) in the wiki root is the
+wiki's own memory of what its folders mean: one row per folder with
+its purpose, who described it (`template`, `deep`, `user`) and since
+when. Deep writes it after a run in which a folder was created or
+found undescribed; you edit the sentences in Obsidian like any page —
+a person's wording is never overwritten. Folders on disk nobody has
+described yet appear as "(no description yet)" until you or the
+migration fill them in. The file is not a wiki page: the index and the
+memory search skip it.
+
+### How Deep files a page
+
+On every run Deep is shown the **wiki map**: every folder that exists
+with its purpose and page count, then the template folders that do not
+exist yet, then the rules. It files a new page into one of those. Only
+when no kind fits may it create a folder, and then it has to say in one
+sentence what kind of page lives there — that sentence lands in the
+structure file and in every later map. A new folder without a purpose,
+or one deeper than a subfolder, is refused and the memory note waits
+for the next run.
+
+Before a page is created, its name is checked against the **whole**
+wiki, not only the exact path: when a page with that name already
+exists in another folder, Deep merges into it instead of creating a
+twin. Names that already exist in several folders are noted in the
+structure file for the migration.
+
+`wiki.defaultSubdirs` from earlier versions is still read, but only
+shapes the example slugs in the prompts; the template above replaces
+the list.
 
 ## How agents read the wiki
 
@@ -356,7 +397,6 @@ wiki:
   enabled: true                          # master toggle
   vaultSubfolder: somora                 # <vault>/somora/ becomes the wiki
   language: de                           # de | en — see "Language" below
-  # defaultSubdirs: [people, projects]   # replaces the language's default set
 
   deep:
     enabled: true
@@ -394,8 +434,8 @@ which language Deep writes page prose in. It covers:
 - the section headings of new pages (table above),
 - the `type:` values Deep picks (`person / projekt / konzept / ort /
   werkzeug` vs `person / project / concept / place / tool`),
-- the default subfolders and the examples in the Deep and Lucid
-  prompts and the `wiki_*` tool descriptions,
+- the folder template ("Folders" above) and the examples in the Deep
+  and Lucid prompts and the `wiki_*` tool descriptions,
 - the wording of `index.md` (`Letztes Update … von Deep` / `Sonstiges`
   / `Letzte Updates` vs `Last update … by Deep` / `Other` / `Recent
   updates`) and of the monthly log (`# Wiki-Log Mai 2026` vs `# Wiki

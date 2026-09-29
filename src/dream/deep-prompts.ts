@@ -21,7 +21,6 @@ import { sectionList, DEFAULT_WIKI_SCHEMA, type WikiSchema } from '../wiki/langu
 export function buildDeepSystemPrompt(schema: WikiSchema = DEFAULT_WIKI_SCHEMA): string {
   const s = schema;
   const sec = s.sections;
-  const subdirs = [...s.subdirs, ...s.extraSubdirExamples].join(' / ');
   const types = s.types.join(' / ');
   const [d1, d2] = [s.subdirs[0] ?? 'people', s.subdirs[1] ?? 'projects'];
   const luca = `${d1}/luca`;
@@ -32,7 +31,7 @@ export function buildDeepSystemPrompt(schema: WikiSchema = DEFAULT_WIKI_SCHEMA):
 
 You receive:
 1. The agent's memory file (frontmatter + body) for one slug.
-2. The wiki's topology (index.md content).
+2. The wiki map: every folder that exists, what KIND of page lives in it, how many pages it holds — and the folders the shipped template proposes that do not exist yet.
 3. Full bodies of the top-N existing wiki pages most relevant to the memory content (embedding-matched).
 
 Three possible decisions:
@@ -47,7 +46,7 @@ Three possible decisions:
 - has substance beyond a one-off observation
 - other agents would benefit from knowing about
 
-For PROMOTE: pick subfolder (${subdirs} / ... — invent a new one if no existing fits), pick a clean slug (lowercase kebab-case, may contain "/" for nested paths), pick type (${types} / ...), write title, write body with sections ${sectionList(s)}. Write the title, the headings and the page prose in ${s.languageName} — the wiki is kept in ${s.languageName}; quote names and terms from the memory as they are. Synthesize and rewrite — don't just copy. Set cross-refs via [[wiki-path]] when relevant pages exist.
+For PROMOTE: pick the subfolder from the wiki map — a folder says what KIND of page lives in it (a person, a project, a device, a rule …), never what the page is about; the topic lives in the page and its links. File into an existing or proposed folder whenever one fits the kind. Only when none does, create one: put the new path in "subfolder" AND add "newFolder": {"path": "<same path>", "purpose": "<one sentence in ${s.languageName}: what kind of page lives there>"} — a new folder without a purpose is refused, and so is a folder deeper than one level below a top folder. A dated work report or status update about a project is NOT a page of its own: MERGE it into that project's page as a timeline entry (or PROMOTE the project page itself when it has none yet, with the report as its first timeline entry). Pick a clean slug (lowercase kebab-case, may contain "/" for nested paths), pick type (${types} / ...), write title, write body with sections ${sectionList(s)}. Write the title, the headings and the page prose in ${s.languageName} — the wiki is kept in ${s.languageName}; quote names and terms from the memory as they are. Synthesize and rewrite — don't just copy. Set cross-refs via [[wiki-path]] when relevant pages exist.
 
 — MERGE — when the memory has substantive new info that EXTENDS an existing wiki page in the provided context:
 - pick the existing wiki path (slug)
@@ -77,6 +76,18 @@ For PROMOTE:
   "title": "Luca",
   "body": "## ${sec.currentState}\\nLuca ...\\n\\n## ${sec.properties}\\n- ...\\n\\n## ${sec.timeline}\\n- 2026-04-...\\n",
   "related": ["${rene}", "${podcast}"]
+}
+
+For PROMOTE into a folder the map does not have (rare):
+{
+  "kind": "promote",
+  "subfolder": "${s.language === 'de' ? 'fahrzeuge' : 'vehicles'}",
+  "newFolder": { "path": "${s.language === 'de' ? 'fahrzeuge' : 'vehicles'}", "purpose": "${s.language === 'de' ? 'Fahrzeuge des Haushalts: Auto, Motorrad, Anhänger — eine Seite pro Fahrzeug.' : 'The household\'s vehicles: car, motorbike, trailer — one page per vehicle.'}" },
+  "slug": "${s.language === 'de' ? 'fahrzeuge/vw-bus' : 'vehicles/vw-bus'}",
+  "type": "${s.types[s.types.length - 1]}",
+  "title": "VW Bus",
+  "body": "## ${sec.currentState}\n...\n",
+  "related": []
 }
 
 For MERGE:
