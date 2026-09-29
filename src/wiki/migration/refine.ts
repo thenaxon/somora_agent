@@ -30,6 +30,9 @@ export interface PageDecision {
   action: PageAction;
   /** move: the folder; fold: the page the content goes into. */
   target: string | null;
+  /** move only: a new file name when the old one is not the thing's
+   *  name (a date-prefixed journal entry that becomes a device page). */
+  name?: string;
   why: string;
   /** What the plan proposed before the model looked. */
   proposed: { action: 'move' | 'fold' | 'review'; target: string | null };
@@ -121,14 +124,16 @@ export function buildRefineSystemPrompt(language: WikiLanguage): string {
 You get: the wiki map (folders that exist, their purpose, page counts, and the template folders not created yet), the names of the entity pages (people, companies, projects, places, devices) a page could be folded into, and a batch of pages with title, type, folder, and their first lines. For every page in the batch decide ONE of:
 
 - "keep": the page is the right kind for the folder it is in. (Also when its folder is a template folder and the page fits it.)
-- "move": the page is a page of its own but belongs in another folder — give the folder path from the map (existing or proposed). Never invent a folder.
+- "move": the page is a page of its own but belongs in another folder — give the folder path from the map (existing or proposed). Never invent a folder. When the page's file name is not the name of the thing it describes (a date-prefixed journal entry that becomes the page of a device or a purchase), add "name": "<lowercase-kebab-case name of the thing>".
 - "fold": the page is not a page of its own — a dated work report, a status update, a detail, a sub-topic of an entity — and its content belongs INTO an existing page as a timeline entry or section. Give that page's path (from the entity names). A dated report about a project folds into the project page; a note about a device folds into the device page; a note about a person into the person page.
 - "unclear": you cannot tell from what you see.
 
 Judge by the KIND of page, not by the topic. A page whose name starts with an entity's name and describes a detail of it is usually a fold. Knowledge folders (${t.folders.find((f) => f.path.startsWith('wissen') || f.path.startsWith('knowledge'))?.path}) keep only knowledge tied to no specific person, company, project or device. Agent folders keep only agent profiles.
 
 Answer with JSON only: an array with one object per page, in the order given:
-[{"page": "<path as given>", "action": "keep|move|fold|unclear", "target": "<folder for move, page path for fold, null otherwise>", "why": "<one short sentence>"}]`;
+[{"page": "<path as given>", "action": "keep|move|fold|unclear", "target": "<folder for move, page path for fold, null otherwise>", "name": "<only for move, only when the file needs a new name>", "why": "<one short sentence>"}]
+
+A page may only "keep" its place when its folder is one the map describes; a page in an undescribed grown folder must move, fold, or be unclear.`;
 }
 
 function pageBlock(j: Judged, body: string): string {
@@ -147,7 +152,7 @@ async function firstLines(wikiAbs: string, path: string, chars: number): Promise
 }
 
 /** Parse one batch answer; missing or malformed pages become `unclear`. */
-export function parseRefineReply(raw: string, batch: Judged[], known: { folders: Set<string>; pages: Set<string> }): PageDecision[] {
+export function parseRefineReply(raw: string, batch: Judged[], known: { folders: Set<string>; pages: Set<string>; described?: Set<string> }): PageDecision[] {
   const json = firstCompleteJson(raw, '[') ?? raw;
   let arr: unknown;
   try {
@@ -168,12 +173,16 @@ export function parseRefineReply(raw: string, batch: Judged[], known: { folders:
     if (!o) return { page: j.page.path, action: 'unclear', target: null, why: 'no answer for this page', proposed: j.proposed, corrected: 'missing' };
     const action = typeof o.action === 'string' ? o.action.trim().toLowerCase() : '';
     const target = typeof o.target === 'string' && o.target.trim() ? norm(o.target) : null;
-    if (action === 'keep') return { page: j.page.path, action: 'keep', target: null, why, proposed: j.proposed };
+    const keepAllowed = !known.described || !j.page.folder || known.described.has(j.page.folder);
+    const keptWrong = (): PageDecision => ({ page: j.page.path, action: 'unclear', target: null, why: `${why} [kept in ${j.page.folder}, a folder the template does not describe]`, proposed: j.proposed, corrected: 'keep in undescribed folder' });
+    if (action === 'keep') return keepAllowed ? { page: j.page.path, action: 'keep', target: null, why, proposed: j.proposed } : keptWrong();
     if (action === 'move') {
       if (!target) return { page: j.page.path, action: 'unclear', target: null, why: why || 'move without a folder', proposed: j.proposed, corrected: 'move without target' };
       if (!known.folders.has(target)) return { page: j.page.path, action: 'unclear', target: null, why: `${why} [wanted folder ${target}, which is neither existing nor proposed]`, proposed: j.proposed, corrected: `unknown folder ${target}` };
-      if (target === j.page.folder) return { page: j.page.path, action: 'keep', target: null, why, proposed: j.proposed, corrected: 'move to own folder = keep' };
-      return { page: j.page.path, action: 'move', target, why, proposed: j.proposed };
+      const nameRaw = typeof o.name === 'string' ? o.name.trim().toLowerCase().replace(/\.md$/, '') : '';
+      const name = /^[a-z0-9][a-z0-9-]{1,80}$/.test(nameRaw) && nameRaw !== j.page.base.toLowerCase() ? nameRaw : undefined;
+      if (target === j.page.folder && !name) return keepAllowed ? { page: j.page.path, action: 'keep', target: null, why, proposed: j.proposed, corrected: 'move to own folder = keep' } : keptWrong();
+      return { page: j.page.path, action: 'move', target, ...(name ? { name } : {}), why, proposed: j.proposed };
     }
     if (action === 'fold') {
       if (!target || !known.pages.has(target)) return { page: j.page.path, action: 'unclear', target: null, why: `${why} [wanted page ${target ?? '?'}, which does not exist]`, proposed: j.proposed, corrected: `unknown page ${target ?? '?'}` };
@@ -204,6 +213,9 @@ export async function refinePlan(args: RefineArgs): Promise<RefinedPlan> {
   const known = {
     folders: new Set([...args.map.folders.map((f) => f.path), ...args.map.planned.map((p) => p.path), ...taxonomyPaths(taxonomyFor(args.language))]),
     pages: new Set(invAll.pages.map((p) => p.path)),
+    // Where a page may stay: template folders and folders a person or
+    // Deep described. A grown folder nobody described is no home.
+    described: new Set([...taxonomyPaths(taxonomyFor(args.language)), ...args.map.folders.filter((f) => f.purpose && f.origin !== 'unknown').map((f) => f.path), ...args.map.planned.map((p) => p.path)]),
   };
   const system = buildRefineSystemPrompt(args.language);
   const context = `${args.map.text}\n\n<entity_pages>\n${entityIndex(invAll.pages)}\n</entity_pages>`;
@@ -291,7 +303,7 @@ export function renderRefinedPlan(r: RefinedPlan, language: WikiLanguage): strin
       L.push('', `### ${g.target ? `\`${g.target}\`` : de ? 'ohne Ziel' : 'no target'} (${g.pages.length})`, '');
       for (const p of g.pages) {
         const d = r.decisions.find((x) => x.page === p)!;
-        L.push(`- \`${p}\` — ${d.why}${d.corrected ? ` _(${d.corrected})_` : ''}`);
+        L.push(`- \`${p}\`${d.name ? ` → \`${d.name}\`` : ''} — ${d.why}${d.corrected ? ` _(${d.corrected})_` : ''}`);
       }
     }
     if (action === 'keep') {

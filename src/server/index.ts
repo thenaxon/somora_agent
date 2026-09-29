@@ -6357,6 +6357,99 @@ app.post('/wiki/migration/refine', async (c) => {
   return c.json({ id, refined: r.markdown, pagesJudged: r.refined.pagesJudged, batchesTotal: r.refined.batchesTotal, batchesFailed: r.refined.batchesFailed, groups: r.refined.groups.map((g) => ({ action: g.action, target: g.target, pages: g.pages.length })) });
 });
 
+// Approvals: a group (move:<folder> / fold:<page>) or a twin, or every
+// group of one action at once. Nothing moves until execute is called.
+app.post('/wiki/migration/plans/:id/approve', async (c) => {
+  const id = c.req.param('id');
+  if (!/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'bad id' }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { groups?: unknown; twins?: unknown; action?: unknown; status?: unknown };
+  const status = body.status === 'dismissed' ? 'dismissed' : body.status === 'pending' ? 'pending' : 'approved';
+  const { readRefinedPlan, readApprovals, writeApprovals } = await import('../wiki/migration/store.ts');
+  const refined = await readRefinedPlan(id);
+  if (!refined) return c.json({ error: `plan ${id} has no refined result yet — POST /wiki/migration/refine first` }, 404);
+  const a = await readApprovals(id);
+  const at = new Date().toISOString();
+  const keys = new Set<string>();
+  if (Array.isArray(body.groups)) for (const k of body.groups) if (typeof k === 'string') keys.add(k);
+  if (typeof body.action === 'string') for (const g of refined.groups) if (g.action === body.action) keys.add(g.key);
+  let touched = 0;
+  for (const k of keys) {
+    if (!refined.groups.some((g) => g.key === k)) continue;
+    a.groups[k] = { status, at };
+    touched++;
+  }
+  const twins = new Set<string>();
+  if (Array.isArray(body.twins)) for (const t of body.twins) if (typeof t === 'string') twins.add(t);
+  if (body.twins === 'all') for (const t of refined.twins) twins.add(t.name);
+  for (const t of twins) {
+    if (!refined.twins.some((x) => x.name === t)) continue;
+    a.twins[t] = { status, at };
+    touched++;
+  }
+  await writeApprovals(id, a);
+  const approved = refined.groups.filter((g) => a.groups[g.key]?.status === 'approved');
+  return c.json({ id, status, touched, approvedGroups: approved.length, approvedPages: approved.reduce((n, g) => n + g.pages.length, 0), approvedTwins: refined.twins.filter((t) => a.twins[t.name]?.status === 'approved').length });
+});
+
+// Execute the approved part. `dryRun: true` (the default) writes a
+// report of what would happen; a real run takes a full copy of the wiki
+// first and refuses to start without it.
+const migrationExecRuns = new Map<string, { started: string; dryRun: boolean; done: number; total: number; finished?: string; error?: string; last?: string }>();
+app.post('/wiki/migration/plans/:id/execute', async (c) => {
+  const id = c.req.param('id');
+  if (!/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'bad id' }, 400);
+  if (!config.wiki.enabled) return c.json({ error: 'config.wiki.enabled is false — wiki layer not active' }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { dryRun?: unknown; wait?: unknown; confirm?: unknown };
+  const dryRun = body.dryRun !== false;
+  if (!dryRun && body.confirm !== 'move my wiki') return c.json({ error: 'a real run needs {"dryRun": false, "confirm": "move my wiki"}' }, 400);
+  const running = migrationExecRuns.get(id);
+  if (running && !running.finished) return c.json({ error: `execute for ${id} is already running`, progress: running }, 409);
+  const { readRefinedPlan, readApprovals, writeExecution, backupDirFor } = await import('../wiki/migration/store.ts');
+  const refined = await readRefinedPlan(id);
+  if (!refined) return c.json({ error: `plan ${id} has no refined result yet` }, 404);
+  const approvals = await readApprovals(id);
+  const ref = config.wiki.lucid.model ?? config.wiki.deep.model;
+  const model = ref ? resolveAnyRef(config, ref) : null;
+  if (!model) return c.json({ error: `no model: wiki.lucid.model / wiki.deep.model unresolved (${ref ?? 'unset'})` }, 400);
+  const obs = resolveObsidianSource(config.obsidian);
+  if (!obs?.vaultPath) return c.json({ error: 'no vault configured' }, 400);
+  const wikiAbs = joinPath(obs.vaultPath, config.wiki.vaultSubfolder);
+  const language = config.wiki.language ?? 'de';
+  const progress: { started: string; dryRun: boolean; done: number; total: number; finished?: string; error?: string; last?: string } = { started: new Date().toISOString(), dryRun, done: 0, total: 0 };
+  migrationExecRuns.set(id, progress);
+  const run = (async () => {
+    const { executeMigration } = await import('../wiki/migration/execute.ts');
+    const result = await executeMigration({
+      planId: id,
+      wikiAbs,
+      language,
+      refined,
+      approvals,
+      model,
+      backupDir: dryRun ? null : backupDirFor(id),
+      dryRun,
+      ...(config.wiki.lucid.thinking ? { thinking: config.wiki.lucid.thinking } : {}),
+      reindex: () => getSharedIndex({ config: config.memory, obsidian: config.obsidian, wiki: config.wiki }).sweepNow(),
+      onProgress: (done, total, item) => {
+        progress.done = done;
+        progress.total = total;
+        progress.last = `${item.kind} ${item.page} → ${item.target} (${item.status})`;
+      },
+    });
+    const w = await writeExecution(id, result, language);
+    progress.finished = new Date().toISOString();
+    return { result, markdown: w.markdown };
+  })();
+  run.catch((err) => {
+    progress.error = (err as Error).message;
+    progress.finished = new Date().toISOString();
+    logger.error({ msg: 'wiki.migration.execute_failed', id, dryRun, err: (err as Error).message });
+  });
+  if (!body.wait) return c.json({ id, dryRun, started: true, message: 'Execute started in background. GET /wiki/migration/plans/:id for progress.' });
+  const r = await run;
+  return c.json({ id, dryRun, report: r.markdown, counts: r.result.counts, linksRewritten: r.result.linksRewritten, foldersRemoved: r.result.foldersRemoved.length, backupDir: r.result.backupDir, reindex: r.result.reindex ?? null });
+});
+
 app.get('/wiki/migration/plans/:id', async (c) => {
   const id = c.req.param('id');
   if (!/^[0-9]{8}-[0-9]{6}$/.test(id)) return c.json({ error: 'bad id' }, 400);
@@ -6369,6 +6462,8 @@ app.get('/wiki/migration/plans/:id', async (c) => {
     dir: joinPath(MIGRATION_ROOT, id),
     plan: { pagesTotal: plan.pagesTotal, foldersTotal: plan.foldersTotal, summary: plan.summary, createdAt: plan.createdAt },
     refine: migrationRefineRuns.get(id) ?? null,
+    execute: migrationExecRuns.get(id) ?? null,
+    approvals: await (await import('../wiki/migration/store.ts')).readApprovals(id),
     refined: refined ? { model: refined.model, pagesJudged: refined.pagesJudged, batchesTotal: refined.batchesTotal, batchesFailed: refined.batchesFailed, createdAt: refined.createdAt, groups: refined.groups.map((g) => ({ action: g.action, target: g.target, pages: g.pages.length })) } : null,
   });
 });

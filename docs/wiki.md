@@ -285,25 +285,48 @@ A wiki that grew before the template keeps working as it is: the map
 only changes where **new** pages go. Moving the existing pages onto
 the template is a separate, deliberate process that nothing starts by
 itself — you trigger it, you read what it would do, you approve it in
-groups, and it takes a backup before it moves a file. Today the first
-two steps exist, and neither touches the wiki:
+groups, and it takes a full copy of the wiki before it moves a file.
+Four steps, all over HTTP ([api.md](api.md#post-wikimigrationplan)):
 
-1. `POST /wiki/migration/plan` reads the wiki and writes a plan under
-   `~/.somora/wiki-migration/<id>/`: folders a rule would move (a
-   folder named `aktien` belongs in `finanzen/depot`), page names that
-   exist in several folders, dated work reports and the project they
-   seem to belong to, and the folders whose pages need a look one by
-   one.
-2. `POST /wiki/migration/refine` has the model look at every one of
-   those pages — with the map and the names of the entity pages in
-   front of it — and answer per page: keep, move, fold into an existing
-   page, or unclear. The answers are grouped by what would happen, so
-   you approve "move 12 pages to infrastruktur/geraete", not 500 lines.
-   No page moves on a folder name alone.
+1. **Plan** — `POST /wiki/migration/plan` reads the wiki and writes a
+   plan under `~/.somora/wiki-migration/<id>/plan.md`: folders a rule
+   would move (a folder named `aktien` belongs in `finanzen/depot`),
+   page names that exist in several folders, dated work reports and
+   the project they seem to belong to. Nothing is touched.
+2. **Judge** — `POST /wiki/migration/refine` has the Lucid model look
+   at **every** page — with the map and the names of the entity pages
+   in front of it — and answer per page: keep, move (with a new file
+   name when the old one is a date, not a thing), fold into an existing
+   page, or unclear. A rule's proposal is only a proposal; no page
+   moves on a folder name alone. The answers land in `refined.md`,
+   grouped by what would happen: "move 12 pages to
+   infrastruktur/geraete", "fold 30 pages into projekte/realtimevoice".
+   Still nothing is touched.
+3. **Approve** — `POST /wiki/migration/plans/<id>/approve` marks groups
+   (or every group of one action, or the same-name unions) approved or
+   dismissed. What you do not approve stays where it is.
+4. **Execute** — `POST /wiki/migration/plans/<id>/execute`. The default
+   is a dry run: it walks the approved steps and writes `dry-run.md`,
+   nothing else. A real run needs `{"dryRun": false, "confirm": "move
+   my wiki"}` and then, in this order: a full copy of the wiki into
+   `~/.somora/wiki-migration/<id>/backup-<time>/` (verified by file
+   count — no copy, no run); the approved moves (file, frontmatter
+   `slug`); the approved folds — the model writes the entry that
+   carries the page's substance into the target (a timeline line for a
+   dated report, a few lines under the fitting heading for a detail),
+   the original is kept in full under `logs/berichte/` (`logs/reports/`
+   with `en`) with `merged_into` in its frontmatter; the approved unions
+   of same-name pages — the copy the model gave a home survives, the
+   model writes its merged body, the other copy goes to the same
+   archive; every `[[link]]` in the wiki pointed at the new places;
+   empty folders removed; the structure file stamped with the template
+   version; `index.md` and the monthly log regenerated; the search
+   index swept. Every step is recorded with its outcome in
+   `execution-<time>.md`; a failed step never stops the others.
 
-The step that executes an approved plan — backup, moves, folding,
-link rewriting, re-indexing — follows in a later release and will be
-described here before it ships.
+To undo a run, copy the backup folder back over the wiki. The plan and
+its files stay under `~/.somora/wiki-migration/` for as long as you
+keep them.
 
 ## How agents read the wiki
 

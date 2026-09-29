@@ -162,7 +162,7 @@ export async function analyzeWiki(args: { wikiAbs: string; language: WikiLanguag
   // 2. Dated reports: fold into the project page they concern.
   const reportPages = new Set<string>();
   for (const p of inv.pages) {
-    if (!p.dated || twinPages.has(p.path)) continue;
+    if (!p.dated || twinPages.has(p.path)) continue; // a dated twin is judged in the review, united first
     if (p.folder === projectsFolder) continue; // a dated project page is the model's call in the review below
     const base = p.base.toLowerCase();
     const into = projectBases.find((b) => base.startsWith(b + '-') || base.includes('-' + b + '-')) ?? null;
@@ -172,7 +172,13 @@ export async function analyzeWiki(args: { wikiAbs: string; language: WikiLanguag
 
   // 3. Folders: by rule where an alias exists, otherwise a per-page
   //    review. Pages already handled above are left out of the lists.
-  const handled = (p: InventoryPage): boolean => twinPages.has(p.path) || reportPages.has(p.path);
+  // Twin pages stay in the per-page review: the union decides which
+  // copy survives, the review decides where the survivor belongs
+  // (2026-09-29, English demo: two `mortgage` pages united into
+  // notes/mortgage, which then stayed in a folder the template does
+  // not know). At execution the union wins over a move or fold of a
+  // dropped copy.
+  const handled = (p: InventoryPage): boolean => reportPages.has(p.path);
   const foldersSeen = new Set<string>();
   for (const [folder, pages] of [...inv.byFolder.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     foldersSeen.add(folder);
@@ -188,12 +194,19 @@ export async function analyzeWiki(args: { wikiAbs: string; language: WikiLanguag
       continue;
     }
     if (target === folder) {
-      // A template folder. Its pages need a look only where the
-      // folder is a catch-all or an agent's own folder.
-      // In the agents folder a page typed `agent` is a profile and stays.
+      // A template folder. Every page still gets the model's look
+      // (Rene, 2026-09-29: the first run folded notes into pages that
+      // were themselves misfiled, because template folders were
+      // trusted). Only an agent profile in the agents folder is
+      // exempt — it is what that folder is for.
       const toReview = top === agentsFolder ? pages.filter((p) => !handled(p) && p.type !== 'agent').map((p) => p.path) : rest;
-      if ((top === knowledgeFolder || top === agentsFolder) && toReview.length > 0) {
-        items.push({ id: id++, kind: 'review_pages', decidedBy: 'model', folder, pages: toReview, why: top === agentsFolder ? 'only agent profiles stay here; work belongs to the projects' : 'only knowledge tied to no person, company or device stays here' });
+      if (toReview.length > 0) {
+        const why = top === agentsFolder
+          ? 'only agent profiles stay here; work belongs to the projects'
+          : top === knowledgeFolder
+            ? 'only knowledge tied to no person, company or device stays here'
+            : 'template folder — each page is checked to be the kind that lives here';
+        items.push({ id: id++, kind: 'review_pages', decidedBy: 'model', folder, pages: toReview, why });
       }
       continue;
     }

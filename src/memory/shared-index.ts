@@ -255,6 +255,14 @@ export class SharedIndex {
     return { agent: best.agent, ...result };
   }
 
+  /** One full sweep over the vault now (the wiki migration calls this
+   *  after moving files, so nobody waits for the 10-minute rescan).
+   *  Rows of files that vanished are dropped by the sweep. */
+  async sweepNow(): Promise<{ indexed: number; skipped: number }> {
+    if (!this.manager || this.state !== 'ready') throw new Error(`shared index not ready (${this.state})`);
+    return this.manager.reindexAll();
+  }
+
   async close(): Promise<void> {
     if (this.manager) {
       await this.manager.close();

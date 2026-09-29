@@ -2296,14 +2296,47 @@ a refine for that plan is running.
 
 ### `GET /wiki/migration/plans/:id`
 
-The plan's summary, the running refine's progress (`done` / `total`
-batches), and the refined result's groups when it exists.
+The plan's summary, the progress of a running refine or execute
+(`done` / `total`), the approvals, and the refined result's groups
+when it exists.
 
 ```json
 { "id": "20260929-104047", "dir": "…/wiki-migration/20260929-104047",
   "plan": { "pagesTotal": 991, "foldersTotal": 71, "summary": { … }, "createdAt": "…" },
   "refine": { "started": "…", "done": 12, "total": 27 },
-  "refined": null }
+  "execute": null,
+  "approvals": { "planId": "…", "groups": { "move:regeln": { "status": "approved", "at": "…" } }, "twins": {} },
+  "refined": { "model": "…", "pagesJudged": 943, "batchesTotal": 38, "batchesFailed": 0,
+               "groups": [ { "action": "move", "target": "regeln", "pages": 50 }, … ] } }
+```
+
+### `POST /wiki/migration/plans/:id/approve`
+
+Mark groups of the refined plan. Body: `groups` (group keys such as
+`move:regeln` or `fold:projekte/somora`), or `action` (`move` / `fold`
+/ `unclear` — every group of that action), or `twins` (names, or
+`"all"`); `status` is `approved` (default), `dismissed` or `pending`.
+**404** until the plan has a refined result.
+
+```json
+{ "id": "…", "status": "approved", "touched": 3, "approvedGroups": 12, "approvedPages": 310, "approvedTwins": 19 }
+```
+
+### `POST /wiki/migration/plans/:id/execute`
+
+Run the approved part. Default `{"dryRun": true}` writes `dry-run.md`
+next to the plan and touches nothing. A real run needs
+`{"dryRun": false, "confirm": "move my wiki"}`, copies the whole wiki
+into `backup-<time>/` under the plan first, and refuses to start when
+the copy is incomplete. Background by default (`wait: true` for the
+result inline); **409** while a run for that plan is going. See
+[wiki.md](wiki.md#migrating-a-grown-wiki) for what a run does.
+
+```json
+{ "id": "…", "dryRun": false, "report": "…/execution-20260929-131500.md",
+  "counts": { "move": 207, "fold": 540, "unite": 19, "failed": 2, "skipped": 0 },
+  "linksRewritten": 812, "foldersRemoved": 51, "backupDir": "…/backup-20260929-131412",
+  "reindex": { "indexed": 610, "skipped": 380 } }
 ```
 
 ### `POST /agents/:agent/dream/run-rem`

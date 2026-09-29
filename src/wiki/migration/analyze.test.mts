@@ -59,7 +59,7 @@ const of = <K extends (typeof plan.items)[number]['kind']>(kind: K) => plan.item
 check('pages counted, logs and index skipped', plan.pagesTotal === 13, String(plan.pagesTotal));
 const moves = of('move_folder');
 check('rule move aktien → finanzen/depot', moves.some((m) => m.from === 'aktien' && m.to === 'finanzen/depot' && m.pages[0] === 'aktien/nvidia'));
-check('twin page is not also moved', !moves.some((m) => m.pages.includes('hardware/proxmox')));
+check('twin page is judged as well (the survivor may need a move)', moves.some((m) => m.pages.includes('hardware/proxmox')));
 const twins = of('unite_twins');
 check('twins: keep the copy in the template folder', twins.length === 1 && twins[0]!.keep === 'infrastruktur/proxmox' && twins[0]!.drop[0] === 'hardware/proxmox');
 const reports = of('fold_report');
@@ -71,12 +71,12 @@ check('wissen reviewed without the dated page', reviews.some((r) => r.folder ===
 check('project sub-pages reviewed', reviews.some((r) => r.folder === 'projekte/somora'));
 check('unknown folder reviewed, not moved', reviews.some((r) => r.folder === 'angebote') && !moves.some((m) => m.from === 'angebote'));
 check('agent profile page stays untouched', !plan.items.some((i) => i.kind !== 'review_pages' && JSON.stringify(i).includes('"agenten/hans"')) && !reviews.some((r) => r.folder === 'agenten'));
-check('person page untouched', !plan.items.some((i) => JSON.stringify(i).includes('personen/anna')));
+check('person page reviewed too, not moved', reviews.some((r) => r.folder === 'personen' && r.pages[0] === 'personen/anna') && !plan.items.some((i) => i.kind !== 'review_pages' && JSON.stringify(i).includes('personen/anna')));
 check('root page unclear', of('unclear').some((u) => u.pages.includes('readme')));
-check('summary adds up', plan.summary.move_folder.pages === 1 && plan.summary.unite_twins.pages === 2 && plan.summary.fold_report.items === 2);
+check('summary adds up', plan.summary.move_folder.pages === 2 && plan.summary.unite_twins.pages === 2 && plan.summary.fold_report.items === 2);
 
 const md = renderPlan(plan);
-check('markdown: title, table, sections', md.startsWith('# Migrationsplan') && md.includes('| Ordner nach Regel verschieben | 1 | 1 | rule |') && md.includes('`aktien/` → `finanzen/depot/`'));
+check('markdown: title, table, sections', md.startsWith('# Migrationsplan') && md.includes('| Ordner nach Regel verschieben | 2 | 2 | rule |') && md.includes('`aktien/` → `finanzen/depot/`'));
 const w = await writePlan(plan, 'test-1');
 check('plan written under SOMORA_HOME', w.dir.startsWith(MIGRATION_ROOT) && (await readdir(w.dir)).sort().join(',') === 'plan.json,plan.md');
 // nothing written into the wiki
