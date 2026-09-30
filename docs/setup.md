@@ -22,7 +22,7 @@ place:
 | Node.js | kept when ≥22.13; otherwise Node 24 system-wide (NodeSource / Homebrew) or, without admin rights, the official build into `~/.local/share/somora/node` (checksum-verified) | only for the system-wide variant |
 | npm folder | when npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH` | no |
 | somora | `npm install -g somora` | no |
-| Service | `somora init`, enabled at boot, lingering on so it survives logout | no (lingering may ask) |
+| Service | Linux: systemd user unit, enabled at boot, lingering on so it survives logout. macOS: LaunchAgent, starts at every login | no (lingering may ask) |
 | Assistant | `somora setup` | no |
 
 Options go after `bash -s --`, or as environment variables:
@@ -164,7 +164,16 @@ somora server status
 journalctl --user -u somora -f      # tail logs
 ```
 
-If you don't want systemd (e.g. on macOS, in a container, or while
+**macOS** has no systemd; the same three commands work there through a
+per-user LaunchAgent (`~/Library/LaunchAgents/ai.somora.server.plist`,
+written by `somora init`). `somora server start` loads it, and from then
+on macOS starts somora at every login and brings it back if it crashes;
+`somora server stop` unloads it until the next login or `start`. Its
+output goes to `~/.somora/logs/launchd.log`. A LaunchAgent never runs
+before its user has logged in — on a Mac used as a server, turn on
+automatic login (System Settings → Users & Groups).
+
+If you don't want a background service (in a container, or while
 debugging):
 
 ```bash

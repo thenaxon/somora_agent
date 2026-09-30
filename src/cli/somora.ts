@@ -24,6 +24,10 @@ import { fileURLToPath } from 'node:url';
 import { SOMORA_VERSION } from '../version.ts';
 import { buildSystemdUnit, extractCustomEnvLines, nodePathLine } from './systemd-unit.ts';
 import { compareVersions, parseUpdateArgs } from './update-args.ts';
+import {
+  LAUNCHD_LABEL, launchdAvailable, launchdLoaded, launchdPid, launchdPlistPath, launchdRestart, launchdStart,
+  launchdStop, nodeDirOnPath, writeLaunchdPlist,
+} from './launchd.ts';
 // Plain-ESM helper shared with bin/somora.mjs (must run on the Node we reject).
 import { nodeUpgradeHint, satisfiesNode } from '../../bin/node-version.mjs';
 
@@ -47,10 +51,11 @@ function usage(): string {
 Usage:
   somora setup [step]                the guided assistant: models, first agent, memory,
                                      team, HTTPS — safe to run again (\`somora setup --help\`)
-  somora init                        data dir + systemd unit (idempotent)
-  somora server start [--foreground] start the server (via systemd, or direct)
+  somora init                        data dir + background service: systemd unit on Linux,
+                                     LaunchAgent on macOS (idempotent)
+  somora server start [--foreground] start the server (as a service, or direct)
   somora server stop                 stop the running server
-  somora server restart              restart via systemd
+  somora server restart              restart the service
   somora server status               show server status + lockfile info
   somora tui                         launch the TUI against the running server
   somora skill <subcommand>          list/check/add/update/remove skills
@@ -131,6 +136,8 @@ function cmdInit(): number {
     kept.push(locksDir);
   }
 
+  if (launchdAvailable()) return cmdInitLaunchd(created, kept);
+
   ensureDir(SYSTEMD_USER_DIR);
   // Preserve operator-added Environment= / EnvironmentFile= lines across
   // the rebake — otherwise a `somora update` silently drops e.g.
@@ -140,8 +147,8 @@ function cmdInit(): number {
     ? readFileSync(SYSTEMD_UNIT_PATH, 'utf8')
     : null;
   const preservedEnv = existingUnit ? extractCustomEnvLines(existingUnit) : [];
-  const npmBinDir = looksLikeGlobalNpmInstall(BIN_PATH) ? resolve(dirname(BIN_PATH), '..', '..', '..', '..', 'bin') : null;
-  const unitContent = buildSystemdUnit(BIN_PATH, preservedEnv, nodePathLine(dirname(process.execPath), homedir(), npmBinDir));
+  const npmBinDir = npmBinDirOf(BIN_PATH);
+  const unitContent = buildSystemdUnit(BIN_PATH, preservedEnv, nodePathLine(nodeDirOnPath(), homedir(), npmBinDir));
   let unitChanged = false;
   if (existingUnit === null) {
     writeFileSync(SYSTEMD_UNIT_PATH, unitContent);
@@ -201,6 +208,32 @@ function cmdInit(): number {
   return 0;
 }
 
+function npmBinDirOf(binPath: string): string | null {
+  return looksLikeGlobalNpmInstall(binPath) ? resolve(dirname(binPath), '..', '..', '..', '..', 'bin') : null;
+}
+
+/** macOS: the LaunchAgent instead of the systemd unit. */
+function cmdInitLaunchd(created: string[], kept: string[]): number {
+  const plist = launchdPlistPath();
+  const what = writeLaunchdPlist(BIN_PATH, npmBinDirOf(BIN_PATH), SOMORA_HOME);
+  if (what === 'created') created.push(plist);
+  else kept.push(what === 'updated' ? `${plist} (updated)` : plist);
+  process.stdout.write(`somora init: data dir ${SOMORA_HOME}\n`);
+  if (created.length) {
+    process.stdout.write('  created:\n');
+    for (const c of created) process.stdout.write(`    ${c}\n`);
+  }
+  if (kept.length) {
+    process.stdout.write('  kept:\n');
+    for (const k of kept) process.stdout.write(`    ${k}\n`);
+  }
+  if (what === 'updated' && launchdLoaded()) {
+    process.stdout.write('  the service definition changed — `somora server restart` applies it\n');
+  }
+  process.stdout.write('\nNext: `somora server start` to launch the server (it then starts at every login).\n');
+  return 0;
+}
+
 /** Heuristic: does this absolute path look like it came from an npm
  *  global install (or an `npm link` setup that targets one)? The
  *  canonical marker is `/lib/node_modules/somora/` somewhere in the
@@ -217,11 +250,16 @@ function spawnServerForeground(): Promise<number> {
   const tsconfigPath = resolve(PKG_ROOT, 'tsconfig.json');
   const serverEntry = resolve(PKG_ROOT, 'src', 'server', 'index.ts');
   const child = spawn(tsxBin, ['--tsconfig', tsconfigPath, serverEntry], { stdio: 'inherit' });
-  const fwd = (sig: NodeJS.Signals) => () => child.kill(sig);
+  let stopping = false;
+  const fwd = (sig: NodeJS.Signals) => () => { stopping = true; child.kill(sig); };
   process.on('SIGTERM', fwd('SIGTERM'));
   process.on('SIGINT', fwd('SIGINT'));
   return new Promise<number>((res) => {
-    child.on('exit', (code) => res(code ?? 0));
+    // A server that was killed (OOM, kill -9) has no exit code. Unless we
+    // asked it to stop, that is a failure — reporting 0 would tell
+    // systemd (Restart=on-failure) and launchd (KeepAlive) not to bring
+    // it back.
+    child.on('exit', (code) => res(code ?? (stopping ? 0 : 1)));
   });
 }
 
@@ -232,6 +270,19 @@ async function cmdServerStart(args: string[]): Promise<number> {
     return await spawnServerForeground();
   }
 
+  if (launchdAvailable()) {
+    if (!existsSync(launchdPlistPath())) {
+      process.stderr.write('service not installed. Run: somora init\n');
+      return 1;
+    }
+    const r = launchdStart();
+    if (!r.ok) {
+      process.stderr.write(`launchctl could not start the service: ${r.detail}\nTry: somora server start --foreground\n`);
+      return 1;
+    }
+    process.stdout.write(`somora server started (launchd: ${LAUNCHD_LABEL}; starts at every login).\n`);
+    return 0;
+  }
   if (!isSystemdAvailable()) {
     process.stderr.write('systemctl --user not available. Try: somora server start --foreground\n');
     return 1;
@@ -249,6 +300,13 @@ async function cmdServerStart(args: string[]): Promise<number> {
 }
 
 function cmdServerStop(): number {
+  if (launchdAvailable() && launchdLoaded()) {
+    const r = launchdStop();
+    if (r.ok) {
+      process.stdout.write('somora server stopped (it starts again at the next login; `somora server start` sooner).\n');
+      return 0;
+    }
+  }
   if (isSystemdAvailable() && existsSync(SYSTEMD_UNIT_PATH)) {
     const r = run('systemctl', ['--user', 'stop', SYSTEMD_UNIT_NAME], { stdio: 'inherit' });
     if (r.code === 0) {
@@ -273,6 +331,19 @@ function cmdServerStop(): number {
 }
 
 function cmdServerRestart(): number {
+  if (launchdAvailable()) {
+    if (!existsSync(launchdPlistPath())) {
+      process.stderr.write('restart needs the service. Run: somora init\n');
+      return 1;
+    }
+    const r = launchdRestart();
+    if (!r.ok) {
+      process.stderr.write(`launchctl could not restart the service: ${r.detail}\n`);
+      return 1;
+    }
+    process.stdout.write('somora server restarted.\n');
+    return 0;
+  }
   if (!isSystemdAvailable() || !existsSync(SYSTEMD_UNIT_PATH)) {
     process.stderr.write('restart needs systemd unit. Run: somora init\n');
     return 1;
@@ -296,7 +367,11 @@ function cmdServerStatus(): number {
   } else {
     process.stdout.write(`lockfile: ${LOCKFILE_PATH} (none — no server running)\n`);
   }
-  if (isSystemdAvailable() && existsSync(SYSTEMD_UNIT_PATH)) {
+  if (launchdAvailable()) {
+    const installed = existsSync(launchdPlistPath());
+    const pid = installed ? launchdPid() : null;
+    process.stdout.write(`\nservice (launchd ${LAUNCHD_LABEL}): ${!installed ? 'not installed — run `somora init`' : launchdLoaded() ? `loaded${pid ? `, running as pid ${pid}` : ', not running'}` : 'installed, not loaded — `somora server start`'}\n`);
+  } else if (isSystemdAvailable() && existsSync(SYSTEMD_UNIT_PATH)) {
     process.stdout.write('\n');
     run('systemctl', ['--user', 'status', SYSTEMD_UNIT_NAME, '--no-pager'], { stdio: 'inherit' });
   }
@@ -476,6 +551,14 @@ async function cmdUpdate(args: string[]): Promise<number> {
     }
   }
 
+  if (launchdAvailable() && existsSync(launchdPlistPath())) {
+    if (!launchdLoaded()) {
+      process.stdout.write('\ndone. The service is not running — start it with `somora server start`.\n');
+      return 0;
+    }
+    process.stdout.write('\nrestarting the service…\n');
+    return cmdServerRestart();
+  }
   if (isSystemdAvailable() && existsSync(SYSTEMD_UNIT_PATH)) {
     process.stdout.write('\nrestarting systemd service…\n');
     return cmdServerRestart();

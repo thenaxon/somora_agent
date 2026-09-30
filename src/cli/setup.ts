@@ -29,6 +29,7 @@ import {
 } from '../setup/prompt.ts';
 import { isOperatorError, tailscaleState } from '../setup/tailscale.ts';
 import { SOMORA_VERSION } from '../version.ts';
+import { launchdPlistPath } from './launchd.ts';
 
 const HOME = homedir();
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(HOME, '.somora');
@@ -161,8 +162,13 @@ async function health(config: YamlFile): Promise<Record<string, unknown> | null>
 }
 
 function serviceAvailable(): boolean {
+  if (process.platform === 'darwin') return existsSync(launchdPlistPath());
   return existsSync(UNIT_PATH) && capture('systemctl', ['--user', 'show-environment']).code === 0;
 }
+
+const LOG_HINT = process.platform === 'darwin'
+  ? `tail -n 50 ${join(SOMORA_HOME, 'logs', 'launchd.log')}`
+  : 'journalctl --user -u somora -n 50';
 
 // ─── step: models ─────────────────────────────────────────────────────
 
@@ -754,7 +760,7 @@ async function stepStart(ctx: Ctx): Promise<void> {
     }
   }
   if (!up) {
-    fail('somora does not answer. Look at the log:  journalctl --user -u somora -n 50');
+    fail(`somora does not answer. Look at the log:  ${LOG_HINT}`);
     return;
   }
   ok(`somora ${SOMORA_VERSION} is running`);
@@ -780,7 +786,7 @@ async function stepStart(ctx: Ctx): Promise<void> {
         }
       } else {
         fail(`${agent} did not answer: ${j.error ?? j.outcome_reason ?? j.outcome ?? `HTTP ${r.status}`}`);
-        explain('Usually the login of the model provider: run `somora setup models`, or see the log with  journalctl --user -u somora -n 50');
+        explain(`Usually the login of the model provider: run \`somora setup models\`, or see the log with  ${LOG_HINT}`);
       }
     } catch (err) {
       fail(`test message failed: ${(err as Error).message}`);

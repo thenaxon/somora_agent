@@ -24,8 +24,13 @@ curl -fsSL https://somora.ai/install.sh | bash
 Linux or macOS, as a normal user. Brings everything that is missing
 (Node.js included), registers the background service and walks you through
 models, your first agent, memory and HTTPS — details under
-[Quickstart](#quickstart). Already have Node ≥22.13?
-`npm install -g somora && somora setup`. Update later: `somora update`.
+[Quickstart](#quickstart). Update later: `somora update`.
+
+| | |
+|---|---|
+| **One line** (recommended) | `curl -fsSL https://somora.ai/install.sh \| bash` |
+| **npm** — you already have Node ≥22.13 | `npm install -g somora && somora setup` |
+| **From source** — you want to work on somora itself | [docs/setup.md → Develop from a checkout](docs/setup.md#develop-from-a-checkout-contributors) |
 
 ## See it
 
@@ -253,8 +258,8 @@ somora codex login                        # ChatGPT subscription; Codex is bundl
 # ~/.somora/config.yaml after step 4
 
 # 4. First-run setup + start
-somora init                    # creates ~/.somora/ and registers the systemd unit
-somora server start            # starts the unit (and enables it at boot)
+somora init                    # creates ~/.somora/ and registers the background service
+somora server start            # starts it (and from then on at boot / login)
 somora tui                     # the default agent is created on first run
 ```
 

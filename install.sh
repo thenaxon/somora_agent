@@ -383,6 +383,13 @@ SERVICE_OK=""
 setup_service() {
   step "Background service"
   if [ -n "$NO_SERVICE" ]; then info "skipped (--no-service)"; somora init >/dev/null; return; fi
+  if [ "$OS" = "darwin" ]; then
+    somora init >/dev/null
+    SERVICE_OK=1
+    ok "registered (starts whenever you log in on this Mac)"
+    info "A Mac used as a server: turn on automatic login, or somora waits for the first login after a reboot."
+    return
+  fi
   if [ "$OS" != "linux" ] || ! have systemctl || ! systemctl --user show-environment >/dev/null 2>&1; then
     somora init >/dev/null
     warn "no systemd user session here — somora cannot register a background service."
