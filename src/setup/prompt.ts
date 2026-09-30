@@ -82,6 +82,14 @@ export class Prompter {
         rl.close();
         resolve(a);
       });
+      // Ctrl-C stops the assistant. Without this listener readline just
+      // closes, which would read as "take the default" and carry on.
+      rl.on('SIGINT', () => {
+        answered = true;
+        rl.close();
+        process.stdout.write('\n\n  stopped — nothing further was changed. Run `somora setup` again to continue.\n');
+        process.exit(130);
+      });
       // Ctrl-D: take the default instead of hanging.
       rl.on('close', () => { if (!answered) resolve(''); });
     });

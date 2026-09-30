@@ -31,6 +31,16 @@ import {
 // Plain-ESM helper shared with bin/somora.mjs (must run on the Node we reject).
 import { nodeUpgradeHint, satisfiesNode } from '../../bin/node-version.mjs';
 
+// CLI commands talk to the person on this terminal; the logger's pretty
+// stdout lines belong to the foreground server only (it gets the
+// variable removed again, see serverChildEnv).
+process.env.SOMORA_LOG_TTY = '0';
+function serverChildEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.SOMORA_LOG_TTY;
+  return env;
+}
+
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const LOCKFILE_PATH = join(SOMORA_HOME, 'locks', 'server.lock');
 const SYSTEMD_USER_DIR = join(homedir(), '.config', 'systemd', 'user');
@@ -249,7 +259,7 @@ function spawnServerForeground(): Promise<number> {
   const tsxBin = resolve(PKG_ROOT, 'node_modules', '.bin', 'tsx');
   const tsconfigPath = resolve(PKG_ROOT, 'tsconfig.json');
   const serverEntry = resolve(PKG_ROOT, 'src', 'server', 'index.ts');
-  const child = spawn(tsxBin, ['--tsconfig', tsconfigPath, serverEntry], { stdio: 'inherit' });
+  const child = spawn(tsxBin, ['--tsconfig', tsconfigPath, serverEntry], { stdio: 'inherit', env: serverChildEnv() });
   let stopping = false;
   const fwd = (sig: NodeJS.Signals) => () => { stopping = true; child.kill(sig); };
   process.on('SIGTERM', fwd('SIGTERM'));

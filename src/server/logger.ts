@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import pino, { type Logger } from 'pino';
 
@@ -18,7 +19,20 @@ const LOG_DIR = join(SOMORA_HOME, 'logs');
 mkdirSync(LOG_DIR, { recursive: true });
 
 const level = process.env.SOMORA_LOG_LEVEL ?? 'info';
-const isTty = Boolean(process.stdout.isTTY);
+// Pretty lines on the terminal are for someone watching the SERVER in
+// the foreground. The interactive CLI commands (setup, wiki migrate, …)
+// own the terminal themselves and switch this off (SOMORA_LOG_TTY=0);
+// and an install where pino-pretty is missing must never fail to start
+// over it — the file log is the record either way.
+function prettyAvailable(): boolean {
+  try {
+    createRequire(import.meta.url).resolve('pino-pretty');
+    return true;
+  } catch {
+    return false;
+  }
+}
+const isTty = Boolean(process.stdout.isTTY) && process.env.SOMORA_LOG_TTY !== '0' && prettyAvailable();
 
 // File target uses `pino-roll` so events after midnight land in the
 // new day's file even when the server has been running for days.

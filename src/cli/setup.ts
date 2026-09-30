@@ -11,7 +11,7 @@
 // src/setup/config-edit.ts: comments survive, the old file is kept as a
 // backup, and a result the server would refuse is never written.
 
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces, userInfo } from 'node:os';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
@@ -172,6 +172,27 @@ const LOG_HINT = process.platform === 'darwin'
 
 // ─── step: models ─────────────────────────────────────────────────────
 
+/** Put `dir` on the PATH of future shells: one marked line in the
+ *  profile files that exist (plus ~/.profile, which login shells read).
+ *  Returns the files it changed — none when the directory is already on
+ *  PATH or already mentioned in every file. */
+export function addToShellPath(dir: string, home: string = HOME, envPath: string = process.env.PATH ?? '', shell: string = process.env.SHELL ?? ''): string[] {
+  if (envPath.split(':').includes(dir)) return [];
+  const shown = dir.startsWith(`${home}/`) ? `$HOME/${dir.slice(home.length + 1)}` : dir;
+  const line = `export PATH="${shown}:$PATH"  # added by somora setup`;
+  const files = [join(home, '.profile')];
+  for (const f of ['.bashrc', '.bash_profile', '.zprofile']) if (existsSync(join(home, f))) files.push(join(home, f));
+  if (existsSync(join(home, '.zshrc')) || shell.endsWith('zsh')) files.push(join(home, '.zshrc'));
+  const changed: string[] = [];
+  for (const f of files) {
+    const text = existsSync(f) ? readFileSync(f, 'utf8') : '';
+    if (text.includes(shown) || text.includes(dir)) continue;
+    appendFileSync(f, `${text === '' || text.endsWith('\n') ? '' : '\n'}\n${line}\n`);
+    changed.push(f);
+  }
+  return changed;
+}
+
 function claudeBinary(): string | null {
   const local = join(HOME, '.local', 'bin', 'claude');
   if (existsSync(local)) return local;
@@ -213,6 +234,11 @@ async function setupClaude(ctx: Ctx, config: YamlFile): Promise<void> {
       return;
     }
     ok(`Claude Code installed at ${tildify(bin)}`);
+    // Its installer only prints a hint when ~/.local/bin is not on PATH.
+    // somora calls the binary by its full path, but the person will want
+    // to type `claude` too.
+    const added = addToShellPath(join(HOME, '.local', 'bin'));
+    if (added.length) ok(`added ~/.local/bin to your PATH ${dim(`(${added.map(tildify).join(', ')} — active in a new terminal)`)}`);
   }
   if (claudeLoggedIn()) {
     ok('Claude login found');
