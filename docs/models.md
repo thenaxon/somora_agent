@@ -46,7 +46,7 @@ providers:
         alias: fable
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-      - id: claude-opus-5
+      - id: claude-opus-5-5
         alias: opus
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
@@ -63,7 +63,7 @@ providers:
 | model | contextWindow | notes | verified |
 |---|---|---|---|
 | `claude-fable-5-1` | 1000000 | Frontier model, adaptive thinking always on. The SDK discloses **no thinking text** for it — somora shows a placeholder row that the model thought ([thinking.md](thinking.md#thinking-content--seeing-what-the-model-thought)). No separate reasoning-token count (rolled into `tokens_out`). | 2026-09-03 |
-| `claude-opus-5` | 1000000 | Anthropic's recommendation for most workloads. Thinking text: placeholder, as above. | 2026-09-03 |
+| `claude-opus-5-5` | 1000000 | Opus 5.5 — Anthropic's recommendation for most workloads; replaces `claude-opus-5` (keep your alias, change the `id`). Thinking text: placeholder, as above. | 2026-09-30 |
 | `claude-sonnet-5` | 1000000 | Same surface as Opus, cheaper on the subscription budget. | 2026-09-03 |
 | `claude-haiku-4-5` | 200000 | Does support extended thinking — keep `reasoning` in `capabilities`, it is missing from most example configs. | 2026-09-03 |
 

@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SOMORA_VERSION } from '../version.ts';
 import { buildSystemdUnit, extractCustomEnvLines, nodePathLine } from './systemd-unit.ts';
-import { compareVersions, parseUpdateArgs } from './update-args.ts';
+import { allowScriptsArgs, compareVersions, parseUpdateArgs } from './update-args.ts';
 import {
   LAUNCHD_LABEL, launchdAvailable, launchdLoaded, launchdPid, launchdPlistPath, launchdRestart, launchdStart,
   launchdStop, nodeDirOnPath, writeLaunchdPlist,
@@ -530,7 +530,8 @@ async function cmdUpdate(args: string[]): Promise<number> {
   // tested with; no in-place re-resolve needed afterwards.
   const spec = `${SOMORA_NPM_NAME}@${target.version}`;
   process.stdout.write(`  npm install -g ${spec}\n`);
-  const ri = spawnSync('npm', ['install', '-g', '--no-audit', '--no-fund', spec], { encoding: 'utf8', stdio: ['inherit', 'inherit', 'pipe'] });
+  const allow = allowScriptsArgs(run('npm', ['config', 'get', 'allow-scripts']).stdout);
+  const ri = spawnSync('npm', ['install', '-g', '--no-audit', '--no-fund', ...allow, spec], { encoding: 'utf8', stdio: ['inherit', 'inherit', 'pipe'] });
   if (ri.stderr) process.stderr.write(ri.stderr);
   if (ri.status !== 0) {
     if (/EACCES/.test(ri.stderr ?? '')) {

@@ -1,7 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { compareVersions, parseUpdateArgs } from './update-args.ts';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { ALLOW_SCRIPTS, allowScriptsArgs, compareVersions, parseUpdateArgs } from './update-args.ts';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 test('update args: default is the release channel with reinit', () => {
   assert.deepEqual(parseUpdateArgs([]), { kind: 'opts', channel: 'release', version: undefined, reinit: true, force: false });
@@ -40,4 +46,20 @@ test('compareVersions: numeric per part, not by string', () => {
 test('compareVersions: a pre-release sorts below its release', () => {
   assert.ok(compareVersions('2026.930.1-rc.1', '2026.930.1') < 0);
   assert.ok(compareVersions('2026.930.2-rc.1', '2026.930.1') > 0);
+});
+
+test('allow-scripts list = every shipped dependency with an install script, and install.sh agrees', () => {
+  const lock = JSON.parse(readFileSync(resolve(root, 'npm-shrinkwrap.json'), 'utf8')) as { packages: Record<string, { hasInstallScript?: boolean; dev?: boolean }> };
+  const withScripts = [...new Set(Object.entries(lock.packages)
+    .filter(([k, v]) => k && v.hasInstallScript && !v.dev)
+    .map(([k]) => k.split('node_modules/').pop()!))].sort();
+  assert.deepEqual([...ALLOW_SCRIPTS].sort(), withScripts);
+  const sh = readFileSync(resolve(root, 'install.sh'), 'utf8').match(/^ALLOW_SCRIPTS="([^"]+)"/m)?.[1];
+  assert.equal(sh, ALLOW_SCRIPTS.join(','));
+});
+
+test('the flag is only passed to an npm that knows it', () => {
+  assert.deepEqual(allowScriptsArgs('undefined\n'), []);
+  assert.equal(allowScriptsArgs('\n')[0], `--allow-scripts=${ALLOW_SCRIPTS.join(',')}`);
+  assert.equal(allowScriptsArgs('node-pty\n').length, 1);
 });

@@ -281,7 +281,7 @@ providers:
   anthropic:
     engine: claude-cli
     models:
-      - id: claude-opus-5
+      - id: claude-opus-5-5
         alias: opus
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]

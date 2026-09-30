@@ -42,7 +42,7 @@ test('an existing config keeps its comments, its models and an odd indentation',
     anthropic:
       engine: claude-cli
       models:
-        - id: claude-opus-5
+        - id: claude-opus-5-5
           alias: grosser          # my own nickname
           contextWindow: 1000000
           capabilities: [text, image]
@@ -68,7 +68,7 @@ test('an existing config keeps its comments, its models and an odd indentation',
 });
 
 test('a result the server would refuse is not written', () => {
-  const original = `server:\n  port: 18737\nproviders:\n  a:\n    engine: claude-cli\n    models:\n      - id: claude-opus-5\n        alias: opus\n        contextWindow: 1000000\n        capabilities: [text]\n`;
+  const original = `server:\n  port: 18737\nproviders:\n  a:\n    engine: claude-cli\n    models:\n      - id: claude-opus-5-5\n        alias: opus\n        contextWindow: 1000000\n        capabilities: [text]\n`;
   const p = tmpFile('config.yaml', original);
   const f = openYaml(p);
   // same alias under a second provider → assertUniqueAliases refuses

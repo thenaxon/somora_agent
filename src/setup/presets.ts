@@ -27,7 +27,7 @@ export const CLAUDE_PRESET: ProviderPreset = {
   engine: 'claude-cli',
   models: [
     { id: 'claude-fable-5-1', alias: 'fable', contextWindow: 1000000, capabilities: FULL, note: 'frontier model' },
-    { id: 'claude-opus-5', alias: 'opus', contextWindow: 1000000, capabilities: FULL, note: 'recommended for most work' },
+    { id: 'claude-opus-5-5', alias: 'opus', contextWindow: 1000000, capabilities: FULL, note: 'recommended for most work' },
     { id: 'claude-sonnet-5', alias: 'sonnet', contextWindow: 1000000, capabilities: FULL, note: 'lighter on the subscription budget' },
     { id: 'claude-haiku-4-5', alias: 'haiku', contextWindow: 200000, capabilities: FULL, note: 'fast and cheap — good for background work' },
   ],

@@ -53,3 +53,17 @@ export function compareVersions(a: string, b: string): number {
   if (bpre === undefined) return -1;
   return apre < bpre ? -1 : 1;
 }
+
+/** Dependencies that build or fetch a binary at install time. npm from
+ *  11.16 on wants them named on a global install (`--allow-scripts`);
+ *  today it only warns, a stricter default would leave node-pty and
+ *  better-sqlite3 unbuilt. update-args.test.mts holds this list against
+ *  npm-shrinkwrap.json and install.sh. */
+export const ALLOW_SCRIPTS = ['better-sqlite3', 'cpu-features', 'esbuild', 'fsevents', 'node-pty', 'onnxruntime-node', 'protobufjs', 'ssh2'];
+
+/** Extra arguments for `npm install -g`, given what `npm config get
+ *  allow-scripts` printed: an npm that does not know the setting says
+ *  "undefined" and must not get the flag. */
+export function allowScriptsArgs(configGetOutput: string): string[] {
+  return configGetOutput.trim() === 'undefined' ? [] : [`--allow-scripts=${ALLOW_SCRIPTS.join(',')}`];
+}

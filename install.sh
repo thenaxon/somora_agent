@@ -29,6 +29,10 @@ PKG_NAME="somora"
 LOCAL_NODE_DIR="$HOME/.local/share/somora/node"
 NPM_PREFIX_DIR="$HOME/.npm-global"
 PROFILE_MARK="# added by the somora installer"
+# Dependencies that build or fetch a binary while installing. Newer npm
+# versions want them named before they may do that (kept in step with
+# src/cli/update-args.ts by a test).
+ALLOW_SCRIPTS="better-sqlite3,cpu-features,esbuild,fsevents,node-pty,onnxruntime-node,protobufjs,ssh2"
 
 VERSION="${SOMORA_VERSION:-latest}"
 YES="${SOMORA_YES:-}"
@@ -370,7 +374,10 @@ install_somora() {
   if have somora; then current="$(somora --version 2>/dev/null || true)"; fi
   if [ -n "$current" ]; then info "installed: $current"; fi
   info "npm install -g $spec   (takes a few minutes, about 1.5 GB)"
-  npm install -g --no-audit --no-fund --loglevel=error "$spec" \
+  local allow=()
+  # npm without the setting answers "undefined" — and would reject the flag.
+  if [ "$(npm config get allow-scripts 2>/dev/null)" != "undefined" ]; then allow=("--allow-scripts=$ALLOW_SCRIPTS"); fi
+  npm install -g --no-audit --no-fund --loglevel=error ${allow[@]+"${allow[@]}"} "$spec" \
     || die "npm could not install $spec. The lines above say why; after fixing it, run this installer again."
   hash -r
   have somora || die "somora was installed but is not on PATH ($(npm config get prefix)/bin)"
