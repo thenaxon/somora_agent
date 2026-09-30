@@ -27,6 +27,14 @@ server:
   # systemd unit does NOT — the update rebakes the unit and drops it).
   host: 127.0.0.1
   port: 18737
+  # HTTPS (HTTP/2). `somora setup access` writes this block for Tailscale;
+  # by hand see docs/setup.md → HTTPS. `renew: tailscale` lets the server
+  # renew the certificate itself and load it without a restart.
+  # tls:
+  #   cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
+  #   key:  ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
+  #   publicHost: <your-host>.<your-tailnet>.ts.net
+  #   renew: tailscale
 
 # capabilities (per model):
 #   text      — always present, plain text I/O
@@ -41,13 +49,13 @@ providers:
   anthropic:
     engine: claude-cli
     models:
-      - id: claude-opus-4-7
+      - id: claude-opus-5
         alias: opus
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-      - id: claude-sonnet-4-6
+      - id: claude-sonnet-5
         alias: sonnet
-        contextWindow: 200000
+        contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
       - id: claude-haiku-4-5
         alias: haiku

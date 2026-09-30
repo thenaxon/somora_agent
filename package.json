@@ -1,10 +1,32 @@
 {
   "name": "somora",
-  "version": "2026.09.29.12",
-  "private": true,
+  "version": "2026.930.1",
+  "description": "A self-hosted multi-agent harness: your agents, your models, one server — with memory, a shared wiki, a web desktop, a phone app and a terminal client.",
   "type": "module",
-  "description": "Local-first gateway for personal AI agents with persistent memory across multiple LLM providers",
   "license": "MIT",
+  "homepage": "https://somora.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thenaxon/somora_agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thenaxon/somora_agent/issues"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "multi-agent",
+    "llm",
+    "claude",
+    "codex",
+    "openai-compatible",
+    "self-hosted",
+    "memory",
+    "wiki"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.13.0"
   },
@@ -21,8 +43,11 @@
     "web-mobile/dist",
     "tsconfig.json",
     "package.json",
+    "npm-shrinkwrap.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "!src/**/*.test.mts",
+    "!src/**/*.test.ts"
   ],
   "scripts": {
     "dev:server": "tsx watch src/server/index.ts",
@@ -66,6 +91,7 @@
     "tsx": "^4.21.0",
     "turndown": "^7.2.4",
     "undici": "^7.25.0",
+    "yaml": "^2.9.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

@@ -8,6 +8,7 @@ const SOMORA_HOME = process.env.SOMORA_HOME ?? join(homedir(), '.somora');
 const CONFIG_PATH = join(SOMORA_HOME, 'config.yaml');
 
 const DEFAULT_CONFIG = `# somora server config — lives at ~/.somora/config.yaml
+# \`somora setup\` is the guided way to fill it (models, agents, memory, HTTPS).
 # API keys are stored here as plain text. This file is *not* committed
 # (it lives outside the repo). Use config.example.yaml in the repo as a
 # documentation reference.
@@ -32,18 +33,18 @@ providers:
   anthropic:
     engine: claude-cli
     models:
-      - id: claude-opus-4-7
+      - id: claude-opus-5
         alias: opus
         contextWindow: 1000000
-        capabilities: [text, image, reasoning]
-      # - id: claude-sonnet-4-6
+        capabilities: [text, image, pdf, reasoning]
+      # - id: claude-sonnet-5
       #   alias: sonnet
-      #   contextWindow: 200000
-      #   capabilities: [text, image, reasoning]
+      #   contextWindow: 1000000
+      #   capabilities: [text, image, pdf, reasoning]
       # - id: claude-haiku-4-5
       #   alias: haiku
       #   contextWindow: 200000
-      #   capabilities: [text, image]
+      #   capabilities: [text, image, pdf, reasoning]
 
   # Example: local OpenAI-compatible server (Ollama / LM Studio / oMLX / vLLM).
   # Uncomment and adjust to wire it up. Rename the key to whatever fits.

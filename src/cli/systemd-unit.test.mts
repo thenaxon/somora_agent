@@ -11,7 +11,7 @@
 
 import assert from 'node:assert/strict';
 
-import { buildSystemdUnit, extractCustomEnvLines } from './systemd-unit.ts';
+import { buildSystemdUnit, extractCustomEnvLines, nodePathLine } from './systemd-unit.ts';
 
 let pass = 0;
 let fail = 0;
@@ -31,6 +31,24 @@ const BIN = '/home/u/.npm-global/lib/node_modules/somora/bin/somora.mjs';
   check('template has NODE_ENV', fresh.includes('Environment=NODE_ENV=production'));
   check('template ExecStart uses bin path', fresh.includes(`ExecStart=${BIN} server start --foreground`));
   check('fresh template yields no custom env', extractCustomEnvLines(fresh).length === 0);
+}
+
+// ── Node outside the system PATH: the unit names its directory ────────
+{
+  check('system node needs no PATH line', nodePathLine('/usr/bin', '/home/u') === null);
+  const line = nodePathLine('/home/u/.local/share/somora/node/bin', '/home/u');
+  check('home node yields a PATH line', line === 'Environment=PATH=/home/u/.local/share/somora/node/bin:/home/u/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', String(line));
+  const unit = buildSystemdUnit(BIN, [], line);
+  check('unit carries the PATH line', unit.includes(line!));
+  check('generated PATH line is not mistaken for operator env', extractCustomEnvLines(unit).length === 0, JSON.stringify(extractCustomEnvLines(unit)));
+  // Node moved (e.g. now system-wide): the old generated line must not stick.
+  const rebaked = buildSystemdUnit(BIN, extractCustomEnvLines(unit), nodePathLine('/usr/bin', '/home/u'));
+  check('stale generated PATH line is dropped on rebake', !rebaked.includes('Environment=PATH='));
+  check('npm bin dir sits between node and ~/.local/bin', nodePathLine('/n/bin', '/home/u', '/home/u/.npm-global/bin')!.startsWith('Environment=PATH=/n/bin:/home/u/.npm-global/bin:/home/u/.local/bin:'));
+  // An operator's own PATH wins and survives.
+  const own = buildSystemdUnit(BIN, ['Environment=PATH=/opt/x:/usr/bin'], line);
+  check('operator PATH wins', own.includes('Environment=PATH=/opt/x:/usr/bin') && !own.includes('.local/share/somora'));
+  check('operator PATH survives extraction', extractCustomEnvLines(own).includes('Environment=PATH=/opt/x:/usr/bin'));
 }
 
 // ── the regression: SOMORA_HOST survives a rebake ─────────────────────

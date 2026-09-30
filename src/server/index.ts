@@ -14,6 +14,7 @@ import { execSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createSecureServer as createHttp2SecureServer } from 'node:http2';
+import { TlsKeeper, type SecureContextHolder } from './tls-keeper.ts';
 import {
   homedir,
   cpus as osCpus,
@@ -7154,6 +7155,18 @@ const httpServer = tlsCert && tlsKey && tlsConf
         logger.info({ msg: 'server.start', port: info.port, host: bindHost, tls: false });
       },
     );
+
+if (tlsCert && tlsConf) {
+  new TlsKeeper({
+    server: httpServer as unknown as SecureContextHolder,
+    certPath: expandHomePath(tlsConf.cert),
+    keyPath: expandHomePath(tlsConf.key),
+    publicHost: tlsConf.publicHost,
+    renew: tlsConf.renew,
+    log: logger,
+    loadedCert: tlsCert,
+  }).start();
+}
 
 // Disable socket and request-body timeouts so long A2A / spawn turns
 // (up to longTaskMaxTimeoutMs) ride through without server-side

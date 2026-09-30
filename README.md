@@ -15,6 +15,18 @@
 [![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
 [![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](#requirements)
 
+## Install
+
+```bash
+curl -fsSL https://somora.ai/install.sh | bash
+```
+
+Linux or macOS, as a normal user. Brings everything that is missing
+(Node.js included), registers the background service and walks you through
+models, your first agent, memory and HTTPS — details under
+[Quickstart](#quickstart). Already have Node ≥22.13?
+`npm install -g somora && somora setup`. Update later: `somora update`.
+
 ## See it
 
 ![somora web screenshot — browser desktop with multi-window chat, agent dock, and tmux app](docs/images/somora-web-2026-05-23.png)
@@ -153,9 +165,32 @@ and their tested config blocks.
 
 ## Quickstart
 
-> somora is installed **from source** — there is no npm registry release
-> yet. `npm pack` + tarball install is the supported path; updates come via
-> `somora update`.
+```bash
+curl -fsSL https://somora.ai/install.sh | bash
+```
+
+One line, as a normal user (not root), on Linux or macOS. The installer
+checks for tmux, ripgrep, git and a compiler and installs what is missing
+(it asks before using admin rights), brings Node.js if yours is missing or
+too old, installs somora from npm, registers the background service, and
+then starts the **setup assistant**:
+
+```text
+somora setup
+  1  Models        connect a Claude or ChatGPT subscription, or your own model server
+  2  First agent   name, language, model and a backup model
+  3  Memory        REM, Deep and Lucid — and where the shared wiki lives
+  4  Team          who is who, once there is more than one agent
+  5  Access        HTTPS through Tailscale, so phone and laptop can reach it
+  6  Start + test  starts the service and sends your agent a real message
+```
+
+Every step first looks at what is already there, so `somora setup` is safe
+to run again — as a whole or one step (`somora setup access`). Update
+later with `somora update`.
+
+Already have Node ≥22.13 and the tools from [Requirements](#requirements)?
+Then it is two commands: `npm install -g somora && somora setup`.
 
 ### Already using a coding agent? Let it set up somora.
 
@@ -171,8 +206,9 @@ https://github.com/thenaxon/somora_agent
 
 Read the current README, then docs/setup.md, docs/models.md,
 docs/agents.md, docs/team.md, docs/resources.md and docs/skills.md.
-Inspect my environment, then install and configure somora using the
-supported install method from the README (npm pack + tarball).
+Inspect my environment, then install somora with the installer from the
+README (`curl -fsSL https://somora.ai/install.sh | bash -s -- --no-setup`)
+and configure it yourself instead of the interactive `somora setup`.
 
 Aim for a complete, useful setup, not just a running server:
 - Help me choose model providers and connect the CLI logins or API
@@ -204,28 +240,21 @@ configuration options that the docs don't describe.
 
 ```bash
 # 1. Prereqs (see docs/setup.md for details per OS)
-sudo apt install tmux ripgrep         # Debian/Ubuntu
-# brew install tmux ripgrep           # macOS
+sudo apt install tmux ripgrep build-essential   # Debian/Ubuntu
+# brew install tmux ripgrep                     # macOS (plus Xcode command line tools)
 
-# 2. Install somora from source — npm pack builds the web clients, then
-#    the tarball is installed globally (a bare `npm install -g .` falls
-#    into npm's link semantics on some setups and leaves a broken install)
-git clone https://github.com/thenaxon/somora_agent.git somora
-cd somora
-npm install -g "$(npm pack | tail -1)"
-# apply the package overrides inside the installed copy (npm honours
-# `overrides` only for a root project, not for a globally installed one)
-(cd "$(npm root -g)/somora" && npm install --omit=dev --no-audit --no-fund)
+# 2. Install somora
+npm install -g somora
 
 # 3. Log in to at least one LLM backend (pick one or more)
-npm install -g @anthropic-ai/claude-code  &&  claude login   # Claude subscription
+curl -fsSL https://claude.ai/install.sh | bash  &&  claude auth login   # Claude subscription
 somora codex login                        # ChatGPT subscription; Codex is bundled
 # local models: run Ollama / LM Studio / oMLX and add the endpoint to
 # ~/.somora/config.yaml after step 4
 
 # 4. First-run setup + start
 somora init                    # creates ~/.somora/ and registers the systemd unit
-somora server start            # starts the unit (auto-starts on login)
+somora server start            # starts the unit (and enables it at boot)
 somora tui                     # the default agent is created on first run
 ```
 

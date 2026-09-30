@@ -27,11 +27,13 @@ All of that stays on your machine.
 You probably don't need every page below right away.
 
 **I just want to try it.** Start with the [project README](../README.md)
-quickstart — install prereqs, install somora from source, run `somora
-init` + `somora server start`, then `somora tui`. ~10 minutes.
+quickstart — one line installs everything and starts the setup
+assistant, which connects a model, creates your first agent and sends
+it a test message. ~10 minutes.
 
 **I want to chat from the browser or my phone.** Read
 [setup.md → HTTPS via Tailscale](setup.md#https-tailscale--required-for-the-web-client-at-scale)
+(or run `somora setup access`, which does it for you)
 to get a real cert, then open `https://<your-tailnet>.ts.net:18737/web/`
 in the browser. The mobile PWA is the same URL with `/mobile/` — see
 [mobile.md](mobile.md).

@@ -1896,6 +1896,13 @@ export const TlsConfigSchema = z
      *  loopback to HTTPS once TLS is on) and surfaced in client docs.
      *  Example: `<your-host>.<your-tailnet>.ts.net`. */
     publicHost: z.string().min(1),
+    /** `tailscale`: the server asks Tailscale for a fresh certificate
+     *  before the current one runs out (checked twice a day) and loads
+     *  it without a restart. Needs `tailscale cert` to work for the
+     *  user somora runs as (`sudo tailscale set --operator=$USER`).
+     *  Absent: the files are only watched — whoever renews them, the
+     *  server picks the new pair up on its next check. */
+    renew: z.enum(['tailscale']).optional(),
   })
   .optional();
 export type TlsConfig = z.infer<typeof TlsConfigSchema>;

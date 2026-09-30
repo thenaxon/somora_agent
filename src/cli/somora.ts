@@ -1,13 +1,14 @@
 // Top-level somora CLI — `somora <subcommand>`.
 //
 // Subcommands:
+//   setup [step]                      guided first-run assistant (src/cli/setup.ts)
 //   init                              idempotent setup (~/.somora/, systemd unit)
 //   server start [--foreground]
 //   server stop
 //   server status
 //   server restart
 //   tui                               launch TUI against running server
-//   update [<version>] [--edge]       install + rebake systemd + restart
+//   update [<version>] [--edge]       install from npm + rebake systemd + restart
 //                                     (see `somora update --help`)
 //   --version | -v
 //   --help | -h
@@ -15,13 +16,14 @@
 // See DECISIONS #42.
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { SOMORA_VERSION } from '../version.ts';
-import { buildSystemdUnit, extractCustomEnvLines } from './systemd-unit.ts';
+import { buildSystemdUnit, extractCustomEnvLines, nodePathLine } from './systemd-unit.ts';
+import { compareVersions, parseUpdateArgs } from './update-args.ts';
 // Plain-ESM helper shared with bin/somora.mjs (must run on the Node we reject).
 import { nodeUpgradeHint, satisfiesNode } from '../../bin/node-version.mjs';
 
@@ -43,7 +45,9 @@ function usage(): string {
   return `somora ${SOMORA_VERSION}
 
 Usage:
-  somora init                        idempotent setup (data dir + systemd unit)
+  somora setup [step]                the guided assistant: models, first agent, memory,
+                                     team, HTTPS — safe to run again (\`somora setup --help\`)
+  somora init                        data dir + systemd unit (idempotent)
   somora server start [--foreground] start the server (via systemd, or direct)
   somora server stop                 stop the running server
   somora server restart              restart via systemd
@@ -61,7 +65,7 @@ Usage:
                                      what is installed, install with npm into ~/.somora/lsp
   somora wiki migrate [step] [id]    move a grown wiki onto the folder template (docs/wiki.md):
                                      guided, or plan|judge|status|approve|dry-run|run|undo
-  somora update [<version>|--edge]   install + rebake systemd + restart
+  somora update [<version>|--edge]   install from npm + rebake systemd + restart
                                      (run \`somora update --help\` for options)
   somora --version                   show version
   somora --help                      this help
@@ -136,7 +140,8 @@ function cmdInit(): number {
     ? readFileSync(SYSTEMD_UNIT_PATH, 'utf8')
     : null;
   const preservedEnv = existingUnit ? extractCustomEnvLines(existingUnit) : [];
-  const unitContent = buildSystemdUnit(BIN_PATH, preservedEnv);
+  const npmBinDir = looksLikeGlobalNpmInstall(BIN_PATH) ? resolve(dirname(BIN_PATH), '..', '..', '..', '..', 'bin') : null;
+  const unitContent = buildSystemdUnit(BIN_PATH, preservedEnv, nodePathLine(dirname(process.execPath), homedir(), npmBinDir));
   let unitChanged = false;
   if (existingUnit === null) {
     writeFileSync(SYSTEMD_UNIT_PATH, unitContent);
@@ -235,6 +240,8 @@ async function cmdServerStart(args: string[]): Promise<number> {
     process.stderr.write('systemd unit not installed. Run: somora init\n');
     return 1;
   }
+  // enable = come back after a reboot; start alone would not.
+  run('systemctl', ['--user', 'enable', SYSTEMD_UNIT_NAME]);
   const r = run('systemctl', ['--user', 'start', SYSTEMD_UNIT_NAME], { stdio: 'inherit' });
   if (r.code !== 0) return r.code;
   process.stdout.write(`somora server started (systemd: ${SYSTEMD_UNIT_NAME}).\n`);
@@ -328,23 +335,23 @@ function cmdTui(): Promise<number> {
 
 // ─── update ─────────────────────────────────────────────────────────
 
-const SOMORA_REPO = 'thenaxon/somora_agent';
-const SOMORA_GIT_URL = `https://github.com/${SOMORA_REPO}.git`;
+const SOMORA_NPM_NAME = 'somora';
 
 function updateUsage(): string {
-  return `somora update — install a new version + rebake systemd + restart
+  return `somora update — install a new version from npm + rebake systemd + restart
 
 Usage:
-  somora update                latest GitHub release (curated, default)
-  somora update --edge         latest git tag (incl. interim status markers)
-  somora update <version>      specific version, e.g. 2026.05.12.7
+  somora update                latest release (npm dist-tag "latest", default)
+  somora update --edge         newest build, including pre-releases (dist-tag "next")
+  somora update <version>      specific version, e.g. 2026.930.1
+  somora update --force        reinstall even when that version is already running
   somora update --no-reinit    skip re-running \`somora init\` after install
 
 Channels:
-  --release   default. Installs only versions you've published as
-              GitHub Releases — safe path for external users.
-  --edge      power-user channel. Installs the latest git tag,
-              including between-release status markers.
+  --release   default. Installs the version published as the current
+              release — safe path for external users.
+  --edge      power-user channel. Installs whatever is newest on npm,
+              which may be a build between releases.
 
 Other:
   --no-reinit  skip rebaking the systemd unit's ExecStart. Default is
@@ -354,60 +361,20 @@ Other:
 `;
 }
 
-type UpdateOpts =
-  | { kind: 'opts'; channel: 'release' | 'edge'; version?: string; reinit: boolean }
-  | { kind: 'help' }
-  | { kind: 'error'; message: string };
+interface NpmTarget { version: string; node?: string }
 
-function parseUpdateArgs(args: string[]): UpdateOpts {
-  let channel: 'release' | 'edge' = 'release';
-  let reinit = true;
-  let version: string | undefined;
-  for (const arg of args) {
-    if (arg === '--edge') channel = 'edge';
-    else if (arg === '--release') channel = 'release';
-    else if (arg === '--no-reinit') reinit = false;
-    else if (arg === '--help' || arg === '-h') return { kind: 'help' };
-    else if (arg.startsWith('--')) return { kind: 'error', message: `unknown flag: ${arg}` };
-    else if (version) return { kind: 'error', message: `multiple version args: ${version}, ${arg}` };
-    else version = arg;
+/** Ask the registry what `somora@<spec>` resolves to. `spec` is a
+ *  dist-tag or an exact version. */
+function npmView(spec: string): NpmTarget | null {
+  const r = run('npm', ['view', `${SOMORA_NPM_NAME}@${spec}`, 'version', 'engines', '--json']);
+  if (r.code !== 0 || !r.stdout.trim()) return null;
+  try {
+    const j = JSON.parse(r.stdout) as { version?: string; engines?: { node?: string } };
+    if (typeof j.version !== 'string') return null;
+    return { version: j.version, node: j.engines?.node };
+  } catch {
+    return null;
   }
-  if (version && channel === 'edge') {
-    return { kind: 'error', message: '--edge and an explicit version are mutually exclusive' };
-  }
-  return { kind: 'opts', channel, version, reinit };
-}
-
-/** Latest tag from `gh release view`, with a curl fallback to the public
- *  GitHub API. Returns the tag name (e.g. "v2026.05.12.4") or null. */
-function resolveLatestRelease(): string | null {
-  const gh = run('gh', ['release', 'view', '--repo', SOMORA_REPO, '--json', 'tagName']);
-  if (gh.code === 0) {
-    try {
-      const j = JSON.parse(gh.stdout);
-      if (typeof j.tagName === 'string') return j.tagName;
-    } catch { /* fall through */ }
-  }
-  const cr = run('curl', ['-fsSL', `https://api.github.com/repos/${SOMORA_REPO}/releases/latest`]);
-  if (cr.code === 0) {
-    try {
-      const j = JSON.parse(cr.stdout);
-      if (typeof j.tag_name === 'string') return j.tag_name;
-    } catch { /* fall through */ }
-  }
-  return null;
-}
-
-/** Highest version-sorted tag on the remote. Doesn't require gh — uses
- *  plain git so it works on minimal installs. */
-function resolveLatestTag(): string | null {
-  const r = run('git', ['ls-remote', '--tags', '--refs', '--sort=-version:refname', SOMORA_GIT_URL]);
-  if (r.code !== 0) return null;
-  for (const line of r.stdout.split('\n')) {
-    const m = line.match(/refs\/tags\/(v[0-9][0-9.]*)$/);
-    if (m && m[1]) return m[1];
-  }
-  return null;
 }
 
 /** Resolve the freshly-installed global somora bin so reinit fires
@@ -419,34 +386,6 @@ function resolveGlobalBin(): string | null {
   return existsSync(candidate) ? candidate : null;
 }
 
-/**
- * Re-resolve the installed package's node_modules in place so the
- * `overrides` in its package.json take effect. npm honours overrides
- * only for the ROOT project — `npm install -g <tgz>` treats somora as
- * a dependency of the global prefix and silently ignores them, which
- * left the live copy on the vulnerable sharp/adm-zip pins the repo had
- * already overridden (2026-09-03). Running `npm install` inside the
- * installed directory makes it the root and applies them; there is no
- * prepare/postinstall script on somora itself, so this only touches
- * node_modules. Non-fatal: a failure leaves a working (if
- * un-overridden) install behind.
- */
-function applyPackageOverridesInPlace(): void {
-  const r = run('npm', ['root', '-g']);
-  if (r.code !== 0) return;
-  const pkgDir = join(r.stdout.trim(), 'somora');
-  if (!existsSync(join(pkgDir, 'package.json'))) return;
-  process.stdout.write('  applying package overrides in the installed copy (npm install --omit=dev)…\n');
-  const res = spawnSync('npm', ['install', '--omit=dev', '--no-audit', '--no-fund'], {
-    cwd: pkgDir,
-    encoding: 'utf8',
-    stdio: ['inherit', 'pipe', 'inherit'],
-  });
-  if (res.status !== 0) {
-    process.stderr.write(`warning: in-place npm install failed (exit ${res.status ?? 'unknown'}) — overrides not applied\n`);
-  }
-}
-
 async function cmdUpdate(args: string[]): Promise<number> {
   const parsed = parseUpdateArgs(args);
   if (parsed.kind === 'help') { process.stdout.write(updateUsage()); return 0; }
@@ -454,97 +393,71 @@ async function cmdUpdate(args: string[]): Promise<number> {
     process.stderr.write(`${parsed.message}\nrun \`somora update --help\` for usage\n`);
     return 2;
   }
-  const { channel, version, reinit } = parsed;
+  const { channel, version, reinit, force } = parsed;
 
-  let ref: string;
+  let target: NpmTarget | null;
   let label: string;
   if (version) {
-    ref = version.startsWith('v') ? version : `v${version}`;
-    label = `${ref} (explicit version)`;
-  } else if (channel === 'edge') {
-    const tag = resolveLatestTag();
-    if (!tag) {
-      process.stderr.write('could not resolve latest git tag from GitHub\n');
+    target = npmView(version);
+    if (!target) {
+      process.stderr.write(`somora ${version} was not found on npm (check the number and your connection)\n`);
       return 1;
     }
-    ref = tag;
-    label = `${ref} (edge channel — latest git tag)`;
+    label = `${target.version} (explicit version)`;
   } else {
-    const tag = resolveLatestRelease();
-    if (!tag) {
+    const latest = npmView('latest');
+    if (!latest) {
       process.stderr.write(
-        'could not resolve latest GitHub release.\n' +
-        '  - check connectivity / `gh auth status`\n' +
-        '  - if no releases are published yet, try `somora update --edge`\n',
+        'could not ask npm for the latest somora version.\n' +
+        '  - check connectivity: `npm view somora version`\n',
       );
       return 1;
     }
-    ref = tag;
-    label = `${ref} (release channel — latest GitHub release)`;
+    target = latest;
+    label = `${latest.version} (release channel)`;
+    if (channel === 'edge') {
+      // "next" only moves when a pre-release is published, so it can be
+      // older than "latest" — edge means whichever is newer.
+      const next = npmView('next');
+      if (next && compareVersions(next.version, latest.version) > 0) target = next;
+      label = `${target.version} (edge channel)`;
+    }
   }
 
   process.stdout.write(`somora update → ${label}\n`);
 
-  // Pack-then-install is the only reliable path:
-  //  - `npm install -g git+…#<ref>` races on the shared cacache when
-  //    prepack triggers nested `npm ci` inside web/, producing
-  //    half-extracted dep tarballs (ENOTEMPTY rename / TAR_ENTRY_ERROR).
-  //  - `npm install -g .` from a local dir only symlinks (npm-link
-  //    style), so deps + the built web/dist never land in the global.
-  // So we clone the target ref, run `npm pack` (which fires prepack
-  // → builds web/dist → produces a real tarball with everything
-  // baked in), then install that tarball globally.
-  const tmpRoot = mkdtempSync(join(tmpdir(), 'somora-update-'));
-  const cloneDir = join(tmpRoot, 'src');
-  let installCode = 0;
-  try {
-    process.stdout.write(`  cloning ${ref} into ${cloneDir}\n`);
-    const cl = run('git', ['clone', '--depth', '1', '--branch', ref, SOMORA_GIT_URL, cloneDir], { stdio: 'inherit' });
-    if (cl.code !== 0) {
-      process.stderr.write(`git clone failed (exit ${cl.code})\n`);
-      return cl.code;
-    }
-
-    // The target release may require a newer Node than the one running
-    // this (older) CLI. Check its engines BEFORE building: after the
-    // install the new bin would refuse to start anyway, but the user
-    // would have waited through the whole web build first.
-    try {
-      const targetPkg = JSON.parse(readFileSync(join(cloneDir, 'package.json'), 'utf8')) as {
-        engines?: { node?: string };
-      };
-      const range = targetPkg.engines?.node;
-      if (range && !satisfiesNode(range, process.versions.node)) {
-        process.stderr.write(`\n${label} needs a newer Node.js than this machine has — update aborted before building.\n`);
-        process.stderr.write(nodeUpgradeHint(range, process.versions.node, process.execPath));
-        return 1;
-      }
-    } catch {
-      /* unreadable target package.json — npm pack will complain */
-    }
-
-    process.stdout.write('  packing tarball (builds web bundle)…\n');
-    const pk = spawnSync('npm', ['pack'], { cwd: cloneDir, encoding: 'utf8', stdio: ['inherit', 'pipe', 'inherit'] });
-    if (pk.status !== 0) {
-      process.stderr.write(`npm pack failed (exit ${pk.status ?? 'unknown'})\n`);
-      return pk.status ?? 1;
-    }
-    // npm pack prints the tarball filename as its last stdout line.
-    const tarballName = pk.stdout.trim().split('\n').pop();
-    if (!tarballName) {
-      process.stderr.write('could not parse tarball name from `npm pack` output\n');
-      return 1;
-    }
-    const tarballPath = join(cloneDir, tarballName);
-
-    process.stdout.write(`  npm install -g ${tarballPath}\n`);
-    const ri = run('npm', ['install', '-g', tarballPath], { stdio: 'inherit' });
-    installCode = ri.code;
-  } finally {
-    try { rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* best-effort */ }
+  if (target.version === SOMORA_VERSION && !force) {
+    process.stdout.write(`already on ${SOMORA_VERSION} — nothing to do (use --force to reinstall)\n`);
+    return 0;
   }
-  if (installCode !== 0) return installCode;
-  applyPackageOverridesInPlace();
+
+  // The target may require a newer Node than the one running this
+  // (older) CLI. Check BEFORE installing: afterwards the new bin would
+  // refuse to start and the old one is gone.
+  if (target.node && !satisfiesNode(target.node, process.versions.node)) {
+    process.stderr.write(`\n${label} needs a newer Node.js than this machine has — update aborted before installing.\n`);
+    process.stderr.write(nodeUpgradeHint(target.node, process.versions.node, process.execPath));
+    return 1;
+  }
+
+  // The package ships npm-shrinkwrap.json, so the dependency tree —
+  // including the security overrides — is the one the release was
+  // tested with; no in-place re-resolve needed afterwards.
+  const spec = `${SOMORA_NPM_NAME}@${target.version}`;
+  process.stdout.write(`  npm install -g ${spec}\n`);
+  const ri = spawnSync('npm', ['install', '-g', '--no-audit', '--no-fund', spec], { encoding: 'utf8', stdio: ['inherit', 'inherit', 'pipe'] });
+  if (ri.stderr) process.stderr.write(ri.stderr);
+  if (ri.status !== 0) {
+    if (/EACCES/.test(ri.stderr ?? '')) {
+      process.stderr.write(
+        '\nnpm may not write to its global folder. Either run the installer again\n' +
+        '(it moves the global folder into your home directory):\n' +
+        '  curl -fsSL https://somora.ai/install.sh | bash\n' +
+        'or do it by hand: `npm config set prefix ~/.npm-global` and add ~/.npm-global/bin to PATH.\n',
+      );
+    }
+    return ri.status ?? 1;
+  }
 
   // Re-run init from the freshly-installed global binary so the
   // systemd unit's ExecStart picks up the new path. Without this,
@@ -616,6 +529,10 @@ async function main(): Promise<number> {
     case 'lsp': {
       const { runLspCli } = await import('./lsp.ts');
       return await runLspCli(rest);
+    }
+    case 'setup': {
+      const { runSetupCli } = await import('./setup.ts');
+      return await runSetupCli(rest);
     }
     case 'wiki': {
       const { runWikiCli } = await import('./wiki.ts');

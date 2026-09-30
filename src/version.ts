@@ -5,7 +5,9 @@
 // the dev tree and from the npm-installed location under
 // ~/.npm-global/lib/node_modules/somora/.
 //
-// Version format follows CalVer: YYYY.MM.DD.N.
+// Version format is calendar-based and valid semver: YYYY.MDD.N
+// (2026.930.1 = first build of 30 September 2026; 2026.1005.2 = second
+// build of 5 October). Up to v2026.09.29.12 it was YYYY.MM.DD.N.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

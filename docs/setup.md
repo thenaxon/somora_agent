@@ -1,9 +1,63 @@
 # Setup
 
 > End-to-end install for somora as a long-running service on your
-> machine. The flow below is what a normal user follows: prereqs →
-> install via npm → systemd user service → chat. A short dev-from-
-> checkout section sits at the bottom for contributors.
+> machine. The short way is the installer plus the setup assistant
+> (next section); the numbered sections after it are the same steps by
+> hand, with the background for each. A short dev-from-checkout section
+> sits at the bottom for contributors.
+
+## The short way: installer + assistant
+
+```bash
+curl -fsSL https://somora.ai/install.sh | bash
+```
+
+Run it as the user who will own somora — not as root; the agents get
+that user's rights. What it does, each step skipped when already in
+place:
+
+| Step | What happens | Needs admin rights |
+|---|---|---|
+| System packages | tmux, ripgrep, git, a C/C++ compiler, python3 — through apt, dnf, pacman, zypper or Homebrew | yes, asked first; without them the compiler is the only hard stop |
+| Node.js | kept when ≥22.13; otherwise Node 24 system-wide (NodeSource / Homebrew) or, without admin rights, the official build into `~/.local/share/somora/node` (checksum-verified) | only for the system-wide variant |
+| npm folder | when npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH` | no |
+| somora | `npm install -g somora` | no |
+| Service | `somora init`, enabled at boot, lingering on so it survives logout | no (lingering may ask) |
+| Assistant | `somora setup` | no |
+
+Options go after `bash -s --`, or as environment variables:
+
+```bash
+curl -fsSL https://somora.ai/install.sh | bash -s -- --no-setup     # stop before the assistant
+curl -fsSL https://somora.ai/install.sh | bash -s -- --version 2026.930.1
+curl -fsSL https://somora.ai/install.sh | bash -s -- --yes --no-sudo  # no questions, no admin rights
+```
+
+`--yes` (`SOMORA_YES=1`), `--no-setup`, `--no-service`, `--no-sudo`,
+`--version <v>` (`SOMORA_VERSION`). `https://somora.ai/install.sh` always
+serves the script of the latest release; the same file is attached to
+every GitHub release as `install.sh`.
+
+### `somora setup` — the assistant
+
+```bash
+somora setup            # all steps
+somora setup access     # one step: models | agent | memory | team | access | start
+```
+
+| Step | What it does |
+|---|---|
+| `models` | Claude subscription (installs Claude Code if missing, runs its login), ChatGPT subscription (the bundled Codex login, browser or device code), or your own OpenAI-compatible server (asks the address, lists its models, asks the context window). Writes the `providers:` block with the tested settings from [models.md](models.md). |
+| `agent` | Creates the first agent: name, how it addresses you, answer language, model, backup model. On an existing install it lists the agents and offers to repair one whose model no longer exists. |
+| `memory` | Turns on REM per agent (with its own model), the duplicate check for new notes, and the shared wiki with Deep and Lucid — in a new folder or an existing Obsidian vault ([dream-phases.md](dream-phases.md), [wiki.md](wiki.md)). |
+| `team` | With two or more agents: writes the first `team.yaml` ([team.md](team.md)). |
+| `access` | This machine only, local network, or **Tailscale HTTPS**: installs and connects Tailscale if needed, walks you through the one switch in the Tailscale admin page, fetches the certificate and turns on automatic renewal. |
+| `start` | Starts (or, after asking, restarts) the service, waits until it answers, sends the agent a real test message and says which model replied. |
+
+The assistant never rewrites a file wholesale: comments and your own
+settings in `config.yaml` / `agent.yaml` stay, the previous version is
+kept next to the file as `<name>.bak-setup-<date>-<time>`, and a result
+the server could not load is not written at all.
 
 ## 1. System prereqs
 
@@ -38,8 +92,8 @@ must be installed and authenticated before the first chat (§5).
 subscription, no API key needed:
 
 ```bash
-npm install -g @anthropic-ai/claude-code
-claude login
+curl -fsSL https://claude.ai/install.sh | bash    # installs to ~/.local/bin/claude
+claude auth login
 ```
 
 **ChatGPT** — the Codex engine uses your ChatGPT subscription. Codex is
@@ -71,37 +125,28 @@ single-window-only; the TUI is unaffected.
 
 ## 4. Install somora
 
-somora is installed **from source** — there is no npm registry release.
-Clone the repo, pack a tarball, install the tarball globally:
-
 ```bash
-git clone https://github.com/thenaxon/somora_agent.git somora
-cd somora
-npm install -g "$(npm pack | tail -1)"
-# apply the package overrides inside the installed copy (npm honours
-# `overrides` only for a root project, not for a globally installed one)
-(cd "$(npm root -g)/somora" && npm install --omit=dev --no-audit --no-fund)
+npm install -g somora
 ```
 
-`npm pack` fires the `prepack` lifecycle hook, which builds the web
-bundle (`cd web && npm ci && npm run build`) and emits a tarball with
-everything baked in. The `npm install -g <tarball>` step then does a
-real global install — the bin lands on your `PATH`, runtime deps land
-under `lib/node_modules/somora/`, and `web/dist` is shipped along.
+The package carries the built web clients and a pinned dependency tree
+(`npm-shrinkwrap.json`), so every install gets exactly the versions the
+release was tested with. One native module (`node-pty`) is compiled
+during the install on Linux — that is what the compiler from §1 is for.
 
-A bare `npm install -g .` from the clone may *look* like it works on
-some setups, but npm often treats a local-folder install as
-`npm link` and just symlinks the global path back to your checkout —
-no deps, no built web bundle, broken binary. Going via `npm pack` is
-the reliable path. (Subsequent upgrades use `somora update`, which
-does the same clone→pack→install under the hood — see [Updating
-somora](#updating-somora) below.)
+If npm answers `EACCES`, its global folder belongs to root. Give npm a
+folder of your own instead of reaching for `sudo`:
+
+```bash
+npm config set prefix ~/.npm-global
+echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.profile && source ~/.profile
+```
 
 ## 5. Start the server + chat
 
 ```bash
 somora init            # creates ~/.somora/ + writes the systemd user-service unit
-somora server start    # starts the unit (auto-starts on login)
+somora server start    # starts the unit and enables it at boot
 somora tui             # opens the TUI against the running server
 ```
 
@@ -129,21 +174,24 @@ somora server start --foreground    # blocks the terminal; Ctrl-C to stop
 ### Updating somora
 
 ```bash
-somora update                # latest GitHub release (curated)
-somora update --edge         # latest git tag (incl. interim versions)
-somora update 2026.05.12.7   # specific version
+somora update                # the current release
+somora update --edge         # the newest build on npm, incl. pre-releases
+somora update 2026.930.1     # a specific version
 ```
 
-`somora update` clones the target ref, builds the web bundle, installs
-globally, re-runs `somora init` so the systemd unit's `ExecStart`
-points at the freshly installed binary, then restarts the service.
-Pass `--no-reinit` to skip the unit rebake if you've hand-edited
+`somora update` asks npm for the target version, checks that your
+Node.js is new enough for it, installs it (`npm install -g somora@<v>`),
+re-runs `somora init` so the systemd unit's `ExecStart` points at the
+freshly installed binary, then restarts the service. When you are
+already on that version it does nothing (`--force` reinstalls). Pass
+`--no-reinit` to skip the unit rebake if you've hand-edited
 `somora.service`.
 
-The default `--release` channel only installs versions that have been
-explicitly published as **GitHub Releases** — the curated path for
-external installers. `--edge` follows the latest git tag instead,
-including interim status markers that don't get a release.
+Version numbers are dates: `2026.930.1` is the first build of
+30 September 2026, `2026.1005.2` the second of 5 October. Versions up
+to `2026.09.29.12` (four parts) predate the npm package and were
+installed from a git checkout; their `somora update` still works and
+brings you onto the npm package.
 
 #### Recovering an upgrade that didn't take effect
 
@@ -922,17 +970,41 @@ different acquisition.
    `src/tools/agents/spawn.ts`) read this hostname from env at server
    startup and use it for their own HTTPS callbacks; there is no
    loopback bypass, everything goes through the one secure listener.
-5. Restart somora. Connect with the full URL:
+5. Add `renew: tailscale` to the block (see [Cert renewal](#cert-renewal))
+   and restart somora. Connect with the full URL:
    `https://<your-host>.<your-tailnet>.ts.net:18737/web/`. The `:port`
    part is required because somora doesn't run on 443.
 
 ### Cert renewal
 
-Tailscale certs are valid for ~90 days. Re-run
-`tailscale cert <fqdn>` to refresh. somora reads the cert files at
-start only and does not reload them on a signal — restart it after
-each renewal, or set up a systemd timer that re-issues and then runs
-`systemctl --user restart somora`.
+Tailscale certs are valid for ~90 days. Add one line and somora takes
+care of them:
+
+```yaml
+server:
+  tls:
+    cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
+    key:  ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
+    publicHost: <your-host>.<your-tailnet>.ts.net
+    renew: tailscale
+```
+
+Twice a day the server asks Tailscale for a certificate that is good
+for at least 30 more days (`tailscale cert --min-validity 720h`; it only
+re-issues when the current one is closer to its end) and loads the new
+pair **without a restart** — running turns are not interrupted. For
+that, `tailscale cert` must work for the user somora runs as:
+
+```bash
+sudo tailscale set --operator=$USER     # once
+```
+
+`somora setup access` does both for you. Without `renew:` the server
+still watches the two files: renew them any way you like and the new
+certificate is served at the next check (log line
+`server.tls.reloaded`). A failed renewal is logged as
+`server.tls.renew_failed` with the reason; from 14 days before the end
+`server.tls.expires_soon` warns on every check.
 
 ### Without Tailscale
 
