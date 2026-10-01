@@ -382,9 +382,14 @@ function cmdServerStatus(): number {
   }
   const update = updateStatus();
   if (update.latestVersion) {
+    // somora.ai may still name the previous version for up to an hour
+    // after a release — then this install is the newer one, not behind.
+    const newer = compareVersions(SOMORA_VERSION, update.latestVersion) > 0;
     process.stdout.write(update.updateAvailable
       ? `  update:     ${update.latestVersion} is available — run \`somora update\`${update.note ? ` (${update.note})` : ''}\n`
-      : `  update:     none (${update.latestVersion} is current)\n`);
+      : newer
+        ? `  update:     none — somora.ai reports ${update.latestVersion}, this install is newer\n`
+        : `  update:     none — ${update.latestVersion} is the current version\n`);
   }
   if (launchdAvailable()) {
     const installed = existsSync(launchdPlistPath());
