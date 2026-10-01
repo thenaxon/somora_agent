@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createSecureServer as createHttp2SecureServer } from 'node:http2';
 import { TlsKeeper, type SecureContextHolder } from './tls-keeper.ts';
+import { UpdateChecker } from './update-check.ts';
 import {
   homedir,
   cpus as osCpus,
@@ -1615,7 +1616,25 @@ app.get(
 // reads package.json), so this is effectively a static snapshot for
 // the lifetime of the process. JSON keeps room for future fields
 // (build-time, git SHA, env name) without breaking the client.
-app.get('/version', (c) => c.json({ version: SOMORA_VERSION }));
+// The daily update check (docs/setup.md → "The daily update check").
+const updateChecker = new UpdateChecker({
+  version: SOMORA_VERSION,
+  endpoint: config.updateCheck.endpoint,
+  statePath: joinPath(SOMORA_HOME_DIR, 'update-check.json'),
+  configEnabled: config.updateCheck.enabled,
+  surface: 'server',
+  log: logger,
+});
+updateChecker.start();
+
+/** Version plus, when known, what somora.ai says is current. */
+app.get('/version', (c) => {
+  const u = updateChecker.status();
+  return c.json({
+    version: SOMORA_VERSION,
+    update: u.latestVersion ? { latestVersion: u.latestVersion, available: u.updateAvailable, ...(u.note ? { note: u.note } : {}) } : null,
+  });
+});
 
 // ─── Config reload + restart ─────────────────────────────────────────
 // Web taskbar gear + TUI /reload, /restart. Reload re-reads config.yaml,

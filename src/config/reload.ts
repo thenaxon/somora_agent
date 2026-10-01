@@ -20,6 +20,7 @@ export const RESTART_REQUIRED_SECTIONS: readonly string[] = [
   'stt', // voice backends are wired at boot
   'tts',
   'sentinel', // scheduler + retention read at boot
+  'updateCheck', // the daily check is scheduled at boot
   'tmux', // attention watcher configured at boot
   'web', // static mounts decided at boot
   'mobile',

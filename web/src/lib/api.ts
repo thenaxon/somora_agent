@@ -654,7 +654,7 @@ export const api = {
     }
     return (await res.json()) as TeamResponse;
   },
-  version: () => getJson<{ version: string }>('/version'),
+  version: () => getJson<{ version: string; update: { latestVersion: string; available: boolean; note?: string } | null }>('/version'),
   configStatus: () =>
     getJson<{
       path: string;

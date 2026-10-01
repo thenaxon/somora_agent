@@ -24,6 +24,8 @@ import { fileURLToPath } from 'node:url';
 import { SOMORA_VERSION } from '../version.ts';
 import { buildSystemdUnit, extractCustomEnvLines, nodePathLine } from './systemd-unit.ts';
 import { allowScriptsArgs, compareVersions, parseUpdateArgs } from './update-args.ts';
+import { load as parseYaml } from 'js-yaml';
+import { DEFAULT_UPDATE_ENDPOINT, readState, statusFrom, type UpdateCheckStatus } from '../server/update-check.ts';
 import {
   LAUNCHD_LABEL, launchdAvailable, launchdLoaded, launchdPid, launchdPlistPath, launchdRestart, launchdStart,
   launchdStop, nodeDirOnPath, writeLaunchdPlist,
@@ -80,6 +82,7 @@ Usage:
                                      what is installed, install with npm into ~/.somora/lsp
   somora wiki migrate [step] [id]    move a grown wiki onto the folder template (docs/wiki.md):
                                      guided, or plan|judge|status|approve|dry-run|run|undo
+  somora telemetry show              what the daily update check sends to somora.ai, and when
   somora update [<version>|--edge]   install from npm + rebake systemd + restart
                                      (run \`somora update --help\` for options)
   somora --version                   show version
@@ -377,6 +380,12 @@ function cmdServerStatus(): number {
   } else {
     process.stdout.write(`lockfile: ${LOCKFILE_PATH} (none — no server running)\n`);
   }
+  const update = updateStatus();
+  if (update.latestVersion) {
+    process.stdout.write(update.updateAvailable
+      ? `  update:     ${update.latestVersion} is available — run \`somora update\`${update.note ? ` (${update.note})` : ''}\n`
+      : `  update:     none (${update.latestVersion} is current)\n`);
+  }
   if (launchdAvailable()) {
     const installed = existsSync(launchdPlistPath());
     const pid = installed ? launchdPid() : null;
@@ -578,6 +587,51 @@ async function cmdUpdate(args: string[]): Promise<number> {
   return 0;
 }
 
+// ─── telemetry ──────────────────────────────────────────────────────
+
+function updateStatus(): UpdateCheckStatus {
+  const file = join(SOMORA_HOME, 'config.yaml');
+  let enabled = true;
+  let endpoint = DEFAULT_UPDATE_ENDPOINT;
+  try {
+    const raw = parseYaml(readFileSync(file, 'utf8')) as { updateCheck?: { enabled?: unknown; endpoint?: unknown } } | null;
+    if (raw?.updateCheck?.enabled === false) enabled = false;
+    if (typeof raw?.updateCheck?.endpoint === 'string') endpoint = raw.updateCheck.endpoint;
+  } catch {
+    /* no config yet — defaults */
+  }
+  return statusFrom({ version: SOMORA_VERSION, configEnabled: enabled, endpoint, surface: 'cli', state: readState(join(SOMORA_HOME, 'update-check.json')) });
+}
+
+/** `somora telemetry show [--json]` — the whole truth about the one
+ *  request somora makes to somora.ai. */
+async function cmdTelemetry(args: string[]): Promise<number> {
+  const sub = args[0];
+  if (sub !== 'show') {
+    process.stdout.write('Usage:\n  somora telemetry show [--json]   what the daily update check sends, where, and when it last ran\n');
+    return sub === undefined || sub === '--help' || sub === '-h' ? 0 : 2;
+  }
+  const s = updateStatus();
+  if (args.includes('--json')) {
+    process.stdout.write(`${JSON.stringify(s, null, 2)}\n`);
+    return 0;
+  }
+  const why: Record<UpdateCheckStatus['reason'], string> = {
+    enabled: 'enabled (updateCheck.enabled in config.yaml)',
+    'do-not-track': 'disabled by DO_NOT_TRACK',
+    'automated-environment': 'disabled in an automated environment (CI is set)',
+    'config-disabled': 'disabled in config.yaml (updateCheck.enabled: false)',
+  };
+  process.stdout.write(`daily update check: ${why[s.reason]}\n`);
+  process.stdout.write(`  request:   GET ${s.endpoint}\n`);
+  process.stdout.write(`  header:    User-Agent: ${s.userAgent}\n`);
+  process.stdout.write('  body:      none — no identifier, no machine id, nothing else\n');
+  process.stdout.write(`  last run:  ${s.lastCheckedAt ? new Date(s.lastCheckedAt).toISOString() : 'never'}\n`);
+  process.stdout.write(`  answer:    ${s.latestVersion ? `latest ${s.latestVersion}${s.updateAvailable ? ' — newer than this install' : ' — this install is current'}` : '—'}${s.note ? `\n  note:      ${s.note}` : ''}\n`);
+  process.stdout.write('  somora.ai logs the request with its IP address and counts installations from that; details: docs/setup.md → "The daily update check".\n');
+  return 0;
+}
+
 // ─── main ────────────────────────────────────────────────────────────
 
 async function main(): Promise<number> {
@@ -612,6 +666,8 @@ async function main(): Promise<number> {
     }
     case 'update':
       return await cmdUpdate(rest);
+    case 'telemetry':
+      return await cmdTelemetry(rest);
     case 'codex': {
       const { runCodexCli } = await import('./codex.ts');
       return await runCodexCli(rest);

@@ -916,6 +916,54 @@ auto-cleanup entirely (manual `sentinel delete` only). Recurring
 triggers don't auto-GC — they end up in `paused` or `error` and you
 choose when to remove them.
 
+## The daily update check — what somora.ai sees
+
+somora runs on your machine and talks to the model providers you
+configured. There is exactly one request it makes on its own: once a
+day the server asks somora.ai whether a newer version exists, and the
+answer shows up as an update notice in the web client's taskbar, in
+`somora server status` and in the server log (`update.available`).
+`somora update` itself keeps using npm.
+
+```http
+GET https://somora.ai/api/latest-version
+User-Agent: somora/2026.1001.2 (linux; node/22.23.2; x64; server)
+```
+
+That is the whole request: no body, no install identifier, no machine
+id, no random token — the version, operating system, Node.js version,
+CPU and whether the server or the CLI asked. The answer is
+`{"version": "…", "note": "…"}`; the note is an optional sentence from
+us to everyone ("update Node first"), at most 500 characters.
+
+**What we do with it.** Like any web server, somora.ai logs the request
+together with its IP address and the approximate location Cloudflare
+derives from it (country, region, city). From those logs we count how
+many installations ask — per day, per version, per operating system —
+to know whether the project is used and what to test on. The raw logs
+are deleted after 90 days, daily totals are kept, nothing is published
+and nothing is passed on. Counting by IP address is approximate by
+nature: two instances behind one router look alike, and many home
+connections change their address.
+
+**Switching it off.** Any of these stops the request entirely:
+
+- `DO_NOT_TRACK=1` in the service's environment (the common
+  convention), or
+- `updateCheck.enabled: false` in `config.yaml`, or
+- a `CI` variable in the environment — a test pipeline is not an
+  installation.
+
+`somora telemetry show` prints the request as it would be sent, why the
+check is on or off, and when it last ran. `updateCheck.endpoint` points
+the check at a mirror of your own. The last answer lives in
+`~/.somora/update-check.json`.
+
+The first check runs one to six minutes after the server starts (a
+random delay, so a fleet restarting together does not knock in unison);
+after a success the next one is a day later, after a failure an hour
+later. A failed check never affects anything else.
+
 ## HTTPS (Tailscale) — required for the web client at scale
 
 The web client opens **one persistent SSE connection per chat window**.

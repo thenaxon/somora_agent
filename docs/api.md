@@ -62,9 +62,9 @@ it on Tailscale or on `127.0.0.1` and tunnel.
 
 ## Versioning & stability
 
-- The version returned by `GET /version` is a calendar version like
-  `2026.05.12.3`. somora doesn't follow semver; minor bumps within
-  the same day are common during active work.
+- The version returned by `GET /version` is calendar-based and valid
+  semver: `2026.1001.2` is the second build of 1 October 2026. Several
+  builds a day are common during active work.
 - Most endpoints listed here are stable — the TUI and web both use
   them, and breaking them would break the shipped clients.
 - Endpoints marked **⚠ experimental** may change shape in any bump.
@@ -78,12 +78,20 @@ it on Tailscale or on `127.0.0.1` and tunnel.
 
 ### `GET /version`
 
-Returns the running somora version.
+Returns the running somora version and, once the daily update check has
+answered, what somora.ai says is current ([setup.md → The daily update
+check](setup.md#the-daily-update-check--what-somoraai-sees)).
 
 ```bash
 curl https://<host>:18737/version
-# { "version": "2026.05.12.3" }
+# { "version": "2026.1001.2", "update": null }
+# { "version": "2026.1001.2",
+#   "update": { "latestVersion": "2026.1005.1", "available": true, "note": "update Node first" } }
 ```
+
+`update` is `null` until the first check has run (or when it is switched
+off); `available` is true when `latestVersion` is newer than `version`;
+`note` is optional.
 
 ### `GET /healthz`
 

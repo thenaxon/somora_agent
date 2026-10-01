@@ -164,6 +164,12 @@ recall; **Tailscale** for HTTPS to the web and mobile clients
 clipboard APIs); **ripgrep** for `file_search`; **Chromium or Chrome** for
 the shared browser.
 
+somora makes one request of its own: once a day it asks somora.ai
+whether a newer version exists (version, OS, Node version and CPU in the
+User-Agent, nothing else; somora.ai counts installations from its
+server log). `DO_NOT_TRACK=1` or `updateCheck.enabled: false` switches it
+off — [docs/setup.md → The daily update check](docs/setup.md#the-daily-update-check--what-somoraai-sees).
+
 [docs/setup.md](docs/setup.md) is the full install walkthrough,
 [docs/models.md](docs/models.md) lists the models known to run with somora
 and their tested config blocks.

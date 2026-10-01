@@ -723,6 +723,16 @@ providers:
 #                                         # lifted for questions about a month / what changed / when
 #     pageSupport: 0.3                    # a page matching in several sections gains support (0 = off)
 
+# The daily update check — the one request somora makes on its own:
+# once a day GET https://somora.ai/api/latest-version with the version,
+# OS, Node version and CPU in the User-Agent, nothing else. somora.ai
+# logs the request with its IP address and counts installations from
+# that (docs/setup.md → "The daily update check"). DO_NOT_TRACK=1 or a
+# CI variable in the environment switch it off as well.
+# updateCheck:
+#   enabled: true
+#   endpoint: https://somora.ai/api/latest-version   # a mirror of your own
+
 # Obsidian vault + wiki layer (docs/wiki.md, docs/dream-phases.md).
 # The vault is read as a recall source for every agent; the wiki is a
 # subfolder of it that Deep writes (memory → wiki consolidation) and

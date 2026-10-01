@@ -386,6 +386,12 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   color: var(--text-3);
   font-family: 'JetBrains Mono', monospace;
 }
+/* the daily update check found a newer version */
+.taskbar-update {
+  color: var(--accent, #7dd3fc);
+  font-weight: 600;
+}
+
 .taskbar-windows {
   display: flex;
   gap: 6px;

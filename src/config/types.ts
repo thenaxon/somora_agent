@@ -1636,6 +1636,21 @@ export const SentinelConfigSchema = z
   .default({ completedRetentionDays: 7 });
 export type SentinelConfig = z.infer<typeof SentinelConfigSchema>;
 
+// The daily update check (src/server/update-check.ts): the one request
+// somora makes to somora.ai. No identifier, no body — version, OS, Node
+// version and CPU in the User-Agent. somora.ai logs the request like
+// any web server and counts installations from those logs
+// (docs/setup.md → "The daily update check"). DO_NOT_TRACK=1 and CI
+// override this section.
+export const UpdateCheckConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    /** Where to ask. A self-hosted mirror can point this elsewhere. */
+    endpoint: z.string().url().default('https://somora.ai/api/latest-version'),
+  })
+  .default({ enabled: true, endpoint: 'https://somora.ai/api/latest-version' });
+export type UpdateCheckConfig = z.infer<typeof UpdateCheckConfigSchema>;
+
 // Skills budget. Mirrors OpenClaw's defaults — they've shipped 53 real
 // skills against these limits for months, so we treat them as known-
 // good rather than re-deriving. Configurable via config.yaml per
@@ -2212,6 +2227,7 @@ export const ConfigSchema = z.object({
   browser: BrowserConfigSchema,
   projects: ProjectsConfigSchema,
   sentinel: SentinelConfigSchema,
+  updateCheck: UpdateCheckConfigSchema,
   obsidian: ObsidianConfigSchema,
   wiki: WikiConfigSchema,
   attachments: AttachmentsConfigSchema,
