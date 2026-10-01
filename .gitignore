@@ -21,7 +21,9 @@ FUTURE.md
 
 # npm pack tarballs (built per release, never tracked)
 somora-*.tgz
-scripts/
+# one-off local scripts stay out — except the test launcher `npm test` runs
+scripts/*
+!scripts/run-tests.mjs
 
 # Web client (somora-web) build + cache artefacts. Sources under web/
 # itself ARE tracked.
