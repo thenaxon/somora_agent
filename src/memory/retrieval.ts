@@ -39,6 +39,21 @@ export interface RetrievalConfig {
    */
   queryTerms?: ReadonlyArray<string>;
   slugMatchBoost?: number;
+  /** Multiplier on wiki chunks under `logs/` (the monthly change logs):
+   *  they name every page that changed, with dense keywords, but say
+   *  only WHEN — the page itself is the answer. 1 = off. */
+  logDemotion?: number;
+  /** Page support: the best chunk of a page gains this share of the
+   *  scores of the page's other candidate chunks, so a page that
+   *  matches in several sections beats a single dense chunk elsewhere.
+   *  0 = off. */
+  pageSupport?: number;
+  /** Extra multiplier when the query contains EVERY word of the page's
+   *  name (on top of slugMatchBoost). 1 = off. */
+  slugFullNameBoost?: number;
+  /** Experiment knobs for pageSupport (defaults 2 and 0.5). */
+  pageSupportMaxChunks?: number;
+  pageSupportMinRatio?: number;
 }
 
 export interface Hit {
@@ -212,8 +227,10 @@ export function hybridSearch(
   // If source-boosts OR source-filter is configured, materialize source
   // per fused candidate BEFORE sort. One query per DB covers both features.
   const slugTerms = (cfg.queryTerms ?? []).filter((w) => w.length >= 4);
+  const allQueryTerms = new Set(cfg.queryTerms ?? []);
   const useSlugBoost = slugTerms.length > 0 && (cfg.slugMatchBoost ?? 1) !== 1;
-  const needSources = Boolean(cfg.sourceBoosts) || Boolean(cfg.sourceFilter?.length) || useSlugBoost;
+  const needSources = Boolean(cfg.sourceBoosts) || Boolean(cfg.sourceFilter?.length) || useSlugBoost
+    || (cfg.logDemotion !== undefined && cfg.logDemotion !== 1) || (cfg.pageSupport ?? 0) > 0;
   const sourceByKey = new Map<Key, string>();
   const slugByKey = new Map<Key, string>();
   if (needSources) {
@@ -231,6 +248,26 @@ export function hybridSearch(
     const words = slug.toLowerCase().split(/[^\p{L}\p{N}]+/u);
     return slugTerms.some((t) => words.includes(t));
   };
+  // Every word of the page's own name (last path segment) is in the
+  // query: "enovom website …" names `projekte/enovom-website` in full.
+  const slugFullyNamed = (key: Key): boolean => {
+    const slug = slugByKey.get(key);
+    if (!slug) return false;
+    // Every word of the name counts, short ones too (`dmz`, `vm`): a
+    // query that names "docker public" has not named `docker-public-dmz-vm`.
+    const words = (slug.toLowerCase().split('/').pop() ?? '').split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2);
+    return words.length >= 2 && words.every((w) => allQueryTerms.has(w));
+  };
+  const isLogPage = (key: Key): boolean => {
+    const slug = slugByKey.get(key);
+    return sourceByKey.get(key) === 'wiki' && slug !== undefined && (slug === 'logs' || slug.startsWith('logs/'));
+  };
+  const useLogDemotion = cfg.logDemotion !== undefined && cfg.logDemotion !== 1;
+  // A question that names a month or asks what changed is ABOUT the
+  // chronicle — then the log is the answer and keeps its full score.
+  const queryAsksForLog = (cfg.queryTerms ?? []).some((t) => LOG_QUERY_TERMS.has(t) || /^\d{4}(-\d{2})?$/.test(t));
+  const usePageSupport = (cfg.pageSupport ?? 0) > 0;
+  const needSlugs = useSlugBoost || useLogDemotion || usePageSupport;
 
   const filterSet = cfg.sourceFilter?.length ? new Set(cfg.sourceFilter) : null;
 
@@ -253,7 +290,28 @@ export function hybridSearch(
       score *= boost;
     }
     if (useSlugBoost && slugMatches(key)) score *= cfg.slugMatchBoost!;
+    if (useSlugBoost && (cfg.slugFullNameBoost ?? 1) !== 1 && slugFullyNamed(key)) score *= cfg.slugFullNameBoost!;
+    if (useLogDemotion && !queryAsksForLog && isLogPage(key)) score *= cfg.logDemotion!;
     fused.push({ key, target: raw.target, id: raw.chunkId, score, vec: raw.vec, bm25: raw.bm25 });
+  }
+  if (usePageSupport && needSlugs) {
+    // Group the candidates by page; the best chunk carries the support.
+    const byPage = new Map<string, typeof fused>();
+    for (const f of fused) {
+      const page = `${f.target}:${slugByKey.get(f.key) ?? f.key}`;
+      const list = byPage.get(page);
+      if (list) list.push(f);
+      else byPage.set(page, [f]);
+    }
+    for (const list of byPage.values()) {
+      if (list.length < 2) continue;
+      list.sort((a, b) => b.score - a.score);
+      // Only sections that match on their own count — a page with many
+      // weak chunks must not outgrow a single exact note elsewhere.
+      const floor = list[0]!.score * (cfg.pageSupportMinRatio ?? 0.5);
+      const rest = list.slice(1, 1 + (cfg.pageSupportMaxChunks ?? 2)).filter((f) => f.score >= floor).reduce((sum, f) => sum + f.score, 0);
+      list[0]!.score += cfg.pageSupport! * rest;
+    }
   }
   fused.sort((a, b) => b.score - a.score);
 
@@ -305,6 +363,16 @@ export function hybridSearch(
     });
   return dedupeNestedHits(hits).slice(0, cfg.maxResults);
 }
+
+/** Words that make a query about the chronicle itself (what changed,
+ *  when): month names in German and English plus the words for change
+ *  logs. A four-digit year or `2026-09` in the query counts as well. */
+const LOG_QUERY_TERMS: ReadonlySet<string> = new Set([
+  'januar', 'februar', 'märz', 'maerz', 'april', 'mai', 'juni', 'juli', 'august', 'september', 'oktober', 'november', 'dezember',
+  'january', 'february', 'march', 'may', 'june', 'july', 'october', 'december',
+  'log', 'logs', 'änderungen', 'aenderungen', 'geändert', 'geaendert', 'chronik', 'protokoll', 'changelog', 'changed', 'changes', 'history',
+  'wann', 'when', 'promoted', 'übernommen', 'uebernommen', 'angelegt', 'erstellt', 'created', 'updated', 'aktualisiert',
+]);
 
 /** How many candidates beyond maxResults hybridSearch materializes so
  *  dedupeNestedHits() has something to backfill from. */

@@ -63,7 +63,10 @@ export const memorySearch: ToolDefinition<z.infer<typeof SearchInput>> = {
     'Use the optional `source` parameter to constrain the search to one layer when you know exactly ' +
     'where to look (e.g. `source: "wiki"` for authoritative consolidated facts). ' +
     'Default: searches all sources. Use this when the pre-injected <memory-context> block is ' +
-    'insufficient or you need to look up something specific.',
+    'insufficient or you need to look up something specific. ' +
+    'Ranking is sensitive to wording: before you tell the user that nothing is known, search ' +
+    'again with other words (the name of the thing, a synonym, German instead of English) and a ' +
+    'higher limit, and read the full page of a near miss with memory_get.',
   inputSchema: SearchInput,
   jsonSchema: {
     type: 'object',

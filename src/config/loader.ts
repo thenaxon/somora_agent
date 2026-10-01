@@ -97,8 +97,12 @@ providers:
 #     minScore: 0.5                        # Treffer unter diesem Score verwerfen (0..1)
 #     maxTokens: 1500                      # Hard-Cap auf den injecten Memory-Block
 #   hybrid:
-#     vectorWeight: 0.7                    # Gewichtung Vector-Score in Hybrid-Fusion
-#     bm25Weight: 0.3                      # Gewichtung BM25/FTS5-Score
+#     vectorWeight: 0.7                    # weight of vector similarity in the fused score
+#     bm25Weight: 0.3                      # weight of BM25 (keyword) score
+#     slugMatchBoost: 1.5                  # page whose name contains a query word (1 = off)
+#     slugFullNameBoost: 1.5               # extra when the query names the page in full (1 = off)
+#     logDemotion: 0.5                     # wiki change logs rank behind the pages (1 = off)
+#     pageSupport: 0.3                     # a page matching in several sections gains support (0 = off)
 
 # Workspace — Default-CWD für die file_*-Tools. Kein Sandkasten:
 # Agents dürfen auch außerhalb schreiben (eigene Persona-Files,

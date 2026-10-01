@@ -320,7 +320,32 @@ export const MemoryHybridConfigSchema = z.object({
    * says which page is the canonical one. 1 = off.
    */
   slugMatchBoost: z.number().min(1).max(3).default(1.5),
-}).default({ vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5 });
+  /**
+   * Multiplier on hits in the wiki's monthly change logs (`logs/`).
+   * Deep writes there which pages it created or changed — one dense
+   * line per page, every keyword of the topic, but the line only says
+   * WHEN. For "how did we set up X" the page about X is the answer and
+   * the log entry a pointer; without the demotion the log won on
+   * keyword density (2026-09-30 report). 1 = treat logs like any page.
+   */
+  logDemotion: z.number().min(0).max(1).default(0.5),
+  /**
+   * Share of a page's other candidate chunks that its best chunk gains.
+   * A page that matches in several sections (a project page: DNS,
+   * deployment, timeline) beats a single dense chunk elsewhere.
+   * 0 = each chunk stands alone.
+   */
+  pageSupport: z.number().min(0).max(1).default(0.3),
+  /**
+   * Extra multiplier (on top of slugMatchBoost) when the query contains
+   * EVERY word of the page's own name — "enovom website …" names
+   * `projekte/enovom-website` in full, while the host page
+   * `docker-public-dmz-vm` only shares two of its four words. Names
+   * with one word get no extra: the plain boost already covers them.
+   * 1 = off.
+   */
+  slugFullNameBoost: z.number().min(1).max(3).default(1.5),
+}).default({ vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5, logDemotion: 0.5, pageSupport: 0.3, slugFullNameBoost: 1.5 });
 
 export const MemoryConfigSchema = z.object({
   embedding: MemoryEmbeddingConfigSchema,
@@ -340,7 +365,7 @@ export const MemoryConfigSchema = z.object({
   embedding: { provider: 'local', model: 'all-MiniLM-L6-v2' },
   chunking: { targetTokens: 400, overlapTokens: 80 },
   autoInject: { queryTurns: 3, maxResults: 5, minScore: 0.35, maxTokens: 1500, historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8, historyTurnChars: 800, shortQueryBm25Weight: 0.5 },
-  hybrid: { vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5 },
+  hybrid: { vectorWeight: 0.7, bm25Weight: 0.3, slugMatchBoost: 1.5, logDemotion: 0.5, pageSupport: 0.3, slugFullNameBoost: 1.5 },
   rescanMinutes: 10,
 });
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;

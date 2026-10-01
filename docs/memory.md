@@ -193,6 +193,9 @@ memory:
     vectorWeight: 0.7
     bm25Weight: 0.3
     slugMatchBoost: 1.5      # page whose slug names a query word (1 = off)
+    slugFullNameBoost: 1.5   # … and extra when the query names the page in full (1 = off)
+    logDemotion: 0.5         # the wiki's monthly change logs rank behind the pages (1 = off)
+    pageSupport: 0.3         # a page matching in several sections gains support (0 = off)
 ```
 
 **How the query is built.** The current message is the query. The
@@ -224,6 +227,55 @@ a short question. Refinements, measured on replayed real sessions:
   page says "Walter" once, the family page four times — so BM25 alone
   ranks the mentions above the page; the name in the slug marks the
   canonical page.
+
+### Which page wins — the three rules after the fusion
+
+Measured on 26 real questions against a 400-page wiki (2026-10-01; the
+report that started it: an agent asked "how did we set up enovom.com on
+docker-public?", the project page came 7th behind the change log and
+four neighbouring pages, and the agent answered that it knew nothing).
+With all three rules the page is 2nd, the other 25 questions are as
+good or better, and the questions that ARE about the log still find it.
+
+- **`logDemotion` (default 0.5)** — Deep writes a monthly change log
+  (`logs/2026-09`): one dense line per page it created or changed, every
+  keyword of the topic. For "how did we set up X" that line is a pointer;
+  the page about X is the answer. Hits in `logs/` are multiplied by this
+  factor — *unless the question is about the chronicle*: a month name
+  (`september`, `march`), a year or `2026-09`, or a word like *changed*,
+  *when*, *promoted*, *created*, *log* in the question switches the
+  demotion off, so "what changed in September?" and "when was the page
+  created?" keep the log on top. Set `1` to rank logs like any page; a
+  lower value (`0.3`) if your logs keep winning on questions about the
+  thing itself — check with `memory_search` before and after.
+- **`pageSupport` (default 0.3)** — hits are chunks, not pages. A project
+  page answers "how did we set it up" across several sections (DNS,
+  deployment, timeline), each matching only part of the question, while
+  a page with one dense paragraph scores higher on that paragraph. The
+  page's best chunk gains this share of the scores of its next two
+  chunks, counting only chunks that reach half of the best one — so a
+  page that mentions every word somewhere does not outgrow a single
+  exact note. Raise it (`0.5`) when long pages keep losing to short
+  mentions; lower it (`0.1`) or `0` when short memory notes lose to long
+  wiki pages. Measured: `0.3` lifted the project page from unranked to
+  2nd and cost one memory note one rank; `0.5` cost three.
+- **`slugFullNameBoost` (default 1.5)** — `slugMatchBoost` fires for any
+  page whose name shares a word with the question, so "enovom website
+  docker-public setup" boosts `projekte/enovom-website` and
+  `infrastruktur/hosts/docker-public-dmz-vm` alike. When the question
+  contains *every* word of a page's name (two words or more), that page
+  is multiplied again — the question means that page. A tried
+  alternative, scaling the boost by the share of name words matched,
+  made longer names lose to shorter ones (`elevenlabs-agents-preise`
+  behind `elevenlabs-agents` for "wie teuer sind elevenlabs agents") and
+  was dropped.
+
+None of the three changes what is indexed; they only reorder hits, so a
+new value takes effect at the next search (config reload or restart).
+When you tune them, keep a handful of your own questions with the page
+you expect and compare ranks before and after — the ranking is
+sensitive to wording, and a value that fixes one question can cost
+another.
 
 The BM25 side sees the message only, with filler words removed
 (`FTS_STOPWORDS` in `src/memory/retrieval.ts`, German and English) —
