@@ -825,7 +825,7 @@ export function MediaWindow() {
               // A click on the <video> itself is play/pause, so the
               // "open large" affordance the image gets via its cursor
               // lives on a button in the corner here — same viewer,
-              // same target as the image (2026-08-31, Rene).
+              // same target as the image (2026-08-31, the operator).
               <div style={{ position: 'relative', flex: 'none' }}>
                 <video
                   controls

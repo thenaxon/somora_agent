@@ -121,12 +121,12 @@ export const SWITCH_TOOL_NAME = 'somora_switch_agent';
  * The target is otherwise fixed for the length of a call, on purpose: a
  * model that can re-point itself can write into a conversation nobody
  * asked it to. This is the one exception, and it is explicit — the
- * human says "put me through to lisa", it is announced in both
+ * human says "put me through to bea", it is announced in both
  * sessions, and the picker in the window follows.
  *
  * Both dimensions, because an agent is not one conversation. Offering
- * only other agents left "put me into your cerebrocraft session"
- * unanswerable, with no way for the agent to help (Rene, 2026-09-12).
+ * only other agents left "put me into your craftbox session"
+ * unanswerable, with no way for the agent to help (the operator, 2026-09-12).
  * The caller's own agent therefore stays in the list.
  *
  * It is a fresh provider session underneath: a voice cannot be changed
@@ -229,7 +229,7 @@ export function parseConsultArgs(raw: string): { ok: true; args: ConsultArgs } |
  * with A2A the agent believes someone is waiting for a reply addressed
  * back to them, and answers accordingly. Here the agent simply answers
  * into its own running chat, and the voice channel reads that answer
- * from the turn result. Rene, 2026-09-11: "er soll sich bewusst sein
+ * from the turn result. The operator, 2026-09-11: "er soll sich bewusst sein
  * das ist eine nachricht seines voice-ichs".
  */
 export interface ConsultTurn {
@@ -263,7 +263,7 @@ export interface ConsultTurn {
  * with A2A the agent believes someone is waiting for a reply addressed
  * back to them, and answers accordingly. Here the agent simply answers
  * into its own running chat, and the voice channel reads that answer
- * from the turn result. Rene, 2026-09-11: "er soll sich bewusst sein
+ * from the turn result. The operator, 2026-09-11: "er soll sich bewusst sein
  * das ist eine nachricht seines voice-ichs".
  */
 export function renderConsultTurn(

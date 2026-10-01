@@ -35,7 +35,7 @@ const REHYPE_PLUGINS = [rehypeHighlight];
 // ReactMarkdown from creating fresh component types per render. Without
 // this, a parent re-render (e.g. the 2-second useLoopState tick) caused
 // React to unmount and remount each <pre>/<img>/<table>, resetting any
-// horizontal scroll the user had set inside a code block (Luca
+// horizontal scroll the user had set inside a code block (Leo
 // 2026-05-16 report).
 const STATIC_COMPONENTS = {
   pre: ({ children }) => (
@@ -137,7 +137,7 @@ function AssistantMarkdownImpl({ content }: Props) {
           // gesture as the start of a drag (even 1px of trackpad
           // jitter can do it), the click event is silently suppressed
           // even though mousedown + mouseup fire on the anchor. Diag
-          // 2026-05-14 (naxon): mouse logs showed exactly that
+          // 2026-05-14 (nova): mouse logs showed exactly that
           // pattern. The actual navigation happens in App.tsx's
           // document-level mouseup capture handler — works in every
           // case because mouseup is fundamental and always fires.

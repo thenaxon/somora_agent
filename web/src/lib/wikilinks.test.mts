@@ -17,23 +17,23 @@ function check(name: string, cond: boolean, detail = ''): void {
 }
 
 const T: Record<string, string | null> = {
-  'personen/rene': 'personen/rene',
+  'personen/max': 'personen/max',
   'projekte/somora': 'projekte/somora',
   'wissen/tls': 'wissen/tls',
   gibtsnicht: null,
 };
 
 {
-  const out = linkifyWikilinks('Siehe [[personen/rene]].', T);
-  check('einfacher Link', out === 'Siehe [personen/rene](wiki:personen%2Frene).', out);
+  const out = linkifyWikilinks('Siehe [[personen/max]].', T);
+  check('einfacher Link', out === 'Siehe [personen/max](wiki:personen%2Fmax).', out);
 }
 {
-  const out = linkifyWikilinks('Siehe [[personen/rene|Rene]].', T);
-  check('Alias wird zum Label', out === 'Siehe [Rene](wiki:personen%2Frene).', out);
+  const out = linkifyWikilinks('Siehe [[personen/max|Max]].', T);
+  check('Alias wird zum Label', out === 'Siehe [Max](wiki:personen%2Fmax).', out);
 }
 {
-  const out = linkifyWikilinks('Siehe [[personen/rene#Wohnort]].', T);
-  check('Anker wird ignoriert', out.includes('wiki:personen%2Frene'), out);
+  const out = linkifyWikilinks('Siehe [[personen/max#Wohnort]].', T);
+  check('Anker wird ignoriert', out.includes('wiki:personen%2Fmax'), out);
 }
 {
   const out = linkifyWikilinks('Siehe [[gibtsnicht]].', T);
@@ -51,11 +51,11 @@ const T: Record<string, string | null> = {
 
 // ── Code darf nicht angefasst werden ──────────────────────────────────
 {
-  const md = 'Ein Link schreibt man `[[personen/rene]]` so.';
+  const md = 'Ein Link schreibt man `[[personen/max]]` so.';
   check('Inline-Code unveraendert', linkifyWikilinks(md, T) === md, linkifyWikilinks(md, T));
 }
 {
-  const md = '```\nSiehe [[personen/rene]]\n```';
+  const md = '```\nSiehe [[personen/max]]\n```';
   check('Fenced Block unveraendert', linkifyWikilinks(md, T) === md);
 }
 {
@@ -63,12 +63,12 @@ const T: Record<string, string | null> = {
   check('Tilde-Fence unveraendert', linkifyWikilinks(md, T) === md);
 }
 {
-  // Der reale Fall aus orte/blackcorner.md: Code-Beispiel UND echter
+  // Der reale Fall aus orte/northcorner.md: Code-Beispiel UND echter
   // Link in derselben Zeile.
-  const md = 'Alt war `[[personen/rene]]`, heute [[personen/rene|Rene]].';
+  const md = 'Alt war `[[personen/max]]`, heute [[personen/max|Max]].';
   const out = linkifyWikilinks(md, T);
-  check('Code geschuetzt, echter Link ersetzt', out.includes('`[[personen/rene]]`'), out);
-  check('… und der echte Link wurde ersetzt', out.includes('[Rene](wiki:'), out);
+  check('Code geschuetzt, echter Link ersetzt', out.includes('`[[personen/max]]`'), out);
+  check('… und der echte Link wurde ersetzt', out.includes('[Max](wiki:'), out);
 }
 {
   const md = 'text [[wissen/tls]] mehr\n\n```js\nconst x = "[[gibtsnicht]]";\n```\n\n[[projekte/somora]]';
@@ -87,7 +87,7 @@ const T: Record<string, string | null> = {
   check('abgeschnittener Link frisst nichts', out.includes('[projekte/somora](wiki:'), out);
 }
 {
-  const out = linkifyWikilinks('[[personen/rene|Rene [der Erste]]]', T);
+  const out = linkifyWikilinks('[[personen/max|Max [der Erste]]]', T);
   check('Klammern im Label entschaerft', !out.includes('[der Erste]'), out);
 }
 {
@@ -98,7 +98,7 @@ const T: Record<string, string | null> = {
   check('leerer Text', linkifyWikilinks('', T) === '');
 }
 {
-  const md = 'Mehrere [[personen/rene]] und [[wissen/tls]] in einer Zeile.';
+  const md = 'Mehrere [[personen/max]] und [[wissen/tls]] in einer Zeile.';
   const out = linkifyWikilinks(md, T);
   check('mehrere Links pro Zeile', (out.match(/wiki:/g) ?? []).length === 2, out);
 }

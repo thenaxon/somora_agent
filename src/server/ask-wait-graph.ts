@@ -1,5 +1,5 @@
 // Wait-graph for blocking A2A calls — circular-wait (deadlock)
-// detection. Born from the 2026-06-01 feedback (Luca's Gideon↔Donna
+// detection. Born from the 2026-06-01 feedback (Leo's Gustav↔Dora
 // hang); spawn-family waits added 2026-06-10.
 //
 // ── The failure mode ─────────────────────────────────────────────────
@@ -132,7 +132,7 @@ export function registerWait(from: WaitNode, to: WaitNode): () => void {
  * Would adding the edge from→to close a wait cycle? True iff a wait
  * path to→…→from already exists. Returns the full cycle as readable
  * "agent/session" labels starting and ending at `from`
- * (e.g. ["donna/main", "gideon/main", "donna/main"]), or null.
+ * (e.g. ["dora/main", "gustav/main", "dora/main"]), or null.
  */
 export function findWaitCycle(from: WaitNode, to: WaitNode): string[] | null {
   const target = keyOf(from);

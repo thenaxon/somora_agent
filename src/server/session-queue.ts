@@ -108,7 +108,7 @@ class SessionLock {
       // in the picture that stopped being a clean rule: a spoken
       // question runs as an agent turn, so the person at the microphone
       // queued behind another agent's errand while the person typing did
-      // not — two humans, two answers (Rene, 2026-09-12: "alle haben die
+      // not — two humans, two answers (the operator, 2026-09-12: "alle haben die
       // selbe prio wer als erster kommt mahlt zuerst das ist dann
       // leichter zu warten").
       //

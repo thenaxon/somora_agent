@@ -30,10 +30,10 @@ reg.register({
 } as never);
 const ctx = { agent: 'a', config: {} } as never;
 
-// The live shape (loki / Qwen, 2026-09-21).
-let r = await reg.invoke('demo', { action: 'create', dispatch: '{"agent": "loki", "prompt": "test"}', tags: '["x","y"]' }, ctx);
+// The live shape (gus / Qwen, 2026-09-21).
+let r = await reg.invoke('demo', { action: 'create', dispatch: '{"agent": "gus", "prompt": "test"}', tags: '["x","y"]' }, ctx);
 assert.equal(r.ok, true, JSON.stringify(r));
-assert.deepEqual(seen.pop(), { action: 'create', dispatch: { agent: 'loki', prompt: 'test' }, tags: ['x', 'y'] });
+assert.deepEqual(seen.pop(), { action: 'create', dispatch: { agent: 'gus', prompt: 'test' }, tags: ['x', 'y'] });
 
 // Valid input is passed through untouched — including a STRING field that happens to hold JSON.
 r = await reg.invoke('demo', { action: 'create', note: '{"this":"is a string field"}' }, ctx);
@@ -41,7 +41,7 @@ assert.equal(r.ok, true);
 assert.deepEqual(seen.pop(), { action: 'create', note: '{"this":"is a string field"}' });
 
 // Text that is not JSON: the original error stands.
-r = await reg.invoke('demo', { action: 'create', dispatch: 'loki please' }, ctx);
+r = await reg.invoke('demo', { action: 'create', dispatch: 'gus please' }, ctx);
 assert.equal(r.ok, false);
 assert.match((r as { error: string }).error, /dispatch/);
 
@@ -51,6 +51,6 @@ assert.equal(r.ok, false);
 assert.match((r as { error: string }).error, /dispatch\.agent/, 'the error points inside the object');
 
 // Unknown keys stay rejected.
-r = await reg.invoke('demo', { action: 'create', 'dispatch.agent': 'loki' }, ctx);
+r = await reg.invoke('demo', { action: 'create', 'dispatch.agent': 'gus' }, ctx);
 assert.equal(r.ok, false);
 console.log('registry-unstringify: all passed');

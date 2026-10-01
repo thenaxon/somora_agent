@@ -6,7 +6,7 @@
 // into another agent's turn — `agent_ask` and `spawn_subagent` carried
 // text only, so an orchestrator handing a graphic to a co-worker could
 // only mention where it lies, and a path is just text to a model that
-// can see. Rene, on whether agents need this: "es könnte schon
+// can see. The operator, on whether agents need this: "es könnte schon
 // passieren das ein agent im A2A ein bild einem anderen agenten
 // schickt zum weiterverarbeiten … besonders bei grösseren tasks wo
 // einer der orchestrator war".

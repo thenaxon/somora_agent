@@ -30,10 +30,10 @@ export interface RetrievalConfig {
   sourceFilter?: ReadonlyArray<string>;
   /**
    * Content words of the query (see contentTerms). A chunk whose slug
-   * contains one of them — `personen/walter-siegl` for "wer ist
-   * walter?" — gets its fused score multiplied by `slugMatchBoost`.
+   * contains one of them — `personen/karl-muster` for "wer ist
+   * karl?" — gets its fused score multiplied by `slugMatchBoost`.
    * The page ABOUT a person or thing rarely repeats its own name in
-   * the body (the Walter page says "Walter" once; the family page says
+   * the body (the Karl page says "Karl" once; the family page says
    * it four times), so BM25 alone ranks the mentions above the page.
    * The name in the slug is the signal that it is the canonical page.
    */
@@ -146,7 +146,7 @@ export function hybridSearch(
   // a message⊕history blend (long, rich) scores every page ~0.54 while
   // a five-word question tops out at 0.49, so a raw cut kept only the
   // blend's candidates and the page the question named never entered
-  // the pool (live case 2026-09-08 17:58, "wer ist walter ?").
+  // the pool (live case 2026-09-08 17:58, "wer ist karl ?").
   const perVectorNormalised = queryEmbeddings.length > 1;
   targets.forEach((t, ti) => {
     if (queryEmbeddings.length > 0 && t.memDb.hasVec) {
@@ -249,12 +249,12 @@ export function hybridSearch(
     return slugTerms.some((t) => words.includes(t));
   };
   // Every word of the page's own name (last path segment) is in the
-  // query: "enovom website …" names `projekte/enovom-website` in full.
+  // query: "acme website …" names `projekte/acme-website` in full.
   const slugFullyNamed = (key: Key): boolean => {
     const slug = slugByKey.get(key);
     if (!slug) return false;
     // Every word of the name counts, short ones too (`dmz`, `vm`): a
-    // query that names "docker public" has not named `docker-public-dmz-vm`.
+    // query that names "dmz host" has not named `dmz-host-vm`.
     const words = (slug.toLowerCase().split('/').pop() ?? '').split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 2);
     return words.length >= 2 && words.every((w) => allQueryTerms.has(w));
   };
@@ -548,7 +548,7 @@ export function blendEmbeddings(q: Float32Array, c: Float32Array | null, w: numb
 /**
  * Words that carry no retrieval signal in an OR-joined FTS5 query.
  * German and English function words plus chat filler. Without this,
- * "ok was kannst du mir über walter so erzählen" ranked pages by how
+ * "ok was kannst du mir über karl so erzählen" ranked pages by how
  * often they say "was", "du", "mir", "so" — every page — and the one
  * term that mattered drowned. Applied only to the BM25 query; the
  * embedding sees the full text. When every token is a stopword the

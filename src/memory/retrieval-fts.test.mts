@@ -6,7 +6,7 @@ const check = (n: string, c: boolean, d = '') => { if (c) pass++; else { fail++;
 const terms = (q: string) => (q ? q.split(' OR ') : []);
 check('empty → empty', sanitizeFtsQuery('') === '');
 check('short tokens dropped', sanitizeFtsQuery('a b cd') === '"cd"');
-check('quoted OR-joined', sanitizeFtsQuery('spiderman GPU node') === '"spiderman" OR "gpu" OR "node"');
+check('quoted OR-joined', sanitizeFtsQuery('mediabox GPU node') === '"mediabox" OR "gpu" OR "node"');
 check('dedupe keeps first occurrence', sanitizeFtsQuery('foo bar foo baz bar') === '"foo" OR "bar" OR "baz"');
 {
   const words = Array.from({ length: 5000 }, (_, i) => `w${i}`).join(' ');

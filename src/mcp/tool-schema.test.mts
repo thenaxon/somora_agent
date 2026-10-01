@@ -14,11 +14,11 @@ const check = (name: string, cond: boolean, detail = ''): void => {
 
 const execLike = z.object({ command: z.string(), target: z.string().default('local') });
 const s = mcpInputSchemaFor({ inputSchema: execLike as never, toolset: 'exec' });
-const wrong = s.safeParse({ command: 'hostname', resource: 'cerebro' });
+const wrong = s.safeParse({ command: 'hostname', resource: 'gpu-box' });
 check('unknown key is refused, not stripped', !wrong.success, JSON.stringify(wrong));
 check('the refusal names the key', !wrong.success && /resource/.test(JSON.stringify(wrong.error.issues)), !wrong.success ? JSON.stringify(wrong.error.issues) : '');
-const right = s.safeParse({ command: 'hostname', target: 'cerebro' });
-check('known keys pass with defaults applied', right.success && (right.data as { target: string }).target === 'cerebro');
+const right = s.safeParse({ command: 'hostname', target: 'gpu-box' });
+check('known keys pass with defaults applied', right.success && (right.data as { target: string }).target === 'gpu-box');
 const dflt = s.safeParse({ command: 'hostname' });
 check('default still fills in', dflt.success && (dflt.data as { target: string }).target === 'local');
 const already = mcpInputSchemaFor({ inputSchema: z.object({ a: z.string() }).strict() as never, toolset: 'file' });

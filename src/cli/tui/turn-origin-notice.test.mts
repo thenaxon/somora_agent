@@ -71,9 +71,9 @@ check('wake/subagent: ref from origin, regex fallback', () => {
 });
 
 check('wake/a2a and voice keep their text-derived names', () => {
-  assert.deepEqual(systemNoticeOf('[agent answer] hans has answered …', undefined, { kind: 'wake', about: 'a2a', ref: 'c1' }), {
+  assert.deepEqual(systemNoticeOf('[agent answer] ada has answered …', undefined, { kind: 'wake', about: 'a2a', ref: 'c1' }), {
     label: '↩  agent answer',
-    name: 'hans',
+    name: 'ada',
   });
   assert.deepEqual(systemNoticeOf('[voice consult] what time is it', 'voice', undefined), {
     label: '🎙  voice',

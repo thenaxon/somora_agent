@@ -161,7 +161,7 @@ WHAT TO SURFACE:
 - New stable facts the wiki doesn't have yet (a project, a device, a contact,
   a place, a person, a preference).
 - Contradictions: wiki/memory says X, user said not-X.
-- Concrete corrections to specific data (Luca turned 9, moved house, etc.).
+- Concrete corrections to specific data (Leo turned 9, moved house, etc.).
 
 WHAT NOT TO SURFACE:
 - Transient state ("working on X today", "feeling tired", "right now I'm…").
@@ -195,9 +195,9 @@ Output format example:
   },
   {
     "action": "memory_write",
-    "slug": "luca-alter",
-    "proposed_content": "Luca ist jetzt 9 (Wiki-Page personen/luca sagt 8).",
-    "reason": "User said on 2026-05-08 that Luca turned 9 last week. Wiki personen/luca says 8 — contradicts; Deep will merge this into the page next run."
+    "slug": "leo-alter",
+    "proposed_content": "Leo ist jetzt 9 (Wiki-Page personen/leo sagt 8).",
+    "reason": "User said on 2026-05-08 that Leo turned 9 last week. Wiki personen/leo says 8 — contradicts; Deep will merge this into the page next run."
   }
 ]
 

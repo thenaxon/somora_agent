@@ -4,7 +4,7 @@
 // the playback and yours from the microphone. Both are drawn at all
 // times, the speaking one dominant — the first version only drew the
 // side that matched the call state, so when the state lagged the
-// animation sat still while the agent talked (Rene, 2026-09-11: "sie
+// animation sat still while the agent talked (the operator, 2026-09-11: "sie
 // reagiert nur auf meine eingabe aber nicht auf seine ausgabe"). An
 // animation that can be wrong about who is speaking must not be the
 // only thing that knows.

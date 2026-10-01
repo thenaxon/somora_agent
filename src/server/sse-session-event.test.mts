@@ -49,7 +49,7 @@ const handover = {
   ts: 1_700_000_000_002,
   engine: 'voice',
   itemType: 'voice_handover',
-  payload: { text: '[voice] handed this call over to lisa (session "main")' },
+  payload: { text: '[voice] handed this call over to bea (session "main")' },
 } as NormalizedEvent;
 
 // ── every event this path carries must be writable ───────────────────

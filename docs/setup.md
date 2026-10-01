@@ -789,7 +789,7 @@ memory:
 # docs/projects.md for the full model.
 #
 # `entities` is a CURATED VOCABULARY — projects belong to one entity
-# (e.g. "privat", "enovom"), and the agent must pick from this list
+# (e.g. "privat", "acme"), and the agent must pick from this list
 # at create time. Prevents STT mishearings from inventing phantom
 # entities and gives you a free filter axis ("list all private
 # projects"). Agents cannot extend this list via tools.
@@ -798,8 +798,8 @@ memory:
 #   entities:
 #     - slug: privat
 #       label: Privat
-#     - slug: enovom
-#       label: enovom GmbH
+#     - slug: acme
+#       label: acme GmbH
 #     # add as many as you need — these are YOURS to curate
 ```
 
@@ -1205,8 +1205,8 @@ Other useful scripts:
 | Command | What |
 |---|---|
 | `npm run typecheck` | server-side `tsc --noEmit` |
-| `npm test` | every `*.test.mts`, each against a throwaway `SOMORA_HOME` |
-| `npm test src/browser` | one subtree, same isolation |
+| `npm test` | every `*.test.mts` under `src/`, `web/src` and `web-mobile/src`, each against a throwaway `SOMORA_HOME`; the web clients run from their own folders so their JSX compiles with their own tsconfig |
+| `npm test src/browser` | one subtree, same isolation (`npm test web/src/lib` for the web client) |
 | `npm run verify:fast` | typecheck plus the suite |
 | `cd web && npm run dev` | Vite dev server for the web client (proxies API to `:18737`) |
 | `cd web && npm run build` | rebuild `web/dist/` (the bundle the production server serves at `/web/`) |

@@ -152,7 +152,7 @@ async function cmdCheck(args: string[]): Promise<number> {
   if (!skill) {
     // Distinguish "no file on disk" from "file exists but loader rejected".
     // The bare 'not found' message used to hide parse/schema errors that the
-    // loader logs as warnings and silently skips (see hans bug 2026-05-11).
+    // loader logs as warnings and silently skips (see ada bug 2026-05-11).
     const skillDir = join(USER_SKILLS_DIR, slug);
     const skillMdPath = join(skillDir, 'SKILL.md');
     if (await pathExists(skillMdPath)) {

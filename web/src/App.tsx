@@ -12,7 +12,7 @@ import { Desktop } from './components/Desktop';
 
 // Document-level mouseup-capture handler for Markdown links in chat
 // bubbles. We listen on `mouseup` rather than `click` because the
-// real-world failure mode on 2026-05-14 (naxon) was: mousedown +
+// real-world failure mode on 2026-05-14 (nova) was: mousedown +
 // mouseup fired on the anchor as expected, but no click event ever
 // followed — the browser had interpreted the gesture as a (cancelled)
 // drag-start on the anchor (HTML's `<a>` is draggable by default),

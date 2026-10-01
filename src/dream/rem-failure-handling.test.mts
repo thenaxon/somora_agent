@@ -173,7 +173,7 @@ function extractCtx(signal?: AbortSignal) {
   ]);
   // Real shape from the live logs: an unescaped quote inside a value.
   const BROKEN_QUOTE =
-    '[\n  {\n    "action": "memory_write",\n    "slug": "a",\n    "proposed_content": "Rene said "no" here",\n    "reason": "r"\n  }\n]';
+    '[\n  {\n    "action": "memory_write",\n    "slug": "a",\n    "proposed_content": "Max said "no" here",\n    "reason": "r"\n  }\n]';
   const CUT_OFF = '[\n  {\n    "action": "memory_write",\n    "slug": "a",\n    "proposed_content": "cut off mid sen';
   const cases: Array<{ name: string; answers: string[]; failed: number; findings: number; calls: number }> = [
     { name: 'empty content twice', answers: [''], failed: 1, findings: 0, calls: 2 },
@@ -206,7 +206,7 @@ function extractCtx(signal?: AbortSignal) {
 {
   const { speakerLabel } = await import('./rem-extract.ts');
   check('label: the person', speakerLabel({}) === 'USER');
-  check('label: another agent is not the user', speakerLabel({ from_agent: 'naxon' }) === 'OTHER-AGENT(naxon)');
+  check('label: another agent is not the user', speakerLabel({ from_agent: 'nova' }) === 'OTHER-AGENT(nova)');
   check('label: a trigger is not the user', speakerLabel({ from_system: 'sentinel' }) === 'SYSTEM(sentinel)');
   check('label: a voice consult IS the person, relayed', speakerLabel({ from_system: 'voice' }).startsWith('USER'));
 }

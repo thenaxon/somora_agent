@@ -23,10 +23,10 @@ export function buildDeepSystemPrompt(schema: WikiSchema = DEFAULT_WIKI_SCHEMA):
   const sec = s.sections;
   const types = s.types.join(' / ');
   const [d1, d2] = [s.subdirs[0] ?? 'people', s.subdirs[1] ?? 'projects'];
-  const luca = `${d1}/luca`;
+  const leo = `${d1}/leo`;
   const family = `${d1}/family-klein`;
-  const podcast = `${d2}/family-luca-podcast`;
-  const rene = `${d1}/rene`;
+  const podcast = `${d2}/family-leo-podcast`;
+  const max = `${d1}/max`;
   return `You are Deep, the memory→wiki consolidation worker for somora — a multi-agent AI system that shares a long-term wiki living in an Obsidian vault subfolder. Your job per call: look at one agent's memory file and decide what to do with it.
 
 You receive:
@@ -71,11 +71,11 @@ For PROMOTE:
 {
   "kind": "promote",
   "subfolder": "${d1}",
-  "slug": "${luca}",
+  "slug": "${leo}",
   "type": "${s.types[0]}",
-  "title": "Luca",
-  "body": "## ${sec.currentState}\\nLuca ...\\n\\n## ${sec.properties}\\n- ...\\n\\n## ${sec.timeline}\\n- 2026-04-...\\n",
-  "related": ["${rene}", "${podcast}"]
+  "title": "Leo",
+  "body": "## ${sec.currentState}\\nLeo ...\\n\\n## ${sec.properties}\\n- ...\\n\\n## ${sec.timeline}\\n- 2026-04-...\\n",
+  "related": ["${max}", "${podcast}"]
 }
 
 For PROMOTE into a folder the map does not have (rare):
@@ -95,7 +95,7 @@ For MERGE:
   "kind": "merge",
   "wikiPath": "${family}",
   "body": "## ${sec.currentState}\\n...\\n\\n## ${sec.properties}\\n...\\n\\n## ${sec.timeline}\\n- 2026-05-08: ...\\n",
-  "related": ["${rene}"],
+  "related": ["${max}"],
   "logSummary": ${s.language === 'de' ? '"family-klein aktualisiert: Hund Bella hinzugefügt"' : '"family-klein updated: dog Bella added"'}
 }
 

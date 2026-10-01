@@ -27,8 +27,8 @@ test('blendEmbeddings: weight 0 or no context returns the query; blend is unit-l
 });
 
 test('sanitizeFtsQuery drops filler words, keeps the term that matters, never returns empty for a real sentence', () => {
-  const s = sanitizeFtsQuery('ok was kannst du mir über walter so erzählen?');
-  assert.equal(s, '"walter"');
+  const s = sanitizeFtsQuery('ok was kannst du mir über karl so erzählen?');
+  assert.equal(s, '"karl"');
   // all stopwords → fall back to the unfiltered tokens rather than nothing
   const fallback = sanitizeFtsQuery('was war das?');
   assert.ok(fallback.length > 0);
@@ -59,8 +59,8 @@ test('buildRecallContext takes the last turns, newest cut to the head, oldest fi
 
 test('historyWeightFor: content words decide how much the history steers', () => {
   const cfg = { historyWeight: 0.3, historyWeightShort: 0.55, historyWeightEmpty: 0.8 };
-  assert.equal(historyWeightFor('ok was kannst du mir über walter so erzählen?', cfg), 0.55); // one content word
+  assert.equal(historyWeightFor('ok was kannst du mir über karl so erzählen?', cfg), 0.55); // one content word
   assert.equal(historyWeightFor('das solltest du aber wissen oder?', cfg), 0.8); // none
-  assert.equal(historyWeightFor('wie ist der stand bei cerebrocraft und den medien für die expansion', cfg), 0.3);
+  assert.equal(historyWeightFor('wie ist der stand bei craftbox und den medien für die expansion', cfg), 0.3);
   assert.equal(historyWeightFor('und seine frau?', cfg), 0.55);
 });

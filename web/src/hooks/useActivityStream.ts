@@ -8,8 +8,8 @@
 // Web already has per-session EventSources via ChatProvider's ref-
 // counted map for chat content. This hook ADDS:
 //   1. streaming-dot coverage for sessions the user has NOT opened a
-//      window for (so naxon's dock-tile lights up when sentinel
-//      wakes it even though no ChatWindow is on naxon)
+//      window for (so nova's dock-tile lights up when sentinel
+//      wakes it even though no ChatWindow is on nova)
 //   2. unread-state cross-client sync (TUI marks seen → web clears)
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

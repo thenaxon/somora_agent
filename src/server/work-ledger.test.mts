@@ -1,6 +1,6 @@
 // The work ledger (private/turn-dispatch-phase2-design.md §1): one book
 // for every piece of work, one wake, take-back for any waiter with the
-// permission rule Rene set (a person: anything; an agent: its own).
+// permission rule the operator set (a person: anything; an agent: its own).
 //
 // Run: npx tsx src/server/work-ledger.test.mts
 
@@ -64,9 +64,9 @@ configureWorkWake({
   _resetWorkLedger();
   const it = openWork({
     id: 'c1',
-    origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: 'c1' },
-    target: { agent: 'lisa', session: 'main' },
-    requester: { agent: 'hans', session: 'main' },
+    origin: { kind: 'agent', from: { agent: 'ada', session: 'main' }, callId: 'c1' },
+    target: { agent: 'bea', session: 'main' },
+    requester: { agent: 'ada', session: 'main' },
     text: 'What   is\n\nthe   state of the world? ' + 'x'.repeat(300),
   });
   check('opens queued', it.state === 'queued' && it.waiting === true && it.wake === 'auto');
@@ -78,10 +78,10 @@ configureWorkWake({
   check('done', getWork('c1')?.state === 'done' && getWork('c1')?.finishedAt !== undefined);
   finishWork('c1', failed('late'));
   check('terminal stays terminal', getWork('c1')?.state === 'done');
-  openWork({ id: 'c2', origin: { kind: 'agent', from: { agent: 'hans' }, callId: 'c2' }, target: { agent: 'lisa', session: 'main' }, text: 'q' });
+  openWork({ id: 'c2', origin: { kind: 'agent', from: { agent: 'ada' }, callId: 'c2' }, target: { agent: 'bea', session: 'main' }, text: 'q' });
   finishWork('c2', failed('boom'));
   check('result.error → failed with error', getWork('c2')?.state === 'failed' && getWork('c2')?.error === 'boom');
-  openWork({ id: 'c3', origin: { kind: 'agent', from: { agent: 'hans' }, callId: 'c3' }, target: { agent: 'lisa', session: 'main' }, text: 'q' });
+  openWork({ id: 'c3', origin: { kind: 'agent', from: { agent: 'ada' }, callId: 'c3' }, target: { agent: 'bea', session: 'main' }, text: 'q' });
   failWork('c3', 'persona missing');
   check('failWork', getWork('c3')?.state === 'failed' && getWork('c3')?.error === 'persona missing');
 }
@@ -93,9 +93,9 @@ configureWorkWake({
   const base = (id: string, extra: Partial<Parameters<typeof openWork>[0]> = {}) =>
     openWork({
       id,
-      origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: id },
-      target: { agent: 'lisa', session: 'main' },
-      requester: { agent: 'hans', session: 'main' },
+      origin: { kind: 'agent', from: { agent: 'ada', session: 'main' }, callId: id },
+      target: { agent: 'bea', session: 'main' },
+      requester: { agent: 'ada', session: 'main' },
       text: 'q',
       ...extra,
     });
@@ -115,7 +115,7 @@ configureWorkWake({
   setWaiting('w-never', false);
   finishWork('w-never', ok('a'));
 
-  base('w-nosession', { requester: { agent: 'hans', session: '?' } });
+  base('w-nosession', { requester: { agent: 'ada', session: '?' } });
   setWaiting('w-nosession', false);
   finishWork('w-nosession', ok('a'));
 
@@ -127,13 +127,13 @@ configureWorkWake({
   setWaiting('w-failed', false);
   finishWork('w-failed', failed('engine down'));
 
-  check('pending wake listed before it fires', pendingWakesFor({ agent: 'hans', session: 'main' }).map((i) => i.id).sort().join(',') === 'w-failed,w-ok');
+  check('pending wake listed before it fires', pendingWakesFor({ agent: 'ada', session: 'main' }).map((i) => i.id).sort().join(',') === 'w-failed,w-ok');
   await delay(80);
   const woke = wakes.map((w) => w.ref).sort();
   check('woke exactly the hung-up, unfetched, auto items (done and failed)', woke.join(',') === 'w-failed,w-ok', woke.join(','));
-  check('wake carries about a2a + requester session', wakes.every((w) => w.about === 'a2a' && w.agent === 'hans' && w.session === 'main'));
-  check('wake text is the a2a record line with the head; the fetch hint rides beside it', wakes.find((w) => w.ref === 'w-ok')?.text.includes('[agent answer] lisa has answered') === true && wakes.find((w) => w.ref === 'w-ok')?.text.includes('answer text') === true && wakes.find((w) => w.ref === 'w-ok')?.prefix.includes('agent_ask_result') === true);
-  check('nothing pending after firing', pendingWakesFor({ agent: 'hans', session: 'main' }).length === 0);
+  check('wake carries about a2a + requester session', wakes.every((w) => w.about === 'a2a' && w.agent === 'ada' && w.session === 'main'));
+  check('wake text is the a2a record line with the head; the fetch hint rides beside it', wakes.find((w) => w.ref === 'w-ok')?.text.includes('[agent answer] bea has answered') === true && wakes.find((w) => w.ref === 'w-ok')?.text.includes('answer text') === true && wakes.find((w) => w.ref === 'w-ok')?.prefix.includes('agent_ask_result') === true);
+  check('nothing pending after firing', pendingWakesFor({ agent: 'ada', session: 'main' }).length === 0);
 }
 
 // ── 3. sub-agent wake carries depth; sentinel never wakes ───────────
@@ -142,9 +142,9 @@ configureWorkWake({
   wakes.length = 0;
   openWork({
     id: 'task_a',
-    origin: { kind: 'subagent', taskId: 'task_a', depth: 2, parent: { agent: 'hans', session: 'sub-1' } },
-    target: { agent: 'hans', session: 'sub-2' },
-    requester: { agent: 'hans', session: 'sub-1' },
+    origin: { kind: 'subagent', taskId: 'task_a', depth: 2, parent: { agent: 'ada', session: 'sub-1' } },
+    target: { agent: 'ada', session: 'sub-2' },
+    requester: { agent: 'ada', session: 'sub-1' },
     text: 'brief',
     waiting: false,
     parentDepth: 1,
@@ -154,7 +154,7 @@ configureWorkWake({
   openWork({
     id: 'task_s',
     origin: { kind: 'sentinel', triggerId: 'tr', taskId: 'task_s' },
-    target: { agent: 'hans', session: 'main' },
+    target: { agent: 'ada', session: 'main' },
     requester: { agent: 'sentinel', session: 'tr' },
     text: 'fire',
     waiting: false,
@@ -171,23 +171,23 @@ configureWorkWake({
 // ── 4. dequeue: permissions + the real lock waiter ──────────────────
 {
   _resetWorkLedger();
-  const A = 'lisa';
+  const A = 'bea';
   const S = 'sess-dq';
   const holder = await acquireSessionLock(A, S, { priority: 'user', turnId: 'h1', workId: 'h1' });
   openWork({ id: 'h1', origin: { kind: 'human', via: 'chat' }, target: { agent: A, session: S }, requester: { human: true }, text: 'first' });
   markRunning('h1', 'h1');
-  openWork({ id: 'ask-1', origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: 'ask-1' }, target: { agent: A, session: S }, requester: { agent: 'hans', session: 'main' }, text: 'second' });
+  openWork({ id: 'ask-1', origin: { kind: 'agent', from: { agent: 'ada', session: 'main' }, callId: 'ask-1' }, target: { agent: A, session: S }, requester: { agent: 'ada', session: 'main' }, text: 'second' });
   let rejected: unknown = null;
   const waiter = acquireSessionLock(A, S, { priority: 'agent', callId: 'ask-1', workId: 'ask-1' }).catch((e) => {
     rejected = e;
   });
-  openWork({ id: 'ask-2', origin: { kind: 'agent', from: { agent: 'naxon', session: 'main' }, callId: 'ask-2' }, target: { agent: A, session: S }, requester: { agent: 'naxon', session: 'main' }, text: 'third' });
+  openWork({ id: 'ask-2', origin: { kind: 'agent', from: { agent: 'nova', session: 'main' }, callId: 'ask-2' }, target: { agent: A, session: S }, requester: { agent: 'nova', session: 'main' }, text: 'third' });
   const waiter2 = acquireSessionLock(A, S, { priority: 'agent', callId: 'ask-2', workId: 'ask-2' });
   await delay(5);
   const listed = listSessionWaiters(A, S);
   check('waiters listed in order with work ids', listed.map((w) => w.workId).join(',') === 'ask-1,ask-2' && listed[0]!.position === 1);
 
-  check('agent may not remove another agent\'s item', dequeueWork('ask-1', { agent: 'naxon' }).status === 'forbidden');
+  check('agent may not remove another agent\'s item', dequeueWork('ask-1', { agent: 'nova' }).status === 'forbidden');
   check('running item cannot be dequeued', dequeueWork('h1', 'human').status === 'running');
   const out = dequeueWork('ask-1', 'human');
   check('human removes any waiter', out.status === 'removed');
@@ -195,7 +195,7 @@ configureWorkWake({
   check('waiter rejected with DequeuedError', rejected instanceof DequeuedError);
   check('item reads dequeued with the reason', getWork('ask-1')?.state === 'dequeued' && getWork('ask-1')?.error === REMOVED_BY_USER);
   check('queue shrank', getSessionLockStatus(A, S).queueLength === 1);
-  check('agent removes its own item', dequeueWork('ask-2', { agent: 'naxon' }).status === 'removed');
+  check('agent removes its own item', dequeueWork('ask-2', { agent: 'nova' }).status === 'removed');
   let rejected2: unknown = null;
   await waiter2.catch((e) => {
     rejected2 = e;
@@ -210,12 +210,12 @@ configureWorkWake({
 {
   _resetWorkLedger();
   wakes.length = 0;
-  const A = 'lisa';
+  const A = 'bea';
   const S = 'sess-dq2';
   const holder = await acquireSessionLock(A, S, { priority: 'user', turnId: 'h', workId: 'h' });
-  openWork({ id: 'gone', origin: { kind: 'agent', from: { agent: 'naxon', session: 'main' }, callId: 'gone' }, target: { agent: A, session: S }, requester: { agent: 'naxon', session: 'main' }, text: 'q1', waiting: false });
+  openWork({ id: 'gone', origin: { kind: 'agent', from: { agent: 'nova', session: 'main' }, callId: 'gone' }, target: { agent: A, session: S }, requester: { agent: 'nova', session: 'main' }, text: 'q1', waiting: false });
   const w1 = acquireSessionLock(A, S, { priority: 'agent', workId: 'gone' }).catch(() => {});
-  openWork({ id: 'online', origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: 'online' }, target: { agent: A, session: S }, requester: { agent: 'hans', session: 'main' }, text: 'q2' });
+  openWork({ id: 'online', origin: { kind: 'agent', from: { agent: 'ada', session: 'main' }, callId: 'online' }, target: { agent: A, session: S }, requester: { agent: 'ada', session: 'main' }, text: 'q2' });
   const w2 = acquireSessionLock(A, S, { priority: 'agent', workId: 'online' }).catch(() => {});
   await delay(5);
   dequeueWork('gone', 'human');
@@ -240,26 +240,26 @@ configureWorkWake({
       waiting: false,
       running,
     });
-  mk('root', ['hans', 'main'], ['hans', 'sub-1']);
-  mk('child', ['hans', 'sub-1'], ['hans', 'sub-2']);
-  mk('grand', ['hans', 'sub-2'], ['hans', 'sub-3']);
-  mk('done-child', ['hans', 'sub-1'], ['hans', 'sub-4']);
+  mk('root', ['ada', 'main'], ['ada', 'sub-1']);
+  mk('child', ['ada', 'sub-1'], ['ada', 'sub-2']);
+  mk('grand', ['ada', 'sub-2'], ['ada', 'sub-3']);
+  mk('done-child', ['ada', 'sub-1'], ['ada', 'sub-4']);
   finishWork('done-child', ok('x'));
   // a queued child holds a real waiter behind a holder
-  const hold = await acquireSessionLock('hans', 'sub-5', { priority: 'agent', workId: 'occupant' });
-  mk('queued-child', ['hans', 'sub-1'], ['hans', 'sub-5'], false);
+  const hold = await acquireSessionLock('ada', 'sub-5', { priority: 'agent', workId: 'occupant' });
+  mk('queued-child', ['ada', 'sub-1'], ['ada', 'sub-5'], false);
   let qRejected: unknown = null;
-  const qWaiter = acquireSessionLock('hans', 'sub-5', { priority: 'agent', workId: 'queued-child' }).catch((e) => {
+  const qWaiter = acquireSessionLock('ada', 'sub-5', { priority: 'agent', workId: 'queued-child' }).catch((e) => {
     qRejected = e;
   });
-  const abort = registerChatAbort('hans', 'sub-1');
+  const abort = registerChatAbort('ada', 'sub-1');
   let fired = false;
   abort.signal.addEventListener('abort', () => {
     fired = true;
   });
   // The occupant of sub-5 is somebody else's running turn: cancelling
   // the QUEUED child behind it must not stop it.
-  const occupantAbort = registerChatAbort('hans', 'sub-5');
+  const occupantAbort = registerChatAbort('ada', 'sub-5');
   let occupantStopped = false;
   occupantAbort.signal.addEventListener('abort', () => {
     occupantStopped = true;
@@ -285,12 +285,12 @@ configureWorkWake({
   _resetWorkLedger();
   const heard: string[] = [];
   const off = onWorkFinished((it) => heard.push(`${it.id}:${it.state}`));
-  openWork({ id: 'x1', origin: { kind: 'voice', consultId: 'x1', callId: 'call' }, target: { agent: 'hans', session: 'main' }, requester: { voiceCall: 'call' }, text: 'spoken' });
-  openWork({ id: 'x2', origin: { kind: 'human', via: 'chat' }, target: { agent: 'hans', session: 'main' }, requester: { human: true }, text: 'typed' });
-  openWork({ id: 'x3', origin: { kind: 'agent', from: { agent: 'lisa', session: 'main' }, callId: 'x3' }, target: { agent: 'hans', session: 'proj' }, requester: { agent: 'lisa', session: 'main' }, text: 'asked' });
-  check('by target session', listWork({ target: { agent: 'hans', session: 'main' } }).map((i) => i.id).join(',') === 'x1,x2');
-  check('by target agent', listWork({ target: { agent: 'hans' } }).length === 3);
-  check('by requester', listWork({ requester: { agent: 'lisa' } }).map((i) => i.id).join(',') === 'x3');
+  openWork({ id: 'x1', origin: { kind: 'voice', consultId: 'x1', callId: 'call' }, target: { agent: 'ada', session: 'main' }, requester: { voiceCall: 'call' }, text: 'spoken' });
+  openWork({ id: 'x2', origin: { kind: 'human', via: 'chat' }, target: { agent: 'ada', session: 'main' }, requester: { human: true }, text: 'typed' });
+  openWork({ id: 'x3', origin: { kind: 'agent', from: { agent: 'bea', session: 'main' }, callId: 'x3' }, target: { agent: 'ada', session: 'proj' }, requester: { agent: 'bea', session: 'main' }, text: 'asked' });
+  check('by target session', listWork({ target: { agent: 'ada', session: 'main' } }).map((i) => i.id).join(',') === 'x1,x2');
+  check('by target agent', listWork({ target: { agent: 'ada' } }).length === 3);
+  check('by requester', listWork({ requester: { agent: 'bea' } }).map((i) => i.id).join(',') === 'x3');
   check('by kind', listWork({ kinds: ['voice'] }).map((i) => i.id).join(',') === 'x1');
   check('by state', listWork({ states: ['queued'] }).length === 3);
   const p = waitForWork('x1', 2_000);
@@ -325,26 +325,26 @@ function wireFollowUps(): void {
     },
   });
 }
-const NAXON = { agent: 'naxon', session: 'main' };
-const LISA = { agent: 'lisa', session: 'main' };
-/** naxon's call to lisa, answered "working on it" — the chain root. */
+const NOVA = { agent: 'nova', session: 'main' };
+const BEA = { agent: 'bea', session: 'main' };
+/** nova's call to bea, answered "working on it" — the chain root. */
 function rootCall(id = 'X'): void {
-  openWork({ id, origin: { kind: 'agent', from: NAXON, callId: id }, target: LISA, requester: NAXON, text: 'research this' });
+  openWork({ id, origin: { kind: 'agent', from: NOVA, callId: id }, target: BEA, requester: NOVA, text: 'research this' });
   markRunning(id);
 }
-/** a sub lisa spawned during `during`, in its own session */
-function sub(id: string, during: string, target = { agent: 'lisa', session: `sub-${id}` }, requester = LISA): void {
+/** a sub bea spawned during `during`, in its own session */
+function sub(id: string, during: string, target = { agent: 'bea', session: `sub-${id}` }, requester = BEA): void {
   openWork({ id, origin: { kind: 'subagent', parent: requester, taskId: id, depth: 1 }, target, requester, text: `task ${id}`, waiting: false, startedDuring: during });
   markRunning(id);
 }
-/** the wake turn lisa's session runs about a finished sub */
-function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA): void {
+/** the wake turn bea's session runs about a finished sub */
+function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = BEA): void {
   openWork({ id, origin: { kind: 'wake', about: 'subagent', ref }, target: session, text: `[subagent attention] Task '${ref}'`, waiting: false, wake: 'never' });
   markRunning(id);
   finishWork(id, ok(text));
 }
 
-// 7a. one child → one follow-up to the asker, as a message from lisa
+// 7a. one child → one follow-up to the asker, as a message from bea
 {
   _resetWorkLedger();
   wireFollowUps();
@@ -353,14 +353,14 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('X', ok('working on it with a sub, will report back'));
   check('7a chainRootOf(sub) is the call', chainRootOf(getWork('S1')!)?.id === 'X');
   finishWork('S1', ok('sub result'));
-  await delay(60); // the sub's own wake fires (lisa hung up on it)
-  check('7a the sub woke lisa', wakes.some((w) => w.ref === 'S1'));
+  await delay(60); // the sub's own wake fires (bea hung up on it)
+  check('7a the sub woke bea', wakes.some((w) => w.ref === 'S1'));
   wakeTurn('S1', 'Here is the assembled research.');
   check('7a nothing yet — the follow-up waits its grace', followUps.length === 0);
   await delay(60);
   check('7a exactly one follow-up', followUps.length === 1, JSON.stringify(followUps));
   const fu = followUps[0];
-  check('7a from lisa/main to naxon/main, correlated by the call id', fu?.from === 'lisa/main' && fu?.to === 'naxon/main' && fu?.callId === 'X');
+  check('7a from bea/main to nova/main, correlated by the call id', fu?.from === 'bea/main' && fu?.to === 'nova/main' && fu?.callId === 'X');
   check('7a text = the wake turn\'s answer; prefix = the follow-up frame', fu?.text === 'Here is the assembled research.' && fu?.prefix === FOLLOW_UP_PREFIX_A2A('X'));
   check('7a the call carries the follow-up in its result', getWork('X')?.result?.follow_ups?.[0] === 'Here is the assembled research.');
   check('7a the message item exists without a requester (nobody waits for it)', fu !== undefined && getWork(fu.id) === undefined);
@@ -394,8 +394,8 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('X', ok('one sub'));
   finishWork('S1', ok('r1'));
   await delay(60);
-  // lisa's wake turn about S1 spawns S5 and ends
-  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: LISA, text: 'wake', waiting: false, wake: 'never' });
+  // bea's wake turn about S1 spawns S5 and ends
+  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: BEA, text: 'wake', waiting: false, wake: 'never' });
   markRunning('wake-S1');
   sub('S5', 'wake-S1');
   finishWork('wake-S1', ok('started one more'));
@@ -420,7 +420,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   await delay(60);
   check('7d root failed → none', followUps.length === 0);
 
-  openWork({ id: 'D', origin: { kind: 'agent', from: NAXON, callId: 'D' }, target: LISA, requester: NAXON, text: 'q' });
+  openWork({ id: 'D', origin: { kind: 'agent', from: NOVA, callId: 'D' }, target: BEA, requester: NOVA, text: 'q' });
   sub('S2', 'D');
   dequeueWork('D', 'human');
   finishWork('S2', ok('r'));
@@ -429,7 +429,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   await delay(60);
   check('7d root dequeued → none', followUps.length === 0);
 
-  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: BEA, requester: { human: true }, text: 'q', wake: 'never' });
   markRunning('H');
   sub('S3', 'H');
   finishWork('H', ok('a'));
@@ -439,7 +439,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   await delay(60);
   check('7d root is a person\'s turn → none (the person sees the wake in the session)', followUps.length === 0 && wakes.length === 3);
 
-  openWork({ id: 'T', origin: { kind: 'sentinel', triggerId: 't', taskId: 'T' }, target: LISA, text: 'fire', waiting: false, wake: 'never', running: true });
+  openWork({ id: 'T', origin: { kind: 'sentinel', triggerId: 't', taskId: 'T' }, target: BEA, text: 'fire', waiting: false, wake: 'never', running: true });
   sub('S4', 'T');
   finishWork('T', ok('a'));
   finishWork('S4', ok('r'));
@@ -457,10 +457,10 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('X', ok('working'));
   finishWork('S1', ok('r'));
   await delay(60);
-  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: LISA, text: 'wake', waiting: false, wake: 'never' });
+  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: BEA, text: 'wake', waiting: false, wake: 'never' });
   markRunning('wake-S1');
-  // lisa agent_asks naxon in that turn
-  openWork({ id: 'R', origin: { kind: 'agent', from: LISA, callId: 'R' }, target: NAXON, requester: LISA, text: 'here is the result', startedDuring: 'wake-S1' });
+  // bea agent_asks nova in that turn
+  openWork({ id: 'R', origin: { kind: 'agent', from: BEA, callId: 'R' }, target: NOVA, requester: BEA, text: 'here is the result', startedDuring: 'wake-S1' });
   finishWork('wake-S1', ok('sent it myself'));
   await delay(60);
   check('7e self-reported → no follow-up', followUps.length === 0);
@@ -475,7 +475,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('S1', ok('r'));
   await delay(60);
   wakeTurn('S1', 'assembled');
-  markFetched('X'); // naxon read agent_ask_result(X) right then
+  markFetched('X'); // nova read agent_ask_result(X) right then
   await delay(60);
   check('7f fetched within the grace → none', followUps.length === 0);
 
@@ -486,7 +486,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('X', ok('working'));
   finishWork('S1', ok('r'));
   await delay(60);
-  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: LISA, text: 'wake', waiting: false, wake: 'never' });
+  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: BEA, text: 'wake', waiting: false, wake: 'never' });
   markRunning('wake-S1');
   failWork('wake-S1', 'stopped by the user');
   await delay(60);
@@ -499,39 +499,39 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('X', ok('working'));
   finishWork('S1', ok('r'));
   await delay(60);
-  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: LISA, text: 'wake', waiting: false, wake: 'never' });
+  openWork({ id: 'wake-S1', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: BEA, text: 'wake', waiting: false, wake: 'never' });
   markRunning('wake-S1');
   failWork('wake-S1', 'engine exploded');
   await delay(60);
   check('7f wake turn failed otherwise → the asker hears that', followUps.length === 1 && followUps[0]?.text.includes('engine exploded') === true, JSON.stringify(followUps));
 }
-// 7g. depth 3: grandchild → sub (as a wake with follow_ups) → lisa → naxon (as a message); each level once
+// 7g. depth 3: grandchild → sub (as a wake with follow_ups) → bea → nova (as a message); each level once
 {
   _resetWorkLedger();
   wireFollowUps();
   rootCall();
-  sub('Y', 'X'); // lisa's sub, session sub-Y
+  sub('Y', 'X'); // bea's sub, session sub-Y
   finishWork('X', ok('delegated to a sub'));
   // the sub spawns a grandchild and reports before it is done
-  sub('Z', 'Y', { agent: 'lisa', session: 'sub-Z' }, { agent: 'lisa', session: 'sub-Y' });
+  sub('Z', 'Y', { agent: 'bea', session: 'sub-Z' }, { agent: 'bea', session: 'sub-Y' });
   finishWork('Y', ok('started a grandchild, reporting now'));
   await delay(60);
-  check('7g lisa woke about Y (its wake), naxon nothing yet', wakes.some((w) => w.ref === 'Y') && followUps.length === 0);
+  check('7g bea woke about Y (its wake), nova nothing yet', wakes.some((w) => w.ref === 'Y') && followUps.length === 0);
   wakeTurn('Y', 'noted, Y has a grandchild');
   await delay(60);
-  check('7g Y\'s wake ended but Z is open → no follow-up to naxon', followUps.length === 0);
+  check('7g Y\'s wake ended but Z is open → no follow-up to nova', followUps.length === 0);
   finishWork('Z', ok('grandchild result'));
   await delay(60);
   check('7g Z woke the sub in its session', wakes.some((w) => w.ref === 'Z' && w.session === 'sub-Y'));
-  wakeTurn('Z', 'sub assembled the grandchild result', 'wake-Z', { agent: 'lisa', session: 'sub-Y' });
+  wakeTurn('Z', 'sub assembled the grandchild result', 'wake-Z', { agent: 'bea', session: 'sub-Y' });
   await delay(60);
   const fuWake = wakes.find((w) => w.ref === 'Y' && w.id === 'wake-Y-fu1');
-  check('7g lisa gets ONE follow-up wake about Y with the new text', fuWake !== undefined && fuWake.text.includes('has a follow-up') && fuWake.text.includes('sub assembled'), JSON.stringify(wakes.map((w) => w.id ?? w.ref)));
+  check('7g bea gets ONE follow-up wake about Y with the new text', fuWake !== undefined && fuWake.text.includes('has a follow-up') && fuWake.text.includes('sub assembled'), JSON.stringify(wakes.map((w) => w.id ?? w.ref)));
   check('7g Y\'s result carries the follow-up for subagent_result', getWork('Y')?.result?.follow_ups?.[0] === 'sub assembled the grandchild result');
-  check('7g naxon nothing yet (lisa\'s follow-up wake has not run)', followUps.length === 0);
-  wakeTurn('Y', 'final answer for naxon', 'wake-Y-fu1');
+  check('7g nova nothing yet (bea\'s follow-up wake has not run)', followUps.length === 0);
+  wakeTurn('Y', 'final answer for nova', 'wake-Y-fu1');
   await delay(60);
-  check('7g …then naxon exactly once, with lisa\'s wake answers (not the sub\'s internal one)', followUps.length === 1 && followUps[0]?.text === 'noted, Y has a grandchild\n\nfinal answer for naxon', JSON.stringify(followUps.map((f) => f.text)));
+  check('7g …then nova exactly once, with bea\'s wake answers (not the sub\'s internal one)', followUps.length === 1 && followUps[0]?.text === 'noted, Y has a grandchild\n\nfinal answer for nova', JSON.stringify(followUps.map((f) => f.text)));
 }
 // 7h. a second cycle after the first follow-up
 {
@@ -545,8 +545,8 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   wakeTurn('S1', 'first result');
   await delay(60);
   check('7h first follow-up', followUps.length === 1);
-  // later, in a wake turn about S1's chain, lisa starts S6
-  openWork({ id: 'wake-S1-b', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: LISA, text: 'wake', waiting: false, wake: 'never' });
+  // later, in a wake turn about S1's chain, bea starts S6
+  openWork({ id: 'wake-S1-b', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: BEA, text: 'wake', waiting: false, wake: 'never' });
   markRunning('wake-S1-b');
   sub('S6', 'wake-S1-b');
   finishWork('wake-S1-b', ok('one more'));
@@ -564,13 +564,13 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   wireFollowUps();
   const heard: Array<{ root: string; text: string }> = [];
   onWorkFollowUp((root, fu) => heard.push({ root: root.id, text: fu.text }));
-  openWork({ id: 'V', origin: { kind: 'voice', consultId: 'V', callId: 'call1' }, target: { agent: 'hans', session: 'main' }, requester: { voiceCall: 'call1' }, text: 'q', waiting: true, wake: 'never' });
+  openWork({ id: 'V', origin: { kind: 'voice', consultId: 'V', callId: 'call1' }, target: { agent: 'ada', session: 'main' }, requester: { voiceCall: 'call1' }, text: 'q', waiting: true, wake: 'never' });
   markRunning('V');
-  sub('S1', 'V', { agent: 'hans', session: 'sub-S1' }, { agent: 'hans', session: 'main' });
+  sub('S1', 'V', { agent: 'ada', session: 'sub-S1' }, { agent: 'ada', session: 'main' });
   finishWork('V', ok('checking with a sub'));
   finishWork('S1', ok('r'));
   await delay(60);
-  wakeTurn('S1', 'the sub says 42', 'wake-S1', { agent: 'hans', session: 'main' });
+  wakeTurn('S1', 'the sub says 42', 'wake-S1', { agent: 'ada', session: 'main' });
   await delay(60);
   check('7i the voice listener heard the follow-up once', heard.length === 1 && heard[0]?.root === 'V' && heard[0]?.text === 'the sub says 42', JSON.stringify(heard));
   check('7i no message and no wake for a voice root', followUps.length === 0 && !wakes.some((w) => w.ref === 'V'));
@@ -579,7 +579,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
 {
   _resetWorkLedger();
   wireFollowUps();
-  openWork({ id: 'S1', origin: { kind: 'subagent', taskId: 'S1', depth: 1 }, target: { agent: 'lisa', session: 'sub' }, requester: LISA, text: 't', waiting: false });
+  openWork({ id: 'S1', origin: { kind: 'subagent', taskId: 'S1', depth: 1 }, target: { agent: 'bea', session: 'sub' }, requester: BEA, text: 't', waiting: false });
   markRunning('S1');
   check('7j chainRootOf is undefined', chainRootOf(getWork('S1')!) === undefined);
   finishWork('S1', ok('r'));
@@ -589,7 +589,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   check('7j nothing', followUps.length === 0);
 }
 
-// 7k. the wake turn is told where its answer goes (Rene's hand test: lisa wrote "leaving it" and naxon got that)
+// 7k. the wake turn is told where its answer goes (the operator's hand test: bea wrote "leaving it" and nova got that)
 {
   _resetWorkLedger();
   wireFollowUps();
@@ -599,10 +599,10 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('S1', ok('r1'));
   await delay(60);
   const w = wakes.find((x) => x.ref === 'S1');
-  check('7k the sub\'s wake frame says the answer is forwarded to naxon for call X', w?.prefix.includes('forwarded to agent naxon') === true && w?.prefix.includes('call_id "X"') === true && w?.prefix.includes('subagent_result') === true, w?.prefix);
+  check('7k the sub\'s wake frame says the answer is forwarded to nova for call X', w?.prefix.includes('forwarded to agent nova') === true && w?.prefix.includes('call_id "X"') === true && w?.prefix.includes('subagent_result') === true, w?.prefix);
   check('7k the record line is untouched', w?.text.startsWith('[subagent attention]') === true && !w?.text.includes('forwarded'));
   // a wake under a person's turn carries no such note
-  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: BEA, requester: { human: true }, text: 'q', wake: 'never' });
   markRunning('H');
   sub('S2', 'H');
   finishWork('H', ok('a'));
@@ -610,32 +610,32 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   await delay(60);
   const w2 = wakes.find((x) => x.ref === 'S2');
   check('7k no note under a person\'s turn', w2 !== undefined && !w2.prefix.includes('forwarded'), w2?.prefix);
-  // depth 3: the sub's own wake (about the grandchild) says its answer goes to lisa for task Y;
-  // lisa's follow-up wake about Y says its answer goes to naxon.
+  // depth 3: the sub's own wake (about the grandchild) says its answer goes to bea for task Y;
+  // bea's follow-up wake about Y says its answer goes to nova.
   _resetWorkLedger();
   wireFollowUps();
   rootCall();
   sub('Y', 'X');
   finishWork('X', ok('delegated'));
-  sub('Z', 'Y', { agent: 'lisa', session: 'sub-Z' }, { agent: 'lisa', session: 'sub-Y' });
+  sub('Z', 'Y', { agent: 'bea', session: 'sub-Z' }, { agent: 'bea', session: 'sub-Y' });
   finishWork('Y', ok('started a grandchild'));
   await delay(60);
   wakeTurn('Y', 'noted');
   finishWork('Z', ok('grandchild result'));
   await delay(60);
   const wz = wakes.find((x) => x.ref === 'Z');
-  check('7k the sub\'s wake about its grandchild: answer goes to the parent for task Y', wz?.prefix.includes("forwarded to your parent (lisa, session main) as the follow-up to task 'Y'") === true, wz?.prefix);
-  wakeTurn('Z', 'sub assembled', 'wake-Z', { agent: 'lisa', session: 'sub-Y' });
+  check('7k the sub\'s wake about its grandchild: answer goes to the parent for task Y', wz?.prefix.includes("forwarded to your parent (bea, session main) as the follow-up to task 'Y'") === true, wz?.prefix);
+  wakeTurn('Z', 'sub assembled', 'wake-Z', { agent: 'bea', session: 'sub-Y' });
   await delay(60);
   const fu = wakes.find((x) => x.id === 'wake-Y-fu1');
-  check('7k lisa\'s follow-up wake about Y: answer goes to naxon for call X', fu?.prefix.includes('forwarded to agent naxon') === true && fu?.prefix.includes('call_id "X"') === true, fu?.prefix);
+  check('7k bea\'s follow-up wake about Y: answer goes to nova for call X', fu?.prefix.includes('forwarded to agent nova') === true && fu?.prefix.includes('call_id "X"') === true, fu?.prefix);
   check('7k forwardingNoteFor is undefined for a root without requester', forwardingNoteFor(getWork('X')!) === undefined);
   // the sub finishes while the root still answers: the note is there already; a failed root gets none
   _resetWorkLedger();
   wireFollowUps();
   rootCall();
   sub('S1', 'X');
-  check('7k note while the root is still running', forwardingNoteFor(getWork('S1')!)?.includes('forwarded to agent naxon') === true);
+  check('7k note while the root is still running', forwardingNoteFor(getWork('S1')!)?.includes('forwarded to agent nova') === true);
   failWork('X', 'model error');
   check('7k no note once the root failed', forwardingNoteFor(getWork('S1')!) === undefined);
 }
@@ -644,9 +644,9 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
 {
   _resetWorkLedger();
   wireFollowUps();
-  const A = 'lisa';
+  const A = 'bea';
   const S = 'main';
-  // lisa's answering turn holds the lock (the root, naxon's call)
+  // bea's answering turn holds the lock (the root, nova's call)
   const release = await acquireSessionLock(A, S, { priority: 'agent', turnId: 'X', workId: 'X' });
   rootCall();
   sub('S1', 'X');
@@ -668,7 +668,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('S2', ok('r2'));
   await delay(60);
   check('7l both wakes were dispatched and wait behind the running turn', wakes.filter((w) => w.ref === 'S1' || w.ref === 'S2').length === 2 && listSessionWaiters(A, S).length === 2);
-  // lisa, still in her answering turn, fetches S2 herself
+  // bea, still in her answering turn, fetches S2 herself
   markFetched('S2');
   await delay(5);
   check('7l the queued wake for S2 is withdrawn: out of the lock queue, item dequeued with the reason', listSessionWaiters(A, S).length === 1 && getWork('wake-S2')?.state === 'dequeued' && getWork('wake-S2')?.error === WAKE_WITHDRAWN, JSON.stringify(getWork('wake-S2')));
@@ -689,7 +689,7 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('X', ok('w'));
   finishWork('S3', ok('r3'));
   await delay(60);
-  openWork({ id: 'wake-S3', origin: { kind: 'wake', about: 'subagent', ref: 'S3' }, target: LISA, text: 'wake', waiting: false, wake: 'never' });
+  openWork({ id: 'wake-S3', origin: { kind: 'wake', about: 'subagent', ref: 'S3' }, target: BEA, text: 'wake', waiting: false, wake: 'never' });
   markRunning('wake-S3');
   markFetched('S3');
   check('7l a running wake is not touched by a late fetch', getWork('wake-S3')?.state === 'running');
@@ -711,43 +711,43 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   await delay(60);
   check('7m one follow-up with both answers, in order', followUps.length === 1 && followUps[0]?.text === 'Here are the three points: A, B, C.\n\nAlready handled in my previous turn — duplicate notice.', JSON.stringify(followUps.map((f) => f.text)));
   check('7m wakeAnswersFor lists them', wakeAnswersFor(getWork('X')!).length === 2);
-  // the sub's own wake turns (in its session) are not part of lisa's answer
+  // the sub's own wake turns (in its session) are not part of bea's answer
   _resetWorkLedger();
   wireFollowUps();
   rootCall();
   sub('Y', 'X');
   finishWork('X', ok('delegated'));
-  sub('Z', 'Y', { agent: 'lisa', session: 'sub-Z' }, { agent: 'lisa', session: 'sub-Y' });
+  sub('Z', 'Y', { agent: 'bea', session: 'sub-Z' }, { agent: 'bea', session: 'sub-Y' });
   finishWork('Y', ok('started'));
   await delay(60);
   wakeTurn('Y', 'noted');
   finishWork('Z', ok('gz'));
   await delay(60);
-  wakeTurn('Z', 'sub-internal assembly', 'wake-Z', { agent: 'lisa', session: 'sub-Y' });
+  wakeTurn('Z', 'sub-internal assembly', 'wake-Z', { agent: 'bea', session: 'sub-Y' });
   await delay(60);
-  wakeTurn('Y', 'final for naxon', 'wake-Y-fu1');
+  wakeTurn('Y', 'final for nova', 'wake-Y-fu1');
   await delay(60);
-  check('7m naxon\'s follow-up = lisa\'s own wake answers only (noted + final), not the sub\'s internal one', followUps.length === 1 && followUps[0]?.text === 'noted\n\nfinal for naxon', JSON.stringify(followUps.map((f) => f.text)));
+  check('7m nova\'s follow-up = bea\'s own wake answers only (noted + final), not the sub\'s internal one', followUps.length === 1 && followUps[0]?.text === 'noted\n\nfinal for nova', JSON.stringify(followUps.map((f) => f.text)));
 }
 
 // 7n. attention:false does not count when someone else waits for the outcome
 {
   _resetWorkLedger();
   wireFollowUps();
-  rootCall(); // naxon asks lisa; lisa's turn is the running root
-  openWork({ id: 'S1', origin: { kind: 'subagent', parent: LISA, taskId: 'S1', depth: 1 }, target: { agent: 'lisa', session: 'sub-S1' }, requester: LISA, text: 't', waiting: false, wake: 'never', startedDuring: 'X' });
+  rootCall(); // nova asks bea; bea's turn is the running root
+  openWork({ id: 'S1', origin: { kind: 'subagent', parent: BEA, taskId: 'S1', depth: 1 }, target: { agent: 'bea', session: 'sub-S1' }, requester: BEA, text: 't', waiting: false, wake: 'never', startedDuring: 'X' });
   check('7n under an agent\'s question the wake stays on', getWork('S1')?.wake === 'auto');
-  openWork({ id: 'V', origin: { kind: 'voice', consultId: 'V', callId: 'call1' }, target: { agent: 'hans', session: 'main' }, requester: { voiceCall: 'call1' }, text: 'q', waiting: true, wake: 'never' });
+  openWork({ id: 'V', origin: { kind: 'voice', consultId: 'V', callId: 'call1' }, target: { agent: 'ada', session: 'main' }, requester: { voiceCall: 'call1' }, text: 'q', waiting: true, wake: 'never' });
   markRunning('V');
-  openWork({ id: 'S2', origin: { kind: 'subagent', parent: { agent: 'hans', session: 'main' }, taskId: 'S2', depth: 1 }, target: { agent: 'hans', session: 'sub-S2' }, requester: { agent: 'hans', session: 'main' }, text: 't', waiting: false, wake: 'never', startedDuring: 'V' });
+  openWork({ id: 'S2', origin: { kind: 'subagent', parent: { agent: 'ada', session: 'main' }, taskId: 'S2', depth: 1 }, target: { agent: 'ada', session: 'sub-S2' }, requester: { agent: 'ada', session: 'main' }, text: 't', waiting: false, wake: 'never', startedDuring: 'V' });
   check('7n under a voice consult the wake stays on', getWork('S2')?.wake === 'auto');
-  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: BEA, requester: { human: true }, text: 'q', wake: 'never' });
   markRunning('H');
-  openWork({ id: 'S3', origin: { kind: 'subagent', parent: LISA, taskId: 'S3', depth: 1 }, target: { agent: 'lisa', session: 'sub-S3' }, requester: LISA, text: 't', waiting: false, wake: 'never', startedDuring: 'H' });
+  openWork({ id: 'S3', origin: { kind: 'subagent', parent: BEA, taskId: 'S3', depth: 1 }, target: { agent: 'bea', session: 'sub-S3' }, requester: BEA, text: 't', waiting: false, wake: 'never', startedDuring: 'H' });
   check('7n under a person\'s turn attention:false is respected', getWork('S3')?.wake === 'never');
-  openWork({ id: 'S4', origin: { kind: 'subagent', taskId: 'S4', depth: 1 }, target: { agent: 'lisa', session: 'sub-S4' }, requester: LISA, text: 't', waiting: false, wake: 'never' });
+  openWork({ id: 'S4', origin: { kind: 'subagent', taskId: 'S4', depth: 1 }, target: { agent: 'bea', session: 'sub-S4' }, requester: BEA, text: 't', waiting: false, wake: 'never' });
   check('7n started from nowhere: respected', getWork('S4')?.wake === 'never');
-  openWork({ id: 'W', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: LISA, text: 'w', waiting: false, wake: 'never' });
+  openWork({ id: 'W', origin: { kind: 'wake', about: 'subagent', ref: 'S1' }, target: BEA, text: 'w', waiting: false, wake: 'never' });
   check('7n a wake item itself is never touched', getWork('W')?.wake === 'never');
 }
 
@@ -755,10 +755,10 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
 {
   _resetWorkLedger();
   wireFollowUps();
-  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: BEA, requester: { human: true }, text: 'q', wake: 'never' });
   markRunning('H');
   sub('S1', 'H');
-  sub('G1', 'S1', { agent: 'lisa', session: 'sub-G1' }, { agent: 'lisa', session: 'sub-S1' }); // the sub's own child
+  sub('G1', 'S1', { agent: 'bea', session: 'sub-G1' }, { agent: 'bea', session: 'sub-S1' }); // the sub's own child
   const out = cancelWork('S1', 'stopped by the user', 'human');
   check('7o both cancelled (cascade)', out?.cancelled.length === 2 && getWork('S1')?.cancelledBy === 'human' && getWork('G1')?.cancelledBy === 'cascade');
   await delay(60);
@@ -767,13 +767,13 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   check('7o the cascaded child wakes nobody', !wakes.some((x) => x.ref === 'G1'));
   _resetWorkLedger();
   wireFollowUps();
-  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: LISA, requester: { human: true }, text: 'q', wake: 'never' });
+  openWork({ id: 'H', origin: { kind: 'human', via: 'chat' }, target: BEA, requester: { human: true }, text: 'q', wake: 'never' });
   markRunning('H');
   sub('S2', 'H');
-  cancelWork('S2', 'cancelled by lisa: not needed');
+  cancelWork('S2', 'cancelled by bea: not needed');
   await delay(60);
   check('7o the agent\'s own cancel wakes nobody', !wakes.some((x) => x.ref === 'S2'));
-  // a person's cancel of a sub under naxon's call: lisa is woken, and naxon still gets one follow-up after the rest
+  // a person's cancel of a sub under nova's call: bea is woken, and nova still gets one follow-up after the rest
   _resetWorkLedger();
   wireFollowUps();
   rootCall();
@@ -782,54 +782,54 @@ function wakeTurn(ref: string, text: string, id = `wake-${ref}`, session = LISA)
   finishWork('X', ok('two subs'));
   cancelWork('S3', 'stopped by the user', 'human');
   await delay(60);
-  check('7o under a call: lisa is woken about the stopped sub, with the forwarding note', wakes.some((x) => x.ref === 'S3' && x.prefix.includes('forwarded to agent naxon')));
+  check('7o under a call: bea is woken about the stopped sub, with the forwarding note', wakes.some((x) => x.ref === 'S3' && x.prefix.includes('forwarded to agent nova')));
   wakeTurn('S3', 'one of two was stopped, continuing with the other');
   finishWork('S4', ok('r4'));
   await delay(60);
   wakeTurn('S4', 'here is what the remaining sub found');
   await delay(60);
-  check('7o naxon gets exactly one follow-up with both wake answers', followUps.length === 1 && followUps[0]?.text.includes('remaining sub found') === true && followUps[0]?.text.includes('one of two was stopped') === true, JSON.stringify(followUps.map((f) => f.text)));
+  check('7o nova gets exactly one follow-up with both wake answers', followUps.length === 1 && followUps[0]?.text.includes('remaining sub found') === true && followUps[0]?.text.includes('one of two was stopped') === true, JSON.stringify(followUps.map((f) => f.text)));
 }
 
 // ── 8. woken with an agent's answer: a reply goes back to the session that answered ──
-// hans (project session) asks naxon/kizilla with wait:false, is woken
+// ada (project session) asks nova/kittyapp with wait:false, is woken
 // with the answer and writes back without naming a session. The wake
-// turn has no from_agent, so it used to land in naxon/main.
+// turn has no from_agent, so it used to land in nova/main.
 {
   _resetWorkLedger();
   const { wakeReplyTargetFor } = await import('./work-ledger.ts');
-  const hansProject = { agent: 'hans', session: '20260914-090000_kizilla-build' };
-  openWork({ id: 'call-1', origin: { kind: 'agent', from: { agent: 'hans', session: hansProject.session }, callId: 'call-1' }, target: { agent: 'naxon', session: '20260914-080000_kizilla' }, requester: hansProject, text: 'report', waiting: false, wake: 'never' });
-  check('8a no wake turn running: nothing to reply to', wakeReplyTargetFor(hansProject) === null);
-  openWork({ id: 'wake-call-1', origin: { kind: 'wake', about: 'a2a', ref: 'call-1' }, target: hansProject, text: '[agent answer] …', running: true, wake: 'never' });
-  const t = wakeReplyTargetFor(hansProject);
-  check('8b woken with the answer: reply target is the session that answered', t?.agent === 'naxon' && t?.session === '20260914-080000_kizilla', JSON.stringify(t));
-  check('8c only for the session that was woken', wakeReplyTargetFor({ agent: 'hans', session: 'main' }) === null);
+  const adaProject = { agent: 'ada', session: '20260914-090000_kittyapp-build' };
+  openWork({ id: 'call-1', origin: { kind: 'agent', from: { agent: 'ada', session: adaProject.session }, callId: 'call-1' }, target: { agent: 'nova', session: '20260914-080000_kittyapp' }, requester: adaProject, text: 'report', waiting: false, wake: 'never' });
+  check('8a no wake turn running: nothing to reply to', wakeReplyTargetFor(adaProject) === null);
+  openWork({ id: 'wake-call-1', origin: { kind: 'wake', about: 'a2a', ref: 'call-1' }, target: adaProject, text: '[agent answer] …', running: true, wake: 'never' });
+  const t = wakeReplyTargetFor(adaProject);
+  check('8b woken with the answer: reply target is the session that answered', t?.agent === 'nova' && t?.session === '20260914-080000_kittyapp', JSON.stringify(t));
+  check('8c only for the session that was woken', wakeReplyTargetFor({ agent: 'ada', session: 'main' }) === null);
   // A sub-agent's session is a sealed room — a wake about a finished sub gives no reply target.
-  openWork({ id: 'task-9', origin: { kind: 'subagent', parent: { agent: 'hans', session: 'main' }, taskId: 'task-9' } as never, target: { agent: 'lisa', session: 'sub-hans-9' }, requester: { agent: 'hans', session: 'main' }, text: 'job', waiting: false, wake: 'never' });
-  openWork({ id: 'wake-task-9', origin: { kind: 'wake', about: 'subagent', ref: 'task-9' }, target: { agent: 'hans', session: 'main' }, text: '[subagent attention] …', running: true, wake: 'never' });
-  check('8d a wake about a SUB-agent is not a reply target', wakeReplyTargetFor({ agent: 'hans', session: 'main' }) === null);
+  openWork({ id: 'task-9', origin: { kind: 'subagent', parent: { agent: 'ada', session: 'main' }, taskId: 'task-9' } as never, target: { agent: 'bea', session: 'sub-ada-9' }, requester: { agent: 'ada', session: 'main' }, text: 'job', waiting: false, wake: 'never' });
+  openWork({ id: 'wake-task-9', origin: { kind: 'wake', about: 'subagent', ref: 'task-9' }, target: { agent: 'ada', session: 'main' }, text: '[subagent attention] …', running: true, wake: 'never' });
+  check('8d a wake about a SUB-agent is not a reply target', wakeReplyTargetFor({ agent: 'ada', session: 'main' }) === null);
   // Once the wake turn is over, the target is gone again.
   finishWork('wake-call-1', ok('done'));
-  check('8e after the wake turn ended: nothing', wakeReplyTargetFor(hansProject) === null);
+  check('8e after the wake turn ended: nothing', wakeReplyTargetFor(adaProject) === null);
 }
 
 // ── 9. withdraw: the soft take-back of a running call (2026-09-24) ──
 {
   _resetWorkLedger();
   wakes.length = 0;
-  openWork({ id: 'w-1', origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: 'w-1' }, target: { agent: 'lisa', session: 'main' }, requester: { agent: 'hans', session: 'main' }, text: 'research this', waiting: false });
-  check('9a a queued call is not withdrawable (dequeue is the tool for it)', withdrawWork('w-1', { agent: 'hans' }).status === 'not_running');
+  openWork({ id: 'w-1', origin: { kind: 'agent', from: { agent: 'ada', session: 'main' }, callId: 'w-1' }, target: { agent: 'bea', session: 'main' }, requester: { agent: 'ada', session: 'main' }, text: 'research this', waiting: false });
+  check('9a a queued call is not withdrawable (dequeue is the tool for it)', withdrawWork('w-1', { agent: 'ada' }).status === 'not_running');
   markRunning('w-1', 'turn-w1');
-  check('9b another agent may not withdraw it', withdrawWork('w-1', { agent: 'naxon' }).status === 'forbidden');
-  const w = withdrawWork('w-1', { agent: 'hans' });
+  check('9b another agent may not withdraw it', withdrawWork('w-1', { agent: 'nova' }).status === 'forbidden');
+  const w = withdrawWork('w-1', { agent: 'ada' });
   check('9c the requester withdraws a running call', w.status === 'withdrawn');
   const it = getWork('w-1')!;
-  check('9d it keeps running, wakes no one, records who took it back', it.state === 'running' && it.wake === 'never' && it.withdrawnBy === 'hans' && typeof it.withdrawnAt === 'number');
-  check('9e unknown id', withdrawWork('nope', { agent: 'hans' }).status === 'unknown');
+  check('9d it keeps running, wakes no one, records who took it back', it.state === 'running' && it.wake === 'never' && it.withdrawnBy === 'ada' && typeof it.withdrawnAt === 'number');
+  check('9e unknown id', withdrawWork('nope', { agent: 'ada' }).status === 'unknown');
   finishWork('w-1', ok('here is the research anyway'));
   await delay(60);
-  check('9f the late result wakes nobody', wakes.length === 0 && pendingWakesFor({ agent: 'hans', session: 'main' }).length === 0, JSON.stringify(wakes));
+  check('9f the late result wakes nobody', wakes.length === 0 && pendingWakesFor({ agent: 'ada', session: 'main' }).length === 0, JSON.stringify(wakes));
   check('9g the result is still readable for agent_ask_result', getWork('w-1')?.state === 'done' && getWork('w-1')?.result?.finalText === 'here is the research anyway');
 }
 

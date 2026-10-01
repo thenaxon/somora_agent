@@ -475,7 +475,7 @@ export async function runDream(args: RunDreamArgs): Promise<{ id: string; finalS
 
     // Mechanical dedup against already-persisted knowledge — the worker
     // model gets the same context in its prompt but small models don't
-    // reliably act on it (buffet 2026-07-06: 26/27 findings were
+    // reliably act on it (finn 2026-07-06: 26/27 findings were
     // repeats). Exact slug collisions are dropped, near-duplicates are
     // marked for batch-dismissal. See rem-dedup.ts.
     const dedup = await applyRemDedup({

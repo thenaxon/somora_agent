@@ -54,7 +54,7 @@ const WIKI_INDEX_SECTION_RE = /^##\s+(.+?)\s*$/;
  * A wiki-index list item: `- [[pfad/seite]] — description`.
  *
  * Anchored, and it captures only the FIRST wikilink of the line. Links
- * further along are prose (`… gehört zu [[personen/xy|Renes]] Team`),
+ * further along are prose (`… gehört zu [[personen/xy|The operator's]] Team`),
  * not pages.
  */
 const WIKI_INDEX_ENTRY_RE = /^[-*]\s*(\[\[[^\]|]+(?:\|[^\]]*)?\]\])\s*(?:[—–-]\s*)?(.*)$/;
@@ -601,7 +601,7 @@ export class MemoryManager {
       // 'skipped' on hash-match alone would leave that file stuck
       // forever (next run keeps seeing the same hash). Verify a chunk
       // actually exists; if not, fall through to rebuild. Discovered
-      // 2026-05-21 on buffet (238 files indexed, 0 chunks).
+      // 2026-05-21 on finn (238 files indexed, 0 chunks).
       const firstChunk = memDb.db
         .prepare(`SELECT id FROM chunks WHERE file_path = ? LIMIT 1`)
         .get(path) as { id: number } | undefined;

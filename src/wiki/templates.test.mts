@@ -43,13 +43,13 @@ function check(name: string, cond: boolean, detail = ''): void {
   // Obsidian-authored page looks like on disk.
   const raw = [
     '---',
-    'slug: rene',
+    'slug: max',
     'type: person',
     'created: 2026-05-01', // unquoted → Date after parse
     'updated: 2026-05-10',
     '---',
     '',
-    '# Rene',
+    '# Max',
     '',
     'Body text.',
   ].join('\n');

@@ -22,7 +22,7 @@ function check(name: string, fn: () => void): void {
 const NOW = 1_800_000_000_000;
 const idle: SessionWork = {
   asOf: NOW,
-  agent: 'hans',
+  agent: 'ada',
   session: 'main',
   busy: false,
   active: null,
@@ -39,8 +39,8 @@ const busyWork: SessionWork = {
     kind: 'agent',
     state: 'running',
     preview: 'What did the nightly build say?',
-    target: { agent: 'hans', session: 'main' },
-    requester: { agent: 'lisa', session: 'main' },
+    target: { agent: 'ada', session: 'main' },
+    requester: { agent: 'bea', session: 'main' },
     enqueuedAt: NOW - 20_000,
     startedAt: NOW - 12_000,
     turnId: 't-1',
@@ -51,7 +51,7 @@ const busyWork: SessionWork = {
       kind: 'human',
       state: 'queued',
       preview: 'and then deploy it',
-      target: { agent: 'hans', session: 'main' },
+      target: { agent: 'ada', session: 'main' },
       requester: { human: true },
       enqueuedAt: NOW - 65_000,
       position: 1,
@@ -61,7 +61,7 @@ const busyWork: SessionWork = {
       kind: 'sentinel',
       state: 'queued',
       preview: '',
-      target: { agent: 'hans', session: 'main' },
+      target: { agent: 'ada', session: 'main' },
       enqueuedAt: NOW - 5_000,
       position: 2,
     },
@@ -73,8 +73,8 @@ const busyWork: SessionWork = {
       about: 'a2a',
       state: 'done',
       preview: '',
-      target: { agent: 'lisa', session: 'main' },
-      requester: { agent: 'hans', session: 'main' },
+      target: { agent: 'bea', session: 'main' },
+      requester: { agent: 'ada', session: 'main' },
       finishedAt: NOW - 1_000,
     },
   ],
@@ -84,8 +84,8 @@ const busyWork: SessionWork = {
       kind: 'subagent',
       state: 'running',
       preview: 'summarize the log',
-      target: { agent: 'hans', session: 'sub-abc' },
-      requester: { agent: 'hans', session: 'main' },
+      target: { agent: 'ada', session: 'sub-abc' },
+      requester: { agent: 'ada', session: 'main' },
       enqueuedAt: NOW - 30_000,
       startedAt: NOW - 30_000,
     },
@@ -94,8 +94,8 @@ const busyWork: SessionWork = {
       kind: 'agent',
       state: 'queued',
       preview: 'is the DB up?',
-      target: { agent: 'lisa', session: 'main' },
-      requester: { agent: 'hans', session: 'main' },
+      target: { agent: 'bea', session: 'main' },
+      requester: { agent: 'ada', session: 'main' },
       enqueuedAt: NOW - 3_000,
     },
   ],
@@ -130,24 +130,24 @@ check('list: idle session', () => {
   const text = formatWorkList(idle, NOW);
   assert.equal(
     text,
-    ['Queue for hans:main', 'Running:', '  nothing', 'Waiting (0):', '  nothing'].join('\n'),
+    ['Queue for ada:main', 'Running:', '  nothing', 'Waiting (0):', '  nothing'].join('\n'),
   );
 });
 
 check('list: every section, numbered waiting entries with age', () => {
   const lines = formatWorkList(busyWork, NOW).split('\n');
-  assert.equal(lines[0], 'Queue for hans:main');
+  assert.equal(lines[0], 'Queue for ada:main');
   assert.equal(lines[1], 'Running:');
-  assert.equal(lines[2], '  💬 agent ask  "What did the nightly build say?", from lisa:main, since 12s');
+  assert.equal(lines[2], '  💬 agent ask  "What did the nightly build say?", from bea:main, since 12s');
   assert.equal(lines[3], 'Waiting (2):');
   assert.equal(lines[4], '   1. 👤 you  "and then deploy it", from you, waited 1m 05s');
   assert.equal(lines[5], '   2. 🔔 sentinel  (no preview), waited 5s');
   assert.equal(lines[6], 'Arriving (1):');
-  assert.equal(lines[7], '  ↩  agent answer  answer from lisa:main, 1s ago');
+  assert.equal(lines[7], '  ↩  agent answer  answer from bea:main, 1s ago');
   assert.equal(lines[8], 'From here (2):');
   // numbered on from the waiting entries (2), so /queue rm 3 / rm 4 reach them
-  assert.equal(lines[9], '   3. 🤖 subagent → hans:sub-abc  "summarize the log"  [running, since 30s]');
-  assert.equal(lines[10], '   4. 💬 agent ask → lisa:main  "is the DB up?"  [queued, waited 3s]');
+  assert.equal(lines[9], '   3. 🤖 subagent → ada:sub-abc  "summarize the log"  [running, since 30s]');
+  assert.equal(lines[10], '   4. 💬 agent ask → bea:main  "is the DB up?"  [queued, waited 3s]');
   assert.equal(lines[11], '/queue rm <n> removes a waiting entry; on a running entry under "From here" it stops it.');
   assert.equal(lines.length, 12);
 });

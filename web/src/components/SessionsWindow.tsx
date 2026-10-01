@@ -433,8 +433,8 @@ export function SessionsWindow({ onOpenChat }: Props) {
                       )}
                       {/* Canonical stored id (date-prefixed) differs from the
                           friendly slug for archived/auto-created sessions —
-                          show it so "blackcorner-ui" vs
-                          "20260516-210048_blackcorner-ui" isn't a guessing
+                          show it so "northcorner-ui" vs
+                          "20260516-210048_northcorner-ui" isn't a guessing
                           game (2026-07-08 feedback). */}
                       {!r.isMain && r.sessionId !== r.slug && (
                         <div

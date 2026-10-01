@@ -30,7 +30,7 @@ import type { LocalSyncResult } from './local.ts';
 
 export interface RemoteSyncOptions {
   agent: string;
-  /** Resource name (mac-studio, spiderman, ...). */
+  /** Resource name (mac-studio, media-box, ...). */
   target: string;
   command: string;
   cwd?: string;

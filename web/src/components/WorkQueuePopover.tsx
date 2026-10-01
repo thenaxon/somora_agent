@@ -226,7 +226,7 @@ export function WorkQueuePopover({ open, onClose, anchorRect, work, onStop, onRe
   }
 
   // Stop on a "From here" row: the sub-agent's task with its children,
-  // or the turn an agent_ask runs as on the target (Rene, 2026-09-13:
+  // or the turn an agent_ask runs as on the target (the operator, 2026-09-13:
   // "click and stop from here, not by opening the sub's session").
   async function handleStopChild(item: WorkItemDto) {
     if (!item.id || !onStopChild) return;

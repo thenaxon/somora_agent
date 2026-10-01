@@ -56,15 +56,15 @@ assert.equal(
 assert.equal(originPresentation({ text: tmuxText, fromSystem: 'tmux' })?.subtitle, 'build-42');
 
 // --- browser ----------------------------------------------------------
-const handoffText = "[browser] The user handed browser 'agent:naxon' back to you (handoff h1). …";
-const activityText = "[browser] The user took over browser 'agent:naxon', did something there …";
+const handoffText = "[browser] The user handed browser 'agent:nova' back to you (handoff h1). …";
+const activityText = "[browser] The user took over browser 'agent:nova', did something there …";
 {
   const p = originPresentation({
     text: handoffText,
-    origin: { kind: 'browser', viewId: 'agent:naxon', cause: 'handoff', handoffId: 'h1' },
+    origin: { kind: 'browser', viewId: 'agent:nova', cause: 'handoff', handoffId: 'h1' },
   });
   assert.equal(p?.kind, 'browser');
-  assert.equal(p?.subtitle, 'naxon · handed back');
+  assert.equal(p?.subtitle, 'nova · handed back');
 }
 assert.equal(
   originPresentation({
@@ -75,11 +75,11 @@ assert.equal(
 );
 assert.equal(
   originPresentation({ text: handoffText, fromSystem: 'browser' })?.subtitle,
-  'naxon · handed back',
+  'nova · handed back',
 );
 assert.equal(
   originPresentation({ text: activityText, fromSystem: 'browser' })?.subtitle,
-  'naxon · handed back after your changes',
+  'nova · handed back after your changes',
 );
 
 // --- voice ------------------------------------------------------------
@@ -97,7 +97,7 @@ const long = 'x'.repeat(120);
 assert.equal(originPresentation({ text: '[voice] short', fromSystem: 'voice' })?.subtitle, 'short');
 
 // --- wake: a2a / subagent / job -------------------------------------
-const answerText = '[agent answer] hans has answered the question you sent to session main …';
+const answerText = '[agent answer] ada has answered the question you sent to session main …';
 {
   const p = originPresentation({
     text: answerText,
@@ -105,12 +105,12 @@ const answerText = '[agent answer] hans has answered the question you sent to se
   });
   assert.equal(p?.kind, 'a2a');
   assert.equal(p?.label, 'agent answer');
-  assert.equal(p?.subtitle, 'hans');
+  assert.equal(p?.subtitle, 'ada');
   assert.equal(p?.detail, 'call_9');
 }
-assert.equal(originPresentation({ text: answerText, fromSystem: 'a2a' })?.subtitle, 'hans');
+assert.equal(originPresentation({ text: answerText, fromSystem: 'a2a' })?.subtitle, 'ada');
 
-const subText = "[subagent attention] Task 'task_7' (sub-agent 'hans', session …) finished";
+const subText = "[subagent attention] Task 'task_7' (sub-agent 'ada', session …) finished";
 {
   const p = originPresentation({
     text: subText,
@@ -168,11 +168,11 @@ assert.equal(originGlyphLabel('').label, 'unknown');
 assert.equal(workRequesterLabel(undefined), '');
 assert.equal(workRequesterLabel({ human: true }), 'you');
 assert.equal(workRequesterLabel({ voiceCall: 'c1' }), 'voice');
-assert.equal(workRequesterLabel({ agent: 'lisa', session: 'main' }), 'from lisa');
+assert.equal(workRequesterLabel({ agent: 'bea', session: 'main' }), 'from bea');
 
-assert.equal(workArrivingLabel('a2a', { agent: 'lisa' }), 'answer from lisa arriving');
+assert.equal(workArrivingLabel('a2a', { agent: 'bea' }), 'answer from bea arriving');
 assert.equal(workArrivingLabel('a2a', undefined), 'agent answer arriving');
-assert.equal(workArrivingLabel('subagent', { agent: 'hans' }), 'sub-agent result arriving');
+assert.equal(workArrivingLabel('subagent', { agent: 'ada' }), 'sub-agent result arriving');
 assert.equal(workArrivingLabel('job', undefined), 'video arriving');
 assert.equal(workArrivingLabel(undefined, undefined), 'result arriving');
 

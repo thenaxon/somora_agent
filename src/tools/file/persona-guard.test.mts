@@ -8,9 +8,9 @@ import { backupPersonaFile, personaFileOf } from './persona-guard.ts';
 
 const home = process.env.SOMORA_HOME!;
 assert.ok(home && !home.endsWith('/.somora'));
-assert.deepEqual(personaFileOf(join(home, 'agents', 'hans', 'AGENTS.md')), { agent: 'hans', file: 'AGENTS.md' });
-assert.equal(personaFileOf(join(home, 'agents', 'hans', 'memory', 'x.md')), null);
-assert.equal(personaFileOf(join(home, 'agents', 'hans', 'sessions', 'main.jsonl')), null);
+assert.deepEqual(personaFileOf(join(home, 'agents', 'ada', 'AGENTS.md')), { agent: 'ada', file: 'AGENTS.md' });
+assert.equal(personaFileOf(join(home, 'agents', 'ada', 'memory', 'x.md')), null);
+assert.equal(personaFileOf(join(home, 'agents', 'ada', 'sessions', 'main.jsonl')), null);
 assert.equal(personaFileOf('/tmp/AGENTS.md'), null);
 // no file yet → no backup
 const dir = join(home, 'agents', 'guard-target'); await mkdir(dir, { recursive: true });

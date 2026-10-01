@@ -89,7 +89,7 @@ export async function applyPromote(args: {
   ctx: ActionContext;
 }): Promise<CandidateOutcome> {
   const { candidate, decision, ctx } = args;
-  const wikiPath = decision.slug; // e.g. "personen/luca"
+  const wikiPath = decision.slug; // e.g. "personen/leo"
   const wikiFileAbs = join(ctx.wikiAbs, `${wikiPath}.md`);
 
   // Build the new wiki page content.

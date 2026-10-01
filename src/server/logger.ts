@@ -41,7 +41,7 @@ const isTty = Boolean(process.stdout.isTTY) && process.env.SOMORA_LOG_TTY !== '0
 // Pre-fix behavior: filename was chosen exactly once at module load
 // (`new Date().toISOString().slice(0,10)`), so an overnight server
 // kept writing 2026-05-14 events into `server-2026-05-13.log` until
-// restart. Hans 2026-05-14 forensics report.
+// restart. Ada 2026-05-14 forensics report.
 //
 // stdout target is ONLY added when stdout is a TTY (running
 // `npm run dev:server` in a terminal). When stdout is a pipe — e.g.

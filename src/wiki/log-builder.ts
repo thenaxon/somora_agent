@@ -6,7 +6,7 @@
 //   ## 2026-05-08
 //
 //   ### Promoted
-//   - [[personen/anna]] aus <agent>/luca (initial)
+//   - [[personen/anna]] aus <agent>/leo (initial)
 //
 //   ### Updated
 //   - [[personen/anna]] (Alter 8 → 9, source: <agent>-session)

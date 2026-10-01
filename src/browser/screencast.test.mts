@@ -52,8 +52,8 @@ test('the registry keys hubs per window: a process change only closes the window
     context: () => ({ newCDPSession: async () => Object.assign(new EventEmitter(), { send: async () => {}, detach: async () => {} }) }),
   });
   const pages = new Map<string, { tabId: string; page: unknown; generation: number }>([
-    ['profile:team@hans|t1', { tabId: 't1', page: fakePage(), generation: 1 }],
-    ['profile:team@lisa|t2', { tabId: 't2', page: fakePage(), generation: 1 }],
+    ['profile:team@ada|t1', { tabId: 't1', page: fakePage(), generation: 1 }],
+    ['profile:team@bea|t2', { tabId: 't2', page: fakePage(), generation: 1 }],
   ]);
   const listeners: Array<(id: string) => void> = [];
   const service = {
@@ -68,12 +68,12 @@ test('the registry keys hubs per window: a process change only closes the window
   const closed: string[] = [];
   const socket = (name: string): ViewerSocket => ({ send: () => {}, buffered: () => 0, close: () => closed.push(name) });
   const registry = new ScreencastRegistry(service as never);
-  await registry.attach('profile:team@hans', 't1', socket('hans'));
-  await registry.attach('profile:team@lisa', 't2', socket('lisa'));
-  // lisa's tab disappears; the change carries the PROCESS id, both windows are checked
-  pages.delete('profile:team@lisa|t2');
+  await registry.attach('profile:team@ada', 't1', socket('ada'));
+  await registry.attach('profile:team@bea', 't2', socket('bea'));
+  // bea's tab disappears; the change carries the PROCESS id, both windows are checked
+  pages.delete('profile:team@bea|t2');
   listeners[0]!('profile:team');
   await new Promise((r) => setImmediate(r));
-  assert.deepEqual(closed, ['lisa'], 'hans keeps his stream');
+  assert.deepEqual(closed, ['bea'], 'ada keeps his stream');
   await registry.shutdown();
 });

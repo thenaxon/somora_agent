@@ -23,7 +23,7 @@
 //      gain a recoverable session.
 //   4. Log loudly so future forensics see the auto-heal in server logs.
 //
-// Reference incident: jarvis 2026-05-13 — claude-cli subprocess died
+// Reference incident: eve 2026-05-13 — claude-cli subprocess died
 // silently 7 seconds after a successful `dream_get` tool invocation.
 // No error logged, no turn_end, session hung for 8 hours until user
 // noticed. See ~/somoraworkspace/somora_feedback/2026-05-13_claude-cli-engine-silent-crash-orphan-tool-call.md

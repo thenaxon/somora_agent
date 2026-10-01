@@ -1,9 +1,9 @@
 // Sanitize assistant_message text against model-emitted XML-style
 // tool-call markup.
 //
-// Background — 2026-05-17 Rene saw a "wall of text" with literal
+// Background — 2026-05-17 the operator saw a "wall of text" with literal
 // `<tool_call>{"name": "...", ...}</tool_call>` and
-// `<tool_response>...</tool_response>` blocks in the chat UI. Lisa
+// `<tool_response>...</tool_response>` blocks in the chat UI. Bea
 // originally hypothesised that the <context-from-other-engines>
 // replay block was leaking; verifying against src/engine/replay.ts
 // proved that path structurally cannot inject tool-call XML (replays

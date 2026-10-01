@@ -2,7 +2,7 @@
 //
 // The tile only exists when it is — the third gate of an opt-in
 // feature, next to the 503 on the route and the empty agent list
-// (Rene 2026-09-11: "voice icon im /web soll natürlich nur erscheinen
+// (the operator 2026-09-11: "voice icon im /web soll natürlich nur erscheinen
 // wenn voice konfiguriert ist das selbe muster wie bei den anderen").
 import { useEffect, useState } from 'react';
 

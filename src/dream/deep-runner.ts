@@ -599,7 +599,7 @@ async function pageTooBig(ctx: ActionContext, wikiPath: string): Promise<{ text:
 }
 
 /**
- * The size guard (Rene, 2026-09-29: "so große Seiten sollten nie
+ * The size guard (the operator, 2026-09-29: "so große Seiten sollten nie
  * entstehen"). A page over `wiki.deep.maxPageChars` takes no more
  * content: Deep is asked once more to write the note as a SUB-PAGE
  * under the page — `<page>/<sub-topic>` with its own current state and

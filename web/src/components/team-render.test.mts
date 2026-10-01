@@ -24,29 +24,29 @@ const file: TeamFileDto = {
   principal: { name: 'Ada' },
   agents: {
     atlas: { reports_to: 'principal' },
-    hans: { reports_to: 'atlas' },
-    lisa: { reports_to: 'atlas' },
-    hans2: { reports_to: 'hans' },
+    ada: { reports_to: 'atlas' },
+    bea: { reports_to: 'atlas' },
+    ada2: { reports_to: 'ada' },
   },
 };
 
 t('chartOrder walks parent before children', () =>
-  assert(chartOrder(file.agents).map((o) => `${o.name}:${o.depth}`).join(',') === 'atlas:0,hans:1,hans2:2,lisa:1', JSON.stringify(chartOrder(file.agents))));
-t('isSelfOrDescendant: self', () => assert(isSelfOrDescendant(file.agents, 'hans', 'hans'), 'self'));
-t('isSelfOrDescendant: grandchild', () => assert(isSelfOrDescendant(file.agents, 'atlas', 'hans2'), 'hans2 under atlas'));
-t('isSelfOrDescendant: sibling is not', () => assert(!isSelfOrDescendant(file.agents, 'hans', 'lisa'), 'lisa not under hans'));
-t('reparent refuses a cycle', () => assert(reparent(file, 'atlas', 'hans2') === null, 'atlas under its own grandchild'));
+  assert(chartOrder(file.agents).map((o) => `${o.name}:${o.depth}`).join(',') === 'atlas:0,ada:1,ada2:2,bea:1', JSON.stringify(chartOrder(file.agents))));
+t('isSelfOrDescendant: self', () => assert(isSelfOrDescendant(file.agents, 'ada', 'ada'), 'self'));
+t('isSelfOrDescendant: grandchild', () => assert(isSelfOrDescendant(file.agents, 'atlas', 'ada2'), 'ada2 under atlas'));
+t('isSelfOrDescendant: sibling is not', () => assert(!isSelfOrDescendant(file.agents, 'ada', 'bea'), 'bea not under ada'));
+t('reparent refuses a cycle', () => assert(reparent(file, 'atlas', 'ada2') === null, 'atlas under its own grandchild'));
 t('reparent to a sibling works', () => {
-  const r = reparent(file, 'lisa', 'hans');
-  assert(r !== null && r.agents.lisa!.reports_to === 'hans', 'lisa under hans');
+  const r = reparent(file, 'bea', 'ada');
+  assert(r !== null && r.agents.bea!.reports_to === 'ada', 'bea under ada');
 });
 t('reparent to principal works', () => {
-  const r = reparent(file, 'hans2', 'principal');
-  assert(r !== null && r.agents.hans2!.reports_to === 'principal', 'hans2 at top');
+  const r = reparent(file, 'ada2', 'principal');
+  assert(r !== null && r.agents.ada2!.reports_to === 'principal', 'ada2 at top');
 });
 t('removeFromChart lifts reports to the parent', () => {
-  const r = removeFromChart(file, 'hans');
-  assert(!r.agents.hans && r.agents.hans2!.reports_to === 'atlas', JSON.stringify(r.agents));
+  const r = removeFromChart(file, 'ada');
+  assert(!r.agents.ada && r.agents.ada2!.reports_to === 'atlas', JSON.stringify(r.agents));
 });
 t('orphan still listed by chartOrder', () => {
   const o = chartOrder({ a: { reports_to: 'ghost' } });

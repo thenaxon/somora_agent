@@ -6,7 +6,7 @@
 //   requires:
 //     bins: ["gog>=0.30", "jq"]
 //
-// Why: on the Lucy host TWO gog installs coexisted (v0.12 via linuxbrew,
+// Why: on the Partner host TWO gog installs coexisted (v0.12 via linuxbrew,
 // v0.34 via release tarball) with incompatible keyring layouts. somora's
 // existence-only check said "gog present ✓" and the wrong one got used —
 // an hour of misdiagnosis. With a constraint the skill goes unavailable

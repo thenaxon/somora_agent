@@ -8,7 +8,7 @@
 // so brew/cargo/go/pip-user installs are invisible to both `which`
 // and `exec`-spawned commands.
 //
-// Hans hit this 2026-05-09: gog installed via linuxbrew was tagged
+// Ada hit this 2026-05-09: gog installed via linuxbrew was tagged
 // `available: false` ("missing bin: gog") in skill metadata, AND
 // `exec({command:"gog ..."})` failed with command-not-found. Two
 // distinct symptoms, one root cause — both fixed here by:
@@ -33,7 +33,7 @@
 //   ~/.npm-global/bin                         npm install -g (non-root prefix)
 //   ~/bin                                     historical user bin
 //
-// Hans hit the npm-global gap 2026-05-11: he ran `node bin/somora.mjs ...`
+// Ada hit the npm-global gap 2026-05-11: he ran `node bin/somora.mjs ...`
 // as a workaround because the globally-installed `somora` CLI at
 // ~/.npm-global/bin/somora was unreachable from agent exec calls — same
 // failure mode as the 2026-05-09 gog/Linuxbrew case.

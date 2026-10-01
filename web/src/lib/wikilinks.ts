@@ -25,7 +25,7 @@ const CODE_SPAN_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)/g;
  * from the server, which owns Obsidian's matching rules.
  *
  * Code spans are copied through untouched. The wiki documents its own
- * syntax — pages carry literal `` `[[personen/rene]]` `` as an example
+ * syntax — pages carry literal `` `[[personen/the operator]]` `` as an example
  * — and rewriting those both breaks the example and leaves raw markdown
  * visible inside the code span. Ten such spans on the reference wiki as
  * of 2026-07-22.

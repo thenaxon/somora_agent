@@ -195,7 +195,7 @@ export function builderToolPredicate(
  * The plan follows the pin: a session that started without a project
  * has its plan at the workspace default; when a project with a folder
  * is pinned later, the plan path moves into that folder and an already
- * written plan file moves with it (Rene, 2026-09-23: "kann er nur im
+ * written plan file moves with it (the operator, 2026-09-23: "kann er nur im
  * somora workdir anlegen?!"). A path set explicitly (PATCH, dispatch
  * plan_path) is never moved.
  */

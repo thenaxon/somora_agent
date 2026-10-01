@@ -1,6 +1,6 @@
 // Keep the phone's screen awake while the PWA is in use.
 //
-// Rene, 2026-09-11: "ich hab ein aktuelles iphone" — the mobile client
+// the operator, 2026-09-11: "ich hab ein aktuelles iphone" — the mobile client
 // should stop the display from going to sleep mid-conversation.
 //
 // Three facts shape this hook:

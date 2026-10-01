@@ -4,7 +4,7 @@
 // (docs/agents.md); the web editor keeps the last five versions when a
 // person saves. The file tools did not — a chat agent wrote one byte
 // over another agent's AGENTS.md in the hardening test (2026-09-23) and
-// the persona was gone. Rene's rule since then: a persona changes only
+// the persona was gone. The operator's rule since then: a persona changes only
 // with a backup. So file_write and file_patch copy the current file to
 // `<file>.bak-<timestamp>` first (last five kept, like the editor).
 

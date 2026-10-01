@@ -43,7 +43,7 @@ it reads `people/`, `projects/`, `knowledge/`, `places/`.
 Three reasons memory and wiki need to be separate:
 
 **Multi-agent.** Each agent has its own conversation history and its
-own atomic observations. But a fact like "Lisa is the user's spouse"
+own atomic observations. But a fact like "Bea is the user's spouse"
 is not agent-private — it's something every agent should know. The
 wiki is where shared facts live.
 
@@ -120,13 +120,13 @@ two dogs. This page bundles the key people …
 
 ## Eigenschaften
 
-- **Spouse:** Dr. Lisa Klein (* 03.02.1984)
+- **Spouse:** Dr. Bea Klein (* 03.02.1984)
 - **Sister:** Eva Klein (* 08.12.1973)
 - …
 
 ## Zeitleiste
 
-- 1941-04-30 — Hans Klein born
+- 1941-04-30 — Ada Klein born
 - 1973-12-08 — Eva Klein born
 - …
 
@@ -165,7 +165,7 @@ shape.
 ### Wikilinks
 
 Use Obsidian's `[[wiki-path]]` syntax for cross-references between
-pages. Example: `Lisa ist die [[personen/familie-klein|Ehefrau]]`.
+pages. Example: `Bea ist die [[personen/familie-klein|Ehefrau]]`.
 
 Wikilinks are indexed as plain text (the brackets are tokenized away),
 so a search for `garten` finds pages mentioning `[[orte/garten]]`. They
@@ -271,7 +271,7 @@ twin. Names that already exist in several folders are noted in the
 structure file for the migration.
 
 A page whose name extends an entity page's name — a note filed as
-`enovom-kapitalruecklage` while `unternehmen/enovom` exists — is
+`acme-kapitalruecklage` while `unternehmen/acme` exists — is
 usually a detail of that entity: Deep is asked again with the entity
 page in full and merges the note into it, unless it insists the page
 is a thing of its own.

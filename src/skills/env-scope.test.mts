@@ -2,7 +2,7 @@
 //
 // Run: npx tsx src/skills/env-scope.test.mts
 //
-// Design (gog friction report + Rene's decision): env vars declared by
+// Design (gog friction report + the operator's decision): env vars declared by
 // any skill are stripped from exec children by default; a command that
 // visibly invokes a skill's declared bin gets exactly that skill's vars
 // re-injected. Token-scan (not first-token-only) so compound commands
@@ -31,7 +31,7 @@ const SKILLS = [
 
 const ENV = {
   GOG_KEYRING_PASSWORD: 'gog-pass',
-  GOG_ACCOUNT: 'cornelia@siegl.at',
+  GOG_ACCOUNT: 'clara@muster.example',
   OP_SERVICE_ACCOUNT_TOKEN: 'op-token',
   ORPHAN_SECRET: 'orphan',
   UNRELATED: 'stay',
@@ -52,7 +52,7 @@ const ENV = {
 {
   const s = computeSkillEnvScope('gog drive search "quarterly report"', SKILLS, ENV);
   check('matched gog', s.matchedSkills.length === 1 && s.matchedSkills[0] === 'gog');
-  check('gog vars injected', s.injectEnv.GOG_KEYRING_PASSWORD === 'gog-pass' && s.injectEnv.GOG_ACCOUNT === 'cornelia@siegl.at');
+  check('gog vars injected', s.injectEnv.GOG_KEYRING_PASSWORD === 'gog-pass' && s.injectEnv.GOG_ACCOUNT === 'clara@muster.example');
   check('op var NOT injected', !('OP_SERVICE_ACCOUNT_TOKEN' in s.injectEnv));
   check(
     'strip set covers all declared vars',

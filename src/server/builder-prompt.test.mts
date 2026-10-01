@@ -43,10 +43,10 @@ assert.match(env, /Git repository: yes/);
 assert.match(env, /Today: 2026-09-23/);
 
 assert.equal(
-  renderBuilderIdentity({ name: 'rudi', description: 'Builds things.' } as never),
-  'You are `rudi`: Builds things.',
+  renderBuilderIdentity({ name: 'dan', description: 'Builds things.' } as never),
+  'You are `dan`: Builds things.',
 );
-assert.equal(renderBuilderIdentity({ name: 'rudi', description: '' } as never), 'You are `rudi`.');
+assert.equal(renderBuilderIdentity({ name: 'dan', description: '' } as never), 'You are `dan`.');
 
 // the harness text carries the sentences weak models need
 for (const must of [
@@ -74,8 +74,8 @@ console.log('builder-prompt.test: ok');
 // The orderer survives the meta round trip and is absent for a person's session.
 {
   const { readBuilderState } = await import('./builder-session.ts');
-  const st = readBuilderState({ builderMode: 'unattended', builderPhase: 'plan', builderOrderer: { agent: 'naxon', session: 's1' } })!;
-  assert.deepEqual(st.orderer, { agent: 'naxon', session: 's1' });
+  const st = readBuilderState({ builderMode: 'unattended', builderPhase: 'plan', builderOrderer: { agent: 'nova', session: 's1' } })!;
+  assert.deepEqual(st.orderer, { agent: 'nova', session: 's1' });
   assert.equal(readBuilderState({ builderMode: 'attended', builderPhase: 'plan' })!.orderer, undefined);
   assert.equal(readBuilderState({ builderMode: 'attended', builderPhase: 'plan', builderOrderer: { agent: '' } })!.orderer, undefined);
 }

@@ -2,7 +2,7 @@
 //
 // Run: npx tsx src/cli/systemd-unit.test.mts
 //
-// Regression (Lucy report): `somora update` rebakes the systemd unit from
+// Regression (Partner report): `somora update` rebakes the systemd unit from
 // a static template and silently dropped operator-added `Environment=` /
 // `EnvironmentFile=` lines — most damagingly `SOMORA_HOST=0.0.0.0`, which
 // left the server bound to the loopback default and locked out

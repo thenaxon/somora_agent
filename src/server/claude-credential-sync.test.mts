@@ -138,7 +138,7 @@ const cleanups: string[] = [];
   check('somora-newer backup', readFileSync(`${user}.somora-prev`, 'utf8') === cred(4000, 'user-old'));
 }
 
-// ── corrupt somora side loses even with newer mtime (Lucy nulled-file) ─
+// ── corrupt somora side loses even with newer mtime (Partner nulled-file) ─
 {
   const { user, somora } = freshDirs();
   cleanups.push(join(user, '..', '..'));

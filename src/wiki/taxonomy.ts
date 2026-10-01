@@ -1,6 +1,6 @@
 // The shipped wiki folder template — one per wiki language.
 //
-// Why (Rene, 2026-09-29): Deep used to be told "pick personen / projekte
+// Why (the operator, 2026-09-29): Deep used to be told "pick personen / projekte
 // / wissen … or invent a new folder", saw the first 4 KB of index.md as
 // its only map, and after five months a wiki had 40+ folders, a
 // 300-page `wissen` catch-all, 15 page names living in several folders

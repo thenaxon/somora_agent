@@ -164,7 +164,7 @@ export class VoiceCallManager {
    *
    * The derived voice self lives nowhere on disk — it is built per call
    * from the persona plus `agent.yaml voice:` — so without this there
-   * is no way to read what the model is actually told (Rene,
+   * is no way to read what the model is actually told (the operator,
    * 2026-09-12: "wo lebt jetzt diese abgeleitete version … ich würd das
    * gerne sehen"). Same idea as prompt-preview for a normal turn.
    */
@@ -292,7 +292,7 @@ export class VoiceCallManager {
     // One person, one somora, one conversation. A second window used to
     // open a second paid connection that wrote into the same session
     // alongside the first; nothing stopped it, and nothing said so
-    // either (Rene, 2026-09-12). The running call keeps the line.
+    // either (the operator, 2026-09-12). The running call keeps the line.
     const running = [...this.calls.values()].find((c) => c.call.snapshot().state !== 'closed');
     if (running) {
       const t = running.call.snapshot().target;

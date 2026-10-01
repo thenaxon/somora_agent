@@ -1,9 +1,9 @@
 // REM post-extraction dedup — mechanical filter, no LLM involved.
 //
-// Why this exists (buffet's report 2026-07-06): the extractor prompt
+// Why this exists (finn's report 2026-07-06): the extractor prompt
 // already hands the worker model every existing memory note plus the
 // wiki context and asks it to propose only NEW facts. Small worker
-// models ignore that instruction — buffet's weekly monitoring sessions
+// models ignore that instruction — finn's weekly monitoring sessions
 // produced the same portfolio findings for weeks, 26/27 findings in one
 // review round were repeats, several with byte-identical slugs. The fix
 // is to stop trusting the prompt and enforce dedup in code, AFTER
@@ -30,7 +30,7 @@
 // memory_delete against slugs that DON'T exist — invented targets would
 // otherwise fail only at dream_apply time (2026-07-23 report).
 //
-// Scope note: workspace files (e.g. buffet's finance/monitoring/) are
+// Scope note: workspace files (e.g. finn's finance/monitoring/) are
 // NOT visible here — that would be the deferred `memory.sourceOfTruth`
 // design (option (c) in the report). This pass covers memory + wiki.
 
@@ -140,7 +140,7 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
   // design — but small worker models sometimes invent a slug instead
   // (2026-07-23 report: a wanted wiki-page update surfaced as
   // memory_edit against the synthetic slug
-  // `wiki-hardware-rene-llm-hardware-upgrade-2026`, which exists
+  // `wiki-hardware-the operator-llm-hardware-upgrade-2026`, which exists
   // nowhere). Such findings explode only later at dream_apply time,
   // which is exactly when agents start improvising. Catch them here:
   //   - memory_edit with proposed_content → downgrade to memory_write
@@ -220,7 +220,7 @@ export async function applyRemDedup(args: RemDedupArgs): Promise<RemDedupResult>
         : null;
     // A write onto an existing MEMORY note is not automatically a
     // duplicate: the worker reuses the obvious slug when the person
-    // corrects something ("luca-alter" again, now with the new age),
+    // corrects something ("leo-alter" again, now with the new age),
     // and dropping it threw the correction away unseen. If the note
     // does not already say it, keep the finding under its own slug —
     // nothing is overwritten, and Deep merges both next run.

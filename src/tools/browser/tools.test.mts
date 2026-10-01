@@ -1,5 +1,5 @@
 // The MCP tool child registers tools from `inputSchema.shape` — a plain
-// ZodObject. hans's first live call (2026-09-08) reached the tool with
+// ZodObject. ada's first live call (2026-09-08) reached the tool with
 // `op` stripped because the schema was a discriminated union. Pin it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

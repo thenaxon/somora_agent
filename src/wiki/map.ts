@@ -181,8 +181,8 @@ export function noteNewPage(map: WikiMap, wikiPath: string, purposeIfNew?: { pur
 export type PromoteTargetCheck =
   | { kind: 'ok'; folder: string; describe?: { path: string; purpose: string; origin: 'template' | 'deep' } }
   | { kind: 'sameName'; target: string; others: string[] }
-  /** The new name extends an entity page's name (`enovom-kapitalruecklage`
-   *  next to `unternehmen/enovom`): usually a detail of that entity. */
+  /** The new name extends an entity page's name (`acme-kapitalruecklage`
+   *  next to `unternehmen/acme`): usually a detail of that entity. */
   | { kind: 'subTopic'; target: string; prefix: string }
   | { kind: 'unknownFolder'; folder: string }
   | { kind: 'tooDeep'; folder: string };
@@ -200,7 +200,7 @@ export function checkPromoteTarget(map: WikiMap, decision: { slug: string; subfo
   const existing = map.folders.find((f) => f.path === folder);
   if (existing) {
     // An existing folder nobody has described yet is no home either
-    // (2026-09-29, Conny's wiki: Deep filed a new pet page into the
+    // (2026-09-29, Clara's wiki: Deep filed a new pet page into the
     // grown `tiere/` although the template has `privat/` for pets) —
     // unless the model describes it, which fills the gap for good.
     if (!existing.purpose) {
@@ -224,9 +224,9 @@ const ENTITY_TOPS = new Set(['personen', 'people', 'unternehmen', 'companies', '
 
 /**
  * An entity page whose name the new page's name extends: `<name>-…`
- * with `<name>` at least four characters (2026-09-29, Rene: the note
- * on enovom's capital reserve became `projekte/enovom-kapitalruecklage-…`
- * while `unternehmen/enovom` existed). The longest such name wins. Null
+ * with `<name>` at least four characters (2026-09-29, the operator: the note
+ * on acme's capital reserve became `projekte/acme-kapitalruecklage-…`
+ * while `unternehmen/acme` existed). The longest such name wins. Null
  * when there is none — a page in a knowledge or event folder never
  * counts, its name is a topic, not an entity.
  */

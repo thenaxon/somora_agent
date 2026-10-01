@@ -113,7 +113,7 @@ async function run(f: Finding, hits: FakeHit[]) {
     finding(10, 'star-wars-tetris', 'Testprojekt: Star-Wars-Tetris in TypeScript, Sprite-Sheet liegt unter assets/.'),
     // Fused 0.98 = wiki top hit (1.0 × 1.4 boost … capped in the mock);
     // the embedding says 0.55 — same corpus, different topic.
-    [hit('wiki', 'projekte/urlaubsplaner-conny', 'Urlaubsplaner für Conny: Kalenderansicht, iCal-Export.', 0.55, 0.98)],
+    [hit('wiki', 'projekte/urlaubsplaner-clara', 'Urlaubsplaner für Clara: Kalenderansicht, iCal-Export.', 0.55, 0.98)],
   );
   check('rank 0.98 with cosine 0.55 → not flagged', f?.likely_duplicate !== true, JSON.stringify(f));
   check('… no duplicate_of', f?.duplicate_of === undefined);
@@ -133,13 +133,13 @@ async function run(f: Finding, hits: FakeHit[]) {
   // Best-by-cosine wins, not best-by-rank: the ranker put an unrelated
   // wiki page first (0.98) and the real duplicate second (0.85).
   const f = await run(
-    finding(12, 'swarmui-docker', 'SwarmUI läuft als Docker-Container auf cerebro.'),
+    finding(12, 'swarmui-docker', 'SwarmUI läuft als Docker-Container auf gpu-box.'),
     [
       hit('wiki', 'bugs/docker-api-unauth-2375', 'Docker API auf 2375 ohne Auth erreichbar.', 0.62, 0.98),
-      hit('memory', 'swarmui-cerebro', 'SwarmUI als Docker-Container auf cerebro.', 0.94, 0.85),
+      hit('memory', 'swarmui-gpu-box', 'SwarmUI als Docker-Container auf gpu-box.', 0.94, 0.85),
     ],
   );
-  check('picks the closest embedding, not the top rank', f?.duplicate_of?.startsWith('memory:swarmui-cerebro@') === true, f?.duplicate_of ?? '');
+  check('picks the closest embedding, not the top rank', f?.duplicate_of?.startsWith('memory:swarmui-gpu-box@') === true, f?.duplicate_of ?? '');
 }
 {
   // BM25-only hits (no embedding) can't be judged → never flagged.
@@ -178,7 +178,7 @@ async function run(f: Finding, hits: FakeHit[]) {
       hit(
         'wiki',
         'projekte/gmp-desk',
-        'Projekt GMP Advisory Desk: warten auf Renes GO für Qwen3. Datensatz in Arbeit.',
+        'Projekt GMP Advisory Desk: warten auf Maxens GO für Qwen3. Datensatz in Arbeit.',
         0.9,
       ),
     ],
@@ -195,7 +195,7 @@ async function run(f: Finding, hits: FakeHit[]) {
 {
   const f = await run(
     finding(3, 'gmp-concept-v2', 'Konzept v2 beschlossen.'),
-    [hit('wiki', 'logs/2026-07', 'promoted gmp-concept-v2 from hans', 0.95)],
+    [hit('wiki', 'logs/2026-07', 'promoted gmp-concept-v2 from ada', 0.95)],
   );
   check('logs/ match does NOT flag', f?.likely_duplicate !== true, JSON.stringify(f));
 }
@@ -223,23 +223,23 @@ async function run(f: Finding, hits: FakeHit[]) {
 // never reached the review.
 {
   const notes: Record<string, string> = {
-    'luca-alter': '---\nname: luca-alter\n---\nLuca ist **8 Jahre** alt.\n',
+    'leo-alter': '---\nname: leo-alter\n---\nLeo ist **8 Jahre** alt.\n',
   };
   const mgr = { search: async () => [], getNote: async (slug: string) => (notes[slug] ? { path: `/x/${slug}.md`, markdown: notes[slug] } : null) };
   const dedup = (findings: Finding[]) =>
-    applyRemDedup({ agent: 'test', dreamId: 'd2', findings, existingMemorySlugs: ['luca-alter'], loadedWikiSlugs: ['personen-root'], mgr: mgr as never, config: CONFIG });
+    applyRemDedup({ agent: 'test', dreamId: 'd2', findings, existingMemorySlugs: ['leo-alter'], loadedWikiSlugs: ['personen-root'], mgr: mgr as never, config: CONFIG });
 
-  const corrected = await dedup([finding(1, 'luca-alter', 'Luca ist seit dem 3. September 9 Jahre alt.')]);
+  const corrected = await dedup([finding(1, 'leo-alter', 'Leo ist seit dem 3. September 9 Jahre alt.')]);
   check('correction on an existing slug is KEPT', corrected.findings.length === 1, JSON.stringify(corrected));
-  check('under its own slug, so nothing is overwritten', /^luca-alter-update-\d{8}$/.test(corrected.findings[0]?.slug ?? ''), corrected.findings[0]?.slug);
+  check('under its own slug, so nothing is overwritten', /^leo-alter-update-\d{8}$/.test(corrected.findings[0]?.slug ?? ''), corrected.findings[0]?.slug);
   check('still a memory_write', corrected.findings[0]?.action === 'memory_write');
   check('the reason says why', /already exists and says something else/.test(corrected.findings[0]?.reason ?? ''));
   check('not counted as dropped', corrected.dropped === 0, `${corrected.dropped}`);
 
-  const repeat = await dedup([finding(2, 'luca-alter', 'Luca ist 8 Jahre alt.')]);
+  const repeat = await dedup([finding(2, 'leo-alter', 'Leo ist 8 Jahre alt.')]);
   check('a real repeat is still dropped', repeat.findings.length === 0 && repeat.dropped === 1, JSON.stringify(repeat));
 
-  const two = await dedup([finding(3, 'luca-alter', 'Luca ist 9.'), finding(4, 'luca-alter', 'Luca geht in die 4. Klasse.')]);
+  const two = await dedup([finding(3, 'leo-alter', 'Leo ist 9.'), finding(4, 'leo-alter', 'Leo geht in die 4. Klasse.')]);
   const slugs = two.findings.map((f) => f.slug);
   check('two corrections in one run get two different slugs', slugs.length === 2 && new Set(slugs).size === 2, slugs.join(', '));
 

@@ -115,7 +115,7 @@ export interface VoiceCallDeps {
    *
    * Both, or the chat window tells two different stories: during a call
    * it showed only what the consult turn published, and a reload then
-   * added what had been on disk all along (Rene, 2026-09-12: "es war
+   * added what had been on disk all along (the operator, 2026-09-12: "es war
    * vorher anders gerendert … erst nach einem browser reload so").
    * Whatever is written is published.
    *
@@ -212,7 +212,7 @@ export class VoiceCall {
    * turn that never got an answer, REM and recall saw every question
    * twice (once as said, once as asked), and a sentence written outside
    * the session lock could land inside a running turn and break its
-   * pair. Rene, 2026-09-12: "es ist viel viel wartbarer code".
+   * pair. The operator, 2026-09-12: "es ist viel viel wartbarer code".
    *
    * What a session records now is exactly what A2A records: the
    * question this call put to the agent, and the agent's answer. The
@@ -235,8 +235,8 @@ export class VoiceCall {
    *
    * The old agent's last sentence is still in the browser's playback
    * queue when the new provider session opens. Announcing the new name
-   * at that moment makes lisa finish her sentence under hans's name and
-   * colour (Rene, 2026-09-12: "es spricht aber noch Lisa"). The call
+   * at that moment makes bea finish her sentence under ada's name and
+   * colour (the operator, 2026-09-12: "es spricht aber noch Bea"). The call
    * says who is on the line only once that is true; the browser adds
    * its own queue to the same question.
    */
@@ -281,8 +281,8 @@ export class VoiceCall {
    * INCLUDING the one already on the line.
    *
    * Filtering itself out made a whole dimension unreachable: an agent
-   * has many sessions, and "put me into your cerebrocraft session" was
-   * impossible while the tool only offered other agents (Rene,
+   * has many sessions, and "put me into your craftbox session" was
+   * impossible while the tool only offered other agents (the operator,
    * 2026-09-12). Same agent plus a different session is a move like any
    * other; the voice stays the same, the conversation does not.
    */
@@ -295,8 +295,8 @@ export class VoiceCall {
    *
    * The voice self knows which session it sits in, and on a handover it
    * passes that name along unless something stops it — which is how
-   * asking for naxon landed in naxon's "cerebrocraft", because lisa had
-   * been in hers (Rene, 2026-09-12: "es muss nicht immer zwingend der
+   * asking for nova landed in nova's "craftbox", because bea had
+   * been in hers (the operator, 2026-09-12: "es muss nicht immer zwingend der
    * fall sein das der andere agent überhaupt eine session hat die so
    * benannt ist"). Nobody said that name, so it is not a wish.
    *
@@ -544,7 +544,7 @@ export class VoiceCall {
         this.announced = { ...from };
         this.setState('connecting');
         const recovered = await this.start();
-        // The reason is the useful part: "there is main and cerebrocraft"
+        // The reason is the useful part: "there is main and craftbox"
         // is what lets the caller pick, where "that did not work" makes
         // them guess again.
         void recovered
@@ -598,8 +598,8 @@ export class VoiceCall {
    * After a handover the provider session is a different object. The
    * route used to hold the one it was given at the start, so once the
    * call continued as another agent the microphone was still feeding a
-   * closed session: the window switched to lisa, lisa heard nothing,
-   * and the call had to be restarted (Rene, 2026-09-12). Anything that
+   * closed session: the window switched to bea, bea heard nothing,
+   * and the call had to be restarted (the operator, 2026-09-12). Anything that
    * talks to the provider goes through the call, never around it.
    */
   async sendAudio(chunk: { base64: string; rateHz: number }): Promise<void> {
@@ -614,8 +614,8 @@ export class VoiceCall {
    * An answer that came back inside the patience goes to the talking
    * model as a tool result. Handed the raw text, the small local model
    * treated "shortened for the ear" as "leave it out": asked for the
-   * team structure, hans answered with 1239 characters and the voice
-   * spoke 25 (Rene, 2026-09-13). The hand-over announcement always
+   * team structure, ada answered with 1239 characters and the voice
+   * spoke 25 (the operator, 2026-09-13). The hand-over announcement always
    * carried an instruction; the quick path now does too — English,
    * naming the call's language and the persona's sentence budget, the
    * wording still the model's.
@@ -873,7 +873,7 @@ export class VoiceCall {
   /** Wait for a pause (the model not speaking, the caller quiet for a
    *  moment), then have the model read the answer. Never a fixed
    *  sentence: the instruction is English, names the call's language,
-   *  and the wording is the model's (Rene, 2026-09-13). */
+   *  and the wording is the model's (the operator, 2026-09-13). */
   private async announce(question: string, res: ConsultDelivery): Promise<void> {
     const deadline = this.now() + ANNOUNCE_MAX_WAIT_MS;
     while (this.now() < deadline) {
@@ -899,7 +899,7 @@ export class VoiceCall {
     try {
       // deliver: the model may be mid-sentence (its own "still working"
       // after a status check); the announcement is kept for the pause
-      // instead of dropped like a filler (2026-09-13, hans counting to
+      // instead of dropped like a filler (2026-09-13, ada counting to
       // forty went silent while the log said announced).
       await this.session.speak?.(instruction, { deliver: true });
       this.log({ msg: 'voice.consult_announced', consultId: res.consultId, state: res.state, chars: body.length, ...(res.followUp ? { followUp: true } : {}) });

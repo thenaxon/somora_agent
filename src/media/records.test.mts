@@ -86,7 +86,7 @@ await writeRecord(
   rec({
     prompt: 'ein roter Panda',
     modelName: 'other-model',
-    agent: 'hans',
+    agent: 'ada',
     createdAt: '2026-08-20T10:00:00.000Z',
     bytes: 500,
   }),
@@ -94,7 +94,7 @@ await writeRecord(
 await writeRecord(
   rec({
     prompt: 'Koala mit Hut',
-    agent: 'naxon',
+    agent: 'nova',
     session: 'main',
     createdAt: '2026-08-25T10:00:00.000Z',
     bytes: 2000,
@@ -113,7 +113,7 @@ const koalas = await listRecords({ query: 'koala' });
 check('filter: case-insensitive prompt substring', koalas.total === 2, String(koalas.total));
 
 check('filter: by model handle', (await listRecords({ model: 'other-model' })).total === 1);
-check('filter: by agent', (await listRecords({ agent: 'hans' })).total === 1);
+check('filter: by agent', (await listRecords({ agent: 'ada' })).total === 1);
 check('filter: by session', (await listRecords({ session: 'main' })).total === 1);
 check('filter: since is inclusive of later entries', (await listRecords({ since: '2026-08-25' })).total === 2);
 check(
@@ -121,7 +121,7 @@ check(
   (await listRecords({ until: '2026-08-26' })).total === 3,
   String((await listRecords({ until: '2026-08-26' })).total),
 );
-check('filter: combined filters intersect', (await listRecords({ query: 'koala', agent: 'naxon' })).total === 1);
+check('filter: combined filters intersect', (await listRecords({ query: 'koala', agent: 'nova' })).total === 1);
 check('filter: no match returns empty', (await listRecords({ query: 'nichtsdergleichen' })).total === 0);
 
 // Paging reports the unpaged total, so a UI can show "3 of 12".
@@ -157,7 +157,7 @@ check('delete: list shrinks', (await listRecords()).total === 2);
 {
   await writeRecord({
     id: 'vid000000001', kind: 'video', createdAt: '2026-08-28T10:00:00.000Z',
-    prompt: 'ein drehender apfel', modelName: 'ltx', modelId: 'ltx', provider: 'cerebro',
+    prompt: 'ein drehender apfel', modelName: 'ltx', modelId: 'ltx', provider: 'gpu-box',
     specs: {}, path: '/tmp/v.mp4', filename: 'v.mp4', mime: 'video/mp4', bytes: 999,
     durationSec: 5.04, width: 1280, height: 704, linkedTo: [], batchId: 'b2', batchIndex: 0,
   });

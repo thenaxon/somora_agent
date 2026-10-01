@@ -21,7 +21,7 @@ const check = (n: string, c: boolean, d = ''): void => {
 const pages = [
   { wikiPath: 'projekte/somora', markdown: 'x'.repeat(100_000) },
   { wikiPath: 'projekte/klein', markdown: 'y'.repeat(2_000) },
-  { wikiPath: 'infrastruktur/hosts/cerebro', markdown: 'z'.repeat(70_000) },
+  { wikiPath: 'infrastruktur/hosts/gpu-box', markdown: 'z'.repeat(70_000) },
 ];
 const grown = structuralFindings(pages, { migrated: false, templateVersion: 0, oversizedChars: 50_000 }, 1);
 check('grown wiki: exactly one hint, nothing else', grown.length === 1 && grown[0]!.kind === 'not_migrated' && grown[0]!.fix.kind === 'no_op' && /somora wiki migrate/.test(grown[0]!.reason));
@@ -30,7 +30,7 @@ check('template wiki: oversized pages, biggest first, ids continue', mig.length 
 check('template wiki: no hint', !mig.some((f) => f.kind === 'not_migrated'));
 const reply = JSON.stringify({ findings: [
   { kind: 'duplicate_page', affected_pages: ['wissen/a', 'wissen/a-release'], reason: 'same release' },
-  { kind: 'misfiled_page', affected_pages: ['wissen/rene-regel'], reason: 'a rule → regeln' },
+  { kind: 'misfiled_page', affected_pages: ['wissen/max-regel'], reason: 'a rule → regeln' },
   { kind: 'oversized_page', affected_pages: ['x'], reason: 'model may not file this' },
   { kind: 'contradiction', affected_pages: ['a', 'b'], reason: 'dates differ' },
 ] });

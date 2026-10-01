@@ -70,7 +70,7 @@ function makeStub(opts: StubOpts = {}): SftpRenameOps & { calls: string[] } {
 
 const TMP = '/srv/app/config.yaml.somora-tmp.1.abc.def';
 const TARGET = '/srv/app/config.yaml';
-const CTX = { op: 'file_write', resource: 'lucy' };
+const CTX = { op: 'file_write', resource: 'partner' };
 
 await check('extension present and succeeds → no fallback', async () => {
   const s = makeStub();
@@ -154,7 +154,7 @@ await check('plain rename Failure, no extension → unlink+rename, final failure
   }
   assert.ok(caught, 'should throw');
   assert.notEqual(caught!.message, 'Failure', 'raw Failure must not surface');
-  assert.ok(caught!.message.startsWith(`file_write on 'lucy': SFTP rename of '${TMP}' onto '${TARGET}' refused (`), caught!.message);
+  assert.ok(caught!.message.startsWith(`file_write on 'partner': SFTP rename of '${TMP}' onto '${TARGET}' refused (`), caught!.message);
   assert.ok(caught!.message.includes('Permission denied'), caught!.message);
   assert.ok(caught!.message.includes('posix-rename@openssh.com'), caught!.message);
   assert.deepEqual(s.calls, [

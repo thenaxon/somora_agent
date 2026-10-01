@@ -523,7 +523,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
   // and clear the SDK session-id BEFORE we append the new user_message
   // so the engine sees a consistent history when it starts. The user
   // gets self-recovery just by sending another message; no /reset
-  // needed. Reference: jarvis 2026-05-13 silent claude-cli crash.
+  // needed. Reference: eve 2026-05-13 silent claude-cli crash.
   try {
     await healOrphanToolCalls({
       agent,
@@ -633,7 +633,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
     }
     // Capability gate. A model that cannot see the attached kind used to
     // end the turn with "switch models". That is exactly the situation
-    // the vision worker exists for (Rene 2026-09-10), so the worker
+    // the vision worker exists for (the operator 2026-09-10), so the worker
     // describes the file and its text rides along with the message. The
     // refusal stays for the case where no worker is configured.
     //
@@ -1030,7 +1030,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       if ('engine' in ev && typeof ev.engine === 'string' && ev.engine.length > 0) {
         lastSeenEngine = ev.engine;
       }
-      // Bug 2026-05-17 Rene: some engines/models hallucinate
+      // Bug 2026-05-17 the operator: some engines/models hallucinate
       // text-format `<tool_call>{…}</tool_call>` markup inside
       // assistant text (instead of going through the engine's
       // structured tool_use channel). That XML survives the wire and

@@ -52,13 +52,13 @@ function open(name: string): MemoryDb {
 
 test('copyVaultWikiRows copies vault/wiki files, chunks, FTS and vectors — not memory', () => {
   const agentsDir = join(dir, 'agents');
-  const donor = openMemoryDb(join(agentsDir, 'lisa', 'memory.db'));
+  const donor = openMemoryDb(join(agentsDir, 'bea', 'memory.db'));
   ensureVecTable(donor, DIM, MODEL);
   fill(donor, DOCS);
   donor.db.close();
 
   const shared = open('shared.db');
-  const r = copyVaultWikiRows(shared, join(agentsDir, 'lisa', 'memory.db'));
+  const r = copyVaultWikiRows(shared, join(agentsDir, 'bea', 'memory.db'));
   assert.deepEqual(r, { files: 3, chunks: 3, vectors: 3 });
   const sources = shared.db.prepare(`SELECT DISTINCT source FROM chunks ORDER BY source`).all().map((x: any) => x.source);
   assert.deepEqual(sources, ['vault', 'wiki']);
@@ -72,7 +72,7 @@ test('copyVaultWikiRows copies vault/wiki files, chunks, FTS and vectors — not
   const slug = shared.db.prepare(`SELECT slug FROM chunks WHERE id = ?`).get(Number(near.rowid)) as { slug: string };
   assert.equal(slug.slug, 'orte/pool');
   // a second copy must refuse — the target is no longer empty
-  assert.throws(() => copyVaultWikiRows(shared, join(agentsDir, 'lisa', 'memory.db')), /already holds/);
+  assert.throws(() => copyVaultWikiRows(shared, join(agentsDir, 'bea', 'memory.db')), /already holds/);
   // the sequence continues past the copied ids
   const seq = shared.db.prepare(`SELECT seq FROM sqlite_sequence WHERE name='chunks'`).get() as { seq: number };
   assert.ok(seq.seq >= 3);
@@ -171,13 +171,13 @@ test('search over [agent∖memory, shared] ranks like the old single DB (order; 
 test('slugMatchBoost lifts the page whose slug names the query term above pages that merely mention it', () => {
   const db = open('slugboost.db');
   fill(db, [
-    { path: '/vault/somora/w.md', source: 'wiki', slug: 'personen/walter-siegl', text: 'walter ist der vater von rene und wohnt in klosterneuburg', vec: [0.7, 0.7, 0, 0] },
-    { path: '/vault/somora/f.md', source: 'wiki', slug: 'personen/familie-siegl', text: 'walter walter walter walter ist teil der familie mit rene', vec: [0.7, 0.7, 0, 0] },
+    { path: '/vault/somora/w.md', source: 'wiki', slug: 'personen/karl-muster', text: 'karl ist der vater von max und wohnt in musterstadt', vec: [0.7, 0.7, 0, 0] },
+    { path: '/vault/somora/f.md', source: 'wiki', slug: 'personen/familie-muster', text: 'karl karl karl karl ist teil der familie mit max', vec: [0.7, 0.7, 0, 0] },
   ]);
-  const cfg = { vectorWeight: 0.7, bm25Weight: 0.3, maxResults: 5, minScore: 0, queryTerms: ['walter'] };
-  const off = hybridSearch(db, 'wer ist walter', Float32Array.from([0.7, 0.7, 0, 0]), { ...cfg, slugMatchBoost: 1 });
-  assert.equal(off[0]!.slug, 'personen/familie-siegl', 'without the boost BM25 prefers the page that repeats the name');
-  const on = hybridSearch(db, 'wer ist walter', Float32Array.from([0.7, 0.7, 0, 0]), { ...cfg, slugMatchBoost: 1.5 });
-  assert.equal(on[0]!.slug, 'personen/walter-siegl');
+  const cfg = { vectorWeight: 0.7, bm25Weight: 0.3, maxResults: 5, minScore: 0, queryTerms: ['karl'] };
+  const off = hybridSearch(db, 'wer ist karl', Float32Array.from([0.7, 0.7, 0, 0]), { ...cfg, slugMatchBoost: 1 });
+  assert.equal(off[0]!.slug, 'personen/familie-muster', 'without the boost BM25 prefers the page that repeats the name');
+  const on = hybridSearch(db, 'wer ist karl', Float32Array.from([0.7, 0.7, 0, 0]), { ...cfg, slugMatchBoost: 1.5 });
+  assert.equal(on[0]!.slug, 'personen/karl-muster');
   db.db.close();
 });

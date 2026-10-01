@@ -1,7 +1,7 @@
 // A tool call whose arguments arrive cut off must never go back on the
 // wire, and must not be executed.
 //
-// 2026-09-10, spielberg/main: the model's call arrived as
+// 2026-09-10, cleo/main: the model's call arrived as
 // `{"project_id": "…", "files": ` — 64 characters, not valid JSON.
 // somora ran it anyway (confusing "project_id is required") and then
 // sent the fragment back with the next request. The backend parses

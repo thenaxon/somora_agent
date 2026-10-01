@@ -326,7 +326,7 @@ when something differs); the bridge registers a changed tool anew
 
 somora's own tools, when they run through the MCP child (claude-cli,
 codex-cli), refuse a call with a parameter the tool does not know —
-`exec({resource: "cerebro"})` instead of `target` fails with an input
+`exec({resource: "gpu-box"})` instead of `target` fails with an input
 validation error naming `resource`, instead of silently dropping it and
 running on the local host. Bridged tools of other MCP servers keep
 taking whatever the model sends; validation is that server's job.

@@ -4,12 +4,12 @@ import assert from 'node:assert/strict';
 import { dedupeChatWindows, sameSession } from './useWindowManager';
 
 const ws = [
-  { id: 'a', kind: 'chat', agentName: 'jarvis', sessionId: 'main' },
-  { id: 'b', kind: 'chat', agentName: 'jarvis', sessionId: 'projekt' },
-  { id: 'c', kind: 'chat', agentName: 'jarvis', sessionId: 'main' }, // twin of a
-  { id: 'd', kind: 'chat', agentName: 'hans', sessionId: 'main' }, // other agent: fine
+  { id: 'a', kind: 'chat', agentName: 'eve', sessionId: 'main' },
+  { id: 'b', kind: 'chat', agentName: 'eve', sessionId: 'projekt' },
+  { id: 'c', kind: 'chat', agentName: 'eve', sessionId: 'main' }, // twin of a
+  { id: 'd', kind: 'chat', agentName: 'ada', sessionId: 'main' }, // other agent: fine
   { id: 'e', kind: 'sessions-list' },
-  { id: 'f', kind: 'pin-note', agentName: 'jarvis', sessionId: 'main' }, // not a chat window
+  { id: 'f', kind: 'pin-note', agentName: 'eve', sessionId: 'main' }, // not a chat window
 ];
 assert.deepEqual(dedupeChatWindows(ws).map((w) => w.id), ['a', 'b', 'd', 'e', 'f']);
 assert.deepEqual(dedupeChatWindows([]), []);
@@ -22,9 +22,9 @@ assert.ok(sameSession('cockpit-final-0923', '20260923-130655_cockpit-final-0923'
 assert.ok(!sameSession('20260923-130655_cockpit-final-0923', 'final-0923'), 'a suffix of the slug is not the slug');
 assert.ok(!sameSession('main', undefined));
 const mixed = [
-  { id: 'a', kind: 'chat', agentName: 'rudi', sessionId: '20260923-130655_cockpit-final-0923' },
-  { id: 'b', kind: 'chat', agentName: 'rudi', sessionId: 'cockpit-final-0923' }, // twin by slug
-  { id: 'c', kind: 'chat', agentName: 'rudi', sessionId: 'cockpit-run-0923' },
+  { id: 'a', kind: 'chat', agentName: 'dan', sessionId: '20260923-130655_cockpit-final-0923' },
+  { id: 'b', kind: 'chat', agentName: 'dan', sessionId: 'cockpit-final-0923' }, // twin by slug
+  { id: 'c', kind: 'chat', agentName: 'dan', sessionId: 'cockpit-run-0923' },
 ];
 assert.deepEqual(dedupeChatWindows(mixed).map((w) => w.id), ['a', 'c']);
 console.log('dedupe-chat-windows.test: ok (incl. slug/id)');

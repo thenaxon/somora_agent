@@ -80,7 +80,7 @@ const KEEPALIVE_SWEEP_MS = 60_000;
 /** A server that does not declare tools.listChanged (a stateless HTTP
  *  server like networth never can) gets its tool list read again this
  *  often; a changed catalog is announced like a notification would be
- *  (naxon, 2026-09-26). */
+ *  (nova, 2026-09-26). */
 const RELIST_INTERVAL_MS = 300_000;
 const CIRCUIT_BREAKER_THRESHOLD = 3;
 const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000;

@@ -21,7 +21,7 @@ const t = (name: string, fn: () => void): void => {
 };
 function assertTrue(cond: boolean, msg: string): void { if (!cond) throw new Error(msg); }
 
-const agents = [{ name: 'hans', description: 'Engineer', icon: '🔧', color: '#6cf', role: 'Engineer' }];
+const agents = [{ name: 'ada', description: 'Engineer', icon: '🔧', color: '#6cf', role: 'Engineer' }];
 
 t('the window renders before the server has answered', () => {
   const html = renderToString(React.createElement(VoiceWindow, { agents } as never));
@@ -39,7 +39,7 @@ t('the orb is there to be driven by real audio', () => {
 });
 
 t('the call button says talk, not call', () => {
-  // Rene, 2026-09-11: "man ruft den ja nicht an man spricht mit hans".
+  // the operator, 2026-09-11: "man ruft den ja nicht an man spricht mit ada".
   const html = renderToString(React.createElement(VoiceWindow, { agents } as never));
   assertTrue(html.includes('talk'), 'button does not say talk');
   assertTrue(!/>\s*call\s*</.test(html), 'still says call');

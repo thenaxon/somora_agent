@@ -2,7 +2,7 @@
 // are facts of the file system, not judgements — and the gate that
 // keeps structure out of a wiki that was never migrated.
 //
-// Why (Rene, 2026-09-29): after the migration a wiki has a template
+// Why (the operator, 2026-09-29): after the migration a wiki has a template
 // version in its structure file; a wiki that only took the update has
 // none. Structure findings ("this page is in the wrong folder", "this
 // page is too big") against a grown wiki would be hundreds of lines of

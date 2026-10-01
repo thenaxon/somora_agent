@@ -59,11 +59,11 @@ function create(dispatch: Record<string, unknown>, session?: string, subagentDep
 }
 {
   // A sub-agent's session is a sealed room nobody watches afterwards.
-  const r = await create({ agent: 'worker', prompt: 'remind the user' }, '20260915-110000_sub-naxon-1-abcd', 1);
+  const r = await create({ agent: 'worker', prompt: 'remind the user' }, '20260915-110000_sub-nova-1-abcd', 1);
   check('omitted as a sub-agent: main, so a person sees it', r.trigger?.dispatch?.session === 'main', r.trigger?.dispatch?.session);
   check('omitted as a sub-agent: says why', /sub-agent/.test(r.session_note ?? '') && /"current"/.test(r.session_note ?? ''), r.session_note);
-  const explicit = await create({ agent: 'worker', session: 'current', prompt: 'x' }, '20260915-110000_sub-naxon-1-abcd', 1);
-  check('a sub-agent can still ask for its own session explicitly', explicit.trigger?.dispatch?.session === '20260915-110000_sub-naxon-1-abcd');
+  const explicit = await create({ agent: 'worker', session: 'current', prompt: 'x' }, '20260915-110000_sub-nova-1-abcd', 1);
+  check('a sub-agent can still ask for its own session explicitly', explicit.trigger?.dispatch?.session === '20260915-110000_sub-nova-1-abcd');
 }
 {
   const r = await create({ agent: 'worker', prompt: 'morning mail check' }, 'main');

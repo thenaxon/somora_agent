@@ -23,19 +23,19 @@ function check(name: string, cond: boolean, detail = ''): void {
   }
 }
 
-const ROOT = '/home/u/.somora/agents/hans/memory';
+const ROOT = '/home/u/.somora/agents/ada/memory';
 
-check('flat note directly under root → true', isFlatMemoryFile(`${ROOT}/rene.md`, ROOT) === true);
+check('flat note directly under root → true', isFlatMemoryFile(`${ROOT}/max.md`, ROOT) === true);
 check('one-level subdir note → false', isFlatMemoryFile(`${ROOT}/notes/x.md`, ROOT) === false);
 check('deep subdir note → false', isFlatMemoryFile(`${ROOT}/notes/sub/x.md`, ROOT) === false);
 check('dot-dir file (.dreams) → false', isFlatMemoryFile(`${ROOT}/.dreams/d.json`, ROOT) === false);
 check('the root itself → false', isFlatMemoryFile(ROOT, ROOT) === false);
-check('path outside root → false', isFlatMemoryFile('/home/u/.somora/agents/hans/other/x.md', ROOT) === false);
+check('path outside root → false', isFlatMemoryFile('/home/u/.somora/agents/ada/other/x.md', ROOT) === false);
 check(
   'sibling dir with shared prefix → false (not memoryRoot)',
-  isFlatMemoryFile('/home/u/.somora/agents/hans/memory-archive/x.md', ROOT) === false,
+  isFlatMemoryFile('/home/u/.somora/agents/ada/memory-archive/x.md', ROOT) === false,
 );
-check('flat note with hyphens/underscores → true', isFlatMemoryFile(`${ROOT}/rene-hardware_2026.md`, ROOT) === true);
+check('flat note with hyphens/underscores → true', isFlatMemoryFile(`${ROOT}/max-hardware_2026.md`, ROOT) === true);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

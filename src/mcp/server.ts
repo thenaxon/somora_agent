@@ -347,7 +347,7 @@ async function main(): Promise<void> {
   // Pass `agent` explicitly: in a multi-agent setup with several MCP
   // children alive at once, the parent-side forensics need to know which
   // agent's MCP just lost its peer. Without the tag, an engine-subprocess
-  // crash is ambiguous across agents (jarvis 2026-05-13 incident).
+  // crash is ambiguous across agents (eve 2026-05-13 incident).
   const shutdown = async (signal: string) => {
     // A stopped CLI turn ends this child; its foreground commands go too.
     logger.info({ msg: 'mcp.server_shutdown', agent, signal, killedExecs: killRunningLocalExecs() });

@@ -83,7 +83,7 @@ export function somoraCredentialPath(): string {
 
 /** OAuth expiry (ms epoch) parsed from a credentials file, or null when
  *  the file is missing/unparseable (e.g. the nulled-file corruption seen
- *  in the Lucy incident 2026-07-23). */
+ *  in the Partner incident 2026-07-23). */
 function parseExpiresAt(content: string | null): number | null {
   if (!content) return null;
   try {

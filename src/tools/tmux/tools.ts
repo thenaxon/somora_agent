@@ -953,7 +953,7 @@ export const tmux: ToolDefinition<z.infer<typeof TmuxInput>, TmuxResult> = {
           // — a pane sitting on "Press up to edit queued messages" or
           // "esc to interrupt" is content-stable but the TUI is NOT
           // actually done. Treating it as idle is the exact failure
-          // hans reported 2026-05-17 (queued-input feedback).
+          // ada reported 2026-05-17 (queued-input feedback).
           const tui = detectTuiState(lastContent, sessionKind);
           if (!tui || tui.state === 'ready') {
             becameIdle = true;

@@ -36,7 +36,7 @@ interface BlacklistEntry {
    * A segment this matches is NOT a hit — the pattern's word appears
    * as an argument of a command that only looks things up. `command -v
    * sudo` / `which sudo` / `type sudo` ask where sudo is, they do not
-   * run it (hans, 2026-09-24).
+   * run it (ada, 2026-09-24).
    */
   unless?: RegExp;
 }
@@ -67,7 +67,7 @@ export function splitCommandSegments(command: string): string[] {
 /**
  * Split at the shell operators, but not inside '…' or "…" — a `|` in
  * a grep pattern is not a pipe (`grep -E 'restart|reboot' RUNBOOK.md`
- * used to leave a segment `reboot` for the halt rule to trip on; hans,
+ * used to leave a segment `reboot` for the halt rule to trip on; ada,
  * 2026-09-24). A backslash escapes the next character outside single
  * quotes. Returns null when a quote is left open: then the old, purely
  * textual split applies — the stricter reading for a string whose
@@ -140,7 +140,7 @@ function splitOutsideQuotes(command: string): string[] | null {
  * then see the same head — before 2026-09-24 the blacklist caught
  * `(sudo …` (its pattern allows `(` in front) while the allow-match
  * wanted the segment to START with `sudo`, so a granted sudo inside a
- * group was refused (hans). An assignment whose value carries `$(` or
+ * group was refused (ada). An assignment whose value carries `$(` or
  * a backtick is left alone: that is command substitution, which the
  * allow-match refuses on purpose (allowlist.ts).
  */
@@ -151,7 +151,7 @@ export function stripSegmentWrapping(segment: string): string {
     s = s.replace(/^[({!\s]+/, '').replace(/[)}\s;]+$/, '');
     // Shell keywords that open a body: `for …; do sudo …; done` leaves
     // a segment `do sudo …`, `if sudo …; then` one `if sudo …`. The
-    // command after the keyword is what runs (hans, 2026-09-24).
+    // command after the keyword is what runs (ada, 2026-09-24).
     s = s.replace(/^(?:do|then|else|elif|if|while|until)\s+/, '');
     const env = /^[A-Za-z_][A-Za-z0-9_]*=(?:'[^'`]*'|"[^"`$]*"|[^\s'"`$]*)(?:\s+|$)/;
     if (env.test(s)) s = s.replace(env, '');
@@ -165,7 +165,7 @@ export function stripSegmentWrapping(segment: string): string {
 // `echo "poweroff issued"`, `cat poweroff.log`, `# reboot later`. On a
 // host whose allowBlocked list permits `systemctl poweroff`, the
 // shutdown itself passed while the status echo next to it was blocked
-// (hans's report 2026-09-03). Now the word must be the command the
+// (ada's report 2026-09-03). Now the word must be the command the
 // shell would run: first token of the segment, optionally behind a
 // subshell paren, leading `VAR=x` assignments, and wrapper commands
 // (`sudo -n`, `doas`, `env`, `nice`, `nohup`, `time`, `ionice`,

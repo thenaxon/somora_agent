@@ -2379,7 +2379,7 @@ app.get('/agents/:agent/sessions/:session/model', async (c) => {
 /**
  * A model switch made by an AGENT is written into the conversation it
  * affects — a person reading that session must be able to see that the
- * model changed, when, and who did it (Rene, 2026-09-21: agents may
+ * model changed, when, and who did it (the operator, 2026-09-21: agents may
  * switch the model of a running session; it must not happen silently).
  * A switch a person makes from their own client is already visible to
  * them and leaves no row.
@@ -4312,7 +4312,7 @@ app.post('/browser/:id/restart', async (c) => {
   }
 });
 
-// `:id` is a view id (`profile:team@hans`); a process id still works
+// `:id` is a view id (`profile:team@ada`); a process id still works
 // while only one agent has a window on it.
 app.post('/browser/:id/control', async (c) => {
   if (!config.browser.enabled) return c.json({ error: 'browser.enabled is false' }, 503);
@@ -5024,7 +5024,7 @@ app.post('/voice/turn', async (c) => {
 
 // Human turns waiting for a busy session lock, by server turnId. Lets
 // DELETE /chat/queue/:turnId hand the message back to the composer —
-// Rene's 2026-08-26 ask: "solange queued praktisch nochmal zurücknehmen
+// the operator's 2026-08-26 ask: "solange queued praktisch nochmal zurücknehmen
 // und umschreiben". Entries live only between POST /chat/send and the
 // moment the lock is granted; A2A and sentinel turns are never listed.
 
@@ -5343,7 +5343,7 @@ app.post('/chat/send', async (c) => {
 // The session ref MUST be resolved the same way /chat/send resolves it:
 // the abort registry is keyed by the canonical session id, so a raw
 // slug here silently missed the registry and the abort was a no-op
-// (aborted:false, no log — Rene's 2026-07-22 report, live-reproduced
+// (aborted:false, no log — the operator's 2026-07-22 report, live-reproduced
 // 2026-07-27: slug → false while the turn ran, canonical id → clean
 // abort). Falls back to the raw ref when resolution fails so turns
 // registered under non-canonical ids (spawn-async bypass sessions)
@@ -5606,8 +5606,8 @@ app.post('/chat/send-sync', async (c) => {
     typeof body.create_model === 'string' && body.create_model.length > 0 ? body.create_model : undefined;
   if (!session && body.create_session === true) {
     // Opt-in creation of a named project session (2026-09-07: "take
-    // Hans and Spielberg in their projektA sessions — create them if
-    // missing, Hans on fable, Spielberg on astra"). Only slugs: main
+    // Ada and Cleo in their projektA sessions — create them if
+    // missing, Ada on fable, Cleo on astra"). Only slugs: main
     // always exists, exact ids and sub-* names are not project sessions.
     const isExactId = /^\d{8}-\d{6}_[A-Za-z0-9_-]+$/.test(sessionRef);
     if (isExactId || sessionRef.startsWith('sub-')) {
@@ -6967,14 +6967,14 @@ const screencasts = new ScreencastRegistry(browserService);
 
 // An answer nobody is waiting for still has to arrive. Same pattern as
 // the sub-agent wake above, for the case that cost a real result on
-// 2026-09-12: hans asked lisa with the minimum timeout, stopped
+// 2026-09-12: ada asked bea with the minimum timeout, stopped
 // waiting after a second, and never learned that her 208-second answer
 // existed.
 // One wake for every kind of finished work (Phase 2): a late agent_ask
 // answer, a background sub-agent, a rendered video. The grace is one
 // config value; the item's own origin says what the wake is about, so
 // the reader sees an agent answer as an agent answer and a sub-agent
-// as a sub-agent (Rene, 2026-09-12 — "war ja eine agent_ask message
+// as a sub-agent (the operator, 2026-09-12 — "war ja eine agent_ask message
 // oder?"). A sub-orchestrator is woken at ITS depth, so it keeps the
 // SUBAGENT framing and the depth cap it had when it spawned.
 // Queue changes reach the clients from the ledger itself: an entry taken

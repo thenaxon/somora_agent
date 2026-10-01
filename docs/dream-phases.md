@@ -551,7 +551,7 @@ as one line each, not the whole `index.md`. Then a final
 cross-folder pass looks across folders — but it sees only the opening
 line of each page. That is enough for a dead link or a missing page
 that spans folders; a contradiction between the body of
-`personen/jane-doe` and the body of `projekte/familie-luca-podcast` is
+`personen/jane-doe` and the body of `projekte/familie-leo-podcast` is
 out of its sight.
 
 The size limit is not only for scale — claude-cli's stdin-stream

@@ -33,14 +33,14 @@ const page = async (rel: string, type: string, body: string): Promise<void> => {
   await writeFile(join(wikiAbs, `${rel}.md`), `---\nslug: ${rel}\ntype: ${type}\n---\n# ${rel.split('/').pop()}\n${body}\n`);
 };
 await page('personen/anna', 'person', 'Anna.');
-await page('unternehmen/enovom', 'unternehmen', 'Firma.');
+await page('unternehmen/acme', 'unternehmen', 'Firma.');
 await page('projekte/somora', 'projekt', 'Das Projekt.');
 await page('hardware/valve-index', 'hardware', 'Ein VR-Headset.');
 await page('hardware/rack-umzug-2026', 'projekt', 'Der Umzug des Racks war ein Vorhaben.');
-await page('agenten/hans', 'agent', 'Steckbrief.');
-await page('agenten/hans/somora-deploy-2026-09-16', 'bericht', 'Deploy lief.');
+await page('agenten/ada', 'agent', 'Steckbrief.');
+await page('agenten/ada/somora-deploy-2026-09-16', 'bericht', 'Deploy lief.');
 await page('wissen/gpt-6', 'konzept', 'Ein Modell.');
-await page('wissen/enovom-bilanz-2025', 'konzept', 'Bilanz der Firma.');
+await page('wissen/acme-bilanz-2025', 'konzept', 'Bilanz der Firma.');
 await page('hardware/proxmox', 'hardware', 'Der Proxmox-Host, 32 GB.');
 await page('infrastruktur/proxmox', 'infrastruktur', 'Proxmox-Host, Netz 10.0.0.1.');
 
@@ -49,10 +49,10 @@ const plan = await analyzeWiki({ wikiAbs, language: 'de', structure });
 const inv = await readInventory(wikiAbs);
 const judged = pagesToJudge(plan, new Map(inv.pages.map((p) => [p.path, p])));
 const paths = judged.map((j) => j.page.path).sort();
-check('pages to judge: every page but the agent profile', paths.join(',') === ['agenten/hans/somora-deploy-2026-09-16', 'hardware/proxmox', 'hardware/rack-umzug-2026', 'hardware/valve-index', 'infrastruktur/proxmox', 'personen/anna', 'projekte/somora', 'unternehmen/enovom', 'wissen/enovom-bilanz-2025', 'wissen/gpt-6'].join(','), paths.join(','));
-check('proposals carried', judged.find((j) => j.page.path === 'hardware/valve-index')?.proposed.target === 'infrastruktur/geraete' && judged.find((j) => j.page.path === 'agenten/hans/somora-deploy-2026-09-16')?.proposed.action === 'fold');
+check('pages to judge: every page but the agent profile', paths.join(',') === ['agenten/ada/somora-deploy-2026-09-16', 'hardware/proxmox', 'hardware/rack-umzug-2026', 'hardware/valve-index', 'infrastruktur/proxmox', 'personen/anna', 'projekte/somora', 'unternehmen/acme', 'wissen/acme-bilanz-2025', 'wissen/gpt-6'].join(','), paths.join(','));
+check('proposals carried', judged.find((j) => j.page.path === 'hardware/valve-index')?.proposed.target === 'infrastruktur/geraete' && judged.find((j) => j.page.path === 'agenten/ada/somora-deploy-2026-09-16')?.proposed.action === 'fold');
 const ent = entityIndex(inv.pages);
-check('entity index lists entity pages only', ent.includes('unternehmen/: enovom') && ent.includes('projekte/: somora') && !ent.includes('gpt-6') && !ent.includes('somora-deploy'));
+check('entity index lists entity pages only', ent.includes('unternehmen/: acme') && ent.includes('projekte/: somora') && !ent.includes('gpt-6') && !ent.includes('somora-deploy'));
 check('system prompt names the four actions', /"keep"/.test(buildRefineSystemPrompt('de')) && buildRefineSystemPrompt('en').includes('knowledge'));
 
 const map = await buildWikiMap({ wikiAbs, language: 'de', structure });
@@ -61,16 +61,16 @@ const batch = judged;
 const reply = JSON.stringify([
   { page: 'hardware/valve-index', action: 'move', target: 'infrastruktur/geraete', why: 'a device' },
   { page: 'hardware/rack-umzug-2026', action: 'move', target: 'projekte', why: 'a project' },
-  { page: 'agenten/hans/somora-deploy-2026-09-16', action: 'fold', target: 'projekte/somora', why: 'dated report' },
+  { page: 'agenten/ada/somora-deploy-2026-09-16', action: 'fold', target: 'projekte/somora', why: 'dated report' },
   { page: 'wissen/gpt-6', action: 'keep', why: 'knowledge' },
-  { page: 'wissen/enovom-bilanz-2025', action: 'fold', target: 'unternehmen/enovom-gmbh', why: 'detail of the company' },
+  { page: 'wissen/acme-bilanz-2025', action: 'fold', target: 'unternehmen/acme-gmbh', why: 'detail of the company' },
 ]);
 const d = parseRefineReply(`Here you go:\n${reply}\nDone.`, batch, known);
 const byPage = new Map(d.map((x) => [x.page, x]));
 check('move to a proposed template folder accepted', byPage.get('hardware/valve-index')?.action === 'move' && byPage.get('hardware/valve-index')?.target === 'infrastruktur/geraete');
 check('move to an existing folder accepted', byPage.get('hardware/rack-umzug-2026')?.action === 'move' && byPage.get('hardware/rack-umzug-2026')?.target === 'projekte');
-check('fold into an existing page accepted', byPage.get('agenten/hans/somora-deploy-2026-09-16')?.action === 'fold' && byPage.get('agenten/hans/somora-deploy-2026-09-16')?.target === 'projekte/somora');
-check('fold into a page that does not exist → unclear, corrected', byPage.get('wissen/enovom-bilanz-2025')?.action === 'unclear' && /unknown page/.test(byPage.get('wissen/enovom-bilanz-2025')?.corrected ?? ''));
+check('fold into an existing page accepted', byPage.get('agenten/ada/somora-deploy-2026-09-16')?.action === 'fold' && byPage.get('agenten/ada/somora-deploy-2026-09-16')?.target === 'projekte/somora');
+check('fold into a page that does not exist → unclear, corrected', byPage.get('wissen/acme-bilanz-2025')?.action === 'unclear' && /unknown page/.test(byPage.get('wissen/acme-bilanz-2025')?.corrected ?? ''));
 check('keep', byPage.get('wissen/gpt-6')?.action === 'keep');
 const d2 = parseRefineReply('[{"page":"wissen/gpt-6","action":"move","target":"fahrzeuge"}]', batch.filter((j) => j.page.path === 'wissen/gpt-6'), known);
 check('move to an unknown folder → unclear', d2[0]!.action === 'unclear' && /unknown folder/.test(d2[0]!.corrected ?? ''));
@@ -98,7 +98,7 @@ check('four page batches + one twin batch, one failed, every page answered', ref
 check('twin confirmed by the model, survivor as the model said', refined.twins.length === 1 && refined.twins[0]!.keep === 'hardware/proxmox' && refined.twins[0]!.drop[0] === 'infrastruktur/proxmox' && refined.twinVerdicts[0]!.same === true);
 const tv = parseTwinReply('[{"name":"Proxmox","same":false,"why":"an agent and a host"},{"name":"x","same":true}]', [{ name: 'proxmox', keep: 'a/proxmox', drop: ['b/proxmox'] }, { name: 'lara', keep: 'a/lara', drop: ['b/lara'] }]);
 check('twin verdicts: name matched case-insensitively, missing pair = apart, keep falls back', tv[0]!.same === false && tv[1]!.same === false && /no answer/.test(tv[1]!.why) && tv[0]!.keep === 'a/proxmox');
-check('markdown lists pairs kept apart', renderRefinedPlan({ ...refined, twinVerdicts: [{ name: 'naxon', pages: ['agenten/naxon', 'infrastruktur/naxon'], same: false, keep: 'agenten/naxon', why: 'agent vs host' }] }, 'de').includes('## Gleichnamig, aber nicht dasselbe'));
+check('markdown lists pairs kept apart', renderRefinedPlan({ ...refined, twinVerdicts: [{ name: 'nova', pages: ['agenten/nova', 'infrastruktur/nova'], same: false, keep: 'agenten/nova', why: 'agent vs host' }] }, 'de').includes('## Gleichnamig, aber nicht dasselbe'));
 check('prompt carries the map, the entity names and the first lines', calls[0]!.includes('<wiki_map>') && calls[0]!.includes('<entity_pages>') && calls.some((c) => c.includes('Ein VR-Headset.') && c.includes('proposal="move → infrastruktur/geraete"')));
 check('refined result carries verdicts', Array.isArray(refined.twinVerdicts));
 await writePlan(plan, 'test-2');

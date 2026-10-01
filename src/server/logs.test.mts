@@ -18,11 +18,11 @@ const line = (o: Record<string, unknown>) => `${JSON.stringify({ time: 1_700_000
 const today = join(logDir, 'server.2026-09-10.1.log');
 writeFileSync(
   today,
-  line({ msg: 'turn.completed', agent: 'lisa' }) +
-    line({ msg: 'engine.fail', level: 50, agent: 'hans', err: 'boom' }) +
+  line({ msg: 'turn.completed', agent: 'bea' }) +
+    line({ msg: 'engine.fail', level: 50, agent: 'ada', err: 'boom' }) +
     line({ msg: 'http', level: 30 }) +
     'not json at all\n' +
-    line({ msg: 'browser.open', level: 30, agent: 'lisa' }),
+    line({ msg: 'browser.open', level: 30, agent: 'bea' }),
 );
 writeFileSync(join(logDir, 'server.2026-09-09.1.log'), line({ msg: 'yesterday' }));
 
@@ -42,7 +42,7 @@ test('the newest day is read by default, garbage lines are skipped', async () =>
 
 test('filters narrow it down without reading anything else', async () => {
   assert.deepEqual((await readLogTail({ minLevel: 50 })).lines.map((l) => l.msg), ['engine.fail']);
-  assert.deepEqual((await readLogTail({ agent: 'lisa' })).lines.map((l) => l.msg), ['turn.completed', 'browser.open']);
+  assert.deepEqual((await readLogTail({ agent: 'bea' })).lines.map((l) => l.msg), ['turn.completed', 'browser.open']);
   assert.deepEqual((await readLogTail({ q: 'BOOM' })).lines.map((l) => l.msg), ['engine.fail'], 'the search is case-insensitive');
   assert.equal((await readLogTail({ limit: 1 })).lines.length, 1, 'the newest line wins when limited');
 });
@@ -59,7 +59,7 @@ test('following reads only what was appended', async () => {
   assert.deepEqual(quiet.lines, [], 'nothing new, nothing read');
   assert.equal(quiet.offset, snap.offset);
 
-  appendFileSync(today, line({ msg: 'tool.call', agent: 'hans' }));
+  appendFileSync(today, line({ msg: 'tool.call', agent: 'ada' }));
   const after = await readLogSince(snap.offset);
   assert.deepEqual(after.lines.map((l) => l.msg), ['tool.call']);
   assert.ok(after.offset > snap.offset);
@@ -74,6 +74,6 @@ test('a rotated or truncated file does not read backwards', async () => {
 test('the level field survives as a number the client can colour by', async () => {
   const snap = await readLogTail({ minLevel: 50 });
   assert.equal(snap.lines[0]?.level, 50);
-  assert.equal(snap.lines[0]?.agent, 'hans');
+  assert.equal(snap.lines[0]?.agent, 'ada');
   assert.equal(snap.lines[0]?.fields.err, 'boom', 'the rest of the line is kept for the detail view');
 });

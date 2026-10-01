@@ -20,7 +20,7 @@
 //                             in list/capture/wait_idle responses and
 //                             by the web tmux list for the badge.
 //
-// Anti-double-trigger contract (Rene, 2026-07-27): if the origin agent
+// Anti-double-trigger contract (the operator, 2026-07-27): if the origin agent
 // observed the running→ready transition itself (its wait_idle returned
 // it, or it captured after the event), NO wake fires. A wake only goes
 // out when the agent's turn ended without having seen the completion.

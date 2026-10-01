@@ -38,7 +38,7 @@ import { buildAnthropicUserContent } from '../multimodal/user-content.ts';
  * message and for each steer that was pushed — closing it at the first
  * result left a steer pushed moments earlier running on a closed
  * stream, where every somora tool failed its permission request with
- * "AbortError: Stream closed" (hans, 2026-09-24). No new steer is
+ * "AbortError: Stream closed" (ada, 2026-09-24). No new steer is
  * pushed after the first result; from then on a message becomes a
  * normal turn (start-turn.ts).
  */
@@ -295,7 +295,7 @@ export const claudeCliEngine: AgentEngine = {
     // underlying claude-cli child died" failure mode — the SDK's stdio
     // peer sometimes doesn't propagate child exit, so `for await` just
     // suspends, no error is thrown, no turn_end is ever yielded, and the
-    // session ends up with an orphan tool_call in JSONL (jarvis 2026-05-13).
+    // session ends up with an orphan tool_call in JSONL (eve 2026-05-13).
     // The watchdog is reset on every received event; if N seconds pass
     // without any event, we abort the SDK to surface the failure loudly.
     //
@@ -493,7 +493,7 @@ export const claudeCliEngine: AgentEngine = {
       // fires, logs "aborting", but the for-await loop sits there
       // forever, the catch never runs, no error/turn_end is yielded,
       // lock+queue stay held until server restart. Reproduced on
-      // 2026-05-16 morning (naxon/lisa).
+      // 2026-05-16 morning (nova/bea).
       //
       // Fix: race each iter.next() against the abort signal ourselves.
       // When the watchdog (or upstream user-abort) fires, the race
@@ -681,7 +681,7 @@ export const claudeCliEngine: AgentEngine = {
           // a normal turn, start-turn.ts); the input closes — so the
           // SDK child exits — once every pushed steer has its result.
           // Closing earlier left the steer's leg without a control
-          // channel: every tool permission request failed (hans,
+          // channel: every tool permission request failed (ada,
           // 2026-09-24). Should a result never come, the idle timer
           // below ends the turn as for any silent child.
           resultsSeen += 1;
@@ -709,7 +709,7 @@ export const claudeCliEngine: AgentEngine = {
             // it equals just "B" and drops "A" on the floor. Sourcing
             // finalText from there made the chat:final event clobber
             // the streaming bubble to the post-tool text only, so the
-            // web client locked in with text-A erased (luca 2026-05-12
+            // web client locked in with text-A erased (leo 2026-05-12
             // bug report). `cumulative` is the running total of every
             // text_delta we saw across the whole turn, so it always
             // contains every text block in order — use it as the source
@@ -867,7 +867,7 @@ export const claudeCliEngine: AgentEngine = {
         // fields (project_focus writes projectSlug + projectLinkedAt;
         // future tools may write others). The `meta` snapshot above is
         // from turn START and would clobber those mid-turn writes if
-        // we spread it directly. Refs: naxon 2026-05-13 — project_focus
+        // we spread it directly. Refs: nova 2026-05-13 — project_focus
         // pin survived inside the turn, then vanished at turn end.
         // Atomic read-merge-write — re-reads under the per-session lock
         // so a concurrent /sessions stats-cache write (or activity mark)

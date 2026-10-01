@@ -65,8 +65,8 @@ const DE: WikiSchema = {
     person: 'personen/jane-doe',
     project: 'projekte/orbit',
     tool: 'infrastruktur/mac-studio',
-    relatedPerson: 'personen/rene',
-    relatedProject: 'projekte/familie-luca-podcast',
+    relatedPerson: 'personen/max',
+    relatedProject: 'projekte/familie-leo-podcast',
   },
   months: ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'],
   text: {
@@ -91,8 +91,8 @@ const EN: WikiSchema = {
     person: 'people/jane-doe',
     project: 'projects/orbit',
     tool: 'infrastructure/mac-studio',
-    relatedPerson: 'people/rene',
-    relatedProject: 'projects/family-luca-podcast',
+    relatedPerson: 'people/max',
+    relatedProject: 'projects/family-leo-podcast',
   },
   months: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
   text: {

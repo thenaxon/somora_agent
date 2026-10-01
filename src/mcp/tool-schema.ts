@@ -1,7 +1,7 @@
 // The input schema a somora tool is registered with on the MCP child
-// server (hans, 2026-09-25): the SDK used to get only `schema.shape`
+// server (ada, 2026-09-25): the SDK used to get only `schema.shape`
 // and rebuilt a plain z.object() from it — which STRIPS unknown keys.
-// `exec({resource: "cerebro", command})` lost its `resource`, `target`
+// `exec({resource: "gpu-box", command})` lost its `resource`, `target`
 // defaulted to local, and a command meant for a remote host ran on the
 // somora host. The registry validates with the tool's own (strict)
 // schema in-process and for codex; the MCP path now does the same:

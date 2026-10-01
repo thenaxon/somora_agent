@@ -2,7 +2,7 @@
 //
 // Run: npx tsx src/cli/resolvers/clawhub.test.mts
 //
-// Regression (Lucy case study 2026-07-24): the resolver extracted only
+// Regression (Partner case study 2026-07-24): the resolver extracted only
 // the last path segment and dropped the owner, so any contested slug
 // (`gog` exists under 3 owners) died with an opaque 409 even when the
 // user pasted the fully-qualified URL. parseClawHubUrl keeps the owner

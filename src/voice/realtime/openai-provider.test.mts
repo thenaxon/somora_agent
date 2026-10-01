@@ -46,9 +46,9 @@ async function openSession(): Promise<{ socket: FakeSocket; events: RealtimeEven
   const opening = provider.open({
     model: 'gpt-realtime-2.1-mini',
     voice: 'marin',
-    instructions: 'you are the voice of hans',
+    instructions: 'you are the voice of ada',
     language: 'de',
-    tools: [{ name: 'somora_agent_consult', description: 'ask hans', parameters: { type: 'object', properties: {} } }],
+    tools: [{ name: 'somora_agent_consult', description: 'ask ada', parameters: { type: 'object', properties: {} } }],
   });
   socket.emit('open');
   const session = await opening;
@@ -66,7 +66,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     session?: { instructions?: string; tools?: Array<{ name?: string }>; audio?: { input?: { transcription?: unknown; turn_detection?: { type?: string } }; output?: { voice?: string } } };
   };
   check('the session is configured on open', update.type === 'session.update', String(update.type));
-  check('with the voice self', update.session?.instructions === 'you are the voice of hans');
+  check('with the voice self', update.session?.instructions === 'you are the voice of ada');
   check('with the chosen voice', update.session?.audio?.output?.voice === 'marin');
   check('with the one tool', update.session?.tools?.length === 1 && update.session.tools[0]?.name === 'somora_agent_consult');
   check(
@@ -75,7 +75,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   );
   check('server-side turn detection is on', update.session?.audio?.input?.turn_detection?.type === 'server_vad');
   // Talking over the model was hard with the provider defaults, which
-  // wait for a confident sustained speaker (Rene, 2026-09-12).
+  // wait for a confident sustained speaker (the operator, 2026-09-12).
   const vad = update.session?.audio?.input?.turn_detection as
     | { threshold?: number; prefix_padding_ms?: number; silence_duration_ms?: number; interrupt_response?: boolean }
     | undefined;

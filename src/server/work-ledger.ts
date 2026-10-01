@@ -77,8 +77,8 @@ export interface WorkItem {
   /** Media to attach to the wake turn (a finished video). */
   wakeMediaIds?: string[];
   /** The item whose turn was running in the requester's session when
-   *  this one was opened — the work this one belongs to. A sub lisa
-   *  spawns while answering naxon's call is `startedDuring` that call;
+   *  this one was opened — the work this one belongs to. A sub bea
+   *  spawns while answering nova's call is `startedDuring` that call;
    *  a sub she spawns in the wake turn about that sub is `startedDuring`
    *  the wake item (chainRootOf follows it back to the call). */
   startedDuring?: string;
@@ -169,7 +169,7 @@ export function openWork(input: OpenWorkInput): WorkItem {
   // attention:false says "do not wake ME". When the sub was started
   // while answering someone else — a call, another agent — that someone
   // is told through the follow-up, and the follow-up needs the wake
-  // turn. hans opted out twice on 2026-09-13 and the caller never heard
+  // turn. ada opted out twice on 2026-09-13 and the caller never heard
   // the result; the flag does not count then.
   if (it.wake === 'never' && it.origin.kind === 'subagent') {
     const root = chainRootOf(it);
@@ -261,8 +261,8 @@ export function markFetched(id: string): void {
 /**
  * The grace lost its race: the wake was dispatched 0.6 s before the
  * requester fetched the result, waited behind its running turn, and
- * then told it what it already knew — twice in Rene's hand test
- * (naxon's [agent answer], lisa's second [subagent attention],
+ * then told it what it already knew — twice in the operator's hand test
+ * (nova's [agent answer], bea's second [subagent attention],
  * 2026-09-13). A wake that has not started yet is taken out of the
  * queue when the result is read; one already running is left alone.
  */
@@ -391,8 +391,8 @@ export function cancelWork(id: string, reason: string, by: 'human' | 'agent' = '
       by: it.cancelledBy,
     });
     outcome.cancelled.push(it.id);
-    // Stopped by a person from the requester's own queue popover (Rene,
-    // 2026-09-13, hand test 10: lisa never learnt her sub was stopped):
+    // Stopped by a person from the requester's own queue popover (the operator,
+    // 2026-09-13, hand test 10: bea never learnt her sub was stopped):
     // the requester hears it like a take-back. Its own cancel, or a
     // child taken down with its parent, wakes no one.
     if (it.cancelledBy === 'human') scheduleWake(it);
@@ -409,7 +409,7 @@ export type WithdrawWorkOutcome =
   | { status: 'unknown' };
 
 /**
- * The soft take-back of a call that already runs (Rene, 2026-09-24:
+ * The soft take-back of a call that already runs (the operator, 2026-09-24:
  * "bei 2 den weichen Weg"): only the requester may do it, only for a
  * running item. The item stays running — the target's turn goes on
  * until it stops by itself — but its outcome wakes no one, and the
@@ -418,7 +418,7 @@ export type WithdrawWorkOutcome =
  * agent_ask_cancel could only take back a QUEUED call, and a free
  * target starts a call within milliseconds, so the take-back never
  * fit the case it was for: "I delegated, the user changed course"
- * (hans, 2026-09-24).
+ * (ada, 2026-09-24).
  */
 export function withdrawWork(id: string, by: { agent: string }): WithdrawWorkOutcome {
   const it = items.get(id);
@@ -453,7 +453,7 @@ export type DequeueWorkOutcome =
 
 /**
  * Take a waiting item back before it starts. A person may remove any
- * item; an agent only what it asked for itself (Rene, 2026-09-13). The
+ * item; an agent only what it asked for itself (the operator, 2026-09-13). The
  * waiter's acquire() rejects with DequeuedError, so the caller that
  * queued it never runs the turn; the item reads `dequeued` with the
  * reason, and whoever asks for the result reads failed + reason.
@@ -485,8 +485,8 @@ export function dequeueWork(id: string, by: DequeueBy): DequeueWorkOutcome {
   // (DELETE /chat/queue returns it), then the item is a record only.
   for (const l of finishListeners) l(it);
   // A requester that hung up learns about it the same way it would
-  // have learnt about the answer (Rene, 2026-09-13: naxon only found
-  // out that lisa's queue had been cleared when he went looking).
+  // have learnt about the answer (the operator, 2026-09-13: nova only found
+  // out that bea's queue had been cleared when he went looking).
   scheduleWake(it);
   return { status: 'removed', item: it };
 }
@@ -586,8 +586,8 @@ function head(it: WorkItem, n: number): string {
 }
 
 /**
- * Rene's hand test, 2026-09-13: the follow-up reached naxon on time and
- * carried lisa's wake-turn answer — "leaving it, as ordered". Lisa did
+ * the operator's hand test, 2026-09-13: the follow-up reached nova on time and
+ * carried bea's wake-turn answer — "leaving it, as ordered". Bea did
  * not know her answer was going anywhere. The wake turn's frame now
  * says where it goes, so the model writes it for the receiver.
  */
@@ -779,7 +779,7 @@ export function inTreeOf(it: WorkItem, rootId: string): boolean {
 }
 
 /** Everything still open below a root: queued or running items at any
- *  depth (a grandchild counts — naxon should hear once, after the whole
+ *  depth (a grandchild counts — nova should hear once, after the whole
  *  tree, not once per level), and finished ones whose wake is still in
  *  its grace. */
 export function openChainMembers(rootId: string): WorkItem[] {
@@ -862,7 +862,7 @@ function maybeFollowUp(wake: WorkItem): void {
   }
   // What the target wrote about this work: the answers of ALL its wake
   // turns in the tree since the root finished, in order — not only the
-  // last one. In Rene's hand test the three points stood in the first
+  // last one. In the operator's hand test the three points stood in the first
   // wake turn and the last one said "duplicate"; the asker got the
   // duplicate.
   const body = wakeAnswersFor(root).join('\n\n');

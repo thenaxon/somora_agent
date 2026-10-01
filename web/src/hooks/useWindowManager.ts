@@ -92,7 +92,7 @@ export function useWindowManager() {
   // reachable no matter what. Runs once after hydration and on every
   // (debounced) resize. Nothing moves when everything already fits —
   // fitAllToDesktop returns the same array, so no re-render and no
-  // localStorage write (2026-08-31, Rene's report).
+  // localStorage write (2026-08-31, the operator's report).
   useEffect(() => {
     if (!hydrated) return;
     const fit = () => setWindows((ws) => fitAllToDesktop(ws, currentViewport()));
@@ -407,7 +407,7 @@ export function useWindowManager() {
 
   /** Open or focus the server log window (singleton). Reading the log
    *  used to mean an ssh session and `tail` — which is not available at
-   *  the moment something looks wrong (Rene 2026-09-10). */
+   *  the moment something looks wrong (the operator 2026-09-10). */
   const openLogs = useCallback(() => {
     const existing = windows.find((w) => w.kind === 'logs');
     if (existing) {
@@ -665,7 +665,7 @@ export function useWindowManager() {
    *  and its window comes back from localStorage pointing at a name the
    *  server no longer serves. Desktop.tsx renders nothing for it, so it
    *  sits there invisible and unclosable — but still counted, which made
-   *  Arrange leave a hole for a window nobody could see (Luca's report).
+   *  Arrange leave a hole for a window nobody could see (Leo's report).
    *
    *  Only ever called with an agent list the server actually answered
    *  with; while it is loading or unreachable the windows stay put,
@@ -683,7 +683,7 @@ export function useWindowManager() {
    *  agent dock WAS a fixed column on the left. Since icons can be
    *  dragged anywhere that reservation only guessed — it held a strip
    *  free whether or not an icon still stood in it, and never matched a
-   *  second icon column (Luca's report). Icons sit below the windows by
+   *  second icon column (Leo's report). Icons sit below the windows by
    *  design, so a window covering one is exactly what a desktop does;
    *  minimize or close it and the icon is back. */
   const autoArrange = useCallback(() => {

@@ -110,7 +110,7 @@ const RemConfigSchema = z.object({
    * A 4xx (bad request, auth, unsupported parameter) is a config
    * problem and does NOT switch — the dream fails visibly instead.
    * One ref or an ordered chain (`[glm, deep41flash]`), tried in turn
-   * like the chat `fallback` (Rene, 2026-09-26: a GPU profile that
+   * like the chat `fallback` (the operator, 2026-09-26: a GPU profile that
    * swaps models leaves one backup down together with the primary).
    */
   fallback: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),

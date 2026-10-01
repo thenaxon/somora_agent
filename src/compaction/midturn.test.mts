@@ -35,7 +35,7 @@ const r = await compactTurnMidway({
   resolvedModel: worker,
   availableModels: [worker],
   config: { triggerRatio: 0.8, safetyCushionPairs: 4 } as never,
-  agent: 'rudi',
+  agent: 'dan',
   summarize: async (_w, system, user) => {
     assert.match(system, /## Work State/);
     assert.match(user, /<transcript>/);
@@ -61,7 +61,7 @@ const none = await compactTurnMidway({
   resolvedModel: worker,
   availableModels: [worker],
   config: { triggerRatio: 0.8, safetyCushionPairs: 4 } as never,
-  agent: 'rudi',
+  agent: 'dan',
   summarize: async () => {
     throw new Error('down');
   },

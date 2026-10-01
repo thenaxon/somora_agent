@@ -1,4 +1,4 @@
-// The bridge registers a changed tool again (naxon, 2026-09-26).
+// The bridge registers a changed tool again (nova, 2026-09-26).
 // Run: npx tsx src/mcp/hub/bridge.test.mts
 import { bridgeMcpTools, toolFingerprint } from './bridge.ts';
 import type { ToolDefinition } from '../../tools/types.ts';

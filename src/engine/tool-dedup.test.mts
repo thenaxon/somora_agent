@@ -137,7 +137,7 @@ const SCAFFOLD =
   check('pure scaffold strips to (near) empty', out.length < 20, `'${out}'`);
 }
 {
-  const clean = 'Der Hostname ist naxon.';
+  const clean = 'Der Hostname ist nova.';
   check('clean text passes through unchanged', stripScaffold(clean) === clean);
 }
 

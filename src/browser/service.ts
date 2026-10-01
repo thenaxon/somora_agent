@@ -14,7 +14,7 @@
 //               are refused by `act`.
 //   view      = one agent's window on a process (`<browser id>@<agent>`).
 //               A shared profile has ONE process but one view per agent,
-//               so hans and lisa each get their own window, tabs, control
+//               so ada and bea each get their own window, tabs, control
 //               state and handoff (private/browser-design.md §10).
 //   control   = per view: agent_control | handoff_requested |
 //               human_control | paused. While a human controls a view,
@@ -697,8 +697,8 @@ export class BrowserService {
   private tabOf(b: BrowserRec, tabId: string, agent?: string): TabRec {
     const t = b.tabs.get(tabId);
     if (!t || t.page.isClosed()) throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `tab '${tabId}' not found in browser '${b.id}' — op:"tabs" lists the open ones`);
-    // Tabs belong to one window. In a shared profile that keeps hans out
-    // of lisa's tabs even though both drive the same Chromium.
+    // Tabs belong to one window. In a shared profile that keeps ada out
+    // of bea's tabs even though both drive the same Chromium.
     if (agent && t.agent !== agent) {
       throw new BrowserOpError('BROWSER_TAB_NOT_FOUND', `tab '${tabId}' belongs to another agent's window on browser '${b.id}' — op:"tabs" lists yours`);
     }
@@ -1038,8 +1038,8 @@ export class BrowserService {
 
   /**
    * Close this agent's window. The Chromium process only ends when no
-   * other agent still has one on it — in a shared profile hans must not
-   * pull the browser out from under lisa.
+   * other agent still has one on it — in a shared profile ada must not
+   * pull the browser out from under bea.
    */
   async stop(agent: string): Promise<{ stopped: string | null }> {
     const bs = this.browsersFor(agent).filter((b) => b.views.has(agent));
@@ -1070,8 +1070,8 @@ export class BrowserService {
   // ── UI / control (stage 3 surfaces; HTTP-testable now) ────────────
 
   /**
-   * One entry per open window, not per process: in a shared profile hans
-   * and lisa are two rows with their own tabs and control state. Stopped
+   * One entry per open window, not per process: in a shared profile ada
+   * and bea are two rows with their own tabs and control state. Stopped
    * browsers are left out the way the tmux list leaves dead sessions out
    * — except one still holding an unanswered handoff, which is the only
    * trail back to that request (private/browser-design.md §10.4).
@@ -1172,7 +1172,7 @@ export class BrowserService {
       this.touch(b);
       // Whom to wake: the requesting agent+session when a handoff was
       // pending; otherwise — only if the human actually did something —
-      // the session of the last tab used IN THIS WINDOW (Rene 2026-09-10).
+      // the session of the last tab used IN THIS WINDOW (the operator 2026-09-10).
       let wake: { agent: string; session: string; text: string; prefix: string; viewId: string; cause: 'handoff' | 'activity'; handoffId?: string } | null = null;
       if (handoff) {
         wake = {

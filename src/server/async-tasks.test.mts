@@ -45,21 +45,21 @@ function mkTask(id: string, parent: [string, string], target: [string, string], 
 
 // ── cascade: orchestrator + 2 children + 1 grandchild ───────────────
 {
-  mkTask('t_root', ['hans', 'main'], ['hans', 'sub-self-1']);
-  mkTask('t_c1', ['hans', 'sub-self-1'], ['hans', 'sub-self-2']);
-  mkTask('t_c2', ['hans', 'sub-self-1'], ['hans', 'sub-self-3']);
-  mkTask('t_gc', ['hans', 'sub-self-2'], ['hans', 'sub-self-4']);
+  mkTask('t_root', ['ada', 'main'], ['ada', 'sub-self-1']);
+  mkTask('t_c1', ['ada', 'sub-self-1'], ['ada', 'sub-self-2']);
+  mkTask('t_c2', ['ada', 'sub-self-1'], ['ada', 'sub-self-3']);
+  mkTask('t_gc', ['ada', 'sub-self-2'], ['ada', 'sub-self-4']);
   // One child already finished — must be skipped, not flipped.
   completeTask('t_c2', RESULT);
 
   // Live abort controller on the root's session — cancel must fire it.
-  const abort = registerChatAbort('hans', 'sub-self-1');
+  const abort = registerChatAbort('ada', 'sub-self-1');
   let signalFired = false;
   abort.signal.addEventListener('abort', () => {
     signalFired = true;
   });
 
-  const outcome = cancelTaskCascade('t_root', 'cancelled by hans: switching models');
+  const outcome = cancelTaskCascade('t_root', 'cancelled by ada: switching models');
   check('cascade cancelled root + running descendants',
     JSON.stringify(outcome?.cancelled.sort()) === JSON.stringify(['t_c1', 't_gc', 't_root']),
     JSON.stringify(outcome));
@@ -85,8 +85,8 @@ function mkTask(id: string, parent: [string, string], target: [string, string], 
 // ── listChildTasks scoping ──────────────────────────────────────────
 {
   check('children scoped to (agent, session)',
-    listChildTasks('hans', 'sub-self-1').map((t) => t.task_id).sort().join(',') === 't_c1,t_c2');
-  check('unknown session has no children', listChildTasks('hans', 'nope').length === 0);
+    listChildTasks('ada', 'sub-self-1').map((t) => t.task_id).sort().join(',') === 't_c1,t_c2');
+  check('unknown session has no children', listChildTasks('ada', 'nope').length === 0);
 }
 
 // ── cancel of unknown task ──────────────────────────────────────────
@@ -102,17 +102,17 @@ check('unknown task → null', cancelTaskCascade('t_missing', 'x') === null);
     },
   });
 
-  mkTask('t_wake', ['hans', 'main'], ['hans', 'sub-self-9']);
+  mkTask('t_wake', ['ada', 'main'], ['ada', 'sub-self-9']);
   completeTask('t_wake', RESULT);
 
-  mkTask('t_fetched', ['hans', 'main2'], ['hans', 'sub-self-10']);
+  mkTask('t_fetched', ['ada', 'main2'], ['ada', 'sub-self-10']);
   completeTask('t_fetched', RESULT);
   markResultFetched('t_fetched'); // parent got the result before grace
 
-  mkTask('t_optout', ['hans', 'main3'], ['hans', 'sub-self-11'], false);
+  mkTask('t_optout', ['ada', 'main3'], ['ada', 'sub-self-11'], false);
   completeTask('t_optout', RESULT);
 
-  mkTask('t_noparent', ['hans', '?'], ['hans', 'sub-self-12']);
+  mkTask('t_noparent', ['ada', '?'], ['ada', 'sub-self-12']);
   completeTask('t_noparent', RESULT);
 
   await delay(150);

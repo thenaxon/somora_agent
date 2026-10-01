@@ -17,7 +17,7 @@ function check(name: string, cond: boolean, detail = ''): void {
   }
 }
 
-const BASE = `# hans — engineer
+const BASE = `# ada — engineer
 model: fable
 thinking: high   # keep
 

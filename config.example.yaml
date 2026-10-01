@@ -368,7 +368,7 @@ providers:
 #   idleStopMinutes: 30                     # stop an unused browser; logins stay
 #   viewport: { width: 1280, height: 800 }
 #   allowPrivate: []                        # LAN hosts/CIDRs agents may open,
-#                                           #  e.g. ["192.168.1.0/24", "nas.local"]
+#                                           #  e.g. ["192.0.2.0/24", "nas.local"]
 #   deny: []                                # hostnames never opened, e.g. ["*.bank.at"]
 #   profiles: {}                            # shared profiles: { firma: { agents: [a, b] } }
 
@@ -430,7 +430,7 @@ providers:
 # the agent knows which paths matter for this conversation.
 #
 # `entities` is a CONTROLLED VOCABULARY — projects belong to one
-# entity (e.g. "privat", "enovom"), and the agent picks FROM this list
+# entity (e.g. "privat", "acme"), and the agent picks FROM this list
 # at create time. Prevents STT mishearings from inventing phantom
 # entities ("enofhom" silently becoming a new category). Only edited
 # here — agents cannot extend it via tools.
@@ -439,8 +439,8 @@ providers:
 #   entities:
 #     - slug: privat
 #       label: Privat
-#     - slug: enovom
-#       label: enovom GmbH
+#     - slug: acme
+#       label: acme GmbH
 #     - slug: firma2
 #       label: Firma Zwei
 

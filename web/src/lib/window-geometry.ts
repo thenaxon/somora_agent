@@ -5,7 +5,7 @@
 // their own clamp and nothing reacted to the viewport changing — move
 // the browser from a 27" to the MacBook screen and every window kept
 // its old coordinates, off-screen and under the taskbar, where the
-// Arrange button that would fix it was covered (Rene's report). The
+// Arrange button that would fix it was covered (the operator's report). The
 // rule users can rely on now: a window never leaves the desktop — its
 // title bar and resize corner are always reachable, and the taskbar
 // always stays on top.
@@ -96,7 +96,7 @@ function gridColumns(n: number): number {
  *
  *  A plain grid leaves a hole whenever n does not fill it — three windows
  *  used to quarter the screen and leave the fourth quarter empty, which
- *  is what prompted this (Luca's report). So when the grid would not come
+ *  is what prompted this (Leo's report). So when the grid would not come
  *  out even, the first slot becomes a MASTER spanning the full height on
  *  the left and the remaining windows tile to its right:
  *

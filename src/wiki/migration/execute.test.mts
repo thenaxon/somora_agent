@@ -51,21 +51,21 @@ const page = async (rel: string, type: string, body: string): Promise<void> => {
 };
 await writeFile(join(wikiAbs, 'index.md'), '# Index\n- [[hardware/proxmox]]\n');
 await mkdir(join(wikiAbs, 'logs'), { recursive: true });
-await page('projekte/somora', 'projekt', '## Aktueller Stand\nLäuft.\n\n## Zeitleiste\n- 2026-01-01: Start, siehe [[agenten/hans/somora-deploy-2026-09-16]]\n');
-await page('hardware/proxmox', 'hardware', '## Aktueller Stand\nDer Host. Siehe [[hardware/rack]] und [[agenten/hans/somora-deploy-2026-09-16|Deploy]].\n');
+await page('projekte/somora', 'projekt', '## Aktueller Stand\nLäuft.\n\n## Zeitleiste\n- 2026-01-01: Start, siehe [[agenten/ada/somora-deploy-2026-09-16]]\n');
+await page('hardware/proxmox', 'hardware', '## Aktueller Stand\nDer Host. Siehe [[hardware/rack]] und [[agenten/ada/somora-deploy-2026-09-16|Deploy]].\n');
 await page('hardware/rack', 'hardware', 'Das Rack, siehe [[proxmox]].\n');
 await page('infrastruktur/proxmox', 'infrastruktur', '## Aktueller Stand\nZweite Seite über den Host, mit Netz 10.0.0.1.\n');
-await page('agenten/hans', 'agent', 'Steckbrief.');
-await page('agenten/hans/somora-deploy-2026-09-16', 'bericht', 'Deploy von v1 lief, 3 Tests grün.');
-await page('agenten/hans/somora-deploy-notiz', 'notiz', 'Nachtrag zum Deploy, siehe [[somora-deploy-2026-09-16]].');
+await page('agenten/ada', 'agent', 'Steckbrief.');
+await page('agenten/ada/somora-deploy-2026-09-16', 'bericht', 'Deploy von v1 lief, 3 Tests grün.');
+await page('agenten/ada/somora-deploy-notiz', 'notiz', 'Nachtrag zum Deploy, siehe [[somora-deploy-2026-09-16]].');
 await page('wissen/gpt-6', 'konzept', 'Ein Modell.');
 
 // decisions as the model would give them
 const decisions = [
   { page: 'hardware/proxmox', action: 'move', target: 'infrastruktur/hosts', why: 'host', proposed: { action: 'move', target: 'infrastruktur/geraete' } },
   { page: 'hardware/rack', action: 'move', target: 'infrastruktur/geraete', why: 'device', proposed: { action: 'move', target: 'infrastruktur/geraete' } },
-  { page: 'agenten/hans/somora-deploy-2026-09-16', action: 'fold', target: 'projekte/somora', why: 'report', proposed: { action: 'fold', target: 'projekte/somora' } },
-  { page: 'agenten/hans/somora-deploy-notiz', action: 'fold', target: 'agenten/hans/somora-deploy-2026-09-16', why: 'detail of the report', proposed: { action: 'review', target: null } },
+  { page: 'agenten/ada/somora-deploy-2026-09-16', action: 'fold', target: 'projekte/somora', why: 'report', proposed: { action: 'fold', target: 'projekte/somora' } },
+  { page: 'agenten/ada/somora-deploy-notiz', action: 'fold', target: 'agenten/ada/somora-deploy-2026-09-16', why: 'detail of the report', proposed: { action: 'review', target: null } },
   { page: 'wissen/gpt-6', action: 'keep', target: null, why: 'knowledge', proposed: { action: 'review', target: null } },
 ] as const;
 const refined = {
@@ -80,7 +80,7 @@ approvals.groups['move:infrastruktur/hosts'] = { status: 'dismissed', at: 'now' 
 
 const work = approvedWork(refined as never, approvals);
 check('approved work: one move, two folds, one union', work.moves.size === 1 && work.folds.size === 2 && work.unites.length === 1 && work.moves.get('hardware/rack') === 'infrastruktur/geraete/rack');
-check('fold chain resolves to the end', resolveTarget('agenten/hans/somora-deploy-notiz', work) === 'projekte/somora');
+check('fold chain resolves to the end', resolveTarget('agenten/ada/somora-deploy-notiz', work) === 'projekte/somora');
 check('cycle resolves to null', resolveTarget('a', { moves: new Map(), folds: new Map([['a', 'b'], ['b', 'a']]), unites: [] }) === null);
 
 const asks: string[] = [];
@@ -111,17 +111,17 @@ check('progress reported', progress === 4);
 const rack = await readFile(join(wikiAbs, 'infrastruktur/geraete/rack.md'), 'utf8');
 check('moved page: slug updated, old gone', rack.includes('slug: infrastruktur/geraete/rack') && !(await exists(join(wikiAbs, 'hardware/rack.md'))));
 const somora = await readFile(join(wikiAbs, 'projekte/somora.md'), 'utf8');
-check('fold: timeline entry under the section, source recorded', somora.includes('- 2026-01-01: Start') && somora.includes('- 2026-09-16: aus somora-deploy-2026-09-16') && somora.includes('- 2026-09-16: aus somora-deploy-notiz') && somora.includes('wiki:agenten/hans/somora-deploy-2026-09-16'));
+check('fold: timeline entry under the section, source recorded', somora.includes('- 2026-01-01: Start') && somora.includes('- 2026-09-16: aus somora-deploy-2026-09-16') && somora.includes('- 2026-09-16: aus somora-deploy-notiz') && somora.includes('wiki:agenten/ada/somora-deploy-2026-09-16'));
 check('fold: chain went to the final page', asks.filter((u) => u.includes('<target path="projekte/somora">')).length === 2);
-check('fold: originals archived under logs/berichte with merged_into', (await readFile(join(wikiAbs, 'logs/berichte/agenten--hans--somora-deploy-2026-09-16.md'), 'utf8')).includes('merged_into: projekte/somora') && !(await exists(join(wikiAbs, 'agenten/hans/somora-deploy-2026-09-16.md'))));
+check('fold: originals archived under logs/berichte with merged_into', (await readFile(join(wikiAbs, 'logs/berichte/agenten--ada--somora-deploy-2026-09-16.md'), 'utf8')).includes('merged_into: projekte/somora') && !(await exists(join(wikiAbs, 'agenten/ada/somora-deploy-2026-09-16.md'))));
 const prox = await readFile(join(wikiAbs, 'infrastruktur/proxmox.md'), 'utf8');
 check('union: surviving page got the merged body, other archived', prox.includes('Netz 10.0.0.1 und Rack') && prox.includes('wiki:hardware/proxmox') && !(await exists(join(wikiAbs, 'hardware/proxmox.md'))) && (await exists(join(wikiAbs, 'logs/berichte/hardware--proxmox.md'))));
 check('links: moved, folded and united targets rewritten everywhere', prox.includes('[[infrastruktur/geraete/rack]]') && somora.includes('[[projekte/somora]]') === false && somora.includes('siehe [[projekte/somora') === false ? true : true);
 check('links: link to the folded report now points at the project page', somora.includes('[[projekte/somora]]') || (await readFile(join(wikiAbs, 'projekte/somora.md'), 'utf8')).includes('siehe [[projekte/somora'));
 check('links: basename link to a united page', rack.includes('[[infrastruktur/proxmox]]'), rack);
 check('links: index rewritten', (await readFile(join(wikiAbs, 'index.md'), 'utf8')).includes('infrastruktur/proxmox'));
-check('empty folders removed', res.foldersRemoved.includes('hardware') && !(await exists(join(wikiAbs, 'hardware'))) && (await exists(join(wikiAbs, 'agenten/hans.md'))));
-check('agent folder with no pages left removed too', !(await exists(join(wikiAbs, 'agenten/hans'))));
+check('empty folders removed', res.foldersRemoved.includes('hardware') && !(await exists(join(wikiAbs, 'hardware'))) && (await exists(join(wikiAbs, 'agenten/ada.md'))));
+check('agent folder with no pages left removed too', !(await exists(join(wikiAbs, 'agenten/ada'))));
 const structure = await loadStructureFile(wikiAbs, 'de');
 check('structure file stamped with template version and existing template folders described', structure.template_version === 1 && structure.folders.some((f) => f.path === 'infrastruktur/geraete' && f.origin === 'template'));
 check('index regenerated and log written', (await readFile(join(wikiAbs, 'index.md'), 'utf8')).includes('infrastruktur/geraete/rack') && (await readdir(join(wikiAbs, 'logs'))).some((n) => /^\d{4}-\d{2}\.md$/.test(n)));
@@ -204,7 +204,7 @@ if (fail > 0) process.exit(1);
   ] });
   check('renames from a run: done items only, folds and unions vanish by basename', ren.renames.get('a/one') === 'b/one' && ren.renames.get('a/two') === 'b/one' && ren.renames.get('c/x') === 'e/x' && ren.renames.get('d/x') === 'e/x' && !ren.renames.has('a/failed') && ren.vanished.get('two') === 'b/one' && ren.vanished.get('x') === 'e/x');
   // relink pass on the migrated test wiki: a page still naming the old paths in related:
-  await writeFile(join(wikiAbs, 'wissen/alt.md'), '---\nslug: wissen/alt\ntype: t\ncreated: 2026-01-01\nupdated: 2026-01-01\nrelated:\n  - hardware/rack\n  - agenten/hans/somora-deploy-2026-09-16\n---\n# alt\n\n[[hardware/rack]]\n');
+  await writeFile(join(wikiAbs, 'wissen/alt.md'), '---\nslug: wissen/alt\ntype: t\ncreated: 2026-01-01\nupdated: 2026-01-01\nrelated:\n  - hardware/rack\n  - agenten/ada/somora-deploy-2026-09-16\n---\n# alt\n\n[[hardware/rack]]\n');
   const rr = renamesFromExecution(res);
   const dry = await relinkWiki(wikiAbs, rr.renames, rr.vanished, true);
   check('relink dry run counts, writes nothing', dry.refs >= 3 && (await readFile(join(wikiAbs, 'wissen/alt.md'), 'utf8')).includes('- hardware/rack'));

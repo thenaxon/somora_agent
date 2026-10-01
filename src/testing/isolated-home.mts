@@ -2,7 +2,7 @@
 // into SOMORA_HOME.
 //
 // Why this exists, plainly: on 2026-09-12 a test of mine wrote fixture
-// personas for "hans" and "lisa" into the configured home. Run through
+// personas for "ada" and "bea" into the configured home. Run through
 // scripts/run-tests.mjs that is a throwaway directory and harmless. Run
 // straight with `npx tsx src/…/x.test.mts` — which is what the header
 // of every test file invites you to do — SOMORA_HOME is unset, the

@@ -103,16 +103,16 @@ const fresh = () => `sess-${++n}`;
     agent: A,
     session: S,
     text: 'q',
-    origin: { kind: 'agent', from: { agent: 'hans', session: 'main' }, callId: 'c1' },
+    origin: { kind: 'agent', from: { agent: 'ada', session: 'main' }, callId: 'c1' },
   });
   await tick();
   const st = getSessionLockStatus(A, S);
   check('agent_ask: call id on the lock', st.activeCallId === 'c1', String(st.activeCallId));
   check('agent_ask: label agent', st.activePriority === 'agent');
-  check('agent_ask: legacy from_agent', calls.at(-1)?.fromAgent === 'hans');
+  check('agent_ask: legacy from_agent', calls.at(-1)?.fromAgent === 'ada');
   check('agent_ask: legacy from_session', calls.at(-1)?.fromSession === 'main');
   check('agent_ask: legacy call id', calls.at(-1)?.agentAskCallId === 'c1');
-  check('agent_ask: the A2A header rides in the prefix, not the text', calls.at(-1)?.turnPrefix === '[Message from agent hans, session main]' && calls.at(-1)?.text === 'q', String(calls.at(-1)?.turnPrefix));
+  check('agent_ask: the A2A header rides in the prefix, not the text', calls.at(-1)?.turnPrefix === '[Message from agent ada, session main]' && calls.at(-1)?.text === 'q', String(calls.at(-1)?.turnPrefix));
   const stop = triggerChatAbort(A, S);
   check('abort found the turn', stop.aborted === true);
   const r = await p;

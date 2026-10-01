@@ -17,7 +17,7 @@ import { join } from 'node:path';
 process.env.SOMORA_HOME = mkdtempSync(join(tmpdir(), 'somora-sessions-'));
 const { resolveSessionId } = await import('./sessions.ts');
 
-const dir = join(process.env.SOMORA_HOME, 'agents', 'lisa', 'sessions');
+const dir = join(process.env.SOMORA_HOME, 'agents', 'bea', 'sessions');
 mkdirSync(dir, { recursive: true });
 const put = (id: string) => writeFileSync(join(dir, `${id}.jsonl`), '');
 
@@ -27,26 +27,26 @@ put('browser-smoke'); // legacy: written under a raw reference
 put('20260907-101010_research');
 
 test('main is always addressable', async () => {
-  assert.equal(await resolveSessionId('lisa', 'main'), 'main');
+  assert.equal(await resolveSessionId('bea', 'main'), 'main');
 });
 
 test('an exact id means that file, and nothing else', async () => {
-  assert.equal(await resolveSessionId('lisa', '20260908-171439_browser-smoke'), '20260908-171439_browser-smoke');
-  assert.equal(await resolveSessionId('lisa', '20260101-000000_browser-smoke'), null, 'an id with no file is not a session');
+  assert.equal(await resolveSessionId('bea', '20260908-171439_browser-smoke'), '20260908-171439_browser-smoke');
+  assert.equal(await resolveSessionId('bea', '20260101-000000_browser-smoke'), null, 'an id with no file is not a session');
 });
 
 test('a session listed under its own raw name resolves to itself', async () => {
   // The bug: this used to answer with the newest _browser-smoke file, so
   // the raw one could be listed but never archived, read or continued.
-  assert.equal(await resolveSessionId('lisa', 'browser-smoke'), 'browser-smoke');
+  assert.equal(await resolveSessionId('bea', 'browser-smoke'), 'browser-smoke');
 });
 
 test('a slug still means the newest session with that slug', async () => {
-  assert.equal(await resolveSessionId('lisa', 'research'), '20260907-101010_research');
+  assert.equal(await resolveSessionId('bea', 'research'), '20260907-101010_research');
 });
 
 test('an unknown or malformed reference is refused, never guessed', async () => {
-  assert.equal(await resolveSessionId('lisa', 'nothing-like-this'), null);
-  assert.equal(await resolveSessionId('lisa', '../escape'), null);
-  assert.equal(await resolveSessionId('lisa', 'with space'), null);
+  assert.equal(await resolveSessionId('bea', 'nothing-like-this'), null);
+  assert.equal(await resolveSessionId('bea', '../escape'), null);
+  assert.equal(await resolveSessionId('bea', 'with space'), null);
 });

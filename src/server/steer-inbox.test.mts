@@ -29,7 +29,7 @@ assert.equal(steerableTurn('a', 's'), null);
 
 // push → drain keeps order and empties the box
 const m1 = pushSteer('a', 's', { text: 'first', origin: human });
-const m2 = pushSteer('a', 's', { text: 'second', origin: human, from_agent: 'naxon', from_session: 'main' });
+const m2 = pushSteer('a', 's', { text: 'second', origin: human, from_agent: 'nova', from_session: 'main' });
 assert.equal(pendingSteer('a', 's'), 2);
 assert.ok(m1.id && m1.ts);
 const drained = drainSteer('a', 's');
@@ -50,5 +50,5 @@ assert.equal(pendingSteer('a', 'other'), 1);
 // the frame names who sent it and carries the text verbatim
 assert.match(frameSteerMessage(m1), /Message from the user, sent while you were working/);
 assert.ok(frameSteerMessage(m1).endsWith('\n\nfirst'));
-assert.match(frameSteerMessage(m2), /Message from agent naxon \(session main\)/);
+assert.match(frameSteerMessage(m2), /Message from agent nova \(session main\)/);
 console.log('steer-inbox.test: ok');

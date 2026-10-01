@@ -1,4 +1,4 @@
-// Right-click menu on an agent's desktop icon (2026-08-31, Rene's ask:
+// Right-click menu on an agent's desktop icon (2026-08-31, the operator's ask:
 // start a new session with an agent without first being in its main
 // chat). The agent is the object here; its sessions are properties of
 // it — which is also where later agent-wide actions (default model,

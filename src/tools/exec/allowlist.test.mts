@@ -4,7 +4,7 @@
 //
 // Context: the pre-fix allowBlocked override refused ANY command whose
 // argument suffix carried a shell operator, so `sudo … && echo ok` was
-// blocked on a host where `sudo` is explicitly whitelisted (hans's
+// blocked on a host where `sudo` is explicitly whitelisted (ada's
 // report 2026-07-21). The fix evaluates each shell segment against the
 // blacklist independently and lets an allowBlocked-covered segment
 // through — while keeping hard-blocks and cross-pipe patterns
@@ -42,7 +42,7 @@ check(
   evaluateExecPolicy('sudo -n true && echo "ok"; echo "---"; sudo -n id -u; sudo -n whoami', SUDO).allowed,
 );
 check(
-  "hans's real piped maintenance command allowed",
+  "ada's real piped maintenance command allowed",
   evaluateExecPolicy('sudo -n -u iobroker iobroker object get system.config 2>&1 | head', SUDO).allowed,
 );
 check(
@@ -108,7 +108,7 @@ check(
   evaluateExecPolicy('pseudo-cmd --flag', SUDO).allowed,
 );
 
-// ── Multi-pattern segment (2026-07-27 spiderman poweroff report) ──
+// ── Multi-pattern segment (2026-07-27 media-box poweroff report) ──
 // One segment can trip SEVERAL blacklist patterns at once (`sudo
 // systemctl poweroff` → sudo pattern AND halt/shutdown pattern). The
 // pre-fix code recorded only the FIRST reason per segment, so the
@@ -124,7 +124,7 @@ check(
   evaluateExecPolicy('sudo -n systemctl poweroff && echo done', SUDO_SYSCTL).allowed,
   JSON.stringify(evaluateExecPolicy('sudo -n systemctl poweroff && echo done', SUDO_SYSCTL)),
 );
-// ── Halt words inside strings / names are not commands (hans 2026-09-03) ──
+// ── Halt words inside strings / names are not commands (ada 2026-09-03) ──
 // The halt/shutdown rule matches on command position per segment. A
 // status echo next to a permitted poweroff used to be the blocked
 // segment while the poweroff itself passed.
@@ -210,7 +210,7 @@ check(
   JSON.stringify(splitCommandSegments('cmd &> /tmp/log')),
 );
 
-// ── segment wrapping: groups, subshells, env assignments (hans 2026-09-24) ──
+// ── segment wrapping: groups, subshells, env assignments (ada 2026-09-24) ──
 check(
   'granted sudo inside a subshell group is cleared',
   evaluateExecPolicy('(sudo -n true && echo ok)', ['sudo']).allowed,
@@ -275,7 +275,7 @@ check(
   JSON.stringify(splitCommandSegments('X=$(sudo echo sub)')),
 );
 
-// ── follow-up (hans 2026-09-24 evening): quotes, lookups, loop keywords ──
+// ── follow-up (ada 2026-09-24 evening): quotes, lookups, loop keywords ──
 check(
   'a | inside a quoted grep pattern is not a pipe',
   evaluateExecPolicy("grep -n -i -E 'docker compose|restart|reboot|recreate' RUNBOOK.md", []).allowed,

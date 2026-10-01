@@ -199,7 +199,7 @@ export const imageGenerate: ToolDefinition<GenerateArgs> = {
       throw new Error(`image_generate: ${budget.reason}`);
     }
 
-    // One image, one place (Rene 2026-09-10). The second destination is
+    // One image, one place (the operator 2026-09-10). The second destination is
     // gone: it produced two paths for the same file, one of which was
     // routinely the nested `<workspace>/<workspace>/…` a relative path
     // creates, and the gallery then showed the same picture under two

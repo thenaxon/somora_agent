@@ -49,7 +49,7 @@ function uniqueRemoteTmp(remotePath: string): string {
  *  - 2026-05-06: returned literal `~/_selftest/foo` for relative paths
  *    when no workspace was set; SFTP treated `~` as a real directory.
  *    Fixed by routing through expandRemotePath.
- *  - 2026-05-09 (Hans Bug 5): when BOTH workspace was set AND user
+ *  - 2026-05-09 (Ada Bug 5): when BOTH workspace was set AND user
  *    passed a `~/foo` path, the join produced `<workspace>/~/foo`
  *    (literal `~` dir under workspace) for file_write/file_patch.
  *    Fixed by branching on tilde BEFORE the workspace branch.

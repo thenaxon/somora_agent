@@ -68,8 +68,8 @@ projects:
   entities:
     - slug: privat
       label: Privat
-    - slug: enovom
-      label: enovom GmbH
+    - slug: acme
+      label: acme GmbH
     # add as many as you need — these are YOURS to curate
 ```
 
@@ -80,7 +80,7 @@ systemctl --user restart somora
 ```
 
 `entities` is a **controlled vocabulary** — projects belong to one
-entity (e.g. "Privat" or "enovom"), and the agent must pick from this
+entity (e.g. "Privat" or "acme"), and the agent must pick from this
 list at create time. See [Entities](#entities--the-controlled-vocabulary)
 below for why this matters.
 
@@ -98,7 +98,7 @@ changes.
 └── projects/
     ├── heimkino.md
     ├── steuern-2025.md
-    ├── enovom-website.md
+    ├── acme-website.md
     └── ...
 ```
 
@@ -147,13 +147,13 @@ must match one of the entries you configured in
 tools — only you can, by editing `config.yaml`.
 
 This is the **voice-input safety net**: when you say something like
-"create a new project Heimkino as an enovom project" and the
+"create a new project Heimkino as an acme project" and the
 transcription comes back fuzzy ("enofhom" because the mic didn't
 hear clearly), the agent calls `entity_list` first, sees the actual
-options (`privat`, `enovom`, `firma2`, …), and picks the closest
+options (`privat`, `acme`, `firma2`, …), and picks the closest
 match instead of inventing a new phantom category. If it does call
 `project_create` with the misspelled slug anyway, the tool rejects
-with `unknown entity 'enofhom' — available: privat, enovom, firma2`
+with `unknown entity 'enofhom' — available: privat, acme, firma2`
 so the agent retries.
 
 Entities also give you a free filter axis. `project_list({entity:

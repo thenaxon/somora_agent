@@ -22,17 +22,17 @@ const check = (n: string, c: boolean, d = ''): void => {
 };
 
 // fixes from fields
-check('link_suggestion → add_link', JSON.stringify(fixFromFields('link_suggestion', ['projekte/somora'], { phrase: 'Rene Siegl', target: '/personen/rene-siegl.md' })) === JSON.stringify({ kind: 'add_link', wikiPath: 'projekte/somora', phrase: 'Rene Siegl', target: 'personen/rene-siegl' }));
+check('link_suggestion → add_link', JSON.stringify(fixFromFields('link_suggestion', ['projekte/somora'], { phrase: 'Max Muster', target: '/personen/max-muster.md' })) === JSON.stringify({ kind: 'add_link', wikiPath: 'projekte/somora', phrase: 'Max Muster', target: 'personen/max-muster' }));
 check('link_suggestion without phrase → null', fixFromFields('link_suggestion', ['a'], { target: 'b' }) === null);
 check('duplicate_page → unite_pages, first survives', JSON.stringify(fixFromFields('duplicate_page', ['wissen/a-release', 'wissen/a', 'wissen/a'], {})) === JSON.stringify({ kind: 'unite_pages', keep: 'wissen/a-release', drop: ['wissen/a'] }));
 check('misfiled_page → move_page into the named folder', JSON.stringify(fixFromFields('misfiled_page', ['wissen/peekaboo'], { target: 'infrastruktur/dienste' })) === JSON.stringify({ kind: 'move_page', from: 'wissen/peekaboo', to: 'infrastruktur/dienste/peekaboo' }));
 check('contradiction → null (informational)', fixFromFields('contradiction', ['a', 'b'], {}) === null);
 
 // addLinkToBody
-const body = '# T\n\n## Stand\nRene Siegl leitet das. Siehe [[personen/rene-siegl|Rene Siegl]] nicht.\nCode `Rene Siegl` bleibt.\n```\nRene Siegl im Block\n```\nRene Siegl wieder, und Renesse.\n';
-const linked = addLinkToBody(body, 'Rene Siegl', 'personen/rene-siegl');
-check('first plain mention linked, existing link, code and fence untouched', linked !== null && linked.split('[[personen/rene-siegl|Rene Siegl]]').length === 3 && linked.includes('`Rene Siegl`') && linked.includes('Rene Siegl im Block') && linked.startsWith('# T'), linked ?? 'null');
-check('heading skipped, whole words only', addLinkToBody('# Rene Siegl\nRenesse\n', 'Rene Siegl', 'personen/rene-siegl') === null && addLinkToBody('Sie heißt Anna.', 'Anna', 'personen/anna') === 'Sie heißt [[personen/anna|Anna]].');
+const body = '# T\n\n## Stand\nMax Muster leitet das. Siehe [[personen/max-muster|Max Muster]] nicht.\nCode `Max Muster` bleibt.\n```\nMax Muster im Block\n```\nMax Muster wieder, und Maxwell.\n';
+const linked = addLinkToBody(body, 'Max Muster', 'personen/max-muster');
+check('first plain mention linked, existing link, code and fence untouched', linked !== null && linked.split('[[personen/max-muster|Max Muster]]').length === 3 && linked.includes('`Max Muster`') && linked.includes('Max Muster im Block') && linked.startsWith('# T'), linked ?? 'null');
+check('heading skipped, whole words only', addLinkToBody('# Max Muster\nMaxwell\n', 'Max Muster', 'personen/max-muster') === null && addLinkToBody('Sie heißt Anna.', 'Anna', 'personen/anna') === 'Sie heißt [[personen/anna|Anna]].');
 check('nothing to link → null', addLinkToBody('nichts', 'Anna', 'personen/anna') === null);
 
 // a temp wiki
@@ -92,8 +92,8 @@ check('move into an unknown folder → failed', r8.kind === 'failed' && /neither
 // dismissed memory + pending run
 const now = new Date();
 await writeLucidRun({ id: '20260901-000000_auto_lucid', status: 'processed', created_at: now.toISOString(), trigger: 'auto', pages_scanned: 1, worker_model_ref: 'x', findings: [
-  { id: 1, kind: 'contradiction', status: 'dismissed', affected_pages: ['B/x', 'a/y'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString(), resolution_note: 'Rene: both dates are right, different events' },
-  { id: 2, kind: 'contradiction', status: 'dismissed', affected_pages: ['old/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: new Date(now.getTime() - 100 * 86_400_000).toISOString(), resolution_note: 'Rene: no' },
+  { id: 1, kind: 'contradiction', status: 'dismissed', affected_pages: ['B/x', 'a/y'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString(), resolution_note: 'Max: both dates are right, different events' },
+  { id: 2, kind: 'contradiction', status: 'dismissed', affected_pages: ['old/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: new Date(now.getTime() - 100 * 86_400_000).toISOString(), resolution_note: 'Max: no' },
   { id: 4, kind: 'contradiction', status: 'dismissed', affected_pages: ['auto/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString() },
   { id: 5, kind: 'contradiction', status: 'dismissed', affected_pages: ['auto/2'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString(), resolution_note: 'dismissed with the rest at review end' },
   { id: 3, kind: 'contradiction', status: 'resolved_manually', affected_pages: ['done/1'], reason: 'r', fix: { kind: 'no_op', note: '' }, resolved_at: now.toISOString() },

@@ -89,7 +89,7 @@ holder();
 // Human turns used to jump ahead of agent turns. A question asked in a
 // voice call runs as an agent turn, so the person at the microphone
 // waited behind another agent's errand while the person typing did not.
-// One queue, in arrival order (Rene, 2026-09-12).
+// One queue, in arrival order (the operator, 2026-09-12).
 {
   const S2 = 'sess-fifo';
   const order: string[] = [];

@@ -113,7 +113,7 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
   // calling a tool that can only answer "no worker configured". Same
   // pattern as projects/wiki self-gating.
   //
-  // Active model can see images itself: hide it too (Rene 2026-09-10).
+  // Active model can see images itself: hide it too (the operator 2026-09-10).
   // The worker is a SUBSTITUTE for models without vision, not a cheaper
   // route for models with it. Measured before this gate: 142 dispatches
   // in the live logs, 67 of them with a failing worker, and every one

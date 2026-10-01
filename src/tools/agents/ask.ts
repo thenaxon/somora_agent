@@ -13,13 +13,13 @@
 // canonical "talk to it" entry point, same surface a human types into.
 //
 // Every call carries from_session so the receiver's header reads
-// `[Message from agent hans, session cerebrocraft]` and it can address
+// `[Message from agent ada, session craftbox]` and it can address
 // a follow-up. An unknown session slug returns the target's existing
 // sessions instead of a bare 404.
 //
 // Lock + queue (src/server/session-queue.ts): an agent_ask call queues
 // on the target session like every other turn — first come, first
-// served, no class jumps ahead (Rene, 2026-09-12). The 'agent' label it
+// served, no class jumps ahead (the operator, 2026-09-12). The 'agent' label it
 // carries is diagnostics for /health, not an order. Sub-spawns to fresh
 // sessions (spawn_subagent's sub-xxx-yyy) are uncontended; this lock
 // only matters when multiple flows hit the SAME session.
@@ -489,7 +489,7 @@ export const agentAsk: ToolDefinition<z.infer<typeof AskInput>, AskResult> = {
         // 409 circular_wait — the target's turn is (directly or via a
         // chain) already blocked waiting on THIS turn. Teach the model
         // the request-response pattern instead of surfacing a raw HTTP
-        // error; this is the self-healing path for the Gideon↔Donna
+        // error; this is the self-healing path for the Gustav↔Dora
         // deadlock (2026-06-01 feedback).
         if (res.status === 409 && body.includes('"circular_wait":true')) {
           let chain = '';

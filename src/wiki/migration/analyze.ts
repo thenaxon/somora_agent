@@ -1,6 +1,6 @@
 // The migration's first step — the plan, without a single write.
 //
-// Why (Rene, 2026-09-29): moving a grown wiki onto the template is the
+// Why (the operator, 2026-09-29): moving a grown wiki onto the template is the
 // most delicate thing somora will ever do to an installation. So the
 // migration is split: this module reads the whole wiki and writes down
 // what it WOULD do, sorted by how sure it is. Rule-based items (a
@@ -123,7 +123,7 @@ const topOf = (folder: string): string => folder.split('/')[0] ?? '';
 /**
  * Where a grown folder belongs by rule: a template path stays; an
  * alias maps; a template subfolder path given as the wrong parent
- * (e.g. `hosts/cerebro`) follows its alias parent. Null = no rule.
+ * (e.g. `hosts/gpu-box`) follows its alias parent. Null = no rule.
  */
 export function ruleTarget(folder: string, taxonomy: WikiTaxonomy, templatePaths: Set<string>): string | null {
   if (!folder) return null;
@@ -195,7 +195,7 @@ export async function analyzeWiki(args: { wikiAbs: string; language: WikiLanguag
     }
     if (target === folder) {
       // A template folder. Every page still gets the model's look
-      // (Rene, 2026-09-29: the first run folded notes into pages that
+      // (the operator, 2026-09-29: the first run folded notes into pages that
       // were themselves misfiled, because template folders were
       // trusted). Only an agent profile in the agents folder is
       // exempt — it is what that folder is for.
@@ -211,7 +211,7 @@ export async function analyzeWiki(args: { wikiAbs: string; language: WikiLanguag
       continue;
     }
     // Under a template top folder but not a template path
-    // (agenten/hans, projekte/somora, personen/rene-siegl, …).
+    // (agenten/ada, projekte/somora, personen/max-muster, …).
     if (templatePaths.has(top)) {
       if (rest.length > 0) {
         const why = top === agentsFolder

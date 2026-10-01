@@ -1,5 +1,5 @@
 // rem.fallback as a chain: the run walks primary → backup 1 → backup 2
-// when each is unreachable (Rene, 2026-09-26). Run: npx tsx src/dream/rem-fallback-chain.test.mts
+// when each is unreachable (the operator, 2026-09-26). Run: npx tsx src/dream/rem-fallback-chain.test.mts
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';

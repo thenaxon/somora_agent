@@ -1,6 +1,6 @@
 // When does compaction fire?
 //
-// 2026-09-10, spielberg/main: a session sent 615,329 tokens of tool
+// 2026-09-10, cleo/main: a session sent 615,329 tokens of tool
 // traffic and the trigger saw 25,982 of them, because it counted chat
 // text only. It never fired, the session reached 97 %, and the turn died
 // at the wall. Two things had to change: count what is actually sent,
@@ -16,7 +16,7 @@ import type { NormalizedEvent } from '../types/events.ts';
 const cfg = { triggerRatio: 0.8, safetyCushionPairs: 4 };
 const ev = (o: Record<string, unknown>): NormalizedEvent => ({ engine: 'openai-compatible', ...o }) as NormalizedEvent;
 
-/** A turn like spielberg's: a little chat, a lot of tool traffic. */
+/** A turn like cleo's: a little chat, a lot of tool traffic. */
 function agenticHistory(rounds: number): NormalizedEvent[] {
   const out: NormalizedEvent[] = [];
   let ts = 1;

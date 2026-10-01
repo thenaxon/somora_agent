@@ -36,7 +36,7 @@ check('errors and warnings are coloured apart from the rest', () =>
 check('the time column is a clock, not a date', () => /^\d{2}:\d{2}:\d{2}$/.test(formatLogTime(Date.now())));
 
 check('field summary drops what already has a column and caps long values', () => {
-  const line = summarizeFields({ agent: 'lisa', msg: 'x', err: 'boom', url: 'y'.repeat(400) });
+  const line = summarizeFields({ agent: 'bea', msg: 'x', err: 'boom', url: 'y'.repeat(400) });
   return line.includes('err=boom') && !line.includes('agent=') && line.length < 400;
 });
 

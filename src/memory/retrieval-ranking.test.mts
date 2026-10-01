@@ -51,18 +51,18 @@ const q = (text: string) => ({ queryTerms: contentTerms(text) });
 test('logDemotion: the change log drops below the page it points at — unless the question is about the chronicle', () => {
   const db = open('log.db');
   fill(db, [
-    { path: '/w/logs/2026-09.md', source: 'wiki', slug: 'logs/2026-09', text: 'projekte/enovom-website übernommen aus hans/enovom-website-docker-public-setup; docker-public enovom website setup', vec: [1, 0, 0, 0] },
-    { path: '/w/projekte/enovom-website.md', source: 'wiki', slug: 'projekte/enovom-website', text: 'die webseite enovom.com läuft auf dem host docker-public in der dmz, setup durch hans', vec: [0.9, 0.1, 0, 0] },
+    { path: '/w/logs/2026-09.md', source: 'wiki', slug: 'logs/2026-09', text: 'projekte/acme-website übernommen aus ada/acme-website-dmz-host-setup; dmz-host acme website setup', vec: [1, 0, 0, 0] },
+    { path: '/w/projekte/acme-website.md', source: 'wiki', slug: 'projekte/acme-website', text: 'die webseite acme.com läuft auf dem host dmz-host in der dmz, setup durch ada', vec: [0.9, 0.1, 0, 0] },
     ...FILLERS,
   ]);
-  const query = 'enovom website docker-public setup';
+  const query = 'acme website dmz-host setup';
   const off = hybridSearch(db, query, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(query), logDemotion: 1 });
   assert.equal(off[0]!.slug, 'logs/2026-09', 'without the demotion the dense log line wins');
   const on = hybridSearch(db, query, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(query), logDemotion: 0.5 });
-  assert.equal(on[0]!.slug, 'projekte/enovom-website');
+  assert.equal(on[0]!.slug, 'projekte/acme-website');
   assert.ok(on[1]!.score < on[0]!.score);
   // "what changed in september" is about the log itself: no demotion
-  for (const chron of ['was hat sich im september im wiki geändert', 'wann wurde enovom-website promoted', 'änderungen 2026-09']) {
+  for (const chron of ['was hat sich im september im wiki geändert', 'wann wurde acme-website promoted', 'änderungen 2026-09']) {
     const hits = hybridSearch(db, chron, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(chron), logDemotion: 0.5 });
     const log = hits.find((h) => h.slug === 'logs/2026-09')!;
     const noDemotion = hybridSearch(db, chron, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(chron), logDemotion: 1 }).find((h) => h.slug === 'logs/2026-09')!;
@@ -74,25 +74,25 @@ test('logDemotion: the change log drops below the page it points at — unless t
 test('pageSupport: a page matching in several sections beats a single dense chunk elsewhere', () => {
   const db = open('support.db');
   fill(db, [
-    { path: '/w/a.md', source: 'wiki', slug: 'infrastruktur/hosts/docker-public', text: 'enovom setup docker-public dmz cloudflare', vec: [1, 0, 0, 0] },
-    { path: '/w/p.md', source: 'wiki', slug: 'projekte/enovom-site', text: 'dns und cloudflare zone für enovom', vec: [0.85, 0.15, 0, 0], line: 10 },
-    { path: '/w/p.md', source: 'wiki', slug: 'projekte/enovom-site', text: 'auslieferung auf docker-public, zip einspielen', vec: [0.85, 0.15, 0, 0], line: 30 },
-    { path: '/w/p.md', source: 'wiki', slug: 'projekte/enovom-site', text: 'zeitleiste: setup 2026-09-28 live', vec: [0.85, 0.15, 0, 0], line: 50 },
+    { path: '/w/a.md', source: 'wiki', slug: 'infrastruktur/hosts/dmz-host', text: 'acme setup dmz-host dmz cloudflare', vec: [1, 0, 0, 0] },
+    { path: '/w/p.md', source: 'wiki', slug: 'projekte/acme-site', text: 'dns und cloudflare zone für acme', vec: [0.85, 0.15, 0, 0], line: 10 },
+    { path: '/w/p.md', source: 'wiki', slug: 'projekte/acme-site', text: 'auslieferung auf dmz-host, zip einspielen', vec: [0.85, 0.15, 0, 0], line: 30 },
+    { path: '/w/p.md', source: 'wiki', slug: 'projekte/acme-site', text: 'zeitleiste: setup 2026-09-28 live', vec: [0.85, 0.15, 0, 0], line: 50 },
     ...FILLERS,
   ]);
-  const query = 'enovom setup docker-public cloudflare';
+  const query = 'acme setup dmz-host cloudflare';
   const off = hybridSearch(db, query, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(query), slugMatchBoost: 1, pageSupport: 0 });
-  assert.equal(off[0]!.slug, 'infrastruktur/hosts/docker-public');
+  assert.equal(off[0]!.slug, 'infrastruktur/hosts/dmz-host');
   const on = hybridSearch(db, query, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(query), slugMatchBoost: 1, pageSupport: 0.5 });
-  assert.equal(on[0]!.slug, 'projekte/enovom-site');
+  assert.equal(on[0]!.slug, 'projekte/acme-site');
   // only the page's best chunk carries the support; the others keep their score
-  const others = on.filter((h) => h.slug === 'projekte/enovom-site').slice(1);
+  const others = on.filter((h) => h.slug === 'projekte/acme-site').slice(1);
   assert.ok(others.every((h) => h.score < on[0]!.score));
   // weak chunks (below half of the page's best) give no support
   const db2 = open('support2.db');
   fill(db2, [
-    { path: '/w/a.md', source: 'wiki', slug: 'x/exact', text: 'enovom setup docker-public cloudflare', vec: [1, 0, 0, 0] },
-    { path: '/w/p.md', source: 'wiki', slug: 'y/broad', text: 'enovom', vec: [0.6, 0.8, 0, 0], line: 10 },
+    { path: '/w/a.md', source: 'wiki', slug: 'x/exact', text: 'acme setup dmz-host cloudflare', vec: [1, 0, 0, 0] },
+    { path: '/w/p.md', source: 'wiki', slug: 'y/broad', text: 'acme', vec: [0.6, 0.8, 0, 0], line: 10 },
     { path: '/w/p.md', source: 'wiki', slug: 'y/broad', text: 'cloudflare', vec: [0.2, 0.9, 0, 0], line: 30 },
     { path: '/w/p.md', source: 'wiki', slug: 'y/broad', text: 'docker', vec: [0.1, 0.9, 0, 0], line: 50 },
     ...FILLERS,
@@ -105,18 +105,18 @@ test('pageSupport: a page matching in several sections beats a single dense chun
 test('slugFullNameBoost: the page whose whole name is in the query beats a page sharing only some words', () => {
   const db = open('fullname.db');
   fill(db, [
-    { path: '/w/h.md', source: 'wiki', slug: 'infrastruktur/hosts/docker-public-dmz-vm', text: 'enovom website läuft hier; docker-public setup', vec: [1, 0, 0, 0] },
-    { path: '/w/p.md', source: 'wiki', slug: 'projekte/enovom-website', text: 'die enovom website auf docker-public, setup durch hans', vec: [0.97, 0.03, 0, 0] },
-    { path: '/w/e.md', source: 'wiki', slug: 'unternehmen/enovom', text: 'enovom website docker-public setup firma', vec: [1, 0, 0, 0] },
+    { path: '/w/h.md', source: 'wiki', slug: 'infrastruktur/hosts/dmz-host-vm', text: 'acme website läuft hier; dmz-host setup', vec: [1, 0, 0, 0] },
+    { path: '/w/p.md', source: 'wiki', slug: 'projekte/acme-website', text: 'die acme website auf dmz-host, setup durch ada', vec: [0.97, 0.03, 0, 0] },
+    { path: '/w/e.md', source: 'wiki', slug: 'unternehmen/acme', text: 'acme website dmz-host setup firma', vec: [1, 0, 0, 0] },
     ...FILLERS,
   ]);
-  const query = 'enovom website docker-public setup';
+  const query = 'acme website dmz-host setup';
   const flat = hybridSearch(db, query, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(query), slugFullNameBoost: 1 });
-  assert.notEqual(flat[0]!.slug, 'projekte/enovom-website', 'with the flat boost alone every name match counts the same');
+  assert.notEqual(flat[0]!.slug, 'projekte/acme-website', 'with the flat boost alone every name match counts the same');
   const full = hybridSearch(db, query, Float32Array.from([1, 0, 0, 0]), { ...base, ...q(query), slugFullNameBoost: 1.5 });
-  assert.equal(full[0]!.slug, 'projekte/enovom-website');
-  // a one-word name ("enovom") gets no extra — its score is unchanged
-  const one = (hits: typeof full) => hits.find((h) => h.slug === 'unternehmen/enovom')!.score.toFixed(6);
+  assert.equal(full[0]!.slug, 'projekte/acme-website');
+  // a one-word name ("acme") gets no extra — its score is unchanged
+  const one = (hits: typeof full) => hits.find((h) => h.slug === 'unternehmen/acme')!.score.toFixed(6);
   assert.equal(one(full), one(flat));
   db.db.close();
 });

@@ -18,7 +18,7 @@
 //      watcher starts. State goes `building` → `ready`.
 //   3. While not `ready`, agent managers keep answering from their own
 //      DB, which still holds the old vault/wiki rows. Nobody waits.
-//   4. Those old rows are never deleted (Rene 2026-09-08: leave them);
+//   4. Those old rows are never deleted (the operator 2026-09-08: leave them);
 //      once `ready`, agent managers simply stop reading them.
 //   5. On every later boot the persisted `ready` state makes the index
 //      usable immediately; the background sweep only catches up on

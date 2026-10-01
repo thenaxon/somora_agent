@@ -24,7 +24,7 @@ export function bridgeMcpTools(manager: McpHubManager, registry: ToolRegistry): 
   // description or input schema changed upstream is registered again
   // (ToolRegistry.register replaces on name); until 2026-09-26 a known
   // name was skipped for good, so a changed tool reached the in-process
-  // engines only after a somora restart (naxon's networth report).
+  // engines only after a somora restart (nova's networth report).
   const registered = new Map<string, string>();
 
   const refresh = (): void => {

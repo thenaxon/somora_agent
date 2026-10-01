@@ -55,8 +55,8 @@ const check = (name: string, cond: boolean, detail = ''): void => {
 // live. The browser can still be seconds behind: chunks arrive faster
 // than real time, so the previous agent's last sentence is sitting in
 // the queue. The window asks the player how far behind it is before it
-// changes name and colour — without that, lisa finishes her sentence
-// under hans's name (Rene, 2026-09-12).
+// changes name and colour — without that, bea finishes her sentence
+// under ada's name (the operator, 2026-09-12).
 {
   let now = 0;
   const node = () => ({

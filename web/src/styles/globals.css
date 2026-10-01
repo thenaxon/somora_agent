@@ -192,7 +192,7 @@ body {
 /* Inline code (single-backtick) — distinct rule from fenced code. Must
  * wrap inside the bubble; otherwise a long inline token like a path or
  * URL pushes the bubble past 75% width and the user sees a horizontal
- * scrollbar that won't stay scrolled (Luca 2026-05-16 report). pre-wrap
+ * scrollbar that won't stay scrolled (Leo 2026-05-16 report). pre-wrap
  * preserves the monospace look while allowing breaks at any point via
  * overflow-wrap: anywhere. */
 .chat-msg-bubble :not(pre) > code {

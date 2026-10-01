@@ -1,6 +1,6 @@
 // Abilities window — per-agent visibility matrix for tools AND skills,
 // plus external MCP server status (design: private/mcp-hub-design.md
-// §4.6; skills half added 2026-08-31 on Rene's request — the same
+// §4.6; skills half added 2026-08-31 on the operator's request — the same
 // matrix for "which agent may use which skill").
 //
 // Left: agent picker. Main: every tool on this instance (built-in
@@ -13,7 +13,7 @@
 // UI never touches agent.yaml itself. The window's internal kind stays
 // `tools` so saved window layouts keep working.
 //
-// Groups are collapsible and carry their own eye (2026-09-10, Luca's
+// Groups are collapsible and carry their own eye (2026-09-10, Leo's
 // report). One MCP server can contribute dozens of tools, and turning
 // that server off for an agent meant clicking every single row; the
 // group eye writes them all in ONE request instead. Collapsed by

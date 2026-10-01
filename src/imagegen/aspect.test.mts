@@ -16,7 +16,7 @@ function check(name: string, cond: boolean, detail = ''): void {
   }
 }
 
-const cerebro: ModelCapabilities = {
+const gpubox: ModelCapabilities = {
   known: true,
   source: 'catalog',
   values: { aspect_ratio: ['1:1', '16:9', '9:16'] },
@@ -32,7 +32,7 @@ check('garbage is null', ratioValue('wide') === null && ratioValue('0:1') === nu
 
 // ── translation ───────────────────────────────────────────────────────
 {
-  const r = translateAspectForOpenAiWire({ aspect_ratio: '16:9', seed: 7 }, cerebro);
+  const r = translateAspectForOpenAiWire({ aspect_ratio: '16:9', seed: 7 }, gpubox);
   check('catalog ratio → size carries the ratio string', r.specs.size === '16:9' && r.specs.aspect_ratio === undefined, JSON.stringify(r));
   check('other specs survive', r.specs.seed === 7);
   check('translation reported exact via catalog-ratio', r.translated?.via === 'catalog-ratio' && r.translated.exact === true);
@@ -46,10 +46,10 @@ check('garbage is null', ratioValue('wide') === null && ratioValue('0:1') === nu
   const r4 = translateAspectForOpenAiWire({ aspect_ratio: '1:1' }, unknown);
   check('1:1 on the table is exact', r4.specs.size === '1024x1024' && r4.translated?.exact === true);
 
-  const r5 = translateAspectForOpenAiWire({ aspect_ratio: '16:9', size: '800x600' }, cerebro);
+  const r5 = translateAspectForOpenAiWire({ aspect_ratio: '16:9', size: '800x600' }, gpubox);
   check('explicit size wins, ratio dropped silently', r5.specs.size === '800x600' && r5.specs.aspect_ratio === undefined && !r5.translated);
 
-  const r6 = translateAspectForOpenAiWire({ size: '1024x1024' }, cerebro);
+  const r6 = translateAspectForOpenAiWire({ size: '1024x1024' }, gpubox);
   check('no ratio → untouched', r6.specs.size === '1024x1024' && !r6.translated && !r6.dropped);
 
   const r7 = translateAspectForOpenAiWire({ aspect_ratio: 'wide' }, unknown);
@@ -60,7 +60,7 @@ check('garbage is null', ratioValue('wide') === null && ratioValue('0:1') === nu
   check('backend that declares aspect_ratio keeps it on the JSON path', r9.specs.aspect_ratio === '16:9' && !r9.translated, JSON.stringify(r9));
   const r10 = translateAspectForOpenAiWire({ aspect_ratio: '16:9' }, native, 'multipart');
   check('…but the multipart edit path is always translated', r10.specs.aspect_ratio === undefined && r10.specs.size === '1792x1024', JSON.stringify(r10));
-  const r11 = translateAspectForOpenAiWire({ aspect_ratio: '16:9' }, cerebro, 'json');
+  const r11 = translateAspectForOpenAiWire({ aspect_ratio: '16:9' }, gpubox, 'json');
   check('named-size catalogs translate on the JSON path too', r11.specs.size === '16:9', JSON.stringify(r11));
 
   const r8 = translateAspectForOpenAiWire({ aspect_ratio: '21:9' }, unknown);

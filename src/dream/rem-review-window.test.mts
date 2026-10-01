@@ -29,7 +29,7 @@ const call = (ts: number, tool: string, input: unknown): NormalizedEvent =>
 // ── a complete loop (CLI engine, mcp-prefixed name) ──────────────────
 {
   const events = [
-    user(10, 'Polizze 788/0327487 gehört zu Walter'),
+    user(10, 'Polizze 788/0327487 gehört zu Karl'),
     agent(11, 'notiert'),
     call(20, 'mcp__somora__dream_review', { dream_id: 'x_auto_lucid', action: 'start' }),
     user(21, '#3 ja es ist rm52 geworden'),

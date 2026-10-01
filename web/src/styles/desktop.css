@@ -773,8 +773,8 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   font-size: 13px;
   /* Long URLs, filesystem paths, and inline code can be > 100 chars
    * with no whitespace — `anywhere` breaks them inside the bubble
-   * instead of forcing horizontal overflow. Hans 2026-05-13 polish
-   * report; Naxon 2026-05-13 link visibility report. */
+   * instead of forcing horizontal overflow. Ada 2026-05-13 polish
+   * report; Nova 2026-05-13 link visibility report. */
   overflow-wrap: anywhere;
   word-break: break-word;
   /* Explicit re-assert of `user-select: text` so descendants always
@@ -863,7 +863,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   align-items: center;
   gap: 4px;
 }
-/* A2A origin caption ("naxon · cerebrocraft") — left of the time on a
+/* A2A origin caption ("nova · craftbox") — left of the time on a
  * peer bubble whose sender wrote from a non-main session. */
 .chat-msg-origin {
   display: inline-flex;
@@ -1070,7 +1070,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 /* Tailwind preflight (@tailwind base in globals.css) strips browser
  * anchor styling (`a { color: inherit; text-decoration: inherit }`),
  * so without an explicit rule a Markdown link inside an assistant
- * bubble reads as plain text — same color, no underline. Naxon
+ * bubble reads as plain text — same color, no underline. Nova
  * 2026-05-13: "link nicht klickbar" was actually "link nicht
  * erkennbar". Restore visible link affordance, scoped to the bubble
  * so we don't accidentally re-style unrelated anchors. */
@@ -1088,7 +1088,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 /* Markdown lists inside assistant bubbles. Without these rules the
  * default tailwind-preflight `ul,ol { list-style: none; padding: 0 }`
  * leaves bullet/number markers invisible and items glued to the bubble
- * edge — hard-to-scan for longer answers. Hans 2026-05-13 polish. */
+ * edge — hard-to-scan for longer answers. Ada 2026-05-13 polish. */
 .chat-msg-bubble ul,
 .chat-msg-bubble ol {
   margin: 6px 0;
@@ -1104,7 +1104,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
 .chat-msg-bubble p:last-child { margin-bottom: 0; }
 /* Code blocks: scroll/wrap rules live in globals.css (single source of
  * truth as of 2026-05-16 — two-file rules conflicted on word-break +
- * white-space, leading to inline code overflowing the bubble per Luca
+ * white-space, leading to inline code overflowing the bubble per Leo
  * 2026-05-16 report). Only the margin stays here as a desktop-chrome
  * detail. */
 .chat-msg-bubble pre {
@@ -1848,7 +1848,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
  * nothing — vertical-align has no effect on a block box. Measured on
  * the live desktop 2026-09-10: in the abilities window the sparkles
  * icon sat 14px above the word "skills", one whole line up, and the
- * MCP heading did the same. Rene: "bei skills in den abilities ist das
+ * MCP heading did the same. The operator: "bei skills in den abilities ist das
  * icon verschoben". Icons that belong inside the line opt back in. */
 .icon-inline {
   display: inline-block;
@@ -1860,7 +1860,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
  * It is neither a user bubble nor an agent bubble: it is the agent's
  * own voice asking the agent. Quiet, indented, and above all WRAPPING —
  * the first live call wrote 400 to 750 characters into a one-line
- * divider that ran off the window unreadably (Rene, 2026-09-11). */
+ * divider that ran off the window unreadably (the operator, 2026-09-11). */
 .voice-note {
   margin: 8px 0 8px 12px;
   padding: 6px 10px;
@@ -1894,7 +1894,7 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
  *
  * It follows the conversation, so the top edge is where lines leave —
  * a hard cut there reads like a broken layout next to a soft, breathing
- * figure. The mask fades the first ~28px out instead (Rene,
+ * figure. The mask fades the first ~28px out instead (the operator,
  * 2026-09-11: "wäre es schöner wenn da so ein schleier wäre"). */
 .voice-transcript {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.35) 14px, #000 32px);

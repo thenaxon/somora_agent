@@ -1,7 +1,7 @@
 // The migration's second step — the model judges every page the plan
 // is unsure about, and every page a rule would move. Still no write.
 //
-// Why (Rene, 2026-09-29): a rule by folder name gets about half of the
+// Why (the operator, 2026-09-29): a rule by folder name gets about half of the
 // pages right — `hardware/` held devices AND the projects that bought
 // them, `rechtliches/` held a lawsuit that is an event, not a rule. So
 // no page moves on a folder name: the rule only proposes a target, and

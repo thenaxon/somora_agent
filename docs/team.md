@@ -141,7 +141,7 @@ turns carry the same block as the agent's normal sessions.
 
 Every framework we looked at routes on one short description per
 colleague, and so does every model: write **triggers**, not résumés —
-`library docs and framework comparisons`, not `Lisa is an experienced
+`library docs and framework comparisons`, not `Bea is an experienced
 researcher with a journalist's mindset`. Character and voice belong in
 that agent's own persona. Keep the block short: every agent loads it in
 every turn, and `somora team check` (and the web preview) warn above

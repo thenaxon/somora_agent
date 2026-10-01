@@ -29,7 +29,7 @@ const img = (id: string): AssistantMedia => ({
 });
 const ev = (e: Partial<HistoryEvent> & { kind: string }): HistoryEvent => ({ ts: 0, ...e }) as HistoryEvent;
 
-// ── the real 2026-08-28 sequence (spielberg/main, turn t-…469271) ──
+// ── the real 2026-08-28 sequence (cleo/main, turn t-…469271) ──
 {
   const events: HistoryEvent[] = [
     ev({ kind: 'user_message', ts: 1, text: 'first ask' }),

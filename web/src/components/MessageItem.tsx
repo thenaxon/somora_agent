@@ -75,7 +75,7 @@ interface Props {
   /** Take a still-queued user message back into the composer. Shown
    *  next to the ⌛ marker only while the row carries `queued` — once
    *  the turn starts the server owns the message and Stop is the only
-   *  handle left. Rene, 2026-08-26. */
+   *  handle left. The operator, 2026-08-26. */
   onRecall?: (messageId: string) => void;
   /** Render preference: hide the 🧠 thinking block above assistant
    *  replies. Pure display — the content is still captured, persisted
@@ -161,14 +161,14 @@ export const MessageItem = memo(function MessageItem({
 
   // Two different features produce a spoken line and they get two
   // different marks: the dictation button is a microphone, a live call
-  // is a call glyph (Rene, 2026-09-12 — "sind 2 ganz unterschiedliche
+  // is a call glyph (the operator, 2026-09-12 — "sind 2 ganz unterschiedliche
   // konzepte"). Older messages carry no source and keep the mic.
   const spokenByUser = msg.role === 'user' && msg.inputModality === 'voice';
   const spokenInCall = spokenByUser && msg.voiceSource === 'realtime';
   const isPeer = msg.role === 'user' && !!msg.fromAgent;
   const peer = isPeer && msg.fromAgent ? peerAgents?.get(msg.fromAgent) : undefined;
-  // Origin caption for A2A inbounds from a NON-main session: "naxon ·
-  // cerebrocraft". main traffic stays as quiet as before; project
+  // Origin caption for A2A inbounds from a NON-main session: "nova ·
+  // craftbox". main traffic stays as quiet as before; project
   // sessions become visible so mis-routing is obvious at a glance
   // (2026-09-06 A2A routing reports).
   const peerSlug =
@@ -511,18 +511,18 @@ function VoiceNote({ pres, ts }: { pres: OriginPresentation; ts: number }) {
   // on a call. It is NOT a message from another agent — the agent
   // answers into this chat and addresses nobody back — and it is not
   // the user typing either, so it gets its own quiet block rather than
-  // a bubble that would read as "Rene wrote this".
+  // a bubble that would read as "The operator wrote this".
   //
   // A block, not a one-line divider: the first live call produced
   // questions of 400 to 750 characters that ran off the window in a
-  // single unbroken line and could not be read at all (Rene,
+  // single unbroken line and could not be read at all (the operator,
   // 2026-09-11). `pres.body` is the question with the lead-in for the
   // agent stripped — scaffolding for the model, not for a reader.
   return (
     <div className="voice-note" aria-label={pres.ariaLabel}>
       <div className="voice-note-head">
         {/* A call, not the dictation button — two features, two glyphs
-            (Rene, 2026-09-12: "sind 2 ganz unterschiedliche konzepte"). */}
+            (Max, 2026-09-12: "sind 2 ganz unterschiedliche konzepte"). */}
         <PhoneCall size={12} />
         <span className="voice-note-label">{pres.label}</span>
         <span className="voice-note-time">{formatBubbleTime(ts)}</span>
@@ -544,7 +544,7 @@ function BubbleTimestamp({
   /** Steering: handed into the running turn — `pending` until the
    *  model read it, `applied` afterwards. */
   steer?: 'pending' | 'applied';
-  /** A2A origin caption ("naxon · cerebrocraft"), left of the time. */
+  /** A2A origin caption ("nova · craftbox"), left of the time. */
   origin?: string;
   /** Present only while queued: takes the message back into the
    *  composer for another edit before it starts. */
@@ -601,7 +601,7 @@ function BubbleTimestamp({
   );
 }
 
-/** `20260906-172957_cerebrocraft` → `cerebrocraft`; `main` stays. */
+/** `20260906-172957_craftbox` → `craftbox`; `main` stays. */
 function sessionSlug(sessionId: string): string {
   const m = /^\d{8}-\d{6}_(.+)$/.exec(sessionId);
   return m ? m[1]! : sessionId;

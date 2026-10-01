@@ -23,7 +23,7 @@ a builder never becomes a chat agent: the files differ (a builder has no
 ```
 
 ```yaml
-# ~/.somora/agents/rudi/agent.yaml
+# ~/.somora/agents/dan/agent.yaml
 kind: builder
 model: deepseek            # any configured alias; local models work well here
 workspace:
@@ -40,7 +40,7 @@ steering: true             # a message typed while it works goes INTO the turn
 
 ```markdown
 ---
-name: rudi
+name: dan
 description: Builds and changes software in the repository it is pointed at.
 role: builder
 icon: 🔨

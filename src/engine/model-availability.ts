@@ -2,7 +2,7 @@
 // every cascade in the house (chat fallback chain, REM worker chain,
 // compaction workers).
 //
-// Why (naxon's report 2026-09-27, Rene): when a GPU profile swaps
+// Why (nova's report 2026-09-27, the operator): when a GPU profile swaps
 // models, a model stays away for hours. Every cascade found that out
 // again on every turn — two dead hops of ~30 s before the third model
 // answered, on every message in the session, and the same in REM and
@@ -12,7 +12,7 @@
 // (default 60), then the model is tried again; a success clears the
 // mark early. In memory only: a restart is a fresh start.
 //
-// Rene's rule: the fallback chip on the turn stays — the person sees
+// the operator's rule: the fallback chip on the turn stays — the person sees
 // that the turn ran on a backup — but the primary is not knocked on
 // every turn.
 

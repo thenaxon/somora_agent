@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import matter from 'gray-matter';
 
 export interface ReferencedWikiPage {
-  /** Wiki path without .md (e.g. 'personen/luca'). */
+  /** Wiki path without .md (e.g. 'personen/leo'). */
   slug: string;
   markdown: string;
   /** mtime of the file when it was read for this context. Deep hands it

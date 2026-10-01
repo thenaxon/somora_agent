@@ -2,7 +2,7 @@
 // memory_* tool schemas is strict (`^[a-z0-9][a-z0-9_-]*$`) on purpose —
 // slugs become file names and wiki links. But the REM extractor is an
 // LLM and writes what the conversation said: `iobroker-ablösung-2026-09-01`,
-// `spiderman-liteLLM-multi-deployment-idee` (2026-09-03 report — four
+// `media-box-liteLLM-multi-deployment-idee` (2026-09-03 report — four
 // dream_apply calls failed on their own extractor's output). Normalise
 // at the source (extraction) and once more at apply time for findings
 // that were extracted before this existed.

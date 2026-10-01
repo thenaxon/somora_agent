@@ -2,7 +2,7 @@
 //
 // Until 2026-09-21 only a person could do that: agent_ask takes `model`
 // for a session it CREATES and refuses it for an existing one ("the
-// model of a running session is the user's call"). Rene lifted that:
+// model of a running session is the user's call"). The operator lifted that:
 // an orchestrator that sees a colleague's session struggling on a small
 // model should be able to move it. What stays is that it never happens
 // silently — the server writes a row into the affected conversation
@@ -39,7 +39,7 @@ export const sessionModel: ToolDefinition<z.infer<typeof Input>, SessionModelRes
   description:
     'Switch the model of an EXISTING somora chat session — your own (default: the session you are in) or ' +
     'another agent\'s (name `agent` and `session`; find sessions with session_list). Use it when the user ' +
-    'asks for it ("stell hans\' Projekt-Session auf opus"), or when a session clearly needs a stronger or ' +
+    'asks for it ("stell ada\' Projekt-Session auf opus"), or when a session clearly needs a stronger or ' +
     'cheaper model for what it is doing. The running turn keeps its model; the NEXT turn uses the new one. ' +
     'The switch is written into that conversation with your name, and every open window updates — so say ' +
     'in your reply what you switched and why. `clear:true` removes the override (back to the persona ' +

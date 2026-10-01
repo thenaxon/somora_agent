@@ -98,7 +98,7 @@ export async function injectMemoryContext(args: {
 
 /**
  * How much the history may steer this message's recall. A message with
- * three or more content words ("was weißt du über walter") decides for
+ * three or more content words ("was weißt du über karl") decides for
  * itself; with one or two ("und seine frau?") the conversation must add
  * the topic; with none ("das solltest du aber wissen oder?") it IS the
  * topic. Exported for tests.

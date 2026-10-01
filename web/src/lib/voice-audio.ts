@@ -112,7 +112,7 @@ export interface VoicePlayer {
    * Chunks arrive faster than real time, so when the server says a
    * handover is done, the previous agent can still have seconds of
    * speech waiting to be heard. Swapping name and colour at that moment
-   * shows the wrong agent saying the last sentence (Rene, 2026-09-12).
+   * shows the wrong agent saying the last sentence (the operator, 2026-09-12).
    */
   pendingMs(): number;
   /** Barge-in: drop everything not yet played. */

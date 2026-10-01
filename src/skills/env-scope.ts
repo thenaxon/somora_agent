@@ -6,11 +6,11 @@
 // values into ~/.somora/somora.env, which lands in process.env at server
 // boot — and from there leaked into EVERY spawned exec child, whether the
 // command had anything to do with the skill or not. On hosts where that
-// felt wrong, per-host wrapper-script workarounds grew instead (Lucy case
+// felt wrong, per-host wrapper-script workarounds grew instead (Partner case
 // study 2026-07-24) — three competing conventions.
 //
 // This module makes the declaration operational, scoped by PROGRAM NAME
-// (Rene's decision 2026-07-27):
+// (the operator's decision 2026-07-27):
 //
 //   - Every env var declared by ANY skill is STRIPPED from spawned exec
 //     children by default (deny-by-default).

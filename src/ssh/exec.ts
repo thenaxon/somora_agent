@@ -132,7 +132,7 @@ function shellQuote(s: string): string {
  * Quote a cwd for a `cd` prefix while keeping `~` functional. Tilde
  * expansion only happens when the word STARTS with an unquoted `~`,
  * so `cd '~/x'` looks for a literal directory named `~` — the same
- * trap as the local-spawn path (2026-06-10 hans feedback). Leave the
+ * trap as the local-spawn path (2026-06-10 ada feedback). Leave the
  * leading `~`/`~/` bare and quote only the rest.
  */
 export function shellQuoteCwd(s: string): string {

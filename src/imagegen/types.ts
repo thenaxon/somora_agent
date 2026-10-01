@@ -90,7 +90,7 @@ export interface ModelCapabilities {
    */
   recommended?: Partial<Record<EnumerableSpecField, string[]>>;
   /**
-   * Named ratios the endpoint accepts IN `size` ("16:9") — the cerebro
+   * Named ratios the endpoint accepts IN `size` ("16:9") — the gpu-box
    * visual-adapter publishes them as `supported_parameters.size.
    * also_accepts` because `aspect_ratio` does not survive OpenAI-shaped
    * routers on /images/edits. Drives the ratio → size translation on

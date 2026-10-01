@@ -23,7 +23,7 @@ import { logger } from '../server/logger.ts';
 
 /** One wiki page as the explorer sees it. */
 export interface WikiPageMeta {
-  /** Path relative to the wiki root without `.md`, e.g. `personen/rene`. */
+  /** Path relative to the wiki root without `.md`, e.g. `personen/the operator`. */
   slug: string;
   /** Absolute path on disk. */
   file: string;
@@ -326,9 +326,9 @@ function firstProseLine(body: string): string {
  * Resolve raw link targets to slugs and compute backlinks.
  *
  * Resolution order, first match wins:
- *   1. exact slug            `[[personen/rene-siegl]]`
+ *   1. exact slug            `[[personen/max-muster]]`
  *   2. case-insensitive slug
- *   3. unique basename       `[[rene-siegl]]`  (Obsidian's short form)
+ *   3. unique basename       `[[max-muster]]`  (Obsidian's short form)
  *
  * A basename that matches several pages stays unresolved rather than
  * picking one arbitrarily — a wrong edge in the graph is worse than a

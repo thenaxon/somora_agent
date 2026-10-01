@@ -159,7 +159,7 @@ export function ChatWindow({
   // server keeps capturing + persisting the text; this just decides
   // whether MessageItem renders the 🧠 block. Default ON (collapsed
   // block, one line) so the feature is discoverable; the ••• menu row
-  // and `/verbose thinking off` hide it. Rene 2026-09-03: per session,
+  // and `/verbose thinking off` hide it. The operator 2026-09-03: per session,
   // not per browser — "maybe I want it in one session and not another".
   const showThinkingKey = `somora.web.showThinking.${agent.name}::${sessionId}`;
   const [showThinking, setShowThinking] = useState<boolean>(() => {
@@ -279,7 +279,7 @@ export function ChatWindow({
   // block's <pre> scrollbar, a wide <table>'s scrollbar). Each streaming
   // delta otherwise re-runs scrollIntoView 3x via the RAF chain below,
   // which on touch devices contributes to the "horizontal scrollbar
-  // won't stay where I dragged it" symptom (Luca 2026-05-16 report).
+  // won't stay where I dragged it" symptom (Leo 2026-05-16 report).
   // Cleared 300ms after pointerup so a single rapid drag isn't broken
   // by an intervening React commit.
   const userScrollGuardRef = useRef(false);
@@ -521,7 +521,7 @@ export function ChatWindow({
       // A call's own rows are not engine internals and do not hide with
       // the tool toggle: with tools collapsed, a handover note would be
       // invisible and a session would carry questions from a call
-      // nobody can see arriving (Rene, 2026-09-12).
+      // nobody can see arriving (the operator, 2026-09-12).
       const isVoiceRow = m.role === 'engine_meta' && m.meta.engine === 'voice';
       if (!showTools && !isVoiceRow && (m.role === 'tool_call' || m.role === 'tool_result' || m.role === 'engine_meta')) return false;
       if (!showMemory && m.role === 'memory_inject') return false;
@@ -926,7 +926,7 @@ export function ChatWindow({
   const thinkingActive = thinkingLevelSet && thinking?.modelSupportsReasoning;
   const thinkingDormant = thinkingLevelSet && !thinking?.modelSupportsReasoning;
   // No sampling badge in the header: the temperature is configuration,
-  // not conversation (Rene 2026-09-03). `/sampling` reports it on
+  // not conversation (the operator 2026-09-03). `/sampling` reports it on
   // demand, same as the TUI.
 
   const isBuilder = agent.kind === 'builder';
@@ -1205,7 +1205,7 @@ export function ChatWindow({
               >
                 {/* Past the window the percentage stops being a scale and
                     starts being noise — 300 % in red says nothing a reader
-                    can act on (Rene, 2026-09-11). Say "over the window"
+                    can act on (Max, 2026-09-11). Say "over the window"
                     and show the number instead. */}
                 {chat.usage.context_tokens > chat.usage.contextWindow
                   ? `▣ >100% (${formatTokens(chat.usage.context_tokens)})`

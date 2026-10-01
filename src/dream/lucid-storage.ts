@@ -68,7 +68,7 @@ export async function listLucidRuns(): Promise<LucidRun[]> {
     // loop-state.json is the review-loop CONTROL file, not a run. It
     // shares this directory but has no `findings[]`, so reading it as a
     // LucidRun made `dream_list` crash on `r.findings.length` for EVERY
-    // agent whenever any review loop was open (2026-07-23, Gideon report).
+    // agent whenever any review loop was open (2026-07-23, Gustav report).
     if (e.name === 'loop-state.json') continue;
     const path = join(LUCID_ROOT, e.name);
     try {
@@ -165,7 +165,7 @@ export const findingKey = (f: Pick<LucidFinding, 'kind' | 'affected_pages'>): st
 
 /**
  * Findings a person dismissed within `days` — filed again they would be
- * the same question twice (Rene, 2026-09-29: "es wurden oft doppelte
+ * the same question twice (the operator, 2026-09-29: "es wurden oft doppelte
  * Dinge gefunden"). Resolved findings are not remembered: the pages
  * changed, a new finding on them is a new question.
  */

@@ -54,7 +54,7 @@ export function stripOriginMarker(text: string): string {
   return text.replace(/^\[[^\]]*\]\s*/, '').trim();
 }
 
-/** Browser view id → the name a person knows: `agent:naxon` → `naxon`,
+/** Browser view id → the name a person knows: `agent:nova` → `nova`,
  *  `profile:work` → `profile work`. */
 function browserViewName(viewId: string): string {
   return viewId.replace(/^agent:/, '').replace(/^profile:/, 'profile ');
@@ -72,7 +72,7 @@ export function tmuxSessionFromText(text: string): string {
   return text.match(/Session '([^']+)'/)?.[1] ?? '';
 }
 
-/** `[browser] … browser 'agent:naxon' …` → `naxon`. */
+/** `[browser] … browser 'agent:nova' …` → `nova`. */
 export function browserNameFromText(text: string): string {
   return browserViewName(text.match(/browser '([^']+)'/)?.[1] ?? '');
 }
@@ -285,7 +285,7 @@ export function originGlyphLabel(kind: string, about?: string): WorkGlyphLabel {
 /** Who asked for a queue entry, as the `/work` route reports it. */
 export type WorkRequester = { agent: string; session: string } | { human: true } | { voiceCall: string };
 
-/** "you" / "voice" / "from lisa" — the requester column of a row. */
+/** "you" / "voice" / "from bea" — the requester column of a row. */
 export function workRequesterLabel(requester: WorkRequester | undefined): string {
   if (!requester) return '';
   if ('human' in requester) return 'you';

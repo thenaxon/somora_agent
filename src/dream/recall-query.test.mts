@@ -6,7 +6,7 @@ const check = (n: string, c: boolean, d = '') => { if (c) pass++; else { fail++;
 const um = (text: string, from_agent?: string) => ({ kind: 'user_message', text, ...(from_agent ? { from_agent } : {}) });
 check('empty', buildVaultRecallQuery([]) === '');
 check('only user messages', buildVaultRecallQuery([um('hello'), { kind: 'assistant_message', text: 'hi' }, { kind: 'tool_call', text: 'x' }]) === 'hello');
-check('A2A messages excluded', buildVaultRecallQuery([um('human'), um('from other agent', 'lisa')]) === 'human');
+check('A2A messages excluded', buildVaultRecallQuery([um('human'), um('from other agent', 'bea')]) === 'human');
 {
   const evs = Array.from({ length: 900 }, (_, i) => um(`msg${i}`));
   const q = buildVaultRecallQuery(evs);

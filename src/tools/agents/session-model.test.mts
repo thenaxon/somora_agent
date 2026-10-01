@@ -9,14 +9,14 @@ process.env.SOMORA_HOME = mkdtempSync(join(tmpdir(), 'somora-session-model-'));
 const { resolveSessionModelTarget, sessionModel } = await import('./session-model.ts');
 const { resolveEngineMetaLabel, summariseEngineMeta } = await import('../../engine/engine-meta-labels.ts');
 
-const me = { agent: 'naxon', session: '20260921-100000_planung' };
-assert.deepEqual(resolveSessionModelTarget({}, me), { agent: 'naxon', session: me.session }, 'default: the session I am in');
-assert.deepEqual(resolveSessionModelTarget({ session: 'main' }, me), { agent: 'naxon', session: 'main' });
-assert.deepEqual(resolveSessionModelTarget({ agent: 'hans', session: 'kizilla' }, me), { agent: 'hans', session: 'kizilla' });
-assert.throws(() => resolveSessionModelTarget({ agent: 'hans' }, me), /name the session of 'hans'/, "never guess another agent's session");
-assert.throws(() => resolveSessionModelTarget({}, { agent: 'naxon' }), /not running inside a session/);
+const me = { agent: 'nova', session: '20260921-100000_planung' };
+assert.deepEqual(resolveSessionModelTarget({}, me), { agent: 'nova', session: me.session }, 'default: the session I am in');
+assert.deepEqual(resolveSessionModelTarget({ session: 'main' }, me), { agent: 'nova', session: 'main' });
+assert.deepEqual(resolveSessionModelTarget({ agent: 'ada', session: 'kittyapp' }, me), { agent: 'ada', session: 'kittyapp' });
+assert.throws(() => resolveSessionModelTarget({ agent: 'ada' }, me), /name the session of 'ada'/, "never guess another agent's session");
+assert.throws(() => resolveSessionModelTarget({}, { agent: 'nova' }), /not running inside a session/);
 
-const ctx = { agent: 'naxon', session: me.session, config: {} } as never;
+const ctx = { agent: 'nova', session: me.session, config: {} } as never;
 await assert.rejects(sessionModel.handler({} as never, ctx), /either `model` or `clear:true`/);
 await assert.rejects(sessionModel.handler({ model: 'opus', clear: true } as never, ctx), /either `model` or `clear:true`/);
 
@@ -25,5 +25,5 @@ const jsonKeys = Object.keys((sessionModel.jsonSchema as { properties: Record<st
 assert.deepEqual(zodKeys, jsonKeys);
 
 assert.equal(resolveEngineMetaLabel('somora', 'session_model'), 'model switched');
-assert.equal(summariseEngineMeta('somora', 'session_model', { text: 'agent naxon switched…' }), 'agent naxon switched…');
+assert.equal(summariseEngineMeta('somora', 'session_model', { text: 'agent nova switched…' }), 'agent nova switched…');
 console.log('session-model: all passed');

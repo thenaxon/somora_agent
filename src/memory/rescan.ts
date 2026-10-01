@@ -1,4 +1,4 @@
-// Periodic sweep + watcher retry policy (2026-09-25, Rene: vault files
+// Periodic sweep + watcher retry policy (2026-09-25, the operator: vault files
 // edited from another machine reached the index late).
 //
 // The vault is a network share (CIFS). A file written on another

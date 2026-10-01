@@ -189,7 +189,7 @@ export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
     // When the skill is unavailable on this host (missing bin /
     // missing config), prepend a clearly-marked warning to the body so
     // the model doesn't blindly run commands the environment can't
-    // execute. Hans 2026-05-09: body alone was ambiguous when
+    // execute. Ada 2026-05-09: body alone was ambiguous when
     // available:false.
     const finalBody = skill.available
       ? body
@@ -217,7 +217,7 @@ export const skill: ToolDefinition<z.infer<typeof SkillInput>, SkillOutput> = {
 // but it is not always reachable: codex-cli freezes the system prompt at
 // session start, so long-running codex sessions lose the registry to
 // codex-side context compaction and never learn about skills added later
-// (hans 2026-07-20 report — the somora-feedback skill existed for two
+// (ada 2026-07-20 report — the somora-feedback skill existed for two
 // months but was invisible to his May session). This tool is the
 // on-demand answer: same data as the registry, fetched fresh from disk,
 // filtered by the agent's allow-list.

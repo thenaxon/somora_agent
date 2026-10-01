@@ -15,7 +15,7 @@
 // installed next week would be invisible to that agent by surprise.
 // The tool matrix avoids exactly that by managing exact-name denies;
 // skills now do the same. The list form stays valid as an allow-list
-// shorthand (Rene, 2026-08-31).
+// shorthand (the operator, 2026-08-31).
 //
 // Enforced at every surface that hands a skill to an agent: the
 // <available_skills> registry in the system prompt, `skill_list`, and

@@ -55,7 +55,7 @@ export interface VoiceInstructionsInput {
  *
  * "You speak de." is a two-letter code buried in an English paragraph,
  * and the model followed the paragraph: agents slipped into English
- * mid-call (Rene, 2026-09-12). The wiki already learned this — it keeps
+ * mid-call (the operator, 2026-09-12). The wiki already learned this — it keeps
  * a `languageName` next to its code for exactly the same reason.
  * Unknown codes fall through as themselves, which is no worse than
  * before.
@@ -160,9 +160,9 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
 
   // What the voice self must ask about, and what it simply IS.
   //
-  // Rene, 2026-09-11, after the first call: asked who he was, the voice
+  // the operator, 2026-09-11, after the first call: asked who he was, the voice
   // self consulted the agent about its own identity and then said "ich
-  // bin hans und nicht er". Two faults in one sentence — it treated its
+  // bin ada und nicht er". Two faults in one sentence — it treated its
   // own name as a fact it had to look up, and it spoke about the agent
   // in the third person. Identity, role, manner and what it can do are
   // ITS OWN; only the work is the agent's.
@@ -186,7 +186,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
   const parts = [
     // The contrast only makes sense when the two differ. Told "these
     // instructions are English, your speech is not" while speaking
-    // English, the line contradicts itself (Rene, 2026-09-12).
+    // English, the line contradicts itself (the operator, 2026-09-12).
     spoken === 'English'
       ? `Speak English. Never switch language mid-call, not for a word.`
       : `Speak ${spoken}. These instructions are English, your speech is not — never switch language mid-call, not for a word. Tool and file names stay as written.`,
@@ -204,7 +204,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     `At most ${sentences} sentences per answer: a conversation, not a lecture, and interruptible.`,
     // The caller picked this agent by name in a picker and talks to it
     // daily. An introduction is a wall in front of the first question,
-    // and jarvis, who is formal by persona, made it a ceremony (Rene,
+    // and eve, who is formal by persona, made it a ceremony (the operator,
     // 2026-09-12: "die brauchen nicht immer eine lange intro davor").
     `Do not introduce yourself and do not list what you can do — they chose you and know you. Answer the first thing they say as if the call had been running. Who you are and how you talk needs no lookup: say it when asked, not before, and you are an agent in somora, not a human. Handed a call: one short sentence that you are here, then on.`,
     consultLine,
@@ -212,7 +212,7 @@ export function buildVoiceInstructions(input: VoiceInstructionsInput): BuiltVoic
     // sentence "die IXO Holding ist schon Vergangenheit" was a remark,
     // not a question, and the dream phase turned it into a memory note
     // that corrected three wiki pages. Since only what reaches the agent
-    // is recorded, a remark nobody forwards is gone (Rene, 2026-09-12).
+    // is recorded, a remark nobody forwards is gone (the operator, 2026-09-12).
     `Pass on what they state or correct too — a decision, a date, "X is history" — as a short note, not only what they ask for.`,
     `What you can do is not yours to judge: never say you cannot do something, never claim a missing tool, never offer a workaround.`,
     `Call the moment something is asked of you — do not announce it, do not ask whether you should, do not wait. You are looking it up, not asking someone else. Keep the request to one short sentence.`,

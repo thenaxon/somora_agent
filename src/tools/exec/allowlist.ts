@@ -105,7 +105,7 @@ export interface ExecPolicyDecision {
   pattern?: string;
   /** Why a granted allowBlocked entry did not clear the segment, when
    *  one of them appears in it — so the agent does not read "blocked"
-   *  as "not granted" (hans, 2026-09-24). */
+   *  as "not granted" (ada, 2026-09-24). */
   hint?: string;
   /** The exact shell segment that caused the block (when a single
    *  segment is attributable). The splitter is quote-unaware, so a
@@ -163,7 +163,7 @@ export function evaluateExecPolicy(
     // the sudo AND the halt/shutdown pattern) — with only the first
     // reason recorded, the cross-segment guard below saw the second
     // reason as "uncovered" and blocked the command even though an
-    // allowBlocked entry had cleared the segment (2026-07-27 spiderman
+    // allowBlocked entry had cleared the segment (2026-07-27 media-box
     // poweroff report: blocked with reason/pattern from two DIFFERENT
     // rules, which was the tell).
     for (const r of blacklistReasons(seg)) segmentReasons.add(r);

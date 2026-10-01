@@ -66,19 +66,19 @@ test('deep prompt: headings, subfolders, types, prose language and examples foll
   assert.match(de, /person \/ projekt \/ konzept \/ ort \/ werkzeug/);
   assert.match(de, /prose in German/);
   assert.match(de, /logSummary in German: "X aktualisiert: <was>"/);
-  assert.match(de, /"slug": "personen\/luca"/);
+  assert.match(de, /"slug": "personen\/leo"/);
   assert.match(en, /"## Current state" \/ "## Properties" \/ "## Timeline" \/ "## Notes"/);
   assert.match(en, /vehicles\/vw-bus/);
   assert.match(en, /person \/ project \/ concept \/ place \/ tool/);
   assert.match(en, /prose in English/);
   assert.match(en, /logSummary in English: "X updated: <what>"/);
-  assert.match(en, /"slug": "people\/luca"/);
-  assert.match(en, /"related": \["people\/rene", "projects\/family-luca-podcast"\]/);
+  assert.match(en, /"slug": "people\/leo"/);
+  assert.match(en, /"related": \["people\/max", "projects\/family-leo-podcast"\]/);
   assert.doesNotMatch(en, GERMAN);
   assert.doesNotMatch(de, ENGLISH_HEADINGS);
   // an explicit subdir override reaches the prompt
   const custom = buildDeepSystemPrompt(resolveWikiSchema({ language: 'en', defaultSubdirs: ['folks', 'work'] }));
-  assert.match(custom, /"slug": "folks\/luca"/);
+  assert.match(custom, /"slug": "folks\/leo"/);
   // merge keeps whatever a page already has
   assert.match(en, /keep the page's language and section headings as they are/);
   assert.match(en, /"## Timeline" on new pages/);
@@ -106,7 +106,7 @@ test('index.md and monthly log are written in the wiki language', async () => {
     const ts = Date.UTC(2026, 8, 8, 12, 0, 0); // 2026-09-08
     await appendLogEntries({
       wikiAbs,
-      entries: [{ wikiPath: `${sub}/anna`, kind: 'promoted', summary: schema.text.promoted(`${sub}/anna`, 'lisa/anna'), ts }],
+      entries: [{ wikiPath: `${sub}/anna`, kind: 'promoted', summary: schema.text.promoted(`${sub}/anna`, 'bea/anna'), ts }],
       schema,
     });
     await regenerateIndex({ wikiAbs, recentUpdates: [{ wikiPath: `${sub}/anna`, summary: 'x', date: '2026-09-08' }], schema });
@@ -119,14 +119,14 @@ test('index.md and monthly log are written in the wiki language', async () => {
       assert.match(index, /## Recent updates\n- 2026-09-08: \[\[people\/anna\]\] — x/);
       assert.doesNotMatch(index, GERMAN);
       assert.match(log, /^# Wiki log September 2026\n/);
-      assert.match(log, /### Promoted\n- \[\[people\/anna\]\] — people\/anna promoted from lisa\/anna/);
+      assert.match(log, /### Promoted\n- \[\[people\/anna\]\] — people\/anna promoted from bea\/anna/);
     } else {
       assert.match(index, /^# somora-Wiki Index\n\nLetztes Update: .* von Deep\n/);
       assert.match(index, /## Personen\n- \[\[personen\/anna\]\]/);
       assert.match(index, /## Sonstiges\n- \[\[loose\]\]/);
       assert.match(index, /## Letzte Updates\n/);
       assert.match(log, /^# Wiki-Log September 2026\n/);
-      assert.match(log, /personen\/anna übernommen aus lisa\/anna/);
+      assert.match(log, /personen\/anna übernommen aus bea\/anna/);
     }
   }
 });
@@ -136,11 +136,11 @@ test('applyPromote: the log line for a promotion uses the schema wording', async
   const memDir = await mkdtemp(join(tmpdir(), 'wiki-mem-'));
   const memFile = join(memDir, 'anna.md');
   await writeFile(memFile, '---\ncreated: 2026-09-08\n---\nAnna is eight.\n', 'utf8');
-  const candidate = { agent: 'lisa', slug: 'anna', filePath: memFile, frontmatter: {}, body: 'Anna is eight.', mtimeMs: Date.now() } as unknown as Parameters<typeof applyPromote>[0]['candidate'];
+  const candidate = { agent: 'bea', slug: 'anna', filePath: memFile, frontmatter: {}, body: 'Anna is eight.', mtimeMs: Date.now() } as unknown as Parameters<typeof applyPromote>[0]['candidate'];
   const decision = { kind: 'promote', subfolder: 'people', slug: 'people/anna', type: 'person', title: 'Anna', body: '## Current state\n\nAnna is eight.\n', related: [] } as unknown as Parameters<typeof applyPromote>[0]['decision'];
   const out = await applyPromote({ candidate, decision, ctx: { wikiAbs, schema: wikiSchemaFor('en') } });
   assert.equal(out.kind, 'promoted');
-  assert.equal((out as { logSummary: string }).logSummary, 'people/anna promoted from lisa/anna');
+  assert.equal((out as { logSummary: string }).logSummary, 'people/anna promoted from bea/anna');
   const page = await readFile(join(wikiAbs, 'people', 'anna.md'), 'utf8');
   assert.match(page, /# Anna\n\n## Current state/);
   const outDe = await applyPromote({
@@ -148,7 +148,7 @@ test('applyPromote: the log line for a promotion uses the schema wording', async
     decision: { ...decision, slug: 'personen/anna' } as typeof decision,
     ctx: { wikiAbs },
   });
-  assert.equal((outDe as { logSummary: string }).logSummary, 'personen/anna übernommen aus lisa/anna');
+  assert.equal((outDe as { logSummary: string }).logSummary, 'personen/anna übernommen aus bea/anna');
 });
 
 test('wiki tool descriptions name both languages, no hard-coded German scaffolding', () => {

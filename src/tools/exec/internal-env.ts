@@ -6,7 +6,7 @@
 // Why a curated strip at all: the somora server (and the MCP tool
 // child that claude-cli / codex-cli turns run through) carries state
 // on its own process.env that is correct for somora and WRONG for a
-// user project. hans, 2026-08-26: `npm run db:seed` failed in a
+// user project. ada, 2026-08-26: `npm run db:seed` failed in a
 // Next.js project because the project's `tsx` honored somora's
 // `TSX_TSCONFIG_PATH` and resolved `@/*` aliases against somora's
 // tsconfig — half an hour lost hunting a project bug that wasn't one.

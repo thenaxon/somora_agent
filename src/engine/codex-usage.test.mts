@@ -3,7 +3,7 @@
 // Run: npx tsx src/engine/codex-usage.test.mts
 //
 // A long codex chat showed a context percentage that kept climbing past
-// 100 % and stayed red, however often the CLI compacted. Rene: "so hat
+// 100 % and stayed red, however often the CLI compacted. The operator: "so hat
 // man irgendwann 300% in rot dort stehen und weiss nicht was das
 // heissen soll". Measured against the app-server: `cachedInputTokens`
 // is a SUBSET of `inputTokens`, and somora added the two. Anthropic

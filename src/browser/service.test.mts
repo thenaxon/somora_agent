@@ -71,7 +71,7 @@ const cfg = {
   stream: { quality: 60, maxFps: 15 },
   allowPrivate: ['127.0.0.1'],
   deny: ['*.example.org'],
-  profiles: { team: { agents: ['hans', 'lisa'] } },
+  profiles: { team: { agents: ['ada', 'bea'] } },
 };
 
 test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on this host' }, async (t) => {
@@ -86,263 +86,263 @@ test('shared browser stage 1', { skip: chromium.path ? false : 'no Chromium on t
   });
 
   await t.test('login flow: open → snapshot → fill → click → otp → welcome', async () => {
-    const opened = await svc.open('naxon', 'main', { url: `${base}/` });
-    assert.equal(opened.browser_id, 'agent:naxon');
+    const opened = await svc.open('nova', 'main', { url: `${base}/` });
+    assert.equal(opened.browser_id, 'agent:nova');
     const tab = opened.tab.tab_id;
-    let snap = await svc.snapshot('naxon', { tab });
+    let snap = await svc.snapshot('nova', { tab });
     assert.match(snap.snapshot, /textbox "Username" \[ref=(?:f\d+)?e\d+\]/);
     assert.doesNotMatch(snap.snapshot, /^\s*- generic \[ref=/m, 'compact snapshot drops bare containers');
     const user = /textbox "Username" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
     const pass = /textbox "Password" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
     const btn = /button "Continue" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
-    await svc.act('naxon', { tab, action: 'fill', ref: user, value: 'rene', generation: snap.generation });
-    await svc.act('naxon', { tab, action: 'fill', ref: pass, value: 'geheim', generation: snap.generation });
-    const clicked = await svc.act('naxon', { tab, action: 'click', ref: btn, generation: snap.generation });
+    await svc.act('nova', { tab, action: 'fill', ref: user, value: 'max', generation: snap.generation });
+    await svc.act('nova', { tab, action: 'fill', ref: pass, value: 'geheim', generation: snap.generation });
+    const clicked = await svc.act('nova', { tab, action: 'click', ref: btn, generation: snap.generation });
     assert.equal(clicked.navigated, true);
-    assert.match(clicked.tab.url, /\/otp\?user=rene/);
+    assert.match(clicked.tab.url, /\/otp\?user=max/);
     // stale ref from the previous page is refused (acceptance 7)
-    await assert.rejects(svc.act('naxon', { tab, action: 'click', ref: btn }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_STALE_REF');
-    await assert.rejects(svc.act('naxon', { tab, action: 'click', ref: btn, generation: snap.generation }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_STALE_REF');
-    snap = await svc.snapshot('naxon', { tab });
+    await assert.rejects(svc.act('nova', { tab, action: 'click', ref: btn }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_STALE_REF');
+    await assert.rejects(svc.act('nova', { tab, action: 'click', ref: btn, generation: snap.generation }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_STALE_REF');
+    snap = await svc.snapshot('nova', { tab });
     const otp = /textbox "Code" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
-    await svc.act('naxon', { tab, action: 'fill', ref: otp, value: '123456' });
-    await svc.act('naxon', { tab, action: 'press', ref: otp, value: 'Enter' });
-    snap = await svc.snapshot('naxon', { tab });
+    await svc.act('nova', { tab, action: 'fill', ref: otp, value: '123456' });
+    await svc.act('nova', { tab, action: 'press', ref: otp, value: 'Enter' });
+    snap = await svc.snapshot('nova', { tab });
     assert.match(snap.snapshot, /heading "Welcome"/);
-    const shot = await svc.screenshot('naxon', { tab });
+    const shot = await svc.screenshot('nova', { tab });
     assert.ok(shot.png.length > 1000);
   });
 
   await t.test('profile isolation: another agent is not logged in (acceptance 6)', async () => {
-    const opened = await svc.open('spielberg', 'main', { url: `${base}/` });
-    assert.equal(opened.browser_id, 'agent:spielberg');
-    const snap = await svc.snapshot('spielberg', { tab: opened.tab.tab_id });
+    const opened = await svc.open('cleo', 'main', { url: `${base}/` });
+    assert.equal(opened.browser_id, 'agent:cleo');
+    const snap = await svc.snapshot('cleo', { tab: opened.tab.tab_id });
     assert.match(snap.snapshot, /heading "Sign in"/);
-    // and naxon's own browser is still logged in
-    const again = await svc.open('naxon', 'main', { url: `${base}/`, tab: 't1' });
-    const s2 = await svc.snapshot('naxon', { tab: again.tab.tab_id });
+    // and nova's own browser is still logged in
+    const again = await svc.open('nova', 'main', { url: `${base}/`, tab: 't1' });
+    const s2 = await svc.snapshot('nova', { tab: again.tab.tab_id });
     assert.match(s2.snapshot, /heading "Welcome back"/);
-    await assert.rejects(svc.tabs('lisa'), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NOT_FOUND');
+    await assert.rejects(svc.tabs('bea'), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NOT_FOUND');
   });
 
   await t.test('shared profile: one Chromium, one window per agent', async () => {
-    const h = await svc.open('hans', 'main', { url: `${base}/` });
+    const h = await svc.open('ada', 'main', { url: `${base}/` });
     assert.equal(h.browser_id, 'profile:team', 'one process for the shared profile');
-    assert.equal(h.view_id, 'profile:team@hans');
-    const l = await svc.open('lisa', 'main', { url: `${base}/otp` });
+    assert.equal(h.view_id, 'profile:team@ada');
+    const l = await svc.open('bea', 'main', { url: `${base}/otp` });
     assert.equal(l.browser_id, 'profile:team');
-    assert.equal(l.view_id, 'profile:team@lisa', 'lisa gets her own window on the same process');
+    assert.equal(l.view_id, 'profile:team@bea', 'bea gets her own window on the same process');
     // Each window lists only its own tabs, and cannot touch the other's.
-    assert.deepEqual((await svc.tabs('hans')).tabs.map((t) => t.tab_id), [h.tab.tab_id]);
-    assert.deepEqual((await svc.tabs('lisa')).tabs.map((t) => t.tab_id), [l.tab.tab_id]);
-    await assert.rejects(svc.snapshot('lisa', { tab: h.tab.tab_id }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_NOT_FOUND');
+    assert.deepEqual((await svc.tabs('ada')).tabs.map((t) => t.tab_id), [h.tab.tab_id]);
+    assert.deepEqual((await svc.tabs('bea')).tabs.map((t) => t.tab_id), [l.tab.tab_id]);
+    await assert.rejects(svc.snapshot('bea', { tab: h.tab.tab_id }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_NOT_FOUND');
     const rows = (await svc.listAll()).filter((b) => b.browser_id === 'profile:team');
-    assert.deepEqual(rows.map((r) => r.view_id).sort(), ['profile:team@hans', 'profile:team@lisa']);
-    // The shared cookie jar is the point of the shared profile: hans logs
-    // in, lisa is logged in too.
-    let snap = await svc.snapshot('hans', { tab: h.tab.tab_id });
+    assert.deepEqual(rows.map((r) => r.view_id).sort(), ['profile:team@ada', 'profile:team@bea']);
+    // The shared cookie jar is the point of the shared profile: ada logs
+    // in, bea is logged in too.
+    let snap = await svc.snapshot('ada', { tab: h.tab.tab_id });
     const user = /textbox "Username" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
     const btn = /button "Continue" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
-    await svc.act('hans', { tab: h.tab.tab_id, action: 'fill', ref: user, value: 'hans' });
-    await svc.act('hans', { tab: h.tab.tab_id, action: 'click', ref: btn });
-    snap = await svc.snapshot('hans', { tab: h.tab.tab_id });
+    await svc.act('ada', { tab: h.tab.tab_id, action: 'fill', ref: user, value: 'ada' });
+    await svc.act('ada', { tab: h.tab.tab_id, action: 'click', ref: btn });
+    snap = await svc.snapshot('ada', { tab: h.tab.tab_id });
     const otp = /textbox "Code" \[ref=((?:f\d+)?e\d+)\]/.exec(snap.snapshot)![1]!;
-    await svc.act('hans', { tab: h.tab.tab_id, action: 'fill', ref: otp, value: '123456' });
-    await svc.act('hans', { tab: h.tab.tab_id, action: 'press', ref: otp, value: 'Enter' });
-    const lisaSees = await svc.open('lisa', 'main', { url: `${base}/`, tab: l.tab.tab_id });
-    assert.equal(lisaSees.view_id, 'profile:team@lisa');
-    assert.match((await svc.snapshot('lisa', { tab: l.tab.tab_id })).snapshot, /heading "Welcome back"/);
+    await svc.act('ada', { tab: h.tab.tab_id, action: 'fill', ref: otp, value: '123456' });
+    await svc.act('ada', { tab: h.tab.tab_id, action: 'press', ref: otp, value: 'Enter' });
+    const lisaSees = await svc.open('bea', 'main', { url: `${base}/`, tab: l.tab.tab_id });
+    assert.equal(lisaSees.view_id, 'profile:team@bea');
+    assert.match((await svc.snapshot('bea', { tab: l.tab.tab_id })).snapshot, /heading "Welcome back"/);
   });
 
   await t.test('handoff, takeover and hand-back stay inside one window', async () => {
-    const hansTab = (await svc.tabs('hans')).tabs[0]!.tab_id;
-    const lisaTab = (await svc.tabs('lisa')).tabs[0]!.tab_id;
+    const hansTab = (await svc.tabs('ada')).tabs[0]!.tab_id;
+    const lisaTab = (await svc.tabs('bea')).tabs[0]!.tab_id;
     const before = wakes.length;
-    const h = await svc.requestHandoff('hans', 'main', { reason: 'team login' });
-    assert.equal(h.view_id, 'profile:team@hans');
-    await assert.rejects(svc.snapshot('hans', { tab: hansTab }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
-    // lisa keeps working in the same Chromium
-    assert.ok((await svc.snapshot('lisa', { tab: lisaTab })).snapshot.length > 0);
+    const h = await svc.requestHandoff('ada', 'main', { reason: 'team login' });
+    assert.equal(h.view_id, 'profile:team@ada');
+    await assert.rejects(svc.snapshot('ada', { tab: hansTab }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    // bea keeps working in the same Chromium
+    assert.ok((await svc.snapshot('bea', { tab: lisaTab })).snapshot.length > 0);
     // a bare process id is ambiguous once two agents have a window
     await assert.rejects(svc.setControl('profile:team', 'human', { by: 'web-team' }), /windows/);
-    await svc.setControl('profile:team@hans', 'human', { by: 'web-team' });
-    await assert.rejects(svc.act('hans', { tab: hansTab, action: 'press', value: 'Enter' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
-    assert.ok((await svc.snapshot('lisa', { tab: lisaTab })).snapshot.length > 0, 'lisa is not locked out');
-    assert.equal(svc.humanControls('profile:team@hans', 'web-team'), true);
-    assert.equal(svc.humanControls('profile:team@lisa', 'web-team'), false);
-    await svc.setControl('profile:team@hans', 'agent', { handoffId: h.handoff_id });
+    await svc.setControl('profile:team@ada', 'human', { by: 'web-team' });
+    await assert.rejects(svc.act('ada', { tab: hansTab, action: 'press', value: 'Enter' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    assert.ok((await svc.snapshot('bea', { tab: lisaTab })).snapshot.length > 0, 'bea is not locked out');
+    assert.equal(svc.humanControls('profile:team@ada', 'web-team'), true);
+    assert.equal(svc.humanControls('profile:team@bea', 'web-team'), false);
+    await svc.setControl('profile:team@ada', 'agent', { handoffId: h.handoff_id });
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(wakes.length, before + 1);
-    assert.equal(wakes[before]!.agent, 'hans');
+    assert.equal(wakes[before]!.agent, 'ada');
   });
 
   await t.test('hand-back after activity wakes the window\'s owner, not the last agent in the process', async () => {
-    const hansTab = (await svc.tabs('hans')).tabs[0]!.tab_id;
-    const lisaTab = (await svc.tabs('lisa')).tabs[0]!.tab_id;
-    await svc.snapshot('hans', { tab: hansTab });
-    // lisa is the most recently active agent ON THE PROCESS …
-    await svc.snapshot('lisa', { tab: lisaTab });
+    const hansTab = (await svc.tabs('ada')).tabs[0]!.tab_id;
+    const lisaTab = (await svc.tabs('bea')).tabs[0]!.tab_id;
+    await svc.snapshot('ada', { tab: hansTab });
+    // bea is the most recently active agent ON THE PROCESS …
+    await svc.snapshot('bea', { tab: lisaTab });
     const before = wakes.length;
-    // … but the user works in hans' window, so hans is woken.
-    await svc.setControl('profile:team@hans', 'human', { by: 'web-team' });
-    svc.markHumanActivity('profile:team@hans', 'click');
-    await svc.setControl('profile:team@hans', 'agent');
+    // … but the user works in ada' window, so ada is woken.
+    await svc.setControl('profile:team@ada', 'human', { by: 'web-team' });
+    svc.markHumanActivity('profile:team@ada', 'click');
+    await svc.setControl('profile:team@ada', 'agent');
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(wakes.length, before + 1);
-    assert.equal(wakes[before]!.agent, 'hans');
+    assert.equal(wakes[before]!.agent, 'ada');
     assert.equal(wakes[before]!.session, 'main');
   });
 
   await t.test('the tab cap counts per window, and stop closes only that window', async () => {
-    // cfg.maxTabsPerAgent is 2: lisa fills hers, hans still has room.
-    await svc.open('lisa', 'main', { url: `${base}/otp` });
-    await assert.rejects(svc.open('lisa', 'main', { url: `${base}/otp` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_LIMIT');
-    const extra = await svc.open('hans', 'main', { url: `${base}/otp` });
+    // cfg.maxTabsPerAgent is 2: bea fills hers, ada still has room.
+    await svc.open('bea', 'main', { url: `${base}/otp` });
+    await assert.rejects(svc.open('bea', 'main', { url: `${base}/otp` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_LIMIT');
+    const extra = await svc.open('ada', 'main', { url: `${base}/otp` });
     assert.equal(extra.browser_id, 'profile:team');
-    const stopped = await svc.stop('hans');
-    assert.equal(stopped.stopped, 'profile:team@hans');
+    const stopped = await svc.stop('ada');
+    assert.equal(stopped.stopped, 'profile:team@ada');
     let rows = (await svc.listAll()).filter((b) => b.browser_id === 'profile:team');
-    assert.deepEqual(rows.map((r) => r.view_id), ['profile:team@lisa'], 'the process stays up for lisa');
-    assert.equal((await svc.tabs('lisa')).tabs.length, 2, 'lisa keeps her tabs');
-    await svc.stop('lisa');
+    assert.deepEqual(rows.map((r) => r.view_id), ['profile:team@bea'], 'the process stays up for bea');
+    assert.equal((await svc.tabs('bea')).tabs.length, 2, 'bea keeps her tabs');
+    await svc.stop('bea');
     rows = (await svc.listAll()).filter((b) => b.browser_id === 'profile:team');
     assert.equal(rows.length, 0, 'the last window closes the process');
   });
 
   await t.test('navigation policy: private host denied, deny list, redirect into LAN blocked', async () => {
-    await assert.rejects(svc.open('naxon', 'main', { url: 'http://10.0.0.1/' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
-    await assert.rejects(svc.open('naxon', 'main', { url: 'https://www.example.org/' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
-    await assert.rejects(svc.open('naxon', 'main', { url: 'file:///etc/passwd' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
+    await assert.rejects(svc.open('nova', 'main', { url: 'http://10.0.0.1/' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
+    await assert.rejects(svc.open('nova', 'main', { url: 'https://www.example.org/' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
+    await assert.rejects(svc.open('nova', 'main', { url: 'file:///etc/passwd' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_NAVIGATION_DENIED');
     // a page that redirects into the LAN: the route interception stops it
-    const r = await svc.open('naxon', 'main', { url: `${base}/redirect-private`, tab: 't1' });
+    const r = await svc.open('nova', 'main', { url: `${base}/redirect-private`, tab: 't1' });
     assert.ok(r.blocked, 'redirect target denied: ' + JSON.stringify(r));
     assert.equal(r.tab.url, 'about:blank');
-    const s = await svc.snapshot('naxon', { tab: 't1' });
+    const s = await svc.snapshot('nova', { tab: 't1' });
     assert.doesNotMatch(s.snapshot, /Internal secret/);
   });
 
   await t.test('tab cap', async () => {
-    const second = await svc.open('naxon', 'main', { url: `${base}/otp` }); // second tab
-    await assert.rejects(svc.open('naxon', 'main', { url: `${base}/otp` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_LIMIT');
-    const closed = await svc.closeTab('naxon', { tab: second.tab.tab_id });
+    const second = await svc.open('nova', 'main', { url: `${base}/otp` }); // second tab
+    await assert.rejects(svc.open('nova', 'main', { url: `${base}/otp` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_TAB_LIMIT');
+    const closed = await svc.closeTab('nova', { tab: second.tab.tab_id });
     assert.equal(closed.remaining, 1);
   });
 
   await t.test('handoff: request → human control refuses agent ops → hand back wakes once', async () => {
     const before = wakes.length;
-    const h = await svc.requestHandoff('naxon', 'main', { reason: 'login needed', resume_note: 'continue with the profile page' });
+    const h = await svc.requestHandoff('nova', 'main', { reason: 'login needed', resume_note: 'continue with the profile page' });
     assert.equal(h.control, 'handoff_requested');
-    await assert.rejects(svc.snapshot('naxon', { tab: 't1' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
-    const human = await svc.setControl('agent:naxon', 'human', { by: 'web-1' });
+    await assert.rejects(svc.snapshot('nova', { tab: 't1' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    const human = await svc.setControl('agent:nova', 'human', { by: 'web-1' });
     assert.equal(human.mode, 'human_control');
-    await assert.rejects(svc.act('naxon', { tab: 't1', action: 'press', value: 'Enter' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
-    await assert.rejects(svc.stop('naxon'), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
-    const back = await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
+    await assert.rejects(svc.act('nova', { tab: 't1', action: 'press', value: 'Enter' }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    await assert.rejects(svc.stop('nova'), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_HUMAN_CONTROL');
+    const back = await svc.setControl('agent:nova', 'agent', { handoffId: h.handoff_id });
     assert.equal(back.mode, 'agent_control');
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(wakes.length, before + 1);
     assert.equal(wakes[before]!.session, 'main');
     assert.match(wakes[before]!.text, /login needed/);
     // a second hand-back must not wake again (acceptance 5)
-    await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
+    await svc.setControl('agent:nova', 'agent', { handoffId: h.handoff_id });
     assert.equal(wakes.length, before + 1);
     const list = await svc.listAll();
-    assert.ok(list.some((b) => b.browser_id === 'agent:naxon' && b.control === 'agent_control'));
+    assert.ok(list.some((b) => b.browser_id === 'agent:nova' && b.control === 'agent_control'));
   });
 
   await t.test('hand-back without handoff: wakes only after human activity, in the last agent session', async () => {
     const before = wakes.length;
     // look and return: no turn
-    await svc.setControl('agent:naxon', 'human', { by: 'web-2' });
-    await svc.setControl('agent:naxon', 'agent');
+    await svc.setControl('agent:nova', 'human', { by: 'web-2' });
+    await svc.setControl('agent:nova', 'agent');
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(wakes.length, before);
     // the agent used t1 from session 'research' last; the user navigates, then hands back
-    await svc.snapshot('naxon', { tab: 't1' }); // t1 was opened from session 'main'
-    await svc.setControl('agent:naxon', 'human', { by: 'web-2' });
-    svc.markHumanActivity('agent:naxon', 'click');
-    await svc.setControl('agent:naxon', 'agent');
+    await svc.snapshot('nova', { tab: 't1' }); // t1 was opened from session 'main'
+    await svc.setControl('agent:nova', 'human', { by: 'web-2' });
+    svc.markHumanActivity('agent:nova', 'click');
+    await svc.setControl('agent:nova', 'agent');
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(wakes.length, before + 1);
-    assert.equal(wakes[before]!.agent, 'naxon');
+    assert.equal(wakes[before]!.agent, 'nova');
     assert.equal(wakes[before]!.session, 'main');
     assert.match(wakes[before]!.text, /took over browser/);
     // mousemove alone is not activity
-    await svc.setControl('agent:naxon', 'human', { by: 'web-2' });
-    svc.markHumanActivity('agent:naxon', 'mousemove');
-    await svc.setControl('agent:naxon', 'agent');
+    await svc.setControl('agent:nova', 'human', { by: 'web-2' });
+    svc.markHumanActivity('agent:nova', 'mousemove');
+    await svc.setControl('agent:nova', 'agent');
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(wakes.length, before + 1);
   });
 
   await t.test('stale hand-back preserves newer request; concurrent return wakes once', async () => {
-    const old = await svc.requestHandoff('naxon', 'main', { reason: 'first' });
-    await svc.setControl('agent:naxon', 'agent', { handoffId: old.handoff_id });
-    const current = await svc.requestHandoff('naxon', 'main', { reason: 'second' });
-    await assert.rejects(svc.setControl('agent:naxon', 'agent', { handoffId: old.handoff_id }), /stale handoff/);
-    assert.equal((await svc.browserInfo('agent:naxon')).handoff?.id, current.handoff_id);
+    const old = await svc.requestHandoff('nova', 'main', { reason: 'first' });
+    await svc.setControl('agent:nova', 'agent', { handoffId: old.handoff_id });
+    const current = await svc.requestHandoff('nova', 'main', { reason: 'second' });
+    await assert.rejects(svc.setControl('agent:nova', 'agent', { handoffId: old.handoff_id }), /stale handoff/);
+    assert.equal((await svc.browserInfo('agent:nova')).handoff?.id, current.handoff_id);
     const before = wakes.length;
-    await Promise.all([1, 2, 3].map(() => svc.setControl('agent:naxon', 'agent', { handoffId: current.handoff_id })));
+    await Promise.all([1, 2, 3].map(() => svc.setControl('agent:nova', 'agent', { handoffId: current.handoff_id })));
     assert.equal(wakes.length, before + 1);
   });
 
   await t.test('one human controller, duplicate hand-back cannot release a later takeover', async () => {
-    const h = await svc.requestHandoff('naxon', 'main', { reason: 'test' });
-    await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
-    await svc.setControl('agent:naxon', 'human', { by: 'viewer-a' });
-    assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), true);
-    assert.equal(svc.humanControls('agent:naxon', 'viewer-b'), false);
-    assert.equal((await svc.browserInfo('agent:naxon')).human_by, 'viewer-a');
-    await svc.setControl('agent:naxon', 'agent', { handoffId: h.handoff_id });
-    assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), true);
-    await assert.rejects(svc.setControl('agent:naxon', 'agent', { by: 'viewer-b' }), /another viewer/);
-    await svc.setControl('agent:naxon', 'agent', { by: 'viewer-a' });
+    const h = await svc.requestHandoff('nova', 'main', { reason: 'test' });
+    await svc.setControl('agent:nova', 'agent', { handoffId: h.handoff_id });
+    await svc.setControl('agent:nova', 'human', { by: 'viewer-a' });
+    assert.equal(svc.humanControls('agent:nova', 'viewer-a'), true);
+    assert.equal(svc.humanControls('agent:nova', 'viewer-b'), false);
+    assert.equal((await svc.browserInfo('agent:nova')).human_by, 'viewer-a');
+    await svc.setControl('agent:nova', 'agent', { handoffId: h.handoff_id });
+    assert.equal(svc.humanControls('agent:nova', 'viewer-a'), true);
+    await assert.rejects(svc.setControl('agent:nova', 'agent', { by: 'viewer-b' }), /another viewer/);
+    await svc.setControl('agent:nova', 'agent', { by: 'viewer-a' });
   });
 
   await t.test('takeover waits for accepted work and rejects queued agent actions', async () => {
     let release!: () => void;
-    const pending = svc.withBrowserLock('agent:naxon', () => new Promise<void>((r) => { release = r; }));
+    const pending = svc.withBrowserLock('agent:nova', () => new Promise<void>((r) => { release = r; }));
     await new Promise((r) => setImmediate(r));
-    const takeover = svc.setControl('agent:naxon', 'human', { by: 'viewer-a' });
-    const action = svc.snapshot('naxon', { tab: 't1' });
+    const takeover = svc.setControl('agent:nova', 'human', { by: 'viewer-a' });
+    const action = svc.snapshot('nova', { tab: 't1' });
     const rejection = assert.rejects(action, /BROWSER_HUMAN_CONTROL/);
-    assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), false);
+    assert.equal(svc.humanControls('agent:nova', 'viewer-a'), false);
     release();
     await pending;
     await takeover;
     await rejection;
-    await svc.setControl('agent:naxon', 'agent', { by: 'viewer-a' });
+    await svc.setControl('agent:nova', 'agent', { by: 'viewer-a' });
   });
 
   await t.test('failed state write keeps the handoff and does not wake the agent', async () => {
-    const handoff = await svc.requestHandoff('naxon', 'main', { reason: 'disk failure test' });
-    await svc.setControl('agent:naxon', 'human', { by: 'viewer-a' });
+    const handoff = await svc.requestHandoff('nova', 'main', { reason: 'disk failure test' });
+    await svc.setControl('agent:nova', 'human', { by: 'viewer-a' });
     const before = wakes.length;
     mkdirSync(`${BrowserService.statePath}.tmp`); // writeFile must refuse a directory
     try {
-      await assert.rejects(svc.setControl('agent:naxon', 'agent', { handoffId: handoff.handoff_id, by: 'viewer-a' }));
-      assert.equal(svc.humanControls('agent:naxon', 'viewer-a'), true);
-      assert.equal((await svc.browserInfo('agent:naxon')).handoff?.id, handoff.handoff_id);
+      await assert.rejects(svc.setControl('agent:nova', 'agent', { handoffId: handoff.handoff_id, by: 'viewer-a' }));
+      assert.equal(svc.humanControls('agent:nova', 'viewer-a'), true);
+      assert.equal((await svc.browserInfo('agent:nova')).handoff?.id, handoff.handoff_id);
       assert.equal(wakes.length, before);
     } finally { rmSync(`${BrowserService.statePath}.tmp`, { recursive: true }); }
-    await svc.setControl('agent:naxon', 'agent', { handoffId: handoff.handoff_id, by: 'viewer-a' });
+    await svc.setControl('agent:nova', 'agent', { handoffId: handoff.handoff_id, by: 'viewer-a' });
     assert.equal(wakes.length, before + 1);
   });
 
   await t.test('explicit tab lookup never silently switches to another tab', async () => {
-    assert.throws(() => svc.viewerPage('agent:naxon', 'missing-tab'), /BROWSER_TAB_NOT_FOUND/);
+    assert.throws(() => svc.viewerPage('agent:nova', 'missing-tab'), /BROWSER_TAB_NOT_FOUND/);
   });
 
   await t.test('stop keeps the profile; ephemeral is separate', async () => {
-    const e = await svc.open('naxon', 'main', { url: `${base}/`, ephemeral: true });
-    assert.equal(e.browser_id, 'agent:naxon:tmp');
-    const s = await svc.snapshot('naxon', { tab: e.tab.tab_id });
+    const e = await svc.open('nova', 'main', { url: `${base}/`, ephemeral: true });
+    assert.equal(e.browser_id, 'agent:nova:tmp');
+    const s = await svc.snapshot('nova', { tab: e.tab.tab_id });
     assert.match(s.snapshot, /heading "Sign in"/, 'ephemeral profile has no cookie');
-    const stopped = await svc.stop('naxon');
+    const stopped = await svc.stop('nova');
     assert.ok(stopped.stopped);
-    const resumed = await svc.open('naxon', 'main', { url: `${base}/` });
+    const resumed = await svc.open('nova', 'main', { url: `${base}/` });
     assert.equal(resumed.control, 'agent_control', 'an explicit open resumes a cleanly stopped profile');
-    assert.match((await svc.snapshot('naxon', { tab: resumed.tab.tab_id })).snapshot, /Welcome back/);
+    assert.match((await svc.snapshot('nova', { tab: resumed.tab.tab_id })).snapshot, /Welcome back/);
   });
 });
 
@@ -385,7 +385,7 @@ test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb
     const svc = new BrowserService({ ...cfg, extraArgs: ['--user-agent=somora-test-ua/1'] } as never, {});
     await svc.init();
     try {
-      const opened = await svc.open('jarvis', 'main', { url: `${base}/` });
+      const opened = await svc.open('eve', 'main', { url: `${base}/` });
       const { page } = svc.viewerPage(opened.browser_id, opened.tab.tab_id);
       assert.equal(await page.evaluate(() => navigator.userAgent), 'somora-test-ua/1');
     } finally {
@@ -433,8 +433,8 @@ test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb
         const svc = new BrowserService({ ...cfg, headed: true } as never, {});
         await svc.init();
         assert.match(svc.warnings().join('\n'), /Xvfb/);
-        await assert.rejects(svc.open('jarvis', 'main', { url: `${base}/` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_LAUNCH_FAILED' && /Xvfb/.test(e.message));
-        assert.equal((await svc.status('jarvis')).headed.mode, 'unavailable');
+        await assert.rejects(svc.open('eve', 'main', { url: `${base}/` }), (e: unknown) => e instanceof BrowserOpError && e.code === 'BROWSER_LAUNCH_FAILED' && /Xvfb/.test(e.message));
+        assert.equal((await svc.status('eve')).headed.mode, 'unavailable');
         await svc.shutdown();
       }
     } finally {
@@ -453,7 +453,7 @@ test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb
     assert.equal(svc.headedPlan().mode, 'xvfb');
     const before = xSockets();
     try {
-      const opened = await svc.open('buffet', 'main', { url: `${base}/` });
+      const opened = await svc.open('finn', 'main', { url: `${base}/` });
       const list = await svc.listAll();
       assert.equal(list.find((b) => b.browser_id === opened.browser_id)?.headed, true);
       const { page } = svc.viewerPage(opened.browser_id, opened.tab.tab_id);
@@ -472,9 +472,9 @@ test('browser launch options: extraArgs, device/locale emulation, headed on Xvfb
       assert.ok(frame.w > 0);
       await cdp.send('Page.stopScreencast').catch(() => {});
       await cdp.detach().catch(() => {});
-      assert.equal((await svc.status('buffet')).headed.mode, 'xvfb');
+      assert.equal((await svc.status('finn')).headed.mode, 'xvfb');
       assert.equal(xSockets().length, before.length + 1, 'somora started one Xvfb for this browser');
-      await svc.stop('buffet');
+      await svc.stop('finn');
       await new Promise((r) => setTimeout(r, 500));
       assert.equal(xSockets().length, before.length, 'the Xvfb is gone with the browser');
     } finally {

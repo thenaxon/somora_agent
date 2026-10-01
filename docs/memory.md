@@ -218,21 +218,21 @@ a short question. Refinements, measured on replayed real sessions:
   question names outright is never pushed down by the history; a
   follow-up without a topic word still finds its page through the
   history.
-- For a one- or two-word question ("wer ist walter?") the exact word
+- For a one- or two-word question ("wer ist karl?") the exact word
   match is the question, so BM25 gets `shortQueryBm25Weight` of the
   fusion instead of the hybrid default.
 - `hybrid.slugMatchBoost` (all searches, not only auto-inject): a chunk
   whose slug contains a content word of the query is multiplied. The
-  page ABOUT a person or thing rarely repeats its own name — the Walter
-  page says "Walter" once, the family page four times — so BM25 alone
+  page ABOUT a person or thing rarely repeats its own name — the Karl
+  page says "Karl" once, the family page four times — so BM25 alone
   ranks the mentions above the page; the name in the slug marks the
   canonical page.
 
 ### Which page wins — the three rules after the fusion
 
 Measured on 26 real questions against a 400-page wiki (2026-10-01; the
-report that started it: an agent asked "how did we set up enovom.com on
-docker-public?", the project page came 7th behind the change log and
+report that started it: an agent asked "how did we set up acme.com on
+dmz-host?", the project page came 7th behind the change log and
 four neighbouring pages, and the agent answered that it knew nothing).
 With all three rules the page is 2nd, the other 25 questions are as
 good or better, and the questions that ARE about the log still find it.
@@ -260,9 +260,9 @@ good or better, and the questions that ARE about the log still find it.
   wiki pages. Measured: `0.3` lifted the project page from unranked to
   2nd and cost one memory note one rank; `0.5` cost three.
 - **`slugFullNameBoost` (default 1.5)** — `slugMatchBoost` fires for any
-  page whose name shares a word with the question, so "enovom website
-  docker-public setup" boosts `projekte/enovom-website` and
-  `infrastruktur/hosts/docker-public-dmz-vm` alike. When the question
+  page whose name shares a word with the question, so "acme website
+  dmz-host setup" boosts `projekte/acme-website` and
+  `infrastruktur/hosts/dmz-host-vm` alike. When the question
   contains *every* word of a page's name (two words or more), that page
   is multiplied again — the question means that page. A tried
   alternative, scaling the boost by the share of name words matched,
@@ -280,7 +280,7 @@ another.
 The BM25 side sees the message only, with filler words removed
 (`FTS_STOPWORDS` in `src/memory/retrieval.ts`, German and English) —
 otherwise every page that says "was", "du" and "so" a lot outranked
-the one page that says "walter". `POST /agents/<name>/memory/recall-preview`
+the one page that says "karl". `POST /agents/<name>/memory/recall-preview`
 runs exactly this path for a message plus a supplied history, which is
 how recall tuning is measured ([api.md](api.md#post-agentsagentmemoryrecall-preview)).
 

@@ -2,9 +2,9 @@
 //
 // Run: npx tsx src/server/ask-attention.test.mts
 //
-// What happened: hans asked lisa for research with the minimum timeout,
+// What happened: ada asked bea for research with the minimum timeout,
 // got `pending` after 1.005 seconds and ended his turn four seconds
-// later. Lisa worked for 208 seconds and wrote a complete answer — into
+// later. Bea worked for 208 seconds and wrote a complete answer — into
 // her own session. The result sat in the registry, correct and
 // complete, and nobody ever learned it existed. A spawned sub-agent has
 // woken its parent since July; an agent_ask never did.
@@ -42,9 +42,9 @@ const register = (opts: { pending: boolean }): string => {
   const call_id = `call-${++n}`;
   registerAskCall({
     call_id,
-    from_agent: 'hans',
+    from_agent: 'ada',
     from_session: '20260912-000000_main',
-    target_agent: 'lisa',
+    target_agent: 'bea',
     target_session: 'main',
   });
   if (opts.pending) markAskCallPending(call_id);
@@ -59,7 +59,7 @@ const register = (opts: { pending: boolean }): string => {
   await delay(40);
   check('the asker is woken', wakes.length === 1, String(wakes.length));
   check('in the session it asked from', wakes[0]?.session === '20260912-000000_main');
-  check('and it is hans, not lisa', wakes[0]?.agent === 'hans');
+  check('and it is ada, not bea', wakes[0]?.agent === 'ada');
   check('the wake carries the beginning of the answer', wakes[0]?.text.includes('iPhone Duo') === true, wakes[0]?.text);
   check('and says how to read the rest', wakes[0]?.text.includes(`agent_ask_result({ call_id: "${id}"`) === true);
 }
@@ -97,7 +97,7 @@ const register = (opts: { pending: boolean }): string => {
 {
   wakes.length = 0;
   const call_id = 'call-nosession';
-  registerAskCall({ call_id, from_agent: 'hans', target_agent: 'lisa', target_session: 'main' });
+  registerAskCall({ call_id, from_agent: 'ada', target_agent: 'bea', target_session: 'main' });
   markAskCallPending(call_id);
   completeAskCall(call_id, result('x'));
   await delay(40);

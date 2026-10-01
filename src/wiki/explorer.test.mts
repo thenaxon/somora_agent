@@ -42,13 +42,13 @@ async function page(root: string, slug: string, body: string): Promise<void> {
 /** A small wiki that exercises every resolution rule. */
 async function scenario(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'somora-wiki-'));
-  await page(root, 'index', '# Index\n\n- [[projekte/somora]]\n- [[personen/rene]]\n');
+  await page(root, 'index', '# Index\n\n- [[projekte/somora]]\n- [[personen/max]]\n');
   await page(
     root,
     'projekte/somora',
-    '# somora\n\nEin Gateway von [[personen/rene]].\nSiehe [[Personen/Rene]] und [[wissen/tls]].\nUnd [[gibtsnicht]].\n',
+    '# somora\n\nEin Gateway von [[personen/max]].\nSiehe [[Personen/Max]] und [[wissen/tls]].\nUnd [[gibtsnicht]].\n',
   );
-  await page(root, 'personen/rene', '# Rene\n\nBaut [[projekte/somora]].\n');
+  await page(root, 'personen/max', '# Max\n\nBaut [[projekte/somora]].\n');
   await page(root, 'wissen/tls', '# TLS\n\nNur Text, keine Links.\n');
   // Same basename in two folders — a short link to it is ambiguous.
   await page(root, 'projekte/doppelt', '# Doppelt A\n\ntext\n');
@@ -72,10 +72,10 @@ async function scenario(): Promise<string> {
   check('alle Seiten gefunden', idx.pages.size === 8, `${idx.pages.size}`);
 
   const somora = idx.pages.get('projekte/somora')!;
-  check('exakter Slug aufgeloest', somora.links.includes('personen/rene'));
+  check('exakter Slug aufgeloest', somora.links.includes('personen/max'));
   check(
     'Gross-/Kleinschreibung egal',
-    somora.links.filter((l) => l === 'personen/rene').length === 1,
+    somora.links.filter((l) => l === 'personen/max').length === 1,
     'case-variant must dedupe onto the same slug, not add a second edge',
   );
   check('unbekanntes Ziel bleibt unaufgeloest', somora.unresolved.includes('gibtsnicht'));
@@ -95,12 +95,12 @@ async function scenario(): Promise<string> {
   check('frontmatter related aufgeloest', verwandt.related.includes('wissen/tls'));
 
   // Backlinks
-  const rene = getPage(idx, 'personen/rene')!;
+  const max = getPage(idx, 'personen/max')!;
   check(
     'Backlinks enthalten Verweisende',
-    rene.backlinks.some((b) => b.slug === 'projekte/somora') &&
-      rene.backlinks.some((b) => b.slug === 'index'),
-    JSON.stringify(rene.backlinks.map((b) => b.slug)),
+    max.backlinks.some((b) => b.slug === 'projekte/somora') &&
+      max.backlinks.some((b) => b.slug === 'index'),
+    JSON.stringify(max.backlinks.map((b) => b.slug)),
   );
 
   const tlsBack = getPage(idx, 'wissen/tls')!.backlinks.map((b) => b.slug);
@@ -159,14 +159,14 @@ async function scenario(): Promise<string> {
   );
   check('globaler Graph nicht gekuerzt bei 8 Seiten', g.truncated === false);
 
-  const lg = localGraph(idx, 'personen/rene')!;
+  const lg = localGraph(idx, 'personen/max')!;
   const ids = new Set(lg.nodes.map((n) => n.id));
-  check('lokaler Graph enthaelt die Seite selbst', ids.has('personen/rene'));
+  check('lokaler Graph enthaelt die Seite selbst', ids.has('personen/max'));
   check('enthaelt ausgehende Nachbarn', ids.has('projekte/somora'));
   check('index auch lokal ausgeschlossen', !ids.has('index'));
   check(
     'Kanten zwischen Nachbarn sind dabei',
-    lg.edges.some((e) => e.from === 'projekte/somora' && e.to === 'personen/rene'),
+    lg.edges.some((e) => e.from === 'projekte/somora' && e.to === 'personen/max'),
   );
   check(
     'keine Kante zeigt aus dem Graph heraus',
@@ -226,14 +226,14 @@ async function scenario(): Promise<string> {
   const idx = await getWikiIndex(root);
   const r = resolveLinkTargets(idx, [
     'projekte/somora',
-    'Personen/Rene',
+    'Personen/Max',
     'tls',
     'doppelt',
     'gibtsnicht',
     'wissen/tls.md',
   ]);
   check('exakt', r['projekte/somora'] === 'projekte/somora');
-  check('case-insensitive', r['Personen/Rene'] === 'personen/rene');
+  check('case-insensitive', r['Personen/Max'] === 'personen/max');
   check('eindeutiger Basename', r['tls'] === 'wissen/tls');
   check('mehrdeutig -> null', r['doppelt'] === null);
   check('unbekannt -> null', r['gibtsnicht'] === null);
@@ -248,16 +248,16 @@ async function scenario(): Promise<string> {
   await getWikiIndex(root);
   // A page edited in Obsidian must show up without a restart. The TTL
   // gate is bypassed by invalidating, which is what /wiki/refresh does.
-  await page(root, 'wissen/tls', '# TLS neu\n\nJetzt mit [[personen/rene]].\n');
+  await page(root, 'wissen/tls', '# TLS neu\n\nJetzt mit [[personen/max]].\n');
   const old = new Date(Date.now() - 60_000);
   await utimes(join(root, 'index.md'), old, old);
   invalidateWikiIndex();
   const idx2 = await getWikiIndex(root);
   check('geaenderter Titel uebernommen', idx2.pages.get('wissen/tls')!.title === 'TLS neu');
-  check('neue Kante erkannt', idx2.pages.get('wissen/tls')!.links.includes('personen/rene'));
+  check('neue Kante erkannt', idx2.pages.get('wissen/tls')!.links.includes('personen/max'));
   check(
     'neuer Backlink erkannt',
-    (idx2.backlinks.get('personen/rene') ?? []).includes('wissen/tls'),
+    (idx2.backlinks.get('personen/max') ?? []).includes('wissen/tls'),
   );
   await rm(root, { recursive: true, force: true });
 }

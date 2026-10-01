@@ -3,7 +3,7 @@
 // Until now the only way to see what the server was doing was to ssh in
 // and tail a file. When something looks odd — a turn that ended
 // strangely, a tool that took too long — that is exactly the moment a
-// user has no way to look (Rene 2026-09-10).
+// user has no way to look (the operator 2026-09-10).
 //
 // Two rules shape this file. Never read a whole log: the directory here
 // holds half a gigabyte and one day's file is several megabytes, so

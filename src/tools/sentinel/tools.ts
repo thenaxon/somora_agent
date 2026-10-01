@@ -364,7 +364,7 @@ export const sentinel: ToolDefinition<SentinelInputT, SentinelResult> = {
         let dispatchSession = dispatch.session ?? 'main';
         let sessionNote: string | undefined;
         // Left out + a trigger on yourself + created from inside a
-        // session → that session (Rene, 2026-09-21). "Wake me to go on
+        // session → that session (the operator, 2026-09-21). "Wake me to go on
         // with this" is what an agent means when it says nothing; `main`
         // was a different conversation that then ran alongside the work.
         // Another agent's trigger, or a call with no session context,

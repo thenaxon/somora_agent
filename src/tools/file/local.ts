@@ -653,7 +653,7 @@ async function walkDir(
         : 'other';
     if (glob) {
       // Without `/` in the user's pattern → basename match (so `*.md`
-      // recursively finds Naxxen.md inside Projekte/novixon/, matching
+      // recursively finds Naxxen.md inside Projekte/exampleco/, matching
       // the docstring promise). With `/` → match against the path
       // relative to the listing root (so `notes/*.md` is positional).
       const rel = relative(root, full);

@@ -2061,8 +2061,8 @@ search, block budget) without running a turn. Body:
 {
   "text": "und wer gehört sonst noch zur familie?",
   "history": [
-    { "kind": "user_message", "text": "was kannst du mir über walter erzählen?" },
-    { "kind": "assistant_message", "text": "Walter ist …" }
+    { "kind": "user_message", "text": "was kannst du mir über karl erzählen?" },
+    { "kind": "assistant_message", "text": "Karl ist …" }
   ],
   "autoInject": { "historyWeight": 0.4 }
 }
@@ -2403,7 +2403,7 @@ The controlled entity vocabulary from `config.projects.entities`.
 {
   "entities": [
     { "slug": "privat", "label": "Privat" },
-    { "slug": "enovom", "label": "enovom GmbH" }
+    { "slug": "acme", "label": "acme GmbH" }
   ]
 }
 ```

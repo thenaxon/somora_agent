@@ -129,7 +129,7 @@ export async function startTurn(args: StartTurnArgs): Promise<ChatTurnResult | n
       ...(args.lockSignal ? { signal: args.lockSignal } : {}),
       // Every waiter announces itself, whoever queued it: the queue
       // badge in the clients refreshes on this event, and until
-      // 2026-09-13 only a typed turn sent it (Rene: the badge lagged
+      // 2026-09-13 only a typed turn sent it (the operator: the badge lagged
       // behind an agent's question).
       onQueued: (ahead) => {
         if (publishSse) {

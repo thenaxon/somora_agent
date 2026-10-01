@@ -2,7 +2,7 @@
 //
 // Reading it used to mean an ssh session and `tail -f`, which is not
 // something you have at hand the moment something looks odd in a chat
-// (Rene 2026-09-10). This shows the end of today's log, follows new
+// (the operator 2026-09-10). This shows the end of today's log, follows new
 // lines while it is open, and filters by level, agent and text.
 //
 // It never asks for the whole file: the server reads a bounded tail and

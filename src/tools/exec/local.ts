@@ -86,7 +86,7 @@ const DEFAULT_SYNC_TIMEOUT_MS = 60_000;
  * expand `~` and resolves relative paths against the somora server's
  * own process cwd — and a nonexistent cwd surfaces as the wildly
  * misleading `spawn /bin/sh ENOENT` (the chdir fails, not the shell;
- * 2026-06-10 hans feedback). The tool schema promises
+ * 2026-06-10 ada feedback). The tool schema promises
  * "relative-to-target-home", so make that true: expand `~`, resolve
  * relative against the home dir, and verify the directory exists so
  * the error names the actual problem.

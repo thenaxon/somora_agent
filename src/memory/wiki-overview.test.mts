@@ -37,7 +37,7 @@ function buildIndex(sections: Array<[string, number]>): string {
     out.push(`## ${title}`);
     for (let i = 0; i < count; i++) {
       const slug = `${title.toLowerCase()}/seite-${i}`;
-      out.push(`- [[${slug}]] — Beschreibung mit Querverweis auf [[personen/rene-siegl|Renes]] Umfeld und noch etwas Fülltext dahinter.`);
+      out.push(`- [[${slug}]] — Beschreibung mit Querverweis auf [[personen/max-muster|Maxens]] Umfeld und noch etwas Fülltext dahinter.`);
     }
     out.push('');
   }
@@ -94,7 +94,7 @@ const OPTS = { maxChars: 4000, topNSlugs: 30 };
   );
   const links = out.match(/\[\[[^\]]+\]\]/g) ?? [];
   check('stage 3: no duplicate links', links.length === new Set(links).size, `${links.length}`);
-  check('stage 3: prose links excluded', !out.includes('rene-siegl'));
+  check('stage 3: prose links excluded', !out.includes('max-muster'));
 }
 
 // ---------------------------------------------------------------- stage 4

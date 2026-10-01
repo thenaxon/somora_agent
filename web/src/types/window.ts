@@ -70,7 +70,7 @@ export interface WindowState {
   // browser reload lands back on the same page instead of the tree root.
   wikiSlug?: string;
   /** browser windows: which window (`<browser id>@<agent>`), e.g.
-   *  `profile:team@hans` or `agent:loki@loki`. */
+   *  `profile:team@ada` or `agent:gus@gus`. */
   browserViewId?: string;
   // Geometry
   x: number;

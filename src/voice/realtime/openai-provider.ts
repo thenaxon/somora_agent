@@ -36,7 +36,7 @@ import type {
  * Where OpenAI answers. Overridable per instance, because the adapter
  * is the protocol and not the vendor: a local service that speaks the
  * same session/event language plugs in here instead of getting a second
- * adapter that would drift from this one (Rene, 2026-09-12).
+ * adapter that would drift from this one (the operator, 2026-09-12).
  */
 const REALTIME_URL = 'wss://api.openai.com/v1/realtime';
 /** OpenAI's realtime audio is PCM16; 24 kHz is what the session
@@ -180,7 +180,7 @@ class OpenAiRealtimeSession implements RealtimeSession {
               type: 'server_vad',
               // Tuned to be interruptible: the defaults wait for a
               // confident, sustained speaker, which makes talking over
-              // the model hard (Rene, 2026-09-12).
+              // the model hard (the operator, 2026-09-12).
               threshold: this.req.turnDetection?.threshold ?? 0.4,
               prefix_padding_ms: this.req.turnDetection?.prefixPaddingMs ?? 200,
               silence_duration_ms: this.req.turnDetection?.silenceDurationMs ?? 420,
@@ -311,7 +311,7 @@ class OpenAiRealtimeSession implements RealtimeSession {
         // Cancelling a response that just finished is the normal shape
         // of an interruption, not a fault: the user talks over the last
         // syllable and the cancel arrives a moment late. It was shown
-        // in red to the human (Rene, 2026-09-12) — it belongs in the
+        // in red to the human (the operator, 2026-09-12) — it belongs in the
         // log, nowhere else.
         if (/no active response/i.test(message)) {
           this.responseActive = false;
@@ -328,7 +328,7 @@ class OpenAiRealtimeSession implements RealtimeSession {
           this.lastRequest = null;
           // Handled here: the request is asked again at the next silence.
           // Shown to the person it read as a fault (red in the web call
-          // window, Rene 2026-09-13) — it belongs in the log.
+          // window, the operator 2026-09-13) — it belongs in the log.
           logger.info({ msg: 'voice.response_in_progress', message, requeued: this.pendingDeliveries.length, speakWhenFree: this.speakWhenFree });
           break;
         }

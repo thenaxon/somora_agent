@@ -6,16 +6,16 @@ import assert from 'node:assert/strict';
 import { sessionSlugOf, withFromAgentHeader } from './a2a.ts';
 
 assert.equal(sessionSlugOf('main'), 'main');
-assert.equal(sessionSlugOf('20260906-172957_cerebrocraft'), 'cerebrocraft');
-assert.equal(sessionSlugOf('sub-hans-123-ab12'), 'sub-hans-123-ab12');
+assert.equal(sessionSlugOf('20260906-172957_craftbox'), 'craftbox');
+assert.equal(sessionSlugOf('sub-ada-123-ab12'), 'sub-ada-123-ab12');
 
 assert.equal(withFromAgentHeader('hi', undefined), 'hi');
 assert.equal(withFromAgentHeader('hi', undefined, 'main'), 'hi');
-assert.equal(withFromAgentHeader('hi', 'hans'), '[Message from agent hans]\nhi');
+assert.equal(withFromAgentHeader('hi', 'ada'), '[Message from agent ada]\nhi');
 assert.equal(
-  withFromAgentHeader('hi', 'hans', '20260906-172957_cerebrocraft'),
-  '[Message from agent hans, session cerebrocraft]\nhi',
+  withFromAgentHeader('hi', 'ada', '20260906-172957_craftbox'),
+  '[Message from agent ada, session craftbox]\nhi',
 );
-assert.equal(withFromAgentHeader('hi', 'hans', 'main'), '[Message from agent hans, session main]\nhi');
+assert.equal(withFromAgentHeader('hi', 'ada', 'main'), '[Message from agent ada, session main]\nhi');
 
 console.log('a2a header: all assertions passed');

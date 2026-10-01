@@ -153,7 +153,7 @@ export function openMemoryDb(dbPath: string): MemoryDb {
   // Without the table, INSERT INTO chunks_vec throws "no such table"
   // and the whole replaceFileChunks transaction rolls back — leaving
   // the files row in place but no chunks. Seen on a fresh agent
-  // (buffet) whose first boot caught the embedder down: ensureVecTable
+  // (finn) whose first boot caught the embedder down: ensureVecTable
   // was never called, but subsequent reindexes happily set hasVec=true
   // from the extension alone, so every chunk write since has been
   // silently rolled back. Discovered 2026-05-21.

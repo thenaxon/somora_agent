@@ -133,7 +133,7 @@ const BODY_RULES: BodyRule[] = [
     test: (body: string) => {
       // Scan the first ~20 non-blank lines for HTML document markers.
       // A `<!DOCTYPE` or `<html` near the top is a strong signal that the
-      // body is a downloaded web page, not a SKILL.md (see hans bug-report
+      // body is a downloaded web page, not a SKILL.md (see ada bug-report
       // 2026-05-11_skill-from-url-html-success.md — `--from-url` on a
       // ClawHub landing page wrote the full HTML response into SKILL.md).
       const lines = body.split('\n').slice(0, 50);

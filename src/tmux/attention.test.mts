@@ -24,7 +24,7 @@ function check(name: string, cond: boolean, detail = ''): void {
   }
 }
 
-const ORIGIN = { agent: 'hans', session: 'main' };
+const ORIGIN = { agent: 'ada', session: 'main' };
 const CFG = { wake: true, cooldownS: 60, dailyCapPerSession: 3 };
 const T0 = Date.parse('2026-07-27T12:00:00Z');
 
@@ -84,7 +84,7 @@ function step(
     now: T0 + 9000,
     observation: {
       lastObservedAt: T0 + 4000,
-      agent: 'hans',
+      agent: 'ada',
       session: 'main',
       sawState: 'ready',
     },
@@ -96,7 +96,7 @@ function step(
     now: T0 + 12_000,
     observation: {
       lastObservedAt: T0 + 4000,
-      agent: 'hans',
+      agent: 'ada',
       session: 'main',
       sawState: 'ready',
     },
@@ -112,7 +112,7 @@ function step(
     now: T0 + 3000,
     observation: {
       lastObservedAt: T0 + 3000,
-      agent: 'hans',
+      agent: 'ada',
       session: 'main',
       sawState: 'ready',
     },
@@ -131,7 +131,7 @@ function step(
     now: T0 + 3000,
     observation: {
       lastObservedAt: T0 + 1000,
-      agent: 'hans',
+      agent: 'ada',
       session: 'main',
       sawState: 'ready',
     },
@@ -148,7 +148,7 @@ function step(
     now: T0 + 6000,
     observation: {
       lastObservedAt: T0 + 4000,
-      agent: 'hans',
+      agent: 'ada',
       session: 'main',
       sawState: 'running',
     },
@@ -162,7 +162,7 @@ function step(
   r = step(r.state, {
     tuiState: 'ready',
     now: T0 + 3000,
-    observation: { lastObservedAt: T0 + 3000, agent: 'lisa', session: 'main' },
+    observation: { lastObservedAt: T0 + 3000, agent: 'bea', session: 'main' },
   });
   check('foreign observation does not stop the wake', r.action.kind === 'wake');
 }
@@ -183,13 +183,13 @@ function step(
   r = step(r.state, {
     tuiState: 'running',
     now: T0 + 100_000,
-    observation: { lastObservedAt: wakeAt + 1000, agent: 'hans', session: 'main' },
+    observation: { lastObservedAt: wakeAt + 1000, agent: 'ada', session: 'main' },
   });
   check('origin interaction re-arms', r.state.disarmed === false);
   r = step(r.state, {
     tuiState: 'ready',
     now: T0 + 103_000,
-    observation: { lastObservedAt: wakeAt + 1000, agent: 'hans', session: 'main' },
+    observation: { lastObservedAt: wakeAt + 1000, agent: 'ada', session: 'main' },
   });
   check('re-armed session wakes again', r.action.kind === 'wake', r.action.kind);
 }
@@ -200,7 +200,7 @@ function step(
   r = step(r.state, { tuiState: 'ready', now: T0 + 3000 });
   r = step(r.state, { tuiState: 'ready', now: T0 + 6000 }); // wake #1
   // Re-arm + new cycle within the 60s cooldown.
-  const obs = { lastObservedAt: T0 + 7000, agent: 'hans', session: 'main' };
+  const obs = { lastObservedAt: T0 + 7000, agent: 'ada', session: 'main' };
   r = step(r.state, { tuiState: 'running', now: T0 + 10_000, observation: obs });
   r = step(r.state, { tuiState: 'ready', now: T0 + 13_000, observation: obs });
   check('event inside cooldown', r.action.kind === 'event');
@@ -214,7 +214,7 @@ function step(
 {
   let s = initialAttentionState();
   let now = T0;
-  const obsBase = { agent: 'hans', session: 'main' };
+  const obsBase = { agent: 'ada', session: 'main' };
   const transitionActions: string[] = [];
   for (let i = 0; i < 4; i++) {
     let r = step(s, {

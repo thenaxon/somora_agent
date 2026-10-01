@@ -33,7 +33,7 @@ writeFileSync(
     prompt: 'ein alter apfel',
     modelName: 'zimage',
     modelId: 'zimage',
-    provider: 'cerebro',
+    provider: 'gpu-box',
     specs: {},
     path: '/tmp/alt.png',
     filename: 'alt.png',
@@ -73,7 +73,7 @@ check('a non-record file is left where it was', existsSync(join(legacyDir, 'note
 // A real video alongside it, so the filter is proven in both directions.
 await writeRecord({
   id: 'vid000000001', kind: 'video', createdAt: '2026-08-28T10:00:00.000Z',
-  prompt: 'ein drehender apfel', modelName: 'ltx', modelId: 'ltx', provider: 'cerebro',
+  prompt: 'ein drehender apfel', modelName: 'ltx', modelId: 'ltx', provider: 'gpu-box',
   specs: {}, path: '/tmp/v.mp4', filename: 'v.mp4', mime: 'video/mp4', bytes: 999,
   durationSec: 5.04, width: 1280, height: 704, linkedTo: [], batchId: 'b2', batchIndex: 0,
 });

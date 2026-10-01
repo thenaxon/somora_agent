@@ -6,7 +6,7 @@
 // deletes/reindexes chunks but can't touch chunks_vec (delete gated on
 // hasVec), leaving orphan vector rows. A later vec-enabled process then
 // surfaces them as ghosts in top-k KNN results. pruneOrphanVecRows sweeps
-// them on the next vec-enabled reindex. Verified live: hans had 14 orphans
+// them on the next vec-enabled reindex. Verified live: ada had 14 orphans
 // (23 vec rows, 9 valid) — the prune removed exactly the 14.
 
 import assert from 'node:assert/strict';

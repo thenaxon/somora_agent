@@ -15,7 +15,7 @@ const REF_RE = /^(?:f\d+)?e\d+$/;
 
 // A flat object with an `op` enum rather than a discriminated union: the
 // MCP tool child registers tools from `inputSchema.shape` (high-level
-// SDK API), and a union has no shape — hans's first live call arrived
+// SDK API), and a union has no shape — ada's first live call arrived
 // with `op` stripped ("Invalid discriminator value", 2026-09-08). The
 // per-op requirements are checked in the handler; the JSON schema below still
 // spells out the variants for the openai-compatible engine.

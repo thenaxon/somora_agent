@@ -5,7 +5,7 @@
 // Context: Deep's MERGE prompt asks the worker model for the FULL
 // integrated page body. On large pages a model may summarize instead —
 // and applyMerge used to write that result unconditionally, then delete
-// the source memory. External incident 2026-07-13 (Donna/luzudemca):
+// the source memory. External incident 2026-07-13 (Dora/luzudemca):
 // a 22 KB page came back as 2.7 KB, content lost, recovery only from
 // backup. Deep auto-applies (`requireApproval: false`), so nobody saw it
 // happen.

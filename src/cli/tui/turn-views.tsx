@@ -119,14 +119,14 @@ function UserTurn({
   // local human just typed. Same line height, similar weight — keeps
   // scrollback rhythm intact.
   if (fromAgent) {
-    // Sender from a non-main session shows as `↬ naxon/cerebrocraft`
+    // Sender from a non-main session shows as `↬ nova/craftbox`
     // so mis-routed project traffic is visible in scrollback; main
-    // stays the plain `↬ naxon` it always was.
+    // stays the plain `↬ nova` it always was.
     const slug = fromSession ? sessionSlugOf(fromSession) : undefined;
     const tag = `↬ ${fromAgent}${slug && slug !== 'main' ? `/${slug}` : ''}`.padEnd(6, ' ');
     // The tag must not give way to a long message: Ink lays the row out
-    // as a flex line and shrank "↬ lisa" to "↬ lis" beside a follow-up
-    // (Rene, 2026-09-13). The name keeps its width; the text wraps.
+    // as a flex line and shrank "↬ bea" to "↬ lis" beside a follow-up
+    // (the operator, 2026-09-13). The name keeps its width; the text wraps.
     return (
       <Box marginTop={1}>
         <Box flexShrink={0} marginRight={1}>

@@ -2,7 +2,7 @@
 //
 // The OpenAI-shaped image API has no `aspect_ratio` — only `size`. A
 // router in front of a backend that DOES understand ratios (LiteLLM in
-// front of the cerebro visual-adapter) forwards unknown JSON keys on
+// front of the gpu-box visual-adapter) forwards unknown JSON keys on
 // /images/generations but rebuilds the multipart body for /images/edits
 // from a fixed whitelist, so `aspect_ratio` silently disappears exactly
 // when reference images are involved (2026-09-06/07 reports: every

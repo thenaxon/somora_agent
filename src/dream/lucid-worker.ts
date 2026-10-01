@@ -124,7 +124,7 @@ export class LucidWorker {
 
   private async fire(trigger: 'auto' | 'manual', force = false): Promise<RunLucidResult> {
     // A run whose findings nobody has looked at yet is not followed by
-    // another one — that made the same findings pile up twice (Rene,
+    // another one — that made the same findings pile up twice (the operator,
     // 2026-09-29). `force` (dream_run / POST /dream/run-lucid) overrides.
     if (!force) {
       const waiting = await pendingLucidRun();

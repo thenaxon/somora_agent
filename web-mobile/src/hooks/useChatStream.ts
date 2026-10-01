@@ -90,7 +90,7 @@ export interface ChatStream {
    *  silently no-ops. */
   abort: () => Promise<void>;
   /** Take a still-queued message back (DELETE /chat/queue/:turnId) so
-   *  it can be edited and re-sent — Rene's 2026-08-26 ask. Resolves
+   *  it can be edited and re-sent — the operator's 2026-08-26 ask. Resolves
    *  with the original text when the server still had it waiting;
    *  null (with a statusNotice) when it already started or failed.
    *  The bubble is removed from the list on success. */

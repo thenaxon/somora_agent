@@ -43,8 +43,8 @@ async function writeAgent(name: string, voice: boolean): Promise<void> {
   await writeFile(join(dir, 'AGENTS.md'), `You are ${name}.\n`, 'utf8');
 }
 
-await writeAgent('hans', true);
-await writeAgent('lisa', true);
+await writeAgent('ada', true);
+await writeAgent('bea', true);
 await writeAgent('stumm', false);
 
 // A script that does nothing: these calls are opened and hung up, never
@@ -69,40 +69,40 @@ const manager = (): InstanceType<typeof VoiceCallManager> =>
     config: config as never,
     provider: new FakeRealtimeProvider(idle),
     runConsult: async () => ({ text: 'x' }),
-    listAgentNames: async () => ['hans', 'lisa', 'stumm'],
+    listAgentNames: async () => ['ada', 'bea', 'stumm'],
   } as never);
 
 // ── the third gate: who appears in the picker ───────────────────────
 {
   const m = manager();
-  const callable = await m.callableAgents(['hans', 'lisa', 'stumm']);
-  check('agents with a voice are callable', callable.includes('hans') && callable.includes('lisa'), callable.join(','));
+  const callable = await m.callableAgents(['ada', 'bea', 'stumm']);
+  check('agents with a voice are callable', callable.includes('ada') && callable.includes('bea'), callable.join(','));
   check('an agent without one never appears', !callable.includes('stumm'), callable.join(','));
 }
 
 // ── one person, one somora, one conversation ────────────────────────
 // A second window used to open a second paid connection writing into
-// the same sessions as the first, with nothing to say so (Rene,
+// the same sessions as the first, with nothing to say so (the operator,
 // 2026-09-12: "1 user 1 somora 1 gespräch per voice").
 {
   const m = manager();
-  const first = await m.start({ agent: 'hans', session: 'main' });
-  check('the first call starts', first.call.snapshot().target.agent === 'hans');
+  const first = await m.start({ agent: 'ada', session: 'main' });
+  check('the first call starts', first.call.snapshot().target.agent === 'ada');
 
   let refusal = '';
   try {
-    await m.start({ agent: 'lisa', session: 'main' });
+    await m.start({ agent: 'bea', session: 'main' });
   } catch (err) {
     refusal = (err as Error).message;
   }
   check('a second call is refused', refusal.length > 0, refusal);
-  check('and the refusal says who is on the line', /hans/.test(refusal), refusal);
+  check('and the refusal says who is on the line', /ada/.test(refusal), refusal);
   check('the running call is untouched', m.list().length === 1, String(m.list().length));
 
   // Hanging up frees the line again.
   await m.stop(first.call.id, 'test');
-  const second = await m.start({ agent: 'lisa', session: 'main' });
-  check('after hanging up, the next call starts', second.call.snapshot().target.agent === 'lisa');
+  const second = await m.start({ agent: 'bea', session: 'main' });
+  check('after hanging up, the next call starts', second.call.snapshot().target.agent === 'bea');
   await m.stop(second.call.id, 'test');
 }
 
@@ -126,12 +126,12 @@ const manager = (): InstanceType<typeof VoiceCallManager> =>
     config: { realtimeVoice: { ...config.realtimeVoice, enabled: false } } as never,
     provider: new FakeRealtimeProvider(idle),
     runConsult: async () => ({ text: 'x' }),
-    listAgentNames: async () => ['hans'],
+    listAgentNames: async () => ['ada'],
   } as never);
-  check('nobody is callable while it is off', (await off.callableAgents(['hans'])).length === 0);
+  check('nobody is callable while it is off', (await off.callableAgents(['ada'])).length === 0);
   let refusal = '';
   try {
-    await off.start({ agent: 'hans', session: 'main' });
+    await off.start({ agent: 'ada', session: 'main' });
   } catch (err) {
     refusal = (err as Error).message;
   }
@@ -141,7 +141,7 @@ const manager = (): InstanceType<typeof VoiceCallManager> =>
 // ── the endpoint is configuration, not a constant ───────────────────
 // The adapter is the protocol, not the vendor. A service of your own
 // that speaks the same session and event language plugs in here rather
-// than getting a second adapter (Rene, 2026-09-12).
+// than getting a second adapter (the operator, 2026-09-12).
 {
   const { OpenAiRealtimeProvider } = await import('./openai-provider.ts');
   const seen: string[] = [];
@@ -191,11 +191,11 @@ const manager = (): InstanceType<typeof VoiceCallManager> =>
   const m = new VoiceCallManager({
     config: { realtimeVoice: { ...config.realtimeVoice, provider: 'local' } } as never,
     runConsult: async () => ({ text: 'x' }),
-    listAgentNames: async () => ['hans'],
+    listAgentNames: async () => ['ada'],
   } as never);
   let refusal = '';
   try {
-    await m.start({ agent: 'hans', session: 'main' });
+    await m.start({ agent: 'ada', session: 'main' });
   } catch (err) {
     refusal = (err as Error).message;
   }

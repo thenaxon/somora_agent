@@ -58,11 +58,11 @@ for (const n of [
     TSX_TSCONFIG_PATH: '/x/tsconfig.json',
     NODE_ENV: 'production',
     CLAUDE_CODE_MESSAGING_TOKEN: 'abc',
-    SOMORA_AGENT: 'hans',
+    SOMORA_AGENT: 'ada',
   };
   const removed = stripSomoraInternalEnv(env);
   check('strip removes the three leaky vars', removed.sort().join(',') === 'CLAUDE_CODE_MESSAGING_TOKEN,NODE_ENV,TSX_TSCONFIG_PATH', removed.join(','));
-  check('strip keeps PATH + SOMORA_AGENT', env.PATH === '/bin' && env.SOMORA_AGENT === 'hans');
+  check('strip keeps PATH + SOMORA_AGENT', env.PATH === '/bin' && env.SOMORA_AGENT === 'ada');
   const present = somoraInternalEnvPresent({ NODE_ENV: 'test', FOO: 'bar', CLAUDE_CODE_MESSAGING_SOCKET: '/s' });
   check(
     'present() lists only internal vars with values',

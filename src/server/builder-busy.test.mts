@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { claimWorkdir, describeClaim, releaseWorkdir, workdirClaimedBy } from './builder-busy.ts';
 
 assert.equal(workdirClaimedBy('/x/repo'), null);
-claimWorkdir({ agent: 'rudi', session: 's1', turnId: 't1', workdir: '/x/repo/' });
+claimWorkdir({ agent: 'dan', session: 's1', turnId: 't1', workdir: '/x/repo/' });
 assert.equal(workdirClaimedBy('/x/repo')?.turnId, 't1', 'same folder (trailing slash ignored)');
 assert.equal(workdirClaimedBy('/x/repo/packages/a')?.turnId, 't1', 'child folder is covered');
 assert.equal(workdirClaimedBy('/x')?.turnId, 't1', 'parent folder is covered');
 assert.equal(workdirClaimedBy('/x/repo2'), null, 'sibling with a shared prefix is free');
 assert.equal(workdirClaimedBy('/x/repo', { exceptTurnId: 't1' }), null, 'a turn does not block itself');
-assert.match(describeClaim(workdirClaimedBy('/x/repo')!), /rudi is working in \/x\/repo \(session s1/);
+assert.match(describeClaim(workdirClaimedBy('/x/repo')!), /dan is working in \/x\/repo \(session s1/);
 releaseWorkdir('t1');
 assert.equal(workdirClaimedBy('/x/repo'), null, 'released with the turn');
 console.log('builder-busy.test: ok');
@@ -17,14 +17,14 @@ console.log('builder-busy.test: ok');
 // Live progress rides on the claim; a chat turn (no claim) is a no-op.
 {
   const { claimOfSession, noteToolCall } = await import('./builder-busy.ts');
-  claimWorkdir({ agent: 'rudi', session: 's2', turnId: 't2', workdir: '/y/repo' });
+  claimWorkdir({ agent: 'dan', session: 's2', turnId: 't2', workdir: '/y/repo' });
   noteToolCall('t2', 'file_read');
   noteToolCall('t2', 'exec');
   noteToolCall('nope', 'exec');
-  const c = claimOfSession('rudi', 's2')!;
+  const c = claimOfSession('dan', 's2')!;
   assert.equal(c.toolCalls, 2);
   assert.equal(c.lastTool, 'exec');
-  assert.equal(claimOfSession('rudi', 'other'), null);
+  assert.equal(claimOfSession('dan', 'other'), null);
   releaseWorkdir('t2');
-  assert.equal(claimOfSession('rudi', 's2'), null);
+  assert.equal(claimOfSession('dan', 's2'), null);
 }

@@ -83,7 +83,7 @@ export function isClawHubUrl(url: string): boolean {
  *  is taken by multiple owners (409 AMBIGUOUS_SKILL_SLUG otherwise) —
  *  dropping it from the URL made `somora skill install
  *  https://clawhub.ai/steipete/skills/gog` fail on any contested slug
- *  (Lucy case study 2026-07-24). Returns null on unrecognized shapes. */
+ *  (Partner case study 2026-07-24). Returns null on unrecognized shapes. */
 export function parseClawHubUrl(url: string): { slug: string; owner?: string } | null {
   let u: URL;
   try {

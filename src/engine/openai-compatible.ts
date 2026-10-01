@@ -1592,7 +1592,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         // because a call whose arguments are not valid JSON must never go
         // back on the wire.
         //
-        // 2026-09-10, spielberg/main: a call arrived cut off after 64
+        // 2026-09-10, cleo/main: a call arrived cut off after 64
         // characters (`{"project_id": "…", "files": `). somora ran it
         // anyway, got a confusing "project_id is required", and then sent
         // the same fragment back in the next round. The backend parses
@@ -1617,7 +1617,7 @@ export const openAiCompatibleEngine: AgentEngine = {
         // Telling them apart by the provider's stop reason does NOT work:
         // routers rewrite it. vLLM overwrites finish_reason with
         // 'tool_calls' whenever a tool call was parsed, even when the
-        // real reason was the output limit (measured on cerebro,
+        // real reason was the output limit (measured on gpu-box,
         // 2026-09-10). Hermes documents the same thing. So the test is
         // structural: a complete JSON value ends on its closing bracket.
         const calls = toolCallsForApi.map((call) => {

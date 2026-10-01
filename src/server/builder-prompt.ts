@@ -190,7 +190,7 @@ export function renderBuilderIdentity(persona: Persona): string {
 export function renderBuilderRulesBlock(rules: string): string {
   const t = rules.trim();
   if (!t) return '';
-  // The body may open with its own heading (rudi's does): keep that one.
+  // The body may open with its own heading (dan's does): keep that one.
   return t.startsWith('# ') ? t : `# Rules for this builder\n\n${t}`;
 }
 

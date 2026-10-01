@@ -7,11 +7,11 @@
 // recogniser and a model that writes what it thinks it heard, and it
 // comes out different every single time:
 //
-//   said "CerebroCraft"  →  Cerebokräft · craft · CerebroCraft
+//   said "Quantumcraft"  →  Quantumkräft · craft · Quantumcraft
 //   said "voicecheck"    →  voice-check
 //
 // All four reached the server on 2026-09-12 and all four missed
-// `cerebrocraft` and `voicecheck`, which is why no call ever got into a
+// `quantumcraft` and `voicecheck`, which is why no call ever got into a
 // session other than main. Matching is therefore done on sound-ish
 // shape, not on spelling — and where the shape is ambiguous the voice
 // asks instead of guessing, because landing in the wrong conversation is
@@ -61,7 +61,7 @@ function similarity(a: string, b: string): number {
 /**
  * How close a heard name has to be before we accept it.
  *
- * `Cerebokräft` against `cerebrocraft` scores 0.83 — a missing letter
+ * `Quantumkräft` against `quantumcraft` clears the threshold — a missing letter
  * and a k for a c, which is what German speech recognition does to an
  * English word. Below 0.7 the two words no longer sound like each other
  * and a match would be a guess.
@@ -80,7 +80,7 @@ export type SessionMatch =
 /**
  * Pick the session a caller meant.
  *
- * Exact first, then containment (a model that heard "CerebroCraft" may
+ * Exact first, then containment (a model that heard "Quantumcraft" may
  * pass only "craft"), then similarity. `main` always exists and is
  * always a candidate.
  */

@@ -3,7 +3,7 @@
 // The window picks an agent and a session, opens one audio channel to
 // somora and shows what is happening. It holds no provider knowledge,
 // no key and never sees a tool call — the server owns all of that
-// (Rene 2026-09-11: "logik soll im somora server stecken nicht im web
+// (the operator 2026-09-11: "logik soll im somora server stecken nicht im web
 // client").
 //
 // Design: private/realtime-voice-design.md
@@ -58,8 +58,8 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
    * The handler is built once, when the call is connected, and closes
    * over the `agent` of that render forever. Comparing against that
    * value silently ignored a move BACK to the agent the call started
-   * with: hans → lisa → hans left the window on lisa (Rene, 2026-09-12:
-   * "es bleibt auf Lisa aber man spricht dann schon mit Hans").
+   * with: ada → bea → ada left the window on bea (the operator, 2026-09-12:
+   * "es bleibt auf Bea aber man spricht dann schon mit Ada").
    */
   const shownRef = useRef<{ agent: string; session: string }>({ agent: '', session: 'main' });
   /** A handover the window has not applied yet, because the previous
@@ -195,7 +195,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
           setState('listening');
           return;
         }
-        // The server's own state is the truth — "asking hans" is a
+        // The server's own state is the truth — "asking ada" is a
         // state no provider event announces.
         if (msg.type === 'state' && msg.call?.state) {
           setState(msg.call.state as CallState);
@@ -442,7 +442,7 @@ export function VoiceWindow({ agents }: { agents: AgentInfo[] }) {
         // minHeight 0 is the whole trick: without it a flex child never
         // shrinks below its content, so the list grew instead of
         // scrolling and the newest line sat below the window edge
-        // (Rene, 2026-09-12: "scrollt noch immer nicht schön weiter").
+        // (the operator, 2026-09-12: "scrollt noch immer nicht schön weiter").
         style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 2 }}
       >
         {[...transcript, ...(partial && partial.text.trim() ? [partial] : [])].map((line, i) => (

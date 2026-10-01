@@ -5,9 +5,9 @@
 // macOS LaunchAgent, …).
 //
 // Why this exists: each somora agent has its own server process. If
-// agent `lisa` is launched without the env vars naxon happens to have
-// in her shell, skill calls (gog, etc.) break for lisa even though
-// everything works for naxon — exactly the symptom in the
+// agent `bea` is launched without the env vars nova happens to have
+// in her shell, skill calls (gog, etc.) break for bea even though
+// everything works for nova — exactly the symptom in the
 // 2026-05-10 gog-env-inheritance bug report.
 //
 // Centralizing the env source under ~/.somora makes the per-agent

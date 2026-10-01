@@ -266,7 +266,7 @@ export function applyCodexCliEnv(config: Config): void {
   // SOMORA_CODEX_SHELL_ENV_POLICY → `-c shell_environment_policy.inherit=…`.
   // Default 'inherit-all' makes codex's exec-shells see the full somora
   // server env (GOG_KEYRING_PASSWORD etc.) — fixes the 2026-05-10
-  // lisa/gog regression where codex's default core-only env stripping
+  // bea/gog regression where codex's default core-only env stripping
   // hid skill-required vars from the agent's shell.
   if (
     process.env.SOMORA_CODEX_SHELL_ENV_POLICY === undefined ||

@@ -19,7 +19,7 @@ export interface ChatTurnResolveDeps {
 /** One image or video made (or announced) during a turn. Carried on
  *  ChatTurnResult so a spawn caller gets the artifact paths without
  *  reading the sub's transcript — the final text is the model's word,
- *  the media list is the tool's (2026-09-05 spielberg report: three
+ *  the media list is the tool's (2026-09-05 cleo report: three
  *  images on disk, final answer a loop-marker, caller had to file_list). */
 export interface ChatTurnMedia {
   type: 'image' | 'video';

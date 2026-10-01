@@ -242,7 +242,7 @@ export const CompactionConfigSchema = z
     workers: z.array(z.string().min(1)).optional(),
     /**
      * Try the session's own model first — the one that is loaded and
-     * answering right now — before `workers` (naxon, 2026-09-26: a
+     * answering right now — before `workers` (nova, 2026-09-26: a
      * session on a model outside the list waited for workers that were
      * not loaded and ended on a weaker one). Only when its engine can
      * summarize and its window fits; `workers` stay the cascade behind
@@ -287,7 +287,7 @@ export const MemoryAutoInjectConfigSchema = z.object({
    * question decides, the conversation nudges. Before 2026-09-08 the
    * turns were concatenated as one text, and a 46-character question
    * after two long answers about something else recalled that
-   * something else (Walter → CerebroCraft). 0 = current message only.
+   * something else (Karl → Craftbox). 0 = current message only.
    */
   historyWeight: z.number().min(0).max(1).default(0.3),
   /** History weight when the message has only one or two content words
@@ -302,7 +302,7 @@ export const MemoryAutoInjectConfigSchema = z.object({
   historyTurnChars: z.number().int().positive().default(800),
   /**
    * BM25 share of the fusion for a message with only one or two content
-   * words ("wer ist walter?"): the exact word match IS the question, and
+   * words ("wer ist karl?"): the exact word match IS the question, and
    * the default 0.3 lets a topic-drifted vector outvote it. Vector share
    * is the remainder. `null` = use `memory.hybrid` as for every query.
    */
@@ -314,8 +314,8 @@ export const MemoryHybridConfigSchema = z.object({
   bm25Weight: z.number().min(0).max(1).default(0.3),
   /**
    * Multiplier on the fused score of a chunk whose slug contains a
-   * content word of the query — `personen/walter-siegl` for "wer ist
-   * walter?". The page ABOUT something rarely repeats its name in the
+   * content word of the query — `personen/karl-muster` for "wer ist
+   * karl?". The page ABOUT something rarely repeats its name in the
    * body, so BM25 ranks the pages that mention it above it; the slug
    * says which page is the canonical one. 1 = off.
    */
@@ -338,9 +338,9 @@ export const MemoryHybridConfigSchema = z.object({
   pageSupport: z.number().min(0).max(1).default(0.3),
   /**
    * Extra multiplier (on top of slugMatchBoost) when the query contains
-   * EVERY word of the page's own name — "enovom website …" names
-   * `projekte/enovom-website` in full, while the host page
-   * `docker-public-dmz-vm` only shares two of its four words. Names
+   * EVERY word of the page's own name — "acme website …" names
+   * `projekte/acme-website` in full, while the host page
+   * `dmz-host-vm` only shares two of its three words. Names
    * with one word get no extra: the plain boost already covers them.
    * 1 = off.
    */
@@ -374,7 +374,7 @@ export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
 // model, idle trigger, chunking) stay in agent.yaml `rem:` — this block
 // is for behavior that should not vary per agent.
 //
-// dedup (2026-07-21, buffet's workspace-dedup report): mechanical
+// dedup (2026-07-21, finn's workspace-dedup report): mechanical
 // post-extraction filter against already-persisted knowledge. The
 // extractor prompt ALSO asks the worker model to dedupe, but small
 // worker models (gemma-class) demonstrably ignore that — 26/27 findings
@@ -647,7 +647,7 @@ export const AgentLoopConfigSchema = z.object({
    * legitimate parallel-build / parallel-test patterns aren't blocked.
    * Counts both local AND remote background jobs against the same
    * cap (the host's resources are what we're protecting; whether the
-   * load lands on the somora server or on spiderman doesn't change
+   * load lands on the somora server or on media-box doesn't change
    * the basic "don't go nuts" intent).
    */
   execMaxConcurrentPerAgent: z.number().int().positive().default(8),
@@ -751,7 +751,7 @@ export const CodexCliConfigSchema = z
      * `core-only` — codex's own restrictive default, which keeps only
      *   PATH/HOME/USER/LANG/etc. Skills with declared env_vars then
      *   silently see them as missing inside the shell — exactly the
-     *   2026-05-10 lisa/GOG_KEYRING_PASSWORD bug. Use only if you have
+     *   2026-05-10 bea/GOG_KEYRING_PASSWORD bug. Use only if you have
      *   a hardening reason and have audited every skill.
      *
      * Maps to codex's `-c shell_environment_policy.inherit=all|core`
@@ -1170,7 +1170,7 @@ export const RealtimeVoiceConfigSchema = z
     /**
      * How easily the model lets itself be interrupted.
      *
-     * Talking over it was hard in practice (Rene, 2026-09-12): the
+     * Talking over it was hard in practice (the operator, 2026-09-12): the
      * provider decides an interruption has happened from its own voice
      * activity detection, and its defaults are tuned for a caller who
      * waits politely. Lower `threshold` reacts to quieter speech,
@@ -1216,7 +1216,7 @@ export const TtsConfigSchema = z
      *  in `agentVoices`. */
     textPrefix: z.string().optional(),
     /** Optional per-agent text-prefix overrides. Key = agent name (e.g.
-     *  "naxon", "hans"); value = the prefix string to prepend to the
+     *  "nova", "ada"); value = the prefix string to prepend to the
      *  synthesize input when somora is generating audio FOR that agent.
      *  Lookup order at synth time:
      *    1. agentVoices[<agent>]  →  use it
@@ -1591,7 +1591,7 @@ export function resolveImageModel(
 // in the system prompt so the agent knows which paths matter.
 //
 // Entities are a CONTROLLED VOCABULARY — projects belong to one entity
-// (e.g. "privat", "enovom"), and at write time the agent's chosen
+// (e.g. "privat", "acme"), and at write time the agent's chosen
 // entity is validated against this list. Prevents STT mishearings from
 // inventing new phantom entities ("enofhom" silently becomes a new
 // category). The list is intentionally USER-curated and edited in
@@ -1736,7 +1736,7 @@ export const WikiDeepConfigSchema = z
      *  skip stands until the note changes. */
     skipCacheDays: z.number().int().min(0).max(3650).default(30),
     /** A page this large is not merged into any more: Deep files the
-     *  note as a sub-page under it instead (Rene, 2026-09-29: "so große
+     *  note as a sub-page under it instead (the operator, 2026-09-29: "so große
      *  Seiten sollten nie entstehen" — the migration had folded 97
      *  reports into one 100 KB page). */
     maxPageChars: z.number().int().min(5_000).default(50_000),
@@ -2184,7 +2184,7 @@ export const ConfigSchema = z.object({
    * Model outages are remembered for every cascade (chat fallback, REM
    * workers, compaction workers): a model that was unreachable is not
    * tried again for this many minutes; a success clears the note early
-   * (naxon/Rene, 2026-09-27 — a swapped GPU profile keeps models away
+   * (nova/The operator, 2026-09-27 — a swapped GPU profile keeps models away
    * for hours, and every turn paid the dead hops again).
    */
   fallback: z
