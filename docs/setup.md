@@ -42,12 +42,13 @@ every GitHub release as `install.sh`.
 
 ```bash
 somora setup            # all steps
-somora setup access     # one step: models | agent | memory | team | access | start
+somora setup access     # one step: models | search | agent | memory | team | access | start
 ```
 
 | Step | What it does |
 |---|---|
 | `models` | Claude subscription (installs Claude Code if missing, runs its login), ChatGPT subscription (the bundled Codex login, browser or device code), or your own OpenAI-compatible server (asks the address, lists its models, asks the context window). Writes the `providers:` block with the tested settings from [models.md](models.md). |
+| `search` | Web search: asks for a Brave Search API key (free plan, 2,000 searches a month), checks it with one real search and stores it under `web.brave.apiKey` — that switches the agents' `web_search` tool on. |
 | `agent` | Creates the first agent: name, how it addresses you, answer language, model, backup model. On an existing install it lists the agents and offers to repair one whose model no longer exists. |
 | `memory` | Turns on REM per agent (with its own model), the duplicate check for new notes, and the shared wiki with Deep and Lucid — in a new folder or an existing Obsidian vault ([dream-phases.md](dream-phases.md), [wiki.md](wiki.md)). |
 | `team` | With two or more agents: writes the first `team.yaml` ([team.md](team.md)). |
@@ -129,10 +130,16 @@ single-window-only; the TUI is unaffected.
 npm install -g somora
 ```
 
-The package carries the built web clients and a pinned dependency tree
-(`npm-shrinkwrap.json`), so every install gets exactly the versions the
-release was tested with. One native module (`node-pty`) is compiled
-during the install on Linux — that is what the compiler from §1 is for.
+The package carries the built web clients. One native module
+(`node-pty`) is compiled during the install on Linux — that is what the
+compiler from §1 is for. The install is about 1.4 GB: somora itself is
+20 MB, the rest are the bundled Codex and Claude engines (each a
+complete program for your platform), the embedding runtime for the
+memory search, the image library and the terminal module. The embedding
+runtime would also download a 300 MB CUDA library on Linux that somora
+never uses (embeddings run on the CPU); the installer and `somora
+update` skip it with `ONNXRUNTIME_NODE_INSTALL=skip` — set the same
+variable when you run `npm install -g somora` by hand.
 
 If npm answers `EACCES`, its global folder belongs to root. Give npm a
 folder of your own instead of reaching for `sudo`:

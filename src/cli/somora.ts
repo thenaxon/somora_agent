@@ -539,13 +539,17 @@ async function cmdUpdate(args: string[]): Promise<number> {
     return 1;
   }
 
-  // The package ships npm-shrinkwrap.json, so the dependency tree —
-  // including the security overrides — is the one the release was
-  // tested with; no in-place re-resolve needed afterwards.
+  // somora never runs embeddings on CUDA (the embedder uses the CPU
+  // provider), so the 300 MB CUDA library onnxruntime-node would
+  // download on Linux is skipped — a fifth of the install.
   const spec = `${SOMORA_NPM_NAME}@${target.version}`;
   process.stdout.write(`  npm install -g ${spec}\n`);
   const allow = allowScriptsArgs(run('npm', ['config', 'get', 'allow-scripts']).stdout);
-  const ri = spawnSync('npm', ['install', '-g', '--no-audit', '--no-fund', ...allow, spec], { encoding: 'utf8', stdio: ['inherit', 'inherit', 'pipe'] });
+  const ri = spawnSync('npm', ['install', '-g', '--no-audit', '--no-fund', ...allow, spec], {
+    encoding: 'utf8',
+    stdio: ['inherit', 'inherit', 'pipe'],
+    env: { ...process.env, ONNXRUNTIME_NODE_INSTALL: 'skip' },
+  });
   if (ri.stderr) process.stderr.write(ri.stderr);
   if (ri.status !== 0) {
     if (/EACCES/.test(ri.stderr ?? '')) {

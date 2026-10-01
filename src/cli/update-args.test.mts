@@ -48,8 +48,8 @@ test('compareVersions: a pre-release sorts below its release', () => {
   assert.ok(compareVersions('2026.930.2-rc.1', '2026.930.1') > 0);
 });
 
-test('allow-scripts list = every shipped dependency with an install script, and install.sh agrees', () => {
-  const lock = JSON.parse(readFileSync(resolve(root, 'npm-shrinkwrap.json'), 'utf8')) as { packages: Record<string, { hasInstallScript?: boolean; dev?: boolean }> };
+test('allow-scripts list = every shipped dependency with an install script (package-lock.json), and install.sh agrees', () => {
+  const lock = JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8')) as { packages: Record<string, { hasInstallScript?: boolean; dev?: boolean }> };
   const withScripts = [...new Set(Object.entries(lock.packages)
     .filter(([k, v]) => k && v.hasInstallScript && !v.dev)
     .map(([k]) => k.split('node_modules/').pop()!))].sort();

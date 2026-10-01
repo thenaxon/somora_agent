@@ -38,11 +38,12 @@ const AGENTS_DIR = join(SOMORA_HOME, 'agents');
 const UNIT_PATH = join(HOME, '.config', 'systemd', 'user', 'somora.service');
 const BIN_PATH = process.env.SOMORA_BIN_PATH ?? '';
 
-const STEPS = ['models', 'agent', 'memory', 'team', 'access', 'start'] as const;
+const STEPS = ['models', 'search', 'agent', 'memory', 'team', 'access', 'start'] as const;
 type Step = (typeof STEPS)[number];
 
 const STEP_TITLES: Record<Step, string> = {
   models: 'Models — which AI your agents use',
+  search: 'Web search',
   agent: 'Your first agent',
   memory: 'Memory and dreaming',
   team: 'Team',
@@ -417,6 +418,57 @@ async function stepModels(ctx: Ctx): Promise<void> {
     return;
   }
   if (save(config, 'config', 'models saved')) ctx.needsRestart = true;
+}
+
+// ─── step: search ─────────────────────────────────────────────────────
+
+/** One request to Brave with the key: is it accepted? */
+async function braveKeyWorks(key: string): Promise<true | string> {
+  try {
+    const r = await fetch('https://api.search.brave.com/res/v1/web/search?q=somora&count=1', {
+      headers: { Accept: 'application/json', 'X-Subscription-Token': key },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (r.ok) return true;
+    if (r.status === 401 || r.status === 403 || r.status === 422) return `Brave rejected the key (HTTP ${r.status}) — copy it again from the dashboard`;
+    if (r.status === 429) return 'Brave answered "rate limited" (429) — the key works, but the monthly quota is used up';
+    return `Brave answered HTTP ${r.status}`;
+  } catch (err) {
+    return `could not reach Brave: ${(err as Error).message}`;
+  }
+}
+
+async function stepSearch(ctx: Ctx): Promise<void> {
+  const { p } = ctx;
+  const config = openConfig();
+  const current = getIn(config, ['web', 'brave', 'apiKey']);
+  if (typeof current === 'string' && current) {
+    ok('web search is on (Brave Search API key present)');
+    if (!(await p.confirm('Replace the key?', false))) return;
+  } else {
+    explain(`Agents can search the web through the Brave Search API: they get the
+      \`web_search\` tool, and \`web_fetch\` reads the pages it finds. The free plan
+      allows 2,000 searches a month. Without a key the agents can still read a page
+      you give them, but not search.
+        1. create an account at  https://api-dashboard.search.brave.com
+        2. choose the free "Data for Search" plan and create an API key
+        3. paste the key here (it is stored in config.yaml, which only you can read)`);
+    if (!(await p.confirm('Do you have a Brave Search API key?', false))) {
+      warn('skipped — add it later with `somora setup search`');
+      return;
+    }
+  }
+  const key = await p.askValid('API key', undefined, (v) => (v.length < 10 ? 'that is too short for a key' : /\s/.test(v) ? 'a key has no spaces' : null));
+  say(`  ${dim('checking the key with one search…')}`);
+  const result = await braveKeyWorks(key);
+  if (result !== true) {
+    warn(result);
+    if (!(await p.confirm('Store it anyway?', false))) return;
+  } else {
+    ok('Brave accepted the key');
+  }
+  setIn(config, ['web', 'brave', 'apiKey'], key);
+  if (save(config, 'config', 'web search saved')) ctx.needsRestart = true;
 }
 
 // ─── step: agent ──────────────────────────────────────────────────────
@@ -833,6 +885,7 @@ async function stepStart(ctx: Ctx): Promise<void> {
 
 const RUN: Record<Step, (ctx: Ctx) => Promise<void>> = {
   models: stepModels,
+  search: stepSearch,
   agent: stepAgent,
   memory: stepMemory,
   team: stepTeam,

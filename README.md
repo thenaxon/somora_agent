@@ -189,11 +189,12 @@ then starts the **setup assistant**:
 ```text
 somora setup
   1  Models        connect a Claude or ChatGPT subscription, or your own model server
-  2  First agent   name, language, model and a backup model
-  3  Memory        REM, Deep and Lucid — and where the shared wiki lives
-  4  Team          who is who, once there is more than one agent
-  5  Access        HTTPS through Tailscale, so phone and laptop can reach it
-  6  Start + test  starts the service and sends your agent a real message
+  2  Web search    a Brave Search API key, so agents can search the web
+  3  First agent   name, language, model and a backup model
+  4  Memory        REM, Deep and Lucid — and where the shared wiki lives
+  5  Team          who is who, once there is more than one agent
+  6  Access        HTTPS through Tailscale, so phone and laptop can reach it
+  7  Start + test  starts the service and sends your agent a real message
 ```
 
 Every step first looks at what is already there, so `somora setup` is safe

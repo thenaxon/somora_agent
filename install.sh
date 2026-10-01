@@ -172,12 +172,36 @@ can_sudo() {
   sudo -n true 2>/dev/null
 }
 
-# Run a noisy command quietly; show its last lines only when it fails.
-quiet() {
-  local log; log="$(mktemp)"
-  if "$@" >"$log" 2>&1; then rm -f "$log"; return 0; fi
-  tail -n 25 "$log" >&2; rm -f "$log"; return 1
+# Run a noisy command quietly, with a spinner so the screen still moves;
+# its last lines are shown only when it fails. Needs a terminal for the
+# spinner — without one it just runs.
+SPIN_PID=""
+spin_start() { # spin_start "<label>"
+  [ -t 1 ] || { info "$1"; return; }
+  (
+    local frames='|/-\' i=0
+    while :; do printf '\r    %s %s' "${frames:i%4:1}" "$1"; i=$((i + 1)); sleep 0.15; done
+  ) &
+  SPIN_PID=$!
 }
+spin_stop() {
+  [ -n "$SPIN_PID" ] || return 0
+  kill "$SPIN_PID" 2>/dev/null; wait "$SPIN_PID" 2>/dev/null; SPIN_PID=""
+  printf '\r\033[K'
+}
+quiet() { # quiet "<label>" <command…>
+  local label="$1"; shift
+  local log; log="$(mktemp)"
+  local started; started="$(date +%s)"
+  spin_start "$label"
+  if "$@" >"$log" 2>&1; then
+    spin_stop; rm -f "$log"; return 0
+  fi
+  spin_stop
+  ui_fail_tail "$log"; rm -f "$log"; return 1
+}
+ui_fail_tail() { printf '    %s--- last lines of the output ---%s\n' "$DIM" "$RST" >&2; tail -n 25 "$1" | sed 's/^/    /' >&2; }
+trap 'spin_stop' EXIT
 
 fetch() { # fetch <url> <outfile>
   if have curl; then curl -fsSL "$1" -o "$2"; else wget -qO "$2" "$1"; fi
@@ -241,14 +265,12 @@ install_system_packages() {
   fi
 
   if [ "$PM" = "brew" ]; then
-    info "installing with Homebrew: $pkgs"
     # shellcheck disable=SC2086
-    quiet brew install $pkgs || warn "brew could not install everything — see the lines above"
+    quiet "installing with Homebrew: $pkgs" brew install $pkgs || warn "brew could not install everything — see the lines above"
   elif can_sudo && confirm "Install them with admin rights?  (sudo $cmd)" y; then
-    info "installing: $pkgs"
-    if [ "$PM" = "apt" ]; then quiet as_root env DEBIAN_FRONTEND=noninteractive apt-get update || true; fi
+    if [ "$PM" = "apt" ]; then quiet "refreshing the package lists" as_root env DEBIAN_FRONTEND=noninteractive apt-get update || true; fi
     # shellcheck disable=SC2086
-    quiet as_root env DEBIAN_FRONTEND=noninteractive $cmd || die "package install failed — fix it and run this again:  sudo $cmd"
+    quiet "installing $pkgs" as_root env DEBIAN_FRONTEND=noninteractive $cmd || die "package install failed — fix it and run this again:  sudo $cmd"
   elif [ -n "$need_cc" ]; then
     die "the build tools are required and need admin rights once. Ask an administrator to run:
          sudo $cmd
@@ -278,13 +300,12 @@ install_node_local() {
   fetch "$base/SHASUMS256.txt" "$tmp/SHASUMS256.txt" || die "could not reach nodejs.org"
   file="$(grep -o "node-v[0-9.]*-${OS}-${ARCH}\.tar\.gz" "$tmp/SHASUMS256.txt" | head -1)"
   [ -n "$file" ] || die "nodejs.org has no Node ${NODE_INSTALL_MAJOR} build for ${OS}-${ARCH}"
-  info "downloading $file"
-  fetch "$base/$file" "$tmp/$file" || die "download failed: $base/$file"
+  quiet "downloading $file" fetch "$base/$file" "$tmp/$file" || die "download failed: $base/$file"
   want="$(grep " $file\$" "$tmp/SHASUMS256.txt" | cut -d' ' -f1)"
   sum="$(sha256_of "$tmp/$file")"
   [ "$want" = "$sum" ] || die "checksum mismatch for $file — not installing it"
   rm -rf "$LOCAL_NODE_DIR"; mkdir -p "$LOCAL_NODE_DIR"
-  tar -xzf "$tmp/$file" -C "$LOCAL_NODE_DIR" --strip-components=1
+  quiet "unpacking Node" tar -xzf "$tmp/$file" -C "$LOCAL_NODE_DIR" --strip-components=1
   rm -rf "$tmp"
   export PATH="$LOCAL_NODE_DIR/bin:$PATH"
   add_to_path "$LOCAL_NODE_DIR/bin"
@@ -293,14 +314,16 @@ install_node_local() {
 install_node_system() {
   case "$PM" in
     apt)
+      # NodeSource's script uses `apt` internally and apt warns about
+      # that on every call — captured like everything else.
       fetch "https://deb.nodesource.com/setup_${NODE_INSTALL_MAJOR}.x" /tmp/somora-nodesource.sh || return 1
-      as_root bash /tmp/somora-nodesource.sh >/dev/null || return 1
-      quiet as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || return 1 ;;
+      quiet "adding the NodeSource package source" as_root bash /tmp/somora-nodesource.sh || return 1
+      quiet "installing Node ${NODE_INSTALL_MAJOR}" as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || return 1 ;;
     dnf)
       fetch "https://rpm.nodesource.com/setup_${NODE_INSTALL_MAJOR}.x" /tmp/somora-nodesource.sh || return 1
-      as_root bash /tmp/somora-nodesource.sh >/dev/null || return 1
-      quiet as_root dnf install -y nodejs || return 1 ;;
-    brew) brew install "node@${NODE_INSTALL_MAJOR}" && brew link --overwrite --force "node@${NODE_INSTALL_MAJOR}" || return 1 ;;
+      quiet "adding the NodeSource package source" as_root bash /tmp/somora-nodesource.sh || return 1
+      quiet "installing Node ${NODE_INSTALL_MAJOR}" as_root dnf install -y nodejs || return 1 ;;
+    brew) quiet "installing Node ${NODE_INSTALL_MAJOR} with Homebrew" brew install "node@${NODE_INSTALL_MAJOR}" && quiet "linking Node" brew link --overwrite --force "node@${NODE_INSTALL_MAJOR}" || return 1 ;;
     *) return 1 ;;
   esac
   hash -r
@@ -319,7 +342,6 @@ install_node() {
 
   local system_ok=""
   case "$PM" in apt|dnf) can_sudo && system_ok=1 ;; brew) system_ok=1 ;; esac
-  [ -z "$system_ok" ] || info "installing Node ${NODE_INSTALL_MAJOR}…"
   if [ -n "$system_ok" ] && confirm "Install Node ${NODE_INSTALL_MAJOR} system-wide (NodeSource/Homebrew)?  No = into your home folder" y; then
     if install_node_system; then ok "Node $(node -v) installed system-wide"; return; fi
     warn "system-wide install did not work — using the home folder instead"
@@ -373,11 +395,16 @@ install_somora() {
   local spec="$PKG_NAME@$VERSION" current=""
   if have somora; then current="$(somora --version 2>/dev/null || true)"; fi
   if [ -n "$current" ]; then info "installed: $current"; fi
-  info "npm install -g $spec   (takes a few minutes, about 1.5 GB)"
+  info "npm install -g $spec"
+  info "about 1.4 GB: somora itself is 20 MB, the rest are the bundled Codex and Claude engines,"
+  info "the embedding runtime for the memory search, the image library and the terminal module"
   local allow=()
   # npm without the setting answers "undefined" — and would reject the flag.
   if [ "$(npm config get allow-scripts 2>/dev/null)" != "undefined" ]; then allow=("--allow-scripts=$ALLOW_SCRIPTS"); fi
-  npm install -g --no-audit --no-fund --loglevel=error ${allow[@]+"${allow[@]}"} "$spec" \
+  # somora runs embeddings on the CPU; the 300 MB CUDA library the
+  # embedding runtime would download on Linux is never used.
+  export ONNXRUNTIME_NODE_INSTALL=skip
+  quiet "downloading and installing (a few minutes)" npm install -g --no-audit --no-fund --loglevel=error ${allow[@]+"${allow[@]}"} "$spec" \
     || die "npm could not install $spec. The lines above say why; after fixing it, run this installer again."
   hash -r
   have somora || die "somora was installed but is not on PATH ($(npm config get prefix)/bin)"
