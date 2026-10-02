@@ -1,4 +1,6 @@
-# somora HTTP API reference
+# HTTP API
+
+The somora HTTP API reference.
 
 > All clients — TUI, web app, and any third-party tool — talk to the
 > same HTTP+SSE+WebSocket surface. This document is the reference for

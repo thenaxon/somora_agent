@@ -1,4 +1,6 @@
-# Language servers — errors after every write
+# Language servers
+
+Errors after every write.
 
 A builder agent ([builder.md](builder.md)) gets the compiler's verdict
 on a file the moment it writes it. After `file_write` or `file_patch`

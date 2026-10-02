@@ -1,4 +1,4 @@
-# TUI display toggles
+# TUI display
 
 The Ink CLI has two complementary toggle families: **show** (whether a
 row appears at all) and **verbose** (how much detail when it does).

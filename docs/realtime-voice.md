@@ -1,4 +1,6 @@
-# Realtime voice — talking to an agent
+# Realtime voice
+
+Talking to an agent.
 
 A standing, interruptible conversation with one of your agents: it
 listens while you speak, answers out loud, and you can talk over it.

@@ -1,4 +1,6 @@
-# tmux — Driving Long-Running Terminal Sessions
+# tmux
+
+Driving long-running terminal sessions.
 
 The `tmux` tool gives the agent a persistent terminal session whose
 state survives between tool calls. Use it when you need to spawn

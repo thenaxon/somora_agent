@@ -1,4 +1,6 @@
-# somora mobile — PWA chat client
+# Mobile app
+
+somora mobile — PWA chat client.
 
 A second web app shipped with somora, mounted at `/mobile`. Designed
 for chatting with your agents from a phone over Tailscale. Minimal-

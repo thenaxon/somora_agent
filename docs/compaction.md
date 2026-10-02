@@ -1,4 +1,6 @@
-# Compaction — how somora keeps a session inside the context window
+# Compaction
+
+How somora keeps a session inside the context window.
 
 A session grows with every turn. Somewhere before it stops fitting into
 the model's context window, the older part of the conversation is

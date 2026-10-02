@@ -1,4 +1,4 @@
-# Prompt-Cache Strategy
+# Prompt cache
 
 > How somora keeps prefix-cache hit rates high across the three engine
 > adapters and the dream worker. Why it matters, how it works, where

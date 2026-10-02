@@ -1,4 +1,4 @@
-# Sampling Parameters
+# Sampling
 
 `temperature`, `top_p` and their relatives decide how much the model
 dices while it writes. Vendors publish recommendations per model

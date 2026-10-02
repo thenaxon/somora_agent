@@ -141,38 +141,70 @@ high-value next steps in rough order:
 6. **Pin a project** to a session so the agent has a persistent
    working set. [projects.md](projects.md).
 
-## Reference docs
+## All pages
 
-| Doc | Reads like | When to open it |
+### Getting started
+
+| Page | Reads like | When to open it |
 |---|---|---|
-| [setup.md](setup.md) | Operator runbook | First install; adding providers; HTTPS; mobile; ops |
-| [agents.md](agents.md) | Persona + agent.yaml reference | Creating an agent; per-agent model, REM, tool/skill visibility |
-| [builder.md](builder.md) | The builder kind | An agent that is a coding harness: plan → Go → build, task panel, questions, hand-over from an orchestrator |
-| [lsp.md](lsp.md) | Language servers | A builder's writes come back with the compiler's errors; install, config, routes |
-| [api.md](api.md) | HTTP/SSE contract | Building a third-party client; debugging streaming |
-| [tools.md](tools.md) | Tool catalog overview | Wondering what an agent can do |
-| [mcp.md](mcp.md) | External MCP servers | Plugging third-party MCP tools into your agents |
-| [files.md](files.md) | File-tool deep dive | Working with `file_read`/`file_write`/`analyze_file` |
-| [memory.md](memory.md) | Concept + mechanics | Tuning recall, writing notes by hand |
-| [wiki.md](wiki.md) | Concept + mechanics | Shared knowledge base, hand-curation |
-| [dream-phases.md](dream-phases.md) | Background workers | REM/Deep/Lucid cadence + triggers |
-| [projects.md](projects.md) | Concept + workflow | Pinning a working set to a session |
-| [resources.md](resources.md) | SSH-target config | Adding a remote machine |
-| [skills.md](skills.md) | Markdown skill format | Writing or installing skills |
-| [tmux.md](tmux.md) | Multi-turn shell sessions | Driving long-running CLIs from agents |
-| [web.md](web.md) | Browser client | Web-UI specifics + HTTPS notes |
-| [mobile.md](mobile.md) | Mobile PWA | iOS/Android install, scope |
-| [voice.md](voice.md) | Dictation + spoken replies | Press-to-talk in web/mobile, optional TTS answers |
-| [realtime-voice.md](realtime-voice.md) | Talking to an agent | A standing, interruptible call; the voice talks, the agent knows |
-| [imagegen.md](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
-| [videogen.md](videogen.md) | Text-to-video | Job-based renders, and how an agent gets its result without waiting |
-| [browser.md](browser.md) | Shared browser | A Chromium per agent profile that agents drive and you can take over for logins |
-| [team.md](team.md) | Org chart → prompt block | Telling every agent who is who and who to involve |
-| [sentinel.md](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
-| [models.md](models.md) | Model reference | Models known to run with somora, per engine, with the config values that work and why |
-| [compaction.md](compaction.md) | Context management | When and how a session is summarised, which model does it, what `contextWindow` controls per engine |
-| [thinking.md](thinking.md) | Reasoning depth | Per-engine thinking levels, session overrides |
-| [sampling.md](sampling.md) | Sampling parameters | temperature, top_p and friends per model, agent and session |
-| [display.md](display.md) | TUI toggles | What the terminal client shows, and `/queue` |
-| [cache-strategy.md](cache-strategy.md) | Prompt-cache mechanics | Why the system prompt is ordered the way it is |
-| [security.md](security.md) | Trust model | Network posture, sandbox stance |
+| [Setup](setup.md) | Operator runbook | First install; adding providers; HTTPS; mobile; ops |
+| [Models](models.md) | Model reference | Models known to run with somora, per engine, with the config values that work and why |
+| [Security](security.md) | Trust model | Network posture, sandbox stance |
+
+### Clients
+
+| Page | Reads like | When to open it |
+|---|---|---|
+| [Web client](web.md) | Browser client | Web-UI specifics + HTTPS notes |
+| [Mobile app](mobile.md) | Mobile PWA | iOS/Android install, scope |
+| [TUI display](display.md) | TUI toggles | What the terminal client shows, and `/queue` |
+| [Voice](voice.md) | Dictation + spoken replies | Press-to-talk in web/mobile, optional TTS answers |
+| [Realtime voice](realtime-voice.md) | Talking to an agent | A standing, interruptible call; the voice talks, the agent knows |
+
+### Agents & team
+
+| Page | Reads like | When to open it |
+|---|---|---|
+| [Agents](agents.md) | Persona + agent.yaml reference | Creating an agent; per-agent model, REM, tool/skill visibility |
+| [Team](team.md) | Org chart → prompt block | Telling every agent who is who and who to involve |
+| [Builder agents](builder.md) | The builder kind | An agent that is a coding harness: plan → Go → build, task panel, questions, hand-over from an orchestrator |
+| [Projects](projects.md) | Concept + workflow | Pinning a working set to a session |
+| [Sentinel](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
+
+### Memory
+
+| Page | Reads like | When to open it |
+|---|---|---|
+| [Memory](memory.md) | Concept + mechanics | Tuning recall, writing notes by hand |
+| [Wiki](wiki.md) | Concept + mechanics | Shared knowledge base, hand-curation |
+| [Dream phases](dream-phases.md) | Background workers | REM/Deep/Lucid cadence + triggers |
+| [Compaction](compaction.md) | Context management | When and how a session is summarised, which model does it, what `contextWindow` controls per engine |
+
+### Tools & integrations
+
+| Page | Reads like | When to open it |
+|---|---|---|
+| [Tools](tools.md) | Tool catalog overview | Wondering what an agent can do |
+| [File tools](files.md) | File-tool deep dive | Working with `file_read`/`file_write`/`analyze_file` |
+| [Resources](resources.md) | SSH-target config | Adding a remote machine |
+| [tmux](tmux.md) | Multi-turn shell sessions | Driving long-running CLIs from agents |
+| [Shared browser](browser.md) | Shared browser | A Chromium per agent profile that agents drive and you can take over for logins |
+| [Language servers](lsp.md) | Language servers | A builder's writes come back with the compiler's errors; install, config, routes |
+| [MCP servers](mcp.md) | External MCP servers | Plugging third-party MCP tools into your agents |
+| [Skills](skills.md) | Markdown skill format | Writing or installing skills |
+| [Image generation](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
+| [Video generation](videogen.md) | Text-to-video | Job-based renders, and how an agent gets its result without waiting |
+
+### Model tuning
+
+| Page | Reads like | When to open it |
+|---|---|---|
+| [Thinking](thinking.md) | Reasoning depth | Per-engine thinking levels, session overrides |
+| [Sampling](sampling.md) | Sampling parameters | temperature, top_p and friends per model, agent and session |
+| [Prompt cache](cache-strategy.md) | Prompt-cache mechanics | Why the system prompt is ordered the way it is |
+
+### Reference
+
+| Page | Reads like | When to open it |
+|---|---|---|
+| [HTTP API](api.md) | HTTP/SSE contract | Building a third-party client; debugging streaming |

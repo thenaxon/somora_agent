@@ -1,4 +1,6 @@
-# Thinking / Reasoning Control
+# Thinking
+
+Thinking / reasoning control.
 
 somora exposes a **single cross-engine knob** for controlling how much
 the model thinks before responding. The knob is the same regardless of

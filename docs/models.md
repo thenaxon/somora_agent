@@ -1,4 +1,6 @@
-# Models known to run with somora — per engine, with the settings that work
+# Models
+
+Models known to run with somora — per engine, with the settings that work.
 
 Configuring a model for somora is not "the model", it is "the model
 behind this engine": the same GPT-5.6 has a different usable context

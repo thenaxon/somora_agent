@@ -1,4 +1,6 @@
-# Team — one org chart for all your agents
+# Team
+
+One org chart for all your agents.
 
 Your agents work together: one asks another for research, one hands
 media work to a specialist, one escalates to the human. For that they

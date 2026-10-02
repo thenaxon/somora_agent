@@ -1,4 +1,6 @@
-# sentinel — proactive triggers for agents
+# Sentinel
+
+Proactive triggers for agents.
 
 Sentinel is somora's trigger runtime. It lets an agent be **woken on a
 schedule** to do work, instead of waiting for you to ask. The output
