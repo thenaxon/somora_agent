@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/somora-hero.png" alt="somora — agent runtime. Run. Rest. Dream. Agents that dream of what they did and never forget." />
+  <img src="docs/images/somora-hero.png" alt="somora.ai — Build your own AI team. Local-first agents that never forget." />
 </p>
 
 # somora 🐨
