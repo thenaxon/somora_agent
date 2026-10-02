@@ -15,6 +15,8 @@
 [![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
 [![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](#requirements)
 
+**[Website](https://somora.ai) · [Documentation](https://docs.somora.ai) · [npm](https://www.npmjs.com/package/somora)**
+
 ## Install
 
 ```bash
@@ -359,7 +361,8 @@ Anything else can talk to the server the same way the clients do:
 ## Documentation
 
 Start at [docs/index.md](docs/index.md): what somora is, which page to read
-for which goal, and every concept in one sentence.
+for which goal, and every concept in one sentence. The same pages, rendered
+and searchable: [docs.somora.ai](https://docs.somora.ai).
 
 - **Get running:** [setup](docs/setup.md) · [models](docs/models.md) · [agents](docs/agents.md) · [team](docs/team.md) · [security](docs/security.md)
 - **Memory and knowledge:** [memory](docs/memory.md) · [wiki](docs/wiki.md) · [dream phases](docs/dream-phases.md) · [compaction](docs/compaction.md) · [cache strategy](docs/cache-strategy.md)
