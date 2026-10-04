@@ -156,10 +156,9 @@ and titles of the active colleagues it can consult with `agent_ask`,
 and the rules. It has no org chart and no involve lines, because a
 builder's context belongs to the repository.
 
-> **Note:** `somora team show` always prints the full block and does
-> not add the builder sentence. The draft preview in the Team window
-> leaves that sentence out too. For the text a turn really sends, use
-> `GET /team/preview/:agent` or the Full prompt tab of the Agent window.
+`somora team show <name>` and the preview in the Team window print
+exactly this text: the compact block for a builder, the full block for
+everyone else.
 
 ## Writing good involve lines
 
@@ -274,7 +273,7 @@ new value applies after a config reload, without a restart.
 |---|---|
 | `somora team init [--principal <name>]` | Writes `~/.somora/team.yaml` from the agents on disk. Refuses when the file exists. Without `--principal` the name is `Principal`. |
 | `somora team check` | Validates the file, prints warnings and the block size per agent, and lists personas that still contain team text. |
-| `somora team show <name>` | Prints the full `# Your team` block for that agent. |
+| `somora team show <name>` | Prints the `# Your team` block that agent gets: compact for a builder, full otherwise. |
 | `somora setup team` | The same first file, as a step of the setup assistant. Needs two or more agents. |
 
 ## Routes

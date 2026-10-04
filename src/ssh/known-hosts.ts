@@ -9,7 +9,7 @@
 // this file entirely — config is authoritative.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '../server/logger.ts';
@@ -22,15 +22,29 @@ const KNOWN_HOSTS_PATH = join(SOMORA_HOME, 'known_hosts.json');
 // decide accept/reject. The file is small (one line per resource) so
 // sync reads are fine.
 let cache: Record<string, string> | null = null;
+// mtime of the file the cache was read from (0 = no file). A person who
+// removes an entry by hand — what the "host key changed" message tells
+// them to do — must not need a server restart for it to count.
+let cacheMtimeMs = -1;
+
+function fileMtimeMs(): number {
+  try {
+    return statSync(KNOWN_HOSTS_PATH).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
 
 function loadSync(): Record<string, string> {
-  if (cache) return cache;
+  const mtimeMs = fileMtimeMs();
+  if (cache && mtimeMs === cacheMtimeMs) return cache;
   try {
     const raw = readFileSync(KNOWN_HOSTS_PATH, 'utf8');
     cache = JSON.parse(raw) as Record<string, string>;
   } catch {
     cache = {};
   }
+  cacheMtimeMs = mtimeMs;
   return cache;
 }
 
@@ -38,6 +52,7 @@ function saveSync(): void {
   if (!cache) return;
   try {
     writeFileSync(KNOWN_HOSTS_PATH, JSON.stringify(cache, null, 2), 'utf8');
+    cacheMtimeMs = fileMtimeMs();
   } catch (err) {
     logger.warn({ msg: 'ssh.known_hosts.save_failed', err: (err as Error).message });
   }

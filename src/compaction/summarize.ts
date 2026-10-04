@@ -167,6 +167,13 @@ export function pickCompactionModel(
 
 /** How many workers one compaction may ask before it gives up. Each
  *  attempt is a real request the user waits on, so the cascade is short. */
+/** The model `compaction.modelOverride` names: by alias, by bare model
+ *  id, or as `provider/modelId` — the three spellings a model ref has
+ *  everywhere else in the config. */
+export function findOverrideModel(models: ResolvedModel[], ref: string): ResolvedModel | undefined {
+  return models.find((m) => m.model.alias === ref || m.modelId === ref || `${m.providerName}/${m.modelId}` === ref);
+}
+
 export const MAX_WORKER_ATTEMPTS = 3;
 
 function matchesRef(m: ResolvedModel, ref: string): boolean {
@@ -561,9 +568,7 @@ export async function runCompaction(
   // debugging nightmare.
   let override: ResolvedModel | undefined;
   if (config.modelOverride) {
-    override = availableModels.find(
-      (m) => m.model.alias === config.modelOverride || m.modelId === config.modelOverride,
-    );
+    override = findOverrideModel(availableModels, config.modelOverride);
     if (!override) {
       logger.warn({
         msg: 'compaction.override_unresolved',

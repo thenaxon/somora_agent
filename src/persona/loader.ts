@@ -552,8 +552,8 @@ icon: 🤖
 const SAMPLE_AGENT_YAML = `# Operator config for this agent. Edit by hand — not subject to agent
 # self-edit (which targets AGENTS.md / SOUL.md / USER.md / MEMORY.md).
 #
-# model:    primary model. Alias or 'provider/modelId'. If unset, falls back
-#           to the first configured model in config.yaml.
+# model:    primary model. Alias or 'provider/modelId'. Required: without
+#           it a turn fails with "model cannot be resolved".
 # fallback: model(s) used when the primary fails before first output. One
 #           ref or an ordered list ("fallback: [deep4flash, orhaiku]") tried
 #           in turn. Put at least one on a different host/provider.

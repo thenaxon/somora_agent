@@ -125,7 +125,7 @@ const HELP_TEXT_BASE = `Available commands:
   /thinking <level>           — set thinking depth for this session: off|low|medium|high
   /thinking default           — clear session override, fall back to persona/engine default
   /reload                     — re-read ~/.somora/config.yaml without a restart (reports what changed)
-  /restart YES                — restart the somora service via systemd (drops every open session stream)
+  /restart YES                — restart the somora service (drops every open session stream)
   /sampling                   — show effective sampling params + source
   /sampling key=value …       — set sampling params for this session (temperature, top_p, top_k,
                                 min_p, frequency_penalty, presence_penalty, repetition_penalty,
@@ -510,7 +510,7 @@ export async function runCommand(
         out.push({ kind: 'notice', text: `restart refused — ${r.error}`, tone: 'error' });
         return out;
       }
-      out.push({ kind: 'notice', text: `restarting somora via systemd — back in ~${r.expectedDowntimeSeconds ?? 8}s, this client will reconnect`, tone: 'warn' });
+      out.push({ kind: 'notice', text: `restarting somora — back in ~${r.expectedDowntimeSeconds ?? 8}s, this client will reconnect`, tone: 'warn' });
       return out;
     }
 

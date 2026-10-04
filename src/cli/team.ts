@@ -10,7 +10,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { listAgents } from '../persona/loader.ts';
-import { renderTeamBlock, TEAM_BLOCK_SOFT_MAX_CHARS } from '../team/render.ts';
+import { renderTeamBlock, renderTeamBlockCompact, TEAM_BLOCK_SOFT_MAX_CHARS } from '../team/render.ts';
+import type { ResolvedTeam } from '../team/types.ts';
 import { loadConfig } from '../config/loader.ts';
 import { resolveTeam } from '../team/resolve.ts';
 import { loadTeamFile, teamFilePath } from '../team/store.ts';
@@ -39,7 +40,7 @@ async function cmdInit(args: string[]): Promise<number> {
     return 1;
   }
   const file = initialTeamFile(
-    agents.map((a) => ({ name: a.name, role: a.role, description: a.description })),
+    agents.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind })),
     principal,
   );
   writeFileSync(path, teamFileToYaml(file), 'utf8');
@@ -85,7 +86,7 @@ async function cmdCheck(): Promise<number> {
     process.stderr.write('The server keeps the last valid team (or none) until this is fixed.\n');
     return 1;
   }
-  const team = resolveTeam(load.file, agents.map((a) => ({ name: a.name, role: a.role, description: a.description })));
+  const team = resolveTeam(load.file, agents.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind })));
   let cap = TEAM_BLOCK_SOFT_MAX_CHARS;
   try {
     cap = (await loadConfig()).promptBudgets.teamBlockChars;
@@ -95,7 +96,7 @@ async function cmdCheck(): Promise<number> {
   process.stdout.write(`team.yaml OK: principal ${team.principal.name}, ${team.order.length} agent(s) in the chart.\n`);
   for (const w of team.warnings) process.stdout.write(`  warning: ${w}\n`);
   for (const name of team.order) {
-    const block = renderTeamBlock(team, name) ?? '';
+    const block = blockFor(team, name, agents) ?? '';
     const flag = block.length > cap ? `  ← over ${cap} chars (promptBudgets.teamBlockChars), shorten involve_for/not_for/notes` : '';
     process.stdout.write(`  ${name}: block ${block.length} chars${flag}\n`);
   }
@@ -127,9 +128,15 @@ async function cmdShow(args: string[]): Promise<number> {
     process.stderr.write(`unknown agent '${name}'. Agents: ${agents.map((a) => a.name).join(', ')}\n`);
     return 1;
   }
-  const team = resolveTeam(load.file, agents.map((a) => ({ name: a.name, role: a.role, description: a.description })));
-  process.stdout.write((renderTeamBlock(team, name) ?? '(empty team)') + '\n');
+  const team = resolveTeam(load.file, agents.map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind })));
+  process.stdout.write((blockFor(team, name, agents) ?? '(empty team)') + '\n');
   return 0;
+}
+
+/** The block an agent really gets: a builder carries the compact one —
+ *  `show` and `check` must say the same as the prompt. */
+function blockFor(team: ResolvedTeam, name: string, agents: Array<{ name: string; kind?: string }>): string | null {
+  return agents.find((a) => a.name === name)?.kind === 'builder' ? renderTeamBlockCompact(team, name) : renderTeamBlock(team, name);
 }
 
 export async function runTeamCli(args: string[]): Promise<number> {

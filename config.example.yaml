@@ -768,7 +768,6 @@ providers:
 #     intervalDays: 7
 #     model: opus
 #     fallback: [gpt56]
-#     requireApproval: true
 
 # Workspace — default cwd for file_* tools. NOT a sandbox: agents can
 # also write outside (their own persona files, the global config).

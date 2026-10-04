@@ -412,7 +412,6 @@ wiki:
     # model: <model>
     # fallback: [<model>]
     # thinking: medium
-    requireApproval: false
     mergeShrinkGuard:
       enabled: true
       minRatio: 0.5
@@ -425,7 +424,6 @@ wiki:
     # model: <model>
     # fallback: [<model>]
     # thinking: medium
-    requireApproval: true
     maxCallsPerTurn: 3
     batchChars: 100000
     oversizedChars: 50000
@@ -453,7 +451,6 @@ wiki:
 | `wiki.deep.model` | Worker model for Deep: an alias or `<provider>/<model>`. |
 | `wiki.deep.fallback` | Backup model or list of models, tried in order when `model` cannot be reached. Best on another provider. |
 | `wiki.deep.thinking` | `off`, `low`, `medium` or `high`. Used when the model can reason. Unset means the engine's default. |
-| `wiki.deep.requireApproval` | Reserved. Deep always applies its decisions. |
 | `wiki.deep.mergeShrinkGuard.enabled` | Refuse a merge that shrinks a page too much. |
 | `wiki.deep.mergeShrinkGuard.minRatio` | The merge is refused when the new text is smaller than this share of the old one. |
 | `wiki.deep.mergeShrinkGuard.minExistingBytes` | Pages smaller than this are never guarded. |
@@ -464,7 +461,6 @@ wiki:
 | `wiki.lucid.model` | Worker model for Lucid. Also judges a migration. If unset, the migration uses `wiki.deep.model`. |
 | `wiki.lucid.fallback` | As `wiki.deep.fallback`. |
 | `wiki.lucid.thinking` | As `wiki.deep.thinking`. |
-| `wiki.lucid.requireApproval` | Reserved. Findings always wait for review, apart from link suggestions. |
 | `wiki.lucid.maxCallsPerTurn` | Most `wiki_*` calls per turn in a review loop. Resets with every message of yours. |
 | `wiki.lucid.batchChars` | Most page text one Lucid call carries. A larger page travels alone. |
 | `wiki.lucid.oversizedChars` | Pages over this size are reported as oversized. |

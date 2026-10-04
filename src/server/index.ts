@@ -1668,7 +1668,8 @@ app.get('/config/status', async (c) => {
     loadedAt: configLoadedAt,
     changedOnDisk: mtimeMs > configLoadedMtimeMs,
     restartRequiredSections: RESTART_REQUIRED_SECTIONS,
-    restartAvailable: systemdUnitActive(),
+    // Linux unit or macOS LaunchAgent — whatever POST /server/restart would use.
+    restartAvailable: serviceRestartCommand() !== null,
   });
 });
 
@@ -2072,7 +2073,7 @@ app.post('/team/preview', async (c) => {
   if (!body || typeof body.agent !== 'string') return c.json({ error: 'body {file, agent} required' }, 400);
   const parsed = parseTeamFile(body.file ?? {});
   if (!parsed.file) return c.json({ agent: body.agent, valid: false, issues: parsed.issues, block: '' });
-  const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description }));
+  const agents = (await listAgents()).map((a) => ({ name: a.name, role: a.role, description: a.description, kind: a.kind }));
   const team = resolveTeam(parsed.file, agents);
   const block = teamBlockFor(team, body.agent, (await loadPersona(body.agent))?.kind) ?? '';
   return c.json({ agent: body.agent, valid: true, issues: [], warnings: team.warnings, block, chars: block.length, softMaxChars: config.promptBudgets.teamBlockChars });

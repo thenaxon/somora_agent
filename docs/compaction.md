@@ -226,7 +226,8 @@ be, for example on a GPU host that swaps models.
 
 ### Pinning one model
 
-`compaction.modelOverride` names one model by alias or model id. It goes
+`compaction.modelOverride` names one model by alias, model id or
+`provider/modelId`. It goes
 to the front of whatever order is in play, ahead of the session model
 and the list. A name that matches nothing is logged as
 `compaction.override_unresolved` and the rest of the order is used.

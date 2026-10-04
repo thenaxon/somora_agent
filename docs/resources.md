@@ -277,9 +277,10 @@ and be readable by the user somora runs as.
 
 **"host key changed since first connection".** The machine presents a
 different key than the stored one. If that is expected, for example
-after a reinstall, set the new fingerprint as `hostKey`. That works at
-once. Or remove the resource's entry from `~/.somora/known_hosts.json`
-and restart somora, because the file is read only once per run.
+after a reinstall, remove the resource's entry from
+`~/.somora/known_hosts.json` and connect again: the new key is stored on
+that connection. Or set the new fingerprint as `hostKey`. Neither needs
+a restart.
 
 **A granted command is still refused.** Read `blocked_segment` and
 `hint` in the result. Usual causes: a wrapper such as `nice` or `env`

@@ -338,8 +338,8 @@ export function Taskbar({
                 onClick={() => void restartServer()}
                 title={
                   configStatus?.restartAvailable === false
-                    ? 'somora is not running as the systemd user unit — restart it the way you started it'
-                    : 'Restart the somora service via systemd'
+                    ? 'somora is not running as a background service — restart it the way you started it'
+                    : 'Restart the somora service'
                 }
               >
                 <Power size={13} />

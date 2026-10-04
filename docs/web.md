@@ -154,8 +154,9 @@ order, so arranging twice changes nothing.
 | **Restart somora** | Restarts the service after a confirmation. All streams drop for a few seconds. The page waits for the server and reloads itself. |
 
 The entry reads `changed on disk` when the file is newer than what the
-server loaded. Restart is greyed out when somora does not run as the
-systemd user unit `somora.service`. `agent.yaml` needs neither: it is read on every
+server loaded. Restart is greyed out when somora does not run as a
+background service (the systemd user unit on Linux, the LaunchAgent on
+macOS). `agent.yaml` needs neither: it is read on every
 turn. The terminal client has the same actions as `/reload` and
 `/restart YES`.
 
@@ -612,8 +613,8 @@ windows.
 (`getDisplayMedia`) only on HTTPS or on `127.0.0.1`. The microphone also needs speech-to-text
 configured.
 
-**Restart is greyed out.** somora does not run as the systemd user
-unit. Restart it the way you started it, or with
+**Restart is greyed out.** somora does not run as a background
+service. Restart it the way you started it, or with
 `somora server restart`.
 
 **The page says somora did not come back.** The server did not answer

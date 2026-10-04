@@ -598,7 +598,6 @@ wiki:
     # model: <alias>
     # fallback: <alias>        # or a list
     # thinking: medium
-    requireApproval: true
     maxCallsPerTurn: 3
     batchChars: 100000
     oversizedChars: 50000
@@ -628,7 +627,6 @@ fallback:
 | `wiki.lucid.model` | none | The Lucid worker. Required. |
 | `wiki.lucid.fallback` | none | Backup worker or list. |
 | `wiki.lucid.thinking` | none | As for Deep. |
-| `wiki.lucid.requireApproval` | true | Reserved. Lucid findings always wait for review. |
 | `wiki.lucid.maxCallsPerTurn` | 3 | `wiki_*` calls per turn in the review loop. |
 | `wiki.lucid.batchChars` | 100000 | Page text per Lucid call. |
 | `wiki.lucid.oversizedChars` | 50000 | Pages above this are reported as `oversized_page`. |
@@ -637,9 +635,6 @@ fallback:
 | `wiki.lucid.autoLinksPerRun` | 30 | Most links set per run. |
 | `wiki.lucid.seenDays` | 90 | A dismissed finding is not reported again for this long. |
 | `fallback.retryUnavailableMinutes` | 60 | How long a model that failed is skipped by chat, REM, Deep, Lucid and compaction. |
-
-`wiki.deep.requireApproval` also exists (default `false`) and is
-reserved: Deep always writes without approval.
 
 ## Tools
 

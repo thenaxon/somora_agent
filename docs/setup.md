@@ -410,7 +410,7 @@ Everything else, such as `providers`, `compaction`, `agentLoop` or
 | Where | How |
 |---|---|
 | Shell | `somora server restart` |
-| Web client | Gear menu in the taskbar, then "Restart somora". Available when somora runs as a systemd service. |
+| Web client | Gear menu in the taskbar, then "Restart somora". Available when somora runs as a background service. |
 | TUI | `/restart YES` |
 | API | `POST /server/restart` |
 

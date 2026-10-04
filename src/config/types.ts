@@ -1737,9 +1737,6 @@ export const WikiDeepConfigSchema = z
      *  (connection, timeout, 5xx/429). One ref or a list. Put at least
      *  one on a different provider than `model`. */
     fallback: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
-    /** Deep auto-applies (no approval). Reserved as bool in case we
-     *  ever need to flip back on. */
-    requireApproval: z.boolean().default(false),
     /** Optional thinking-level for the Deep LLM one-shot. When set and
      *  the worker model declares the 'reasoning' capability, the call
      *  forwards effort/reasoning_effort per engine. Unset = engine
@@ -1763,7 +1760,6 @@ export const WikiDeepConfigSchema = z
   .default({
     enabled: true,
     intervalHours: 12,
-    requireApproval: false,
     mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
     skipCacheDays: 30,
     maxPageChars: 50_000,
@@ -1777,11 +1773,6 @@ export const WikiLucidConfigSchema = z
     model: z.string().min(1).optional(),
     /** Backup worker(s) — as `wiki.deep.fallback`. */
     fallback: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
-    /** Lucid findings need user approval before wiki-edits apply.
-     *  Approval happens via `dream_list` / `dream_get` / `dream_apply`
-     *  / `dream_dismiss` — any agent with the `dream` toolset can
-     *  review platform-wide Lucid runs. */
-    requireApproval: z.boolean().default(true),
     /** Optional thinking-level for the Lucid LLM one-shot. Semantics
      *  identical to wiki.deep.thinking. */
     thinking: ThinkingLevelSchema.optional(),
@@ -1816,7 +1807,6 @@ export const WikiLucidConfigSchema = z
   .default({
     enabled: true,
     intervalDays: 7,
-    requireApproval: true,
     maxCallsPerTurn: 3,
     batchChars: 100_000,
     oversizedChars: 50_000,
@@ -1883,7 +1873,6 @@ export const WikiConfigSchema = z
     deep: {
       enabled: true,
       intervalHours: 12,
-      requireApproval: false,
       mergeShrinkGuard: { enabled: true, minRatio: 0.5, minExistingBytes: 2000 },
       skipCacheDays: 30,
     maxPageChars: 50_000,
@@ -1891,7 +1880,6 @@ export const WikiConfigSchema = z
     lucid: {
       enabled: true,
       intervalDays: 7,
-      requireApproval: true,
       maxCallsPerTurn: 3,
       batchChars: 100_000,
       oversizedChars: 50_000,
