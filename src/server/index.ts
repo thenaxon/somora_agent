@@ -288,6 +288,11 @@ async function publish(agent: string, session: string, event: SseEvent): Promise
   const subs = streams.get(key);
   if (!subs || subs.size === 0) {
     lastPublishOkAt.set(key, Date.now());
+    // Nobody has this session open — exactly the case the activity
+    // hub exists for (running dot + unread badge on a session that is
+    // not on screen). Without this the hub only ever heard about
+    // sessions some client was already looking at.
+    void tapPublish(agent, session, event);
     return;
   }
   // Per-subscriber write budget. A healthy writeSSE finishes in
