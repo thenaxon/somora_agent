@@ -1,230 +1,299 @@
 # Resources
 
-A resource is a named remote machine that the `file_*`, `exec` and
-`tmux` tools act on via the `target` parameter. SSH is the only
-transport; the schema carries a `type` so another one can be added
-without breaking config.
+A resource is a remote machine with a name. Once it is in your config,
+an agent can run commands, edit files and open terminal sessions there
+as easily as on the machine somora runs on. The connection is SSH with
+a private key.
 
-## Configuration
+## What you get
 
-Resources are global — defined once in `~/.somora/config.yaml`,
-visible to every agent unless an agent's `agent.yaml` denies them.
+- **One name instead of connection details.** The agent passes
+  `target: "<name>"` to a tool. Host, user and key stay in the config.
+- **Works across the tool families**: `exec` and `process`, the
+  `file_*` tools and `tmux`.
+- **Host keys are checked.** The first connection remembers the
+  machine's key. A changed key refuses the connection.
+- **Per-agent visibility.** Every agent sees every resource unless its
+  `agent.yaml` hides one.
+- **Maintenance where you allow it.** A resource can permit chosen
+  blocked commands such as `sudo`. Each such run is recorded.
+
+## Set it up
+
+1. Make sure the somora machine can log in to the remote with a key
+   file: `ssh -i ~/.ssh/id_ed25519 karl@192.0.2.10` must work without
+   a password prompt.
+2. Add the resource to `~/.somora/config.yaml`:
 
 ```yaml
 resources:
-  build-server:
+  nova:
     type: ssh
-    host: 192.0.2.10                      # example IP from RFC 5737 doc range
-    port: 22                              # optional, default 22
-    user: alice
-    keyPath: ~/.ssh/id_ed25519            # path on the somora server
+    host: 192.0.2.10
+    user: karl
+    keyPath: ~/.ssh/id_ed25519
     description: |
-      macOS build host. Has Homebrew + standard CLI toolchain.
-    workspace: /Users/alice/work          # optional default cwd for relative paths
-    # hostKey: 'sha256:abc...'            # optional strict-mode pin; TOFU when omitted
+      Build machine. Ubuntu, Docker installed.
 ```
 
-Per-agent visibility filter in `agent.yaml`:
+3. Ask an agent: "Test the resource nova." It calls `resource_test`
+   and reports user, host name, system and uptime.
 
-```yaml
-resources:
-  deny: ['production-db']                 # hide individual names; default = all visible
-```
+No restart is needed. The resource tools and every call with a
+`target` read the config fresh.
+
+## Using a resource
+
+`resource_list` shows an agent what it can reach. The `name` of an
+entry is what goes into `target`. The default target is `local`, the
+machine somora runs on.
+
+A relative path on a resource is resolved like this:
+
+| Path | Resolves to |
+|---|---|
+| `/srv/app/x` | used as is |
+| `~` or `~/x` | the SSH user's home on the remote |
+| `x` in a `file_*` tool | inside `workspace` when the resource has one, else the home |
+| `x` as `cwd` of `exec` | the home on the remote |
+
+The path rules that protect keys and system folders apply on a
+resource as they do locally.
 
 ## Authentication
 
-Private-key only. No passwords, no agent-forwarding (deliberate
-security stance). The keyfile is loaded once at first connection and
-held in process memory for the pool's lifetime.
+Only a private key file works. There are no passwords and no agent
+forwarding, on purpose. `keyPath` is a path on the somora machine, and
+`~` means the home there. The key is read when a connection opens.
+Tools never see it.
 
-`keyPath` resolves `~` to `$HOME` on the somora server.
+## Host keys
 
-## Host-key verification
+| Mode | When | What happens |
+|---|---|---|
+| **Trust on first use** | no `hostKey` set | The first connection stores the machine's fingerprint in `~/.somora/known_hosts.json`. Later connections must match it. |
+| **Strict** | `hostKey` set | Only the fingerprint from the config is accepted. The stored file is not consulted. |
 
-Two modes:
+Trust on first use is fine on a home network. Use strict mode for
+machines reached over networks you do not control. The stored file is
+somora's own, keyed by resource name, and separate from
+`~/.ssh/known_hosts`.
 
-1. **Strict** — config has `hostKey: 'sha256:<base64>'`. Mismatches at
-   handshake refuse the connection. Recommended for production
-   targets.
-2. **TOFU (Trust On First Use)** — no `hostKey` in config. The first
-   successful connection pins the host's fingerprint to
-   `~/.somora/known_hosts.json` (somora-managed, separate from
-   `~/.ssh/known_hosts`). Subsequent connections require a match.
-   Recommended for local-network targets where MITM risk is low.
-
-Computing the fingerprint of an existing target:
+To get the fingerprint of a machine:
 
 ```bash
 ssh-keygen -lf <(ssh-keyscan -t ed25519 <host> 2>/dev/null)
-# → 256 SHA256:<base64> ... ED25519
+# 256 SHA256:<base64> ... (ED25519)
 ```
 
-The base64 part (without padding) goes into `hostKey:` as
-`sha256:<base64>`.
+Write it as `hostKey: 'sha256:<base64>'`, with `sha256` in lower case
+and without trailing `=`.
 
-## Connection lifecycle
+## Connections
 
-One pooled `ssh2.Client` per resource name. Lazy: opens on first call.
-Idle: closed after 5 minutes of inactivity. Keepalive: 30s pings, 3
-missed → close.
+somora keeps one connection per resource and reuses it.
 
-The pool is a single chokepoint for logging, host-key trust, and
-lifecycle. file_* and exec tools never touch ssh2 directly — they go
-through `getConnection(name, resource)`.
+| Behaviour | Value |
+|---|---|
+| Opens | on the first call that needs it |
+| Connect timeout | 15 seconds |
+| Keepalive | every 30 seconds, closed after 3 missed |
+| Idle close | after 5 minutes without a call |
+| Config change | a new `host`, `port`, `user`, `keyPath` or `hostKey` reconnects on the next call |
+| Server stop | all connections are closed |
 
-Server shutdown drains the pool gracefully.
+## Allowing blocked commands
 
-## Tools
+`exec` refuses a short list of dangerous commands on every target:
+`sudo`, `reboot`, `rm -rf` on system folders and others. The full list
+is on the security page.
 
-- `resource_list` — lists every resource visible to the calling agent
-  (after the deny-filter is applied). Each entry includes
-  `allowBlockedCount` so the agent knows whether the resource has any
-  privileged-command overrides (see next section).
-- `resource_test` — connects (or reuses cached conn) and runs
-  `whoami; hostname; uname -srm; uptime` for a fast reachability
-  check. Surfaces auth/network errors with a clear message before
-  workload tools fail later.
-
-## Privileged command allowlist (opt-in per resource)
-
-The `exec` tool has a global blacklist that refuses dangerous commands
-(`sudo`, `doas`, `reboot`, `shutdown`, `poweroff`, fork bombs, world-
-writable on system paths, etc.) regardless of target. That default is
-right for everyday use, but it blocks legitimate maintenance on
-dedicated agent-workstations — hosts that exist specifically so a
-Somora-agent can run system updates, reboot after a kernel bump,
-repair mounts, and so on.
-
-For those hosts, a resource can declare an `allowBlocked:` list. Each
-entry whitelists a command pattern that overrides the global block
-**for that resource only**. The `local` target (= the host where the
-Somora server runs) never gets an override — `local` keeps the strict
-default.
+A machine that an agent is meant to maintain needs some of them. List
+what the agent may run there anyway:
 
 ```yaml
 resources:
-  homeserver:
+  gpu-box:
     type: ssh
     host: 192.0.2.42
-    user: agent-user
+    user: karl
     keyPath: ~/.ssh/id_ed25519
-    description: |
-      Dedicated AI/GPU workstation. Somora-agents own routine
-      maintenance here: system updates, kernel reboots, mount fixes.
     allowBlocked:
       - sudo ~/bin/system-update.sh
-      - sudo ~/bin/fix-nas-mount.sh
       - systemctl reboot
-      - sudo                              # broad: any "sudo …" command
+      - sudo                    # broad: any "sudo ..." command
 ```
 
-### Match rule
+The list applies to that resource only. The `local` target never gets
+an override.
 
-Matching is **segment-aware**: the command is split into the sub-
-commands the shell would run separately (at `;`, `&&`, `||`, `|`,
-background `&`, and newlines), and **every sub-command that trips the
-global blacklist must be individually covered by an `allowBlocked`
-entry.** A sub-command that isn't blacklisted needs no entry. What
-merely wraps a sub-command is peeled before matching: a subshell or
-group around it (`(sudo … | tail -3)`, `{ sudo …; }`), a leading `!`,
-and plain environment assignments in front (`LANG=C sudo …`) — so
-`(sudo -n apt-get update | tail -3)` is the same command as
-`sudo -n apt-get update` to both the blacklist and the grant. The same
-goes for the shell keywords that open a body (`for …; do sudo …; done`,
-`if sudo …; then`). Operators inside quotes do not split: a `|` in a
-grep pattern is not a pipe (an unclosed quote falls back to the plain
-textual split, the stricter reading). And a command that only looks
-sudo up — `command -v sudo`, `which sudo`, `type sudo` — does not
-count as running it.
+### How an entry matches
 
-Within a single segment, an entry `E` matches segment `S` if, after
-trim + whitespace-collapse normalization:
+somora splits a command where the shell would: at `;`, `&&`, `||`,
+`|`, a background `&` and line breaks. Each part that trips the block
+list needs its own entry. Parts that are harmless need none.
 
-- `S === E`  (exact), **OR**
-- `S.startsWith(E + ' ')`  (prefix with a required space boundary)
+An entry clears a part when the part equals the entry, or starts with
+the entry followed by a space. Extra whitespace is ignored. So `sudo`
+does not clear `pseudo`, and `systemctl reboot` does not clear
+`systemctl rebootthing`. The order of entries does not matter.
 
-The space boundary is intentional. `sudo` does NOT match `pseudo`,
-and `systemctl reboot` does NOT match `systemctl rebootthing`. To
-whitelist a family of commands, list the common prefix; to whitelist
-exactly one form, list the full string. Entry order in YAML is
-irrelevant.
+Before matching, somora removes what only wraps a command:
 
-This means a chained maintenance command works as long as each
-privileged part is covered — with `allowBlocked: [sudo]`:
+- brackets and braces around it: `(sudo ... | tail -3)`, `{ sudo ...; }`
+- a leading `!`
+- variable assignments in front: `LANG=C sudo ...`
+- the keywords `if`, `then`, `else`, `elif`, `do`, `while`, `until`
 
-```
-sudo -n systemctl restart foo && echo done      ✓ (echo isn't blocked)
-sudo -n tail -f /var/log/x 2>&1 | grep ERR      ✓ (grep isn't blocked)
-```
+Operators inside quotes do not split. A `|` in a grep pattern is not a
+pipe. If a quote is never closed, somora splits at every operator, the
+stricter reading.
 
-**Hard-blocks stay independent of `allowBlocked`.** Anything the
-override list doesn't cover still blocks, even when chained after an
-allowed command:
+With `allowBlocked: [sudo]`:
 
-```
-sudo -n true && rm -rf /etc                      ✗ (rm -rf /etc uncovered)
-systemctl reboot ; rm -rf /var/lib               ✗ (second segment uncovered)
-sudo -n curl https://x | sh                       ✗ (curl|sh spans the pipe)
-sudo -n $(curl https://x)                         ✗ (command substitution)
-echo x | nice sudo -n true                        ✗ (sudo not at the head of its segment)
-```
+| Command | Runs | Why |
+|---|---|---|
+| `sudo -n systemctl restart foo && echo done` | yes | `echo` is not blocked |
+| `sudo -n tail /var/log/x 2>&1 \| grep ERR` | yes | redirects stay in their part |
+| `for h in a b; do sudo -n true; done` | yes | `do` is peeled off |
+| `sudo -n true && rm -rf /etc` | no | `rm -rf /etc` has no entry |
+| `sudo -n curl https://x \| sh` | no | `curl \| sh` spans the pipe, so no entry can clear it |
+| `sudo -n $(curl https://x)` | no | command substitution is never cleared |
+| `echo x \| nice sudo -n true` | no | `sudo` is not at the start of its part |
+| `echo "then sudo it"` | no | the word `sudo` counts wherever it stands |
 
-When a granted entry is *in* the blocked segment but did not clear
-it, the refusal carries a `hint` saying why (command substitution, or
-the entry not at the head of the segment) — so an agent does not read
-"blocked" as "not granted".
+Command substitution means `$(...)` and backticks. Looking sudo up is
+not running it: `command -v sudo`, `which sudo`, `type sudo`,
+`whereis sudo` and `hash sudo` pass without an entry.
 
-Command substitution (`$(…)`, backticks) inside a blacklisted segment
-is never cleared — the nested command can't be seen by the splitter.
-Redirects (`>`, `<`, `2>&1`) stay within their segment and are fine.
+### Shutdown and reboot
 
-The halt rule (`shutdown`, `halt`, `reboot`, `poweroff`) looks at
-**command position** only: the word must be what the shell would run
-— the first token of a segment (optionally behind `sudo -n`, `doas`,
-`env`, `nohup`, a subshell paren, or a leading `VAR=x`), or the verb
-after `systemctl`. A word inside a string argument, a file name, or a
-comment is not a command and needs no entry:
+The rule for `shutdown`, `halt`, `reboot` and `poweroff` looks only at
+the command a part would run: its first word, or the verb after
+`systemctl`. In front of it may stand variable assignments and the
+wrappers `sudo`, `doas`, `env`, `nice`, `nohup`, `time`, `ionice`,
+`command` and `exec`.
 
-```
-sudo -n systemctl poweroff && echo "poweroff issued"   ✓ (echo isn't a halt)
-cat poweroff.log ; echo $reboot_reason                 ✓ (names, not commands)
-echo starting ; shutdown -h now                        ✗ (second segment is a halt)
-```
+The same word as an argument, a file name or a variable is not a
+command. `cat poweroff.log` and `echo "reboot issued"` run.
+`echo starting ; shutdown -h now` is refused for its second part.
 
-The splitter itself stays quote-unaware and conservative: a string
-argument carrying a separator (`echo "a; sudo b"`) still yields a
-segment of its own. To make such blocks self-explanatory, a blocked
-result names the exact `blocked_segment` that tripped and lists the
-resource's `allow_blocked_entries`, so an agent can see at a glance
-whether the problem is a missing entry or an unlucky string argument
-— and rephrase instead of guessing.
+### When a command is refused
 
-### Audit trail
+The result of `exec` has `blocked: true` and these fields:
 
-Every privileged-allowed execution appends one line to
+| Field | Meaning |
+|---|---|
+| `reason` | Which rule matched, for example `sudo (privilege escalation)`. |
+| `pattern` | The pattern of that rule. |
+| `blocked_segment` | The exact part that was refused, when one part is to blame. |
+| `allow_blocked_entries` | The entries of the resource, when it has any. |
+| `hint` | Set when an entry appears in the refused part but did not clear it. Says why: command substitution, or the entry is not at the start. |
+
+### The audit file
+
+Every command that runs because of an entry adds one line to
 `~/.somora/audit/exec-privileged.jsonl`:
 
 ```json
-{"ts":1747500000000,"agent":"<your-agent>","session":"…","resource":"homeserver","command_head":"sudo ~/bin/system-update.sh","matched_entry":"sudo ~/bin/system-update.sh","blacklist_reason":"sudo (privilege escalation)","blacklist_pattern":"…"}
+{"ts":1747500000000,"agent":"<your-agent>","session":"main","resource":"gpu-box","command_head":"sudo ~/bin/system-update.sh","matched_entry":"sudo ~/bin/system-update.sh","blacklist_reason":"sudo (privilege escalation)","blacklist_pattern":"..."}
 ```
 
-Append-only. Rotate by hand or via logrotate if it grows; Somora does
-not GC it.
+`command_head` holds the first 200 characters. `matched_entry` lists
+every entry that was used, separated by commas. The line is written
+when the command is let through, so it carries no exit code.
 
-### Security posture
+somora only appends to this file. Rotate it yourself, for example
+with logrotate.
 
-`allowBlocked` is an explicit opt-in trust grant: the operator of the
-Somora host is telling the system "on this remote, these specific
-admin commands are normal operation." A few practical guidelines:
+### Choosing entries
 
-- Prefer prepared scripts with fixed paths over broad shell patterns.
-  `sudo ~/bin/system-update.sh` is far safer than a blanket
-  `sudo` entry, because the script itself can be defensive
-  (`set -euo pipefail`, expected-path checks, logging).
-- Use a broad entry (`sudo` on its own) only when the resource is a
-  truly dedicated agent-workstation where you'd let the agent do
-  whatever an admin would.
-- Keep production-shared hosts free of `allowBlocked` entries
-  entirely; the global blacklist is the right default there.
-- The audit JSONL is the after-the-fact review surface; check it if
-  you ever wonder what your agents did with their elevated privileges.
+- Prefer a prepared script with a fixed path.
+  `sudo ~/bin/system-update.sh` is far safer than a bare `sudo`,
+  because the script decides what happens.
+- Use a bare `sudo` only on a machine where the agent may do whatever
+  an administrator would.
+- Leave shared and production machines without `allowBlocked`.
+
+## Settings
+
+In `~/.somora/config.yaml`:
+
+```yaml
+resources:
+  <name>:                       # letters, digits, _ and -
+    type: ssh
+    host: 192.0.2.10
+    port: 22
+    user: karl
+    keyPath: ~/.ssh/id_ed25519
+    description: Build machine.
+    workspace: /home/karl/work
+    hostKey: 'sha256:<base64>'
+    allowBlocked: []
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `type` | required | The transport. Only `ssh` exists. |
+| `host` | required | Host name or IP address. |
+| `port` | `22` | SSH port. |
+| `user` | required | Login user on the remote. |
+| `keyPath` | required | Private key file on the somora machine. `~` expands. |
+| `description` | none | Free text the agent sees in `resource_list`. Say what the machine is for. |
+| `workspace` | none | Folder on the remote where relative paths of the `file_*` tools start. Without it they start in the home. |
+| `hostKey` | none | Fingerprint for strict mode. Without it the first connection is trusted. |
+| `allowBlocked` | `[]` | Blocked commands this resource may run anyway. |
+
+In an agent's `agent.yaml`:
+
+```yaml
+resources:
+  deny: ['gpu-box']
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `resources.deny` | `[]` | Resource names this agent cannot see or use. There is no allow list. |
+
+## Tools
+
+| Tool | Parameters | What it does |
+|---|---|---|
+| `resource_list` | none | Lists the resources the agent may use: `name`, `type`, `host`, `user`, `description`, `workspace` and `allowBlockedCount`, the number of `allowBlocked` entries. |
+| `resource_test` | `name` | Connects, or reuses the open connection, and runs `whoami`, `hostname`, `uname -srm` and `uptime`. Returns `ok`, `whoami`, `hostnameRemote`, `uname`, `uptime` and `ms`, or `error` with the reason. |
+
+There are no `somora` commands and no HTTP routes for resources. You
+manage them in the two config files.
+
+## Troubleshooting
+
+**"not configured or denied for this agent".** The name is misspelled,
+missing from `config.yaml`, or listed under `resources.deny` of that
+agent.
+
+**"cannot read keyfile".** `keyPath` must exist on the somora machine
+and be readable by the user somora runs as.
+
+**"host key changed since first connection".** The machine presents a
+different key than the stored one. If that is expected, for example
+after a reinstall, set the new fingerprint as `hostKey`. That works at
+once. Or remove the resource's entry from `~/.somora/known_hosts.json`
+and restart somora, because the file is read only once per run.
+
+**A granted command is still refused.** Read `blocked_segment` and
+`hint` in the result. Usual causes: a wrapper such as `nice` or `env`
+in front of the entry, `$(...)` in the same part, or a second blocked
+command in the chain.
+
+**A program is missing on the remote.** `file_search` needs `rg`
+there, and `tmux` needs tmux.
+
+## See also
+
+- [Security](security.md): the full list of blocked commands and
+  protected paths.
+- [Files](files.md): the `file_*` tools and the `target` parameter.
+- [tmux](tmux.md): long-running terminal sessions on a resource.
+- [Tools](tools.md): all tool families at a glance.
+- [Agents](agents.md): `agent.yaml`, where `resources.deny` lives.

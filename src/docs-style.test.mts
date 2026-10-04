@@ -22,10 +22,9 @@ const MAX_PARAGRAPH_WORDS = 80;
 
 /** Pages still in the old style. Shrinks; never grows. */
 const LEGACY = new Set([
-  'agents.md', 'api.md', 'browser.md', 'builder.md', 'cache-strategy.md', 'compaction.md', 
-  'dream-phases.md', 'files.md', 'imagegen.md', 'index.md', 'lsp.md', 'mcp.md', 'projects.md',
-  'realtime-voice.md', 'resources.md', 'sampling.md', 'sentinel.md', 'setup.md', 'skills.md',
-  'thinking.md', 'tmux.md', 'tools.md', 'videogen.md', 'web.md', 'wiki.md',
+  'agents.md', 'api.md', 'browser.md', 'builder.md', 'cache-strategy.md', 
+  'dream-phases.md', 'imagegen.md', 'index.md', 'lsp.md', 'mcp.md',   'sampling.md', 'setup.md', 'skills.md',
+  'thinking.md', 'videogen.md', 'web.md', 'wiki.md',
 ]);
 
 /** `DOCS_STYLE_PAGES=a.md,b.md` checks those pages although they are

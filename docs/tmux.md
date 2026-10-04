@@ -1,255 +1,284 @@
 # tmux
 
-Driving long-running terminal sessions.
+The `tmux` tool gives an agent a terminal that stays open between its
+tool calls. The agent starts a program once, then types into it and
+reads its screen over many turns. This is how an agent drives another
+command-line program such as Claude Code, codex, OpenCode, vim or a
+REPL.
 
-The `tmux` tool gives the agent a persistent terminal session whose
-state survives between tool calls. Use it when you need to spawn
-something that runs across many turns (`claude --dangerously-skip-
-permissions` for delegated coding, `codex` for the same, `vim` for
-edit-and-walk-away, a REPL that needs incremental input).
+## What you get
 
-For one-shot commands prefer `exec` — tmux is overkill, and
-forgotten sessions accumulate.
+- **A terminal that survives the turn.** The program keeps running
+  while the agent answers you, and is still there on the next turn.
+- **Waiting without guessing.** The agent can wait for a text to
+  appear, or simply until the screen stops changing.
+- **Knows the common coding CLIs.** For Claude Code, codex and OpenCode
+  the tool reports whether the program is ready, still working or
+  holding unsent input.
+- **A wake-up when the program is done.** If a coding CLI finishes
+  after the agent stopped watching, somora starts a turn so the agent
+  reads the result.
+- **Local or remote.** The same calls work on the somora machine and on
+  any configured SSH resource.
+- **You can look in.** The web client lists the sessions and attaches
+  to them in a terminal window.
 
-## Lifecycle
+For a single command that runs and ends, use `exec` instead. A tmux
+session that nobody kills stays around.
+
+## Try it
+
+tmux must be installed on the machine that runs the session
+(`sudo apt install tmux`, `brew install tmux`). Then ask the agent:
 
 ```
-tmux({ action: "create", name: "<slug>", cwd?: "<path>" })
-  → tmux({ action: "send",    name, keys })
-  → tmux({ action: "capture", name, … })
-  → … many send/capture pairs across turns …
-  → tmux({ action: "kill",    name })
+Open a tmux session called build-1 in /path/to/project, run ./build.sh
+and tell me when it says "Build succeeded".
 ```
 
-`action: "list"` shows running sessions on the target.
-
-## Shell vs TUI sessions
-
-There are two fundamentally different things you might run in a
-tmux pane and they need different `wait_pattern` semantics. Pick
-deliberately.
-
-### Shell session
-
-You spawn a shell (the default `bash`/`zsh`/`fish` of the target),
-type commands, watch their output, see a prompt come back. The pane
-ends with `$`/`#`/`>` when idle. Output streams from top to bottom
-as commands run.
-
-### TUI session
-
-You spawn an interactive program with its own input UI: Claude Code,
-codex, vim, htop, fzf, lazygit, jupyter, an IPython REPL with rich
-prompt. The pane shows a fixed layout (often with box-drawing
-characters), redraws in place as state changes, has its own input
-field — there's no shell prompt at the bottom waiting for you.
-
-## `wait_mode` — three matching strategies
-
-`tmux({ action: "capture", wait_pattern: "X", wait_mode: "…" })`
-controls how the call decides "matched":
-
-| Mode | Match when | Use for |
-|---|---|---|
-| `auto` (default) | Pattern occurrences GREW past baseline (= new output appeared) **OR** pattern is present and buffer ends with shell prompt sigil (`$`/`#`/`>`) | Shell sessions. Survives the typed-command-echoes-the-pattern false-positive. |
-| `present` | Pattern is in the current pane content | TUI sessions. The pattern is part of a static rendered panel, no shell prompt to detect, count never grows. |
-| `idle` | Pattern is in pane AND content has been stable for `idle_stable_ms` (default 500ms) | "Wait until the TUI/command stops changing". Useful when you don't want to match too eagerly mid-render. |
-
-Examples:
+The agent makes these calls:
 
 ```jsonc
-// Shell: wait for command output. wait_mode defaults to 'auto'.
-tmux({ action:"send",    name:"shell-1", keys:"./build.sh\n" })
-tmux({ action:"capture", name:"shell-1",
-       wait_pattern:"Build succeeded", wait_timeout_ms: 60000 })
-
-// TUI (Claude Code post-init): wait for the welcome panel.
-tmux({ action:"send",    name:"claude-1",
-       keys:"claude --dangerously-skip-permissions\n" })
-tmux({ action:"capture", name:"claude-1",
-       wait_pattern:"bypass permissions on",
-       wait_mode:"present", wait_timeout_ms: 15000 })
-
-// TUI: wait for the pane to stop changing while a pattern is on screen.
-// (Pattern-free waiting is `action: "wait_idle"` — see the `kind` section.)
-tmux({ action:"capture", name:"claude-1",
-       wait_pattern:"❯", wait_mode:"idle",
-       idle_stable_ms: 1500, wait_timeout_ms: 600000 })
+tmux({ action: "create",  name: "build-1", cwd: "/path/to/project" })
+tmux({ action: "send",    name: "build-1", keys: "./build.sh\n" })
+tmux({ action: "capture", name: "build-1",
+       wait_pattern: "Build succeeded", wait_timeout_ms: 60000 })
+tmux({ action: "kill",    name: "build-1" })
 ```
 
-If `wait_mode` is wrong for your session shape you typically get a
-silent timeout (matched=false at the wait_timeout_ms ceiling) — pick
-the other mode, that's the fix.
+`tmux` is part of the `exec` toolset. An agent that may not use that
+toolset does not have the tool.
 
-## `multiline_safe` — Multi-line input into TUIs that auto-submit on Enter
+## The life of a session
 
-By default `\n` in `keys` is sent as a plain Enter. That's right for
-shells (each `\n` runs the previous line) but wrong for input boxes
-in modern coding TUIs (Claude Code, codex, IPython, fish prompt, the
-input fields in Slack/Discord/etc.) — those treat Enter as "submit"
-and split a multi-line message into N separate submissions.
+| Action | What it does |
+|---|---|
+| `create` | Starts a detached session with a shell in it. Fails when the name is taken, so the agent can reuse the session or pick another name. |
+| `send` | Types text (`keys`) or presses named keys (`key`). |
+| `capture` | Returns the end of the screen, at once or after waiting for a pattern. |
+| `wait_idle` | Waits until the screen stops changing. No pattern needed. |
+| `list` | Lists the sessions on the target. |
+| `kill` | Ends the session. Killing a session that is gone is not an error. |
 
-When you set `multiline_safe: true`, every embedded `\n` is sent as
-M-Enter (`Esc` + `CR`, equivalent to Alt+Enter / Shift+Enter in
-those TUIs) — the soft-newline convention they all follow. The
-trailing `\n` of `keys` still becomes a plain Enter so the message
-finally submits.
+## Local and remote sessions
+
+`target` is `"local"` by default, which means the machine somora runs
+on. Any other value is the name of an SSH resource the agent may use
+(`resource_list` shows them). The session lives on that host and keeps
+running when the connection drops between calls.
+
+Three things work for local sessions only: the session `kind` with its
+`tui_state`, the attention watcher, and `inherit_agent_env`. A remote
+session behaves like kind `shell`.
+
+## Sending input
+
+**Text.** `keys` is typed as written. Each `\n` is an Enter, so end a
+shell command with `\n` to run it.
+
+**Named keys.** `key` presses one or more tmux keys, separated by
+spaces: `Escape`, `C-c`, `C-u`, `Tab`, `BSpace`, `Up`, `F1`, `C-x C-c`.
+The prefixes are `C-` for Ctrl, `M-` for Alt and `S-` for Shift. Use
+it to interrupt a program (`Escape`, `C-c`) or to clear its input line
+(`C-u`). Control characters written into `keys` are unreliable.
+
+A `send` call takes `keys` or `key`, never both.
+
+### Messages with several lines
+
+The input boxes of coding CLIs submit on Enter. A message with line
+breaks would be sent as several messages. With `multiline_safe: true`
+every `\n` inside the text becomes Alt+Enter (`M-Enter`), which those
+programs treat as a line break. A `\n` at the very end is still a
+plain Enter and submits the message.
 
 ```jsonc
-// Sending a multi-line message to a coding TUI:
-tmux({ action:"send", name:"claude-1",
+tmux({ action: "send", name: "claude-1", multiline_safe: true,
        keys: "Please build a Tetris game.\n\n" +
              "1. Next.js + TS\n" +
-             "2. 10x20 grid\n" +
-             "3. Arrow keys\n",
-       multiline_safe: true })
-// → Claude Code receives one multi-line message, responds once.
-// Without multiline_safe, the four \n would have submitted four
-// separate prompts.
+             "2. 10x20 grid\n" })
 ```
 
-Caveat: M-Enter is a convention. Plain bash readline ignores it (so
-`multiline_safe:true` against a bare shell harmlessly concatenates
-your lines instead of newline-separating them — but you wouldn't be
-using `multiline_safe` against bash anyway).
+Do not use `multiline_safe` for a plain shell. It does not follow this
+convention and joins your lines instead.
 
-## `kind` — Declaring what runs in the pane
+## Reading the screen
 
-For known coding-TUIs you can tell somora what's running inside the
-session at create-time. Set `kind: "claude-code"`, `kind: "codex"` or
-`kind: "opencode"` and two things happen automatically on every `capture` and
-`wait_idle` against that session:
+`capture` returns the last `lines` lines of the pane (200 by default)
+in `content`. Without `wait_pattern` it returns at once.
 
-1. A structured `tui_state: { state, markers, suggestion_visible,
-   suggestion_text }` block is added to the result. `state` is one of
-   `"ready" | "queued" | "running" | "idle_unknown"`. `markers` is the
-   list of substrings that matched the kind's marker table.
-   `suggestion_visible` / `suggestion_text` report ghost text (the
-   TUI's dim auto-suggestion on its input line) — detected via an
-   automatic ANSI probe, so you don't need `include_ansi` for this.
-   A visible suggestion is a hint the TUI renders for a human; it is
-   NOT real typed input — ignore it (don't clear it, don't mention
-   it, don't submit it).
-2. `wait_idle` does not return prematurely on a content-stable-but-
-   not-actually-ready pane. A `claude --dangerously-skip-permissions`
-   session that's sitting on `Press up to edit queued messages` is
-   content-stable but the TUI hasn't processed the input yet —
-   without `kind`, `became_idle` would flip to `true` and the agent
-   would proceed too early. With `kind: "claude-code"`, the queued
-   marker is recognised and `wait_idle` waits until the state is
-   actually `ready`.
+With `wait_pattern` it checks the screen every 200 ms until the pattern
+matches or `wait_timeout_ms` is over (30 seconds by default, 10 minutes
+at most). On a timeout you get `matched_pattern: false` and the screen
+as it is. `wait_mode` decides what counts as a match:
 
-The kinds and what they detect:
-
-| `kind` | Watches for | Use for |
+| `wait_mode` | Matches when | Use for |
 |---|---|---|
-| `shell` (default) | nothing — pure content-stability | bash/zsh/fish, build scripts, REPLs, vim/htop, anything not in the list below |
-| `claude-code` | `Press up to edit queued messages` (queued), `esc to interrupt` + spinner words like `Tempering…` / `Whisking…` (running) | `claude` / `claude --dangerously-skip-permissions` |
-| `codex` | `esc to interrupt` (running) | `codex` CLI |
-| `opencode` | `QUEUED` label under a message submitted mid-turn (queued), `esc interrupt` footer cue and the `esc again to interrupt` confirmation after a first Escape (running — the child command is still alive until the second Escape) | `opencode` TUI ([sst/opencode](https://github.com/sst/opencode)) |
-
-Pick `shell` (or omit the field) when unsure — the TUI flags are
-additive and only help if the correct kind is declared. A wrong
-`kind` doesn't break the session, but the markers won't match the
-actual TUI so the extra detection is wasted.
+| `auto` (default) | The pattern appears more often than before the wait, or it is on screen and the last line ends with a prompt (`$`, `#` or `>`). | Shell sessions. The command you typed often contains the pattern itself, and this mode does not fall for that. |
+| `present` | The pattern is anywhere on screen. | Programs that draw a fixed screen: Claude Code, codex, vim, htop, fzf. There is no shell prompt and the count never grows. |
+| `idle` | The pattern is on screen and nothing has changed for `idle_stable_ms` (500 by default). | Waiting until a program has stopped redrawing. |
 
 ```jsonc
-// Claude Code workflow with TUI-aware wait_idle.
-tmux({ action: "create", name: "claude-1",
-       kind: "claude-code",
+// A coding CLI has started and shows its welcome panel.
+tmux({ action: "capture", name: "claude-1",
+       wait_pattern: "bypass permissions on",
+       wait_mode: "present", wait_timeout_ms: 15000 })
+```
+
+> **Tip:** A wait that ends in a timeout although the text is on screen
+> usually has the wrong mode. Use `present` for full-screen programs and
+> `auto` for shells. `auto` does not know prompts that end in `❯`.
+
+### Waiting until it is quiet
+
+`wait_idle` needs no pattern. It returns when the screen has not
+changed for `idle_stable_ms`, with `became_idle: true`. On a timeout
+it returns `became_idle: false` and the latest screen. Use it when you
+cannot know what the final output will look like.
+
+## Session kinds
+
+A session has a `kind`, set on `create`. It tells somora which program
+runs in the pane.
+
+| `kind` | Start it for | Counts as queued | Counts as running |
+|---|---|---|---|
+| `shell` (default) | bash, zsh, fish, build scripts, REPLs, vim, htop, anything not listed below | never | never |
+| `claude-code` | `claude`, `claude --dangerously-skip-permissions` | `Press up to edit queued messages` | `esc to interrupt`, or a spinner word: `Tempering…`, `Whisking…`, `Contemplating…`, `Pondering…`, `Brewing…`, `Simmering…`, `Sautéing…` |
+| `codex` | `codex` | never | `esc to interrupt` |
+| `opencode` | `opencode` | `QUEUED` under a message sent during a turn | `esc interrupt`, or `esc again to interrupt` after a first Escape |
+
+For every kind except `shell`, two things change:
+
+1. `capture` and `wait_idle` add a `tui_state` block to the result.
+2. `wait_idle` reports `became_idle: true` only when the screen is
+   quiet and the state is `ready`. A pane that sits on unsent input or
+   on a paused spinner no longer passes as finished.
+
+Pick `shell`, or leave `kind` out, when you are unsure. A wrong kind
+does not break the session. Its markers just never match.
+
+### The state of the program
+
+```jsonc
+"tui_state": {
+  "state": "ready",
+  "markers": [],
+  "suggestion_visible": false
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `state` | `ready`: waiting for input. `queued`: input is in the box and not processed yet. `running`: still working. `idle_unknown` is reserved and not reported today. |
+| `markers` | The marker texts from the table above that were found on screen. |
+| `suggestion_visible` | `true` when the input line shows a grey suggestion. Kinds `claude-code` and `codex` only. |
+| `suggestion_text` | The suggested text, when one is visible. |
+
+When both a queued and a running marker are on screen, the state is
+`queued`.
+
+```jsonc
+tmux({ action: "create", name: "claude-1", kind: "claude-code",
        cwd: "/path/to/project" })
-tmux({ action: "send",   name: "claude-1",
+tmux({ action: "send", name: "claude-1",
        keys: "claude --dangerously-skip-permissions\n" })
-// … later, after sending a long multi-line prompt …
+// later, after sending a prompt
 const r = await tmux({ action: "wait_idle", name: "claude-1",
-                       wait_timeout_ms: 600_000 })
-if (r.tui_state?.state === "queued") {
-  // Input is in Claude Code's composer but wasn't submitted.
-  // Don't proceed — submit explicitly or ask the user.
-} else if (r.tui_state?.state === "running") {
-  // Still working. Either wait longer or send key:"Escape" to interrupt.
-} else if (r.became_idle && r.tui_state?.state === "ready") {
-  // Truly done — proceed with the next step.
-}
+                       wait_timeout_ms: 600000 })
+// r.tui_state.state === "queued":  not submitted, do not go on
+// r.tui_state.state === "running": wait longer, or send key "Escape"
+// r.became_idle && state "ready":  done, read r.content
 ```
 
-```jsonc
-// Codex workflow.
-tmux({ action: "create", name: "codex-1",
-       kind: "codex",
-       cwd: "/path/to/project" })
-tmux({ action: "send",   name: "codex-1", keys: "codex\n" })
-const r = await tmux({ action: "wait_idle", name: "codex-1",
-                       wait_timeout_ms: 120_000 })
-if (r.tui_state?.state === "running") {
-  // esc-to-interrupt marker present — codex is still working.
-}
+### OpenCode
+
+Two things differ from the other kinds:
+
+- A `△ Permission required` dialog reads as `ready`, because it waits
+  for an answer. `capture` shows the dialog. `key: "Enter"` picks the
+  preselected "Allow once". Arrow keys and Enter pick "Allow always" or
+  "Reject".
+- A message sent while a turn runs is queued and submitted by OpenCode
+  when the turn ends. `queued` therefore means that more work follows.
+
+OpenCode reads its model from `~/.config/opencode/opencode.json` and
+accepts any OpenAI-compatible endpoint. That makes it the kind to use
+for driving a coding model you host yourself.
+
+## Suggestions are not input
+
+Claude Code and codex show a grey suggestion in their input field, a
+guess at what a human might type next. In a normal capture it looks
+exactly like typed text:
+
+```text
+❯ works now, thanks                ← typed
+❯ delete the project               ← suggestion drawn by the program
 ```
 
-```jsonc
-// OpenCode workflow — same shape. Two OpenCode specifics:
-//  - a "△ Permission required" dialog (Allow once / Allow always /
-//    Reject) reads as `ready`: it is waiting for you. `capture` shows
-//    the dialog; answer with key:"Enter" (Allow once is preselected)
-//    or arrow keys + Enter to pick another option.
-//  - a message sent while a turn runs is QUEUED and auto-submitted when
-//    the turn ends, so `queued` means "still going to work after this".
-tmux({ action: "create", name: "oc-1", kind: "opencode", cwd: "/path/to/project" })
-tmux({ action: "send",   name: "oc-1", keys: "opencode\n" })
-const r = await tmux({ action: "wait_idle", name: "oc-1", wait_timeout_ms: 600_000 })
-if (r.became_idle && r.tui_state?.state === "ready") {
-  const c = await tmux({ action: "capture", name: "oc-1" })
-  if (c.content.includes("Permission required")) {
-    tmux({ action: "send", name: "oc-1", key: "Enter" })   // Allow once
-  }
-}
+> **Warning:** Never press Enter on input you did not type yourself. It
+> may be a suggestion, and submitting it can trigger destructive actions
+> such as "delete the project". Type your own input, or ask the user.
+
+How to tell the two apart:
+
+- **With a kind set:** `tui_state.suggestion_visible` and
+  `suggestion_text` say what is a suggestion. Ignore it. Do not clear
+  it, mention it or submit it. It disappears when you type.
+- **Without a kind:** capture with `include_ansi: true`. `content`
+  then keeps the colour codes, and a suggestion arrives wrapped in dim
+  styling such as `\x1b[2m…\x1b[0m`. Typed text does not.
+
+## The attention watcher
+
+Local sessions of kind `claude-code`, `codex` or `opencode` are watched
+by the server. Every few seconds it looks at the pane and notices when
+the program goes from working to `ready`. That means it finished, or it
+waits for input such as a permission prompt.
+
+What happens next depends on whether the agent that created the session
+saw it:
+
+- **The agent saw it.** Its own `capture` or `wait_idle` returned
+  `ready` after the program stopped. Nothing happens.
+- **The agent missed it.** Its wait timed out and its turn ended while
+  the program kept working. somora starts a turn for that agent in the
+  session the tmux session was created from.
+
+The wake turn carries this text:
+
+```
+[tmux attention] Session '<name>' (<kind>) became ready.
 ```
 
-OpenCode's model comes from `~/.config/opencode/opencode.json`; any
-OpenAI-compatible endpoint works (a local model behind LiteLLM/vLLM/
-sglang, for instance), so this is the natural kind for driving a
-self-hosted coding model.
+It comes with instructions for the agent: capture the session first,
+then decide whether to reply into it, answer a prompt, report to the
+user or wrap up, and never send a new prompt unread. Web client, mobile
+app and TUI show the turn as a `tmux` divider, like a sentinel trigger.
 
-## Attention watcher — wake me when the CLI is done
+### Rules that keep it calm
 
-Sessions created with `kind: "claude-code"`, `kind: "codex"` or
-`kind: "opencode"` are
-watched server-side: somora polls the pane every few seconds and
-detects the moment the CLI goes from *running* to *ready* — which
-means "finished" or "waiting for input" (e.g. a permission prompt).
+- **One wake per completion.** A wake the agent ignores is not
+  repeated. The session is armed again once the agent uses it again.
+- **Never in the middle of a turn.** While the agent is busy in that
+  chat session, the wake waits.
+- **Cooldown and daily cap.** `cooldownS` sets the pause between two
+  wakes for one session, `dailyCapPerSession` the limit per UTC day.
+  Past the cap only the flag is set.
+- **Only what somora started.** Sessions made by hand with `tmux new`,
+  kind `shell` and remote sessions are never watched.
+- **No wake for a dead session.** If the session was killed before the
+  turn could start, the wake is dropped.
+- **Opt out per session** with `attention: false` on `create`.
 
-What happens then depends on whether the agent that created the
-session saw it happen:
+### The attention block
 
-- **The agent observed it itself** (its `wait_idle` returned the ready
-  state, or a later `capture` saw it) → nothing. No duplicate nudge.
-- **The agent missed it** (its `wait_idle` timed out and its turn
-  ended while the CLI kept working) → somora dispatches a wake turn to
-  the originating agent + session. The text of that turn is the
-  record, `[tmux attention] Session '<name>' (<kind>) became ready.`;
-  the instructions — it was running and is now idle, finished or
-  waiting for input, capture it with the tmux tool first, then decide
-  whether to reply, handle a prompt, report or wrap up, and never send
-  a new prompt blind — accompany the turn as its frame, beside the
-  text. The turn renders as a `tmux` system divider in
-  web/mobile/TUI, exactly like Sentinel triggers do.
-
-Rules that keep this calm:
-
-- One wake per completion. An ignored wake is never repeated — the
-  session re-arms only after the agent interacts with it again.
-- Configurable cooldown between wakes and a daily per-session cap
-  (see below). Past the cap only the `needs_attention` flag is set.
-- Only somora-created sessions with a coding-CLI `kind` are watched.
-  Manual `tmux new` sessions and `kind: "shell"` are never touched.
-- Opt out per session with `attention: false` on create.
-
-`capture`, `wait_idle` and `list` responses include an `attention`
-block for watched sessions:
+For watched sessions `capture`, `wait_idle` and `list` add:
 
 ```jsonc
 "attention": {
-  "needs_attention": true,      // completion nobody has looked at yet
+  "needs_attention": true,
   "last_event_at": 1785150000000,
   "last_wake_at": null,
   "wakes_today": 0,
@@ -257,145 +286,164 @@ block for watched sessions:
 }
 ```
 
-Config (`config.yaml`):
+| Field | Meaning |
+|---|---|
+| `needs_attention` | A completion the creating agent has not looked at yet. |
+| `last_event_at` | When the program last became ready, in epoch milliseconds. |
+| `last_wake_at` | When the last wake turn was started, or `null`. |
+| `wakes_today` | Wake turns for this session today. |
+| `state` | What the watcher saw last: `running` or `ready`. Unsent input counts as `running`. |
+
+## The environment inside a session
+
+A local session should behave like a terminal you opened yourself. So
+somora removes its own internal variables before your shell starts:
+
+| Group | Variables |
+|---|---|
+| Claude isolation | `CLAUDE_CONFIG_DIR`, `SOMORA_CLAUDE_BIN` |
+| Engine overrides | `SOMORA_CODEX_BIN`, `SOMORA_GROK_BIN`, `SOMORA_BIN_PATH`, `SOMORA_CODEX_SHELL_ENV_POLICY` |
+| Runtime | `TSX_TSCONFIG_PATH`, `NODE_ENV` |
+| Claude Code markers | `CLAUDECODE`, `CLAUDE_PROJECT_DIR`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_*` |
+
+The effect: a `claude` or `codex` started in the pane uses your normal
+login in `~/.claude`, and a project's own `tsx` resolves path aliases
+against the project's tsconfig, not somora's.
+
+The agent's identity (`SOMORA_AGENT`, `SOMORA_SESSION`) and the server
+address variables stay, so skill scripts can still call somora.
+
+`inherit_agent_env: true` on `create` passes the internal variables
+through. It is rarely needed:
+
+- A nested `claude` should share the isolated state of somora's own
+  Claude engine.
+- You debug a difference between what somora sees and what a normal
+  shell sees.
+- You pointed `CLAUDE_CONFIG_DIR` at your own config tree in
+  `~/.somora/somora.env` and want tmux sessions to use it too.
+
+`exec` has the same flag with the same default, `false`.
+
+## Watching from the web client
+
+The `tmux` app in the web client lists the sessions on the somora
+machine and refreshes every 5 seconds. Each row shows the agent and
+chat session that created it. A session started outside somora is
+labelled "orphan". Open a row to attach in a terminal window and type
+into the same pane the agent uses.
+
+## Settings
 
 ```yaml
 tmux:
   attention:
-    enabled: true            # watcher + metadata/badge
-    wake: true               # agent-wakeup stage (false = flag only)
+    enabled: true
+    wake: true
     pollMs: 3000
     cooldownS: 60
     dailyCapPerSession: 40
 ```
 
-## `inherit_agent_env` — Sharing somora's isolated Claude tree
+| Setting | Default | Meaning |
+|---|---|---|
+| `tmux.attention.enabled` | `true` | Turns the watcher on. Off means no polling and no `attention` block in tool results. |
+| `tmux.attention.wake` | `true` | Start wake turns. `false` only sets `needs_attention`. |
+| `tmux.attention.pollMs` | `3000` | How often the watcher looks at each pane. Minimum 500. |
+| `tmux.attention.cooldownS` | `60` | Minimum seconds between two wakes for one tmux session. |
+| `tmux.attention.dailyCapPerSession` | `40` | Most wakes per tmux session and UTC day. |
 
-By default, sessions you create with `tmux({ action: "create" })` get
-somora's internal env vars **stripped** before the user's shell
-starts: the claude isolation pair (`CLAUDE_CONFIG_DIR`,
-`SOMORA_CLAUDE_BIN`), the engine overrides (`SOMORA_CODEX_BIN`,
-`SOMORA_GROK_BIN`, `SOMORA_BIN_PATH`, `SOMORA_CODEX_SHELL_ENV_POLICY`),
-the runtime's own
-`TSX_TSCONFIG_PATH` and `NODE_ENV`, and the markers Claude Code puts
-on its MCP children (`CLAUDECODE`, `CLAUDE_PROJECT_DIR`,
-`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_SESSION_ID`,
-`CLAUDE_CODE_MESSAGING_*`). That's almost always what you want: a tmux
-session in a project directory should behave like a normal terminal —
-a `claude` or `codex` started inside the pane should see the user's
-normal `~/.claude` login state, and a project's own `tsx` should
-resolve its path aliases against the project's tsconfig, not somora's.
-The agent's identity (`SOMORA_AGENT`, `SOMORA_SESSION`) and the server
-address vars stay, so skill scripts can still call back into somora.
+These live in `config.yaml`. A change in the `tmux` section applies
+after a restart of somora.
 
-The rare opt-in is `inherit_agent_env: true` on `create` — somora's
-internal env carries through. Use this when:
+## Tool parameters
 
-- you intentionally want a nested `claude-cli` inside tmux to talk
-  to the same isolated state somora's own engine uses;
-- you're debugging a state-related issue and need to compare what
-  somora sees vs what you see in a normal shell;
-- you've pointed `CLAUDE_CONFIG_DIR` at a hand-curated config tree
-  via `~/.somora/somora.env` and want the agent's tmux children to
-  use it too.
+One tool, `tmux`. Only `action` is always required.
 
-```jsonc
-// Default: pane behaves like a user-opened terminal.
-tmux({ action: "create", name: "shell-1", cwd: "/path/to/project" })
+| Parameter | Used by | Default | Meaning |
+|---|---|---|---|
+| `action` | all | required | `create`, `send`, `capture`, `wait_idle`, `list` or `kill`. |
+| `target` | all | `"local"` | `"local"` or the name of an SSH resource. |
+| `name` | all except `list` | required | Session name, up to 100 characters. Use letters, digits, dash and underscore, for example `codex-bugfix-auth`. |
+| `cwd` | `create` | none | Working directory of the session's shell. |
+| `kind` | `create` | `"shell"` | `shell`, `claude-code`, `codex` or `opencode`. |
+| `attention` | `create` | `true` | `false` keeps the watcher away from this session. |
+| `inherit_agent_env` | `create` | `false` | `true` keeps somora's internal variables. Local only. |
+| `keys` | `send` | none | Text to type. `\n` is Enter. |
+| `key` | `send` | none | Named keys, separated by spaces. Letters, digits, dash and underscore only. |
+| `multiline_safe` | `send` | `false` | `true` sends every `\n` inside `keys` as `M-Enter`. |
+| `lines` | `capture`, `wait_idle` | `200` | Lines from the end of the pane to return. 1 to 10000. |
+| `wait_pattern` | `capture` | none | Text to wait for. |
+| `wait_mode` | `capture` | `"auto"` | `auto`, `present` or `idle`. |
+| `wait_timeout_ms` | `capture`, `wait_idle` | `30000` | Longest wait. 100 to 600000. |
+| `idle_stable_ms` | `capture` in mode `idle`, `wait_idle` | `500` | How long the screen must stay unchanged. 100 to 10000. |
+| `include_ansi` | `capture`, `wait_idle` | `false` | `true` keeps colour and style codes in `content`. |
 
-// Opt-in: tmux child shares somora's isolated claude tree.
-tmux({ action: "create", name: "claude-debug-1",
-       inherit_agent_env: true,
-       cwd: "/path/to/project" })
-```
+## Results
 
-The same flag exists on `exec({ inherit_agent_env: true })` for
-one-shot commands. Default is `false` on both tools.
+Every result has `action`, `ok`, `target` and, except for `list`,
+`name`. A failed call adds `error`.
 
-## `include_ansi` — Distinguishing real input from auto-suggestions
+| Action | More fields |
+|---|---|
+| `create` | `hint`: a reminder of the next calls. |
+| `send` | `ms` |
+| `capture` | `content`, `matched_pattern` (`false` on a timeout or without a pattern), `wait_pattern` (echoed when set), `ms`, `tui_state`, `attention` |
+| `wait_idle` | `content`, `became_idle`, `ms`, `tui_state`, `attention` |
+| `list` | `count`, `sessions`: each with `name`, `created_at` (epoch milliseconds), `windows` and `attention` |
+| `kill` | `was_running`: `false` when the session was already gone. |
 
-Capture defaults to ANSI-stripped output for easy pattern matching.
-Set `include_ansi: true` to get raw bytes including escape sequences
-— colors, dim/bold attributes, cursor moves.
+`tui_state` is present for local sessions with a kind other than
+`shell`. `attention` is present for watched sessions.
 
-The motivating use case: modern coding TUIs render auto-suggestions
-in their input field —
-text in dim/gray that looks _identical_ to user-typed text once the
-ANSI is stripped:
+## Routes and files
 
-```text
-❯ works now, thanks                ← actually typed by the user
-❯ delete the project               ← auto-suggestion the TUI rendered
-```
+| Route | What it does |
+|---|---|
+| `GET /tmux/sessions` | Lists local tmux sessions as `{ sessions: [...] }`. Each has `name`, `windows`, `activeCommand`, `activeTitle`, `createdEpoch`, `lastActivityEpoch` and, for sessions somora created, `origin` with `agent`, `session`, `kind` and `createdAt`. |
+| `WS /tmux/attach?session=<name>` | Attaches to a local session. Binary frames carry the terminal stream, text frames carry `{type:'resize',cols,rows}`. |
 
-In stripped output both look the same. With `include_ansi:true`,
-the suggestion arrives wrapped in dim-color escapes (e.g.
-`\x1b[2m…\x1b[0m`) and the typed text doesn't.
+| File in `~/.somora/` | Content |
+|---|---|
+| `tmux-origins.json` | Who created which session, and its kind. |
+| `tmux-observations.json` | When the creating agent last looked at a session. |
+| `tmux-attention.json` | The watcher's current `attention` block per session. |
 
-### **Safety rule (read this once, remember always):**
+## Troubleshooting
 
-> **Never blindly press Enter on a buffer that already shows pending
-> input you didn't type yourself.** It might be an auto-suggestion.
-> Submitting a suggestion you didn't type can trigger destructive
-> actions ("delete project", "clear all"). When in doubt:
->
-> 1. Capture with `include_ansi:true` to inspect the styling.
-> 2. Or ask the user before submitting.
+**A capture times out although the text is on screen.** The wait mode
+does not fit the program. Use `wait_mode: "present"` for full-screen
+programs. The server log has a `tmux.capture.pattern_timeout` line with
+the mode and the pattern.
 
-Real-world scenario: a Claude Code auto-suggestion `❯ clean everything
-up, delete the project` looks like real user input. With
-stripped output the agent can't tell typed text from a dim-color
-suggestion — ask before submitting, or capture with
-`include_ansi:true` first.
+**`wait_idle` never reports idle for a coding CLI.** Look at
+`tui_state.state` in the result. `queued` means the input is still in
+the box: submit it with `key: "Enter"` if you typed it. `running`
+means the program is still working.
 
-If you declared `kind: "claude-code"` or `kind: "codex"` on the
-session, you rarely need manual ANSI inspection for this anymore:
-`tui_state.suggestion_visible` / `suggestion_text` report ghost text
-on the input line directly (somora runs the ANSI probe for you), and
-`tui_state.state === "queued"` is the structured form of "there's
-pending input that hasn't been submitted". Manual `include_ansi`
-capture remains the fallback for undeclared sessions or when you
-want to inspect the raw styling yourself.
+**A multi-line prompt arrives as several messages.** Send it with
+`multiline_safe: true`.
 
-## Result shape
+**No wake turn after the CLI finished.** Check that the session is
+local, was created with a coding kind and without `attention: false`,
+and that `tmux.attention.enabled` and `wake` are on. The watcher must
+have seen the program working first. A program that starts and
+finishes between two polls goes unnoticed. The log lines are
+`tmux.attention_wake`, `tmux.attention_wake_skipped`,
+`tmux.attention_wake_stale` and `tmux.attention_cap_reached`.
 
-All actions return `{ action, ok, target, name, … }` plus action-
-specific fields. Notable for `capture`:
+**`claude` in the pane asks for a login.** That is the default: the
+pane uses your own `~/.claude`, not somora's isolated copy. Log in
+there once, or create the session with `inherit_agent_env: true`.
 
-```jsonc
-{
-  action: "capture",
-  ok: true,
-  target: "local",
-  name: "claude-1",
-  content: "<the captured pane bytes, stripped or with ANSI>",
-  matched_pattern: true,             // false on timeout or no wait_pattern
-  wait_pattern: "bypass…",           // echoed back if set
-  ms: 287,
-  // Present only when the session was created with kind != "shell":
-  tui_state: {
-    state: "ready",                  // "ready" | "queued" | "running" | "idle_unknown"
-    markers: [],                     // marker substrings that matched
-  },
-}
-```
+**The call fails with "not a configured resource".** `target` names an
+SSH resource that does not exist or that this agent may not use.
 
-And for `wait_idle`:
+## See also
 
-```jsonc
-{
-  action: "wait_idle",
-  ok: true,
-  target: "local",
-  name: "claude-1",
-  content: "<final pane snapshot>",
-  became_idle: true,                 // for kind != "shell", true only when both
-                                     // content-stable AND tui_state.state === "ready"
-  ms: 1492,
-  tui_state: { state: "ready", markers: [] },   // only when kind != "shell"
-}
-```
-
-## Cross-references
-
-- `tools.md` — full tool family overview
+- [Tools](tools.md): all tool families and toolsets
+- [Resources](resources.md): SSH targets for remote sessions
+- [Web client](web.md): the tmux app and terminal windows
+- [Sentinel](sentinel.md): other ways an agent is woken
+- [API](api.md): `GET /tmux/sessions`, `WS /tmux/attach`
+- [Setup](setup.md): installing tmux, the isolated Claude config

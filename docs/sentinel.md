@@ -1,35 +1,60 @@
 # Sentinel
 
-Proactive triggers for agents.
+Sentinel wakes an agent on a schedule, so it does work without you
+asking. Each wake-up is a normal turn in one of the agent's sessions,
+and the answer is a normal chat message you read when you have time.
+It is not a notification system: the agent does the work, you read the
+result.
 
-Sentinel is somora's trigger runtime. It lets an agent be **woken on a
-schedule** to do work, instead of waiting for you to ask. The output
-of every fire is a chat message in the agent's session — just like
-when you ask the agent something directly. You read it when you have
-time.
+## What you get
 
-This is not a notification system for you the user. If you want
-"BTC dropped below 50k" as a toast, every monitoring tool already does
-that. Sentinel is for "your agent saw BTC drop, looked at the news, and
-wrote me a brief note about why" — the agent does work, you read its
-output.
+- **Reminders and routines in plain words.** Say "remind me tomorrow at
+  10" or "summarize my mail every morning at 8" and the agent sets the
+  trigger itself.
+- **Five kinds of schedule**: once, every so often, daily, weekly, or a
+  cron expression.
+- **Answers where you expect them.** A trigger fires in the session you
+  name. A trigger an agent sets on itself comes back to the conversation
+  it was set in.
+- **Built-in limits.** A trigger that keeps failing or fires too often
+  pauses itself.
+- **A window to manage them.** List, test, pause, resume and delete
+  triggers in the web client.
+- **Outage handling.** You decide per trigger whether a fire missed
+  while somora was down is caught up.
 
-## Sources
+## Try it
 
-Triggers are time-based. One source type, `time`, with five spec
-variants:
+Ask an agent in chat:
 
-| Source variant | Example use |
-|---|---|
-| `at` — single absolute moment | "remind me tomorrow 10:00 to call the dentist" |
-| `every` — fixed interval (≥ 60s) | "every 15 minutes check open github runs" |
-| `daily` — same time each day | "every morning 08:00 summarize my mails" |
-| `weekly` — same day-of-week + time each week | "every monday 09:00 review the backlog" |
-| `cron` — full 5-field cron escape hatch | "0 8 * * mon-fri" (mon-fri ranges NOT supported — use `weekly` for ranges) |
+```text
+Remind me in ten minutes to stretch.
+```
 
-## How an agent installs a trigger
+The agent calls the `sentinel` tool and creates a one-shot trigger.
+Open the **sentinel** tile (the bell) on the web desktop to see it with
+its next fire time. Press **test now** to fire it at once. The agent's
+answer appears in the session the trigger points to.
 
-The agent has access to one tool: `sentinel`. Action `create` shape:
+## Schedules
+
+Every trigger has the source type `time` and one of five specs:
+
+| `spec.type` | Fields | Example | Fires |
+|---|---|---|---|
+| `at` | `iso` | `"2030-05-18T10:00:00+02:00"` | Once, at that moment. |
+| `every` | `interval` | `"15m"` | At a fixed interval of at least 60 seconds. Units: `ms`, `s`, `m`, `h`. |
+| `daily` | `time` | `"08:00"` | Every day at that time. `HH:MM` or `HH:MM:SS`. |
+| `weekly` | `day`, `time` | `"mon"`, `"09:00"` | Every week. `day` is `mon`, `tue`, `wed`, `thu`, `fri`, `sat` or `sun`. |
+| `cron` | `expression` | `"0 9 1 * *"` | Whenever the five-field cron expression matches. |
+
+`daily`, `weekly` and `cron` use the server's local time. An `every`
+trigger first fires one interval after it is created, then keeps to
+that rhythm however long each turn takes.
+
+## Creating a trigger
+
+Agents use the `sentinel` tool with the action `create`:
 
 ```json
 {
@@ -49,30 +74,48 @@ The agent has access to one tool: `sentinel`. Action `create` shape:
 }
 ```
 
-When the trigger fires at 08:00, the agent receives a user-message turn
-in session `morning-routine` (auto-created with timestamp prefix if
-not existing). The text of that turn is exactly the prompt above:
+| Field | Required | Meaning |
+|---|---|---|
+| `name` | yes | Label, up to 100 characters. The trigger id is built from it, for example `morning-mail-summary-a7c3`. |
+| `intent` | no | What the user wanted, up to 500 characters. Shown to the agent at every fire. |
+| `source` | yes | `{ "type": "time", "spec": … }`, see Schedules. |
+| `dispatch.agent` | yes | The agent to wake. It must exist. |
+| `dispatch.session` | no | The session to fire in, see below. |
+| `dispatch.prompt` | yes | The text the agent receives as its message. |
+| `policy.cooldownMs` | no | Minimum milliseconds since the last successful fire. An earlier fire is skipped. |
+| `policy.maxFiresPerDay` | no | Daily limit for this trigger, 1 to 500. Default 500. |
+| `policy.missedFiresPolicy` | no | `skip` (default), `catchUpOnce` or `catchUpAll`, see Missed fires. |
 
-**Which session.** `dispatch.session` takes a slug or id, `"main"`, or
-`"current"` — the session the agent is in while it creates the trigger
-(only when `dispatch.agent` is the creating agent). Left out, a trigger
-an agent sets on itself fires in the session it was created from —
-"wake me to go on with this" is what leaving it out means, and `main`
-would be a different conversation running alongside the work. The create
-result then carries a `session_note` naming that session. A trigger on
-another agent, one created by a sub-agent (its session is a sealed work
-room nobody watches afterwards), or one created outside any session (the
-HTTP tool route), fires in `main`. Name `"main"` explicitly for a recurring job that
-belongs there.
+The agent that creates the trigger is its owner. The result carries the
+full trigger and a `hint` with the next fire time.
 
+There is no HTTP route for creating. An external client calls the tool
+through `POST /agents/:agent/tools/sentinel` with the same body.
 
-```text
-Check inbox via the gog skill, group by topic, tell me what's important today.
-```
+## Which session a trigger fires in
 
-Beside it — in the turn's frame, the same per-turn field that carries
-the memory-recall block, never in the stored text — the model sees a
-structured **evidence block**:
+| `dispatch.session` | Fires in |
+|---|---|
+| a slug or id | That session. A slug that does not exist yet is created at the first fire. An exact session id that does not exist is an error. |
+| `"main"` | The agent's main session. |
+| `"current"` | The session the agent is in while it creates the trigger. Only valid when `dispatch.agent` is the creating agent. |
+| left out, trigger on yourself | The session it was created from. The result then carries a `session_note` naming that session. |
+| left out, anything else | `main`. This covers a trigger on another agent, one created by a sub-agent, and one created outside any session through the HTTP tool route. |
+
+Leaving the session out means "wake me to go on with this". A sub-agent
+is the exception because nobody watches its session once its task is
+handed in.
+
+> **Tip:** Name `"main"` explicitly for a recurring job that belongs
+> there and not in the conversation the agent happens to be in.
+
+## What the agent receives
+
+A fire is a user-message turn in the target session. It waits in the
+session's queue like any other turn, and the Stop button ends it. The
+text of the turn is exactly `dispatch.prompt`.
+
+Beside the text, the model sees an evidence block for this one turn:
 
 ```text
 [Sentinel trigger fired]
@@ -80,218 +123,233 @@ trigger_id: morning-mail-summary-a7c3
 name: morning-mail-summary
 created_by: <your-agent>
 source: time (daily 08:00)
-fired_at: 2026-05-18T08:00:00.000Z
+fired_at: 2030-05-18T08:00:00.000Z
+policy: cooldown 60s
 user_intent: Check inbox and tell me what's important today
 The prompt below is what this trigger asks of you.
 ```
 
-A catch-up fire adds `mode: catch-up (server was down at scheduled fire
-time)`, a trigger with a cooldown adds `policy: cooldown <n>s`. The
-agent reads the block, understands it was woken (not user-asked),
-loads its skills, does the work, writes its summary as a normal chat
-message. You see it next time you open that agent in the web/mobile UI.
-Because the stored text is the prompt alone, that is what the agent's
-memory and recall are built from; the evidence stays scaffolding for
-the one turn.
+The `policy` line appears only with a cooldown, `user_intent` only with
+an intent. A catch-up fire adds
+`mode: catch-up (server was down at scheduled fire time)`.
 
-## Listing, pausing, deleting
+The block tells the agent it was woken and not asked by you. It is not
+stored as message text, so the agent's memory and recall are built from
+the prompt alone. In the session file the row carries the block in its
+`ephemeral` field and an `origin` with `kind: "sentinel"`, `triggerId`,
+`triggerName` and `taskId`.
 
-Same tool:
+The agent then works with whatever tools and skills it has and writes a
+normal reply. Clients draw the start of a sentinel turn as a divider,
+not as a bubble of yours.
+
+## Managing triggers
+
+All actions of the `sentinel` tool:
+
+| Action | Parameters | What it does |
+|---|---|---|
+| `create` | `name`, `source`, `dispatch`, optional `intent`, `policy` | Creates a trigger. |
+| `list` | optional `owner`, `status`, `include_completed` | Lists triggers, newest first. Fired one-shots are hidden and counted in `hidden_completed`. |
+| `get` | `id` | Full detail of one trigger. |
+| `pause` | `id` | Stops it from firing. |
+| `resume` | `id` | Makes it active again and clears the error count. |
+| `delete` | `id` | Removes the trigger and its history. |
+| `test` | `id` | Fires now, ignoring cooldown and daily limit. Marked `testMode` in the history. |
+| `history` | `id`, optional `limit` (1 to 200, default 50) | The latest fires, newest first. |
+| `purge_completed` | optional `owner` | Deletes every fired one-shot. Other triggers are never touched. |
 
 ```jsonc
-sentinel({ action: "list" })                              // working view: fired one-shots hidden
-sentinel({ action: "list", include_completed: true })     // …including fired one-shots
-sentinel({ action: "list", owner: "<your-agent>" })             // filter by owner agent
-sentinel({ action: "list", status: "paused" })            // filter by status
-sentinel({ action: "purge_completed" })                   // delete every fired one-shot (optional owner)
+sentinel({ action: "list" })                            // working view
+sentinel({ action: "list", include_completed: true })   // with fired one-shots
+sentinel({ action: "list", owner: "<your-agent>" })     // one owner
+sentinel({ action: "list", status: "paused" })          // one status
 sentinel({ action: "get", id: "morning-mail-summary-a7c3" })
-sentinel({ action: "pause", id: "..." })
-sentinel({ action: "resume", id: "..." })
-sentinel({ action: "delete", id: "..." })                 // removes trigger + history
-sentinel({ action: "history", id: "...", limit: 50 })     // last N fires
-sentinel({ action: "test", id: "..." })                   // fire NOW, bypass cooldown/cap
+sentinel({ action: "history", id: "...", limit: 50 })
+sentinel({ action: "test", id: "..." })
+sentinel({ action: "purge_completed" })
 ```
 
-## Web-UI sentinel tab
+`status` is one of `active`, `paused`, `error` or `completed`.
+`status: "completed"` also shows the fired one-shots.
 
-In the desktop web client there's a **Sentinel** app icon (bell glyph)
-next to Sessions / Tmux / Terminal. The window shows:
+### In the web client
 
-- **List**: every trigger with status icon, schedule, owner, next-fire
-  time and fire count. Click to open the detail pane on the right.
-- **Detail**: schedule, intent, dispatch config (agent + session +
-  prompt), policy, stats, and the last 50 fires with outcome
-  (success / error / skipped). Plus four action buttons: **test now**,
-  **pause** / **resume**, **delete**.
+The **sentinel** tile opens a window with two parts:
 
-The "test now" button bypasses cooldown and daily-cap — use it to
-verify a freshly-installed trigger does what you expect without
-waiting for its real fire time.
+- **List**: each trigger with status icon, schedule, owner, target
+  session, next fire time and fire count. A pause or error reason is
+  shown in red.
+- **Detail**: schedule, intent, dispatch, policy, stats and the last 50
+  fires. Three buttons: **test now**, **pause** or **resume**, and
+  **delete**.
 
-## Storage layout
+## Limits
 
-Everything is under `~/.somora/sentinel/`:
+Agents create triggers without asking for confirmation, but they cannot
+get around these limits:
 
-```text
-~/.somora/sentinel/
-  triggers.json                    # all triggers, one JSON file
-  history/
-    morning-mail-summary-a7c3.jsonl    # JSONL fire history per trigger
-    ...
-```
-
-Git-friendly when `~/.somora/` is versioned. Human-readable when
-debugging.
-
-## Safeguards
-
-These are enforced both at trigger-create time AND in the scheduler
-(defense in depth). Agents can install triggers without user
-confirmation, but they cannot bypass these limits:
-
-| Limit | Default | Reason |
+| Limit | Value | What happens |
 |---|---|---|
-| **Minimum interval** | 60 s | No sub-minute polling possible |
-| **Max active triggers per agent** | 50 | Prevents accidental fan-out |
-| **Max fires per trigger per day (UTC)** | 500 | Auto-pauses with status `paused` + reason `daily_cap`; auto-resumes when the UTC day rolls over |
-| **Auto-pause on consecutive errors** | 3 | Status → `error`, sticky until user resumes. A fire whose agent turn ran and failed (engine error, or a person stopped it) is recorded as an `error` fire and counts toward the streak. |
+| Minimum interval | 60 s | `create` rejects a shorter `every` interval. |
+| Triggers per agent | 50 | `create` fails once the owner has 50 active or paused triggers. Completed and errored ones do not count. |
+| Fires per trigger per day | 500, or `policy.maxFiresPerDay` | The trigger pauses with a daily cap reason and resumes by itself when the UTC day rolls over. Skipped fires do not count. |
+| Errors in a row | 3 | Status becomes `error`. It stays so until someone resumes it. |
 
-A **daily-cap** pause is temporary: the scheduler flips the trigger back
-to `active` automatically once the UTC day rolls over and its fire count
-resets — no manual action needed. An **error** pause is sticky: it stays
-paused until you fix the underlying cause (e.g. an expired login for
-a CLI the prompt relies on) and click **resume**. Both are visible in the
-web-UI with a status icon and the reason.
+A fire counts as an error when the agent or session cannot be found,
+when the turn fails in the engine, or when a person stops the turn.
+Fix the cause first, for example an expired login of a command line
+tool the prompt relies on, then resume.
 
-## Completed-trigger retention (GC)
+## Missed fires
 
-One-shot `at`-triggers turn into status `completed` once they've
-fired. `list` hides them by default and reports the number as
-`hidden_completed` (`include_completed: true` or `status: "completed"`
-shows them); `purge_completed` deletes all of them in one call,
-optionally per owner — recurring, active, paused and errored triggers
-are never touched. Sentinel also auto-deletes `completed` triggers
-(and their history file) older than a configurable retention window.
+Sentinel runs inside the somora server. When the server was down at a
+fire time, the next start decides what happens.
 
-Configure in `config.yaml`:
+**One-shot `at` triggers** have a fixed grace of 6 hours. Missed by up
+to 6 hours, the trigger fires once as a catch-up. Missed by more, it is
+marked `completed` with the reason
+`stale: server was down past catch-up grace` and does not fire.
 
-```yaml
-sentinel:
-  completedRetentionDays: 7   # default; 0 disables auto-cleanup
-```
+**Recurring triggers** follow `policy.missedFiresPolicy`:
 
-The sweep runs at server boot and on each daily re-arm tick, so a
-trigger that completed 8+ days ago will be gone within ~24 hours of
-the next boot or daily heartbeat. Manual deletion (`sentinel({
-action: "delete", id: "..." })` or the web-UI Delete button) works at
-any time and bypasses the retention window.
-
-Recurring triggers (`every` / `daily` / `weekly` / `cron`) never
-reach `completed` status under normal operation — they go to
-`paused` (manual, or auto via daily-cap which auto-resumes next UTC day)
-or `error` (auto-paused after the 3-consecutive-fail streak). Those
-don't auto-GC; you choose when to remove them.
-
-## Catch-up policy when somora was down
-
-Sentinel runs in-process with the somora server. If the server is
-down when a fire was due, the next-boot logic decides what to do.
-
-### One-shot `at` triggers
-
-A 6-hour grace window applies system-wide:
-
-- Missed by ≤ 6h → fire once with `catchUp: true` in the history.
-- Missed by > 6h → mark `completed` with reason "stale: server was
-  down past catch-up grace". We miss it cleanly rather than firing a
-  day-late "your 10am reminder".
-
-### Recurring triggers — configurable per trigger
-
-For `every` / `daily` / `weekly` / `cron`, the behavior is set via
-`policy.missedFiresPolicy` on the trigger:
-
-| Setting | Behavior | Use for |
+| Value | Behaviour | Good for |
 |---|---|---|
-| `skip` (default) | No backfill. Compute next future fire, arm normally. | "Daily inbox check" — stacked fires after an outage are spam. |
-| `catchUpOnce` | Fire ONE historical instance with `catchUp:true` in evidence. | "Monthly invoice summary" — you want to know it was missed but only get one fire. |
-| `catchUpAll` | Fire one per missed instant (capped at 24). | Log-style triggers where each instant carries unique context. |
+| `skip` (default) | Nothing is caught up. The next regular fire is scheduled. | A daily inbox check, where stacked fires after an outage are noise. |
+| `catchUpOnce` | One catch-up fire, however many were missed. | A monthly summary you do not want to lose. |
+| `catchUpAll` | One catch-up fire per missed moment, at most 24. | Log-style triggers where every moment matters. |
 
-Example monthly trigger that survives multi-day outages:
+A catch-up fire has `catchUp: true` in the history and the `mode` line
+in the evidence block, so the agent knows it is late.
 
 ```jsonc
 {
   "action": "create",
   "name": "monthly-summary",
   "source": { "type": "time", "spec": { "type": "cron", "expression": "0 9 1 * *" } },
-  "dispatch": { "agent": "<your-agent>", "session": "main", "prompt": "Erstelle den monatsbericht." },
+  "dispatch": { "agent": "<your-agent>", "session": "main", "prompt": "Write the monthly report." },
   "policy": { "missedFiresPolicy": "catchUpOnce" }
 }
 ```
 
-If somora was offline on the 1st at 9am, the next boot detects the
-missed fire and dispatches it with `catchUp:true` so the agent knows the
-fire is delayed.
+## Cron expressions
 
-## Cron syntax (the escape hatch)
-
-90% of recurring use-cases fit `daily` / `weekly` / `every` —
-prefer those when they do; they read better. For the remaining 10%
-(monthly recurring, multi-time-per-day) use `cron`:
-
-```
-"0 8 * * *"      # daily 8:00
-"0 9 1 * *"      # 1st of each month, 9:00
-"*/15 * * * *"   # every 15 min
-"0 9,17 * * *"   # 9:00 AND 17:00 daily
-"0 0 * * 0"      # sundays midnight
-```
-
-Standard 5-field cron (minute hour day-of-month month day-of-week).
-Sentinel's parser is intentionally minimal:
-
-- Supports: `*`, `N`, `*/N`, `a,b,c` (comma-list)
-- Does NOT support: ranges `1-5` (use `1,2,3,4,5`), named months
-  `MON` / `JAN` (use numbers), `@daily` / `@hourly` macros
-
-Day-of-week is 0=Sun...6=Sat (Vixie convention).
-
-## What the agent receives
-
-Every fire runs as a **user-message turn** on the dispatched agent's
-own session, in-process, through the same entry every other turn takes
-— it waits in the session's queue in arrival order and the Stop button
-ends it like any other. A fire a person removes from that queue before
-it starts is recorded in the trigger's history as `skipped` with the
-reason `removed from the queue by the user`. The agent's session JSONL records it exactly
-like a real user message: the text is the trigger's `dispatch.prompt`,
-`origin.kind: "sentinel"` names the trigger (`triggerId`,
-`triggerName`) and the fire (`taskId`), and the evidence block sits in
-the row's `ephemeral` field beside the text. From the agent's
-perspective:
-
-- A turn arrives whose text is the prompt, with the structured
-  evidence block beside it.
-- It can use any skill it has access to (`gog`, `gh`, `web_fetch`, …).
-- It writes its response. The response is a normal assistant message
-  in the session, visible next time you open the chat.
-- The chat history mixes sentinel-triggered turns and your direct
-  questions seamlessly. The `origin` on the row — and the evidence
-  block the model sees — is what distinguishes them; clients draw a
-  sentinel turn as a divider, not a bubble.
-
-## Comparison with skills
-
-Skills are markdown instruction-bundles an agent loads at runtime
-during a conversation. Sentinel triggers are scheduled entry points
-for that conversation. A trigger can tell the agent to load a skill
-— but the trigger itself is not a skill. They sit at different
-layers:
+Prefer `daily`, `weekly` and `every` when they fit: they read better.
+Use `cron` for the rest, such as monthly jobs or several times a day.
 
 ```text
-user/sentinel → opens a turn for agent → agent loads skills as needed → tools execute
+"0 8 * * *"      # daily 8:00
+"0 9 1 * *"      # 1st of each month, 9:00
+"*/15 * * * *"   # every 15 minutes
+"0 9,17 * * *"   # 9:00 and 17:00 daily
+"0 0 * * 0"      # Sundays at midnight
 ```
 
-The integration model is CLI-tool-based: you authenticate `gog` /
-`gh` / `aws-cli` / etc. once on the host, and the woken agent runs
-them through its skills. somora doesn't own your OAuth.
+The five fields are minute, hour, day of month, month, day of week.
+Day of week is 0 for Sunday to 6 for Saturday. The parser is small on
+purpose:
+
+| Supported | Not supported |
+|---|---|
+| `*`, a number `N`, a step `*/N`, a list `a,b,c` | Ranges like `1-5` (write `1,2,3,4,5`), names like `MON` or `JAN`, macros like `@daily` or `@hourly` |
+
+When both day of month and day of week are set, the trigger fires when
+either one matches.
+
+## Cleanup of fired one-shots
+
+An `at` trigger gets the status `completed` once it has fired. `list`
+hides these, `purge_completed` deletes them all, and somora deletes each
+one with its history `sentinel.completedRetentionDays` days after its
+last fire. The sweep runs at server start and at least once a day.
+
+Recurring triggers never become `completed`. Paused and errored
+triggers are never cleaned up automatically: you decide when to delete
+them.
+
+## Sentinel and skills
+
+A skill is a set of instructions an agent loads during a turn. A
+trigger is what starts the turn. A trigger's prompt can tell the agent
+to use a skill, but the trigger is not a skill itself.
+
+Tools like `gog` or `gh` that a prompt relies on are logged in once on
+the host. The woken agent runs them like in any other turn. somora does
+not hold those logins.
+
+## Settings
+
+In `config.yaml`:
+
+```yaml
+sentinel:
+  completedRetentionDays: 7
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `sentinel.completedRetentionDays` | `7` | Days a fired one-shot and its history are kept. `0` turns the automatic cleanup off. Allowed: 0 to 3650. |
+
+A change needs a server restart. The limits in the table above are
+fixed and not configurable.
+
+## Routes
+
+| Route | What it does |
+|---|---|
+| `GET /sentinel/triggers` | All triggers, newest first. Optional `?owner=` and `?status=`. Includes completed ones. |
+| `GET /sentinel/triggers/:id` | One trigger. |
+| `GET /sentinel/triggers/:id/history` | Its fires, newest first. Optional `?limit=`, default 50, at most 200. |
+| `POST /sentinel/triggers/:id/pause` | Pause. |
+| `POST /sentinel/triggers/:id/resume` | Resume. |
+| `POST /sentinel/triggers/:id/test` | Fire now. |
+| `DELETE /sentinel/triggers/:id` | Delete trigger and history. |
+| `GET /sentinel/status` | `{ started, nextFireAt }` of the scheduler. |
+| `POST /agents/:agent/tools/sentinel` | Any tool action, including `create`. |
+
+## Files
+
+```text
+~/.somora/sentinel/
+  triggers.json                        # all triggers
+  history/
+    morning-mail-summary-a7c3.jsonl    # one line per fire
+```
+
+Each history line has `firedAt`, `scheduledFor` and an `outcome` of
+`success`, `error` or `skipped`, plus `error`, `skipReason`, `taskId`,
+`catchUp` and `testMode` where they apply. About the last 200 fires per
+trigger are kept.
+
+## Troubleshooting
+
+**A trigger did not fire.** Look at its history. A `skipped` entry
+names the reason:
+
+| `skipReason` starts with | Meaning |
+|---|---|
+| `cooldown` | The last successful fire was less than `cooldownMs` ago. |
+| `daily_cap` | The daily limit was reached. The trigger is paused until the next UTC day. |
+| `concurrency` | Too many background turns were running, for this agent or on the whole server. |
+| `removed from the queue by the user` | A person removed the waiting fire before it started. |
+
+**A trigger shows status `error`.** Three fires in a row failed. The
+reason line names the last error. Fix the cause and resume.
+
+**A reminder fired in the wrong session.** `get` the trigger and check
+`dispatch.session`. Delete it and create it again with the session
+named explicitly.
+
+**A trigger was created with no next fire time.** The `at` moment was
+already in the past. Delete it and create it with a future time.
+
+**A new setting has no effect.** `sentinel` settings are read at
+server start. Restart somora.
+
+## See also
+
+- [Tools](tools.md): the `sentinel` toolset among all agent tools
+- [API](api.md): request and response bodies of the sentinel routes
+- [Web client](web.md): the desktop and its app tiles
+- [Display](display.md): how a sentinel turn looks in the chat
+- [Skills](skills.md): instructions a woken agent can load

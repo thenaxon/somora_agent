@@ -1,117 +1,500 @@
 # Tools
 
-somora exposes tools to the agent through a single registry. Every
-tool is **engine-agnostic**: claude-cli (and grok-cli) see them via an
-MCP server somora spawns per turn, codex-cli receives them as Codex
-dynamic tools on the app-server and somora answers the calls,
-openai-compatible sees them in-process. The model never knows which
-path it's on.
+Tools are what an agent can do besides writing text: search its memory,
+read a file, run a command, ask another agent. somora keeps all of them
+in one catalog, and every agent gets the same tools whichever model or
+engine it runs on.
 
-## Tool families
+## What you get
 
-| Toolset | Tools | Purpose |
+- **One catalog for every engine.** A tool works the same on
+  `claude-cli`, `grok-cli`, `codex-cli` and `openai-compatible` models.
+- **Only tools that can run.** A tool whose configuration is missing is
+  not shown to the model at all, so it cannot pick it by mistake.
+- **A switch per agent.** Hide single tools, whole families or an
+  external server from one agent, in the web client or in `agent.yaml`.
+- **Results that fit.** An oversized result is shortened and the full
+  text is kept in a file the agent can page through.
+- **Broken calls repaired.** A call with unusable arguments is answered
+  with advice the model can act on. It never breaks the turn.
+
+## Try it
+
+List every tool the server has registered:
+
+```bash
+curl http://127.0.0.1:18737/tools | jq '.count, .tools[].name'
+```
+
+Run one without a model in the loop. Replace `<name>` with an agent:
+
+```bash
+curl -X POST http://127.0.0.1:18737/agents/<name>/tools/time_now \
+  -H 'content-type: application/json' -d '{}'
+```
+
+To see and change what one agent is offered, open the **Abilities**
+window in the web client. Each tool has a switch there.
+
+## The tool families
+
+Every tool carries a toolset tag. The tag groups tools for the
+per-agent switch (`toolset:<tag>`). There are 63 built-in tools, plus
+whatever your external MCP servers bring.
+
+| Toolset | Tools | Offered when |
 |---|---|---|
-| `memory` | `memory_search`, `memory_get`, `memory_list`, `memory_write`, `memory_edit`, `memory_delete` | Read/write across the three layers — agent memory inbox, shared wiki, read-only vault. Hybrid retrieval (vector + BM25) with per-source boost; filler words are dropped from the keyword side and a page whose slug names a query word is lifted, so `memory_search "karl"` finds the page about Karl, not the pages that mention him most (see `memory.md`). |
-| `dream` | `dream_list`, `dream_get`, `dream_apply`, `dream_dismiss`, `dream_run`, `dream_review` | Inspect findings from REM (per-agent) and Lucid (platform-wide); trigger Deep/Lucid via `dream_run({phase: 'deep'\|'lucid'})`. `dream_review({dream_id, action:'start'\|'end'})` opens/closes a conversational wiki-edit loop for a Lucid run. See `dream-phases.md`. |
-| `wiki` | `wiki_edit`, `wiki_create`, `wiki_delete`, `wiki_move` | Loop-scoped wiki write tools. Only exposed to the agent currently holding the active `dream_review` loop; otherwise hidden. `wiki_edit` mutates body and/or `related:`/`sources:` frontmatter; `wiki_move` moves or renames a page into a folder the wiki map lists and rewrites every `[[link]]` to it. A per-turn cap on wiki_* calls (`wiki.lucid.maxCallsPerTurn`, default 3) keeps the model from batch-editing without user check-in. See `dream-phases.md`. |
-| `time` | `time_now` | Current date/time/timezone — model never hallucinates "today". |
-| `web` | `web_search`, `web_fetch` | Search via Brave + fetch web pages as Markdown (Mozilla Readability + SSRF guards). |
-| `file` | `file_read`, `file_write`, `file_patch`, `file_search`, `file_list`, `analyze_file` | Generic filesystem I/O — local or against any configured SSH resource via `target=...`. `analyze_file` is the multimodal companion for models that cannot see: it dispatches images/PDFs to the configured `vision.worker` — a single model or an ordered chain tried until one answers — and returns a text description. It is hidden from any agent whose active model has the `image` capability (see `files.md`). `file_read` returns numbered lines (`N: text`, 2000 per call, with the offset to continue), `file_patch` tolerates whitespace and indentation drift between the model's `old_string` and the file and shows a diff of what changed, `file_search` takes `include` globs, `context` lines and `files_only`, `file_list` walks recursively with a glob and honours `.gitignore`; output that had to be shortened is kept in full under `~/.somora/agents/<agent>/tool-output/` and the result names the file. Limits and the matching chain in `files.md`. For a builder agent, a write or patch result also carries the language server's `errors` for the file (`lsp.md`). |
-| `exec` | `exec`, `process` | One-shot shell commands (sync + background) on local or any SSH resource. Hard-blacklisted destructive patterns; per-resource `allowBlocked` opt-in lets dedicated agent-workstations whitelist admin commands like `sudo …` or `systemctl reboot` (see `resources.md`). Background jobs are fully detached (survive somora/MCP restarts until they finish or are killed) and disk-tracked with poll/log/kill via `process` — poll verifies real process liveness (exit-code file + PID probe), never a stale in-memory state. |
-| `exec` (tool `tmux`) | `tmux` | Persistent multi-turn terminal sessions (claude/codex/vim/REPLs). One typed tool with `action: create | send | capture | list | kill` against `target: local | <ssh-resource>`. See `tmux.md` for shell-vs-TUI patterns, `wait_mode` choices, `multiline_safe`, `include_ansi`, and the auto-suggestion safety rule. |
-| `agents` | `spawn_subagent`, `spawn_subagents`, `subagent_status`, `subagent_result`, `subagent_list`, `subagent_cancel`, `agent_ask`, `agent_ask_result`, `agent_ask_cancel`, `session_list`, `session_model`, `builder_dispatch` | Agent-to-agent orchestration. `spawn_*` create sealed sub-sessions for delegated work; `subagent_*` poll/collect results — a `done` result carries the sub's final text plus runtime-derived facts the model cannot fake: `outcome` (`completed` / `partial` — the engine had to force a finish at the round cap or tool budget / `degraded` — the text is a somora marker, the sub looped or never answered / `failed`) with `outcome_reason`, `tool_calls` and `rounds`, `files_written` (files created or edited via `file_write`/`file_patch`), and `media` (absolute paths of every image or video the sub generated, straight from the media store). All of these are present even when the final text degraded, and the `[subagent attention]` wake names outcome, files and media too; `subagent_cancel` cancels a spawn tree of your own, running or still waiting in its queue (cascades to child-spawns, disk artifacts untouched). Finished async subs wake their parent with a `[subagent attention]` turn unless spawned with `attention:false` or the result was already fetched. Every spawn is such a background task: `wait:true` waits for it and returns the result inline plus its `task_id`, so a synchronous sub is listed by `subagent_list`, stoppable, and reached by `subagent_cancel` together with its children while the parent waits; when the wait runs out (`agentLoop.longTaskMaxTimeoutMs`) the tool returns `state: "pending"` with the `task_id`, the sub keeps running and the parent is woken when it finishes. Child spawns count against the parent persona's concurrent cap (4), with the last slot reserved for top-level spawns so an orchestrator sub can never lock its own agent out. `agent_ask` posts a live question into another agent's existing session (request-response: the target's normal reply flows back as the tool result). The target sees `[Message from agent <name>, session <slug>]`, so it can address a follow-up; an `agent_ask` without `session` that answers the agent who wrote to it (or a sub's spawning parent, or — from an `[agent answer]` wake turn — the agent whose answer woke it) goes back to the session that message came from, otherwise to `main` — an explicit `session` always wins, and an unknown slug returns the target's existing sessions instead of a bare 404. With `create_session: true` (and optionally `model: "<alias>"`) a missing project session is created on the target, the model pinned on it and the target told — so "work with <agent-a> and <agent-b> in their <project> sessions, create them if needed, <agent-a> on <alias-1> and <agent-b> on <alias-2>" is two calls; the model is only applied to a session the call creates, never to an existing one. When the target does not answer within `timeout_ms`, `agent_ask` returns `state: "pending"` with a `call_id` — and when that answer finally lands, the asker is **woken** with the first lines of it and the call_id to read the rest (the same attention wake a finished sub-agent sends). `wait: false` hands the message over and returns `pending` at once, for jobs that may take their time; the wake is the same. `agent_ask_result` fetches or waits for that call's outcome (`done` / `failed` / `pending` with `phase` queued or running) — the message is never re-sent, so the target's work cannot run twice. `agent_ask_cancel` takes a call of your own back: out of the target's queue while it waits (`removed`), or, while it runs, by telling the target to stop through its running turn and letting the outcome wake nobody (`withdrawn`, `steered` says whether the stop message reached the turn) — it never aborts the target's turn. A target that answered "I am working on it with sub-agents and will report back" does not have to remember to: when the work it started while answering finishes later — its subs, calls of its own, and whatever those start — the asker hears the outcome once, as a follow-up: an ordinary message from the target under the original `call_id` for an agent, one more `[subagent attention]` wake with the text in `follow_ups` of `subagent_result` for a parent, a spoken follow-up for a voice call; so an asker never re-asks. Both `agent_ask` and the `spawn_*` tools take `images: ["/absolute/path.png"]` — pictures the receiving agent SEES (somora uploads them and puts them on that turn), because a path in the message text is just text to a model; a target whose model has no vision gets the vision worker's description instead. Blocking A2A waits are deadlock-guarded — the server tracks who waits on whom and rejects any call that would close a wait cycle (even across chains of 3+ agents) with an instructive error instead of letting both sessions hang. `session_model` switches the model of an EXISTING session — the agent's own (default: the one it is in) or another agent's, named by `agent` + `session` — or clears the override with `clear:true`; the running turn keeps its model, the next one uses the new one, and the switch is written into that conversation with the agent's name and shown in every open window. (`agent_ask` with `create_session` + `model` remains the way to pin a model on a session that does not exist yet.) `session_list` is the read-only view of somora's chat sessions — the agent's own by default, another agent's with `agent`, everyone's with `"*"`: session name (usable as `session` in `agent_ask` and sentinel dispatch), last activity, message count, pinned project, whether a turn is running there right now and how many wait behind it, and which row is the session the agent is in. See `agents.md`. `builder_dispatch` hands a build order to a builder agent (kind: builder, see `builder.md`) in one call — fresh session, project pinned, unattended + build — and returns a call_id; the caller is woken with the builder's report like with any agent_ask (wait:false). `builder` may be omitted when exactly one builder exists; a project folder another builder is working in right now is refused (one builder per folder, see `builder.md`). |
-| `media` | `media_list` | Find images and video generated earlier, newest first, with an optional `type` filter. Its own toolset because the gallery is shared: a video-only install still needs to list what it made. |
-| `video` | `video_generate`, `video_status`, `video_models` | Job-based text-to-video. `video_generate` returns immediately and the agent is woken when the render lands — it never waits. Global concurrency cap; the caller that finds it full is refused with the numbers rather than queued. `reference_images` takes paths and the order means something (one = opening frame, two = opening and closing). Hidden unless `videoGen` is configured. See `videogen.md`. |
-| `image` | `image_generate`, `image_models` | Text-to-image against a configured image model, plus an index over everything generated. Specs (`aspect_ratio`, `resolution`, `quality`, `n`, …) are real request fields, validated against what the selected model actually accepts; the prompt is passed through verbatim. Returns paths and metadata rather than bytes — `return_image: true` opts into the image entering the agent's context. `reference_images` takes file paths (image-to-image); several may be combined. `image_models` lists the configured handles and what each one accepts. Hidden unless `imageGen` is configured. See `imagegen.md`. |
-| `memory` (tag) | `somora_docs_list`, `somora_docs_read` | Read somora's own documentation (this directory). Tagged `memory` for gating (`toolset:memory`), grouped with the other read-only discovery tools. |
-| `memory` (tag) | `resource_list`, `resource_test` | Discover and probe configured remote SSH targets. Tagged `memory` for gating, like the docs tools. |
-| `mcp` | `mcp__<server>__*` | Tools imported from external [MCP servers](mcp.md) configured in `mcp.servers`. Discovered at runtime, schema-sanitized, namespaced per server, and gateable per agent like any built-in tool. |
-| `browser` (optional) | `browser` | A managed Chromium per agent profile, with one window per agent when a profile is shared: `open` (with per-tab `device`/`locale` emulation), `snapshot` (accessibility tree with element refs), `act` (click/fill/press/scroll/select), `screenshot`, `tabs`, `status`, `request_handoff` (the user signs in or decides in the web client, the agent is woken to continue in the same tab), `close_tab`, `stop`. Hidden unless `browser.enabled`; the browser ability is also checked at execution. Handoffs appear in the source chat and taskbar, belong to the requesting agent's window alone, and require an existing, non-archived source session. See `browser.md`. |
-| `builder` | `todo_write`, `ask_user`, `plan_write` | The builder kind's own tools (see `builder.md`): the session task list shown in the task panel, a question to the person watching (blocks until answered or timed out; only offered while the session is attended), and the plan file (the one write allowed in the plan phase). Offered to builders by their kind allow-list; a chat agent sees them only when its `tools.allow` names them. |
-| `sentinel` | `sentinel` | Time-based triggers that wake an agent on a schedule — one action-enum tool: `create`, `list` (fired one-shots hidden unless `include_completed`), `get`, `pause`, `resume`, `delete`, `test`, `history`, `purge_completed` (drop every fired one-shot at once). See `sentinel.md`. |
-| `projects` (optional) | `entity_list`, `project_list`, `project_get`, `project_create`, `project_update`, `project_focus` | Pointer-file manifests that bind a session to a real-world thing. Visible only with `projects.enabled: true` (registered always, hidden by their availability probe otherwise). See `projects.md`. |
-| `skills` | `skill`, `skill_list` | Activate a Markdown skill ("how to do task X with our tools"), or list all skills available to the agent. Skills live at `~/.somora/skills/<slug>/SKILL.md` (agentskills.io format). The system prompt carries a name+description registry; `skill` loads the full body on demand, `skill_list` re-fetches the registry fresh from disk (useful when an engine froze the system prompt at session start). See `skills.md`. |
+| `memory` | 10 | always |
+| `dream` | 6 | always |
+| `wiki` | 4 | only to the agent that holds an open `dream_review` loop |
+| `time` | 1 | always |
+| `web` | 2 | `web_fetch` always, `web_search` with `web.brave.apiKey` |
+| `file` | 6 | always, except `analyze_file` (see below) |
+| `exec` | 3 | always |
+| `agents` | 12 | always |
+| `skills` | 2 | always |
+| `sentinel` | 1 | always |
+| `projects` | 6 | `projects.enabled: true` |
+| `image` | 2 | `imageGen.enabled: true` and at least one entry in `imageGen.models` |
+| `video` | 3 | `videoGen.enabled: true` and at least one entry in `videoGen.models` |
+| `media` | 1 | image or video generation is set up |
+| `browser` | 1 | `browser.enabled: true` |
+| `builder` | 3 | builder agents, or a chat agent whose `tools.allow` names the tool |
+| `mcp` | varies | servers listed under `mcp.servers` |
 
-## Definition shape
+### Memory, docs and resources
 
-A tool is a `ToolDefinition` (see `src/tools/types.ts`) with:
+Toolset `memory`. The docs and resource tools carry the same tag, so
+`toolset:memory` covers all ten.
 
-- `name` — globally unique (also the MCP method / OpenAI function name)
-- `toolset` — grouping tag
-- `description` — what the LLM sees in the tool list. Long-form
-  preferred: descriptions are policy, not just API docs ("use this
-  INSTEAD of running `cat` via exec").
-- `inputSchema` — Zod schema for runtime validation
-- `jsonSchema` — JSON Schema for MCP / OpenAI tool definitions
-- `handler(input, ctx)` — receives validated input + a `ToolContext`
-  (`{ agent, getMemoryManager, config }`)
-- `available?(ctx)` — optional runtime probe; tools that fail are
-  hidden from the model entirely (no API key → no `web_search`
-  exposed, etc.)
-- `maxResultSizeChars?` — cap on the JSON-stringified result;
-  default 100 000 (≈25–35k tokens)
+| Tool | What it does |
+|---|---|
+| `memory_search` | Searches the agent's notes, the shared wiki and the vault in one go. |
+| `memory_get` | Returns the full note or page behind a search hit. |
+| `memory_list` | Lists notes, or browses a wiki folder. |
+| `memory_write` | Creates or replaces a note in the agent's inbox. |
+| `memory_edit` | Changes an existing note. |
+| `memory_delete` | Removes a note. |
+| `somora_docs_list` | Lists the pages of this documentation. |
+| `somora_docs_read` | Reads one page of this documentation. |
+| `resource_list` | Lists the remote SSH targets the agent may use. |
+| `resource_test` | Checks that one SSH target is reachable. |
 
-The registry truncates oversized results to a `{ truncated, preview,
-hint, … }` marker so a runaway tool can't blow context.
+### Dreaming and the wiki
 
-## Where tools are wired
+Toolsets `dream` and `wiki`.
 
-Two `ToolRegistry` instances exist by necessity:
+| Tool | What it does |
+|---|---|
+| `dream_list` | Lists findings from REM and Lucid that wait for review. |
+| `dream_get` | Shows one finding in full. |
+| `dream_apply` | Approves a finding, for example turns it into a note. |
+| `dream_dismiss` | Rejects a finding. |
+| `dream_run` | Starts a phase by hand: `phase` is `deep` (default), `lucid` or `rem`. |
+| `dream_review` | Opens or closes a wiki review loop for a Lucid run: `action` is `start` or `end`. |
+| `wiki_edit` | Changes the body, `related:` or `sources:` of a wiki page. |
+| `wiki_create` | Creates a wiki page in a folder of the wiki. |
+| `wiki_delete` | Deletes a wiki page. |
+| `wiki_move` | Moves or renames a page and rewrites every `[[link]]` to it. |
 
-- **In-process registry** in `src/server/index.ts` — used by the
-  openai-compatible engine's agent-loop and by HTTP debug endpoints
-  (`GET /tools`).
-- **MCP child-process registry** in `src/mcp/server.ts` — spawned per
-  turn by claude-cli and grok-cli (different process, separate
-  memory). codex-cli uses the in-process registry: the app-server asks
-  somora (`item/tool/call`) and the tool runs in the server.
+The four `wiki_*` tools exist only inside a review loop. While an agent
+holds the loop it gets them, and loses the `exec`, `agents` and `skills`
+toolsets plus `file_write` and `file_patch` until the loop ends. It may
+make 3 `wiki_*` calls per turn (`wiki.lucid.maxCallsPerTurn`), so you
+are asked between edits.
 
-Both populate from a single `registerAllTools(registry)` function in
-`src/tools/index.ts`. Adding a new tool bundle = ONE new
-`registerMany()` line there; both engine surfaces pick it up. The
-two registries are physically separate (process boundary) but the
-code that fills them is shared, so the effective tool set is
-identical across all three engines.
+### Time and web
+
+Toolsets `time` and `web`.
+
+| Tool | What it does |
+|---|---|
+| `time_now` | Returns the current date, time, weekday and timezone. |
+| `web_search` | Searches the web through Brave. Needs `web.brave.apiKey`. |
+| `web_fetch` | Fetches a web page as Markdown. Addresses inside your own network are refused. |
+
+### Files
+
+Toolset `file`. Every tool works on the somora host or, with
+`target`, on a configured SSH resource.
+
+| Tool | What it does |
+|---|---|
+| `file_read` | Reads a file as numbered lines (`N: text`), 2000 per call, with the offset to continue. |
+| `file_write` | Creates or replaces a file. |
+| `file_patch` | Replaces `old_string` in a file. Tolerates whitespace and indentation drift and shows a diff. |
+| `file_search` | Searches file contents. Takes `include` globs, `context` lines and `files_only`. |
+| `file_list` | Lists a folder, recursively with a glob. Honours `.gitignore`. |
+| `analyze_file` | Has an image or PDF described by the vision worker, for models that cannot see. |
+
+`analyze_file` is offered only when `vision.worker` is set and the
+agent's current model lacks the `image` capability. A model that can see
+reads the picture itself with `file_read`.
+
+For a builder agent, a write or patch result also carries the language
+server's `errors` for the file.
+
+### Shell and terminals
+
+Toolset `exec`.
+
+| Tool | What it does |
+|---|---|
+| `exec` | Runs one shell command, waiting for it or in the background, locally or on an SSH resource. |
+| `process` | Handles background jobs: `action` is `list`, `poll`, `log`, `write` or `kill`. |
+| `tmux` | Keeps terminal sessions open across turns: `action` is `create`, `send`, `capture`, `wait_idle`, `list` or `kill`, against `target: local` or an SSH resource. |
+
+Destructive command patterns are blocked. A resource can lift single
+blocks with `allowBlocked`, for a machine that belongs to the agent.
+
+Background jobs are detached: they survive a somora restart and are
+tracked on disk. `poll` checks the real process, never a remembered
+state.
+
+The tmux guide explains `wait_mode`, `multiline_safe` and
+`include_ansi`.
+
+### Other agents
+
+Toolset `agents`.
+
+| Tool | What it does |
+|---|---|
+| `spawn_subagent` | Hands a task to a sub-agent in its own sealed session. |
+| `spawn_subagents` | Starts several sub-agents in one call. |
+| `subagent_status` | Reports where one sub-agent stands. |
+| `subagent_result` | Fetches a sub-agent's result, or waits for it. |
+| `subagent_list` | Lists the agent's sub-agent tasks. |
+| `subagent_cancel` | Stops a sub-agent and everything it started. |
+| `agent_ask` | Sends a message into another agent's session and returns its reply. |
+| `agent_ask_result` | Fetches or waits for the outcome of an earlier `agent_ask`: `done`, `failed` or `pending`. The message is never sent twice. |
+| `agent_ask_cancel` | Takes an own `agent_ask` back. |
+| `session_list` | Lists chat sessions: the agent's own, another agent's with `agent`, everyone's with `"*"`. |
+| `session_model` | Switches the model of an existing session, or clears the override with `clear:true`. |
+| `builder_dispatch` | Hands a build order to a builder agent and returns a `call_id`. |
+
+What an agent should know about waiting:
+
+- **A spawn is a background task.** The default is `wait:false`: the
+  tool returns a `task_id` and the parent is woken with a
+  `[subagent attention]` turn when the sub finishes. `attention:false`
+  switches the wake off. `wait:true` waits and returns the result
+  inline.
+- **A wait that runs out is not a failure.** After
+  `agentLoop.longTaskMaxTimeoutMs` the tool returns `state: "pending"`
+  with the `task_id`. The sub keeps running and the wake still comes.
+- **`agent_ask` behaves the same.** No answer within `timeout_ms`
+  returns `state: "pending"` with a `call_id`, and the asker is woken
+  when the answer lands. `wait: false` returns `pending` at once.
+- **Cancelling a question never aborts the target's turn.** A queued
+  call is `removed`. A running one is `withdrawn`, and `steered` says
+  whether the stop message reached the turn.
+- **Waits cannot deadlock.** A call that would close a circle of agents
+  waiting on each other is refused with an explanation.
+
+A finished sub-agent's result carries facts the model cannot make up:
+
+| Field | Meaning |
+|---|---|
+| `outcome` | `completed`, `partial` (the engine forced a finish at a limit), `degraded` (the sub looped or never answered) or `failed`. |
+| `outcome_reason` | Why, in words. |
+| `tool_calls`, `rounds` | How much work the sub did. |
+| `files_written` | Files created or edited with `file_write` or `file_patch`. |
+| `media` | Absolute paths of every image or video the sub generated. |
+| `follow_ups` | Results of work the sub started and that finished later. |
+
+More parameters:
+
+- **Sessions.** The target sees
+  `[Message from agent <name>, session <slug>]`. An `agent_ask` without
+  `session` answers into the session that message came from, otherwise
+  into `main`. An explicit
+  `session` always wins. `create_session: true`, optionally with
+  `model: "<alias>"`, creates a missing session on the target and pins
+  the model on it.
+- **Pictures.** `agent_ask` and the `spawn_*` tools take
+  `images: ["/absolute/path.png"]`. The receiving agent sees them. A
+  target without vision gets the vision worker's description.
+- **Limits.** One agent runs at most 4 sub-agents at a time, 16 across
+  the instance. Subs started by a sub count against the parent, and the
+  last slot is kept for top-level spawns.
+- **Builders.** `builder_dispatch` may omit `builder` when exactly one
+  builder exists. A project folder another builder is working in is
+  refused.
+
+### Skills, sentinel and projects
+
+Toolsets `skills`, `sentinel` and `projects`.
+
+| Tool | What it does |
+|---|---|
+| `skill` | Loads the full text of one skill from `~/.somora/skills/<slug>/SKILL.md`. |
+| `skill_list` | Lists the skills the agent may use, fresh from disk. |
+| `sentinel` | Manages triggers that wake an agent on a schedule: `action` is `create`, `list`, `get`, `pause`, `resume`, `delete`, `test`, `history` or `purge_completed`. |
+| `entity_list` | Lists the entities a project can belong to. |
+| `project_list` | Lists projects, filtered by entity or tag. |
+| `project_get` | Shows one project with its paths. |
+| `project_create` | Creates a project. |
+| `project_update` | Changes a project: paths, tags and other fields. |
+| `project_focus` | Pins a project to the current session. |
+
+`sentinel` with `list` hides one-shot triggers that already fired
+unless you pass `include_completed`. `purge_completed` drops them all.
+
+### Images, video and browser
+
+Toolsets `image`, `video`, `media` and `browser`.
+
+| Tool | What it does |
+|---|---|
+| `image_generate` | Creates images from a prompt. Returns paths and metadata. `return_image: true` also shows the image to the agent. |
+| `image_models` | Lists the configured image models and what each accepts. |
+| `video_generate` | Starts a video render and returns at once. The agent is woken when it lands. |
+| `video_status` | Reports on video jobs. |
+| `video_models` | Lists the configured video models and what each accepts. |
+| `media_list` | Finds images and videos generated earlier, newest first, with an optional `type` filter. |
+| `browser` | Drives a managed Chromium: `op` is `open`, `snapshot`, `act`, `screenshot`, `tabs`, `status`, `request_handoff`, `close_tab` or `stop`. |
+
+`image_generate` passes the prompt on unchanged. Its specs, such as
+`aspect_ratio`, `resolution` and `quality`, are checked against what the
+chosen model accepts. `browser` with `open` can emulate a `device` and a
+`locale` per tab.
+
+Both generate tools take `reference_images` as file paths. For video
+the order matters: one picture is the opening frame, two are opening and
+closing frame.
+
+`media_list` has its own toolset because the gallery is shared: an
+install with video only still needs to list what it made.
+
+### Builder tools
+
+Toolset `builder`.
+
+| Tool | What it does |
+|---|---|
+| `todo_write` | Keeps the session's task list shown in the task panel. |
+| `ask_user` | Asks the person watching a question and waits for the answer. |
+| `plan_write` | Writes the plan file. It is the one write allowed in the plan phase. |
+
+`ask_user` is offered only while the session is attended. In the plan
+phase a builder does not get `file_write`, `file_patch`, `process`,
+`spawn_subagent` and `subagent_result`.
+
+### Tools from MCP servers
+
+Toolset `mcp`. Each server under `mcp.servers` adds its tools as
+`mcp__<server>__<tool>`. They are found at runtime and can be hidden
+per agent like any built-in tool, a whole server with
+`mcp__<server>__*`.
+
+## Choosing tools per agent
+
+An agent sees every tool that can run, unless its `agent.yaml` says
+otherwise:
+
+```yaml
+# ~/.somora/agents/<your-agent>/agent.yaml
+tools:
+  deny:
+    - toolset:exec          # a whole family
+    - mcp__acme__*          # everything from one MCP server
+    - web_search            # one tool
+  allow: []                 # empty: everything that is not denied
+```
+
+| Pattern | Matches |
+|---|---|
+| `web_search` | the tool with exactly this name |
+| `toolset:exec` | every tool with this toolset tag |
+| `mcp__acme__*` | every tool whose name starts with the text before `*` |
+
+The rules:
+
+- `deny` beats `allow`.
+- An empty or missing `allow` means everything that is not denied.
+- A non-empty `allow` means only the tools it matches.
+- No `tools:` block means no restriction.
+
+A change applies from the agent's next turn. The switches in the
+Abilities window write exact names into `deny`. When the block contains
+an `allow` list, a `toolset:` rule or a `*` pattern, the window shows it
+read-only: you wrote a policy by hand and the window does not guess how
+to edit it.
+
+> **Tip:** Every offered tool costs context on every turn. Smaller
+> local models use tools better when they are offered fewer of them.
+
+### What a builder gets
+
+A builder agent (`kind: builder`) starts from a short list instead of
+everything:
+
+```
+file_read  file_write  file_patch  file_search  file_list  analyze_file
+exec  process  todo_write  ask_user  plan_write
+spawn_subagent  subagent_result  subagent_cancel
+agent_ask  agent_ask_result  skill  skill_list
+web_fetch  web_search
+project_get  project_list  project_create  project_focus
+memory_search  memory_get  time_now
+```
+
+Its own `tools.allow` adds to this list and its `tools.deny` removes
+from it. A chat agent never gets the three `builder` tools unless its
+`allow` names one of them.
+
+## How a tool reaches the model
+
+| Engine | How it gets the tools |
+|---|---|
+| `claude-cli`, `grok-cli` | through a local MCP server that somora starts for each turn |
+| `codex-cli` | as Codex dynamic tools. Codex asks somora, and the tool runs in the server |
+| `openai-compatible` | as function definitions, run inside the server |
+
+All paths are filled from the same catalog and pass the same per-agent
+filter, so the set is identical on every engine. The `claude-cli` and
+`grok-cli` engines see the names with a prefix, `mcp__somora__<tool>`.
+
+## Results, limits and timeouts
+
+**Size.** A result may be up to 100 000 characters of JSON unless the
+tool sets its own limit. A larger one is replaced by a marker with
+`truncated`, `original_size_chars`, `cap_chars`, a `preview` and a
+`hint`. The complete result is saved under
+`~/.somora/agents/<agent>/tool-output/` and the marker names the file
+in `full_output_file`, so the agent can read parts of it with
+`file_read`.
+
+**Time.** A tool call may take 30 seconds
+(`agentLoop.toolCallTimeoutMs`). Tools that are known to run long set
+their own limit, or take it from the call: `exec`, `agent_ask` and
+`subagent_result` wait as long as the caller asked, up to
+`agentLoop.longTaskMaxTimeoutMs`.
+
+**Wrong input.** Input is checked against the tool's schema, and the
+error names the field. A nested object sent as a JSON string is read
+and accepted. An unknown tool name is answered with up to three similar
+names.
 
 ## When a call arrives broken
 
-A model streams the arguments of a tool call as text, so a call can
-arrive unusable in two different ways, and they need different answers:
+A model writes the arguments of a tool call as text. On
+`openai-compatible` engines that text can arrive unusable in two ways.
 
-- **Cut off** — the text stops mid-value, usually because the answer ran
-  out of output allowance while writing it. Retrying the same request
-  reproduces it exactly, so somora does not retry: it answers the call
-  with "arrived cut off after N characters … call it again with less in
-  one go", and adds the numbers when the round demonstrably spent its
-  whole allowance.
-- **Malformed** — complete but not valid JSON, the kind of slip a second
-  attempt usually does not repeat. somora silently sends the same
-  request again, up to twice. Only if the model keeps producing invalid
-  JSON does it get told, with the parser's complaint and the reminder
-  that a tool without required parameters takes `{}`.
+| Fault | What it is | What somora does |
+|---|---|---|
+| **Cut off** | The text stops mid-value, usually because the answer ran out of output allowance. | Does not retry, because the same request ends the same way. The model is told the call "arrived cut off after N characters" and to send less in one go. |
+| **Malformed** | Complete, but not valid JSON. | Sends the same request again without comment, up to twice. After that the model is told what the parser found, and that a tool without required parameters takes `{}`. |
 
-The two are told apart structurally: a complete JSON value ends on its
-closing bracket. Not by the provider's stop reason — routers rewrite it.
-vLLM replaces `length` with `tool_calls` whenever it parsed a tool call,
-so the stop reason cannot show an output limit at all.
+somora tells the two apart by the text itself: a complete JSON value
+ends on its closing bracket. The provider's stop reason is not used,
+because routers rewrite it.
 
-Neither fault ever travels back to the model. Backends parse tool-call
-arguments while building the next prompt, so returning the text means
-the whole request is rejected — and since the call sits in the running
-conversation, every following round of that turn is rejected too. The
-call keeps its place in the message (dropping it would leave a reply
-without its call, which backends refuse just as hard) but its arguments
-are replaced by an empty object. The unparsed text stays in the session
-record, where it is evidence rather than a payload.
+The broken text is never sent back to the model. Backends parse the
+arguments of earlier calls, so one bad call would make every further
+round of the turn fail. The call keeps its place in the conversation
+with empty arguments, and the original text stays in the session record.
 
-## Background reading
+## Settings
 
-- `display.md` — `/show` and `/verbose` toggles for the TUI
-- `thinking.md` — cross-engine thinking depth control
-- `memory.md` — per-agent memory inbox + retrieval mechanics
-- `wiki.md` — shared long-term wiki layer
-- `dream-phases.md` — REM/Deep/Lucid background consolidation
-- `resources.md` — SSH targets that file_* / exec / tmux dispatch to
-- `skills.md` — Markdown skill system + per-agent visibility (deny/allow, Abilities window)
-- `files.md` — file_* tools + multimodal `analyze_file`
-- `tmux.md` — shell-vs-TUI session patterns + capture/send modes
+Settings in `config.yaml` that decide whether a tool is offered:
+
+| Setting | Tools it enables |
+|---|---|
+| `web.brave.apiKey` | `web_search` |
+| `vision.worker` | `analyze_file`, for models without the `image` capability |
+| `projects.enabled` | `entity_list` and the five `project_*` tools |
+| `imageGen.enabled` with `imageGen.models` | `image_generate`, `image_models`, `media_list` |
+| `videoGen.enabled` with `videoGen.models` | `video_generate`, `video_status`, `video_models`, `media_list` |
+| `browser.enabled` | `browser` |
+| `mcp.servers` | `mcp__<server>__*` |
+
+Settings that shape how tools run:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `agentLoop.toolCallTimeoutMs` | `30000` | Time limit of one tool call, unless the tool sets its own. |
+| `agentLoop.longTaskMaxTimeoutMs` | `1800000` | Longest wait of the tools that wait for other work. |
+| `wiki.lucid.maxCallsPerTurn` | `3` | `wiki_*` calls per turn inside a review loop. |
+
+Per agent, in `agent.yaml`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `tools.deny` | none | Patterns of tools to hide from this agent. |
+| `tools.allow` | none | When set, only matching tools are offered. For a builder it adds to the builder list. |
+| `kind` | `chat` | `builder` starts from the short builder list. |
+
+## Routes
+
+| Route | What it does |
+|---|---|
+| `GET /tools` | Lists every registered tool with `name`, `toolset`, `description`, `inputSchema`, `maxResultSizeChars` and `hasAvailabilityCheck`. Includes tools that are not offered right now. |
+| `POST /agents/:agent/tools/:name` | Runs one tool as that agent. The body is the tool's input. A failed call answers 400. |
+| `GET /agents/:agent/tools` | Lists the tools this agent could use, each with `visible`, plus the agent's `gating` and `hasPatternRules`. |
+| `PUT /agents/:agent/tools` | Writes `{ deny: [...], allow: [...] }` into the agent's `agent.yaml`. |
+
+## Troubleshooting
+
+**The agent says it has no such tool.** Check the "Offered when" column
+above, then the agent's `tools:` block. `GET /agents/<name>/tools`
+lists only tools whose configuration exists, with `visible` for each.
+
+**A tool is in `GET /tools` but the agent does not get it.** That route
+lists everything registered. What an agent is offered also depends on
+configuration, its `tools:` block, and whether it holds a review loop.
+
+**"is hidden while you hold the active dream_review loop".** The agent
+is inside a wiki review. It ends the loop with
+`dream_review({action: 'end'})` and gets its tools back.
+
+**"is not available in this context".** The tool's configuration is
+missing, or the call came from outside the situation the tool needs.
+
+Log lines to look for: `tool.invoked` (with `result_truncated` when a
+result was shortened), `tool.input_invalid`, `tool.invoke_failed`,
+`tool.available_threw` and `agents.tool_gating_updated`.
+
+## Adding a tool from source
+
+A tool is one `ToolDefinition` object in the somora repository, under
+`src/tools/`:
+
+| Field | Meaning |
+|---|---|
+| `name` | Unique. Also the MCP method and function name. |
+| `toolset` | The family tag. |
+| `description` | What the model reads. Write it as policy, not only as API text: "use this INSTEAD of running `cat` via exec". |
+| `inputSchema` | Zod schema, checked at runtime. |
+| `jsonSchema` | JSON Schema sent to the model. Keep it in step with `inputSchema` by hand. |
+| `handler(input, ctx)` | Does the work. `ctx` carries `agent`, `session`, `config`, `activeModel` and `getMemoryManager`. |
+| `available?(ctx)` | Optional check. When it returns false or throws, the tool is hidden and a call is refused. |
+| `maxResultSizeChars?` | Own size limit for the result. |
+| `defaultTimeoutMs?`, `timeoutFromInput?`, `maxTimeoutMs?` | Own time limits. |
+
+Register a new bundle with one `registerMany()` line in
+`registerAllTools(registry)` in `src/tools/index.ts`. The server and
+the MCP child process both fill their registry from that function, so
+every engine picks the tool up.
+
+## See also
+
+- [Agents](agents.md): sub-agents, `agent_ask` and sessions in detail
+- [Builder agents](builder.md): mode, phase and the task panel
+- [Memory](memory.md): the memory tools and how recall ranks
+- [Wiki](wiki.md): the shared long-term layer
+- [Dream phases](dream-phases.md): REM, Deep, Lucid and the review loop
+- [File tools](files.md): limits of the file tools and `analyze_file`
+- [Resources](resources.md): SSH targets and `allowBlocked`
+- [tmux](tmux.md): shell and TUI session patterns
+- [External MCP servers](mcp.md): connecting tool servers
+- [Skills](skills.md): the skill system and per-agent visibility
+- [Sentinel](sentinel.md): scheduled triggers
+- [Projects](projects.md): project manifests
+- [Image generation](imagegen.md) and [video generation](videogen.md)
+- [Shared browser](browser.md): the managed browser and handoffs
+- [Language servers](lsp.md): the `errors` a builder gets after a write
+- [TUI display](display.md): `/show` and `/verbose` for tool calls
+- [Thinking](thinking.md): thinking depth across engines
+- [API](api.md): all routes

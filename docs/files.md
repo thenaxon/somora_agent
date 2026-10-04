@@ -1,387 +1,521 @@
 # File tools
 
-`file_read`, `file_write`, `file_patch`, `file_search`, `file_list` and
-`analyze_file` work on the local filesystem by default and on any
-configured remote resource via the `target` parameter (where
-applicable — `analyze_file` is local-only).
+The file tools let an agent read, write, change, search and list files.
+They work on the machine somora runs on and, with one extra parameter,
+on any machine you have set up as an SSH resource. Images and PDFs can
+be read too, and you can attach files to a chat message.
 
-## The `target` parameter
+## What you get
 
-Every file tool accepts:
+- **One set of tools everywhere.** `file_read`, `file_write`,
+  `file_patch`, `file_search` and `file_list` behave the same locally
+  and over SSH.
+- **Safe paging.** Long files come back in numbered pages, long search
+  results are cut cleanly, and the agent is told how to continue.
+- **Edits that land.** `file_patch` finds the text to replace even when
+  the model got the indentation or line endings slightly wrong.
+- **Guard rails.** Keys, credentials and system folders are closed.
+  Persona files are backed up before every change.
+- **Images and PDFs.** A model that can see gets the picture itself. A
+  model that cannot gets a description from a vision worker.
+
+## Try it
+
+Ask your agent:
+
+```
+Write a file hello.md in your workspace with one line of text,
+then read it back and change the word "hello" to "goodbye".
+```
+
+The agent makes three tool calls:
+
+```jsonc
+{ "name": "file_write", "input": { "path": "hello.md", "content": "hello world\n" } }
+{ "name": "file_read",  "input": { "path": "hello.md" } }
+{ "name": "file_patch", "input": { "path": "hello.md", "old_string": "hello", "new_string": "goodbye" } }
+```
+
+The file lands in the agent's workspace, by default
+`~/somoraworkspace/hello.md`.
+
+## Local and remote targets
+
+Every file tool except `analyze_file` takes a `target`:
 
 ```
 target: "local" | "<resource-name>"
 ```
 
-- `local` (default) — the somora server's own filesystem.
-- a resource name from `resource_list` — operates over SSH (SFTP for
-  read/write/patch, remote-exec'd ripgrep for search).
+| Value | Where it works |
+|---|---|
+| `local` (default) | The filesystem of the somora server. |
+| a name from `resource_list` | That SSH resource. Reading, writing and patching go over SFTP. Searching runs `rg` on the remote machine. |
 
-The model picks the target. It never picks the SSH transport, auth, or
-host-key handling — those are all server-side.
+The model only picks the target. Connection, login and host key checks
+are handled by the server.
 
-## Path resolution
-
-- **Relative paths** resolve against the agent's workspace dir
-  (per-agent `workspace.path` in `agent.yaml`, falling back to
-  `config.workspace.default` which auto-creates `~/somoraworkspace` at
-  first start).
-- **Absolute paths** pass through.
-- **`~/`** expands to `$HOME` on local. On a remote target `~` expands
-  to the SSH user's home (and wins over `resource.workspace`); a bare
-  relative path joins onto `resource.workspace`, or onto the SSH user's
-  home when the resource sets none.
-
-## The path-blacklist (write side)
-
-`file_write` and `file_patch` refuse to touch anything under:
-
-```
-System/credentials:
-  /etc, /usr, /boot, /sys, /proc, /dev,
-  /etc/shadow, /etc/sudoers, /etc/ssh
-  ~/.ssh, ~/.gnupg, ~/.aws/credentials, ~/.kube/config
-
-somora-internal:
-  ~/.somora/known_hosts.json                  (SSH trust file)
-  ~/.somora/agents/*/sessions/                (any agent's session JSONL +
-                                               meta — append-only, managed
-                                               by the storage layer)
+```jsonc
+{ "name": "file_read",   "input": { "path": "/tmp/log.txt", "target": "<resource-name>" } }
+{ "name": "file_search", "input": { "pattern": "TODO", "path": "src/", "target": "<resource-name>" } }
 ```
 
-Symlink escapes are caught: each write resolves the closest existing
-ancestor with `realpath` and re-checks the policy on the resolved path.
+Three things are local only: showing images and PDFs, the persona
+backup, and the builder write scope.
 
-**What's INTENTIONALLY allowed**:
+## How paths resolve
 
-- `~/.somora/agents/<any-agent>/{AGENTS,SOUL,USER}.md` — including
-  OTHER agents' persona files. Cross-agent editing is by design;
-  agents collaboratively shape each other's behaviour, not just their
-  own.
-- `~/.somora/agents/<any-agent>/agent.yaml` — operator config. Same
-  cross-agent rule.
-- `~/.somora/agents/<any-agent>/memory/notes/*.md` — memory notes.
-- `~/.somora/config.yaml` — global server config.
-
-The blacklist exists to prevent footguns (system corruption, leaked
-credentials) and to protect the data formats somora's own storage
-layer manages (session JSONL, the SSH known-hosts file). Within those
-limits, agents are trusted.
-
-The read side has a smaller blacklist — only credential files and
-`/etc/shadow`-class secrets. Other paths read freely.
-
-## Steering the model away from `exec`
-
-Every file tool description tells the model to use it instead of
-running `cat`, `echo`, `grep` or `sed` through exec: the file tools
-paginate safely, have no quoting issues, and work the same locally and
-over SSH (SFTP). This is deliberate policy: in cross-engine tool
-design, the orchestrator prefers tools whose description tells it when
-to pick them.
-
-The `exec` tool mirrors this in reverse — file_* for read, write,
-patch and search; exec for what the file tools cannot do (run a build,
-start a server, and the like).
-
-## Multimodal: `file_read` polymorph + `analyze_file`
-
-### `file_read` is polymorphic — text, image, or PDF
-
-When pointed at a local file, `file_read` detects the format via magic
-bytes and returns one of three things based on the file kind AND the
-active model's capabilities:
-
-| Detected | Active model has `image` cap? | Returned |
+| Path | Local | On an SSH resource |
 |---|---|---|
-| Text | n/a | text content (paginated, 200k char cap) |
-| Image (PNG/JPEG/WebP/GIF) | yes | image content block — model sees it directly |
-| Image | no | error pointing at `analyze_file` |
-| PDF | yes | each page rendered to PNG, returned as image-array (max 20 pages) |
-| PDF | no | error pointing at `analyze_file` |
-| Unknown binary | n/a | error with hint to inspect via `exec` first |
+| Relative | Joined onto the agent's workspace. | Joined onto the resource's `workspace`, or onto the SSH user's home when none is set. |
+| Absolute | Used as it is. | Used as it is. |
+| `~` or `~/...` | `$HOME` of the user somora runs as. | The SSH user's home, even when the resource has a `workspace`. |
 
-**PDF → PNG-page render.** MCP's tool-result content union has no
-`document` type, so the polymorph rasterizes each page server-side
-and ships them as `image` blocks. The model OCRs the page images
-visually — same approach Anthropic uses internally for native PDF.
-Token cost is real: ~1300 tokens per page on Anthropic, so a
-30-page PDF costs ~40k tokens. For long PDFs prefer `analyze_file`.
+The workspace is `workspace.path` in the agent's `agent.yaml`. Without
+it, `workspace.default` from `config.yaml` applies. Both folders are
+created when the server starts.
 
-**Capability gating** uses the active turn's resolved model. somora
-passes the model through `ToolContext.activeModel` — set in-process
-by the server's run-turn, set via `SOMORA_ACTIVE_MODEL` env var for
-the MCP child process when claude-cli/codex-cli spawn it. Models
-declare capabilities in their provider config (`capabilities:
-[text, image, pdf, reasoning]`). file_read polymorph requires the
-`image` capability for both image AND pdf paths because both deliver
-as images post-rasterization. The `pdf` capability is meaningful for
-`analyze_file` (which can talk to providers with native PDF support).
+A session pinned to a project that has a working folder uses that
+folder as the root for relative paths.
 
-### `analyze_file` — the worker dispatcher
+The workspace is a starting point, not a fence. An agent can reach any
+path that the rules below leave open.
 
-It is a **substitute for models that cannot see**, and only those. The
-tool is not offered at all when the active model has the `image`
-capability: an agent that can look at the file itself should, and a tool
-it never sees is one it cannot pick by mistake.
+> **Tip:** Do not start a relative path with the workspace folder's own
+> name. `somoraworkspace/notes.md` creates a nested copy of the folder.
+> The result then carries a `warning` that says so.
 
-It appears when:
-- the active main model lacks `image` capability (text-only LLM) and you
-  still need to reason about a file;
-- targeted questions help — `analyze_file({path, prompt: "Which row of
-  the table has the highest value?"})` lets the worker focus, the agent
-  gets a sharp answer.
+## Paths that are closed
 
-A described file is second-hand: the tool result names the worker, and
-the agent is told to quote it rather than claim to have looked.
+| Rule | Paths |
+|---|---|
+| Never read or written | `~/.ssh`, `~/.gnupg`, `~/.aws/credentials`, `~/.kube/config`, `/etc/shadow`, `/etc/sudoers`, `/etc/ssh`, `/boot`, `/sys`, `/proc` |
+| Readable, never written | `/etc`, `/usr`, `/dev` |
+| Never written | `~/.somora/known_hosts.json`, every agent's `sessions/` folder under `~/.somora/agents/` |
 
-```yaml
-# config.yaml — global vision worker config
-vision:
-  worker: openrouter/claude-haiku-4-5      # default for image + PDF
-  pdfWorker: openrouter/claude-sonnet-4-6  # optional override for PDFs
+The read rules apply to `file_read`, `file_list`, `file_search` and
+`analyze_file`. A search that starts in an open folder leaves out hits
+from a closed one. The write rules apply to `file_write` and
+`file_patch`.
+
+Symbolic links are resolved before the check. For a file that does not
+exist yet, the closest existing parent folder is resolved.
+
+On an SSH resource only the first row applies, relative to the remote
+user's home. Editing `/etc` on a machine you manage is ordinary work
+for an agent with that resource.
+
+Everything else is open on purpose:
+
+- `~/.somora/config.yaml`, the server configuration.
+- `AGENTS.md`, `SOUL.md`, `USER.md`, `VOICE.md` and `agent.yaml` under
+  `~/.somora/agents/<name>/`, for the agent itself and for other agents.
+- Memory notes under `~/.somora/agents/<name>/memory/`.
+
+> **Warning:** These rules stop accidents and keep secrets out of the
+> model by mistake. They are not a sandbox. An agent with the `exec`
+> tool can still reach those paths through the shell.
+
+## Persona files never without a backup
+
+Agents may edit their own persona files and those of other agents. To
+make sure a persona is never lost, `file_write` and `file_patch` first
+copy the current file to `<file>.bak-<timestamp>`. The result names the
+copy in `backup`. The last five backups per file are kept.
+
+This covers `AGENTS.md`, `SOUL.md`, `USER.md`, `VOICE.md` and
+`agent.yaml` directly under `~/.somora/agents/<name>/`.
+
+## Builders write inside their project
+
+A builder agent pinned to a project folder may write only there and in
+its temp folder, `~/.somora/agents/<name>/tmp`. Outside of it the write
+is refused. When you are attending, you are asked in the task panel
+and have five minutes to answer. See
+[Where a builder may write](builder.md#where-a-builder-may-write).
+
+Chat agents are not affected.
+
+## Reading text
+
+`file_read` returns text with a line number in front of every line:
+
+```
+1: first line
+2: second line
 ```
 
-`worker` also takes an **ordered list**, tried front to back until one
-answers:
+The agent can cite `path:line` and copy lines into `file_patch`,
+leaving out the `N: ` prefix.
+
+One call returns up to 2000 lines. The result says whether there is
+more:
+
+| Field | Meaning |
+|---|---|
+| `content` | The numbered lines. |
+| `lines` | Total number of lines in the file. |
+| `range` | First and last line shown, as `from` and `to`. |
+| `summary` | `End of file (N lines).` or `Showing lines a-b of N. Continue with offset=b.` |
+| `truncated`, `next_offset` | Set while there is more. Pass `next_offset` as `offset` to continue. |
+
+A line longer than 2000 characters is cut and marked with
+`… [line cut at 2000 chars]`. A whole result holds at most 200 000
+characters.
+
+## Images and PDFs
+
+`file_read` looks at the first bytes of a local file, not at its name,
+and answers by kind:
+
+| File | Active model has `image` | Result |
+|---|---|---|
+| Text | any | Numbered text. |
+| PNG, JPEG, WebP, GIF | yes | The image itself. The model sees it. |
+| PDF | yes | The first 20 pages as images, rendered at 1.5 times page size. |
+| Image or PDF | no | An error that points to `analyze_file`. |
+| Unknown binary | any | An error with the hint to inspect the file with `exec`. |
+
+An image may be up to `attachments.maxImageBytes` in size. PDF pages
+cost tokens: roughly 1300 per page on Anthropic models. A PDF with more
+than 20 pages comes with a note that only the first 20 were rendered.
+
+A model declares what it can see with `capabilities` in its provider
+entry in `config.yaml`, for example `[text, image, pdf, reasoning]`.
+
+## When the model cannot see
+
+`analyze_file` is the substitute for models without the `image`
+capability. It sends an image or PDF to a vision worker model and
+returns the worker's text answer.
+
+```jsonc
+{ "name": "analyze_file", "input": { "path": "chart.png", "prompt": "Which row of the table has the highest value?" } }
+```
+
+Without a `prompt` the worker describes the file in detail. The result
+holds `analysis`, the `worker` that answered, `mimeType`, `size` and
+`ms`. The agent is told to quote the description and not to claim it
+saw the file.
+
+The tool is offered only when both are true:
+
+- `vision.worker` is set.
+- The active model lacks the `image` capability. A model that can see
+  should look itself with `file_read`.
+
+### The worker chain
+
+`vision.worker` takes one model or an ordered list. The list is tried
+front to back until one worker answers. This keeps `analyze_file` alive
+when a local vision model is not loaded at the moment.
 
 ```yaml
 vision:
   worker:
-    - local/qwen-vision                    # preferred: free, stays in-house
-    - openrouter/claude-haiku-4-5          # always available, costs money
-  timeoutMs: 60000                         # per attempt, then move on
-  totalBudgetMs: 90000                     # for the WHOLE chain
-  maxOutputTokens: 1500                    # a caption is not a chat answer
-  healthCacheMs: 60000                     # skip a just-failed worker this long
-  timeoutCooldownMs: 10000                 # shorter: slow is not dead
+    - local/qwen-vision               # preferred: free, stays in-house
+    - openrouter/claude-haiku-4-5     # always available, costs money
+  pdfWorker: openrouter/claude-sonnet-4-6   # optional, for PDFs only
 ```
 
-Two budgets, because one was not enough. `timeoutMs` bounds a single
-attempt and `totalBudgetMs` bounds the walk: each attempt gets whatever
-is left, and a worker that could not finish in the remaining time is not
-started; without it a chain of four workers spends four full timeouts
-back to back. `maxOutputTokens`
-overrides the worker model's own cap, which is a chat cap — with 16k
-available, a reasoning worker thinks its way past the timeout while
-writing three lines about a screenshot. A worker that returns nothing
-with `finish_reason: length` says exactly that instead of "empty
-response". A timeout cools a worker down for `timeoutCooldownMs` rather
-than the full `healthCacheMs`, because slow and gone are different
-things.
+Rules for the chain:
 
-This exists because a locally hosted worker is only loaded while its GPU
-profile is active; with a single configured value, switching profiles
-takes `analyze_file` down for every agent at once and does so silently.
-Entries that don't resolve, or that lack the capability the file needs,
-are skipped rather than fatal — the point of a chain is surviving one
-entry being unusable. The tool result names the worker that answered,
-and lists the ones passed over when it wasn't the first.
+- A worker must be on an `openai-compatible` provider. Use a proxy such
+  as OpenRouter to reach a Claude or GPT model.
+- A worker needs the `image` capability for images and the `pdf`
+  capability for PDFs. One that lacks it is skipped for that file.
+- A worker that failed is skipped for `vision.healthCacheMs`. After a
+  mere timeout it is skipped for the shorter `vision.timeoutCooldownMs`,
+  because slow is not the same as gone.
+- One attempt may take `vision.timeoutMs`. The whole chain may take
+  `vision.totalBudgetMs`. A worker is not started when less than two
+  seconds of that budget are left.
+- When a later worker answered, the result lists the ones passed over
+  in `fellBackFrom`, each with its reason.
 
-### Switching to a model that can't see images
+`vision.maxOutputTokens` replaces the worker model's own output limit.
+A description is short, and a reasoning model with a large limit can
+think past the timeout. Raise it when you ask for long transcriptions.
 
-History is packed for the model that will read it. A session that once
-carried an image would replay that image on every later turn, and a
-text-only endpoint rejects the content type — so attachments the active
-model cannot process are replayed as a text marker naming the file, its
-type and its size. The conversation keeps working and the model can
-still refer to what it cannot see
-(`[Image attachment "shot.png" (image/png, 1.2 MB) — not shown: …]`).
-The text of those turns is untouched.
+> **Note:** A worker name that is not a model in `config.yaml` stops the
+> server at start with a clear message. A missing capability or the
+> wrong engine only writes a warning to the log.
 
-Sending a **new** attachment to such a model does not fail the turn.
-somora hands the file to the configured vision worker and appends its
-description to the message the model receives, marked as a description
-rather than the file itself. The clients still show the original
-attachment, so what you see is unchanged. Only when no `vision.worker`
-is configured does the turn refuse, and the error says both ways out:
-switch models, or configure a worker.
+## Editing with file patch
 
-### What can be attached
+`file_patch` replaces `old_string` with `new_string`. `old_string` must
+match exactly one place, unless `replace_all` is true. The result
+carries:
 
-Images (PNG/JPEG/GIF/WebP), PDFs and text. Video and audio are
-recognised by the file-type sniffer — that is what lets the web FileView
-serve them with an honest content type — but they are deliberately not
-attachable to a chat turn: no engine can put a video in a prompt, and
-accepting one would mean an attachment that vanishes silently while the
-turn is packed.
+| Field | Meaning |
+|---|---|
+| `replacements` | How many places were changed. |
+| `strategy` | How the text was found, see below. |
+| `lines` | Line range of the first replaced block, as `from` and `to`. |
+| `diff` | The changed lines with their original line numbers. |
+| `note` | Present when the match was not exact. |
 
-Worker model **must be on `openai-compatible` engine** (use
-openrouter or another openai-compatible proxy if you want a Claude or
-GPT model). Same constraint as Dream-Mode. At server startup, somora
-warn-checks worker capabilities and surfaces missing `image`/`pdf`
-declarations clearly in the log — but does NOT hard-fail, so an
-image-only worker is still usable for image analysis (PDF requests
-will error per call instead).
+### Tolerant matching
 
-**Caps:** 5 MB per image, 32 MB per PDF (the upstream provider
-ceilings; providers additionally cap PDFs at 100 pages). PDF render:
-max 20 pages by default, scale 1.5× (configurable in code).
+Models often reproduce text with small errors: a tab for four spaces,
+one level of indentation missing, `\n` sent as two characters. So
+`file_patch` tries eight ways to find `old_string`, in this order, and
+uses the first that gives exactly one match (or any number with
+`replace_all`):
 
-**Engine support:**
-- claude-cli (Anthropic) — full polymorph support; images and rendered
-  PDFs ride as native ImageBlock / DocumentBlock content
-- codex-cli (OpenAI) — dynamic-tool results carry images natively
-  (`inputImage`); PDFs rasterise to per-page PNGs
-- openai-compatible (omlx, openrouter, ollama) — works for vision-
-  capable models (gemma-vision, gpt-5 via openrouter, etc.); local
-  servers vary in tool-result image-content support — failures
-  surface as explicit API errors
+| Strategy | What it tolerates |
+|---|---|
+| `exact` | Nothing. Always tried first. |
+| `line_trimmed` | Leading and trailing whitespace of each line. |
+| `block_anchor` | Blocks of three or more lines: first and last line equal, middle lines at least 0.65 similar, the block up to a quarter longer or shorter. |
+| `whitespace_normalized` | Runs of whitespace count as one. A single line may also match inside a longer line. |
+| `indentation_flexible` | A different common indentation. |
+| `escape_normalized` | Escaped characters such as `\n`, `\t`, `\"`, `\\` in `old_string`. |
+| `trimmed_boundary` | Whitespace around the whole `old_string`. |
+| `context_aware` | First and last line equal, same length, at least half of the middle lines equal. |
 
-The multimodal helper modules in `src/multimodal/` feed both the
-agent-driven path (file_read / analyze_file) and the user-driven
-path (chat-message attachments via paperclip / paste / drag&drop).
+Further rules:
 
-## User-attachments (web + TUI client)
+- When nothing matches and every line of `old_string` starts like
+  `12: `, the line numbers are removed and the search runs again.
+- A tolerant match far larger than `old_string` is refused: twice the
+  lines or more, three lines more, or four times the characters. The
+  agent is asked to read the file again.
+- Local files under `~/.somora` are matched with `exact` only. A wrong
+  edit in the configuration or a persona file costs the most.
+- Files with Windows line endings keep them.
 
-The web client exposes paperclip / drag&drop / paste so users can
-attach files directly to a chat turn. Pipeline:
+## Searching and listing
 
-1. `POST /attachments` — raw bytes go to a streaming endpoint that
-   sniffs MIME via magic-bytes (extensions are untrusted), enforces
-   per-kind caps from `config.attachments`, and lands the file at
-   `~/.somora/attachments/<sha256>.<ext>`. Returns
-   `{hash, mime, kind, size, name}`. Same content uploaded twice =
-   same file on disk (sha256 dedup).
-2. `POST /chat/send` (and `/chat/send-sync`, `/spawn-async`) — body
-   extension `attachments: [{hash, name, mime, size}]`. Server resolves refs, validates the active model's
-   capabilities, refuses with a clear error if the model lacks
-   `image` / `pdf` cap.
-3. JSONL persists refs only on the `user_message` event — bytes never
-   travel into JSONL or back out. History replay re-loads bytes from
-   disk on demand.
-4. Agents use the same pipeline through their tools: `agent_ask` and
-   `spawn_subagent`/`spawn_subagents` take `images: ["/absolute/path"]`,
-   upload those files themselves and put the refs on the turn they
-   start. That is how an orchestrator hands a co-worker a graphic it
-   just generated — naming the path in the message text only gives the
-   receiving model a string. A receiving model without
-   vision gets the vision worker's description, exactly as for a chat
-   attachment.
-5. Each engine adapter builds its native multimodal user-message
-   shape: claude-cli inlines as `ContentBlockParam[]` with
-   `ImageBlockParam` / `DocumentBlockParam`; codex-cli sends images as
-   native `localImage` turn inputs and rasterises PDFs to per-page PNGs
-   into a sibling cache dir; openai-compatible produces an array-content
-   user message (`{type:'image_url'}` / `{type:'file'}` / rasterised
-   PNGs depending on the provider's `pdfMode`).
+`file_search` searches file contents with ripgrep and follows
+`.gitignore`. A hit holds `path`, `line`, `col` and `text`. Lines up to
+about 500 characters come back whole. A longer line is cut to a window
+of 500 characters on each side of the match and marked
+`truncated: true`.
 
-### Caps + per-turn count
+`file_list` lists a folder. Each entry has `path`, `type` (`file`, `dir`
+or `other`), `size` in bytes, and `mtime` and `ctime` in milliseconds.
+Files starting with a dot are left out unless a `glob` such as `.*` asks
+for them.
 
-```yaml
-attachments:
-  maxImageBytes: 5242880   # 5 MB — Anthropic ceiling, lowest common denominator
-  maxPdfBytes:   33554432  # 32 MB — Anthropic ceiling
-  maxTextBytes:  1048576   # 1 MB
-  maxPerTurn:    10        # UX sanity cap
+A recursive listing skips what `.gitignore` and `.ignore` exclude, such
+as `node_modules`. Folders on the way to a listed file still appear.
+Pass `respect_gitignore: false` to see everything.
+
+Every file tool tells the model in its description to use it in place
+of `cat`, `grep`, `sed` or `ls` through `exec`. The file tools page
+safely, have no quoting problems and work the same over SSH.
+
+## Shortened output is kept
+
+When a tool result is too long, the full text is saved under
+`~/.somora/agents/<agent>/tool-output/` and the result names the file:
+
+| Field | When |
+|---|---|
+| `stdout_file`, `stderr_file` | `exec` output beyond about 60 000 characters, or beyond the capture limit of 256 KB per stream. |
+| `full_output_file` | Any tool result over its size limit. |
+
+The agent can then `file_read` a part of that file or `file_search` in
+it, and need not run the command again. Files older than seven days are
+removed, at server start and once an hour.
+
+## Attaching files to a message
+
+The web client offers a paperclip, drag and drop, and paste. The phone
+app has an attachment button. Images (PNG, JPEG, GIF, WebP), PDFs and
+text files can be attached, up to `attachments.maxPerTurn` per message.
+
+Video and audio cannot be attached, because no engine can put them in a
+prompt.
+
+How an attachment travels:
+
+1. The client uploads the raw bytes with `POST /attachments`. The server
+   detects the type from the content, checks the size limit for that
+   type and stores the file as `~/.somora/attachments/<sha256>.<ext>`.
+2. The client sends the message with
+   `attachments: [{hash, name, mime, size}]`.
+3. The session file stores only these references, on the
+   `user_message` event, never the bytes. When history is replayed, the
+   bytes are loaded from disk.
+4. The engine receives the file in its own format.
+
+The same content uploaded twice is stored once. Stored attachments are
+never removed automatically.
+
+Agents use the same path. `agent_ask`, `spawn_subagent` and
+`spawn_subagents` take `images: ["/absolute/path"]`, upload those files
+and attach them to the turn they start. Naming a path in the message
+text alone gives the other model only a string.
+
+### Attachments and models that cannot see
+
+When you attach an image or PDF and the active model cannot see it,
+the turn does not fail. somora asks the vision worker for a description
+and adds it to the message, marked as a description. The clients still
+show your original attachment.
+
+Only when no `vision.worker` is set is the turn refused. The error names
+both ways out: switch the model, or configure a worker.
+
+When you switch a session to a model that cannot see, older attachments
+in the history are replaced by a text marker, so the session keeps
+working:
+
+```
+[Image attachment "shot.png" (image/png, 1.2 MB) — not shown: the active model has no 'image' capability. It can be described with analyze_file({path:"..."}).]
 ```
 
-Defaults match the strictest engine in the supported set so a config
-that accepts any of them is safe everywhere. Operators with a
-single-engine fleet can raise these. `analyze_file` honours the same
-caps: its vision worker runs on an `openai-compatible` provider, so the
-Anthropic ceiling does not apply there — raise `maxImageBytes` when the
-agent should inspect large images, e.g. somora's own 2K/4K `imageGen`
-output (a 2048×2048 PNG is routinely 6–9 MB).
+### How each engine receives a PDF
 
-### `pdfMode` — only on `openai-compatible` providers
-
-```yaml
-providers:
-  openrouter:
-    engine: openai-compatible
-    pdfMode: native    # opt-in; default is 'rasterize'
-```
-
-- `claude-cli` providers: always native (Anthropic supports inline
-  PDF). No knob.
-- `codex-cli` providers: always rasterise (Codex accepts only images
-  as native input). No knob.
-- `openai-compatible` providers: depends on the actual backend
-  behind the URL. `rasterize` (default) renders pages to PNG and
-  works against omlx, ollama, anything image-capable. `native`
-  passes the PDF as a `{type:'file'}` content block — Anthropic
-  via OpenRouter and OpenAI direct accept this; most local servers
-  do not. Enable `native` per-provider when your backend supports
-  it.
-
-Token economics: `native` ships the PDF as text (the provider
-extracts on their side) — a few-page invoice lands at ~3–4k
-prompt tokens. `rasterize` sends one image per page; image-capable
-providers charge ~1.5–2k image-tokens per page on top of the
-page-PNG bytes, so a 5-page PDF can easily 3–5× the prompt-token
-cost of `native`. Pick `native` when the backend supports it.
-
-### Garbage collection
-
-There is none. Every uploaded file lands in `~/.somora/
-attachments/<hash>.<ext>` and stays. After heavy use, orphaned
-files (referenced only by JSONL sessions that have since been reset
-or deleted) accumulate. Acceptable trade-off: disk is cheap, single-
-user setup.
-
-## Persona files: never without a backup
-
-A persona file of any agent — `AGENTS.md`, `SOUL.md`, `USER.md`,
-`VOICE.md`, `agent.yaml` under `~/.somora/agents/<name>/` — stays
-writable through `file_write` and `file_patch` (agents edit themselves
-and, by design, each other), but the current file is copied to
-`<file>.bak-<timestamp>` first and the result names that copy in
-`backup`; the last five backups are kept, like the web editor does. A
-chat agent once overwrote another agent's `AGENTS.md` with one byte in a
-test, and the persona was gone.
-
-## Limits
-
-A builder agent pinned to a project folder may write only there and in
-its temp folder; see [builder.md](builder.md#where-a-builder-may-write).
-
-| Tool | Cap | Notes |
+| Engine | Images | PDFs |
 |---|---|---|
-| `file_read` | 2000 lines per call by default (`limit`), 200 000 chars hard cap, 2000 chars per line | Text comes back numbered: every line is `N: text` with its 1-based line number, so the model can cite `path:line` and copy exact lines into `file_patch` (without the prefix). `offset` is the number of lines to skip (0-based), `limit` the number of lines. The result carries `range` (first/last line shown), `lines` (total) and a `summary`: `End of file (N lines).` or `Showing lines a-b of N. Continue with offset=b.` — plus `next_offset` while there is more. A line longer than 2000 chars is cut with `… [line cut at 2000 chars]`. Missing files surface as `file_read: file_not_found at '<path>'. Did you mean: a.ts, b.ts?` with up to three near names from the same directory. Errors on binary files — images and PDFs point at `analyze_file`, other binaries at `exec`. |
-| `file_write` | none on input; 100 000 char result envelope | Atomic via tmp+rename. Over SSH the rename uses `posix-rename@openssh.com` so an existing target is replaced; servers without the extension get unlink+rename. |
-| `file_patch` | requires `old_string` to be unique unless `replace_all=true` | Exact match first; when the file differs from `old_string` only in whitespace, indentation, line endings, escaped characters or a copied `N: ` line-number prefix, the closest *unique* block is used (see "Tolerant matching" below). The result carries `strategy`, the replaced `lines` range, a `diff` of the changed lines with original line numbers, and a `note` whenever tolerance was needed. |
-| `file_search` | 50 hits default, 500 max; hit text is the whole line up to ~500 chars, longer lines windowed ±500 chars around the first match (`col` = column, `truncated` marks a cut line); 100 000 chars of hit text per call, then `truncated: true` | Needs `rg` (ripgrep) on the target machine. `include` narrows to a glob (`*.ts`, `*.{ts,tsx}`, `src/**`, `!*.test.*`), `case_insensitive` ignores case, `context` (0-5) adds `before`/`after` line arrays to each hit, `files_only` returns just `files` (the matching paths). `path` may be a directory or a single file. |
-| `file_list` | 5000 entries per call (default 200) | Path resolution + read-policy identical to `file_read`. Recursive listings skip what `.gitignore`/`.ignore` exclude (`node_modules`, build output) by way of `rg --files`; `respect_gitignore: false` lists everything. Directories on the way to a kept file are still listed. Missing dirs surface as `file_list: file_not_found at '<path>'`. |
+| `claude-cli` | Native image block. | Native document block. |
+| `codex-cli` | Native image input. | Rendered to one PNG per page. |
+| `openai-compatible` | Works with models that can see. Local servers vary. | Depends on `pdfMode`. |
 
-### Tolerant matching in `file_patch`
+`pdfMode` is a setting of an `openai-compatible` provider:
 
-A model's `old_string` is a reconstruction of what it read, and small models reconstruct badly: a level of indentation missing, a tab for four spaces, `\n` sent as two characters, or the `12: ` prefix copied from a numbered read. Byte-exact matching turned each of those into "not found" and a retry with the same mistake. `file_patch` now locates `old_string` with a chain of matchers, in this order, and uses the first one that yields exactly one match (or any number with `replace_all`):
+| Value | Effect |
+|---|---|
+| `rasterize` (default) | Pages are rendered to PNG. Works with every backend that accepts images. |
+| `native` | The PDF is passed as a file. Anthropic through OpenRouter and OpenAI accept this. Most local servers do not. |
 
-1. `exact` — byte-exact, always tried first and always wins when it matches.
-2. `line_trimmed` — lines compared without leading/trailing whitespace.
-3. `block_anchor` — for blocks of three or more lines: first and last line identical (trimmed), the block may be up to a quarter longer or shorter, middle lines compared by edit-distance similarity (threshold 0.65); with several candidates the clearly most similar one.
-4. `whitespace_normalized` — runs of whitespace treated as one; for a single-line `old_string` also as a substring of a line.
-5. `indentation_flexible` — common leading indentation removed on both sides.
-6. `escape_normalized` — `\n`, `\t`, `\"`, `\\` and friends in `old_string` unescaped.
-7. `trimmed_boundary` — leading/trailing whitespace of the whole `old_string` ignored.
-8. `context_aware` — anchors at both ends, same length, at least half of the non-empty middle lines identical.
+`native` usually costs far fewer tokens, since `rasterize` sends one
+image per page. Choose it when your backend supports it.
 
-Before the chain runs on an `old_string` whose lines all start like `12: `, the prefixes are stripped (`note` says so). Two brakes: a tolerant match whose span is far larger than `old_string` (≥ twice the lines, or +3 lines, or ×4 the characters) is refused with a request to re-read and pass the exact text; and inside somora's own home (`~/.somora` — config, persona files, memory) only `exact` runs, because a wrong-place edit there costs the most. CRLF files are matched on LF and written back as CRLF. When several matchers see more than one candidate and none sees exactly one, the error says so and asks for more context or `replace_all`.
+## Settings
 
-### Full copies of shortened output
+All in `config.yaml`. The values shown are the defaults.
 
-When a tool result is shortened — `exec` output beyond its ~60 000-char budget (or the 256 KB capture cap), or any result over its size cap — the full text is written under `~/.somora/agents/<agent>/tool-output/` and the result names the file (`stdout_file`, `stderr_file`, `full_output_file`) with a hint to `file_read` a window of it or `file_search` inside it instead of re-running the command. Files older than seven days are removed (sweep at boot and hourly).
-| `analyze_file` | `attachments.maxImageBytes` (5 MB default) / `attachments.maxPdfBytes` (32 MB) | Local files only; worker on openai-compatible engine. **Hidden from the model entirely when `config.vision.worker` is unset or the active model has the `image` capability itself** (the same path-resolution + read-policy as `file_read` applies). |
+```yaml
+workspace:
+  default: ~/somoraworkspace
 
-`rg` not installed → clear error: `file_search: ripgrep (rg) not found
-on PATH. Install via your package manager (brew/apt/dnf/pacman) or set
-$RG_BIN to a custom location.` We deliberately don't ship a JS fallback walker —
-parity with rg's defaults (.gitignore-respect, encoding handling) is
-worth the dependency.
+vision:
+  # worker: <provider>/<model>      # unset by default; one model or a list
+  # pdfWorker: <provider>/<model>   # unset by default
+  timeoutMs: 60000
+  totalBudgetMs: 90000
+  maxOutputTokens: 1500
+  healthCacheMs: 60000
+  timeoutCooldownMs: 10000
 
-## Examples (what the agent sees)
+attachments:
+  maxImageBytes: 5242880    # 5 MB
+  maxPdfBytes: 33554432     # 32 MB
+  maxTextBytes: 1048576     # 1 MB
+  maxPerTurn: 10
 
-```jsonc
-// Local read
-{ "name": "file_read", "input": { "path": "notes.md" } }
-// → reads <workspace>/notes.md
-
-// Remote read
-{ "name": "file_read", "input": { "path": "/tmp/log.txt", "target": "<resource-name>" } }
-// → SFTP read via that resource
-
-// Remote search
-{ "name": "file_search", "input": { "pattern": "TODO", "path": "src/", "target": "<resource-name>" } }
-// → ssh <resource-name> 'rg --json --max-count 50 "TODO" /home/.../src/'
+providers:
+  <name>:
+    engine: openai-compatible
+    pdfMode: rasterize
 ```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `workspace.default` | `~/somoraworkspace` | Root for relative paths. Per agent: `workspace.path` in `agent.yaml`. |
+| `vision.worker` | unset | Vision worker, or an ordered list of them. Without it `analyze_file` is hidden. |
+| `vision.pdfWorker` | unset | Worker or list for PDFs only. Falls back to `vision.worker`. |
+| `vision.timeoutMs` | `60000` | Time limit for one worker attempt. |
+| `vision.totalBudgetMs` | `90000` | Time limit for the whole chain. |
+| `vision.maxOutputTokens` | `1500` | Output limit for a worker answer. |
+| `vision.healthCacheMs` | `60000` | How long a failed worker is skipped. `0` turns this off. |
+| `vision.timeoutCooldownMs` | `10000` | How long a worker is skipped after a timeout. `0` turns this off. |
+| `attachments.maxImageBytes` | `5242880` | Largest image for uploads, `file_read` and `analyze_file`. |
+| `attachments.maxPdfBytes` | `33554432` | Largest PDF for uploads and `analyze_file`. |
+| `attachments.maxTextBytes` | `1048576` | Largest text attachment. |
+| `attachments.maxPerTurn` | `10` | Attachments per message. |
+| `providers.<name>.pdfMode` | `rasterize` | How an `openai-compatible` provider gets PDFs. |
+
+The size defaults match the strictest supported provider, so they are
+safe with every engine. Providers may also limit PDFs to 100 pages.
+Raise `maxImageBytes` when agents should look at large images, such as
+generated 2K or 4K pictures, which often have 6 to 9 MB.
+
+## Tools
+
+| Tool | What it does | Limits |
+|---|---|---|
+| `file_read` | Reads text, an image or a PDF. | 2000 lines per call by default, 2000 characters per line, 200 000 characters per result. |
+| `file_write` | Writes a text file. Creates parent folders. | None on the content. |
+| `file_patch` | Replaces `old_string` with `new_string`. | `old_string` must be unique unless `replace_all`. |
+| `file_search` | Searches file contents with a regular expression. | 50 hits by default, 500 at most, 100 000 characters of hit text. |
+| `file_list` | Lists a folder. | 200 entries by default, 5000 at most. |
+| `analyze_file` | Has a vision worker describe an image or PDF. Local files only. | `attachments.maxImageBytes`, `attachments.maxPdfBytes`. |
+
+### Parameters
+
+All tools except `analyze_file` also take `target`.
+
+| Tool | Parameter | Meaning |
+|---|---|---|
+| `file_read` | `path` | The file. Required. |
+| | `offset` | Number of lines to skip. `offset: 2000` starts at line 2001. |
+| | `limit` | Number of lines to return. Default 2000. |
+| `file_write` | `path`, `content` | Required. |
+| | `mode` | `overwrite` (default), `create` (fails if the file exists) or `append` (creates the file if missing). |
+| `file_patch` | `path`, `old_string`, `new_string` | Required. An empty `new_string` deletes the match. |
+| | `replace_all` | Replace every match. Default false. |
+| `file_search` | `pattern` | Regular expression in ripgrep syntax. Required. |
+| | `path` | Folder or single file. Default: the workspace. |
+| | `limit` | Most hits to return, 1 to 500. Default 50. |
+| | `include` | Only files matching a glob: `*.ts`, `*.{ts,tsx}`, `src/**`, `!*.test.*`. |
+| | `case_insensitive` | Ignore case. Default false. |
+| | `context` | 0 to 5 lines around each hit, returned as `before` and `after`. |
+| | `files_only` | Return only the matching paths, in `files`. |
+| `file_list` | `path` | The folder. Required. |
+| | `recursive` | Include subfolders. Default false. |
+| | `sortBy` | `name` (default), `mtime` (newest first) or `size` (largest first). |
+| | `limit` | 1 to 5000. Default 200. |
+| | `glob` | Filter with `*`, `**` and `?`. Without `/` it matches the file name, with `/` the path below the listed folder. |
+| | `respect_gitignore` | Default true. Applies to recursive listings. |
+| `analyze_file` | `path` | The image or PDF. Required. |
+| | `prompt` | What to ask the worker, up to 4000 characters. |
+
+`create` and `overwrite` write to a temporary file and rename it, so a
+file is never half written. The same holds for `file_patch`. Over SSH
+the rename uses `posix-rename@openssh.com`. Servers without that
+extension get a delete followed by a rename.
+
+## Routes
+
+| Route | Purpose |
+|---|---|
+| `POST /attachments` | Upload one file. The body is the raw bytes, the name goes in the `X-Somora-Filename` header. Returns `{hash, mime, kind, size, name}`. Multipart uploads are rejected with status 415. |
+| `GET /attachments/:hash` | Fetch a stored attachment. |
+| `POST /chat/send`, `POST /chat/send-sync`, `POST /spawn-async` | Accept `attachments: [{hash, name, mime, size}]` in the body. |
+
+## Troubleshooting
+
+| What you see | Cause and fix |
+|---|---|
+| `file_search: ripgrep (rg) not found on PATH. Install via your package manager (brew/apt/dnf/pacman) or set $RG_BIN to a custom location.` | Install ripgrep on the somora host, or point `$RG_BIN` at it. There is no built-in fallback. |
+| `file_search on '<resource>': ripgrep (rg) not installed.` | Install ripgrep on the remote machine. |
+| `read blocked: ...` or `write blocked: ...` | The path is under a closed folder. See the table above. |
+| `write refused: ... is outside the project folder` | A builder tried to write outside its project. |
+| `file_read: file_not_found at '<path>'. Did you mean: a.ts, b.ts?` | The file does not exist. Up to three similar names from the same folder are suggested. |
+| `file_list: file_not_found at '<path>'` | The folder does not exist. |
+| `old_string was not found in the file` | The text differs too much. Read the file again and copy the lines exactly. |
+| `old_string matches more than one place in the file` | Add surrounding lines, or pass `replace_all: true`. |
+| `lacks 'image' capability` on `file_read` | The model cannot see. Use `analyze_file` or switch the model. |
+| `analyze_file` is missing from the tool list | `vision.worker` is unset, or the active model can see images itself. |
+| `no vision worker could handle this ...` | Every worker in the chain failed. The message lists each one with its reason. |
+| `worker produced no text within ... output tokens` | The worker spent its output on thinking. Raise `vision.maxOutputTokens` or use another worker. |
+| `vision.worker.no_image_capability` or `vision.worker.no_pdf_capability` in the log at start | A worker lacks a capability. Add it to the model, or set `vision.pdfWorker`. |
+| `multipart uploads are not supported` | Send the raw file bytes as the body of `POST /attachments`. |
+| A file ended up in `<workspace>/<workspace-name>/...` | The relative path started with the workspace folder's name. Drop that prefix. |
+
+## See also
+
+- [Security](security.md): the same path rules next to the shell, web and memory rules.
+- [Resources](resources.md): setting up the SSH machines that `target` names.
+- [Builder](builder.md): the write scope of a builder agent and the task panel.
+- [Language servers](lsp.md): errors a builder gets after each write.
+- [Agents](agents.md): persona files and `agent.yaml`.
+- [Models](models.md): model capabilities and providers.
+- [Projects](projects.md): pinning a session to a project folder.
+- [API](api.md): every route in detail, including the chat routes.
+- [Tools](tools.md): the list of all tools.

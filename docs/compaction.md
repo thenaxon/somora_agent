@@ -1,255 +1,353 @@
 # Compaction
 
-How somora keeps a session inside the context window.
+A session grows with every turn. Before it stops fitting into the
+model's context window, somora folds the older part of the conversation
+into a summary and sends only the recent exchanges word for word. This
+is called compaction.
 
-A session grows with every turn. Somewhere before it stops fitting into
-the model's context window, the older part of the conversation is
-folded into a summary and only the recent exchanges travel to the model
-verbatim. This page describes when that happens, who does it, which
-model does the summarising, and — the part people trip over — what the
-per-model `contextWindow` value actually controls on each engine.
+## What you get
 
-Related: [setup.md → Tunables](setup.md#tunables) (the knobs),
-[models.md](models.md) (recommended `contextWindow` per model),
-[thinking.md](thinking.md), [cache-strategy.md](cache-strategy.md).
+- **Sessions that never run full.** A long conversation keeps going
+  instead of ending in a "prompt too long" error.
+- **Nothing is lost on disk.** Compaction only changes what is sent to
+  the model. The session file stays the full record.
+- **A summary that remembers the work.** It keeps goals, decisions, open
+  questions and which tools already ran on which files.
+- **You choose who summarises.** Name the models that may write
+  summaries, in the order they are tried.
+- **A backup when a model is down.** If one summariser refuses, the next
+  one is asked.
 
-## Two kinds of compaction
+## Set it up
 
-| | who compacts | when | what you see |
-|---|---|---|---|
-| `openai-compatible` | **somora** | before a turn, when the prompt reaches `triggerRatio × inputBudget` (default 0.8; the budget is the window minus the answer, and the number is the one the provider measured last) | a `context compacted` row when the reactive path ran; otherwise nothing — the summary is invisible, the recent pairs are verbatim |
-| `claude-cli`, `codex-cli`, `grok-cli` | **the CLI itself**, inside its own session/thread | at the CLI's own threshold (codex: its server-delivered session cap) | nothing from somora; the engine's own compaction is opaque to it. The `▣` percentage still tells the truth: codex reports its own `modelContextWindow` per thread, and the prompt size it reports is the prompt, cached part included, so somora does not add `cachedInputTokens` on top (that would count the cached part twice and drive the badge past 100 % on long threads). Anthropic counts the other way round, `input_tokens` EXCLUDES the cached part, so claude-cli sums. |
+Compaction works without any setting. Two things are worth doing:
 
-somora's history file (`sessions/<id>.jsonl`) is never shortened by
-either. Compaction only changes what is *sent*; the JSONL stays the
-full record, and REM reads it independently.
-
-## The openai-compatible path in detail
-
-1. **Measure.** The number that decides is the one the provider
-   reported for this session's last request (`usage.prompt_tokens`,
-   kept on the session as `contextTokens`). Only when there is none —
-   a new session, a model switch, a provider that omits usage — does
-   somora fall back to a character estimate: system prompt, latest
-   summary, every user/assistant message after it, and the tool traffic
-   (arguments in full, results capped the way the replay caps them), at
-   **4 characters per token**.
-
-   That estimate is corrected by what the last request actually cost
-   (`tokenRatio`, measured ÷ estimated). Prose runs near 4 characters
-   per token; code, JSON and markup near 2.5. Tool traffic is counted
-   on purpose: a session made of tool calls can carry twenty times more
-   tokens than its visible chat text, and an estimate that only counts
-   chat never triggers on such a session.
-2. **Trigger.** `tokens >= triggerRatio × inputBudget`, where the input
-   budget is `contextWindow − maxTokens` of the **model that will answer
-   this turn**. The output reservation comes out of the same window, so
-   measuring against the full window would let a session walk into a
-   provider 400 while every check says it fits. Switching a long
-   session from a 1M-window model to a
-   131k one triggers a compaction on the next turn; the measured number
-   is dropped on a model switch because tokenizers differ.
-3. **Range.** Everything after the previous summary up to, but not
-   including, the last `safetyCushionPairs` exchanges (default 4) is
-   summarised. Unanswered user messages are never folded in. The
-   previous summary is passed to the worker as *prior summary*, so the
-   result is a rolling summary, not a chain of summaries.
-4. **Worker.** See below — a separate model call, one-shot, no tools.
-   When the cushion covers the whole session there is nothing to
-   summarise; somora then retries once keeping only the last exchange,
-   because an aggressive summary beats a turn that cannot run. After a
-   compaction the next real reading is checked against the trigger, and
-   a compaction that did not clear it is logged rather than assumed to
-   have worked.
-5. **Persist.** The summary is stored with the timestamp it covers
-   (`throughTs`) in the session's meta; later turns replay
-   `[summary] + pairs after throughTs`. CLI engines use the same
-   record when they rebuild a session (a Codex thread that no longer
-   exists, an MCP server rename on claude-cli) — the replay is bounded
-   to the most recent 40 exchanges either way.
-
-**Reactive path.** The estimate can be wrong (tool payloads, images, a
-backend with a smaller real limit than configured). When a backend
-rejects the prompt as too long — `400 "Prompt too long"`, `"maximum
-context length"`, oMLX's prefill guard — the engine forces a compaction
-down to the last exchange, retries the turn once, and leaves a
-`context compacted` engine row. A second refusal surfaces as a
-plain-language error (switch model, or `/reset`) instead of the raw
-400. This path only runs before anything has streamed and before any
-tool has run: retrying later would execute those tools a second time.
-Mid-turn the same refusal ends the turn with an explanation, because the
-work already done cannot be replayed.
-
-**Either way the refusal is read.** It is the one moment a backend states
-its own limits — the window it enforces and how many input tokens it
-counted — and somora takes both: the count corrects this session's
-estimate, and a reported window smaller than the configured one is logged
-with the value to put in `config.yaml`.
-
-## Inside a running turn
-
-Steps 1 to 5 size the conversation *before* the turn. A turn with tools
-grows while it runs — every result, every image, and the tool schemas
-that travel with each request. Sized once, a turn estimated at a few
-tens of thousands of tokens can reach the backend at ten times that,
-die on a raw 400, and lose its work.
-
-So before **every** request of a turn, somora measures what it is about
-to send: all messages, images counted as images rather than as their
-base64 length, plus the tool schemas. It compares that against the
-window minus the model's output reserve minus a 5% margin. If it does
-not fit:
-
-1. **The oldest tool results are shortened** to a one-line notice that
-   says the call already ran and must not be repeated. Nothing is
-   dropped: an assistant message with `tool_calls` and no matching
-   reply is rejected by every OpenAI-compatible backend, and the
-   model's own record of what it did is what stops it repeating work.
-2. If that is not enough, more recent results follow, **except the
-   newest**, which is what the model is reasoning about right now.
-3. As a last resort the newest result is **cut**, keeping its beginning
-   and labelling the cut.
-4. Only when there is nothing left to shorten does the turn stop, with
-   an explanation naming the numbers instead of a raw backend error.
-   The tool results already produced stay in the session, so nothing
-   has to be redone.
-
-A trimmed turn leaves a `context trimmed` engine row, so it is visible
-that the model saw less than the full results.
-
-A **builder** turn ([builder.md](builder.md#long-turns)) goes one step
-further before trimming: when the turn's own traffic passes the trigger
-mid-way, the rounds so far are summarised into a work-state block (what
-was done, what the files look like now, what is left) and the last six
-rounds stay verbatim, then the turn continues on the smaller context.
-Chat agents keep the trimming above; nothing changes for them.
-
-### What a summary keeps
-
-The summary a compaction writes follows a fixed template — the goal,
-what was done, decisions and their reasons, the work state, the
-relevant files, open points, and the tone of the conversation — and
-the pairs after it stay verbatim. Tool calls are not flattened into
-prose: each summarised pair carries its **tool trail** (the tool, the
-essential argument such as a path or a command, and whether it
-succeeded), so a model that continues after the compaction knows which
-file it already wrote and which command already ran, instead of
-repeating them.
-
-**Reading the numbers.** The chat header shows two different things.
-`▣` is occupancy: the prompt size of the turn's **last** request against
-the window. `Σ↑` is spend, and the Σ is the point — it sums every
-request the turn made. Example: 21 tool rounds on a 524k window read
-`▣ 62%` (about 323k tokens in the last request) and `Σ↑ 6.0M` (sent in
-total, because the context travels with every request). Both are
-correct; only the first one says how full it is.
-
-## Which model summarises
-
-`compaction.workers` is an **ordered list** of the models allowed to
-summarise, and that order is the cascade — the first entry is asked
-first, and a model that is not on the list is never a worker:
+1. Give every model the right `contextWindow`. See
+   [What contextWindow controls per engine](#what-contextwindow-controls-per-engine).
+2. Name the models that may summarise. Without this list somora may pick
+   a subscription model, and the summary then counts against that
+   subscription.
 
 ```yaml
 compaction:
   workers: [<small-local-alias>, <hosted-alias>]
 ```
 
-Listed entries are honoured as written, including their window: naming
-a model means you meant it. An entry that matches no configured alias
-or `provider/modelId` is skipped with a `compaction.workers_unresolved`
-warning.
+## Two kinds of compaction
 
-Workers that are currently marked unreachable (see `fallback.retryUnavailableMinutes` in [setup.md](setup.md#tunables) — the note the chat fallback and REM share) are left out of the cascade, unless that would leave nothing to try.
+Who compacts depends on the engine of the model that answers.
 
-`compaction.preferSessionModel: true` puts the session's own model —
-the one answering right now, session override included — in front of
-the list, provided its engine can summarise and its window fits the
-summary with headroom; the list stays the cascade behind it. Off by
-default: a session on a hosted subscription model would otherwise start
-paying for its own summaries. Use it when sessions run on models that
-are loaded and answering while the listed workers may not be (a GPU
-profile that swaps models).
+| Engine | Who compacts | When | What you see |
+|---|---|---|---|
+| `openai-compatible` | somora | Before a turn, when the prompt reaches `triggerRatio` times the input budget | Usually nothing. A `context compacted` row when a compaction ran inside or in reaction to a turn |
+| `claude-cli`, `codex-cli`, `grok-cli` | The CLI itself, inside its own session | At the CLI's own threshold | Nothing from somora |
 
-Without the list, somora picks automatically **from every configured
-model on every engine that has a one-shot path** (claude-cli,
-codex-cli, openai-compatible), in this order:
+The session file `sessions/<id>.jsonl` is never shortened by either
+kind. REM reads it independently.
 
-> every model whose `contextWindow >= estimatedTokens × 1.3`,
-> **smallest window first**
+The rest of this page, up to [Which model summarises](#which-model-summarises),
+describes the `openai-compatible` path.
 
-`compaction.modelOverride` still works and simply goes to the front of
-whatever cascade is in play.
+## Before a turn
 
-**A refusal costs one attempt, not the compaction.** At most
-**three** workers are asked per compaction; each failure is logged as
-`compaction.worker_failed` with the reason and the next candidate, and
-only when all of them refuse does the compaction fail. This matters
-because a worker can fail for reasons that have nothing to do with the
-summary: a memory guard on a busy host, a route being reloaded, a rate
-limit. somora cannot see which machine sits behind which route, so it
-does not guess — it asks the next model.
+### Measuring the session
 
-Three consequences worth knowing:
+somora uses two numbers and takes the larger one:
 
-- The worker may be a **subscription-backed CLI model**. If the
-  smallest fitting window belongs to a Claude or Codex model, the
-  summary is produced through that CLI and counts against that
-  subscription. Nothing in the UI says so. Set `workers` if you
-  want the summariser kept to local models.
-- A `contextWindow` that is **too high** for what the engine can
-  really take makes that model eligible for histories it cannot
-  hold; the summarise call then fails or is compacted again by the
-  CLI. Too **low** just removes it from the candidate list.
-- The history handed to the worker is the *range* above, not the
-  whole session, so a 32k local model is a perfectly good worker for a
-  session that has been compacting all along.
+- **The provider's count.** What the provider reported as prompt size
+  for the session's last request. It is dropped when the session
+  switches to another model, because tokenizers differ.
+- **An estimate.** System prompt, latest summary, every message after
+  it, and the tool traffic, at 4 characters per token. Tool arguments
+  count in full, tool results up to 800 characters each, the same cap
+  the replay uses.
 
-## What `contextWindow` really controls — per engine
+The estimate is corrected by what the last request really cost. Prose
+runs near 4 characters per token, code and JSON near 2.5, so somora
+keeps the factor "measured divided by estimated" per session and applies
+it, limited to between 0.5 and 3.
 
-The same per-model field does three different jobs:
+### The trigger
 
-| meaning | openai-compatible | claude-cli / codex-cli / grok-cli |
+A compaction runs when the size reaches `triggerRatio` times the input
+budget. The input budget is `contextWindow` minus `maxTokens` of the
+model that answers this turn. The answer needs room in the same window,
+so measuring against the full window would let a session run into a
+provider error while every check says it fits.
+
+Switching a long session from a model with a large window to one with a
+small window triggers a compaction on the next turn.
+
+### What gets summarised
+
+Everything after the previous summary, up to but not including the last
+`safetyCushionPairs` exchanges (default 4). The newest message, the one
+being answered, is never part of it. An older message that never got an
+answer is included and marked as unanswered.
+
+The previous summary is handed to the summariser, which carries its
+points over. The result is one rolling summary, not a chain.
+
+When the last exchanges cover the whole session there is nothing to
+summarise. somora then tries once more and keeps only the last exchange.
+
+### What a summary keeps
+
+The summary has seven fixed sections: Goal, Constraints, Decisions,
+Recent Context, Open Questions, Work State and Relevant Files. It is
+written in the language of the conversation and prefers direct quotes.
+
+Tool calls are not flattened into prose. Each summarised exchange
+carries its tool trail: the tool, its key argument such as a path or a
+command, and whether it succeeded. A model that continues after the
+compaction knows which file it already wrote and which command already
+ran.
+
+### Where the summary is stored
+
+The summary is saved in the session's meta data together with the time
+it covers. Later turns send the summary plus the exchanges after that
+time.
+
+`claude-cli` and `codex-cli` use the same record when they have to
+rebuild a session, for example after a Codex thread is gone. That replay
+is limited to the 40 most recent exchanges and 60,000 characters.
+
+### When compaction fails
+
+A failed compaction does not stop the turn. The turn runs on the
+uncompacted history and the checks described below take over. After a
+successful compaction the next real count is compared with the trigger.
+If it is still above, a warning is logged.
+
+## When the backend refuses the prompt
+
+The estimate can be wrong, or the backend can have a smaller limit than
+configured. When a backend rejects the prompt as too long, somora reacts:
+
+| Situation | What happens |
+|---|---|
+| Nothing has streamed and no tool has run | somora compacts down to the last exchange, retries the turn once and leaves a `context compacted` row |
+| The retry is refused too, or nothing could be compacted | The turn ends with a plain message: switch model with `/model` or start over with `/reset` |
+| Tools have already run in this turn | The turn ends with an explanation. The work stays in the session and the next message compacts first |
+
+A turn is not retried after tools have run, because that would run them
+a second time.
+
+The refusal is also read. Backends state the window they enforce and the
+tokens they counted. The count corrects the session's estimate. A
+reported window smaller than the configured one is logged with the value
+to put into `config.yaml`.
+
+## Inside a running turn
+
+A turn with tools grows while it runs: every tool result, every image
+and the tool definitions travel with each request. So before every
+request of a turn, somora measures what it is about to send. Images
+count as images, about 1,300 tokens each, not by their encoded length.
+
+The limit is the window minus the model's `maxTokens` (4,096 if unset)
+minus a 5% margin. The margin is 15% for a provider that never reports
+token counts. If the request does not fit:
+
+1. **The oldest tool results are shortened** to a one-line notice saying
+   the call already ran and must not be repeated. The four newest
+   results stay.
+2. **More recent results follow**, except the newest. That is the one
+   the model is working with right now.
+3. **The newest result is cut** as a last resort. Its beginning is kept
+   and the cut is labelled.
+4. **The turn stops** only when nothing is left to shorten, with a
+   message that names the numbers. Tool results already produced stay in
+   the session.
+
+No message is ever dropped, only shortened, so the model keeps its own
+record of what it did. A trimmed turn leaves a `context trimmed` row.
+
+### Builder turns
+
+A [builder](builder.md#long-turns) turn takes one step before trimming.
+When the next request no longer fits, the earlier rounds of the turn are
+summarised into a work-state block: what was done, what is in progress,
+what is blocked, the next move and the relevant files. The task list is
+appended. The last six rounds stay word for word.
+
+This leaves a `context compacted` row. It uses `workers` and
+`preferSessionModel`, asks at most three models, and falls back to
+trimming when none delivers.
+
+## Which model summarises
+
+A summary is a separate, single model call without tools. Three engines
+can do it: `openai-compatible`, `claude-cli` and `codex-cli`. A
+`grok-cli` model is never a summariser.
+
+### With a workers list
+
+`compaction.workers` is an ordered list. The first entry is asked first,
+and a model that is not on the list never summarises. An entry is an
+alias, a model id or `provider/modelId`.
+
+Entries are used as written, without a window check: naming a model
+means you meant it. An entry that matches no configured model is skipped
+with a `compaction.workers_unresolved` warning. If no entry matches at
+all, the compaction fails.
+
+### Without a list
+
+somora picks from every configured model on the three engines above:
+each model whose `contextWindow` is at least 1.3 times the estimated
+size of the summary request, smallest window first.
+
+Three things follow from this:
+
+- **A subscription model may be picked.** If the smallest fitting window
+  belongs to a Claude or Codex model, the summary runs through that CLI
+  and counts against that subscription. Nothing in the UI says so. Set
+  `workers` to keep summaries on local models.
+- **A wrong `contextWindow` misleads the pick.** Too high makes a model
+  eligible for histories it cannot hold. Too low removes it from the
+  candidates.
+- **A small model is often enough.** The summariser gets only the range
+  to summarise, not the whole session. A 32k local model works well for
+  a session that has been compacting all along.
+
+### Session model first
+
+`compaction.preferSessionModel: true` puts the model that is answering
+the session in front of the list, session override included. It is used
+only when its engine can summarise and its window is at least 1.3 times
+the request. The list stays the order behind it.
+
+It is off by default, because a session on a hosted subscription model
+would start paying for its own summaries. Switch it on when sessions run
+on models that are loaded and answering while the listed workers may not
+be, for example on a GPU host that swaps models.
+
+### Pinning one model
+
+`compaction.modelOverride` names one model by alias or model id. It goes
+to the front of whatever order is in play, ahead of the session model
+and the list. A name that matches nothing is logged as
+`compaction.override_unresolved` and the rest of the order is used.
+
+### When a summariser fails
+
+At most three models are asked per compaction. A refusal costs one
+attempt, not the compaction: the next model is asked. Only when all of
+them refuse does the compaction fail.
+
+A model can fail for reasons that have nothing to do with the summary: a
+busy host, a route being reloaded, a rate limit. A model that could not
+be reached is remembered as unavailable for
+`fallback.retryUnavailableMinutes` (default 60). A model that only
+rejected the request is not.
+
+Chat fallback, REM and compaction share this memory. Models marked
+unavailable are left out before the three attempts are chosen, unless
+that would leave nothing to try. A model that answers is cleared at
+once. The memory is not kept across a restart.
+
+## What contextWindow controls per engine
+
+The same per-model field does three jobs:
+
+| Job | `openai-compatible` | `claude-cli`, `codex-cli`, `grok-cli` |
 |---|---|---|
-| **Compaction trigger** (`triggerRatio ×`) | yes — this is the wall somora compacts against | **no** — the CLI compacts on its own threshold |
-| **Worker selection** (smallest fitting window, engine-agnostic) | yes | yes |
-| **Usage display** (`X / contextWindow` in TUI header and `agent` SSE end event) | yes | yes |
+| Compaction trigger and in-turn limit | yes | no, the CLI compacts on its own threshold |
+| Choice of summariser | yes | yes, except `grok-cli` |
+| Usage display in the header | yes | yes |
 
-So on a CLI engine the value never prevents an overflow — it decides
-whether that model is picked as a summariser for *other* sessions and
-whether the percentage in the header tells the truth. Which is exactly
-why it must be the **effective session limit of the CLI**, not the
-native API window of the model:
+On a CLI engine the value never prevents an overflow. It decides whether
+the model is picked as a summariser for other sessions and whether the
+percentage in the header is true. Set it to the limit the engine really
+enforces:
 
-- **codex-cli**: Codex runs a session against a window it delivers
-  itself and reports per thread as `modelContextWindow` — **258,400**
-  for the GPT-5.6 and GPT-6 models, although the model's API window
-  is 1.05M. somora uses that reported number for the header
-  as soon as the first turn reports it, so the configured value matters
-  before the first turn and for the compaction-worker choice: configure
-  `contextWindow: 258400`. A value of 400000 or 1000000 — the obvious
-  thing to copy from the model card — makes the header claim "68 %
-  free" while codex is already compacting internally, and lets the
-  model be picked as a summariser for histories it will refuse.
-- **claude-cli**: Claude Code sessions run against the model's real
-  window (1M for the Claude 5 family, 200k for Haiku 4.5), so the
-  native value is correct here.
-- **openai-compatible**: use the **server's** limit, not the model
-  card's — vLLM `--max-model-len`, SGLang `--context-length`, oMLX's
-  configured length. With 1000000 configured against a 700k backend
-  somora only compacts at 800k and the backend answers 400 first.
+| Engine | Set `contextWindow` to | Why |
+|---|---|---|
+| `codex-cli` | 258400 | Codex runs every session against its own window, which is smaller than the model's API window. |
+| `claude-cli` | the model's real window | Claude Code sessions run against it: 1M for the Claude 5 family, 200k for Haiku 4.5. |
+| `openai-compatible` | the server's limit | Use vLLM `--max-model-len`, SGLang `--context-length` or oMLX's configured length, not the number on the model card. |
 
-[models.md](models.md) lists the recommended values per model.
+> **Warning:** A value that is too high on `openai-compatible` means
+> somora compacts too late. With 1000000 configured against a backend
+> that takes 700k, compaction starts at about 800k and the backend
+> refuses first.
 
-## Knobs
+Codex reports its window per thread as `modelContextWindow`. somora uses
+that number for the header from the first turn on, so the configured
+value matters before the first turn and for the choice of summariser. A
+value copied from the model card makes the header show free space while
+Codex is already compacting.
+
+## Reading the numbers
+
+The chat header shows two different things:
+
+| Symbol | Meaning |
+|---|---|
+| `▣` | How full the window is: the prompt size of the turn's last request against the window. |
+| `Σ↑` | How much was sent: the sum over every request the turn made. |
+
+A turn with 21 tool rounds on a 524k window can read `▣ 62%` and
+`Σ↑ 6.0M`. Both are correct, because the context travels with every
+request. Only the first says how full the window is.
+
+The percentage is counted the same way on every engine: the whole
+prompt, cached part included. Codex reports `cachedInputTokens` as part
+of its prompt size, so somora does not add it. Claude reports
+`input_tokens` without the cached part, so somora adds the cache
+numbers.
+
+## Settings
+
+All settings live in `config.yaml` and are optional.
 
 ```yaml
 compaction:
-  triggerRatio: 0.8           # fraction of the input budget (openai-compatible only)
-  safetyCushionPairs: 4       # most-recent exchanges never summarised
-  # workers: [<small-local-alias>, <hosted-alias>]   # who may summarise, in the order they are tried
-  # modelOverride: <alias>    # pin the summariser (any engine with a one-shot path)
+  triggerRatio: 0.8
+  safetyCushionPairs: 4
+  # workers: [<small-local-alias>, <hosted-alias>]
+  # preferSessionModel: false
+  # modelOverride: <alias>
+fallback:
+  retryUnavailableMinutes: 60
 ```
 
-Environment overrides `SOMORA_COMPACTION_*` are listed in
-[setup.md → Environment overrides](setup.md#environment-overrides).
+| Setting | Default | Meaning |
+|---|---|---|
+| `compaction.triggerRatio` | 0.8 | Share of the input budget at which a compaction runs. Above 0, at most 1. `openai-compatible` only. |
+| `compaction.safetyCushionPairs` | 4 | The most recent exchanges that are never summarised. |
+| `compaction.workers` | unset | Models that may summarise, in the order they are tried. Unset means automatic choice. |
+| `compaction.preferSessionModel` | false | Ask the session's own model before the workers. |
+| `compaction.modelOverride` | unset | One model that is always asked first. |
+| `fallback.retryUnavailableMinutes` | 60 | How long an unreachable model is skipped by chat, REM and compaction. 1 to 1440. |
+
+Environment variables override the file:
+
+| Variable | Overrides |
+|---|---|
+| `SOMORA_COMPACTION_TRIGGER_RATIO` | `compaction.triggerRatio` |
+| `SOMORA_COMPACTION_SAFETY_PAIRS` | `compaction.safetyCushionPairs` |
+| `SOMORA_COMPACTION_WORKERS` | `compaction.workers`, comma separated |
+| `SOMORA_COMPACTION_MODEL` | `compaction.modelOverride` |
+
+## Troubleshooting
+
+| Symptom | Look for | What to do |
+|---|---|---|
+| The backend still answers "prompt too long" | `engine.context_overflow` in the log, with a hint naming the window the backend enforces | Lower the model's `contextWindow` to that value. |
+| Compaction runs every turn | `engine.compaction_ineffective` | The recent exchanges alone are too big. Lower `safetyCushionPairs` or use a model with a larger window. |
+| Summaries cost subscription usage | `compaction.worker_chosen` shows a CLI model | Set `compaction.workers`. |
+| Compaction fails | `compaction.worker_failed`, `compaction.all_workers_failed`, `compaction.no_model_fits`, `engine.compaction_fail` | Check that the workers are reachable and that one has a large enough window. |
+| A listed worker is never asked | `compaction.workers_unresolved` or `model.unavailable` | Fix the name, or wait until the model is tried again. |
+
+## See also
+
+- [Models](models.md): recommended `contextWindow` per model
+- [Setup](setup.md#tunables): all tunables in one place
+- [Builder](builder.md#long-turns): how long builder turns stay inside
+  the window
+- [Cache strategy](cache-strategy.md): what is sent in which order and
+  why
+- [Thinking](thinking.md): reasoning levels per engine

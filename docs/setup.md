@@ -329,7 +329,7 @@ window it delivers itself and reports on every turn
 CLI engine the value does not trigger somora's compaction anyway — it
 only decides whether the model is picked as a compaction worker and
 what the header percentage claims. See
-[compaction.md](compaction.md#what-contextwindow-really-controls--per-engine)
+[compaction.md](compaction.md#what-contextwindow-controls-per-engine)
 and [models.md](models.md).
 
 <a id="codex"></a>
