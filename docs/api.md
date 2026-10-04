@@ -208,7 +208,7 @@ run `somora auth status` on the host. See
 [setup.md](setup.md#isolated-claude-config-dir).
 
 `sharedIndex` is the vault/wiki retrieval index shared by all agents
-([memory.md](memory.md#mental-model--memory-inbox)). `state` is
+([memory.md](memory.md#where-notes-live)). `state` is
 `ready` when agents read vault/wiki from it, `building` while the
 first build after an update is still running (agents then still answer
 from their own DB), `disabled` when no vault is configured, `failed`
@@ -218,7 +218,7 @@ agent's DB on the first boot after the update) or `sweep` (embedded
 from disk). `null` until the server has opened it.
 
 `memoryEmbedder` is the health of the embedding model behind memory
-retrieval (see [memory.md](memory.md#hybrid-retrieval-mechanics)). The
+retrieval (see [memory.md](memory.md#how-recall-ranks)). The
 server loads it once at boot; `state` is `ok` when the model is loaded,
 `loading` while the (first-run) download is in flight, and `failed` when
 the last attempt threw — `error` then carries the reason. `failed` means

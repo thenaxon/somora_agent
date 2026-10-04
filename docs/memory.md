@@ -1,81 +1,88 @@
 # Memory
 
-> Each agent has a private memory inbox. Memory is plain Markdown files
-> on disk, indexed by SQLite (`sqlite-vec` for vector + FTS5 for BM25)
-> for fast hybrid retrieval. Inboxes are short-term — Deep promotes
-> stable knowledge to the shared [wiki](wiki.md) and deletes the source.
+Every agent keeps its own notes as plain Markdown files. somora finds the
+relevant ones for each message and shows them to the agent before it
+answers, so the agent remembers without being asked to look.
 
-## Three layers, one search
+## What you get
 
-somora unifies three sources behind one retrieval pipeline. Every search
-(auto-injection or explicit `memory_search`) ranks across all three:
+- **Recall without asking.** Notes that fit the current message are
+  added to every turn automatically.
+- **One search over everything.** The agent's own notes, the shared
+  [wiki](wiki.md) and your Obsidian vault are searched together.
+- **Plain files.** A note is a `.md` file. Edit it with any editor, sync
+  it, put it under version control.
+- **Works offline.** The search index and the embedding model run on
+  your machine.
+- **A tidy inbox.** Notes are short-term. The Deep phase moves lasting
+  knowledge into the wiki and removes the note.
 
-| Source | Where | Lifecycle | Source-tag in hits |
+## Try it
+
+Tell the agent something worth keeping:
+
+```
+Remember that the garden gate code is 4711.
+```
+
+The agent writes a note with `memory_write`. Start a new session and ask
+for the gate code: the note is recalled and the agent answers from it.
+
+You can also write a note yourself. Save a file as
+`~/.somora/agents/<name>/memory/gate-code.md` and the agent sees it on
+its next turn.
+
+## The three sources
+
+Recall draws on three places. Every hit carries a tag that says where it
+came from.
+
+| Source | Where it lives | Who writes it | Tag in hits |
 |---|---|---|---|
-| **memory** | `~/.somora/agents/<name>/memory/*.md` | per-agent, short-term, deleted by Deep on promotion | `memory/<slug>` |
-| **wiki** | `<vault>/<wiki-subfolder>/**/*.md` | shared, long-term, single source of truth | `wiki/<path>` |
-| **vault** | rest of `<vault>` outside the wiki subfolder | user-managed, read-only from somora | `vault/<path>` |
+| **memory** | `~/.somora/agents/<name>/memory/*.md` | the agent, you, REM | `memory/<slug>` |
+| **wiki** | `<vault>/<wiki-subfolder>/**/*.md` | Deep and Lucid | `wiki/<path>` |
+| **vault** | the rest of your Obsidian vault | you | `vault/<path>` |
 
-A single `memory_search("garten")` call returns hits from all three,
-ranked by hybrid score with per-source boosts (default: wiki 1.4×,
-memory 0.85×, vault 0.65×). Curated wiki content ranks above raw memory
-inbox content; both rank above unstructured vault notes.
+Memory is private to one agent and short-term. The wiki is shared by all
+agents and long-term. The vault is yours: somora reads it and never
+writes to it.
 
-This document covers the **memory inbox** — the per-agent layer. See
-[wiki.md](wiki.md) for the wiki layer and [agents.md](agents.md) for
-how vault binding works.
+Curated content ranks first. By default a wiki hit counts 1.4 times, a
+memory hit 0.85 times and a vault hit 0.65 times its score.
 
-## Mental model — memory inbox
+This page covers the memory inbox. The wiki has [its own page](wiki.md).
+
+## Where notes live
 
 ```
 ~/.somora/agents/<name>/
-├── memory.db (+ -wal, -shm)      ← derived index of THIS agent's notes, rebuilt from .md if deleted
+├── memory.db (+ -wal, -shm)      ← search index of this agent's notes
 └── memory/
-    ├── *.md                      ← un-consolidated notes the agent has now
-    ├── .deep-skip-cache.json     ← Deep's hash-cache (skipped files)
-    └── .dreams/                  ← REM extraction findings
-        ├── <id>.dream.md         ← pending review
-        └── processed/            ← resolved findings (audit trail)
+    ├── *.md                      ← the notes
+    ├── .deep-skip-cache.json     ← notes Deep looked at and left alone
+    └── .dreams/                  ← REM findings
+        ├── <id>.dream.md         ← waiting for review
+        └── processed/            ← resolved findings
 ```
 
-The `.md` files are the source of truth. The SQLite index is derived —
-delete `memory.db*` and it rebuilds from the `.md` files on next agent
-init. Files survive `git`, `vim`, `rsync`, anything. The agent reads
-them through the same pipeline regardless of who wrote them (you, the
-agent itself via tools, REM extraction, or a sync from another machine).
+The `.md` files are the truth. `memory.db` is built from them: delete it
+and it is rebuilt the next time the agent starts.
 
-The vault and the wiki are indexed **once per instance**, not once per
-agent, in `~/.somora/index/shared.db`. The index belongs to the source,
-not to the reader: every agent would embed exactly the same chunks, so
-one copy serves them all, and one file-watcher on the vault replaces
-one per agent. A new agent's first turn therefore costs nothing beyond
-its own notes. `shared.db` is derived too: delete it and the server
-rebuilds it. When an agent DB still holds vault/wiki rows for the same
-embedding model, those rows are copied over first (seconds, no model
-call) and the vault is swept in the background; agents keep answering
-from their own DB until the shared index is ready. `GET /health` →
-`sharedIndex` shows `building` during that phase and `ready` after
-([api.md](api.md#get-health)).
+The vault and the wiki have one shared index for the whole instance,
+`~/.somora/index/shared.db`. All agents read the same copy, so a new
+agent costs nothing beyond its own notes. This index is rebuilt too when
+you delete it. While it builds, `GET /health` reports
+`sharedIndex: building`, afterwards `ready`.
 
-The inbox is **volatile by design**. Files come in via REM or
-`memory_write`; Deep consolidates them into the wiki and deletes the
-source on Promote/Merge. A clean inbox means everything substantive
-that's been observed is now in the wiki.
+## How recall works
 
-## How retrieval works
+There are two ways a note reaches the agent.
 
-Two paths flow into every chat turn:
+### Automatic recall
 
-### 1. Auto-injection (always on)
-
-The runtime builds an embedding query from the user's current message
-plus the last few turns, runs hybrid search over the agent's own
-memory index and the shared vault/wiki index as one candidate pool,
-takes the top-N hits above a configurable score threshold, and hands
-them to the engine as a `<memory-context>` block. The block is
-per-turn context: every engine places it in front of the user message
-of that turn, not in the system prompt (see
-[cache-strategy.md](cache-strategy.md)).
+For every message somora searches all three sources and hands the best
+hits to the agent as a `<memory-context>` block, placed in front of the
+message:
 
 ```
 <memory-context>
@@ -98,73 +105,171 @@ rather than answering from these notes.
 </memory-context>
 ```
 
-The wording of that header is deliberate and load-bearing. Phrasing
-such as "no tool call required" or calling the wiki "authoritative"
-measurably lowers the tool-call rate of smaller models: it reads as a
-general "you do not need tools here", and it puts recall above the
-actual state of the system. Framing the notes as recollection rather
-than observation, with an explicit "never replaces a tool", keeps the
-rate up. If you customise this block, keep that distinction.
+Up to 5 hits with a score of at least 0.35 are included, capped at 1500
+tokens. All three limits are settings.
 
+> **Note:** The wording of the block header matters. It calls the notes
+> recollection, not observation, and says they never replace a tool.
+> Wording such as "no tool call required" makes smaller models stop
+> using tools. If you change the block, keep that distinction.
 
-The agent sees relevant notes (from any source) without having to call
-a search tool.
+### Recall on demand
 
-Only query-dependent content goes in this block. The wiki topology
-header is not part of it — it is stable for a whole session, so it sits
-in the system prompt instead, where the provider's prefix cache holds
-it. See [wiki.md](wiki.md#overview-block).
+When the automatic block is not enough, the agent searches itself with
+`memory_search` and reads a whole note or page with `memory_get`. Search
+hits are sections of about 400 tokens. `memory_get` returns the full
+file.
 
-### 2. Tools (agent-driven, on demand)
+All six tools are listed under [Tools](#tools).
 
-When auto-injection isn't enough, the agent calls tools:
+## Writing notes
 
+A note gets into the inbox in three ways.
+
+1. **You save a file** in `~/.somora/agents/<name>/memory/`. It is
+   indexed about 1.5 seconds later and the agent sees it on the next
+   turn.
+2. **The agent writes it** with `memory_write`, changes it with
+   `memory_edit` or removes it with `memory_delete`.
+3. **REM proposes it.** After a session REM extracts facts and proposes
+   notes as findings. A finding becomes a note when it is approved with
+   `dream_apply`.
+
+Note names (slugs) are lowercase letters, digits, `-` and `_`. The write
+tools accept nothing else, so an agent cannot write outside its own
+memory folder. Agents cannot write to the wiki or the vault at all.
+
+### Notes on a network share
+
+The file watcher only sees files saved on the somora host. A vault on a
+network share that you edit from another machine sends no file events.
+Those files are picked up by a full sweep every 10 minutes
+(`memory.rescanMinutes`) and at every server start.
+
+If the share is unreachable when the server starts, the watcher retries
+by itself with a growing delay, from 30 seconds up to 10 minutes.
+
+## File format
+
+```markdown
+---
+slug: garden
+description: Notes about the garden
+tags: [home, places]
+created: 2026-04-15
+updated: 2026-05-01
+---
+
+# Garden
+
+The garden is about 2000 m², spread over four adjoining plots …
 ```
-memory_search(query, limit?, minScore?, source?)
-memory_get(reference)                              # full content of one item
-memory_list(tag?, source?, pathPrefix?)             # browse own memory (or wiki/vault/all)
-memory_write(slug, content, frontmatter?)           # write to own inbox
-memory_edit(slug, content, frontmatter?)            # modify existing
-memory_delete(slug)                                 # remove
+
+The frontmatter is optional. `description` is what `memory_list` shows.
+The write tools maintain `created` and `updated`.
+
+To keep a note in the inbox for good, add `wiki_promote: false`. Deep
+then ignores it. This is useful for scratchpads:
+
+```yaml
+---
+slug: scratch
+wiki_promote: false
+---
 ```
 
-`memory_search` ranks across all three sources by default; pass
-`source: 'memory' | 'wiki' | 'vault'` to constrain. `memory_get`
-accepts a reference like `wiki/personen/familie-klein` returned by
-search, fetches the full file content (vs. the snippet shown in
-search hits).
+## How the inbox empties
 
-Search snippets are chunks (~400 tokens, with overlap). Full files
-go through `memory_get` — the agent decides when a snippet is
-enough vs needing the whole page. Adjacent chunks share one paragraph
-of overlap on purpose and may both match; a chunk whose lines lie
-entirely inside another hit from the same file is folded into the
-wider one before results are ranked, so the same section never lands
-twice in the injected block.
+The inbox is not meant to grow. Deep runs every 12 hours, or on demand
+with `dream_run({phase:'deep'})`, and decides for each note:
 
-### Hybrid retrieval mechanics
+| Decision | What happens | The note |
+|---|---|---|
+| **Skip** | Too thin, short-lived, or already in the wiki | stays |
+| **Promote** | A new wiki page is created | is deleted |
+| **Merge** | The content goes into an existing wiki page | is deleted |
 
-- **Vector** — local embeddings via ONNX (`Xenova/all-MiniLM-L6-v2`
-  by default, 384-dim). Configurable in `config.yaml`. The model
-  downloads **once per machine** to `~/.somora/models/transformers/`
-  (a stable location that survives `somora update`) and is shared by
-  every agent. Until that first download finishes — or if it ever
-  fails — retrieval degrades gracefully to BM25-only; it upgrades to
-  hybrid automatically once the model is present, and the next reindex
-  backfills embeddings for anything indexed while it was unavailable.
-  Whether the model is actually loaded is visible on `GET /health` as
-  `memoryEmbedder` (`state: idle | loading | ok | failed`, plus the error);
-  a failed load is also logged once at boot as
-  `memory.embedder_boot_failed`.
-- **BM25** — SQLite FTS5 over chunk text. Tokenizer drops punctuation,
-  lowercases everything (so `[[wiki-link]]` tokenizes to `wiki` and
-  `link`).
-- **Fusion** — min-max normalize each modality independently, weighted
-  sum (default 0.7 vector + 0.3 BM25), apply per-source boost.
-- **Auto-inject minScore** — default 0.35. Hits below this score don't
-  appear in the inject block. Configurable.
+A skipped note is remembered by its content and not looked at again
+until it changes. A mostly empty inbox is the sign that Deep is working.
 
-Tunables live in `config.yaml`:
+## Your Obsidian vault
+
+Point somora at a vault and name the subfolder that holds the wiki:
+
+```yaml
+obsidian:
+  vault: ~/Documents/Vault/
+wiki:
+  enabled: true
+  vaultSubfolder: somora    # ~/Documents/Vault/somora/ becomes the wiki
+  language: de              # de | en
+```
+
+All agents share this vault. The wiki subfolder is recalled as `wiki`,
+everything else as `vault`. Folders that start with a dot (`.obsidian/`,
+`.trash/`, `.git/`) are skipped.
+
+In a vault hit, `--` separates folders:
+`Projects/Personal/Travel.md` is `vault/Projects--Personal--Travel`.
+
+## How recall ranks
+
+You only need this section when recall finds the wrong notes.
+
+Each hit gets a score from two searches that are combined:
+
+- **Meaning.** A local embedding model (`all-MiniLM-L6-v2`) compares the
+  meaning of the question with each section.
+- **Words.** A full-text search (BM25) matches the exact words. Filler
+  words such as "the", "was" or "du" are ignored, in English and German.
+
+The two scores are scaled to the same range and added, 70% meaning and
+30% words by default. The result is multiplied by the weight of its
+source.
+
+The embedding model is downloaded once per machine to
+`~/.somora/models/transformers/`. Until it is there, or if loading
+fails, recall runs on words alone and switches to both by itself later.
+`GET /health` shows the state as `memoryEmbedder`.
+
+### The question and the conversation
+
+The current message is the question. The turns before it only nudge the
+search, so two long answers about something else cannot outvote a short
+question. How strong the nudge is depends on the message:
+
+| The message has | History weight | Setting |
+|---|---|---|
+| three or more content words | 0.3 | `historyWeight` |
+| one or two ("and his wife?") | 0.55 | `historyWeightShort` |
+| none ("you should know that") | 0.8 | `historyWeightEmpty` |
+
+A message with at least one content word is also searched alone, and
+each section keeps the better of its two scores. A page the question
+names is therefore never pushed down by the history.
+
+For a question of one or two words the exact word is the question, so
+the word search gets half of the weight (`shortQueryBm25Weight`).
+
+### Which page wins
+
+Four rules reorder the hits after scoring. They change nothing in the
+index, so a new value applies from the next search.
+
+| Setting | Default | What it does | When to change it |
+|---|---|---|---|
+| `slugMatchBoost` | 1.5 | Lifts a page whose name contains a word of the question. The page about a person rarely repeats the name, pages that mention the person do. | `1` switches it off. |
+| `slugFullNameBoost` | 1.5 | Lifts a page again when the question contains every word of its name (two words or more). | `1` switches it off. |
+| `logDemotion` | 0.5 | Ranks the wiki's monthly change log behind the pages it lists. Switched off automatically when the question is about the chronicle: a month, a year, or words like "when", "changed", "created". | Lower (`0.3`) if logs still win on questions about the thing itself. `1` treats logs like any page. |
+| `pageSupport` | 0.3 | A page that matches in several sections gains from its next two sections, if they reach half of its best one. | Raise (`0.5`) when long pages lose to short mentions. Lower (`0.1`) or `0` when short notes lose to long pages. |
+
+Ranking is sensitive to wording. Before you change a value, write down a
+handful of your own questions with the page you expect, and compare the
+ranks before and after with `memory_search`.
+
+## Settings
+
+All settings live in `config.yaml`. The values shown are the defaults.
 
 ```yaml
 memory:
@@ -175,285 +280,111 @@ memory:
     targetTokens: 400
     overlapTokens: 80
   autoInject:
-    queryTurns: 3            # current message + the 2 turns before it
+    queryTurns: 3
     maxResults: 5
     minScore: 0.35
     maxTokens: 1500
-    historyWeight: 0.3       # how much those turns steer the vector query
-    historyWeightShort: 0.55 # … when the message has only 1–2 content words
-    historyWeightEmpty: 0.8  # … when it has none ("das solltest du wissen oder?")
-    historyTurnChars: 800    # head of each turn that goes into the blend
-    shortQueryBm25Weight: 0.5 # BM25 share for a 1–2-word question (null = hybrid default)
-  rescanMinutes: 10          # full sweep of the vault/wiki index every N minutes
-                             # (0 = off) — catches files saved from another
-                             # machine onto a network share, which the file-
-                             # watcher cannot see; unchanged files are skipped
-                             # by hash, so a sweep of ~1000 files takes ~1 s
+    historyWeight: 0.3
+    historyWeightShort: 0.55
+    historyWeightEmpty: 0.8
+    historyTurnChars: 800
+    shortQueryBm25Weight: 0.5
+  rescanMinutes: 10
   hybrid:
     vectorWeight: 0.7
     bm25Weight: 0.3
-    slugMatchBoost: 1.5      # page whose slug names a query word (1 = off)
-    slugFullNameBoost: 1.5   # … and extra when the query names the page in full (1 = off)
-    logDemotion: 0.5         # the wiki's monthly change logs rank behind the pages (1 = off)
-    pageSupport: 0.3         # a page matching in several sections gains support (0 = off)
-```
-
-**How the query is built.** The current message is the query. The
-previous `queryTurns - 1` turns are context: embedded separately and
-blended into the message embedding at `historyWeight` — so the
-question decides and the conversation nudges. Concatenating everything
-into one text would let two long answers about something else outvote
-a short question. Refinements, measured on replayed real sessions:
-
-- The weight adapts to how much the message says. Three or more
-  content words (everything that is not a filler word like "ok",
-  "kannst", "mir", "so" — a built-in German + English stopword list,
-  also dropped from BM25 queries): `historyWeight`. One or two ("und seine
-  frau?"): `historyWeightShort`. None ("das solltest du aber wissen
-  oder?"): `historyWeightEmpty` — the conversation is the topic.
-- A message with a content word also runs on its own, and a chunk
-  keeps the better of the two vector scores — each query vector's
-  candidates normalised on their own first, because a long blend
-  scores every page higher than a five-word question does. A page the
-  question names outright is never pushed down by the history; a
-  follow-up without a topic word still finds its page through the
-  history.
-- For a one- or two-word question ("wer ist karl?") the exact word
-  match is the question, so BM25 gets `shortQueryBm25Weight` of the
-  fusion instead of the hybrid default.
-- `hybrid.slugMatchBoost` (all searches, not only auto-inject): a chunk
-  whose slug contains a content word of the query is multiplied. The
-  page ABOUT a person or thing rarely repeats its own name — the Karl
-  page says "Karl" once, the family page four times — so BM25 alone
-  ranks the mentions above the page; the name in the slug marks the
-  canonical page.
-
-### Which page wins — the three rules after the fusion
-
-Measured on 26 real questions against a 400-page wiki (2026-10-01; the
-report that started it: an agent asked "how did we set up acme.com on
-dmz-host?", the project page came 7th behind the change log and
-four neighbouring pages, and the agent answered that it knew nothing).
-With all three rules the page is 2nd, the other 25 questions are as
-good or better, and the questions that ARE about the log still find it.
-
-- **`logDemotion` (default 0.5)** — Deep writes a monthly change log
-  (`logs/2026-09`): one dense line per page it created or changed, every
-  keyword of the topic. For "how did we set up X" that line is a pointer;
-  the page about X is the answer. Hits in `logs/` are multiplied by this
-  factor — *unless the question is about the chronicle*: a month name
-  (`september`, `march`), a year or `2026-09`, or a word like *changed*,
-  *when*, *promoted*, *created*, *log* in the question switches the
-  demotion off, so "what changed in September?" and "when was the page
-  created?" keep the log on top. Set `1` to rank logs like any page; a
-  lower value (`0.3`) if your logs keep winning on questions about the
-  thing itself — check with `memory_search` before and after.
-- **`pageSupport` (default 0.3)** — hits are chunks, not pages. A project
-  page answers "how did we set it up" across several sections (DNS,
-  deployment, timeline), each matching only part of the question, while
-  a page with one dense paragraph scores higher on that paragraph. The
-  page's best chunk gains this share of the scores of its next two
-  chunks, counting only chunks that reach half of the best one — so a
-  page that mentions every word somewhere does not outgrow a single
-  exact note. Raise it (`0.5`) when long pages keep losing to short
-  mentions; lower it (`0.1`) or `0` when short memory notes lose to long
-  wiki pages. Measured: `0.3` lifted the project page from unranked to
-  2nd and cost one memory note one rank; `0.5` cost three.
-- **`slugFullNameBoost` (default 1.5)** — `slugMatchBoost` fires for any
-  page whose name shares a word with the question, so "acme website
-  dmz-host setup" boosts `projekte/acme-website` and
-  `infrastruktur/hosts/dmz-host-vm` alike. When the question
-  contains *every* word of a page's name (two words or more), that page
-  is multiplied again — the question means that page. A tried
-  alternative, scaling the boost by the share of name words matched,
-  made longer names lose to shorter ones (`elevenlabs-agents-preise`
-  behind `elevenlabs-agents` for "wie teuer sind elevenlabs agents") and
-  was dropped.
-
-None of the three changes what is indexed; they only reorder hits, so a
-new value takes effect at the next search (config reload or restart).
-When you tune them, keep a handful of your own questions with the page
-you expect and compare ranks before and after — the ranking is
-sensitive to wording, and a value that fixes one question can cost
-another.
-
-The BM25 side sees the message only, with filler words removed
-(`FTS_STOPWORDS` in `src/memory/retrieval.ts`, German and English) —
-otherwise every page that says "was", "du" and "so" a lot outranked
-the one page that says "karl". `POST /agents/<name>/memory/recall-preview`
-runs exactly this path for a message plus a supplied history, which is
-how recall tuning is measured ([api.md](api.md#post-agentsagentmemoryrecall-preview)).
-
-## Writing memory
-
-Three ways content lands in the memory inbox:
-
-1. **You edit `~/.somora/agents/<name>/memory/<slug>.md` directly.** A
-   chokidar file-watcher re-indexes within ~1.5 s of save. The agent
-   sees your edit on the next turn. Works with `vim`, VSCode, Obsidian,
-   any editor that does atomic-rename writes.
-
-   The same watcher covers the vault and the wiki — with one limit: it
-   only sees writes made on the somora host. A vault on a network share
-   (SMB/NFS) that you edit from another machine gets no file events
-   here, so those files are picked up by the periodic sweep instead
-   (`memory.rescanMinutes`, default every 10 minutes) and, as before, by
-   the full sweep at every server start. When the share is unreachable
-   while the server boots, the watcher retries on its own with a growing
-   delay (30 s, 60 s, … up to 10 min) instead of staying silent until the
-   next restart (`memory.watcher_retry` / `memory.watcher_recovered` in
-   the log).
-
-2. **The agent writes it via tool.** `memory_write` (create or replace),
-   `memory_edit` (modify existing, fail if missing), `memory_delete`
-   (remove). Slugs are limited to lowercase `[a-z0-9_-]` so the agent
-   can never accidentally write outside the memory directory.
-
-3. **Via REM (the per-agent dream phase).** REM extracts facts from
-   session transcripts and proposes `memory_write` / `memory_edit` /
-   `memory_delete` findings. You approve via `dream_apply`; the
-   underlying tool call writes the file. Nothing lands in memory
-   without your say-so.
-
-## File format
-
-```markdown
----
-slug: garten
-description: Notes about the garden
-tags: [home, places]
-created: 2026-04-15
-updated: 2026-05-01
----
-
-# Garten
-
-Der Garten ist ca. 2000 m², aufgeteilt auf vier zusammenhängende
-Grundstücke …
-```
-
-Frontmatter is optional. `description` (if present) is shown by
-`memory_list`. The write tools manage `created`/`updated`
-automatically. Add an `wiki_promote: false` field to opt a single
-memory file out of Deep evaluation:
-
-```yaml
----
-slug: scratch
-wiki_promote: false        # stays in memory inbox forever; Deep ignores
----
-```
-
-Useful for scratchpads or transient state you don't want consolidated.
-
-## How memory inboxes get drained
-
-The inbox is not where things accumulate forever. Deep runs every 12h
-(or via `dream_run({phase:'deep'})`) and decides per file:
-
-- **Skip** — too thin, transient, already in wiki. File stays.
-- **Promote** — new wiki topic. New page is created in the wiki.
-  **Source memory file is deleted.**
-- **Merge** — wiki page exists, new content integrated.
-  **Source memory file is deleted.**
-
-After a few Deep runs, your inbox typically contains only:
-- Files Deep has skipped (cached by hash so they're not re-evaluated
-  next run unless content changes)
-- Recent additions since the last Deep run
-
-See [dream-phases.md](dream-phases.md#phase-deep--memory--wiki) for the
-full Deep mechanic. The inbox is intended to look mostly empty most of
-the time — that's a sign Deep is working.
-
-## Obsidian vault as a read source
-
-Configure server-globally:
-
-```yaml
-obsidian:
-  vault: ~/Documents/Vault/
+    slugMatchBoost: 1.5
+    slugFullNameBoost: 1.5
+    logDemotion: 0.5
+    pageSupport: 0.3
 wiki:
-  enabled: true
-  vaultSubfolder: somora    # → ~/Documents/Vault/somora/ becomes the wiki
-  language: de              # de | en — headings, folders, index/log wording (wiki.md)
+  search:
+    boostWiki: 1.4
+    boostMemory: 0.85
+    boostVault: 0.65
 ```
 
-All agents share this single vault, and so do they share its index
-(`~/.somora/index/shared.db`, see the mental model above). Vault notes
-are recalled alongside each agent's own memory. Hits return them as
-`vault/<path>` (slugs use `--` as path separator:
-`Projects/Personal/Travel.md` → `Projects--Personal--Travel`).
+| Setting | Meaning |
+|---|---|
+| `memory.embedding.model` | The local embedding model. |
+| `memory.chunking.targetTokens` | Size of one indexed section. |
+| `memory.chunking.overlapTokens` | How much neighbouring sections overlap. |
+| `memory.autoInject.queryTurns` | The current message plus this many minus one earlier turns steer the search. |
+| `memory.autoInject.maxResults` | Most hits in the automatic block. |
+| `memory.autoInject.minScore` | Hits below this score are left out of the block. Raise to 0.5 or more if the block is noisy. |
+| `memory.autoInject.maxTokens` | Size limit of the block. |
+| `memory.autoInject.historyWeight` | How much earlier turns steer the search for a normal message. |
+| `memory.autoInject.historyWeightShort` | The same for a message with one or two content words. |
+| `memory.autoInject.historyWeightEmpty` | The same for a message with none. |
+| `memory.autoInject.historyTurnChars` | How much of each earlier turn is used. |
+| `memory.autoInject.shortQueryBm25Weight` | Share of the word search for a one- or two-word question. `null` uses `bm25Weight`. |
+| `memory.rescanMinutes` | Full sweep of vault and wiki every N minutes. `0` switches it off. Unchanged files are skipped. |
+| `memory.hybrid.vectorWeight` | Share of the meaning search. |
+| `memory.hybrid.bm25Weight` | Share of the word search. |
+| `memory.hybrid.slugMatchBoost` | See [Which page wins](#which-page-wins). |
+| `memory.hybrid.slugFullNameBoost` | See [Which page wins](#which-page-wins). |
+| `memory.hybrid.logDemotion` | See [Which page wins](#which-page-wins). |
+| `memory.hybrid.pageSupport` | See [Which page wins](#which-page-wins). |
+| `wiki.search.boostWiki` | Weight of a wiki hit. |
+| `wiki.search.boostMemory` | Weight of a memory hit. |
+| `wiki.search.boostVault` | Weight of a vault hit. |
 
-Agents CANNOT write to the vault from somora — `memory_write` is hard-
-scoped to per-agent memory directories; the wiki is written only by
-Deep/Lucid (server-side workers, not agent-direct).
+## Tools
 
-A few notes on vault integration:
+| Tool | What it does |
+|---|---|
+| `memory_search(query, limit?, minScore?, source?)` | Searches all three sources. `source` is `memory`, `wiki`, `vault` or `all` (default). `minScore` defaults to 0, so the agent gets the best hits whatever their score. |
+| `memory_get(reference)` | Returns the full file behind a hit. The reference is what search returned, for example `memory/gate-code` or `wiki/personen/familie-klein`. |
+| `memory_list(tag?, source?, pathPrefix?)` | Lists notes with name, description and tags. Default is the agent's own inbox. `source: "wiki"` with `pathPrefix` browses a wiki folder. |
+| `memory_write(slug, content, frontmatter?)` | Creates or replaces a note in the agent's inbox. |
+| `memory_edit(slug, content, frontmatter?)` | Changes an existing note. Fails when the note does not exist. |
+| `memory_delete(slug)` | Removes a note. Removing a note that is not there is not an error. |
 
-- Dotfile directories (`.obsidian/`, `.trash/`, `.git/`) are skipped.
-- The same hybrid retrieval ranks across both memory + wiki + vault.
-- The wiki subfolder of the vault gets `source: 'wiki'`; the rest of
-  the vault gets `source: 'vault'` so retrieval can boost differently.
+Neighbouring sections of a file overlap on purpose and can both match.
+A section that lies completely inside another hit of the same file is
+folded into it, so the same text never appears twice in the results.
 
-## Tool surface
+The tools reach the model differently per engine: through a local MCP
+server for `claude-cli` and `grok-cli`, as dynamic tools for
+`codex-cli`, and as function definitions for `openai-compatible`
+engines.
 
-```
-memory_search(query, limit?, minScore?, source?)
-                              hybrid recall across memory + wiki + vault.
-                              minScore defaults to 0 (agent gets best top-N).
-memory_get(reference)         full content of a hit; reference like
-                              'memory/<slug>' or 'wiki/<path>'.
-memory_list(tag?, source?, pathPrefix?)
-                              list own memory inbox notes; source: wiki | vault | all
-                              browses the other layers.
-memory_write(slug, content, frontmatter?)
-                              create or replace own-inbox note.
-memory_edit(slug, content, frontmatter?)
-                              modify existing inbox note; fails if missing.
-memory_delete(slug)           remove inbox note (idempotent).
-```
+## When recall feels off
 
-`memory_*` write tools refuse non-memory paths by construction (slug
-regex rejects `/`, uppercase, special chars). Agents cannot write
-to wiki or vault directly — those go through Deep/Lucid.
-
-The tools are exposed three ways:
-- For `claude-cli` (and `grok-cli`): via a local stdio MCP server
-  (`src/mcp/server.ts`).
-- For `codex-cli`: as Codex dynamic tools on the app-server; somora
-  serves each call from the in-process registry.
-- For `openai-compatible` engines: as in-process function definitions
-  via the agent's tool-call loop.
-
-## Debug endpoints
-
-When recall feels off, query the raw index directly:
+Ask the index directly. Replace `<name>` with the agent.
 
 ```bash
-# How many notes are indexed for this agent (across all sources —
-# memory from the agent's own DB, wiki/vault from the shared index)
+# How many notes are indexed for this agent, across all sources
 curl 'http://127.0.0.1:18737/agents/<name>/memory/notes' | jq '.count'
 
-# State of the shared vault/wiki index: building | ready, files, chunks
+# State of the shared vault and wiki index: building | ready
 curl 'http://127.0.0.1:18737/health' | jq '.sharedIndex'
 
-# Is the embedding model loaded? "failed" = BM25-only for every agent
+# Is the embedding model loaded? "failed" means words-only search
 curl 'http://127.0.0.1:18737/health' | jq '.memoryEmbedder'
 
-# Raw search — see exactly what would be auto-injected for a given query
-curl 'http://127.0.0.1:18737/agents/<name>/memory/search?q=garten&minScore=0' \
+# What a search returns, with the score of each of the two searches
+curl 'http://127.0.0.1:18737/agents/<name>/memory/search?q=garden&minScore=0' \
   | jq '.hits[] | {source, slug, score, vecScore, bm25Score, text: .text[0:80]}'
 ```
 
-This returns per-modality scores (`vecScore`, `bm25Score`) and the
-chunk text that matched. Helpful when a recall feels off ("the agent
-didn't see X even though I wrote about it yesterday") to confirm
-whether the issue is at the index level (chunks not present) or higher
-(score below threshold).
+If the note is missing from the search, it is not indexed. If it is
+there with a low score, it fell below `minScore`.
+
+Two log lines to look for: `memory.embedder_boot_failed` when the
+embedding model could not be loaded at start, and `memory.watcher_retry`
+/ `memory.watcher_recovered` when the vault was unreachable.
+
+`POST /agents/<name>/memory/recall-preview` runs the automatic recall
+for a message and a history you supply, without starting a turn. Use it
+to compare settings.
 
 ## See also
 
-- [wiki.md](wiki.md) — the shared long-term wiki layer
-- [dream-phases.md](dream-phases.md) — REM/Deep/Lucid mechanics
-- [agents.md](agents.md) — per-agent setup including memory directory
+- [Wiki](wiki.md): the shared long-term layer, and the overview block
+  that tells agents which pages exist
+- [Dream phases](dream-phases.md): REM, Deep and Lucid in detail
+- [Agents](agents.md): per-agent setup
+- [Cache strategy](cache-strategy.md): why the memory block sits in
+  front of the message and not in the system prompt
+- [API](api.md): `GET /health` and the memory routes

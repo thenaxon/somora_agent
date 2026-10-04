@@ -1,311 +1,263 @@
 # Mobile app
 
-somora mobile — PWA chat client.
+A chat app for your phone. It ships with somora, is served at `/mobile`
+and installs to the home screen like a native app. It does one thing:
+talking to your agents.
 
-A second web app shipped with somora, mounted at `/mobile`. Designed
-for chatting with your agents from a phone over Tailscale. Minimal-
-scope by intent: no tmux terminals, no file viewer, no multi-window
-layout — just chat, switch between agents, send + receive.
+## What you get
 
-## Installing on your phone
+- **Chat with every agent**, in any of its sessions, with live answers.
+- **Sessions and model in the header.** Switch or start a session and
+  pick the model with one tap.
+- **Voice in and out.** Dictate a message, have the answer read aloud.
+- **Photos and PDFs** from the camera, the photo library or files.
+- **Dots that show what happens elsewhere**: which agents are working,
+  where something unread is waiting.
+- **Picks up where it left off** after the phone slept or the
+  connection dropped.
 
-Prerequisites:
+Terminals, file windows and the multi-window desktop stay in the
+[web client](web.md).
 
-1. Tailscale installed and connected on your phone.
-2. somora running with TLS via Tailscale-cert (see [setup.md](setup.md)
-   → "HTTPS via Tailscale"). Plain HTTP works for testing but PWAs need
-   a secure context to install.
+## Install it
 
-Then:
+You need two things first:
 
-1. On the phone, open the somora URL in Safari (iOS) or Chrome
-   (Android): `https://<your-host>.<your-tailnet>.ts.net:18737/mobile/`
-2. **iOS:** tap the share icon (square + up arrow) → "Add to Home
-   Screen". Confirm.
-3. **Android:** Chrome surfaces an "install" prompt automatically (or
-   tap menu → "Install app").
+1. Tailscale installed and connected on the phone.
+2. somora served over HTTPS. A home-screen app only installs from a
+   secure address. The setup guide covers this under
+   "HTTPS (Tailscale)".
 
-The icon (the somora koala) lands on your home screen. Tapping it
-opens somora in standalone PWA mode — no browser chrome, full screen,
-own app switcher entry.
+Then open this address on the phone:
 
-## Using it
+```
+https://<your-host>.<your-tailnet>.ts.net:18737/mobile/
+```
 
-- **Avatar row at the top** lists every agent registered on the
-  server. Tap to switch the active agent. The last-selected agent is
-  remembered across reloads — opening the PWA again drops you straight
-  back into your last conversation.
-- **Header** reads `agent · session ▾ model`. Tap it for a sheet with
-  two lists: the agent's **sessions** (tap to switch, **+ New** to
-  start one) and the **model for this session** (tap to switch; the
-  agent's own model is tagged *default*, a model somora currently
-  cannot reach *unreachable*). An agent reopens in the session you
-  left it in on this phone. A model switch made while a turn runs
-  applies from the next turn. When a backup model answered the last
-  turn, the header shows that model with `⇄` in the warning colour.
-- **Chat area** shows the running history of the open session (`main`
-  until you pick another). Markdown rendering for code blocks, links, lists, etc.
-  Pinch-to-zoom is disabled; a wide code block scrolls horizontally.
-- **Input bar** at the bottom: paperclip (attachments), mic (voice),
-  textarea, send. Enter sends, Shift+Enter inserts a newline. The
-  textarea stays editable while a turn is streaming — sending during
-  a running turn enqueues the message rather than blocking it (see
-  "Queueing & Stop" below).
-- **Stop buttons** (two, same abort) while a turn is in flight: a red
-  square **in the composer next to Send**, plus a small one pinned to
-  the streaming bubble's bottom-right corner. Both always visible (no
-  hover state on touch). Send stays tappable the whole time — Stop is
-  additive, so queued sends keep working mid-turn. A failed or no-op
-  abort shows a short notice instead of silently doing nothing.
-- **Voice input:** tap the mic — it goes red and pulses while
-  recording. Tap again to stop; the transcript lands in the textarea
-  ready for you to edit before sending. Never auto-sends. Requires
-  `stt.enabled: true` in the server config and a browser that
-  supports `getUserMedia` + `MediaRecorder` (every modern phone
-  browser does). The button is hidden when either prerequisite is
-  missing.
-- **Keep the screen awake:** the top bar carries a `☀️`/`🌙` toggle.
-  With it on, the phone's display stays lit while the app is open —
-  no more falling asleep mid-conversation. The lock is re-taken every
-  time you come back to the app, because browsers drop it whenever the
-  page is hidden, and it is released when you leave. The setting is
-  sticky per browser and off by default.
+| Phone | How to install |
+|---|---|
+| **iOS** (Safari) | Share icon, then "Add to Home Screen". |
+| **Android** (Chrome) | Accept the install prompt, or menu, then "Install app". |
 
-  **iOS needs 18.4 or newer.** Apple's Safari accepted the request
-  inside a home-screen web app long before it honoured it; the screen
-  slept anyway until the fix in Safari 18.4 (WebKit bug 254545). On an
-  older iPhone the toggle still switches, and its tooltip says the
-  system may ignore it — there is no other way to tell, since the
-  request itself succeeds. The button is hidden entirely in browsers
-  without the API.
-- **Spoken replies** (when TTS is configured in `tts.*`): the top-bar
-  shows a `🔊`/`🔇` toggle. When on AND you submit a turn via the
-  mic, the assistant's text reply is also played as audio. Toggle is
-  sticky per agent. A Play-button appears on bubbles that have audio
-  so you can replay any time. Full details in
-  [voice.md](voice.md).
-- **Attachments:** tap the paperclip to open the phone's native file
-  picker — iOS / Android both let you choose Camera, Photo Library, or
-  Files there. Pictures (`image/*`) and PDFs are accepted. Picked
-  files upload to the server immediately and appear as chips above
-  the textarea; tap the × on a chip to drop it before sending. You
-  can send with attachments only (no text).
-- **Fallback marker:** a reply produced by the persona's `fallback:`
-  model (or one of a fallback chain) carries a small `⇄ fallback ·
-  <model>` pill under the bubble; its tooltip names the models that
-  failed and why. Same data the desktop chip uses, so a reload keeps it.
-- **Typing indicator:** when you've sent and the agent is still
-  thinking / running tools, a three-dot pulse appears in an agent
-  bubble. It's replaced by the actual streaming response as soon as
-  the model starts emitting text.
-- **Thinking line:** when the engine surfaces its reasoning (see
-  [thinking.md](thinking.md) for which engines do and how the server
-  captures it), the agent bubble gets a single `🧠 thinking` row at
-  the top with a chevron. While the model is still thinking and has
-  not written any reply text, the newest line of its reasoning peeks
-  underneath, muted and cut to one line — no big open block on a
-  phone. Once reply text arrives or the turn finishes, only the row
-  remains. Tap it to expand the full text (plain, scrollable, capped
-  at half the screen; a `(truncated by the server)` note appears
-  when the server cut it) and tap again to collapse — your tap wins
-  for that message. History reloads keep the reasoning on the reply
-  it belongs to. There is no client toggle: the line only exists when
-  the server sends the content, so `thinkingContent.capture: false`
-  in `config.yaml` hides it everywhere.
-- **Connection-lost banner** appears when the SSE stream drops (e.g.
-  Tailscale wakes up, server briefly down). The browser auto-reconnects
-  the EventSource; the banner clears once the stream is back, and the
-  client then asks the server what it missed while it was away — the
-  answer that was streaming during the drop is restored instead of
-  being lost. The same reconciliation runs in the web client.
-- **Background sleep recovery.** iOS Safari aggressively freezes TCP
-  sockets while the PWA is in the background — the stream looks alive
-  but no bytes flow, and no error fires. When you return to the app,
-  the client checks how long since the last server event (heartbeats
-  arrive every 20 s); if the gap is wider than 45 s it tears down the
-  EventSource and reopens it, re-hydrating from `/chat/history` so
-  anything broadcast while you were gone shows up without a reload.
+The somora koala appears on the home screen. The app opens full screen,
+without the browser's bars.
 
-## Activity feed (multi-agent dots + unread)
+## The screen
 
-The avatar strip shows two passive markers per agent that come from a
-single app-wide SSE on `/activity/stream`:
+| Part | What it does |
+|---|---|
+| **Header** | Shows `agent · session ▾ model`. Tap it to switch session or model. On the right: the work badge, the screen-awake toggle and the voice toggle. |
+| **Avatar row** | One tile per agent. Tap to switch. The app remembers the last agent. |
+| **Chat** | The history of the open session. Replies are rendered as Markdown. A wide code block scrolls sideways. |
+| **Input bar** | Paperclip, microphone, text field, Send. Enter sends, Shift+Enter starts a new line. |
 
-- **Streaming dot** — pulses on every agent whose any session is mid-
-  turn, not just the one you're chatting with. When a sentinel job
-  wakes agent B while you're chatting with agent A, B's avatar lights up so you
-  notice the background activity.
-- **Unread dot** — a different-colour dot appears when an agent has
-  movement since you last looked. Counts: peer-to-peer A2A inbounds,
-  sentinel-triggered messages, and assistant final replies. Your own
-  typed messages don't trigger it (even from a different client).
+## Sessions and model
 
-The dot on an avatar covers every session of that agent except the one
-on screen; the session sheet shows which session it is. The badge
-clears the moment the session becomes active and the server broadcasts the cleared state so
-the web tab and TUI also drop their badge. When you return to the PWA
-from the background, the visibility change re-fires the "seen" ping
-on the current agent. State persists across server restarts.
+Tap the header. A sheet opens with two lists.
 
-See [api.md](api.md#get-activitystream) for the underlying endpoint.
+**Sessions.** `main` is first, then the most recently used. Tap one to
+switch. **+ New** asks for a name and opens the new session. If the
+name exists already, that session opens. A dot marks a session with
+something unread, `running` one that is working right now.
 
-## Queueing & Stop
+**Model for this session.** Tap a model to use it for this session
+only. The agent's own model is tagged `default`. Choosing it again
+removes the session's own choice. A model somora cannot reach at the
+moment is tagged `unreachable`.
 
-Submits during a running turn don't block. The optimistic user-bubble
-appears immediately with a small hourglass next to its timestamp
-(`⌛ queued`, or `⌛ queued · N ahead` when other turns sit in front)
-and the marker clears as soon as the server starts that turn. The
-queue serialises on the server side — turns execute in order, no
-preemption. See [api.md](api.md#queuing) for the lock semantics.
+Good to know:
 
-While a bubble still shows the marker, **↩ edit** next to it takes the
-message back into the composer (`DELETE /chat/queue/:id`) so you
-can change it and send again; it then joins the end of the queue. If
-the turn started meanwhile, the marker just clears and a notice says
-so.
+- Each agent reopens in the session you left it in on this phone.
+- A model switch during a running turn applies from the next turn.
+- A switch made elsewhere, by another client or by an agent, shows up
+  in the header right away.
+- When a backup model answered the last turn, the header shows that
+  model with `⇄` in the warning colour.
 
-The header badge (`waiting 3 · running · 1 arriving`, `2 sub-agents`,
-`1 ask`) counts every turn on the session, whoever started it. Tap it for the same four
-sections the desktop shows — Running, Waiting, Arriving, From here —
-as a sheet. **×** on a waiting entry removes it, whoever queued it:
-your own message comes back into the composer, another agent's
-question is reported to that agent as failed with the reason, a
-sub-agent brief as cancelled, a sentinel fire as skipped. Under From
-here, **×** removes a sub-agent or question that has not started yet
-and **■** stops one that runs — the sub-agent with everything it
-started.
+Renaming, archiving and resetting a session are done in the web client.
 
-Stop (composer or bubble — same action) cancels the
-**currently-running** turn only, whatever started it — your message,
-another agent's, a sentinel fire or any other wake. Anything still
-queued behind it keeps its slot and executes when the lock frees.
+## Sending messages
 
-A turn that ends in an error shows a compact **⚠** block inside the
-turn (from the `turn_error` SSE event, and from `error` rows on
-reload), with the media marker under it when the turn produced a
-picture before failing.
+### While the agent is working
 
-## Scope: what's in vs what's not
+You can keep typing. A message sent during a running turn is queued and
+shows `⌛ queued`, or `⌛ queued · N ahead`. Queued messages run in
+order.
 
-**In the mobile client:**
-- One agent at a time, any of its sessions — switch or start one from
-  the header sheet; the model of the open session is shown there and
-  can be switched
-- Live streaming of agent responses with a typing-cursor indicator
-- Streaming-state dot on **every** agent currently mid-turn (not just
-  the active one), plus a dream-phase pulse (REM / DEEP / LUCID) and
-  a REM pending-review counter mirroring the desktop dock; a trailing
-  violet **wiki chip** appears in the avatar row when lucid runs are
-  waiting for review (platform-wide, mirrors the desktop wiki-tile
-  badge)
-- Per-agent unread dot — sentinel fires, A2A inbounds, and assistant
-  replies arriving on inactive agents leave a marker that clears
-  when you tap that agent (cross-client synced)
-- Markdown rendering of agent replies
-- localStorage-persisted last agent, and the last session per agent
-- Voice input via STT (mic-button → record → transcript editable in
-  input → send manually)
-- Spoken replies via TTS (optional, gated by per-agent auto-play
-  toggle; replay button on past bubbles when audio is cached)
-- Camera / photo-roll attachments via the native picker
-- Keeping the display awake while the app is open (iOS 18.4+)
-- A marker on any reply that produced media (a generated image, say):
-  one line naming what exists, pointing at the web app. The PWA renders
-  no images or video itself — but staying silent would make a turn that
-  produced a picture read as an empty-handed answer
-- Typing-indicator while the agent is working
-- Type-during-streaming with queued indicator + Stop on the streaming
-  bubble (parity with the web client)
-- Background sleep recovery — reconnects automatically when the PWA
-  returns from the home-screen after a long pause
+- **↩ edit** next to a queued message takes it back into the text
+  field. Send it again and it joins the end of the queue.
+- **Stop** is the red square beside Send, and a second one on the
+  streaming reply. Both do the same: they cancel the running turn only.
+  Queued messages keep their place.
 
-**Not in the mobile client (use `/web` from a real screen):**
-- tmux session attach / shell terminal
-- File viewer windows
-- Pin-note windows
-- Multi-window layout, drag/resize
+### The work badge
+
+The badge in the header counts everything on the session, whoever
+started it, for example `waiting 3 · running · 1 arriving`. Tap it for
+a sheet with four sections: Running, Waiting, Arriving, From here.
+
+| Button | Where | What it does |
+|---|---|---|
+| **×** | a waiting entry | Removes it. Your own message returns to the text field. Another agent's question is reported back to it as failed, a sub-agent brief as cancelled, a sentinel fire as skipped. |
+| **×** | under "From here" | Removes a sub-agent or question that has not started. |
+| **■** | under "From here" | Stops one that is running. A sub-agent stops with everything it started. |
+
+A line under "From here" that belongs to an agent on this phone can be
+tapped to jump to that session.
+
+### Attachments
+
+Tap the paperclip. The phone offers camera, photo library and files.
+Pictures and PDFs are accepted. Each file uploads at once and appears as
+a chip above the text field. Tap × on a chip to drop it. You can send
+attachments without text.
+
+### Voice
+
+**Dictating.** Tap the microphone. It turns red while recording. Tap
+again and the transcript lands in the text field for you to check. It
+is never sent by itself. The button is hidden when `stt.enabled` is off
+or the browser cannot record.
+
+**Spoken replies.** With text-to-speech configured, the header shows a
+`🔊`/`🔇` toggle. When it is on and you sent the message by voice, the
+reply is also played. The toggle is remembered per agent. Replies with
+audio get a Play button. Details are in the [voice guide](voice.md).
+
+### Keeping the screen awake
+
+The `☀️`/`🌙` toggle in the header keeps the display on while the app
+is open. It is off by default and remembered per browser.
+
+> **Note:** On an iPhone this needs iOS 18.4 or newer. Older versions
+> accept the request and let the screen sleep anyway. The toggle still
+> switches there, and its tooltip says so.
+
+## What the chat shows
+
+| Marker | Meaning |
+|---|---|
+| Three pulsing dots | The agent is thinking or running tools. The reply replaces them. |
+| `🧠 thinking` | The model's reasoning, when the engine provides it. While it thinks, the newest line peeks below. Tap the row to read all of it. |
+| `⇄ fallback · <model>` | A backup model answered. The tooltip names the models that failed and why. |
+| **⚠** block | The turn ended in an error. |
+| Media line | The reply produced a picture or video. The phone shows a line naming it. Open the web client to see it. |
+
+The thinking row only exists when the server captures reasoning.
+`thinkingContent.capture: false` in `config.yaml` hides it everywhere.
+
+## Dots on the avatars
+
+| Dot | Meaning |
+|---|---|
+| **Pulsing** | A turn is running in one of that agent's sessions. |
+| **Unread** | Something arrived since you last looked: a reply, a message from another agent, or a sentinel message. Your own messages do not count. |
+| **REM / DEEP / LUCID pulse** | The agent is in a dream phase. |
+| **Number badge** | REM findings waiting for review. |
+| **Violet wiki chip** | Lucid runs waiting for review. |
+
+The unread dot covers every session of an agent except the one on
+screen. The session sheet shows which session it is. Opening the session
+clears the dot on all your clients, the web client and the TUI included.
+The state survives a server restart.
+
+## When the connection drops
+
+A banner appears while the live connection is down. The app reconnects
+by itself and then asks the server what it missed, so an answer that was
+streaming during the gap is restored.
+
+A phone in the pocket is a special case. iOS freezes the connection of
+a background app without reporting an error. When you return, the app
+checks how long the server has been silent. After more than 45 seconds
+it reconnects and reloads the history.
+
+## Not on the phone
+
+Use the [web client](web.md) for these:
+
+- Terminal sessions and the shell
+- File viewer and pin-note windows
+- Several windows side by side
 - Renaming, archiving or resetting a session
-- Dream-runner-controls UI (manually triggering REM / DEEP / LUCID)
-- Project switcher (still works if you preset projects server-side)
-- The builder task panel (plan, Go, task list, questions) and the steer
-  toggle — a builder can be chatted with from the phone, but its plan is
-  approved and its questions answered in the web client
+- Starting REM, Deep or Lucid by hand
+- Switching the project of a session
+- A builder's task panel: plan, Go, task list and questions. You can
+  chat with a builder from the phone, but its plan is approved and its
+  questions are answered in the web client.
 
-## Configuration
+## Settings
 
 ```yaml
 mobile:
   show:
-    tools: false      # default off — toggle on to render `[tool call · …]`
-                      # and `[tool result · …]` rows inline in the mobile
-                      # chat. Cluttery on small screens, hence default off.
-    memory: false     # default off — toggle on to render `[memory · …]`
-                      # inject rows.
+    tools: false
+    memory: false
 ```
 
-`GET /mobile-config` reports both flags; the mobile client does not
-render tool or memory rows, so they change nothing on the phone today —
-the desktop's `/show` and `/verbose` toggles are where that detail is.
+| Setting | Default | Meaning |
+|---|---|---|
+| `mobile.show.tools` | `false` | Reserved for showing tool calls in the mobile chat. |
+| `mobile.show.memory` | `false` | Reserved for showing recalled notes in the mobile chat. |
 
-## Authentication / security
+Both are reported by `GET /mobile-config`. The mobile app does not draw
+tool or memory rows yet, so they change nothing today.
 
-Same posture as `/web`: LAN-trust on the tailnet. The PWA only works
-when the phone is on the same Tailscale net as the somora server. No
-external public access. There's no login screen — Tailscale is your
-auth boundary. Auth credentials (Anthropic OAuth, OpenAI Codex login)
-stay server-side; the phone just speaks to the somora HTTP API.
+Settings the phone depends on elsewhere:
+
+| What | Setting | Where |
+|---|---|---|
+| Dictating | `stt.enabled` and the speech-to-text provider | setup guide, "Speech-to-Text" |
+| Spoken replies | `tts.*` | [voice guide](voice.md) |
+| Thinking row | `thinkingContent.capture` | [thinking guide](thinking.md) |
+
+## Security
+
+The phone app has no login screen. It works only while the phone is on
+the same Tailscale network as the server, and Tailscale is the access
+boundary. Your model logins stay on the server. The phone only talks to
+the somora API.
 
 ## Troubleshooting
 
-**"Couldn't install" / no install prompt on iOS:**
-- iOS only offers "Add to Home Screen" via the share menu, not via a
-  banner. Tap share → scroll → "Add to Home Screen".
-- The page must be served over HTTPS. Plain HTTP-served somora won't
-  qualify as a PWA.
+**No install option on iOS.** iOS never shows an install banner. Use
+the share icon, scroll, then "Add to Home Screen". The address must be
+HTTPS.
 
-**Chat is blank / agents don't load:**
-- Check that Tailscale is connected on the phone (Tailscale app, status
-  should say "Connected" and list your nodes).
-- `curl -k https://<your-host>.<your-tailnet>.ts.net:18737/healthz`
-  from a laptop on the same tailnet should return `ok`.
+**Blank chat, no agents.** Check that Tailscale is connected on the
+phone. From a laptop on the same network this must answer `ok`:
 
-**Service-worker stuck on old version after deploy:**
-- The service-worker bumps cache name on each release, but if you saw
-  a bug fixed in a new release: pull-to-refresh the PWA twice (first
-  refresh swaps the worker, second sees the new cache).
-- Hard reset: long-press the home-screen icon → "Remove app" → reinstall
-  via the share menu.
+```bash
+curl -k https://<your-host>.<your-tailnet>.ts.net:18737/healthz
+```
 
-**Voice input greyed out:**
-- The button is permanently disabled when `stt.enabled` is `false`
-  in the server's `config.yaml`. Flip to `true`, configure the
-  provider + model (see [setup.md](setup.md) → "Speech-to-Text"),
-  and restart somora.
-- iOS Safari needs explicit microphone permission the first time —
-  tap the mic, accept the prompt. Once accepted, the permission
-  sticks for the PWA.
-- If you see the mic spinner forever after stopping a recording:
-  `/stt/transcribe` is timing out (the worker model might be down
-  or overloaded). Check the somora server logs for the request.
+**The app shows an old version after an update.** Close the app fully
+and open it again. If it still looks old, do it a second time. As a last
+resort remove the app from the home screen and install it again.
 
-**Attachment upload fails / chip never appears:**
-- Big files: somora caps per-kind upload sizes (see
-  `src/attachments/store.ts`). If the picker accepted a file but
-  the upload errors out, the server's response message appears
-  briefly above the input — it tells you what limit was hit.
-- HEIC photos from iOS: most somora pipelines accept HEIC fine, but
-  if an agent reports inability to read the image, set your iPhone's
-  Camera setting to "Most Compatible" (Settings → Camera → Formats)
-  so it captures JPEG instead.
+**Microphone button missing or greyed out.** `stt.enabled` is `false`,
+or no speech-to-text provider is configured. Set it up and restart
+somora. On iOS, allow the microphone the first time the phone asks.
+
+**Recording never finishes transcribing.** The speech-to-text model is
+down or overloaded. Look for the `/stt/transcribe` request in the server
+log.
+
+**An upload fails.** The file is over the size limit for its kind. The
+server's message appears briefly above the text field and names the
+limit.
+
+**The agent cannot read an iPhone photo.** Switch the camera to
+"Most Compatible" under Settings, Camera, Formats, so it saves JPEG.
 
 ## Building from source
 
-The mobile PWA lives under `web-mobile/` in the somora repo:
+The app lives in `web-mobile/` in the somora repository:
 
 ```text
 web-mobile/
-├── package.json        # vite + react, isolated from web/
-├── vite.config.ts      # base: '/mobile/', dev-server :5174
+├── package.json        # vite + react, separate from web/
+├── vite.config.ts      # base: '/mobile/', dev server on :5174
 ├── src/
 │   ├── components/
 │   ├── hooks/
@@ -317,8 +269,15 @@ web-mobile/
     └── icon-{192,512}.png
 ```
 
-Built via root `package.json`'s `build:mobile` script, which runs `cd
-web-mobile && npm ci && npm run build`. `npm pack`'s `prepack` hook
-runs `build:all` so the tarball always contains both `web/dist` and
-`web-mobile/dist`. `somora update` picks this up automatically — no
-manual step needed for end users.
+`npm run build:mobile` builds it. `npm pack` builds both web apps
+first, so a release always contains them, and `somora update` needs no
+extra step.
+
+## See also
+
+- [Web client](web.md): the full desktop
+- [Voice](voice.md): speech-to-text and spoken replies
+- [Thinking](thinking.md): which engines show their reasoning
+- [Setup](setup.md): HTTPS via Tailscale, speech-to-text
+- [API](api.md): `GET /activity/stream`, `DELETE /chat/queue/:id`,
+  `GET /mobile-config`
