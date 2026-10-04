@@ -287,6 +287,8 @@ export type Turn =
       details?: string;
     }
   | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' }
+  /** The somora lettering, greeting an empty session once per run. */
+  | { kind: 'banner'; id: string; lines: readonly string[]; tagline: string; hint: string }
   /**
    * Media an agent produced during the turn. A terminal can't show a
    * picture, so this is the PATH — which is the more useful half here

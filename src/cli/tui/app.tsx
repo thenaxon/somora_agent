@@ -15,6 +15,7 @@ import { THINKING_TAIL_LINES, tailLines } from './thinking-text.ts';
 import { nextId, summarize } from './format.ts';
 import { rememberAgent } from './state.ts';
 import { formatWorkCounters } from './work-queue.ts';
+import { BANNER_COMPACT, BANNER_MOTTO, BANNER_TAGLINE, BANNER_TAGLINE_SHORT, BANNER_WIDE, bannerShape, isUtf8Locale } from '../banner.ts';
 import type {
   AgentInfo,
   PendingQueuedTurn,
@@ -67,6 +68,7 @@ export function App({
 }: Props) {
   const { exit } = useApp();
   const apiRef = useRef(new Api(base));
+  const bannerShownRef = useRef(false);
 
   const [agent, setAgent] = useState(initialAgent);
   const [session, setSession] = useState(initialSession);
@@ -381,6 +383,19 @@ export function App({
         const replayed = mapHistoryToTurns(events);
         if (replayed.length > 0) {
           setTurns(replayed);
+        } else if (!bannerShownRef.current) {
+          // An empty session is greeted with the lettering — once per run.
+          const shape = bannerShape({ isTTY: process.stdout.isTTY === true, columns: process.stdout.columns, utf8: isUtf8Locale() });
+          if (shape !== 'none') {
+            bannerShownRef.current = true;
+            appendTurn({
+              kind: 'banner',
+              id: nextId(),
+              lines: shape === 'wide' ? BANNER_WIDE : BANNER_COMPACT,
+              tagline: shape === 'wide' ? BANNER_TAGLINE : BANNER_TAGLINE_SHORT,
+              hint: shape === 'wide' ? `${BANNER_MOTTO}  ·  type a message to start, /help for commands` : `${BANNER_MOTTO}  ·  /help for commands`,
+            });
+          }
         }
       } catch {
         /* history endpoint failures are non-fatal — leave scrollback empty */

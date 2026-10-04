@@ -30,6 +30,7 @@ import {
 import { isOperatorError, tailscaleState } from '../setup/tailscale.ts';
 import { SOMORA_VERSION } from '../version.ts';
 import { launchdPlistPath } from './launchd.ts';
+import { isUtf8Locale, renderBanner } from './banner.ts';
 
 const HOME = homedir();
 const SOMORA_HOME = process.env.SOMORA_HOME ?? join(HOME, '.somora');
@@ -910,7 +911,12 @@ export async function runSetupCli(args: string[]): Promise<number> {
   }
   mkdirSync(SOMORA_HOME, { recursive: true });
   const ctx: Ctx = { p: new Prompter(), needsRestart: false };
-  say(bold(`somora setup`) + dim(`  ${SOMORA_VERSION}`));
+  // The lettering on a full run, unless the installer has just shown it.
+  const banner = !only && process.env.SOMORA_BANNER_SHOWN !== '1'
+    ? renderBanner(`setup ${SOMORA_VERSION}`, { isTTY: process.stdout.isTTY === true, columns: process.stdout.columns, utf8: isUtf8Locale() })
+    : '';
+  if (banner) process.stdout.write(`${banner}\n`);
+  else say(bold(`somora setup`) + dim(`  ${SOMORA_VERSION}`));
   if (!only) say(dim('  Enter takes the suggestion in [brackets]. Ctrl-C stops; run it again to pick up where you left off.'));
   const steps: Step[] = only ? (only === 'start' ? ['start'] : [only, 'start']) : [...STEPS];
   try {

@@ -18,6 +18,7 @@ import { sessionSlugOf } from '../../engine/a2a.ts';
 import { Box, Text } from 'ink';
 import type { FromSystemKind, Turn, TurnOrigin } from './types.ts';
 import { renderInline } from './markdown.tsx';
+import { BANNER_HEX } from '../banner.ts';
 import { THINKING_MAX_LINES, capLines, hiddenLinesMarker } from './thinking-text.ts';
 
 export interface VerboseFlags {
@@ -77,7 +78,23 @@ export function TurnView({
       return <MediaNotice items={turn.items} />;
     case 'system':
       return <SystemNotice text={turn.text} tone={turn.tone} />;
+    case 'banner':
+      return <Banner lines={turn.lines} tagline={turn.tagline} hint={turn.hint} />;
   }
+}
+
+function Banner({ lines, tagline, hint }: { lines: readonly string[]; tagline: string; hint: string }) {
+  return (
+    <Box flexDirection="column" marginTop={1} marginBottom={1} paddingLeft={2}>
+      {lines.map((l, i) => (
+        <Text key={i} color={BANNER_HEX} wrap="truncate">
+          {l}
+        </Text>
+      ))}
+      <Text>{tagline}</Text>
+      <Text color="gray">{hint}</Text>
+    </Box>
+  );
 }
 
 function UserTurn({

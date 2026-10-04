@@ -466,9 +466,44 @@ finish() {
   printf '\n    Docs: https://github.com/thenaxon/somora_agent#readme   Update later: somora update\n\n'
 }
 
+# The somora lettering — only on a UTF-8 terminal; the compact one below
+# 60 columns. Same lines as src/cli/banner.ts.
+banner() {
+  local cols utf8="" mint="" line
+  [ -t 1 ] || return 1
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) utf8=1 ;; "") [ "$(uname -s)" = "Darwin" ] && utf8=1 ;; esac
+  [ -n "$utf8" ] || return 1
+  cols="${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}"
+  mint=$'\033[38;2;126;184;154m'
+  printf '\n'
+  if [ "$cols" -ge 60 ]; then
+    while IFS= read -r line; do printf '  %s%s%s\n' "$mint" "$line" "$RST"; done <<'ART'
+███████╗ ██████╗ ███╗   ███╗ ██████╗ ██████╗  █████╗
+██╔════╝██╔═══██╗████╗ ████║██╔═══██╗██╔══██╗██╔══██╗
+███████╗██║   ██║██╔████╔██║██║   ██║██████╔╝███████║
+╚════██║██║   ██║██║╚██╔╝██║██║   ██║██╔══██╗██╔══██║
+███████║╚██████╔╝██║ ╚═╝ ██║╚██████╔╝██║  ██║██║  ██║
+╚══════╝ ╚═════╝ ╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝
+ART
+    printf '  %s\n' "Build your own AI team. Local-first agents that never forget."
+  elif [ "$cols" -ge 22 ]; then
+    while IFS= read -r line; do printf '  %s%s%s\n' "$mint" "$line" "$RST"; done <<'ART'
+┌─┐┌─┐┌┬┐┌─┐┬─┐┌─┐
+└─┐│ │││││ │├┬┘├─┤
+└─┘└─┘┴ ┴└─┘┴└─┴ ┴
+ART
+    printf '  %s\n' "Local-first agents that never forget."
+  else
+    return 1
+  fi
+  printf '  %sRun. Rest. Dream.  ·  installer (%s)%s\n\n' "$DIM" "$VERSION" "$RST"
+  # The assistant started at the end does not show it a second time.
+  export SOMORA_BANNER_SHOWN=1
+}
+
 main() {
   parse_args "$@"
-  printf '%ssomora installer%s  %s(%s)%s\n' "$B" "$RST" "$DIM" "$VERSION" "$RST"
+  banner || printf '%ssomora installer%s  %s(%s)%s\n' "$B" "$RST" "$DIM" "$VERSION" "$RST"
   detect_platform
   install_system_packages
   install_node
