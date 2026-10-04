@@ -411,8 +411,7 @@ Details that matter when you pick a mapping:
 | Worker | Engines |
 |---|---|
 | Vision worker for `analyze_file` | `openai-compatible` only |
-| REM | `openai-compatible` only |
-| Deep, Lucid, compaction | `openai-compatible`, `claude-cli`, `codex-cli` |
+| REM, Deep, Lucid, compaction | `openai-compatible`, `claude-cli`, `codex-cli` |
 
 `grok-cli` cannot be a worker of any kind.
 

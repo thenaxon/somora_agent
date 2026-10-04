@@ -4,10 +4,12 @@
 // via the dream tools.
 //
 // Worker model is configured per-agent in agent.yaml under `rem.model`.
-// For v1 the worker MUST be an openai-compatible provider (uses the
-// chat.completions API directly). claude-cli / codex-cli as worker is
-// future work — would require routing through their respective adapters
-// with a synthetic JSON-output prompt.
+// Any engine with a one-shot path can be the worker: an
+// openai-compatible provider is asked through chat.completions here, a
+// model on claude-cli or codex-cli (a subscription, no endpoint of its
+// own) through the same one-shot callers Deep and Lucid use
+// (deep-llm.ts). The first version only knew the endpoint path, and a
+// REM switched on with a subscription model failed on every run.
 //
 // Wiki-awareness (v2.5): the LLM sees the wiki index plus top-N
 // embedding-matched wiki pages so it can dedupe against canonical
@@ -28,6 +30,7 @@ import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-re
 import { samplingBody } from '../engine/sampling.ts';
 import { isAvailabilityError } from '../engine/availability.ts';
 import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable } from '../engine/model-availability.ts';
+import { callOneShotOn, hasOneShotPath } from './deep-llm.ts';
 import { normalizeSlug } from '../memory/slug.ts';
 
 export interface ExtractContext {
@@ -211,21 +214,23 @@ const VALID_ACTIONS: ReadonlySet<FindingAction> = new Set([
 ]);
 
 /**
- * Build the OpenAI client for the worker model. v1 requires baseUrl+apiKey
- * (i.e. openai-compatible providers). claude-cli/codex-cli workers would
- * need different routing — explicit error keeps the failure visible.
+ * The OpenAI client for a worker on an openai-compatible provider; null
+ * for a worker on a CLI engine, which is asked through its one-shot
+ * caller instead. An engine without either path (grok-cli) is an
+ * explicit error — the failure stays visible.
  */
-function buildClient(model: ResolvedModel): OpenAI {
-  if (model.provider.engine !== 'openai-compatible') {
-    throw new Error(
-      `dream worker model '${model.providerName}/${model.modelId}' is on engine '${model.provider.engine}'; ` +
-        `only openai-compatible engines are supported as dream workers in v1.`,
-    );
+function buildClient(model: ResolvedModel): OpenAI | null {
+  if (model.provider.engine === 'openai-compatible') {
+    return createPatientOpenAIClient({
+      baseURL: model.provider.baseUrl,
+      apiKey: model.provider.apiKey,
+    });
   }
-  return createPatientOpenAIClient({
-    baseURL: model.provider.baseUrl,
-    apiKey: model.provider.apiKey,
-  });
+  if (hasOneShotPath(model.provider.engine)) return null;
+  throw new Error(
+    `dream worker model '${model.providerName}/${model.modelId}' is on engine '${model.provider.engine}', ` +
+      `which cannot run REM — use a model on claude-cli, codex-cli or an openai-compatible provider.`,
+  );
 }
 
 /**
@@ -587,59 +592,84 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         eventsInChunk: chunk.events.length,
         estimatedTokensIn: reqTokens,
       });
-      const completion = await Promise.race([
-        // Same reasoning mapping + one retry on rejection as chat turns
-        // (src/engine/reasoning-retry.ts); the adjusted value sticks for
-        // the remaining chunks of this run. `max_tokens` from the model's
-        // `maxTokens` bounds a runaway thinking phase on reasoning workers.
-        withReasoningRetry(
-          reasoning,
-          (reasoningBody) =>
-            client.chat.completions.create(
-              {
-                model: model.modelId,
-                messages: [
-                  { role: 'system', content: systemPrompt },
-                  { role: 'user', content: userMsg },
-                ],
-                stream: false,
-                ...(model.model.maxTokens ? { max_tokens: model.model.maxTokens } : {}),
-                ...samplingBody(model.model.sampling),
-                ...userTagParam(model, ctx.agent, 'rem'),
-                ...reasoningBody,
-              },
-              // Pass the abort signal through to the HTTP layer so shutdown /
-              // user-activity aborts cancel the in-flight request cleanly
-              // instead of dying later with an opaque transport error
-              // ("terminated") when the process tears down its sockets.
-              ctx.signal ? { signal: ctx.signal } : undefined,
-            ),
-          {
-            engine: 'openai-compatible',
-            phase: 'rem',
-            agent: ctx.agent,
-            provider: model.providerName,
-            model: model.modelId,
-          },
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`chunk ${i + 1}/${totalChunks} timed out after ${ctx.chunkTimeoutMs}ms`)),
+          ctx.chunkTimeoutMs,
         ),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`chunk ${i + 1}/${totalChunks} timed out after ${ctx.chunkTimeoutMs}ms`)),
-            ctx.chunkTimeoutMs,
+      );
+      let text: string;
+      let finishReason: string | null | undefined;
+      let usage: unknown;
+      if (client) {
+        const openai = client;
+        const completion = await Promise.race([
+          // Same reasoning mapping + one retry on rejection as chat turns
+          // (src/engine/reasoning-retry.ts); the adjusted value sticks for
+          // the remaining chunks of this run. `max_tokens` from the model's
+          // `maxTokens` bounds a runaway thinking phase on reasoning workers.
+          withReasoningRetry(
+            reasoning,
+            (reasoningBody) =>
+              openai.chat.completions.create(
+                {
+                  model: model.modelId,
+                  messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userMsg },
+                  ],
+                  stream: false,
+                  ...(model.model.maxTokens ? { max_tokens: model.model.maxTokens } : {}),
+                  ...samplingBody(model.model.sampling),
+                  ...userTagParam(model, ctx.agent, 'rem'),
+                  ...reasoningBody,
+                },
+                // Pass the abort signal through to the HTTP layer so shutdown /
+                // user-activity aborts cancel the in-flight request cleanly
+                // instead of dying later with an opaque transport error
+                // ("terminated") when the process tears down its sockets.
+                ctx.signal ? { signal: ctx.signal } : undefined,
+              ),
+            {
+              engine: 'openai-compatible',
+              phase: 'rem',
+              agent: ctx.agent,
+              provider: model.providerName,
+              model: model.modelId,
+            },
           ),
-        ),
-      ]);
-      // Defensive: backends can answer 200 with an error body that has no
-      // `choices` (omlx prefill-memory-guard rejections, 2026-07-24). A
-      // bare `completion.choices[0]` access would throw the useless
-      // "Cannot read properties of undefined (reading '0')" — surface the
-      // actual backend payload instead.
-      const choice = completion.choices?.[0];
-      if (!choice?.message) {
-        const bodyPreview = JSON.stringify(completion)?.slice(0, 500) ?? '(unserializable)';
-        throw new Error(`backend response has no choices — raw body: ${bodyPreview}`);
+          timeout,
+        ]);
+        // Defensive: backends can answer 200 with an error body that has no
+        // `choices` (omlx prefill-memory-guard rejections, 2026-07-24). A
+        // bare `completion.choices[0]` access would throw the useless
+        // "Cannot read properties of undefined (reading '0')" — surface the
+        // actual backend payload instead.
+        const choice = completion.choices?.[0];
+        if (!choice?.message) {
+          const bodyPreview = JSON.stringify(completion)?.slice(0, 500) ?? '(unserializable)';
+          throw new Error(`backend response has no choices — raw body: ${bodyPreview}`);
+        }
+        text = choice.message.content ?? '';
+        finishReason = choice.finish_reason;
+        usage = completion.usage;
+      } else {
+        // A worker on a CLI engine (claude-cli, codex-cli): one stateless,
+        // tool-less question through the same caller Deep and Lucid use.
+        // This model only — the backup chain is walked below, per chunk.
+        text = await Promise.race([
+          callOneShotOn({
+            workerModel: model,
+            systemPrompt,
+            userMessage: userMsg,
+            timeoutMs: ctx.chunkTimeoutMs,
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+            logCtx: { agent: ctx.agent, phase: 'rem', chunkIndex: i + 1, totalChunks },
+            ...(ctx.thinking ? { thinking: ctx.thinking } : {}),
+          }),
+          timeout,
+        ]);
       }
-      const text = choice.message.content ?? '';
       let chunkFindings: ReturnType<typeof parseFindings>;
       try {
         chunkFindings = parseFindings(text);
@@ -658,7 +688,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
             workerModel: `${model.providerName}/${model.modelId}`,
             err: parseErr.message,
             responseChars: text.length,
-            finishReason: choice.finish_reason,
+            finishReason,
           });
           i -= 1;
           continue;
@@ -676,7 +706,7 @@ export async function extractFromSession(ctx: ExtractContext): Promise<ExtractRe
         responseChars: text.length,
         responsePreview: text.slice(0, 300).replace(/\s+/g, ' ').trim(),
         durationMs: Date.now() - reqStart,
-        usage: completion.usage,
+        usage,
       });
       if (ctx.onChunkComplete) {
         await ctx.onChunkComplete({

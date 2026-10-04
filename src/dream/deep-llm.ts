@@ -121,8 +121,15 @@ export async function callOneShotLLM(args: OneShotArgs): Promise<string> {
   throw lastErr;
 }
 
-/** Dispatch to the engine adapter of ONE model. */
-async function callOneShotOn(args: OneShotArgs): Promise<string> {
+/** Which engines can answer a one-shot call at all. */
+export function hasOneShotPath(engine: string): boolean {
+  return engine === 'openai-compatible' || engine === 'claude-cli' || engine === 'codex-cli';
+}
+
+/** Dispatch to the engine adapter of ONE model — no backups, no outage
+ *  bookkeeping. REM uses it for a worker on a CLI engine: it walks its
+ *  own chain per chunk. */
+export async function callOneShotOn(args: OneShotArgs): Promise<string> {
   const engine = args.workerModel.provider.engine;
   switch (engine) {
     case 'openai-compatible':
