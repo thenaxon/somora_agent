@@ -1,145 +1,78 @@
-# somora docs — start here
+# somora docs
 
-A short guide so you don't have to read every page to get started.
-somora is a **local-first gateway for personal AI agents with persistent
-memory**. It runs as a long-lived service on your own machine, exposes
-an HTTP+SSE API plus three first-party clients (TUI, web desktop,
-mobile PWA), and lets you route conversations across Claude /
-ChatGPT / any OpenAI-compatible model — all without giving up
-ownership of the chat log, the memory layer, or your knowledge base.
+somora runs AI agents on your own machine. They remember what you told
+them, work together as a team, and you talk to them from the browser,
+the phone or the terminal. This page shows where to start and what
+each page is for.
 
-## What is somora — in one paragraph
+## What somora is
 
-You define **agents** (personas with their own model, memory inbox, and
-session). They come in two kinds: **chat agents** — the ones you talk
-to, that remember and coordinate — and **builders**, coding harnesses
-that take a repository, plan, build, test and report
-([builder.md](builder.md)). You talk to both from the TUI, the browser,
-or your phone.
-The server orchestrates the actual LLM call against the engine you
-configured (subscription or API), persists every message as JSONL,
-and runs a three-phase background **dream system** that turns raw
-session content into curated memory notes and a shared wiki over time.
-All of that stays on your machine.
+- **Agents with memory.** Each agent has its own character, model and
+  notes. Background phases turn finished conversations into notes and
+  into a shared wiki.
+- **Your models.** A Claude or ChatGPT subscription, a local model
+  server or an API key. somora brings no model of its own.
+- **Three clients.** A desktop in the browser, an app for the phone and
+  a terminal client. All talk to the same server.
+- **Real work.** Agents read and write files, run commands, search the
+  web, drive a browser and hand work to each other.
+- **Local first.** Conversations, notes and the wiki are plain files on
+  your machine.
+
+## Start here
+
+```bash
+curl -fsSL https://somora.ai/install.sh | bash
+```
+
+The installer sets everything up and starts an assistant that connects
+a model, creates your first agent and sends it a test message. That
+takes about ten minutes. [Setup](setup.md) explains each step.
 
 ## Choose your path
 
-You probably don't need every page below right away.
+| I want to … | Open |
+|---|---|
+| chat from the browser or the phone | [Setup](setup.md#https-via-tailscale) for HTTPS, or run `somora setup access`. Then [Web client](web.md) and [Mobile app](mobile.md). |
+| add a provider or a model | [Setup](setup.md#connect-models) and [Models](models.md) |
+| create another agent | [Agents](agents.md) |
+| have my agents know who is who | [Team](team.md) |
+| let an agent do real work | [Tools](tools.md), then [File tools](files.md), [Resources](resources.md) and [tmux](tmux.md) |
+| teach an agent a recipe | [Skills](skills.md) |
+| decide what each agent may use | [Tools](tools.md), [MCP servers](mcp.md#per-agent-tool-control) and [Skills](skills.md#per-agent-visibility) |
+| have an agent build software | [Builder agents](builder.md) |
+| give agents long-term memory | [Memory](memory.md), [Wiki](wiki.md) and [Dream phases](dream-phases.md) |
+| talk instead of type | [Voice](voice.md) and [Realtime voice](realtime-voice.md) |
+| have agents make images or video | [Image generation](imagegen.md) and [Video generation](videogen.md) |
+| have agents act on a schedule | [Sentinel](sentinel.md) |
+| know what is exposed and to whom | [Security](security.md) |
+| build my own client | [HTTP API](api.md) |
 
-**I just want to try it.** Start with the [project README](../README.md)
-quickstart — one line installs everything and starts the setup
-assistant, which connects a model, creates your first agent and sends
-it a test message. ~10 minutes.
+## The words somora uses
 
-**I want to chat from the browser or my phone.** Read
-[setup.md → HTTPS via Tailscale](setup.md#https-via-tailscale)
-(or run `somora setup access`, which does it for you)
-to get a real cert, then open `https://<your-tailnet>.ts.net:18737/web/`
-in the browser. The mobile PWA is the same URL with `/mobile/` — see
-[mobile.md](mobile.md).
+| Word | Meaning |
+|---|---|
+| **agent** | A persona with its own instructions, model, notes and conversations. Lives in `~/.somora/agents/<name>/`. A chat agent talks and coordinates. A builder plans and writes software. |
+| **session** | One conversation with one agent. Stored as a file, can be resumed and switched. |
+| **engine** | The way somora reaches a model: `claude-cli` (Claude subscription), `codex-cli` (ChatGPT subscription), `grok-cli` (SuperGrok subscription) or `openai-compatible` (any server or API that speaks the OpenAI chat format). |
+| **provider, model, alias** | `config.yaml` lists providers and the models on each. An alias is a short name for a model that works everywhere. |
+| **memory** | An agent's own short-term notes. Recalled automatically for every message, together with the wiki and your vault. |
+| **wiki** | The long-term knowledge base shared by all agents. Lives in a folder, usually inside your Obsidian vault. |
+| **dream phases** | Background work. REM turns conversations into notes. Deep moves lasting notes into the wiki. Lucid reviews the wiki. |
+| **project** | A working set of paths and notes pinned to a session, shown to the agent in every turn. |
+| **resource** | Another machine reached over SSH. File, shell and tmux tools can target it. |
+| **skill** | A Markdown how-to the agent loads when the situation calls for it. |
+| **tool** | Something an agent can call: read a file, run a command, search the web, ask another agent. |
+| **sentinel** | A trigger that starts an agent turn on a schedule. |
 
-**I want to add a new provider / model.** [setup.md → Configuring
-providers](setup.md#connect-models) plus the comment block in
-[`config.example.yaml`](../config.example.yaml) is the full reference.
+## After the first chat
 
-**I want an agent to build software.** Create one of kind `builder`
-([builder.md](builder.md)): it plans in a repository, you press Go, it
-builds, tests and reports; another agent can hand it the order with the
-bundled `builder-handover` skill.
-
-**I want my agent to do real work** — read files, run commands, search
-the web, edit notes. The [tools overview](tools.md) lists the tool
-families. [files.md](files.md), [resources.md](resources.md), and
-[tmux.md](tmux.md) cover the heavy ones. [Skills](skills.md) are
-markdown how-tos you install to teach an agent multi-step recipes.
-
-**I want to decide what each agent may use.** Tools and skills are
-shared by all agents; the web client's **Abilities** window (or
-`agent.yaml`) hides any of them for a given agent. [mcp.md → Per-agent
-tool control](mcp.md#per-agent-tool-control) and [skills.md → Per-agent
-visibility](skills.md#per-agent-visibility).
-
-**I want my agents to make video.** [videogen.md](videogen.md) — a
-render takes minutes, so the agent starts one and is woken when it is
-ready rather than holding its turn open. Off until `videoGen` is
-configured; verified against a self-hosted endpoint, the hosted
-providers are untested.
-
-**I want my agents to make images.** [imagegen.md](imagegen.md) —
-configure a model, then generate from the Media window or let an
-agent call `image_generate`. Results land in your workspace and show
-up in the chat.
-
-**I want long-term memory + a shared knowledge base.** Read
-[memory.md](memory.md) for the per-agent inbox, [wiki.md](wiki.md) for
-the shared layer, and [dream-phases.md](dream-phases.md) for how
-sessions automatically flow into both.
-
-**I want to build a third-party client / integration.** [api.md](api.md)
-is the HTTP+SSE contract — same surface the built-in clients use.
-
-## Core concepts in one sentence each
-
-- **agent** — a persona with its own `AGENTS.md`, memory inbox, default
-  model, and chat sessions. Lives at `~/.somora/agents/<name>/`.
-- **session** — a single chat thread with one agent. Persisted as JSONL,
-  resumable, switchable mid-conversation.
-- **engine** — the adapter that talks to an LLM backend. Four exist:
-  `claude-cli` (Claude subscription), `codex-cli` (ChatGPT subscription,
-  bundled), `grok-cli` (SuperGrok subscription), `openai-compatible`
-  (any `/v1/chat/completions` endpoint — OpenRouter, Ollama, oMLX,
-  LM Studio, …).
-- **provider / model / alias** — `config.yaml` declares providers (with
-  baseUrl + apiKey if needed) and models on each. An `alias` lets you
-  refer to a model by short nickname anywhere.
-- **memory** — three layers an agent reads from: its own per-agent
-  inbox (`~/.somora/agents/<name>/memory/*.md`), the shared wiki, and
-  the read-only Obsidian vault. Hybrid retrieval: vector + BM25.
-- **wiki** — a curated long-term knowledge base shared across all
-  agents. Lives under your Obsidian vault. Written by the dream system,
-  editable by hand.
-- **dream system** — three background phases. **REM** turns finished
-  sessions into memory-inbox notes (per-agent). **Deep** promotes
-  high-value notes into the shared wiki. **Lucid** cleans up the wiki
-  on a slower cadence. See [dream-phases.md](dream-phases.md).
-- **project** — an explicit pin of "files / paths / vault notes /
-  research artifacts that belong to this chat session". Auto-injected
-  into the agent's system prompt. See [projects.md](projects.md).
-- **resource** — a configured SSH host. `file_*`, `exec`, and `tmux`
-  tools dispatch against it via `target=<resource>`. See
-  [resources.md](resources.md).
-- **skill** — a markdown how-to (agentskills.io format) installed at
-  `~/.somora/skills/<slug>/SKILL.md`. The agent loads the body on
-  demand via the `skill` tool when it recognizes the situation.
-- **tools** — the things an agent can call. Memory reads, wiki edits,
-  file I/O, shell exec, tmux sessions, web search/fetch, sub-agent
-  spawning, etc. See [tools.md](tools.md).
-- **voice** — two separate features that share only the word. Dictation
-  and spoken replies: a mic button on web/mobile, optional TTS for the
-  answer, plus a generic `/voice/turn` audio-in/audio-out endpoint, all
-  on the OpenAI-compatible audio shape with no extra credentials
-  ([voice.md](voice.md)). And realtime voice: a standing, interruptible
-  call with an agent, where a second model does the talking and the
-  agent does the knowing ([realtime-voice.md](realtime-voice.md)).
-
-## Where to next
-
-If you've installed somora and chatted with the default agent, the
-high-value next steps in rough order:
-
-1. **Create a second agent** with a different persona — copy the
-   default `~/.somora/agents/<name>/AGENTS.md`, edit, restart.
-2. **Configure a real provider** if you started on the subscription
-   defaults — see [setup.md → Configuring providers](setup.md).
-3. **Enable the wiki** by pointing somora at your Obsidian vault in
-   `config.yaml`. The dream system then has somewhere to consolidate
-   memory into. [wiki.md](wiki.md).
-4. **Install your phone as a PWA** for chatting from anywhere on your
-   tailnet. [mobile.md](mobile.md).
-5. **Add an SSH resource** so an agent can read files and run commands
-   on a remote machine. [resources.md](resources.md).
-6. **Pin a project** to a session so the agent has a persistent
-   working set. [projects.md](projects.md).
+1. **Create a second agent** with a different job: `somora setup agent`.
+2. **Turn on memory and the wiki**: `somora setup memory`.
+3. **Put the app on your phone**: [Mobile app](mobile.md).
+4. **Write the team file** once you have two agents: [Team](team.md).
+5. **Add a machine** an agent may work on: [Resources](resources.md).
+6. **Pin a project** to a session: [Projects](projects.md).
 
 ## All pages
 
@@ -147,49 +80,49 @@ high-value next steps in rough order:
 
 | Page | Reads like | When to open it |
 |---|---|---|
-| [Setup](setup.md) | Operator runbook | First install; adding providers; HTTPS; mobile; ops |
-| [Models](models.md) | Model reference | Models known to run with somora, per engine, with the config values that work and why |
-| [Security](security.md) | Trust model | Network posture, sandbox stance |
+| [Setup](setup.md) | Operator runbook | First install, the setup assistant, HTTPS, updates, every command and server setting |
+| [Models](models.md) | Model reference | Models known to run with somora, per engine, with the config values that work |
+| [Security](security.md) | Trust model | Who can reach the server, what agents may do, where credentials live |
 
 ### Clients
 
 | Page | Reads like | When to open it |
 |---|---|---|
-| [Web client](web.md) | Browser client | Web-UI specifics + HTTPS notes |
-| [Mobile app](mobile.md) | Mobile PWA | iOS/Android install, scope |
-| [TUI display](display.md) | TUI toggles | What the terminal client shows, and `/queue` |
-| [Voice](voice.md) | Dictation + spoken replies | Press-to-talk in web/mobile, optional TTS answers |
-| [Realtime voice](realtime-voice.md) | Talking to an agent | A standing, interruptible call; the voice talks, the agent knows |
+| [Web client](web.md) | Browser client | The desktop in the browser, window by window |
+| [Mobile app](mobile.md) | Mobile PWA | Installing on the phone, sessions and model, what it can and cannot do |
+| [TUI display](display.md) | Terminal client | What the terminal client shows, and every slash command |
+| [Voice](voice.md) | Dictation and spoken replies | The microphone in web and mobile, optional spoken answers |
+| [Realtime voice](realtime-voice.md) | Talking to an agent | A standing call you can interrupt: the voice talks, the agent knows |
 
 ### Agents & team
 
 | Page | Reads like | When to open it |
 |---|---|---|
-| [Agents](agents.md) | Persona + agent.yaml reference | Creating an agent; per-agent model, REM, tool/skill visibility |
-| [Team](team.md) | Org chart → prompt block | Telling every agent who is who and who to involve |
-| [Builder agents](builder.md) | The builder kind | An agent that is a coding harness: plan → Go → build, task panel, questions, hand-over from an orchestrator |
-| [Projects](projects.md) | Concept + workflow | Pinning a working set to a session |
+| [Agents](agents.md) | Persona and `agent.yaml` reference | Creating an agent, and every per-agent setting |
+| [Team](team.md) | Org chart for agents | Telling every agent who is who and who to involve |
+| [Builder agents](builder.md) | The builder kind | An agent that builds software: plan, Go, build, with a task panel and questions |
+| [Projects](projects.md) | Concept and workflow | Pinning a working set to a session |
 | [Sentinel](sentinel.md) | Trigger runtime | Scheduling proactive agent work |
 
 ### Memory
 
 | Page | Reads like | When to open it |
 |---|---|---|
-| [Memory](memory.md) | Concept + mechanics | Tuning recall, writing notes by hand |
-| [Wiki](wiki.md) | Concept + mechanics | Shared knowledge base, hand-curation |
-| [Dream phases](dream-phases.md) | Background workers | REM/Deep/Lucid cadence + triggers |
+| [Memory](memory.md) | Concept and settings | How agents remember, writing notes by hand, tuning recall |
+| [Wiki](wiki.md) | Concept and settings | The shared knowledge base, its structure, editing by hand |
+| [Dream phases](dream-phases.md) | Background workers | What REM, Deep and Lucid do, when they run and how to review them |
 | [Compaction](compaction.md) | Context management | When and how a session is summarised, which model does it, what `contextWindow` controls per engine |
 
 ### Tools & integrations
 
 | Page | Reads like | When to open it |
 |---|---|---|
-| [Tools](tools.md) | Tool catalog overview | Wondering what an agent can do |
-| [File tools](files.md) | File-tool deep dive | Working with `file_read`/`file_write`/`analyze_file` |
-| [Resources](resources.md) | SSH-target config | Adding a remote machine |
+| [Tools](tools.md) | Tool catalog | Every tool an agent can have, and how to limit them per agent |
+| [File tools](files.md) | File tools in depth | Working with `file_read`/`file_write`/`analyze_file` |
+| [Resources](resources.md) | SSH targets | Adding a remote machine |
 | [tmux](tmux.md) | Multi-turn shell sessions | Driving long-running CLIs from agents |
 | [Shared browser](browser.md) | Shared browser | A Chromium per agent profile that agents drive and you can take over for logins |
-| [Language servers](lsp.md) | Language servers | A builder's writes come back with the compiler's errors; install, config, routes |
+| [Language servers](lsp.md) | Language servers | A builder's writes come back with the compiler's errors |
 | [MCP servers](mcp.md) | External MCP servers | Plugging third-party MCP tools into your agents |
 | [Skills](skills.md) | Markdown skill format | Writing or installing skills |
 | [Image generation](imagegen.md) | Text-to-image | Generating images from the web app or an agent |
@@ -207,4 +140,4 @@ high-value next steps in rough order:
 
 | Page | Reads like | When to open it |
 |---|---|---|
-| [HTTP API](api.md) | HTTP/SSE contract | Building a third-party client; debugging streaming |
+| [HTTP API](api.md) | HTTP and SSE reference | Building your own client or integration |

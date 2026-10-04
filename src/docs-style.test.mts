@@ -21,9 +21,7 @@ const read = (f: string) => readFileSync(resolve(docs, f), 'utf8');
 const MAX_PARAGRAPH_WORDS = 80;
 
 /** Pages still in the old style. Shrinks; never grows. */
-const LEGACY = new Set([
-  'api.md', 
-  'index.md',     ]);
+const LEGACY = new Set(['api.md']);
 
 /** `DOCS_STYLE_PAGES=a.md,b.md` checks those pages although they are
  *  still listed — for trying a rewrite before taking it off the list. */
@@ -121,7 +119,9 @@ test('rewritten pages keep the reading style', () => {
     });
     flush(lines.length);
     const h2 = lines.filter((l) => /^## /.test(l));
-    if (h2[h2.length - 1] !== '## See also') problems.push(`${page}: the last section must be "## See also"`);
+    // index.md ends with "## All pages" — the site's sidebar is built from it (docs-index.test.mts).
+    const lastSection = page === 'index.md' ? '## All pages' : '## See also';
+    if (h2[h2.length - 1] !== lastSection) problems.push(`${page}: the last section must be "${lastSection}"`);
     if (!/^# \S/.test(lines[0] ?? '')) problems.push(`${page}: first line must be the H1`);
     if ((lines[2] ?? '').startsWith('#') || (lines[2] ?? '').trim() === '') problems.push(`${page}: the H1 is followed by a short plain introduction`);
   }
