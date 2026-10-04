@@ -17,6 +17,10 @@ import { createSecureServer as createHttp2SecureServer } from 'node:http2';
 import { TlsKeeper, type SecureContextHolder } from './tls-keeper.ts';
 import { UpdateChecker } from './update-check.ts';
 import {
+  allowResume, clearRestartIntent, detectedResumeText, readRestartIntent, requestedResumeText, writeRestartIntent,
+} from './restart-intent.ts';
+import { LAUNCHD_LABEL, launchdAvailable, launchdDomain, launchdLoaded } from '../cli/launchd.ts';
+import {
   homedir,
   cpus as osCpus,
   freemem as osFreemem,
@@ -1681,27 +1685,102 @@ function systemdUnitActive(): boolean {
   return r.status === 0 && r.stdout.trim() === 'active';
 }
 
-// Restart via systemd (the way `somora update` and the docs restart it).
-// Responds first, then asks systemd a moment later so the client gets
-// its 200 before the socket goes away. 409 when somora is not running
-// as the user unit — a foreground `somora server start` has nothing to
-// bring it back.
-app.post('/server/restart', (c) => {
-  if (!systemdUnitActive()) {
+/** How this server is brought back after a stop: the systemd user unit
+ *  on Linux, the LaunchAgent on macOS. null = started by hand
+ *  (foreground), nothing would restart it. */
+function serviceRestartCommand(): { via: 'systemd' | 'launchd'; cmd: string; args: string[] } | null {
+  if (systemdUnitActive()) return { via: 'systemd', cmd: 'systemctl', args: ['--user', 'restart', 'somora.service'] };
+  if (launchdAvailable() && launchdLoaded()) {
+    // kickstart -k: launchd kills and restarts the job itself. bootout +
+    // bootstrap from a child of this process would die with the job.
+    return { via: 'launchd', cmd: 'launchctl', args: ['kickstart', '-k', `${launchdDomain()}/${LAUNCHD_LABEL}`] };
+  }
+  return null;
+}
+
+function restartServiceNow(svc: { cmd: string; args: string[] }): void {
+  const child = spawnChild(svc.cmd, svc.args, { detached: true, stdio: 'ignore' });
+  child.unref();
+}
+
+/** A requested restart that waits for its turn to end (restart-intent.ts). */
+let pendingRestart: { agent: string; session: string; since: number } | null = null;
+const RESTART_WAIT_MAX_MS = 10 * 60 * 1000;
+const RESTART_OTHERS_GRACE_MS = 30 * 1000;
+
+function sessionBusy(agent: string, session: string): boolean {
+  return listAllSessionLockStates().some((x) => x.agent === agent && x.session === session && x.busy);
+}
+
+function restartWhenTurnEnded(svc: { via: string; cmd: string; args: string[] }, agent: string, session: string): void {
+  const since = Date.now();
+  pendingRestart = { agent, session, since };
+  let ownEndedAt: number | null = null;
+  const tick = setInterval(() => {
+    const now = Date.now();
+    if (ownEndedAt === null) {
+      if (sessionBusy(agent, session) && now - since < RESTART_WAIT_MAX_MS) return;
+      ownEndedAt = now;
+    }
+    // The requester is done. Give turns running elsewhere a short grace;
+    // what is still running after it is cut and marked at boot.
+    const others = listAllSessionLockStates().filter((x) => x.busy && !(x.agent === agent && x.session === session));
+    if (others.length > 0 && now - ownEndedAt < RESTART_OTHERS_GRACE_MS) return;
+    clearInterval(tick);
+    logger.warn({ msg: 'server.restart_now', via: svc.via, requestedBy: `${agent}/${session}`, waitedMs: now - since, cutting: others.map((x) => `${x.agent}/${x.session}`) });
+    restartServiceNow(svc);
+  }, 500);
+  tick.unref();
+}
+
+// Restart through the service manager (systemd user unit, or the
+// LaunchAgent on macOS). 409 when somora was started by hand — a
+// foreground `somora server start` has nothing to bring it back.
+//
+// With `agent` + `session` in the body the restart is a REQUEST from
+// inside that session's turn: it is written down, waits until the turn
+// has ended, and after boot the session is woken with the outcome
+// (`somora server restart` / `somora update` send this when an agent
+// runs them). Without them — the web gear menu, the TUI — it restarts
+// right away, responding first so the client gets its 200.
+app.post('/server/restart', async (c) => {
+  const svc = serviceRestartCommand();
+  if (!svc) {
     return c.json(
-      { ok: false, error: 'somora is not running as the systemd user unit somora.service — restart it the way you started it' },
+      { ok: false, error: 'somora is not running as a background service (systemd user unit / LaunchAgent) — restart it the way you started it' },
       409,
     );
   }
-  logger.warn({ msg: 'server.restart_requested', via: 'systemd' });
-  setTimeout(() => {
-    const child = spawnChild('systemctl', ['--user', 'restart', 'somora.service'], {
-      detached: true,
-      stdio: 'ignore',
+  const body = (await c.req.json().catch(() => ({}))) as { agent?: unknown; session?: unknown; reason?: unknown };
+  if (typeof body.agent === 'string' && typeof body.session === 'string' && body.agent && body.session) {
+    const agent = body.agent;
+    if (!(await loadPersona(agent))) return c.json({ ok: false, error: `agent '${agent}' not found` }, 404);
+    const session = (await resolveSessionId(agent, body.session)) ?? body.session;
+    if (pendingRestart) {
+      return c.json({ ok: true, deferred: true, already: true, via: svc.via, requestedBy: `${pendingRestart.agent}/${pendingRestart.session}`, message: 'A restart is already scheduled; it happens when the turn that asked for it has ended.' });
+    }
+    writeRestartIntent({
+      agent,
+      session,
+      requestedAt: Date.now(),
+      fromVersion: SOMORA_VERSION,
+      ...(typeof body.reason === 'string' && body.reason.trim() ? { reason: body.reason.trim().slice(0, 300) } : {}),
     });
-    child.unref();
-  }, 300);
-  return c.json({ ok: true, via: 'systemd', expectedDowntimeSeconds: 8 });
+    const busy = sessionBusy(agent, session);
+    logger.warn({ msg: 'server.restart_requested', via: svc.via, agent, session, deferred: busy });
+    restartWhenTurnEnded(svc, agent, session);
+    return c.json({
+      ok: true,
+      deferred: true,
+      via: svc.via,
+      message: busy
+        ? 'Restart scheduled. It happens when your current turn has ended — finish what you are saying and end the turn now, do not wait or poll for it. You are woken in this session when the server is back.'
+        : 'Restart scheduled. You are woken in this session when the server is back.',
+    });
+  }
+  logger.warn({ msg: 'server.restart_requested', via: svc.via });
+  setTimeout(() => restartServiceNow(svc), 300);
+  return c.json({ ok: true, via: svc.via, expectedDowntimeSeconds: 8 });
 });
 
 app.get('/env', (c) => c.json(getEffectiveEnv()));
@@ -7056,6 +7135,42 @@ for (const t of interruptedTurns) {
       logger.warn({ msg: 'restart.wake_failed', agent: w.agent, session: w.session, err: (err as Error).message });
     });
     logger.info({ msg: 'restart.wake_sent', to: `${w.agent}/${w.session}`, about: w.about, ref: w.ref });
+  }
+}
+// The session that asked for the restart (or caused it from its own
+// turn) is woken to check the outcome and carry on — restart-intent.ts.
+{
+  const resumeMode = config.server.resumeAfterRestart;
+  const resumes: Array<{ agent: string; session: string; text: string; why: 'requested' | 'detected' | 'all' }> = [];
+  const intent = readRestartIntent();
+  if (intent) {
+    clearRestartIntent();
+    if (resumeMode !== 'off') resumes.push({ agent: intent.agent, session: intent.session, text: requestedResumeText(intent, SOMORA_VERSION), why: 'requested' });
+  }
+  for (const t of interruptedTurns) {
+    if (resumeMode === 'off') break;
+    if (resumes.some((r) => r.agent === t.agent && r.session === t.session)) continue;
+    // A helper or an asked turn has its asker woken above; resuming it
+    // here as well would answer the same question twice.
+    if (t.callId || t.parent) continue;
+    if (t.selfRestart || resumeMode === 'all') {
+      resumes.push({ agent: t.agent, session: t.session, text: detectedResumeText(SOMORA_VERSION), why: t.selfRestart ? 'detected' : 'all' });
+    }
+  }
+  for (const r of resumes) {
+    if (!allowResume(r.agent, r.session)) {
+      logger.warn({ msg: 'restart.resume_suppressed', to: `${r.agent}/${r.session}`, why: r.why, hint: 'woken twice within ten minutes already — not again, to avoid a restart loop' });
+      continue;
+    }
+    const ref = `restart-${Date.now()}-${r.agent}`;
+    const origin: TurnOrigin = { kind: 'wake', about: 'job', ref };
+    const workId = `restart-resume-${ref}`;
+    openWork({ id: workId, origin, target: { agent: r.agent, session: r.session }, text: r.text, waiting: false, wake: 'never' });
+    void startTurn({ agent: r.agent, session: r.session, text: r.text, workId, origin }).catch((err: unknown) => {
+      if (err instanceof DequeuedError) return;
+      logger.warn({ msg: 'restart.resume_failed', agent: r.agent, session: r.session, err: (err as Error).message });
+    });
+    logger.info({ msg: 'restart.resume_sent', to: `${r.agent}/${r.session}`, why: r.why });
   }
 }
 installTtsCacheGc(config);

@@ -27,6 +27,14 @@ server:
   # systemd unit does NOT — the update rebakes the unit and drops it).
   host: 127.0.0.1
   port: 18737
+  # Who is woken after a restart to check the outcome and carry on:
+  #   requested (default) — the session that asked for the restart
+  #                         (`somora server restart` / `somora update` run by
+  #                         an agent wait for the end of its turn) or that
+  #                         visibly restarted the server from its own turn
+  #   all                 — also every other turn the restart cut
+  #   off                 — nobody; cut turns are only marked
+  # resumeAfterRestart: requested
   # HTTPS (HTTP/2). `somora setup access` writes this block for Tailscale;
   # by hand see docs/setup.md → HTTPS. `renew: tailscale` lets the server
   # renew the certificate itself and load it without a restart.

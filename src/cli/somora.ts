@@ -25,6 +25,7 @@ import { SOMORA_VERSION } from '../version.ts';
 import { buildSystemdUnit, extractCustomEnvLines, nodePathLine } from './systemd-unit.ts';
 import { allowScriptsArgs, compareVersions, parseUpdateArgs } from './update-args.ts';
 import { load as parseYaml } from 'js-yaml';
+import { callServer } from './server-call.ts';
 import { DEFAULT_UPDATE_ENDPOINT, readState, statusFrom, type UpdateCheckStatus } from '../server/update-check.ts';
 import {
   LAUNCHD_LABEL, launchdAvailable, launchdLoaded, launchdPid, launchdPlistPath, launchdRestart, launchdStart,
@@ -343,6 +344,32 @@ function cmdServerStop(): number {
   return 0;
 }
 
+/** Called from an agent's shell (the exec tool sets SOMORA_AGENT and
+ *  SOMORA_SESSION)? Then restarting right now would kill the turn that
+ *  runs this very command. The server is asked instead: it restarts when
+ *  that turn has ended and wakes the session afterwards. Returns the
+ *  exit code when the request was taken, null when the caller should
+ *  restart directly (not in a turn, or the server did not take it). */
+async function restartFromTurn(reason: string): Promise<number | null> {
+  const agent = process.env.SOMORA_AGENT;
+  const session = process.env.SOMORA_SESSION;
+  if (!agent || !session) return null;
+  try {
+    const r = await callServer('/server/restart', { body: { agent, session, reason } });
+    if (r.status === 200 && r.json.deferred === true) {
+      process.stdout.write(`${typeof r.json.message === 'string' ? r.json.message : 'Restart scheduled for the end of your turn.'}\n`);
+      return 0;
+    }
+    if (r.status === 409) {
+      process.stderr.write(`${typeof r.json.error === 'string' ? r.json.error : 'the server cannot restart itself'}\n`);
+      return 1;
+    }
+  } catch {
+    /* server not reachable (or older than this CLI) — restart directly */
+  }
+  return null;
+}
+
 function cmdServerRestart(): number {
   if (launchdAvailable()) {
     if (!existsSync(launchdPlistPath())) {
@@ -411,7 +438,7 @@ async function cmdServer(args: string[]): Promise<number> {
     case 'stop':
       return cmdServerStop();
     case 'restart':
-      return cmdServerRestart();
+      return (await restartFromTurn('somora server restart')) ?? cmdServerRestart();
     case 'status':
       return cmdServerStatus();
     default:
@@ -586,11 +613,11 @@ async function cmdUpdate(args: string[]): Promise<number> {
       return 0;
     }
     process.stdout.write('\nrestarting the service…\n');
-    return cmdServerRestart();
+    return (await restartFromTurn(`somora update → ${target.version}`)) ?? cmdServerRestart();
   }
   if (isSystemdAvailable() && existsSync(SYSTEMD_UNIT_PATH)) {
     process.stdout.write('\nrestarting systemd service…\n');
-    return cmdServerRestart();
+    return (await restartFromTurn(`somora update → ${target.version}`)) ?? cmdServerRestart();
   }
   process.stdout.write('\ndone. Restart any running server manually.\n');
   return 0;

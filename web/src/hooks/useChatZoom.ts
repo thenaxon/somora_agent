@@ -1,13 +1,15 @@
-// Per-agent chat text zoom.
+// Chat text zoom, per session.
 //
-// Scoped to the agent, not to the window: "make my conversation with
-// nova bigger" should survive closing and reopening that chat, and
-// should not leak into other agents or the rest of the desktop.
+// The zoom belongs to one conversation: two sessions of the same agent
+// side by side (a project session large, `main` small) are set
+// independently, and the size survives closing and reopening that chat.
+// The key is `<agent>/<session>`. A value stored under the bare agent
+// name — the per-agent zoom of earlier builds — is the starting size for
+// that agent's sessions that have no value of their own yet.
 //
 // State lives in a module-level store rather than per-hook useState so
-// two windows showing the SAME agent (e.g. two sessions side by side)
-// stay in sync instead of drifting apart and racing each other into
-// localStorage.
+// two windows showing the SAME session stay in sync instead of drifting
+// apart and racing each other into localStorage.
 
 import { useCallback, useSyncExternalStore } from 'react';
 
@@ -73,12 +75,35 @@ function subscribe(listener: () => void) {
   };
 }
 
-function setAgentZoom(agent: string, zoom: number) {
-  const next: ZoomMap = { ...state };
-  // 100% is the default, so it is stored as absence — keeps the blob
-  // small and makes "never touched" and "reset to normal" identical.
-  if (zoom === DEFAULT_ZOOM) delete next[agent];
-  else next[agent] = zoom;
+/** At most this many per-session entries are kept; the oldest go first.
+ *  Sessions come and go, the blob should not grow with them. */
+const MAX_SESSION_ENTRIES = 200;
+
+export function zoomKey(agent: string, session: string): string {
+  return `${agent}/${session}`;
+}
+
+/** What a window shows: the session's own value, else the agent's
+ *  earlier per-agent value, else 100 %. */
+export function zoomFor(map: ZoomMap, agent: string, session: string): number {
+  return map[zoomKey(agent, session)] ?? map[agent] ?? DEFAULT_ZOOM;
+}
+
+/** The map after one session's zoom changed. 100 % is stored explicitly
+ *  when the agent has an inherited value (otherwise "reset" would fall
+ *  back to it), and as absence when not. */
+export function withSessionZoom(map: ZoomMap, agent: string, session: string, zoom: number): ZoomMap {
+  const key = zoomKey(agent, session);
+  const next: ZoomMap = { ...map };
+  delete next[key];
+  if (zoom !== DEFAULT_ZOOM || next[agent] !== undefined) next[key] = zoom; // re-inserted last = newest
+  const sessionKeys = Object.keys(next).filter((k) => k.includes('/'));
+  for (const old of sessionKeys.slice(0, Math.max(0, sessionKeys.length - MAX_SESSION_ENTRIES))) delete next[old];
+  return next;
+}
+
+function setSessionZoom(agent: string, session: string, zoom: number) {
+  const next = withSessionZoom(state, agent, session, zoom);
   state = next;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -88,23 +113,23 @@ function setAgentZoom(agent: string, zoom: number) {
   for (const listener of listeners) listener();
 }
 
-export function useChatZoom(agentName: string) {
+export function useChatZoom(agentName: string, sessionId: string) {
   const all = useSyncExternalStore(
     subscribe,
     () => state,
     () => SERVER_STATE,
   );
-  const zoom = all[agentName] ?? DEFAULT_ZOOM;
+  const zoom = zoomFor(all, agentName, sessionId);
 
   const zoomIn = useCallback(
-    () => setAgentZoom(agentName, stepZoom(zoom, 1)),
-    [agentName, zoom],
+    () => setSessionZoom(agentName, sessionId, stepZoom(zoom, 1)),
+    [agentName, sessionId, zoom],
   );
   const zoomOut = useCallback(
-    () => setAgentZoom(agentName, stepZoom(zoom, -1)),
-    [agentName, zoom],
+    () => setSessionZoom(agentName, sessionId, stepZoom(zoom, -1)),
+    [agentName, sessionId, zoom],
   );
-  const resetZoom = useCallback(() => setAgentZoom(agentName, DEFAULT_ZOOM), [agentName]);
+  const resetZoom = useCallback(() => setSessionZoom(agentName, sessionId, DEFAULT_ZOOM), [agentName, sessionId]);
 
   return {
     zoom,

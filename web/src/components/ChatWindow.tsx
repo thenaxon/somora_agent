@@ -263,7 +263,7 @@ export function ChatWindow({
 
   // Text size for THIS agent's transcript, independent of every other
   // window and of the desktop chrome.
-  const { zoom, zoomIn, zoomOut, resetZoom, canZoomIn, canZoomOut } = useChatZoom(agent.name);
+  const { zoom, zoomIn, zoomOut, resetZoom, canZoomIn, canZoomOut } = useChatZoom(agent.name, sessionId);
   const zoomPct = Math.round(zoom * 100);
 
   const scrollRef = useRef<HTMLDivElement>(null);

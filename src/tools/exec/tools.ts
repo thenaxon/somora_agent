@@ -204,6 +204,15 @@ type ExecResult =
   | ExecBlockedResult
   | ExecCapDeniedResult;
 
+/** Who runs the command: skill scripts call back into somora with it,
+ *  and `somora server restart` / `somora update` use it to schedule the
+ *  restart for the end of this turn instead of cutting it. In the MCP
+ *  child the launcher has set both already; the in-process engine has
+ *  them only here. */
+function callerIdentityEnv(ctx: { agent: string; session?: string }): Record<string, string> {
+  return { SOMORA_AGENT: ctx.agent, ...(ctx.session ? { SOMORA_SESSION: ctx.session } : {}) };
+}
+
 export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
   name: 'exec',
   toolset: 'exec',
@@ -215,6 +224,11 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
     '(list/poll/log/write/kill). Background jobs are fully detached: they keep running across ' +
     'turns and somora/MCP restarts until they finish or you kill them. Note: process write ' +
     '(stdin) only works while the somora process that spawned the job is alive. ' +
+    '\n\n' +
+    'Restarting somora itself: run `somora server restart` (or `somora update`) — from here it does ' +
+    'not restart at once but when your turn has ended, and you are woken in this session when the ' +
+    'server is back; end your turn after it, do not wait or poll. NEVER restart it with ' +
+    '`systemctl restart somora` / `launchctl` directly: that kills the turn you are in. ' +
     '\n\n' +
     'IMPORTANT — to reach a remote host, ALWAYS use target:<resource-name> (from resource_list). ' +
     'NEVER shell out to raw `ssh user@host …` from target:"local" — that bypasses the resource ' +
@@ -403,7 +417,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
             agent: ctx.agent,
             command: input.command,
             ...(input.cwd ? { cwd: input.cwd } : {}),
-            ...(input.env ? { env: input.env } : {}),
+            env: { ...callerIdentityEnv(ctx), ...(input.env ?? {}) },
             ...(input.description ? { description: input.description } : {}),
             releaseSlot: slot.release,
             stripSomoraInternalEnv: !input.inherit_agent_env,
@@ -479,7 +493,7 @@ export const exec: ToolDefinition<z.infer<typeof ExecInput>, ExecResult> = {
       const r = await localExecSync({
         command: input.command,
         ...(localCwd ? { cwd: localCwd } : {}),
-        ...(input.env ? { env: input.env } : {}),
+        env: { ...callerIdentityEnv(ctx), ...(input.env ?? {}) },
         timeoutMs: input.timeout_ms ?? 60_000,
         pty: input.pty,
         stripSomoraInternalEnv: !input.inherit_agent_env,

@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { appendEvent } from '../storage/sessions.ts';
 import type { NormalizedEvent } from '../types/events.ts';
 import { logger } from './logger.ts';
+import { turnRestartedServer } from './restart-intent.ts';
 
 export const RESTART_NOTE = '[somora] This turn was interrupted by a server restart; the work it was doing stopped here.';
 const TAIL_BYTES = 128 * 1024;
@@ -33,6 +34,8 @@ export interface InterruptedTurn {
   callId?: string;
   /** The parent of a helper turn, when this was one. */
   parent?: { agent: string; session: string };
+  /** A tool call of the cut turn restarted somora (restart-intent.ts). */
+  selfRestart?: boolean;
 }
 
 async function readTail(path: string): Promise<Record<string, unknown>[]> {
@@ -76,6 +79,7 @@ export function openTurnOf(rows: Record<string, unknown>[]): Omit<InterruptedTur
     turnId: typeof start.turnId === 'string' ? start.turnId : `t-${start.ts}`,
     startedAt: typeof start.ts === 'number' ? start.ts : Date.now(),
   };
+  if (turnRestartedServer(rows.slice(startIdx + 1))) t.selfRestart = true;
   for (let i = startIdx - 1; i >= 0; i--) {
     const r = rows[i]!;
     if (r.kind !== 'user_message') continue;

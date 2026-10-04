@@ -6,7 +6,7 @@
 // stoppen (sonst zoomt man sich aus dem Fenster) und dass ein Wert aus
 // einem aelteren Build, der nicht mehr in der Liste steht, nicht
 // haengenbleibt.
-import { DEFAULT_ZOOM, ZOOM_LEVELS, stepZoom } from './useChatZoom';
+import { DEFAULT_ZOOM, ZOOM_LEVELS, stepZoom, withSessionZoom, zoomFor } from './useChatZoom';
 
 let ok = 0, bad = 0;
 const t = (name: string, fn: () => void) => {
@@ -82,6 +82,41 @@ t('jede Stufe ist von 100% aus erreichbar', () => {
   for (const level of ZOOM_LEVELS) {
     if (!seen.has(level)) throw new Error(`Stufe ${level} nicht erreichbar`);
   }
+});
+
+t('Zoom gilt pro Session, nicht pro Agent', () => {
+  let m = withSessionZoom({}, 'ada', 'main', 1.25);
+  eq(zoomFor(m, 'ada', 'main'), 1.25, 'main');
+  eq(zoomFor(m, 'ada', 'projekt'), 1, 'andere Session bleibt bei 100%');
+  eq(zoomFor(m, 'bea', 'main'), 1, 'anderer Agent bleibt bei 100%');
+  m = withSessionZoom(m, 'ada', 'projekt', 0.9);
+  eq(zoomFor(m, 'ada', 'main'), 1.25, 'main unveraendert');
+  eq(zoomFor(m, 'ada', 'projekt'), 0.9, 'projekt eigener Wert');
+});
+
+t('alter Agent-Wert ist Startwert, bis die Session einen eigenen hat', () => {
+  const old = { ada: 1.5 };
+  eq(zoomFor(old, 'ada', 'main'), 1.5, 'geerbt');
+  const m = withSessionZoom(old, 'ada', 'main', 1.75);
+  eq(zoomFor(m, 'ada', 'main'), 1.75, 'eigener Wert');
+  eq(zoomFor(m, 'ada', 'projekt'), 1.5, 'andere Session erbt weiter');
+  eq(m.ada as number, 1.5, 'Agent-Wert bleibt erhalten');
+});
+
+t('Zuruecksetzen auf 100% haelt auch gegen einen geerbten Agent-Wert', () => {
+  const m = withSessionZoom({ ada: 1.5 }, 'ada', 'main', 1);
+  eq(zoomFor(m, 'ada', 'main'), 1, 'reset');
+  const plain = withSessionZoom({ 'ada/main': 1.25 }, 'ada', 'main', 1);
+  if ('ada/main' in plain) throw new Error('100% ohne geerbten Wert wird als Fehlen gespeichert');
+});
+
+t('hoechstens 200 Session-Eintraege, die aeltesten fallen weg', () => {
+  let m: Record<string, number> = { ada: 1.5 };
+  for (let i = 0; i < 230; i++) m = withSessionZoom(m, 'ada', `s${i}`, 1.25);
+  const keys = Object.keys(m).filter((k) => k.includes('/'));
+  eq(keys.length, 200, 'Anzahl');
+  if ('ada/s0' in m || !('ada/s229' in m)) throw new Error('falsche Eintraege entfernt');
+  eq(m.ada as number, 1.5, 'Agent-Wert zaehlt nicht mit');
 });
 
 console.log(`\n${ok} ok, ${bad} fehlgeschlagen`);

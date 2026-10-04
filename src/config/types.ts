@@ -2189,8 +2189,20 @@ export const ConfigSchema = z.object({
       host: z.string().min(1).default('127.0.0.1'),
       port: z.number().int().positive().default(18737),
       tls: TlsConfigSchema,
+      /**
+       * Which sessions are woken after a restart to check the outcome
+       * and carry on (src/server/restart-intent.ts):
+       *   requested — the session that asked for the restart
+       *               (`somora server restart` / `somora update` from an
+       *               agent's shell) or visibly caused it from its own
+       *               turn. Default.
+       *   all       — additionally every turn the restart cut, unless
+       *               another agent waits for it (that one is told).
+       *   off       — nobody; cut turns are only marked.
+       */
+      resumeAfterRestart: z.enum(['requested', 'all', 'off']).default('requested'),
     })
-    .default({ host: '127.0.0.1', port: 18737 }),
+    .default({ host: '127.0.0.1', port: 18737, resumeAfterRestart: 'requested' }),
   providers: z.record(z.string().regex(/^[A-Za-z0-9_-]+$/), ProviderSchema),
   compaction: CompactionConfigSchema,
   memory: MemoryConfigSchema,

@@ -180,6 +180,18 @@ output goes to `~/.somora/logs/launchd.log`. A LaunchAgent never runs
 before its user has logged in — on a Mac used as a server, turn on
 automatic login (System Settings → Users & Groups).
 
+**Restarts and running turns.** A restart ends every turn that is
+running. An agent that needs one (after changing the config, after an
+update) runs `somora server restart` or `somora update` in its shell:
+from there the restart waits until the agent's turn has ended, and the
+agent is woken in the same session when the server is back, with the
+old and new version, to check the result and carry on. A turn that was
+cut because the agent restarted the service directly is woken as well
+and told not to repeat the command. Turns of other sessions that the
+restart cut are marked as interrupted; whoever waited for them is told.
+`server.resumeAfterRestart: all` also continues those, `off` wakes
+nobody ([api.md](api.md#a-restart-requested-from-inside-a-turn)).
+
 If you don't want a background service (in a container, or while
 debugging):
 

@@ -1239,7 +1239,7 @@ it bypasses per-agent tool gating, so treat it as an operator surface.
 ```bash
 curl -sk https://<host>:18737/config/status          # loadedAt, changedOnDisk, restartRequiredSections, restartAvailable
 curl -sk -X POST https://<host>:18737/config/reload  # → { ok, changed: [...], restartRequired: [...] } or 400 with the schema issues
-curl -sk -X POST https://<host>:18737/server/restart # → { ok, via: "systemd", expectedDowntimeSeconds } or 409 without a systemd unit
+curl -sk -X POST https://<host>:18737/server/restart # → { ok, via: "systemd" | "launchd", expectedDowntimeSeconds } or 409 when not run as a service
 ```
 
 Reload validates the file first and keeps the running config on any
@@ -1248,6 +1248,39 @@ obsidian, wiki, mcp, claudeCli, codexCli, stt, tts, sentinel, tmux,
 web, mobile) are consumed at boot and only change after a restart; the
 rest applies to the next request. See [web.md](web.md) for the taskbar
 surface and the TUI's `/reload` / `/restart`.
+
+### A restart requested from inside a turn
+
+An agent that restarts somora from its own turn would kill that turn.
+`POST /server/restart` therefore takes the requester:
+
+```bash
+curl -sk -X POST https://<host>:18737/server/restart \
+     -H 'Content-Type: application/json' \
+     -d '{"agent":"<your-agent>","session":"main","reason":"config change"}'
+# → { ok: true, deferred: true, via, message }
+```
+
+With `agent` + `session` the restart does not happen at once: the
+request is written to `~/.somora/restart-intent.json`, the server waits
+until that session's turn has ended (and up to 30 s for turns running
+in other sessions — what still runs then is cut and marked), restarts
+through the service manager, and after boot wakes the session with a
+`[somora] The server restart you requested is done: …` turn (origin
+`wake`, about `job`). A second request while one is pending answers
+`{ deferred: true, already: true }`. `somora server restart` and
+`somora update` send exactly this when an agent runs them through
+`exec` (the tool sets `SOMORA_AGENT` / `SOMORA_SESSION` for the command),
+so that is all an agent has to do.
+
+A turn that was cut by a restart it visibly caused itself (a raw
+`systemctl restart somora` or `launchctl kickstart …` among its tool
+calls) is woken after boot too, with the instruction not to run the
+command again. A session is woken at most twice in ten minutes
+(`restart.resume_suppressed` in the log) so that an agent answering the
+wake with another restart cannot loop. `server.resumeAfterRestart`
+(`requested` | `all` | `off`, [setup.md](setup.md)) widens or switches
+this off.
 
 ## Sampling
 
