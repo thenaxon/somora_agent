@@ -1,57 +1,29 @@
 # Image generation
 
-Text-to-image against an OpenAI-shaped image endpoint. Both a human and
-an agent drive the **same code path** — the web app's Media window
-POSTs to `/images/generate`, agents call the `image_generate` tool —
-so the two can't end up able to do different things.
+somora can turn a text prompt into a picture. You do it in the Media
+window of the web client, and your agents do it with the
+`image_generate` tool. Both use the same code, so an agent can do
+exactly what you can do by hand. It is off until you configure it.
 
-Off by default. Nothing appears in the UI and no tool is exposed until
-`imageGen` is configured.
+## What you get
 
-## Nothing appears until it is configured
+- **One feature, two entrances.** The Media window and the agent tool
+  share models, settings and gallery.
+- **No second API key.** An image model borrows the address and key of
+  a provider you already have.
+- **Mistakes caught before you pay.** A value the model does not accept
+  is rejected with the list of values it does accept.
+- **Pictures in the chat.** What an agent generates during a turn shows
+  up on its answer automatically.
+- **A gallery that remembers.** Every image keeps its prompt, model,
+  settings and cost, and agents can find old ones again.
+- **Honest results.** If the provider returns a different size or shape
+  than requested, the result says so.
 
-There is no image surface at all until an `imageGen` block with at least
-one model exists. That holds in three independent places, and all three
-are checked:
+## Set it up
 
-- **the model's tool list** — `image_generate` and friends are not
-  offered, so they cost no context and cannot be called;
-- **HTTP** — `GET /images/status` reports `enabled: false`; generate,
-  listing, catalog and capability routes answer `503`;
-- **the desktop** — the Media tile stays hidden, and the window says so
-  rather than opening an empty form.
-
-The same applies per agent: `tools: deny: [toolset:image]` in an
-agent.yaml removes `image_generate` and `image_models` for that agent
-on every engine. `media_list` sits in its own `media` toolset, because a
-video-only install needs it too.
-
-## What is verified, and what is not
-
-Everything in this document runs daily against a **self-hosted,
-OpenAI-shaped endpoint** — a LiteLLM router in front of local models.
-Verified there end to end: both wire dialects, reference images as
-multipart, catalog-driven capabilities, the `503`-means-busy path, and
-the fallback chain.
-
-**OpenRouter verified live**: catalog read, text-to-image
-and edits from reference images all work against `openrouter.ai`.
-
-**Not yet tested against a live hosted account.** The `openai` dialect
-is written to OpenAI's published API and its shape has been exercised
-against a faithful local stand-in, but nobody has run it against
-`api.openai.com` yet. It is expected to work; it is not proven to. If
-you try it, the interesting bits are the response shapes — that is where
-providers differ most.
-
-
-## Configure
-
-Image models are **not** listed in `providers.<x>.models`. Same posture
-as STT and TTS: a model listed there becomes selectable as a
-conversation model, shows up in pickers and `/v1/models`, and fails on
-the first turn. It's a separate service surface, and it reuses an
-existing provider only for its `baseUrl` and `apiKey`:
+Add an `imageGen` block to `config.yaml` and restart somora. The model
+points at a provider that is already defined under `providers`:
 
 ```yaml
 providers:
@@ -67,7 +39,7 @@ imageGen:
   maxImagesPerTurn: 5
   models:
     - name: grok-imagine                    # handle used by tool + UI
-      provider: openrouter                  # ← baseUrl + apiKey from here
+      provider: openrouter                  # baseUrl + apiKey from here
       model: x-ai/grok-imagine-image-2.0
       label: "Grok Imagine 2.0"
       defaults:
@@ -76,291 +48,429 @@ imageGen:
         output_format: png
 ```
 
-**Which API key gets used**: the one on the provider the model points
-at. No second key, no duplicated connection details. If you want image
-generation billed separately, define a second provider entry with the
-same `baseUrl` and a different key, and point `provider:` at that.
+Then open the **media** tile on the desktop, type a prompt and press
+**Generate**. Or ask an agent: "Draw a koala in space, 16:9."
 
-**Adding a model** needs three things: a handle, the provider it goes
-through, and the wire id. `GET /images/catalog` lists what the provider
-currently offers, so you don't have to hunt for the exact id — the
-Media window surfaces it too. Config stays the source of truth for
-what somora will actually call.
+> **Warning:** Do not list image models under `providers.<x>.models`.
+> A model listed there becomes a chat model, appears in the model
+> pickers and in `/v1/models`, and fails on the first turn.
 
-**Looking at what was made.** Picking a tile in the Media window shows
-it below the gallery with its prompt, specs and cost. An image opens
-large in the file viewer with a click (zoom cursor); a video plays
-inline and has an **open** button in its corner for the same viewer —
-a click on the video itself is play/pause, so it can't double as the
-"open large" gesture. Both land in the same FileView window an agent's
-link to the file would open.
+Good to know:
 
-**Endpoint paths differ by provider.** The default `/images` is
-OpenRouter's; OpenAI direct wants `/images/generations`. Set
-`endpoint:` per model when it differs, and `capabilitiesEndpoint: null`
-when the provider has no model catalog at all (a local image server).
+- The provider must use `engine: openai-compatible`.
+- The first model in the list is the default.
+- The API key is the one of the provider the model points at. To bill
+  images separately, define a second provider with the same `baseUrl`
+  and another key, and point `provider:` at it.
+- `GET /images/catalog` lists the image models your provider offers, so
+  you can copy the exact model id.
 
-**Reference images are where providers really diverge.** Plain
-generation is the same JSON POST everywhere, but working *from* an
-existing image is a different request depending on the endpoint, so
-each model declares which dialect it speaks:
+## Nothing appears until it is configured
+
+Without an `imageGen` block that has `enabled: true` and at least one
+model, image generation does not exist anywhere:
+
+| Place | What happens |
+|---|---|
+| Agent tools | `image_generate` and `image_models` are not offered. They cost no context and cannot be called. |
+| HTTP | `GET /images/status` answers `enabled: false`. Generate, gallery listing, catalog and capabilities answer `503`. |
+| Desktop | The media tile is hidden, unless video generation is configured. |
+
+To take it away from one agent, add `tools: deny: [toolset:image]` to
+its `agent.yaml`. That removes `image_generate` and `image_models` on
+every engine. `media_list` belongs to the separate `media` toolset,
+because an install with only video needs it too.
+
+## The Media window
+
+The form is on the left, the gallery on the right, newest first.
+
+- **The form follows the model.** A setting with a fixed set of values
+  is a dropdown. A setting without one is a text field. A setting the
+  model does not take is hidden.
+- **Click a tile** to see the picture with its prompt, settings, size,
+  cost and path. Click the picture to open it large in the file viewer.
+- **Buttons under the picture:** copy the path, reuse the settings,
+  download, remove from the gallery.
+- **The gallery header** has a prompt search and shows the number of
+  items and their total size.
+
+The same window holds videos. A video plays in place and has its own
+button to open it in the file viewer.
+
+## How settings are checked
+
+Allowed values differ per model, so somora does not hardcode them. It
+looks in three places, in this order:
+
+1. `imageGen.models[].allow` in your config. It always wins.
+2. The provider's model catalog, read from `capabilitiesEndpoint`.
+3. Nothing known: everything is passed through.
+
+The third step is deliberate. Only a list somora positively knows can
+reject something, so a catalog that is briefly unreachable never blocks
+a valid request.
+
+When the model publishes its full list of settings, a setting outside
+that list is rejected too. Rejections name what is valid, because the
+caller is usually a language model that needs the answer to correct
+itself:
+
+```
+resolution '4K' is not supported by Grok Imagine 2.0 — allowed: 1K, 2K
+```
+
+Values under `defaults` fill in what the caller left out. A default the
+model does not take is skipped without an error.
+
+> **Note:** The catalog is read once and kept until somora restarts.
+> Restart after your provider adds a model or changes its settings.
+
+## Reference images
+
+A model can work from existing pictures. How they are sent depends on
+the endpoint, so each model declares its dialect with `wire:`.
 
 | `wire:` | Reference images travel as | Sent to |
 |---|---|---|
 | `openrouter` (default) | `input_references`: one `{ "type": "image_url", "image_url": { "url": "data:<mime>;base64,…" } }` object per file | `endpoint` |
 | `openai` | multipart, one `image[]` part per file | `editEndpoint` |
 
-`openai` is the setting for OpenAI itself and for an OpenAI-compatible
-router such as LiteLLM in front of a local image backend. There is no
-autodetection: a wrong guess would only surface after the user already
-waited for a render, and whoever configures the model knows the answer.
+Use `openai` for OpenAI itself and for an OpenAI-compatible router such
+as LiteLLM in front of a local image backend. There is no
+autodetection: a wrong guess would only show after you waited for a
+render.
 
-**On the `openai` wire, `aspect_ratio` is sent as `size`.** That wire
-has no ratio field, and a router in front of a backend that does
-understand ratios forwards the unknown key on `/images/generations` but
-rebuilds the multipart body for `/images/edits` from a fixed whitelist
-— so a "16:9" edit with reference images came back 1024×1024 without a
-word (measured against LiteLLM). somora therefore translates
-before sending: if the model's catalog says `size` also accepts named
-ratios (`supported_parameters.size.also_accepts`, as a self-hosted
-visual adapter may publish), the ratio string itself goes out as `size`
-and the backend renders it exactly; else the listed size closest to
-the ratio; else OpenAI's own sizes (1792×1024 / 1024×1792 — 7:4, not
-16:9, and the result carries a warning saying so). An explicit `size`
-always wins over `aspect_ratio`. One exception keeps existing setups
-working: a backend whose catalog positively declares `aspect_ratio`
-and offers no named sizes still receives `aspect_ratio` on the plain
-generation path (routers forward unknown JSON keys there); only the
-multipart edit path is always translated. The `openrouter` wire keeps
-`aspect_ratio`, which is native there. What actually left somora is
-logged per request (`imagegen.request`: endpoint, multipart or not,
-the spec fields — never the image bytes) and stored on the record as
-its `specs`.
+Without reference images both dialects send the same JSON request to
+`endpoint`.
 
-**Responses come in three shapes, and all three end as a local file.**
-An endpoint that does not want to serve files itself returns the image
-inline as `data[].b64_json`; OpenAI direct returns an absolute URL on a
-different host; an image server addressed directly tends to return a
-*relative* path into its own output tree, because from its side the
-client already knows the host. Relative paths are resolved against the
-provider's `baseUrl`.
+References must be PNG, JPEG, WebP or GIF. The type is read from the
+file content, not from the file name. The model's own limit on how many
+it takes is enforced before the request goes out, when it is known.
 
-The provider's API key is sent when fetching such a URL **only if the
-URL is on the same origin as `baseUrl`**. A pre-signed link on someone
-else's host does not need it, and sending it there would hand the
-credential to a third party.
+> **Note:** The `openai` wire follows OpenAI's published API and is
+> meant for routers in front of local models as well. It has not been
+> run against `api.openai.com` itself.
 
-**When a model is unavailable.** An image model can be configured and
-still not be loaded right now — image backends commonly share a GPU box
-that runs one profile at a time, and answer `503` when theirs isn't
-active. `fallback:` on a model names another handle to try; that one may
-name a fallback of its own.
+## Aspect ratio on the openai wire
 
-Only *availability* walks the chain: unreachable, timing out, or a
-server error. A rejected spec value or an empty prompt fails on the
-first model instead, because the next one would reject it too and the
-real message would be buried. When a fallback did happen, the tool
-result and the HTTP response say so — a chain that has quietly settled
-on its last resort is a cost and quality change worth noticing.
+The `openai` wire has no ratio field, and routers drop `aspect_ratio`
+on the edit endpoint. somora therefore sends the ratio as `size`:
 
-**Sampling knobs.** `steps`, `cfg` and `guidance` are passed through
-when set and omitted when not, so a model's own defaults stand unless
-someone deliberately overrides them. They are not part of OpenAI's image
-API but are the common vocabulary of diffusion backends; which of them a
-given model actually reads is answered by its capability list, not by
-anything hardcoded. Useful in a loop: generate, look at the result
-(`file_read` with a vision model, `analyze_file` without one), adjust,
-regenerate.
+| Situation | What is sent as `size` |
+|---|---|
+| The catalog says `size` also accepts named ratios (`supported_parameters.size.also_accepts`) | The ratio itself, for example `16:9` |
+| The catalog lists concrete sizes | The listed size closest to the ratio |
+| Neither | OpenAI's own sizes: 1792×1024 or 1024×1792 for 16:9 and 9:16. That is 7:4, not 16:9, and the result carries a warning. |
 
-**A substituted size is noticed here, not upstream.** Endpoints cap
-dimensions, round to sizes they support, or only render squares — and
-they answer `200` with a perfectly good image of the wrong shape. somora
-reads the returned image's real pixel dimensions and compares them to
-what was asked for; a mismatch becomes a note on the result naming both
-numbers. The same check runs for the **shape**: when a ratio was asked
-for (as `aspect_ratio`, or as a named `size`) and the pixels are more
-than 1 % off, the result says which ratio was requested and what came
-back (`imagegen.aspect_ratio_substituted` in the log) — the case that
-would have stopped a series of accidental squares after the first
-one. This deliberately does not depend on the endpoint reporting it,
-because a strict OpenAI-shaped proxy in front of a backend drops any
-non-standard response field — measured against exactly such a router.
-Dimensions are kept on the image record.
+Two rules sit on top:
 
-Where a provider *does* report what it did differently, `ignored_params`
-(names it accepted but did not use) and `warnings` (free text) are read
-and relayed to the caller verbatim. Both are optional and absent almost
-everywhere.
+- An explicit `size` always wins over `aspect_ratio`.
+- A model whose catalog declares `aspect_ratio` and offers no named
+  ratios in `size` still receives `aspect_ratio` on plain generation.
+  Requests with reference images are always translated.
 
-## How specs are validated
+The `openrouter` wire keeps `aspect_ratio`, which is native there.
 
-Allowed values differ per model — grok-imagine renders 1K and 2K,
-others do 512 or 4K — so somora doesn't hardcode them. It reads the
-provider's image-model catalog at runtime and validates against that.
-Precedence:
+## When the result differs from the request
 
-1. `imageGen.models[].allow` — operator override, always wins
-2. the provider catalog, cached per process
-3. nothing known → **everything is allowed**
+An endpoint may cap dimensions, round to a size it supports or only
+render squares, and still answer with a perfectly good image. somora
+measures the returned picture itself:
 
-That third step is deliberate. A tool that refuses valid input because
-a catalog was briefly unreachable would be worse than no validation at
-all, so only a positively-known allow-list can reject something. The
-same rule drives the UI: a spec the catalog pins down renders as a
-dropdown of exactly its values, one it says nothing about renders as a
-free-text field.
+- **Size.** Explicit pixels were requested and others came back: the
+  result names both.
+- **Shape.** A ratio was requested and the picture is more than 1 %
+  off: the result names the ratio and the real dimensions.
 
-Rejections name the valid values:
+If the provider reports `ignored_params` or `warnings`, they are passed
+on word for word. All of this appears as `notes` in the tool result and
+as `warnings` in the HTTP response. The real pixel dimensions are
+stored with the image, next to the `specs` as they were sent.
 
-```
-resolution '4K' is not supported by Grok Imagine 2.0 — allowed: 1K, 2K
-```
+## Sampling settings
 
-The caller is usually a language model, and one told only "invalid"
-retries the same thing.
+`steps`, `cfg` and `guidance` are sent when set and left out otherwise,
+so the model's own defaults stand. They are not part of OpenAI's image
+API but common among diffusion backends. `image_models` tells which of
+them a model reads.
+
+They are useful in a loop: generate, look at the result with
+`file_read` or `analyze_file`, adjust, generate again.
+
+## When a model is unavailable
+
+An image model can be configured and still not be loaded. Image
+backends often share a GPU machine that runs one profile at a time and
+answer `503` when theirs is not active. `fallback:` on a model names
+another handle to try. That one may name a fallback of its own.
+
+| Problem | What happens |
+|---|---|
+| Endpoint unreachable, timeout, an error status from the provider, or a response without a usable image | The next model in the chain is tried. |
+| Empty prompt, unknown model, a value somora rejects, a config mistake | Fails on the first model. The next one would not help. |
+
+When a fallback was used, the tool result and the HTTP response say so
+and name the models that were skipped.
 
 ## Where images go
 
-Every image lands in `imageGen.outputDir`, regardless of which agent
-made it. That single directory is what the gallery and the file-serving
-route index; resolving it per agent workspace would scatter images
-across several and leave the gallery blind to most of them.
+Every image lands in `imageGen.outputDir`, whichever agent made it.
+There is no second destination. An agent that needs the file uses the
+path from the tool result.
 
-**One image, one place.** There is no second destination. Two paths for
-the same bytes — one of them routinely a `<workspace>/<workspace>/…`
-folder that a relative path creates by accident — would have the gallery
-list the same picture under two names. An agent that needs the file uses
-the path in the tool result. `save_to` is accepted by the tool and the
-route so a persona line that names one does not fail a generation; it is
-ignored, and the result says where the image actually is. The Media
-window shows the one canonical path.
-
-Filenames are `2026-08-26_143012_koala-im-weltraum.png`: chronologically
-sortable and recognizable without opening them.
-
-Metadata lives separately, one JSON file per item under
-`~/.somora/media/` (images and videos share the store) — prompt, model,
-every spec, cost, timestamp, agent, paths. The images directory itself is something you browse and clean
-out, and provenance shouldn't vanish with a file you dragged elsewhere.
-
-## Tools
-
-| Tool | Purpose |
+| What | Where |
 |---|---|
-| `image_generate` | Generate and save. Returns path + metadata, not the bytes. |
-| `media_list` | Find earlier images **and video** by prompt substring, type, model, agent, or date. |
-| `image_models` | List configured handles, and what one model accepts. |
+| Image files | `imageGen.outputDir`, default `~/somoraworkspace/images` |
+| With `monthlyFolders: true` | `<outputDir>/YYYY-MM/` |
+| File name | `2026-08-26_143012_koala-im-weltraum.png`: date, time, then the start of the prompt |
+| Metadata | `~/.somora/media/<id>.json`, one file per item, shared with videos |
 
-Specs travel as real request fields (`aspect_ratio: "16:9"`), never as
-text inside the prompt. The prompt is passed through verbatim.
+The metadata holds prompt, model, settings, cost, time, agent and path.
+It is kept apart from the pictures so that the image folder stays clean
+and the history survives when you move a file.
 
-`image_generate` deliberately does **not** return the image by default:
-a 2K PNG as base64 in a tool result is millions of characters of
-context. `return_image: true` opts into it (~2k tokens) and requires a
-vision-capable model; without one, the error points at `analyze_file`,
-which dispatches to the configured `vision.worker`.
+Whatever shape the provider answers in, the picture ends up as a local
+file: inline `data[].b64_json`, an absolute URL, or a path relative to the
+provider's `baseUrl`. When somora fetches a URL, it sends the API key
+only if the URL is on the same origin as `baseUrl`. A link on another
+host never receives your key.
 
-`media_list` exists because a path in a tool result doesn't survive
-context compaction. "The koala one" has to stay findable. It is named
-for the question, not for one medium: finding the thing made earlier is
-the same question for a picture and for a video, and the gallery behind
-it holds both.
+Nothing is deleted automatically. Generated images are your work, not
+a cache.
 
-`image_models` exists because the `model` argument is a free string:
-with more than one model configured, nothing else tells the caller
-which handles are available, and a wrong guess costs a round trip.
-Listing handles is free; passing `model:` for one of them also reports
-the values that model accepts per spec field, which is the other thing
-that is otherwise learned only by being rejected. A field the catalog
-takes as free text shows as `any value`; when the catalog also names
-known-good values for it (`supported_parameters.<field>.recommended`),
-they appear under `recommended` — not a restriction, but a value
-outside that list is the usual reason for an upstream 400, so prefer
-them.
+## In the chat
 
-**`reference_images` takes file paths**, not base64 — the tool reads
-them itself, through the same read policy as `file_read`. Passing
-several is how sources get combined into one picture. Whether a model
-accepts more than one is its own business; `image_models` reports the
-limit when the provider publishes it.
+Images generated during a turn appear on the agent's answer in the web
+client. The server adds them after the turn ends, so the agent does not
+have to send anything.
 
-Image generation writes only into `imageGen.outputDir`, so it is not a
-way around the `file_write` policy.
+Technically this is an `assistant_media` event, tied to the answer by
+`turnId` and stored in the session file, so a reloaded conversation
+still shows the pictures. Each entry carries its `type`, `image` or
+`video`.
 
-### Per-agent review stance
+The mobile app at `/mobile` shows no media. It adds one line naming what was made
+and points to the web client.
+
+## Review by the agent
+
+`image_generate` returns the path and metadata, not the picture: an
+image in a tool result costs context. An agent can still look at its
+work.
+
+| Way | Effect |
+|---|---|
+| `return_image: true` on a call | The image comes back with the result (about 2k tokens). Needs a model that can see images. Otherwise the call fails before generating and points to `analyze_file`, which uses the configured `vision.worker`. |
+| `imageReview: always` in `agent.yaml` | Every generated image comes back. Meant for agents whose job is images. On a text-only model the image is generated and a note explains why it is not attached. |
+| Later | The file is on disk. `file_read` or `analyze_file` shows it at any time. |
 
 ```yaml
 # ~/.somora/agents/<name>/agent.yaml
 imageReview: never    # never (default) | always
 ```
 
-`always` feeds each generated image back into that agent's context so
-it can judge the result and re-prompt on its own. Meant for agents
-whose job is images.
+`never` is not a lock: `return_image` on a single call still works. An
+explicit `return_image: false` also overrides `always`.
 
-`never` is **not a lock**. The agent can still pass `return_image` per
-call when the task demands it, and afterwards the file is on disk like
-any other — "have a look at it" works via `file_read`. Nothing is lost,
-it's only deferred until someone decides it's worth the tokens.
+`maxImagesPerTurn` limits how many images one turn may produce. It is a
+cost brake: an agent that reviews its own work could otherwise generate
+in a loop. With the claude-cli engine the limit applies per call only
+and does not add up over the turn. With codex-cli and openai-compatible
+it adds up.
 
-`maxImagesPerTurn` caps how many images one turn may produce. It's a
-cost brake, not a rate limit: an agent set to `always` can otherwise
-re-prompt in a loop at real money per round. Under claude-cli the tool
-runs in an MCP child process with no turn id; there the per-call cap
-still applies but nothing accumulates. codex-cli and openai-compatible
-run it in-process with the turn id, so the cap accumulates.
+## Settings
 
-## In the chat
+```yaml
+imageGen:
+  enabled: false
+  outputDir: ~/somoraworkspace/images
+  monthlyFolders: false
+  maxImagesPerTurn: 5
+  timeoutMs: 300000
+  models:
+    - name: local-flux
+      provider: local-images
+      model: flux-dev
+      label: "Flux (local)"
+      wire: openai                    # default: openrouter
+      endpoint: /images/generations   # default: /images
+      editEndpoint: /images/edits
+      capabilitiesEndpoint: null      # default: /images/models
+      fallback: grok-imagine
+      defaults: {}
+      allow:
+        supported: [size, aspect_ratio, seed, steps, guidance, n]
+        aspect_ratio: ["1:1", "16:9", "9:16"]
+        maxReferences: 4
+```
 
-Images generated during a turn appear on the assistant's bubble
-automatically. The server publishes them after the turn finalizes —
-the agent doesn't have to remember to send anything, because the
-failure mode of relying on that is "Done!" with nothing to look at.
+| Setting | Default | Meaning |
+|---|---|---|
+| `imageGen.enabled` | `false` | Master switch. |
+| `imageGen.outputDir` | `~/somoraworkspace/images` | The one folder for every image. |
+| `imageGen.monthlyFolders` | `false` | Sort files into `<outputDir>/YYYY-MM/`. |
+| `imageGen.maxImagesPerTurn` | `5` | Images one turn may produce, 1 to 100. Also the upper limit for `n` in one call. |
+| `imageGen.timeoutMs` | `300000` | Time limit for one request to the provider, 5 seconds to 30 minutes. |
+| `imageGen.models` | none | At least one model. The first is the default. |
 
-Mechanically it's an append-only `assistant_media` event paired to the
-bubble by `turnId`, exactly like `assistant_audio`, persisted to JSONL
-so a reloaded conversation still shows them. Each entry carries its own
-`type` (`image` or `video`) rather than the event naming one medium: the
-kind string lives in session files forever, and a second, nearly
-identical event kind for the next medium would have to be understood by
-every reader from then on.
+Per model:
 
-`/mobile` deliberately renders no media — it marks the bubble with a
-one-liner naming what exists and points at the web app, so a turn that
-produced a picture doesn't read as an empty-handed answer on a phone.
+| Setting | Default | Meaning |
+|---|---|---|
+| `name` | required | Handle for the tool and the window. Letters, digits, `_` and `-`. |
+| `provider` | required | Name of an entry under `providers`. |
+| `model` | required | Model id sent to the provider. |
+| `label` | `name` | Name shown in the window and in messages. |
+| `endpoint` | `/images` | Path after `baseUrl`. `/images` is OpenRouter's. OpenAI itself uses `/images/generations`. |
+| `wire` | `openrouter` | Dialect for reference images: `openrouter` or `openai`. |
+| `editEndpoint` | `/images/edits` | Path for requests with reference images. `wire: openai` only. |
+| `capabilitiesEndpoint` | `/images/models` | Path of the provider's model catalog. `null` when there is none, for example a local image server. |
+| `fallback` | none | Handle of the model to try when this one is unavailable. |
+| `defaults` | `{}` | Values used when the caller sets none: `resolution`, `aspect_ratio`, `size`, `quality`, `output_format`, `background`, `steps`, `cfg`, `guidance`. |
+| `allow` | none | Your own list of what the model accepts. Replaces the catalog. |
 
-## HTTP
+Inside `allow`:
+
+| Key | Meaning |
+|---|---|
+| `resolution`, `aspect_ratio`, `size`, `quality`, `output_format`, `background` | Allowed values for that setting. |
+| `supported` | The complete list of settings the model takes. Anything else is rejected. Without it, a setting the endpoint does not read is forwarded and silently ignored there. |
+| `maxN` | Most images per call, 1 to 10. |
+| `maxReferences` | Most reference images, 0 to 16. `0` means none at all. |
+
+A misspelled key inside `allow` or `defaults` is a config error.
+
+Per agent, in `agent.yaml`: `imageReview` (`never` or `always`) and
+`tools: deny: [toolset:image]`.
+
+## Tools
+
+| Tool | Toolset | Purpose |
+|---|---|---|
+| `image_generate` | `image` | Generate and save. Returns path and metadata. |
+| `image_models` | `image` | List the configured handles. With `model:`, show what that model accepts. |
+| `media_list` | `media` | Find earlier images and videos, newest first. |
+
+Parameters of `image_generate`:
+
+| Parameter | Meaning |
+|---|---|
+| `prompt` | Required. Passed to the model unchanged, up to 4000 characters. |
+| `model` | Handle of a configured model. Omit for the default. |
+| `aspect_ratio` | For example `1:1`, `16:9`, `9:16`, `4:3`. |
+| `resolution` | A tier, for example `512`, `1K`, `2K`, `4K`. |
+| `size` | Explicit pixels, for example `1024x1024`. |
+| `quality` | For example `auto`, `low`, `medium`, `high`. |
+| `output_format` | `png`, `jpeg`, `webp`, `svg`. |
+| `background` | `auto`, `transparent`, `opaque`. |
+| `output_compression` | 0 to 100, for webp and jpeg. |
+| `seed` | Repeats an earlier result. |
+| `n` | Number of images, 1 to 10. |
+| `steps`, `cfg`, `guidance` | Sampling settings. |
+| `reference_images` | Up to 16 file paths of pictures to work from. Pass several to combine them. |
+| `return_image` | Also return the picture to the agent. Default `false`. |
+| `extra` | Provider-specific fields, passed through untouched. |
+| `save_to` | Accepted and ignored. The result says where the image is. |
+
+Settings travel as real request fields, never as text inside the
+prompt.
+
+`reference_images` takes file paths, not base64. The tool reads the
+files itself under the same read rules as `file_read`. Relative paths
+start at the agent's workspace.
+
+`image_models` exists because `model` is a free string. For one model
+it lists the values per setting under `accepts`. A setting that takes
+free text shows as `any value`. Values the catalog suggests
+(`supported_parameters.<field>.recommended`) appear under
+`recommended`: not a restriction, but a value outside that list is the
+usual reason for a provider error.
+
+`media_list` exists because a path in a tool result does not survive
+context compaction. Its filters: `type` (`image` or `video`), `query`
+(part of the prompt), `model`, `agent`, `mine_only`, `since` and
+`until` (`YYYY-MM-DD`), `limit` (default 20, at most 200) and `offset`.
+
+Image generation writes only into `imageGen.outputDir`. It is not a way
+around the `file_write` rules.
+
+## Routes
 
 | Route | Purpose |
 |---|---|
-| `GET /images/status` | Enabled? Configured models, output dir. Drives the desktop tile. |
-| `GET /images` | Gallery listing. `query`, `model`, `agent`, `since`, `until`, `limit`, `offset`. |
+| `GET /images/status` | Enabled or not, the configured models, `outputDir`, `maxImagesPerTurn`. Decides whether the tile shows. |
+| `GET /images` | Gallery listing. `query`, `model`, `agent`, `since`, `until`, `limit` (default 60, at most 200), `offset`. |
 | `GET /images/:id` | One record. |
-| `GET /images/:id/file` | The image bytes. |
-| `GET /images/models/:name/capabilities` | Spec vocabulary for one model. |
-| `GET /images/catalog` | What the provider offers (`?provider=`). |
-| `POST /images/generate` | Generate. Body: `prompt` plus any specs. |
-| `DELETE /images/:id` | Forget the record. **The file stays.** |
+| `GET /images/:id/file` | The image itself. `?download=1` makes the browser save it. |
+| `GET /images/models/:name/capabilities` | What one model accepts. |
+| `GET /images/catalog` | What the provider offers. `?provider=` picks the provider. |
+| `POST /images/generate` | Generate. Body: `prompt`, optional `model`, any setting, `reference_images` as base64. |
+| `DELETE /images/:id` | Forget the record. The file stays. |
 
-Files are served **by record id, never by path**. The client can't name
-a file; the id is looked up in the metadata store and the path comes
-from there. That's what lets the images directory be user-chosen
-without the route becoming a way to read arbitrary files.
+`POST /images/generate` answers `400` for something the caller can fix,
+`502` when the provider failed and `503` when the model is not
+available right now.
 
-`DELETE` removes the gallery entry only. Deleting user files from a
-one-click gallery button is the wrong default, and an image may have a
-hardlink somewhere that somora cannot reliably reach.
+Files are served by record id, never by path. A client cannot name a
+file, so a folder of your choice does not turn the route into a way to
+read other files. `410` means the record exists but the file was moved
+or deleted.
+
+`DELETE` removes the gallery entry only. A gallery button should not
+delete your files with one click.
+
+## Troubleshooting
+
+**The media tile is missing.** `imageGen.enabled` is not `true`, the
+model list is empty, or somora was not restarted after the change.
+
+**"needs an openai-compatible provider".** The model's `provider:`
+points at a provider with another engine. Define an
+`openai-compatible` provider for images.
+
+**A setting is rejected.** The message names the allowed values. Ask
+`image_models` with `model:` for the full picture, or correct the
+`allow` block if it is yours.
+
+**A setting has no effect and no error.** The model has no catalog and
+no `allow.supported` list, so somora cannot know the setting is not
+read. Add `allow.supported`.
+
+**The picture has the wrong shape.** Read the note on the result. The
+log lines `imagegen.request` (what was sent, never the image bytes),
+`imagegen.aspect_ratio_translated` and
+`imagegen.aspect_ratio_substituted` show what happened.
+
+**"not available right now".** The provider answered `503` or `504`.
+Try later, or set `fallback:` on the model.
+
+**The request times out.** Large renders take minutes. Raise
+`imageGen.timeoutMs`.
+
+**The image URL could not be fetched, with 401 or 403.** The provider
+returned a link on another host than its `baseUrl`, and the key is not
+sent there. Set `baseUrl` to the host that serves the images, or have
+the endpoint return `b64_json`.
+
+**An agent hits the image limit.** `maxImagesPerTurn` is reached. The
+agent is told to ask you before generating more.
 
 ## Known gaps
 
-- **Reference images** (image-to-image) work through the tool's
-  `reference_images` argument, but the Media window has no picker for
-  them — the browser path accepts base64 only.
-- **No progress streaming.** The endpoint can stream partial renders;
-  somora waits for the finished image and shows a busy state.
-- **No automatic cleanup.** Generated images are work product, not a
-  cache, so nothing is ever deleted on a timer. The gallery shows the
-  total size so the archive's growth stays visible.
-- **Any agent that sees the toolset can generate.** Restrict it per
-  agent with the normal `tools:` gating in `agent.yaml`
-  (`deny: [toolset:image]`).
+- **No picker for reference images in the Media window.** Agents pass
+  them through `reference_images`. The route takes them as base64.
+- **No progress display.** somora waits for the finished image and
+  shows a busy state.
+- **No automatic cleanup.** Nothing is deleted on a timer. The gallery
+  shows the total size so growth stays visible.
+- **Every agent with the toolset can generate.** Restrict it per agent
+  with `deny: [toolset:image]`.
+
+## See also
+
+- [Video generation](videogen.md): the same idea for video, with jobs
+- [Tools](tools.md): every tool and how to allow or deny them per agent
+- [Files](files.md): `file_read`, `analyze_file` and the read rules
+- [Web client](web.md): the desktop and its windows
+- [API](api.md): the image and media routes in full

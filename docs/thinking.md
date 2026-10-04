@@ -1,87 +1,63 @@
 # Thinking
 
-Thinking / reasoning control.
+Many models can reason before they answer. somora has one setting for
+how much: `off`, `low`, `medium` or `high`. It works the same on every
+engine, and somora translates it into the word each model expects.
 
-somora exposes a **single cross-engine knob** for controlling how much
-the model thinks before responding. The knob is the same regardless of
-which underlying engine (`claude-cli`, `codex-cli`, `openai-compatible`)
-runs the turn — somora translates per engine.
+## What you get
 
-## The user surface
+- **One setting for all engines.** The same four levels on Claude,
+  Codex, Grok and local models.
+- **A default per agent, a choice per session.** Set the level in
+  `agent.yaml` and change it for one session with `/thinking`.
+- **Words that fit the model.** A mapping per model turns `high` into
+  `xhigh` or `max` where the model calls it that.
+- **An honest badge.** The header shows the level, the word the model
+  receives, and whether the model can reason at all.
+- **The reasoning itself.** Where the engine provides it, the thinking
+  text appears above the reply, next to a count of reasoning tokens.
 
-For **chat turns**, three places to set it (later sources beat earlier ones):
+## Try it
 
-1. **`agent.yaml` per persona** — global default for that agent
+In the TUI or the web client, type:
 
-   ```yaml
-   model: opus
-   thinking: medium     # off | low | medium | high
-   ```
+```
+/thinking high           # more reasoning for this session
+/thinking off            # no reasoning
+/thinking default        # back to the agent's default
+/thinking                # TUI: show the level and where it comes from
+```
 
-2. **`/thinking <level>` slash command** — per-session override (works
-   in TUI and Web)
+Ask something that needs thought and watch the `🧠` count next to the
+output tokens. Then compare with `/thinking low`.
 
-   ```
-   /thinking high           # crank it up for this session
-   /thinking off            # disable thinking entirely
-   /thinking default        # clear override, back to persona default
-   /thinking                # show current state + source + dormant warning
-   ```
+To set an agent's default, add one line to its `agent.yaml`:
 
-3. **Engine default** — when nothing is set, each engine uses whatever
-   the model's own default is (typically `medium` for adaptive thinking,
-   `medium` for codex reasoning models)
+```yaml
+model: opus
+thinking: medium     # off | low | medium | high
+```
 
-For the **three dream-system phases** (REM, Deep, Lucid — background
-memory consolidation, see [dream-phases.md](dream-phases.md)), the
-worker LLMs have their own per-phase thinking knobs:
+## Where the level comes from
 
-| Phase | Where | Field |
+The first source that has a value wins.
+
+| Order | Source | Set with |
 |---|---|---|
-| REM | `agent.yaml` per persona | `rem.thinking` |
-| Deep | `config.yaml` server-global | `wiki.deep.thinking` |
-| Lucid | `config.yaml` server-global | `wiki.lucid.thinking` |
+| 1 | The session | `/thinking <level>`, or the THINKING section of the `•••` session menu in the web client |
+| 2 | The agent | `thinking:` in `agent.yaml` |
+| 3 | Nothing set | somora sends no level and the model uses its own default |
 
-All three are optional; unset = engine default (no reasoning_effort
-sent — the backend decides; a Qwen 3.x thinking model under vLLM then
-*thinks*, see the vocabulary table below). Dream phases share the same
-engine adapters + per-engine mapping table below, so the values follow
-identical semantics: the per-model `reasoning.levels` block, the retry
-on a rejected value and the model's `maxTokens` output cap all apply to
-REM, Deep and Lucid calls exactly as to chat turns. High thinking is a
-reasonable choice for these background workers — nobody waits on the
-latency — at the cost of longer chunks and more tokens per run. REM
-is per-agent because session-extraction styles vary by persona;
-Deep/Lucid are server-global because they operate on the shared
-wiki across all agents.
+In the TUI, `/thinking -` does the same as `/thinking default`.
 
-The TUI header surfaces the effective state (chat turns only — dream
-runs are background workers and don't render in the TUI):
+> **Warning:** "Nothing set" is not "off". A Qwen 3.x thinking model
+> reasons by default, so an agent without `thinking:` runs it at full
+> depth. Give such agents an explicit level.
 
-- `🧠 medium` (cyan) — active and being applied
-- `🧠 high→xhigh` (cyan, grey arrow) — active, and the model receives a
-  different word for this level than somora's own (see *Per-model
-  vocabulary* below)
-- `🧠 thinking…` (cyan, during streaming, before first content token) —
-  visual cue that the model is in its reasoning pass
-- `thinking=medium (dormant)` (yellow) — setting is stored but the active
-  model has no `reasoning` capability, so it has no effect
+## The reasoning capability
 
-The Web client renders the same three states in its chat-window
-header next to the model name. Parity between TUI and Web is
-intentional — both clients hit the same `/agents/<a>/sessions/<s>/thinking`
-endpoint and consume the same SSE events.
-
-The output-token segment additionally shows the reasoning tokens spent
-when the engine reports them: `↓ 412 (1.2k 🧠)`. Backends that stream
-their thinking as `reasoning_content` deltas but report no
-`reasoning_tokens` in `usage` get an estimate from the streamed text
-(4 chars per token), marked with a tilde: `(~1.2k 🧠)`.
-
-## The `reasoning` capability
-
-A model only honors the thinking knob if its `capabilities` array in
-`config.yaml` includes `reasoning`:
+The level only reaches a model that lists `reasoning` in its
+`capabilities` in `config.yaml`:
 
 ```yaml
 - id: claude-opus-4-7
@@ -90,113 +66,42 @@ A model only honors the thinking knob if its `capabilities` array in
   capabilities: [text, image, reasoning]
 ```
 
-Without `reasoning` in the list, the engine adapter silently skips the
-per-turn thinking parameter — the value is sent to the model unchanged
-from whatever the model defaults to. The TUI marks this state as
-**dormant** (yellow, with `(dormant)` suffix) instead of pretending the
-setting works.
+Without `reasoning`, somora sends no thinking parameter and the model
+behaves as it does by default. The level stays stored and the header
+marks it as dormant.
 
-This matters for cloud-vs-local: cloud reasoning models (opus, gpt-5,
-o3) all support it; vanilla local models (Gemma, Llama plain, Mistral
-plain) do **not**. Local reasoning models that DO support it (GPT-OSS,
-Qwen3-Thinking served via vLLM/SGLang) should be marked with
-`reasoning` — then the same knob works there too.
+Cloud reasoning models support it. Plain local models (Gemma, plain
+Llama or Mistral) do not. Local reasoning models served by vLLM or
+SGLang (GPT-OSS, Qwen thinking models, DeepSeek) do: mark them with
+`reasoning` and the same setting works there.
 
-## Per-engine translation
+## What each engine receives
 
-Each engine adapter receives the resolved `ThinkingLevel` plus the
-active model's capability list. If the model lacks `'reasoning'`, the
-adapter does nothing engine-specific. Otherwise it maps:
+| somora level | `claude-cli` | `codex-cli` | `grok-cli` | `openai-compatible` |
+|---|---|---|---|---|
+| `off` | `thinking: { type: 'disabled' }` | `turn/start.effort: minimal` | `--reasoning-effort low` | parameter omitted |
+| `low` | `effort: 'low'` | `turn/start.effort: low` | `--reasoning-effort low` | `reasoning_effort: 'low'` |
+| `medium` | `effort: 'medium'` | `turn/start.effort: medium` | `--reasoning-effort medium` | `reasoning_effort: 'medium'` |
+| `high` | `effort: 'high'` | `turn/start.effort: high` | `--reasoning-effort high` | `reasoning_effort: 'high'` |
 
-| somora level | claude-cli                                 | codex-cli                              | openai-compatible             |
-|--------------|--------------------------------------------|----------------------------------------|-------------------------------|
-| `off`        | `thinking: { type: 'disabled' }`           | `turn/start.effort: minimal` †         | param omitted entirely ‡      |
-| `low`        | `effort: 'low'`                            | `turn/start.effort: low`               | `reasoning_effort: 'low'`     |
-| `medium`     | `effort: 'medium'`                         | `turn/start.effort: medium`            | `reasoning_effort: 'medium'`  |
-| `high`       | `effort: 'high'`                           | `turn/start.effort: high`              | `reasoning_effort: 'high'`    |
+What `off` means differs per engine:
 
-† codex-cli has no real "off" state for reasoning-capable models — `off`
-maps to `minimal` (its lowest setting). The semantic difference vs
-`off` on claude is documented but unavoidable. Not every Codex model
-accepts `minimal` (GPT-6 Astra answers `low | medium | high | xhigh |
-max` only): when the backend rejects the effort word, codex-cli reads
-the supported list out of the error and retries the turn once with the
-nearest value (`engine_meta` `reasoning_effort_adjusted`, log
-`engine.reasoning_effort_rejected`). Map the level in the model's
-`reasoning.levels` (e.g. `{ "off": low }`) to skip the retry.
+- **Claude** really switches thinking off.
+- **Codex** has no off. It gets `minimal`, its lowest word.
+- **Grok** always reasons. It gets `low`.
+- **OpenAI-compatible** models get no parameter, which is the model's
+  own default. For Qwen 3.x that default is thinking on. For
+  DeepSeek V4 on SGLang it is no reasoning at all.
 
-The per-model `reasoning.levels` block (see the vocabulary section
-below) applies to **codex-cli and grok-cli as well**, not only to the
-OpenAI-compatible engine: codex accepts `xhigh` and `max` for the
-GPT-5.6 family, so `reasoning: { levels: { high: xhigh } }` on such a
-model sends `effort: xhigh` for `/thinking high`.
-Without a mapping the level goes through verbatim as in the table.
-`max` is deliberately not a suggested default — OpenAI documents it for
-the hardest problems, with the latency and cost to match; map it in a
-session when you need it.
+The table is the default. A `reasoning.levels` block on the model
+replaces single cells for `codex-cli`, `grok-cli` and
+`openai-compatible`. It has no effect on `claude-cli`.
 
-### Why three different surfaces
+## Mapping levels per model
 
-The mapping is intentionally lossy because the underlying APIs disagree:
-
-- **Anthropic / claude-agent-sdk** uses adaptive thinking (`{ type:
-  'adaptive' }`) plus an `effort` enum guiding depth, OR explicit
-  `{ type: 'enabled', budgetTokens: N }` for fixed budgets, OR
-  `{ type: 'disabled' }`. Adaptive is the default for Opus 4.6+.
-
-- **Codex** wraps OpenAI's reasoning models. The app-server's
-  `turn/start.effort` accepts `minimal | low | medium | high | xhigh |
-  max` (per model, see `somora codex debug models`). Set per turn; the
-  thread keeps the last value.
-
-- **OpenAI-compatible chat.completions** accepts the body field
-  `reasoning_effort`. OpenAI's own vocabulary is `none | minimal | low |
-  medium | high | xhigh` — but every model family has its own words,
-  and some backends reject a word they don't know with HTTP 400 instead
-  of ignoring it. That is what the per-model block below is for.
-
-Adopting one engine's vocabulary as somora's would have leaked detail.
-The neutral `off | low | medium | high` enum maps cleanly to all three
-and is the smallest set users actually distinguish in practice.
-
-## Per-model vocabulary (`openai-compatible`)
-
-Three models, three vocabularies:
-
-| Model family | Accepted values | Unknown value → |
-|---|---|---|
-| OpenAI o-series / gpt-5 | `none minimal low medium high xhigh` | 400 |
-| Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh` — no `high`; `none` = 0 reasoning tokens (verified on Qwen3.8-Flash-Next), but about 1 reply in 8 then opens with planning text — see below | **400** — the template raises |
-| DeepSeek V4 | `low high max`; `none` and unset both = no reasoning | ignored |
-| DeepSeek V4.1 | `none low high max` — `none` is a real level here, so map `off: none` and `medium: high` (measured: 0 / 55 / 48 / 92 reasoning tokens for `none` / `low` / `high` / `max`) | ignored |
-
-‡ "Omitted" means the backend's own default. For a Qwen 3.x thinking
-model that default is *thinking on* — measured: unset 60 reasoning
-tokens on a one-line arithmetic prompt, `low` 31, `none` 0.
-So `off` without a `levels` mapping does **not** switch Qwen off; map
-it (below) and give Qwen-based personas an explicit `thinking:` in
-`agent.yaml`, otherwise "nothing set" is silently the most expensive
-behaviour.
-
-**`none` is cheap, not clean.** Zero reasoning tokens does not mean the
-model stops planning — with no reasoning channel to plan in, a Qwen 3.x
-model sometimes plans in the answer: "The user asks what my persona
-says about me. I can answer that directly…" arrives as the reply, in
-front of the answer or instead of it. Measured on Qwen3.8-Flash-Next
-with an agent's real first turn (23k-char system prompt, 48 tools):
-`none` 13 of 108 replies opened with such planning text, `low` 0 of
-113. Tools and the memory block made no difference. `low` cost about
-110 extra tokens per reply, in the separate thinking channel where it
-belongs. For a Qwen-based agent that talks to people, map `off: low`;
-keep `off: none` for workers whose output is parsed, not read.
-
-somora's neutral `off | low | medium | high` fits none of them fully.
-Two things keep a thinking knob from killing a turn:
-
-**1. Per-model mapping in `config.yaml`.** Each model on an
-`openai-compatible` provider may carry a `reasoning:` block that says
-which word somora sends for each level, and where in the request body
-it goes:
+Models disagree on the words, and some reject a word they do not know.
+Each model in `config.yaml` may carry a `reasoning:` block that says
+which word somora sends for each level:
 
 ```yaml
 providers:
@@ -207,11 +112,11 @@ providers:
         alias: qwen
         contextWindow: 262144
         capabilities: [text, reasoning]
-        maxTokens: 16384              # output cap; see setup.md
+        maxTokens: 16384              # output cap, reasoning included
         reasoning:
           param: reasoning_effort     # reasoning_effort (default) | reasoning | chat_template_kwargs
-          levels:                     # somora level → model value
-            off: null                 # null = omit the param (model default)
+          levels:                     # somora level: word the model gets
+            off: null                 # null = omit the parameter
             low: low
             medium: medium
             high: xhigh               # this model's real maximum
@@ -221,157 +126,237 @@ providers:
           levels: { medium: high, high: max }
 ```
 
-- A string is sent verbatim; `null` omits the parameter for that level.
-- Levels you leave out keep the default mapping (`off` omits, the rest
-  go through unchanged), so a block with a single line is fine.
-- `param` picks the body shape: `reasoning_effort` top-level (OpenAI,
-  vLLM, LiteLLM), `reasoning` for OpenRouter's nested
-  `{ "reasoning": { "effort": … } }`, or `chat_template_kwargs` for
-  vLLM templates that only read `{ "chat_template_kwargs": {
-  "reasoning_effort": … } }`.
-- `off` means "somora does not ask for a depth" — the model's own
-  default, which for Qwen 3.x under vLLM is *thinking on*. To make
-  `off` really switch reasoning off, map it: `off: none` (verified on
-  Qwen3.8-Flash-Next, 0 reasoning tokens; `chat_template_kwargs:
-  { enable_thinking: false }` is the template-level equivalent). That
-  is the right floor for a worker; for an agent people read, `off: low`
-  is the safer floor on Qwen 3.x — see "`none` is cheap, not clean"
-  above. On a backend without `none` in its vocabulary, `off: low` is
-  the floor anyway. somora does not guess this for you.
+| Key | Meaning |
+|---|---|
+| `levels.<level>` | A string is sent as it is. `null` omits the parameter for that level. A level you leave out keeps the default from the table above. |
+| `param` | Where the word goes in the request. Only for `openai-compatible`. |
 
-**2. Retry on rejection.** With or without a block, when the backend
-answers a request with an error about the effort value, somora reads the
-backend's own list of accepted values out of the message ("Supported:
-xhigh, medium, low"), picks the nearest weaker one (then the nearest
-stronger; never `none`), and sends the request again once. A rejected
-`none` is the exception: it is retried with the parameter *omitted*,
-never with a level that thinks. If the message names no values, the
-retry goes out without the parameter. The
-adjusted value stays for the rest of that turn. The turn gets an
-`engine_meta` line ("reasoning effort adjusted") saying what was sent,
-and the server log carries `engine.reasoning_effort_rejected` with the
-backend's text — the cue to add the mapping to the model's block so it
-stops costing a round-trip.
-
-**Behind a router or proxy the retry may never fire.** The retry needs
-the backend's 400 to reach somora. A parameter-normalising gateway in
-between — LiteLLM with `drop_params: true`, most OpenAI-compatible
-routers — typically swallows it. Measured against a Qwen route
-through LiteLLM that does not let the parameter through: every value
-(`low`, `high`, `xhigh`, `none`, unset) returns 200 with a completion,
-and the reasoning volume does not move with the value either — the
-router dropped the parameter before the backend saw it. With
-`allowed_openai_params: ["reasoning_effort"]` on that route the volume
-moves as expected (unset 60 / low 31 / none 0 reasoning tokens). Two
-consequences for router-fronted models:
-
-- Neither the retry nor the `levels` mapping can help when the router
-  drops the parameter; the model runs at its own default depth whatever
-  somora sends, and the badge shows a word that never arrives. The fix
-  is on the router (LiteLLM: let `reasoning_effort` through for that
-  route, e.g. via `allowed_openai_params`), not in somora. Verify with
-  a direct probe: send two efforts with a prompt that needs thinking
-  and compare `usage.completion_tokens_details.reasoning_tokens`.
-- Once the router passes the parameter through, the 400 for an unknown
-  word may still be masked. Map the model explicitly in `levels` and do
-  not rely on the retry; there is no `engine.reasoning_effort_rejected`
-  cue on that path.
-
-YAML note: somora parses config with a YAML 1.2 reader, so an unquoted
-`off:` key is the string `off`. Quoting it (`"off": low`) is equally
-fine and safer for tooling that reads the file with a YAML 1.1 parser.
-
-One more vendor quirk worth knowing: DeepSeek V4 served by SGLang
-reasons **only when the request carries a `reasoning_effort`** — with
-the parameter omitted it answers without a thinking phase at all
-(`reasoning_tokens: 0`, the "thinking" lands in the visible text
-instead). On that model `off` really is off, and any
-level switches thinking on.
-
-The badge shows the mapped word whenever it differs from the level:
-`🧠 high→xhigh`, or `🧠 high→off` when the level maps to "omit".
-
-Sampling parameters (`temperature`, `top_p`, …) follow the same
-three-layer pattern and are described in [sampling.md](sampling.md).
-
-## Reasoning-token visibility
-
-When the engine reports reasoning tokens in the turn's usage, somora
-forwards them as `tokens_out_reasoning` on the `agent-end` SSE event.
-Both the TUI and the Web client render the count next to total output
-tokens with a 🧠 glyph (`↓ 412 (1.2k 🧠)`).
-
-Per-engine support:
-
-| Engine | Reasoning-token count surfaced? | How |
+| `param` | Request body | Used by |
 |---|---|---|
-| `codex-cli` | ✓ | parsed from `reasoningOutputTokens` in the app-server's `thread/tokenUsage/updated` notification |
-| `openai-compatible` | ✓ | parsed from `completion_tokens_details.reasoning_tokens` in the chat.completions usage chunk |
-| `claude-cli` | ✗ | Anthropic's `usage` object reports `input_tokens` / `output_tokens` / `cache_*` — thinking-tokens are rolled into `output_tokens`, no separate counter |
+| `reasoning_effort` (default) | `{ "reasoning_effort": … }` | OpenAI, vLLM, LiteLLM |
+| `reasoning` | `{ "reasoning": { "effort": … } }` | OpenRouter |
+| `chat_template_kwargs` | `{ "chat_template_kwargs": { "reasoning_effort": … } }` | vLLM templates that only read kwargs |
 
-claude-cli turns therefore show only the combined output count.
+On Codex the GPT-5.6 family also accepts `xhigh` and `max`, so
+`reasoning: { levels: { high: xhigh } }` sends `effort: xhigh` for
+`/thinking high`. `somora codex debug models` lists the words each
+Codex model accepts.
 
-Some OpenAI-compatible backends stream the reasoning text but report
-no `reasoning_tokens` in usage (SGLang, some router setups). For those
-somora estimates the count from the streamed `reasoning_content`
-(about four characters per token) and flags it with
-`tokens_out_reasoning_estimated: true`; the TUI and web client show
-the badge with a tilde (`~1.2k 🧠`). An exact count from usage always
-wins over the estimate.
+> **Tip:** `max` is meant for the hardest problems, with the latency and
+> cost to match. Map it when you need it, not as a default.
 
-The reasoning *text* itself is a separate feature — see
-"Thinking content" below.
+> **Note:** somora reads the config as YAML 1.2, so an unquoted `off:`
+> key is the string `off`. Quoting it (`"off": low`) is equally fine and
+> safer for tools that read the file as YAML 1.1.
 
-## Wire format
+## What the model families accept
 
-The `agent` SSE event carries the resolved thinking state on both
-`start` and `end` phases so clients can show the badge from the very
-first token of a turn:
+| Model family | Accepted words | An unknown word |
+|---|---|---|
+| OpenAI o-series, gpt-5 | `none minimal low medium high xhigh` | answers 400 |
+| Qwen 3.x reasoning (vLLM chat template) | `none low medium xhigh`, no `high` | answers 400 |
+| DeepSeek V4 | `low high max`. `none` and no parameter both mean no reasoning. | is ignored |
+| DeepSeek V4.1 | `none low high max`. Map `off: none` and `medium: high`. | is ignored |
 
-```jsonc
-event: agent
-data: {
-  "phase": "start",
-  "provider": "anthropic",
-  "model": "claude-opus-4-7",
-  "thinking": { "level": "high", "active": true }
-}
+The [models guide](models.md) has the recommended mapping for each
+tested model, GLM included.
+
+### Switching Qwen off
+
+Without a mapping, `off` sends nothing and Qwen 3.x keeps thinking.
+There are two ways to map it:
+
+| Mapping | Result | Use it for |
+|---|---|---|
+| `off: none` | Zero reasoning tokens. About one reply in eight then opens with planning text ("The user asks … I can answer that directly …"). | Workers whose output is parsed, not read |
+| `off: low` | About 110 extra tokens per reply, in the thinking channel where they belong. No planning text in the reply. | Agents that talk to people |
+
+`chat_template_kwargs: { enable_thinking: false }` is the same switch
+as `none` at the template level. On a backend without `none`,
+`off: low` is the floor anyway. somora does not guess this for you.
+
+### DeepSeek V4 on SGLang
+
+This model reasons only when the request carries a `reasoning_effort`.
+With the parameter omitted it answers without a thinking phase, and any
+thinking lands in the visible text. So `off` really is off there, and
+every other level switches thinking on.
+
+## When a model rejects the word
+
+With or without a mapping, a backend may answer with an error about the
+effort value. somora then retries once:
+
+1. It reads the list of accepted words from the error message, for
+   example "Supported: xhigh, medium, low".
+2. It picks the nearest weaker word, or else the nearest stronger one.
+   It never picks `none`.
+3. It sends the request again. The adjusted word stays for the rest of
+   the turn.
+
+On `openai-compatible`, a rejected `none` is retried with the parameter
+omitted, never with a word that thinks. The same happens when the error
+names no words. On `codex-cli` the retry only happens when the error
+lists the words. A model that knows no `minimal` then gets `low` for
+`off`.
+
+The chat shows a "reasoning effort adjusted" line with what was sent.
+That is the cue to add the word to the model's `levels`, so it stops
+costing a round trip.
+
+## Models behind a router
+
+The retry needs the backend's error to reach somora. A gateway that
+normalises parameters, such as LiteLLM with `drop_params: true`, often
+drops `reasoning_effort` before the model sees it. Every level then
+answers normally with the same amount of reasoning, and the badge shows
+a word that never arrives.
+
+- **Fix it on the router.** In LiteLLM, let the parameter through for
+  that route, for example with
+  `allowed_openai_params: ["reasoning_effort"]`. Neither the retry nor
+  `levels` can help while the router drops it.
+- **Check with a direct probe.** Send two efforts with a prompt that
+  needs thinking and compare
+  `usage.completion_tokens_details.reasoning_tokens`.
+- **Map the model explicitly.** A router may still hide the error for an
+  unknown word, so do not rely on the retry there.
+
+## Dream phases
+
+The background workers for REM, Deep and Lucid have their own optional
+level. They use the same engine mapping, the same `reasoning.levels`
+and the model's `maxTokens` output cap. On `openai-compatible` workers
+the retry applies too.
+
+| Phase | File | Setting |
+|---|---|---|
+| REM | `agent.yaml` | `rem.thinking` |
+| REM judge | `config.yaml` | `rem.dedup.judge.thinking` |
+| Deep | `config.yaml` | `wiki.deep.thinking` |
+| Lucid | `config.yaml` | `wiki.lucid.thinking` |
+
+Unset means no level is sent and the model decides. A Qwen 3.x worker
+then thinks. A high level is a reasonable choice here: nobody waits for
+the answer, and the cost is longer runs and more tokens.
+
+REM is set per agent because extraction differs by persona. Deep and
+Lucid work on the wiki that all agents share, so they are set once.
+
+## What the header shows
+
+| Badge | Meaning |
+|---|---|
+| `🧠 medium` | The level is applied. |
+| `🧠 high→xhigh` | Applied, and the model receives a different word than the level. `🧠 high→off` means the parameter is omitted. |
+| `thinking=medium (dormant)` | A level is stored, but the model has no `reasoning` capability. It has no effect. |
+| `thinking` with a spinner | TUI only: the turn runs and no reply text has arrived yet. |
+| `↓ 412 (1.2k 🧠)` | Reasoning tokens of the turn, next to the output tokens. |
+| `(~1.2k 🧠)` | The same as an estimate, see below. |
+
+The TUI and the web client show the same badges. Two differences: the
+web client hides the badge when the level is `off`, and the TUI shows
+the arrow only on `openai-compatible` models. Dream runs are background
+work and have no badge.
+
+## Reasoning tokens
+
+| Engine | Count shown | Source |
+|---|---|---|
+| `codex-cli` | yes | `reasoningOutputTokens` in the app-server's `thread/tokenUsage/updated` notification |
+| `openai-compatible` | yes | `completion_tokens_details.reasoning_tokens` in the usage chunk |
+| `grok-cli` | when Grok reports it | the usage of the turn |
+| `claude-cli` | no | Anthropic counts thinking inside `output_tokens`. There is no separate number. |
+
+Some OpenAI-compatible backends stream the reasoning text but report no
+`reasoning_tokens` (SGLang, some routers). somora then estimates the
+count from the streamed text, about four characters per token, and
+marks it with a tilde. An exact count from the backend always wins.
+
+## Seeing the thinking text
+
+The reasoning text travels as its own event, separate from the reply.
+It is never sent back to a model: history rebuilds, compaction summaries
+and REM extraction read user, assistant and tool rows only.
+
+| Client | What you see | Switch |
+|---|---|---|
+| Web | A collapsed `🧠 thinking` block above the reply. While the model thinks and has not written yet, it is open and shows the last lines live. It folds when the reply starts. Click to open it. | **Show thinking in replies** in the `•••` session menu, or `/verbose thinking on\|off`. On by default, remembered per session in the browser. |
+| TUI | The text dimmed and indented above the reply, at most 40 lines (`… (+N lines)`), and the last lines live while the model thinks. | `/verbose thinking on\|off`. Off by default. `tui.verbose.thinking` in `config.yaml` sets the start value. |
+| Mobile | One `🧠 thinking` row. Tap it to read all of it. | none |
+
+The client switches only change the display. The text is still
+captured, stored and exported.
+
+### What each engine provides
+
+| Engine | You get | Checked |
+|---|---|---|
+| `openai-compatible` | The full reasoning text, when the backend streams `reasoning_content` or `reasoning` deltas. | end to end on DeepSeek V4 (SGLang) and Qwen 3.8 (vLLM) through a LiteLLM router |
+| `openai-compatible`, inline `<think>` models | The full text, split off the reply. | DeepSeek V4 Flash |
+| `claude-cli` | Whatever the Claude Agent SDK delivers. With the current SDK the thinking blocks arrive empty, and somora shows one placeholder line saying that the model thought. A redacted block gets its own placeholder. | yes |
+| `codex-cli` | A summary per thinking phase: heading-like sentences. Codex never streams the raw reasoning. somora asks for `summary: auto` on `turn/start` while capture is on and reads `item/reasoning/summaryTextDelta`. | yes |
+| `grok-cli` | ACP `agent_thought_chunk` frames. | no, it follows the ACP schema only |
+
+In practice the full text comes from local and routed models. Claude
+and Codex give a placeholder or a summary, because their providers do
+not disclose the trace.
+
+### Models that think inline
+
+Some models print their reasoning as `<think>…</think>` inside the
+normal text: DeepSeek V4 on a server without a reasoning parser, R1,
+QwQ. somora splits the block off. The reasoning goes to the thinking
+block, and the reply and any subagent `result` stay clean.
+
+Both shapes are handled: the full block, and the one where the chat
+template already wrote `<think>` into the prompt, so only the closing
+tag arrives. Until the closing tag arrives, the text may stream as
+reply text. The final message is always clean.
+
+## Settings
+
+Server-wide, in `config.yaml`. The values shown are the defaults.
+
+```yaml
+thinkingContent:
+  capture: true
+  maxChars: 65536
 ```
 
-```jsonc
-event: agent
-data: {
-  "phase": "end",
-  "usage": {
-    "tokens_in": 12450,
-    "tokens_out": 387,
-    "tokens_in_cached": 11800,
-    "tokens_out_reasoning": 1240,
-    "tokens_out_reasoning_estimated": false
-  },
-  "contextWindow": 1000000,
-  "provider": "anthropic",
-  "model": "claude-opus-4-7",
-  "thinking": { "level": "high", "active": true, "wire": "xhigh" }
-}
-```
+| Setting | Default | Meaning |
+|---|---|---|
+| `thinkingContent.capture` | `true` | `false` drops the thinking text at the server: no SSE event, no JSONL row, nothing in any client. Codex is then asked for no summaries. |
+| `thinkingContent.maxChars` | `65536` | Most characters of thinking text stored per turn. Longer text is cut and the clients show "(truncated by the server)". Keeps a long reasoning phase from filling the session file. |
+| `tui.verbose.thinking` | `false` | Whether the TUI starts with the thinking text shown. |
 
-`thinking.active = false` means a level is set but the active model
-lacks the `reasoning` capability — the knob is dormant. `thinking.wire`
-is present only when the value the engine sends differs from `level`
-(per-model vocabulary); `"off"` there means the parameter is omitted.
+Where a level is set:
 
-## HTTP API for clients
+| Setting | File | Values |
+|---|---|---|
+| `thinking` | `agent.yaml` | `off`, `low`, `medium`, `high`. Unset: nothing is sent. |
+| `rem.thinking` | `agent.yaml` | the same |
+| `rem.dedup.judge.thinking`, `wiki.deep.thinking`, `wiki.lucid.thinking` | `config.yaml` | the same |
+| `reasoning.param`, `reasoning.levels` | per model in `config.yaml` | see [Mapping levels per model](#mapping-levels-per-model) |
 
-Clients (TUI, web) drive the per-session override via:
+## Commands
 
-| Method | Path                                                | Purpose                              |
-|--------|-----------------------------------------------------|--------------------------------------|
-| GET    | `/agents/:agent/sessions/:session/thinking`         | current effective level + source     |
-| PUT    | `/agents/:agent/sessions/:session/thinking`         | body: `{ "level": "high" }` — sets override |
-| DELETE | `/agents/:agent/sessions/:session/thinking`         | clears override → falls back to persona/engine default |
+| Command | Where | What it does |
+|---|---|---|
+| `/thinking` | TUI | Shows the level, its source, and a warning when it is dormant. |
+| `/thinking off\|low\|medium\|high` | TUI, web | Sets the level for this session. |
+| `/thinking default` | TUI, web | Removes the session's level. |
+| `/verbose thinking on\|off` | TUI, web | Shows or hides the thinking text. |
 
-GET response example:
+## Routes
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/agents/:agent/sessions/:session/thinking` | The level in effect and its source |
+| PUT | `/agents/:agent/sessions/:session/thinking` | Body `{ "level": "high" }`. Sets the session's level. Answers `{ agent, session, level }`, or 400 for an unknown level. |
+| DELETE | `/agents/:agent/sessions/:session/thinking` | Removes the session's level. Answers `{ agent, session, cleared: true }`. |
+
+All three answer 404 for an unknown agent or session. A GET response:
 
 ```json
 {
@@ -386,80 +371,93 @@ GET response example:
 }
 ```
 
-`source` is one of `session-override | persona-default | engine-default`.
-`wire` is the word the engine sends for `effective` when it differs
-(`null` otherwise; `"off"` = parameter omitted).
+| Field | Meaning |
+|---|---|
+| `effective` | The level in effect, or `null` when nothing is set. |
+| `override` | The session's level, or `null`. |
+| `personaDefault` | The agent's level, or `null`. |
+| `source` | `session-override`, `persona-default` or `engine-default`. |
+| `modelSupportsReasoning` | `false` means the level is dormant. |
+| `wire` | The word the engine sends when it differs from `effective`, else `null`. `"off"` means the parameter is omitted. Reported for `openai-compatible` and `codex-cli`. |
 
-## Thinking content — seeing what the model thought
+## Events
 
-The reasoning text itself is available, not only the badge and the
-token count. It travels as its own event, separate
-from the reply, and is never sent back to a model or into memory.
+The `agent` SSE event carries the thinking state at the start and the
+end of a turn, so a client can show the badge from the first token:
 
-**Web:** every assistant bubble that carries thinking gets a collapsed
-`🧠 thinking` block above the reply text. While the model is still
-thinking and has not written a word yet, the block is open and shows
-the tail of the reasoning live; the moment the reply starts it folds
-away, and a click opens it again. Not everyone wants the block: the
-`•••` session menu has a **Show thinking in replies** checkbox, and
-`/verbose thinking on|off` does the same from the composer. Both are
-display-only and remembered per session in the browser — the text is
-still captured, persisted and exported. **TUI:** off by default —
-`/verbose thinking on` shows the text dimmed and indented above the
-reply, capped at 40 lines (`… (+N lines)`), and the live tail while the
-model thinks. See [display.md](display.md).
-
-### Engine matrix
-
-| Engine | Thinking content | What you get | Status |
-|---|---|---|---|
-| `openai-compatible` | yes, when the backend streams `reasoning_content` (or `reasoning`) deltas | the full reasoning text as the model wrote it | verified end to end (SSE + history row) on DeepSeek V4 (SGLang) and Qwen 3.8 (vLLM) through a LiteLLM router |
-| `openai-compatible`, inline `<think>` models (DeepSeek V4 on SGLang without a reasoning parser, R1, QwQ) | yes | somora splits an inline `<think>…</think>` block off the reply — also the DeepSeek shape where only the closing tag arrives because the template prefilled the opening one — and routes it to the thinking block; the visible reply and subagent results stay clean | verified on DeepSeek V4 Flash |
-| `claude-cli` | placeholder only with the current SDK | The Claude Agent SDK carries thinking as its own blocks, but what those blocks contain depends on the SDK version, not on somora: with `@anthropic-ai/claude-agent-sdk` 0.3.258 every model measured (Fable, Opus 4.7, Sonnet 4.6) runs the thinking phase and delivers an **empty** block — somora shows one placeholder line. With SDK 0.3.215 Sonnet 4.6 streamed the text while Fable and Opus 4.7 stayed empty. Explicitly redacted blocks get their own placeholder. | measured on both SDK versions |
-| `codex-cli` | summaries per thinking phase | Codex never streams the raw chain of thought; with `summary: auto` on `turn/start` (somora sets it while `thinkingContent.capture` is on) the app-server streams `item/reasoning/summaryTextDelta` per thinking phase — heading-like sentences, shown as the thinking block. | verified on the app-server engine |
-| `grok-cli` | wired, unverified | ACP `agent_thought_chunk` frames, cumulative like message chunks | follows the ACP schema only — not verified against a live Grok session |
-
-The token counter and the badge are unchanged and work on every engine
-that reports reasoning at all; the content layer sits on top and is
-simply absent where an engine has nothing to show. In practice this
-means: the full text comes from the local and routed models on
-`openai-compatible`; Claude and Codex give a placeholder or a one-line
-summary, because their providers do not disclose the trace.
-
-### Configuration
-
-```yaml
-# config.yaml — server-global
-thinkingContent:
-  capture: true        # false = no SSE event, no JSONL row, nothing in any client
-  maxChars: 65536      # per-turn cap on what is persisted; longer text is cut and marked
+```jsonc
+event: agent
+data: {
+  "phase": "start",
+  "provider": "local",
+  "model": "some-qwen-reasoning-model",
+  "thinking": { "level": "high", "active": true, "wire": "xhigh" }
+}
 ```
 
-`capture` is the one switch: turning it off drops the content at the
-server before it reaches any client. The cap keeps a Qwen turn at
-`xhigh` from writing tens of thousands of tokens into the session file
-per turn; the clients show "(truncated by the server)" on a cut block.
+```jsonc
+event: agent
+data: {
+  "phase": "end",
+  "usage": {
+    "tokens_in": 12450,
+    "tokens_out": 387,
+    "tokens_in_cached": 11800,
+    "tokens_out_reasoning": 1240,
+    "tokens_out_reasoning_estimated": true
+  },
+  "contextWindow": 262144,
+  "provider": "local",
+  "model": "some-qwen-reasoning-model",
+  "thinking": { "level": "high", "active": true, "wire": "xhigh" }
+}
+```
 
-### Wire and storage
+| Field | Meaning |
+|---|---|
+| `thinking` | Present only when a level is set. |
+| `thinking.active` | `false`: the model lacks the `reasoning` capability and the level is dormant. |
+| `thinking.wire` | The word sent when it differs from `level`. `"off"` means the parameter is omitted. Sent for `openai-compatible` models only. |
+| `usage.tokens_out_reasoning` | Reasoning tokens of the turn, when the engine reports or somora estimates them. |
+| `usage.tokens_out_reasoning_estimated` | `true` when the count is an estimate. Absent otherwise. |
 
-- SSE: `event: thinking` with `{ state: 'delta' | 'final', text,
-  truncated? }`, deltas cumulative like `chat`. The `final` arrives
-  before the `chat` final of the same turn.
-- JSONL / `/chat/history`: one `thinking_message` row per turn, placed
-  before the turn's `assistant_message`. Deltas are not persisted.
-- Never replayed: history rebuilds for the model, compaction summaries
-  and REM extraction read user, assistant and tool rows only.
+The thinking text has its own event and its own history row:
 
-### Inline `<think>` models
+| Where | Shape |
+|---|---|
+| SSE | `event: thinking` with `{ state: 'delta' \| 'final', text, truncated? }`. Deltas are cumulative, like `chat`. The `final` arrives before the `chat` final of the same turn. |
+| JSONL and `/chat/history` | One `thinking_message` row per turn, placed before the turn's `assistant_message`. Deltas are not stored. |
+| A rejected effort word | An `engine_meta` row of type `reasoning_effort_adjusted`. |
 
-Models that print their reasoning as `<think>…</think>` inside the
-normal text stream (DeepSeek V4 on a server without a reasoning parser,
-R1, QwQ) get the block split off by the openai-compatible engine: the
-reasoning goes to the thinking block, the reply and any subagent
-`result` stay clean. Both shapes are handled — the full block, and the
-DeepSeek-on-SGLang shape where the chat template prefilled `<think>` in
-the prompt so only the closing tag arrives. Until the closing tag
-arrives the deltas may stream as
-reply text; the final message is always clean. A `reasoning_effort`
-knob still only works where the backend honours it — for DeepSeek V4
-see [models.md](models.md).
+## Troubleshooting
+
+**The badge says dormant.** The model has no `reasoning` in its
+`capabilities`. Add it if the model can reason, or switch the model.
+
+**The level changes nothing.** If the model sits behind a router, the
+router probably drops the parameter. See
+[Models behind a router](#models-behind-a-router).
+
+**`/thinking off` and the model still thinks.** On Qwen 3.x, `off`
+sends nothing unless you map it. See
+[Switching Qwen off](#switching-qwen-off).
+
+**Replies open with planning text.** The model runs with `none`. Map
+`off: low` for that model.
+
+**A "reasoning effort adjusted" line in the chat.** The model rejected
+the word. The server log has `engine.reasoning_effort_rejected` with the
+backend's text. Add the word it accepts to the model's `levels`.
+
+**No thinking block on Claude, only a placeholder.** That is what the
+SDK delivers. The setting still works.
+
+## See also
+
+- [Models](models.md): tested models and the mapping each one needs
+- [Sampling](sampling.md): `temperature`, `top_p` and friends, set the
+  same way
+- [TUI display](display.md): `/verbose` and what the header shows
+- [Dream phases](dream-phases.md): REM, Deep and Lucid
+- [Setup](setup.md): `maxTokens` and other model settings
+- [API](api.md): all routes and SSE events

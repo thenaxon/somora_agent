@@ -1,168 +1,193 @@
 # External MCP servers
 
 somora can connect to external [MCP](https://modelcontextprotocol.io)
-servers and offer their tools to every agent, on every engine, right
-next to the built-in tools. One config entry, and `claude-cli`,
-`codex-cli`, `grok-cli` and `openai-compatible` agents all see the
-server's tools —
-namespaced, schema-sanitized, and individually gateable per agent.
+servers and offer their tools to your agents, next to the built-in
+tools. You add a server once in `config.yaml`. Every agent on every
+engine can then use its tools, and you decide per agent which ones it
+sees.
 
-```yaml
-# ~/.somora/config.yaml
-mcp:
-  servers:
-    parallel:
-      url: https://mcp.parallel.ai/v1beta/search_mcp/
-      headers:
-        x-api-key: "${PARALLEL_API_KEY}"
-```
+## What you get
 
-That's the whole setup for a hosted server. Header values expand
-`${VAR}` / `${VAR:-default}` from the server environment, so secrets
-stay out of the config file.
+- **One entry, every engine.** Agents on `claude-cli`, `codex-cli`,
+  `grok-cli` and `openai-compatible` all get the server's tools.
+- **One connection, in one place.** somora holds the connection and the
+  credentials. The engines never talk to the external server
+  themselves.
+- **Names that cannot clash.** Every tool is called
+  `mcp__<server>__<tool>`, so it never shadows a built-in tool or a
+  tool of another server.
+- **Per-agent visibility.** Hide one tool or a whole server for an
+  agent, by hand or with a click in the web client.
+- **Servers that fail do not hurt.** A broken tool schema is skipped, a
+  dead server is retried in the background, and somora starts without
+  waiting for any of them.
+- **OAuth logins kept alive.** For servers that log in with OAuth,
+  somora refreshes the token itself.
 
-## Adding a server, step by step
+## Set it up
 
-Works the same whether a human or a somora agent (via its own tools)
-does it:
+This works the same for a person and for an agent editing the files
+with its own tools.
 
-1. **Add the entry** to `mcp.servers` in `~/.somora/config.yaml`
-   (agents: `file_patch`). Server name: lowercase letters, digits,
-   hyphens — max 30 chars, no underscores.
-2. **Put the secret in the environment**, not the config: append
-   `MY_KEY=...` to `~/.somora/somora.env` and reference it as
-   `${MY_KEY}` in the `headers:` block. The env file is read at server
-   start.
-3. **Restart somora** — the hub reads `mcp.servers` at boot, config
-   edits alone don't connect anything: `systemctl --user restart
-   somora`. Agents: be aware this cuts your own running turn; finish
-   your reply first or ask the user to restart.
-4. **Verify**: `curl -sk https://localhost:18737/mcp/status` should show the
-   server `connected` with a tool count, and the new
-   `mcp__<server>__*` tools appear in the tool list (web UI: the
-   **abilities** tile). A `failed`/`needs-auth` state with `lastError` usually means
-   a wrong URL or missing/wrong API key.
+1. **Add the server** under `mcp.servers` in `~/.somora/config.yaml`
+   (an agent uses `file_patch`):
 
-## How it works
+   ```yaml
+   mcp:
+     servers:
+       acme:
+         url: https://mcp.acme.example/v1/
+         headers:
+           x-api-key: "${ACME_API_KEY}"
+   ```
 
-somora runs a single MCP **client hub** in the server process. It holds
-one long-lived connection per configured server, discovers the tools
-(`tools/list`, pagination included), and executes every call — no
-matter which engine asked:
+   The name may use lowercase letters, digits and hyphens, at most 30
+   characters, no underscores.
+2. **Put the secret in the environment**, not in the config. Append
+   `ACME_API_KEY=...` to `~/.somora/somora.env`. The file is read when
+   the server starts.
+3. **Restart somora** with `somora restart`. The list of servers is
+   read at start only.
+4. **Check it**:
 
-- **openai-compatible** agents get the tools bridged straight into
-  somora's tool registry.
-- **claude-cli** gets a lightweight per-turn proxy that serves the
-  discovered tool list and forwards calls to the hub.
-- **codex-cli** receives them as Codex dynamic tools, one namespace per
-  external server (`somora_mcp_<server>`), and somora answers the calls.
-  The CLIs never talk to the external server themselves — connections,
-  credentials, retries and audit stay in one place.
+   ```bash
+   curl -sk https://localhost:18737/mcp/status
+   ```
 
-Tool names are namespaced `mcp__<server>__<tool>` (the CLI engines see
-`mcp__somora-<server>__<tool>`), so external tools can never shadow
-built-ins or each other.
+   The server should be `connected` with a tool count. Its tools appear
+   as `mcp__acme__*` in the **abilities** window of the web client.
 
-## Robustness
+> **Warning:** An agent that restarts somora cuts its own running turn.
+> Finish the reply first, or ask the user to restart.
 
-External servers are treated as untrusted, flaky input:
+Port 18737 speaks HTTPS when `server.tls` is configured. With a
+self-signed certificate `curl` needs `-k`. Without TLS use `http://`
+and drop `-k`.
 
-- **Schema sanitizing** — discovered JSON Schemas are normalized for
-  known provider incompatibilities (draft-07 `definitions`, nullable
-  unions, dangling `required`, …). A tool with an unusable schema is
-  skipped individually and logged; it can never break the request for
-  the rest of the tool list.
-- **Connection lifecycle** — lazy connect (server boot never blocks on
-  an external host), automatic transport fallback (streamable HTTP →
-  SSE), jittered backoff with a circuit breaker on transient failures,
-  slow re-probing of permanently failed servers, and an app-level
-  keepalive ping on idle connections. A dead upstream is detected on
-  the failing call and recovers on the next one.
-- **Serial by default** — many MCP servers mishandle concurrent
-  requests, so somora serializes calls per server. Opt in to
-  parallelism per server with `supportsParallelToolCalls: true`.
-- **Result caps** — oversized results are truncated with a marker, the
-  same way built-in tool results are; notable failures land in an
-  audit log under `~/.somora/audit/`.
+## What can be added
+
+Check three things before you add a server.
+
+| Question | Works | Does not work |
+|---|---|---|
+| How does it run? | A hosted HTTP endpoint (`https://...`). | A local package you start as a command (`npx ...`, `uvx ...`). |
+| How does it log in? | No login, a fixed API key or token in a header, or an OAuth login whose credential a login tool writes to a JSON file. | A browser OAuth flow against the server itself, with no credential file. |
+| What does it offer? | Tools. | MCP resources, prompts and elicitation are ignored. |
+
+If a service offers both a hosted URL and a package, use the URL. Many
+services with an OAuth flow also offer an API key: check their docs.
+
+> **Warning:** Do not put `command:` or `args:` into `mcp.servers`.
+> They are ignored. An entry without a `url` is skipped with
+> `mcp.hub.config_invalid` in the log. A `transport` other than `http`
+> or an invalid server name makes `config.yaml` invalid, and somora
+> does not start.
+
+## How the tools reach the model
+
+somora runs one MCP client, the hub, inside the server process. It
+holds one connection per configured server, reads the tool list and
+runs every call, whichever engine asked.
+
+| Engine | How it gets the tools | Name the model sees |
+|---|---|---|
+| `openai-compatible` | Added to somora's own tool list. | `mcp__<server>__<tool>` |
+| `claude-cli` | One small proxy per server and turn. It serves the tool list and forwards calls to the hub. | `mcp__somora-<server>__<tool>` |
+| `grok-cli` | The same proxy as `claude-cli`. | `somora-<server>__<tool>` |
+| `codex-cli` | Codex dynamic tools, one namespace per server. | `somora_mcp_<server>` namespace, tool under its own name |
+
+In `agent.yaml`, in the abilities window and in the session history the
+tool is always `mcp__<server>__<tool>`.
+
+What happens on import:
+
+- Characters outside letters, digits, `_` and `-` in a tool name become
+  `_`. A tool whose full name is longer than 64 characters, or collides
+  with another after this step, is skipped.
+- Schemas are repaired for known provider problems. A tool whose schema
+  cannot be used is skipped alone, with `mcp.hub.tool_skipped` in the
+  log.
+- Descriptions are cut at 2048 characters. Invisible and control
+  characters are removed from names, descriptions and schemas.
+- Tools of a server that is not `connected` are not offered.
+
+What comes back from a call:
+
+- Text, JSON and images reach the model. Embedded text resources and
+  resource links arrive as text. Audio and other binary content is
+  dropped.
+- A result longer than `maxResultChars` is cut with a marker, like a
+  built-in tool result.
+- External tools take whatever arguments the model sends. Checking them
+  is the external server's job. somora's own tools are stricter: they
+  refuse a call with a parameter the tool does not know.
 
 ## Per-agent tool control
 
-Which tools an agent actually sees is decided per agent, uniformly for
-built-in and MCP tools, in the agent's `agent.yaml`:
+Which tools an agent sees is decided in its `agent.yaml`, the same way
+for built-in and external tools:
 
 ```yaml
-# ~/.somora/agents/<name>/agent.yaml
+# ~/.somora/agents/<your-agent>/agent.yaml
 tools:
   deny:
-    - mcp__parallel__web_search   # hide one MCP tool
-    - toolset:exec                # hide a whole tool family
-  allow: []                       # empty = everything not denied
+    - mcp__acme__web_search   # hide one external tool
+    - mcp__acme__*            # hide a whole server
+    - toolset:exec            # hide a whole tool family
+  allow: []                   # empty: everything that is not denied
 ```
 
-Patterns: exact tool name, `toolset:<tag>` for a family, or a trailing
-`*` glob (`mcp__parallel__*` hides a whole server). `deny` beats
-`allow`; agents without a `tools:` section see everything. This is the
-knob for overlapping tools — e.g. give your research agent an
-MCP-provided search tool while everyone else keeps the built-in
-`web_search`, and no agent ever sees both.
+A pattern is an exact tool name, `toolset:<tag>` for a family, or a
+name ending in `*`. `deny` beats `allow`. An agent without a `tools:`
+block sees everything. A change applies from the agent's next turn.
 
-Denying a tool is real context saved, not just tidiness: the full
-built-in surface is roughly 13k tokens of schema in **every** turn, and
-a denied tool is absent from the model's list on all four engines — the
-same matcher runs in-process for `openai-compatible` and inside the MCP
-child that serves `claude-cli`, `codex-cli` and `grok-cli`.
+A hidden tool is absent from the model's tool list on all four engines,
+so it also costs no context. This is the way to handle overlapping
+tools: give a research agent the search tool of an MCP server and hide
+the built-in `web_search` for it, while every other agent keeps the
+built-in one.
 
-Tools whose configuration doesn't exist are never offered at all, on any
-engine. A tool that cannot run is worse than one that isn't there: the
-model spends a call finding out.
+A builder agent starts from a short list of coding tools. It gets an
+external tool only when its `tools.allow` names it.
 
 ### The Abilities window
 
-The web client has an **abilities** tile in the app dock that opens the
-same control as a point-and-click matrix: pick an agent on the left,
-toggle any tool's visibility in the middle (built-ins grouped by
-toolset, only tools this agent could actually use — a tool whose config
-is missing has nothing to configure, and a switch that changes nothing
-is worse than no switch), external tools grouped by MCP server, and
-watch external server health on the right — state, tool count,
-transport, last error, and a reconnect button per server. Below the
-tools sits the same matrix for **skills** — which markdown how-tos this
-agent may see and activate; see [skills.md](skills.md#per-agent-visibility).
+The **abilities** tile in the dock of the web client opens the same
+control as a matrix.
 
-The matrix knows the agent's kind ([builder.md](builder.md)). A chat
-agent sees every toolset except `builder` (task list, question, plan
-file — those need the task panel and the builder phases). A builder
-sees a **builder tools** group first — its coding set, on by default —
-and below it **more**, every other built-in and external tool, off
-unless switched on; switching one on writes it into the builder's
-`tools.allow`, switching a default off writes it into `tools.deny`.
+| Part | What it shows |
+|---|---|
+| Left | The agents. Pick one. |
+| Middle | Every tool this agent could use, with an eye to show or hide it. Built-in tools are grouped by toolset, external tools by MCP server. Below them: the same for skills. |
+| Right | Each MCP server with state, tool count, transport, last error and a reconnect button. |
 
-Every group — each built-in toolset, each MCP server, and the skills
-section — is a collapsible block, closed by default; the header shows
-how many abilities it holds and how many of those are hidden, and which
-blocks you left open is remembered per browser
-(`localStorage`, `somora-abilities-expanded`). The eye in the header
-toggles the **whole group** in a single write, which is what makes an
-MCP server with dozens of tools practical to switch off for an agent.
-With a group half hidden, one click hides the rest and the next brings
-all of it back — the header eye is dimmed in that state so "some
-hidden" doesn't read as "all visible".
+Good to know:
 
-Toggles manage exact-name deny entries and are written server-side into
-the agent's `agent.yaml` (comments and the rest of the file stay
-untouched). If an agent's `agent.yaml` carries hand-written pattern
-rules (globs, `toolset:`, allow-lists), the matrix shows them and goes
-read-only — the UI never rewrites operator policy it can't represent.
+- Groups are collapsed at first. The header shows how many abilities a
+  group holds and how many are hidden. Which groups you opened is
+  remembered per browser (`localStorage`, `somora-abilities-expanded`).
+- The eye in a group header switches the whole group in one write. If
+  some are hidden, one click hides the rest and the next click brings
+  all back. The eye is dimmed while a group is half hidden.
+- A tool whose configuration is missing is not listed. No engine offers
+  it either.
+- For a builder the window shows **builder tools** first and everything
+  else under **more**, off until switched on. Switching one on writes
+  it into `tools.allow`. Switching a builder tool off writes it into
+  `tools.deny`.
+- A chat agent does not see the `builder` toolset.
 
-## Servers that need an interactive OAuth login
+A switch writes an exact tool name into `deny` in the agent's
+`agent.yaml`. Comments and the rest of the file stay as they are. If
+the file holds an `allow` list, a `toolset:` rule or a `*` pattern, the
+window shows the rules and is read-only: you wrote that policy by hand.
 
-Some MCP servers don't take an API key — they authenticate with an
-OAuth login that grants a short-lived token which must be refreshed.
-somora supports these when the login is performed by a tool that writes
-the credential to a JSON file (today: Claude Code's `/design-login`).
-The hub reads the token from that file, refreshes it against the token
-endpoint as it nears expiry, and rotates it back — so every engine gets
-the tools with no per-engine login.
+## Servers with an OAuth login
+
+Some servers take no API key. They use an OAuth login that hands out a
+short-lived token. somora supports them when an interactive login tool
+writes the credential to a JSON file. The hub reads the token from that
+file and every engine gets the tools without a login of its own.
 
 ```yaml
 mcp:
@@ -171,162 +196,229 @@ mcp:
       url: https://example.com/mcp
       auth:
         type: oauth-refresh
-        credentialKey: myServiceOauth          # top-level key in the credentials file
+        credentialKey: myServiceOauth      # top-level key in the credential file
         tokenEndpoint: https://example.com/oauth/token
-        # credentialFile defaults to ~/.somora/claude-home/.credentials.json
-        # refresh: true            # may the hub rotate the token itself? true (default),
-                                   # false (another process owns the chain), or a list of
-                                   # the credential keys it owns — see Claude Design below
-      headers:                                 # optional extra static headers
+      headers:                             # optional extra headers
         X-Client: my-client
 ```
 
-The credential file is **never** in config — it is provisioned by the
-interactive login. If the refresh token expires or is revoked, the
-server shows `needs-auth` and you re-run the login.
+How the token is kept alive:
+
+- **Who refreshes.** With `refresh: true` the hub refreshes the token
+  itself. With `refresh: false` another program owns the token and the
+  hub only reads the file again on every connect. A list of key names
+  means: the hub refreshes exactly these keys.
+- **When.** A token within 5 minutes of its expiry is refreshed at the
+  token endpoint. A connected server is reconnected at that point, so
+  the live connection carries the new token.
+- **Writing back.** The new access token and the new refresh token are
+  written back to the file. All other keys in the file stay untouched.
+- **No collisions.** The refresh runs under a lock file and reads the
+  credential again first. If another program refreshed in the meantime,
+  the hub uses that token.
+
+When the token endpoint rejects the refresh with HTTP 400 or 401, the
+refresh token is dead. The hub renames the entry to
+`<key>_stale_<timestamp>` in the credential file and the server shows
+`needs-auth`, with the new key name in `lastError`. Run the login
+again, then reconnect the server.
+
+> **Note:** The credential itself is never in `config.yaml`. Only the
+> interactive login creates it.
 
 ### Claude Design
 
-[Claude Design](https://claude.ai/design) exposes an official MCP server
-(`https://api.anthropic.com/v1/design/mcp`) that authenticates against a
-claude.ai account — there is no API key. It needs the **separate
-`/design-login` credential**: Anthropic put Claude Design behind its own
-`user:design:read` / `user:design:write` scope, which the ordinary
-Claude login does not carry.
+[Claude Design](https://claude.ai/design) has an MCP server that logs
+in with a claude.ai account. There is no API key. It needs its own
+credential, written by `/design-login` in Claude Code, because the
+ordinary Claude login does not carry the `user:design:*` scope.
 
-> **Unsupported / may break.** This uses the same first-party login
-> Claude Code uses; Anthropic does not document third-party access and
-> could change it at any time — it has already changed twice. Treat it
-> as experimental.
+> **Warning:** This uses the same first-party login Claude Code uses.
+> Anthropic does not document third-party access and can change it at
+> any time. Treat it as experimental.
 
-**Setup:**
-
-1. Be logged into Claude Code on the machine (`claude` → `/login`).
-2. Run **`/design-login`** once in a Claude Code session. It writes a
-   `designOauth` entry beside the ordinary one in
+1. Be logged into Claude Code on the machine (`claude`, then `/login`).
+2. Run `CLAUDE_CONFIG_DIR=~/.somora/claude-home claude` and in it
+   `/design-login`, once. It writes a `designOauth` entry beside the
+   ordinary `claudeAiOauth` into
    `~/.somora/claude-home/.credentials.json`.
-3. Add the server with a single preset line:
+3. Add the server with the preset:
+
    ```yaml
    mcp:
      servers:
        claude-design:
-         preset: claude-design   # fills url, auth, and the X-Anthropic-Client header
+         preset: claude-design
    ```
-4. Restart somora and check `curl -sk https://localhost:18737/mcp/status`
-   — `claude-design` should be `connected` with its tool count.
 
-**Which credential, and why the preset names two.** The preset asks for
-`designOauth` first and falls back to the ordinary `claudeAiOauth`,
-taking whichever key is actually in the file. Anthropic has moved the
-Design endpoint between the two more than once — for a while the
-ordinary login was accepted, then the separate `user:design:*` scope
-became mandatory again. A list survives the next move in either
-direction without anyone editing config. The same applies to any
-server: `credentialKey` accepts an ordered list.
+4. Restart somora and check `/mcp/status`: `claude-design` should be
+   `connected` with its tool count.
 
-**If it says `needs-auth`,** run `/design-login` again. A token that
-authenticates for everything else but lacks the design scope is refused
-by this endpoint alone — the endpoint says so in its response body, and
-somora surfaces that rather than parking on a generic failure.
+What the preset fills in (a field you set yourself wins):
 
-**Who keeps the token alive.** The `designOauth` access token lives
-only a few hours. Somora refreshes it itself: the preset marks that
-one key as somora-owned (`refresh: ['designOauth']`), the hub rotates
-it shortly before expiry — reconnecting the server so the live session
-carries the new bearer — and writes the rotated token back to the file
-for the CLI to pick up. The refresh runs under a lockfile with a
-re-read, so an interactive Claude Code session that happens to rotate
-the same chain does not collide with it. `claudeAiOauth` stays the
-CLI's: somora never refreshes it (two refreshers on one rotating chain
-invalidate each other and get the credential revoked).
+| Field | Value |
+|---|---|
+| `url` | `https://api.anthropic.com/v1/design/mcp` |
+| `auth.credentialKey` | `designOauth`, then `claudeAiOauth`: the first one present in the file is used |
+| `auth.tokenEndpoint` | `https://platform.claude.com/v1/oauth/token` |
+| `auth.refresh` | `['designOauth']` |
+| `headers` | `X-Anthropic-Client: claude-cli-design-tool` |
 
-When a refresh is *rejected* (the refresh token itself expired or was
-revoked), the hub moves the dead entry aside as
-`designOauth_stale_<timestamp>` and parks the server as `needs-auth`
-with that in the message. Claude Code's `/design-login` refuses to run
-while a `designOauth` entry exists ("A design credential is already
-stored"), so the move is what makes the re-login possible without
-editing `.credentials.json` by hand. After the login:
-`POST /mcp/servers/claude-design/reconnect`, or wait for the next
-re-probe.
+So somora refreshes `designOauth` itself. Its access token lives only a
+few hours and nothing else keeps it alive. somora never refreshes
+`claudeAiOauth`: that token belongs to the Claude CLI, and two programs
+refreshing one token invalidate each other.
 
-## What can be added, and what cannot
+If the server shows `needs-auth`, run `/design-login` again and then
+reconnect:
 
-Before adding a server, classify it. Three questions decide everything:
+```bash
+curl -sk -X POST https://localhost:18737/mcp/servers/claude-design/reconnect
+```
 
-1. **How does it run?** A hosted **HTTP endpoint** (`https://…`) works.
-   A local **stdio package** (`npx @something/mcp-server`, `uvx …` —
-   anything you'd start as a command) is **not supported yet**.
-   **Never put `command:`/`args:` into `mcp.servers`** — the config
-   schema rejects it and somora will refuse to START until the entry
-   is removed. If the service offers both a hosted URL and an npm
-   package, use the URL.
-2. **How does it authenticate?** No auth or a **static API key/token
-   header** works (`headers:` + `${VAR}` from `~/.somora/somora.env`).
-   An **OAuth login** whose credential is written to a JSON file by an
-   interactive login tool works via `auth: {type: oauth-refresh}` (see
-   "Servers that need an interactive OAuth login" above; Claude Design
-   is the worked example). A **browser OAuth flow with no file-based
-   credential** (dynamic client registration against the server itself)
-   is **not supported yet**. Check the service's docs for an API-key
-   option; many offer both.
-3. **What does it offer?** Only **tools** are imported. Servers whose
-   value is MCP *resources*, *prompts*, or interactive *elicitation*
-   only work for their tools; the rest is ignored. Tool results:
-   text, JSON and images come through; audio/binary blobs are
-   dropped.
+Without a reconnect the hub tries again by itself within 5 minutes.
+Claude Code refuses `/design-login` while a `designOauth` entry exists.
+That is why the hub moves a dead entry aside: you can log in again
+without editing the file.
 
-If the answers are "HTTP + API key + tools", add it (see the
-step-by-step above) and check `/mcp/status`. Anything else is not
-supported — don't try to force it through the config.
+## Connections and recovery
+
+A server is in one of five states:
+
+| State | Meaning |
+|---|---|
+| `connected` | Tools are available. |
+| `pending` | Connecting, or waiting for the next try after a drop. |
+| `failed` | The last connect failed. `lastError` says why. |
+| `needs-auth` | The server refused the credential (401, 403 or a missing scope). |
+| `disabled` | `enabled: false` in the config. |
+
+How the hub behaves:
+
+- **Start.** somora connects to all servers in the background. Startup
+  never waits for one.
+- **Transport.** Streamable HTTP first, then the older SSE transport.
+- **One call at a time.** Many MCP servers mishandle parallel requests,
+  so calls to one server run one after another. Set
+  `supportsParallelToolCalls: true` for a server that is known to be
+  safe.
+- **Idle connections** are pinged after 3 minutes without activity.
+- **A dropped connection** goes back to `pending` and is retried within
+  about a minute.
+- **A failed connect** is retried with a growing pause: 1 second,
+  doubling up to 1 minute. From the third failure in a row the pause is
+  at least 1 minute.
+- **An error that will not go away** (refused credential, missing
+  environment variable, missing credential file, unknown host) is
+  tried again only every 5 minutes.
+- **A call that fails** because the server is gone is not repeated. The
+  connection is rebuilt for the next call.
+- **Changed tools** arrive without a restart. A server that announces
+  changes pushes them. For all others the hub reads the tool list again
+  every 5 minutes.
+
+A manual reconnect clears all waiting times and connects at once.
+
+## Settings
 
 ```yaml
+# ~/.somora/config.yaml
 mcp:
   servers:
-    <name>:                # [a-z0-9-], max 30 chars
-      url: https://...     # required — remote HTTP endpoint
-      headers: {}          # static headers, ${VAR} expansion
+    <name>:                  # lowercase letters, digits, hyphens; max 30
+      url: https://...
+      headers: {}
       enabled: true
       tools:
-        include: []        # import only these upstream tools (empty = all)
+        include: []
         exclude: []
-      timeoutMs: 60000     # per tool call
+      timeoutMs: 60000
       connectTimeoutMs: 15000
       maxResultChars: 100000
       supportsParallelToolCalls: false
+      # preset: claude-design
+      # auth:
+      #   type: oauth-refresh
+      #   credentialKey: myServiceOauth
+      #   tokenEndpoint: https://example.com/oauth/token
+      #   credentialFile: ~/.somora/claude-home/.credentials.json
+      #   refresh: true
 ```
 
-## Status & operations
+| Setting | Default | Meaning |
+|---|---|---|
+| `url` | none | The server's HTTP endpoint. Required unless a `preset` supplies it. |
+| `transport` | `http` | Only `http` is accepted. |
+| `headers` | `{}` | Fixed request headers. Values expand `${VAR}` and `${VAR:-default}` from the server environment at connect time. A missing variable fails the connect, not the start. |
+| `enabled` | `true` | `false` keeps the entry but never connects. |
+| `tools.include` | `[]` | Import only these tools, by the server's own tool names. Empty means all. |
+| `tools.exclude` | `[]` | Never import these. Wins over `include`. |
+| `timeoutMs` | `60000` | Time limit for one tool call. |
+| `connectTimeoutMs` | `15000` | Time limit for connecting. |
+| `maxResultChars` | `100000` | Longest result passed to the model. |
+| `supportsParallelToolCalls` | `false` | Allow parallel calls to this server. |
+| `preset` | none | `claude-design` fills `url`, `auth` and a header. |
+| `auth.type` | none | `oauth-refresh`. Leave `auth` out for servers with a header key or no login. |
+| `auth.credentialKey` | none | Top-level key in the credential file, or an ordered list. The first key present in the file is used. |
+| `auth.tokenEndpoint` | none | OAuth token endpoint used for the refresh. |
+| `auth.credentialFile` | `~/.somora/claude-home/.credentials.json` | The JSON file the login writes. `~` is expanded. |
+| `auth.refresh` | `true` | `true`, `false`, or a list of the keys the hub may refresh. |
+
+With `auth` set, the hub sends `Authorization: Bearer <token>`. An
+`Authorization` entry under `headers` is ignored for that server.
+
+The settings are read at start. A config reload does not pick up
+changes under `mcp`.
+
+## Routes
+
+All three answer `503` when no server is configured.
+
+| Route | What it does |
+|---|---|
+| `GET /mcp/status` | `{enabled, servers}`. Per server: `state`, `toolCount`, `transport`, `lastError`, `lastConnectedAt`, `consecutiveFailures`. |
+| `POST /mcp/servers/<name>/reconnect` | Drops the connection and connects again at once. Answers `{ok, status}`, or `400` for an unknown or disabled server. |
+| `POST /mcp/call` | Runs one tool without a model. Body: `{server, tool, args, timeoutMs}`, with `tool` as the server's own tool name. Answers `{isError, text, images}`, or `502` when the call fails. The proxies use this route. It is also handy for debugging. |
 
 ```bash
-curl -sk https://localhost:18737/mcp/status | jq          # per-server state + tool counts
+curl -sk https://localhost:18737/mcp/status | jq
 curl -sk -X POST https://localhost:18737/mcp/servers/<name>/reconnect
 ```
 
-Port 18737 speaks **HTTPS** when `server.tls` is configured (the
-recommended setup) — plain `http://` gets an empty reply, and a
-self-signed cert needs `-k`. Drop both if you run without TLS.
+The abilities window reads and writes an agent's tool visibility with
+`GET` and `PUT /agents/<name>/tools`.
 
-Server states: `connected`, `pending` (connecting/retrying), `failed`,
-`needs-auth`, `disabled`. A connection that drops mid-life (keepalive
-ping fails, upstream closes the stream, an OAuth token expires) goes
-back to `pending` and is retried by the 60 s keepalive sweep — first
-after a few seconds, then with exponential backoff up to a minute, and
-every 5 min once the error looks permanent (`needs-auth`, missing env
-var). Manual `reconnect` resets the backoff and retries immediately. `/mcp/call` exists as a loopback-only
-dispatch endpoint for debugging a tool without an LLM in the loop.
+## Files
 
-A tool that changes upstream — its description or its input schema —
-reaches every engine without a somora restart: a server that declares
-`tools.listChanged` pushes the change, and a server that cannot (a
-stateless HTTP server never can) has its tool list read again every
-5 minutes by the keepalive sweep (`mcp.hub.relist_changed` in the log
-when something differs); the bridge registers a changed tool anew
-(`mcp.bridge_tool_updated`).
+| Path | Content |
+|---|---|
+| `~/.somora/config.yaml` | The `mcp.servers` entries. |
+| `~/.somora/somora.env` | Secrets referenced as `${VAR}` in `headers`. |
+| `~/.somora/mcp/catalog.json` | The current tool list per server, written by the hub and read by the proxies. |
+| `~/.somora/audit/mcp-calls.jsonl` | Calls that failed, returned an error or hit a server that was not connected. Holds the first 200 characters of the arguments. Rotates at 5 MB. |
 
-somora's own tools, when they run through the MCP child (claude-cli,
-codex-cli), refuse a call with a parameter the tool does not know —
-`exec({resource: "gpu-box"})` instead of `target` fails with an input
-validation error naming `resource`, instead of silently dropping it and
-running on the local host. Bridged tools of other MCP servers keep
-taking whatever the model sends; validation is that server's job.
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `/mcp/status` answers `503` | No server under `mcp.servers`, or somora was not restarted after adding one. |
+| The server is missing from the status | The entry has no `url`. Look for `mcp.hub.config_invalid` in the log. |
+| `failed` with `missing env var` | The variable is not in `~/.somora/somora.env`, or is empty. Add it and restart. |
+| `failed` with a timeout or a network error | Wrong URL or the server is down. The hub keeps retrying. |
+| `needs-auth` on a server with a header key | Wrong or expired API key. |
+| `needs-auth` on an OAuth server | The login expired or lacks a scope. Run the login again, then reconnect. |
+| `failed` with `credential file not found` or `credential key ... missing` | The interactive login has not been run yet. |
+| `connected`, but fewer tools than expected | Check `tools.include` and `tools.exclude`, then the log for `mcp.hub.tool_skipped`. |
+| An agent does not see the tools | Its `agent.yaml` hides them, or it is a builder without the tool in `tools.allow`. |
+| A tool changed on the server but not for the agent | Wait up to 5 minutes or reconnect. The log shows `mcp.hub.relist_changed` and `mcp.bridge_tool_updated`. |
+
+## See also
+
+- [Tools](tools.md): the built-in tools and the full rules for choosing
+  tools per agent
+- [Skills](skills.md): the skills half of the abilities window
+- [Builder agents](builder.md): the short tool list a builder starts
+  from
+- [Security](security.md): what each engine is allowed to load
+- [API](api.md): every route with request and response
+- [Web client](web.md): the dock and its windows
