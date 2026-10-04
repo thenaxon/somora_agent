@@ -1,934 +1,705 @@
 # Dream Phases
 
-> Background memory consolidation in three phases — REM, Deep, Lucid.
-> Together they turn raw conversation into curated long-term knowledge
-> without any single LLM call doing too much.
+While you are not chatting, somora tidies up what was said. Three
+background jobs, called REM, Deep and Lucid, turn conversations into
+notes, notes into wiki pages, and keep the wiki free of contradictions.
+Each job has its own model, its own rhythm and its own rule for what
+needs your approval.
 
-## Why three phases?
+## What you get
 
-When you chat with an agent, useful facts get said in passing. „I moved
-to Berlin." „My new car is a hybrid." „We decided to ship the dark-mode
-toggle next sprint." A naive memory layer would either dump every turn
-into long-term storage (noise) or rely on the agent to manually save
-(unreliable + tedious). somora splits the work:
+- **Nothing said in passing is lost.** REM reads finished conversations
+  and proposes the facts worth keeping.
+- **You decide what is remembered.** REM and Lucid only propose. A note
+  or a wiki fix happens when you or the agent approve it.
+- **A wiki that writes itself.** Deep moves approved notes into the
+  shared wiki without asking, so the inbox stays small.
+- **A wiki that stays consistent.** Lucid finds contradictions,
+  duplicates, dead links and misfiled pages.
+- **Cost under control.** Each phase runs on the model you name for it,
+  never silently on the chat model.
+- **Outages are survived.** Every phase can have backup models, and REM
+  catches up by itself after a failure.
 
-1. **REM** notices what's new in a recent session and proposes facts to
-   keep — small per-agent jobs, you approve each one. Result lands in
-   the agent's *private memory inbox*.
-2. **Deep** rolls multiple inbox entries up into the *shared wiki*
-   pages — bigger consolidation runs across all agents, every ~12 h.
-   Auto-applies (you'd be drowning in approvals otherwise) but the wiki
-   stays editable in Obsidian.
-3. **Lucid** audits the wiki for contradictions, dead refs, missing
-   pages and links worth adding — every ~7 d. Findings come back as proposals
-   you walk through with the agent in a `dream_review` loop.
+## Set it up
 
-Each phase has its own LLM worker (small/cheap for REM, strong/expensive
-for Deep+Lucid), its own cadence, and its own approval semantics. No
-single prompt has to do everything; the system just keeps grinding
-incrementally in the background while you use somora normally.
-
-## The mental model
-
-```
-   ┌─ REM ─────────────────┐    ┌─ Deep ─────────────────┐    ┌─ Lucid ──────────────┐
-   │  Session → Memory     │    │  Memory → Wiki         │    │  Wiki cleanup        │
-   │  per-agent            │    │  platform-wide         │    │  platform-wide       │
-   │  ~30 min idle         │    │  ~12 h scheduled       │    │  ~7 d scheduled      │
-   │  small/local model    │    │  strong model          │    │  strong model        │
-   │  approval required    │    │  auto-applies          │    │  approval required   │
-   └───────────────────────┘    └────────────────────────┘    └──────────────────────┘
-                │                            │                            │
-                ▼                            ▼                            ▼
-   memory inbox grows           wiki gets new pages /         wiki gets fixed:
-   with new facts the           merges of new content;        contradictions resolved,
-   agent should keep            consumed memory files         dead links repaired,  
-                                are deleted                   missing pages created
-```
-
-Each phase has one job. Each runs at its own cadence. Each uses an LLM
-worker model you configure separately. The phases compose into a clean
-flow: facts come in via REM, get consolidated by Deep, get audited by
-Lucid.
-
-## Phase REM — Session → Memory
-
-REM ("Rapid Eye Movement") extracts new factual information from a
-session's transcript and proposes additions to the agent's **private
-memory inbox**.
-
-### Job
-
-Read the session JSONL since the last REM run, identify FACTS the user
-asserted (not jokes, not transient state, not things already in memory or
-the wiki), and surface them as `pending` findings for your approval.
-
-### Triggers
-
-Three triggers, all per-agent:
-
-**Manual: `/reset YES`** — when you reset a session, somora archives the
-current `main.jsonl` to a timestamped name and starts a fresh `main`.
-If REM is enabled for the agent, it spawns a manual run over the part of
-the archive REM has not read yet, and marks the archive as read when
-that run succeeds — so the idle worker does not read it a second time.
-Result lands in
-`~/.somora/agents/<name>/memory/.dreams/<id>.dream.md` and shows up in
-`dream_list`.
-
-**Automatic: idle-timer** — when REM is enabled, an in-process worker
-watches each agent's chat activity. After `idleMinutes` of no chat
-(default 30), the worker:
-
-1. Resumes any previously-paused dream first (don't waste prior work).
-2. Otherwise picks the most-recently-active session whose last activity
-   is past its `dreamReadThroughTs` marker. **Archived sessions count**:
-   filing a conversation away says you are done with it, not that it
-   should be forgotten, so a session archived before REM caught up still
-   gets its last stretch read.
-3. Runs an extraction over the delta range — minus any Lucid review
-   loop inside it (`dream_review start` … `end`): facts the user
-   clarifies there are written to the wiki directly, so REM skips that
-   window instead of re-extracting them as duplicate findings.
-4. On success, bumps the marker — and goes straight on to the next
-   unread session, up to eight in one cycle. A backlog is read in one
-   stretch of silence instead of one session per idle interval. The
-   cycle ends at the first run that does not succeed (the worker is
-   probably still down), and a session whose last attempt failed is
-   picked last, so it cannot hold up the others.
-
-**Catch up now: `dream_run({phase: 'rem'})`** or
-`POST /agents/:agent/dream/run-rem` — starts that same cycle at once
-instead of waiting for the idle timer, e.g. after a worker outage.
-Answers `started`, `busy` or `nothing_to_do`.
-
-**It comes back on its own.** When a cycle ends with work still left —
-a run that failed, a paused dream, a session nobody has read yet — the
-worker schedules itself again rather than waiting for you to chat. Four
-attempts at one, two, four and eight idle intervals, then it goes quiet
-until real activity restarts the count. A backend that is down for an
-hour is caught; one that is down all afternoon does not become an
-all-afternoon retry loop. A successful run resets the count, so draining
-a backlog of several sessions is not charged against it.
-
-A failed range keeps its record until a run actually reads it. A
-successful run only clears the failures it covered, so a shorter manual
-run cannot make the evidence of an unread stretch disappear.
-
-Manual REM runs do **not** pause when you start chatting again — they're
-user-initiated, bounded, just run to completion.
-Automatic REM runs **abort** on user activity (the in-flight extraction
-gets paused; resumed on next idle).
-
-### Worker model
-
-Configured per-agent in `agent.yaml`:
+REM is switched on per agent, in `~/.somora/agents/<name>/agent.yaml`:
 
 ```yaml
 rem:
   enabled: true
-  model: <alias>             # alias from config.yaml or 'provider/modelId'
-  # fallback: <alias>        # optional backup worker — or [a, b], tried in turn
-  idleMinutes: 30
-  chunkTokens: 50000         # range-split for very long sessions
-  chunkTimeoutMs: 600000     # 10 min per chunk (room for local models)
-  participate_in_wiki: true  # default true; false = REM only, never Deep
-  # thinking: medium         # optional; off | low | medium | high
-                             # only honored if the REM worker model has the
-                             # 'reasoning' capability — otherwise dormant.
+  model: <alias>          # required: a model alias or provider/modelId
 ```
 
-`model` is required when REM is enabled: there is no implicit default
-and REM never falls back to the agent's chat model, so a run can never
-silently land on an expensive model. A small local model (30B class)
-is good enough for atomic-fact extraction with the right prompt, and
-REM runs often, so cost matters. A strong hosted model works too.
-
-**`rem.fallback` — a backup worker, or a chain of them.** A local
-worker is away whenever its box switches profiles, benchmarks or
-reboots. With `fallback:` set to a second model (typically a cheap
-hosted one on a *different* provider) — or to an ordered list,
-`fallback: [glm, deep41flash]`, like the chat `fallback` — a run whose
-current worker is unreachable — connection refused, 5xx, timeout, 429
-after the SDK's retries — continues on the next backup from the chunk
-that hit the outage; chunks already finished are kept, the failed chunk
-is retried on the backup, and the backup stays in charge until it is
-unreachable itself, when the next one in the chain takes over. When the
-chain is exhausted the chunk fails as it would without a backup. A
-worker that is currently marked unreachable (the note every cascade
-shares, `fallback.retryUnavailableMinutes`, default 60 min) is not
-tried: the run starts on the first backup that is not marked, recorded
-in the dream file as a switch at chunk 0. What does NOT
-switch: a 4xx rejection (bad parameter, unsupported reasoning level,
-auth) — that is a config problem and the dream fails visibly; and a
-run paused by user activity — that pauses as before. The agent's chat
-`model:`/`fallback:` are never used implicitly: REM only ever runs on
-workers you named. Both refs are validated when the run starts, so a
-typo in `fallback:` fails the dream immediately rather than on the day
-the primary is down. The dream file records `worker_fallback_ref` and,
-when the switch happened, `worker_switch` (`from`, `to`, `reason`,
-`at_chunk`); the Markdown body shows the same line, and the log carries
-`dream.worker_fallback`.
-
-### What REM sees
-
-Each REM run feeds the worker:
-
-- Transcript chunk (1+ chunks if session is long)
-- Existing memory inbox contents for this agent
-- Wiki context (index.md + top-N relevant wiki pages, embedding-matched
-  against session content)
-- Vault-recall snippets (if vault is configured)
-- The REM system prompt (in `src/dream/rem-extract.ts`)
-
-The transcript says who wrote each message. Not every `user_message` is
-the person: another agent's `agent_ask`, a sentinel trigger's prompt, a
-tmux or job wake arrive the same way. They are labelled
-`OTHER-AGENT(<name>)` and `SYSTEM(<kind>)`; only `USER` lines (a voice
-consult counts, it is the person relayed) are the person speaking. A
-stable fact another agent passed on may still become a finding — often
-it is the only way an orchestrated agent learns it — but it is recorded
-with its source ("Laut <name>: …"), never as something the user said.
-Trigger text is never a source of facts.
-
-The wiki context is critical: REM dedupes against the **wiki**, not just
-memory. New facts that contradict the wiki get surfaced as
-`memory_write` so Deep can later merge them in.
-
-### Output: findings
-
-A REM run produces `pending` findings, each with:
-
-- `action` — `memory_write | memory_edit | memory_delete | vault_hint`
-- `slug` — kebab-case identifier
-- `proposed_content` — what should land in memory if approved
-- `reason` — why this finding (quotes user's statement)
-
-Approve with `dream_apply`, reject with `dream_dismiss`. Memory file is
-written/edited/deleted only on approval. If a finding was correct but
-already handled outside the dream flow (you edited the wiki yourself,
-the agent documented it in chat), close it with
-`dream_dismiss({resolved_manually: true, reason})` — it is then recorded
-as `resolved_manually` instead of `dismissed`, so the history reads
-"done elsewhere" rather than "rejected".
-
-### Mechanical dedup
-
-Small worker models don't reliably act on the "propose only NEW facts"
-instruction — recurring sessions (weekly sentinels) can produce the same
-findings run after run. A code-level filter runs after extraction,
-before findings are stored:
-
-- **Exact slug collision** with a loaded wiki page → the finding is
-  dropped (logged as `dream.rem.dedup_dropped`). With an existing
-  **memory note** it depends on what the note says: if the note already
-  carries the finding's content it is a repeat and dropped; if it says
-  something else — the worker reuses the obvious slug when the person
-  corrects a fact — the finding is kept under a slug of its own
-  (`<slug>-update-<date>`, logged as `dream.rem.dedup_reslugged`), so
-  the correction reaches the review and nothing is overwritten.
-- **High content similarity** (hybrid search against memory + wiki) →
-  the finding is kept but marked `likely_duplicate` with a
-  `duplicate_of` pointer plus a `matched_excerpt` showing the text the
-  similarity actually fired on. Wiki audit logs (`logs/…`, written by
-  Deep) are excluded from the comparison corpus — they record that
-  something was *processed*, not the knowledge itself.
-
-**The flag marks topic overlap, not fact identity.** Embedding
-similarity cannot tell "waiting for the GO" from "GO was given" — on a
-fast-moving project every finding scores high against the project's own
-wiki page, including genuinely new state. Two guardrails:
-
-- When the finding carries concrete tokens (numbers, dates, versions)
-  that appear nowhere in the matched text, it is additionally marked
-  `novel_details: true` and the review output says so explicitly —
-  **do not batch-dismiss those**; they are usually a new fact on a
-  known topic.
-- For everything else, glance at the `matched_excerpt` before
-  dismissing. Batch-dismissal is safe when the excerpt already states
-  the finding's fact, not merely its topic.
-
-Platform-wide tunables in `config.yaml` (defaults apply when the block
-is absent):
+Deep and Lucid are switched on for the whole instance, in `config.yaml`.
+They need the wiki, and the wiki needs an Obsidian vault:
 
 ```yaml
-rem:
-  dedup:
-    enabled: true             # default true
-    similarityThreshold: 0.85 # cosine similarity of the finding's
-                              # embedding to the closest existing
-                              # memory/wiki chunk, 0..1. NOT the fused
-                              # search score (that is a rank within one
-                              # query — the top hit is always 1.0 before
-                              # boosts). Paraphrases of the same fact
-                              # ~0.85-0.95, same topic / different fact
-                              # ~0.6-0.8. Lower = mark more.
-```
-
-### Backup workers for Deep and Lucid
-
-Deep and Lucid each name one worker (`wiki.deep.model`,
-`wiki.lucid.model`). When that model is not reachable, the run would
-fail and wait for its next slot — twelve hours for Deep, a week for
-Lucid, and longer when the cause is an expired login nobody notices.
-Give each a backup:
-
-```yaml
+obsidian:
+  vault: ~/Documents/Vault/
 wiki:
+  enabled: true
   deep:
-    model: opus
-    fallback: [gpt56, local-model]   # one ref or a list, tried in order
+    model: <alias>        # required
   lucid:
-    model: opus
-    fallback: gpt56
+    model: <alias>        # required
 ```
 
-- A backup steps in when the worker **is not there**: connection
-  refused, timeout, 5xx, 429. A request the host refuses (4xx) stays an
-  error — another model would only hide a broken request.
-- Outages are remembered together with chat, REM and compaction: a model
-  that failed is skipped for `fallback.retryUnavailableMinutes` (default
-  60) by every one of them, and a successful call clears the mark. If
-  the chat found Opus down ten minutes ago, the next Deep run starts
-  with the backup straight away.
-- Which model answered is on record: `dream.worker_unavailable` and
-  `dream.worker_switched` in the log, `answeredBy` on `dream.deep.done`,
-  and `answered_by` in the Lucid run file when it was not the configured
-  worker.
-- Put at least one backup on a **different provider** than the worker —
-  a second Claude model does not help when the Claude login has expired.
-  A model you host yourself is the backup that is always there.
-- Deep decides what goes into the wiki, Lucid judges contradictions:
-  pick backups you would trust with that. A noticeably weaker model is
-  better than no run for Deep (its notes can be corrected by a later
-  run), but think twice for Lucid, whose findings you review by hand.
-- A backup name that is not a configured model stops the server at
-  start with the list of known models.
+Restart somora. Then chat with the agent, leave it alone for half an
+hour and ask: "Did you dream anything?" The agent calls `dream_list` and
+walks you through the findings.
 
-REM has had the same since September: `rem.fallback` in `agent.yaml`
-([agents.md](agents.md)).
+## The three phases
 
-### Coverage judge
+| | REM | Deep | Lucid |
+|---|---|---|---|
+| **Job** | Conversation to memory notes | Memory notes to wiki pages | Review of the wiki |
+| **Scope** | One agent | All agents | The shared wiki |
+| **Runs** | After 30 minutes without chat | Every 12 hours | Every 7 days |
+| **Approval** | Every finding | None | Every finding |
+| **Result** | Findings in `dream_list` | New and updated wiki pages | Findings in `dream_list` |
+| **Configured in** | `agent.yaml`, `rem` | `config.yaml`, `wiki.deep` | `config.yaml`, `wiki.lucid` |
+| **Good model** | Small or local | Strong | Strong |
 
-Similarity finds topic overlap; it cannot say whether the *fact* is
-already written. On a hundred hand-reviewed findings the cosine flag
-caught five real duplicates. The coverage judge asks a model instead:
-it reads the whole pages of the closest candidates (memory notes and
-wiki pages the similarity search returned) and answers one question —
-is every substantive element of this finding already stated there
-(`covered`), or does it add at least one fact, number, date, decision
-or conclusion none of them state (`adds_new`)? On the same hundred
-findings the question caught 93, with 91 % of its marks right.
+Facts come in through REM, are consolidated by Deep and are checked by
+Lucid. No phase starts another one: Deep works on the notes that are on
+disk, whoever wrote them.
 
-What the verdict does — nothing is deleted, the finding stays in the
-review either way:
+### Which models can do the work
 
-- `covered` at or above `minConfidence` → the finding is marked
-  `likely_duplicate` like a similarity hit, `duplicate_of` names the
-  page as `<source>:<slug>@judge` (when similarity had already marked
-  it, its pointer and number stay), and `matched_excerpt` shows the
-  paragraph of that page that carries the finding's numbers or dates.
-- `adds_new` → no mark; if similarity had marked the finding, it is
-  additionally flagged `novel_details`, the review's "do not
-  batch-dismiss" signal.
-- Every judged finding carries `judge_verdict`, `judge_confidence`
-  (0–100), `judge_reason` (the model's one sentence, in English like
-  every model-facing text somora produces) and, for `covered`,
-  `judge_by`. `dream_list` / `dream_get` show them beside
-  `matched_excerpt`.
+A worker model can sit on an `openai-compatible` provider, on
+`claude-cli` or on `codex-cli`. A Claude or ChatGPT subscription is
+therefore enough for all three phases. A model on `grok-cli` cannot be a
+worker for any phase.
 
-A finding without candidates is not judged; a call that fails or
-replies unreadably leaves the finding without a verdict (logged as
-`dream.rem.judge_failed` / `judge_unreadable`); past `maxPerRun` the
-rest of the run goes unjudged and the log says so once. The run's
-`dream.rem.dedup_summary` line carries `judged`, `judge_marked`,
-`judge_cleared`, `judge_failed`, `judge_skipped` and `judge_model`.
+## REM
 
-Off by default. The model is the REM worker of the agent whose dream
-is running unless `model` names another one — a smaller, cheaper
-model does fine, the question is easier than the extraction. A named
-model is validated when the run starts, like `rem.fallback`; without
-one the judge follows the worker, so when a run switched to
-`rem.fallback` the judge asks the fallback too. Cost:
-one call per finding with candidates, a few thousand input tokens each
-(the pages), so on a hosted model keep `maxPerRun` in mind.
+REM reads what was said in a session since its last visit and proposes
+memory notes for the agent it belongs to.
 
-```yaml
-rem:
-  dedup:
-    judge:
-      enabled: false          # default false
-      # model: <alias>        # default: the agent's REM worker (rem.model)
-      candidates: 4           # distinct pages the judge reads per finding
-      maxPageChars: 6000      # each page is cut to this
-      minConfidence: 80       # a `covered` verdict below this marks nothing
-      maxPerRun: 60           # findings judged per run; the rest go unjudged
-      timeoutMs: 120000
-      # thinking: low         # optional; honoured when the model can reason
-```
+### What REM does
 
-## Phase Deep — Memory → Wiki
+It looks for facts the person stated: decisions, changes, preferences.
+It leaves out jokes, passing states and what the agent's notes or the
+wiki already say. Each fact becomes a finding that waits for review.
+Nothing is written to memory before a finding is approved.
 
-Deep consolidates **all agents' memory inboxes** into the shared wiki.
+### When REM runs
 
-### Job
-
-For each memory file across all participating agents, decide one of three
-outcomes:
-
-- **Skip** — transient (daily log, scratchpad), already covered, too thin.
-- **Promote** — new wiki topic, create dedicated page with frontmatter,
-  sections, cross-references.
-- **Merge** — topic exists in the wiki, integrate new content into the
-  existing page (preserves structure, updates `## Aktueller Stand` and
-  `## Zeitleiste` typically).
-
-After successful Promote or Merge, the source memory file is **deleted**.
-Wiki = canonical, inbox stays a clean queue.
-
-### Triggers
-
-**Schedule** — every 12h (configurable).
-
-**Manual** — `dream_run({phase: 'deep'})` from any agent's chat, or
-`POST /dream/run-deep` over HTTP. Optional `force: true` bypasses the
-hash-cache (re-evaluates every memory file).
-
-Deep operates on whatever memory files are currently on disk. It does
-**not** trigger REM. New observations only enter memory when you
-approve a REM finding via `dream_apply`; Deep picks them up on its
-next run.
-
-### Worker model
-
-Configured platform-wide in `config.yaml`:
-
-```yaml
-wiki:
-  deep:
-    enabled: true
-    intervalHours: 12
-    model: <alias>           # required — alias from config.yaml or 'provider/modelId'
-    # thinking: medium       # optional; per-engine reasoning_effort. Honored
-                             # when the worker model has the 'reasoning'
-                             # capability. On a strong model this tends to
-                             # improve skip/promote/merge judgement at the
-                             # cost of more rate-limit budget.
-```
-
-Without `model` Deep does not run: the scheduler logs
-`dream.deep.no_worker_model_configured` and returns without touching
-anything.
-
-### Single-prompt logic (skip / promote / merge in one call)
-
-Per memory file, Deep does ONE LLM call that decides skip/promote/merge.
-The worker sees:
-
-- The memory file's body, and when its content was stated: a note that
-  came from a REM finding carries `stated_at` (the end of the
-  conversation it was read from) — not the day the finding was applied,
-  which for a conversation dreamed late can be months off
-- The wiki map: every folder with what kind of page lives in it and
-  how many, the template folders not created yet, and the filing
-  rules (see [wiki.md](wiki.md#folders-kind-not-topic))
-- Top-8 relevant wiki pages, embedding-matched against the memory
-  body. A page over 8000 characters arrives shortened to its first
-  6000 — good enough to decide with, not to rewrite from: a merge into
-  a page the worker saw shortened, or did not see at all, is asked
-  again with that one page in full, and the write is refused if the
-  page changed while the worker was deciding
-
-When the memory contradicts a fact on the page, Deep compares dates
-before touching it: a memory that is clearly newer updates the fact and
-notes the revision in the timeline; one that is older than the page's
-statement — or whose order cannot be told — leaves the current fact
-alone and is added to the timeline as a dated earlier entry.
-
-Returns a structured `MemoryFateDecision`:
-
-```json
-{ "kind": "skip", "reason": "..." }
-
-{ "kind": "promote", "subfolder": "personen", "slug": "personen/jane-doe",
-  "type": "person", "title": "Jane Doe",
-  "body": "## Aktueller Stand\n…", "related": [...],
-  "newFolder": { "path": "…", "purpose": "…" } }   // only for a folder the map lacks
-
-{ "kind": "merge", "wikiPath": "personen/familie-klein",
-  "body": "...full updated body...",
-  "logSummary": "familie-klein aktualisiert: ..." }
-```
-
-Deep applies the decision verbatim — after three checks against the
-wiki. A page over `wiki.deep.maxPageChars` (default 50 000) takes no
-more content: instead of merging, Deep is asked once more to write the
-note as a sub-page under it (`projekte/somora/traum-pipeline`, its own
-current state and timeline) — the migration had folded 97 reports into
-one 100 KB page, and pages like that are never to grow again. Then two
-checks against the wiki map. A promote into a folder that neither exists nor is proposed
-by the template is refused unless the model gave the folder a purpose
-(then the folder is created and described in the structure file); a
-folder deeper than one subfolder is refused. And the page name is
-checked across all folders: when a page of that name already exists
-elsewhere, the promote becomes a merge into that page, asked again
-with the page in full. No second LLM call otherwise — with one
-exception, the merge guard below.
-
-### Merge guard (anti-clobber)
-
-The `merge` decision asks the worker for the **full** updated page body,
-and Deep writes that body as the new page. On large pages this is a real
-failure mode: instead of integrating the new fact, a model may return a
-*summary* of the page — and the page shrinks from 22 KB to 3 KB with the
-old content gone. Deep auto-applies, so nothing catches it in between.
-
-Before writing, Deep therefore compares body sizes. When the new body is
-shorter than `minRatio` × the existing body, the merge is refused:
-
-- the wiki page stays untouched,
-- the **source memory file is not deleted** — it survives for the next
-  run, so the content still exists in two places rather than none,
-- a `dream.deep.merge_shrink_blocked` warning is logged with both sizes,
-- the candidate is not written to the skip-cache, so the next Deep run
-  retries it with a fresh LLM call.
-
-```yaml
-wiki:
-  deep:
-    mergeShrinkGuard:
-      enabled: true            # default
-      minRatio: 0.5            # refuse when newBody < 0.5 × existingBody
-      minExistingBytes: 2000   # pages below this are never guarded
-```
-
-`minExistingBytes` exempts small pages: shrinking a 400-byte stub is
-normal editing, and guarding it would only stall consolidation.
-
-If a specific page trips the guard repeatedly, that is the signal that
-it has outgrown full-body merges — split it into sub-pages.
-
-### Hash-cache
-
-Skipped memory files get cached by body-hash in
-`~/.somora/agents/<name>/memory/.deep-skip-cache.json`. On the next Deep
-run, files whose hash matches the cached entry are skipped without an
-LLM call. When most memories are unchanged between runs, a Deep run
-costs no worker tokens at all.
-
-The cache invalidates automatically when:
-- Memory body changes (hash mismatch → re-evaluate)
-- Promote/merge consumed the file (entry pruned)
-- File is deleted (opportunistic cleanup on next loadCache)
-- The skip is older than `wiki.deep.skipCacheDays` (default 30; `0` =
-  never). A skip is a verdict against the wiki of that day — "too thin
-  for a page of its own" stops being true once the page exists, and the
-  note belongs on it. Expiry is spread over up to a quarter of the
-  period per note, and at most 10 expired notes per agent are looked at
-  again in one run, so a batch skipped on one day does not come back as
-  one expensive run. Skipped again, a note rests for another period.
-
-`dream_run({phase: 'deep', force: true})` ignores the cache for one run.
-
-### No approval
-
-Deep runs auto-apply. No per-finding review — the trade-off is that
-Memory→Wiki is mechanical consolidation, not subjective. If a Deep run
-makes a bad decision you don't like, you fix it in Obsidian (the wiki
-is just markdown) or wait for Lucid to flag it.
-
-The audit trail lives in `<vault>/<wiki-subfolder>/logs/YYYY-MM.md` —
-monthly append-only logs of all Promotes and Merges with one-line
-summaries.
-
-## Phase Lucid — Wiki cleanup
-
-Lucid audits the existing wiki, surfaces objectively-verifiable
-quality issues, and hands them off to **a conversational review loop**
-where you walk the findings with one of your agents and that agent
-writes the changes via loop-scoped `wiki_*` tools. Lucid itself never
-auto-edits the wiki.
-
-### Job
-
-Walk the wiki (subfolder by subfolder), identify issues that are
-objectively provable from the wiki content, surface a SHORT list (max
-8 per batch — one batch per subfolder plus the cross pass). Lucid is
-intentionally narrow:
-
-| Finding kind | What it means |
+| Trigger | What happens |
 |---|---|
-| `contradiction` | Two pages assert mutually exclusive facts about the same subject. Cite specific text from each. |
-| `duplicate_page` | Two pages describe the same thing under different names — the migration unites only same-name pages. The page that should survive comes first; `dream_apply` unites them (the model writes the merged body, the other page goes to the report archive, links follow). |
-| `misfiled_page` | A page plainly not of its folder's kind, judged against the wiki map. Only in a wiki on the folder template; the finding names the folder, `dream_apply` moves the page there. |
-| `oversized_page` | A page over `wiki.lucid.oversizedChars` (default 50 000). Found without a model, only in a wiki on the template; the review can split it into sub-pages (`wiki_create` + `wiki_edit` + `wiki_move`). |
-| `not_migrated` | One per run in a wiki without the template: Lucid checks content only here, `somora wiki migrate` is available. Dismiss it once to keep the wiki as it is. |
-| `dead_ref` | `[[wiki-path]]` references a page that doesn't exist. |
-| `wanted_page` | Topic referenced by ≥3 wiki pages but missing its own page. |
-| `link_suggestion` (set by Lucid itself, see below) | A page mentions a named entity in prose AND a wiki page exists with that name AND there is no `[[wikilink]]` from one to the other. Strict: only for clearly identifiable named entities, not generic words. |
+| **Idle timer** | After `idleMinutes` without a chat message (default 30) REM reads the unread sessions of the agent, up to eight in one go. |
+| **`/reset YES`** | The session is archived and REM reads the part of it that it has not read yet. |
+| **`dream_run({phase: 'rem'})`** | Starts the idle cycle at once. Answers `started`, `busy` or `nothing_to_do`. |
+| **`POST /agents/:agent/dream/run-rem`** | The same over HTTP. |
 
-Subjective polish (stylistic rewrites, "this could read better",
-"feels old") is **deliberately NOT in scope**. Those decisions belong
-in the review conversation, not pre-baked as findings. Three further
-kinds (`stale_claim`, `outdated`, `inconsistent_xref`) are accepted
-when a run file is read, so archived runs in `processed/` still parse,
-but no run produces them.
+How the idle cycle goes:
 
-### Triggers
+1. A run that was paused earlier is finished first.
+2. Otherwise the most recently active session with unread messages is
+   read. Archived sessions count: archiving says you are done with a
+   conversation, not that it should be forgotten.
+3. After a successful run the next unread session follows. The cycle
+   ends at the first run that fails. A session whose last attempt
+   failed is picked last, so it cannot hold up the others.
 
-**Schedule** — every 7 days (configurable).
+A chat message to the agent pauses an automatic run. It resumes at the
+next idle time. A run started by `/reset YES` is not paused.
 
-**Manual** — `dream_run({phase: 'lucid'})` or `POST /dream/run-lucid`.
+REM comes back by itself when work is left over: a failed run, a paused
+run, an unread session. It retries after one, two, four and eight idle
+intervals and then stays quiet until the next chat message. A failed
+stretch stays on record until a run has actually read it.
 
-### Cluster strategy
+Messages inside a Lucid review (`dream_review` start to end) are
+skipped. What you clarify there goes straight into the wiki.
 
-Lucid cuts the wiki into calls by size: one call carries as many pages
-of one folder (subfolders are folders of their own) as fit
-`wiki.lucid.batchChars` (default 100 000 characters); a page larger
-than that travels alone; a big folder goes in numbered parts. A grown
-wiki with seventy small folders gets seventy small calls, a wiki on
-the template with three big folders gets those in parts — the same
-rule for both. Beside its pages every call sees the wiki map (the
-folders and what lives in each) and the other pages of its top folder
-as one line each, not the whole `index.md`. Then a final
-cross-folder pass looks across folders — but it sees only the opening
-line of each page. That is enough for a dead link or a missing page
-that spans folders; a contradiction between the body of
-`personen/jane-doe` and the body of `projekte/familie-leo-podcast` is
-out of its sight.
+### The REM worker
 
-The size limit is not only for scale — claude-cli's stdin-stream
-parser fails on very large single user-messages. As a side-effect the
-worker reads each part with full focus, which produces higher-quality
-findings than scanning everything at once.
+`rem.model` is required when REM is enabled. REM never falls back to
+the agent's chat model or chat fallback, so a run cannot land on an
+expensive model by accident. A small local model is good enough for
+this job and REM runs often. A strong hosted model works too.
 
-### Worker model
-
-Configured platform-wide:
+`rem.fallback` names one backup worker or an ordered list:
 
 ```yaml
-wiki:
-  lucid:
-    enabled: true
-    intervalDays: 7
-    model: <alias>           # required — alias from config.yaml or 'provider/modelId'
-    requireApproval: true
-    maxCallsPerTurn: 3       # wiki_* calls the loop holder may make per turn
-    batchChars: 100000       # page text per Lucid call; a bigger folder goes in parts
-    oversizedChars: 50000    # pages above this are reported (template wikis only)
-    maxFindings: 12          # kept per run for review, weighted: contradictions, dead refs,
-                             # duplicates, misfiled/oversized, wanted pages
-    autoLinks: true          # link suggestions are set by Lucid, not reviewed
-    autoLinksPerRun: 30
-    seenDays: 90             # a dismissed finding is not filed again for this long
-    # thinking: medium       # optional; same semantics as wiki.deep.thinking.
-                             # Lucid is judgement-heavy (consistency + dead-
-                             # ref detection) so medium thinking is often
-                             # the sweet spot on cost/quality.
-```
-
-Without `model` a Lucid run fails with
-`no worker model configured for lucid`.
-
-### Output
-
-A `LucidRun` JSON file in `~/.somora/wiki-lucid/<run-id>.json`. The cap
-of 8 findings applies to each call (one per batch, plus the cross
-pass); a run over ninety batches could return hundreds, so
-`wiki.lucid.maxFindings` (default 60) keeps the weighty ones —
-contradictions, dead refs, duplicates, misfiled and oversized pages,
-wanted pages; a pair filed by two calls counts once; what was dropped
-is logged (`dream.lucid.run_capped`). Link suggestions are not
-reviewed at all: Lucid sets them itself — the first plain mention of
-the name becomes a `[[link]]` — up to `wiki.lucid.autoLinksPerRun`
-(30) per run, and records each as `applied` or, when the phrase was
-not found as plain text, `dismissed` with the reason (`autoLinks:
-false` turns this off). A finding a person dismissed is not filed
-again for `wiki.lucid.seenDays` (90). And while a run still has
-findings waiting, no new run starts — the scheduler looks again six
-hours later, `dream_run({phase:'lucid', force:true})` runs anyway. The
-file also
-records `batches_total` and `batches_failed`: a run in which every batch
-failed, or that was aborted, is `failed` — not a clean wiki with zero
-findings. Each finding is **informational only** — `fix.kind:
-'no_op'` with the description of the issue. The actual editing happens
-in a `dream_review` loop (next section), not via `dream_apply`.
-
-When the review loop closes (or you dismiss the whole run), the file
-moves to `~/.somora/wiki-lucid/processed/` with the loop summary
-appended for the audit trail.
-
-### Reviewing Lucid findings — the `dream_review` loop
-
-Findings are walked by an agent in conversation with you, not via
-button-click approval. You start the loop with one agent, talk through
-each finding, the agent writes changes via loop-scoped `wiki_*` tools
-when you OK each step, and you close the loop when done.
-
-```
-> you:    have a look at the lucid result
-scribe:    dream_list   → finds the Lucid run
-         dream_get(id) → reads all findings
-         dream_review({dream_id, action: 'start'})  ← opens the loop
-         "Here is what Lucid found: 5 contradictions, 2 dead refs.
-          Starting with the first: page X says Y, page Z says W.
-          My proposal: <concrete change>. OK?"
-
-> you:    yes, do it
-scribe:    wiki_edit({...})   ← writes the page
-         "Done. Next finding: ..."
-
-> [several rounds of walk-discuss-edit]
-
-> you:    good, wrap it up
-scribe:    dream_review({dream_id, action: 'end', summary: '...'})  ← closes
-         findings you did not get to stay open; the run is archived only
-         when none are left (or with dismiss_rest: true); a later loop
-         continues where this one stopped, and Lucid runs no new scan
-         while findings wait
-```
-
-While the loop is active for an agent:
-
-- The agent gets `wiki_edit` / `wiki_create` / `wiki_delete` / `wiki_move` (loop-scoped)
-- Read-only file tools (`file_read`, `file_search`, `file_list`,
-  `analyze_file`) stay available so the agent can look up source
-  material before proposing an edit. `file_write` / `file_patch` are
-  hidden — only wiki_* may mutate.
-- The agent's `exec_*` / `agents_*` / `skill_*` / `tmux_*` tools are
-  temporarily hidden so the conversation stays focused. Hiding is
-  enforced at the call, not only in the listing: a hidden tool invoked
-  from a definition the model already had is refused.
-- **CLI engines (claude-cli, codex-cli, grok-cli) receive the tool
-  list once per turn.** Starting the loop mid-turn does not make
-  `wiki_*` callable in that same turn — they appear on the next turn.
-  Practical pattern: `dream_review start`, end the reply, continue after
-  the user speaks. `dream_dismiss` with `resolved_manually: true`
-  closes a finding you resolved by other means at any time.
-- Other agents continue normal operation but cannot start their own
-  loop until this one ends — somora-instance-global lock
-- The TUI status line shows `📝 wiki-review:<agent>`
-- Per-turn cap: max 3 wiki_* calls in a single turn
-  (`wiki.lucid.maxCallsPerTurn`) so the agent cannot batch-edit
-  without checking in. Resets on every user message.
-- Auto-expiry: 24h idle without activity → loop auto-closes as a
-  safety net in case the agent forgot to call `action: 'end'`
-
-`wiki_edit` accepts body changes (`newBody`) and/or frontmatter ops
-(`relatedAdd`, `relatedRemove`, `sourcesAdd`, `sourcesRemove`) — all
-optional. Pass only what you want to touch. Useful pattern: clear a
-dead `related:` ref with `wiki_edit({wikiPath, relatedRemove: ['dead/page']})`
-without touching the body.
-
-## Reviewing findings — the `dream_*` tool surface
-
-REM and Lucid have different review flows because the cost of a wrong
-auto-apply differs:
-
-- **REM findings** are atomic memory writes — small, easy to audit
-  individually, isolated to one agent's inbox. They use the per-finding
-  approval pattern (`dream_apply` / `dream_dismiss`).
-- **Lucid findings** are wiki edits that ripple across multiple pages
-  and need the user's judgement. They use the conversational
-  `dream_review` loop described above.
-
-Tools:
-
-```
-dream_list([include_processed])         List pending dreams (REM + Lucid);
-                                        include_processed:true adds resolved ones
-dream_get(dream_id)                     Show full content of a dream
-dream_apply(dream_id, finding_id)       Accept REM finding → applied
-dream_dismiss(dream_id, [finding_id],   Reject (one finding or whole run);
-              [reason],                 resolved_manually:true records
-              [resolved_manually])      "handled outside the dream flow"
-                                        instead of "rejected"
-dream_run({phase, [wait], [force]})     Trigger Deep or Lucid manually
-dream_review({dream_id, action, [summary]})
-                                        Open/close the wiki review loop
-                                        for a Lucid run (Lucid only)
-```
-
-`dream_list` returns a `kind` discriminator per entry:
-
-- `kind: 'memory'` — REM finding, scoped to the agent in whose chat
-  you're calling. Other agents don't see it.
-- `kind: 'wiki_lucid'` — Lucid finding, platform-wide. Any agent with
-  the `dream` toolset sees the same set.
-
-Typical REM flow:
-
-```
-scribe> dream_list
-   → memory dream: 5 pending findings
-scribe> dream_get dream_id=<id>
-   → full finding list with action, slug, reason, proposed_content
-> walk through with me, finding by finding
-scribe> dream_apply  (or dream_dismiss)
-   → repeats until all resolved → dream_done: true
-```
-
-Typical Lucid flow:
-
-```
-scribe> dream_list
-   → wiki_lucid run: 6 pending findings
-scribe> dream_get dream_id=<id>
-   → full finding list (all fix.kind = 'no_op' informational)
-scribe> dream_review({dream_id, action: 'start'})
-   → loop opens, wiki_* tools become available, file_*/exec_* etc. hide
-[walk-discuss-edit conversation rounds]
-scribe> dream_review({dream_id, action: 'end', summary: 'F1 applied as edit X, F2 dismissed, ...'})
-   → loop closes, run archived
-```
-
-`dream_apply` on a Lucid finding (always `no_op`) marks it applied
-without writing anything — useful only as
-acknowledge-and-move-on if you don't want the loop. The actual fix
-path is the loop.
-
-## Triggering manually
-
-REM is per-agent: `/reset YES` reads the session it archives,
-`dream_run({phase: 'rem'})` (or `POST /agents/:agent/dream/run-rem`)
-catches up every unread session of the calling agent, and the idle
-timer does the same on its own.
-
-Deep and Lucid are platform-wide:
-
-```
-# In any agent's chat:
-> ruf bitte dream_run({phase: 'deep'}) auf
-> dream_run({phase: 'lucid'})
-> dream_run({phase: 'deep', force: true})  # bypass hash-cache
-
-# Or HTTP directly:
-curl -X POST http://127.0.0.1:18737/dream/run-deep   -d '{"wait":true}'
-curl -X POST http://127.0.0.1:18737/dream/run-lucid  -d '{"wait":true}'
-```
-
-`wait: true` blocks the request until the run finishes (returns full
-outcome). Default `wait: false` is fire-and-forget — agent gets a
-"started in background" reply, run completes on its own. `force` is
-honoured by `run-deep` only.
-
-Two read-only routes expose the state: `GET /dream-states` (per-agent
-REM activity and pending counts plus the Deep/Lucid running flags) and
-`GET /dream/loop-state` (the active review loop, if any).
-
-## Configuration cheat-sheet
-
-```yaml
-# config.yaml — platform-wide
-wiki:
+rem:
   enabled: true
-  vaultSubfolder: somora                 # → <vault>/somora/
-  language: de                           # de | en — scaffolding + prose language
+  model: local-small
+  fallback: [glm, flash]
+```
+
+| Situation | What REM does |
+|---|---|
+| Worker unreachable: connection refused, timeout, 5xx, 429 | Continues on the next backup from the chunk that failed. Finished chunks are kept. The backup stays in charge for the rest of the run. |
+| Worker is marked as unavailable when the run starts | Starts on the first backup that is not marked. |
+| Chain used up | The chunk fails as it would without a backup. |
+| Request rejected (4xx: bad parameter, auth) | No switch. The run fails visibly, because this is a setup problem. |
+| Unknown name in `model` or `fallback` | The run fails at its start. |
+
+The dream file records the backups as `worker_fallback_ref` and a switch
+as `worker_switch` with `from`, `to`, `reason` and `at_chunk`.
+
+### What the worker sees
+
+- The transcript, split into chunks of about `chunkTokens` tokens.
+- The agent's existing memory notes.
+- The wiki: its index and the 8 pages closest to the conversation.
+- Up to 15 matching notes from the vault.
+
+The transcript says who wrote each line. Only `USER` lines are the
+person speaking. A line from another agent is labelled
+`OTHER-AGENT(<name>)`, an automatic trigger `SYSTEM(<kind>)`. A fact
+passed on by another agent can become a finding, but it is recorded
+with its source ("Laut <name>: …"). Trigger text is never a source.
+
+### What REM produces
+
+A dream file with findings. Each finding has:
+
+| Field | Meaning |
+|---|---|
+| `action` | `memory_write`, `memory_edit`, `memory_delete` or `vault_hint` |
+| `slug` | Name of the note |
+| `proposed_content` | What the note will say when approved |
+| `reason` | Why, with the statement it rests on |
+
+`vault_hint` points out a vault note that looks outdated. Approving it
+writes nothing, because somora never writes to your vault.
+
+A note written from a finding carries `stated_at`: the end of the
+conversation it came from. Deep uses that date, not the day of the
+approval. A run without findings is filed away at once and never shows
+up for review.
+
+### Repeats are marked
+
+Small models do not reliably stick to "only new facts". After the
+extraction, code checks each finding against what is already stored.
+
+| Check | Result |
+|---|---|
+| The slug is the name of a wiki page | The finding is dropped. |
+| The slug is an existing note with the same content | The finding is dropped. |
+| The slug is an existing note with different content | The finding is kept under `<slug>-update-<date>`, so a correction reaches the review and nothing is overwritten. |
+| The content is very similar to a note or wiki page | The finding is kept and marked `likely_duplicate`. `duplicate_of` names the page, `matched_excerpt` shows the text that matched. |
+
+The mark means the topic overlaps. It does not prove the fact is
+already written. A finding with numbers, dates or versions that the
+matched text lacks is also marked `novel_details`.
+
+> **Warning:** Do not dismiss findings marked `novel_details` in bulk.
+> They are usually a new fact on a known topic. For the others, read
+> `matched_excerpt` first: dismiss when it states the fact, not only
+> the topic.
+
+The wiki's monthly change logs are left out of the comparison. They
+record that something was processed, not the knowledge itself.
+
+### The coverage judge
+
+Similarity cannot tell "waiting for the go" from "the go was given".
+The optional coverage judge asks a model instead. It reads the whole
+pages of the closest candidates and answers one question: is everything
+in this finding already stated there?
+
+| Verdict | Effect |
+|---|---|
+| `covered`, confidence at or above `minConfidence` | The finding is marked `likely_duplicate`. `duplicate_of` reads `<source>:<slug>@judge` unless similarity had marked it already. |
+| `adds_new` | No mark. If similarity had marked the finding, it also gets `novel_details`. |
+| No candidates, call failed, answer unreadable, or `maxPerRun` reached | No verdict. The finding is reviewed as usual. |
+
+Nothing is deleted by the judge. A judged finding shows `judge_verdict`,
+`judge_confidence` (0 to 100), `judge_reason` and, when covered,
+`judge_by` in `dream_get`.
+
+The judge is off by default. Without `rem.dedup.judge.model` it uses the
+worker the REM run is on, including a backup the run switched to. The
+question is easier than the extraction, so a smaller model does fine. It
+costs one call per finding with candidates, a few thousand tokens each.
+
+## Deep
+
+Deep moves the memory notes of all agents into the shared wiki. It runs
+without approval.
+
+### What Deep does
+
+For each note Deep asks its worker once and gets one of three answers:
+
+| Decision | What happens | The note |
+|---|---|---|
+| **Skip** | Short-lived, too thin, or already in the wiki | stays |
+| **Promote** | A new wiki page is written | is deleted |
+| **Merge** | The content goes into an existing page | is deleted |
+
+Two ways to keep notes out of Deep:
+
+- `wiki_promote: false` in the frontmatter of a note keeps that note in
+  the inbox.
+- `rem.participate_in_wiki: false` in `agent.yaml` keeps all notes of
+  that agent out of the wiki.
+
+### When Deep runs
+
+Every `wiki.deep.intervalHours` (default 12). The rhythm survives
+restarts. On a fresh install the first run is one interval after the
+first start.
+
+Run it now with `dream_run({phase: 'deep'})` or `POST /dream/run-deep`.
+Only one Deep run is active at a time.
+
+### The Deep worker
+
+`wiki.deep.model` is required. Without it Deep does nothing and logs
+`dream.deep.no_worker_model_configured`. Deep decides what goes into the
+wiki, so a strong model is worth it. Backups are covered under
+[Backup workers](#backup-workers).
+
+### What the worker sees
+
+- The note and when its content was stated (`stated_at` if present).
+- The wiki map: every folder, what kind of page lives in it, and the
+  filing rules.
+- The 8 wiki pages closest to the note. A page over 8000 characters
+  arrives cut to its first 6000.
+
+When the note contradicts the page, Deep compares dates. A note that is
+clearly newer updates the fact and records the change in the timeline.
+A note that is older, or whose order is unclear, leaves the fact alone
+and is added to the timeline as an earlier entry.
+
+### Checks before Deep writes
+
+| Check | What happens |
+|---|---|
+| Merge into a page the worker saw shortened or not at all | The worker is asked again with that page in full. The write is refused if the page changed in the meantime. |
+| Target page is over `maxPageChars` (default 50 000) | The page takes no more content. The worker is asked to write the note as a sub-page under it. |
+| Promote into a folder the wiki map does not know | Refused, unless the worker gave the folder a purpose. Then the folder is created and described. |
+| Folder deeper than one level below a top folder | Refused. |
+| A page of that name exists in another folder | The promote becomes a merge into that page. |
+| Merge would shrink the page | Refused by the shrink guard, see below. |
+
+A refused note stays in the inbox and is tried again on the next run.
+
+### The shrink guard
+
+For a merge the worker returns the full new page. On a large page a
+model may return a summary instead, and the old content would be gone.
+Deep therefore compares sizes. If the new body is shorter than
+`minRatio` times the old one, the merge is refused: the page and the
+note both stay, and the next run tries again.
+
+Pages below `minExistingBytes` are not guarded. Shrinking a short stub
+is normal editing.
+
+> **Tip:** A page that trips the guard again and again has outgrown
+> full-page merges. Split it into sub-pages.
+
+### Skipped notes are remembered
+
+A skipped note is remembered by a hash of its content. While the note is
+unchanged, later runs skip it without a model call. A run in which
+nothing changed costs no tokens.
+
+A skip is forgotten when:
+
+- the note changes or is deleted,
+- the skip is older than `skipCacheDays` (default 30, `0` means never),
+- you run `dream_run({phase: 'deep', force: true})`, which looks at
+  every note again.
+
+A skip expires because it was a verdict against the wiki of that day.
+"Too thin for a page of its own" stops being true once the page exists.
+Expiry is spread out per note, and at most 10 expired notes per agent
+are looked at again in one run.
+
+### What Deep leaves behind
+
+New and updated pages in the wiki, and one line per promote or merge in
+the monthly log `<vault>/<wiki-subfolder>/logs/YYYY-MM.md`.
+
+There is no review. If Deep decided badly, edit the page in Obsidian or
+wait for Lucid to flag it.
+
+## Lucid
+
+Lucid reads the wiki and reports what is provably wrong with it. It sets
+missing links itself. Everything else waits for a review.
+
+### What Lucid looks for
+
+| Finding | Meaning | Fix |
+|---|---|---|
+| `contradiction` | Two pages state facts that exclude each other. | In the review loop |
+| `duplicate_page` | Two pages describe the same thing under different names. | `dream_apply` unites them: the worker writes the merged page, the other page is archived, links follow. |
+| `misfiled_page` | A page that is not of its folder's kind. | `dream_apply` moves it to the folder the finding names. |
+| `oversized_page` | A page over `oversizedChars` (default 50 000). Found without a model. | Split it in the review loop. |
+| `dead_ref` | A `[[wiki-path]]` link to a page that does not exist. | In the review loop |
+| `wanted_page` | A missing page that three or more pages link to. | In the review loop |
+| `link_suggestion` | A page names something that has its own page, without linking it. | Set by Lucid itself |
+| `not_migrated` | The wiki does not use the folder template. Reported once per run. | Run `somora wiki migrate`, or dismiss to keep the wiki as it is. |
+
+`misfiled_page` and `oversized_page` are only reported in a wiki on the
+folder template. Style is not Lucid's business: "this could read
+better" belongs in the conversation, not in a finding.
+
+Three older kinds (`stale_claim`, `outdated`, `inconsistent_xref`) are
+still readable in archived runs. No run produces them.
+
+### When Lucid runs
+
+Every `wiki.lucid.intervalDays` (default 7), with the same restart-safe
+rhythm as Deep. Run it now with `dream_run({phase: 'lucid'})` or
+`POST /dream/run-lucid`.
+
+While a run still has findings waiting, no new run starts. The schedule
+looks again six hours later. `force: true` runs anyway.
+
+### The Lucid worker
+
+`wiki.lucid.model` is required. Without it a run fails with
+`no worker model configured for lucid`. Lucid judges contradictions and
+you review its findings by hand, so pick a strong model.
+
+### How Lucid reads the wiki
+
+Lucid cuts the wiki into calls by size. One call carries as many pages
+of one folder as fit into `batchChars` (default 100 000 characters). A
+larger page travels alone, a big folder goes in parts. Each call also
+sees the wiki map and one line for every other page of its top folder.
+
+A last pass looks across folders. It sees only the opening line of each
+page. That is enough for a dead link or a missing page. A contradiction
+between the bodies of two pages in different folders is out of its
+sight.
+
+### What Lucid produces
+
+A run file, `~/.somora/wiki-lucid/<run-id>.json`.
+
+- **Findings are capped.** Each call may return up to 8. The run keeps
+  the `maxFindings` weightiest (default 12): contradictions first, then
+  dead links, duplicates, misfiled and oversized pages, wanted pages.
+- **Links are set at once.** The first plain mention becomes a
+  `[[link]]`, up to `autoLinksPerRun` per run. Each one is recorded as
+  `applied`, or as `dismissed` with the reason. `autoLinks: false`
+  switches this off.
+- **Dismissed findings stay away.** A finding you dismissed is not
+  reported again for `seenDays` (default 90).
+- **Failures are visible.** The file records `batches_total` and
+  `batches_failed`. A run in which every call failed has the status
+  `failed`. It is not a clean wiki with zero findings.
+
+## Backup workers
+
+Deep and Lucid each name one worker. If it is unreachable the run would
+fail and wait for its next slot: twelve hours, or a week. Give each a
+backup:
+
+```yaml
+wiki:
   deep:
-    enabled: true
-    intervalHours: 12
-    model: <alias>                       # required
-    # thinking: medium                   # optional; reasoning_effort for the
-                                         # Deep worker LLM. Off by default.
-    mergeShrinkGuard:
-      enabled: true                      # refuse merges that shrink a page
-      minRatio: 0.5                      # newBody < 0.5 × existingBody → skip
-      minExistingBytes: 2000             # smaller pages are never guarded
-    skipCacheDays: 30                    # a cached skip of an unchanged note is
-                                         # looked at again after this; 0 = never
+    model: opus
+    fallback: [gpt, local-model]   # one name or a list, tried in order
   lucid:
-    enabled: true
-    intervalDays: 7
-    model: <alias>                       # required
-    requireApproval: true
-    maxCallsPerTurn: 3
-    # thinking: medium                   # optional; reasoning_effort for the
-                                         # Lucid worker LLM. Off by default.
-  search:
-    boostWiki: 1.4                       # wiki hits rank above memory
-    boostMemory: 0.85
-    boostVault: 0.65
-rem:
-  dedup:
-    enabled: true                        # mechanical dedup after extraction
-    similarityThreshold: 0.85
-    judge:
-      enabled: false                     # coverage judge (see REM → Coverage judge)
-      # model: <alias>                   # default: the agent's REM worker
-      candidates: 4
-      maxPageChars: 6000
-      minConfidence: 80
-      maxPerRun: 60
+    model: opus
+    fallback: gpt
 ```
 
-```yaml
-# agent.yaml — per-agent
-rem:
-  enabled: true
-  model: <alias>                         # required when enabled
-  # fallback: <alias>                    # optional backup worker
-  idleMinutes: 30
-  chunkTokens: 50000
-  chunkTimeoutMs: 600000
-  participate_in_wiki: true
-  # thinking: medium                     # optional; dormant unless the REM
-                                         # worker model has the 'reasoning'
-                                         # capability.
+- A backup steps in when the worker is not there: connection refused,
+  timeout, 5xx, 429. A rejected request (4xx) stays an error.
+- An outage is remembered and shared with chat, REM and compaction. A
+  model that failed is skipped by all of them for
+  `fallback.retryUnavailableMinutes` (default 60). A successful call
+  clears the mark.
+- A backup name that is not a configured model stops the server at
+  start, with the list of known models.
+
+> **Tip:** Put at least one backup on a different provider. A second
+> Claude model does not help when the Claude login has expired.
+
+A weaker backup is better than no run for Deep, whose pages a later run
+can correct. Think twice for Lucid, whose findings you review by hand.
+
+## Reviewing findings
+
+`dream_list` shows what waits. Each entry has a `kind`:
+
+| `kind` | From | Who sees it |
+|---|---|---|
+| `memory` | REM | Only the agent it belongs to |
+| `wiki_lucid` | Lucid | Every agent with the `dream` toolset |
+
+### REM findings
+
+Ask the agent to go through them with you. It calls `dream_get` for the
+list, then `dream_apply` or `dream_dismiss` per finding. When the last
+one is resolved the dream file moves to `processed/`.
+
+If a finding was right but is already taken care of, close it with
+`dream_dismiss({resolved_manually: true, reason})`. The history then
+reads "done elsewhere", not "rejected".
+
+If the note of a `memory_edit` finding no longer exists, because Deep
+moved it into the wiki, `dream_apply` writes the content as a new note.
+
+### Lucid findings
+
+`duplicate_page` and `misfiled_page` can be fixed directly with
+`dream_apply`. The other findings are worked through in a conversation,
+the review loop:
+
+```
+you:    have a look at the Lucid result
+agent:  dream_list, dream_get
+        dream_review({dream_id, action: 'start'})
+        "Lucid found 3 contradictions and 2 dead links. The first:
+         page X says A, page Y says B. I would change Y. OK?"
+you:    yes
+agent:  wiki_edit({...})
+        "Done. Next finding: ..."
+you:    good, wrap it up
+agent:  dream_review({dream_id, action: 'end', summary: '...'})
 ```
 
-All three `thinking` fields are optional and unset = engine default
-(no reasoning_effort sent). See [thinking.md](thinking.md) for the
-per-engine mapping table and dormant-state semantics.
+`dream_apply` on any other Lucid finding only marks it as applied and
+changes nothing in the wiki.
+
+### Rules of the review loop
+
+| Rule | Detail |
+|---|---|
+| Wiki tools appear | The agent gets `wiki_edit`, `wiki_create`, `wiki_delete` and `wiki_move`. They exist only inside the loop. |
+| Other tools are hidden | `exec_*`, `tmux_*`, `agents_*`, `skill_*`, `file_write` and `file_patch` are refused. `file_read`, `file_search`, `file_list`, `analyze_file`, memory and web tools stay. |
+| One loop at a time | Only one agent on the instance can hold a loop. |
+| Small steps | At most `maxCallsPerTurn` (default 3) `wiki_*` calls per turn. The count resets with every message of yours. |
+| Open findings stay open | `end` needs a `summary`. Findings you did not get to keep waiting, and a later loop continues there. `dismiss_rest: true` closes them all. |
+| Archive | The run file moves to `processed/` when no finding is left. |
+| Forgotten loops | A loop without activity for 24 hours closes by itself. |
+
+`wiki_edit` takes a new body (`newBody`), changes to the frontmatter
+lists (`relatedAdd`, `relatedRemove`, `sourcesAdd`, `sourcesRemove`), or
+both. `wiki_edit({wikiPath, relatedRemove: ['dead/page']})` removes a
+dead reference without touching the text.
+
+> **Note:** Agents on `claude-cli`, `codex-cli` and `grok-cli` get their
+> tool list once per turn. After `dream_review` start, the `wiki_*`
+> tools are available from the next turn. The agent should end its
+> reply and continue after you answer.
+
+The TUI shows `📝 wiki-review:<agent>` in the status line while a loop
+is open.
 
 ## Where things live
 
 ```
-~/.somora/agents/<agent>/memory/             ← memory inbox (REM writes here)
-~/.somora/agents/<agent>/memory/.dreams/     ← REM run files awaiting approval
-~/.somora/agents/<agent>/memory/.dreams/processed/   ← resolved REM runs
-~/.somora/agents/<agent>/memory/.deep-skip-cache.json ← Deep hash-cache
-~/.somora/wiki-lucid/<run-id>.json           ← Lucid run files
-~/.somora/wiki-lucid/processed/              ← resolved Lucid runs
-<vault>/<wiki-subfolder>/                    ← the wiki itself
-<vault>/<wiki-subfolder>/index.md            ← auto-regenerated topology
-<vault>/<wiki-subfolder>/logs/YYYY-MM.md     ← monthly Deep audit log
+~/.somora/agents/<name>/memory/                    ← the agent's notes
+~/.somora/agents/<name>/memory/.dreams/            ← REM runs waiting for review (<id>.dream.md)
+~/.somora/agents/<name>/memory/.dreams/processed/  ← resolved REM runs
+~/.somora/agents/<name>/memory/.deep-skip-cache.json ← notes Deep skipped
+~/.somora/wiki-lucid/<run-id>.json                 ← Lucid runs waiting for review
+~/.somora/wiki-lucid/processed/                    ← resolved Lucid runs
+<vault>/<wiki-subfolder>/                          ← the wiki
+<vault>/<wiki-subfolder>/index.md                  ← page overview, rebuilt automatically
+<vault>/<wiki-subfolder>/logs/YYYY-MM.md           ← monthly log of Deep
 ```
 
-## What dreams won't do
+The dream phases write only to the agents' memory folders and to the
+wiki subfolder. The rest of your vault is read, never written.
 
-- **Auto-write to memory or wiki without approval** — except Deep, which
-  runs auto-apply (no approval) but is bounded to the structured
-  `MemoryFateDecision` and writes only the markdown the LLM produced.
-- **Edit content outside the agent's memory or the wiki subfolder** — the
-  rest of your Obsidian vault stays read-only from somora's perspective.
-- **Sync across machines automatically** — somora is single-host. Use git
-  or syncthing on the wiki subfolder if you want cross-device sync (memory
-  inboxes are ephemeral inboxes, not worth syncing).
+## Settings
 
-## Design rationale
+### REM per agent
 
-Each phase has its own worker model so you can tune cost vs quality
-independently:
+In `agent.yaml`. The values shown are the defaults.
 
-- REM runs often → cheap local model is fine for atomic-fact extraction.
-- Deep runs occasionally → strong model is worth it for quality consolidation.
-- Lucid runs rarely → strong model definitely worth it for finding
-  contradictions.
+```yaml
+rem:
+  enabled: true
+  model: <alias>
+  # fallback: <alias>          # or a list: [a, b]
+  idleMinutes: 30
+  chunkTokens: 50000
+  chunkTimeoutMs: 600000
+  participate_in_wiki: true
+  # thinking: medium
+```
 
-Each phase has its own approval policy so you control surface area:
+| Setting | Default | Meaning |
+|---|---|---|
+| `rem.enabled` | none | Switches REM on for this agent. |
+| `rem.model` | none | The worker. Required. Alias or `provider/modelId`. |
+| `rem.fallback` | none | Backup worker, or an ordered list of them. |
+| `rem.idleMinutes` | 30 | Minutes without chat before REM starts. |
+| `rem.chunkTokens` | 50000 | Size of one piece of a long transcript. |
+| `rem.chunkTimeoutMs` | 600000 | Time limit per piece. Ten minutes leave room for local models. |
+| `rem.participate_in_wiki` | true | `false` keeps this agent's notes out of Deep. |
+| `rem.thinking` | none | `off`, `low`, `medium` or `high`. Used when the worker model can reason. |
 
-- REM proposes; you decide what enters memory.
-- Deep auto-applies; mistakes are recoverable in Obsidian.
-- Lucid proposes; you decide what gets fixed in the wiki.
+### REM for all agents
 
-The wiki is the only place where stable knowledge lives. The memory
-inbox is volatile by design — files come in, get consolidated, get
-deleted. The vault is read-only context (your Obsidian notes outside
-the wiki subfolder are yours, not somora's).
+In `config.yaml`.
+
+```yaml
+rem:
+  dedup:
+    enabled: true
+    similarityThreshold: 0.85
+    judge:
+      enabled: false
+      # model: <alias>
+      candidates: 4
+      maxPageChars: 6000
+      minConfidence: 80
+      maxPerRun: 60
+      timeoutMs: 120000
+      # thinking: low
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `rem.dedup.enabled` | true | Check findings against stored notes and pages. |
+| `rem.dedup.similarityThreshold` | 0.85 | Similarity (0 to 1) from which a finding is marked `likely_duplicate`. Lower marks more. A rewording of the same fact scores about 0.85 to 0.95, the same topic with another fact about 0.6 to 0.8. |
+| `rem.dedup.judge.enabled` | false | Switches the coverage judge on. |
+| `rem.dedup.judge.model` | the REM worker | Model that judges. |
+| `rem.dedup.judge.candidates` | 4 | Pages the judge reads per finding. |
+| `rem.dedup.judge.maxPageChars` | 6000 | Each page is cut to this length. |
+| `rem.dedup.judge.minConfidence` | 80 | A `covered` verdict below this marks nothing. |
+| `rem.dedup.judge.maxPerRun` | 60 | Findings judged per run. The rest go unjudged. |
+| `rem.dedup.judge.timeoutMs` | 120000 | Time limit per judge call. |
+| `rem.dedup.judge.thinking` | none | Used when the judge model can reason. |
+
+### Deep and Lucid
+
+In `config.yaml`.
+
+```yaml
+wiki:
+  enabled: false
+  vaultSubfolder: somora
+  language: de
+  deep:
+    enabled: true
+    intervalHours: 12
+    # model: <alias>
+    # fallback: <alias>        # or a list
+    # thinking: medium
+    mergeShrinkGuard:
+      enabled: true
+      minRatio: 0.5
+      minExistingBytes: 2000
+    skipCacheDays: 30
+    maxPageChars: 50000
+  lucid:
+    enabled: true
+    intervalDays: 7
+    # model: <alias>
+    # fallback: <alias>        # or a list
+    # thinking: medium
+    requireApproval: true
+    maxCallsPerTurn: 3
+    batchChars: 100000
+    oversizedChars: 50000
+    maxFindings: 12
+    autoLinks: true
+    autoLinksPerRun: 30
+    seenDays: 90
+fallback:
+  retryUnavailableMinutes: 60
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `wiki.enabled` | false | Switches the wiki on, and with it Deep and Lucid. |
+| `wiki.deep.enabled` | true | Scheduled Deep runs. |
+| `wiki.deep.intervalHours` | 12 | Hours between Deep runs. |
+| `wiki.deep.model` | none | The Deep worker. Required. |
+| `wiki.deep.fallback` | none | Backup worker or list. |
+| `wiki.deep.thinking` | none | Used when the worker can reason. Tends to improve the decisions and costs more. |
+| `wiki.deep.mergeShrinkGuard.enabled` | true | Refuse merges that shrink a page. |
+| `wiki.deep.mergeShrinkGuard.minRatio` | 0.5 | Refuse when the new body is shorter than this share of the old one. |
+| `wiki.deep.mergeShrinkGuard.minExistingBytes` | 2000 | Pages below this size are not guarded. |
+| `wiki.deep.skipCacheDays` | 30 | A skipped, unchanged note is looked at again after this many days. `0` means never. |
+| `wiki.deep.maxPageChars` | 50000 | A page above this takes no more content and gets sub-pages. |
+| `wiki.lucid.enabled` | true | Scheduled Lucid runs. |
+| `wiki.lucid.intervalDays` | 7 | Days between Lucid runs. |
+| `wiki.lucid.model` | none | The Lucid worker. Required. |
+| `wiki.lucid.fallback` | none | Backup worker or list. |
+| `wiki.lucid.thinking` | none | As for Deep. |
+| `wiki.lucid.requireApproval` | true | Reserved. Lucid findings always wait for review. |
+| `wiki.lucid.maxCallsPerTurn` | 3 | `wiki_*` calls per turn in the review loop. |
+| `wiki.lucid.batchChars` | 100000 | Page text per Lucid call. |
+| `wiki.lucid.oversizedChars` | 50000 | Pages above this are reported as `oversized_page`. |
+| `wiki.lucid.maxFindings` | 12 | Findings kept per run for review. |
+| `wiki.lucid.autoLinks` | true | Lucid sets suggested links itself. |
+| `wiki.lucid.autoLinksPerRun` | 30 | Most links set per run. |
+| `wiki.lucid.seenDays` | 90 | A dismissed finding is not reported again for this long. |
+| `fallback.retryUnavailableMinutes` | 60 | How long a model that failed is skipped by chat, REM, Deep, Lucid and compaction. |
+
+`wiki.deep.requireApproval` also exists (default `false`) and is
+reserved: Deep always writes without approval.
+
+## Tools
+
+All six belong to the `dream` toolset.
+
+| Tool | What it does |
+|---|---|
+| `dream_list(include_processed?)` | Lists REM dreams of the calling agent and Lucid runs that wait for review. `include_processed: true` adds resolved ones. Failed runs are listed with their `error`. |
+| `dream_get(dream_id)` | Returns all findings of one dream or Lucid run with their status. |
+| `dream_apply(dream_id, finding_id)` | Carries out one finding. For REM: writes, edits or deletes the note. For Lucid: unites or moves pages, otherwise only marks the finding. |
+| `dream_dismiss(dream_id, finding_id?, reason?, resolved_manually?)` | Closes one finding, or the whole dream without `finding_id`. `resolved_manually: true` records "handled elsewhere". |
+| `dream_run(phase?, wait?, force?)` | Starts `deep` (default), `lucid` or `rem` now. See below. |
+| `dream_review(dream_id, action, summary?, dismiss_rest?)` | `start` opens and `end` closes the review loop for a Lucid run. `end` requires `summary`. |
+
+Finding ids start at 1. An unknown `dream_id` returns
+`error: dream_not_found` with the list of valid ids.
+
+`dream_run` returns at once and the run continues in the background.
+`wait: true` blocks until a Deep or Lucid run is done and returns its
+result. `force: true` makes Deep ignore its remembered skips, and makes
+Lucid run although findings wait. For `rem` neither applies.
+
+## Routes
+
+| Route | What it does |
+|---|---|
+| `POST /agents/:agent/dream/run-rem` | Starts the REM cycle for one agent. Returns `outcome`: `started`, `busy` or `nothing_to_do`. 400 when REM is not enabled for the agent. |
+| `POST /dream/run-deep` | Starts Deep. Body `{wait?, force?}`. With `wait: true` returns `candidatesSeen`, `cachedSkips`, `counts` and `outcomes`. |
+| `POST /dream/run-lucid` | Starts Lucid. Body `{wait?, force?}`. With `wait: true` returns `runId`, `findingsCount`, `pagesScanned` and `status`. |
+| `GET /dream-states` | Per agent: REM `active` and `pendingCount`. Deep: `active`. Lucid: `active`, `pendingRuns`, `pendingFindings` and `loopHolder`. |
+| `GET /dream/loop-state` | The open review loop: `active`, `agent`, `dreamId`, `startedAt`, `lastActivityAt`. |
+
+`run-deep` and `run-lucid` answer 400 when `wiki.enabled` is false.
+
+```bash
+curl -X POST http://127.0.0.1:18737/dream/run-deep  -d '{"wait":true}'
+curl -X POST http://127.0.0.1:18737/dream/run-lucid -d '{"wait":true}'
+```
+
+## Troubleshooting
+
+| Symptom | Where to look |
+|---|---|
+| REM never runs for an agent | `rem.enabled` and `rem.model` in `agent.yaml`. The log line `dream.rem.registered` appears at start for every agent with REM. After enabling REM, restart. |
+| A dream shows `failed` in `dream_list` | Read its `error`. The same stretch is retried automatically, so wait for the new dream. `dream.worker_fallback` in the log shows a switch to a backup. |
+| REM gave up after an outage | `dream.rem.self_heal_exhausted` in the log. Send the agent a message or call `dream_run({phase: 'rem'})`. |
+| The judge marks nothing | `dream.rem.dedup_summary` carries `judged`, `judge_marked`, `judge_cleared`, `judge_failed`, `judge_skipped` and `judge_model`. Single failures are logged as `dream.rem.judge_failed` and `dream.rem.judge_unreadable`. |
+| A finding vanished before review | `dream.rem.dedup_dropped` (repeat of an existing page or note) or `dream.rem.dedup_reslugged` (kept under a new name). |
+| Deep does nothing | `dream.deep.no_worker_model_configured`, or `wiki.enabled` is false. |
+| A note never reaches the wiki | It is remembered as skipped. Run Deep with `force: true`. `dream.deep.merge_shrink_blocked` means the shrink guard refused the merge. |
+| Which model answered | `dream.worker_unavailable` and `dream.worker_switched` in the log, `answeredBy` on `dream.deep.done`, `answered_by` in the Lucid run file. |
+| Lucid does not start | `dream.lucid.skip_pending`: an earlier run still has open findings. Review it or use `force: true`. |
+| Lucid found fewer findings than expected | `dream.lucid.run_capped` lists what `maxFindings` dropped. `batches_failed` in the run file shows calls that failed. |
 
 ## See also
 
-- [memory.md](memory.md) — how the memory inbox indexes and retrieves
-- [wiki.md](wiki.md) — the shared long-term wiki layer
-- [agents.md](agents.md) — per-agent configuration including REM
-- [tools.md](tools.md) — full tool reference (`dream_*` is one toolset among the others)
+- [Memory](memory.md): the inbox REM fills and Deep empties
+- [Wiki](wiki.md): folders, page format and the migration onto the
+  folder template
+- [Agents](agents.md): `agent.yaml`, including the `rem` block
+- [Models](models.md): aliases, providers and the chat fallback
+- [Thinking](thinking.md): what the `thinking` levels mean per engine
+- [Tools](tools.md): all toolsets, `dream` among them

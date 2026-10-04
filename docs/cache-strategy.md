@@ -1,252 +1,228 @@
 # Prompt cache
 
-> How somora keeps prefix-cache hit rates high across the three engine
-> adapters and the dream worker. Why it matters, how it works, where
-> the bodies are buried.
+Model providers remember the beginning of a prompt they have seen before
+and do not process it again. somora builds every request so that this
+beginning stays the same from turn to turn. This page explains the
+order, what breaks it, and which settings matter.
 
-## The problem
+## What you get
 
-Every modern LLM provider implements some form of **prefix cache**:
-the inference engine remembers the KV-cache state for the longest
-exact-token prefix it has seen recently and reuses it on the next
-request. For long-running conversations that share a stable prefix
-(system prompt, tools list, accumulated history), the cache turns
-re-encoding cost from O(N) to O(new tokens only).
+- **Cheaper turns.** Cloud providers bill cached input at a fraction of
+  the normal price.
+- **Faster first word.** A local model skips re-reading the cached part,
+  which saves seconds on a long conversation.
+- **Nothing to set up.** The order is built in, for every engine.
+- **Recall that does not cost the cache.** Recalled notes change on every
+  turn and still leave the earlier conversation cached.
+- **A number to watch.** The chat header shows how much of the last
+  turn's input came from the cache.
 
-The win is huge:
+## Check it
 
-- **Anthropic** charges 10% of fresh-input price for cached tokens.
-  A 20k-token system+history that hits cache costs ~$0.30 instead
-  of ~$3.00 per turn on Opus.
-- **Local models (mlx-omx, ollama)** save the full pre-encode pass
-  on cached tokens. On a local 30B-class model at 30-50 tok/s, a
-  20k-token cached prefix means **6-10 seconds less time-to-first-token**.
-- **OpenAI** discounts cached input by 50% on supported models.
+Send two messages in the same session and look at the input tokens in
+the status line, for example `Σ↑ 12k+80k¢`. The part marked `¢` was read
+from the cache. From the second turn on it should cover most of the
+input.
 
-**The trap:** cache works on **byte-identical prefix matching**. Any
-per-turn change in the prompt — even a single character — invalidates
-the cache from that point onward. Get the prompt structure wrong and
-every turn re-encodes the whole prior conversation.
+To see the system prompt exactly as the next turn sends it, open the
+agent's window in the web client and choose **Full prompt**, or call:
 
-Memory recall is the most common per-turn variable. Dump it in the
-wrong place and cache dies.
+```bash
+curl 'http://127.0.0.1:18737/agents/<your-agent>/prompt-preview?session=main'
+```
 
-## The three-engine landscape
+The preview never changes the session.
 
-somora has three engine adapters with very different cache mechanics:
+## The one rule
 
-| Engine | Backend | Cache scope |
+A cache matches from the first character up to the first difference.
+Everything after a changed character is processed again.
+
+So the order is always the same: what never changes comes first, what
+changes rarely comes next, and what changes on every turn comes last.
+
+| Changes | Example | Where it goes |
 |---|---|---|
-| `claude-cli` | Anthropic via SDK, stateful resumed session | SDK manages internal session state; we send only the new user message; Anthropic cache_control on system+tools holds across turns |
-| `codex-cli` | OpenAI via the bundled Codex app-server, stateful via `thread/resume <thread_id>` | Codex remembers history internally; we send only new content; Codex's API call to OpenAI gets full prefix cache |
-| `openai-compatible` | Anything (mlx-omx, ollama, OpenAI, vLLM, ...), stateless | We reconstruct the full conversation from JSONL on every call; the request must be byte-identical to prior calls for the prefix to match |
+| Never or rarely | persona, team, wiki overview, skills | system prompt |
+| Per session | session name, pinned project | end of the system prompt |
+| Every turn | recalled notes, the frame of the turn | in front of the user message |
 
-The first two are stateful — the underlying CLI/SDK preserves session
-state, and we just hand it the next user message. Cache works
-naturally because the API call's prefix is whatever the backend
-already saw.
+## Order of the system prompt
 
-`openai-compatible` is the hard case. There's no session resumption.
-We rebuild the entire conversation array from JSONL and send it.
-Byte-identity across turns is on us.
+The system prompt is put together from eight parts, in this order:
 
-## What belongs in the prefix vs. the per-turn block
-
-Before asking *where* a block goes, ask whether it changes with the
-question:
-
-| | Example | Goes to |
+| # | Part | Changes when |
 |---|---|---|
-| Changes per turn | memory hits for this query | `<memory-context>`, per turn |
-| Stable for the session | wiki topology overview, skills registry, persona | system prompt |
+| 1 | Self-pointer: who the agent is, its paths and resources | resources or paths change in the config |
+| 2 | Persona: `SOUL.md`, `AGENTS.md`, `USER.md` | you edit one of the files |
+| 3 | Team block | `team.yaml` or the list of agents changes |
+| 4 | Tool reminder | never (constant text) |
+| 5 | Wiki overview | never within a session |
+| 6 | Skills list | a skill is added, removed or its description edited |
+| 7 | This session | never within a session |
+| 8 | Project | the session's project is switched or the project is updated |
 
-Getting this wrong is expensive in a way that hides well. Take the
-wiki overview: it is byte-identical on every turn. Carried in the
-per-turn memory block it is a duplicate per turn on
-`claude-cli`/`codex-cli`, and on `openai-compatible` — where
-`buildMessages` replays every past turn — it is re-sent once per turn
-*of history*: 900 chars × 27 turns = 24 KB on every single request,
-for something that has not changed since turn 1.
+Parts 1 to 6 are the same for all sessions of one agent, so a provider
+can reuse them across sessions. The project is last because it is the
+part most likely to change in the middle of a session.
 
-The system-prompt version is measurably free after the first turn.
-`claude-cli`, fresh session:
+A sub-agent turn adds one note to part 1. Empty parts are left out: no
+team, no wiki, no pinned project.
 
-```
-turn 1   tokens_in 9081   cached  878
-turn 2   tokens_in 9696   cached 9079     ← 94% of the prefix
-```
+Tool definitions are not part of this text. They travel in the tool
+channel of the API and stay the same as long as the set of tools does.
 
-The corollary: a block in the prefix must not move. The wiki overview
-is snapshotted into `session.meta.json` on the first turn and reused
-verbatim afterwards, even after Deep rewrites `index.md`. Freshness
-there is worth less than the cache — and recall (`memory_search`,
-auto-injection) is live regardless.
+### The wiki overview is frozen
 
-## Where memory recall goes per engine
+The wiki overview is read on the first turn of a session and stored with
+the session. Later turns reuse the stored text, even after Deep has
+rewritten the wiki index. A fresh map in the middle of a session would
+change a block in front of the whole conversation.
 
-The runtime injects a `<memory-context>...</memory-context>` block per
-turn that contains the top-N memory hits for the current query. Each
-engine handles it differently:
+Recall is not affected: automatic recall and `memory_search` always use
+the live index. A new session, or a reset of the current one, gets a new
+overview.
 
-### claude-cli (stateful)
+### Builder agents
 
-```ts
-// src/engine/claude-cli.ts
-const memoryBlock = ephemeralContext ? `${ephemeralContext}\n\n` : '';
-const effectiveUserMessage = replayPrefix + memoryBlock + userMessage;
+A builder (`kind: builder`) has a different system prompt with the same
+idea: identity and environment, harness rules, compact team, the
+builder's own rules, repository instructions, skills, session, project.
 
-// systemPromptForTurn = systemPrompt unchanged
-SDK.query({ systemPrompt, userMessage: effectiveUserMessage });
-```
+The environment block names the model and today's date, so a builder's
+prefix changes when either does. A builder gets no automatic recall
+block.
 
-`ephemeralContext` already carries the turn's frame (an A2A header,
-a sentinel evidence block) ahead of the recall block, composed by the
-server (`src/server/turn-framing.ts`); the adapter adds nothing.
-Memory lives at the **start of the new user-message text**. The SDK
-sends only the new turn to Anthropic; the persistent system prompt
-stays stable across turns; Anthropic's `cache_control` ephemeral
-breakpoint on the system block holds. Hits 95-98% cache after the
-first turn.
+## Where the per-turn block goes
 
-### codex-cli (stateful)
+Everything that belongs to one turn only is collected in one block and
+placed in front of the user's text, never in the system prompt. In
+order:
 
-```ts
-// src/engine/codex-cli.ts — one app-server process per turn
-thread/start | thread/resume { developerInstructions: systemPrompt + tool guidance, dynamicTools, config }
-turn/start   { input: [ text: ephemeral + replayPrefix + userMessage, localImage… ], effort }
-```
+1. the Lucid review block, while a review is open
+2. the frame of the turn: the header of a message from another agent, a
+   sentinel's evidence, the instructions beside a wake-up
+3. the `<memory-context>` block with the recalled notes
 
-The system prompt travels as Codex *developer instructions* on every
-thread start/resume (stable across turns), the tool schemas as dynamic
-tools, and only the new turn as user input. Memory lands at the start of
-the user text. Codex keeps the thread and sends it to its OpenAI backend
-with the right cache shape. Hits ~70–85% cache (128k of 153k input
-cached on a six-tool turn).
+How that block reaches the model depends on the engine.
 
-### openai-compatible (stateless)
+| Engine | Conversation is kept by | System prompt is sent | The user message contains |
+|---|---|---|---|
+| `claude-cli` | the Claude session, resumed | every turn, unchanged | catch-up, per-turn block, your text |
+| `codex-cli` | the Codex thread, resumed | as developer instructions on every thread start and resume | attachment notes, per-turn block, project block on a resumed thread, catch-up, your text |
+| `grok-cli` | the Grok session, resumed | once, as the start of the first message | system prompt on a fresh session, per-turn block, project block on a resumed session, attachments, your text |
+| `openai-compatible` | somora, rebuilt from the session file on every request | every request, as the one system message | per-turn block, your text |
 
-This is where it gets interesting. We persist the memory block on
-the `user_message` JSONL event — together with the turn's frame (an
-A2A header, a sentinel evidence block, the instructions beside a
-wake-up; see `user_message` in [api.md](api.md)), which goes in the
-same field ahead of the recall block:
+"Catch-up" is the summary of turns another engine answered, sent when
+you switch engines within a session.
+
+The first three engines keep the conversation themselves. somora only
+sends the new turn, and the provider's cache covers the rest.
+
+On `codex-cli` and `grok-cli` a resumed conversation also gets the
+project block in front of the user message, so the model sees a new pin
+at once.
+
+## The openai-compatible engine
+
+This engine has no session on the provider's side. somora sends the
+whole conversation on every request, and it must come out identical each
+time.
+
+### Recalled notes are stored with the message
+
+The per-turn block is saved in the session file next to the message it
+was sent with, in the field `ephemeral` of the `user_message` event:
 
 ```jsonc
-{"kind":"user_message","ts":..."text":"the user typed this","ephemeral":"<memory-context>...</memory-context>"}
+{"kind":"user_message","ts":...,"text":"what you typed","ephemeral":"<memory-context>...</memory-context>"}
 ```
 
-When `buildMessages` rebuilds the conversation for the next API call,
-it reads the `ephemeral` field off each historic user_message and
-prepends it to the message content:
+When the conversation is rebuilt, each earlier user message gets its own
+stored block back in front of its text. The request for turn 6 therefore
+starts with exactly what was sent for turn 5. Only the new message is
+new.
 
-```ts
-// src/engine/openai-compatible.ts:buildMessages()
-if (ev.kind === 'user_message') {
-  // A row with `origin` carries its A2A header inside `ephemeral`;
-  // an older row never stored it, so it is added here as before.
-  const headed = ev.origin ? ev.text : withFromAgentHeader(ev.text, ev.from_agent, ev.from_session);
-  const composed = ev.ephemeral ? `${ev.ephemeral}\n\n${headed}` : headed;
-  // → user message content is byte-identical to what was sent at turn N
-}
-```
+The price is a larger session file: each user message also stores its
+block, typically 500 to 2000 characters.
 
-Result: the entire prior conversation reconstructs to the same byte
-sequence the backend already cached. Cache match holds across the
-full history; only the new user message is fresh.
+### Why not a second system message
 
-The trade-off is JSONL size: each user_message stores the recall
-block alongside the user-typed text (~500-2000 chars per turn).
-Acceptable cost for the cache win.
+Putting the recalled notes in a late system message looks cleaner and
+does not work here. On turn 1 the block sits at position 2. On turn 2 it
+sits at position 4, and position 2 now holds the first user message. The
+cache stops matching right after the system prompt.
 
-#### Tool history
+Some model servers also accept a system message only at the very start.
+For the same reason the compaction summary is appended to the one system
+message and is not sent as a second one.
 
-Turns that used tools are replayed in the **native** OpenAI shape: an
-assistant message carrying `tool_calls`, followed by one `role:'tool'`
-message per result.
+### Tool calls in the history
+
+Earlier turns that used tools are replayed in the native shape: an
+assistant message with `tool_calls`, then one `role: tool` message per
+result.
 
 ```jsonc
 {"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function",
-  "function":{"name":"file_write","arguments":"{\"path\":\"tetris.js\"}"}}]}
+  "function":{"name":"file_write","arguments":"{\"path\":\"notes.md\"}"}}]}
 {"role":"tool","tool_call_id":"c1","content":"{\"ok\":true}"}
-{"role":"assistant","content":"Fertig, läuft auf Port 3020."}
+{"role":"assistant","content":"Done, the file is written."}
 ```
 
-Flattening those turns to prose is not a neutral simplification. Measured
-against a real session history, N=20 per cell: with tool turns
-flattened, deepseek-chat produced **0/20** tool calls and deepseek-r1
-**1/20**; replaying the native shape lifted them to **14/20** and
-**10/20**. A model has no memory beyond what the rebuild hands it, so a
-transcript in which the assistant never calls tools is a demonstration
-that here, one does not call tools.
+Three rules apply:
 
-Two rules keep providers from rejecting the request:
+- Each call is followed directly by its result, in order.
+- A call without a recorded result is dropped. A crashed turn leaves
+  such calls, and most providers reject them.
+- Each replayed result is cut to 800 characters
+  (`MAX_REPLAYED_TOOL_RESULT_CHARS`, a fixed value). The model can call
+  the tool again when it needs the full output.
 
-- every `tool_calls` entry is immediately followed by its matching
-  `role:'tool'` message, in order;
-- calls with no recorded result are **dropped** — a crashed turn leaves
-  exactly that, and an unmatched call is a hard 400 on most backends.
+The native shape matters for more than the cache. A history in which the
+assistant never calls a tool teaches a weaker model not to call tools.
 
-Tool results are capped at `MAX_REPLAYED_TOOL_RESULT_CHARS` (800) each.
-Unbounded results are what bloated the context in the first place; the
-model can re-read anything it needs by calling the tool again.
+The rebuild is deterministic: the same session file gives the same
+request, so the cache holds.
 
-This is cache-safe: the reconstruction is deterministic over immutable
-JSONL events, so repeated rebuilds of the same history are byte-identical
-and the prefix match holds.
+## What breaks the cache
 
-### Why a late system message does not work
+| Event | Effect |
+|---|---|
+| Editing `SOUL.md`, `AGENTS.md` or `USER.md` | Everything after the self-pointer is processed again, once. |
+| Changing `team.yaml`, adding or removing an agent | Once, from the team block on. |
+| Adding, removing or editing a skill | Once, from the skills list on. |
+| Switching or updating the session's project | Once, from the project block on. The parts before it stay cached. |
+| Changing the set of tools an agent sees | Once. Tool definitions sit in front of the conversation. |
+| A compaction on `openai-compatible` | Once. The summary joins the system message and the older messages are dropped. |
+| Switching the model or provider of a session | The new model starts with an empty cache. |
+| `memoryInjectMode: system` | Every turn. The system prompt changes with each recall. |
+| A long pause | Providers drop a cache after some idle time. |
 
-The obvious alternative — inject memory as a SECOND `role:'system'`
-message right before the latest user message, keeping the persistent
-system prompt stable — works for stateful engines but **does not work
-for stateless openai-compatible**. An instrumented two-turn dump shows
-why:
+All but the last two are one-time costs. Avoid editing persona files or
+skills in the middle of a long, expensive session if the cost matters.
 
-- Turn 1 sent: `[sys persona] [sys eph_v1] [user_eins]`
-- Turn 2 sent: `[sys persona] [user_eins] [asst_eins] [sys eph_v2] [user_zwei]`
-- Position 1 mismatch (turn 1: sys eph_v1, turn 2: user_eins) → cache stops at position 0
+## The dream worker
 
-The dynamic memory block "wanders" through the message array as
-history grows. Whatever position it sits at now becomes a different
-message at that position next turn.
-
-**Lesson:** for stateless prompt-cache, variable content must sit at
-the **very end** of the prompt sequence, with no per-turn-changing
-content earlier in the byte stream.
-
-JSONL persistence is what makes this hold: by persisting the memory
-block on each user_message, the "variable" content for prior turns
-becomes effectively stable (frozen at original send-time) on every
-subsequent reconstruction.
-
-## Dream-worker cache
-
-The REM extractor (`src/dream/rem-extract.ts`) runs the same problem
-in miniature: per-chunk LLM calls send a stable system prompt + a
-user message containing transcript + memory + vault. Memory and
-vault are computed **once per dream run** and reused across all
-chunks. Transcript varies per chunk.
-
-The user message is therefore built stable-first:
+REM reads a long session in chunks, one model call per chunk. Each call
+uses the same order: what is the same for the whole run comes first, the
+chunk comes last.
 
 ```
 Agent name: <your-agent>
-<existing_memory>... stable ...</existing_memory>     ← cached chunks 2..N
-<vault_referenced>... stable ...</vault_referenced>   ← cached chunks 2..N
-<transcript>... per-chunk ...</transcript>            ← variable, end of prompt
+<existing_memory>...</existing_memory>             same for every chunk
+<wiki_index>...</wiki_index>                       same for every chunk
+<wiki_relevant_pages>...</wiki_relevant_pages>     same for every chunk
+<vault_referenced>...</vault_referenced>           same for every chunk
+<transcript>...</transcript>                       differs per chunk
 ```
 
-Transcript-first would be the same anti-pattern as above: variable
-content shifts the stable blocks to different byte positions across
-chunks, and memory + vault (~4-15k tokens combined) are re-encoded
-every chunk instead of cached.
+From the second chunk on, everything above the transcript can come from
+the cache.
 
-For long sessions that chunk into 5+ pieces on local models, this
-saves multiple seconds per chunk.
+## Settings
 
-## Configuration
-
-Per-provider on `openai-compatible` providers in `config.yaml`:
+All settings live in `config.yaml`. The values shown are the defaults.
 
 ```yaml
 providers:
@@ -254,120 +230,73 @@ providers:
     engine: openai-compatible
     baseUrl: ...
     apiKey: ...
-    memoryInjectMode: inline-user      # default — JSONL-persistence + reconstruct
+    memoryInjectMode: inline-user
     models: [...]
 
-  some-quirky-backend:
-    engine: openai-compatible
-    baseUrl: ...
-    apiKey: ...
-    memoryInjectMode: system           # fallback — concat-onto-system
-    models: [...]
+agentLoop:
+  toolUsageReminder: true
+
+wiki:
+  search:
+    overviewMaxChars: 4000
+    overviewTopNSlugs: 30
 ```
 
-Two values:
+| Setting | Default | Meaning |
+|---|---|---|
+| `providers.<name>.memoryInjectMode` | `inline-user` | Only for `openai-compatible` providers. `inline-user` puts the per-turn block in front of the user message and keeps the cache. `system` appends it to the system prompt and loses the cache on every turn. |
+| `agentLoop.toolUsageReminder` | `true` | Adds the constant tool reminder to the system prompt when the agent has tools. Switching it changes the prefix once. |
+| `wiki.search.overviewMaxChars` | `4000` | Size limit of the wiki overview. A larger value means a larger constant prefix, paid once per session. |
+| `wiki.search.overviewTopNSlugs` | `30` | Most sections listed when the overview falls back to section names and counts. |
 
-- `inline-user` (default) — memory persisted on each user_message,
-  reconstructed byte-identical on every call. Cache-friendly. Works
-  for any backend that accepts standard OpenAI Chat Completions
-  message arrays.
-- `system` — concat-onto-system-prompt. Cache-destructive.
-  Only set this if a backend mishandles embedded memory blocks
-  inside user-message content (rare).
+Set `memoryInjectMode: system` only for a model server that mishandles
+a memory block inside user messages. `claude-cli`, `codex-cli` and
+`grok-cli` have no such setting: the placement is fixed.
 
-`claude-cli` and `codex-cli` have no `memoryInjectMode` knob — their
-backend is deterministic, the right placement is hardcoded.
+## Where the numbers come from
 
-## Verifying cache strategy changes
-
-`cached_tokens` reporting in API responses is **unreliable** across
-backends:
-
-- mlx-omx returns `cached_tokens: null` even when the cache is
-  actively being used (verified via byte-identical direct curl).
-  Their dashboard shows hits but the API field stays null.
-- OpenAI nests it as `prompt_tokens_details.cached_tokens`.
-- Anthropic returns `cache_read_input_tokens` separately.
-- Some backends don't report it at all.
-
-**Don't trust cache hit numbers alone.** When changing anything
-that affects prompt construction (memory placement, system prompt,
-tool list, history reconstruction), instrument the engine adapter
-to dump the message array per turn and compare position-by-position
-across two consecutive turns. Every position before the new content
-should match exactly:
-
-```ts
-// temp instrumentation, remove after verification
-logger.info({
-  msg: 'engine.X.messages_dump',
-  messages: messages.map((m, i) => ({
-    idx: i,
-    role: m.role,
-    contentLen: typeof m.content === 'string' ? m.content.length : -1,
-    contentHead:
-      typeof m.content === 'string' ? m.content.slice(0, 80) : '[non-str]',
-  })),
-});
-```
-
-Run two turns on the same session. Pull both dumps from the server
-log. Check that role + length + content-head match at positions
-0..N-2; only the last position should differ in turn 2 (the new
-user message). If anything earlier diverges, the cache is being
-invalidated at that point and the fix isn't right yet.
-
-## Lessons learned
-
-1. **Cache wins are real and worth fighting for** — not just a
-   nice-to-have. On Anthropic the cost difference is 10× per cached
-   token. On local models the latency difference is the user's
-   subjective "this feels fast vs. slow."
-
-2. **Variable content always at the end.** Any per-turn-changing
-   block — memory, dynamic context, tool-call updates — must sit at
-   the very end of the prompt sequence. If it's earlier, every turn
-   invalidates everything after it.
-
-3. **Stateless backends are a different beast** than stateful ones
-   (`claude-cli`/`codex-cli`). For stateless, byte-identity across
-   reconstructions matters. The cleanest way to guarantee that is
-   to **persist what you sent** (in JSONL or equivalent storage)
-   and rebuild from that record, not from the source variables.
-
-4. **Don't trust cache-hit numbers from the API alone.** Always
-   verify the prompt structure with a position-dump comparison.
-   Backends report cache state inconsistently or not at all.
-
-5. **Reference repos don't always have the answer.** OpenClaw and
-   Hermes both punt on stateless-openai-compatible cache (Hermes
-   relies on Anthropic's cache_control; OpenClaw's bundles are
-   minified). Sometimes the right pattern is the one you build
-   yourself.
-
-6. **Verify with a two-turn position dump.** A late-system layout
-   looks plausible and even passes when judged by `cached_tokens`
-   from a single response; only a 2-turn position-dump comparison
-   shows the wandering block.
-
-7. **Not every backend has a cache to protect.** Same session, same
-   day, three consecutive turns: `claude-cli` reported 94% of the
-   prefix cached, while `deepseek-chat` via OpenRouter reported
-   `cached_tokens: 0` on every turn. Before trading anything away to
-   keep a prefix stable, check that the provider on that path is
-   actually caching it.
-
-## Code pointers
-
-| Concern | File |
+| Engine | Field read from the provider |
 |---|---|
-| `user_message.ephemeral` event field | `src/types/events.ts` |
-| Persist ephemeral in JSONL | `src/server/run-turn.ts` (`appendEvent`) |
-| Reconstruct from history | `src/engine/openai-compatible.ts` (`buildMessages`) |
-| Memory placement claude-cli | `src/engine/claude-cli.ts` (effectiveUserMessage) |
-| Memory placement codex-cli | `src/engine/codex-cli.ts` (promptPayload) |
-| Turn frame ahead of the recall block | `src/server/turn-framing.ts` (`composeTurnPrefix`) |
-| REM worker stable-prefix | `src/dream/rem-extract.ts` (`buildUserMessage`) |
-| Wiki-overview snapshot | `src/server/prompt-assembly.ts` (`buildWikiOverviewBlock`) |
-| Wiki-overview shortener | `src/memory/manager.ts` (`renderWikiOverview`) |
-| `memoryInjectMode` schema | `src/config/types.ts` (`OpenAiCompatibleProviderSchema`) |
+| `claude-cli` | `cache_read_input_tokens` |
+| `codex-cli` | `cachedInputTokens` |
+| `grok-cli` | `cachedReadTokens` |
+| `openai-compatible` | `prompt_tokens_details.cached_tokens` |
+
+somora passes the value on as `tokens_in_cached` in the usage of a turn.
+It is a part of `tokens_in`, not an addition to it.
+
+## Troubleshooting
+
+**The cached part is always zero.** Not every provider caches, and not
+every provider that caches reports it. Some local servers use their
+cache and still report nothing. Check the provider's own dashboard or
+compare the time to the first word before you change anything.
+
+**The cached part drops to almost nothing on every turn.** Look for
+`memoryInjectMode: system` on the provider. Then check whether something
+in the system prompt changes between turns: call the prompt preview
+twice and compare the two results.
+
+**The cached part drops once and recovers.** That is one of the one-time
+events under [What breaks the cache](#what-breaks-the-cache).
+
+**You changed how prompts are built and want proof.** A cached-token
+number from one response is not enough. Run two turns in one session and
+compare the two requests message by message. Every position before the
+new user message must be identical in role and content.
+
+## See also
+
+- [Memory](memory.md): the recall block and its settings
+- [Wiki](wiki.md): the overview block and how it shrinks for a large wiki
+- [Projects](projects.md): the project block at the end of the system
+  prompt
+- [Team](team.md): the team block
+- [Skills](skills.md): the skills list
+- [Builder](builder.md): the builder's system prompt in detail
+- [Compaction](compaction.md): when older messages are replaced by a
+  summary
+- [Models](models.md): provider fields, including `memoryInjectMode`
+- [Display](display.md): the token figures in the status line
+- [API](api.md): `GET /agents/:agent/prompt-preview` and the
+  `user_message` event

@@ -22,9 +22,8 @@ const MAX_PARAGRAPH_WORDS = 80;
 
 /** Pages still in the old style. Shrinks; never grows. */
 const LEGACY = new Set([
-  'agents.md', 'api.md', 'builder.md', 'cache-strategy.md', 
-  'dream-phases.md', 'index.md',   'setup.md',   'web.md', 'wiki.md',
-]);
+  'api.md', 
+  'index.md',     ]);
 
 /** `DOCS_STYLE_PAGES=a.md,b.md` checks those pages although they are
  *  still listed — for trying a rewrite before taking it off the list. */

@@ -1,145 +1,138 @@
 # Setup
 
-> End-to-end install for somora as a long-running service on your
-> machine. The short way is the installer plus the setup assistant
-> (next section); the numbered sections after it are the same steps by
-> hand, with the background for each. A short dev-from-checkout section
-> sits at the bottom for contributors.
+This page takes you from an empty machine to a somora server that runs
+in the background and answers in the browser, on the phone and in the
+terminal. The short way is one installer command followed by a guided
+assistant. Everything the two do can also be done by hand, and the
+reference at the end lists every command, file and server setting.
 
-## The short way: installer + assistant
+## What you get
+
+- **One command to install.** The installer brings Node.js, the system
+  packages, somora and the background service.
+- **A guided assistant.** `somora setup` connects your models, creates
+  the first agent, turns on memory and sets up HTTPS. It is safe to run
+  again at any time.
+- **A service that stays up.** somora starts at boot on Linux and at
+  login on macOS, and comes back after a crash.
+- **Your subscriptions or your own server.** A Claude or ChatGPT
+  subscription, a local model server or an API key. No model ships with
+  somora.
+- **Updates in one command.** `somora update` installs the new version
+  and restarts the service.
+
+## Install it
 
 ```bash
 curl -fsSL https://somora.ai/install.sh | bash
 ```
 
-Run it as the user who will own somora — not as root; the agents get
-that user's rights. What it does, each step skipped when already in
-place:
+Run it as the user who will own somora, not as root. The agents get
+that user's rights. The installer shows the somora lettering and then
+works through these steps. A step that is already in place is skipped.
 
-| Step | What happens | Needs admin rights |
+| Step | What happens | Admin rights |
 |---|---|---|
-| System packages | tmux, ripgrep, git, a C/C++ compiler, python3 — through apt, dnf, pacman, zypper or Homebrew | yes, asked first; without them the compiler is the only hard stop |
-| Node.js | kept when ≥22.13; otherwise Node 24 system-wide (NodeSource / Homebrew) or, without admin rights, the official build into `~/.local/share/somora/node` (checksum-verified) | only for the system-wide variant |
-| npm folder | when npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH` | no |
-| somora | `npm install -g somora` | no |
-| Service | Linux: systemd user unit, enabled at boot, lingering on so it survives logout. macOS: LaunchAgent, starts at every login | no (lingering may ask) |
-| Assistant | `somora setup` | no |
+| System packages | tmux, ripgrep and git. On Linux also a C and C++ compiler, make and python3. Installed with apt, dnf, pacman, zypper or Homebrew. | Asked first. Without them only the missing build tools stop the install. |
+| Node.js | Kept when it is 22.13 or newer. Otherwise Node 24 system wide (NodeSource or Homebrew), or the official build into `~/.local/share/somora/node`, checked against its checksum. | Only for the system wide variant. |
+| npm folder | When npm's global folder is not writable for you, it moves to `~/.npm-global` and is added to your `PATH`. | No. |
+| somora | `npm install -g somora`, about 1.4 GB with the bundled engines. | No. |
+| Service | Linux: systemd user unit, enabled at boot, lingering on so it survives logout. macOS: LaunchAgent that starts at every login. | Lingering may ask. |
+| Assistant | Starts `somora setup` when a terminal is attached. | No. |
 
-Options go after `bash -s --`, or as environment variables:
+Supported systems:
+
+| System | Support |
+|---|---|
+| Linux, x86_64 or arm64, with glibc | Yes. |
+| macOS, Intel or Apple Silicon | Yes. Apple's command line tools must be installed first: `xcode-select --install`. |
+| Windows | Inside WSL2 only. |
+| Alpine Linux | No. The native modules need glibc. |
+
+Options go after `bash -s --`, or are set as environment variables:
 
 ```bash
-curl -fsSL https://somora.ai/install.sh | bash -s -- --no-setup     # stop before the assistant
+curl -fsSL https://somora.ai/install.sh | bash -s -- --no-setup
 curl -fsSL https://somora.ai/install.sh | bash -s -- --version 2026.930.1
-curl -fsSL https://somora.ai/install.sh | bash -s -- --yes --no-sudo  # no questions, no admin rights
+curl -fsSL https://somora.ai/install.sh | bash -s -- --yes --no-sudo
 ```
 
-`--yes` (`SOMORA_YES=1`), `--no-setup`, `--no-service`, `--no-sudo`,
-`--version <v>` (`SOMORA_VERSION`). `https://somora.ai/install.sh` always
-serves the script of the latest release; the same file is attached to
-every GitHub release as `install.sh`.
+| Option | Variable | Meaning |
+|---|---|---|
+| `--version <v>` | `SOMORA_VERSION` | Install this version instead of the latest. |
+| `--yes`, `-y` | `SOMORA_YES=1` | No questions, take the defaults. The assistant is not started. |
+| `--no-setup` | `SOMORA_NO_SETUP=1` | Stop before the assistant. |
+| `--no-service` | `SOMORA_NO_SERVICE=1` | Write the service definition, but do not enable or start it. |
+| `--no-sudo` | `SOMORA_NO_SUDO=1` | Never ask for admin rights. |
+| none | `SOMORA_ALLOW_ROOT=1` | Allow a run as root, for containers. |
 
-### `somora setup` — the assistant
+Without a terminal, for example in a pipeline, the installer takes the
+defaults, starts the service and tells you to run `somora setup`.
+
+`https://somora.ai/install.sh` always serves the script of the latest
+release. The same file is attached to every GitHub release as
+`install.sh`.
+
+## The setup assistant
 
 ```bash
-somora setup            # all steps
-somora setup access     # one step: models | search | agent | memory | team | access | start
+somora setup            # all steps, in order
+somora setup access     # one step only
 ```
 
 | Step | What it does |
 |---|---|
-| `models` | Claude subscription (installs Claude Code if missing, runs its login), ChatGPT subscription (the bundled Codex login, browser or device code), or your own OpenAI-compatible server (asks the address, lists its models, asks the context window). Writes the `providers:` block with the tested settings from [models.md](models.md). |
-| `search` | Web search: asks for a Brave Search API key (free plan, 2,000 searches a month), checks it with one real search and stores it under `web.brave.apiKey` — that switches the agents' `web_search` tool on. |
-| `agent` | Creates the first agent: name, how it addresses you, answer language, model, backup model. On an existing install it lists the agents and offers to repair one whose model no longer exists. |
-| `memory` | Turns on REM per agent (with its own model), the duplicate check for new notes, and the shared wiki with Deep and Lucid — in a new folder or an existing Obsidian vault ([dream-phases.md](dream-phases.md), [wiki.md](wiki.md)). |
-| `team` | With two or more agents: writes the first `team.yaml` ([team.md](team.md)). |
-| `access` | This machine only, local network, or **Tailscale HTTPS**: installs and connects Tailscale if needed, walks you through the one switch in the Tailscale admin page, fetches the certificate and turns on automatic renewal. |
-| `start` | Starts (or, after asking, restarts) the service, waits until it answers, sends the agent a real test message and says which model replied. |
+| `models` | Connects a Claude subscription (installs Claude Code if missing and runs its login), a ChatGPT subscription (the bundled Codex login, in the browser or with a device code), or your own server. For a server it asks the address and key, lists the models and asks each one's context window. |
+| `search` | Asks for a Brave Search API key, checks it with one real search and stores it as `web.brave.apiKey`. That gives the agents the `web_search` tool. |
+| `agent` | Creates an agent: name, what it calls you, answer language, model and backup model. On an existing install it lists the agents and offers to repair one whose model is gone. |
+| `memory` | Turns on REM per agent with a model and a backup model, offers the duplicate check for new notes, and sets up the shared wiki with Deep and Lucid, their model and a backup model. The wiki goes into a new folder or your Obsidian vault. |
+| `team` | With two or more agents and no team file yet: writes `team.yaml`. |
+| `access` | This machine only, the local network, or Tailscale HTTPS. For Tailscale it installs and connects it if needed, walks you through the one switch in the Tailscale admin page, fetches the certificate and turns on automatic renewal. |
+| `start` | Starts the service, or restarts it after asking. Waits until it answers, sends an agent a real test message and says which model replied. |
 
-The assistant never rewrites a file wholesale: comments and your own
-settings in `config.yaml` / `agent.yaml` stay, the previous version is
-kept next to the file as `<name>.bak-setup-<date>-<time>`, and a result
-the server could not load is not written at all.
+Good to know:
 
-## 1. System prereqs
+- A single step runs alone. When it changed something, the `start` step
+  follows to apply it.
+- REM, Deep and Lucid accept any connected model, a Claude or ChatGPT
+  subscription included.
+- The assistant never rewrites a file wholesale. Comments and your own
+  settings in `config.yaml` and `agent.yaml` stay.
+- The previous version of a changed file is kept next to it as
+  `<name>.bak-setup-<date>-<time>`.
+- A result the server could not load is not written at all.
 
-Hard requirements:
+## Install by hand
 
-| Tool | Why | Install |
-|---|---|---|
-| **Node ≥22.13** | runtime + native `node:sqlite`; every `somora` command refuses to start on an older Node and prints the upgrade steps, `somora update` checks the target release before building | [nodejs.org](https://nodejs.org/) or `nvm install 22` |
-| **tmux** | the `tmux` tool + the web tmux app | `sudo apt install tmux` (Debian/Ubuntu) · `brew install tmux` (macOS) · `sudo dnf install tmux` (Fedora) |
-| **ripgrep** (`rg`) | needed by `file_search` | `sudo apt install ripgrep` · `brew install ripgrep` · `sudo dnf install ripgrep` |
-| **git** | clone the repo | usually pre-installed; otherwise package-manage |
+The installer does nothing you cannot do yourself. You need:
 
-Optional, per feature:
-
-| Tool | Why | Install |
-|---|---|---|
-| **Chromium / Chrome** | the shared `browser` tool ([browser.md](browser.md)) — auto-detected, or set `browser.executablePath` | `sudo apt install chromium` · `brew install --cask chromium` · `sudo dnf install chromium` |
-| **Xvfb** | `browser.headed: true` on a host without a display (a virtual screen so Chromium runs with a window and does not announce itself as headless) | `sudo apt install xvfb` · `sudo dnf install xorg-x11-server-Xvfb` · `sudo pacman -S xorg-server-xvfb` · macOS: not needed |
-
-C/C++ toolchain — `npm install` builds two native modules
-(`better-sqlite3` for SQLite, `@huggingface/transformers`'s ONNX runtime
-for local embeddings). Both ship prebuilt binaries for the common
-platforms; if your build falls through to source you'll need
-`build-essential` / Xcode CLT / equivalent.
-
-## 2. At least one LLM backend
-
-Pick one or more. somora doesn't care which you use, but at least one
-must be installed and authenticated before the first chat (§5).
-
-**Claude (recommended)** — Anthropic's Claude Code CLI uses your Claude
-subscription, no API key needed:
+| Tool | Why |
+|---|---|
+| Node.js 22.13 or newer | The runtime. Every `somora` command refuses an older Node and prints the upgrade steps. |
+| tmux | The `tmux` tool and the terminal windows of the web client. |
+| ripgrep (`rg`) | The `file_search` tool. |
+| git | Used by skills and by builder agents. |
+| C and C++ compiler, make, python3 | Linux only. One native module, `node-pty`, is compiled during the install. On macOS Apple's command line tools do this. |
 
 ```bash
-curl -fsSL https://claude.ai/install.sh | bash    # installs to ~/.local/bin/claude
-claude auth login
+sudo apt install tmux ripgrep git build-essential python3   # Debian, Ubuntu
+sudo dnf install tmux ripgrep git gcc-c++ make python3      # Fedora
+brew install tmux ripgrep git                               # macOS
 ```
 
-**ChatGPT** — the Codex engine uses your ChatGPT subscription. Codex is
-bundled with somora (no separate install), so this login step comes
-**after** [§4 Install somora](#4-install-somora):
+Then install and start:
 
 ```bash
-somora codex login   # ChatGPT Plus/Pro/Business; an existing `codex login` is picked up too
+ONNXRUNTIME_NODE_INSTALL=skip npm install -g somora
+somora init            # data folder and service definition
+somora server start    # start the service and enable it at boot
+somora setup           # models, first agent, memory, HTTPS
+somora tui             # chat in the terminal
 ```
 
-**Local models** — Ollama, LM Studio, vLLM, or oMLX. Install separately
-per their docs and have a `/v1/chat/completions` endpoint reachable on
-some `http://host:port`. somora talks to them via the `openai-compatible`
-engine — see [§6 Configuring providers](#6-configuring-providers) for
-the config block.
-
-## 3. Optional but recommended
-
-| Tool | Unlocks | Install |
-|---|---|---|
-| **Obsidian** | the wiki layer + read-only vault recall | [obsidian.md](https://obsidian.md/) |
-| **Tailscale** | HTTPS for the web client (lifts the 6-connection browser limit, unlocks mic/screenshot APIs) | [tailscale.com](https://tailscale.com/) |
-
-Without Obsidian: somora still works (memory inbox per agent, sessions,
-all tools), you just lose the long-term shared wiki layer.
-
-Without Tailscale: the web client falls back to plain HTTP/1.1 and is
-single-window-only; the TUI is unaffected.
-
-## 4. Install somora
-
-```bash
-npm install -g somora
-```
-
-The package carries the built web clients. One native module
-(`node-pty`) is compiled during the install on Linux — that is what the
-compiler from §1 is for. The install is about 1.4 GB: somora itself is
-20 MB, the rest are the bundled Codex and Claude engines (each a
-complete program for your platform), the embedding runtime for the
-memory search, the image library and the terminal module. The embedding
-runtime would also download a 300 MB CUDA library on Linux that somora
-never uses (embeddings run on the CPU); the installer and `somora
-update` skip it with `ONNXRUNTIME_NODE_INSTALL=skip` — set the same
-variable when you run `npm install -g somora` by hand.
+`ONNXRUNTIME_NODE_INSTALL=skip` leaves out a 300 MB CUDA library that
+somora never uses. Embeddings run on the CPU. The installer and
+`somora update` set it for you.
 
 If npm answers `EACCES`, its global folder belongs to root. Give npm a
 folder of your own instead of reaching for `sudo`:
@@ -149,151 +142,66 @@ npm config set prefix ~/.npm-global
 echo 'export PATH="$HOME/.npm-global/bin:$PATH"' >> ~/.profile && source ~/.profile
 ```
 
-## 5. Start the server + chat
+Without the assistant, the first server start writes a `config.yaml`
+with one Claude provider and, when no agent exists, a starter agent
+named `default`. Edit both, or create your own agent as the agents
+guide describes.
+
+## Run as a service
+
+`somora init` writes the service definition with the path of the
+installed `somora` baked in. It is safe to run again. The same commands
+work on Linux and macOS.
+
+| Command | What it does |
+|---|---|
+| `somora server start` | Starts the service and enables it for the next boot or login. |
+| `somora server stop` | Stops it. Without a service it sends a stop signal to the running server. |
+| `somora server restart` | Restarts the service. |
+| `somora server status` | Shows process, port, host, start time and version, a waiting update, and the state of the service. |
+| `somora server start --foreground` | Runs the server in this terminal, without a service. Ctrl-C stops it. Use it in a container or while debugging. `-f` is the short form. |
+
+### Linux
+
+The service is a systemd user unit at
+`~/.config/systemd/user/somora.service`. It is restarted five seconds
+after a failure. Read its output with `journalctl --user -u somora -f`.
+
+A user service stops when you log out unless lingering is on. The
+installer turns it on. By hand:
 
 ```bash
-somora init            # creates ~/.somora/ + writes the systemd user-service unit
-somora server start    # starts the unit and enables it at boot
-somora tui             # opens the TUI against the running server
+sudo loginctl enable-linger $USER
 ```
 
-`somora init` is idempotent and one-time: it creates `~/.somora/`
-(config + lockfile + logs land here) and writes the systemd unit at
-`~/.config/systemd/user/somora.service` with `ExecStart` baked to your
-freshly installed global binary. From then on, `somora server start`
-just brings the unit up; the server runs in the background and
-survives logout / reboot. To stop / restart / inspect:
+`somora init` rewrites the unit on every update. Your own
+`Environment=` and `EnvironmentFile=` lines are carried over, and the
+command prints what it preserved. A drop-in file under
+`~/.config/systemd/user/somora.service.d/` is never touched.
 
-```bash
-somora server stop
-somora server restart
-somora server status
-journalctl --user -u somora -f      # tail logs
-```
+### macOS
 
-**macOS** has no systemd; the same three commands work there through a
-per-user LaunchAgent (`~/Library/LaunchAgents/ai.somora.server.plist`,
-written by `somora init`). `somora server start` loads it, and from then
-on macOS starts somora at every login and brings it back if it crashes;
-`somora server stop` unloads it until the next login or `start`. Its
-output goes to `~/.somora/logs/launchd.log`. A LaunchAgent never runs
-before its user has logged in — on a Mac used as a server, turn on
-automatic login (System Settings → Users & Groups).
+The service is a LaunchAgent at
+`~/Library/LaunchAgents/ai.somora.server.plist`. macOS starts it at
+every login and brings it back after a crash. `somora server stop`
+unloads it until the next login or the next `somora server start`. Its
+output goes to `~/.somora/logs/launchd.log`.
 
-**Restarts and running turns.** A restart ends every turn that is
-running. An agent that needs one (after changing the config, after an
-update) runs `somora server restart` or `somora update` in its shell:
-from there the restart waits until the agent's turn has ended, and the
-agent is woken in the same session when the server is back, with the
-old and new version, to check the result and carry on. A turn that was
-cut because the agent restarted the service directly is woken as well
-and told not to repeat the command. Turns of other sessions that the
-restart cut are marked as interrupted; whoever waited for them is told.
-`server.resumeAfterRestart: all` also continues those, `off` wakes
-nobody ([api.md](api.md#a-restart-requested-from-inside-a-turn)).
+> **Note:** A LaunchAgent never runs before its user has logged in. On
+> a Mac used as a server, turn on automatic login under System
+> Settings, Users & Groups.
 
-If you don't want a background service (in a container, or while
-debugging):
+## Connect models
 
-```bash
-somora server start --foreground    # blocks the terminal; Ctrl-C to stop
-```
+somora needs at least one model. `somora setup models` writes these
+blocks for you. By hand, edit `providers` in `~/.somora/config.yaml`.
 
-### Updating somora
-
-```bash
-somora update                # the current release
-somora update --edge         # the newest build on npm, incl. pre-releases
-somora update 2026.930.1     # a specific version
-```
-
-`somora update` asks npm for the target version, checks that your
-Node.js is new enough for it, installs it (`npm install -g somora@<v>`),
-re-runs `somora init` so the systemd unit's `ExecStart` points at the
-freshly installed binary, then restarts the service. When you are
-already on that version it does nothing (`--force` reinstalls). Pass
-`--no-reinit` to skip the unit rebake if you've hand-edited
-`somora.service`.
-
-Version numbers are dates: `2026.930.1` is the first build of
-30 September 2026, `2026.1005.2` the second of 5 October. Versions up
-to `2026.09.29.12` (four parts) predate the npm package and were
-installed from a git checkout; their `somora update` still works and
-brings you onto the npm package.
-
-#### Recovering an upgrade that didn't take effect
-
-The systemd unit's `ExecStart` is baked in by whichever copy of somora
-ran `somora init`. If you initially ran `init` from a git checkout
-(common for early adopters), the unit pins to that checkout path:
-
-```
-ExecStart=/home/<you>/somora/bin/somora.mjs server start --foreground
-```
-
-A subsequent `npm install -g <tarball>` then has no effect on the
-running service — systemd keeps launching the checkout binary, which
-serves its old `web/dist`. Symptom: new features missing in the web UI
-even after install + restart.
-
-To spot it:
-
-```bash
-systemctl --user cat somora.service | grep ExecStart
-# good:  ExecStart=/home/<you>/.npm-global/lib/node_modules/somora/bin/somora.mjs ...
-# bad:   ExecStart=/home/<you>/somora/bin/somora.mjs ...   (← checkout, not global)
-```
-
-`somora update` re-bakes the unit automatically. If the unit still
-points at a checkout, run the manual fix once:
-
-```bash
-"$(npm root -g)"/somora/bin/somora.mjs init
-systemctl --user daemon-reload
-systemctl --user restart somora.service
-# or, for a config.yaml edit that touches models, providers, caps, tools:
-# the gear menu in the web taskbar → Reload config, or /reload in the TUI
-curl -ks https://<host>:18737/version
-```
-
-Hard-reload the browser (Ctrl+Shift+R / Cmd+Shift+R) after so it
-doesn't serve a cached JS bundle from before the upgrade.
-
-On first start somora creates `~/.somora/`:
-
-```
-~/.somora/
-├── config.yaml                ← server config (created with sane defaults)
-├── agents/
-│   └── default/               ← seed agent created on first run; rename / customize
-│       ├── AGENTS.md
-│       ├── SOUL.md
-│       ├── USER.md
-│       └── agent.yaml
-├── index/
-│   └── shared.db              ← vault + wiki retrieval index, one per instance (derived, rebuilt if deleted)
-└── logs/
-    └── server.YYYY-MM-DD.1.log
-```
-
-The log rolls daily. You do not need a shell to read it: the **log**
-tile in the web client shows the end of a day's file with filters for
-level, agent and text ([web.md](web.md)).
-
-### Optional: tell the agents who is who
-
-With more than one agent, write `~/.somora/team.yaml` (start with
-`somora team init --principal "<your name>"`) so every agent gets the
-org chart and "who to involve for what" in its prompt. See
-[team.md](team.md).
-
-## 6. Configuring providers
-
-Edit `~/.somora/config.yaml`. The shipped default has just one provider
-(Anthropic via Claude Code subscription) and is enough to chat with
-Claude. Add more providers as needed.
-
-### Anthropic via Claude Code subscription (no API key)
+| Kind | Engine | Login |
+|---|---|---|
+| Claude subscription | `claude-cli` | Install Claude Code with `curl -fsSL https://claude.ai/install.sh \| bash`, then `claude auth login`. No API key. |
+| ChatGPT subscription | `codex-cli` | `somora codex login`. Codex is bundled with somora. A login made with a global Codex is picked up too. |
+| Grok subscription | `grok-cli` | Install the Grok CLI with `curl -fsSL https://x.ai/cli/install.sh \| bash`, then `grok login`. |
+| Own server or API key | `openai-compatible` | Ollama, LM Studio, vLLM, oMLX, OpenRouter or any other server with a `/v1/chat/completions` endpoint. |
 
 ```yaml
 providers:
@@ -304,993 +212,709 @@ providers:
         alias: opus
         contextWindow: 1000000
         capabilities: [text, image, pdf, reasoning]
-```
-
-Requires the Claude Code CLI binary at `~/.local/bin/claude` (or set
-`SOMORA_CLAUDE_BIN` env to its path). Auth is handled by the binary —
-`claude login` once and somora rides on the resulting session.
-
-### OpenAI via Codex CLI subscription (no API key)
-
-```yaml
-providers:
-  openai:
-    engine: codex-cli
-    models:
-      - id: gpt-5.6-terra
-        alias: terra
-        contextWindow: 258400        # the Codex session window, not the 1.05M API window
-        capabilities: [text, image, pdf, reasoning]
-```
-
-`contextWindow: 258400` is deliberate: Codex runs a session against a
-window it delivers itself and reports on every turn
-(`modelContextWindow`, 258,400 for every model it offers), and on a
-CLI engine the value does not trigger somora's compaction anyway — it
-only decides whether the model is picked as a compaction worker and
-what the header percentage claims. See
-[compaction.md](compaction.md#what-contextwindow-controls-per-engine)
-and [models.md](models.md).
-
-<a id="codex"></a>
-Codex is **bundled** — `@openai/codex` is an exact-version dependency of
-somora and runs as an app-server per turn; a global `codex` on the host
-is ignored (`SOMORA_CODEX_BIN` remains as a debugging override). Auth:
-`somora codex login` (ChatGPT Plus/Pro/Business). somora keeps its own
-Codex home at `~/.somora/codex-home` and mirrors `auth.json` from
-`~/.codex` on every turn, so a login done with a global Codex CLI works
-as well. `somora codex debug models` shows the model catalog the bundled
-version sees.
-
-somora's tools reach Codex as dynamic tools. `codexCli.directTools`
-(config.yaml) names the tools kept in the model's direct tool list every
-turn; everything else is deferred and found via Codex tool search (or
-`ALL_TOOLS` inside Code Mode on the GPT-5.6/GPT-6 models). The default
-is the everyday core: memory_*, file_*, exec, tmux, web_*, time_now,
-agent_ask, agent_ask_result, spawn_subagent, subagent_result, somora_docs_*.
-
-### xAI via Grok Build CLI subscription (no API key)
-
-```yaml
-providers:
-  xai:
-    engine: grok-cli
-    models:
-      - id: grok-4.5
-        alias: grok
-        contextWindow: 500000
-        capabilities: [text, reasoning]
-```
-
-Requires the Grok Build CLI (`grok`) on PATH — installed via
-`curl -fsSL https://x.ai/cli/install.sh | bash`, which drops the binary
-at `~/.local/bin/grok`. Override with `SOMORA_GROK_BIN` if it lives
-elsewhere.
-
-Auth is handled by the binary: run `grok login` once, which writes a
-session to `~/.grok/auth.json`. somora's adapter connects over ACP
-(Agent Client Protocol — JSON-RPC on stdio, `grok agent stdio`) and the
-handshake picks up that session as the `cached_token` auth method
-automatically. **A SuperGrok / Premium subscription authenticates the
-CLI, not the xAI API** — so this path uses your subscription, while
-pointing an `openai-compatible` provider at `https://api.x.ai/v1`
-would bill a separate pay-per-token API account instead.
-
-`grok-4.5` reports three reasoning efforts (low / medium / high,
-default high), so somora's `/thinking` knob maps straight through. Give
-the model the `reasoning` capability to activate it. Note there's no
-"disabled" state — `/thinking off` maps to `low`.
-
-**Tools.** somora's full MCP surface (memory, file_*, exec, wiki,
-subagents, …) is handed to the ACP session via
-`session/new`'s `mcpServers` parameter, scoped to the current
-agent+session exactly like claude-cli and codex-cli. On top of that
-Grok Build brings its own file/shell tools, scoped to the working
-directory (`$HOME`).
-
-Grok reaches MCP tools through a `search_tool` / `use_tool`
-indirection rather than listing all of them up front, which keeps a
-large surface cheap context-wise. The adapter unwraps that: a
-`use_tool{tool_name:'somora__memory_list'}` call is recorded as
-`mcp__somora__memory_list`, so session logs and tool rows match
-what the other engines emit. The `search_tool` probes themselves
-surface as-is.
-
-Budget note: the tool catalogue is not free. A trivial two-tool turn
-measured ~76k input tokens on a fresh session, ~108k on the follow-up,
-with most of it served from cache (`tokens_in_cached`). Against
-grok-4.5's 500k window that's comfortable, and on a subscription it
-costs nothing extra — but it's worth knowing before pointing an
-API-billed provider at the same setup.
-
-Sessions resume across turns via `session/load` against the
-`grokSessionId` stashed in session-meta.
-
-**Attachments.** Grok Build exposes no attachment channel over ACP —
-the handshake reports `promptCapabilities.image: false`. Images and
-PDFs therefore never reach the engine: the capability gate in
-`run-turn.ts` refuses them first, since `grok-4.5` declares neither
-`image` nor `pdf`, and the user gets "does not support image inputs"
-before a process is spawned. Text attachments pass the gate and are
-inlined into the prompt, the same way codex-cli handles its non-image
-attachments. Anything else that somehow arrives is named to the model
-as undeliverable and recorded as an `engine_meta` item of type
-`attachments_unsupported` — never dropped silently.
-
-**API failures surface as errors.** xAI reports a spent balance or a
-blocked subscription on the proprietary `_x.ai/*` channel — a
-`retry_state{type:'failed'}` frame plus `turn_completed` with
-`stop_reason: 'error'` — not through the ACP error channel. The
-adapter reads both and emits a somora `error` event carrying the
-message (e.g. *"API error (status 402 Payment Required): Grok Build
-usage balance exhausted"*), so a configured `fallback:` model takes
-over. Replayed frames from `session/load` are ignored via
-`_meta.isReplay`, so a failure from an earlier turn cannot abort a
-resumed one.
-
-### Local OpenAI-compatible LLM (Ollama, LM Studio, vLLM, oMLX, ...)
-
-For this engine `contextWindow` is the compaction wall — set it to the
-**server's** limit (`--max-model-len`, `--context-length`), not the
-model card's. Recommended blocks per model family, with sampling and
-reasoning vocabularies, are in [models.md](models.md).
-
-```yaml
-providers:
   local:
     engine: openai-compatible
-    baseUrl: http://localhost:11434/v1   # adjust to your local server
-    apiKey: dummy                         # most local servers ignore this
+    baseUrl: http://localhost:11434/v1
+    apiKey: none                 # most local servers ignore it
     models:
       - id: llama3.3:70b
         alias: llama
-        contextWindow: 131072
+        contextWindow: 131072    # the SERVER's limit, not the model card's
         capabilities: [text]
-      - id: gemma-3-27b-it
-        alias: gemma
-        contextWindow: 131072
-        capabilities: [text, image]
 ```
 
-Multiple OpenAI-compatible providers can coexist — give each one a unique
-name (`local`, `lmstudio`, `office`, …).
-
-#### Reliability with smaller / local models
-
-Smaller models (deepseek, kimi, and many local ones) drive the
-OpenAI-compatible tool loop less reliably than the big hosted models.
-Two well-documented failure modes show up: they re-issue the **same tool
-call over and over** without registering the result, and they sometimes
-**echo the provider's internal tool-result template** ("Use the results
-below to formulate an answer…") as their reply instead of answering.
-somora hardens this path so a weaker model degrades gracefully instead of
-flooding you:
-
-- **Duplicate tool calls in one round are collapsed** to a single
-  execution — the model still gets a result for every *distinct* call.
-- **A per-turn tool-call budget** (`agentLoop.maxToolCallsPerTurn`,
-  default 30) stops a runaway that the round cap can't see, and forces a
-  clean final answer.
-- **A budget notice at 75 %** of either cap: one user-role message
-  ("N rounds and M calls remain — wrap up") so a "read N things, then
-  summarise" task ends on its own instead of at the hard stop.
-- **The forced final answer** is a user-role message, valid on every
-  backend (strict chat templates such as vLLM + Qwen reject a trailing
-  system message). If that call fails too, the turn returns a digest of
-  the last tool results instead of only an error line.
-- **Output guards** detect a leaked template or a repeated-text loop in
-  the stream, cut it before it floods the window, and force one clean
-  no-tools answer.
-
-None of this touches the `claude-cli` / `codex-cli` engines — they run
-their own loop. It also stays out of the way of capable models, which
-never trip these guards.
-
-```yaml
-providers:
-  local:
-    engine: openai-compatible
-    models:
-      - id: some-strong-local-model
-        alias: big
-        contextWindow: 131072
-        capabilities: [text]
-        # Opt a trusted model back into parallel tool calls. Default is
-        # sequential (one call per round) because weak models fan out
-        # into large duplicate batches; a strong model doing independent
-        # reads can safely parallelise.
-        parallelToolCalls: true
-      - id: some-local-reasoning-model
-        alias: thinker
-        contextWindow: 262144
-        capabilities: [text, reasoning]
-        # Output cap sent as `max_tokens`. Unset = not sent, and vLLM then
-        # allows the whole remaining context — on a reasoning model, where
-        # thinking and answer share that budget, nothing else stops a
-        # runaway thinking phase. (Not the memory block's
-        # `memory.autoInject.maxTokens`, which caps injected input.)
-        maxTokens: 16384
-        # Which words this model accepts for somora's thinking levels and
-        # where they go in the request — see docs/thinking.md.
-        reasoning:
-          levels: { high: xhigh }
-        # Vendor-recommended sampling for this model; agent.yaml and the
-        # session override win per key — see docs/sampling.md.
-        sampling:
-          temperature: 1.0
-          top_p: 0.95
-
-agentLoop:
-  maxToolCallsPerTurn: 30   # hard ceiling on tool calls per turn (openai-compatible)
-
-thinkingContent:            # the model's reasoning text in the clients — docs/thinking.md
-  capture: true             # false drops it at the server (no SSE, no JSONL)
-  maxChars: 65536           # per-turn cap on what is persisted
-```
-
-## 7. Voice — STT + TTS (optional)
-
-Voice is two independent toggles:
-
-- **STT** (speech-to-text) — turns the mic button on for the web and
-  mobile-PWA chat. Tap, talk, tap again → transcript drops into the
-  draft.
-- **TTS** (text-to-speech) — when you submit via mic and the per-chat
-  auto-play toggle is on, somora generates spoken audio for the
-  assistant reply and plays it. A Play-button on the bubble lets you
-  replay.
-
-Both proxy through OpenAI-compatible endpoints on a provider you've
-already configured. See [voice.md](voice.md) for the full picture
-including the `/voice/turn` audio-in/audio-out endpoint for
-integrations.
-
-### Speech-to-Text
-
-When enabled, the web chat input grows a mic button next to send. Click
-→ record, click again → transcribe → text lands in the textarea ready to
-send. Audio is forwarded to an OpenAI-compatible STT endpoint
-(`POST /v1/audio/transcriptions`) and the result lands locally — never
-travels via a cloud API unless you configure one.
-
-Supported upstreams: **oMLX** (mlx-audio, Apple Silicon — full audio API
-including TTS), **faster-whisper-server**, **OpenAI Whisper API**, and
-anything else exposing the OpenAI audio shape. Configure once, switch
-backends by editing one block.
-
-```yaml
-stt:
-  enabled: true
-  provider: omlx                              # ← name of an entry in `providers`
-  model: mlx-community/whisper-large-v3-turbo
-  language: de                                # optional default hint (ISO 639-1)
-```
-
-`stt.provider` must reference an existing `openai-compatible` provider
-in your `providers` block — the STT call reuses its `baseUrl` and
-`apiKey`. The STT model is **not** listed in `providers.<x>.models`;
-keeping it separate keeps it out of chat-model pickers, agent-config
-validation, and `/v1/models`.
-
-The web mic button **auto-hides** when:
-- the server reports `stt.enabled: false` (or the block is omitted)
-- the browser lacks `MediaRecorder` / `navigator.mediaDevices.getUserMedia`
-- the page wasn't loaded over a secure context (HTTPS — required by the
-  mic-permission API in most browsers; via Tailscale, that's already
-  satisfied)
-
-### Recommended model
-
-`mlx-community/whisper-large-v3-turbo` is the practical sweet spot on
-Apple Silicon: ~800M params, near-real-time on M-series chips,
-multilingual incl. German, marginal quality difference vs. the full
-large-v3. If oMLX flags the model as missing the HuggingFace
-preprocessor/tokenizer files (MLX-converted repos sometimes ship
-weights only), drop the upstream config JSONs in alongside the weights:
-
-```bash
-cd ~/.omlx/models/whisper-large-v3-turbo
-for f in preprocessor_config.json tokenizer.json special_tokens_map.json \
-         tokenizer_config.json generation_config.json; do
-  curl -L -O "https://huggingface.co/openai/whisper-large-v3-turbo/resolve/main/$f"
-done
-```
-
-### Text-to-Speech
-
-Mirror config for spoken replies. Same posture — proxies through an
-OpenAI-compatible TTS endpoint (`POST /v1/audio/speech`) on a provider
-you already have.
-
-```yaml
-tts:
-  enabled: true
-  provider: omlx                              # ← references providers.omlx
-  model: fish-audio-s2-pro-8bit               # whatever your upstream calls it
-  language: de
-  cache:
-    retentionDays: 7                          # 0 disables GC
-    maxSizeMB: 500
-  reencode:
-    enabled: true                             # needs ffmpeg on $PATH
-    opusBitrateKbps: 24
-  clients:
-    web:
-      autoPlayVoiceReplies: false             # initial toggle state for new sessions
-      allowUserOverride: true
-    mobile:
-      autoPlayVoiceReplies: false
-      allowUserOverride: true
-```
-
-Auto-TTS for the normal chat fires **only** when all four hold:
-`tts.enabled` is true, the user submitted via mic (`input_modality=voice`),
-the per-session 🔊 toggle is on, and the assistant text is speakable
-(no heavy code blocks / large tables). Otherwise the chat stays
-text-only. The `🔊`/`🔇` toggle in the chat header is sticky per
-session (`localStorage`).
-
-Two flows are wired:
-
-- **Normal chat auto-TTS** — voice input → spoken reply on web + mobile.
-- **`POST /voice/turn`** — independent audio-in/audio-out endpoint
-  for panel/satellite/bridge integrations; always generates audio
-  regardless of toggles. See [voice.md](voice.md#audio-in-and-audio-out-for-integrations).
-
-System dependency: `ffmpeg` on `$PATH` if you want `tts.reencode.enabled`
-(opus/m4a output). Without ffmpeg, set `reencode.enabled: false` and
-clients receive plain WAV (larger, but works).
-
-## Tunables
-
-These all live in `config.yaml` with conservative defaults; uncomment to
-override. Full schema in [`src/config/types.ts`](../src/config/types.ts).
-
-```yaml
-promptBudgets:                # soft caps for static prompt text — warnings only, nothing is truncated
-  teamBlockChars: 3000        # the "# Your team" block per agent (docs/team.md)
-  personaFileChars: 8000      # each of AGENTS.md / SOUL.md / USER.md
-  personaTotalChars: 14000    # the three together — shown in the web Agent window
-
-realtimeVoice:                # talking to an agent (docs/realtime-voice.md)
-  enabled: false              # off until a realtime provider and a key exist
-  provider: openai            # openai | google | local
-  model: gpt-realtime-2.1-mini
-  apiKeyFile: ~/.somora/secrets/openai-realtime.key   # a FILE, chmod 600 — never the key in config
-  # url: ws://127.0.0.1:8787/realtime   # where to connect; omitted = OpenAI. Set it (and
-  #                             # provider: local) to use a service of your own that speaks
-  #                             # the same protocol — same adapter, no key needed on localhost
-  defaultVoice: alloy         # ten exist: alloy ash ballad coral echo sage shimmer verse marin cedar
-  consultPolicy: always       # auto | substantive | always — when the speaking model must ask the real agent
-  consult:
-    quickAnswerMs: 8000       # how long a spoken question waits on the agent (1000..120000);
-                              # past it the voice says it handed the request over and keeps
-                              # talking, the answer is read out when it lands
-  maxCallMinutes: 20          # hard stop; a standing call bills while nobody talks
-  allowAgentSwitch: false     # move a call to another agent or session mid-conversation
-  turnDetection: { threshold: 0.4, prefixPaddingMs: 200, silenceDurationMs: 420 }
-  # Separate from `stt`/`tts`: those are dictation and spoken replies
-  # (docs/voice.md). A call needs a realtime-capable provider; a normal
-  # chat-completions endpoint cannot carry one.
-
-compaction:
-  triggerRatio: 0.8           # fraction of the input budget (window minus the answer)
-  safetyCushionPairs: 4       # most-recent turns kept uncompacted
-  # modelOverride: opus       # force a specific compaction worker model
-  # workers: [big-local, small-local]   # who may summarise, in the order they are tried
-  # The trigger works off the token count the provider reported for the
-  # last request, and off somora's own ESTIMATE only until there is one
-  # (new session, model switch, provider without usage). When the backend
-  # nevertheless rejects a prompt as too long (400 "Prompt too long",
-  # "maximum context length", oMLX's prefill memory guard — typical after
-  # switching a long session from a 1M-window model to a 131k one), the
-  # openai-compatible engine forces a compaction down to the last
-  # exchange and retries the turn once; a second refusal surfaces as a
-  # plain-language error (switch model or /reset) instead of the raw 400.
-  # Compaction workers are picked from models whose engine has a one-shot
-  # path (claude-cli, codex-cli, openai-compatible): the smallest
-  # contextWindow that fits the range × 1.3 — which can be a
-  # subscription-backed CLI model. `workers:` replaces that pick with an
-  # ordered list of your own; a model that is not listed never
-  # summarises. Either way up to three workers are asked per compaction,
-  # so one refusing (busy host, rate limit, a route being reloaded)
-  # costs an attempt, not the compaction. Mechanics, and what
-  # contextWindow means on each engine, in docs/compaction.md.
-
-agentLoop:
-  maxRounds: 8                # tool-call rounds per turn (openai-compatible)
-  toolCallTimeoutMs: 30000    # per-tool-call timeout for fast tools (memory, web, file, time)
-  longTaskDefaultTimeoutMs: 300000   # 5 min — slow A2A tools (agent_ask, subagent_result
-                              # wait_until_done) when the caller passes no timeout_ms;
-                              # also honoured inside the MCP child of the CLI engines
-  longTaskMaxTimeoutMs: 1800000      # 30 min — hard ceiling for those, even with an explicit
-                              # timeout_ms; past it the tool answers state "pending", the
-                              # work keeps running. claudeCli.mcpToolTimeoutMs and
-                              # codexCli.toolTimeoutSec must be >= this.
-  execMaxConcurrentPerAgent: 8       # background exec jobs one agent may hold
-  execMaxConcurrentGlobal: 32        # … across all agents
-  wakeGraceMs: 3000           # when work an agent started and walked away from
-                              # finishes (a late agent_ask answer, a background
-                              # sub-agent, a rendered video), the agent is woken in
-                              # the session it asked from — unless it fetched the
-                              # result within this grace. 0..60000.
-  toolUsageReminder: true     # short "call tools, don't narrate" block in the
-                              # system prompt whenever the agent has tools.
-                              # Tools reach the model through a separate API
-                              # field, never through prompt text; smaller local
-                              # models benefit from being told so explicitly.
-                              # Constant text — one cache invalidation on
-                              # rollout, none afterwards.
-
-# Per-engine idle-event watchdog. If an engine produces no events
-# (assistant_delta, tool_call, …) for this duration mid-turn, the
-# turn is aborted so the per-session lock releases and the user
-# sees a clean error instead of all agents looking dead. Dream
-# workers (Deep/Lucid) bypass this — they run on their own path.
-#
-# While a tool call is in flight the threshold is automatically
-# relaxed to the MCP tool timeout (claudeCli.mcpToolTimeoutMs /
-# codexCli.toolTimeoutSec, 30 min by default), so a legitimately
-# long-blocking tool (agent_ask, subagent_result wait_until_done)
-# isn't cut off by the much shorter idle window — a genuinely dead
-# child is still caught at the tool-timeout horizon.
-# How long a model that was unreachable stays out of every cascade —
-# the chat fallback chain, the REM worker chain and the compaction
-# workers. The first cascade that hits the outage writes the model
-# down; later turns start past it instead of paying the dead hop
-# (~30 s each) again. A success clears the note early; a config
-# reload or POST /models/availability/reset clears all of them.
-fallback:
-  retryUnavailableMinutes: 60
-
-engineWatchdog:
-  claudeCliIdleMs: 300000        # 5 min — subscription, fast first event
-  codexCliIdleMs: 300000         # 5 min — subscription, fast first event
-  grokCliIdleMs: 300000          # 5 min — same class as the other CLIs
-  openaiCompatibleIdleMs: 1200000 # 20 min — local LLMs can stream slowly;
-                                  # raise if your backend regularly silences
-                                  # for longer than 20 min mid-turn
-
-# Per-subscriber write budget for SSE broadcasts. A healthy writeSSE
-# finishes in microseconds; a wedged subscriber (mobile browser
-# backgrounded, TCP receive window stuck at 0, dead-but-not-closed
-# stream) can otherwise stall every following turn on that session
-# until server restart. This is NOT a per-turn timeout — long-running
-# tool calls and slow local LLMs are unaffected, because each
-# individual event-write is still microseconds.
-sse:
-  publishTimeoutMs: 10000         # 10 sec per single event-write; evict the
-                                  # subscriber on overrun and continue. Healthy
-                                  # writes never hit this; 2 orders of magnitude
-                                  # more than a normal write ever takes.
-  publishParallel: true           # broadcast in parallel — one slow client
-                                  # never blocks the others. Flip to false only
-                                  # if you need strict serial delivery order.
-  heartbeatMs: 20000              # comment-frame heartbeat on every stream;
-                                  # clients treat > ~2 missed as a lost link.
-  deadAfterMs: 60000              # a subscriber whose heartbeat write has not
-                                  # completed for this long is dead: evicted
-                                  # (`sse.publish_evict_dead` in the log), socket
-                                  # destroyed. Catches vanished tabs / stuck
-                                  # TCP windows that never send FIN.
-  h2PingIntervalMs: 30000         # HTTP/2 PING per client session (TLS listener) …
-  h2PingTimeoutMs: 30000          # … no ACK within this → session destroyed
-  keepAliveDelayMs: 30000         # TCP keepalive on every socket
-
-memory:
-  embedding:
-    provider: local           # 'local' uses @huggingface/transformers (ONNX)
-    model: all-MiniLM-L6-v2   # alias or full HF repo path
-  chunking:
-    targetTokens: 400
-    overlapTokens: 80
-  autoInject:
-    queryTurns: 3             # current message + last-(N-1) turns as context
-    maxResults: 5             # top-N hits injected per turn
-    minScore: 0.35            # discard hits below this score (0..1)
-    maxTokens: 1500           # hard cap on the injected memory block
-    historyWeight: 0.3        # how much the previous turns steer the vector query
-    historyWeightShort: 0.55  # … for a message with only 1–2 content words
-    historyWeightEmpty: 0.8   # … for a message with none ("das solltest du wissen?")
-    historyTurnChars: 800     # head of each previous turn used for the blend
-    shortQueryBm25Weight: 0.5 # BM25 share for a 1–2-word question; null = hybrid default
-  hybrid:
-    vectorWeight: 0.7
-    bm25Weight: 0.3
-    slugMatchBoost: 1.5       # boost a page whose slug names a query word (1 = off)
-
-# Projects (opt-in, off by default) — pointer-file manifests binding
-# a chat session to a real-world thing (Obsidian notes, code dirs,
-# URLs, remote-resource paths). When enabled, agents see six tools
-# (entity_list, project_list, project_get, project_create,
-# project_update, project_focus), the chat-header gets a project chip,
-# and slash commands /projekt + /projects activate. See
-# docs/projects.md for the full model.
-#
-# `entities` is a CURATED VOCABULARY — projects belong to one entity
-# (e.g. "privat", "acme"), and the agent must pick from this list
-# at create time. Prevents STT mishearings from inventing phantom
-# entities and gives you a free filter axis ("list all private
-# projects"). Agents cannot extend this list via tools.
-# projects:
-#   enabled: true
-#   entities:
-#     - slug: privat
-#       label: Privat
-#     - slug: acme
-#       label: acme GmbH
-#     # add as many as you need — these are YOURS to curate
-```
-
-### Engine-meta — codex todo_list
-
-`codex-cli` (GPT-5.x and codex models) tracks an internal
-plan/checklist while it works. Codex emits `item.completed` events with
-`itemType: "todo_list"` every time the model marks a task done or adds
-a new one. somora persists these to the session JSONL as `engine_meta`
-records — they're available to:
-
-- The chat UI when **show.tools** is enabled (web + TUI). Renders as
-  a dimmer block with a `◌ codex · plan` prefix to visually
-  differentiate from real tool calls. Expand to see the task list with
-  ✓ / → / ○ glyphs per status.
-- The REM dream-worker, which scans session history to extract
-  memories. Codex plans appear in that history, so the agent can
-  retain "what was on my list yesterday" implicitly.
-- The session export (`?format=markdown`), where plans render as
-  GitHub-style task lists.
-
-Mobile PWA hides engine_meta entirely (mobile is intentionally a
-text-only minimalist surface). The other engines emit their own
-`engine_meta` rows through the same mechanism — a forced compaction,
-a dropped sampling key or an adjusted reasoning effort on
-`openai-compatible`, an undeliverable attachment on `grok-cli`, a
-restarted session on any CLI engine.
-
-Friendly labels live in
-[`src/engine/engine-meta-labels.ts`](../src/engine/engine-meta-labels.ts)
-— a tiny `engine → itemType → label` map. Unknown itemTypes fall back
-to the raw string so future codex/SDK additions appear immediately,
-just with a less-pretty label. No configuration needed.
-
-### Wiki + dream-system (optional but recommended)
-
-The wiki layer enables long-term shared knowledge across all agents.
-Requires an Obsidian vault. See [wiki.md](wiki.md) for the full
-mental model.
-
-```yaml
-obsidian:
-  vault: ~/Documents/Vault     # required for the wiki to work
-
-wiki:
-  enabled: true
-  vaultSubfolder: somora       # → <vault>/somora/ becomes the wiki
-  language: de                 # de | en — section headings, default folders,
-                               # index/log wording, prose language (docs/wiki.md)
-
-  deep:                        # Memory→Wiki consolidation
-    enabled: true
-    intervalHours: 12
-    model: opus                # via claude-cli, subscription
-    fallback: [gpt56]          # backup worker(s) when `model` is unreachable —
-                               # see dream-phases.md → Backup workers
-
-  lucid:                       # Wiki cleanup
-    enabled: true
-    intervalDays: 7
-    model: opus
-    fallback: [gpt56]
-    requireApproval: true
-    maxCallsPerTurn: 3         # cap on wiki_* tool invocations during
-                               # an active Lucid review-loop, per user
-                               # turn. Forces per-page user confirmation
-                               # for bigger plans. Raise (e.g. 5-10) if
-                               # you regularly OK multi-page batches
-                               # and the default 3 cuts off legitimate
-                               # work. Resets on every user message.
-
-  search:
-    boostWiki: 1.4             # wiki hits rank above memory in retrieval
-    boostMemory: 0.85
-    boostVault: 0.65
-    overviewMaxChars: 4000     # wiki-overview block in the system prompt;
-                               # snapshotted once per session, so this is
-                               # paid once inside the cached prefix
-    overviewTopNSlugs: 30      # max sections listed when even the bare
-                               # page list exceeds the budget
-```
-
-Per-agent REM (session→memory extraction) is configured in each
-`agent.yaml`, not here — see [agents.md](agents.md).
-
-**Scheduler state files** — Deep and Lucid persist their cadence
-to `~/.somora/dream-state/{deep,lucid}.json` so server restarts
-don't reset the timer. Each file holds the last started / completed /
-failed timestamps; the worker reads these at boot and schedules the
-next run at `lastCompletedAt + interval`, with a 60 s startup grace
-when the run is already overdue. Fresh installs get an `lastCompletedAt
-= now` anchor on first boot so restart-storms before the first auto-
-fire don't starve out the schedule.
-
-You normally never touch these files. If you want to **force the
-next auto-Deep/Lucid to fire sooner** without manually triggering
-it, edit `lastCompletedAt` to an older timestamp (or delete the
-file — the bootstrap anchor is rewritten on the next start). If
-you want to **pause auto-firing** without disabling the worker,
-set `lastCompletedAt` to a future timestamp.
-
-### Sentinel — proactive triggers (optional)
-
-The trigger runtime that wakes agents on a schedule (see
-[sentinel.md](sentinel.md)). One configuration knob:
-
-```yaml
-sentinel:
-  completedRetentionDays: 7   # default; 0 disables auto-cleanup
-```
-
-`completedRetentionDays` controls how long one-shot `at`-triggers
-stay in the registry after they've fired. The scheduler sweeps at
-boot and on each daily re-arm tick; older `completed` entries get
-auto-deleted along with their history file. Set to 0 to disable
-auto-cleanup entirely (manual `sentinel delete` only). Recurring
-triggers don't auto-GC — they end up in `paused` or `error` and you
-choose when to remove them.
-
-## The daily update check — what somora.ai sees
-
-somora runs on your machine and talks to the model providers you
-configured. There is exactly one request it makes on its own: once a
-day the server asks somora.ai whether a newer version exists, and the
-answer shows up as an update notice in the web client's taskbar, in
-`somora server status` and in the server log (`update.available`).
-`somora update` itself keeps using npm.
-
-```http
-GET https://somora.ai/api/latest-version
-User-Agent: somora/2026.1001.2 (linux; node/22.23.2; x64; server)
-```
-
-That is the whole request: no body, no install identifier, no machine
-id, no random token — the version, operating system, Node.js version,
-CPU and whether the server or the CLI asked. The answer is
-`{"version": "…", "note": "…"}`; the note is an optional sentence from
-us to everyone ("update Node first"), at most 500 characters.
-
-**What we do with it.** Like any web server, somora.ai logs the request
-together with its IP address and the approximate location Cloudflare
-derives from it (country, region, city). From those logs we count how
-many installations ask — per day, per version, per operating system —
-to know whether the project is used and what to test on. The raw logs
-are deleted after 90 days, daily totals are kept, nothing is published
-and nothing is passed on. Counting by IP address is approximate by
-nature: two instances behind one router look alike, and many home
-connections change their address.
-
-**Switching it off.** Any of these stops the request entirely:
-
-- `DO_NOT_TRACK=1` in the service's environment (the common
-  convention), or
-- `updateCheck.enabled: false` in `config.yaml`, or
-- a `CI` variable in the environment — a test pipeline is not an
-  installation.
-
-`somora telemetry show` prints the request as it would be sent, why the
-check is on or off, and when it last ran. `updateCheck.endpoint` points
-the check at a mirror of your own. The last answer lives in
-`~/.somora/update-check.json`.
-
-The first check runs one to six minutes after the server starts (a
-random delay, so a fleet restarting together does not knock in unison);
-after a success the next one is a day later, after a failure an hour
-later. A failed check never affects anything else.
-
-## HTTPS (Tailscale) — required for the web client at scale
-
-The web client opens **one persistent SSE connection per chat window**.
-Browsers cap HTTP/1.1 at 6 concurrent connections per origin, so a multi-
-agent setup (plus tmux session attaches) hits that ceiling fast —
-symptom: new chat tabs silently fail to send, agents seem unresponsive.
-
-Solution: serve somora over **HTTP/2-over-TLS**. HTTP/2 multiplexes
-every stream over a single TCP connection, lifting the limit entirely.
-The same upgrade also unlocks secure-context-only browser APIs that the
-roadmap depends on (mic / screenshare / clipboard write / push
-notifications / service workers).
-
-**somora's blessed path is Tailscale.** Tailscale issues
-publicly-trusted Let's Encrypt certs for your tailnet's `*.ts.net`
-hostnames, free, with a single command — Node + every browser accept
-them with no warnings, no CA installs, and no manual cert pinning. If
-you're not on Tailscale you'll need to wire up your own cert (mkcert
-for LAN-only, or a real DNS-validated LE cert) — same config block,
-different acquisition.
-
-### Set up TLS via Tailscale
-
-1. Install Tailscale on the somora host (`sudo tailscale up`).
-2. In the [Tailscale admin DNS panel](https://login.tailscale.com/admin/dns),
-   enable **MagicDNS** and **HTTPS Certificates** (one-time tailnet setting).
-3. Generate certs into `~/.somora/certs/`:
+Provider names are free. Several servers can sit side by side under
+different names. Aliases must be unique across the whole file.
+
+Connect two providers when you can. An agent's `fallback` model then
+answers when the first one is down.
+
+A Grok subscription signs in the Grok CLI, not the xAI API. An
+`openai-compatible` provider pointed at `https://api.x.ai/v1` is billed
+separately, per token. Grok calls somora's tools through its own
+`use_tool` step. somora records them under their usual names, such as
+`mcp__somora__memory_list`.
+
+The models guide has a tested block for every model family, the Codex
+and Grok details and all model fields.
+
+## HTTPS via Tailscale
+
+Over plain HTTP the web client works in one window on the machine
+itself. For daily use from other devices you want HTTPS:
+
+- A browser allows six connections per address over plain HTTP. Every
+  chat window and terminal holds one, so new windows stop sending.
+  HTTPS uses HTTP/2, which has no such limit.
+- The microphone, the clipboard and installing the phone app need a
+  secure address.
+
+Tailscale is the supported way. It is a private network between your
+own devices and issues a publicly trusted certificate for your
+machine's name at no cost. `somora setup access` does all of the
+following for you.
+
+1. Install Tailscale on the somora host and connect it:
+   `sudo tailscale up`.
+2. In the [Tailscale admin DNS page](https://login.tailscale.com/admin/dns),
+   turn on **MagicDNS** and **HTTPS Certificates**. Once per account.
+3. Allow your user to fetch certificates, so somora can renew them:
+   `sudo tailscale set --operator=$USER`.
+4. Fetch the certificate. `tailscale status` shows your host name.
 
    ```bash
-   mkdir -p ~/.somora/certs
-   cd ~/.somora/certs
+   mkdir -p ~/.somora/certs && cd ~/.somora/certs
    tailscale cert <your-host>.<your-tailnet>.ts.net
    ```
 
-   `tailscale status` shows your hostname; the FQDN is
-   `<host>.<tailnet>.ts.net`. The command writes
-   `<fqdn>.crt` (cert) and `<fqdn>.key` (private key, mode 0600).
-4. Reference them in `~/.somora/config.yaml`:
+5. Point `~/.somora/config.yaml` at the two files:
 
    ```yaml
    server:
-     host: 0.0.0.0        # REQUIRED for remote clients (default 127.0.0.1 = loopback only)
+     host: 0.0.0.0        # accept other devices; the default 127.0.0.1 is this machine only
      port: 18737
      tls:
        cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
        key:  ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
        publicHost: <your-host>.<your-tailnet>.ts.net
+       renew: tailscale
    ```
 
-   `host: 0.0.0.0` is what makes the server reachable from other machines
-   (LAN / Tailscale); the default `127.0.0.1` binds loopback-only. Keep
-   this in `config.yaml` (not as a `SOMORA_HOST` env in the systemd unit) —
-   config survives `somora update`, unit env does not (the update rebakes
-   the unit from a template). If you *do* need custom systemd env, put it in
-   a drop-in (`~/.config/systemd/user/somora.service.d/*.conf`) — drop-ins
-   survive the rebake; `somora init` also carries forward existing
-   `Environment=`/`EnvironmentFile=` lines and prints what it preserved.
+6. Restart somora and open
+   `https://<your-host>.<your-tailnet>.ts.net:18737/web/`. The port is
+   part of the address.
 
-   `publicHost` MUST match the cert subject — strict TLS verification is
-   on. Internal MCP-child callers (subagent fallback in
-   `src/tools/agents/spawn.ts`) read this hostname from env at server
-   startup and use it for their own HTTPS callbacks; there is no
-   loopback bypass, everything goes through the one secure listener.
-5. Add `renew: tailscale` to the block (see [Cert renewal](#cert-renewal))
-   and restart somora. Connect with the full URL:
-   `https://<your-host>.<your-tailnet>.ts.net:18737/web/`. The `:port`
-   part is required because somora doesn't run on 443.
+`publicHost` must match the name in the certificate. somora's own
+internal calls go through the same HTTPS listener and verify it.
 
-### Cert renewal
+> **Warning:** somora has no login of its own. With `host: 0.0.0.0`
+> everyone who can reach the port can talk to your agents. Tailscale is
+> the access boundary. Do not open the port to the internet.
 
-Tailscale certs are valid for ~90 days. Add one line and somora takes
-care of them:
+### Certificate renewal
 
-```yaml
-server:
-  tls:
-    cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
-    key:  ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
-    publicHost: <your-host>.<your-tailnet>.ts.net
-    renew: tailscale
-```
+A Tailscale certificate is valid for about 90 days. With
+`renew: tailscale` the server asks Tailscale twice a day for a
+certificate that is good for at least 30 more days
+(`tailscale cert --min-validity 720h`) and loads the new pair without a
+restart. Running turns are not interrupted.
 
-Twice a day the server asks Tailscale for a certificate that is good
-for at least 30 more days (`tailscale cert --min-validity 720h`; it only
-re-issues when the current one is closer to its end) and loads the new
-pair **without a restart** — running turns are not interrupted. For
-that, `tailscale cert` must work for the user somora runs as:
-
-```bash
-sudo tailscale set --operator=$USER     # once
-```
-
-`somora setup access` does both for you. Without `renew:` the server
-still watches the two files: renew them any way you like and the new
-certificate is served at the next check (log line
-`server.tls.reloaded`). A failed renewal is logged as
-`server.tls.renew_failed` with the reason; from 14 days before the end
-`server.tls.expires_soon` warns on every check.
+Without `renew`, the server still watches the two files. Renew them any
+way you like and the new certificate is served at the next check.
 
 ### Without Tailscale
 
-Drop in any cert + key — the config doesn't care about the issuer, only
-that the file paths point at valid PEM. For local LAN dev,
-[mkcert](https://github.com/FiloSottile/mkcert) is the cleanest
-non-Tailscale option (`mkcert -install` once per device, then
-`mkcert <host>.local 192.168.x.y`). Self-signed (without an installed
-CA) will work but every browser will scream — only acceptable for
-single-developer scratch use.
+Any certificate and key in PEM format work. The config does not care
+who issued them. For a local network, [mkcert](https://github.com/FiloSottile/mkcert)
+is the simplest: `mkcert -install` once per device, then
+`mkcert <host>.local 192.0.2.10`. A self signed certificate without an
+installed CA works, but every browser warns.
 
-### Falling back to plain HTTP
+### Plain HTTP
 
-Omit the `server.tls` block entirely. somora reverts to HTTP/1.1 plain.
-You'll keep the 6-connection limit and lose secure-context features.
-Fine for single-window dev, no good for multi-agent daily use.
+Leave out the `server.tls` block and somora speaks plain HTTP. That is
+fine for one window on the machine itself. The TUI is not affected.
 
-## Mobile PWA — `/mobile`
+## Update
 
-somora ships a second web client at `/mobile` aimed at phones. It's a
-PWA — installable to your home screen on iOS / Android, runs in
-standalone-app mode with no browser chrome. Minimal-scope by design:
-chat only, no tmux / no file viewer / no multi-window layout. See
-[mobile.md](mobile.md) for the full feature scope, install flow per
-platform, and configuration knobs.
+```bash
+somora update                # the current release
+somora update --edge         # the newest build on npm, pre-releases included
+somora update 2026.930.1     # one specific version
+```
 
-Installing:
+`somora update` does this, in order:
 
-1. On the phone, with Tailscale connected, visit
-   `https://<your-host>.<your-tailnet>.ts.net:18737/mobile/` in Safari
-   (iOS) or Chrome (Android).
-2. **iOS:** share menu → "Add to Home Screen".
-3. **Android:** Chrome's install banner, or menu → "Install app".
+1. Asks npm which version is meant. When you already run it, nothing
+   happens.
+2. Checks that your Node.js is new enough for that version, before
+   anything is installed.
+3. Installs it with `npm install -g somora@<version>`.
+4. Runs `somora init` from the new install, so the service points at
+   it.
+5. Restarts the service. When somora runs in the foreground, restart it
+   yourself.
 
-Build pipeline: `build:mobile` script alongside `build:web`, both run
-by `build:all` and triggered by the `prepack` hook on `npm pack`. The
-`somora update` flow picks this up automatically — no manual step. The
-release tarball always contains both `web/dist` and `web-mobile/dist`.
+| Option | Meaning |
+|---|---|
+| `--release` | The current release. This is the default. |
+| `--edge` | Whichever is newer on npm: the release or the latest pre-release. Cannot be combined with a version. |
+| `<version>` | Exactly this version. A leading `v` is accepted. |
+| `--force` | Reinstall even when that version is already running. |
+| `--no-reinit` | Skip `somora init` after the install. Use it when you edited the service definition by hand. |
+| `--help`, `-h` | Print the usage. |
+
+A version number is a date and a counter: `2026.930.1` is the first
+build of 30 September 2026.
+
+After an update, reload the web client with Ctrl+Shift+R, or
+Cmd+Shift+R on a Mac, so the browser drops the old script.
+
+## The daily update check
+
+Once a day the server asks somora.ai whether a newer version exists.
+It is the only request somora makes on its own. The answer shows up as
+a notice in the web client's taskbar, in `somora server status` and in
+the server log as `update.available`. `somora update` itself asks npm.
+
+The request is a plain `GET https://somora.ai/api/latest-version`. It
+has no body and no identifier. Its `User-Agent` names the somora
+version, the operating system, the Node.js version and the CPU type.
+The answer is `{"version": "…", "note": "…"}`. The note is an optional
+sentence to all installs, 500 characters at most.
+
+Like any web server, somora.ai logs the request with its IP address and
+the rough location derived from it, and counts installations per day,
+version and system from those logs. Raw logs are deleted after 90 days.
+Nothing is published or passed on.
+
+Any one of these stops the request:
+
+- `DO_NOT_TRACK=1` in the service's environment
+- `updateCheck.enabled: false` in `config.yaml`
+- a `CI` variable in the environment
+
+`somora telemetry show` prints the request as it would be sent, why the
+check is on or off, and when it last ran. `updateCheck.endpoint` points
+the check at a mirror of your own. The security guide has the timing
+details.
+
+## Restart and reload
+
+A restart ends every turn that is running. Many config changes do not
+need one.
+
+### Reload the config
+
+| Where | How |
+|---|---|
+| Web client | Gear menu in the taskbar, then "Reload config". |
+| TUI | `/reload` |
+| API | `POST /config/reload` |
+
+The server reads `config.yaml` again and checks it. A file with a
+mistake is rejected with the reason, and the running config stays as it
+was. A reload also forgets which models were marked unreachable.
+
+The answer lists the sections that changed, and which of them only
+apply after a restart. These sections are read once at start:
+
+`server`, `memory`, `obsidian`, `wiki`, `mcp`, `claudeCli`, `codexCli`,
+`stt`, `tts`, `sentinel`, `updateCheck`, `tmux`, `web`, `mobile`
+
+Everything else, such as `providers`, `compaction`, `agentLoop` or
+`fallback`, applies with the reload.
+
+### Restart
+
+| Where | How |
+|---|---|
+| Shell | `somora server restart` |
+| Web client | Gear menu in the taskbar, then "Restart somora". Available when somora runs as a systemd service. |
+| TUI | `/restart YES` |
+| API | `POST /server/restart` |
+
+The API route answers `409` when somora runs in the foreground: nothing
+would bring it back.
+
+### A restart asked for by an agent
+
+An agent that needs a restart, after a config change or for an update,
+runs `somora server restart` or `somora update` in its shell. From
+there the restart does not cut the agent off:
+
+1. The server notes the request and waits until the agent's turn has
+   ended, ten minutes at most.
+2. Turns running in other sessions get 30 more seconds to finish.
+3. The service restarts.
+4. The agent is woken in the same session and told the old and the new
+   version, so it can check the result and carry on.
+
+A turn that was cut because the agent restarted the service directly,
+for example with `systemctl`, is woken as well and told not to repeat
+the command. Turns of other sessions that the restart cut are marked as
+interrupted. Whoever waited for them is told.
+
+| `server.resumeAfterRestart` | Who is woken after a restart |
+|---|---|
+| `requested` (default) | The session that asked for the restart, or caused it from its own turn. |
+| `all` | Also every other turn the restart cut, unless another agent waits for it. |
+| `off` | Nobody. Cut turns are only marked. |
+
+A session is woken at most twice in ten minutes, so an agent cannot
+restart in a loop.
+
+## Optional features
+
+Each of these is off until you configure it and has its own page.
+
+| Feature | Minimal config | Page |
+|---|---|---|
+| Web search | `web.brave.apiKey`, or `somora setup search` | [Tools](tools.md) |
+| Dictation and spoken replies | `stt` and `tts` blocks naming a provider and a model | [Voice](voice.md) |
+| Talking to an agent in a call | `realtimeVoice.enabled: true` with a provider and a key file | [Realtime voice](realtime-voice.md) |
+| Shared wiki, Deep and Lucid | `obsidian.vault` and `wiki.enabled: true`, or `somora setup memory` | [Wiki](wiki.md), [Dream phases](dream-phases.md) |
+| Team chart in every prompt | `~/.somora/team.yaml`, or `somora team init --principal "<your name>"` | [Team](team.md) |
+| Image and video generation | `imageGen.enabled`, `videoGen.enabled`, each with `models` | [Image generation](imagegen.md), [Video generation](videogen.md) |
+| Shared browser | `browser.enabled: true` and Chromium or Chrome on the host | [Browser](browser.md) |
+| External MCP servers | `mcp.servers` | [MCP](mcp.md) |
+| Projects | `projects.enabled: true` with a list of `entities` | [Projects](projects.md) |
+| Scheduled triggers | none, the agents create them | [Sentinel](sentinel.md) |
+| Remote machines over SSH | `resources` | [Resources](resources.md) |
+| Language servers for builders | `somora lsp install` | [Language servers](lsp.md) |
+| Phone app | HTTPS, then open `/mobile/` on the phone | [Mobile app](mobile.md) |
+
+Spoken replies in a smaller audio format need `ffmpeg` on the host.
 
 ## Isolated Claude config dir
 
-somora-spawned claude-cli subprocesses run with their own config tree
-under `~/.somora/claude-home/`, not the user's `~/.claude/`. On first
-server start the dir is auto-created and the user's
-`~/.claude/.credentials.json` is copied into it; a continuous sync
-(see below) keeps both credential stores on the same OAuth session so
-one `claude login` covers somora and the user's own Claude Code.
+somora runs Claude Code with its own config folder,
+`~/.somora/claude-home/`, not your `~/.claude/`. Your own Claude Code
+sessions, plugins and settings never reach an agent, and an update of
+your Claude Code cannot break somora's state. The folder is created at
+the first server start.
 
-Everything else (project history, sessions, plugin marketplace state,
-shell snapshots, MCP-needs-auth cache, …) lives separately. somora's
-agents never see the user's interactive-CLI state, and vice versa.
+Only the login is shared. somora keeps the credentials file in both
+folders identical, so one `claude auth login` covers both:
 
-**Why it matters**
+- A change on either side is copied to the other within seconds while
+  the server runs. A check every 60 seconds, at server start and before
+  every Claude turn catches the rest.
+- When the two differ, the side whose login expires later wins. The
+  replaced file is kept once as `.credentials.json.somora-prev`.
+- When a turn still fails on the login, somora syncs again and tells
+  you whether sending the message again is enough or a new login is
+  needed.
 
-- **Auto-update insulation.** Anthropic's launcher silently rolls
-  forward the user's claude binary. If a release migrates the state
-  schema, somora's spawn — which may run a different binary version —
-  would no longer read the migrated tree cleanly. The isolated dir
-  keeps somora's state out of that path.
-- **Privacy + predictability.** The user's project conversations,
-  installed plugins, and per-project skill caches never leak into
-  agent context.
-- **Reproducible deploys.** A fresh somora install on a new machine
-  starts from the same blank slate regardless of how the user's
-  personal Claude Code is set up.
-
-**Scope**
-
-The isolation applies to the internal engine adapter that somora uses
-to talk to Claude. Tools the agent invokes for the user — `tmux create`,
-`exec`, the `process` family — strip somora-internal vars from the
-spawned shell by default (`CLAUDE_CONFIG_DIR`, `SOMORA_CLAUDE_BIN`, the
-other engine-binary overrides, `TSX_TSCONFIG_PATH`, `NODE_ENV`, and
-Claude Code's MCP-child markers), so a `claude` or `codex` you start
-inside a tmux pane sees your normal `~/.claude` login state, and a
-project's own `tsx`/`next`/dotenv see the project's config rather than
-somora's. The `inherit_agent_env: true` flag opts back into inheritance
-when you specifically want it (see `docs/tmux.md`).
-
-**Overriding**
-
-Set `CLAUDE_CONFIG_DIR` in `~/.somora/somora.env` (or shell env) to
-point at any directory you prefer — useful for shared multi-host
-setups, or when you want somora to read a hand-curated config tree.
-The auto-create + credential sync still runs on whichever path
-you supply.
-
-**If the user hasn't run `claude login`**
-
-The credentials file at `~/.claude/.credentials.json` won't exist
-yet, and the bootstrap logs a warning instead of failing. Run
-`claude login` once interactively (any session) — the running
-server's credential watcher picks it up within seconds, no restart
-needed.
-
-**Shared-login credential sync**
-
-Sharing one login between two config trees has a structural enemy:
-the claude CLI refreshes OAuth tokens with an atomic write (tmp file +
-rename). A symlink from the somora-side file to
-`~/.claude/.credentials.json` would not survive that — rename replaces
-the *symlink itself*, so after the first token refresh the link would
-silently materialize into a real file. From then on both trees would
-rotate the same OAuth session independently, and whichever side
-refreshes later invalidates the other; the losing side eventually
-fails with `OAuth session expired and could not be refreshed`.
-
-somora therefore maintains the sharing as a *continuously reconciled
-content sync* (default `claudeCli.sharedUserCredentials: true` in
-`config.yaml`), never as a symlink:
-
-- **Filesystem watcher** on both parent directories plus a 60 s
-  fallback poll — a token refresh (or fresh `claude login`) on either
-  side propagates to the other within seconds, while the server runs.
-- **Boot reconcile** covers drift that happened while the server was
-  down.
-- **Pre-turn reconcile** in the claude-cli engine guarantees every
-  turn starts on the newest OAuth chain.
-- **Auth-failure reconcile** — if a turn still fails auth, somora
-  reconciles inline and tells you whether re-sending the message is
-  enough or a fresh `claude login` is needed.
-
-On divergence the side with the *later OAuth expiry* wins (its refresh
-happened last, so its refresh-token chain is the live one) and is
-copied over the other — atomic write, mode `0600`, previous content
-kept once at `.credentials.json.somora-prev`. A corrupt/unparseable
-file always loses to a healthy one.
-
-Inspect or fix the state manually any time:
-
-```
-somora auth status   # both stores: mtime, OAuth expiry, in sync / diverged
-somora auth sync     # one-shot reconcile (what the watcher does continuously)
+```bash
+somora auth status   # both stores: age, expiry, in sync or diverged
+somora auth sync     # reconcile now
 ```
 
-`GET /health` also reports the sync state under `claudeAuth`
-(existence, expiry, divergence — never token material).
+`GET /health` reports the same state under `claudeAuth`, without any
+token.
 
-**Running somora on a separate Claude account**
+| You want | Do this |
+|---|---|
+| A separate Claude account for somora | Set `claudeCli.sharedUserCredentials: false`, then run `CLAUDE_CONFIG_DIR=~/.somora/claude-home claude auth login`. somora then touches neither file. |
+| Another config folder | Set `CLAUDE_CONFIG_DIR` in `~/.somora/somora.env` or in the service's environment. |
+| No login yet | Run `claude auth login` in any terminal. The running server picks it up, no restart needed. |
 
-Set `claudeCli.sharedUserCredentials: false` in `config.yaml` — somora
-then never touches either credentials file, and you manage
-`~/.somora/claude-home/.credentials.json` yourself (e.g. via
-`CLAUDE_CONFIG_DIR=~/.somora/claude-home claude login`).
+A `claude` or `codex` that an agent starts in a terminal or shell sees
+your normal login, not somora's folder. The tmux guide explains
+`inherit_agent_env`, which changes that.
 
-## Environment overrides
+## Engine rows in the chat
 
-| Var                              | Default                      | Purpose                                  |
-| -------------------------------- | ---------------------------- | ---------------------------------------- |
-| `SOMORA_HOME`                    | `~/.somora`                  | data root for config / agents / sessions |
-| `SOMORA_PORT`                    | `config.yaml:server.port`    | server bind port (override)              |
-| `SOMORA_HOST`                    | `config.yaml:server.host` (`127.0.0.1`) | server bind host override. Prefer `server.host` in config.yaml — it survives `somora update`; a `SOMORA_HOST` env in the systemd unit is dropped by the update rebake. Auto-set to `tls.publicHost` for MCP-child callers when TLS is on. |
-| `SOMORA_TLS`                     | `0`                          | set to `1` by parent when serving HTTPS — MCP-child callers use it to switch to https:// |
-| `SOMORA_LOG_LEVEL`               | `info`                       | Pino log level                           |
-| `SOMORA_CLAUDE_BIN`              | `~/.local/bin/claude`        | Claude Code binary path                  |
-| `CLAUDE_CONFIG_DIR`              | `~/.somora/claude-home`      | Isolated state dir for claude-cli subprocesses (auto-created on boot, see "Isolated Claude config dir") |
-| `SOMORA_CODEX_BIN`               | unset (bundled)              | Debugging override for the Codex binary; otherwise the bundled `@openai/codex` is used |
-| `SOMORA_COMPACTION_TRIGGER_RATIO`| from config                  | override compaction trigger              |
-| `SOMORA_COMPACTION_SAFETY_PAIRS` | from config                  | override compaction cushion              |
-| `SOMORA_COMPACTION_MODEL`        | from config                  | override compaction worker               |
-| `SOMORA_COMPACTION_WORKERS`      | from config                  | comma-separated worker cascade           |
+Engines report things that are neither text nor a tool call. Codex, for
+example, keeps a plan and reports it as an item of type `todo_list`
+whenever a task is added or done. somora stores each such report in the
+session as an `engine_meta` record.
 
-The live values are queryable: `GET /env` returns the resolved set with
-`isDefault` flags, and the same data is logged at server startup as
-`somora.env`.
+| Where | What you see |
+|---|---|
+| Web client and TUI | A dimmer row such as `◌ codex · plan`, shown when tool rows are shown. Expand it for the task list. |
+| Phone app | Nothing. |
+| Session export as Markdown | Plans appear as task lists. |
+| REM | Reads them with the rest of the session. |
 
-## Develop from a checkout (contributors)
+Other engines use the same record: a forced compaction, a dropped
+sampling key or an adjusted reasoning effort on `openai-compatible`, an
+attachment `grok-cli` could not pass on, a restarted session on a CLI
+engine. An item type somora has no label for is shown under its raw
+name. There is nothing to configure.
 
-If you want to hack on somora itself rather than just run it:
+## Settings
+
+Server settings live in `~/.somora/config.yaml`. The values shown are
+the defaults. `server.tls` has no default.
+
+```yaml
+server:
+  host: 127.0.0.1
+  port: 18737
+  resumeAfterRestart: requested
+  # tls:
+  #   cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
+  #   key: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
+  #   publicHost: <your-host>.<your-tailnet>.ts.net
+  #   renew: tailscale
+
+updateCheck:
+  enabled: true
+  endpoint: https://somora.ai/api/latest-version
+
+fallback:
+  retryUnavailableMinutes: 60
+
+agentLoop:
+  maxRounds: 8
+  maxToolCallsPerTurn: 30
+  # maxTurnMs: 3600000
+  toolCallTimeoutMs: 30000
+  longTaskDefaultTimeoutMs: 300000
+  longTaskMaxTimeoutMs: 1800000
+  wakeGraceMs: 3000
+  execMaxConcurrentPerAgent: 8
+  execMaxConcurrentGlobal: 32
+  toolUsageReminder: true
+
+engineWatchdog:
+  claudeCliIdleMs: 300000
+  codexCliIdleMs: 300000
+  grokCliIdleMs: 300000
+  openaiCompatibleIdleMs: 1200000
+
+sse:
+  publishTimeoutMs: 10000
+  publishParallel: true
+  heartbeatMs: 20000
+  deadAfterMs: 60000
+  h2PingIntervalMs: 30000
+  h2PingTimeoutMs: 30000
+  keepAliveDelayMs: 30000
+
+claudeCli:
+  mcpToolTimeoutMs: 1800000
+  mcpConnectTimeoutMs: 60000
+  sharedUserCredentials: true
+
+codexCli:
+  toolTimeoutSec: 1800
+  shellEnvironmentPolicy: inherit-all
+  # directTools: [...]
+```
+
+### Server and updates
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `server.host` | `127.0.0.1` | Address the server listens on. `0.0.0.0` accepts other devices. Set it here, not as `SOMORA_HOST` in the service. |
+| `server.port` | `18737` | Port. |
+| `server.resumeAfterRestart` | `requested` | Who is woken after a restart: `requested`, `all` or `off`. |
+| `server.tls.cert` | none | Certificate file in PEM format. With `key` it switches the server to HTTPS and HTTP/2. `~` is your home folder. |
+| `server.tls.key` | none | Private key file in PEM format. |
+| `server.tls.publicHost` | none | Host name clients use. Must match the certificate. |
+| `server.tls.renew` | none | `tailscale`: renew the certificate automatically. |
+| `updateCheck.enabled` | `true` | The daily update check. |
+| `updateCheck.endpoint` | `https://somora.ai/api/latest-version` | Where the check asks. |
+| `fallback.retryUnavailableMinutes` | `60` | A model that was unreachable is skipped this long by chat, REM and compaction. A success, a config reload or `POST /models/availability/reset` clears the mark. 1 to 1440. |
+
+### The tool loop
+
+`maxRounds`, `maxToolCallsPerTurn` and `maxTurnMs` apply to the
+`openai-compatible` engine. The CLI engines run their own loop.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `agentLoop.maxRounds` | `8` | Most rounds of tool calls per turn. Then the model must answer. |
+| `agentLoop.maxToolCallsPerTurn` | `30` | Most tool calls per turn in total. Stops a model that repeats one call without end. |
+| `agentLoop.maxTurnMs` | unset | Time limit of one turn. Unset means none. |
+| `agentLoop.toolCallTimeoutMs` | `30000` | Time limit of a fast tool call: memory, web, files, time. |
+| `agentLoop.longTaskDefaultTimeoutMs` | `300000` | How long `agent_ask` and `subagent_result` wait when the caller gives no `timeout_ms`. |
+| `agentLoop.longTaskMaxTimeoutMs` | `1800000` | Longest such wait. After it the tool answers `pending` and the work keeps running. Keep `claudeCli.mcpToolTimeoutMs` and `codexCli.toolTimeoutSec` at least this high. |
+| `agentLoop.wakeGraceMs` | `3000` | When work an agent started and left finishes, the agent is woken unless it fetched the result within this time. 0 to 60000. |
+| `agentLoop.execMaxConcurrentPerAgent` | `8` | Background shell jobs one agent may hold. |
+| `agentLoop.execMaxConcurrentGlobal` | `32` | The same across all agents. |
+| `agentLoop.toolUsageReminder` | `true` | Adds a short "call tools, do not describe them" block to the prompt of an agent that has tools. Helps smaller local models. |
+
+At 75 % of the round or call limit the model gets one notice to wrap
+up. At the limit it is asked for a final answer without tools.
+
+### Stuck engines and stuck clients
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `engineWatchdog.claudeCliIdleMs` | `300000` | A turn is ended with a clear error when the engine sends nothing for this long. |
+| `engineWatchdog.codexCliIdleMs` | `300000` | The same for Codex. |
+| `engineWatchdog.grokCliIdleMs` | `300000` | The same for Grok. |
+| `engineWatchdog.openaiCompatibleIdleMs` | `1200000` | The same for your own servers. Raise it when your server is silent for longer inside a turn. |
+| `sse.publishTimeoutMs` | `10000` | Time one event may take to reach one client. A client over it is dropped, so it cannot block a session. |
+| `sse.publishParallel` | `true` | Send to all clients at once. `false` sends one after the other. |
+| `sse.heartbeatMs` | `20000` | Heartbeat on every live stream. |
+| `sse.deadAfterMs` | `60000` | A client whose heartbeat could not be written for this long is dropped. |
+| `sse.h2PingIntervalMs` | `30000` | HTTP/2 ping per client. HTTPS only. |
+| `sse.h2PingTimeoutMs` | `30000` | A client that does not answer the ping in time is dropped. |
+| `sse.keepAliveDelayMs` | `30000` | TCP keepalive on every connection. |
+
+While a tool call runs, the watchdog waits as long as the engine's tool
+timeout instead, so a long `agent_ask` is not cut. Deep and Lucid are
+not watched: they run outside the chat.
+
+### Claude and Codex engines
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `claudeCli.mcpToolTimeoutMs` | `1800000` | Longest tool call on the Claude engine. Passed on as `MCP_TOOL_TIMEOUT`. |
+| `claudeCli.mcpConnectTimeoutMs` | `60000` | Time the Claude engine waits for somora's tools to connect. Passed on as `MCP_TIMEOUT`. |
+| `claudeCli.sharedUserCredentials` | `true` | Keep the Claude login in sync with `~/.claude`. |
+| `codexCli.toolTimeoutSec` | `1800` | Longest tool call on the Codex engine, in seconds. |
+| `codexCli.shellEnvironmentPolicy` | `inherit-all` | What Codex's own shell inherits from the server's environment. `core-only` passes only the basics. |
+| `codexCli.directTools` | the everyday core tools | somora tools kept in the Codex model's direct list on every turn. The rest is found through tool search. |
+
+### Sections with their own page
+
+| Section | Page |
+|---|---|
+| `providers`, per model fields | [Models](models.md) |
+| `compaction` | [Compaction](compaction.md) |
+| `memory`, `obsidian` | [Memory](memory.md) |
+| `rem`, `wiki` | [Dream phases](dream-phases.md), [Wiki](wiki.md) |
+| `promptBudgets` | [Team](team.md), [Agents](agents.md) |
+| `thinkingContent` | [Thinking](thinking.md) |
+| `tui` | [TUI display](display.md) |
+| `mobile` | [Mobile app](mobile.md) |
+| `web.brave`, `vision` | [Tools](tools.md) |
+| `workspace`, `attachments` | [Files](files.md) |
+| `stt`, `tts` | [Voice](voice.md) |
+| `realtimeVoice` | [Realtime voice](realtime-voice.md) |
+| `imageGen`, `videoGen` | [Image generation](imagegen.md), [Video generation](videogen.md) |
+| `browser` | [Browser](browser.md) |
+| `mcp` | [MCP](mcp.md) |
+| `projects` | [Projects](projects.md) |
+| `sentinel` | [Sentinel](sentinel.md) |
+| `resources` | [Resources](resources.md) |
+| `skills` | [Skills](skills.md) |
+| `lsp` | [Language servers](lsp.md) |
+| `tmux` | [tmux](tmux.md) |
+
+Per agent settings live in each agent's `agent.yaml` and are described
+in the agents guide.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `somora setup [step]` | The guided assistant. Steps: `models`, `search`, `agent`, `memory`, `team`, `access`, `start`. |
+| `somora init` | Creates the data folder and writes the service definition. Safe to run again. |
+| `somora server start [--foreground]` | Starts the server, as a service or in this terminal. |
+| `somora server stop` | Stops the server. |
+| `somora server restart` | Restarts the service. |
+| `somora server status` | Shows the running server, a waiting update and the service state. |
+| `somora tui` | Opens the terminal client against the running server. |
+| `somora update [<version>] [--edge] [--force] [--no-reinit]` | Installs a version from npm, refreshes the service and restarts it. |
+| `somora telemetry show [--json]` | Shows what the daily update check sends and when it last ran. |
+| `somora auth status` | Shows both Claude credential stores. |
+| `somora auth sync` | Reconciles the two stores now. |
+| `somora codex <args>` | Runs the bundled Codex: `login`, `logout`, `debug models`, `features list`, `--version`. |
+| `somora skill list`, `check`, `add`, `update`, `remove` | Manages skills. Run `somora skill` for the details. |
+| `somora team init [--principal <name>]` | Writes `team.yaml` from the agents on disk. Never overwrites. |
+| `somora team check` | Validates `team.yaml`. |
+| `somora team show <agent>` | Prints the team block that agent sees. |
+| `somora lsp status` | Lists the language servers and which are installed. |
+| `somora lsp install [id…]` | Installs language servers into `~/.somora/lsp`. |
+| `somora wiki migrate [step] [id]` | Moves a grown wiki onto the folder template. Guided, or one of `plan`, `judge`, `status`, `approve`, `dry-run`, `run`, `undo`, `relink`. |
+| `somora --version`, `-v` | Prints the version. |
+| `somora --help`, `-h` | Prints the usage. `setup`, `update` and `codex` have their own `--help`. |
+
+Useful routes for a quick check:
+
+| Route | Answer |
+|---|---|
+| `GET /healthz` | `ok` |
+| `GET /health` | State of the server, including `claudeAuth`. |
+| `GET /version` | Running version and, once known, the latest one. |
+| `GET /env` | The environment overrides in effect, each with an `isDefault` flag. Logged at start as `somora.env`. |
+| `GET /config/status` | When the config was loaded, whether the file changed since, and the sections that need a restart. |
+
+## Files and folders
+
+Everything somora keeps lives under `~/.somora/`, or under
+`SOMORA_HOME` when that is set.
+
+| Path | What it is |
+|---|---|
+| `config.yaml` | The server config. |
+| `somora.env` | Secrets for skills and tools, one `KEY=value` per line. Loaded into the server's environment at start. A variable that is already set wins. Keep it at `chmod 600`. |
+| `team.yaml` | The team chart. |
+| `agents/<name>/` | One folder per agent: `AGENTS.md`, `SOUL.md`, `USER.md`, `agent.yaml`, its memory and its sessions. |
+| `index/shared.db` | The search index over vault and wiki. Derived. It is rebuilt when deleted. |
+| `logs/server.YYYY-MM-DD.1.log` | The server log, one file per day. The log tile in the web client reads it without a shell. |
+| `logs/launchd.log` | Output of the service on macOS. |
+| `locks/server.lock` | Process, port and version of the running server. |
+| `certs/` | TLS certificate and key. |
+| `claude-home/`, `codex-home/` | somora's own config folders for Claude Code and Codex, with a copy of each login. |
+| `dream-state/deep.json`, `lucid.json` | When Deep and Lucid last ran. |
+| `update-check.json` | The last answer of the update check. |
+| `restart-intent.json`, `restart-resume.json` | A restart an agent asked for, and who was woken after one. |
+| `skills/`, `mcp/`, `lsp/`, `sentinel/`, `projects/`, `browser/` | Data of the feature of that name. |
+| `attachments/`, `images/`, `media/`, `video-jobs/`, `tts-cache/` | Uploaded files, generated pictures, video and audio. |
+| `models/` | The downloaded embedding model. |
+| `audit/` | Logs of privileged shell commands and MCP calls. |
+| `known_hosts.json` | Pinned host keys of SSH resources. |
+| `wiki-lucid/`, `wiki-migration/` | State of Lucid reviews, and plans and backups of a wiki migration. |
+| `tmux-*.json`, `tui-state.json` | State of the terminal watcher and of the TUI. |
+
+Deep and Lucid plan their next run from the time of the last completed
+one in `dream-state/`. To make the next run come sooner, set
+`lastCompletedAt` in the file to an older time. To pause the schedule
+without switching the phase off, set it to a time in the future.
+
+Outside that folder:
+
+| Path | What it is |
+|---|---|
+| `~/.config/systemd/user/somora.service` | The service on Linux. |
+| `~/Library/LaunchAgents/ai.somora.server.plist` | The service on macOS. |
+| `~/.local/share/somora/node` | Node.js, when the installer put it into your home folder. |
+| `~/.npm-global` | npm's global folder, when the installer moved it. |
+| `~/somoraworkspace` | The default working folder of the file tools. |
+
+## Environment variables
+
+Settings belong in `config.yaml`. These variables override it or cover
+what the config cannot. Set them in `~/.somora/somora.env` or in the
+service's environment.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SOMORA_HOME` | `~/.somora` | The data folder. |
+| `SOMORA_PORT` | `server.port` | Overrides the port. |
+| `SOMORA_HOST` | `server.host` | Overrides the listen address. Prefer the config. With HTTPS on, the server sets it to `server.tls.publicHost` for its own child processes. |
+| `SOMORA_TLS` | unset | Set to `1` by the server when it serves HTTPS, for its child processes. Do not set it yourself. |
+| `SOMORA_LOG_LEVEL` | `info` | Log level. |
+| `SOMORA_ENV_FILE` | `~/.somora/somora.env` | Another env file to load at start. |
+| `DO_NOT_TRACK` | unset | `1` turns the daily update check off. A set `CI` does the same. |
+| `SOMORA_CLAUDE_BIN` | `~/.local/bin/claude` | Path of the Claude Code binary. |
+| `CLAUDE_CONFIG_DIR` | `~/.somora/claude-home` | Config folder of the Claude engine. |
+| `SOMORA_CODEX_BIN` | unset | Uses another Codex binary instead of the bundled one. For debugging. |
+| `SOMORA_GROK_BIN` | `~/.local/bin/grok`, else `grok` on `PATH` | Path of the Grok CLI. |
+| `SOMORA_COMPACTION_TRIGGER_RATIO` | from config | Overrides `compaction.triggerRatio`. |
+| `SOMORA_COMPACTION_SAFETY_PAIRS` | from config | Overrides `compaction.safetyCushionPairs`. |
+| `SOMORA_COMPACTION_MODEL` | from config | Overrides `compaction.modelOverride`. |
+| `SOMORA_COMPACTION_WORKERS` | from config | Overrides `compaction.workers`, comma separated. |
+| `MCP_TOOL_TIMEOUT`, `MCP_TIMEOUT` | from config | Override `claudeCli.mcpToolTimeoutMs` and `claudeCli.mcpConnectTimeoutMs`. |
+| `SOMORA_CODEX_TOOL_TIMEOUT_SEC` | from config | Overrides `codexCli.toolTimeoutSec`. |
+| `SOMORA_CODEX_SHELL_ENV_POLICY` | from config | Overrides `codexCli.shellEnvironmentPolicy`. |
+| `SOMORA_MAX_SUBAGENT_DEPTH` | `3` | How deep sub-agents may start sub-agents. |
+| `SOMORA_URL` | from config | Server address for `somora wiki migrate`. |
+| `ONNXRUNTIME_NODE_INSTALL` | unset | `skip` during `npm install` leaves out the unused CUDA library. |
+
+Inside an agent's shell, somora sets `SOMORA_AGENT` and
+`SOMORA_SESSION`. That is how `somora server restart` knows it was
+called from a turn.
+
+## Troubleshooting
+
+**`somora: command not found` after the install.** Open a new terminal,
+or run `source ~/.profile`. The installer added npm's folder to your
+`PATH`.
+
+**A command says Node.js is too old.** Install Node 22.13 or newer, or
+run the installer again. `somora update` checks this before it installs
+anything.
+
+**`npm install -g` fails with `EACCES`.** npm's global folder belongs
+to root. Run the installer again, or move the folder as shown under
+"Install by hand".
+
+**The service does not start on Linux.** Look at
+`journalctl --user -u somora -n 50`. Status `203/EXEC` means the unit
+cannot find `node`. Run `somora init` again from a shell where `node`
+works. It writes the right `PATH` into the unit.
+
+**somora stops when you log out, or is not there after a reboot.** On
+Linux lingering is off: `sudo loginctl enable-linger $USER`. On macOS
+nobody has logged in yet: turn on automatic login.
+
+**The assistant says somora does not answer.** Read the log:
+`journalctl --user -u somora -n 50` on Linux,
+`tail -n 50 ~/.somora/logs/launchd.log` on macOS. A `config.yaml` the
+server cannot load is the usual cause.
+
+**An update shows no effect.** The service may point at another copy of
+somora, for example a source checkout. Check and repair:
+
+```bash
+systemctl --user cat somora.service | grep ExecStart
+# good: …/lib/node_modules/somora/bin/somora.mjs server start --foreground
+"$(npm root -g)"/somora/bin/somora.mjs init
+systemctl --user daemon-reload
+systemctl --user restart somora.service
+curl -ks https://<your-host>:18737/version
+```
+
+Then reload the browser with Ctrl+Shift+R.
+
+**Other devices cannot connect.** `server.host` is still `127.0.0.1`.
+Set it to `0.0.0.0` in `config.yaml` and restart.
+
+**New chat windows do not send, agents seem dead.** The web client runs
+over plain HTTP and hit the browser's limit of six connections. Set up
+HTTPS.
+
+**The browser warns about the certificate.** The address does not match
+`server.tls.publicHost`, or the certificate ran out. The server log
+shows `server.tls.expires_soon` from 14 days before the end,
+`server.tls.renew_failed` with the reason when a renewal did not work,
+and `server.tls.reloaded` when a new certificate was loaded. A failed
+renewal is most often the missing `sudo tailscale set --operator=$USER`.
+
+**A Claude turn fails with `OAuth session expired and could not be
+refreshed`.** Run `somora auth status`.
+When the stores diverged, `somora auth sync`. When both are expired,
+`claude auth login`.
+
+**The test message was answered by the backup model.** The first model
+did not respond. Check its login with `somora setup models`.
+
+**All agents seem dead after one client hung.** The log shows
+`sse.publish_evict_dead` when a stuck client was dropped. Nothing to
+do. A turn that ends with an idle error was stopped by
+`engineWatchdog`.
+
+## Develop from a checkout
+
+To work on somora itself:
 
 ```bash
 git clone https://github.com/thenaxon/somora_agent.git somora
 cd somora
-npm install                    # local install instead of -g
-npm run dev:server             # terminal A — starts via tsx watch
-npm run dev:cli                # terminal B — TUI against the dev server
+npm install
+npm run dev:server             # terminal A: the server, restarts on changes
+npm run dev:cli                # terminal B: the TUI against it
 ```
 
-The dev server reads/writes the same `~/.somora/` as the production
-binary, so anything you configure (providers, agents, persona files)
-shows up in both. To isolate, point `SOMORA_HOME` at a scratch dir:
+The dev server uses the same `~/.somora/` as an installed somora. To
+keep them apart, point it at a scratch folder:
 
 ```bash
 SOMORA_HOME=/tmp/somora-dev npm run dev:server
 ```
 
-Other useful scripts:
-
-| Command | What |
+| Command | What it does |
 |---|---|
-| `npm run typecheck` | server-side `tsc --noEmit` |
-| `npm test` | every `*.test.mts` under `src/`, `web/src` and `web-mobile/src`, each against a throwaway `SOMORA_HOME`; the web clients run from their own folders so their JSX compiles with their own tsconfig |
-| `npm test src/browser` | one subtree, same isolation (`npm test web/src/lib` for the web client) |
-| `npm run verify:fast` | typecheck plus the suite |
-| `cd web && npm run dev` | Vite dev server for the web client (proxies API to `:18737`) |
-| `cd web && npm run build` | rebuild `web/dist/` (the bundle the production server serves at `/web/`) |
+| `npm run typecheck` | `tsc --noEmit` for the server. |
+| `npm test` | Every `*.test.mts` under `src/`, `web/src` and `web-mobile/src`, each against a throwaway `SOMORA_HOME`. |
+| `npm test src/browser` | One subtree, with the same isolation. |
+| `npm run verify:fast` | Typecheck plus the tests. |
+| `npm run build:all` | Builds both web apps (`build:web`, `build:mobile`). `npm pack` runs it first. |
+| `cd web && npm run dev` | Vite dev server for the web client. It proxies the API to port 18737. |
+| `cd web && npm run build` | Rebuilds `web/dist/`, which the server serves at `/web/`. |
 
-Run tests through `npm test`, not `tsx --test` directly. The logger opens
-its file the moment it is imported, so a test started without an
-explicit `SOMORA_HOME` would write into the running installation's log
-and make its error count meaningless. The launcher sets a temporary home
-before anything loads and removes it afterwards; `SOMORA_TEST_HOME=/some/dir`
-keeps it when you want to read the test's own log. A file started by hand
-under `node:test` falls back to a temporary log directory too, but only
-the launcher isolates sessions, memory and the Claude config as well.
+Run tests through `npm test`, not with `tsx --test`. The logger opens
+its file as soon as it is imported, so a test started without its own
+`SOMORA_HOME` writes into the log of the running install. The launcher
+sets a temporary home first and removes it afterwards.
+`SOMORA_TEST_HOME=/some/dir` keeps it for reading.
 
-There's no built-in auth on the HTTP API — somora binds to `127.0.0.1`
-by default and assumes you're its only user. To expose it across a
-network, use Tailscale (see HTTPS section above) or put it behind a
-reverse proxy with proper auth.
+`somora init` from a checkout points the service at the checkout and
+warns about it. That is what you want while developing, and the reason
+for the "update shows no effect" entry above.
+
+## See also
+
+- [Models](models.md): a tested block per model family, all model fields
+- [Agents](agents.md): creating agents, `agent.yaml`, personas
+- [Security](security.md): who can reach the server, what an agent may
+  do, the update check in detail
+- [Web client](web.md): the desktop, the gear menu, the log tile
+- [Mobile app](mobile.md): installing the phone app
+- [TUI display](display.md): the terminal client
+- [Memory](memory.md) and [Dream phases](dream-phases.md): notes, REM,
+  Deep and Lucid
+- [Voice](voice.md): dictation and spoken replies
+- [Compaction](compaction.md): `contextWindow` and the compaction
+  settings
+- [API](api.md): every route, including
+  [a restart requested from inside a turn](api.md#a-restart-requested-from-inside-a-turn)

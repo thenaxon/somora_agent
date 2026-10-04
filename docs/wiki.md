@@ -1,583 +1,547 @@
 # Wiki Layer
 
-> Long-term, structured, shared knowledge that all agents read but only
-> Deep and Lucid (and you, in Obsidian) write. Lives in a designated
-> subfolder of an Obsidian vault.
-
-## What it is
-
-The wiki is somora's long-term memory. While each agent has its own
-private **memory inbox** (`~/.somora/agents/<name>/memory/*.md`), the
-wiki is **one shared knowledge base** that every agent can read from
-and contribute to via the Deep dream phase.
-
-```
-<obsidian-vault>/
-├── … your normal Obsidian notes (somora reads these as 'vault' source) …
-└── <wiki-subfolder>/                  ← THIS is the wiki
-    ├── index.md                       ← auto-regenerated topology
-    ├── personen/
-    │   ├── familie-klein.md
-    │   ├── max-meier.md
-    │   └── …
-    ├── projekte/
-    │   ├── somora.md
-    │   ├── internal-cms.md
-    │   └── …
-    ├── wissen/
-    │   ├── runpod.md
-    │   └── …
-    ├── infrastruktur/, orte/, …       ← the shipped template, see "Folders"
-    ├── _struktur.md                   ← the folders and what lives in them
-    └── logs/
-        └── YYYY-MM.md                 ← monthly Deep audit log
-```
-
-The folder names, section headings and the wording of index and log
-follow `wiki.language` (`de`, the default, or `en` — see
-[Language](#language)). The tree above is the German set; with `en`
-it reads `people/`, `projects/`, `knowledge/`, `places/`.
-
-## Why a separate layer
-
-Three reasons memory and wiki need to be separate:
-
-**Multi-agent.** Each agent has its own conversation history and its
-own atomic observations. But a fact like "Bea is the user's spouse"
-is not agent-private — it's something every agent should know. The
-wiki is where shared facts live.
-
-**Curation.** Memory inboxes accumulate raw observations ("user
-mentioned a new family car arrived"). The wiki is the place where
-those observations
-get integrated into a coherent picture (`personen/familie-klein` is
-updated; the source memory entry is deleted). One source of truth per
-topic.
-
-**You-edit-able.** The wiki is plain markdown in your Obsidian vault.
-You can read it in Obsidian, edit it like any note, link it from other
-vault content. somora respects your edits (mtime-aware writes — Deep/Lucid
-back off if you've changed a page since they last saw it).
-
-## How wiki pages are written
-
-### By Deep (Memory → Wiki consolidation)
-
-Every 12h or via `dream_run({phase: 'deep'})`, Deep iterates each agent's
-memory inbox, decides per file whether to skip / promote / merge, and
-applies the structured fix verbatim. After Promote/Merge the source
-memory file is deleted.
-
-See [dream-phases.md](dream-phases.md#phase-deep--memory--wiki) for
-mechanics.
-
-### By Lucid + an agent in a `dream_review` loop
-
-Every 7 days or via `dream_run({phase: 'lucid'})`, Lucid scans the
-existing wiki for objectively-verifiable issues (contradictions, dead
-refs, missing pages, link suggestions) — max 8 findings per run. Each
-finding is **informational only** — the actual editing happens in a
-conversational `dream_review` loop where you walk the findings with
-one of your agents and the agent writes changes via loop-scoped
-`wiki_edit` / `wiki_create` / `wiki_delete` / `wiki_move` tools after you OK each
-step. Outside the loop, no agent can write to the wiki.
-
-See [dream-phases.md](dream-phases.md#phase-lucid--wiki-cleanup) for
-the full flow + loop discipline rules.
-
-### By you (manually in Obsidian)
-
-The wiki is just markdown. Open Obsidian, edit a page, save. somora's
-file-watcher re-indexes the change — once, into the shared vault/wiki
-index every agent reads ([memory.md](memory.md#where-notes-live)).
-Deep and Lucid will respect your edit on next run (mtime check before
-writing — they back off on conflict).
-
-## Page format
-
-Every wiki page is markdown with YAML frontmatter:
-
-```markdown
----
-slug: personen/familie-klein
-type: family
-created: 2026-05-08
-updated: 2026-05-09
-sources:
-  - alpha/familie-klein              # which agent's memory contributed
-  - beta/people
-related:
-  - wissen/family-cars
-  - orte/main-house
----
-
-# Familie Klein
-
-## Aktueller Stand
-
-Familie around Sarah Klein: spouse, sister, father, niece and
-two dogs. This page bundles the key people …
-
-## Eigenschaften
-
-- **Spouse:** Dr. Bea Klein (* 03.02.1984)
-- **Sister:** Eva Klein (* 08.12.1973)
-- …
-
-## Zeitleiste
-
-- 1941-04-30 — Ada Klein born
-- 1973-12-08 — Eva Klein born
-- …
-
-## Notizen
-
-- Querverweise: [[wissen/family-cars]], [[orte/main-house]]
-```
-
-### Frontmatter fields
-
-| Field | Required | Purpose |
-|---|---|---|
-| `slug` | yes | Wiki path without `.md`, matches the file's location. Stable identifier. |
-| `type` | yes | Loose category (`person`, `projekt`, `konzept`, `ort`, `werkzeug`, …). Deep may invent new types. |
-| `created` | yes | ISO date when the page was first created. |
-| `updated` | yes | ISO date of last modification. Deep refreshes on every Promote/Merge. |
-| `sources` | optional | List of `<agent>/<memory-slug>` strings — which agent inboxes contributed content. |
-| `related` | optional | List of wiki-paths (without `.md`) for cross-references. |
-
-### Section conventions (soft)
-
-Deep prefers writing pages with four section headers, named by
-`wiki.language`:
-
-| `de` (default) | `en` | content |
-|---|---|---|
-| `## Aktueller Stand` | `## Current state` | prose summary, current state of the topic |
-| `## Eigenschaften` | `## Properties` | bullet-list of stable facts |
-| `## Zeitleiste` | `## Timeline` | dated entries (additions, changes, milestones) |
-| `## Notizen` | `## Notes` | miscellaneous observations, cross-refs |
-
-You can introduce other sections; Deep respects existing structure on
-Merge. The conventions exist so multi-agent reads have a predictable
-shape.
-
-### Wikilinks
-
-Use Obsidian's `[[wiki-path]]` syntax for cross-references between
-pages. Example: `Bea ist die [[personen/familie-klein|Ehefrau]]`.
-
-Wikilinks are indexed as plain text (the brackets are tokenized away),
-so a search for `garten` finds pages mentioning `[[orte/garten]]`. They
-are NOT followed transitively — `memory_search` doesn't walk graph
-edges. The agent reads the wikilink in a hit and decides whether to
-fetch the referenced page via `memory_get`.
-
-## index.md
-
-Auto-regenerated after every Deep run. Contains:
-
-- Header with last-update timestamp
-- Sections per subfolder (`## Personen`, `## Projekte`, … — the
-  capitalised folder names)
-  - One bullet per page with the slug + first-line description
-- `## Letzte Updates` (`## Recent updates` with `wiki.language: en`) —
-  last 10 Promote/Merge entries from the current run
-
-```markdown
-# somora-Wiki Index
-
-Letztes Update: 2026-05-09 07:45 UTC von Deep
-
-## Personen
-- [[personen/familie-klein]] — Family around Sarah Klein …
-- [[personen/anna]] — Niece, daughter of Eva …
-
-## Projekte
-- [[projekte/internal-cms]] — Internal CMS used by …
-- [[projekte/release-pipeline]] — CI/CD across multiple repos …
-
-## Wissen
-- [[wissen/family-cars]] — Notes on the household vehicle fleet …
-
-## Letzte Updates
-- 2026-05-09: [[personen/familie-klein]] — familie-klein aktualisiert: spouse + birthday
-```
-
-The index is the **topology header** Lucid and REM see — they know what
-subfolders exist and what slugs are taken without loading every page
-body.
-
-## Folders: kind, not topic
-
-A folder says what **kind** of page lives in it — a person, a project,
-a device, a rule — never what a page is about. Topics live in the page
-body, in its `[[links]]` and in `index.md`. Kept this way, a wiki with
-a thousand pages still has a dozen folders; without the rule, five
-months of Deep runs produced 40 folders, a 300-page `wissen/` catch-all
-and the same page name living in several folders at once.
-
-somora ships one folder template per wiki language. Deep proposes it,
-your wiki's real folders win: a folder you or Deep created is listed as
-it is, the template only fills the gaps.
-
-| `de` | `en` | What lives there |
-|---|---|---|
-| `personen/` | `people/` | one page per human |
-| `unternehmen/` | `companies/` | one page per company, firm, supplier |
-| `projekte/` | `projects/` | one page per bounded undertaking; dated work reports are timeline entries on it, not pages |
-| `infrastruktur/` | `infrastructure/` | devices, hosts, services, provider accounts — subfolders `geraete/hosts/dienste/konten` (`devices/hosts/services/accounts`) |
-| `finanzen/` | `finances/` | accounts, portfolio, crypto, real estate as investment, loans — one subfolder per kind |
-| `besitz/` | `possessions/` | things owned that are not investments |
-| `orte/` | `places/` | houses, sites, cities, destinations |
-| `ereignisse/` | `events/` | what happened when |
-| `wissen/` | `knowledge/` | subject knowledge tied to no person or company — `konzepte/anleitungen/vergleiche` (`concepts/how-tos/comparisons`) |
-| `regeln/` | `rules/` | directives, preferences, agreements |
-| `agenten/` | `agents/` | agent profiles only, no work reports |
-| `privat/` | `personal/` | interests, hobbies, pets, health, living |
-
-At most one level of subfolders. The template with its rationale per
-folder lives in `src/wiki/taxonomy.ts`; adding a language means adding
-an entry there.
-
-### The structure file
-
-`_struktur.md` (`_structure.md` with `en`) in the wiki root is the
-wiki's own memory of what its folders mean: one row per folder with
-its purpose, who described it (`template`, `deep`, `user`) and since
-when. Deep writes it after a run in which a folder was created or
-found undescribed; you edit the sentences in Obsidian like any page —
-a person's wording is never overwritten. Folders on disk nobody has
-described yet appear as "(no description yet)" until you or the
-migration fill them in. The file is not a wiki page: the index and the
-memory search skip it.
-
-### How Deep files a page
-
-On every run Deep is shown the **wiki map**: every folder that exists
-with its purpose and page count, then the template folders that do not
-exist yet, then the rules. It files a new page into one of the
-described ones — a grown folder nobody has described is not a home
-until someone describes it. Only when no kind fits may it create a folder, and then it has to say in one
-sentence what kind of page lives there — that sentence lands in the
-structure file and in every later map. A new folder without a purpose,
-or one deeper than a subfolder, is refused and the memory note waits
-for the next run.
-
-Before a page is created, its name is checked against the **whole**
-wiki, not only the exact path: when a page with that name already
-exists in another folder, Deep merges into it instead of creating a
-twin. Names that already exist in several folders are noted in the
-structure file for the migration.
-
-A page whose name extends an entity page's name — a note filed as
-`acme-kapitalruecklage` while `unternehmen/acme` exists — is
-usually a detail of that entity: Deep is asked again with the entity
-page in full and merges the note into it, unless it insists the page
-is a thing of its own.
-
-`wiki.defaultSubdirs` from earlier versions is still read, but only
-shapes the example slugs in the prompts; the template above replaces
-the list.
-
-### Migrating a grown wiki
-
-A wiki that grew before the template keeps working as it is: the map
-only changes where **new** pages go. Moving the existing pages onto
-the template is a separate, deliberate process that nothing starts by
-itself — you trigger it, you read what it would do, you approve it in
-groups, and it takes a full copy of the wiki before it moves a file.
-Four steps, from the shell on the somora host — `somora wiki migrate`
-walks you through them, and each is also a subcommand with flags so a
-script, or an agent that read this page, can drive it — or over HTTP
-([api.md](api.md#post-wikimigrationplan)), which is what the command
-calls:
-
-```
-somora wiki migrate                 guided: plan → judge → approve → dry run → run
-somora wiki migrate plan            step 1, prints the plan id
-somora wiki migrate judge <id>      step 2, waits for the model, lists the groups
-somora wiki migrate status <id>     the groups and what is approved
-somora wiki migrate approve <id> --action move --action fold --twins
-somora wiki migrate approve <id> --group fold:projekte/somora --dismiss
-somora wiki migrate dry-run <id>    step 4a, writes dry-run.md, touches nothing
-somora wiki migrate run <id> --confirm "move my wiki"
-somora wiki migrate undo <id>       the backup back over the wiki (the current
-                                    wiki is moved aside, nothing is deleted)
-somora wiki migrate relink <id>     point links and related: at the moved pages
-                                    again (runs before .07 missed related:)
-```
-
-The words "move my wiki" are the one thing an agent must not supply on
-its own: it may plan, judge, read the groups out and record your
-approvals, and it starts the real run only after you said the words.
-
-1. **Plan** — `POST /wiki/migration/plan` reads the wiki and writes a
-   plan under `~/.somora/wiki-migration/<id>/plan.md`: folders a rule
-   would move (a folder named `aktien` belongs in `finanzen/depot`),
-   page names that exist in several folders, dated work reports and
-   the project they seem to belong to. Nothing is touched.
-2. **Judge** — `POST /wiki/migration/refine` has the Lucid model look
-   at **every** page — with the map and the names of the entity pages
-   in front of it — and answer per page: keep, move (with a new file
-   name when the old one is a date, not a thing), fold into an existing
-   page, or unclear. A rule's proposal is only a proposal; no page
-   moves on a folder name alone. The answers land in `refined.md`,
-   grouped by what would happen: "move 12 pages to
-   infrastruktur/geraete", "fold 30 pages into projekte/realtimevoice".
-   Still nothing is touched.
-3. **Approve** — `POST /wiki/migration/plans/<id>/approve` marks groups
-   (or every group of one action, or the same-name unions) approved or
-   dismissed. What you do not approve stays where it is.
-4. **Execute** — `POST /wiki/migration/plans/<id>/execute`. The default
-   is a dry run: it walks the approved steps and writes `dry-run.md`,
-   nothing else. A real run needs `{"dryRun": false, "confirm": "move
-   my wiki"}` and then, in this order: a full copy of the wiki into
-   `~/.somora/wiki-migration/<id>/backup-<time>/` (verified by file
-   count — no copy, no run); the approved moves (file, frontmatter
-   `slug`); the approved folds — the model writes the entry that
-   carries the page's substance into the target (a timeline line for a
-   dated report, a few lines under the fitting heading for a detail),
-   the original is kept in full under `logs/berichte/` (`logs/reports/`
-   with `en`) with `merged_into` in its frontmatter — that archive is
-   left out of the search index, its substance now lives in the target
-   pages; the approved unions
-   of same-name pages — the copy the model gave a home survives, the
-   model writes its merged body, the other copy goes to the same
-   archive; every `[[link]]` in the wiki pointed at the new places;
-   empty folders removed; the structure file stamped with the template
-   version; `index.md` and the monthly log regenerated; the search
-   index swept. Every step is recorded with its outcome in
-   `execution-<time>.md`; a failed step never stops the others.
-
-To undo a run: `somora wiki migrate undo <id>` moves the current wiki
-folder aside (`<wiki>.before-undo-<time>`), copies the backup to the
-wiki's place and sweeps the search index. The plan and its files stay
-under `~/.somora/wiki-migration/` for as long as you keep them.
-
-## How agents read the wiki
-
-Three paths feed a chat turn:
-
-1. **Auto-injection** runs hybrid search (vector + BM25) across all three
-   memory layers. With wiki enabled, hits from `source: 'wiki'` get a
-   1.4× boost (configurable) so curated wiki pages outrank noisier
-   memory chunks. Auto-injected wiki content shows up as
-   `[wiki/<path> · score=N.NN]` in the `<memory-context>` block.
-
-2. **Wiki overview block** puts a shortened `index.md` into the system
-   prompt — so the agent sees the wiki topology even when no specific
-   page matches, and can decide "is there a wiki page I should fetch?"
-   It is built once, on a session's first turn, and then frozen for the
-   life of that session (see [Overview block](#overview-block)).
-
-3. **Explicit tool calls** — `memory_search` or `memory_get` with a
-   `wiki/<path>` reference. Agents fetch full pages on demand.
-
-Wiki paths in references look like `wiki/personen/familie-klein` — the
-`wiki/` prefix is the source-tag, the rest is the slug.
-
-### Overview block
-
-The overview answers one question: *what topics does the wiki hold?*
-Content comes from search and `memory_get`, never from here.
-
-It lives in the **system prompt**, not in the per-turn memory block. The
-content is identical on every turn, so putting it in the cached prefix
-costs it once per session instead of once per turn — and on the
-`openai-compatible` engine, which rebuilds the whole conversation from
-the transcript, once instead of once *per turn of history*.
-
-It is also **frozen for the session**. Deep rewrites `index.md` every
-~12 h; re-reading it mid-session would shift a block that sits in front
-of the entire conversation and invalidate the provider's prefix cache.
-A session therefore keeps the wiki map it started with. Recall stays
-current regardless — auto-injection and `memory_search` always hit the
-live index. To pick up a rewritten map, start a new session or `/reset`
-the current one; both re-read `index.md` on the next turn.
-
-`index.md` rarely fits the budget, so it degrades through four stages.
-Each one describes the **whole** wiki; they differ in resolution:
-
-| Stage | Content | Used when |
-|---|---|---|
-| 1 | `index.md` verbatim | fits `overviewMaxChars` |
-| 2 | sections + pages + clipped descriptions | small wiki |
-| 3 | sections + bare page links | medium wiki |
-| 4 | section names + page counts | large wiki |
-
-Stage 4 deliberately reports `- Projekte (60)` rather than listing 30 of
-the 258 pages. A partial page list reads as complete and stops the agent
-from searching; a section with a count tells it what to search *for*.
-
-Raise `overviewMaxChars` to keep page names visible on a larger wiki —
-the cost is a bigger constant prefix, paid once per session.
-
-## Web explorer
-
-The web client has a read-only wiki browser behind the **wiki** tile in
-the app dock. Three columns:
-
-```
-┌──────────┬────────────────────────┬───────────────┐
-│ tree     │ # somora Voice/TTS     │   graph       │
-│ wissen/  │                        │      o        │
-│ konzepte/│ …                      │     / \       │
-│ projekte/│ [[somora]] [[voice]]   │    o   o      │
-│ personen/│                        │ backlinks:    │
-│ bugs/    │                        │ · projekte/x  │
-└──────────┴────────────────────────┴───────────────┘
-```
-
-`[[wikilinks]]` are clickable and navigate inside the window. Targets
-that resolve to no page render as **broken** instead of vanishing — a
-wiki with gaps should look like one. Resolution follows Obsidian's
-rules, in order: exact slug, case-insensitive slug, then a unique
-basename. A basename matching several pages stays unresolved rather
-than picking one; a wrong edge reads as a real relationship and is
-worse than a missing one.
-
-The graph toggles between **This page** (the current page, what it links
-to, and what links to it — plus the edges among those neighbours) and
-**Whole wiki** (every page at once, capped at the 400 most-connected).
-Scroll to zoom, drag the background to pan, and the expand button gives
-the graph the full window — a dense whole-wiki view only becomes legible
-once you can zoom into a corner and read the labels. Clicking a node
-opens that page. `index.md` is excluded from both scopes: it links to
-every page by construction, so including it turns the graph into a star
-around one node and adds hundreds of edges that say nothing about how
-the knowledge connects.
-
-Read-only is deliberate. Deep and Lucid own the wiki files; an editor
-in the browser would race them mid-run.
-
-### Endpoints
-
-```http
-GET  /wiki/status                            # { enabled, root? }
-GET  /wiki/tree                              # folder tree + page titles
-GET  /wiki/page?slug=konzepte/voice-tts      # body + frontmatter + links
-GET  /wiki/graph?scope=local&slug=<slug>     # neighbourhood
-GET  /wiki/graph?scope=global                # whole wiki
-POST /wiki/refresh                           # drop the cache, re-scan
-```
-
-Pages are addressed by **slug, never by path**. A request can only name
-pages the index already found under the wiki root, so `../`, absolute
-paths and symlink escapes are rejected by construction rather than by a
-filter someone has to keep correct.
-
-The index caches for 10 seconds, then re-stats the tree and re-parses
-only files whose mtime or size moved. Edits made in Obsidian appear
-within that window; the refresh button skips it.
-
-## Configuration
+The wiki is the long-term knowledge all your agents share. It is a
+folder of Markdown pages inside your Obsidian vault: one page per
+person, project, device or rule. somora writes it from the agents' notes,
+and you can read and edit it like any other note.
+
+## What you get
+
+- **One shared picture.** A fact one agent learned is known to all of
+  them, on one page per thing.
+- **Curated, not collected.** The Deep phase turns loose notes into
+  pages and removes the notes. One source of truth per topic.
+- **Yours to edit.** Pages are plain Markdown in your vault. somora
+  never overwrites a page you changed while it was working on it.
+- **A tidy structure.** A folder says what kind of page lives in it, so
+  a thousand pages still fit a dozen folders.
+- **A browser with a graph.** The web client shows the pages, their
+  links and what links back.
+
+## Set it up
+
+The wiki is off by default. It needs a vault and a subfolder name:
 
 ```yaml
 # ~/.somora/config.yaml
-wiki:
-  enabled: true                          # master toggle
-  vaultSubfolder: somora                 # <vault>/somora/ becomes the wiki
-  language: de                           # de | en — see "Language" below
-
-  deep:
-    enabled: true
-    intervalHours: 12
-    model: opus
-
-  lucid:
-    enabled: true
-    intervalDays: 7
-    model: opus
-    requireApproval: true
-    maxCallsPerTurn: 3                   # wiki_* calls per turn in a review loop
-
-  search:
-    boostWiki: 1.4                       # search-rank multiplier per source
-    boostMemory: 0.85
-    boostVault: 0.65
-    overviewMaxChars: 4000               # overview-block budget (see above)
-    overviewTopNSlugs: 30                # max sections in the stage-4 view
-
 obsidian:
-  vault: /path/to/your/vault
+  vault: ~/Documents/Vault
+wiki:
+  enabled: true
+  vaultSubfolder: somora      # <vault>/somora/ becomes the wiki
+  language: en                # de (default) | en
+  deep:
+    model: <model>            # worker model for Deep
+  lucid:
+    model: <model>            # worker model for Lucid
 ```
 
-`obsidian.vault` is required for the wiki to work — the wiki is a
-subfolder of your Obsidian vault. If you don't use Obsidian, you can
-still point `vault` at any directory; somora doesn't require Obsidian
-itself, just the markdown-vault layout.
+You do not need Obsidian itself. `obsidian.vault` can be any folder of
+Markdown files. Without it there is no wiki.
+
+Restart the server. Deep fills the wiki from the agents' notes on its
+next run, or at once when an agent calls `dream_run({phase: 'deep'})`.
+
+## Where it lives
+
+```
+<vault>/
+├── … your own notes (read as source "vault", never written) …
+└── <wiki-subfolder>/
+    ├── index.md               ← list of all pages, regenerated by Deep
+    ├── _structure.md          ← the folders and what lives in them
+    ├── people/
+    │   └── nina-muster.md
+    ├── projects/
+    │   └── house-build.md
+    ├── knowledge/, places/, … ← see "Folders: kind, not topic"
+    └── logs/
+        └── YYYY-MM.md         ← monthly change log
+```
+
+This is the English set. With `language: de` the names are German:
+`personen/`, `projekte/`, `wissen/`, `orte/`, `_struktur.md`.
+
+Each agent also has a private memory inbox under
+`~/.somora/agents/<name>/memory/`. The inbox is short-term and belongs
+to one agent. The wiki is long-term and shared.
+
+## Who writes the wiki
+
+| Writer | When | What it does |
+|---|---|---|
+| **Deep** | every 12 hours, or `dream_run({phase: 'deep'})` | Reads each agent's inbox. Per note it skips, creates a page, or merges into a page. A used note is deleted. No approval step. |
+| **Lucid** | every 7 days, or `dream_run({phase: 'lucid'})` | Checks the wiki for contradictions, dead links, missing, duplicate, misfiled and oversized pages. Sets plain link suggestions itself. Everything else waits for review. |
+| **An agent in review** | when you start `dream_review` | Walks the Lucid findings with you and changes pages with `wiki_edit`, `wiki_create`, `wiki_delete` and `wiki_move` after you agree to each step. |
+| **You** | any time | Edit a page in Obsidian and save. |
+
+Outside a `dream_review` loop no agent can write to the wiki. The four
+`wiki_*` tools only work for the agent that holds the loop.
+
+Every write checks the file's modification time first. If you changed a
+page after somora read it, the write is dropped and tried again on the
+next run. Your edit is picked up by the file watcher and indexed once,
+for all agents.
+
+Two guards protect large pages. A merge that would shrink a page to
+less than half is refused (`wiki.deep.mergeShrinkGuard`). A page over
+50,000 characters takes no more content: Deep files the note as a
+sub-page under it (`wiki.deep.maxPageChars`).
+
+## Page format
+
+```markdown
+---
+slug: people/nina-muster
+type: person
+created: 2026-05-08
+updated: 2026-05-09
+sources:
+  - ada/nina-muster
+  - bea/people
+related:
+  - places/main-house
+---
+
+# Nina Muster
+
+## Current state
+
+Nina is Karl's sister and lives in the main house …
+
+## Properties
+
+- **Brother:** Karl Muster
+
+## Timeline
+
+- 2026-05-08: moved into the main house
+
+## Notes
+
+- See also [[places/main-house]]
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `slug` | yes | Path inside the wiki without `.md`. Matches the file's location. |
+| `type` | yes | Loose category. Deep prefers `person`, `project`, `concept`, `place`, `tool` (`de`: `person`, `projekt`, `konzept`, `ort`, `werkzeug`) and may use others. |
+| `created` | yes | Date the page was created. |
+| `updated` | yes | Date of the last change. Refreshed on every write. |
+| `sources` | no | `<agent>/<memory-slug>` entries: which inboxes contributed. |
+| `related` | no | Other wiki pages, as paths without `.md`. |
+
+New pages get four sections. You can add others: a merge keeps the
+structure a page already has.
+
+| `en` | `de` | Content |
+|---|---|---|
+| `## Current state` | `## Aktueller Stand` | a short summary in prose |
+| `## Properties` | `## Eigenschaften` | stable facts as a list |
+| `## Timeline` | `## Zeitleiste` | dated entries |
+| `## Notes` | `## Notizen` | everything else, cross-references |
+
+Link pages with Obsidian's `[[path]]` or `[[path|label]]`. Search does
+not follow links. An agent that sees a link in a hit decides itself
+whether to read that page with `memory_get`.
+
+## Folders: kind, not topic
+
+A folder says what **kind** of page lives in it: a person, a project, a
+device, a rule. It never says what a page is about. Topics live in the
+page text, in links and in `index.md`. Without this rule a wiki grows a
+folder per topic and the same page name in several of them.
+
+somora ships one folder template per language. Your wiki's real folders
+win: a folder you or Deep created is used as it is, and the template
+only fills gaps. Subfolders go one level deep at most.
+
+| `en` | `de` | What lives there |
+|---|---|---|
+| `people/` | `personen/` | one page per human |
+| `companies/` | `unternehmen/` | one page per company, firm, supplier |
+| `projects/` | `projekte/` | one page per bounded undertaking. Dated work reports are timeline entries on it, not pages. |
+| `infrastructure/` | `infrastruktur/` | subfolders `devices`, `hosts`, `services`, `accounts` (`geraete`, `hosts`, `dienste`, `konten`) |
+| `finances/` | `finanzen/` | subfolders `accounts`, `portfolio`, `crypto`, `real-estate`, `loans` (`konten`, `depot`, `krypto`, `immobilien`, `kredite`) |
+| `possessions/` | `besitz/` | things owned that are not investments |
+| `places/` | `orte/` | houses, sites, cities, destinations |
+| `events/` | `ereignisse/` | what happened when |
+| `knowledge/` | `wissen/` | knowledge tied to no person or company. Subfolders `concepts`, `how-tos`, `comparisons` (`konzepte`, `anleitungen`, `vergleiche`) |
+| `rules/` | `regeln/` | directives, preferences, agreements |
+| `agents/` | `agenten/` | agent profiles only, no work reports |
+| `personal/` | `privat/` | interests, hobbies, pets, health, living |
+
+### The structure file
+
+`_structure.md` (`_struktur.md` with `de`) in the wiki root holds one
+table row per folder: its purpose, who described it (`template`, `deep`
+or `user`) and since when. Deep writes it after a run that created a
+folder or met an undescribed one.
+
+Edit the sentences in Obsidian like any page. Your wording and the
+template's are never overwritten. The file is not a wiki page: the
+index and the search skip it.
+
+### How Deep files a page
+
+On every run Deep sees a map of the wiki: every existing folder with
+its purpose and page count, the template folders that do not exist yet,
+and the rules. Then:
+
+- **A new page goes into a described folder.** A folder nobody has
+  described shows as "(no description yet)" and is not used until
+  someone describes it.
+- **A new folder needs a purpose.** Deep may create one only when no
+  kind fits, with one sentence on what lives there. The sentence goes
+  into the structure file. A folder without a purpose, or deeper than
+  one subfolder, is refused and the note waits for the next run.
+- **No twins.** The page name is checked against the whole wiki. If a
+  page of that name exists in another folder, Deep merges into it.
+  Names that already exist in several folders are listed in the
+  structure file.
+- **Details go to their entity.** A note named `acme-capital-reserve`
+  while `companies/acme` exists is usually a detail of acme. Deep is
+  asked again with that page in full and merges, unless it insists the
+  note is a thing of its own.
+
+## The index page
+
+Deep regenerates `index.md` after every run. It has one section per top
+folder, one line per page with a short description, and the last 10
+changes of that run. Pages in the wiki root are listed under `Other`
+(`Sonstiges`).
+
+```markdown
+# somora wiki index
+
+Last update: 2026-05-09 07:45 UTC by Deep
+
+## People
+- [[people/nina-muster]] — Karl's sister, lives in the main house …
+
+## Projects
+- [[projects/house-build]] — Extension of the main house …
+
+## Recent updates
+- 2026-05-09: [[people/nina-muster]] — nina-muster updated: address
+```
+
+The description is the page's `description` field if it has one,
+otherwise its first line of prose, cut at 120 characters.
+
+## How agents read the wiki
+
+| Way | What the agent gets |
+|---|---|
+| **Automatic recall** | Wiki sections that fit the message, in the `<memory-context>` block, tagged `[wiki/<path> · score=N.NN]`. A wiki hit counts 1.4 times its score, so curated pages rank ahead of raw notes. |
+| **Overview block** | A map of what the wiki holds, in the system prompt. |
+| **Tools** | `memory_search` to search, `memory_get('wiki/<path>')` to read a whole page, `memory_list` with `source: "wiki"` to browse a folder. |
+
+A reference is `wiki/` plus the slug: `wiki/people/nina-muster`.
+
+## Overview block
+
+The overview tells the agent which topics the wiki holds, so it knows
+what is worth searching for. It carries page names only. Content comes
+from recall and `memory_get`.
+
+It sits in the system prompt and is frozen for the session: it is built
+on the session's first turn and stays the same after that. A block in
+front of the whole conversation must not change, or the provider's
+prompt cache is lost on every Deep run.
+
+Recall is not frozen. Search always uses the live index. To get a fresh
+map, start a new session or `/reset` the current one.
+
+`index.md` rarely fits the budget of `wiki.search.overviewMaxChars`.
+somora then shortens it in stages. Every stage covers the whole wiki:
+
+| Stage | Content | Used when |
+|---|---|---|
+| 1 | `index.md` as it is | it fits the budget |
+| 2 | sections, pages, descriptions cut to 100 characters | small wiki |
+| 3 | sections and bare page links | medium wiki |
+| 4 | section names with page counts | large wiki |
+
+Stage 4 says `- Projects (60)` and does not list some of the pages. A
+partial list looks complete and stops the agent from searching. With
+the default of 4000 characters, page names stay visible up to roughly
+120 pages.
+
+> **Tip:** Raise `overviewMaxChars` to keep page names visible on a
+> larger wiki. The cost is a bigger system prompt, paid once per
+> session.
 
 ## Language
 
-`wiki.language` decides what the wiki's scaffolding is called and
-which language Deep writes page prose in. It covers:
+`wiki.language` sets what the wiki's scaffolding is called and which
+language Deep writes in:
 
-- the section headings of new pages (table above),
-- the `type:` values Deep picks (`person / projekt / konzept / ort /
-  werkzeug` vs `person / project / concept / place / tool`),
-- the folder template ("Folders" above) and the examples in the Deep
-  and Lucid prompts and the `wiki_*` tool descriptions,
-- the wording of `index.md` (`Letztes Update … von Deep` / `Sonstiges`
-  / `Letzte Updates` vs `Last update … by Deep` / `Other` / `Recent
-  updates`) and of the monthly log (`# Wiki-Log Mai 2026` vs `# Wiki
-  log May 2026`, promotion lines),
-- the instruction to the Deep worker to write titles, headings and
-  prose in that language.
+- the section headings and `type` values of new pages
+- the folder template and the name of the structure file
+- the wording of `index.md` and of the monthly log
+- the examples in the Deep and Lucid prompts
+- the language of titles, headings and prose that Deep writes
 
-`de` is the default; an installation that never sets the key keeps
-producing pages that match its existing ones. Set `en` for an English
-wiki. Switching later changes only new scaffolding: Merge keeps the
-headings a page already has, existing pages are not translated, and
-memory notes and search are language-neutral and unaffected. Names and
-terms are quoted as they appear in the memory, whatever the wiki
-language.
+`de` is the default. Switching later changes new scaffolding only.
+Existing pages are not translated, and a merge keeps the headings a
+page has. Names and terms are quoted as they appear in the note,
+whatever the language. Notes and search are not affected.
 
-## Multi-agent participation
+## Web explorer
 
-By default, every agent's memory inbox feeds the wiki via Deep. Opt
-individual agents OUT in their `agent.yaml`:
+The web client has a read-only wiki window behind the **wiki** tile in
+the dock. The tile appears when the wiki is enabled. It carries a badge
+while Lucid findings wait for review.
+
+| Column | What it shows |
+|---|---|
+| **Tree** | Folders and pages, a filter box, a re-scan button and the page count. |
+| **Page** | The rendered page. `[[links]]` open inside the window. |
+| **Graph** | The link graph, then the page's backlinks and its broken links. |
+
+A link that matches no page is shown as broken. Links resolve like in
+Obsidian: exact path, then path ignoring case, then a page name that is
+unique in the wiki. A name that fits several pages stays unresolved.
+
+The graph has two views. **This page** shows the page, what it links
+to, what links to it and the links among those. **Whole wiki** shows
+all pages, limited to the 400 best connected. `related` entries count
+as links. `index.md` is left out because it links to everything.
+
+Scroll to zoom, drag to pan, click a node to open the page. The expand
+button gives the graph the whole window.
+
+Edits made in Obsidian show up within about 10 seconds. The re-scan
+button skips the wait. There is no editor on purpose: an editor in the
+browser would race Deep and Lucid.
+
+## Migrating a grown wiki
+
+A wiki that grew without the template keeps working. The map only
+decides where **new** pages go. Moving existing pages onto the template
+is a separate process that only you start. You approve it in groups,
+and it copies the whole wiki before it moves a file.
+
+Run `somora wiki migrate` on the somora host. It walks you through four
+steps. Each step is also a subcommand and a route, so a script or an
+agent can drive it. See [Commands](#commands) and [Routes](#routes).
+
+> **Warning:** A real run needs the words "move my wiki" from you. An
+> agent may plan, judge, read the groups to you and record your
+> approvals. It must not supply those words on its own.
+
+1. **Plan.** Reads the wiki and writes `plan.md`: folders a rule would
+   move (a folder named `stocks` belongs in `finances/portfolio`), page
+   names that exist in several folders, and dated work reports with the
+   project they seem to belong to. Nothing is touched.
+2. **Judge.** The Lucid model looks at every page and answers: keep,
+   move, fold into an existing page, or unclear. No page moves on a
+   folder name alone. The answers land in `refined.md`, grouped by what
+   would happen: "move 12 pages to infrastructure/devices". Nothing is
+   touched.
+3. **Approve.** You approve or dismiss groups, all groups of one
+   action, or the unions of same-name pages. What you do not approve
+   stays where it is.
+4. **Execute.** The default is a dry run that writes `dry-run.md` and
+   nothing else. The real run does the steps below.
+
+A real run, in this order:
+
+| Step | What happens |
+|---|---|
+| Backup | A full copy of the wiki, checked by file count. No copy, no run. |
+| Moves | The file moves and its `slug` follows. |
+| Folds | The model writes the page's substance into the target: a timeline line for a dated report, a few lines under the fitting heading for a detail. The original is kept in `logs/reports/` (`logs/berichte/`) with `merged_into` in its frontmatter. This archive is not searched. |
+| Unions | Of two same-name pages one survives with a merged text. The other goes to the same archive. |
+| Links | Every `[[link]]` and `related` entry is pointed at the new places. |
+| Cleanup | Empty folders are removed. The structure file, `index.md` and the monthly log are updated. The search index is swept. |
+
+Every step is recorded with its outcome in `execution-<time>.md`. A
+failed step does not stop the others.
+
+All files of a plan live in `~/.somora/wiki-migration/<id>/`, the backup
+in `backup-<time>/` below it. They stay until you delete them.
+
+To undo a run, use `somora wiki migrate undo <id>`. It moves the current
+wiki aside to `<wiki>.before-undo-<time>`, copies the backup back and
+sweeps the search index. Nothing is deleted.
+
+## Keeping an agent out
+
+Every agent's inbox feeds the wiki by default. To keep one out, set
+this in its `agent.yaml`:
 
 ```yaml
 rem:
-  enabled: true
-  participate_in_wiki: false   # REM still runs; Deep won't see this agent's inbox
+  participate_in_wiki: false   # REM still runs, Deep skips this inbox
 ```
 
-Useful for scratch agents, sandbox personas, or anything you don't want
-contributing to shared knowledge.
+A single note stays out with `wiki_promote: false` in its frontmatter.
 
-## Sync across machines
+## Sync and limits
 
-The wiki is plain markdown in your Obsidian vault. Use whatever sync
-mechanism you already use for Obsidian — iCloud, Syncthing, git, etc.
-somora is single-host; the wiki sync is your responsibility.
+- **Sync is yours.** The wiki is part of your vault. Use the sync you
+  already use for it. somora runs on one host.
+- **Do not sync the inboxes.** Deep empties them. Synced to a second
+  machine, a note one side just changed could be consumed by the other.
+- **Your vault stays yours.** somora reads the vault outside the wiki
+  folder and never writes there. Deep does not turn vault notes into
+  wiki pages.
+- **No chat logs.** Deep skips notes that are only of the day: task
+  lists, scratchpads, daily logs.
+- **Splitting a page is manual.** Lucid can propose moving or uniting
+  pages. To split one page in two, edit it in Obsidian.
 
-Memory inboxes (`~/.somora/agents/<name>/memory/`) are intentionally
-NOT designed for sync. They're ephemeral inboxes that get drained by
-Deep — sync them and you risk Deep on machine A consuming a memory
-file that machine B has just modified.
+## Settings
 
-## What the wiki is not
+All settings live in `config.yaml`. The values shown are the defaults.
+Keys marked as comments have no default.
 
-**Not your raw notes.** Your Obsidian vault outside the wiki subfolder
-is yours alone. somora reads it (auto-injection sees `source: 'vault'`
-hits) but never writes to it. Deep won't promote vault content into the
-wiki.
+```yaml
+obsidian:
+  # vault: ~/Documents/Vault
+wiki:
+  enabled: false
+  vaultSubfolder: somora
+  language: de
+  # defaultSubdirs: [people, projects]
+  deep:
+    enabled: true
+    intervalHours: 12
+    # model: <model>
+    # fallback: [<model>]
+    # thinking: medium
+    requireApproval: false
+    mergeShrinkGuard:
+      enabled: true
+      minRatio: 0.5
+      minExistingBytes: 2000
+    skipCacheDays: 30
+    maxPageChars: 50000
+  lucid:
+    enabled: true
+    intervalDays: 7
+    # model: <model>
+    # fallback: [<model>]
+    # thinking: medium
+    requireApproval: true
+    maxCallsPerTurn: 3
+    batchChars: 100000
+    oversizedChars: 50000
+    maxFindings: 12
+    autoLinks: true
+    autoLinksPerRun: 30
+    seenDays: 90
+  search:
+    boostWiki: 1.4
+    boostMemory: 0.85
+    boostVault: 0.65
+    overviewMaxChars: 4000
+    overviewTopNSlugs: 30
+```
 
-**Not a chat log.** Daily-log-shaped memory files are routinely skipped
-by Deep ("transient task list, scratchpad, or daily log"). The wiki
-captures stable knowledge, not session transcripts.
+| Setting | Meaning |
+|---|---|
+| `obsidian.vault` | Path to the vault. Required for the wiki. |
+| `wiki.enabled` | Switches the wiki on. |
+| `wiki.vaultSubfolder` | Folder inside the vault that is the wiki. |
+| `wiki.language` | `de` or `en`. See [Language](#language). |
+| `wiki.defaultSubdirs` | Still read, but only shapes the example paths in the prompts. The folder template decides where pages go. |
+| `wiki.deep.enabled` | Switches the scheduled Deep run on. |
+| `wiki.deep.intervalHours` | Hours between Deep runs. |
+| `wiki.deep.model` | Worker model for Deep: an alias or `<provider>/<model>`. |
+| `wiki.deep.fallback` | Backup model or list of models, tried in order when `model` cannot be reached. Best on another provider. |
+| `wiki.deep.thinking` | `off`, `low`, `medium` or `high`. Used when the model can reason. Unset means the engine's default. |
+| `wiki.deep.requireApproval` | Reserved. Deep always applies its decisions. |
+| `wiki.deep.mergeShrinkGuard.enabled` | Refuse a merge that shrinks a page too much. |
+| `wiki.deep.mergeShrinkGuard.minRatio` | The merge is refused when the new text is smaller than this share of the old one. |
+| `wiki.deep.mergeShrinkGuard.minExistingBytes` | Pages smaller than this are never guarded. |
+| `wiki.deep.skipCacheDays` | An unchanged note that was skipped is looked at again after this many days. `0` means only when it changes. |
+| `wiki.deep.maxPageChars` | A page over this size takes no more merges. The note becomes a sub-page. |
+| `wiki.lucid.enabled` | Switches the scheduled Lucid run on. |
+| `wiki.lucid.intervalDays` | Days between Lucid runs. |
+| `wiki.lucid.model` | Worker model for Lucid. Also judges a migration. If unset, the migration uses `wiki.deep.model`. |
+| `wiki.lucid.fallback` | As `wiki.deep.fallback`. |
+| `wiki.lucid.thinking` | As `wiki.deep.thinking`. |
+| `wiki.lucid.requireApproval` | Reserved. Findings always wait for review, apart from link suggestions. |
+| `wiki.lucid.maxCallsPerTurn` | Most `wiki_*` calls per turn in a review loop. Resets with every message of yours. |
+| `wiki.lucid.batchChars` | Most page text one Lucid call carries. A larger page travels alone. |
+| `wiki.lucid.oversizedChars` | Pages over this size are reported as oversized. |
+| `wiki.lucid.maxFindings` | Most findings a run keeps for review. Link suggestions fill what is left after the weightier kinds. |
+| `wiki.lucid.autoLinks` | Lucid sets link suggestions itself: the first plain mention becomes a `[[link]]`. |
+| `wiki.lucid.autoLinksPerRun` | Most links set per run. |
+| `wiki.lucid.seenDays` | A finding you dismissed is not filed again for this many days. |
+| `wiki.search.boostWiki` | Weight of a wiki hit in recall. |
+| `wiki.search.boostMemory` | Weight of a memory hit. |
+| `wiki.search.boostVault` | Weight of a vault hit. |
+| `wiki.search.overviewMaxChars` | Size budget of the overview block. |
+| `wiki.search.overviewTopNSlugs` | Most sections in stage 4 of the overview. The largest ones win. |
 
-**Not auto-fixed beyond Deep + Lucid.** Lucid surfaces objective
-issues; you walk them with an agent in a `dream_review` loop and the
-agent writes the fixes after you OK each step. If you want bigger
-restructuring (split a page in two, move between subfolders), do it
-manually in Obsidian — Lucid intentionally stays out of structural
-changes.
+## Commands
+
+The commands talk to the running server. They never touch the wiki
+themselves.
+
+| Command | What it does |
+|---|---|
+| `somora wiki migrate` | Guided: plan, judge, approve, dry run, run. |
+| `somora wiki migrate plan` | Step 1. Prints the plan id. |
+| `somora wiki migrate judge <id>` | Step 2. Waits for the model and lists the groups. |
+| `somora wiki migrate status <id>` | The groups and what is approved. |
+| `somora wiki migrate approve <id> --action move --action fold --twins` | Approves all groups of an action (`move`, `fold`, `unclear`) and all same-name unions. |
+| `somora wiki migrate approve <id> --group fold:projects/orbit --dismiss` | Dismisses one group. A group key is `move:<folder>` or `fold:<page>`. |
+| `somora wiki migrate dry-run <id>` | Writes `dry-run.md`, touches nothing. |
+| `somora wiki migrate run <id> --confirm "move my wiki"` | The real run, with backup first. |
+| `somora wiki migrate undo <id>` | Puts the backup back. Asks for "yes" unless you pass `--yes`. |
+| `somora wiki migrate relink <id>` | A second pass over links and `related` entries with the renames of a finished run. |
+
+`--url <server>` picks the server. The default comes from `SOMORA_URL`
+or from the config.
+
+## Routes
+
+When the wiki is not enabled, the explorer routes answer 503 and the
+migration routes 400. The request and response fields are in the
+[API reference](api.md).
+
+| Route | What it does |
+|---|---|
+| `GET /wiki/status` | `{ enabled, root? }` |
+| `GET /wiki/tree` | Folder tree with page titles. |
+| `GET /wiki/page?slug=<slug>` | Text, frontmatter, links, backlinks, broken links. |
+| `GET /wiki/graph?scope=local&slug=<slug>` | The page's neighbourhood. |
+| `GET /wiki/graph?scope=global` | The whole wiki. |
+| `POST /wiki/refresh` | Drops the cache and scans again. |
+| `POST /wiki/migration/plan` | Step 1. Returns the plan id. |
+| `POST /wiki/migration/refine` | Step 2 for `{id}`. Runs in the background. |
+| `GET /wiki/migration/plans/:id` | Plan, progress, groups, approvals. |
+| `POST /wiki/migration/plans/:id/approve` | Step 3: `groups`, `action` or `twins` with `status`. |
+| `POST /wiki/migration/plans/:id/execute` | Step 4. Dry run by default. A real run needs `{"dryRun": false, "confirm": "move my wiki"}`. |
+| `POST /wiki/migration/plans/:id/relink` | Second pass over links and `related`. |
+| `POST /wiki/migration/reindex` | Sweeps the search index now. |
+
+Pages are addressed by slug, never by file path. A request can only
+name a page the server already found under the wiki root, so `../` and
+absolute paths lead nowhere.
+
+## When something is off
+
+| Symptom | What to check |
+|---|---|
+| No wiki tile, routes answer 503 | `GET /wiki/status` shows `enabled: false`. Set both `wiki.enabled` and `obsidian.vault`, then restart. |
+| The agent does not know a new page exists | Its overview is the one from session start. Start a new session or reset. The log line `wiki.overview_failed` means the overview could not be built. |
+| A page you edited was not updated by Deep | Your edit came between its read and its write. The note is tried again on the next run. |
+| A note is never promoted | It was skipped and is looked at again when it changes or after `skipCacheDays`. Check for `wiki_promote: false` and `participate_in_wiki: false`. |
+| Migration says "no model" | Set `wiki.lucid.model` or `wiki.deep.model`. |
 
 ## See also
 
-- [dream-phases.md](dream-phases.md) — REM/Deep/Lucid mechanics
-- [memory.md](memory.md) — the per-agent memory inbox
-- [agents.md](agents.md) — per-agent config including `participate_in_wiki`
+- [Memory](memory.md): the per-agent inbox, recall and search ranking
+- [Dream phases](dream-phases.md): how REM, Deep and Lucid work, and
+  the review loop
+- [Agents](agents.md): `agent.yaml`, including `participate_in_wiki`
+- [Web client](web.md): the desktop the wiki window lives in
+- [API](api.md): the wiki and migration routes in full
+- [Cache strategy](cache-strategy.md): why the overview is frozen per
+  session

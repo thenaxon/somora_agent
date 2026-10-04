@@ -82,7 +82,7 @@ it on Tailscale or on `127.0.0.1` and tunnel.
 
 Returns the running somora version and, once the daily update check has
 answered, what somora.ai says is current ([setup.md → The daily update
-check](setup.md#the-daily-update-check--what-somoraai-sees)).
+check](setup.md#the-daily-update-check)).
 
 ```bash
 curl https://<host>:18737/version
@@ -196,7 +196,7 @@ of its text and its `position` (1 = next). Any of these ids can go to
 what the session started elsewhere. `lastEngineEventAgoMs` ticks up while the engine is
 silent — if it climbs past a few minutes on a chat turn (vs. a long
 local-LLM job), the turn is wedged and the engine watchdog will abort
-it. See [setup.md](setup.md#tunables) `engineWatchdog` to tune
+it. See [setup.md](setup.md#settings) `engineWatchdog` to tune
 thresholds per engine.
 
 `claudeAuth` reports the shared-login credential sync between
@@ -234,7 +234,7 @@ advances when a broadcast reached at least one subscriber within the
 `sse.publishTimeoutMs` budget; if `subscriberCount > 0` but
 `lastPublishOkAgoMs` grows without bound, at least one client is wedged
 — the next publish auto-evicts it (see `sse.publishTimeoutMs` in
-[setup.md](setup.md#tunables)).
+[setup.md](setup.md#settings)).
 
 ### `GET /host-stats`
 
@@ -1089,7 +1089,7 @@ The four lists:
   next). Any of them can be removed with `DELETE /chat/queue/:id`.
 - `pendingWakes` — work this session asked for that has finished and
   whose wake-up turn is scheduled (the grace is `agentLoop.wakeGraceMs`,
-  see [setup.md](setup.md#tunables)); `about` says what kind of answer
+  see [setup.md](setup.md#settings)); `about` says what kind of answer
   is on its way.
 - `children` — the sub-agents and `agent_ask` calls this session
   started that are still queued or running, with their target so a
@@ -2055,7 +2055,7 @@ the assistant message the fallback model produced), `assistant_audio`,
 `turn_end`. Each carries `kind`, `ts`, and kind-specific fields. Tool names are normalised here too.
 `engine_meta` rows preserve the raw `itemType` + opaque `payload`;
 clients resolve the friendly label on render (see
-[setup.md](setup.md#engine-meta--codex-todo_list)).
+[setup.md](setup.md#engine-rows-in-the-chat)).
 
 ### `POST /chat/abort`
 

@@ -1,893 +1,681 @@
 # Web client
 
-A browser-based desktop for somora — multi-window chat with every
-agent on your LAN. Same backend as the TUI, just a different head.
+A desktop in your browser. Every agent is an icon, every conversation a
+window, and you can keep as many open side by side as you like. It talks
+to the same server as the terminal client and the phone app, so all
+three show the same conversations.
 
-## Mental model
+## What you get
 
-```
-  ┌─────────────────────────────── browser ─────────────────────────┐
-  │  ┌─ agent dock ─┐  ┌── chat: scribe ───┐  ┌── chat: coach ────┐ │
-  │  │  scribe ●    │  │ history + stream  │  │ history + stream  │ │
-  │  │  coach  ●    │  │ tool blocks       │  │ tool blocks       │ │
-  │  │  archi. ◯    │  │ [paperclip] ▢▷▶   │  │ [paperclip] ▢▷▶   │ │
-  │  └──────────────┘  └───────────────────┘  └───────────────────┘ │
-  │                                                                 │
-  │  taskbar: [scribe] [coach]  ▢ auto-arrange  💾 save layout      │
-  └─────────────────────────────────────────────────────────────────┘
-                              │ HTTP + SSE
-                              ▼
-                    somora server :18737
-```
+- **Many chats at once.** One window per agent and session, each with
+  live answers, tool calls and token counts.
+- **Never blocked.** Type while the agent works. Your message waits in
+  a queue you can see and edit, or steers the running turn.
+- **Everything in one place.** Sessions, files, terminals, the shared
+  browser, media, the wiki, the team chart and the server log are
+  windows on the same desktop.
+- **A glance tells you what is going on.** Dots and badges show which
+  agents work, where something unread waits and what is dreaming.
+- **Server controls.** Reload the config or restart somora from the
+  taskbar, and see when an update is available.
 
-Each chat window is a `ChatProvider`-managed React subtree subscribing
-to one SSE stream keyed by `agent::session`. Multiple windows for the
-same agent share state — open an agent's `main` session twice and both
-windows render the same live transcript.
+## Open it
 
-## Access
-
-The somora server mounts the production bundle at `/web/*`. **HTTPS is
-a hard requirement once you open more than one chat window** — see
-"Why HTTPS is required" below. The blessed path is Tailscale, which
-hands out free Let's Encrypt certs for your tailnet's hostnames.
+The server serves the web client at `/web/`:
 
 ```
 https://<your-host>.<your-tailnet>.ts.net:18737/web/
 ```
 
-For full Tailscale + cert setup steps see [setup.md](setup.md#https-tailscale--required-for-the-web-client-at-scale).
-Short version:
+On the machine somora runs on, `http://127.0.0.1:18737/web/` works too.
+To reach it from other devices, set `server.host: 0.0.0.0` in
+`~/.somora/config.yaml` and restart.
 
-```bash
-# in the Tailscale admin: enable MagicDNS + HTTPS Certificates (one-time)
-mkdir -p ~/.somora/certs && cd ~/.somora/certs
-tailscale cert <your-host>.<your-tailnet>.ts.net   # use your own FQDN
-```
+> **Warning:** There is no login. Anyone who can reach the port can use
+> every agent. Keep the server on your tailnet or LAN, never on the
+> public internet.
 
-Add to `~/.somora/config.yaml`:
+> **Note:** Use HTTPS as soon as you open more than a few windows. Over
+> plain HTTP a browser allows six connections per server, and every chat
+> window and terminal holds one. The seventh window looks dead.
+> Microphone, screenshots and voice calls also need HTTPS. The setup
+> guide shows the Tailscale way under "HTTPS (Tailscale)".
+
+## The desktop
+
+### Icons
+
+The desktop shows one icon per agent, followed by the app icons.
+
+| Action | Result |
+|---|---|
+| Click an agent | Opens its `main` chat, or brings that window forward. |
+| Right-click an agent | Opens the agent menu, see below. |
+| Click an app icon | Opens that window. Each app has one window. |
+| Drag an icon | Moves it to any free cell. Dropping on an occupied cell swaps the two. |
+| `Alt+Arrow` | Moves the focused icon one cell. |
+
+Icons sit below windows, like on a real desktop. The arrangement is
+remembered per browser. In a smaller browser window, icons that no
+longer fit move to the nearest free cell and return when there is room
+again.
+
+### What an agent icon shows
+
+| Signal | Meaning |
+|---|---|
+| Status dot | Green: idle. Amber: a turn is running in one of its sessions, open or not. Violet: holds the dream review loop. Grey: server unreachable. |
+| Unread dot | Something arrived in a session since you last looked: a reply, a message from another agent or a sentinel message. Your own messages do not count. |
+| Pulse glow | A dream phase is running. Green: REM for this agent. Indigo: Deep, on every agent. Violet: Lucid, on the agent holding the review loop. |
+| Number badge | REM findings waiting for review, `9+` at most. It shrinks as an agent works through them with `dream_apply` and `dream_dismiss`. |
+| Grey outline and `builder` label | The agent is a builder. |
+
+A session counts as seen when its chat window is open and focused. That
+clears the unread dot on all your clients. The state lives in the
+session's meta file as `unreadAt` and `seenAt`, so it survives a server
+restart. Dream states refresh every 30 seconds.
+
+### The agent menu
+
+| Entry | What it does |
+|---|---|
+| **Open main** | Opens the `main` session. |
+| **Recent sessions** | The three most recently active other sessions. Click one to open it in its own window. |
+| **New session…** | Type a name: letters, digits, `-` and `_`. The field says what is wrong while you type. Enter creates and opens it, Esc cancels. |
+| **All sessions…** | Opens the Sessions window. |
+| **Configure…** | Opens the Agent window. |
+
+### App icons
+
+| Icon | Window | Shown |
+|---|---|---|
+| `tmux` | List of tmux sessions on the host. Click one to attach. | always |
+| `terminal` | A fresh shell in the somora workspace. | always |
+| `sessions` | All sessions of all agents. | always |
+| `sentinel` | Triggers: list, history, test, pause, resume, delete. | always |
+| `abilities` | Tools and skills per agent, MCP server health. | always |
+| `team` | The org chart editor. | always |
+| `log` | The server log. | always |
+| `voice` | A call with an agent. | when realtime voice is set up |
+| `browser` | The shared browser's sessions. | when `browser.enabled` |
+| `media` | Image and video generation, gallery. | when image or video generation is set up |
+| `wiki` | The wiki explorer. | when `wiki.enabled` and `obsidian.vault` are set |
+
+The `wiki` icon carries a violet badge when Lucid findings wait for
+review. Its tooltip names the oldest waiting run. Review them with any
+agent through `dream_review`.
+
+### Windows
+
+Drag the title bar to move a window and the bottom-right corner to
+resize it. The title bar has Close and Minimize. A minimized window
+stays in the taskbar. Closing a window never ends the conversation or
+disturbs other clients.
+
+Windows never leave the desktop. Dragging and resizing stop at the
+edges, and no window can cover the taskbar. When the browser gets
+smaller, windows that no longer fit are pushed back inside, and shrunk
+only when they are bigger than the desktop. Nothing grows back by
+itself: use **Restore** for that.
+
+There is one chat window per conversation. Opening a session that is
+already on the desktop brings its window forward, whether you come from
+an icon, the Sessions window, a link in a chat or `/session`.
+
+The layout is saved in the browser as you go and comes back after a
+reload. Each device keeps its own.
+
+## The taskbar
+
+The bar at the bottom always stays on top. From left to right:
+
+| Part | What it does |
+|---|---|
+| Koala, name and version | The somora mascot and the server version. When a newer version exists it reads `· update <version>`. |
+| `Browser · N waiting for you` | Appears when an agent handed the shared browser to you. Opens the browser list. |
+| Window buttons | One per open window, in the agent's colour. Click to focus or bring back a minimized window. |
+| Gear | Server menu: reload config, restart. |
+| **Arrange** | Tiles all windows that are not minimized. |
+| **Save** and **Restore** | Stores the current layout as a snapshot and brings it back later. |
+| **Fullscreen** | Switches the browser to full screen. Hidden where the browser cannot do it. |
+| `cpu` and `mem` | Load and memory of the host, refreshed every 5 seconds. |
+| Clock | Time and date. |
+
+**Arrange** fills the whole desktop. Counts that fill a grid (1, 2, 4,
+6) become an even grid. With 3, 5 or 7 windows the leftmost one takes
+the full height and the others stack beside it. Windows keep their
+order, so arranging twice changes nothing.
+
+### Reload and restart
+
+| Gear entry | What it does |
+|---|---|
+| **Reload config** | Reads `config.yaml` again and applies it without a restart. A message lists the changed sections and says which of them need a restart. A file with an error is rejected and the running config stays. |
+| **Restart somora** | Restarts the service after a confirmation. All streams drop for a few seconds. The page waits for the server and reloads itself. |
+
+The entry reads `changed on disk` when the file is newer than what the
+server loaded. Restart is greyed out when somora does not run as the
+systemd user unit `somora.service`. `agent.yaml` needs neither: it is read on every
+turn. The terminal client has the same actions as `/reload` and
+`/restart YES`.
+
+### When an agent restarts somora
+
+An agent can restart the server from its own turn, with
+`somora server restart` or `somora update`. Such a restart waits until
+that turn has ended. After the server is back, the session is woken to
+check the result and carry on. In the chat this shows as a divider
+reading `⚙ system · restart`.
+
+Which sessions are woken is set by `server.resumeAfterRestart`. A
+session is not woken a third time within ten minutes, so a failing
+restart cannot loop.
+
+### Update notice
+
+somora checks once a day whether a newer version exists. If so, the
+taskbar shows `· update <version>` next to the running version, and the
+gear menu repeats it. Run `somora update` to install it.
+
+## Chat windows
+
+### The header
+
+The first line shows the agent's name, its role, `streaming…` while a
+turn runs and the work badge. The second line reads from left to right:
+
+| Element | Meaning |
+|---|---|
+| Session | The session name, with the full id beside it in grey when the two differ. |
+| Model | The model the next turn uses. |
+| `⇄ <model>` | The last turn was answered by a backup model, the agent's `fallback:` in `agent.yaml`. The tooltip says why. |
+| `🧠 <level>` | The thinking level. `(dormant)` means the model cannot reason, so the level has no effect. |
+| **tools** | Shows or hides tool calls, tool results and the engine's own plan rows. |
+| **memory** | Shows or hides the line that lists the notes recalled for a turn. |
+| **voice** | Spoken replies on or off. Only when text-to-speech is configured. |
+| `▣ 21%` | How full the context window was on the turn's last request. Amber above 75 %, red above 90 %. |
+| `Σ↑` and `↓` | Tokens the turn spent in and out, summed over all its requests. |
+| `● connected` | The live connection of this window. `offline` while it is down. |
+
+`▣` and `Σ↑` measure different things. A turn with 21 tool rounds sends
+its context 21 times, so the sum runs far past the window and says
+nothing about how full it is.
+
+When the last request was larger than the window somora knows, the
+badge reads `▣ >100%` with the token count. The configured
+`contextWindow` of that model is then too small.
+
+On the right of the header:
+
+| Control | What it does |
+|---|---|
+| ⊖ and ⊕ | Chat text size from 75 to 200 %. Only the conversation is scaled. A percentage appears when it is not 100 %: click it to reset. |
+| Project chip | The project of this session. Only with `projects.enabled`. |
+| `•••` | The session menu. |
+
+The text size is remembered per agent and session. Two sessions of the
+same agent can have different sizes, and two windows on the same
+session stay in step.
+
+The three toggles and the thinking switch are remembered per agent and
+session too.
+
+### The conversation
+
+| What you see | Meaning |
+|---|---|
+| Tool rows | Calls and results, above the answer of their turn. Rows marked `◌ codex · plan` come from the engine. Hidden unless **tools** is on. |
+| `🧠 memory · N hits` | The notes recalled for the turn. The arrow expands the injected text. Hidden unless **memory** is on. |
+| `🧠 thinking` block | The model's reasoning, when the engine provides it. Collapsed to one line. |
+| `⇄ fallback · <model>` chip | A backup model answered. The tooltip lists every model that failed before it, with the reason. |
+| Another agent's icon and colour | A message from another agent. `<agent> · <session>` appears when it came from a session other than its `main`. |
+| Centered divider | A message from somora itself, not from a person. See the table below. |
+| Red **Turn failed** block | The turn ended in an error. Media it produced before failing hangs under it. |
+| Pictures and videos under a reply | Media the turn generated. |
+| Thumbnails on your message | Your attachments. |
+
+A notice appears once when a backup model takes over and once when the
+primary model answers again. When every model fails, the error names
+all of them with their reasons.
+
+Dividers name where the message came from:
+
+| Divider | Source |
+|---|---|
+| `Sentinel · <trigger>` | A sentinel trigger fired. |
+| `tmux · <session>` | The tmux attention watcher. |
+| `browser · <name> · handed back` | You gave the shared browser back. |
+| `voice` | A question from a running call. |
+| `agent answer · <agent>` | A late answer to an `agent_ask`. |
+| `subagent · <task>` | A background sub-agent finished. |
+| `video` | A video job finished. |
+| `⚙ system · <cause>` | somora itself, for example `restart` after a restart. |
+
+The window follows new messages while you are at the bottom. Scroll up
+and it stays where you read. Scroll back down to follow again.
+
+History loads the last 100 entries. Scrolling to the top loads 100
+more, as does **↑ load older**. A window left open on a busy session
+keeps the newest 300 rows once it passes 400. The older ones come back
+the same way.
+
+Finished replies are Markdown with highlighted code. Hover one for two
+buttons:
+
+| Button | What it does |
+|---|---|
+| **Copy** | Copies the reply as Markdown. |
+| **Pin** | Opens a pin note with this reply. The pin stays yellow while the note exists. Click it again to close the note. |
+
+A reply with generated audio also has a Play button.
+
+### Pin notes
+
+A pin note is a small window that keeps one reply in view while the
+conversation goes on. It has a yellow title bar and shows the agent,
+the session, when the reply was written and when you pinned it.
+
+- The content is a snapshot. It does not change when the agent writes
+  more.
+- You can pin as many replies as you like. Pinning the same reply again
+  brings its note forward.
+- Notes come back after a reload, and stay when the chat window is
+  closed or the session is archived.
+
+### The input bar
+
+| Control | What it does |
+|---|---|
+| Paperclip | Attaches files. Drag and drop onto the window and paste work too. |
+| Screenshot | Captures a window, a tab or the screen and attaches it. Hidden where the browser cannot do it. |
+| Text field | Enter sends, Shift+Enter starts a new line. Type `/` for commands. |
+| Microphone | Records, then adds the transcript to your draft for you to check. Shown when speech-to-text is configured. |
+| **queue** or **steer** | Only while a turn runs. Chooses what happens to your next message. |
+| Red Stop | Only while a turn runs. Cancels the running turn. |
+| Send | Sends the draft. |
+
+Attached files upload at once and appear as chips above the input.
+Images and PDFs reach every engine. A model that cannot read a file's
+type refuses the upload with a hint to switch models. Uploaded files
+are stored once as `~/.somora/attachments/<sha256>.<ext>`. The files
+guide has the details.
+
+### While the agent is working
+
+You can keep typing. With the pill on **queue**, a message waits behind
+the running turn and shows `⌛ queued`, or `⌛ queued · N ahead`. Queued
+messages run in order.
+
+- **↩ edit** next to a queued message takes it back into the input,
+  attachments included. Send it again and it joins the end of the
+  queue. If the turn started in the meantime, a notice says so.
+- With the pill on **steer**, the message goes into the running turn.
+  The model reads it at its next step. The bubble shows `steering…`,
+  then `steered`. A steer the turn no longer reads becomes a normal
+  queued message.
+- **Stop** cancels the running turn only. A second Stop sits on the
+  streaming reply. Queued messages keep their place.
+
+The agent's `steering:` setting in `agent.yaml` decides which way the
+pill starts. Stop works on any turn, whoever started it: the sender is
+told that you stopped it.
+
+### The work badge
+
+The badge in the header counts everything on the session, whoever
+started it, for example `waiting 3 · running · 1 arriving`. It adds
+`2 sub-agents` or `1 ask` for work this session has out elsewhere.
+Click it for the list:
+
+| Section | Shows | Buttons |
+|---|---|---|
+| **Running** | The turn that runs now: its source, first line and start time. | Stop |
+| **Waiting** | The queue in order, with source, preview and waiting time. | **×** removes an entry. |
+| **Arriving** | Answers on their way back: a late `agent_ask` reply, a finished sub-agent, a rendered video. | none |
+| **From here** | Sub-agents and questions this session started that still wait or run. Click a row to open that session. | **×** removes one that has not started. **■** stops a running one. |
+
+Removing a waiting entry tells its sender. Your own message returns to
+the input. Another agent's question is reported back as failed, a
+sub-agent brief as cancelled, a sentinel fire as skipped. Stopping a
+sub-agent also stops everything it started.
+
+### Slash commands
+
+Type `/` in an empty input. Arrow keys move, Enter or Tab accepts, Esc
+closes. Commands are not available while a turn is running.
+
+| Command | What it does |
+|---|---|
+| `/model <ref>` | Switches the model for this session. Completes from the model list. |
+| `/session <slug>` | Switches this window to another session of the agent. |
+| `/new <slug>` | Creates a session and switches to it. |
+| `/thinking <off\|low\|medium\|high\|default>` | Sets the thinking level for this session. `default` removes the override. |
+| `/sampling [key=value …\|default]` | Shows, sets or clears sampling parameters for this session. Only the openai-compatible engine uses them. |
+| `/temp <0–2>\|default` | Short for `/sampling temperature=<n>`. |
+| `/verbose thinking on\|off` | Shows or hides the thinking block in this session. Display only. |
+| `/projekt <slug>` | Pins a project to this session. `/projekt unlink` clears it. `/project` is an alias. Only with `projects.enabled`. |
+| `/reset YES` | Archives this session and starts fresh. `YES` is the confirmation. |
+
+There is no `/agent` command. To talk to another agent, open its
+window.
+
+### The session menu
+
+The `•••` button opens a menu with three parts. Click outside or press
+Esc to close it.
+
+| Part | What it does |
+|---|---|
+| **Model** | Shows the current model, its engine and context window. **Switch model…** opens a filterable list. A click sets the model for this session, like `/model`. |
+| **Thinking** | Shows the level and where it comes from. Buttons set off, low, medium or high for this session. **Reset to default** removes the override. **Show thinking in replies** is the same switch as `/verbose thinking`. |
+| **Danger zone** | **Reset session** archives the conversation as `<timestamp>_<session>-archive` and starts fresh, after a second click to confirm. With REM enabled for the agent, REM reads the archived part. |
+
+## The Sessions window
+
+One table of all sessions of all agents. The line on top counts total,
+live, archived, dreamed and partial sessions.
+
+| Column | Meaning |
+|---|---|
+| Agent | The agent's name in its colour. |
+| Slug | The session name. A dot marks unread activity. |
+| Project | The session's project. Only with `projects.enabled`. |
+| Engine | `claude-cli`, `codex-cli` or `openai-compatible`: the engine that last ran it. |
+| Status | `●` a client is connected to it right now. `📦` archived. `★` the `main` session. |
+| Last activity | Relative time. |
+| Msgs | Number of user and assistant messages. |
+| Size | Size of the session file. |
+| REM | `✓` REM has read everything. `⚠N` REM ran, and N events arrived since. `○` REM never ran on it. |
+
+A `⚠N` session needs no action. REM picks the new events up on its next
+run.
+
+| Control | What it does |
+|---|---|
+| Tabs | **Active** (default), **Archived**, **All**. |
+| Filters | Agent, engine, REM state (`dreamed`, `partial`, `never`) and a text search over slug, agent and id. |
+| Column headers | Agent, Last activity, Msgs and Size sort. Click again to reverse. |
+| Click a row | Opens the chat window of that session. |
+| Archive button | Archives or unarchives the session. Not offered for `main`: use `/reset` there. |
+| Checkboxes | Select several sessions and archive them together. |
+| Two download buttons | Export as a readable Markdown transcript or as the raw JSONL file. Works for archived sessions too. |
+| Reload and auto-refresh | Reload by hand. The list also refreshes every 60 seconds unless you switch that off. |
+
+Archiving is a flag, not a move: `archived`, `archivedAt` and
+`archiveReason` in the session's meta file. The files stay where they
+are, the session only disappears from the pickers, and unarchiving
+brings it back. Nothing is ever deleted here. To free space, remove files from
+`~/.somora/agents/<agent>/sessions/` by hand.
+
+## Files
+
+A file path in a reply is a link. Clicking it opens the file in a
+window. Nothing is refused for its type: what cannot be shown is
+described.
+
+| The file is | You get |
+|---|---|
+| Markdown | Rendered like a chat reply |
+| Text or code | Monospace with syntax highlighting |
+| Image | Shown inline |
+| Video | A player with seeking |
+| Audio | A player |
+| PDF | The browser's own viewer |
+| Anything else | Name, type, size |
+
+Every file has a download button. The type is read from the file's
+content, not its extension. `.svg` is shown as source text, because an
+SVG can carry script.
+
+Which files can be opened follows the read policy, the same rule
+`file_read` applies for an agent. The window reads `GET /files/view`,
+and media bytes come from `GET /files/raw`.
+
+## Terminals
+
+**terminal** opens a fresh shell in the somora workspace. Each window
+is its own shell, and closing the window ends it.
+
+**tmux** lists the tmux sessions on the host and refreshes every 5
+seconds. A row shows which agent and session created it, or `orphan`
+for one started outside somora. Click a row to attach: output streams
+live and your keys go straight through. The tmux guide covers the rest.
+
+## The Agent window
+
+**Configure…** in the agent menu shows what an agent is made of and
+what its prompt costs.
+
+| Part | What it shows |
+|---|---|
+| Budget strip | Persona files, team block, full prompt and tool schemas, in characters and estimated tokens against `promptBudgets`. |
+| `AGENTS.md`, `SOUL.md`, `USER.md` | Editors with a counter per file, Save and Discard. |
+| `agent.yaml` | Read-only. |
+| **Full prompt** | The system prompt as the next turn on a chosen session would send it, split into its parts with sizes. |
+| **Voice prompt** | What the talking model is told on a call, and whether it comes from `VOICE.md` or the persona. Only for agents that can be called. |
+
+The budgets are soft. Going over turns the counter yellow, and nothing
+is cut.
+
+Saving is guarded, because agents edit these files too. A save is
+refused when the file changed on disk since you loaded it. The previous
+version is kept as a backup. `AGENTS.md` must keep a frontmatter whose
+`name` matches the agent's directory.
+
+For a builder the window shows only `AGENTS.md`, and **Full prompt**
+shows the builder's own prompt.
+
+## Other windows
+
+These features have their own pages. In short:
+
+| Window | What it is |
+|---|---|
+| **abilities** | A matrix of tools and skills per agent, plus the health of external MCP servers. A switch takes effect on the agent's next turn. On `codex-cli` the chat shows a `tools changed` marker. |
+| **team** | Drag agents onto their superior, edit titles and rules, and preview the `# Your team` block every agent gets. Saved to `~/.somora/team.yaml`. |
+| **sentinel** | The triggers that wake agents on their own, with history and a test button. |
+| **browser** | One row per agent window of the shared browser. A row opens the live view with tabs, address bar and take-over buttons. A waiting handoff also shows as an **Open browser** notice in its chat. |
+| **media** | The form for generating images and videos, and the gallery. |
+| **wiki** | The shared wiki in three columns: folder tree, page, links and graph. Read-only. `[[wikilinks]]` are clickable. |
+| **voice** | A live call with an agent. |
+| **log** | The end of the server log. Pick the day, a minimum level and a text filter. New lines follow every 2 seconds, and following pauses when you scroll up. |
+
+A builder's chat window opens wider and carries the task panel on the
+right: mode and phase switches, the **Go** button, the task list the
+builder keeps with `todo_write` and the questions it asks with
+`ask_user`. Below about 640 px width the panel folds to a
+strip.
+
+With projects enabled, the project chip in the chat header shows the
+pinned project. Click it for a searchable list of all projects, grouped
+by entity. A change made from another client shows up at once.
+
+## Settings
+
+The web client has no section of its own in `config.yaml`. These
+settings shape it:
 
 ```yaml
 server:
+  host: 127.0.0.1
   port: 18737
-  tls:
+  resumeAfterRestart: requested
+  tls:                      # optional, no default
     cert: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.crt
-    key:  ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
+    key: ~/.somora/certs/<your-host>.<your-tailnet>.ts.net.key
     publicHost: <your-host>.<your-tailnet>.ts.net
+promptBudgets:
+  teamBlockChars: 3000
+  personaFileChars: 8000
+  personaTotalChars: 14000
 ```
 
-Then `systemctl --user restart somora` (or however you launch it).
+| Setting | Default | Meaning |
+|---|---|---|
+| `server.host` | `127.0.0.1` | Address the server listens on. `0.0.0.0` makes it reachable from other devices. |
+| `server.port` | `18737` | Port. |
+| `server.resumeAfterRestart` | `requested` | Who is woken after a restart. `requested`: the session that asked for it or caused it. `all`: also every turn the restart cut. `off`: nobody. |
+| `server.tls.cert`, `server.tls.key` | none | Certificate and key files. With both set, the server speaks HTTPS. |
+| `server.tls.publicHost` | none | The host name the certificate is for. |
+| `promptBudgets.teamBlockChars` | `3000` | Soft limit for the team block in the Agent window. |
+| `promptBudgets.personaFileChars` | `8000` | Soft limit for one persona file. |
+| `promptBudgets.personaTotalChars` | `14000` | Soft limit for the persona files together. |
 
-By default the server binds `127.0.0.1`. To reach it across the
-tailnet/LAN, set `SOMORA_HOST=0.0.0.0`:
+The environment variable `SOMORA_HOST` overrides `server.host`. Prefer
+the config file: a variable added to the service definition is lost on
+`somora update`.
 
-```bash
-# ~/.config/systemd/user/somora.env
-SOMORA_HOST=0.0.0.0
-```
+### What the browser remembers
 
-**There is no auth** — same trust model as the API server. Tailnet-only
-by design (everyone with a Tailscale node on your tailnet can reach it,
-no public exposure).
+All of this is stored in the browser, per device. Nothing is stored on
+the server.
 
-For development:
+| Key in `localStorage` | Holds |
+|---|---|
+| `somora-desktop-icons` | Where you placed the icons. |
+| `somora-web-layout` | The open windows, saved as you go. |
+| `somora-web-layout-saved` | The snapshot made with **Save**. |
+| `somora-chat-zoom` | Text size per agent and session. |
+| `somora.web.showTools.<agent>::<session>` | The **tools** toggle. The same pattern with `showMemory` and `showThinking`. |
+| `somora.voice.autoPlay.<agent>::<session>` | The **voice** toggle. |
+| `somora.web.builderPanel.collapsed.<agent>` | Whether the builder panel is folded. |
+
+## Routes the client uses
+
+The API guide describes each route. These are the ones behind the
+controls on this page:
+
+| Route | Used for |
+|---|---|
+| `GET /agents` | Agent icons |
+| `GET /chat/stream` | Live events of one window |
+| `POST /chat/send`, `POST /chat/abort` | Send and Stop |
+| `DELETE /chat/queue/:id` | ↩ edit and × in the queue |
+| `GET /agents/:agent/sessions/:session/work` | Work badge and list, refetched on every queue event and every 3 s while the list is open |
+| `PUT /agents/<a>/sessions/<s>/model` | Model switch |
+| `GET /agents/:agent/sessions/:session/export?format=…` | Session export |
+| `GET /sessions` | Sessions window |
+| `GET /activity/stream` | Status and unread dots |
+| `POST /sessions/:agent/:session/seen` | Marks a session as seen |
+| `GET /dream-states` | Pulse glow and badges |
+| `GET /files/view`, `GET /files/raw` | File windows |
+| `POST /attachments` | Uploads |
+| `GET /stt/config`, `POST /stt/transcribe` | Microphone |
+| `GET /tts/config` | Voice toggle |
+| `GET /config/status`, `POST /config/reload`, `POST /server/restart` | Gear menu |
+| `GET /version` | Version and update notice |
+| `GET /host-stats` | `cpu` and `mem` |
+| `GET /logs`, `GET /logs/since` | Log window |
+| `GET /health` | Waiting for the server after a restart |
+
+## SSE event vocabulary
+
+A chat window listens for these events on `/chat/stream`. The stream is
+keyed by agent and session, so two agents can both have a `main`
+session without seeing each other's events. Field shapes are in the API
+guide.
+
+| Event | Payload | Meaning |
+|---|---|---|
+| `status` | `{msg}` | Connection state. |
+| `heartbeat` | none | Keeps the connection alive. |
+| `user_message` | `{text, ts, turnId?, origin?, from_agent?, from_session?, from_system?, agent_ask_call_id?}` | A message landed in the session, from any client. `from_system` is one of `sentinel`, `tmux`, `subagent`, `job`, `browser`, `voice`, `a2a`, `system` and is drawn as a divider. `origin` carries the same as one structured value. |
+| `turn_queued` | `{turnId, ahead, workId?, kind?}` | A send met a running turn. Drives the `⌛ queued` marker. Sent again when waiters move up. |
+| `turn_dequeued` | `{turnId, workId}` | A waiting entry was taken back, from any client. |
+| `steer_queued` | `{steerId, text, ts, turnId, origin?}` | A message was steered into the running turn. |
+| `turn_started` | `{turnId}` | The turn's id, so later media and errors pair with it. |
+| `turn_error` | `{turnId?, message, engine}` | The turn failed. Drawn as the **Turn failed** block. |
+| `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider` and `model` are the model that answered. |
+| `model_fallback` | `{requested, actual, reason, hops?}` | A backup model answers this turn. One event per failed model. |
+| `session_model` | none | The session's model was switched. The window reads the session info again. |
+| `chat` | `{state: 'delta'\|'final', text}` | Assistant text. Each delta carries the full text so far. |
+| `thinking` | `{state: 'delta'\|'final', text, truncated?}` | Reasoning text, cumulative like `chat`. |
+| `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | A tool call and its outcome. |
+| `engine_meta` | `{engine, itemType, label, summary?, payload}` | The engine's own rows, for example the codex `todo_list`. |
+| `memory` | `{count, topScore, refs, fullText?}` | Notes recalled for this turn. |
+| `project` | `{from, to, via}` | The session's project changed. |
+| `assistant_audio` | `{turnId, url, mime, durationMs?, cacheKey}` | A spoken reply for the turn. Drives the Play button. |
+| `assistant_media` | `{turnId, media: [{type, id, prompt, mime, filename, url}]}` | Media the turn produced. An unknown `type` is skipped. |
+
+A message you type is echoed as `user_message` to every client on the
+session, so the terminal client and a second browser tab show it too.
+Your own window does not show it twice.
+
+## Troubleshooting
+
+**New windows stay empty or sending does nothing.** You are on plain
+HTTP with more than six connections open. Switch to HTTPS or close
+windows.
+
+**No microphone or screenshot button.** The browser offers recording
+(`getUserMedia`, `MediaRecorder`) and screen capture
+(`getDisplayMedia`) only on HTTPS or on `127.0.0.1`. The microphone also needs speech-to-text
+configured.
+
+**Restart is greyed out.** somora does not run as the systemd user
+unit. Restart it the way you started it, or with
+`somora server restart`.
+
+**The page says somora did not come back.** The server did not answer
+within 90 seconds after a restart. Check the service and its log.
+
+**The header shows `offline`.** The live connection of that window is
+down. It reconnects by itself once the server answers.
+
+**An app icon is missing.** Its feature is not enabled. See the table
+under "App icons".
+
+**The context badge reads `▣ >100%`.** The model's `contextWindow` in
+`config.yaml` is smaller than what the engine really sent. Raise it.
+
+## Building from source
+
+The client lives in `web/` in the somora repository.
 
 ```bash
 cd web
 npm install
 npm run dev
-# vite reads ~/.somora/certs automatically and serves
-# https://<host>.<tailnet>.ts.net:5173/web/  (HTTP/2)
-# proxies /agents /attachments /browser /chat /dream /files /health
-# /models /terminal /tmux /tools /tui-config /version to the https
-# somora server
 ```
 
-If `~/.somora/certs/<host>.{crt,key}` aren't present (`SOMORA_TLS_HOST`
-overrides the host name), Vite falls back to plain HTTP/1.1 — works for
-one-window debugging, hits the 6-connection wall fast otherwise.
-
-## Why HTTPS is required
-
-Browsers cap **HTTP/1.1** at 6 concurrent connections per origin. Each
-chat window holds one persistent SSE stream — so 6 windows max before
-new tabs silently fail to send and agents look unresponsive. Tmux
-session attaches and any xterm.js/WebSocket panels eat connections
-from the same pool.
-
-HTTP/2-over-TLS multiplexes every stream over **one** TCP connection.
-The 6-limit becomes effectively unlimited, end of problem.
-
-Plus the secure-context features the client relies on — `getUserMedia`
-(mic), `getDisplayMedia` (screenshare), Clipboard async, Service Workers
-(offline + push notifications), Web Push: all require HTTPS. You can
-serve a chat app over plain HTTP, but you can't have voice or push
-without it.
-
-## Window manager
-
-- **Desktop icons**: one tile per agent from `/agents` plus the app
-  tiles, laid out on a grid that spans the whole desktop. Fresh
-  install = the classic left column; from there **drag any icon to
-  any cell** (dropping on an occupied cell swaps the two), or move the
-  focused icon with `Alt+Arrow`. The arrangement is stored per browser
-  in `localStorage` (`somora-desktop-icons`); a narrower window
-  relocates icons that no longer fit, widening restores them. Icons sit
-  *below* windows like on a real desktop. Click an agent tile to open
-  its chat window; clicking again focuses the existing window.
-  **Right-click** an agent tile for its menu: *Open main*, the three
-  most recently active other sessions (click one to open it in its
-  own window), *New session…* (type a name — letters, digits, `-`,
-  `_`; the field tells you what's wrong while you type — Enter creates
-  it and opens a new window, Esc cancels), *All sessions…* (the
-  Sessions tool) and *Configure…* (the Agent window, see "Features"
-  below). Agent-wide actions live here; per-chat settings stay in the
-  chat's `•••` menu.
-  Each agent tile carries up to three live signals:
-  - **Status dot** (bottom-right of the icon): green = idle,
-    amber = streaming, violet = holds the dream review loop, grey =
-    offline.
-  - **Pulse glow** around the icon when a dream phase is running for
-    this agent: green = REM (per-agent session→memory extraction),
-    indigo = Deep (server-wide consolidation, every participating
-    agent pulses), violet = Lucid (review-loop holder). Polled every
-    30 s from `GET /dream-states`. See
-    [dream-phases.md](dream-phases.md) for what each phase does.
-  - **REM badge** (top-right of the icon) when the agent has REM
-    extractions waiting for review: a small green counter (`1`, `2`,
-    `9+`). The badge clears as you work through findings via
-    `dream_apply` / `dream_dismiss`.
-- **App tiles**: non-agent surfaces — `tmux`
-  (attach to an existing tmux session), `terminal` (fresh shell in
-  the somora workspace), `sessions` (cross-agent session browser
-  — see next section), `sentinel` (the proactive triggers: list,
-  detail with history, test / pause / resume / delete — see
-  [sentinel.md](sentinel.md)), `abilities` (per-agent visibility matrix
-  for tools and skills plus external MCP server health — see
-  [mcp.md](mcp.md) and [skills.md](skills.md)), `team` (the org
-  chart editor for `team.yaml` — see [team.md](team.md)), and `log`
-  (the server's own log, see below). Opt-in tiles appear with their
-  feature: `voice` (a call with an agent, see [voice.md](voice.md)),
-  `browser` (see below), `media` (the image-generation form and
-  gallery, see [imagegen.md](imagegen.md)) and `wiki`. The `wiki`
-  tile carries a violet **Lucid badge** when completed lucid runs are
-  waiting for review — lucid is platform-wide wiki cleanup, so its
-  review backlog lives here rather than on any single agent. The
-  badge counts pending findings; the tooltip names the oldest waiting
-  run. Review with any agent via `dream_review`.
-- **Window**: drag the title bar to move, drag the bottom-right
-  corner to resize. Close button removes the window without
-  unsubscribing other clients.
-- **Windows never leave the desktop.** Dragging and resizing stop at
-  the edges (a window may hang off the right edge while you drag it,
-  but its title bar and body never go under the taskbar). When the
-  *browser* gets smaller — you move it from an external display to
-  the laptop screen, or a saved layout comes back on a smaller
-  screen — every window that no longer fits is pushed back inside
-  and, only if it is bigger than the desktop itself, shrunk to fit.
-  Nothing is rearranged and nothing grows back when the browser gets
-  bigger again: use **Save/Restore layout** in the taskbar for that.
-
-
-One chat window per conversation: opening a session that is already
-on the desktop — from the dock, the sessions tool, a link in another
-chat, or `/session` typed into a window — brings that window forward
-instead of adding a second one. The rule sees through the two spellings
-of a session (its slug and its dated id), so `/session main` and the
-sessions list never end up on separate windows of the same stream.
-
-## Taskbar gear: reload config, restart
-
-The gear left of **Arrange** opens a small server menu:
-
-- **Reload config** re-reads `~/.somora/config.yaml`, validates it and
-  swaps it in without a restart. A typo leaves the running config
-  untouched; the toast shows the schema error with field and message.
-  On success the toast lists the changed sections and, when one of
-  them only applies at boot (server, memory, mcp, voice, wiki
-  schedulers, …), says so. The menu marks *changed on disk* when the
-  file is newer than what the server loaded.
-- **Restart somora** asks systemd to restart the user unit. Every open
-  stream drops for a few seconds; the page polls `/health` and reloads
-  itself once the new process answers. Greyed out when somora is not
-  running as `somora.service`.
-
-`agent.yaml` needs neither: it is read on every turn. The TUI has the
-same two actions as `/reload` and `/restart YES`.
-- **Taskbar (bottom)**: lists open windows and always stays on top —
-  no window can cover it, so **Arrange** (tile all windows across the
-  desktop) is always reachable. Save/restore persists positions in
-  `localStorage`.
-- **Arrange** tiles every non-minimized window over the full desktop.
-  Counts that don't fill a grid get a full-height *master* on the left
-  with the rest stacked beside it (3 → one left, two right; likewise 5
-  and 7) instead of a grid with a hole in it; 1, 2, 4, 6 … tile as an
-  even grid. Windows keep their left-to-right,
-  top-to-bottom order, so the leftmost window becomes the master and
-  arranging twice changes nothing. Icons are not worked around — they
-  sit below windows, so Arrange uses the width right up to the left
-  edge and a covered icon is back when you close or minimize the
-  window. Chat windows whose agent no longer exists (a renamed or
-  deleted agent in a restored layout) are dropped once the server has
-  answered, rather than sitting there invisible and taking up a tile.
-
-Layout state is per-browser-profile. There's no server-side window
-manager — each device remembers its own arrangement.
-
-## Sessions tool
-
-A cross-agent session browser launched from the `sessions` tile in
-the app dock. The single window where you keep order across the
-hundreds of sessions somora accumulates over weeks.
-
-```
- ┌───────────────────────────── Sessions ──────────────────────────────┐
- │ 172 total · 1 live · 28 archived · 94 dreamed · 50 partial   [⟳]   │
- │ [Active] [Archived] [All]                                            │
- │ search: ____   agent: nova luna  engine: codex-cli  REM: partial    │
- │ ─────────────────────────────────────────────────────────────────── │
- │ ☐  Agent  Slug             Engine     Status  Last act.  Msgs  Size │
- │ ☐  nova   main ★           codex-cli  ●★      5 min ago  46    280k │
- │ ☐  luna   debug-auth-x     claude-cli         3h ago     12    22k  │
- │ ☑  nova   sub-self-477…    openai-c.          yesterday  2     35k  │
- │ ...                                                                  │
- │ [2 selected] [Archive selected] [Clear]                              │
- └─────────────────────────────────────────────────────────────────────┘
-```
-
-**What it shows per row:**
-
-| Column | Meaning |
-|---|---|
-| Agent | Persona name, coloured with the agent's `color` from `AGENTS.md` frontmatter |
-| Slug | Session slug — `★` marks the magic `main` session |
-| Engine | `claude-cli` / `codex-cli` / `openai-compatible` (last engine that touched it) |
-| Status | `●` (green) = at least one SSE subscriber is live on this session right now · `📦` = archived · `★` = main |
-| Last activity | Human-readable relative time (`5 min ago`, `yesterday`, `3w ago`) |
-| Msgs | `user_message` + `assistant_message` count |
-| Size | Bytes on disk for the JSONL |
-| REM | `🧠 ✓` (green) = REM dreamed up to the latest event · `🧠 ⚠N` (orange) = REM ran once but `N` new events have arrived since · `🧠 ○` (grey) = never dreamed |
-
-**About the REM column.** REM is the per-agent background phase that turns
-finished session content into memory candidates (see
-[dream-phases.md](dream-phases.md)). The column tells you, per session, how
-much of its history REM has already processed:
-
-- **`🧠 ✓` (dreamed).** REM has worked through every event in this session.
-  Nothing waiting.
-- **`🧠 ⚠N` (partial).** REM ran at some point — but you've chatted further
-  since. The number is how many user/assistant events have piled up beyond
-  REM's last read-through marker. They'll be picked up on the next idle-
-  triggered REM run for this agent.
-- **`🧠 ○` (never).** No REM run has touched this session yet. Common for
-  brand-new sessions, sub-agent spawns that finished quickly, or sessions
-  on agents where REM is disabled in `agent.yaml`.
-
-The lag count is informational — you don't have to do anything about it. If
-you want to nudge a session, end it (`/reset`) and REM will fire on the
-archived copy at the next idle window.
-
-**Tabs:**
-
-- **Active** — non-archived sessions (default). Same set the `/session` slash-popup sees.
-- **Archived** — sessions explicitly archived OR legacy `/reset` outputs (ids ending in `-archive`).
-- **All** — both.
-
-**Filters + sort:** agent (multi-select chip group), engine, REM-state (`dreamed` / `partial` / `never`), plus a free-text search across slug / agent / id. Column headers sort by last-activity / messages / size / agent (click to toggle direction).
-
-**Click a row** (outside the checkbox / action buttons) → opens a chat window for that (agent, session). Same `wm.openChat()` path the agent dock uses.
-
-**Archive / Unarchive:** the right-edge action button on each row archives (or unarchives in the Archived tab). Bulk-select with the checkboxes and the bulk-action bar archives multiple at once. The magic `main` session can't be archived directly — use `/reset` to spawn an archived copy.
-
-**Export:** two download icons sit next to the archive button on every row — a file-text icon downloads a **Markdown transcript** (readable, with `##` user/assistant headers, fenced code blocks for tool calls, and engine plan items as task lists), a file-json icon downloads the raw **JSONL** (byte-identical to the on-disk source, full fidelity). Markdown is great for sharing or saving into Obsidian; JSONL is the canonical backup you'd drop on another somora host. Both work for archived sessions too. Backend route: `GET /agents/:agent/sessions/:session/export?format=…` (see [api.md](api.md)).
-
-**Reload:** manual reload icon top-right, plus a 60-second auto-refresh toggle (default on). Stats are cached in each session's `<id>.meta.json` and invalidated by JSONL mtime, so reloads stay cheap.
-
-**Archive semantics:** archive is **meta-flag based**, no file movement. `meta.archived = true` (with `archivedAt` + optional `archiveReason`) is the source of truth. The `<id>.jsonl` and `<id>.meta.json` files stay where they are. Default-filtering at `listSessions()` keeps archives out of the slash-popup, chat-window session picker, and the Active tab — they only surface in the Sessions tool. No hard-delete option, on purpose: archive is fully reversible, and you can always clean up `~/.somora/agents/<agent>/sessions/` by hand if you really want bytes gone.
-
-**Why this exists:** sessions accumulate fast (REM idle-trigger, sub-agent spawns, `/reset` archives, debugging sessions). Without a place to see everything at once, slash-popups grow until they're useless and you can't tell which old sessions are still worth keeping. The Sessions tool is the housekeeping surface — search, filter, archive, see at a glance which sessions have unconsolidated memory waiting for REM.
-
-## Chat window anatomy
-
-```
- ┌──────────────────────────────────────────────────────┐
- │ 🧠  scribe  · assistant             ● streaming     │ ← header
- │ main · opus · think:medium · 🔧 on · ▣21% Σ↑12k ↓4k · ●│ ← live meta
- ├──────────────────────────────────────────────────────┤
- │  [user]   summarize today's notes                    │
- │                                                       │
- │  [tool]   memory_search "today notes"                │ ← above
- │  [tool]   → notes/2026-05-10 · 0.71                  │
- │  [scribe] You spent the morning on the cache fix...  │ ← below
- │  ▮                                                   │
- ├──────────────────────────────────────────────────────┤
- │  📎  Type a message…                            ▷    │ ← input
- └──────────────────────────────────────────────────────┘
-```
-
-- **Header**: agent name, role badge from `AGENTS.md`, streaming pill.
-- **Meta line (10px mono)**: session id, model, thinking level, tools
-  toggle, context fill, token counts, connection dot. The two readings
-  mean different things. `▣` is how full the window was on the turn's
-  last request, amber past 75 % and red past 90 %. `Σ↑` and `↓` are what
-  the turn spent; the Σ says it is a sum over every request the turn
-  made. A turn with 21 tool rounds sends its context 21 times, so the
-  sum runs far past the window and says nothing about how full it is —
-  a real one read `▣ 62% Σ↑ 6.0M` against a 524k window. The TUI header
-  shows the same pair. On a CLI engine the window is the one the engine
-  reports for itself where it reports one (codex sends
-  `modelContextWindow` per thread), because the configured
-  `contextWindow` is somora's guess at a cap that engine enforces on its
-  own. If the last request was still bigger than the window somora knows,
-  the badge reads `▣ >100%` with the raw number rather than a percentage
-  that keeps climbing — a plain "300 %" said nothing a reader could act
-  on, and the tooltip names the cause (configured window too small). When the last turn was
-  answered by the persona's `fallback:` model, a warn-coloured
-  `⇄ <backup-model>` marker sits next to the model (tooltip: why the
-  primary failed).
-- **Chat text zoom** (⊖ / ⊕ in the header, left of the project chip):
-  75–200 % in discrete steps, **per agent** — one conversation can be
-  enlarged without touching other agents, the window chrome or the
-  desktop. The percentage readout appears only off-default and doubles
-  as the reset. Persisted per browser (`somora-chat-zoom`).
-- **Fallback marker on bubbles**: an assistant turn produced by a
-  fallback model carries a `⇄ fallback · <model>` chip. Hover shows why
-  the primary failed — and with a fallback chain (`fallback: [a, b]` in
-  agent.yaml, see [agents.md](agents.md)) every model that failed before
-  this one, in order. It survives reloads — the server persists a
-  `model_fallback` event in the session history. A short notice
-  appears once at the start of a fallback streak and once more when
-  the primary model answers again; turns in between get the chip only.
-  When every model in the chain fails before producing anything, the
-  turn's error row names all of them with their reasons (`All 3 models
-  failed. …`) instead of only the last one's raw error. The TUI prints
-  the same as a warn line in the scrollback, the mobile client shows
-  the chip on the bubble.
-- **Server log** (the **log** tile): the end of somora's own log in a
-  window, so a look at what the server did no longer needs an ssh
-  session. Pick the day, a minimum level (debug, info, warn, error) and
-  a text filter; new lines follow every two seconds while the window is
-  open, and following pauses when you scroll up to read. Only the tail
-  of one day's file is ever read.
-- **Browser window** (when `browser.enabled`): the **browser** tile
-  lists browser sessions, one row per agent window — agents sharing a
-  profile run in one Chromium but get a window each, with their own
-  tabs, control state and handoff. A row opens the live view with tab
-  bar, URL bar and take-over buttons. Stopped browsers are not listed,
-  except one still holding an unanswered handoff. A pending handoff adds
-  an **Open browser** notice in its source chat and a taskbar marker. These and the list
-  update from one change stream. Broken viewer connections reconnect;
-  stopped browsers can be explicitly reopened without replaying old
-  actions. Closing the viewer keeps human control in place. See
-  [browser.md](browser.md#in-the-web-client).
-- **Peer origin caption**: a message another agent sent via `agent_ask`
-  renders with that agent's icon and colour; when it was sent from one
-  of the sender's non-main sessions, `<agent> · <session>` sits left of
-  the timestamp. Main-session traffic shows no caption. The TUI shows
-  the same as `↬ <agent>/<session>`.
-- **Body**: pinned-to-bottom auto-scroll. Manually scroll up to read
-  history; new messages won't yank you down. Scroll back to the
-  bottom to re-pin.
-- **Tool-rendering toggle** (wrench in the meta line): show or hide
-  tool-call / tool-result blocks AND `engine_meta` rows (codex's
-  internal plan/todo state — see [setup.md](setup.md#engine-meta--codex-todo_list)).
-  Persists per `agent::session` in `localStorage` — a reload restores
-  your choice. Tools render **above** the agent's answer for a given
-  turn (TUI-style ordering) — the assistant bubble is a single message
-  that re-anchors to the bottom of the transcript whenever a tool event
-  lands, so cumulative text never duplicates around tool boundaries.
-  Engine-meta blocks render dimmer than tool calls and prefix with
-  `◌ codex · plan` so it's visually clear they came from the engine,
-  not from somora's tool layer.
-- **Input**: auto-grow textarea up to 120px, then internal scroll.
-  Enter sends, Shift+Enter newline. The textarea stays editable
-  while a turn is streaming — pressing Send during a running turn
-  enqueues the message rather than blocking it (see "Queueing &
-  Stop" below).
-- **Steer / queue toggle** (next to Send, while a turn runs): a small
-  labelled pill reading **queue** (hourglass, off) or **steer** (bolt,
-  on). With steer on, what you type goes *into* the running turn instead
-  of behind it — the model reads it at its next step and changes course; the
-  bubble shows `steering…` until the engine has taken it and `steered`
-  after. With queue the message waits as before. The agent's
-  `steering:` in agent.yaml sets which way the toggle starts; a steer the
-  turn ends before reading becomes an ordinary queued turn. Works on
-  every engine; a Claude turn keeps its channel to somora open until
-  every steered message has been answered, so tools keep working in the
-  steered part of the turn; see [api.md → Steering](api.md#steering) and
-  [agents.md](agents.md).
-- **Stop buttons** (two, same abort): while a turn is in flight a
-  red Stop appears **in the composer next to Send** and on the
-  **streaming assistant bubble** (in the slot where copy/pin sit on
-  finished bubbles). Send stays live the whole time, so queued sends
-  keep working from the button — Stop is additive, it never replaces
-  Send. One click aborts the current turn server-side via
-  `POST /chat/abort`; if there was nothing to stop (turn just
-  finished) or the abort fails, a notice says so instead of silently
-  doing nothing.
-- **Mic button** (next to send, when STT is configured): click-to-toggle
-  voice input. Click once to start recording — the icon switches to a
-  red stop-square and `MediaRecorder` captures from the default mic.
-  Click again to stop; the audio blob is POSTed to `/stt/transcribe`,
-  somora forwards it to the configured upstream (e.g. oMLX Whisper),
-  and the returned transcript is appended to the textarea — your
-  existing draft is preserved, voice gets added with a separating
-  space. Hidden when the browser lacks `MediaRecorder` /
-  `getUserMedia` (capability gate identical to the screenshot
-  button), or when somora's `/stt/config` reports STT disabled.
-  Configuration in [setup.md §7](setup.md#7-voice--stt--tts-optional).
-- **Voice replies** (when TTS is configured): the chat header shows a
-  `🔊`/`🔇` toggle. When on, mic-submitted turns trigger automatic
-  TTS playback of the assistant reply (text replies are unaffected).
-  Toggle is sticky per `<agent>:<session>`. A Play-button appears on
-  bubbles that have generated audio so you can replay any time. Full
-  details in [voice.md](voice.md).
-
-Markdown is rendered via `react-markdown` + `remark-gfm` +
-`rehype-highlight`. Code blocks scroll horizontally inside the
-75%-width bubble; tables overflow-scroll independently.
-
-### Session actions menu (`•••`)
-
-The three-dots button in the chat header opens a popover anchored to
-that button — same screen position every time, escapes the chat
-window via a portal so it can't be clipped. Three sections:
-
-- **MODEL** — current model + engine + context window. "Switch
-  model…" expands an inline picker with a free-text filter; clicking
-  a model commits a per-session override (`PUT /agents/<a>/sessions/
-  <s>/model`). Same flow as the `/model` slash command.
-- **THINKING** — current effective level and its source (session
-  override / persona default / engine default). A segmented control
-  (off / low / medium / high) sets a session override; "Reset to
-  default" removes the override and falls back to persona / engine
-  default.
-- **DANGER ZONE — Reset session** — archives the current chat (the
-  jsonl is kept as `<id>-archive`) and starts a fresh session. If the
-  agent has REM enabled in `agent.yaml`, REM fires asynchronously
-  over the archived range to extract memory candidates. Two-click
-  confirm so it can't trigger by accident.
-
-Close the menu by clicking the `•••` button again, clicking anywhere
-outside the popover, or pressing `Escape`.
-
-### Bubble actions: copy and pin
-
-Hover any finished assistant bubble and two small icons appear in the
-top-right corner. They show up only once the message has finished
-streaming — partial content can't be copied or pinned. The buttons
-sit inside the bubble so they travel with their message as you scroll
-and don't clutter the chat header.
-
-- **Copy** writes the bubble's raw markdown to the clipboard. The
-  icon swaps to a check glyph for ~1.5 s as a confirmation cue, then
-  reverts. Pasting elsewhere preserves headings, lists, code blocks,
-  tables — anything markdown carries.
-- **Pin** opens a free-floating pin-note window with a snapshot of
-  that message (see below). The pin icon turns yellow + filled and
-  stays visible even without hover, so pinned messages stand out
-  while you scroll the history.
-
-Clicking an active pin again closes its pin-note window. Closing the
-pin-note window via its `×` does the same thing — the two affordances
-stay in sync.
-
-### Pin-note windows
-
-A pin-note is a small free-floating window that captures one
-assistant message for working memory. Use it when an answer is
-important to refer back to while the conversation continues — a
-recipe, a config snippet, a decision summary.
-
-Layout:
-
-```
- ┌──────────────────────────────────────┐
- │ 📌 nova note                  × ─ ⤢ │ ← yellow titlebar tint
- ├──────────────────────────────────────┤
- │ 🤖 nova · main             14:08    │ ← agent + source + when said
- ├──────────────────────────────────────┤
- │                                      │
- │ rendered markdown body, scrollable,  │ ← same renderer as the chat
- │ selectable…                          │
- │                                      │
- ├──────────────────────────────────────┤
- │ 📌 pinned 3 min ago                   │ ← when the pin itself was made
- └──────────────────────────────────────┘
-```
-
-Behaviour:
-
-- **Free-floating.** Drag the titlebar to move, drag the bottom-right
-  corner to resize, same as any other window. Pin-notes have their
-  own z-stack so you can leave one over a chat while continuing the
-  conversation.
-- **Yellow titlebar tint** distinguishes them at a glance from chat,
-  tmux, and sessions windows.
-- **Snapshot semantics.** The content is frozen at pin time. If the
-  agent continues streaming additions to the same turn, the pin
-  doesn't update — re-pin to capture the new state.
-- **Multiple in parallel.** Pin as many messages as you like; each
-  gets its own window. Re-pinning the same message focuses the
-  existing note instead of duplicating.
-- **Survives reloads.** Pin-notes live in the window-manager's
-  `localStorage` layout, so a browser refresh restores them.
-- **Survives the source.** Even if the original session is archived
-  or the chat window is closed, the pin-note keeps its content. The
-  header still shows the source agent and session label so you can
-  retrace where the message came from.
-
-Closing a pin-note (`×` button on the window, or click the active
-pin button on the source bubble) just removes the note window — the
-original message stays in chat history.
-
-## Queueing & Stop
-
-You don't have to wait for a turn to finish before typing the next
-one. Submits during a running turn flow into the per-session queue
-on the server (see [api.md](api.md#queuing)) and execute in order
-once the lock frees. The alternative is the steer toggle in the
-composer: a message steered into the running turn is read by the
-model mid-work instead of after it (see "Chat window anatomy").
-
-The optimistic user-bubble shows up immediately with a small
-hourglass marker next to its timestamp:
-
-```
- ┌──────────────────────────────────────┐
- │  next thing I want to ask            │
- │                       ⌛ queued · 14:08 │
- └──────────────────────────────────────┘
-```
-
-When other waiters sit in front, the marker reads
-`⌛ queued · N ahead`. The marker disappears as soon as the server
-starts the turn — at that point the bubble looks like any other
-finished user message, and the assistant's reply streams in below it.
-
-While the marker is showing, the message is still yours: the small
-**↩ edit** next to it takes the message back out of the queue and
-into the composer (`DELETE /chat/queue/:id`), attachments
-included, so you can add the thing you forgot and send again. The
-re-sent message joins the end of the queue. If the turn started in
-the meantime the bubble just loses its marker and a notice says so —
-Stop is the handle from then on.
-
-### The queue badge
-
-The window header says what the session is doing as a whole:
-`waiting 3 · running · 1 arriving`, and `2 sub-agents` / `1 ask` when
-the session has work out elsewhere. It counts every kind of turn, not only yours — a
-question from another agent, a sub-agent brief, a sentinel fire, a
-question from a call. Click it for the list:
-
-- **Running** — the turn holding the lock: where it came from, its
-  first line, since when, and Stop.
-- **Waiting** — the queue in order, each entry with its origin, a
-  preview and how long it has waited, and **×** to remove it, whoever
-  queued it. Your own message comes back into the composer as with
-  ↩ edit; another agent's question is reported to that agent as failed
-  with the reason, a sub-agent brief as cancelled, a sentinel fire as
-  skipped.
-- **Arriving** — answers on their way back into this session: a late
-  reply to an `agent_ask`, a finished background sub-agent, a rendered
-  video.
-- **From here** — the sub-agents and `agent_ask` calls this session
-  started that are still queued or running; a row opens the target
-  session. **×** on one that has not started yet removes it from the
-  target's queue; **■** on a running one stops it — a sub-agent
-  together with everything it started, a question as the turn it runs
-  on the target. This session hears about it the way it would have
-  heard the result.
-
-Badge and list both read `GET /agents/:agent/sessions/:session/work`
-([api.md](api.md#get-agentsagentsessionssessionwork)): refetched on
-every queue event, and every 3 s while the list is open so the wait
-times keep counting.
-
-Aborting (Stop button on the streaming bubble) cancels the
-**currently-running** turn only. Queued waiters keep their slots and
-run in order. It does not matter what started that turn: a message
-from another agent, a sub-agent brief, a sentinel fire, a tmux or
-browser wake, a voice consult or a wake-up stops the same way as your
-own message, and whoever asked for it is told it was stopped by the
-user.
-
-## Failed turns
-
-A turn that ends in an error (engine 5xx, watchdog, abort) renders as
-a red **Turn failed** block inside the turn, right where it happened.
-Media the turn produced before failing (a generated picture, say)
-hangs under that block — not under the previous answer. The block
-comes from the `turn_error` SSE event live and from the session
-file's `error` rows on reload.
-
-## Activity feed (multi-agent dots + unread)
-
-The agent dock and the Sessions tool both show two passive indicators
-that come from a single app-wide SSE on `/activity/stream`:
-
-- **Streaming dot** — fills on every agent whose any session is mid-
-  turn, not just agents whose chat window you currently have open.
-  When a sentinel job wakes a different agent in the background or a
-  peer-agent message kicks off an A2A reply, that agent's dock tile
-  goes busy even if its window is closed.
-- **Unread dot** — appears (different colour from streaming) when a
-  session has activity since you last viewed it. Counts: A2A
-  inbounds, sentinel-triggered messages, and assistant final replies.
-  Self-typed messages and tool/memory side-effects do not count.
-
-A session is "viewed" when its chat window is open and focused. The
-client POSTs `/sessions/:agent/:session/seen` on focus and the server
-broadcasts the cleared state — open the chat on the TUI or mobile and
-the badge here disappears too. Per-session badges also show in the
-Sessions tool's session list.
-
-State persists across server restarts: `unreadAt` and `seenAt` live in
-each session's meta. Endpoint docs: see [api.md](api.md#get-activitystream).
-
-## Cross-client echo
-
-When you type a message in a Web window, the somora server echoes a
-`user_message` SSE event to **every** subscriber of that
-`agent::session`. The TUI tail will show what you typed in the web,
-and a second web tab on the same chat will show it too. Self-echoes
-are deduped against the optimistic local-user message via a pending
-list, so you never see the same text twice.
-
-## SSE event vocabulary
-
-The web client listens for these named events on `/chat/stream`:
-
-| Event | Payload | Meaning |
-|---|---|---|
-| `status` | `{msg}` | Connection state — initial `connected`, periodic keepalive |
-| `user_message` | `{text, ts, turnId?, origin?, from_agent?, from_session?, from_system?, agent_ask_call_id?}` | A user-typed message landed in the session (any client). `turnId` pairs the event with an optimistic bubble made by `POST /chat/send`. `from_system` marks a system-trigger inbound: `sentinel`, `tmux` (attention watcher), `subagent` (finished task), `job` (video job), `browser` (hand-back), `voice` (question from a realtime call), `a2a` (late answer to an `agent_ask`). Each is drawn as a centered divider, not a bubble — in the web client, on mobile and in the TUI alike. `origin` carries the same information as one structured value (shape in [api.md](api.md#get-chatstream)); turns recorded before it existed have only the `from_*` fields. |
-| `turn_queued` | `{turnId, ahead, workId?, kind?}` | Fired when a send hit a busy lock. `ahead` ≥ 1 includes the currently-running turn. `workId` is the entry's id in the session's work queue (equals `turnId` for a typed turn) and `kind` its origin. Drives the `⌛ queued` marker. Re-emitted for the waiters that move up after a dequeue. |
-| `turn_dequeued` | `{turnId, workId}` | A waiting entry was taken back (↩ edit or × in the queue list, from any client). The bubble for a typed message is dropped; the queue list refreshes. |
-| `turn_started` | `{turnId}` | The engine's own turn id — stamped on the assistant bubble so `assistant_media` / `turn_error` pair to this turn. |
-| `turn_error` | `{turnId?, message, engine}` | The turn failed. Rendered as the **Turn failed** block inside the turn. |
-| `agent` | `{phase: 'start'\|'end', usage?, provider?, model?, fallback?, ...}` | Turn boundary. On `end`, `provider`/`model` are the model that ACTUALLY answered; `fallback` `{requested, actual, reason, hops?}` is set when that was a fallback model (same shape as `model_fallback`). |
-| `model_fallback` | `{requested, actual, reason, hops?}` | The primary model failed before producing anything; a fallback model is answering this turn. `requested` is always the primary, `actual` the model now answering; `hops` lists every model that failed so far (chain). One event per hop, precedes the first `chat` delta of the model that answers. |
-| `chat` | `{state: 'delta'\|'final', text}` | Cumulative assistant text (each delta carries the full running text, not just the new chunk) |
-| `thinking` | `{state: 'delta'\|'final', text, truncated?}` | The model's reasoning text, cumulative like `chat`; `truncated` when the server cut it at its cap. Renders as the 🧠 thinking block above the reply (the "Show thinking in replies" switch in the `•••` menu, same as `/verbose thinking`). See [thinking.md](thinking.md). |
-| `tool` | `{phase: 'call'\|'result'\|'error', tool, summary?, details?, error?}` | Tool invocation lifecycle |
-| `engine_meta` | `{engine, itemType, label, summary?, payload}` | Engine-internal side-channel (e.g. codex `todo_list`). Renders under the tools toggle. |
-| `memory` | `{count, topScore, refs, fullText?}` | Memory auto-inject for this turn |
-| `project` | `{from, to, via}` | Project focus change — fired by `/projekt` slash + HTTP routes. MCP-routed agent tool calls don't emit this; clients re-GET `/…/project` on `agent:end` instead. Only fires when the projects feature is enabled. |
-| `assistant_audio` | `{turnId, url, mime, durationMs?, cacheKey}` | Server-generated TTS artifact for the matching turn. Pairs by `turnId`; drives the Play-button on the bubble. |
-| `assistant_media` | `{turnId, media: [{type, id, prompt, mime, filename, url}]}` | Media produced while the turn ran. Pairs by `turnId` and renders under the bubble. Published by the server after the turn finalizes — the agent doesn't have to attach anything. Each entry's `type` decides the renderer; an unknown type is skipped rather than guessed at. See [imagegen.md](imagegen.md). |
-
-The server pubsub key is `${agent}::${session}` — multiple agents can
-share a session id like `main` without leaking events across windows.
-
-## FileView
-
-Agents reference files by absolute path in chat (`[report.md](/home/…)`),
-and the web client's Markdown renderer turns those into links that open
-a FileView window. Nothing is refused for being the wrong type:
-what the viewer cannot render, it describes.
-
-| The file is | You get |
-|---|---|
-| Markdown | full render, same plugins as chat |
-| Text / code | monospace, syntax highlighting for the known extensions |
-| Image | inline, click for full size |
-| Video | `<video controls>`, seeking served by Range requests |
-| Audio | `<audio controls>` |
-| PDF | the browser's own viewer |
-| anything else | name, type, size — and a download |
-
-**A download button is present for every file type**, including the ones
-that render inline.
-
-The classification comes from the file's magic bytes, not its
-extension: a `.dat` holding PNG bytes is shown as the image it is, and a
-`.png` that is really a JPEG is served with the type it really has.
-`.svg` is the deliberate exception — it is markup that can carry script,
-so it is shown as its own source rather than rendered.
-
-Bytes come from `GET /files/raw`, which streams and honours `Range`;
-without that, scrubbing a video would re-fetch the whole file. Inline
-display is limited to image/video/audio/PDF, because anything else shown
-inline would run on somora's own origin.
-
-The boundary is the read policy, not the workspace: a file under
-`/tmp/` is viewable, a file under a blocked root is not — the same
-answer `file_read` gives an agent. See [api.md](api.md#get-filesview).
-
-## Features
-
-- **Chat windows** — one per `(agent, session)`, live SSE streaming,
-  full history hydration on open, per-window tool/memory toggles,
-  cross-client echo (multiple windows on the same session stay in
-  sync), window manager with persistence (positions/sizes survive
-  reload).
-- **Windows never leave the desktop** — shrinking the browser pushes
-  every window back inside and shrinks only what no longer fits; the
-  taskbar (with Arrange, Save/Restore layout) always stays on top. See
-  the window-manager section above.
-- **Agent context menu** — right-click an agent tile: open main, jump
-  to one of its recent sessions, start a named new session in its own
-  window, open the Sessions tool, or **Configure…** (the Agent window
-  below).
-- **Agent window** — what a persona is made of and what it costs. A
-  budget strip on top: the three persona files together, the team
-  block, the full assembled prompt and the tool schemas, each in
-  characters and estimated tokens against `promptBudgets` in
-  config.yaml (soft caps: over budget turns the counter yellow, nothing
-  is truncated). Tabs for `AGENTS.md`, `SOUL.md` and `USER.md` as plain
-  editors with a per-file counter and Save/Discard, `agent.yaml`
-  read-only (model, fallback, REM — edit the file or use the session
-  controls), and **Full prompt**: the system prompt exactly as the next
-  turn on a chosen session would send it, split into its parts with
-  sizes, plus the tool-schema total and a note on what is *not* in that
-  text (memory recall, history, the engine's own instructions). Agents
-  that can be called by voice get one more tab, **Voice prompt**: the
-  whole instruction the talking model is given, whether it came from a
-  hand-written `VOICE.md` or was derived from the persona, with voice,
-  language and consult policy beside it. Saving
-  is guarded: the agents edit these files themselves, so a save is
-  refused when the file changed on disk since you loaded it, and you
-  are asked to reload; the previous version is kept as a backup.
-  `AGENTS.md` must keep a loadable frontmatter whose `name` matches the
-  agent directory.
-- **Queued messages are editable** — a message waiting behind a running
-  turn shows ⌛ and an *edit* link that takes it back into the composer;
-  a turn that fails renders as a *Turn failed* block inside the turn,
-  with any media it produced under it.
-- **Abilities window** — per-agent matrix for tools *and* skills, plus
-  external MCP server health. See [mcp.md](mcp.md#the-abilities-window)
-  and [skills.md](skills.md#per-agent-visibility). The matrix follows the
-  agent's kind: a chat agent sees the whole programme minus the three
-  builder-only tools, a builder sees its coding set on top and every
-  other tool under *more*, off unless switched on. A toggle takes effect
-  on the agent's next turn on every engine; on codex-cli the Codex
-  thread is restarted with the session history carried over (a
-  `tools changed` marker appears in the chat), because Codex keeps a
-  thread's tool set for its lifetime.
-- **Builder windows** — an agent of kind `builder`
-  ([builder.md](builder.md)) has a grey outline and a *builder* label on
-  its tile, and its chat window opens wider than a chat window (960 × 620,
-  so the panel is not folded from the start) and carries the **task panel**
-  docked on the right: mode (attended / unattended) and phase (plan / build) switches,
-  the **Go** button that approves the plan and starts the build, the
-  plan file's path, the task list the builder keeps with `todo_write`,
-  and any question it asks with `ask_user`, answered right there. The
-  panel folds to a strip when the window is narrower than about 640 px
-  and unfolds again with the window. The agent window shows only
-  `AGENTS.md` for a builder (no `SOUL.md` / `USER.md`: the harness rules
-  replace the persona), and the Full prompt tab shows the harness prompt
-  with its parts.
-- **Team window** — the org chart editor for `~/.somora/team.yaml`
-  ([team.md](team.md)): drag an agent card onto its new superior (or
-  onto you), edit title, "involve for" / "not for" chips, notes and the
-  active switch per agent, your own name/title/about and the global
-  rules; the preview pane shows the exact `# Your team` block any agent
-  would get — rendered from the unsaved draft, so you see the effect
-  before saving. Save validates on the server, writes atomically and
-  keeps the last five versions as backups; agents pick the change up on
-  their next turn. With no file yet the window offers to create one from
-  the agents on disk.
-- **Drag & drop / paste / paperclip attachments.**
-  Per-turn user-attachments end-to-end through all three engines:
-  claude-cli inlines as native ImageBlock / DocumentBlock;
-  codex-cli sends images as native turn inputs and rasterises PDFs to
-  per-page PNGs; openai-compatible builds an array-content user
-  message (`image_url` for images, `file` or rasterised pages for
-  PDFs depending on `pdfMode`). Bytes live content-addressed at
-  `~/.somora/attachments/<sha256>.<ext>`; JSONL refs only, never
-  inline. See `docs/files.md` (and config block below) for the
-  Server side; the client surface is paperclip + Cmd/Ctrl+V paste
-  + drag&drop overlay + a per-bubble thumbnail row. Capability
-  gate refuses uploads for models without `image`/`pdf` capability
-  with a clear nudge to `/model`. Switching an existing session to a
-  text-only model afterwards keeps working: the history is packed for
-  the model that will read it, so past attachments it cannot process
-  are replayed as a text marker naming the file instead of being
-  re-sent and rejected. See `files.md`.
-- **Older-messages lazy-load**. Initial history load is paginated
-  to the last 100 events; scrolling near the top auto-fetches the
-  next 100, anchoring the visible position so you stay where you
-  were reading. There's also an explicit "↑ load older" button
-  for clarity. A window left open on a busy session does not grow
-  without bound either: past 400 rows it keeps the newest 300 once
-  the running turn has ended, and the older rows come back through
-  the same "load older" path. Each window redraws only for events
-  of its own session, so several streaming windows side by side stay
-  responsive.
-
-- **Memory-inject banner** — per-turn `🧠 memory · N hits · refs…` line
-  in the chat flow, mirrors the TUI's `◇ memory · …` row. Brain icon in
-  the meta-line toggles visibility; chevron expands the full injected
-  text. Persists per `agent::session` like the tools toggle.
-- **Slash-command popup** — type `/` in the input to bring up a
-  command picker:
-  - `/model <ref>` — switch model for this session (autocompletes from
-    `/models`).
-  - `/session <slug>` — switch the window to another session of this
-    agent (in-place, the SSE re-subscribes).
-  - `/new <slug>` — create a new session and switch this window to it.
-  - `/thinking <off|low|medium|high|default>` — set / clear the
-    thinking-effort override.
-  - `/sampling [key=value …|default]` and `/temp <n>|default` — sampling
-    parameters for this session (openai-compatible engine), see
-    [sampling.md](sampling.md).
-  - `/verbose thinking on|off` — show or hide the 🧠 thinking block
-    above replies in this session (display only; same switch as the
-    checkbox in the ••• session menu).
-  - `/projekt <slug>` (alias `/project`) — pin a project to this
-    session. Autocompletes from `/projects` with entity + path-count
-    detail per row. `/projekt unlink` is always the first row so
-    clearing the pin doesn't require waiting for the list to load.
-    Only present when the projects feature is enabled in `config.yaml`.
-  - `/reset YES` — archive this session and start fresh (same as the
-    Danger-zone action in the `•••` menu); `YES` is the confirmation.
-
-  Arrow-keys navigate, Enter or Tab accepts, Escape dismisses. Note:
-  `/agent` is intentionally *not* a slash-command — the agent dock on
-  the left is the agent switcher, switching agent inside an existing
-  window would mean discarding the window's identity. `/skill` is also
-  out, because skills are activated by the agent itself via the `skill`
-  tool, not by user-facing CLI shortcuts.
-- **Tmux session windows** — attach to a running tmux session in its
-  own window via xterm.js + a WebSocket bridge. Sessions you started
-  in the terminal show up in the AppDock; output streams live and
-  keystrokes go straight through.
-- **Sessions tool** — cross-agent session browser in the AppDock with
-  filter (agent, engine, REM state), sort, search, click-to-chat,
-  bulk archive/unarchive, and 60s auto-refresh. Archive is a meta-flag
-  (no file movement, no hard delete) so archived sessions stay
-  inspectable and can be restored. When the projects feature is on,
-  the table also has a Project column with color-coded chips per row.
-- **Wiki explorer** (opt-in, read-only) — a dock tile that opens the
-  shared wiki in three columns: folder tree, rendered page, link graph
-  plus backlinks. Obsidian `[[wikilinks]]` are clickable and navigate
-  in place; targets that match no page render as broken rather than
-  silently disappearing, so gaps in the wiki stay visible. The graph
-  toggles between the current page's neighbourhood and the whole wiki,
-  and clicking a node opens that page. The tile only appears when
-  `wiki.enabled` and `obsidian.vault` are both set — the same gate the
-  server applies to the routes. Nothing here writes: the wiki is owned
-  by Deep/Lucid, and a viewer that could also edit would race them.
-  See [wiki.md](wiki.md#web-explorer).
-- **Project chip + switcher** (opt-in) — when `projects.enabled` is
-  on, the chat-window header gains a chip next to the ••• action
-  button. Color-pill with project name when pinned; ghost folder
-  button when unpinned. Click opens a switcher popover with all
-  configured projects grouped by entity + a search field. Cross-
-  client live update via SSE: pin via `/projekt` in the TUI, the
-  open web window updates within 100 ms. See
-  [projects.md](projects.md) for the feature model.
-
-## Files of interest
-
-```
+The dev server runs on port 5173 under `/web/` and passes API calls on
+to the somora server. It serves HTTPS when a certificate for your host
+is in `~/.somora/certs/`. Set `SOMORA_TLS_HOST` to name the host.
+Without a certificate it falls back to plain HTTP.
+
+```text
 web/
 ├── src/
-│   ├── components/
-│   │   ├── ChatProvider.tsx     ← global per-session state + SSE multiplexer
-│   │   ├── Desktop.tsx          ← window manager host
-│   │   ├── Window.tsx           ← drag/resize chrome
-│   │   ├── ChatWindow.tsx       ← header + body + input
-│   │   ├── MessageItem.tsx      ← per-message renderer (user/agent/tool)
-│   │   ├── DesktopIcons.tsx     ← icon grid: drag/swap/keyboard placement
-│   │   ├── AgentTile.tsx        ← one agent tile (status dot, pulse, badge)
-│   │   ├── AppTile.tsx          ← one app tile
-│   │   ├── WikiWindow.tsx       ← wiki explorer: tree + reader + links
-│   │   ├── WikiGraph.tsx        ← d3-force layout, plain-SVG rendering
-│   │   └── Taskbar.tsx          ← bottom bar + layout actions
-│   ├── hooks/
-│   │   ├── useAgents.ts         ← /agents poll
-│   │   ├── useSessionInfo.ts    ← /tui-config + per-session model/thinking
-│   │   ├── useLoopState.ts      ← /dream/review-state poll
-│   │   └── useWindowManager.ts  ← layout state + localStorage persistence
-│   ├── lib/
-│   │   ├── api.ts               ← typed wrappers around /agents, /chat/*, etc.
-│   │   └── colors.ts            ← per-agent gradient + role-tint resolver
+│   ├── components/     # windows, taskbar, chat
+│   ├── hooks/          # window manager, icons, zoom, activity
+│   ├── lib/            # api.ts and helpers
 │   └── styles/
-│       ├── desktop.css          ← desktop chrome (windows, taskbar, tiles)
-│       ├── globals.css          ← Tailwind + targeted overrides
-│       └── tokens.css           ← CSS variables (theme)
-└── vite.config.ts               ← base: '/web/', proxy in dev mode
+└── vite.config.ts      # base: '/web/', proxy in dev mode
 ```
+
+`npm run build` in the repository root builds the client into the
+package.
+
+## See also
+
+- [Setup](setup.md): HTTPS via Tailscale, speech-to-text, updates
+- [Mobile app](mobile.md): the chat on your phone
+- [API](api.md): every route and event the client uses
+- [Agents](agents.md): `agent.yaml`, fallback models, steering
+- [Models](models.md): context windows and thinking levels
+- [Thinking](thinking.md): which engines show their reasoning
+- [Sampling](sampling.md): the parameters behind `/sampling`
+- [Files](files.md): attachments and the read policy
+- [Dream phases](dream-phases.md): REM, Deep and Lucid
+- [Voice](voice.md) and [Realtime voice](realtime-voice.md): dictation,
+  spoken replies and calls
+- [Browser](browser.md): the shared browser and handoffs
+- [Image generation](imagegen.md) and [Video generation](videogen.md):
+  the media window
+- [Wiki](wiki.md): the explorer and what the wiki holds
+- [Team](team.md): the org chart
+- [Builder](builder.md): the task panel
+- [Projects](projects.md): the project chip
+- [Sentinel](sentinel.md): triggers
+- [tmux](tmux.md): terminal sessions for agents
+- [MCP servers](mcp.md) and [Skills](skills.md): the abilities window

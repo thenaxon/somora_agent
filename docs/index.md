@@ -32,14 +32,14 @@ assistant, which connects a model, creates your first agent and sends
 it a test message. ~10 minutes.
 
 **I want to chat from the browser or my phone.** Read
-[setup.md → HTTPS via Tailscale](setup.md#https-tailscale--required-for-the-web-client-at-scale)
+[setup.md → HTTPS via Tailscale](setup.md#https-via-tailscale)
 (or run `somora setup access`, which does it for you)
 to get a real cert, then open `https://<your-tailnet>.ts.net:18737/web/`
 in the browser. The mobile PWA is the same URL with `/mobile/` — see
 [mobile.md](mobile.md).
 
 **I want to add a new provider / model.** [setup.md → Configuring
-providers](setup.md#6-configuring-providers) plus the comment block in
+providers](setup.md#connect-models) plus the comment block in
 [`config.example.yaml`](../config.example.yaml) is the full reference.
 
 **I want an agent to build software.** Create one of kind `builder`

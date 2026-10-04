@@ -345,7 +345,7 @@ Environment variables override the file:
 ## See also
 
 - [Models](models.md): recommended `contextWindow` per model
-- [Setup](setup.md#tunables): all tunables in one place
+- [Setup](setup.md#settings): server-level settings in one place
 - [Builder](builder.md#long-turns): how long builder turns stay inside
   the window
 - [Cache strategy](cache-strategy.md): what is sent in which order and
