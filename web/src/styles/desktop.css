@@ -367,14 +367,11 @@ input, textarea { font: inherit; color: inherit; background: none; border: 0; ou
   margin-right: 4px;
 }
 .taskbar-logo-mark {
-  width: 28px;
+  /* the koala of somora.ai on its own — no tile behind it */
+  width: 34px;
   height: 28px;
-  border-radius: 7px;
-  background: linear-gradient(135deg, var(--accent), #2c8d7b);
   display: grid;
   place-items: center;
-  box-shadow: 0 0 16px var(--accent-glow);
-  color: #07090d;
 }
 .taskbar-logo-text {
   font-weight: 600;

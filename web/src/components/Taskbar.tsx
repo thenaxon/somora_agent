@@ -220,7 +220,7 @@ export function Taskbar({
     <div className="taskbar">
       <div className="taskbar-logo">
         <div className="taskbar-logo-mark">
-          <Koala size={18} color="#0a0e15" strokeWidth={1.8} />
+          <Koala size={20} />
         </div>
         <div>
           <div className="taskbar-logo-text">somora</div>

@@ -210,7 +210,7 @@ export function MobileApp() {
     <div className="mobile-shell">
       <header className="mobile-header">
         <span className="mobile-header-mark">
-          <Koala size={26} />
+          <Koala size={24} />
         </span>
         <span className="mobile-header-title">
           {activeAgent ?? 'somora'}

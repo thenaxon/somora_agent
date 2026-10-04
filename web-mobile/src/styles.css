@@ -84,9 +84,10 @@ button { cursor: pointer; }
   background: linear-gradient(180deg, var(--bg-1), var(--bg-0));
 }
 .mobile-header-mark {
-  width: 28px; height: 28px;
+  /* the koala is 1.5 times as wide as it is high */
+  width: 38px; height: 28px;
+  flex: none;
   display: grid; place-items: center;
-  color: var(--accent);
 }
 .mobile-header-title {
   font-weight: 600;
