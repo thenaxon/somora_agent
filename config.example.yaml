@@ -762,10 +762,12 @@ providers:
 #     enabled: true
 #     intervalHours: 12
 #     model: opus                         # worker model ref (alias or provider/model)
+#     fallback: [gpt56]                   # backup(s) when `model` is unreachable — best on another provider
 #   lucid:
 #     enabled: true
 #     intervalDays: 7
 #     model: opus
+#     fallback: [gpt56]
 #     requireApproval: true
 
 # Workspace — default cwd for file_* tools. NOT a sandbox: agents can

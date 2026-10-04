@@ -27,7 +27,8 @@ import type { Config, ResolvedModel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import { resolveObsidianSource } from '../memory/registry.ts';
 import { logger } from '../server/logger.ts';
-import { callOneShotLLM } from './deep-llm.ts';
+import { callOneShotLLM, oneShotAnsweredBy } from './deep-llm.ts';
+import { resolveDreamWorker } from './worker-model.ts';
 import { buildLucidSystemPrompt } from './lucid-prompt.ts';
 import { resolveWikiSchema } from '../wiki/language.ts';
 import { findingKey, recentlyDismissedKeys, setRunStatus, writeLucidRun } from './lucid-storage.ts';
@@ -63,11 +64,10 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
   const id = makeRunId(args.trigger);
 
   // Resolve worker model.
-  const ref = args.config.wiki.lucid.model;
+  const { ref, model: workerModel } = resolveDreamWorker(args.config, 'lucid');
   if (!ref) {
     return failedRun(id, args.trigger, start, 0, 'no worker model configured for lucid');
   }
-  const workerModel = resolveAnyRef(args.config, ref);
   if (!workerModel) {
     return failedRun(id, args.trigger, start, 0, `worker model '${ref}' did not resolve`);
   }
@@ -284,6 +284,10 @@ export async function runLucid(args: RunLucidArgs): Promise<RunLucidResult> {
     logger.warn({ msg: 'dream.lucid.partial_coverage', id, batchesTotal, batchesFailed });
   }
   setRunStatus(run, 'completed');
+  {
+    const used = oneShotAnsweredBy(workerModel);
+    if (used.some((m) => m !== run.worker_model_ref)) run.answered_by = used;
+  }
   await writeLucidRun(run);
 
   logger.info({

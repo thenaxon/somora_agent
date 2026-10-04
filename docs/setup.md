@@ -873,11 +873,14 @@ wiki:
     enabled: true
     intervalHours: 12
     model: opus                # via claude-cli, subscription
+    fallback: [gpt56]          # backup worker(s) when `model` is unreachable —
+                               # see dream-phases.md → Backup workers
 
   lucid:                       # Wiki cleanup
     enabled: true
     intervalDays: 7
     model: opus
+    fallback: [gpt56]
     requireApproval: true
     maxCallsPerTurn: 3         # cap on wiki_* tool invocations during
                                # an active Lucid review-loop, per user

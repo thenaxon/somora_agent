@@ -192,6 +192,7 @@ export class DeepWorker {
         cachedSkips: result.cachedSkips,
         outcomes: counts,
         durationMs: result.durationMs,
+        ...(result.answeredBy ? { answeredBy: result.answeredBy } : {}),
       });
 
       const completedAt = Date.now();

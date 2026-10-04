@@ -1733,6 +1733,10 @@ export const WikiDeepConfigSchema = z
     intervalHours: z.number().positive().default(12),
     /** Worker model for Deep. Format `<provider>/<modelId>`. */
     model: z.string().min(1).optional(),
+    /** Backup worker(s), tried in order when `model` is not reachable
+     *  (connection, timeout, 5xx/429). One ref or a list. Put at least
+     *  one on a different provider than `model`. */
+    fallback: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
     /** Deep auto-applies (no approval). Reserved as bool in case we
      *  ever need to flip back on. */
     requireApproval: z.boolean().default(false),
@@ -1771,6 +1775,8 @@ export const WikiLucidConfigSchema = z
     intervalDays: z.number().positive().default(7),
     /** Worker model for Lucid (wiki cleanup / contradiction detection). */
     model: z.string().min(1).optional(),
+    /** Backup worker(s) — as `wiki.deep.fallback`. */
+    fallback: z.union([z.string().min(1), z.array(z.string().min(1))]).optional(),
     /** Lucid findings need user approval before wiki-edits apply.
      *  Approval happens via `dream_list` / `dream_get` / `dream_apply`
      *  / `dream_dismiss` — any agent with the `dream` toolset can

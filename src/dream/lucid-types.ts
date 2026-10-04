@@ -124,6 +124,9 @@ export interface LucidRun {
   pages_scanned: number;
   /** Worker model that produced the findings. */
   worker_model_ref: string;
+  /** Models that actually answered, when a backup stepped in for
+   *  `worker_model_ref` (wiki.lucid.fallback). Absent on a normal run. */
+  answered_by?: string[];
   /** Total tokens estimated for the LLM call (in + out). */
   estimated_tokens?: number;
   /** LLM batches started (one per subfolder + the cross pass) and how

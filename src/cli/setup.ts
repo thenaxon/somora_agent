@@ -649,10 +649,18 @@ async function stepMemory(ctx: Ctx): Promise<void> {
       setIn(config, ['obsidian', 'vault'], path);
       setIn(config, ['wiki', 'enabled'], true);
       setIn(config, ['wiki', 'language'], language);
+      // A backup on another provider, when there is one: without it a
+      // run fails for as long as the worker is unreachable.
+      const others = aliases.filter((a) => a !== model);
+      const backup = others.length ? await chooseModel(p, 'Backup model for Deep and Lucid (used when the first is unreachable):', others, suggestFallback(config, model), true) : null;
       setIn(config, ['wiki', 'deep', 'enabled'], true);
       setIn(config, ['wiki', 'deep', 'model'], model);
       setIn(config, ['wiki', 'lucid', 'enabled'], true);
       setIn(config, ['wiki', 'lucid', 'model'], model);
+      if (backup) {
+        setIn(config, ['wiki', 'deep', 'fallback'], [backup]);
+        setIn(config, ['wiki', 'lucid', 'fallback'], [backup]);
+      }
     }
   }
   if (save(config, 'config', 'memory settings saved')) ctx.needsRestart = true;

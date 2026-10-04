@@ -27,6 +27,8 @@ import type { Config, ResolvedModel, ThinkingLevel } from '../config/types.ts';
 import { resolveAnyRef } from '../config/types.ts';
 import type { MemoryManager } from '../memory/manager.ts';
 import { logger } from '../server/logger.ts';
+import { resolveDreamWorker } from './worker-model.ts';
+import { oneShotAnsweredBy } from './deep-llm.ts';
 import {
   applyMerge,
   applyPromote,
@@ -79,6 +81,9 @@ export interface RunDreamBArgs {
 }
 
 export interface RunDreamBResult {
+  /** `provider/model` of every model that answered — more than the
+   *  configured worker when a backup stepped in (wiki.deep.fallback). */
+  answeredBy?: string[];
   outcomes: CandidateOutcome[];
   candidatesSeen: number;
   durationMs: number;
@@ -93,12 +98,11 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
   const dispatcher = args.dispatcher ?? new DefaultPromotionDispatcher(schema);
 
   // Resolve worker model. Without it Deep can't run.
-  const ref = args.config.wiki.deep.model;
+  const { ref, model: workerModel } = resolveDreamWorker(args.config, 'deep');
   if (!ref) {
     logger.warn({ msg: 'dream.deep.no_worker_model_configured' });
     return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: Date.now() - start };
   }
-  const workerModel = resolveAnyRef(args.config, ref);
   if (!workerModel) {
     logger.error({ msg: 'dream.deep.worker_model_unresolved', ref });
     return { outcomes: [], candidatesSeen: 0, cachedSkips: 0, durationMs: Date.now() - start };
@@ -260,7 +264,9 @@ export async function runDreamB(args: RunDreamBArgs): Promise<RunDreamBResult> {
     }
   }
 
+  const answered = oneShotAnsweredBy(workerModel);
   return {
+    ...(answered.some((m) => m !== `${workerModel.providerName}/${workerModel.modelId}`) ? { answeredBy: answered } : {}),
     outcomes: allOutcomes,
     candidatesSeen,
     cachedSkips,

@@ -578,6 +578,16 @@ startClaudeCredentialSyncWatcher();
   }
 }
 
+// Backup workers of Deep and Lucid: a typo would only surface on the day
+// the worker is down — refuse it now instead.
+for (const phase of ['deep', 'lucid'] as const) {
+  const bad = workerChain(config.wiki[phase].fallback).filter((ref) => !resolveAnyRef(config, ref));
+  if (bad.length > 0) {
+    console.error(`\n\x1b[31m[!] somora config invalid:\x1b[0m wiki.${phase}.fallback names ${bad.map((b) => `'${b}'`).join(', ')}, which is not a configured model.\n${describeModelRefs(config)}\n`);
+    process.exit(1);
+  }
+}
+
 // Push claude-cli SDK tunables into process.env so the subprocess
 // inherits them. Must run before the first engine call.
 applyClaudeCliSdkEnv(config);

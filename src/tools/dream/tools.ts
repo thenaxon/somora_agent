@@ -11,6 +11,7 @@
 //   dream_dismiss(dream_id, finding_id?)  — reject a single finding; without finding_id:
 //                                            whole dream dismissed
 
+import { resolveDreamWorker } from '../../dream/worker-model.ts';
 import { z } from 'zod';
 import {
   dismissEntireDream,
@@ -409,8 +410,7 @@ async function applyLucidFindingFromRun(
     throw new Error('lucid apply: no obsidian vault configured');
   }
   const wikiAbs = join(obs.vaultPath, ctx.config.wiki.vaultSubfolder);
-  const lucidRef = ctx.config.wiki.lucid.model ?? ctx.config.wiki.deep.model;
-  const model = lucidRef ? resolveAnyRef(ctx.config, lucidRef) : null;
+  const model = resolveDreamWorker(ctx.config, 'lucid').model ?? resolveDreamWorker(ctx.config, 'deep').model;
   const outcome = await applyLucidFinding(finding, {
     wikiAbs,
     language: ctx.config.wiki.language ?? 'de',

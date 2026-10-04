@@ -265,6 +265,49 @@ rem:
                               # ~0.6-0.8. Lower = mark more.
 ```
 
+### Backup workers for Deep and Lucid
+
+Deep and Lucid each name one worker (`wiki.deep.model`,
+`wiki.lucid.model`). When that model is not reachable, the run would
+fail and wait for its next slot — twelve hours for Deep, a week for
+Lucid, and longer when the cause is an expired login nobody notices.
+Give each a backup:
+
+```yaml
+wiki:
+  deep:
+    model: opus
+    fallback: [gpt56, local-model]   # one ref or a list, tried in order
+  lucid:
+    model: opus
+    fallback: gpt56
+```
+
+- A backup steps in when the worker **is not there**: connection
+  refused, timeout, 5xx, 429. A request the host refuses (4xx) stays an
+  error — another model would only hide a broken request.
+- Outages are remembered together with chat, REM and compaction: a model
+  that failed is skipped for `fallback.retryUnavailableMinutes` (default
+  60) by every one of them, and a successful call clears the mark. If
+  the chat found Opus down ten minutes ago, the next Deep run starts
+  with the backup straight away.
+- Which model answered is on record: `dream.worker_unavailable` and
+  `dream.worker_switched` in the log, `answeredBy` on `dream.deep.done`,
+  and `answered_by` in the Lucid run file when it was not the configured
+  worker.
+- Put at least one backup on a **different provider** than the worker —
+  a second Claude model does not help when the Claude login has expired.
+  A model you host yourself is the backup that is always there.
+- Deep decides what goes into the wiki, Lucid judges contradictions:
+  pick backups you would trust with that. A noticeably weaker model is
+  better than no run for Deep (its notes can be corrected by a later
+  run), but think twice for Lucid, whose findings you review by hand.
+- A backup name that is not a configured model stops the server at
+  start with the list of known models.
+
+REM has had the same since September: `rem.fallback` in `agent.yaml`
+([agents.md](agents.md)).
+
 ### Coverage judge
 
 Similarity finds topic overlap; it cannot say whether the *fact* is

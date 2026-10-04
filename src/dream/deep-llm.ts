@@ -29,6 +29,8 @@ import { claudeCliThinkingOptions, codexCliReasoningArgs } from '../engine/think
 import { openAiReasoningState, withReasoningRetry } from '../engine/reasoning-retry.ts';
 import { samplingBody } from '../engine/sampling.ts';
 import { userTagParam } from '../engine/user-tag.ts';
+import { isAvailabilityError } from '../engine/availability.ts';
+import { markModelAvailable, markModelUnavailable, modelRef, modelUnavailable } from '../engine/model-availability.ts';
 
 export interface OneShotArgs {
   workerModel: ResolvedModel;
@@ -46,10 +48,81 @@ export interface OneShotArgs {
   thinking?: ThinkingLevel;
 }
 
-/** Dispatch a one-shot LLM call to the right engine adapter. Returns
- *  the assistant's text content as a single string. Throws on engine
- *  errors (timeout, subprocess crash, SDK error). */
+// ─── backup workers ─────────────────────────────────────────────────
+//
+// Deep and Lucid name ONE worker (`wiki.deep.model`), and a run used to
+// fail for as long as that model was unreachable — on one installation
+// Deep stood still for three weeks behind an expired login. A worker
+// can now carry backups (`wiki.deep.fallback`, `wiki.lucid.fallback`):
+// when the call fails because the model is not there (connection,
+// timeout, 5xx/429 — availability.ts), the next one answers. A request
+// the host refuses (4xx) stays an error: another model would hide it.
+//
+// The chain is attached to the resolved worker object once
+// (resolveDreamWorker, worker-model.ts) instead of being threaded
+// through every call site. Outages are shared with chat, REM and
+// compaction (model-availability.ts): a model marked unavailable is
+// skipped for `fallback.retryUnavailableMinutes`, a success clears it.
+
+const fallbackChains = new WeakMap<ResolvedModel, ResolvedModel[]>();
+const answeredBy = new WeakMap<ResolvedModel, Set<string>>();
+
+export function setOneShotFallbacks(worker: ResolvedModel, fallbacks: ResolvedModel[]): void {
+  if (fallbacks.length > 0) fallbackChains.set(worker, fallbacks);
+}
+
+/** `provider/model` of every model that answered for this worker since
+ *  it was resolved — one entry normally, more after a switch. */
+export function oneShotAnsweredBy(worker: ResolvedModel): string[] {
+  return [...(answeredBy.get(worker) ?? [])].filter((m) => !m.startsWith('announced:'));
+}
+
+/** The worker and its backups in the order to try them: models marked
+ *  unavailable go to the back rather than away — if everything is
+ *  marked, the first try is still the configured worker. */
+export function oneShotOrder(worker: ResolvedModel, isDown: (ref: string) => boolean = (ref) => modelUnavailable(ref) !== null): ResolvedModel[] {
+  const chain = [worker, ...(fallbackChains.get(worker) ?? [])];
+  const up = chain.filter((m) => !isDown(modelRef(m)));
+  const down = chain.filter((m) => isDown(modelRef(m)));
+  return [...up, ...down];
+}
+
+/** One-shot LLM call: system prompt + user message → the assistant's
+ *  text. Tries the worker, then its backups when the worker is not
+ *  reachable. Throws the last error when nobody answered. */
 export async function callOneShotLLM(args: OneShotArgs): Promise<string> {
+  const order = oneShotOrder(args.workerModel);
+  let lastErr: unknown;
+  for (let i = 0; i < order.length; i++) {
+    const model = order[i]!;
+    const ref = modelRef(model);
+    try {
+      const text = await callOneShotOn({ ...args, workerModel: model });
+      markModelAvailable(ref);
+      let used = answeredBy.get(args.workerModel);
+      if (!used) answeredBy.set(args.workerModel, (used = new Set()));
+      used.add(ref);
+      if (model !== args.workerModel && !used.has(`announced:${ref}`)) {
+        // Once per run and backup — a Lucid run makes dozens of calls.
+        used.add(`announced:${ref}`);
+        logger.warn({ msg: 'dream.worker_switched', ...args.logCtx, configured: modelRef(args.workerModel), answeredBy: ref });
+      }
+      return text;
+    } catch (err) {
+      lastErr = err;
+      const message = String((err as Error)?.message ?? err);
+      const outage = isAvailabilityError(err) && !args.signal?.aborted;
+      if (outage) markModelUnavailable(ref, message);
+      const next = order[i + 1];
+      if (!outage || !next) throw err;
+      logger.warn({ msg: 'dream.worker_unavailable', ...args.logCtx, workerModel: ref, err: message.slice(0, 300), next: modelRef(next) });
+    }
+  }
+  throw lastErr;
+}
+
+/** Dispatch to the engine adapter of ONE model. */
+async function callOneShotOn(args: OneShotArgs): Promise<string> {
   const engine = args.workerModel.provider.engine;
   switch (engine) {
     case 'openai-compatible':
