@@ -35,8 +35,16 @@ own app switcher entry.
   server. Tap to switch the active agent. The last-selected agent is
   remembered across reloads — opening the PWA again drops you straight
   back into your last conversation.
-- **Chat area** shows the running history of the active agent's `main`
-  session. Markdown rendering for code blocks, links, lists, etc.
+- **Header** reads `agent · session ▾ model`. Tap it for a sheet with
+  two lists: the agent's **sessions** (tap to switch, **+ New** to
+  start one) and the **model for this session** (tap to switch; the
+  agent's own model is tagged *default*, a model somora currently
+  cannot reach *unreachable*). An agent reopens in the session you
+  left it in on this phone. A model switch made while a turn runs
+  applies from the next turn. When a backup model answered the last
+  turn, the header shows that model with `⇄` in the warning colour.
+- **Chat area** shows the running history of the open session (`main`
+  until you pick another). Markdown rendering for code blocks, links, lists, etc.
   Pinch-to-zoom is disabled; a wide code block scrolls horizontally.
 - **Input bar** at the bottom: paperclip (attachments), mic (voice),
   textarea, send. Enter sends, Shift+Enter inserts a newline. The
@@ -132,8 +140,9 @@ single app-wide SSE on `/activity/stream`:
   sentinel-triggered messages, and assistant final replies. Your own
   typed messages don't trigger it (even from a different client).
 
-Tap an avatar to open that session; the badge clears the moment the
-session becomes active and the server broadcasts the cleared state so
+The dot on an avatar covers every session of that agent except the one
+on screen; the session sheet shows which session it is. The badge
+clears the moment the session becomes active and the server broadcasts the cleared state so
 the web tab and TUI also drop their badge. When you return to the PWA
 from the background, the visibility change re-fires the "seen" ping
 on the current agent. State persists across server restarts.
@@ -179,7 +188,9 @@ picture before failing.
 ## Scope: what's in vs what's not
 
 **In the mobile client:**
-- One agent at a time, one main session per agent
+- One agent at a time, any of its sessions — switch or start one from
+  the header sheet; the model of the open session is shown there and
+  can be switched
 - Live streaming of agent responses with a typing-cursor indicator
 - Streaming-state dot on **every** agent currently mid-turn (not just
   the active one), plus a dream-phase pulse (REM / DEEP / LUCID) and
@@ -191,7 +202,7 @@ picture before failing.
   replies arriving on inactive agents leave a marker that clears
   when you tap that agent (cross-client synced)
 - Markdown rendering of agent replies
-- localStorage-persisted last-agent
+- localStorage-persisted last agent, and the last session per agent
 - Voice input via STT (mic-button → record → transcript editable in
   input → send manually)
 - Spoken replies via TTS (optional, gated by per-agent auto-play
@@ -213,6 +224,7 @@ picture before failing.
 - File viewer windows
 - Pin-note windows
 - Multi-window layout, drag/resize
+- Renaming, archiving or resetting a session
 - Dream-runner-controls UI (manually triggering REM / DEEP / LUCID)
 - Project switcher (still works if you preset projects server-side)
 - The builder task panel (plan, Go, task list, questions) and the steer

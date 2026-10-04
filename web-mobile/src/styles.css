@@ -1111,3 +1111,109 @@ button { cursor: pointer; }
   background: rgba(239, 68, 68, 0.12);
   font-size: 12px;
 }
+
+/* ── Session + model: header button and its sheet ───────────────── */
+
+.mobile-header-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.mobile-header-pick:active { opacity: 0.6; }
+.mobile-header-pick .mobile-header-title {
+  /* the name keeps its room; the model gives way first */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.mobile-header-session { color: var(--text-2); font-weight: 500; }
+.mobile-header-caret { color: var(--text-3); font-size: 10px; flex: none; }
+.mobile-header-model {
+  flex: 0 10 auto;
+  /* a long session name may squeeze it, never remove it */
+  min-width: 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+}
+.mobile-header-model.fallback { color: var(--warn); }
+
+.session-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.session-new {
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  padding: 5px 10px;
+}
+.session-new-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; }
+.session-new-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-0);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  color: var(--text-0);
+  font-family: inherit;
+  /* 16px: below that iOS zooms the page when the field gets focus */
+  font-size: 16px;
+  padding: 7px 9px;
+}
+.session-new-go {
+  background: var(--accent);
+  border: 0;
+  border-radius: 6px;
+  color: var(--bg-0);
+  font: inherit;
+  font-weight: 700;
+  padding: 9px 12px;
+}
+.session-new-go:disabled { opacity: 0.4; }
+.session-new-hint { flex-basis: 100%; color: var(--warn); font-size: 11px; }
+
+.sheet-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+}
+.sheet-row:active { background: var(--bg-3); }
+.sheet-row:disabled { opacity: 0.6; }
+.sheet-row.active { color: var(--text-0); }
+.sheet-row.more { color: var(--text-3); }
+.sheet-row-mark { width: 12px; flex: none; color: var(--accent); font-size: 10px; text-align: center; }
+.sheet-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.sheet-row-meta { flex: none; color: var(--text-3); font-size: 10px; }
+.sheet-row-meta.accent { color: var(--accent); }
+.sheet-row-tag {
+  flex: none;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--text-3);
+  font-size: 9px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+.sheet-row-tag.warn { color: var(--warn); border-color: var(--warn); }
+.sheet-row-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }

@@ -2,7 +2,7 @@
 // state AND the chat-stream hook so it's instantiated exactly once
 // per active agent (no duplicate SSE subscriptions in children).
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AvatarRow } from './AvatarRow';
 import { ChatArea } from './ChatArea';
 import { MessageInput } from './MessageInput';
@@ -15,24 +15,77 @@ import { Koala } from './Koala';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { WorkBadge, WorkSheet } from './WorkSheet';
 import { useSessionWork, type WorkItemDto } from '../hooks/useSessionWork';
+import { useSessionModel } from '../hooks/useSessionModel';
+import { SessionSheet } from './SessionSheet';
+import { sessionKey } from '../hooks/useActivityStream';
+import { MAIN_SESSION, labelForRef, modelLabel, readLastSession, writeLastSession, type OpenSession } from '../hooks/session-pick';
+import type { SessionSummary } from '../../../web/src/lib/api';
+
+function storage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
 
 export function MobileApp() {
   const { agents, loading, error } = useAgents();
   const [lastAgent, setLastAgent] = useLastAgent();
   const [activeAgent, setActiveAgent] = useState<string | null>(null);
-  const chat = useChatStream(activeAgent);
+  // The session each agent is open in. An agent opens where it was
+  // left on this phone (localStorage), main otherwise.
+  const [openSessions, setOpenSessions] = useState<Record<string, OpenSession>>({});
+  const session = useMemo<OpenSession>(
+    () => (activeAgent ? openSessions[activeAgent] ?? readLastSession(storage(), activeAgent) : MAIN_SESSION),
+    [activeAgent, openSessions],
+  );
+  const pickSession = useCallback((agentName: string, next: OpenSession) => {
+    setOpenSessions((prev) => ({ ...prev, [agentName]: next }));
+    writeLastSession(storage(), agentName, next);
+  }, []);
+  const chat = useChatStream(activeAgent, session.id);
+  const sessionModel = useSessionModel(activeAgent, session.id, chat.subscribeModelEvents);
+  const [sessionSheetOpen, setSessionSheetOpen] = useState(false);
+
+  // A remembered session may be gone (archived from the desktop), and a
+  // jump from the work sheet knows the session only by its reference:
+  // check against the agent's list, fall back to main, settle the name.
+  useEffect(() => {
+    if (!activeAgent || session.id === 'main') return;
+    let cancelled = false;
+    const agentName = activeAgent;
+    const ref = session.id;
+    fetch(`/agents/${encodeURIComponent(agentName)}/sessions`)
+      .then((r) => (r.ok ? (r.json() as Promise<SessionSummary[]>) : null))
+      .then((list) => {
+        // No answer = no verdict; the session stays as it is.
+        if (cancelled || !list) return;
+        const hit = list.find((s) => s.id === ref) ?? list.find((s) => s.slug === ref);
+        if (!hit) pickSession(agentName, MAIN_SESSION);
+        else if (hit.id !== ref || hit.slug !== session.slug) pickSession(agentName, { id: hit.id, slug: hit.slug });
+      })
+      .catch(() => {
+        /* offline — keep showing what we have */
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAgent, session.id]);
   // A recalled queued message travels ChatArea → recall() → here → the
   // composer. MessageInput owns its draft state, so the hand-over is a
   // nonce'd prop rather than lifting the whole draft up.
   const [draftInject, setDraftInject] = useState<{ text: string; nonce: number } | null>(null);
   // Work queue (header badge + bottom sheet): the /work snapshot of the
-  // active agent's main session, refetched on queue-moving SSE events
+  // open session, refetched on queue-moving SSE events
   // and every 3 s while the sheet is open.
   const [workOpen, setWorkOpen] = useState(false);
-  const { work, refresh: refreshWork } = useSessionWork(activeAgent, chat.subscribeTurnEvents, workOpen);
+  const { work, refresh: refreshWork } = useSessionWork(activeAgent, session.id, chat.subscribeTurnEvents, workOpen);
   useEffect(() => {
     setWorkOpen(false);
-  }, [activeAgent]);
+    setSessionSheetOpen(false);
+  }, [activeAgent, session.id]);
   // × on a waiting entry: any kind, by ledger id. A person's text goes
   // back into the composer, as the bubble's "↩ edit" does.
   const removeWorkItem = async (item: WorkItemDto): Promise<string | null> => {
@@ -80,16 +133,25 @@ export function MobileApp() {
   // badges for any session with movement since the user last looked.
   const activity = useActivityStream(agents);
 
-  // Auto-mark the active agent's main session as seen whenever the
-  // user switches to it. Other clients will clear their badge live
+  // Auto-mark the open session as seen whenever the user switches to
+  // it. Other clients will clear their badge live
   // via the broadcast. Dep is `postSeen` only (useCallback-stable),
   // not the whole `activity` object — its `unreadAgents` / `marks`
   // churn on every server tick.
   const postSeen = activity.postSeen;
   useEffect(() => {
     if (!activeAgent) return;
-    postSeen(activeAgent, 'main');
-  }, [activeAgent, postSeen]);
+    postSeen(activeAgent, session.id);
+  }, [activeAgent, session.id, postSeen]);
+
+  // An answer that lands while the session is on screen has been seen.
+  const subscribeTurnEvents = chat.subscribeTurnEvents;
+  useEffect(() => {
+    if (!activeAgent) return;
+    return subscribeTurnEvents((event) => {
+      if (event === 'turn_end' && document.visibilityState === 'visible') postSeen(activeAgent, session.id);
+    });
+  }, [activeAgent, session.id, postSeen, subscribeTurnEvents]);
 
   // Foreground/visibility change: tapping back into the app counts as
   // "looking" — re-fire seen on the active session so a desktop sibling
@@ -99,12 +161,12 @@ export function MobileApp() {
     if (!activeAgent) return;
     const onVisible = () => {
       if (document.visibilityState === 'visible') {
-        postSeen(activeAgent, 'main');
+        postSeen(activeAgent, session.id);
       }
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [activeAgent, postSeen]);
+  }, [activeAgent, session.id, postSeen]);
 
   // Voice: TTS availability + per-agent (== per "main" session) auto-
   // play toggle. Sticky in localStorage; seeded from /tts/config the
@@ -201,6 +263,31 @@ export function MobileApp() {
     return out;
   }
 
+  // The dot on an avatar: something unread in any session of that agent
+  // — except the one on screen right now.
+  const openKey = activeAgent ? sessionKey(activeAgent, session.id) : null;
+  const unreadAgentsShown = useMemo(() => {
+    const out = new Set<string>();
+    for (const k of activity.unreadSessions) {
+      if (k === openKey) continue;
+      out.add(k.slice(0, k.indexOf('::')));
+    }
+    return out;
+  }, [activity.unreadSessions, openKey]);
+
+  // Header model: what the session is set to — or, when a backup model
+  // answered the last turn, that one (in the warning colour).
+  const lastAgentMessage = [...chat.messages].reverse().find((m) => m.role === 'agent');
+  // Only while it still says something about the model in use: after a
+  // switch to another model the last turn's stand-in is history.
+  const info = sessionModel.info;
+  const lastFallback = lastAgentMessage?.fallback ?? null;
+  const fallback =
+    lastFallback && (!info || lastFallback.requested === `${info.provider}/${info.modelId}` || lastFallback.requested === info.alias)
+      ? lastFallback
+      : null;
+  const headerModel = fallback ? labelForRef(fallback.actual, []) : modelLabel(sessionModel.info);
+
   // Keep the screen awake while the app is open. Sticky per browser;
   // the hook re-acquires the lock every time the app comes back to the
   // foreground, because the browser drops it whenever the page hides.
@@ -212,12 +299,38 @@ export function MobileApp() {
         <span className="mobile-header-mark">
           <Koala size={24} />
         </span>
-        <span className="mobile-header-title">
-          {activeAgent ?? 'somora'}
-        </span>
-        <span className="mobile-header-meta">main</span>
+        {activeAgent ? (
+          <button
+            type="button"
+            className="mobile-header-pick"
+            onClick={() => {
+              setWorkOpen(false);
+              setSessionSheetOpen((v) => !v);
+            }}
+            aria-haspopup="dialog"
+            aria-expanded={sessionSheetOpen}
+            aria-label={`${activeAgent}, session ${session.slug}${headerModel ? `, model ${headerModel}` : ''} — switch session or model`}
+          >
+            <span className="mobile-header-title">
+              {activeAgent}
+              <span className="mobile-header-session"> · {session.slug}</span>
+            </span>
+            <span className="mobile-header-caret" aria-hidden="true">▾</span>
+            {headerModel && (
+              <span
+                className={`mobile-header-model ${fallback ? 'fallback' : ''}`}
+                title={fallback ? `${fallback.requested} did not answer — ${fallback.actual} stepped in` : undefined}
+              >
+                {fallback ? `⇄ ${headerModel}` : headerModel}
+              </span>
+            )}
+          </button>
+        ) : (
+          <span className="mobile-header-title">somora</span>
+        )}
         <WorkBadge work={work} open={workOpen} onToggle={() => {
           if (!workOpen) refreshWork();
+          setSessionSheetOpen(false);
           setWorkOpen((v) => !v);
         }} />
         {!wakeLock.unsupported && (
@@ -286,19 +399,36 @@ export function MobileApp() {
         onStop={() => void chat.abort()}
         onRemove={removeWorkItem}
         onStopChild={stopChildItem}
-        onOpenSession={(agentName, sessionId) => {
-          // The phone shows one session per agent (main): a child in
-          // another agent's main session is one tap away, anything
-          // else stays a line of text.
-          if (sessionId !== 'main' || !agents.some((a) => a.name === agentName)) return false;
+        canOpenSession={(agentName) => agents.some((a) => a.name === agentName)}
+        onOpenSession={(agentName, sessionRef) => {
+          // A child in any session of an agent this phone knows is one
+          // tap away. The reference may be an id or a name — the check
+          // against the agent's list settles which.
+          if (!agents.some((a) => a.name === agentName)) return false;
+          pickSession(agentName, sessionRef === 'main' ? MAIN_SESSION : { id: sessionRef, slug: sessionRef });
           switchAgent(agentName);
           return true;
         }}
       />
 
+      {activeAgent && (
+        <SessionSheet
+          open={sessionSheetOpen}
+          onClose={() => setSessionSheetOpen(false)}
+          agent={activeAgent}
+          session={session}
+          unreadSessions={activity.unreadSessions}
+          streamingSessions={activity.streamingSessions}
+          onPick={(next) => pickSession(activeAgent, next)}
+          modelInfo={sessionModel.info}
+          onSetModel={sessionModel.setModel}
+          streaming={chat.streaming}
+        />
+      )}
+
       {error && <div className="banner error">{error}</div>}
       {loading && agents.length === 0 && (
-        <div className="banner info">Lade agents…</div>
+        <div className="banner info">Loading agents…</div>
       )}
 
       <AvatarRow
@@ -306,7 +436,7 @@ export function MobileApp() {
         activeAgent={activeAgent}
         onSelect={switchAgent}
         streamingAgents={mergeStreaming(activity.streamingAgents, chat.streaming ? activeAgent : null)}
-        unreadAgents={activity.unreadAgents}
+        unreadAgents={unreadAgentsShown}
         dreamStates={dreamStates}
       />
 
@@ -338,7 +468,7 @@ export function MobileApp() {
       ) : (
         <div className="chat-empty">
           {agents.length === 0 && !loading
-            ? 'Keine agents auf diesem somora konfiguriert.'
+            ? 'No agents are configured on this somora.'
             : 'Pick an agent above.'}
         </div>
       )}

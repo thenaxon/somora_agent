@@ -31,6 +31,10 @@ interface SessionEntry {
   seenAt?: string | null;
 }
 
+export function sessionKey(agent: string, session: string): string {
+  return key(agent, session);
+}
+
 function key(agent: string, session: string): string {
   return `${agent}::${session}`;
 }
@@ -49,6 +53,10 @@ function hasUnread(mark: SessionMark | undefined): boolean {
 export interface ActivityState {
   streamingAgents: Set<string>;
   unreadAgents: Set<string>;
+  /** `agent::session` keys with something unread — the session sheet's dots. */
+  unreadSessions: Set<string>;
+  /** `agent::session` keys with a turn running right now. */
+  streamingSessions: Set<string>;
   postSeen: (agent: string, session: string) => void;
 }
 
@@ -189,10 +197,18 @@ export function useActivityStream(agents: AgentInfo[]): ActivityState {
     return out;
   }, [marks]);
 
+  const unreadSessions = useMemo(() => {
+    const out = new Set<string>();
+    for (const [k, mark] of Object.entries(marks)) {
+      if (hasUnread(mark)) out.add(k);
+    }
+    return out;
+  }, [marks]);
+
   // Memoise the returned object — see web/src/hooks/useActivityStream.ts
   // for the rationale (consumer useEffect dep-arrays).
   return useMemo(
-    () => ({ streamingAgents, unreadAgents, postSeen }),
-    [streamingAgents, unreadAgents, postSeen],
+    () => ({ streamingAgents, unreadAgents, unreadSessions, streamingSessions: streamingKeys, postSeen }),
+    [streamingAgents, unreadAgents, unreadSessions, streamingKeys, postSeen],
   );
 }

@@ -125,7 +125,7 @@ export function ChatArea({
       <div className="chat-scroll" ref={scrollRef}>
         {messages.length === 0 && !streaming && (
           <div className="chat-empty">
-            Sag etwas zu <strong>{agent}</strong>.
+            Say something to <strong>{agent}</strong>.
           </div>
         )}
         {messages.map((m) => (

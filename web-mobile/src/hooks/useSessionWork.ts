@@ -1,5 +1,5 @@
-// The active agent's main-session work queue, read from
-// GET /agents/:agent/sessions/main/work. Thin client: fetch on mount,
+// The open session's work queue, read from
+// GET /agents/:agent/sessions/:session/work. Thin client: fetch on mount,
 // refetch on every queue-moving SSE event the chat stream relays, and
 // every 3 s while the sheet is open so the wait times keep counting.
 // The shape is the one the desktop client types (web/src/lib/api.ts).
@@ -14,6 +14,7 @@ const LIVE_POLL_MS = 3000;
 
 export function useSessionWork(
   agent: string | null,
+  session: string,
   subscribeTurnEvents: (handler: (event: TurnQueueEvent) => void) => () => void,
   live: boolean,
 ): { work: SessionWorkResponse | null; refresh: () => void } {
@@ -22,20 +23,23 @@ export function useSessionWork(
   const againRef = useRef(false);
   const agentRef = useRef(agent);
   agentRef.current = agent;
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   const refresh = useCallback(() => {
     const a = agentRef.current;
+    const sess = sessionRef.current;
     if (!a) return;
     if (inFlightRef.current) {
       againRef.current = true;
       return;
     }
     inFlightRef.current = true;
-    fetch(`/agents/${encodeURIComponent(a)}/sessions/main/work`)
+    fetch(`/agents/${encodeURIComponent(a)}/sessions/${encodeURIComponent(sess)}/work`)
       .then((r) => (r.ok ? (r.json() as Promise<SessionWorkResponse>) : null))
       .then((w) => {
-        // A reply for the agent the user already left is dropped.
-        if (w && agentRef.current === a) setWork(w);
+        // A reply for the session the user already left is dropped.
+        if (w && agentRef.current === a && sessionRef.current === sess) setWork(w);
       })
       .catch(() => {
         /* keep the last snapshot; an older server without the route
@@ -53,7 +57,7 @@ export function useSessionWork(
   useEffect(() => {
     setWork(null);
     refresh();
-  }, [agent, refresh]);
+  }, [agent, session, refresh]);
 
   useEffect(() => subscribeTurnEvents(() => refresh()), [subscribeTurnEvents, refresh]);
 

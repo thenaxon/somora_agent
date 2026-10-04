@@ -66,12 +66,14 @@ interface SheetProps {
   /** Stop a running entry under "From here" (sub-agent task or the
    *  agent_ask turn on its target). Resolves with a note or null. */
   onStopChild?: (item: WorkItemDto) => Promise<string | null>;
-  /** Jump to a child's session. The phone only shows `main` per
-   *  agent, so the caller decides which targets are reachable. */
+  /** Jump to a child's session; false when it could not be opened. */
   onOpenSession?: (agent: string, session: string) => boolean;
+  /** Which targets are reachable from here (an agent this client
+   *  knows) — only those lines are tappable. */
+  canOpenSession?: (agent: string, session: string) => boolean;
 }
 
-export function WorkSheet({ open, onClose, work, onStop, onRemove, onStopChild, onOpenSession }: SheetProps) {
+export function WorkSheet({ open, onClose, work, onStop, onRemove, onStopChild, onOpenSession, canOpenSession }: SheetProps) {
   const [note, setNote] = useState<string | null>(null);
   const [removing, setRemoving] = useState<string | null>(null);
 
@@ -198,7 +200,7 @@ export function WorkSheet({ open, onClose, work, onStop, onRemove, onStopChild, 
             {children.map((item, i) => {
               const gl = originGlyphLabel(item.kind, item.about);
               const target = item.target;
-              const canOpen = Boolean(onOpenSession && target && target.session === 'main');
+              const canOpen = Boolean(onOpenSession && target && (canOpenSession ? canOpenSession(target.agent, target.session) : true));
               const body = (
                 <>
                   <span className="work-line-glyph" aria-hidden="true">{gl.glyph}</span>

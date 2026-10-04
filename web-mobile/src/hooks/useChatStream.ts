@@ -1,4 +1,4 @@
-// Single SSE subscription for the active agent's main session. Auto-
+// Single SSE subscription for the active agent's open session. Auto-
 // unsubscribes when the agent changes and resubscribes to the new one.
 // Loads history on agent-switch so the chat surface shows the existing
 // conversation immediately, then streams new events on top.
@@ -100,6 +100,10 @@ export interface ChatStream {
    *  turn (agent phase end). The header badge refetches /work on it.
    *  Stable across renders (ref-backed). */
   subscribeTurnEvents: (handler: (event: TurnQueueEvent) => void) => () => void;
+  /** Model view: fires when the session's model was switched
+   *  (`session_model`), from this client or anywhere else. Stable
+   *  across renders (ref-backed). */
+  subscribeModelEvents: (handler: () => void) => () => void;
   /** Remove any waiting entry from the queue by its ledger id
    *  (DELETE /chat/queue/:id, no body = the person may remove
    *  anything). A human turn hands its text back for the composer;
@@ -114,7 +118,7 @@ export interface ChatStream {
 
 export type TurnQueueEvent = 'turn_queued' | 'turn_dequeued' | 'turn_started' | 'turn_end';
 
-export function useChatStream(agent: string | null): ChatStream {
+export function useChatStream(agent: string | null, session: string = 'main'): ChatStream {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -127,6 +131,9 @@ export function useChatStream(agent: string | null): ChatStream {
   const audioListenersRef = useRef<Set<(url: string) => void>>(new Set());
   // Queue view: subscribers refetching /work on queue-moving events.
   const turnListenersRef = useRef<Set<(event: TurnQueueEvent) => void>>(new Set());
+  // Model view: subscribers refetching the session's model when it was
+  // switched (from here, another client, or an agent).
+  const modelListenersRef = useRef<Set<() => void>>(new Set());
   const emitTurnEvent = (event: TurnQueueEvent) => {
     turnListenersRef.current.forEach((fn) => fn(event));
   };
@@ -165,7 +172,7 @@ export function useChatStream(agent: string | null): ChatStream {
     setConnectionError(null);
     streamingIdRef.current = null;
     currentTurnIdRef.current = null;
-    // Buffered ahead-counts belong to the previous agent's session —
+    // Buffered ahead-counts belong to the previous session —
     // a stale entry must not be applied to a bubble on the new one.
     pendingQueuedRef.current.clear();
 
@@ -177,7 +184,7 @@ export function useChatStream(agent: string | null): ChatStream {
     //    list and take that with it — one of the two ways an answer
     //    disappeared after a connection blip (2026-09-09 report).
     const syncHistory = () =>
-      fetch(`/chat/history?agent=${encodeURIComponent(agent)}&session=main`)
+      fetch(`/chat/history?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`)
         .then(async (res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const body = (await res.json()) as { events?: HistoryEvent[] };
@@ -192,7 +199,7 @@ export function useChatStream(agent: string | null): ChatStream {
     void syncHistory();
 
     // 2. Subscribe to SSE for live events.
-    const url = `/chat/stream?agent=${encodeURIComponent(agent)}&session=main`;
+    const url = `/chat/stream?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`;
     const es = new EventSource(url);
     lastEventAtRef.current = Date.now();
     const bump = () => { lastEventAtRef.current = Date.now(); };
@@ -205,6 +212,9 @@ export function useChatStream(agent: string | null): ChatStream {
       // The browser reconnects an EventSource on its own, and the turn
       // kept running on the server meanwhile. Ask what was missed rather
       // than waiting for the staleness watchdog further down.
+      // A model switch between the first read and this connection (or
+      // while it was down) sent its event to nobody: read it again.
+      modelListenersRef.current.forEach((fn) => fn());
       if (!openedOnce) {
         openedOnce = true;
         return;
@@ -213,7 +223,7 @@ export function useChatStream(agent: string | null): ChatStream {
     };
     const onError = () => {
       if (cancelled) return;
-      setConnectionError('Verbindung wackelt — versuche neu zu verbinden…');
+      setConnectionError('Connection is shaky — trying to reconnect…');
     };
     // Server emits `heartbeat` every 20s; its only job is keeping TCP
     // alive and feeding the staleness watchdog. No UI payload.
@@ -654,6 +664,11 @@ export function useChatStream(agent: string | null): ChatStream {
     es.addEventListener('turn_started', onTurnStarted);
     es.addEventListener('turn_error', onTurnError);
     es.addEventListener('turn_dequeued', onTurnDequeued);
+    const onSessionModel = () => {
+      bump();
+      modelListenersRef.current.forEach((fn) => fn());
+    };
+    es.addEventListener('session_model', onSessionModel);
 
     return () => {
       cancelled = true;
@@ -673,7 +688,7 @@ export function useChatStream(agent: string | null): ChatStream {
       es.removeEventListener('turn_dequeued', onTurnDequeued);
       es.close();
     };
-  }, [agent, reopenTick]);
+  }, [agent, session, reopenTick]);
 
   // Sleep-recovery: iOS Safari aggressively freezes TCP sockets when
   // the PWA goes to the background — EventSource appears alive but no
@@ -737,7 +752,7 @@ export function useChatStream(agent: string | null): ChatStream {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agent,
-          session: 'main',
+          session,
           text,
           ...(attachments && attachments.length > 0
             ? { attachments: attachments.map((a) => ({ hash: a.hash, name: a.name, mime: a.mime })) }
@@ -783,7 +798,7 @@ export function useChatStream(agent: string | null): ChatStream {
   const abort: ChatStream['abort'] = async () => {
     if (!agent) return;
     try {
-      const res = await fetch(`/chat/abort?agent=${encodeURIComponent(agent)}&session=main`, {
+      const res = await fetch(`/chat/abort?agent=${encodeURIComponent(agent)}&session=${encodeURIComponent(session)}`, {
         method: 'POST',
       });
       if (!res.ok) {
@@ -873,6 +888,13 @@ export function useChatStream(agent: string | null): ChatStream {
     };
   }, []);
 
+  const subscribeModelEvents = useCallback<ChatStream['subscribeModelEvents']>((handler) => {
+    modelListenersRef.current.add(handler);
+    return () => {
+      modelListenersRef.current.delete(handler);
+    };
+  }, []);
+
   // × in the queue sheet. Same route as recall(), but by ledger id and
   // for any kind — a message from another client, an agent_ask, a
   // spawn, a sentinel fire. The bubble carrying that turnId (if this
@@ -910,6 +932,7 @@ export function useChatStream(agent: string | null): ChatStream {
     abort,
     recall,
     subscribeTurnEvents,
+    subscribeModelEvents,
     dequeueWork,
     connectionError,
     statusNotice,
