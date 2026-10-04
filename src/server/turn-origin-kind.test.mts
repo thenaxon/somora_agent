@@ -59,6 +59,11 @@ check('call id: async sub', originCallId({ kind: 'subagent', depth: 1, taskId: '
 check('call id: sentinel', originCallId({ kind: 'sentinel', triggerId: 'x', taskId: 't8' }) === 't8');
 check('call id: none for human', originCallId({ kind: 'human', via: 'chat' }) === undefined);
 check('call id: none for wake', originCallId({ kind: 'wake', about: 'a2a', ref: 'c' }) === undefined);
+{
+  const sys = originToLegacy({ kind: 'wake', about: 'system', ref: 'restart-1', cause: 'restart' });
+  check('system wake: from_system is system, no agent attribution', sys.fromSystem === 'system' && sys.fromAgent === undefined);
+  check('system wake: log token', originKind({ kind: 'wake', about: 'system', ref: 'r' }) === 'wake:system');
+}
 
 // from_session never travels without from_agent — the stored shape
 // depends on it (sse-serializer, run-turn).

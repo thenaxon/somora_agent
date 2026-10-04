@@ -123,6 +123,7 @@ check('labels reuse the scrollback glyphs', () => {
   assert.equal(workLabel({ kind: 'human' }), '👤 you');
   assert.equal(workLabel({ kind: 'sentinel' }), '🔔 sentinel');
   assert.equal(workLabel({ kind: 'wake', about: 'job' }), '🎬 video');
+  assert.equal(workLabel({ kind: 'wake', about: 'system' }), '⚙  system');
   assert.equal(workLabel({ kind: 'wake', about: 'subagent' }), '🤖 subagent');
 });
 

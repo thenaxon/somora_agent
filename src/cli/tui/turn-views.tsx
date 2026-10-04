@@ -166,6 +166,7 @@ export const SYSTEM_LABELS: Record<FromSystemKind, string> = {
   a2a: '↩  agent answer',
   tmux: '🖥  tmux',
   job: '🎬 video',
+  system: '⚙  system',
 };
 
 function fromSystemOfOrigin(origin: TurnOrigin): FromSystemKind | undefined {
@@ -223,6 +224,10 @@ export function systemNoticeOf(
       };
     case 'job':
       return { label, name: summarizeVideoWakeText(text) };
+    case 'system':
+      // The occasion in a word: from the origin, else from the
+      // `[system: restart]` lead-in of the text.
+      return { label, name: (origin?.kind === 'wake' && origin.cause) || text.match(/^\[system:\s*([^\]]+)\]/)?.[1]?.trim() || '' };
   }
 }
 

@@ -47,7 +47,11 @@ export type TurnOrigin =
    *  a late agent_ask answer (`a2a`, ref = call_id), a finished async
    *  sub (`subagent`, ref = task_id), a rendered video (`job`, ref =
    *  job id). `depth` keeps a sub-orchestrator's nesting level across
-   *  the wake. */
-  | { kind: 'wake'; about: 'a2a' | 'subagent' | 'job'; ref: string; depth?: number };
+   *  the wake.
+   *  `system` is somora itself speaking — nobody's answer and no job
+   *  result: "the restart you asked for is done", "the question you sent
+   *  was cut off by a restart". `cause` names the occasion in a word
+   *  (`restart`); new occasions need no new kind. */
+  | { kind: 'wake'; about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string };
 
 export type TurnOriginKind = TurnOrigin['kind'];

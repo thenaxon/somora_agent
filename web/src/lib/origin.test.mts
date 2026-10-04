@@ -137,8 +137,26 @@ assert.equal(
   'Your render is ready: /tmp/a.mp4',
 );
 
+// --- wake: system (somora itself speaking) ---------------------------
+{
+  const text = '[system: restart] The server restart you requested is done: somora 1.0.0 → 1.0.1, back after 4 s.';
+  const p = originPresentation({ text, origin: { kind: 'wake', about: 'system', ref: 'restart-1', cause: 'restart' } });
+  assert.equal(p?.kind, 'system');
+  assert.equal(p?.label, 'system');
+  assert.equal(p?.glyph, '⚙');
+  assert.equal(p?.subtitle, 'restart');
+  assert.equal(p?.body, 'The server restart you requested is done: somora 1.0.0 → 1.0.1, back after 4 s.');
+  // without the structured origin: the cause comes from the lead-in
+  assert.equal(originPresentation({ text, fromSystem: 'system' })?.subtitle, 'restart');
+  // a system message without a cause still renders, with an empty subtitle
+  assert.equal(originPresentation({ text: 'plain', origin: { kind: 'wake', about: 'system', ref: 'x' } })?.subtitle, '');
+  // never mistaken for an agent's answer or a video
+  assert.notEqual(p?.label, 'agent answer');
+  assert.notEqual(p?.label, 'video');
+}
+
 // Every legacy word maps to a row.
-for (const fs of ['sentinel', 'tmux', 'subagent', 'job', 'browser', 'voice', 'a2a'] as const) {
+for (const fs of ['sentinel', 'tmux', 'subagent', 'job', 'browser', 'voice', 'a2a', 'system'] as const) {
   assert.notEqual(originPresentation({ text: '', fromSystem: fs }), null, fs);
 }
 
@@ -155,6 +173,8 @@ import {
 
 assert.deepEqual(originGlyphLabel('human'), { glyph: '💬', label: 'message', icon: 'human' });
 assert.equal(originGlyphLabel('agent').label, 'agent ask');
+assert.deepEqual(originGlyphLabel('wake', 'system'), { glyph: '⚙', label: 'system', icon: 'system' });
+assert.equal(workArrivingLabel('system', undefined), 'system message arriving');
 assert.equal(originGlyphLabel('subagent').icon, 'subagent');
 assert.equal(originGlyphLabel('sentinel').glyph, '🔔');
 assert.equal(originGlyphLabel('wake', 'a2a').label, 'agent answer');

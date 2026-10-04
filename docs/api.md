@@ -1067,7 +1067,7 @@ Every entry has the same shape:
   video render.
 - `kind` — where it came from: `human`, `agent`, `subagent`,
   `sentinel`, `tmux`, `browser`, `voice` or `wake`; a `wake` also says
-  `about` (`a2a`, `subagent` or `job`).
+  `about` (`a2a`, `subagent`, `job` or `system`).
 - `state` — `queued`, `running`, `done`, `failed`, `cancelled` or
   `dequeued` (taken out of the queue before it started).
 - `preview` — the first 160 characters of the text, line breaks folded
@@ -1266,8 +1266,8 @@ request is written to `~/.somora/restart-intent.json`, the server waits
 until that session's turn has ended (and up to 30 s for turns running
 in other sessions — what still runs then is cut and marked), restarts
 through the service manager, and after boot wakes the session with a
-`[somora] The server restart you requested is done: …` turn (origin
-`wake`, about `job`). A second request while one is pending answers
+`[system: restart] The server restart you requested is done: …` turn
+(origin `wake`, about `system`, cause `restart`). A second request while one is pending answers
 `{ deferred: true, already: true }`. `somora server restart` and
 `somora update` send exactly this when an agent runs them through
 `exec` (the tool sets `SOMORA_AGENT` / `SOMORA_SESSION` for the command),
@@ -1808,7 +1808,7 @@ Event types:
     | { kind: 'tmux';     tmuxSession: string; tmuxKind?: string }
     | { kind: 'browser';  viewId: string; cause: 'handoff' | 'activity'; handoffId?: string }
     | { kind: 'voice';    callId?: string; consultId: string }
-    | { kind: 'wake';     about: 'a2a' | 'subagent' | 'job'; ref: string; depth?: number };
+    | { kind: 'wake';     about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string };
   ```
 
   `human` is a person typing (`chat`) or dictating (`voice-stt`).
@@ -1827,7 +1827,10 @@ Event types:
   four system triggers; `wake` brings something the agent started
   earlier back to it — a late `agent_ask` answer (`ref` = call id), a
   finished async sub-agent (`ref` = task id) or a rendered video
-  (`ref` = job id) — and, with `about: "subagent"`, a follow-up on a
+  (`ref` = job id); `about: "system"` is somora itself speaking, with
+  the occasion in `cause` (today `restart`: the restart an agent asked
+  for is done, or a question / a helper was cut off by one — the text
+  begins `[system: restart]`) — and, with `about: "subagent"`, a follow-up on a
   finished sub whose own work finished later (the text reads `Task
   '<id>' … has a follow-up: the work it started has finished. It
   begins: "…"`, and the frame points at the `follow_ups` field of `subagent_result`). The
@@ -1972,7 +1975,7 @@ Event types:
   - `chat:final` (assistant answer)
   - `user_message` with `from_agent` set (A2A peer wrote to us)
   - `user_message` with `from_system` set (`sentinel`, `tmux`,
-    `subagent`, `job`, `browser`, `voice` or `a2a` woke us)
+    `subagent`, `job`, `browser`, `voice`, `a2a` or `system` woke us)
   Plain self-typed user messages, tool / memory / engine_meta events,
   and lifecycle (`agent:start`, `agent:end`) are excluded.
 - `seen` — `{agent, session, seenAt}` — broadcast when any client

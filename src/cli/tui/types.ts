@@ -181,7 +181,7 @@ export interface PendingQueuedTurn {
 // word. `job` = a finished video render (videogen wake). The
 // structured `origin` (src/types/turn-origin.ts) carries the same
 // information plus ids; old turns only have this word.
-export type FromSystemKind = 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a' | 'job';
+export type FromSystemKind = 'sentinel' | 'tmux' | 'subagent' | 'browser' | 'voice' | 'a2a' | 'job' | 'system';
 
 // One entry of GET /agents/:agent/sessions/:session/work — a preview of
 // a turn the session runs, waits for, is about to receive, or started
@@ -199,7 +199,7 @@ export interface WorkItemInfo {
   id: string | null;
   kind: WorkKind;
   /** Wake items: what finished (`a2a` answer, `subagent` result, `job` video). */
-  about?: 'a2a' | 'subagent' | 'job';
+  about?: 'a2a' | 'subagent' | 'job' | 'system';
   state: string;
   preview: string;
   target?: { agent: string; session: string };

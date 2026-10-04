@@ -30,11 +30,11 @@ export type TurnOrigin =
    *  a late agent_ask answer (`a2a`, ref = call_id), a finished async
    *  sub (`subagent`, ref = task_id), a rendered video (`job`, ref =
    *  job id). */
-  | { kind: 'wake'; about: 'a2a' | 'subagent' | 'job'; ref: string; depth?: number };
+  | { kind: 'wake'; about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string };
 
 export type TurnOriginKind = TurnOrigin['kind'];
 
 /** The legacy `from_system` marker, derived server-side from `origin`:
  *  sentinel/tmux/browser/voice keep their word, a wake carries its
  *  `about`. Human, agent and subagent turns have none. */
-export type FromSystem = 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+export type FromSystem = 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a' | 'system';

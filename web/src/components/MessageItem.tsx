@@ -40,6 +40,7 @@ import {
   Volume2,
   PhoneCall,
   Clapperboard,
+  Cog,
   type LucideIcon,
 } from 'lucide-react';
 import type { AssistantMedia, AttachmentDisplay, ChatMessage, ThinkingContent } from '../types/chat';
@@ -423,6 +424,7 @@ const ORIGIN_ICONS: Record<OriginRowKind, LucideIcon> = {
   subagent: Bot,
   a2a: CornerDownLeft,
   job: Clapperboard,
+  system: Cog,
   voice: PhoneCall,
 };
 

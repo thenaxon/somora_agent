@@ -6,7 +6,7 @@ import type { TurnOrigin } from '../types/turn-origin.ts';
 
 export type { TurnOrigin, TurnOriginKind, TurnOriginRef } from '../types/turn-origin.ts';
 
-export type FromSystem = 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+export type FromSystem = 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a' | 'system';
 
 export interface LegacyOriginFields {
   fromAgent?: string;
@@ -25,7 +25,7 @@ export interface LegacyOriginFields {
  *   agent               → from_agent, from_session (when known), agent_ask_call_id (when known)
  *   subagent            → subagentDepth only (a brief is neutral, never labelled — Juni-Audit 2026-07)
  *   sentinel/tmux/browser/voice → from_system = kind
- *   wake                → from_system = about ('a2a' | 'subagent' | 'job'), subagentDepth when carried
+ *   wake                → from_system = about ('a2a' | 'subagent' | 'job' | 'system'), subagentDepth when carried
  */
 export function originToLegacy(origin: TurnOrigin): LegacyOriginFields {
   switch (origin.kind) {

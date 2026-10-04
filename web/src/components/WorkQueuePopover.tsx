@@ -24,6 +24,7 @@ import {
   Bell,
   Bot,
   Clapperboard,
+  Cog,
   CornerDownLeft,
   Globe,
   Hourglass,
@@ -57,6 +58,7 @@ const WORK_ICONS: Record<WorkIconKey, LucideIcon> = {
   subagent: Bot,
   a2a: CornerDownLeft,
   job: Clapperboard,
+  system: Cog,
   voice: PhoneCall,
 };
 

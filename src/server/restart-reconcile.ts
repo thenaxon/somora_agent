@@ -132,12 +132,12 @@ export async function reconcileInterruptedTurns(agents: readonly string[]): Prom
 /** The wake text for an asker whose question died with the restart. */
 export function restartWakeText(t: InterruptedTurn): string {
   return (
-    `[agent answer] The question you sent to ${t.agent} (session '${t.session}') was cut off by a server restart before an answer came` +
+    `[system: restart] The question you sent to ${t.agent} (session '${t.session}') was cut off by a server restart before an answer came` +
     (t.callId ? ` (call_id "${t.callId}")` : '') +
     '. It will not be answered on its own — send it again if you still need it.'
   );
 }
 
 export function restartParentWakeText(t: InterruptedTurn): string {
-  return `[subagent attention] The helper in ${t.agent}'s session '${t.session}' was cut off by a server restart before it finished; there is no result. Start it again if you still need it.`;
+  return `[system: restart] The helper in ${t.agent}'s session '${t.session}' was cut off by a server restart before it finished; there is no result. Start it again if you still need it.`;
 }

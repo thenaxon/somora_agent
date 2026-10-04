@@ -53,7 +53,7 @@ export type NormalizedEvent =
        * after the medium: the distinguishing fact is "something you
        * kicked off is done", and video is only the first of those.
        */
-      from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+      from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a' | 'system';
       /**
        * Where the turn came from, as one value (src/types/turn-origin.ts).
        * Additive since 2026-09-13: from_agent / from_system above stay
@@ -504,7 +504,7 @@ export type SseEvent =
         /** Set only when the inbound was synthesized by an internal
          *  subsystem (today: 'sentinel'). Clients render the message
          *  as a centered system divider. */
-        from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+        from_system?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a' | 'system';
         /** Same value as on the stored event — see NormalizedEvent. */
         origin?: TurnOrigin;
         agent_ask_call_id?: string;

@@ -122,7 +122,7 @@ function seconds(ms: number): string {
 export function requestedResumeText(intent: RestartIntent, nowVersion: string, now: number = Date.now()): string {
   const version = intent.fromVersion === nowVersion ? `somora ${nowVersion}` : `somora ${intent.fromVersion} → ${nowVersion}`;
   return (
-    `[somora] The server restart you requested is done: ${version}, back after ${seconds(now - intent.requestedAt)}` +
+    `[system: restart] The server restart you requested is done: ${version}, back after ${seconds(now - intent.requestedAt)}` +
     (intent.reason ? ` (${intent.reason})` : '') +
     '. Your turn before it ended normally. Check that what you restarted for is in place, then continue with what you were doing — do not restart again unless something is actually wrong.'
   );
@@ -131,7 +131,7 @@ export function requestedResumeText(intent: RestartIntent, nowVersion: string, n
 /** Wake text for a turn that was cut by a restart it caused itself. */
 export function detectedResumeText(nowVersion: string): string {
   return (
-    `[somora] Your previous turn was cut off by a server restart that it started itself; the server is back (somora ${nowVersion}). ` +
+    `[system: restart] Your previous turn was cut off by a server restart that it started itself; the server is back (somora ${nowVersion}). ` +
     'The command that restarted it did run — do NOT run it again. The instruction above still stands: check the current state, then continue from there. ' +
     'Next time restart with `somora server restart` (or `somora update`) from your shell: it waits until your turn has ended and wakes you afterwards.'
   );

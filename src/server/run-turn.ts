@@ -190,7 +190,7 @@ export interface RunChatTurnArgs {
    *  the message as a centered system divider rather than a normal
    *  user-bubble. Mutually exclusive with fromAgent. Derived from
    *  `origin` when a caller goes through startTurn. */
-  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a';
+  fromSystem?: 'sentinel' | 'tmux' | 'subagent' | 'job' | 'browser' | 'voice' | 'a2a' | 'system';
   /** Where this turn came from, as one value (src/types/turn-origin.ts).
    *  Persisted additively on user_message and the SSE event; the
    *  legacy fields above stay what old sessions, clients and engines

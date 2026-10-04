@@ -19,7 +19,7 @@ import type { FromSystem, TurnOrigin } from '../types/origin';
 
 /** The divider row a message maps to. `subagent` here is the WAKE
  *  ("your sub-agent finished"), not a sub-agent's own session. */
-export type OriginRowKind = 'sentinel' | 'tmux' | 'browser' | 'voice' | 'a2a' | 'subagent' | 'job';
+export type OriginRowKind = 'sentinel' | 'tmux' | 'browser' | 'voice' | 'a2a' | 'subagent' | 'job' | 'system';
 
 export interface OriginPresentation {
   /** Which row matched — components pick their icon set by this. */
@@ -92,6 +92,11 @@ export function videoLineFromText(text: string): string {
   return stripOriginMarker(text).split('\n')[0]?.trim() ?? '';
 }
 
+/** `[system: restart] …` → `restart`. */
+export function systemCauseFromText(text: string): string {
+  return text.match(/^\[system:\s*([^\]]+)\]/)?.[1]?.trim() ?? '';
+}
+
 // --- the table ------------------------------------------------------
 
 /** Which divider row a `from_system` word selects. */
@@ -104,6 +109,7 @@ function rowFromLegacy(fromSystem: string | undefined): OriginRowKind | null {
     case 'a2a':
     case 'subagent':
     case 'job':
+    case 'system':
       return fromSystem;
     default:
       return null;
@@ -217,6 +223,17 @@ export function originPresentation(msg: OriginPresentationInput): OriginPresenta
         ariaLabel: 'video render finished',
         body,
       };
+    case 'system':
+      // somora itself speaking. The occasion (`restart`) comes from the
+      // origin, else from the `[system: restart]` lead-in.
+      return {
+        kind,
+        glyph: '⚙',
+        label: 'system',
+        subtitle: (origin?.kind === 'wake' && origin.cause) || systemCauseFromText(text),
+        ariaLabel: 'message from somora itself',
+        body,
+      };
   }
 }
 
@@ -229,6 +246,7 @@ export const FROM_SYSTEM_VALUES: readonly FromSystem[] = [
   'browser',
   'voice',
   'a2a',
+  'system',
 ];
 
 // --- the work queue (GET …/work) --------------------------------------
@@ -274,6 +292,8 @@ export function originGlyphLabel(kind: string, about?: string): WorkGlyphLabel {
           return { glyph: '🤖', label: 'sub-agent result', icon: 'subagent' };
         case 'job':
           return { glyph: '🎬', label: 'video', icon: 'job' };
+        case 'system':
+          return { glyph: '⚙', label: 'system', icon: 'system' };
         default:
           return { glyph: '↩', label: 'wake', icon: 'a2a' };
       }
@@ -304,6 +324,8 @@ export function workArrivingLabel(about: string | undefined, target: { agent: st
       return 'sub-agent result arriving';
     case 'job':
       return 'video arriving';
+    case 'system':
+      return 'system message arriving';
     default:
       return 'result arriving';
   }

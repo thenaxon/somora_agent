@@ -92,5 +92,12 @@ check('sentinel: name from prompt header', () => {
   });
 });
 
+check('system: label and the occasion, from the origin or from the lead-in', () => {
+  const text = '[system: restart] The server restart you requested is done: somora 1.0.0, back after 4 s.';
+  assert.deepEqual(systemNoticeOf(text, 'system', { kind: 'wake', about: 'system', ref: 'r1', cause: 'restart' }), { label: '⚙  system', name: 'restart' });
+  assert.deepEqual(systemNoticeOf(text, 'system', undefined), { label: '⚙  system', name: 'restart' });
+  assert.deepEqual(systemNoticeOf('no lead-in', undefined, { kind: 'wake', about: 'system', ref: 'r2' }), { label: '⚙  system', name: '' });
+});
+
 console.log(`${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

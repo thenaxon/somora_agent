@@ -1458,7 +1458,7 @@ export interface WorkItemDto {
   /** Origin kind: human | agent | subagent | sentinel | tmux | browser | voice | wake. */
   kind: string;
   /** For a wake: what came back. */
-  about?: 'a2a' | 'subagent' | 'job';
+  about?: 'a2a' | 'subagent' | 'job' | 'system';
   state: string;
   /** First 160 characters of the text — the only text the route sends. */
   preview: string;

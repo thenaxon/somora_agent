@@ -7123,18 +7123,21 @@ configureWorkWake({
 
 // The askers of the turns the last process died in (see boot above).
 for (const t of interruptedTurns) {
-  const wakes: Array<{ agent: string; session: string; text: string; ref: string; about: 'a2a' | 'subagent' }> = [];
-  if (t.fromAgent && t.fromSession && t.callId) wakes.push({ agent: t.fromAgent, session: t.fromSession, text: restartWakeText(t), ref: t.callId, about: 'a2a' });
-  if (t.parent) wakes.push({ agent: t.parent.agent, session: t.parent.session, text: restartParentWakeText(t), ref: t.turnId, about: 'subagent' });
+  // somora itself speaking — not the asked agent's answer and not the
+  // helper's result — so these go out as `system` wakes; `what` only
+  // says for the log which wait was cut.
+  const wakes: Array<{ agent: string; session: string; text: string; ref: string; what: 'a2a' | 'subagent' }> = [];
+  if (t.fromAgent && t.fromSession && t.callId) wakes.push({ agent: t.fromAgent, session: t.fromSession, text: restartWakeText(t), ref: t.callId, what: 'a2a' });
+  if (t.parent) wakes.push({ agent: t.parent.agent, session: t.parent.session, text: restartParentWakeText(t), ref: t.turnId, what: 'subagent' });
   for (const w of wakes) {
-    const origin: TurnOrigin = { kind: 'wake', about: w.about, ref: w.ref };
+    const origin: TurnOrigin = { kind: 'wake', about: 'system', ref: w.ref, cause: 'restart' };
     const workId = `restart-wake-${w.ref}`;
     openWork({ id: workId, origin, target: { agent: w.agent, session: w.session }, text: w.text, waiting: false, wake: 'never' });
     void startTurn({ agent: w.agent, session: w.session, text: w.text, workId, origin }).catch((err: unknown) => {
       if (err instanceof DequeuedError) return;
       logger.warn({ msg: 'restart.wake_failed', agent: w.agent, session: w.session, err: (err as Error).message });
     });
-    logger.info({ msg: 'restart.wake_sent', to: `${w.agent}/${w.session}`, about: w.about, ref: w.ref });
+    logger.info({ msg: 'restart.wake_sent', to: `${w.agent}/${w.session}`, about: w.what, ref: w.ref });
   }
 }
 // The session that asked for the restart (or caused it from its own
@@ -7163,7 +7166,7 @@ for (const t of interruptedTurns) {
       continue;
     }
     const ref = `restart-${Date.now()}-${r.agent}`;
-    const origin: TurnOrigin = { kind: 'wake', about: 'job', ref };
+    const origin: TurnOrigin = { kind: 'wake', about: 'system', ref, cause: 'restart' };
     const workId = `restart-resume-${ref}`;
     openWork({ id: workId, origin, target: { agent: r.agent, session: r.session }, text: r.text, waiting: false, wake: 'never' });
     void startTurn({ agent: r.agent, session: r.session, text: r.text, workId, origin }).catch((err: unknown) => {

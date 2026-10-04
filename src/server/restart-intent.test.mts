@@ -5,7 +5,7 @@ import {
   allowResume, clearRestartIntent, detectedResumeText, looksLikeSelfRestart, readRestartIntent, requestedResumeText,
   turnRestartedServer, writeRestartIntent,
 } from './restart-intent.ts';
-import { openTurnOf } from './restart-reconcile.ts';
+import { openTurnOf, restartParentWakeText, restartWakeText } from './restart-reconcile.ts';
 
 test('commands that restart this somora are recognised, others are not', () => {
   for (const yes of [
@@ -63,6 +63,10 @@ test('wake texts say what happened and forbid restarting again', () => {
   assert.match(t, /do not restart again/);
   assert.match(requestedResumeText({ agent: 'a', session: 's', requestedAt: 0, fromVersion: '1.2.3' }, '1.2.3', 500), /somora 1\.2\.3, back after 1 s\./);
   assert.match(detectedResumeText('2026.1004.1'), /do NOT run it again/);
+  // all restart messages carry the system lead-in the clients read the occasion from
+  for (const text of [t, detectedResumeText('1.0.0'), restartWakeText({ agent: 'bea', session: 's', turnId: 't', startedAt: 0, callId: 'c1' }), restartParentWakeText({ agent: 'bea', session: 's', turnId: 't', startedAt: 0 })]) {
+    assert.match(text, /^\[system: restart\] /);
+  }
 });
 
 test('a session is woken at most twice in ten minutes', () => {

@@ -18,6 +18,7 @@ const FROM_SYSTEM_KINDS: ReadonlySet<string> = new Set([
   'voice',
   'a2a',
   'job',
+  'system',
 ]);
 
 function isFromSystemKind(v: unknown): v is FromSystemKind {
