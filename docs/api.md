@@ -1,119 +1,148 @@
 # HTTP API
 
-The somora HTTP API reference.
+Every somora client talks to the same server over HTTP, Server-Sent
+Events and WebSockets: the terminal client, the web client, the mobile
+app and anything you build yourself. This page lists every route and
+every stream event, so you can write your own client from it.
 
-> All clients — TUI, web app, and any third-party tool — talk to the
-> same HTTP+SSE+WebSocket surface. This document is the reference for
-> that surface, so you can build your own client: a Telegram bridge,
-> a status dashboard, a Voice frontend, a Stream-Deck integration,
-> whatever you want to plug into your agents.
+## What you get
 
-The server is a Hono app served by `@hono/node-server` over HTTP/2
-(see [setup.md](setup.md) for TLS via Tailscale). The base URL in a
-typical install is `https://<host>.<tailnet>.ts.net:18737`. The TUI
-and web both live at this same origin (TUI is the binary that ships
-with somora; web is mounted under `/web`).
+- **One surface for all clients.** What the shipped clients can do, your
+  client can do: there are no private routes.
+- **Send and follow.** Post a message, then read the reply as it is
+  written, tool call by tool call.
+- **Everything about a session**: history, queue, model, thinking
+  level, project, unread state.
+- **The machinery behind the agents**: memory search, wiki, dream
+  phases, triggers, browser, media, voice.
+- **No login to implement.** Whoever reaches the port may use it. Read
+  "Access model" before you open that port to anyone.
 
-## Authentication & deployment model
+## First request
 
-**There is no API key, no OAuth, no per-route auth.** somora's
-security model is *LAN-trust*: the server binds to the loopback or
-the Tailnet, and anyone who can reach the address is authorised.
+List the agents, open the stream of one session, then send a message.
+The reply arrives on the stream.
 
-This is a deliberate choice that follows from somora's positioning:
+```bash
+BASE=https://<your-host>:18737
 
-- **Local-first.** somora lives on your machine (or a server in your
-  Tailnet). It holds your memory, talks to your accounts. There is
-  no multi-tenancy concept.
-- **Tailscale is the ACL.** Tailnet ACLs decide who can reach the
-  port; somora itself trusts whoever's already at the door.
-- **Anything an agent can do, you can do.** The API surfaces the
-  same capabilities the agent has — memory writes, model switches,
-  dream triggers. If the model is allowed to do it, so is your
-  client.
+# 1. Who is there?
+curl $BASE/agents
 
-**Do not expose the somora port to the public internet.** No auth
-guard means anyone who finds the URL gets full agent control,
-including the ability to read all memory + sessions + vault. Keep
-it on Tailscale or on `127.0.0.1` and tunnel.
+# 2. Follow the session (keep this running)
+curl -N "$BASE/chat/stream?agent=<your-agent>&session=main" &
+
+# 3. Send a message
+curl -X POST $BASE/chat/send \
+     -H 'Content-Type: application/json' \
+     -d '{"agent":"<your-agent>","session":"main","text":"What is on today?"}'
+# → 202 { "ok": true, "turnId": "…" }
+```
+
+On the stream you now see `user_message`, `agent` with `phase: "start"`,
+`chat` deltas, perhaps `tool` events, a `chat` event with
+`state: "final"` and `agent` with `phase: "end"`.
+
+A fuller client usually does this:
+
+| When | Calls |
+|---|---|
+| On start | `GET /agents`, `GET /sessions`, `GET /version`, one `GET /activity/stream` |
+| Per open chat window | `GET /chat/history?limit=200`, one `GET /chat/stream` |
+| On input | `POST /attachments` per file, then `POST /chat/send` |
+| On Stop | `POST /chat/abort` |
+| To show the queue | `GET /agents/:agent/sessions/:session/work` |
+
+If you do not want to handle a stream, `POST /chat/send-sync` waits for
+the turn and returns the reply in the response.
 
 ## Conventions
 
-- **Encoding.** Request and response bodies are JSON (`Content-Type:
-  application/json`) unless otherwise noted. Attachments are
-  `multipart/form-data`.
-- **Errors.** A non-2xx response carries `{ "error": "<message>" }`
-  in the body. Messages are human-readable strings and may be in
-  German (somora speaks both — error text follows the locale of the
-  originating component).
-- **IDs.** Session IDs are `<YYYYMMDD>-<HHMMSS>_<slug>`. The literal
-  string `main` is the always-on default session per agent and is
-  always addressable. A route that takes `<slug|id>` resolves in this
-  order: `main`, an exact id, a session stored under exactly that name,
-  then the newest session with that slug. The third rule matters for
-  sessions written before the id format was enforced: whatever the
-  session list shows can be addressed under the name it was shown with.
-  An unknown reference is refused rather than resolved to a neighbour.
-- **Polling cadence.** Endpoints that surface live state are cheap
-  by design — poll every 2 s for the dream loop, 30 s for dream
-  phases, 60 s for sessions. The server caches expensive lookups
-  (e.g. session sizes) so polling doesn't burn cycles.
-- **SSE.** Streaming endpoints use Server-Sent Events with named
-  events (`chat`, `tool`, `memory_inject`, `status`, `heartbeat`).
-  See [SSE event vocabulary](web.md#sse-event-vocabulary).
+| Topic | Rule |
+|---|---|
+| Base URL | `https://<your-host>.<your-tailnet>.ts.net:18737` with HTTPS set up, else `http://127.0.0.1:18737`. The web client is under `/web/`, the mobile app under `/mobile/`. |
+| Bodies | JSON in, JSON out (`Content-Type: application/json`), unless a route says otherwise. Uploads are raw bytes or `multipart/form-data`, as noted per route. |
+| Errors | A non-2xx response carries `{ "error": "<message>" }`. The message is written for a person. Some routes add fields, noted per route. |
+| Unknown agent or session | `404` on every route that takes one. |
+| Times | Epoch milliseconds as numbers, or ISO 8601 strings. The examples show which. |
+| Streams | Server-Sent Events with named events. `data` is always JSON. |
 
-## Versioning & stability
+### Session references
 
-- The version returned by `GET /version` is calendar-based and valid
-  semver: `2026.1001.2` is the second build of 1 October 2026. Several
-  builds a day are common during active work.
-- Most endpoints listed here are stable — the TUI and web both use
-  them, and breaking them would break the shipped clients.
-- Endpoints marked **⚠ experimental** may change shape in any bump.
-  They are surfaced because the TUI/web already need them; lock
-  yourself to a specific somora version if your client depends on
-  them.
+A session id has the form `<YYYYMMDD>-<HHMMSS>_<slug>`. Every agent
+also has the session `main`, which always exists. Where a route takes
+`:session` or a `session` field, it accepts a reference and resolves it
+in this order:
 
----
+1. `main`
+2. an exact id
+3. a session stored under exactly that name
+4. the newest session with that slug
+
+An unknown reference is refused. It is never resolved to a similar
+name. Responses carry the resolved id.
+
+### Polling
+
+Routes that report live state only read memory and are cheap. The
+shipped clients poll the dream loop every 2 seconds, the dream phases
+every 30 seconds and the session list every 60 seconds. Prefer the two
+streams where they cover what you need.
+
+## Access model
+
+There is no API key, no login and no per-route permission. The server
+trusts every request that reaches it. Access is decided by the network:
+bind to `127.0.0.1`, or to a private network such as a tailnet whose
+rules say who may connect.
+
+> **Warning:** Never expose the port to the public internet. Anyone who
+> reaches it can read all memory and sessions and act as any agent.
+
+The API can do what an agent can do: write memory, switch models, start
+dream runs, run tools. The security page describes the trust boundary
+and how to check your setup.
+
+## Stability
+
+- The version from `GET /version` is calendar based and valid semver:
+  `2026.1001.2` is the second build of 1 October 2026.
+- The routes on this page are used by the shipped clients and are kept
+  stable.
+- A route marked **experimental** may change shape in any build. Pin a
+  somora version if your client depends on one.
+- New fields may appear in any response and any event. Ignore what you
+  do not know.
 
 ## Core
 
 ### `GET /version`
 
-Returns the running somora version and, once the daily update check has
-answered, what somora.ai says is current ([setup.md → The daily update
-check](setup.md#the-daily-update-check)).
+The running version and what the daily update check found.
 
-```bash
-curl https://<host>:18737/version
-# { "version": "2026.1001.2", "update": null }
-# { "version": "2026.1001.2",
-#   "update": { "latestVersion": "2026.1005.1", "available": true, "note": "update Node first" } }
+```json
+{ "version": "2026.1001.2",
+  "update": { "latestVersion": "2026.1005.1", "available": true, "note": "update Node first" } }
 ```
 
-`update` is `null` until the first check has run (or when it is switched
-off); `available` is true when `latestVersion` is newer than `version`;
-`note` is optional.
+| Field | Meaning |
+|---|---|
+| `version` | The running build. |
+| `update` | `null` until the first check has answered, or when the check is switched off. |
+| `update.latestVersion` | The newest published version. |
+| `update.available` | `true` when `latestVersion` is newer than `version`. |
+| `update.note` | Optional hint that comes with the release. |
 
 ### `GET /healthz`
 
-Liveness probe. Returns the plain-text `ok` with status 200. Use it
-to wait for server start, smoke-test load balancers, etc.
+Liveness probe. Answers the plain text `ok` with status 200. Use it to
+wait for the server to come up.
 
 ### `GET /health`
 
-Diagnostic snapshot. Use this when something looks stuck — e.g. an
-agent's session has stopped responding but the server is still
-accepting HTTP. The response shows which `(agent, session)` is busy,
-since when, what its current turn id is, queue depth behind it, and
-how long ago the last engine event reached SSE subscribers. Read-only,
-cheap (in-memory only).
-
-```bash
-curl https://<host>:18737/health
-```
-
-Returns:
+A snapshot for diagnosing a session that seems stuck: which session is
+busy, since when, what waits behind it, and when the last event went
+out. Read-only and cheap.
 
 ```json
 {
@@ -125,699 +154,773 @@ Returns:
   "lockfileStartedAt": "2026-05-14T11:09:08.429Z",
   "activeSessions": 1,
   "totalKnownSessions": 3,
-  "claudeAuth": {
-    "enabled": true,
-    "userExists": true,
-    "somoraExists": true,
-    "identical": true,
-    "userExpiresAt": 1785503549000,
-    "somoraExpiresAt": 1785503549000,
-    "lastSyncResult": "noop",
-    "lastSyncAt": 1785496349000
-  },
-  "memoryEmbedder": {
-    "state": "ok",
-    "provider": "local",
-    "model": "all-MiniLM-L6-v2",
-    "dim": 384,
-    "error": null,
-    "since": 1785496350120,
-    "attempts": 1,
-    "loadMs": 2373
-  },
-  "sharedIndex": {
-    "state": "ready",
-    "role": "owner",
-    "path": "/home/me/.somora/index/shared.db",
-    "files": 626,
-    "chunks": 1466,
-    "built_by": "seed:<agent>"
-  },
+  "claudeAuth": { "enabled": true, "userExists": true, "somoraExists": true,
+                  "identical": true, "userExpiresAt": 1785503549000,
+                  "somoraExpiresAt": 1785503549000,
+                  "lastSyncResult": "noop", "lastSyncAt": 1785496349000 },
+  "memoryEmbedder": { "state": "ok", "provider": "local", "model": "all-MiniLM-L6-v2",
+                      "dim": 384, "error": null, "since": 1785496350120,
+                      "attempts": 1, "loadMs": 2373 },
+  "sharedIndex": { "state": "ready", "role": "owner",
+                   "path": "/home/me/.somora/index/shared.db",
+                   "files": 626, "chunks": 1466, "built_by": "sweep" },
   "sessions": [
     {
-      "agent": "<your-agent>",
-      "session": "main",
-      "busy": true,
-      "activePriority": "user",
-      "activeSince": 1778757036447,
-      "activeAgeMs": 1024,
-      "activeCallId": null,
-      "activeTurnId": "b5b7a734-...",
-      "queueLength": 1,
-      "userWaiting": 0,
-      "agentWaiting": 1,
+      "agent": "<your-agent>", "session": "main",
+      "busy": true, "activePriority": "user",
+      "activeSince": 1778757036447, "activeAgeMs": 1024,
+      "activeCallId": null, "activeTurnId": "b5b7a734-…",
+      "queueLength": 1, "userWaiting": 0, "agentWaiting": 1,
       "queued": [
         { "id": "3f0c2b1e-…", "kind": "agent",
           "preview": "Can you check whether the build log mentions …",
           "enqueuedAt": 1778757040112, "position": 1 }
       ],
-      "lastEngineEventAt": 1778757036900,
-      "lastEngineEventAgoMs": 571,
+      "lastEngineEventAt": 1778757036900, "lastEngineEventAgoMs": 571,
       "subscriberCount": 2,
-      "lastPublishOkAt": 1778757036900,
-      "lastPublishOkAgoMs": 571
+      "lastPublishOkAt": 1778757036900, "lastPublishOkAgoMs": 571
     }
   ]
 }
 ```
 
-`activeAgeMs` is how long the current turn has been holding the
-per-session lock. `activeTurnId` is set for every running turn,
-whatever started it — a typed message, an `agent_ask`, a sub-agent
-brief, a sentinel fire, a tmux or browser wake, a voice consult or a
-wake-up — so a session that looks stuck can always be matched to a
-turn and stopped with `POST /chat/abort`. `queued` names the waiters
-behind it in lock order: the entry's id (the `turnId` of a typed
-message, the `call_id` of an `agent_ask`, the `task_id` of a sub-agent
-brief or a sentinel fire), its origin `kind`, the first 160 characters
-of its text and its `position` (1 = next). Any of these ids can go to
-`DELETE /chat/queue/:id`; the per-session view
-`GET /agents/:agent/sessions/:session/work` adds what is arriving and
-what the session started elsewhere. `lastEngineEventAgoMs` ticks up while the engine is
-silent — if it climbs past a few minutes on a chat turn (vs. a long
-local-LLM job), the turn is wedged and the engine watchdog will abort
-it. See [setup.md](setup.md#settings) `engineWatchdog` to tune
-thresholds per engine.
+Per session:
 
-`claudeAuth` reports the shared-login credential sync between
-`~/.claude` and somora's isolated claude-home (paths and mtimes
-elided above; never token material). `identical: false` with both
-sides present means the stores have diverged and the watcher hasn't
-caught up yet — if it persists, claude-cli auth is about to break;
-run `somora auth status` on the host. See
-[setup.md](setup.md#isolated-claude-config-dir).
+| Field | Meaning |
+|---|---|
+| `busy`, `activeSince`, `activeAgeMs` | Whether a turn runs, and for how long. |
+| `activePriority` | `user` for a person typing or dictating, `agent` for everything else. A label only: the queue is first in, first out. |
+| `activeTurnId` | Set for every running turn, whatever started it. Stop it with `POST /chat/abort`. |
+| `activeCallId` | The call id when the running turn is another agent's question, else `null`. |
+| `queueLength`, `userWaiting`, `agentWaiting` | How many turns wait, in total and by label. |
+| `queued` | The waiters in order: `id`, origin `kind`, the first 160 characters as `preview`, `enqueuedAt`, `position` (1 is next). Any `id` can go to `DELETE /chat/queue/:id`. |
+| `lastEngineEventAt`, `lastEngineEventAgoMs` | When the engine last produced an event. A value that keeps growing during a chat turn means the turn hangs. The engine watchdog then aborts it (`engineWatchdog` in the config). |
+| `subscriberCount` | Clients connected to this session's stream. |
+| `lastPublishOkAt`, `lastPublishOkAgoMs` | When an event last reached the subscribers. If it grows while `subscriberCount` is above 0, one client is stuck. The next event removes it after `sse.publishTimeoutMs`. |
 
-`sharedIndex` is the vault/wiki retrieval index shared by all agents
-([memory.md](memory.md#where-notes-live)). `state` is
-`ready` when agents read vault/wiki from it, `building` while the
-first build after an update is still running (agents then still answer
-from their own DB), `disabled` when no vault is configured, `failed`
-with `error` when the DB could not be opened or built. `built_by`
-says where the content came from: `seed:<agent>` (copied out of that
-agent's DB on the first boot after the update) or `sweep` (embedded
-from disk). `null` until the server has opened it.
+Top-level blocks:
 
-`memoryEmbedder` is the health of the embedding model behind memory
-retrieval (see [memory.md](memory.md#how-recall-ranks)). The
-server loads it once at boot; `state` is `ok` when the model is loaded,
-`loading` while the (first-run) download is in flight, and `failed` when
-the last attempt threw — `error` then carries the reason. `failed` means
-every agent's memory search is BM25-only until the next retry succeeds
-(one retry per agent per minute, on search): the server keeps working,
-but semantic recall and dream dedup are silently degraded, so treat a
-persistent `failed` as an incident. The model cache lives under
-`~/.somora/models/transformers/` and survives updates.
-
-`subscriberCount` is the number of currently-connected SSE clients
-(web / mobile / TUI tail) watching this session. `lastPublishOkAt` only
-advances when a broadcast reached at least one subscriber within the
-`sse.publishTimeoutMs` budget; if `subscriberCount > 0` but
-`lastPublishOkAgoMs` grows without bound, at least one client is wedged
-— the next publish auto-evicts it (see `sse.publishTimeoutMs` in
-[setup.md](setup.md#settings)).
+| Block | Meaning |
+|---|---|
+| `claudeAuth` | State of the login shared between `~/.claude` and somora's own Claude folder. Expiry times only, never tokens. `identical: false` with both sides present means they have drifted apart. If that stays, run `somora auth status`. |
+| `memoryEmbedder` | The embedding model behind memory search. `state` is `ok`, `loading` or `failed`. With `failed`, `error` says why and every search is keyword only until a retry succeeds. |
+| `sharedIndex` | The search index over vault and wiki that all agents share. `state` is `ready`, `building`, `disabled` (no vault configured) or `failed` with `error`. `built_by` is `seed:<agent>` or `sweep`. `null` until the server has opened it. |
 
 ### `GET /host-stats`
 
-Host machine resource snapshot — CPU load and memory usage of the box
-somora is running on. Surfaced to the web taskbar's `cpu` / `mem`
-widgets and handy when somora lives on a VM you don't otherwise have a
-metrics view for.
-
-```bash
-curl https://<host>:18737/host-stats
-```
-
-Returns:
+CPU load and memory of the machine somora runs on.
 
 ```json
 {
-  "cpu": {
-    "loadAvg1": 0.42,
-    "cores": 6,
-    "percent": 7.0
-  },
-  "mem": {
-    "totalBytes": 25186074624,
-    "availableBytes": 23197777920,
-    "usedBytes": 1988296704,
-    "percent": 7.9
-  }
+  "cpu": { "loadAvg1": 0.42, "cores": 6, "percent": 7.0 },
+  "mem": { "totalBytes": 25186074624, "availableBytes": 23197777920,
+           "usedBytes": 1988296704, "percent": 7.9 }
 }
 ```
 
-`cpu.percent` is the 1-minute load average divided by core count and
-expressed as a percentage. Values over 100 mean the box has more
-runnable processes than CPUs — not capped, an overload signal is more
-useful than a clamped number.
-
-`mem.availableBytes` is "memory the kernel can hand back without I/O".
-The reading is platform-specific so it matches what the OS-native
-tools report:
-
-- **Linux:** `/proc/meminfo:MemAvailable` (includes reclaimable page
-  cache). Falls back to `os.freemem()` on kernels that don't expose
-  it.
-- **macOS:** `vm_stat` pages free + inactive + speculative, times
-  page size. Mirrors Activity Monitor's "Available" notion. Falls
-  back to `os.freemem()` if the `vm_stat` binary is unavailable.
-- **Other:** `os.freemem()` straight (degraded but non-erroring).
-
-`usedBytes` = `totalBytes − availableBytes`. Read-only, cheap (no disk
-I/O on Linux, a sub-millisecond `vm_stat` spawn on macOS).
-
-### `GET /tui-config` · `GET /mobile-config`
-
-Display preferences for thin clients, read from config.yaml by the
-server so no client parses the file itself. `/tui-config` returns
-`{show: {memory, tools}, verbose: {tools, memory, system, thinking}}`
-(the `tui:` block, see [display.md](display.md)); `/mobile-config`
-returns `{show: {tools, memory}}` (the `mobile:` block). A custom
-client is free to use either as its own defaults.
+| Field | Meaning |
+|---|---|
+| `cpu.percent` | The 1-minute load average divided by the core count, as a percentage. Not capped: above 100 means overload. |
+| `mem.availableBytes` | Memory the system can hand out without swapping. Linux reads `MemAvailable` from `/proc/meminfo`, macOS adds free, inactive and speculative pages from `vm_stat`. Elsewhere it is the free memory the runtime reports. |
+| `mem.usedBytes` | `totalBytes` minus `availableBytes`. |
 
 ### `GET /env`
 
-The environment overrides the running server resolved at boot, one
-entry per variable: `{SOMORA_HOME, SOMORA_PORT, SOMORA_LOG_LEVEL,
-SOMORA_CLAUDE_BIN, SOMORA_CODEX_BIN, SOMORA_CODEX_TOOL_TIMEOUT_SEC,
-SOMORA_COMPACTION_TRIGGER_RATIO, SOMORA_COMPACTION_SAFETY_PAIRS,
-SOMORA_COMPACTION_MODEL, SOMORA_COMPACTION_WORKERS}`, each `{value, isDefault, note?}` — `value`
-is what is in force, `isDefault` says the variable was unset or
-invalid, `note` explains a fallback (e.g. "unset → uses config.yaml
-server.port"). Diagnostic; see [setup.md](setup.md).
+The environment overrides the running server resolved at start. One
+entry per variable, each `{value, isDefault, note?}`.
 
-### `GET /tools`
-
-List every tool registered on the server (the same tools agents see).
-Useful for clients that want to surface a tool catalog.
-
-```bash
-curl https://<host>:18737/tools
-```
-
-Returns `{ count, tools: [{ name, toolset, description, inputSchema,
-maxResultSizeChars, hasAvailabilityCheck }] }` — `inputSchema` is the
-tool's JSON Schema, `maxResultSizeChars` is `null` when the tool uses
-the default cap, `hasAvailabilityCheck` says the tool has a runtime
-probe and may be hidden from some agents.
-
-### `GET /agents/:agent/skills` · `PUT /agents/:agent/skills`
-
-Per-agent skill visibility — the skills half of the web client's
-Abilities matrix (the tools half is `GET/PUT /agents/:agent/tools`,
-documented in [mcp.md](mcp.md)).
-
-`GET` returns `{ agent, gating, hasPatternRules, skills: [{ name,
-description, available, unavailableReason?, visible }] }` — every skill
-installed on the instance, with `visible` telling whether this agent
-sees it. `gating` is the agent's `skills:` section (`{deny, allow}`)
-or `null`; `hasPatternRules` is true when it carries a hand-written
-allow-list, which the UI shows read-only.
-
-`PUT` takes `{ deny: string[], allow: string[] }` and rewrites only the
-`skills:` block of the agent's `agent.yaml` (comments and the rest of
-the file untouched; empty deny+allow removes the block). Names must
-be skill names (`[a-z0-9-]`). Takes effect on the agent's next turn.
-See [skills.md](skills.md#per-agent-visibility).
-
-### `GET /agents/:agent/tools` · `PUT /agents/:agent/tools`
-
-The tools half of the Abilities matrix (see [mcp.md](mcp.md)).
-
-`GET` returns `{ agent, gating, hasPatternRules, tools: [{ name,
-toolset, mcpServer?, description, visible, availableNow }] }` — every
-tool configured on the instance, built-in and imported from external
-MCP servers (`mcpServer` names the origin), with `visible` telling
-whether this agent's gating lets it through. `gating` is the agent's
-`tools:` section (`{deny, allow}`) or `null`; `hasPatternRules` is
-true when it carries an allow-list or a `toolset:`/glob deny rule,
-which the UI shows read-only.
-
-`PUT` takes `{ deny: string[], allow: string[] }` and rewrites only the
-`tools:` block of the agent's `agent.yaml`; `400` when the body has
-the wrong shape or the write fails. Returns `{ok: true}`; takes effect
-on the agent's next turn.
-
-### `POST /agents/:agent/tools/:name`
-
-Invoke a tool directly as an agent (without going through a chat
-turn). The body is the tool's input shape; the response is the tool's
-output. Same authorisation as everything else (LAN-trust).
-
-```bash
-curl -X POST https://<host>:18737/agents/<your-agent>/tools/memory_search \
-     -H 'Content-Type: application/json' \
-     -d '{"query":"voice satellites","limit":3}'
-```
-
----
-
-## Images
-
-Present only when `imageGen.enabled` is set and at least one model is
-configured; every route below answers `503` otherwise. See
-[imagegen.md](imagegen.md) for configuration.
-
-### `GET /images/status`
-
-`{enabled, outputDir, maxImagesPerTurn, models: [{name, label, model, provider, defaults}]}`,
-or `{enabled: false}`. Clients use this to decide whether to show an
-image-generation surface at all.
-
-### `GET /images`
-
-Gallery listing, newest first. Query: `query` (prompt substring, case-
-insensitive), `model`, `agent`, `since`/`until` (`YYYY-MM-DD`), `limit`
-(default 60, max 200), `offset`.
-
-Returns `{total, offset, items: [ImageRecord], totalBytes}`. `total`
-is the unpaged count.
-
-### `GET /images/:id`
-
-One `ImageRecord`: prompt, model, specs, path, mime, bytes, cost,
-agent, session. A record may carry a `linkedTo` field; nothing writes
-it, and the clients show the one canonical path.
-
-### `GET /images/:id/file`
-
-The image bytes, with the record's MIME. `410` when the record exists
-but the file was moved or deleted outside somora.
-
-Files are addressed **by record id, never by path** — the client cannot
-name a file, so a user-chosen images directory does not turn this into
-a way to read arbitrary files.
-
-### `GET /images/models/:name/capabilities`
-
-`{model, source: 'catalog'|'config'|'unknown', known, values, maxN, maxReferences, sizeAlsoAccepts, defaults}`. `sizeAlsoAccepts` lists named ratios the endpoint takes in `size` (`null` when it publishes none) — see the aspect-ratio note in [imagegen.md](imagegen.md).
-
-`values` maps a spec field to its allowed values. **A field absent from
-`values` has no known constraint** — clients should offer free input
-there rather than an empty dropdown.
-
-### `GET /images/catalog`
-
-`{provider, models: [{id, name?}]}` — what the provider currently
-offers. `?provider=<name>` selects the provider; defaults to the one
-behind the first configured model. Read-only discovery aid; config
-still decides what somora will call.
-
-### `POST /images/generate`
-
-Body: `prompt` (required), optional `model` (a configured handle) and
-any specs — `resolution`, `aspect_ratio`, `size`, `quality`,
-`output_format`, `background`, `output_compression`, `seed`, `n` — plus
-optional `reference_images`. A `save_to` field is accepted for
-compatibility and ignored: every image lives in one place, the
-configured images directory, and the response carries its path.
-
-`reference_images` is **base64 on this route** — a browser has the bytes
-of a file the user picked and no server-side path for it. The
-`image_generate` tool takes file paths instead, for the mirror-image
-reason: an agent works on the same machine, and base64 in a tool
-argument would mean loading a file into its context just to send it
-straight back out.
-
-Returns `{images: [ImageRecord], costUsd, warnings?, fellBackFrom?}`.
-`warnings` carries anything the endpoint did differently than asked — a
-size or aspect ratio it substituted (detected by measuring the returned
-image, not by trusting the endpoint to report it), an `aspect_ratio`
-that had to be sent as the closest `size` on the OpenAI wire (see
-[imagegen.md](imagegen.md)), plus any `ignored_params` or `warnings`
-the provider itself sent.
-`fellBackFrom` is present only when a `fallback:` chain had to be
-walked, and names the models that were unavailable.
-
-`503` when the model is configured but not loaded right now (an image
-backend commonly shares a GPU box that runs one profile at a time and
-says so) — distinct from `502`, which means the endpoint misbehaved.
-
-`400` for anything the caller can fix, with a message naming the field
-and the values that would have worked. `502` when the upstream itself
-failed.
-
-### `DELETE /images/:id`
-
-Forgets the record. **The file on disk is kept** — returns
-`{ok, path, fileKept: true}`.
-
-## Media
-
-One gallery over everything somora generated — images and videos.
-The `/images/*` routes above are the image-only view; these are the
-medium-agnostic ones the web Media window and the mobile PWA use.
-
-### `GET /media`
-
-Query: `kind` (`image` | `video`; omit for both), `agent`, `query`
-(prompt substring), `limit` (default 60, max 200), `offset`.
-
-Returns `{total, offset, items: [MediaRecord], totalBytes}`. A
-`MediaRecord` is `{id, kind, createdAt, prompt, modelName, modelId,
-provider, specs, path, filename, mime, bytes, width?, height?,
-durationSec?, thumbPath?, thumbMime?, linkedTo, costUsd?, agent?,
-session?, references?, batchId, batchIndex}` — `kind` is absent on
-records written before video existed and then means `image`;
-`durationSec` and the thumbnail fields are video-only.
-
-### `GET /media/:id`
-
-One `MediaRecord`, `404` when unknown.
-
-### `GET /media/:id/file`
-
-The bytes with the record's MIME, `Content-Disposition: inline`
-(`?download=1` forces `attachment`), immutable cache headers, and
-**HTTP Range support** (`206` / `416`) so a video player can seek
-without re-downloading. `410` when the record exists but the file
-left the disk.
-
-### `GET /media/:id/thumb`
-
-A video's still image (`image/webp` unless the record says otherwise),
-same headers as `/file`. `404` when the provider served no thumbnail.
-
-### `DELETE /media/:id`
-
-Removes the record. Returns `{ok: true}` or `404`.
-
-## Video
-
-Video generation runs as **jobs**: `POST` starts one and returns at
-once, the render continues in the main server, the finished file
-becomes a `MediaRecord`, and an agent that started the job is woken
-with a `from_system: 'job'` turn. Enabled by `videoGen.enabled` in
-config.yaml; see [videogen.md](videogen.md).
-
-### `GET /video/status`
-
-`{enabled: false, reason}` when video is off or no model is
-configured. Otherwise `{enabled: true, active, limit, models:
-[{name, label, model, provider, wire}], jobs: [VideoJob]}` — `active`
-and `limit` are the concurrent-job slot (`videoGen.maxConcurrent`,
-default 4). `?agent=<name>` limits `jobs` to that agent's. A `VideoJob`
-is `{id, providerJobId, modelName, provider, prompt, specs, status,
-progress?, queuePosition?, error?, createdAt, updatedAt, mediaId?,
-path?, agent?, session?, references?}` with `status` one of `queued`,
-`in_progress`, `completed`, `failed`; `mediaId` appears once the file
-is stored and is what `/media/:id` takes.
-
-### `POST /video/generate`
-
-Body: `prompt` (required), optional `model` (a configured handle),
-the specs `seconds`, `size`, `aspect_ratio`, `audio`, `quality`,
-`seed`, optional `reference_images` (**base64**, as on
-`/images/generate`), and optional `agent` + `session` naming who
-should be woken when the job finishes.
-
-Returns `{job: VideoJob}` immediately. `400` for a bad request, `429`
-when all job slots are busy, `503` when the model is configured but
-not available right now, `502` when the provider failed. Poll
-`GET /video/status` or watch the session for the completion turn.
-
-## Files
-
-### `GET /files/view`
-
-Read a server-local file by absolute path. Used by the web client's
-FileView window so users can click absolute-path links emitted in
-agent messages (e.g. `[report.md](/home/user/somoraworkspace/...)`)
-and see the content in-app without SSH-ing into the server.
-
-Policy is reused 1:1 from the `file_read` tool — the same allowlist
-(workspace + somora-home roots) and the same blocklist (`~/.ssh`,
-credential stores, system dirs, …). Symlink-resolution prevents path
-escapes via realpath check on the closest existing ancestor.
-
-Read-only, no writes. This route answers *what a file is*; the bytes of
-anything it cannot inline come from `GET /files/raw`.
-
-**Query parameters**
-
-| Name | Required | Description |
-|---|---|---|
-| `path` | yes | Absolute filesystem path. `~`-prefix is expanded server-side. Relative paths are rejected (no agent-context cwd here). |
-
-**File kinds.** A known text extension decides how the text is
-highlighted; everything else is classified from the file's magic bytes,
-because an extension is a claim and not evidence — a `.dat` holding PNG
-bytes is reported as an image. Nothing is refused for being the wrong
-type: an unrecognised file still comes back described, with a download
-link, which beats an error for a file the user can see referenced in
-chat.
-
-| | `kind` | Response carries |
-|---|---|---|
-| `.md`, `.markdown` | `markdown` | `content`, full Markdown render |
-| `.txt`, `.log`, other text | `text` | `content`, monospace |
-| `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.svg` | `code` | `content`, syntax highlighting |
-| PNG / JPEG / GIF / WebP bytes | `image` | `url`, `mime` |
-| MP4 / MOV / WebM bytes | `video` | `url`, `mime` |
-| WAV / MP3 / OGG / FLAC / M4A bytes | `audio` | `url`, `mime` |
-| PDF bytes | `pdf` | `url`, `mime` |
-| anything else | `binary` | `mime` and a download link only |
-
-`.svg` is listed as `code`, not as an image: it is markup that can carry
-script, so it is shown as its own source rather than rendered.
-
-Text responses are capped at 200 000 characters and set
-`truncated: true` past that. Every response carries `downloadUrl`.
-
-**Success response (200), text**
-
-```json
-{
-  "path": "/home/user/somoraworkspace/somora_feedback/example.md",
-  "kind": "markdown",
-  "ext": ".md",
-  "bytes": 4321,
-  "content": "# Report\n…",
-  "truncated": false,
-  "downloadUrl": "/files/raw?download=1&path=…"
-}
-```
-
-**Success response (200), media**
-
-```json
-{
-  "path": "/home/user/somoraworkspace/shots/run-12.png",
-  "kind": "image",
-  "ext": ".png",
-  "bytes": 184320,
-  "mime": "image/png",
-  "url": "/files/raw?path=…",
-  "downloadUrl": "/files/raw?download=1&path=…"
-}
-```
-
-**Error responses**
-
-| Status | When |
+| Field | Meaning |
 |---|---|
-| `400` | Missing `path` query, relative path, path is a directory or non-regular file |
-| `403` | Policy blocked (path resolves under a blacklisted root or a denied somora-internal location) |
-| `404` | File does not exist |
+| `value` | What is in force. |
+| `isDefault` | The variable was unset or invalid. |
+| `note` | Explains a fallback, for example that an unset `SOMORA_PORT` means `server.port` from `config.yaml`. |
 
-```bash
-curl -G "https://<host>:18737/files/view" \
-     --data-urlencode "path=/home/user/somoraworkspace/somora_feedback/example.md"
-```
+The variables: `SOMORA_HOME`, `SOMORA_PORT`, `SOMORA_LOG_LEVEL`,
+`SOMORA_CLAUDE_BIN`, `SOMORA_CODEX_BIN`, `SOMORA_CODEX_TOOL_TIMEOUT_SEC`,
+`SOMORA_COMPACTION_TRIGGER_RATIO`, `SOMORA_COMPACTION_SAFETY_PAIRS`,
+`SOMORA_COMPACTION_MODEL`, `SOMORA_COMPACTION_WORKERS`.
 
----
+### `GET /tui-config` · `GET /mobile-config`
 
-### `GET /files/raw`
+Display preferences for clients, read from `config.yaml` by the server
+so that no client parses the file itself.
 
-The bytes behind a `/files/view` result: media the viewer displays
-inline, and a download for every other type. Same path policy, applied
-in the same two passes — the byte route is not a way around what the
-metadata route refuses.
-
-**Query parameters**
-
-| Name | Required | Description |
+| Route | Returns | Config block |
 |---|---|---|
-| `path` | yes | Absolute filesystem path, as for `/files/view`. |
-| `download` | no | `1` forces `Content-Disposition: attachment`, whatever the type. |
+| `GET /tui-config` | `{show: {memory, tools}, verbose: {tools, memory, system, thinking}}` | `tui:` |
+| `GET /mobile-config` | `{show: {tools, memory}}` | `mobile:` |
 
-**Range requests are supported** (`Accept-Ranges: bytes`, `206` with
-`Content-Range`, `416` past the end, and `bytes=-N` for a suffix). A
-browser seeking inside a video depends on it; without Range, scrubbing
-re-fetches the whole file. There is therefore no size cap.
+A custom client may use either as its own defaults.
 
-`Content-Type` is taken from the magic bytes, never the extension, and
-`X-Content-Type-Options: nosniff` is set so a browser cannot re-guess
-it. `Content-Disposition: inline` is limited to image, video, audio and
-PDF — anything else is served as an attachment, because a file
-displayed inline runs on somora's own origin.
+### `GET /logs`
 
-The path policy is the only boundary: files outside the workspace
-(`/tmp/...` screenshots, for instance) are viewable as long as they are
-not under a blocked root, which matches what `file_read` allows an
-agent to see.
+The tail of the server log for one day.
 
-```bash
-curl -G "https://<host>:18737/files/raw" \
-     --data-urlencode "path=/home/user/somoraworkspace/shots/run-12.png" \
-     -o run-12.png
-```
+| Query | Default | Meaning |
+|---|---|---|
+| `day` | newest file | `YYYY-MM-DD`. A day, never a path. |
+| `minLevel` | none | Lowest level to include: 20 debug, 30 info, 40 warn, 50 error. |
+| `q` | none | Substring to find in the raw line, case-insensitive. |
+| `agent` | none | Only lines of this agent. |
+| `limit` | 300 | At most 2000. |
 
----
+Returns `{day, days, lines: [{ts, level, msg, agent?, session?, fields}], offset, truncated}`.
+`days` lists every day that has a file, newest first. `offset` is the
+byte position to continue from. `truncated` says older lines lay
+outside the window: only the last 512 KiB of the file are read.
 
-## Agents
+### `GET /logs/since`
 
-### `GET /agents`
+What was appended to the log after a position: the follow path for a
+log view.
 
-List configured agents.
+| Query | Meaning |
+|---|---|
+| `offset` | Byte position from the last response. Default 0. |
+| `day`, `agent`, `q`, `minLevel` | As for `GET /logs`. |
 
-```bash
-curl https://<host>:18737/agents
-```
+Returns `{lines, offset, day}`. When the file shrank, the offset snaps
+back to its real size.
 
-Returns an array of `AgentInfo`:
+## Config and restart
 
-```json
-[
-  {
-    "name": "<your-agent>",
-    "description": "scribe and personal-assistant",
-    "icon": "📝",
-    "color": "#6366f1",
-    "role": "Scribe"
-  }
-]
-```
+### `GET /config/status`
 
-Source: `~/.somora/agents/<name>/AGENTS.md` frontmatter.
-
-### `GET /agents/:agent/system-prompt`
-
-Returns the persona part of the system prompt (`SOUL.md`, `AGENTS.md`,
-`USER.md` with somora's headings) — `{agent, systemPrompt}`. For the
-complete prompt as a turn sends it, use `/prompt-preview` below.
-
-### `GET /agents/:agent/prompt-preview`
-
-The system prompt exactly as the next turn on `?session=<slug|id>`
-(default `main`) would send it, without running a turn or touching the
-session:
+Whether `config.yaml` changed on disk since the server loaded it, and
+whether the server can restart itself.
 
 ```json
-{ "agent": "<your-agent>", "session": "main", "text": "…", "chars": 16210,
-  "parts": [{"key": "self", "label": "Self-pointer", "chars": 900},
-            {"key": "persona", "label": "Persona (SOUL.md · AGENTS.md · USER.md)", "chars": 9340},
-            {"key": "team", "label": "Team block", "chars": 2652}, …],
-  "tools": {"count": 41, "schemaChars": 26510, "names": ["exec", …]},
-  "budgets": {"teamBlockChars": 3000, "personaFileChars": 8000, "personaTotalChars": 14000},
-  "notIncluded": ["tool schemas (…)", "memory recall injected per turn", …] }
+{ "path": "/home/me/.somora/config.yaml",
+  "loadedAt": "2026-05-14T11:09:08.429Z",
+  "changedOnDisk": false,
+  "restartRequiredSections": ["server", "memory", "obsidian", "wiki", "mcp",
+    "claudeCli", "codexCli", "stt", "tts", "sentinel", "updateCheck",
+    "tmux", "web", "mobile"],
+  "restartAvailable": true }
 ```
 
-`parts` concatenate to `text` (separators included), in prompt order:
-self-pointer, persona, team, tool reminder, wiki overview, skills,
-session (which session this is, so the agent can name it to tools),
-project. `tools` counts the tools this agent can see after gating and
-the size of their JSON schemas — they travel on the API tool channel,
-not in `text`, and engines load them direct or deferred. The list is
-resolved against the model that session would actually use, including a
-per-session `/model` override, because a capability-gated tool differs
-per model: `analyze_file` is offered only where the model cannot see
-images itself. Read-only: a
-session whose wiki overview was never snapshotted is rendered without
-persisting the snapshot.
+`restartRequiredSections` are the config sections that are read at
+start and only change after a restart. `restartAvailable` is `true`
+when the systemd user unit is active.
 
-### `GET /agents/:agent/persona`
+### `POST /config/reload`
 
-`{agent, files: [{name, exists, content, hash, chars, bytes, mtime,
-readOnly}], budgets, totals: {personaChars}}` — `AGENTS.md`, `SOUL.md`,
-`USER.md` (editable) and `agent.yaml` (`readOnly: true`). `hash` is the
-optimistic lock for the write below; `budgets` is
-`config.promptBudgets`.
+Reads `config.yaml` again. The file is checked first: on any error the
+running config stays in force.
 
-### `PUT /agents/:agent/persona/:file`
+| Status | Body |
+|---|---|
+| `200` | `{ok: true, changed: [...], restartRequired: [...], loadedAt}`. `changed` lists the sections that differ, `restartRequired` those of them that need a restart. |
+| `400` | `{ok: false, error}` with the schema problems. Nothing was changed. |
 
-Body: `{content, baseHash}`; `file` is one of `AGENTS.md`, `SOUL.md`,
-`USER.md`. Writes only when `baseHash` equals the hash of the file
-currently on disk — agents self-edit these files, so a stale save must
-not overwrite theirs: `409 {error, currentHash, currentContent}` tells
-the client to reload. `AGENTS.md` must keep a parseable frontmatter
-whose `name` (when set) matches the agent directory and a non-empty
-body (`400` otherwise). The previous version is kept as
-`<file>.bak-<timestamp>` (last five); the write is atomic. Returns
-`{ok: true, hash, backup, chars}`. The next turn uses the new text.
+A reload also forgets every "model unavailable" mark, like
+`POST /models/availability/reset`.
 
----
+### `POST /server/restart`
 
-## Team
+Restarts the server through its service manager: the systemd user unit
+on Linux, the LaunchAgent on macOS. Without a body the restart happens
+at once.
 
-The org chart from `~/.somora/team.yaml` (see [team.md](team.md)).
-Readable and writable over HTTP; the file can also be edited by hand.
+| Status | Body |
+|---|---|
+| `200` | `{ok: true, via: "systemd" \| "launchd", expectedDowntimeSeconds: 8}` |
+| `409` | `{ok: false, error}`: somora was started by hand, so nothing would bring it back. Restart it the way you started it. |
 
-### `GET /team`
+### A restart requested from inside a turn
 
-`{enabled, path, exists, valid, issues, file?, principal?, rules?,
-agents?, order?, unlisted?, missing?, warnings?}` — `file` is the parsed
-document as written; `agents` (keyed by name: `{name, title, reportsTo,
-involveFor, notFor, notes?, children, depth}`), `order` (pre-order
-walk), `unlisted` (agents on disk missing from the file) and `missing`
-(file entries without a directory) are the resolved view. `enabled:
-false` with `exists: false` means no file; with `valid: false` the
-`issues` say what is wrong (`{path, message}`), and the server keeps
-the last valid team in force.
+An agent that restarts somora from its own turn would cut that turn
+off. The route therefore takes the requester in the body and waits.
 
-### `GET /team/preview/:agent`
+```bash
+curl -X POST $BASE/server/restart \
+     -H 'Content-Type: application/json' \
+     -d '{"agent":"<your-agent>","session":"main","reason":"config change"}'
+# → { "ok": true, "deferred": true, "via": "systemd", "message": "…" }
+```
 
-`{agent, enabled, block, chars, softMaxChars}` — the exact `# Your
-team` text that agent gets in its system prompt. `404` for an unknown
-agent.
+| Field | Required | Meaning |
+|---|---|---|
+| `agent` | yes | The agent that asks. |
+| `session` | yes | The session it asks from. |
+| `reason` | no | Free text, at most 300 characters. Shown to the agent after the restart. |
 
-### `GET /team/check`
+What happens:
 
-`{exists, valid, issues, warnings, unlisted, missing, blocks: [{agent,
-chars, overSoftMax}], softMaxChars}` — what `somora team check` prints,
-minus the persona scan.
+1. The request is written to `~/.somora/restart-intent.json`.
+2. The server waits until that session's turn has ended, at most 10
+   minutes.
+3. Turns in other sessions get 30 more seconds. What still runs is cut
+   and marked in its session.
+4. The server restarts.
+5. After start, the session is woken with a turn whose text begins
+   `[system: restart]` and says the restart is done. Its origin is
+   `{kind: "wake", about: "system", cause: "restart"}`.
 
-### `PUT /team`
+| Status | Body |
+|---|---|
+| `200` | `{ok: true, deferred: true, via, message}` |
+| `200` | `{ok: true, deferred: true, already: true, via, requestedBy, message}` when a restart is already scheduled |
+| `404` | `{ok: false, error}` for an unknown agent |
+| `409` | `{ok: false, error}` when somora does not run as a service |
 
-Body: the whole document as JSON (`{version: 1, principal, rules?,
-agents}` — the same shape `GET /team` returns under `file`). The server
-validates exactly like the loader; `400 {error, issues: [{path,
-message}]}` writes nothing. On success the previous file is kept as
-`team.yaml.bak-<timestamp>` (last five), the new one is written
-atomically, the read cache is dropped, and the response is `{ok: true,
-backup, …}` plus everything `GET /team` returns. Agents see the change
-on their next turn.
+`somora server restart` and `somora update` send this request when an
+agent runs them through `exec`. The tool sets `SOMORA_AGENT` and
+`SOMORA_SESSION` for the command, so the agent has nothing else to do.
 
-### `POST /team/init`
+A turn that was cut by a restart it caused itself, for example a raw
+`systemctl restart somora` or `launchctl kickstart` among its tool
+calls, is woken after start too and told not to run the command again.
+Other agents whose question or helper was cut are told as well.
 
-Body: `{principal?: string}`. Writes a first document with every agent
-on disk reporting to the principal (titles from the frontmatter, the
-default rules spelled out). `409` when a file already exists — this
-never overwrites. Returns the same shape as `GET /team`.
+A session is woken at most twice in ten minutes, so an agent that
+answers the wake with another restart cannot loop. The setting
+`server.resumeAfterRestart` (`requested`, `all` or `off`) widens this or
+switches it off.
 
-### `POST /team/preview`
+## Chat
 
-Body: `{file, agent}` — a draft document and the agent to render for.
-Returns `{agent, valid, issues, warnings, block, chars, softMaxChars}`;
-an invalid draft comes back with `valid: false` and its `issues`, and
-nothing is written. This is what the web Team window's live preview
-uses.
+A turn is one message into a session and everything the agent does to
+answer it. Each session runs one turn at a time. Whatever arrives while
+a turn runs waits in that session's queue.
+
+### `POST /chat/send`
+
+Sends a message and returns at once. The turn runs in the background
+and its events arrive on `GET /chat/stream`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `agent` | string | yes | Agent name. When left out, the alphabetically first agent is used, so pass it. |
+| `text` | string | yes | The message. |
+| `session` | string | no | Session reference. Default `main`. |
+| `attachments` | array | no | `{hash, name, mime, size}` objects from `POST /attachments`. |
+| `steer` | boolean | no | Hand the text to the turn that is running now. See "Steering". Ignored together with `agent_ask_call_id`. |
+| `input_modality` | `"text"` or `"voice"` | no | `voice` when the client filled the text from its microphone. Stored as `user_message.input.modality`. A condition for a spoken reply. |
+| `stt_provider` | string | no | Free tag naming the speech-to-text path used. |
+| `auto_play_requested` | boolean | no | The client wants a spoken reply (`assistant_audio`). Only honoured together with `input_modality: "voice"`. |
+| `from_agent` | string | no | The turn is written by another agent. Used by the `agent_ask` tool. |
+| `from_session` | string | no | The session the asking agent wrote from. Ignored without `from_agent`. |
+| `agent_ask_call_id` | string | no | Correlation id of an agent's question. With `from_agent` the call is registered, so `GET /a2a/ask-result` finds it while the turn waits or runs. |
+| `subagent_depth` | number | no | Nesting depth when the turn is a sub-agent brief. The turn's `origin` becomes `{kind: "subagent"}`. |
+
+| Status | Body |
+|---|---|
+| `202` | `{ok: true, turnId}`. Keep `turnId` to match the later `turn_queued` and `user_message` events to the bubble you drew. |
+| `202` | `{ok: true, steered: true, steerId, turnId}` when `steer` went into the running turn. `turnId` is that turn's. |
+| `202` | `{ok: true, turnId, steered: false}` when `steer` was set but nothing could take it. The message was queued. |
+| `400` | No agent is configured. |
+| `404` | Unknown agent or session. |
+
+#### Steering
+
+With `steer: true` a message goes into the running turn instead of
+waiting behind it. The server keeps it until the agent's next step: after
+the tools of the current round have returned and before the next model
+call. The model reads it as a message that was sent while it was
+working. A running tool call is never interrupted.
+
+What a client sees, in order:
+
+1. The `202` response with `steerId`.
+2. A `steer_queued` event on the stream, so other windows can show the
+   pending message.
+3. A `user_message` event with `steer: true` and the same `steer_id`,
+   once the model has been given the text. The message is now in the
+   session history, at the place where the model read it.
+
+| Case | Result |
+|---|---|
+| Engine `openai-compatible`, `claude-cli` or `codex-cli` | The message is steered. |
+| Any other engine, or no turn running | It is queued as a turn of its own (`steered: false`). |
+| The turn is already finishing | It becomes an ordinary queued turn. Nothing is lost. |
+| The message carries `agent_ask_call_id` | Never steered: such a question needs a turn of its own. |
+
+Sub-agent and voice turns can be steered like any other. The web
+client offers a steer or queue switch next to Send. Its starting
+position is the agent's `steering:` setting in `agent.yaml`, reported
+by `GET /agents`.
+
+#### Queuing
+
+A message for a session that is busy is queued, not refused. Each
+session has one queue, first in, first out. Every kind of turn goes
+through it: typed and dictated messages, questions from other agents,
+sub-agent briefs, sentinel fires, tmux and browser wakes, voice
+consults and wake-ups. None jumps ahead. A running turn always
+finishes before the next one starts.
+
+| You want to | Use |
+|---|---|
+| Show "queued" on a message | The `turn_queued` event |
+| See what runs and what waits | `GET /agents/:agent/sessions/:session/work` |
+| Take a waiting turn back | `DELETE /chat/queue/:id` |
+| Stop the running turn | `POST /chat/abort` |
+
+### `POST /chat/send-sync`
+
+Sends a message, waits for the turn to finish and returns the result.
+This is also the route the agent-to-agent tools use.
+
+It takes `agent`, `session`, `text`, `attachments`, `from_agent`,
+`from_session`, `agent_ask_call_id` and `subagent_depth` as on
+`POST /chat/send`, plus:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `model` | string | An alias or `provider/id` that answers this one turn instead of the session's model. |
+| `max_rounds` | number | Overrides `agentLoop.maxRounds` for this turn. |
+| `create_session` | boolean | When `session` is a slug that does not exist on the target, create it and deliver the message there. Only slugs: an exact id or a `sub-*` name answers `400`. |
+| `create_model` | string | With `create_session`: the model pinned on the session if this call creates it. Ignored when the session exists; the response then carries `session_note`. |
+| `waiter_agent`, `waiter_session` | string | The turn that blocks on this request. Registers the wait in the deadlock guard. Set both or neither. |
+| `detach` | boolean | With `from_agent` and `agent_ask_call_id`: hand the message over and return at once. The asker is woken when the reply lands. This is `agent_ask` with `wait: false`. |
+
+Response `200`, the turn result:
+
+```json
+{ "finalText": "…", "outcome": "completed", "tool_calls": 3, "rounds": 2,
+  "usage": { "tokens_in": 18200, "tokens_out": 640 },
+  "contextWindow": 200000, "provider": "anthropic", "model": "claude-opus-4-7",
+  "thinkingActive": false, "ms": 8421,
+  "session_id": "20260511-093251_research-notes" }
+```
+
+| Field | Meaning |
+|---|---|
+| `finalText` | The reply. |
+| `outcome` | `completed`, `partial`, `degraded` or `failed`. `outcome_reason` and `error` explain the last three. |
+| `tool_calls`, `rounds`, `ms` | How much work the turn was. |
+| `files_written`, `media` | Files and generated media of the turn, when there are any. |
+| `follow_ups` | Texts that reached the caller after the report. See `GET /spawn-result`. |
+| `usage`, `contextWindow`, `provider`, `model` | Tokens and the model that answered. `fallback` is added when a backup model answered. |
+| `thinkingActive`, `thinkingLevel` | Whether a thinking level was applied. |
+| `session_id` | The resolved session id. |
+| `session_created`, `session_model` | Present when this call created the session. |
+| `session_note` | Present when `create_model` was ignored. |
+
+Other answers:
+
+| Status | Body | When |
+|---|---|---|
+| `202` | `{call_id, state: "pending", session_id, session_created?, session_model?, session_note?}` | `detach` was set. |
+| `200` | `{finalText: "", outcome: "failed", dequeued: true, error: "removed from the queue by the user before it started", session_id}` | A person removed the waiting call from the queue. |
+| `400` | `{error, known_models}` | `create_model` names an unknown model. Nothing was created. |
+| `404` | `{error, known_sessions: [...]}` | Unknown session. The list holds the target's live session slugs, so a caller can correct itself. |
+| `409` | `{error, circular_wait: true, chain: [...]}` | With `waiter_*`: the target already waits on the caller, directly or through others. |
+| `500` | `{error}` | The turn could not run. |
+
+A session created through `create_session` is told so beside its first
+message: who created it and on which model it runs. A message with
+`from_agent` is shown to the target with a header naming the agent and
+its session. Neither is part of the stored `text`.
+
+### `POST /chat/abort`
+
+Stops the turn that is running on a session, whatever started it.
+Agent and session go in the query string.
+
+```bash
+curl -X POST "$BASE/chat/abort?agent=<your-agent>&session=main"
+```
+
+| Query | Default | Meaning |
+|---|---|---|
+| `agent` | first agent | Agent name. |
+| `session` | `main` | Session reference. |
+
+Returns `{agent, session, aborted: true, ms_running}`, or
+`{agent, session, aborted: false}` when nothing was running. Safe to
+call twice.
+
+- Only the running turn is stopped. Queued turns keep their place.
+- A command the turn runs through `exec` is killed with it. Its result
+  says `killed: the turn was stopped`.
+- Whoever asked for the turn learns why it ended: another agent's
+  question and a sub-agent task report `state: "failed"` with
+  `error: "stopped by the user"`. A sentinel fire is recorded as
+  `error` with the same text.
+
+### `DELETE /chat/queue/:id`
+
+Takes a waiting turn out of the queue before it starts. Nothing is
+written to the session.
+
+`:id` is the id the queue views show:
+
+| Waiting entry | Its id |
+|---|---|
+| A typed message | The `turnId` from `POST /chat/send` |
+| Another agent's question | The `call_id` |
+| A sub-agent brief or a sentinel fire | The `task_id` |
+
+| Body field | Meaning |
+|---|---|
+| none | The request acts as the person and may remove anything. |
+| `requesting_agent` | Acts as that agent, which may remove only what it asked for itself. This is what `agent_ask_cancel` sends. |
+| `withdraw_running` | With `requesting_agent`: if the call already runs, withdraw it instead of answering `409`. |
+
+| Status | Body | Meaning |
+|---|---|---|
+| `200` | `{ok: true, id, turnId, kind, agent, session, text?, attachments?}` | Removed. For a typed message (`kind: "human"`), `text` and `attachments` come back so the client can put them into its input field. The attachment refs stay valid. |
+| `200` | `{ok: true, state: "withdrawn", id, turnId, agent, session, steered, steerId?, ranMs}` | A running call was withdrawn. Its result no longer wakes the asker. With `steered: true` the target was told to stop through a steered message. The turn is not aborted. |
+| `403` | `{ok: false, reason: "forbidden", id, error}` | The entry does not belong to `requesting_agent`. |
+| `404` | `{ok: false, reason: "unknown", error}` | Nothing waits under that id. |
+| `409` | `{ok: false, reason: "already_started", id, turnId}` | The turn is running. Use `POST /chat/abort`. |
+
+Who is told about a removed entry:
+
+| Removed | What its requester sees |
+|---|---|
+| Another agent's question | `state: "failed"` with `error: "removed from the queue by the user before it started"`, as the tool result, in `agent_ask_result` and in `GET /a2a/ask-result`. An asker that had stopped waiting is woken with an `[agent answer]` turn. |
+| A sub-agent brief | `cancelled` with the same error in `subagent_status`, `subagent_result` and `GET /spawn-status`. The parent is woken with a `[subagent attention]` turn. |
+| A sentinel fire | The trigger's history records it as `skipped` with `skipReason: "removed from the queue by the user"`. |
+| A wake-up turn | Dropped quietly. The result it was bringing stays readable. |
+
+On success every client on the session gets a `turn_dequeued` event,
+followed by fresh `turn_queued` events for the typed messages that
+moved up.
+
+### `GET /chat/history`
+
+The stored events of a session, oldest first. Clients load this when a
+chat window opens.
+
+| Query | Required | Meaning |
+|---|---|---|
+| `agent` | yes | Agent name. |
+| `session` | yes | Session reference. |
+| `limit` | no | Return only the last N events (1 to 2000, default 200 once paging is used). |
+| `before` | no | Epoch ms. Return events older than this. Pass the `oldestTs` of the previous page. |
+
+Without `limit` and `before` the whole session is returned.
+
+```json
+{ "agent": "<your-agent>",
+  "session": "20260511-093251_research-notes",
+  "events": [ { "kind": "user_message", "ts": 1715512000000, "text": "…" } ],
+  "hasMore": true,
+  "oldestTs": 1715512000000 }
+```
+
+Every event has `kind` and `ts`. The kinds:
+
+| `kind` | What it is |
+|---|---|
+| `user_message` | The message that started a turn, with `text`, `origin` and the fields described under "The user_message event". The stored row also has `ephemeral`. |
+| `assistant_message` | The reply text. |
+| `thinking_message` | The model's reasoning: `{text, truncated?}`. Stands directly before its `assistant_message`. |
+| `tool_call`, `tool_result` | A tool call and its result. Tool names are in short form (`memory_search`). |
+| `engine_meta` | A side note of the engine or of somora: raw `itemType` and `payload`. See "Engine notes". |
+| `model_fallback` | A backup model answered. Stands before the assistant message it produced. |
+| `assistant_audio`, `assistant_media` | Spoken audio and generated media of a turn, paired by `turnId`. |
+| `project_switched` | The session's project changed. |
+| `error` | An error text. |
+| `turn_start`, `turn_end` | Bookkeeping around a turn. |
+
+`400` when `agent` or `session` is missing or `before` is not a number.
+
+### `GET /agents/:agent/sessions/:session/work`
+
+What the session is doing right now, what waits behind it, which
+answers are about to arrive and what it started elsewhere. Only the
+first 160 characters of each text are exposed.
+
+```json
+{
+  "asOf": 1789300000000,
+  "agent": "<your-agent>",
+  "session": "20260913-101500_main",
+  "busy": true,
+  "active": {
+    "id": "1f3a…", "kind": "agent", "state": "running",
+    "preview": "Can you check whether the release notes mention …",
+    "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+    "requester": { "agent": "<other-agent>", "session": "20260910-083000_main" },
+    "enqueuedAt": 1789299990000, "startedAt": 1789299991000, "turnId": "1f3a…"
+  },
+  "queued": [
+    { "id": "b5b7…", "kind": "human", "state": "queued",
+      "preview": "and the changelog too",
+      "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+      "requester": { "human": true },
+      "enqueuedAt": 1789299995000, "position": 1 }
+  ],
+  "pendingWakes": [
+    { "id": "9d2c…", "kind": "agent", "about": "a2a", "state": "done",
+      "preview": "Which of the three drafts …",
+      "target": { "agent": "<other-agent>", "session": "20260910-083000_main" },
+      "requester": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+      "enqueuedAt": 1789299900000, "startedAt": 1789299901000,
+      "finishedAt": 1789299999500 }
+  ],
+  "children": [
+    { "id": "task-…", "kind": "subagent", "state": "running",
+      "preview": "Summarise the three …",
+      "target": { "agent": "<your-agent>", "session": "sub-<your-agent>-20260913-101700" },
+      "requester": { "agent": "<your-agent>", "session": "20260913-101500_main" },
+      "enqueuedAt": 1789299970000, "startedAt": 1789299971000 }
+  ]
+}
+```
+
+The four lists:
+
+| List | Holds |
+|---|---|
+| `active` | The running turn, or `null`. When a turn runs without an entry, the response carries `activeTurnId` instead. |
+| `queued` | The waiters in order, each with `position` (1 is next). Remove one with `DELETE /chat/queue/:id`. |
+| `pendingWakes` | Work this session asked for that has finished and whose wake-up turn is scheduled. `about` is `a2a`, `subagent` or `job`. The delay is `agentLoop.wakeGraceMs`. |
+| `children` | Sub-agents and questions to other agents that this session started and that still wait or run. |
+
+Every entry has the same fields:
+
+| Field | Meaning |
+|---|---|
+| `id` | The work id: a `turnId`, a `call_id`, a `task_id`, the consult id of a question from a call, or a video job id. |
+| `kind` | Where it came from: `human`, `agent`, `subagent`, `sentinel`, `tmux`, `browser`, `voice` or `wake`. A `wake` also has `about` (`a2a`, `subagent`, `job` or `system`). |
+| `state` | `queued`, `running`, `done`, `failed`, `cancelled` or `dequeued`. |
+| `preview` | The first 160 characters of the text, line breaks folded to spaces. |
+| `target` | The `{agent, session}` the turn runs on. |
+| `requester` | Who asked: `{agent, session}`, `{human: true}` or `{voiceCall}`. Absent for sentinel, tmux and browser turns. |
+| `enqueuedAt`, `startedAt?`, `finishedAt?` | Epoch ms. |
+| `turnId?`, `error?` | The turn id once it runs. The error for `failed`, `cancelled` and `dequeued`. |
+
+This view lives in memory and is empty after a restart.
+
+## Streams
+
+### `GET /chat/stream`
+
+The live events of one session, as Server-Sent Events. Open one per
+chat window.
+
+```bash
+curl -N "$BASE/chat/stream?agent=<your-agent>&session=main"
+```
+
+| Query | Default | Meaning |
+|---|---|---|
+| `agent` | first agent | Agent name. |
+| `session` | `main` | Session reference. |
+
+`400` when no agent is configured, `404` for an unknown agent or
+session. The first event is `status` with
+`{msg: "connected", session}`, where `session` is the resolved id.
+
+All events:
+
+| Event | When | Data |
+|---|---|---|
+| `status` | On connect, and for error notices (`error: …`, `turn failed: …`) | `{msg}` |
+| `heartbeat` | Every `sse.heartbeatMs` (20 s) | The current time in ms |
+| `user_message` | A turn's message was stored: the turn has started. Also for a steered message. | See "The user_message event" |
+| `turn_queued` | A message has to wait behind another turn | `{turnId, ahead, workId?, kind?}` |
+| `turn_dequeued` | A waiting entry was removed with `DELETE /chat/queue/:id` | `{turnId, workId}` |
+| `steer_queued` | A steered message was accepted for the running turn | `{steerId, text, ts, turnId, origin}` |
+| `turn_started` | The engine opened the turn | `{turnId}` |
+| `agent` | The model call starts and ends | `{phase: "start"\|"end", usage?, contextWindow?, provider?, model?, thinking?, fallback?}` |
+| `memory` | After `agent` start: what recall put into the turn | `{count, topScore?, refs, fullText}` |
+| `thinking` | The model's reasoning text | `{state: "delta"\|"final", text, truncated?}` |
+| `chat` | The reply text | `{state: "delta"\|"final", text}` |
+| `tool` | A tool is called, returns or fails | `{phase: "call"\|"result"\|"error", tool, summary?, details?, error?}` |
+| `engine_meta` | A side note of the engine or of somora | `{engine, itemType, label, summary?, payload}` |
+| `model_fallback` | A backup model takes over the turn | `{requested, actual, reason, hops?}` |
+| `turn_error` | The turn ended with an error | `{turnId?, message, engine}` |
+| `assistant_audio` | Spoken audio for the reply is ready | `{turnId, url, mime, durationMs?, cacheKey}` |
+| `assistant_media` | Images or videos made during the turn | `{turnId, media: [{type, id, prompt, mime, filename, url, thumbUrl?, durationSec?}]}` |
+| `session_model` | The session's model was set or cleared | `{model, resolved?, source}` |
+| `project` | The session's project changed | `{from, to, via}` |
+| `builder_state` | A builder session's mode, phase or plan file changed | `{mode, phase, planPath}` |
+| `todo_updated` | A builder replaced its task list | `{todos: [{content, status, priority?}], by?}` |
+| `question_asked` | A builder waits for the person | `{questionId, question, header?, options, multiple, expiresAt}` |
+| `question_answered` | The open question was answered | `{questionId, answered}` |
+
+Details where the table is not enough:
+
+**`chat` and `thinking`.** Deltas are cumulative: each `delta` carries
+the whole text so far, so replace what you show instead of appending.
+The `final` event carries the complete text. The `thinking`
+final comes before the `chat` final of the same turn. Thinking is only
+sent by engines that expose it, and not at all with
+`thinkingContent.capture: false`.
+
+**`agent`.** The start event carries `provider`, `model` and
+`thinking` (`{level, active}`). The end event adds `usage`,
+`contextWindow` and, when a backup model answered, `fallback` and the
+model that really answered.
+
+| `usage` field | Meaning |
+|---|---|
+| `tokens_in`, `tokens_out` | What the turn spent, summed over every request it made. A turn with tools can exceed the context window several times over. |
+| `tokens_in_cached` | The part of `tokens_in` read from the provider's cache. |
+| `tokens_out_reasoning`, `tokens_out_reasoning_estimated` | Reasoning tokens, and whether the number is an estimate. |
+| `context_tokens` | The prompt size of the turn's last request. This is the only value to compare with `contextWindow`. Optional. |
+
+**`tool`.** Tool names are in short form: `memory_search`, not
+`mcp__somora__memory_search`. `summary` is one line made for display.
+`details` is the input or the output as pretty-printed JSON. A result
+with nothing worth showing sends no `result` event.
+
+**`turn_queued`.** `ahead` counts the turns before this one, including
+the running one, at the moment it was queued. It is not updated as the
+queue drains, except after a `DELETE /chat/queue/:id`. Show "queued"
+until the `user_message` with the same `turnId` arrives.
+
+**`turn_started`.** This `turnId` is the engine's own id (`t-…`). It is
+the one that `assistant_media`, `assistant_audio`, `turn_error` and the
+stored `turn_end` carry. Mark the reply you are about to draw with it,
+so that late audio, media and errors land on the right turn.
+
+**`model_fallback`.** Model names are `provider/modelId`. `requested`
+is the agent's first model, `actual` the one answering now, `reason`
+the failure. With a chain of backups one event is sent per hop. `hops`
+lists every model that failed so far as `[{model, reason}]`. The event
+is stored in the history too.
+
+**`memory`.** `refs` are `source/slug` in score order. `fullText` is
+the block the model was given. `count` is `0` when recall found
+nothing.
+
+**`session_model`.** Sent to every client on the session, because a
+switch is often made from elsewhere. `source` is `session-override`, or
+`persona-default` with `model: null` after a clear.
+
+**`project`.** `from` and `to` are project slugs or `null`. `via` is
+`slash_command` for a change through the API and `tool` when the agent
+changed it during a turn.
+
+**`heartbeat`.** The server watches these writes. One that fails, or
+stays unfinished for `sse.deadAfterMs` (60 s), ends the stream. Over
+HTTPS the connection is also pinged (`sse.h2PingIntervalMs`,
+`sse.h2PingTimeoutMs`). A client should reconnect when heartbeats stop.
+
+#### The user_message event
+
+```json
+{ "text": "and the changelog too", "ts": 1789299995000, "turnId": "b5b7…",
+  "origin": { "kind": "human", "via": "chat" } }
+```
+
+| Field | Meaning |
+|---|---|
+| `text` | The message as it is kept: what a person typed, what an agent asked, what a trigger's prompt says, or the one-line statement of a wake-up. |
+| `ts` | Epoch ms. |
+| `turnId` | The id from `POST /chat/send`. Match it to the bubble you drew. |
+| `origin` | Where the turn came from. See below. |
+| `input` | `{modality?: "text"\|"voice", source?: "stt"\|"realtime"}` when the turn was not typed. `stt` is dictation, `realtime` a sentence from a call. |
+| `steer`, `steer_id` | `steer: true` marks a message that went into the running turn `turnId`. `steer_id` matches the `steer_queued` event. |
+| `from_agent`, `from_session`, `agent_ask_call_id` | Older fields, derived from an `agent` origin. |
+| `from_system` | Older field, derived from the origin: `sentinel`, `tmux`, `browser`, `voice`, or for a wake its `about` (`a2a`, `subagent`, `job`, `system`). The shipped clients draw these as a divider, not as a bubble. |
+
+`origin` is one of:
+
+```ts
+origin?:
+  | { kind: 'human';    via: 'chat' | 'voice-stt' }
+  | { kind: 'agent';    from: { agent: string; session?: string }; callId?: string }
+  | { kind: 'subagent'; parent?: { agent: string; session: string }; taskId?: string; depth: number }
+  | { kind: 'sentinel'; triggerId: string; taskId: string; triggerName?: string }
+  | { kind: 'tmux';     tmuxSession: string; tmuxKind?: string }
+  | { kind: 'browser';  viewId: string; cause: 'handoff' | 'activity'; handoffId?: string }
+  | { kind: 'voice';    callId?: string; consultId: string }
+  | { kind: 'wake';     about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string };
+```
+
+| `kind` | The turn was started by |
+|---|---|
+| `human` | A person typing (`chat`) or dictating (`voice-stt`). |
+| `agent` | Another agent's question, or its follow-up on one (`callId` is the original call). |
+| `subagent` | A brief running in its own `sub-…` session. |
+| `sentinel`, `tmux`, `browser`, `voice` | A trigger, a tmux session that became ready, a browser window handed back, a question from a voice call. |
+| `wake` | Something the agent started earlier has finished: a late answer (`about: "a2a"`, `ref` is the call id), a sub-agent (`subagent`, task id) or a video (`job`, job id). |
+| `wake` with `about: "system"` | somora itself speaks. `cause` names the occasion. Today that is `restart`, and the text begins `[system: restart]`. |
+
+Stored rows from old sessions may have no `origin`. Read the `from_*`
+fields then.
+
+What the model is told about a turn, such as who wrote it and what to
+do with it, is not part of `text`. It is kept in the stored row's
+`ephemeral` field together with the recalled memory, and is not on the
+stream event.
+
+#### Engine notes
+
+`engine_meta` carries notes that are not part of the reply. `label` is
+a display name chosen by the server, `payload` the original item, and
+most notes have a readable `payload.text`.
+
+| `itemType` | Meaning |
+|---|---|
+| `todo_list` | Codex's own plan or checklist (label `plan`). |
+| `error`, `reconnecting`, `transport_fallback` | Codex reported an error, reconnects a dropped stream by itself, or switched to HTTPS after retries. The last two are not failures. |
+| `model_switch` | The Codex thread continues under a new model. |
+| `thread_recreated` | The Codex thread was gone. A new one was started with the history replayed. |
+| `tools_changed` | The agent's tool set changed, so a new Codex thread was started with the history replayed. |
+| `mcp_server_renamed` | The engine session was rebuilt (label `session restarted`). |
+| `context_compacted` | The history was compacted after it outgrew the window. |
+| `context_trimmed` | The oldest tool results of the running turn were shortened to fit the window. The turn goes on. |
+| `attachments_unsupported` | The engine cannot pass attachments on. |
+| `session_model` | An agent switched this session's model (label `model switched`). |
+| `voice_handover`, `voice_spoken` | A call was handed to or from another agent. What a call said out loud, in older sessions. |
+| `reasoning_effort_adjusted`, `sampling_dropped` | The backend refused a parameter and the turn was retried without it. |
+
+An unknown `itemType` keeps its raw name as label.
+
+### `GET /activity/stream`
+
+One stream for the whole server: which sessions are working and which
+have something unread. It also reports sessions that no client has
+open. Open one per client.
+
+```bash
+curl -N $BASE/activity/stream
+```
+
+| Event | When | Data |
+|---|---|---|
+| `status` | On connect | `{msg: "connected"}` |
+| `heartbeat` | Every `sse.heartbeatMs` | The current time in ms |
+| `streaming` | A turn starts or ends on any session | `{agent, session, phase: "start"\|"end"}` |
+| `turn` | Something a person should read arrived in a session | `{agent, session, unreadAt}` |
+| `seen` | A client marked a session as seen | `{agent, session, seenAt}` |
+
+A `turn` event is sent for a finished reply (`chat` with
+`state: "final"`) and for a `user_message` that carries `from_agent` or
+`from_system`. Messages a person typed, tool events and the start and
+end of a model call do not count.
+
+A session is unread when `unreadAt` is later than `seenAt`, or `seenAt`
+is `null`. Both are ISO timestamps kept with the session, so the state
+survives a restart. The session lists return them.
+
+### `POST /sessions/:agent/:session/seen`
+
+Tells the server that the person is looking at this session now. Other
+clients get a `seen` event and clear their badge.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `ts` | no | ISO timestamp of when the session was looked at. Default: now. |
+
+The body may be empty. The server keeps the later of the stored value
+and `ts`, so the marker never moves backwards.
+
+```json
+{ "ok": true, "agent": "<your-agent>", "session": "main", "seenAt": "2026-05-27T14:00:00.000Z" }
+```
 
 ## Sessions
 
-A session is a single conversation thread inside an agent. Each
-agent has a magical `main` session plus any number of named sessions.
+A session is one conversation of an agent. Every agent has `main` and
+any number of named sessions.
 
 ### `GET /agents/:agent/sessions`
 
-List sessions for one agent. Archived sessions are filtered out by
-default — pass `?include_archived=true` to surface them.
+The sessions of one agent.
 
-```bash
-curl https://<host>:18737/agents/<your-agent>/sessions
-curl https://<host>:18737/agents/<your-agent>/sessions?include_archived=true
-```
-
-Returns an array of `SessionSummary`:
+| Query | Meaning |
+|---|---|
+| `include_archived=true` | Also return archived sessions. They are left out by default. |
 
 ```json
 [
@@ -839,1603 +942,1042 @@ Returns an array of `SessionSummary`:
 ]
 ```
 
-`unreadAt` and `seenAt` drive the unread badge UX: a session is unread
-when `unreadAt > seenAt` (or `seenAt` is null). See
-[`/activity/stream`](#get-activitystream) for the live feed that
-keeps these in sync across clients.
+| Field | Meaning |
+|---|---|
+| `dreamCoverageTs`, `dreamLagEvents` | How far REM has read this session, and how many events it has not read yet. `null` when it never ran. |
+| `unreadAt`, `seenAt` | Unread state, see `GET /activity/stream`. |
+| `archivedAt`, `archiveReason` | Present on archived sessions. |
+| `projectSlug` | Present when a project is pinned. |
 
 ### `GET /sessions`
 
-Cross-agent session list. Same data as the per-agent endpoint, but
-flattened across every agent and wrapped as `{sessions: [...]}`, with
-each row carrying its agent name. Used by the web Sessions tool and
-by the `session_list` agent tool. Each row also says whether a turn is
-running in that session right now: `busy`, `queueLength` (turns waiting
-behind it) and `activeSince` (ms timestamp, `null` when idle).
+The sessions of all agents in one list.
 
-```bash
-curl https://<host>:18737/sessions
-curl https://<host>:18737/sessions?include_archived=true
-```
+| Query | Meaning |
+|---|---|
+| `include_archived=true` | Also return archived sessions. |
+
+Returns `{sessions: [...]}`. The `session_list` tool reads this route.
+Each row has the fields above with the id as `sessionId`, plus:
+
+| Field | Meaning |
+|---|---|
+| `agent`, `agentColor`, `agentIcon` | The agent the session belongs to. |
+| `liveSubscribers` | Clients connected to its stream right now. |
+| `dream` | `{status, coverageTs, lagEvents}` with `status` `dreamed`, `partial` or `never`. Replaces the two `dream*` fields. |
+| `busy`, `queueLength`, `activeSince` | Whether a turn runs, how many wait, and since when (ms, `null` when idle). |
 
 ### `POST /agents/:agent/sessions`
 
-Create a new named session.
+Creates a named session.
 
-```bash
-curl -X POST https://<host>:18737/agents/<your-agent>/sessions \
-     -H 'Content-Type: application/json' \
-     -d '{"slug":"research-notes"}'
-```
+| Body field | Required | Meaning |
+|---|---|---|
+| `slug` | yes | The name. Must match `[A-Za-z0-9_-]+`. |
 
-Returns `201 { id, slug, agent }`. The slug must match `[A-Za-z0-9_-]+`.
-One live session per slug: when a non-archived session already carries
-the name, the answer is `409 { error, id, slug, agent, exists: true }`
-with that session's id — the web and TUI simply switch to it. Archiving
-or resetting the session frees the name.
-Cannot be the reserved string `main` (`400`).
+| Status | Body |
+|---|---|
+| `201` | `{id, slug, agent}` |
+| `400` | The slug is missing, invalid, or `main`. |
+| `409` | `{error, id, slug, agent, exists: true}`: a live session already has this name. `id` is that session, so a client can switch to it. |
+
+Archiving or resetting a session frees its name.
 
 ### `POST /agents/:agent/sessions/:session/archive`
 
-Hide a session from active views without deleting it. The `<id>.jsonl`
-and `<id>.meta.json` stay on disk; only the `archived: true` flag
-in meta is set. Reversible via unarchive.
+Hides a session from the default lists without deleting anything.
 
-```bash
-curl -X POST https://<host>:18737/agents/<your-agent>/sessions/<id>/archive \
-     -H 'Content-Type: application/json' \
-     -d '{"reason":"old smoke test"}'
-```
+| Body field | Required | Meaning |
+|---|---|---|
+| `reason` | no | Free text, kept with the session. |
 
-The `main` session cannot be archived directly — use `/reset` instead.
+Returns `{archived: true, agent, session}`. `400` when the session
+cannot be archived. `main` cannot: reset it instead.
 
 ### `POST /agents/:agent/sessions/:session/unarchive`
 
-Clears the `archived` flag.
-
-### `GET /agents/:agent/sessions/:session/export`
-
-Download the session as either raw JSONL (canonical, byte-identical to
-the source-of-truth file on disk) or a rendered Markdown transcript
-(human-readable, suitable for Obsidian / GitHub / blog posts).
-
-Query param `format`:
-- `json` — `Content-Type: application/x-ndjson`. The complete JSONL
-  with every event preserved (turn_start, tool_call, engine_meta, …).
-  Use this for backups and cross-host transfer.
-- `markdown` (default) — `Content-Type: text/markdown`. Renders
-  user/assistant turns as `##` sections, tool calls as collapsible
-  `<details>` blocks with their JSON args/results, and engine_meta
-  items (e.g. codex's plan/todo lists) as task-style bullet lists
-  with status glyphs. Skips bookkeeping events (turn_start, turn_end,
-  assistant_audio) — those don't add value in a transcript.
-
-Both responses set `Content-Disposition: attachment` so browsers
-trigger a file save.
-
-```bash
-# Markdown transcript
-curl https://<host>:18737/agents/<your-agent>/sessions/main/export?format=markdown \
-     -o <your-agent>-main.md
-
-# Raw JSONL (full fidelity)
-curl https://<host>:18737/agents/<your-agent>/sessions/main/export?format=json \
-     -o <your-agent>-main.jsonl
-```
-
-The web client surfaces this via per-row download icons in the
-Sessions tool (file-text icon = markdown, file-json icon = JSONL).
-The TUI has `/export [json|markdown] [path]` — see [display.md](display.md)
-for the slash-command reference.
+Brings an archived session back. Returns
+`{archived: false, agent, session}`.
 
 ### `POST /agents/:agent/sessions/:session/reset`
 
-Archive the current session content and start fresh. Triggers an
-asynchronous REM extraction over the archived content if REM is
-enabled for the agent.
-
-```bash
-curl -X POST https://<host>:18737/agents/<your-agent>/sessions/main/reset
-# { "agent": "<your-agent>", "session": "main",
-#   "archivedId": "20260512-140822_main-archive",
-#   "dreamSpawned": true }
-```
-
-The reset returns immediately. The REM run continues in the
-background; check its progress via `GET /dream-states` or via
-the per-agent REM badge in the web AgentDock.
-
-### Builder sessions
-
-Agents of kind `builder` (see [builder.md](builder.md)) carry mode,
-phase, plan file and task list per session, plus at most one open
-question. The web task panel reads and writes these; the builder's own
-tools (`todo_write`, `ask_user`, `plan_write`) call the same routes.
-
-- `GET /agents/:agent/sessions/:session/builder` → `{agent, session,
-  kind, state, question, turn}` — `question` also carries the write-scope
-  question a builder's `file_write`/`file_patch` raises for a path outside
-  the project folder (attended mode; see builder.md) — `turn` is `{turnId, startedAt,
-  toolCalls, lastTool?, lastToolAt?}` while a turn runs on the session,
-  else `null`; `state` is `{mode: "attended"|"unattended",
-  phase: "plan"|"build", planPath, todos: [{content, status,
-  priority?}]}` or `null` before the session's first turn; `question`
-  is `{questionId, question, header?, options: [{label,
-  description?}], multiple, askedAt, expiresAt}` or `null`.
-- `PATCH /agents/:agent/sessions/:session/builder` `{mode?, phase?,
-  planPath?, orderer?}` → `{agent, session, state}`. Publishes
-  `builder_state`. `orderer` `{agent, session?}` names the agent that
-  handed the order over (`builder_dispatch` sets it).
-- `POST /lsp/diagnostics` `{agent, session, path, touch?}` →
-  `{diagnostics: {server, errors, errors_in_other_files} | null}` — the
-  language server's verdict on a file a builder just wrote (what
-  `file_write`/`file_patch` call; see [lsp.md](lsp.md)); `touch: true`
-  only starts the server. `GET /lsp/status` → the servers found, the
-  config and the running instances.
-- `GET /builders` → `{builders: [{name, role, description, busy: [{session,
-  workdir, since}]}]}` — the agents of kind builder and the folders each
-  is working in right now.
-- `GET /builders/busy?workdir=<path>` → `{workdir, busy: {agent, session,
-  turnId, workdir, since, reason} | null}` — whether a builder's running
-  turn claims that folder (or a parent/child of it). Without `workdir`:
-  `{claims: [...]}`.
-- `POST /agents/:agent/sessions/:session/builder/go` `{note?}` →
-  `202 {agent, session, state, turnId, callId?, wakes?}` — sets the phase
-  to build and starts a turn telling the builder the plan is approved
-  (`note` is appended to that message). With an `orderer` in the state
-  the turn runs as that agent's detached ask (`callId` = `turnId`,
-  `wakes` = the orderer): it is woken with the report like after
-  `agent_ask` with `wait:false`. `409 {error, busy}` when another
-  builder's turn is working in the session's folder right now.
-- `PUT /agents/:agent/sessions/:session/todos` `{todos: [{content,
-  status, priority?}], by_agent?}` → `{agent, session, todos}` — replaces
-  the whole list (max 100 items). Publishes `todo_updated`.
-- `PUT /agents/:agent/sessions/:session/plan` `{content}` → `{path, bytes,
-  archived?, note?}` (what `plan_write` calls); `archived` names where a
-  plan file that was already there and not written by this session was
-  moved: `PLAN-<date>-<session>.md` beside it. The path is the session's
-  plan path (the pinned project's `PLAN.md`, else `<workspace>/PLAN.md`),
-  written atomically under the file write policy.
-- `POST /agents/:agent/sessions/:session/ask` `{question, header?,
-  options: [{label, description?}] (2-6), multiple?, timeout_ms?}` —
-  **blocks** until the person answers or the wait runs out (default 30
-  min, max 4 h) and returns `{answered, answers: string[], text?}`.
-  Publishes `question_asked` when the question opens. A second question
-  on the same session supersedes the first (which returns unanswered).
-- `POST /agents/:agent/sessions/:session/answer` `{questionId,
-  answers?: string[], text?}` → `{ok: true}`, or `404` when no such
-  question is open. Publishes `question_answered`.
-
-### `GET /agents/:agent/sessions/:session/work`
-
-What this session is doing right now, what waits behind it, which
-answers are about to arrive, and what it started elsewhere. This is
-the data behind the queue badge in the web client, the sheet on mobile
-and `/queue` in the TUI. Previews only: the first 160 characters of
-each message, never a prompt, a tool body or a secret.
-
-```bash
-curl https://<host>:18737/agents/<your-agent>/sessions/main/work
-```
+Archives the session's content and starts the session empty. If REM is
+enabled for the agent, it reads the archived content in the background.
 
 ```json
-{
-  "asOf": 1789300000000,
-  "agent": "<your-agent>",
-  "session": "20260913-101500_main",
-  "busy": true,
-  "active": {
-    "id": "1f3a…", "kind": "agent", "state": "running",
-    "preview": "Can you check whether the release notes mention …",
-    "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
-    "requester": { "agent": "<other-agent>", "session": "20260910-083000_main" },
-    "enqueuedAt": 1789299990000, "startedAt": 1789299991000, "turnId": "1f3a…"
-  },
-  "queued": [
-    { "id": "b5b7…", "kind": "human", "state": "queued",
-      "preview": "and the changelog too",
-      "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
-      "requester": { "human": true },
-      "enqueuedAt": 1789299995000, "position": 1 },
-    { "id": "task-…", "kind": "sentinel", "state": "queued",
-      "preview": "[sentinel] inbox digest …",
-      "target": { "agent": "<your-agent>", "session": "20260913-101500_main" },
-      "enqueuedAt": 1789299998000, "position": 2 }
-  ],
-  "pendingWakes": [
-    { "id": "9d2c…", "kind": "agent", "about": "a2a", "state": "done",
-      "preview": "Which of the three drafts …",
-      "target": { "agent": "<other-agent>", "session": "20260910-083000_main" },
-      "requester": { "agent": "<your-agent>", "session": "20260913-101500_main" },
-      "enqueuedAt": 1789299900000, "startedAt": 1789299901000, "finishedAt": 1789299999500 }
-  ],
-  "children": [
-    { "id": "task-…", "kind": "subagent", "state": "running",
-      "preview": "Summarise the three …",
-      "target": { "agent": "<your-agent>", "session": "sub-<your-agent>-20260913-101700" },
-      "requester": { "agent": "<your-agent>", "session": "20260913-101500_main" },
-      "enqueuedAt": 1789299970000, "startedAt": 1789299971000 }
-  ]
-}
+{ "agent": "<your-agent>", "session": "main",
+  "archivedId": "20260512-140822_main-archive",
+  "dreamSpawned": true }
 ```
 
-Every entry has the same shape:
+The reset waits for a running turn to finish. An empty session answers
+`{agent, session, archivedId: null, reason}`. Follow the REM run with
+`GET /dream-states`.
 
-- `id` — the work id: the `turnId` of a typed message, the `call_id`
-  of an `agent_ask`, the `task_id` of a sub-agent brief or a sentinel
-  fire, the consult id of a question from a call, the job id of a
-  video render.
-- `kind` — where it came from: `human`, `agent`, `subagent`,
-  `sentinel`, `tmux`, `browser`, `voice` or `wake`; a `wake` also says
-  `about` (`a2a`, `subagent`, `job` or `system`).
-- `state` — `queued`, `running`, `done`, `failed`, `cancelled` or
-  `dequeued` (taken out of the queue before it started).
-- `preview` — the first 160 characters of the text, line breaks folded
-  to spaces. The only text exposed.
-- `target` — the `{agent, session}` the turn runs on.
-- `requester` — who asked for it: `{agent, session}` for an
-  `agent_ask`, a sub-agent brief or a wake; `{human: true}` for a typed
-  message; `{voiceCall}` for a question from a call. Absent for
-  sentinel, tmux and browser turns, which nobody waits on.
-- `enqueuedAt`, `startedAt?`, `finishedAt?` — epoch ms. `turnId?` once
-  the turn runs; `error?` for `failed`, `cancelled` and `dequeued`.
+### `GET /agents/:agent/sessions/:session/export`
 
-The four lists:
+Downloads the session as a file.
 
-- `active` — the turn holding the session lock, or `null`. `busy` is
-  the lock itself; when a turn holds it without a ledger entry the
-  response carries `activeTurnId` instead.
-- `queued` — the waiters in lock order, each with `position` (1 =
-  next). Any of them can be removed with `DELETE /chat/queue/:id`.
-- `pendingWakes` — work this session asked for that has finished and
-  whose wake-up turn is scheduled (the grace is `agentLoop.wakeGraceMs`,
-  see [setup.md](setup.md#settings)); `about` says what kind of answer
-  is on its way.
-- `children` — the sub-agents and `agent_ask` calls this session
-  started that are still queued or running, with their target so a
-  client can jump there.
+| `format` | Content type | Content |
+|---|---|---|
+| `markdown` (default) | `text/markdown` | A readable transcript: messages as sections, tool calls as collapsible blocks, plans as task lists. Bookkeeping events are left out. |
+| `json` | `application/x-ndjson` | The stored events, one JSON object per line, complete. Use this for backups. |
 
-Everything here lives in memory and is gone after a restart, like the
-sub-agent registry. `404` for an unknown agent or session.
-
----
-
-## Models & thinking
-
-Per-session overrides for the active model and the active thinking
-level. Both fall back to the persona default when unset.
-
-### Model
+Both set `Content-Disposition: attachment`. `400` for another format.
 
 ```bash
-# Read current
-curl https://<host>:18737/agents/<your-agent>/sessions/main/model
-
-# Set per-session override
-curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/model \
-     -H 'Content-Type: application/json' \
-     -d '{"model":"claude-opus-4-7"}'
-
-# Clear override (back to persona default)
-curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/model
+curl "$BASE/agents/<your-agent>/sessions/main/export?format=markdown" -o main.md
+curl "$BASE/agents/<your-agent>/sessions/main/export?format=json" -o main.jsonl
 ```
 
-The `model` field accepts an alias (`claude-opus-4-7`), a
-`<provider>/<id>` tuple (`anthropic/claude-opus-4-20250514`), or
-anything else resolvable by `GET /models`.
+## Models and thinking
 
-A switch takes effect at the next turn: a turn that is already running
-keeps the model it started with. Every open client is told through the
-`session_model` SSE event.
-
-Both routes take optional `by_agent` / `by_session` in the body — sent
-by the `session_model` agent tool. A switch made by an agent is written
-into the affected conversation as an `engine_meta` row (`engine:
-"somora"`, `itemType: "session_model"`, label `model switched`) naming
-who switched to what, so a person reading that session sees it. A
-switch without `by_agent` — a person using their own client — leaves no
-row.
-
-Switching models mid-session is safe on every engine. On codex-cli the
-thread simply continues under the new model (`thread/resume` takes the
-model; Codex may compact the thread context once) and somora drops a
-`model switch` marker into the conversation. The somora session (id, history, meta) is untouched;
-alias changes that resolve to the same underlying model don't trigger a
-re-thread.
-
-### Thinking
-
-```bash
-# Read
-curl https://<host>:18737/agents/<your-agent>/sessions/main/thinking
-
-# Set
-curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/thinking \
-     -H 'Content-Type: application/json' \
-     -d '{"level":"medium"}'
-
-# Clear override
-curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/thinking
-```
-
-Levels: `off`, `low`, `medium`, `high` — anything else is a `400`.
-Per-model `reasoning.levels` in config.yaml decides which wire word
-(`minimal`, `xhigh`, `max`, …) each level becomes; see
-[thinking.md](thinking.md).
-
-`GET` returns `{agent, session, effective, override, personaDefault,
-source, modelSupportsReasoning, wire}`: `effective` is the level in
-force (session override > persona default > `null` = engine default),
-`source` says which of those won (`session-override` /
-`persona-default` / `engine-default`), `modelSupportsReasoning` tells a
-client whether the setting is live or dormant on the current model,
-and `wire` is the value actually sent when it differs from the level
-(e.g. `high` → `xhigh`). `PUT` answers `{agent, session, level}`,
-`DELETE` answers `{agent, session, cleared: true}`.
-
-The `GET …/model` payload is `{agent, session, provider, modelId,
-alias, engine, contextWindow, source, override, personaDefault}` with
-`source` `session-override` or `persona-default`; `PUT` answers
-`{agent, session, model, resolved: "<provider>/<modelId>"}` and `400`
-names an unknown model; `DELETE` answers `{agent, session, cleared:
-true}`.
+Each session can override the agent's model, thinking level and
+sampling. Without an override the agent's own setting applies.
 
 ### `GET /models`
 
-List models the server knows about. Sources: config-level model
-definitions plus engine-discovered models.
+Every model in `config.yaml`.
 
-```bash
-curl https://<host>:18737/models
+```json
+[ { "provider": "anthropic", "id": "claude-opus-4-20250514",
+    "alias": "claude-opus-4-7", "engine": "claude-cli",
+    "contextWindow": 200000, "capabilities": ["vision", "reasoning"],
+    "ref": "claude-opus-4-7" } ]
 ```
 
-Each entry: `{ provider, id, alias, engine, contextWindow,
-capabilities, ref }`. `ref` is the canonical handle to pass to the
-model-set endpoints.
-
----
-
-
-## External MCP servers
-
-Status and control of the MCP hub (`mcp.servers` in config.yaml, see
-[mcp.md](mcp.md)). All three answer `503` when no external server is
-configured.
-
-
-Each entry carries `unavailable: {since, until, reason}` (epoch ms)
-while the model is marked unreachable — a cascade (chat fallback, REM
-worker chain, compaction) hit a host error on it within the last
-`fallback.retryUnavailableMinutes`; cascades start past such models.
+| Field | Meaning |
+|---|---|
+| `ref` | The handle to pass to the model routes: the alias, else `<provider>/<id>`. |
+| `unavailable` | `{since, until, reason}` in epoch ms. Present while the model is marked unreachable after a host error. Fallback chains skip such models for `fallback.retryUnavailableMinutes`. |
 
 ### `POST /models/availability/reset`
 
-Forget every "unavailable" mark, so the next cascade tries the primaries
-again. `200 {ok: true, cleared, retryUnavailableMinutes}`. A config
-reload does the same as a side effect.
+Forgets every "unavailable" mark, so the first-choice models are tried
+again. Returns `{ok: true, cleared, retryUnavailableMinutes}`.
 
-### `GET /mcp/status`
+### `GET /agents/:agent/sessions/:session/model`
 
-`{enabled: true, servers: {<name>: {state, toolCount, transport?,
-lastError?, lastConnectedAt?, consecutiveFailures}}}` — `state` is
-`pending`, `connected`, `failed`, `needs-auth` or `disabled`.
+The model the session's next turn will use.
 
-### `POST /mcp/servers/:name/reconnect`
-
-Tears the connection down and reconnects immediately, resetting the
-backoff. `{ok: true, status}` with the server's new status entry;
-`400` when the name is unknown or the server is disabled in config.
-
-### `POST /mcp/call`
-
-Body: `server`, `tool` (the upstream tool name), `args` (object),
-optional `timeoutMs`. Calls the tool through the hub and returns
-`{isError, text, images: [{data, mimeType}]}`. `502` when the upstream
-call failed. This is the loopback path somora's own MCP children use;
-it bypasses per-agent tool gating, so treat it as an operator surface.
-
-## Config reload + restart
-
-```bash
-curl -sk https://<host>:18737/config/status          # loadedAt, changedOnDisk, restartRequiredSections, restartAvailable
-curl -sk -X POST https://<host>:18737/config/reload  # → { ok, changed: [...], restartRequired: [...] } or 400 with the schema issues
-curl -sk -X POST https://<host>:18737/server/restart # → { ok, via: "systemd" | "launchd", expectedDowntimeSeconds } or 409 when not run as a service
+```json
+{ "agent": "<your-agent>", "session": "main",
+  "provider": "anthropic", "modelId": "claude-opus-4-20250514",
+  "alias": "claude-opus-4-7", "engine": "claude-cli", "contextWindow": 200000,
+  "source": "session-override", "override": "claude-opus-4-7",
+  "personaDefault": "claude-sonnet-4-5" }
 ```
 
-Reload validates the file first and keeps the running config on any
-error. Sections listed in `restartRequiredSections` (server, memory,
-obsidian, wiki, mcp, claudeCli, codexCli, stt, tts, sentinel, tmux,
-web, mobile) are consumed at boot and only change after a restart; the
-rest applies to the next request. See [web.md](web.md) for the taskbar
-surface and the TUI's `/reload` / `/restart`.
+`source` is `session-override` or `persona-default`. `500` when the
+agent's model cannot be resolved.
 
-### A restart requested from inside a turn
+### `PUT /agents/:agent/sessions/:session/model`
 
-An agent that restarts somora from its own turn would kill that turn.
-`POST /server/restart` therefore takes the requester:
+Sets the session's model. It applies from the next turn: a running turn
+keeps the model it started with. This is safe on every engine.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `model` | yes | An alias or `<provider>/<id>`, as `ref` in `GET /models`. |
+| `by_agent`, `by_session` | no | Who switched, when an agent did it. Sent by the `session_model` tool. |
+
+Returns `{agent, session, model, resolved: "<provider>/<modelId>"}`.
+`400` for a missing or unknown model; the error lists the known ones.
+
+Every client on the session gets a `session_model` event. A switch
+with `by_agent` is also written into the conversation as an
+`engine_meta` note naming who switched to what. A switch by a person
+leaves no note.
+
+### `DELETE /agents/:agent/sessions/:session/model`
+
+Clears the override. Takes the same optional `by_agent` and
+`by_session`. Returns `{agent, session, cleared: true}` and sends
+`session_model` with `model: null`.
+
+### `GET /agents/:agent/sessions/:session/thinking`
+
+The thinking level in force.
+
+| Field | Meaning |
+|---|---|
+| `effective` | The level that applies: `off`, `low`, `medium`, `high`, or `null` for the engine's default. |
+| `override`, `personaDefault` | The session's and the agent's setting, or `null`. |
+| `source` | `session-override`, `persona-default` or `engine-default`. |
+| `modelSupportsReasoning` | Whether the current model uses the setting at all. |
+| `wire` | The value actually sent when it differs from the level, for example `xhigh` for `high`. Else `null`. |
+
+### `PUT /agents/:agent/sessions/:session/thinking`
+
+Sets the level. Body `{"level": "off" | "low" | "medium" | "high"}`.
+Returns `{agent, session, level}`. Anything else is a `400`. Which
+word is sent to the model for a level is set per model under
+`reasoning.levels` in the config.
+
+### `DELETE /agents/:agent/sessions/:session/thinking`
+
+Clears the override. Returns `{agent, session, cleared: true}`.
+
+### `GET /agents/:agent/sessions/:session/sampling`
+
+The sampling values in force. Only the `openai-compatible` engine
+applies them.
+
+| Field | Meaning |
+|---|---|
+| `effective` | Model defaults, agent defaults and session override merged, or `null`. |
+| `override`, `personaDefault`, `modelDefault` | The three layers, each an object or `null`. |
+| `source` | `session-override`, `persona-default`, `model-default` or `engine-default`. |
+| `engineSupportsSampling` | Whether the setting has any effect on the current model. |
+
+### `PUT /agents/:agent/sessions/:session/sampling`
+
+Merges keys into the session's override. A key set to `null` is
+dropped.
 
 ```bash
-curl -sk -X POST https://<host>:18737/server/restart \
-     -H 'Content-Type: application/json' \
-     -d '{"agent":"<your-agent>","session":"main","reason":"config change"}'
-# → { ok: true, deferred: true, via, message }
-```
-
-With `agent` + `session` the restart does not happen at once: the
-request is written to `~/.somora/restart-intent.json`, the server waits
-until that session's turn has ended (and up to 30 s for turns running
-in other sessions — what still runs then is cut and marked), restarts
-through the service manager, and after boot wakes the session with a
-`[system: restart] The server restart you requested is done: …` turn
-(origin `wake`, about `system`, cause `restart`). A second request while one is pending answers
-`{ deferred: true, already: true }`. `somora server restart` and
-`somora update` send exactly this when an agent runs them through
-`exec` (the tool sets `SOMORA_AGENT` / `SOMORA_SESSION` for the command),
-so that is all an agent has to do.
-
-A turn that was cut by a restart it visibly caused itself (a raw
-`systemctl restart somora` or `launchctl kickstart …` among its tool
-calls) is woken after boot too, with the instruction not to run the
-command again. A session is woken at most twice in ten minutes
-(`restart.resume_suppressed` in the log) so that an agent answering the
-wake with another restart cannot loop. `server.resumeAfterRestart`
-(`requested` | `all` | `off`, [setup.md](setup.md)) widens or switches
-this off.
-
-## Sampling
-
-Per-session sampling override (`temperature`, `top_p`, …), merged over
-the agent's and the model's defaults. Only the `openai-compatible`
-engine applies it — `engineSupportsSampling` tells clients whether the
-setting is live or dormant. Full description in [sampling.md](sampling.md).
-
-```bash
-curl https://<host>:18737/agents/<your-agent>/sessions/main/sampling
-
-curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/sampling \
-  -H 'Content-Type: application/json' -d '{"temperature":0.7}'      # merges; null drops a key
-
-curl -X DELETE https://<host>:18737/agents/<your-agent>/sessions/main/sampling
+curl -X PUT $BASE/agents/<your-agent>/sessions/main/sampling \
+     -H 'Content-Type: application/json' -d '{"temperature":0.7}'
 ```
 
 Keys: `temperature`, `top_p`, `top_k`, `min_p`, `frequency_penalty`,
-`presence_penalty`, `repetition_penalty`, `seed`, `stop`; an unknown key
-or an out-of-range value is a `400` naming the field. `GET` returns
-`{agent, session, effective, override, personaDefault, modelDefault,
-source, engineSupportsSampling}` (`source` is `session-override`,
-`persona-default`, `model-default` or `engine-default`). `PUT` merges
-the body into the override and returns `{agent, session, override}`
-(`null` once the last key is dropped); `DELETE` returns `{agent,
-session, cleared: true}`.
+`presence_penalty`, `repetition_penalty`, `seed`, `stop`. Returns
+`{agent, session, override}`; `override` is `null` once the last key is
+gone. `400` names an unknown key or a value out of range.
 
-## Chat
+### `DELETE /agents/:agent/sessions/:session/sampling`
 
-### `POST /chat/send`
+Clears the override. Returns `{agent, session, cleared: true}`.
 
-Fire-and-forget. The server returns 202 immediately; the actual
-turn runs in the background and emits SSE events to `/chat/stream`
-subscribers on the same `(agent, session)`.
+## Agents
 
-```bash
-curl -X POST https://<host>:18737/chat/send \
-     -H 'Content-Type: application/json' \
-     -d '{"agent":"<your-agent>","session":"main","text":"Was steht heute an?"}'
-```
+### `GET /agents`
 
-Body fields:
-- `agent` — agent name; when omitted the server falls back to the
-  alphabetically first configured agent, so pass it
-- `session` (optional) — defaults to `"main"`
-- `text` (required) — user message
-- `attachments` (optional) — array of `{hash, name, mime, size}` —
-  refs from prior `POST /attachments` calls
-- `input_modality` (optional) — `"voice"` when the client filled the
-  text through its microphone (STT); recorded as
-  `user_message.input.modality` and a precondition for a spoken reply
-- `stt_provider` (optional) — free-form tag of the STT path used
-- `auto_play_requested` (optional) — the client wants a spoken reply
-  for this turn (`assistant_audio`); honoured only together with
-  `input_modality: "voice"`, see [voice.md](voice.md)
-- `subagent_depth` (optional) — nesting depth when the turn is a
-  sub-agent brief; the turn's `origin` becomes `{kind: "subagent"}`
-- `from_agent` (optional, A2A) — when set, the turn is attributed to
-  another agent (used by `agent_ask` tool)
-- `from_session` (optional, A2A) — the session the asking agent wrote
-  from; ignored without `from_agent`. Same meaning as on
-  `/chat/send-sync`.
-- `agent_ask_call_id` (optional, A2A) — correlation UUID. A call id
-  posted here is registered like one from `/chat/send-sync`, so
-  `GET /a2a/ask-result` finds it while the turn is queued or running,
-  not only in the target's history afterwards.
-- `steer` (optional, default false) — hand the text to the turn that is
-  running on this session right now instead of queuing a turn of its
-  own; see *Steering* below. Ignored together with `agent_ask_call_id`.
-
-Response: `{ ok: true, turnId }`. The `turnId` is the server-issued
-identifier for the queued/running turn — clients echo it through to
-match later SSE events (`turn_queued`, `user_message`) back to the
-optimistic bubble they rendered locally. With `steer: true` the response
-is `{ ok: true, steered: true, steerId, turnId }` when the message went
-into the running turn (`turnId` is that turn's), or `{ ok: true, turnId,
-steered: false }` when nothing steerable was running and it queued as
-usual.
-
-Streaming responses arrive via `/chat/stream`; this endpoint just
-acknowledges receipt.
-
-#### Steering
-
-A message for a session whose turn is still running can be handed
-**into** that turn instead of waiting behind it: `steer: true`. The
-server keeps it in a per-session letterbox; the engine reads the
-letterbox at its next step boundary — after the tools of the current
-round returned, before the next model call — and gives the model the
-text as a user message framed as "sent while you were working, delivered
-before your next step". The model then changes course, stops, or carries
-on as told. A running tool call is never interrupted; the message lands
-after it returns.
-
-What a client sees: the `202` response carries `steerId`; a
-`steer_queued` SSE event tells the other windows on the session; and
-when the engine has handed the text to the model, a `user_message` event
-(and a session record) with `steer: true` and the same `steer_id`
-follows — that is the moment the bubble stops being "pending". The
-record sits in the session file exactly where the model read it, between
-the tool results of one round and the next assistant step.
-
-Engines: `openai-compatible` (somora's own loop), `claude-cli`
-(streamed input) and `codex-cli` (`turn/steer`) take steer messages;
-any other engine does not, and the request queues instead (`steered:
-false`). A message that arrives when the turn is already finishing, too
-late for the engine to read it, becomes an ordinary queued turn of its
-own — nothing is dropped. Sub-agent and voice turns are steerable like
-any other; `agent_ask` calls are not steered (their answer must come
-from a turn of their own).
-
-The web composer shows a **steer / queue** toggle next to Send while a
-turn runs: "steer" = the next message steers, "queue" = it queues. The agent's
-`steering:` setting in `agent.yaml` is the default position (see
-[agents.md](agents.md)).
-
-#### Queuing
-
-Sends on a `(agent, session)` that already has a turn running are
-**enqueued**, not rejected. The server holds a per-session lock with
-one FIFO queue, in arrival order, and every turn takes the same path
-into it: typed and dictated messages, `agent_ask` calls, sub-agent
-briefs, sentinel fires, tmux and browser wakes, voice consults and the
-wake-ups that bring a late answer, a finished sub-agent or a rendered
-video back. No origin jumps ahead of another. Turns are labelled by
-where they came from, for diagnostics only (`activePriority` in
-`/health`):
-- `user` — a person typing or dictating (no `from_agent`, no system
-  origin)
-- `agent` — everything else
-
-The currently-running turn always finishes — preempting would corrupt
-JSONL — so a queued turn starts only after the lock holder releases.
-Where a turn came from is recorded on its `user_message` as `origin`
-(see `GET /chat/stream`).
-
-Every turn is an entry in one work ledger, whoever started it.
-`GET /agents/:agent/sessions/:session/work` shows the running entry,
-the waiters in order, the answers about to arrive and the sub-agents
-and `agent_ask` calls the session started; `/health` lists the waiters
-of every session next to its counters; and `DELETE /chat/queue/:id`
-takes any waiting entry out again.
-
-Clients can opt into rendering a queue indicator by listening for the
-`turn_queued` SSE event (see below). UIs without it still work; the
-turn runs eventually, just without a visible "waiting" hint.
-
-### `DELETE /chat/queue/:id`
-
-Take a waiting turn back before it starts, whoever queued it. `:id` is
-the work id the queue views show: the `turnId` that `POST /chat/send`
-returned for a typed message, the `call_id` of an `agent_ask`, the
-`task_id` of a sub-agent brief or a sentinel fire. Nothing is written
-to the session — the message never became a turn.
-
-Without a body the request acts as the person and may remove anything.
-With a body `{"requesting_agent": "<name>"}` it acts as that agent and
-may remove only entries that agent asked for itself; anything else is
-`403 {ok: false, reason: "forbidden"}`. This is what `agent_ask_cancel`
-sends.
-
-- `200 {ok: true, id, kind, agent, session, text?, attachments?}` —
-  the waiter is gone. For a typed message (`kind: "human"`) the payload
-  comes back with `text` and `attachments: [{hash, name, mime, size}]`,
-  so the client can put it into its composer (attachment refs are still
-  valid, no re-upload needed). `turnId` carries the same id for older
-  clients.
-- `409 {ok: false, reason: "already_started"}` — the lock went to this
-  turn meanwhile; it is running. `POST /chat/abort` is the tool now.
-  With a body `{"requesting_agent": "<name>", "withdraw_running": true}`
-  (what `agent_ask_cancel` sends) a running call of that agent's own is
-  instead **withdrawn**: `200 {ok: true, state: "withdrawn", id, turnId,
-  agent, session, steered, steerId?, ranMs}` — its outcome wakes the
-  requester no more, and when the target's turn reads its steer inbox
-  (`steered: true`) a stop message is put there with a `steer_queued`
-  SSE event like any steered message; the turn is not aborted. `403`
-  when the call is not that agent's.
-- `404 {ok: false, reason: "unknown"}` — nothing waits under that id
-  (started, finished, or never queued here).
-
-Whoever asked for a removed entry is told:
-
-- an `agent_ask`, on the line or already pending, reads
-  `state: "failed"` with `error: "removed from the queue by the user
-  before it started"` — as its inline result, through
-  `agent_ask_result` and through `GET /a2a/ask-result`; an asker that
-  had already stopped waiting is woken with an `[agent answer]` turn
-  saying so, the same way it would have been woken with the answer;
-- a sub-agent brief reads `cancelled` with the same error in
-  `subagent_status`, `subagent_result` and `/spawn-status`, and its
-  parent is woken with a `[subagent attention]` turn saying there is
-  no result;
-- a sentinel fire is recorded in the trigger's history as `skipped`
-  with `skipReason: "removed from the queue by the user"`;
-- a wake-up turn is dropped quietly; the result it was bringing stays
-  readable.
-
-Side effects on success: a `turn_dequeued` SSE event for every open
-client on the session, followed by fresh `turn_queued` events for the
-typed messages that moved up (their `ahead` shrank).
-
-### `POST /chat/send-sync`
-
-Synchronous variant. Waits for the turn to finish and returns the
-full result inline. Slower (you block on it) but simpler for clients
-that don't want to manage SSE.
-
-```bash
-curl -X POST https://<host>:18737/chat/send-sync \
-     -H 'Content-Type: application/json' \
-     -d '{"agent":"<your-agent>","session":"main","text":"…"}'
-```
-
-Body fields: same as `/chat/send` (`agent`, `session`, `text`,
-`attachments`, `from_agent`, `agent_ask_call_id`, `subagent_depth`),
-plus:
-
-- `model` (optional) — an alias or `provider/id` from config.yaml that
-  answers this one turn instead of the session's model.
-- `max_rounds` (optional) — per-turn override of `agentLoop.maxRounds`.
-
-- `attachments` (optional) — refs from `POST /attachments`, exactly as
-  on `/chat/send`. This is the route the A2A tools use, so it is also
-  how one agent hands another a picture the receiving model has to
-  actually see. A target whose model has no vision gets the vision
-  worker's description instead, the same as for a chat attachment.
-  Agents normally do not build this by hand: `agent_ask` and
-  `spawn_subagent` take `images: ["/absolute/path.png"]` and upload for
-  them (see [agents.md](agents.md)).
-- `from_session` (optional, A2A) — the session the asking agent wrote
-  from (id or `main`). Persisted as `user_message.from_session` and
-  shown to the target in the attribution header
-  (`[Message from agent <other-agent>, session <slug>]`) so it can address
-  a follow-up. The server composes that header into the turn's frame
-  (the stored row's `ephemeral`, see `user_message` under `GET
-  /chat/stream`); the stored `text` is the message itself. Ignored
-  without `from_agent`.
-- `waiter_agent` / `waiter_session` (optional, A2A) — identify the
-  caller turn that blocks on this request. Used by `agent_ask` and
-  `spawn_subagent` internally to register the wait in the server's
-  deadlock guard; set both or neither.
-- `create_session` (optional, default false) — when `session` is a
-  named slug that does not exist on the target yet, create it (with
-  the standard timestamped id) and deliver the message into it. Only
-  slugs: `main` always exists, exact ids and `sub-*` names answer
-  `400`. The target is told beside its first message — in the turn's
-  frame, not in the stored text — that the session was just created
-  (`[Your session '<slug>' was just created by <agent> for this
-  conversation; it runs on model <model>.]`).
-- `create_model` (optional, with `create_session`) — alias or
-  `provider/id` pinned on the session **if this call creates it**
-  (same effect as `PUT …/sessions/:session/model`). An unknown model
-  is `400 {error, known_models}` and nothing is created. When the
-  session already exists the model is ignored and the response
-  carries `session_note` saying so.
-- `detach` (optional, with `from_agent` and `agent_ask_call_id`) —
-  hand the message over and return at once instead of waiting for the
-  reply: `202 {call_id, state: "pending", session_id,
-  session_created?, session_model?, session_note?}`. The turn queues and
-  runs as usual; the asker is woken with an `[agent answer]` turn when
-  the reply lands (the record line names the target, the session and
-  the first words of the answer; the instruction to read the whole
-  answer with `agent_ask_result` accompanies it as the turn's frame),
-  or reads it with `GET /a2a/ask-result`. This is `agent_ask` with
-  `wait: false`. Ignored without the two A2A fields.
-
-The success response is the turn result plus `session_id` (the
-resolved id), `session_created: true` and `session_model` when this
-call created the session, or `session_note` when `create_model` was
-ignored.
-
-An unknown `session` answers `404` with the target's existing,
-non-archived session slugs, so a caller that guessed wrong can correct
-itself instead of retreating to `main`:
+The configured agents.
 
 ```json
-{ "error": "session 'reserch' not found for agent '<other-agent>'",
-  "known_sessions": ["main", "research", "somora-dev"] }
+[ { "name": "<your-agent>", "description": "scribe and personal assistant",
+    "icon": "📝", "color": "#6366f1", "role": "Scribe",
+    "steering": true, "kind": "chat" } ]
 ```
 
-When `waiter_*` are present and the request would close a wait cycle
-(the target is already — directly or through a chain of waits —
-blocked on the caller), the server responds `409` instead of
-deadlocking:
+| Field | Meaning |
+|---|---|
+| `icon`, `color`, `role` | Optional display values from the agent's `AGENTS.md`. |
+| `steering` | The agent's default for a message typed while a turn runs: `true` steers, `false` queues. |
+| `kind` | `chat` or `builder`. |
+
+### `GET /agents/:agent/system-prompt`
+
+The agent's own part of the system prompt: `SOUL.md`, `AGENTS.md` and
+`USER.md` under somora's headings. Returns `{agent, systemPrompt}`. For
+the complete prompt use the next route.
+
+### `GET /agents/:agent/prompt-preview`
+
+The system prompt exactly as the next turn would send it. No turn runs
+and nothing is changed.
+
+| Query | Default | Meaning |
+|---|---|---|
+| `session` | `main` | The session to build the prompt for. |
 
 ```json
-{ "error": "circular A2A wait: …", "circular_wait": true,
-  "chain": ["scribe/main", "coach/main", "scribe/main"] }
+{ "agent": "<your-agent>", "session": "main", "text": "…", "chars": 16210,
+  "parts": [ { "key": "self", "label": "Self-pointer", "chars": 900 },
+             { "key": "persona", "label": "Persona (SOUL.md · AGENTS.md · USER.md)", "chars": 9340 },
+             { "key": "team", "label": "Team block", "chars": 2652 } ],
+  "tools": { "count": 41, "schemaChars": 26510, "names": ["exec"] },
+  "budgets": { "teamBlockChars": 3000, "personaFileChars": 8000, "personaTotalChars": 14000 },
+  "notIncluded": ["tool schemas (…)", "memory recall injected per turn"] }
 ```
 
-Response on success: the full turn result (`finalText`, `usage`,
-`model`, `ms`, …). A call that a person removes from the target's
-queue before it starts (`DELETE /chat/queue/:id`) answers `200` with
-`outcome: "failed"`, `dequeued: true` and `error: "removed from the
-queue by the user before it started"`.
+| Field | Meaning |
+|---|---|
+| `parts` | The pieces of `text` in prompt order: self-pointer, persona, team, tool reminder, wiki overview, skills, session, project. |
+| `tools` | The tools this agent would see on that session's model, and the size of their schemas. They travel beside the prompt, not in `text`. |
+| `budgets` | `promptBudgets` from the config. |
+| `notIncluded` | What a turn sends in addition. |
 
-### Sub-agent tasks — `/spawn-*`
+### `GET /agents/:agent/persona`
 
-The HTTP twins of the `spawn_subagent` / `subagent_*` tools. Every
-spawn is one of these tasks, whether the tool was called with
-`wait: false` or `wait: true` — a synchronous spawn registers the task,
-runs it in the background and waits for it through the result route,
-which is why it is listed, stoppable and cancellable like any other
-task while the parent waits. Agents
-running in an MCP child (claude-cli, codex-cli) reach the task store
-this way; a custom client can use them to run a sealed background
-task in a fresh session and collect the result.
+The agent's persona files with what is needed to edit them.
 
-#### `POST /spawn-async`
+Returns `{agent, kind, files, budgets, totals: {personaChars}}`. Each
+file is `{name, exists, content, hash, chars, bytes, mtime, readOnly}`.
+The files are `AGENTS.md`, `SOUL.md`, `USER.md` and, read-only,
+`agent.yaml`.
 
-Body: `agent` and `session` (required — a slug that does not exist is
-created with the standard timestamped id; an exact id that is gone is
-a `404`), `text` (the task), optional `from_agent`, `parent_agent` +
-`parent_session` (who to report back to; default the caller),
-`subagent_depth`, `model` (override), `max_rounds`, `attention`
-(`false` suppresses the `[subagent attention]` wake of the parent), and
-`attachments` (refs from `POST /attachments` — pictures that belong to
-the brief).
+### `PUT /agents/:agent/persona/:file`
 
-Returns `202 {task_id}` at once; the turn runs in the background under
-the target session's lock. `429` when the per-agent concurrent spawn
-cap is full.
+Saves one persona file. `:file` is `AGENTS.md`, `SOUL.md` or `USER.md`.
 
-#### `GET /spawn-status?task_id=…`
+| Body field | Required | Meaning |
+|---|---|---|
+| `content` | yes | The new text. |
+| `baseHash` | yes | The `hash` you read. The save only goes through when the file on disk still has it. |
 
-`{task_id, state, parent_agent, parent_session, target_agent,
-target_session, started_at, finished_at?, error?}` — `state` is
-`running`, `done`, `failed` or `cancelled`. `404` for an unknown id.
+| Status | Body |
+|---|---|
+| `200` | `{ok: true, hash, backup, chars}`. The next turn uses the new text. |
+| `400` | Wrong body, an unknown file, or an `AGENTS.md` without a readable header, with a `name` that does not match the agent, or without a body. |
+| `409` | `{error, currentHash, currentContent}`: the file changed meanwhile. Agents edit these files too, so reload and merge. |
 
-#### `GET /spawn-result?task_id=…`
+The previous version is kept beside the file as
+`<file>.bak-<timestamp>`. The last five are kept.
 
-Same fields plus `result` (the full turn result: `finalText`,
-`outcome`, `tool_calls`, `files_written`, `media`, `usage`, …) once
-terminal. `result.follow_ups: string[]` (oldest first) holds texts
-that reached the parent after the sub's report: the outcome of work
-the sub started and did not wait for — its own subs, agents it asked.
-Each one is announced to the parent with a `[subagent attention]`
-wake whose text says `Task '<task_id>' … has a follow-up: the work it
-started has finished. It begins: "…"` and whose frame reads `Fetch it
-with subagent_result({ task_id: "<task_id>" }) — the follow-up is in
-its follow_ups field — then continue whatever depended on it. If nothing
-does, a short acknowledgement to the user is enough.` (see
-[agents.md](agents.md)). A task still running answers
-`409 {task_id, state: "running", error}`. `wait_until_done=1` +
-`timeout_ms` block server-side (capped at
-`agentLoop.longTaskMaxTimeoutMs`); with `waiter_agent` /
-`waiter_session` the wait joins the deadlock guard and a cycle answers
-`409 {circular_wait: true, chain}`. Reading a terminal result here
-cancels the parent's pending `[subagent attention]` wake.
+### `GET /tools`
 
-#### `GET /spawn-list?parent_agent=…`
+Every tool registered on the server.
 
-`{tasks: [entry]}` — every task this agent spawned since server start
-(the store is in-memory).
+Returns `{count, tools: [{name, toolset, description, inputSchema, maxResultSizeChars, hasAvailabilityCheck}]}`.
+`inputSchema` is the tool's JSON Schema. `maxResultSizeChars` is `null`
+for the default cap. `hasAvailabilityCheck` says the tool is checked at
+run time and may be hidden from some agents.
 
-#### `POST /spawn-cancel`
+### `GET /agents/:agent/tools` · `PUT /agents/:agent/tools`
 
-Body: `task_id`, optional `requesting_agent` (an agent must be the
-spawning agent — otherwise `403`; without it the request acts as a
-person and the parent reads `stopped by the user`), optional `reason`.
-Cancels the task — a running
-turn is aborted, a task still waiting in its session's queue is taken
-out of it — and cascades to child spawns; returns `{cancelled: [task_ids],
-skipped: [{task_id, state}]}` (tasks that were already terminal are
-skipped). Disk artifacts stay.
+Which tools an agent may use.
+
+`GET` returns:
+
+| Field | Meaning |
+|---|---|
+| `agent`, `kind` | The agent and its kind. |
+| `kindDefaults` | For a builder: the tool names its kind allows by default. Else `null`. |
+| `gating` | The agent's `tools:` section as `{deny, allow}`, or `null`. |
+| `hasPatternRules` | `true` when the section has an allow list, a `toolset:` rule or a wildcard. The web client shows such a section read-only. |
+| `tools` | `[{name, toolset, mcpServer?, description, visible, availableNow}]`: every tool, built in or from an external MCP server. `visible` says whether the agent may use it. |
+
+`PUT` takes `{deny: string[], allow: string[]}` and rewrites only the
+`tools:` block of the agent's `agent.yaml`. Returns `{ok: true}`. `400`
+for a wrong body or a failed write. It applies from the agent's next
+turn.
+
+### `GET /agents/:agent/skills` · `PUT /agents/:agent/skills`
+
+Which skills an agent sees.
+
+`GET` returns `{agent, kind, gating, hasPatternRules, skills}`. Each
+skill is `{name, description, available, unavailableReason?, visible}`.
+`gating` is the agent's `skills:` section as `{deny, allow}` or `null`.
+`hasPatternRules` is `true` when it has a hand-written allow list.
+
+`PUT` takes `{deny: string[], allow: string[]}` and rewrites only the
+`skills:` block of `agent.yaml`. Empty lists remove the block. Names
+are skill names (`[a-z0-9-]`). Returns `{ok: true}`, `400` on a wrong
+body. It applies from the next turn.
+
+### `POST /agents/:agent/tools/:name`
+
+Runs one tool as the agent, without a chat turn. The body is the
+tool's input, the response its result.
+
+```bash
+curl -X POST $BASE/agents/<your-agent>/tools/memory_search \
+     -H 'Content-Type: application/json' \
+     -d '{"query":"voice satellites","limit":3}'
+```
+
+`400` with the result when the tool reports a failure.
+
+## Team
+
+The team file `~/.somora/team.yaml` says who reports to whom. It can be
+read and written here or edited by hand.
+
+### `GET /team`
+
+The team as written and as resolved.
+
+| Field | Meaning |
+|---|---|
+| `enabled` | A valid team is in force. |
+| `path`, `exists`, `valid` | The file, whether it is there, whether it parses. |
+| `issues` | `[{path, message}]` when it is invalid. The last valid team stays in force. |
+| `file` | The document as written. |
+| `principal`, `rules` | The person at the top and the team rules. |
+| `agents` | By name: `{name, title, reportsTo, involveFor, notFor, notes?, children, depth}`. |
+| `order` | The agents from the top down. |
+| `unlisted`, `missing` | Agents on disk that the file does not name, and file entries without an agent. |
+| `warnings` | Things worth fixing that do not make the file invalid. |
+
+### `GET /team/preview/:agent`
+
+The team text that agent gets in its system prompt. Returns
+`{agent, enabled, block, chars, softMaxChars}`, or
+`{agent, enabled: false, block: ""}` without a team.
+
+### `GET /team/check`
+
+What `somora team check` prints, without the persona scan. Returns
+`{exists, valid, issues, warnings, unlisted, missing, blocks: [{agent, chars, overSoftMax}], softMaxChars}`.
+
+### `PUT /team`
+
+Replaces the team file. The body is the whole document as JSON:
+`{version: 1, principal, rules?, agents}`, the shape `GET /team`
+returns under `file`.
+
+| Status | Body |
+|---|---|
+| `200` | `{ok: true, backup, …}` plus everything `GET /team` returns. |
+| `400` | `{error, issues: [{path, message}]}`. Nothing was written. |
+
+The previous file is kept as `team.yaml.bak-<timestamp>` (last five).
+Agents see the change on their next turn.
+
+### `POST /team/init`
+
+Writes a first team file in which every agent reports to the
+principal. Body `{principal?: string}`. Returns `{ok: true, …}` with
+the fields of `GET /team`. `409` when a file exists: this route never
+overwrites. `400` when there are no agents.
+
+### `POST /team/preview`
+
+Renders a draft for one agent without saving it. Body `{file, agent}`.
+Returns `{agent, valid, issues, warnings, block, chars, softMaxChars}`.
+An invalid draft comes back with `valid: false` and its `issues`.
+
+## Agent to agent
+
+These routes carry the `agent_ask` and sub-agent tools. A custom client
+can use them to follow such calls or to run background tasks.
 
 ### `GET /a2a/ask-result`
 
-Outcome of an `agent_ask` call by `call_id` — backs the
-`agent_ask_result` tool.
+The outcome of one agent's question to another, by call id.
 
-A call whose asker stopped waiting (`agent_ask` returned `pending`) does
-not depend on anyone remembering to poll: when the answer lands, the
-asker is woken in the session it asked from, with the first lines and
-the `call_id`. Reading the result — here or through the tool — cancels
-that wake, and a caller still on the line never gets one, because the
-answer reaches it as its tool result.
-
-A `done` call may be followed later by a **follow-up**: when the target
-answered "I am working on it and will report back" and the work it
-started while answering — sub-agents, calls of its own, and whatever
-those start — finishes after its reply, the asker receives the outcome
-once, as an ordinary message from the target into the session it asked
-from. That message is a normal turn with `origin: { kind: "agent",
-from: { agent, session }, callId }` where `callId` is this `call_id`
-and `text` is the follow-up; its frame is the `[Follow-up on the
-question you sent earlier (call_id "…"): …]` note quoted under
-`user_message` in `GET /chat/stream`. Nobody waits for it, so `DELETE
-/chat/queue/:id` on it wakes no one. It is not sent when the asker was
-a person, when the call did not finish `done`, when the target already
-wrote to the asker itself in the meantime, when the asker read this
-route during the wake grace, or after a server restart (a restart
-instead wakes the asker once with a failure note, see agents.md); a follow-up
-whose reporting turn failed says so, with the error, in place of the
-text.
-
-```
-GET /a2a/ask-result?call_id=<uuid>
-GET /a2a/ask-result?call_id=<uuid>&wait_until_done=1&timeout_ms=300000
-GET /a2a/ask-result?call_id=<uuid>&agent=<target>&session=<slug>    # after a restart
-```
+| Query | Required | Meaning |
+|---|---|---|
+| `call_id` | yes | The id of the call. |
+| `wait_until_done` | no | `1` blocks until the call finishes or `timeout_ms` passes. |
+| `timeout_ms` | no | Default `agentLoop.longTaskDefaultTimeoutMs`, capped at `agentLoop.longTaskMaxTimeoutMs`. |
+| `waiter_agent`, `waiter_session` | no | Who waits. Registers the wait in the deadlock guard. |
+| `agent`, `session` | no | The target. Needed after a restart, when the call is no longer in memory: the answer is then read from the target's history. |
 
 ```json
 { "call_id": "…", "state": "done", "target_agent": "<other-agent>",
-  "target_session": "20260906-172957_research", "started_at": 1788…,
-  "finished_at": 1788…, "response": "…", "outcome": "completed", "source": "registry" }
+  "target_session": "20260906-172957_research", "started_at": 1788000000000,
+  "finished_at": 1788000042000, "response": "…", "outcome": "completed",
+  "source": "registry" }
 ```
 
-`state` is `queued` (behind another turn on the target session),
-`running`, `done` or `failed`. A `failed` call carries `error`; the
-value `stopped by the user` means a person pressed Stop on the target's
-turn, and `removed from the queue by the user before it started` that a
-person took the waiting call out of the target's queue — the target
-never saw it. Neither is something to retry on the agent's own. The
-live registry is fed by `/chat/send-sync`
-and by `/chat/send` when it carries an `agent_ask_call_id`; when it has
-no record (server restarted since the
-call) pass `agent` + `session` and the route reads the target's JSONL
-(`user_message.agent_ask_call_id`) — `source: "history"`, and `state`
-becomes `unknown` when the turn never reached `turn_end`. With
-`wait_until_done` the request blocks until the call finishes or
-`timeout_ms` passes; `waiter_agent` / `waiter_session` register the
-wait in the deadlock guard, and a cycle answers `409` with
-`circular_wait: true` like `/spawn-result`.
+| Field | Meaning |
+|---|---|
+| `state` | `queued`, `running`, `done` or `failed`. Read from history it can also be `unknown`: the turn never ended. |
+| `response`, `outcome` | The reply and the turn's outcome, once done. |
+| `error` | Why it failed. `stopped by the user` and `removed from the queue by the user before it started` mean a person intervened. An agent should not retry those by itself. |
+| `source` | `registry` (in memory) or `history` (read from the target session). |
+
+`404` when the call is unknown and no `agent` and `session` were given,
+or when the target session has no such call. `409` with
+`circular_wait: true` and `chain` when waiting would close a cycle.
+
+Reading a result cancels the wake-up the asker would otherwise get. A
+`done` call may later be followed by one more message from the target,
+when work it had started finishes after its reply. That follow-up
+arrives as a normal turn with an `agent` origin and the same `callId`.
 
 ### `GET /a2a/turn-origin/:agent/:session`
 
-Who started the turn currently running on `agent/session`: the A2A
-asker (`from_agent`/`from_session` of the live turn, `kind: "a2a"`),
-for a sub-agent session the spawning parent from its spawn meta
-(`kind: "subagent"`), or — when the turn is an `[agent answer]` wake —
-the agent and session whose answer woke it (`kind: "wake"`), so a reply
-written from the wake turn goes back to the conversation it belongs to.
+Who started the turn that is running on a session. `agent_ask` uses it
+to send a reply back to the session the question came from.
 
 ```json
 { "origin": { "agent": "<other-agent>", "session": "20260906-172957_research", "kind": "a2a" } }
-{ "origin": null }
 ```
 
-`agent_ask` calls this when its `session` argument is omitted: if the
-target is the origin agent, the message goes back to the origin
-session instead of `main` (logged as `agent_ask.session_inferred`,
-reported as `session_inferred: true` in the tool result). An explicit
-`session` always wins. Every `agent_ask` result names the rule that
-applied as `routing_reason`: `explicit`, `reply_to_origin`, or
-`default_main` — the last with a `routing_note` when the caller sits in
-a non-main session, since a turn started by tmux, sentinel, a wake or a
-person has no origin and its report would land in the target's `main`
-unannounced.
+| `kind` | Meaning |
+|---|---|
+| `a2a` | Another agent asked. |
+| `subagent` | The session is a sub-agent's. The origin is the parent that started it. |
+| `wake` | The turn is a wake-up. The origin is the agent and session whose answer caused it. |
 
-### `GET /chat/stream`
+`{"origin": null}` when the turn was started by a person or a trigger.
 
-Server-Sent Events stream for a single `(agent, session)`. Subscribe
-once per chat window you want to display.
+The `agent_ask` result names the rule that chose the target session as
+`routing_reason`:
 
-```bash
-curl -N "https://<host>:18737/chat/stream?agent=<your-agent>&session=main"
-```
+| `routing_reason` | Meaning |
+|---|---|
+| `explicit` | The caller named a session. |
+| `reply_to_origin` | No session was named and the target is the origin agent, so the message went to the origin session. The result also has `session_inferred: true`. |
+| `default_main` | Neither applied: the message went to `main`. A `routing_note` is added when the caller sits in another session. |
 
-Event types:
-- `chat` — `{state: 'delta'|'final', text}` — streaming assistant
-  output
-- `agent` — `{phase: 'start'|'end', usage?, contextWindow?, provider?,
-  model?, thinking?, fallback?}` — turn lifecycle around the model call.
-  `usage` carries `tokens_in`, `tokens_out`, optional `tokens_in_cached`,
-  `tokens_out_reasoning` (+`_estimated`) and `context_tokens`. Read them
-  as two different things: `tokens_in`/`tokens_out` are what the turn
-  SPENT, summed over every request it made, so a tool-using turn exceeds
-  the window several times over. `context_tokens` is OCCUPANCY, the
-  prompt size of the turn's last request, and is the only one to compare
-  against `contextWindow`. All three engines report it; a client should
-  still treat it as optional.
-- `user_message` — `{text, ts, turnId?, origin?, input?, from_agent?,
-  from_session?, from_system?, agent_ask_call_id?, steer?, steer_id?}`
-  — broadcast when a turn's user_message is written to JSONL. `steer:
-  true` marks a message that was handed into the running turn `turnId`
-  (see *Steering* under `POST /chat/send`); `steer_id` pairs it with the
-  `steer_queued` event and the send response. `input` is
-  `{modality?: 'text'|'voice', source?: 'stt'|'realtime'}` when the
-  turn was not typed — `stt` is the microphone button, `realtime` a
-  sentence from a standing call — so the live bubble and the one
-  rebuilt from history render the same way. Self-typed sends, A2A
-  inbounds, and system wakes all flow through here; `from_system` is
-  one of `sentinel`, `tmux`, `subagent`, `job`, `browser`, `voice`,
-  `a2a`, and web, mobile and TUI draw each of them as a divider rather
-  than a bubble. `turnId` lets a sending client match this event to
-  the optimistic bubble it rendered after `POST /chat/send` (which
-  echoes the same id).
+### Sub-agent tasks
 
-  `text` is the record of the turn: what a person typed, what an agent
-  asked, what a trigger's prompt says, or the one-line statement of a
-  wake-up. It is what the dream phase learns from, what recall is
-  built from and what a reader sees. Everything the model is told
-  *about* the turn — who wrote it, why it arrives now, what to do with
-  it — is the turn's **frame**, and the frame travels in the stored
-  row's `ephemeral` field beside the memory-recall block (frame first,
-  then the recall block), never in `text`. Every engine puts
-  `ephemeral` in front of the user message, and it replays
-  byte-identically on later turns, so caching is unaffected. Per
-  origin the frame is: the `[Message from agent <name>, session
-  <slug>]` header and, for a session `agent_ask` created, the
-  `[Your session '<slug>' was just created by …]` note, or for a
-  follow-up on an earlier call the `[Follow-up on the question you
-  sent earlier (call_id "…"): …]` note (`agent`, see below); the
-  evidence block of a sentinel fire (`sentinel`); the inspect-now
-  instructions of a tmux wake (`tmux`); the take-a-fresh-snapshot
-  advice of a browser hand-back (`browser`); the call framing of a
-  voice consult (`voice`); and the "read the whole answer with
-  `agent_ask_result(…)`" / "fetch the full answer with
-  `subagent_result(…)`" instruction of a wake-up (`wake`). `human` and
-  `subagent` turns carry no frame. The SSE event carries `text` and
-  `origin`; `ephemeral` is on the stored row only.
+Every sub-agent runs as a task: a brief that runs in a session of its
+own and reports back. These routes are what `spawn_subagent` and the
+`subagent_*` tools call. Tasks live in memory and are gone after a
+restart.
 
-  `origin` says where the turn came from as one value. It is present on
-  the SSE event and on the stored `user_message` row of every turn;
-  rows recorded by earlier releases have none, so a client keeps
-  reading `from_*` as the fallback.
+### `POST /spawn-async`
 
-  ```ts
-  origin?:
-    | { kind: 'human';    via: 'chat' | 'voice-stt' }
-    | { kind: 'agent';    from: { agent: string; session?: string }; callId?: string }
-    | { kind: 'subagent'; parent?: { agent: string; session: string }; taskId?: string; depth: number }
-    | { kind: 'sentinel'; triggerId: string; taskId: string; triggerName?: string }
-    | { kind: 'tmux';     tmuxSession: string; tmuxKind?: string }
-    | { kind: 'browser';  viewId: string; cause: 'handoff' | 'activity'; handoffId?: string }
-    | { kind: 'voice';    callId?: string; consultId: string }
-    | { kind: 'wake';     about: 'a2a' | 'subagent' | 'job' | 'system'; ref: string; depth?: number; cause?: string };
-  ```
+Starts a task and returns at once.
 
-  `human` is a person typing (`chat`) or dictating (`voice-stt`).
-  `agent` is an `agent_ask` — or a follow-up on one: when the target
-  answered and work it started while answering (sub-agents, calls of
-  its own) finishes later, the target's session sends the asker one
-  more turn with `origin.kind: "agent"` and `callId` = the original
-  call. Its `text` is the follow-up itself; its frame, beside the
-  `[Message from agent …]` header, is `[Follow-up on the question you
-  sent earlier (call_id "<id>"): the work it started has finished.
-  Below is its result — treat it as the answer to that question.
-  Continue whatever depended on it; if nothing does, tell your human
-  in one line.]`. It is broadcast as a `user_message` like any agent
-  turn; there is no separate event. `subagent` a sealed brief running
-  in its own `sub-…` session; `sentinel`, `tmux`, `browser` and `voice` the
-  four system triggers; `wake` brings something the agent started
-  earlier back to it — a late `agent_ask` answer (`ref` = call id), a
-  finished async sub-agent (`ref` = task id) or a rendered video
-  (`ref` = job id); `about: "system"` is somora itself speaking, with
-  the occasion in `cause` (today `restart`: the restart an agent asked
-  for is done, or a question / a helper was cut off by one — the text
-  begins `[system: restart]`) — and, with `about: "subagent"`, a follow-up on a
-  finished sub whose own work finished later (the text reads `Task
-  '<id>' … has a follow-up: the work it started has finished. It
-  begins: "…"`, and the frame points at the `follow_ups` field of `subagent_result`). The
-  legacy fields stay and are derived from it:
-  `agent` fills `from_agent`, `from_session` and `agent_ask_call_id`
-  (= `callId`); `sentinel`, `tmux`, `browser` and `voice` set
-  `from_system` to the same word; `wake` sets `from_system` to its
-  `about`; `human` and `subagent` set none of them.
-- `steer_queued` — `{steerId, text, ts, turnId, origin}` — fired when
-  `POST /chat/send` with `steer: true` accepted a message for the turn
-  `turnId` that is running. Not yet in the session file: the matching
-  `user_message` with `steer: true` and the same `steer_id` follows
-  once the engine has handed the text to the model. Other windows on
-  the session render a pending bubble from this.
-- `builder_state` — `{mode, phase, planPath}` — a builder session's
-  mode or phase changed, or its plan file was set (see *Builder
-  sessions*).
-- `todo_updated` — `{todos: [{content, status, priority?}], by?}` — the
-  builder replaced its task list (`todo_write`).
-- `question_asked` — `{questionId, question, header?, options, multiple,
-  expiresAt}` — the builder is waiting for the person (`ask_user`);
-  answer with `POST …/answer`.
-- `question_answered` — `{questionId, answered}` — the open question
-  was answered.
-- `turn_queued` — `{turnId, ahead, workId?, kind?}` — fired when `POST /chat/send`
-  hit a busy lock and the turn had to wait. `ahead` is the number
-  of turns this one must wait for (≥1, includes the currently-
-  running one). Static snapshot at enqueue time, not updated as
-  the queue drains — except after a `DELETE /chat/queue/:id`,
-  which re-emits it for the waiters that moved up. Clients render
-  `"queued · N ahead"` until the matching `user_message` event
-  arrives (= the turn is now actually running, lock acquired).
-- `turn_dequeued` — `{turnId, workId}` — a waiting entry was taken
-  back via `DELETE /chat/queue/:id`, whoever queued it; both fields
-  carry the removed entry's id. Clients drop the optimistic bubble for
-  a typed message with that id and refresh their queue view.
-- `turn_started` — `{turnId}` — the engine opened the turn; this is
-  the engine's own id (`t-…`), the one `assistant_media`,
-  `assistant_audio`, `turn_error` and the session file's `turn_end`
-  carry. Clients stamp the assistant bubble they are about to build
-  with it, so artifacts that arrive after the turn closed pair to
-  THIS turn instead of "the most recent bubble".
-- `turn_error` — `{turnId?, message, engine}` — the turn ended with an
-  error instead of (or after) an assistant message. The `status`
-  event still carries the same text (`error: …` / `turn failed: …`)
-  for older clients; this one adds the turn id so the failure can be
-  rendered as a block inside the right turn.
-- `session_model` — `{model, resolved?, source}` — the session's model
-  override was set (`PUT …/model`) or cleared (`DELETE …/model`,
-  `model: null`, `source: "persona-default"`). Sent to every subscriber
-  of the session, because the switch is often made from outside the
-  window showing it (an orchestrator agent, another client). Clients
-  re-read `GET …/model` and update their header.
-- `tool` — `{phase: 'call'|'result'|'error', tool, summary?,
-  details?, error?}` — tool-call events
-- `thinking` — `{state: 'delta'|'final', text, truncated?}` — the
-  model's reasoning text, cumulative deltas like `chat`; the `final`
-  precedes the `chat` final of the same turn. Only engines that surface
-  thinking send it; `thinkingContent.capture: false` in config.yaml
-  suppresses it entirely. See [thinking.md](thinking.md).
-- `engine_meta` — `{engine, itemType, label, summary?, payload}` —
-  engine-internal side-channel state. The canonical case is codex's
-  `todo_list` (an internal plan/checklist the model updates mid-turn)
-  — somora persists these so memory / REM-dream can read them later
-  and clients can optionally render them. `label` is server-resolved
-  (e.g. `todo_list` → `"plan"`); unknown item-types fall back to the
-  raw `itemType`. `payload` is the engine's original event, opaque.
-  Codex's own `error` notifications arrive as `error` — except those
-  codex marks `willRetry`: a dropped stream it reconnects by itself is
-  one `reconnecting` row per turn, and its switch to HTTPS after the
-  retries is a `transport_fallback` row; neither is a failure.
-  Besides engine-native items, somora emits its own: `model_switch`
-  (codex thread continued under a new model), `thread_recreated` (the
-  Codex thread no longer existed; a fresh one was started with the
-  session history replayed), `tools_changed` (the agent's tool set
-  changed — Abilities toggle, hub server, review loop, update — and
-  Codex threads keep their tools, so a fresh thread was started with the
-  history replayed), `mcp_server_renamed`
-  (engine session rebuilt after somora's MCP server rename, label
-  "session restarted"), `context_compacted` (history compacted after a
-  context overflow — on `codex-cli` it means codex compacted its own
-  thread and said so, which is otherwise invisible), `context_trimmed` (the oldest tool results in a
-  running turn were shortened to keep the request inside the window —
-  the turn continues, the model keeps the record that those tools already
-  ran), `attachments_unsupported` (the engine cannot forward attachments,
-  grok-cli), `voice_handover` (a call was handed to or
-  from another agent), `voice_spoken` (what a voice call said out loud —
-  found in sessions recorded by earlier releases), `reasoning_effort_adjusted` and `sampling_dropped`
-  (backend rejected the parameter, turn retried without it). Each
-  carries a human-readable `payload.text`.
-- `model_fallback` — `{requested, actual, reason, hops?}` (refs are
-  `provider/modelId`) — the persona's primary model failed before
-  producing anything and a configured `fallback:` model is answering
-  this turn. `requested` is always the primary, `actual` the model
-  now answering, `reason` the failure that triggered this hop. `hops`
-  lists every model that failed so far, in order
-  (`[{model, reason}, …]`, primary first) — with a fallback chain
-  (`fallback: [a, b]`) one event is sent per hop and the last one
-  carries the whole chain. Sent before the fallback's first delta;
-  the following `agent` phase:'end' also carries `fallback` (same
-  shape) and reports the ACTUAL `provider`/`model`. Persisted to
-  history as the same kind, so a reload keeps the marker on that turn.
-- `memory` — `{count, topScore?, refs, fullText}` — the memory recall
-  injected into this turn: number of hits, best fused score, the
-  `source/slug` refs, and the full `<memory-context>` block text.
-  Sent after `agent` phase:'start'; `count` is `0` with empty `refs`
-  when recall found nothing.
-- `status` — `{msg}` — connection events, error notices
-- `heartbeat` — current ms timestamp, every `sse.heartbeatMs` (20 s). The
-  server watches these writes: one that fails or stays pending for
-  `sse.deadAfterMs` (60 s) marks the stream dead — it is closed and its
-  socket destroyed, logged as `sse.disconnect {reason: 'dead'}`. On the
-  TLS listener every HTTP/2 session is also PINGed (`sse.h2PingIntervalMs`)
-  and destroyed when it stops answering (`sse.h2PingTimeoutMs`), and every
-  socket carries TCP keepalive — a tab that vanished without closing is
-  gone server-side in about a minute instead of never.
+| Body field | Required | Meaning |
+|---|---|---|
+| `agent` | yes | The agent that does the work. |
+| `session` | yes | The session to run in. A slug that does not exist is created. An exact id that does not exist answers `404`. |
+| `text` | yes | The brief. |
+| `parent_agent`, `parent_session` | no | Who is told when the task ends. Default: `from_agent`, else the agent itself. |
+| `from_agent` | no | Marks the turn as written by that agent. |
+| `subagent_depth` | no | Nesting depth. |
+| `model` | no | Model for this task. |
+| `max_rounds` | no | Overrides `agentLoop.maxRounds`. |
+| `attention` | no | `false` suppresses the parent's wake-up when the task ends. |
+| `attachments` | no | Refs from `POST /attachments`. |
 
-Tool names are normalised through the same path the wire serializer
-uses — clients receive `memory_search`, not
-`mcp__somora__memory_search`. Tool input/output payloads ride
-in the `details` field as pretty-printed JSON.
+Returns `202 {task_id}`. `400` when `agent` or `session` is missing,
+`429` when the agent already runs as many sub-agents as allowed.
 
-### `GET /activity/stream`
+### `GET /spawn-status?task_id=…`
 
-App-wide activity feed. One subscription per client gives streaming
-markers for every busy `(agent, session)` plus unread state for
-sessions the user hasn't viewed since new movement arrived. Distinct
-from `/chat/stream`, which is per-session and per-window.
-
-```bash
-curl -N https://<host>:18737/activity/stream
-```
-
-Event types:
-
-- `streaming` — `{agent, session, phase: 'start'|'end'}` — emitted
-  when any turn begins or ends on any session. Drives multi-agent
-  streaming-dots in clients that aren't subscribed to every per-
-  session `/chat/stream`.
-- `turn` — `{agent, session, unreadAt}` — a new unread-candidate
-  event landed in the session's JSONL. Unread candidates are:
-  - `chat:final` (assistant answer)
-  - `user_message` with `from_agent` set (A2A peer wrote to us)
-  - `user_message` with `from_system` set (`sentinel`, `tmux`,
-    `subagent`, `job`, `browser`, `voice`, `a2a` or `system` woke us)
-  Plain self-typed user messages, tool / memory / engine_meta events,
-  and lifecycle (`agent:start`, `agent:end`) are excluded.
-- `seen` — `{agent, session, seenAt}` — broadcast when any client
-  POSTs `/sessions/:agent/:session/seen`. Sibling clients clear
-  their unread badge for that session.
-- `status` — `{msg}` — connection lifecycle.
-- `heartbeat` — current ms timestamp, every `sse.heartbeatMs`; same
-  liveness rules as `/chat/stream`.
-
-Unread state is persisted in the session's meta as `unreadAt` and
-`seenAt` (both ISO timestamps). A session is unread when
-`unreadAt > seenAt` (or `seenAt` is null). The persistence path is
-authoritative, so a server restart preserves the badge state.
-
-### `POST /sessions/:agent/:session/seen`
-
-Tell the server "I am looking at this session now". Updates `seenAt`
-in the session's meta and broadcasts a `seen` event on
-`/activity/stream` so other open clients clear their badge live.
-
-```bash
-curl -X POST https://<host>:18737/sessions/<your-agent>/main/seen
-```
-
-Optional body:
+The state of a task.
 
 ```json
-{ "ts": "2026-05-27T14:00:00.000Z" }
+{ "task_id": "task-…", "state": "running",
+  "parent_agent": "<your-agent>", "parent_session": "20260913-101500_main",
+  "target_agent": "<your-agent>", "target_session": "sub-<your-agent>-20260913-101700",
+  "started_at": 1789299970000 }
 ```
 
-`ts` lets a client claim an older "I last looked at this at …" time —
-useful for scrolling-into-view triggers where the wall-clock isn't
-exactly "now". The server clamps to `max(currentSeenAt, ts)`, so a
-later arrival can never regress the seen marker.
+`state` is `running`, `done`, `failed` or `cancelled`. `finished_at`
+and `error` appear when they apply. `404` for an unknown id.
 
-Response:
+### `GET /spawn-result?task_id=…`
+
+The result of a finished task.
+
+| Query | Meaning |
+|---|---|
+| `task_id` | Required. |
+| `wait_until_done` | `1` blocks until the task ends or `timeout_ms` passes. |
+| `timeout_ms` | Capped at `agentLoop.longTaskMaxTimeoutMs`. |
+| `waiter_agent`, `waiter_session` | Who waits. Joins the deadlock guard. |
+
+Returns `{task_id, state, target_agent, target_session, result?, error?}`.
+`result` is the turn result described under `POST /chat/send-sync`.
+
+`result.follow_ups` holds texts that reached the parent after the
+report: the outcome of work the sub-agent started and did not wait for.
+Each one is announced to the parent with a `[subagent attention]`
+wake-up.
+
+| Status | Meaning |
+|---|---|
+| `409` | `{task_id, state: "running", error}`: not finished yet. With `circular_wait: true` and `chain`: the task waits on the caller. |
+| `404` | Unknown id. |
+
+Reading a finished result cancels the parent's pending wake-up.
+
+### `GET /spawn-list?parent_agent=…`
+
+Every task that agent started since the server came up. Returns
+`{tasks: [...]}` with entries as in `GET /spawn-status`. `400` without
+`parent_agent`.
+
+### `POST /spawn-cancel`
+
+Cancels a task and every task it started. A running turn is aborted, a
+waiting one is taken out of its queue. Files it wrote stay.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `task_id` | yes | The task. |
+| `requesting_agent` | no | Acts as that agent, which must be the one that started the task (`403` otherwise). Without it the request acts as a person and the parent reads `stopped by the user`. |
+| `reason` | no | Free text, added to the reason the parent reads. |
+
+Returns `{cancelled: [task_ids], skipped: [{task_id, state}]}`. Tasks
+that had already ended are skipped. `404` for an unknown id.
+
+## Builder sessions
+
+Agents of kind `builder` keep a mode, a phase, a plan file and a task
+list per session, and at most one open question to the person. The web
+client's task panel uses these routes, and so do the builder's own
+tools `todo_write`, `ask_user` and `plan_write`.
+
+### `GET /agents/:agent/sessions/:session/builder`
+
+The builder state of a session.
 
 ```json
-{ "ok": true, "agent": "<your-agent>", "session": "main", "seenAt": "2026-…" }
+{ "agent": "<your-agent>", "session": "20260913-101500_main", "kind": "builder",
+  "state": { "mode": "attended", "phase": "plan",
+             "planPath": "/home/me/code/acme/PLAN.md",
+             "todos": [ { "content": "Write the parser", "status": "pending" } ] },
+  "question": null,
+  "turn": { "turnId": "…", "startedAt": 1789299991000, "toolCalls": 7,
+            "lastTool": "file_write", "lastToolAt": 1789299999000 } }
 ```
 
-### `GET /chat/history`
+| Field | Meaning |
+|---|---|
+| `state` | `{mode, phase, planPath, todos, orderer?}`, or `null` before the session's first turn. `mode` is `attended` or `unattended`, `phase` is `plan` or `build`. |
+| `question` | `{questionId, question, header?, options: [{label, description?}], multiple, askedAt, expiresAt}` or `null`. Also carries the question a builder raises before writing outside its project folder. |
+| `turn` | Progress of the running turn, else `null`. |
 
-Snapshot of past events for a session. The TUI and web both
-hydrate this on open.
+### `PATCH /agents/:agent/sessions/:session/builder`
 
-```bash
-curl "https://<host>:18737/chat/history?agent=<your-agent>&session=main"
-```
+Changes mode, phase or plan file. Sends `builder_state`.
 
-Rows are the session's JSONL events in order. A turn with thinking
-carries one `thinking_message` row (`{kind, ts, engine, text,
-truncated?}`) directly before its `assistant_message`; clients fold it
-onto that bubble.
+| Body field | Meaning |
+|---|---|
+| `mode` | `attended` or `unattended`. |
+| `phase` | `plan` or `build`. |
+| `planPath` | An absolute path, or `null` to clear it. |
+| `orderer` | `{agent, session?}`: the agent that handed the order over. Set by `builder_dispatch`. |
 
-```bash
-```
+Returns `{agent, session, state}`. `400` for a value outside these.
 
-Pagination: pass `?limit=200` to get the last 200 events plus a
-`hasMore` + `oldestTs` cursor; subsequent calls supply
-`?before=<oldestTs>&limit=200` for older windows.
+### `POST /agents/:agent/sessions/:session/builder/go`
 
-```json
-{
-  "agent": "<your-agent>",
-  "session": "20260511-093251_research-notes",
-  "events": [...],
-  "hasMore": true,
-  "oldestTs": 1715512000000
-}
-```
+Approves the plan: sets the phase to `build` and starts a turn that
+tells the builder to carry it out.
 
-Event kinds: `user_message`, `assistant_message`, `thinking_message`,
-`tool_call`, `tool_result`, `engine_meta`, `model_fallback` (precedes
-the assistant message the fallback model produced), `assistant_audio`,
-`assistant_media`, `project_switched`, `error`, `turn_start` and
-`turn_end`. Each carries `kind`, `ts`, and kind-specific fields. Tool names are normalised here too.
-`engine_meta` rows preserve the raw `itemType` + opaque `payload`;
-clients resolve the friendly label on render (see
-[setup.md](setup.md#engine-rows-in-the-chat)).
+| Body field | Meaning |
+|---|---|
+| `note` | Optional text added to that message. |
 
-### `POST /chat/abort`
+| Status | Body |
+|---|---|
+| `202` | `{agent, session, state, turnId}` |
+| `202` | `{agent, session, state, turnId, callId, wakes}` when the state has an `orderer`. The turn then runs as that agent's question, and `wakes` names who gets the report. |
+| `409` | `{error, busy}`: another builder's turn is working in the session's folder. |
 
-Cancel an in-flight turn on a `(agent, session)`. The TUI fires it
-on ESC; web and mobile fire it from the Stop button overlaid on the
-streaming assistant bubble. Idempotent — returns `aborted: false`
-when no turn is running. Cancels the **currently-running** turn
-only; queued waiters keep their slots and still execute — a waiting
-entry is removed with `DELETE /chat/queue/:id` instead.
+### `PUT /agents/:agent/sessions/:session/todos`
 
-It stops whatever is running on the session, regardless of what
-started it — a command the turn is running through `exec` is killed with
-it (process group, `SIGTERM` then `SIGKILL`), on the in-process engine and
-in the MCP child alike, and its result says `killed: the turn was
-stopped`: a typed message, an `agent_ask` from another agent, a
-sub-agent brief, a sentinel fire, a tmux or browser wake, a voice
-consult or a wake-up. Whoever asked for that turn learns why it ended:
-an `agent_ask` still on the line, `agent_ask_result` and
-`subagent_result` report `state: "failed"` with `error: "stopped by
-the user"`, and a sentinel fire is recorded with outcome `error` and
-the same text. The tool descriptions tell the asking agent not to
-retry that on its own.
+Replaces the whole task list. Sends `todo_updated`.
 
-```bash
-curl -X POST "https://<host>:18737/chat/abort?agent=<your-agent>&session=main"
-```
+| Body field | Meaning |
+|---|---|
+| `todos` | `[{content, status?, priority?}]`, at most 100. `status` defaults to `pending`. Each `content` is cut at 500 characters. |
+| `by_agent` | Optional: who wrote it. |
 
----
+Returns `{agent, session, todos}`.
+
+### `PUT /agents/:agent/sessions/:session/plan`
+
+Writes the session's plan file. Body `{content}`.
+
+The path is the session's plan path. Without one it is `PLAN.md` in the
+session's working folder, which is the pinned project's folder or the
+workspace. Returns `{path, bytes, archived?, note?}`. Sends
+`builder_state`.
+
+If a plan was already there and this session did not write it, it is
+moved aside first to `PLAN-<date>-<session>.md` and `archived` names
+that file. `400` when the write policy forbids the path.
+
+### `POST /agents/:agent/sessions/:session/ask`
+
+Asks the person a question and **blocks** until they answer or the
+wait runs out. Sends `question_asked`.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `question` | yes | The question, at most 2000 characters. |
+| `options` | yes | 2 to 6 of `{label, description?}`. |
+| `header` | no | A short title, at most 40 characters. |
+| `multiple` | no | `true` allows several answers. |
+| `timeout_ms` | no | Default 30 minutes, at most 4 hours. |
+
+Returns `{answered, answers: string[], text?}`. A second question on
+the same session replaces the first, which returns unanswered.
+
+### `POST /agents/:agent/sessions/:session/answer`
+
+Answers the open question. Sends `question_answered`.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `questionId` | yes | From `question_asked` or the builder state. |
+| `answers` | no | The chosen labels. |
+| `text` | no | A free-text answer. |
+
+Returns `{ok: true}`. `404` when no such question is open.
+
+### `GET /builders`
+
+The builder agents and the folders each is working in right now.
+Returns `{builders: [{name, role, description, busy: [{session, workdir, since}]}]}`.
+
+### `GET /builders/busy`
+
+Whether a running builder turn claims a folder.
+
+| Query | Meaning |
+|---|---|
+| `workdir` | A path. The check also covers its parent and child folders. |
+
+Returns `{workdir, busy}` where `busy` is
+`{agent, session, turnId, workdir, since, reason}` or `null`. Without
+`workdir` it returns `{claims: [...]}`.
+
+### `POST /lsp/diagnostics`
+
+Asks the language server about a file a builder just wrote. This is
+what `file_write` and `file_patch` call.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `agent`, `session` | yes | The builder session. |
+| `path` | yes | Absolute path of the file. |
+| `touch` | no | `true` only starts the server and returns `{diagnostics: null, touched: true}`. |
+
+Returns `{diagnostics}` with `{server, errors, errors_in_other_files}`
+or `null`. For an agent that is not a builder, or with language servers
+switched off, it is `{diagnostics: null, reason}`.
+
+### `GET /lsp/status`
+
+The language servers somora knows. Returns
+`{enabled, waitMs, servers: [{id, title, extensions, enabled, command, source}], running}`.
 
 ## Memory
 
-Each agent has its own memory layer — markdown notes under
-`~/.somora/agents/<agent>/memory/` plus, optionally, a shared Obsidian
-vault and wiki layer. See [memory.md](memory.md) for the storage
-architecture.
+Each agent has its own notes. A shared vault and the wiki can be
+searched with them.
 
 ### `GET /agents/:agent/memory/notes`
 
-List indexed notes for an agent. Optional `?source=memory|vault|wiki`
-to filter by source layer.
-
-### `POST /agents/:agent/memory/recall-preview`
-
-What auto-inject would recall for a message in a given conversation
-state — the turn's own recall path (query construction, history blend,
-search, block budget) without running a turn. Body:
-
-```json
-{
-  "text": "und wer gehört sonst noch zur familie?",
-  "history": [
-    { "kind": "user_message", "text": "was kannst du mir über karl erzählen?" },
-    { "kind": "assistant_message", "text": "Karl ist …" }
-  ],
-  "autoInject": { "historyWeight": 0.4 }
-}
-```
-
-`history` is optional (oldest first; only `user_message` and
-`assistant_message` entries count). `autoInject` optionally overrides
-any `memory.autoInject` knob for this call only — for measuring a
-setting before changing config.yaml. Response: `hits` with `slug`,
-`source`, `score`, `vecScore`, `bm25Score`, line range, plus
-`injectedCount` and `ephemeralContextChars`. Used by the recall replay
-harness; loopback-only like every debug route.
+The agent's indexed notes. Returns `{agent, count, notes}`.
 
 ### `GET /agents/:agent/memory/search`
 
-Hybrid (BM25 + vector) search over the agent's own memory notes plus
-the shared vault/wiki index — the same `MemoryManager.search` the
-`memory_search` tool and auto-inject use: filler words are dropped
-from the keyword side, a page whose slug names a query word is boosted
-(`memory.hybrid.slugMatchBoost`), see [memory.md](memory.md). No
-history blend here — that is auto-inject's, use `recall-preview` above
-to see a turn's actual recall.
+Searches the agent's notes and the shared vault and wiki index by
+keyword and by meaning. It is the search the `memory_search` tool uses.
+
+| Query | Default | Meaning |
+|---|---|---|
+| `q` | required | The search text. |
+| `limit` | 5 | 1 to 50. |
+| `minScore` | 0 | 0 to 1. Hits below it are dropped. Recall during a turn uses `autoInject.minScore` instead. |
 
 ```bash
-curl "https://<host>:18737/agents/<your-agent>/memory/search?q=voice+satellites&limit=5&minScore=0.3"
+curl "$BASE/agents/<your-agent>/memory/search?q=voice+satellites&limit=5"
 ```
 
-Query params: `q` (required), `limit` (1–50, default 5), `minScore`
-(0..1, default 0 — the route shows everything; auto-inject applies
-`autoInject.minScore`).
+Returns `{agent, query, limit, minScore, count, hits}`. Each hit:
 
-Returns `{ agent, query, limit, minScore, count, hits: [...] }`; each
-hit carries `slug`, `source` (`memory` | `wiki` | `vault`), `score`
-(fused, min-max normalised within this query's candidates — a rank,
-not a similarity), `vecScore`, `bm25Score`, `startLine`, `endLine`,
-`filePath` and the chunk `text`.
+| Field | Meaning |
+|---|---|
+| `slug`, `source` | The note, and where it lives: `memory`, `wiki` or `vault`. |
+| `score` | The combined score, scaled within this query's results. It is a rank, not a similarity. |
+| `vecScore`, `bm25Score` | The meaning score and the keyword score. |
+| `startLine`, `endLine`, `filePath`, `text` | The matching passage. |
 
-For full content of a hit, agents call `memory_get` via the tool
-endpoint (`POST /agents/:a/tools/memory_get`). Same path is
-available to your client.
+For the whole note, call the `memory_get` tool through
+`POST /agents/:agent/tools/:name`.
 
----
+### `POST /agents/:agent/memory/recall-preview`
+
+What a turn would recall for a message, without running a turn. Use it
+to try a recall setting before changing the config.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `text` | yes | The message. |
+| `history` | no | Earlier messages, oldest first: `{kind, text}` with `kind` `user_message` or `assistant_message`. Other entries are ignored. |
+| `autoInject` | no | Overrides any `memory.autoInject` setting for this call only. |
+
+```json
+{ "text": "and who else is in the family?",
+  "history": [
+    { "kind": "user_message", "text": "what can you tell me about Karl?" },
+    { "kind": "assistant_message", "text": "Karl is …" } ],
+  "autoInject": { "historyWeight": 0.4 } }
+```
+
+Returns `{agent, text, historyTurns, injectedCount, hits, ephemeralContextChars}`.
+The hits have `slug`, `source`, `score`, `vecScore`, `bm25Score`,
+`startLine` and `endLine`.
 
 ## Wiki explorer
 
-Read-only browse surface over the shared wiki, backing the web client's
-wiki window. All routes return **503** unless `wiki.enabled` and
-`obsidian.vault` are both configured.
-
-Pages are addressed by **slug, never by path** — a request can only name
-pages the index already found under the wiki root, so traversal attempts
-come back as a plain 404 rather than needing a filter to catch them.
+Read access to the shared wiki. Every route except the status answers
+`503` unless `wiki.enabled` and `obsidian.vault` are both set. Pages
+are addressed by slug, never by path, so a request can only name pages
+the wiki index already found.
 
 ### `GET /wiki/status`
 
-`{ enabled: boolean, root?: string }`. Cheap enough to call on UI mount;
-clients use it to decide whether to show the wiki entry point at all.
+Whether the wiki is on. Returns `{enabled, root?}`. Ask this once to
+decide whether to show a wiki view.
 
 ### `GET /wiki/tree`
 
+The folder tree with all pages.
+
 ```json
-{
-  "root": "/path/to/vault/somora",
-  "pages": 262,
-  "builtAt": 1784750000000,
+{ "root": "/path/to/vault/somora", "pages": 262, "builtAt": 1784750000000,
   "nodes": [
-    { "type": "dir", "name": "personen", "path": "personen",
+    { "type": "dir", "name": "people", "path": "people",
       "children": [
-        { "type": "page", "slug": "personen/familie-klein",
-          "name": "familie-klein.md", "title": "Familie Klein",
-          "description": "…", "mtimeMs": 1784700000000 }
-      ] }
-  ]
-}
+        { "type": "page", "slug": "people/muster-family",
+          "name": "muster-family.md", "title": "Muster family",
+          "description": "…", "mtimeMs": 1784700000000 } ] } ] }
 ```
 
-Titles come from the page's first `# H1`, falling back to frontmatter
-`title`, then the filename.
+A page's title is its first `# H1`, else `title` from its header, else
+the file name.
 
 ### `GET /wiki/page?slug=<slug>`
 
-Returns `markdown` plus resolved relationships:
+One page with its links.
 
 ```json
-{
-  "slug": "projekte/somora", "title": "somora", "folder": "projekte",
+{ "slug": "projects/somora", "title": "somora", "folder": "projects",
   "mtimeMs": 1784700000000,
-  "markdown": "## Aktueller Stand\n…",
-  "frontmatter": { "type": "project", "created": "2026-05-08" },
-  "links":       [{ "slug": "personen/jane-doe", "title": "Jane" }],
-  "backlinks":   [{ "slug": "agenten/<your-agent>", "title": "Your Agent" }],
-  "unresolved":  ["personen/familie-doe"],
-  "linkTargets": { "personen/jane-doe": "personen/jane-doe",
-                   "familie-doe": null }
-}
+  "markdown": "## Current state\n…",
+  "frontmatter": { "type": "project" },
+  "links":      [ { "slug": "people/nina-muster", "title": "Nina" } ],
+  "backlinks":  [ { "slug": "agents/<your-agent>", "title": "Your agent" } ],
+  "unresolved": ["people/muster-family"],
+  "linkTargets": { "people/nina-muster": "people/nina-muster", "muster-family": null } }
 ```
 
-`linkTargets` maps every raw `[[target]]` in the body to a slug, or
-`null` when nothing matches. Resolution — exact slug, case-insensitive
-slug, unique basename — lives here so clients don't reimplement
-Obsidian's matching. An ambiguous basename resolves to `null` on
-purpose: guessing one of several same-named pages fabricates a
-relationship.
+`linkTargets` maps every `[[target]]` in the text to a slug, or to
+`null` when nothing matches. A target matches by exact slug, by slug
+without regard to case, or by a file name that exists only once. A file
+name that exists several times resolves to `null`.
 
-404 when the slug names no page.
+`400` without `slug`, `404` for an unknown page.
 
 ### `GET /wiki/graph?scope=local&slug=<slug>` · `?scope=global`
 
+The link graph around one page, or of the whole wiki.
+
 ```json
-{
-  "scope": "local",
-  "nodes": [{ "id": "projekte/somora", "label": "somora",
-              "folder": "projekte", "degree": 41 }],
-  "edges": [{ "from": "agenten/<your-agent>", "to": "projekte/somora",
-              "type": "wikilink" }],
-  "truncated": false
-}
+{ "scope": "local",
+  "nodes": [ { "id": "projects/somora", "label": "somora", "folder": "projects", "degree": 41 } ],
+  "edges": [ { "from": "agents/<your-agent>", "to": "projects/somora", "type": "wikilink" } ],
+  "truncated": false }
 ```
 
-`local` returns the page, everything it points at, everything pointing
-at it, and the edges among those neighbours. `global` returns the whole
-wiki, capped at the 400 most-connected pages — `truncated` says whether
-the cap bit. `degree` always counts the full wiki, so a node stays
-recognisable as a hub inside a local view.
+| Scope | Returns |
+|---|---|
+| `local` (default) | The page, what it links to, what links to it, and the links among those. Needs `slug`. |
+| `global` | The whole wiki, capped at the 400 best-connected pages. `truncated` says whether the cap applied. |
 
-`index.md` is excluded from both scopes: it links to every page by
-construction, which makes it a table of contents rather than a
-relationship.
+`degree` always counts links in the whole wiki. Edge `type` is
+`wikilink` for a `[[link]]` in the text and `related` for a `related:`
+entry in the header. `index.md` is left out: it links to everything.
 
-Edge `type` is `wikilink` for inline `[[links]]` and `related` for
-frontmatter `related:` entries.
+`400` when `local` has no `slug`, `404` for an unknown page.
 
 ### `POST /wiki/refresh`
 
-Drops the cache and re-scans. The index otherwise caches for 10 seconds
-and then re-parses only files whose mtime or size changed, so ordinary
-edits appear without this call.
-
----
+Rebuilds the wiki index now. Returns `{pages, builtAt}`. Ordinary edits
+show up without it: the index is kept for 10 seconds and then re-reads
+only files that changed.
 
 ## Dream system
 
-The dream system runs in three phases (REM, Deep, Lucid) — see
-[dream-phases.md](dream-phases.md) for the model. Some of these
-endpoints surface state for monitoring; others trigger phases
-manually.
-
-### `GET /dream/loop-state`
-
-Read-only snapshot of the active Lucid review loop, if any.
-
-```json
-{ "active": true, "agent": "<your-agent>", "dreamId": "lucid-...",
-  "startedAt": "…", "lastActivityAt": "…" }
-```
-
-Returns `{ active: false }` when no loop is held.
+The three dream phases, REM, Deep and Lucid, turn conversations into
+memory and wiki pages. These routes show their state and start them by
+hand.
 
 ### `GET /dream-states` ⚠ experimental
 
-Per-agent REM state + server-global Deep / Lucid state. Drives the
-web AgentDock pulse indicators and REM badges.
+The state of all three phases.
 
 ```json
-{
-  "rem": {
-    "<your-agent>":  { "active": false, "pendingCount": 3 },
-    "<agent-b>":  { "active": true,  "pendingCount": 0 }
-  },
+{ "rem": { "<your-agent>": { "active": false, "pendingCount": 3 } },
   "deep":  { "active": false },
-  "lucid": { "active": false, "pendingRuns": 0, "pendingFindings": 0 }
-}
+  "lucid": { "active": false, "pendingRuns": 0, "pendingFindings": 0 } }
 ```
 
-`rem[<agent>].active` is filesystem-driven (presence of
-`<agent>/memory/.dreams/<id>.dream.running.md`).
-`rem[<agent>].pendingCount` is the number of completed REM dreams
-waiting for review (`<id>.dream.md` files in `.dreams/`, not in
-`processed/`).
+| Field | Meaning |
+|---|---|
+| `rem.<agent>.active` | A REM dream is running for that agent. |
+| `rem.<agent>.pendingCount` | Finished REM dreams that wait for review. |
+| `deep.active`, `lucid.active` | A run is in progress. |
+| `lucid.pendingRuns`, `lucid.pendingFindings` | Lucid runs and findings that wait for review. `oldestPendingAt` is added when there are any. |
+| `lucid.loopHolder` | The agent that is reviewing Lucid findings right now, when one is. |
 
-### `POST /dream/run-deep`
+### `GET /dream/loop-state`
 
-Trigger a Deep run manually. Default is fire-and-forget (returns
-immediately); set `{"wait": true}` to wait for the run to finish and
-get the result inline.
-
-```bash
-curl -X POST https://<host>:18737/dream/run-deep \
-     -H 'Content-Type: application/json' \
-     -d '{"wait":true, "force":false}'
-```
-
-`force: true` bypasses the per-agent skip-cache so every memory file
-gets re-evaluated.
-
-### `POST /dream/run-lucid`
-
-Same shape as `run-deep`, for the Lucid (wiki review) phase. While a
-previous run still has findings waiting for review, no new run starts
-(the response names that run); `{"force": true}` runs anyway.
-
-### `POST /wiki/migration/plan`
-
-Step one of moving a grown wiki onto the folder template
-([wiki.md](wiki.md#migrating-a-grown-wiki)): read the whole wiki and
-write down what a migration would do — nothing in the wiki is touched.
-The plan lands under `~/.somora/wiki-migration/<id>/plan.md` (and
-`plan.json`). **400** when the wiki layer is off.
+Whether an agent is reviewing Lucid findings right now.
 
 ```json
-{ "id": "20260929-104047", "plan": "/home/you/.somora/wiki-migration/20260929-104047/plan.md",
-  "pagesTotal": 991, "foldersTotal": 71,
-  "summary": { "move_folder": { "items": 19, "pages": 40 }, "unite_twins": { "items": 19, "pages": 38 },
-               "fold_report": { "items": 190, "pages": 190 }, "review_pages": { "items": 37, "pages": 447 },
-               "describe_folder": { "items": 0, "pages": 0 }, "unclear": { "items": 0, "pages": 0 } },
-  "durationMs": 1830 }
+{ "active": true, "agent": "<your-agent>", "dreamId": "lucid-…",
+  "startedAt": "…", "lastActivityAt": "…" }
 ```
 
-### `POST /wiki/migration/refine`
-
-Step two: the Lucid model (falling back to the Deep model) judges every
-page the plan is unsure about, and every page a rule would move — keep,
-move to a folder, fold into an existing page, or unclear — in batches
-of 25 pages. Body `{ "id": "<plan id>", "wait": false, "batchSize": 25 }`.
-Runs in the background by default and writes `refined.md` /
-`refined.json` next to the plan; `wait: true` returns the result inline.
-Still no write into the wiki. **404** for an unknown plan, **409** while
-a refine for that plan is running.
-
-```json
-{ "id": "20260929-104047", "started": true, "message": "Refine started in background. GET /wiki/migration/plans/:id for progress." }
-```
-
-### `GET /wiki/migration/plans/:id`
-
-The plan's summary, the progress of a running refine or execute
-(`done` / `total`), the approvals, and the refined result's groups
-when it exists.
-
-```json
-{ "id": "20260929-104047", "dir": "…/wiki-migration/20260929-104047",
-  "plan": { "pagesTotal": 991, "foldersTotal": 71, "summary": { … }, "createdAt": "…" },
-  "refine": { "started": "…", "done": 12, "total": 27 },
-  "execute": null,
-  "approvals": { "planId": "…", "groups": { "move:regeln": { "status": "approved", "at": "…" } }, "twins": {} },
-  "refined": { "model": "…", "pagesJudged": 943, "batchesTotal": 38, "batchesFailed": 0,
-               "groups": [ { "action": "move", "target": "regeln", "pages": 50 }, … ] } }
-```
-
-### `POST /wiki/migration/reindex`
-
-One full sweep of the shared search index now (`somora wiki migrate
-undo` calls it after putting a backup back). Returns `{ indexed,
-skipped }`; **503** while the index is still building.
-
-### `POST /wiki/migration/plans/:id/relink`
-
-A second pass over every page with the renames a finished run of this
-plan recorded: `[[links]]` and frontmatter `related:` entries that
-still name a moved, folded or united page are pointed at its new
-place. Idempotent. `{"dryRun": true}` only counts. Runs before
-v2026.09.29.07 left `related:` untouched — this is the repair.
-
-```json
-{ "id": "…", "dryRun": false, "renames": 819, "refsRewritten": 393, "pagesTouched": 224 }
-```
-
-### `POST /wiki/migration/plans/:id/approve`
-
-Mark groups of the refined plan. Body: `groups` (group keys such as
-`move:regeln` or `fold:projekte/somora`), or `action` (`move` / `fold`
-/ `unclear` — every group of that action), or `twins` (names, or
-`"all"`); `status` is `approved` (default), `dismissed` or `pending`.
-**404** until the plan has a refined result.
-
-```json
-{ "id": "…", "status": "approved", "touched": 3, "approvedGroups": 12, "approvedPages": 310, "approvedTwins": 19 }
-```
-
-### `POST /wiki/migration/plans/:id/execute`
-
-Run the approved part. Default `{"dryRun": true}` writes `dry-run.md`
-next to the plan and touches nothing. A real run needs
-`{"dryRun": false, "confirm": "move my wiki"}`, copies the whole wiki
-into `backup-<time>/` under the plan first, and refuses to start when
-the copy is incomplete. Background by default (`wait: true` for the
-result inline); **409** while a run for that plan is going. See
-[wiki.md](wiki.md#migrating-a-grown-wiki) for what a run does.
-
-```json
-{ "id": "…", "dryRun": false, "report": "…/execution-20260929-131500.md",
-  "counts": { "move": 207, "fold": 540, "unite": 19, "failed": 2, "skipped": 0 },
-  "linksRewritten": 812, "foldersRemoved": 51, "backupDir": "…/backup-20260929-131412",
-  "reindex": { "indexed": 610, "skipped": 380 } }
-```
+`{ "active": false }` when nobody is.
 
 ### `POST /agents/:agent/dream/run-rem`
 
-Catch up one agent's unread conversations now: starts the REM cycle the
-idle timer would start — resume a paused dream, else read the sessions
-with unread events one after another — without waiting for silence.
-Always in the background; chat activity pauses it as usual.
+Starts REM for one agent now, without waiting for the agent to go
+quiet. It always runs in the background, and chat activity pauses it as
+usual.
 
 ```json
 { "agent": "<your-agent>", "outcome": "started", "started": true, "message": "…" }
 ```
 
-`outcome` is `started`, `busy` (a cycle is already running) or
-`nothing_to_do`. `400` when REM is not enabled for the agent, `404` for
-an unknown agent, `409` when REM was enabled after the server started.
+`outcome` is `started`, `busy` (already running) or `nothing_to_do`.
+`400` when REM is not enabled for the agent, `409` when it was enabled
+after the server started.
 
----
+### `POST /dream/run-deep`
+
+Starts a Deep run.
+
+| Body field | Default | Meaning |
+|---|---|---|
+| `wait` | `false` | `true` waits for the run and returns its result. |
+| `force` | `false` | `true` re-reads every memory file, also those the skip cache would leave out. |
+
+Without `wait`: `{started: true, wait: false, force, message}`. With
+it: `{wait: true, force, candidatesSeen, cachedSkips, durationMs, counts, outcomes}`.
+`400` when the wiki is off.
+
+### `POST /dream/run-lucid`
+
+Starts a Lucid run. Same body as `POST /dream/run-deep`. While an
+earlier run still has findings waiting for review, no new run starts
+unless `force` is `true`.
+
+Without `wait`: `{started: true, wait: false, message}`. With it:
+`{wait: true, runId, findingsCount, pagesScanned, durationMs, status}`.
+`400` when the wiki is off.
+
+## Wiki migration
+
+These routes move a grown wiki onto the folder template, in steps:
+plan, refine, approve, execute. Plan ids look like `20260929-104047`.
+Each plan has a folder under `~/.somora/wiki-migration/<id>/`. All
+write routes answer `400` when the wiki is off or the id is malformed.
+
+### `POST /wiki/migration/plan`
+
+Step one. Reads the whole wiki and writes down what a migration would
+do. Nothing in the wiki is touched.
+
+```json
+{ "id": "20260929-104047",
+  "plan": "/home/me/.somora/wiki-migration/20260929-104047/plan.md",
+  "pagesTotal": 991, "foldersTotal": 71,
+  "summary": { "move_folder": { "items": 19, "pages": 40 },
+               "unite_twins": { "items": 19, "pages": 38 },
+               "fold_report": { "items": 190, "pages": 190 },
+               "review_pages": { "items": 37, "pages": 447 },
+               "describe_folder": { "items": 0, "pages": 0 },
+               "unclear": { "items": 0, "pages": 0 } },
+  "durationMs": 1830 }
+```
+
+### `POST /wiki/migration/refine`
+
+Step two. The Lucid model, or else the Deep model, judges every page
+the plan is unsure about or would move: keep, move, fold into another
+page, or unclear. Still nothing is written into the wiki.
+
+| Body field | Default | Meaning |
+|---|---|---|
+| `id` | required | The plan id. |
+| `wait` | `false` | `true` returns the result in the response. |
+| `batchSize` | 25 | Pages per model call. |
+
+Without `wait`: `{id, started: true, message}`. With it:
+`{id, refined, pagesJudged, batchesTotal, batchesFailed, groups: [{action, target, pages}]}`.
+The result is also written as `refined.md` and `refined.json` beside
+the plan. `404` for an unknown plan, `409` while a refine for it runs.
+
+### `GET /wiki/migration/plans/:id`
+
+The plan, the progress of a running step and the approvals.
+
+```json
+{ "id": "20260929-104047", "dir": "…/wiki-migration/20260929-104047",
+  "plan": { "pagesTotal": 991, "foldersTotal": 71, "summary": {}, "createdAt": "…" },
+  "refine": { "started": "…", "done": 12, "total": 27 },
+  "execute": null,
+  "approvals": { "planId": "…", "groups": { "move:rules": { "status": "approved", "at": "…" } }, "twins": {} },
+  "refined": { "model": "…", "pagesJudged": 943, "batchesTotal": 38, "batchesFailed": 0,
+               "createdAt": "…",
+               "groups": [ { "action": "move", "target": "rules", "pages": 50 } ] } }
+```
+
+`refine` and `execute` are `null` when that step has not run since the
+server started. A finished step has `finished`, a failed one `error`.
+
+### `POST /wiki/migration/plans/:id/approve`
+
+Step three. Marks groups of the refined plan.
+
+| Body field | Meaning |
+|---|---|
+| `groups` | Group keys such as `move:rules` or `fold:projects/somora`. |
+| `action` | `move`, `fold` or `unclear`: every group of that action. |
+| `twins` | Names of twin pages to unite, or `"all"`. |
+| `status` | `approved` (default), `dismissed` or `pending`. |
+
+```json
+{ "id": "…", "status": "approved", "touched": 3,
+  "approvedGroups": 12, "approvedPages": 310, "approvedTwins": 19 }
+```
+
+`404` until the plan has a refined result.
+
+### `POST /wiki/migration/plans/:id/execute`
+
+Step four. Runs the approved part.
+
+| Body field | Default | Meaning |
+|---|---|---|
+| `dryRun` | `true` | A dry run writes `dry-run.md` beside the plan and touches nothing. |
+| `confirm` | none | A real run needs `{"dryRun": false, "confirm": "move my wiki"}`. |
+| `wait` | `false` | `true` returns the result in the response. |
+
+A real run first copies the whole wiki into `backup-<time>/` under the
+plan and does not start when the copy is incomplete.
+
+Without `wait`: `{id, dryRun, started: true, message}`. With it:
+
+```json
+{ "id": "…", "dryRun": false, "report": "…/execution-20260929-131500.md", "steps": 768,
+  "counts": { "move": 207, "fold": 540, "unite": 19, "failed": 2, "skipped": 0 },
+  "linksRewritten": 812, "foldersRemoved": 51, "backupDir": "…/backup-20260929-131412",
+  "reindex": { "indexed": 610, "skipped": 380 } }
+```
+
+`404` without a refined result, `409` while a run for that plan is
+going.
+
+### `POST /wiki/migration/plans/:id/relink`
+
+Goes over every page again with the renames a finished run recorded.
+`[[links]]` and `related:` entries that still name a moved, folded or
+united page are pointed at its new place. Safe to repeat. Body
+`{"dryRun": true}` only counts.
+
+```json
+{ "id": "…", "dryRun": false, "renames": 819, "refsRewritten": 393, "pagesTouched": 224 }
+```
+
+`404` when the plan has no finished run.
+
+### `POST /wiki/migration/reindex`
+
+Runs one full pass of the shared search index now. `somora wiki migrate
+undo` calls it after putting a backup back. Returns
+`{indexed, skipped}`. `503` when the index cannot run it yet.
 
 ## Projects
 
-Curated pointer-file manifests linking a session to a real-world
-project. **Opt-in feature** — every route below returns `503` when
-`projects.enabled` is `false` in `config.yaml`. Clients should probe
-[`GET /projects/feature`](#get-projectsfeature) once at boot to
-decide whether to surface the feature at all. See
-[projects.md](projects.md) for the user-level model.
+A project links a session to a folder, links and a description. The
+feature is opt-in: every route except the first answers `503` when
+`projects.enabled` is `false`.
 
 ### `GET /projects/feature`
 
-Feature-flag probe. **Always returns 200**, regardless of the
-configured state — clients use this to detect availability without
-ambiguity (empty entities array vs. feature off).
+Whether projects are on. Always answers `200`.
 
 ```json
 { "enabled": true, "entityCount": 2 }
@@ -2443,551 +1985,846 @@ ambiguity (empty entities array vs. feature off).
 
 ### `GET /projects/entities`
 
-The controlled entity vocabulary from `config.projects.entities`.
+The fixed list of entities a project can belong to, from
+`projects.entities` in the config.
 
 ```json
-{
-  "entities": [
-    { "slug": "privat", "label": "Privat" },
-    { "slug": "acme", "label": "acme GmbH" }
-  ]
-}
+{ "entities": [ { "slug": "private", "label": "Private" },
+                { "slug": "acme", "label": "acme" } ] }
 ```
-
-Agents call this before `project_create` when they're uncertain
-about an entity name they heard via STT — the response is the
-canonical match list. Direct clients fetch it once to populate
-filter dropdowns.
 
 ### `GET /projects`
 
-List configured projects.
+The projects.
 
-Query params (all optional):
-- `entity=<slug>` — filter to one entity
-- `tag=<string>` — filter to projects whose `tags[]` contains this
-- `includeArchived=true` — include soft-deleted projects (hidden by
-  default)
+| Query | Meaning |
+|---|---|
+| `entity` | Only this entity. |
+| `tag` | Only projects with this tag. |
+| `includeArchived=true` | Also archived projects. |
 
 ```json
-{
-  "total": 3,
+{ "total": 1,
   "projects": [
-    {
-      "slug": "heimkino",
-      "name": "Heimkino",
-      "entity": "privat",
-      "description": "Receiver, beamer, …",
-      "color": "#4f46e5",
+    { "slug": "home-cinema", "name": "Home cinema", "entity": "private",
+      "description": "Receiver, projector, …", "color": "#4f46e5",
       "tags": ["hardware", "wip"],
-      "created": "2026-04-15T10:23:00Z",
-      "updated": "2026-05-13T09:42:00Z",
+      "created": "2026-04-15T10:23:00Z", "updated": "2026-05-13T09:42:00Z",
       "archived": false,
-      "paths": [
-        { "ref": "~/code/heimkino", "label": "Sourcecode" },
-        { "ref": "https://drive.google.com/..." }
-      ]
-    }
-  ]
-}
+      "paths": [ { "ref": "~/code/home-cinema", "label": "Source code" },
+                 { "ref": "https://example.com/plans" } ],
+      "workdir": "~/code/home-cinema" } ] }
 ```
 
 ### `GET /projects/:slug`
 
-Full project file content. `404` if the slug doesn't exist.
-
-```bash
-curl https://<host>:18737/projects/heimkino
-```
+One project as `{project}`. `400` for a malformed slug, `404` when it
+does not exist.
 
 ### `POST /projects`
 
-Create a new project. Returns `201` with the full project on
-success.
+Creates a project.
 
-Body:
-```json
-{
-  "slug": "heimkino",
-  "name": "Heimkino",
-  "entity": "privat",
-  "description": "Receiver, beamer, acoustic treatment",
-  "color": "#4f46e5",
-  "tags": ["hardware", "wip"],
-  "expires": null,
-  "paths": [
-    { "ref": "~/code/heimkino", "label": "Sourcecode" },
-    { "ref": "https://drive.google.com/..." }
-  ],
-  "workdir": "~/code/heimkino"
-}
-```
+| Body field | Required | Meaning |
+|---|---|---|
+| `slug` | yes | Must match `[a-z0-9_-]+` and be new. |
+| `name` | yes | Display name. |
+| `entity` | yes | One of the slugs from `GET /projects/entities`. |
+| `description`, `color`, `tags`, `expires` | no | Free fields. `expires` is a date string or `null`. |
+| `paths` | no | `[{ref, label?}]`. A `ref` is `https://…`, `~/path`, `/path`, or `<resource>:/path` with a resource from the config. |
+| `workdir` | no | The project's working folder. A session that pins the project works there. |
 
-`workdir` (optional) is the project's working directory — pinning the
-project to a session makes it that session's working directory (see
-[projects.md](projects.md)).
-
-Validation:
-- `slug` must match `[a-z0-9_-]+` and be unique (`409` on collision)
-- `entity` must match one of `config.projects.entities[].slug`
-  (`400` with the available list when unknown)
-- each `paths[].ref` must be scheme-recognised — `https://...`,
-  `~/abs`, `/abs`, or `<resource-slug>:/path` where the slug
-  exists in `config.resources` (`400` with the available list
-  when the resource is unknown)
+| Status | Body |
+|---|---|
+| `201` | `{project}` |
+| `400` | A required field is missing, the slug is malformed, the entity is unknown or a `ref` is not valid. The error lists what is available. |
+| `409` | A project with that slug exists. |
 
 ### `PATCH /projects/:slug`
 
-Transactional multi-op update. All ops validate first; if any one
-fails, **nothing is written**. Returns `200` with the updated
-project on success.
+Changes a project through a list of operations. All are checked first:
+if one fails, nothing is written.
 
-Body:
 ```json
-{
-  "ops": [
+{ "ops": [
     { "op": "add_path", "ref": "~/research/atmos.md", "label": "Atmos notes" },
     { "op": "set_field", "field": "description", "value": "Updated" },
-    { "op": "set_tags", "tags": ["hardware", "wip", "avr"] }
-  ]
-}
+    { "op": "set_tags", "tags": ["hardware", "wip"] } ] }
 ```
 
-Supported op shapes:
-
-| `op` | Required fields | Effect |
+| `op` | Fields | Effect |
 |---|---|---|
-| `set_field` | `field` ∈ {name,description,color,expires}, `value` (string or null) | Update top-level field; `null` clears optional fields (cannot clear `name`). |
-| `add_path` | `ref`, `label?` | Append a pointer. Same scheme validation as `POST /projects`. |
-| `remove_path` | `ref` | Remove by exact ref match. `400` if `ref` isn't in the list. |
-| `set_tags` | `tags: string[]` | Replace the full tag array. |
-| `archive` | `reason?` | Soft-delete. |
-| `unarchive` | — | Restore. |
+| `set_field` | `field` (`name`, `description`, `color`, `expires`, `workdir`), `value` (string or `null`) | Sets the field. `null` clears it. `name` cannot be cleared. |
+| `add_path` | `ref`, `label?` | Adds a path. Checked as in `POST /projects`. `400` when it is already there. |
+| `remove_path` | `ref` | Removes the path with exactly that `ref`. `400` when it is not there. |
+| `set_tags` | `tags` | Replaces all tags. |
+| `archive` | `reason?` | Hides the project. |
+| `unarchive` | none | Brings it back. |
 
-Slug and entity are intentionally **not** mutable in v1 — would
-break session pins. Workaround: delete the file and recreate.
+Returns `{project}`. `400` for a bad operation, `404` for an unknown
+project. Slug and entity cannot be changed.
 
 ### `GET /agents/:agent/sessions/:session/project`
 
-Current pinned project for a session. Always returns `200` (or
-`404` if the agent/session itself doesn't exist).
+The project pinned to a session.
 
-```json
-{
-  "agent": "<your-agent>",
-  "session": "main",
-  "slug": "heimkino",
-  "project": { … full ProjectInfo … }
-}
-```
-
-When no project is pinned: `{ "agent": …, "session": …, "slug": null, "project": null }`.
-When the slug is set but the file is missing on disk:
-`{ …, "slug": "ghost", "project": null, "missing": true }`.
+| Case | Body |
+|---|---|
+| Pinned | `{agent, session, slug, project}` |
+| Nothing pinned | `{agent, session, slug: null, project: null}` |
+| Pinned, but the project file is gone | `{agent, session, slug, project: null, missing: true}` |
 
 ### `POST /agents/:agent/sessions/:session/project`
 
-Pin a project to a session.
-
-```bash
-curl -X POST https://<host>:18737/agents/<your-agent>/sessions/main/project \
-     -H 'Content-Type: application/json' \
-     -d '{"slug":"heimkino"}'
-```
-
-Returns `{ agent, session, previousSlug, currentSlug }`. Re-pinning
-the same project is a noop — no `project_switched` event is written
-to the JSONL.
-
-Emits an SSE `project` event to every subscriber of (agent, session).
+Pins a project to a session. Body `{"slug": "<slug>"}`; `null` clears
+the pin. Returns `{agent, session, previousSlug, currentSlug}` and
+sends a `project` event. `400` without `slug` or for an unknown
+project.
 
 ### `DELETE /agents/:agent/sessions/:session/project`
 
-Clear the pin. Returns `{ agent, session, cleared: true, previousSlug }`.
-Also emits an SSE `project` event.
-
----
-
-## Realtime voice
-
-Talking to an agent: a standing, interruptible call where a realtime
-model speaks and the agent knows. Off unless `realtimeVoice.enabled`.
-Concept and configuration in [realtime-voice.md](realtime-voice.md);
-this is not the dictation/TTS path ([voice.md](voice.md)).
-
-### `GET /voice/status`
-
-```json
-{ "enabled": true, "provider": "openai", "model": "gpt-realtime-2.1-mini",
-  "maxCallMinutes": 20, "agents": ["<your-agent>", "<other-agent>"], "calls": [] }
-```
-
-`agents` lists who may be called — realtime voice on, and the agent's
-`agent.yaml` carries `voice.enabled: true`. With the feature off the
-answer is `{ "enabled": false, "agents": [] }` (200, not an error: a
-client asks this to decide whether to show the tile at all).
-
-### `GET /voice/instructions?agent=<name>&session=<slug>`
-
-Exactly what the speaking model would be told, without starting a call:
-
-```json
-{ "agent": "<your-agent>", "session": "main", "text": "You are <your-agent>, speaking out loud …",
-  "chars": 1528, "source": "derived", "voice": "ash", "language": "de",
-  "consultPolicy": "always" }
-```
-
-`source` is `derived` (built from the persona plus `agent.yaml voice:`)
-or `VOICE.md` when the operator wrote one. The derived text exists only
-in memory — this is the only way to read it. `503` when voice is off,
-`404` when that agent has no voice.
-
-### `WS /voice/attach?agent=<name>&session=<slug>`
-
-The call itself. One JSON frame format in both directions; the browser
-holds no provider knowledge, no key, and never sees a tool call.
-
-Client → server:
-
-```json
-{ "type": "audio", "base64": "<PCM16 24 kHz mono>" }
-{ "type": "interrupt" }
-{ "type": "hangup" }
-```
-
-Keep sending audio while nobody speaks. The provider ends a turn on
-SILENCE, not on missing packets — a client that stops sending gets one
-"speech started" and then nothing at all.
-
-Server → client:
-
-```json
-{ "type": "ready", "call": { … }, "rateHz": 24000 }
-{ "type": "audio", "base64": "…", "rateHz": 24000 }
-{ "type": "state", "call": { "state": "consulting", "consults": 2, "target": { … } } }
-{ "type": "event", "event": { "kind": "user_transcript", "text": "…", "final": true }, "call": { … } }
-```
-
-`state` is `connecting | listening | consulting | speaking | closed`.
-`consulting` is somora running a real turn in the bound session — no
-provider event announces it. `target` changes when a call is handed to
-another agent, and the client follows it.
-
-Closing the socket ends the call: a standing connection bills by the
-minute. Work the agent already accepted keeps running — hanging up and
-cancelling are two different things.
+Clears the pin. Returns `{agent, session, cleared: true, previousSlug}`
+and sends a `project` event.
 
 ## Attachments
 
-Files attached to chat turns (images, PDFs, plain-text snippets)
-travel via this two-step flow: upload first, then ref the hash on
-`/chat/send`.
+Files for a chat turn travel in two steps: upload first, then name the
+upload in `attachments` on `POST /chat/send` or `POST /chat/send-sync`.
 
 ### `POST /attachments`
 
-Upload **one** file as the raw request body, with its name in the
-`X-Somora-Filename` header (URL-encoded, so spaces and non-ASCII
-survive). Content is stored once on disk, deduped by hash.
-
-Raw bytes rather than a form upload is deliberate: multipart parsing
-pulls the whole file into memory, while a raw body streams and keeps
-the size cap meaningful. A `multipart/form-data` request is refused
-with `415` rather than stored as an opaque text attachment.
+Uploads one file as the raw request body. The file name goes into the
+`X-Somora-Filename` header, URL-encoded.
 
 ```bash
-curl -X POST https://<host>:18737/attachments \
+curl -X POST $BASE/attachments \
      --data-binary @./screenshot.png \
      -H "Content-Type: image/png" \
      -H "X-Somora-Filename: screenshot.png"
 ```
 
-Returns one object (the type is sniffed from the bytes, not the name):
 ```json
-{ "hash": "sha256-…",
-  "name": "screenshot.png",
-  "mime": "image/png",
-  "kind": "image",
-  "size": 184320 }
+{ "hash": "9f2c…", "name": "screenshot.png", "mime": "image/png",
+  "kind": "image", "size": 184320 }
 ```
 
-Collect the objects for as many files as you need and pass them as
-`attachments[]` on the next `/chat/send` or `/chat/send-sync`. The
-per-turn count and per-file size come from `config.attachments`.
+The type is read from the bytes, not from the name. The same content
+is stored only once. Pass the whole object on in `attachments`.
+
+| Status | When |
+|---|---|
+| `400` | No body, or the file breaks a limit from `attachments` in the config. |
+| `415` | A `multipart/form-data` upload. Send the raw bytes. |
 
 ### `GET /attachments/:hash`
 
-Serve the bytes for a previously-uploaded attachment. Useful for
-clients that want to preview the same image the agent saw.
+The bytes of an uploaded file, for showing what the agent saw. `:hash`
+is the 64-character hash. `400` for a malformed hash, `404` when it is
+unknown.
 
----
+## Files
 
-## Tmux integration
+### `GET /files/view`
 
-somora knows about tmux sessions on the host and lets clients attach
-to them through a WebSocket bridge. See [tmux.md](tmux.md) for the
-full model.
+Describes a file on the server by absolute path, and returns its text
+when it is a text file. The shipped clients use it to open paths that
+agents mention in chat.
 
-### `GET /tmux/sessions`
+| Query | Required | Meaning |
+|---|---|---|
+| `path` | yes | Absolute path. A leading `~` is expanded. |
 
-List live tmux sessions, joined with somora's origin store so each
-session carries the agent/session that created it (if known).
+The route follows the same rules as the `file_read` tool: what an agent
+may read, you may view. Links are resolved before the check.
 
-```bash
-curl https://<host>:18737/tmux/sessions
-```
+| File | `kind` | The response carries |
+|---|---|---|
+| `.md`, `.markdown` | `markdown` | `content` |
+| `.txt`, `.log`, other text | `text` | `content` |
+| `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.svg` | `code` | `content` |
+| PNG, JPEG, GIF, WebP | `image` | `url`, `mime` |
+| MP4, MOV, WebM | `video` | `url`, `mime` |
+| WAV, MP3, OGG, FLAC, M4A | `audio` | `url`, `mime` |
+| PDF | `pdf` | `url`, `mime` |
+| anything else | `binary` | `url`, `mime` |
 
-### `WS /tmux/attach?session=<name>`
+Media and unknown files are recognised from their bytes, not from the
+extension. An `.svg` is shown as its source, because it can carry
+script.
 
-WebSocket bridge to `tmux attach-session -d -t <name>`. Binary
-frames carry the terminal stream; text frames carry control messages
-(`{type:'resize',cols,rows}`).
-
-### `WS /terminal/attach`
-
-Fresh shell (no tmux session). Same binary/text frame protocol as
-`/tmux/attach`.
-
----
-
-## Browser — shared managed Chromium
-
-Served by the somora web server. See [browser.md](browser.md). Mutating
-HTTP routes answer `503` while `browser.enabled` is false; status and
-the change stream return `{enabled:false,browsers:[],warnings:[]}`.
-The viewer WebSocket refuses attachment when disabled.
-
-### `GET /logs`
-
-The server's own log, for the log window in the web client. Query:
-`day` (`YYYY-MM-DD`, default the newest file), `minLevel` (pino numbers:
-20 debug, 30 info, 40 warn, 50 error), `q` (case-insensitive substring
-over the raw line), `agent`, `limit` (default 300, max 2000).
-
-Returns `{ day, days, lines: [{ ts, level, msg, agent?, session?, fields }],
-offset, truncated }`. `days` lists every day that has a file, newest
-first. `offset` is a byte position to continue from. `truncated` says
-older lines were outside the read window.
-
-Only the tail of one day's file is read (512 KiB), so the cost does not
-grow with the log — the directory routinely holds hundreds of megabytes.
-The caller names a day, never a path.
-
-### `GET /logs/since`
-
-`?offset=<n>` plus the same filters. Returns `{ lines, offset, day }`
-with only what was appended after `offset` — the follow path for the log
-window. A file that shrank (rotation, truncation) snaps the offset back
-to its real size instead of reading backwards.
-
-### `POST /browser/op`
-
-Run one `browser` tool operation for an agent, in that agent's window — the path the MCP tool
-child takes for claude-cli/codex-cli turns, because the Chromium lives
-in the server process. Body `{ agent, session?, input }` where `input`
-is the tool's argument object (`{ op: "open", url }`, `{ op:
-"snapshot", tab }`, …). Returns the tool's result object (`ok`,
-`error`, `hint`, `tab`, `snapshot`, …), never a non-2xx for a tool-level
-refusal.
-
-### `GET /browser/status`
-
-`{ enabled, headed, browsers: [{ view_id, agent, browser_id, profile,
-ephemeral, state, control, human_by?, handoff?, tabs: [{ tab_id, url,
-title, agent, session?, generation, emulation? }], last_used, headed? }],
-warnings }` — one entry per open **window**, not per Chromium process:
-`view_id` is `<browser_id>@<agent>` and `agent` owns it. Agents sharing
-a profile run in one process (`browser_id`) with one window each, own
-tabs, own control state, own handoff. Stopped browsers are not listed,
-except one still holding a pending handoff. `control` is
-`agent_control`, `handoff_requested`, `human_control` or `paused`.
-`headed` is the host plan for `browser.headed` (`headless`, `display`,
-`xvfb`, `unavailable`); `warnings` lists what the operator must fix
-(no Chromium found, headed configured but no display and no Xvfb).
-`emulation` shows a tab's `device` / `locale` from `open`.
-
-### `GET /browser/stream`
-
-SSE events `browsers` contain `{enabled,browsers,warnings}` with the same
-browser entries as `/browser/status`. Every connection starts with a
-complete snapshot; later events replace it. `heartbeat` follows the
-normal SSE liveness settings. Slow readers receive coalesced snapshots;
-stalled writes terminate the connection.
-
-### `POST /browser/:id/restart`
-
-Explicitly reopen a known stopped browser with a blank page and the
-same profile. `:id` may be a window id or a browser id — a restart is
-per process; every window that existed comes back with its control
-state. No old navigation or input is replayed. Pending handoffs
-remain pending. Returns `{ok:true}` or `409` with `{error}` when recovery
-is refused (unknown browser or removed shared-profile configuration).
-
-### `POST /browser/:id/control`
-
-`:id` is a window id (`profile:team@<your-agent>`); a bare browser id works
-while only one agent has a window on that process, and is otherwise
-refused as ambiguous. Body `{ mode: "human" | "agent", by?, handoffId? }`.
-`human` takes control of that window: its agent's ops are refused until
-handed back, while other agents on the same process keep working.
-`agent` hands it back; with a pending handoff the requesting agent is
-woken once in its session (pass the `handoffId` from the status so a
-stale button press after a newer handoff does not wake twice). Without a
-pending handoff, a hand-back after real activity wakes the window's own
-agent, in the session of the last tab it used there. `404`
-when the browser is not running, `409` on a state conflict. A mismatched
-handoff ID is refused; a duplicate completed ID does not release a newer
-manual takeover. With `by`, a different current controller cannot be
-handed back. The web client sends control over its viewer WebSocket so
-the identity matches subsequent input. Wake dispatch is not a durable
-queue; see the recovery limitations in [browser.md](browser.md).
-
-### `GET /browser/attach` (WebSocket)
-
-`?view=<viewId>&tab=<tabId>&viewer=<id>` — the live view behind the web
-client's browser window. `viewId` is `<browser_id>@<agent>`; only that
-window's tabs are reachable, and `browser=` is still accepted as the
-parameter name. Control, input and hand-back over this socket act on
-that window. Binary frames carry one JPEG each:
-`[u32 BE header length][JSON header][JPEG]`, header `{ tabId,
-generation, seq, url, cssWidth, cssHeight, scrollX, scrollY, ts }`.
-Frames are ack-paced (`browser.stream.maxFps`, default 15, at most 20 fps) and skipped for a viewer whose
-socket has more than 2 MB pending. Text frames (JSON):
-
-- server → viewer: `ping` (answer `{"type":"pong"}`; 80 s of silence
-  drops the socket), `ready` `{browser, tabId, viewerId}` after attach
-  or a tab switch, `tabs` `{browser}` whenever tabs or control changed,
-  `control` `{control}` after a control request, `notice`/`error`
-  `{text}`.
-- viewer → server: `control` `{mode:"human"|"agent", handoffId?}`,
-  `tab` `{tabId}` (switch the streamed tab), and — only while this
-  viewer holds human control — `navigate` `{url}` (same policy as the
-  tool), `newtab`, `closetab` `{tabId}`, `resize` `{width,height}`,
-  `mousemove`/`click`/`mousedown`/`mouseup` `{x,y,button?,clickCount?}`
-  in CSS pixels of the streamed viewport, `wheel` `{x,y,deltaX,deltaY}`,
-  `text` `{text}` (composed text incl. paste; CDP `Input.insertText`),
-  `key` `{key, ctrl?, alt?, shift?, meta?, action?}` (Playwright key
-  names, e.g. `Enter`, `Control+a`), `back`, `forward`, `reload`. Input
-  from a viewer without control gets a `notice`, nothing is applied.
-  Input other than `navigate`, `newtab`, `closetab`, `tab` and `control`
-  must also carry `frameTab` and `generation` from the displayed frame;
-  obsolete metadata is refused. Messages above 64 KiB and queues above
-  64 commands close the connection.
-
-Close codes: `1008` bad request (unknown browser, disabled), `4000`
-heartbeat timeout, `4001` tab closed, `1009` oversized input, `1012` server
-shutdown. `1008` also covers excessive pending input.
-
-## Sentinel — proactive triggers
-
-Sentinel installs time-based triggers that wake agents on a schedule.
-The agent does its work into its own chat session — same surface as
-when you interact with it directly. See [sentinel.md](sentinel.md) for
-the conceptual overview.
-
-The same operations are also exposed as the `sentinel` tool agents
-can call (`POST /agents/:agent/tools/sentinel`); the HTTP routes below
-are for the web-UI sentinel tab and for external clients.
-
-### `GET /sentinel/triggers`
-
-List all triggers. Optional query filters:
-
-- `?owner=<agent>` — only triggers whose `ownerAgent` matches
-- `?status=active|paused|error|completed`
-
-```bash
-curl https://<host>:18737/sentinel/triggers?status=active
+```json
+{ "path": "/home/me/somoraworkspace/report.md", "kind": "markdown",
+  "ext": ".md", "bytes": 4321, "content": "# Report\n…",
+  "truncated": false, "downloadUrl": "/files/raw?download=1&path=…" }
 ```
 
 ```json
-{
-  "count": 2,
+{ "path": "/home/me/somoraworkspace/shots/run-12.png", "kind": "image",
+  "ext": ".png", "bytes": 184320, "mime": "image/png",
+  "url": "/files/raw?path=…", "downloadUrl": "/files/raw?download=1&path=…" }
+```
+
+Text is cut at 200 000 characters; `truncated` is then `true` and
+`truncated_reason` says why. Every response has `downloadUrl`.
+
+| Status | When |
+|---|---|
+| `400` | `path` is missing, relative, a folder or not a regular file. |
+| `403` | The read rules forbid the path. |
+| `404` | The file does not exist. |
+
+### `GET /files/raw`
+
+The bytes of a file: media to show in place, and a download for
+everything else. Same path rules as `GET /files/view`.
+
+| Query | Required | Meaning |
+|---|---|---|
+| `path` | yes | Absolute path. |
+| `download` | no | `1` forces a download. |
+
+- Range requests work (`206`, `416`, and `bytes=-N` for the end), so a
+  video player can seek. There is no size limit.
+- `Content-Type` comes from the bytes, with
+  `X-Content-Type-Options: nosniff`.
+- Only images, video, audio and PDF are served `inline`. Everything
+  else is an attachment.
+
+Errors as for `GET /files/view`.
+
+## Images
+
+Image generation. The routes that list, generate or ask a provider
+answer `503` unless `imageGen.enabled` is set and at least one model is
+configured.
+
+### `GET /images/status`
+
+Whether image generation is on. Returns `{enabled: false}`, or
+`{enabled: true, outputDir, maxImagesPerTurn, models: [{name, label, model, provider, defaults}]}`.
+
+### `GET /images`
+
+The generated images, newest first.
+
+| Query | Default | Meaning |
+|---|---|---|
+| `query` | none | Part of the prompt, case-insensitive. |
+| `model`, `agent` | none | Only this model or agent. |
+| `since`, `until` | none | `YYYY-MM-DD`. |
+| `limit` | 60 | At most 200. |
+| `offset` | 0 | For paging. |
+
+Returns `{total, offset, items, totalBytes}`. `total` counts all
+matches, not only this page. The items are media records, see
+`GET /media`.
+
+### `GET /images/:id`
+
+One record: prompt, model, specs, path, type, size, cost, agent and
+session.
+
+### `GET /images/:id/file`
+
+The image bytes. `?download=1` forces a download. `410` when the
+record exists but the file was moved or deleted. Files are addressed
+by record id, never by path.
+
+### `GET /images/models/:name/capabilities`
+
+What a configured image model accepts.
+
+| Field | Meaning |
+|---|---|
+| `model`, `defaults` | The configured name and its default specs. |
+| `source` | Where the answer comes from: `catalog`, `config` or `unknown`. |
+| `known` | Whether anything is known about the model. |
+| `values` | Allowed values per spec field. A field that is missing here has no known limit: offer free input for it. |
+| `recommended`, `supported` | The provider's recommended values and supported fields, or `null`. |
+| `maxN`, `maxReferences` | Most images per request and most reference images, or `null`. |
+| `sizeAlsoAccepts` | Named ratios the endpoint takes in `size`, or `null`. |
+
+`404` for an unknown model name.
+
+### `GET /images/catalog`
+
+The image models a provider offers right now. `?provider=<name>`
+picks the provider; the default is the one behind the first configured
+model. Returns `{provider, models: [{id, name?}]}`. The config still
+decides which models somora calls. `400` for an unknown provider.
+
+### `POST /images/generate`
+
+Generates images.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `prompt` | yes | What to draw. |
+| `model` | no | A configured model name. |
+| `resolution`, `aspect_ratio`, `size`, `quality`, `output_format`, `background`, `output_compression`, `seed`, `n`, `steps`, `cfg`, `guidance` | no | Specs. Which ones a model takes is in its capabilities. |
+| `reference_images` | no | Images as base64 strings. The `image_generate` tool takes file paths instead. |
+| `session` | no | Recorded with the image. |
+
+Returns `{images: [record], costUsd, warnings?, fellBackFrom?}`.
+`warnings` lists what the endpoint did differently than asked, for
+example a size it replaced. `fellBackFrom` names the models that were
+unavailable when a backup model was used. A `save_to` field is ignored:
+every image lands in the configured images folder.
+
+| Status | Meaning |
+|---|---|
+| `400` | Something the caller can fix. The message names the field and the values that work. |
+| `502` | The provider failed. |
+| `503` | The model is configured but not loaded right now. |
+
+Error bodies carry `kind` beside `error`.
+
+### `DELETE /images/:id`
+
+Forgets the record. The file on disk is kept. Returns
+`{ok, path, fileKept: true}`.
+
+## Media
+
+One gallery over everything somora generated: images and videos.
+
+### `GET /media`
+
+| Query | Default | Meaning |
+|---|---|---|
+| `kind` | both | `image` or `video`. |
+| `agent` | none | Only this agent. |
+| `query` | none | Part of the prompt. |
+| `limit` | 60 | At most 200. |
+| `offset` | 0 | For paging. |
+
+Returns `{total, offset, items, totalBytes}`. A media record:
+
+| Field | Meaning |
+|---|---|
+| `id`, `kind`, `createdAt` | `kind` is `image` or `video`. A record without `kind` is an image. |
+| `prompt`, `modelName`, `modelId`, `provider`, `specs` | How it was made. |
+| `path`, `filename`, `mime`, `bytes` | The file. |
+| `width?`, `height?`, `durationSec?` | Size, and length for a video. |
+| `thumbPath?`, `thumbMime?` | A video's still image. |
+| `costUsd?`, `agent?`, `session?`, `references?` | Cost, who made it, reference images. |
+| `batchId`, `batchIndex`, `linkedTo` | Grouping of images made in one request. |
+
+### `GET /media/:id`
+
+One media record. `404` when unknown.
+
+### `GET /media/:id/file`
+
+The bytes, served `inline`. `?download=1` forces a download. Range
+requests work (`206`, `416`), so a video player can seek. `410` when
+the file left the disk.
+
+### `GET /media/:id/thumb`
+
+A video's still image, `image/webp` unless the record says otherwise.
+Same behaviour as `/file`. `404` when there is none.
+
+### `DELETE /media/:id`
+
+Removes the record. Returns `{ok: true}` or `404`.
+
+## Video
+
+Video generation runs as jobs. A request starts one and returns at
+once. It is on when `videoGen.enabled` is set and a model is
+configured. When the file is ready it becomes a media record, and an agent
+that started the job is woken with a turn whose origin is
+`{kind: "wake", about: "job"}`.
+
+### `GET /video/status`
+
+Whether video generation is on, and the jobs.
+
+| Query | Meaning |
+|---|---|
+| `agent` | Only this agent's jobs. |
+
+Returns `{enabled: false, reason}` when it is off. Otherwise:
+
+| Field | Meaning |
+|---|---|
+| `active`, `limit` | Jobs running now and the most allowed at once (`videoGen.maxConcurrent`). |
+| `models` | `[{name, label, model, provider, wire}]` |
+| `jobs` | Each `{id, providerJobId, modelName, provider, prompt, specs, status, progress?, queuePosition?, error?, createdAt, updatedAt, mediaId?, path?, agent?, session?, references?}`. |
+
+A job's `status` is `queued`, `in_progress`, `completed` or `failed`.
+`mediaId` appears once the file is stored. It is the id for
+`GET /media/:id`.
+
+### `POST /video/generate`
+
+Starts a job.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `prompt` | yes | What to show. |
+| `model` | no | A configured model name. |
+| `seconds`, `size`, `aspect_ratio`, `audio`, `quality`, `seed` | no | Specs. |
+| `reference_images` | no | Images as base64 strings. |
+| `agent`, `session` | no | Who is woken when the job ends. |
+
+Returns `{job}`. Follow it with `GET /video/status`.
+
+| Status | Meaning |
+|---|---|
+| `400` | A bad request. |
+| `429` | All job slots are busy. |
+| `502` | The provider failed. |
+| `503` | Video is off, or the model is not available right now. |
+
+## Voice
+
+Dictation and spoken replies. Each route answers `503` when its part,
+`stt` or `tts`, is not enabled in the config.
+
+### `GET /stt/config`
+
+Whether dictation is available. Returns `{enabled, language}` or
+`{enabled: false}`. `language` is the default language hint or `null`.
+
+### `POST /stt/transcribe`
+
+Turns a recording into text. The body is `multipart/form-data`.
+
+| Form field | Required | Meaning |
+|---|---|---|
+| `file` | yes | The recording. |
+| `language` | no | Overrides the configured language. |
+
+Returns `{text}`. `400` for a wrong body, `502` when the transcription
+service failed or was unreachable.
+
+### `GET /tts/config`
+
+Whether spoken replies are available, and the defaults per client.
+
+```json
+{ "enabled": true,
+  "formats": ["audio/wav", "audio/opus", "audio/mp4"],
+  "language": "de", "voice": null,
+  "clients": {
+    "web":    { "autoPlayVoiceReplies": false, "allowUserOverride": true },
+    "mobile": { "autoPlayVoiceReplies": false, "allowUserOverride": true } } }
+```
+
+`formats` is only `audio/wav` when re-encoding is off. Returns
+`{enabled: false}` when spoken replies are off.
+
+### `POST /tts/synthesize`
+
+Speaks a text. The response body is the audio. The format is chosen
+from the `Accept` header.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `text` | yes | At most 4000 characters. |
+| `voice`, `language` | no | Override the configured ones. |
+| `agent` | no | Use this agent's voice settings. |
+
+| Response header | Meaning |
+|---|---|
+| `Content-Type` | `audio/wav`, `audio/opus` or `audio/mp4`. |
+| `X-Tts-Cache` | `hit` or `miss`. |
+| `X-Tts-Cache-Key` | The key under which the audio is cached. |
+| `X-Tts-Duration-Ms` | The length, when it is known. |
+
+`400` for a missing or too long text, `502` when the speech service
+failed.
+
+### `GET /tts/cache/:filename`
+
+A cached audio file. File names have the form
+`<64 hex characters>.<wav|opus|m4a>`. This is the URL in
+`assistant_audio.url`, so a client can hand it straight to an audio
+player. A `Range: bytes=N-` request works, for seeking.
+
+`400` for another file name, `404` when the file is not cached.
+
+### `POST /voice/turn`
+
+Audio in, audio out, in one request: transcribes the recording, runs a
+normal turn with it, and speaks the reply. The turn shows up in the
+session and on its stream like any other. The body is
+`multipart/form-data`.
+
+| Form field | Required | Meaning |
+|---|---|---|
+| `audio` | yes | The recording. |
+| `agent` | yes | Agent name. When left out, the first agent is used. |
+| `session` | no | Default `main`. A slug that does not exist is created. An exact id that does not exist answers `404`. |
+| `voice`, `language` | no | For the spoken reply. Default: `tts.voice`, `tts.language`. |
+
+The audio format is chosen from the `Accept` header.
+
+```json
+{ "ok": true, "agent": "<your-agent>", "session": "main",
+  "transcript": "What time is it?",
+  "text": "It is 10:29.",
+  "audio": { "url": "/tts/cache/abc123….opus", "mime": "audio/opus",
+             "durationMs": 1800, "cacheKey": "abc123…" } }
+```
+
+The reply is always spoken, whatever a client's auto-play setting says.
+A reply that is mostly code or tables is replaced by a short spoken
+note that points to the chat.
+
+`502` when transcription returned nothing, the agent gave no reply or
+speech failed.
+
+### `assistant_audio` SSE event
+
+After a turn whose reply was spoken, the session's stream sends:
+
+```
+event: assistant_audio
+data: {"turnId":"…","url":"/tts/cache/….opus","mime":"audio/opus","durationMs":1800,"cacheKey":"…"}
+```
+
+Match it by `turnId` and offer a play button on that reply. The event
+is also stored, so `GET /chat/history` returns it.
+
+## Realtime voice
+
+A standing call with an agent that you can interrupt. Off unless
+`realtimeVoice.enabled` is set. This is separate from dictation and
+spoken replies.
+
+### `GET /voice/status`
+
+Whether calls are possible, and with whom.
+
+```json
+{ "enabled": true, "provider": "openai", "model": "gpt-realtime-2.1-mini",
+  "maxCallMinutes": 20, "agents": ["<your-agent>"], "calls": [] }
+```
+
+`agents` lists who can be called: agents whose `agent.yaml` has
+`voice.enabled: true`. `calls` lists the calls in progress. With the
+feature off the answer is `{"enabled": false, "agents": []}` with
+status `200`.
+
+### `GET /voice/instructions?agent=<name>&session=<slug>`
+
+What the speaking model would be told, without starting a call.
+
+```json
+{ "agent": "<your-agent>", "session": "main",
+  "text": "You are <your-agent>, speaking out loud …", "chars": 1528,
+  "source": "derived", "voice": "ash", "language": "de", "consultPolicy": "always" }
+```
+
+`source` is `derived` when the text is built from the agent's persona
+and its `voice:` settings, or `VOICE.md` when the agent has that file.
+`503` when realtime voice is off, `404` when the agent has no voice.
+
+### `WS /voice/attach?agent=<name>&session=<slug>`
+
+The call itself, as a WebSocket with JSON text frames in both
+directions. `session` defaults to `main`.
+
+Client to server:
+
+| Frame | Meaning |
+|---|---|
+| `{"type": "audio", "base64": "…"}` | Microphone audio: PCM16, 24 kHz, mono. |
+| `{"type": "interrupt"}` | Stop the model's speech. |
+| `{"type": "hangup"}` | End the call. |
+
+Server to client:
+
+| Frame | Meaning |
+|---|---|
+| `{"type": "ready", "call", "rateHz": 24000}` | The call is up. |
+| `{"type": "audio", "base64", "rateHz"}` | Speech to play. |
+| `{"type": "state", "call"}` | The call's state changed. |
+| `{"type": "event", "event", "call"}` | Something happened. `event.kind` is `user_speech`, `user_transcript`, `model_speech`, `model_transcript`, `tool_call`, `interrupted`, `usage`, `closed` or `error`. |
+
+`call` is `{id, target, state, startedAt, consults, spokenTurns, handoverTo?, lastError?}`.
+`state` is `connecting`, `listening`, `consulting`, `speaking` or
+`closed`. `consulting` means the agent is running a real turn in the
+session. `target` changes when the call is handed to another agent.
+
+> **Note:** Keep sending audio while nobody speaks. The model ends a
+> turn on silence, not on missing packets.
+
+Closing the socket ends the call. Work the agent already accepted
+keeps running. The socket closes with code `1008` when realtime voice
+is off or the call cannot start, and `1000` when the call ended.
+
+## Tmux integration
+
+Terminals in the browser: tmux sessions on the server, and a plain
+shell.
+
+### `GET /tmux/sessions`
+
+The tmux sessions on the server.
+
+```bash
+curl $BASE/tmux/sessions
+```
+
+Returns `{sessions: [{name, windows, activeCommand, activeTitle, createdEpoch, lastActivityEpoch, origin?}]}`.
+The two `…Epoch` fields are in seconds. `origin` says which agent and
+session created the tmux session, when somora did.
+
+### `WS /tmux/attach?session=<name>`
+
+A WebSocket to `tmux attach-session -d -t <name>`.
+
+| Direction | Frame | Meaning |
+|---|---|---|
+| server to client | binary | Terminal output. |
+| client to server | binary | Keyboard input. |
+| client to server | text `{"type":"resize","cols":N,"rows":N}` | The terminal's size changed. |
+| server to client | text `{"type":"ping"}` | Sent every 25 seconds. |
+
+Any message from the client counts as a sign of life. After 80 seconds
+without one the server closes the socket with code `4000`, so answer
+each ping, for example with `{"type":"pong"}`. Code `1008` means the
+session name is invalid or unknown, `1011` that tmux could not start,
+`1000` that tmux exited.
+
+### `WS /terminal/attach`
+
+A WebSocket to a fresh shell in the default workspace folder, without
+tmux. Same frames, pings and close codes as `/tmux/attach`. The shell
+ends when the socket closes.
+
+## Browser
+
+The shared browser that agents drive and people can watch and take
+over. With `browser.enabled` off, the routes that change something
+answer `503`, and the status and its stream report
+`{enabled: false, browsers: [], warnings: []}`.
+
+### `GET /browser/status`
+
+The open browser windows.
+
+```json
+{ "enabled": true, "headed": "headless",
+  "browsers": [
+    { "view_id": "profile:team@<your-agent>", "agent": "<your-agent>",
+      "browser_id": "profile:team", "profile": "team", "ephemeral": false,
+      "state": "running", "control": "agent_control",
+      "tabs": [ { "tab_id": "t1", "url": "https://example.com", "title": "Example",
+                  "agent": "<your-agent>", "generation": 3 } ],
+      "last_used": 1789299999000 } ],
+  "warnings": [] }
+```
+
+| Field | Meaning |
+|---|---|
+| `browsers` | One entry per window, not per browser process. `view_id` is `<browser_id>@<agent>`. Agents that share a profile share a process and have one window each. |
+| `control` | `agent_control`, `handoff_requested`, `human_control` or `paused`. `human_by` and `handoff` are added when they apply. |
+| `tabs` | `{tab_id, url, title, agent, session?, generation, emulation?}`. `emulation` shows a tab's `device` and `locale`. |
+| `headed` | How windows are shown on the server, following `browser.headed`: `headless`, `display`, `xvfb` or `unavailable`. |
+| `warnings` | What needs fixing, for example that no Chromium was found. |
+
+Stopped browsers are not listed, except one that still holds an open
+hand-over.
+
+### `GET /browser/stream`
+
+The browser status as Server-Sent Events.
+
+| Event | When | Data |
+|---|---|---|
+| `browsers` | On connect, and whenever a window, tab or control state changes | `{enabled, browsers, warnings}` as in `GET /browser/status` |
+| `heartbeat` | Every `sse.heartbeatMs` | The current time in ms |
+
+Each `browsers` event is a complete snapshot that replaces the one
+before.
+
+### `POST /browser/op`
+
+Runs one operation of the `browser` tool for an agent, in that agent's
+window.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `agent` | yes | The agent. |
+| `session` | no | Its session. |
+| `input` | yes | The tool's arguments, for example `{"op": "open", "url": "…"}` or `{"op": "snapshot", "tab": "…"}`. |
+
+Returns the tool's result object (`ok`, `error`, `hint`, `tab`,
+`snapshot` and so on). A refusal by the tool is still a `200`. `400`
+without an `input.op`, `404` for an unknown agent.
+
+### `POST /browser/:id/restart`
+
+Reopens a stopped browser with a blank page and the same profile.
+`:id` is a window id or a browser id. Every window that existed comes
+back with its control state. Nothing is replayed. Returns `{ok: true}`,
+or `409 {error}` when the browser is unknown or its shared profile was
+removed from the config.
+
+### `POST /browser/:id/control`
+
+Takes a window over, or hands it back to its agent. `:id` is a window
+id such as `profile:team@<your-agent>`. A bare browser id works while
+only one agent has a window on it.
+
+| Body field | Required | Meaning |
+|---|---|---|
+| `mode` | yes | `human` takes control: the agent's operations in that window are refused until it is handed back. `agent` hands it back. |
+| `by` | no | Who acts. With it, somebody else's control cannot be handed back. |
+| `handoffId` | no | The id of the hand-over being answered, from the status. Prevents a late button press from waking the agent twice. |
+
+Returns `{ok: true, control}`.
+
+Handing back with an open hand-over wakes the agent that asked for it,
+once, in its session. Without one, a hand-back after real activity
+wakes the window's own agent in the session of the last tab it used.
+
+| Status | Meaning |
+|---|---|
+| `400` | `mode` is neither `human` nor `agent`. |
+| `404` | The browser is not running. |
+| `409` | A state conflict, such as a `handoffId` that does not match. |
+
+### `GET /browser/attach` (WebSocket)
+
+The live picture of one browser window, with input.
+
+| Query | Meaning |
+|---|---|
+| `view` | The window id `<browser_id>@<agent>`. `browser` is accepted as the parameter name too. |
+| `tab` | The tab to show first. Optional. |
+| `viewer` | An id for this viewer. Optional. |
+
+Binary frames from the server carry one JPEG each:
+`[u32 BE header length][JSON header][JPEG]`. The header is
+`{tabId, generation, seq, url, cssWidth, cssHeight, scrollX, scrollY, ts}`.
+The frame rate follows `browser.stream.maxFps` (default 15, at most 20).
+Frames are skipped for a viewer with more than 2 MB waiting to be sent.
+
+Text frames from the server:
+
+| `type` | Data | Meaning |
+|---|---|---|
+| `ready` | `{browser, tabId, viewerId}` | Attached, or switched to another tab. |
+| `tabs` | `{browser}` | Tabs or control changed. |
+| `control` | `{control}` | Answer to a control request. |
+| `notice`, `error` | `{text}` | A hint, or a failed request. |
+| `ping` | none | Answer with `{"type":"pong"}`. 80 seconds of silence close the socket. |
+
+Text frames from the viewer:
+
+| `type` | Data | Meaning |
+|---|---|---|
+| `control` | `{mode: "human"\|"agent", handoffId?}` | Take over or hand back. |
+| `tab` | `{tabId}` | Show another tab. |
+| `navigate` | `{url}` | Open a URL. Same rules as for the tool. |
+| `newtab`, `closetab` | none, `{tabId}` | Open or close a tab. |
+| `resize` | `{width, height}` | Resize the page. |
+| `mousemove`, `click`, `mousedown`, `mouseup` | `{x, y, button?, clickCount?}` | Pointer input, in CSS pixels of the shown page. |
+| `wheel` | `{x, y, deltaX, deltaY}` | Scrolling. |
+| `text` | `{text}` | Typed or pasted text. |
+| `key` | `{key, ctrl?, alt?, shift?, meta?, action?}` | A key by its Playwright name, such as `Enter` or `Control+a`. |
+| `back`, `forward`, `reload` | none | History and reload. |
+
+Everything except `control` and `tab` is applied only while this viewer
+holds control; otherwise it gets a `notice`. Input other than
+`navigate`, `newtab`, `closetab`, `tab` and `control` must carry
+`frameTab` and `generation` from the frame on screen, and input for an
+older picture is refused.
+
+| Close code | Meaning |
+|---|---|
+| `1008` | Bad request: unknown browser, browser switched off, or more than 64 inputs waiting. |
+| `1009` | A message larger than 64 KiB. |
+| `1012` | The server is shutting down. |
+| `4000` | No sign of life for 80 seconds. |
+| `4001` | The tab or the browser was closed. |
+
+## Sentinel
+
+Sentinel wakes agents on a schedule. These routes list and manage the
+triggers. The same operations are available to agents as the `sentinel`
+tool.
+
+### `GET /sentinel/triggers`
+
+All triggers, newest first.
+
+| Query | Meaning |
+|---|---|
+| `owner` | Only triggers of this agent. |
+| `status` | `active`, `paused`, `error` or `completed`. |
+
+```json
+{ "count": 1,
   "triggers": [
-    {
-      "id": "morning-mail-summary-a7c3",
-      "name": "morning-mail-summary",
-      "ownerAgent": "<other-agent>",
+    { "id": "morning-mail-summary-a7c3", "name": "morning-mail-summary",
+      "ownerAgent": "<your-agent>",
       "source": { "type": "time", "spec": { "type": "daily", "time": "08:00" } },
       "evaluator": { "type": "none" },
-      "dispatch": { "agent": "<other-agent>", "session": "morning-routine",
-                    "prompt": "Check inbox via gog skill…" },
-      "createdAt": "2026-05-17T11:00:00.000Z",
-      "status": "active",
-      "fireCount": 5,
-      "lastSuccessAt": "2026-05-17T08:00:01.234Z",
-      "errorStreak": 0,
-      "nextFireAt": "2026-05-18T08:00:00.000Z"
-    }
-  ]
-}
+      "dispatch": { "agent": "<your-agent>", "session": "morning-routine",
+                    "prompt": "Check the inbox …" },
+      "createdAt": "2026-05-17T11:00:00.000Z", "status": "active",
+      "fireCount": 5, "lastSuccessAt": "2026-05-17T08:00:01.234Z",
+      "errorStreak": 0, "nextFireAt": "2026-05-18T08:00:00.000Z" } ] }
 ```
 
 ### `GET /sentinel/triggers/:id`
 
-`{trigger}` — the full trigger document for a single id. 404 if missing.
+One trigger as `{trigger}`.
 
 ### `GET /sentinel/triggers/:id/history`
 
-Newest-first fire log. `?limit=N` capped at 200, default 50.
+The fires of a trigger, newest first. `?limit=N`, default 50, at most
+200.
 
 ```json
-{
-  "count": 5,
+{ "count": 2,
   "entries": [
-    {
-      "firedAt": "2026-05-17T08:00:01.234Z",
-      "scheduledFor": "2026-05-17T08:00:00.000Z",
-      "outcome": "success",
-      "taskId": "task-..."
-    },
-    {
-      "firedAt": "2026-05-16T08:00:00.500Z",
-      "scheduledFor": "2026-05-16T08:00:00.000Z",
-      "outcome": "skipped",
-      "skipReason": "cooldown (1320s remaining)"
-    }
-  ]
-}
+    { "firedAt": "2026-05-17T08:00:01.234Z", "scheduledFor": "2026-05-17T08:00:00.000Z",
+      "outcome": "success", "taskId": "task-…" },
+    { "firedAt": "2026-05-16T08:00:00.500Z", "scheduledFor": "2026-05-16T08:00:00.000Z",
+      "outcome": "skipped", "skipReason": "cooldown (1320s remaining)" } ] }
 ```
 
-Outcomes: `success` / `error` (with `error: string`) / `skipped`
-(with `skipReason: string`). Plus optional `catchUp: true` (boot
-recovery fire) and `testMode: true` (fired via `/test`). A fire that a
-person took out of the session's queue before it started is `skipped`
-with `skipReason: "removed from the queue by the user"`; one stopped
-while running is `error` with `stopped by the user`.
+| `outcome` | Comes with |
+|---|---|
+| `success` | `taskId` |
+| `error` | `error`. `stopped by the user` when a person stopped the turn. |
+| `skipped` | `skipReason`. `removed from the queue by the user` when a person removed the waiting fire. |
 
-`404` once the trigger is deleted (its history file goes with it).
+`catchUp: true` marks a fire made up for after a restart, `testMode:
+true` one started through the test route. `404` once the trigger is
+deleted.
 
 ### `POST /sentinel/triggers/:id/pause`
 
-Set status to `paused`. Trigger stops firing until explicitly resumed.
-Returns `{"ok": true}`. 404 if missing.
+Pauses a trigger until it is resumed. Returns `{ok: true}`.
 
 ### `POST /sentinel/triggers/:id/resume`
 
-Set status back to `active`, recompute `nextFireAt` from the spec.
-Idempotent for already-active triggers. 404 if missing.
+Sets a trigger back to `active`, clears its error count and works out
+its next fire. Returns `{ok: true}`. `400` when the schedule cannot be
+computed.
 
 ### `POST /sentinel/triggers/:id/test`
 
-Fire NOW, bypassing cooldown and daily-cap. The fire is recorded with
-`testMode: true` in history. The dispatched agent receives the same
-evidence-prefixed prompt as a real fire.
-
-```bash
-curl -X POST https://<host>:18737/sentinel/triggers/morning-mail-summary-a7c3/test
-```
+Fires a trigger now, ignoring cooldown and daily cap. The agent gets
+the same prompt as on a real fire. Returns `{ok: true, hint}`.
 
 ### `DELETE /sentinel/triggers/:id`
 
-Remove the trigger and its history file. Idempotent — already-deleted
-ids return 404.
+Removes a trigger and its history. Returns `{ok: true}`, or `404` when
+it is already gone.
 
 ### `GET /sentinel/status`
 
-Scheduler diagnostic snapshot. Useful when sanity-checking that the
-scheduler is armed for the next due trigger.
+Whether the scheduler runs and when the next trigger is due.
 
 ```json
 { "started": true, "nextFireAt": 1779013800000 }
@@ -2995,246 +2832,104 @@ scheduler is armed for the next due trigger.
 
 ### Creating triggers
 
-Triggers are created through the agent-facing tool, not a dedicated
-HTTP route, so the safeguards (min-interval, per-agent cap, limit
-enforcement) all run through the same validation path:
+There is no route to create a trigger. Create it through the tool, so
+that the same limits apply as for an agent:
 
 ```bash
-curl -X POST https://<host>:18737/agents/<your-agent>/tools/sentinel \
+curl -X POST $BASE/agents/<your-agent>/tools/sentinel \
   -H 'Content-Type: application/json' \
   -d '{
     "action": "create",
     "name": "morning-mail-summary",
-    "intent": "Daily 8am inbox digest",
+    "intent": "Daily inbox digest at 8",
     "source": { "type": "time", "spec": { "type": "daily", "time": "08:00" } },
     "dispatch": {
-      "agent": "<other-agent>",
+      "agent": "<your-agent>",
       "session": "morning-routine",
-      "prompt": "Check inbox via the gog skill, group by topic, tell me what is important."
+      "prompt": "Check the inbox, group by topic, tell me what is important."
     }
   }'
 ```
 
-The full `sentinel` tool surface (`create` / `list` / `get` /
-`pause` / `resume` / `delete` / `test` / `history` / `purge_completed`)
-is described in [sentinel.md](sentinel.md).
+The tool's actions are `create`, `list`, `get`, `pause`, `resume`,
+`delete`, `test`, `history` and `purge_completed`.
 
----
+## External MCP servers
 
-## Voice
+State and control of the external MCP servers from `mcp.servers` in
+the config. All three routes answer `503` when none is configured.
 
-Two flows: STT for filling chat drafts, TTS for spoken replies. Plus
-`/voice/turn` as the audio-in/audio-out endpoint for integrations.
-All routes return 503 when the matching block is missing or disabled
-in `config.yaml`. See [voice.md](voice.md) for the full picture.
+### `GET /mcp/status`
 
-### `GET /stt/config`
-
-Reports STT availability + the default language hint.
+The state of each server.
 
 ```json
-{ "enabled": true, "language": "de" }
+{ "enabled": true,
+  "servers": { "<name>": { "state": "connected", "toolCount": 12, "transport": "stdio",
+                           "lastConnectedAt": 1789299000000, "consecutiveFailures": 0 } } }
 ```
 
-Returns `{ "enabled": false }` when STT is off in config — clients
-auto-hide their mic button.
+`state` is `pending`, `connected`, `failed`, `needs-auth` or
+`disabled`. `lastError` is added after a failure.
 
-### `POST /stt/transcribe`
+### `POST /mcp/servers/:name/reconnect`
 
-Forwards a multipart audio recording to the configured upstream's
-`/v1/audio/transcriptions` and returns the transcript.
+Drops the connection to one server and connects again at once. Returns
+`{ok: true, status}` with the server's new state. `400` when the name
+is unknown or the server is disabled in the config.
 
-```http
-POST /stt/transcribe
-Content-Type: multipart/form-data
+### `POST /mcp/call`
 
-file=@recording.webm
-language=de              # optional, overrides config default
-```
+Calls one tool of an external server directly.
 
-Response: `{ "text": "<transcript>" }`. 503 when disabled.
+| Body field | Required | Meaning |
+|---|---|---|
+| `server` | yes | The server's name. |
+| `tool` | yes | The tool's name on that server. |
+| `args` | no | The tool's arguments as an object. |
+| `timeoutMs` | no | How long to wait. |
 
-### `GET /tts/config`
+Returns `{isError, text, images: [{data, mimeType}]}`. `400` without
+`server` or `tool`, `502` when the call failed.
 
-Reports TTS availability + supported wire formats + per-client
-auto-play defaults.
-
-```json
-{
-  "enabled": true,
-  "formats": ["audio/wav", "audio/opus", "audio/mp4"],
-  "language": "de",
-  "voice": null,
-  "clients": {
-    "web": { "autoPlayVoiceReplies": false, "allowUserOverride": true },
-    "mobile": { "autoPlayVoiceReplies": false, "allowUserOverride": true }
-  }
-}
-```
-
-### `POST /tts/synthesize`
-
-Generate (or fetch from cache) spoken audio for a piece of text.
-Content-negotiates the wire format from `Accept`.
-
-```http
-POST /tts/synthesize
-Content-Type: application/json
-Accept: audio/opus, audio/wav;q=0.5
-
-{ "text": "Es ist 10:29 Uhr.", "voice": null, "language": "de" }
-```
-
-Response body is audio bytes. Useful response headers:
-
-- `Content-Type` — `audio/wav`, `audio/opus`, or `audio/mp4`.
-- `X-Tts-Cache` — `hit` or `miss`.
-- `X-Tts-Cache-Key` — sha256 hex used for caching.
-- `X-Tts-Duration-Ms` — set on WAV cache misses; omitted otherwise
-  (clients can compute on-play).
-
-400 on missing `text` or text > 4000 chars. 502 on upstream failure.
-503 when TTS disabled.
-
-### `GET /tts/cache/:filename`
-
-Stream a previously-generated audio file by its cache key. Filenames
-are `<64-hex>.<wav|opus|m4a>`; anything else returns 400. Supports
-single-range requests (`Range: bytes=N-`) so mobile `<audio>` can
-seek.
-
-This is the URL emitted as `assistant_audio.url` in SSE and JSONL —
-clients render it directly into `<audio src=…>` without ever calling
-`/tts/synthesize` for cached turns.
-
-### `POST /voice/turn`
-
-Independent audio-in → audio-out endpoint. STT-transcribes the
-recording, runs a normal agent turn (with `input_modality=voice`),
-sanitizes the assistant reply for speech, generates TTS, and returns
-JSON with the artifact URL. The session JSONL + SSE stream see the
-turn live, same as a `/chat/send` turn.
-
-```http
-POST /voice/turn
-Content-Type: multipart/form-data
-Accept: audio/opus, audio/wav;q=0.5
-
-agent=<name>             # required
-session=<name>           # required: "main" / exact id / new slug (creates)
-audio=@recording.webm    # required
-voice=<voice-id>         # optional, falls back to tts.voice
-language=<lang>          # optional, falls back to tts.language
-```
-
-Response:
-
-```json
-{
-  "ok": true,
-  "agent": "<your-agent>",
-  "session": "main",
-  "transcript": "Wie spät ist es?",
-  "text": "Es ist 10:29 Uhr.",
-  "audio": {
-    "url": "/tts/cache/abc123….opus",
-    "mime": "audio/opus",
-    "durationMs": 1800,
-    "cacheKey": "abc123…"
-  }
-}
-```
-
-- Session lock priority: `user` (treated as human input).
-- Always generates audio, regardless of any per-chat auto-play
-  toggle (those toggles only affect `/chat/send`).
-- 404 when `session=<exact-id>` doesn't exist; auto-creates for free-
-  form slug names. 503 if either `stt` or `tts` is disabled.
-
-### `assistant_audio` SSE event
-
-After a turn whose reply got TTS (auto or via `/voice/turn`), the
-session's SSE stream emits:
-
-```
-event: assistant_audio
-data: {"turnId":"…","url":"/tts/cache/…","mime":"audio/opus","durationMs":1800,"cacheKey":"…"}
-```
-
-Clients pair on `turnId` and render a Play-button on the matching
-assistant bubble. The event is also appended to the session JSONL,
-so `/chat/history` returns it on reload and Play-buttons survive.
-
----
+> **Note:** This route does not apply an agent's tool rules. It is
+> meant for the server's own use and for an operator.
 
 ## Web bundle
 
 ### `GET /web/`
 
-Serves the bundled web UI from `web/dist/`. Same-origin as the API,
-so the web app's `fetch('/agents')` works without CORS. `GET /web`
-(no slash) redirects here.
+The web client, as static files from the same address as the API.
+`GET /web` redirects here.
 
 ### `GET /mobile/`
 
-Serves the mobile PWA from `web-mobile/dist/` the same way; `GET
-/mobile` redirects to it. Both bundles are static files — a custom
-client does not need them, every function they use is in the routes
-above.
+The mobile app, served the same way. `GET /mobile` redirects here. A
+custom client needs neither: everything they do goes through the routes
+on this page.
 
----
+## See also
 
-## Building a custom client — typical flow
-
-A minimal client that wants to send a message and stream the
-response back works like this:
-
-```bash
-# 1. Discover agents
-curl https://<host>:18737/agents
-
-# 2. Optionally set the model + thinking for this conversation
-curl -X PUT https://<host>:18737/agents/<your-agent>/sessions/main/model \
-     -H 'Content-Type: application/json' \
-     -d '{"model":"claude-opus-4-7"}'
-
-# 3. Subscribe to the stream (background)
-curl -N "https://<host>:18737/chat/stream?agent=<your-agent>&session=main" &
-
-# 4. Send a message — server fires the turn, events arrive on the stream
-curl -X POST https://<host>:18737/chat/send \
-     -H 'Content-Type: application/json' \
-     -d '{"agent":"<your-agent>","session":"main","text":"Was steht heute an?"}'
-```
-
-For richer clients (a dashboard, a desktop app, a phone bridge), the
-typical loop is:
-
-1. **On boot:** `GET /agents` + `GET /sessions` + `GET /version` to
-   build the navigation.
-2. **For each open chat window:** open one SSE subscription
-   (`/chat/stream`) and one history hydration (`/chat/history?limit=200`).
-3. **On user input:** `POST /attachments` for any files, then
-   `POST /chat/send` with `attachments[]` set.
-4. **On user reset:** `POST /agents/:a/sessions/:s/reset`. The server
-   triggers REM in the background; your UI can show the resulting
-   pending count via `/dream-states`.
-5. **For monitoring:** poll `/dream-states` every 30 s for dream-phase
-   indicators, `/dream/loop-state` every 2 s if you want to surface
-   the Lucid review loop.
-
-The TUI's API client lives at `src/cli/tui/api.ts`; the web's at
-`web/src/lib/api.ts`. Both are short, focused, typed wrappers over
-the surface above and make good starting points for your own.
-
----
-
-## Files of interest in the somora source
-
-- `src/server/index.ts` — every route definition lives here
-- `src/server/sse-serializer.ts` — wire format for SSE events
-- `src/server/tool-format.ts` — tool name + arg + result
-  pre-formatting (normalises `mcp__…` prefixes)
-- `src/cli/tui/api.ts` — reference client (TypeScript)
-- `web/src/lib/api.ts` — second reference client (TypeScript,
-  browser-targeted)
+- [Setup](setup.md): install, HTTPS, restart and reload, all settings
+- [Security](security.md): who can reach the server and what that means
+- [Web client](web.md) and [Mobile app](mobile.md): the shipped clients
+  built on these routes
+- [Display](display.md): what the terminal client shows and its commands
+- [Agents](agents.md): agent files, `agent_ask`, sub-agents, steering
+- [Team](team.md): the team file
+- [Models](models.md), [Thinking](thinking.md), [Sampling](sampling.md):
+  the per-session overrides
+- [Builder agents](builder.md) and [Language servers](lsp.md): modes,
+  phases, plans, diagnostics
+- [Memory](memory.md), [Wiki](wiki.md), [Dream phases](dream-phases.md):
+  search, the wiki and its migration, REM, Deep and Lucid
+- [Projects](projects.md): what a project is and how sessions use it
+- [Files](files.md) and [Tools](tools.md): read and write rules, the
+  tool list
+- [Image generation](imagegen.md) and [Video generation](videogen.md):
+  models, specs, jobs
+- [Voice](voice.md) and [Realtime voice](realtime-voice.md): dictation,
+  spoken replies, calls
+- [Tmux](tmux.md), [Browser](browser.md), [Sentinel](sentinel.md),
+  [MCP servers](mcp.md), [Skills](skills.md): the features behind the
+  remaining routes

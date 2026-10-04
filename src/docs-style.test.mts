@@ -21,7 +21,7 @@ const read = (f: string) => readFileSync(resolve(docs, f), 'utf8');
 const MAX_PARAGRAPH_WORDS = 80;
 
 /** Pages still in the old style. Shrinks; never grows. */
-const LEGACY = new Set(['api.md']);
+const LEGACY = new Set<string>([]);
 
 /** `DOCS_STYLE_PAGES=a.md,b.md` checks those pages although they are
  *  still listed — for trying a rewrite before taking it off the list. */
