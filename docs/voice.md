@@ -1,212 +1,225 @@
 # Voice (dictation and spoken replies)
 
-> **This page is not about calls.** somora has two separate voice
-> features and mixing them up leads to the wrong config and the wrong
-> expectations:
->
-> - **This page** — press a button, talk, get text you can still edit
->   before sending; optionally hear the answer read back. One recording,
->   one message, one reply. Configured under `stt:` and `tts:`.
-> - **[realtime-voice.md](realtime-voice.md)** — a standing conversation
->   with an agent: it listens while you speak, you can interrupt it, and
->   it asks the real agent in the background. Configured under
->   `realtimeVoice:`, and it needs a realtime-capable provider.
->
-> They share nothing but the word "voice": different endpoints,
-> different config, different clients, different bills. Both can run at
-> the same time.
+Talk instead of type. Press the microphone in the web or mobile client,
+speak, and your words land in the text field as text you can still edit.
+If you like, the agent's answer is read back to you.
 
-Somora supports two voice flows:
+> **Note:** This page is not about calls. A standing conversation with
+> an agent, where it listens while you speak and you can interrupt it,
+> is a separate feature with its own settings under `realtimeVoice:`.
+> See [Realtime voice](realtime-voice.md). Both can run side by side.
 
-1. **STT in chat** — the web and mobile-PWA clients have a mic button
-   next to send. Tap, talk, tap again — Somora transcribes via your
-   configured Whisper-compatible upstream and drops the text into the
-   chat input.
-2. **TTS reply (optional)** — when you submit a message via mic and
-   the per-chat auto-play toggle is on, Somora generates spoken audio
-   for the assistant's reply and plays it automatically. A Play-button
-   on the bubble lets you replay any time.
+## What you get
 
-Both flows route through OpenAI-compatible endpoints on a provider
-you already configured (`oMLX`, faster-whisper-server, OpenAI itself,
-etc.) — no extra credentials.
+- **Dictation in every chat.** A microphone button next to Send turns
+  one recording into text. Nothing is sent until you send it.
+- **Spoken replies when you want them.** A dictated message can get an
+  answer that is played aloud. Typed messages stay silent.
+- **A Play button for replay.** Every reply that has audio can be
+  played again, also after a reload.
+- **A voice per agent.** Each agent can speak with its own speaker or
+  style.
+- **No extra account.** Both directions use a provider you already
+  configured, through its OpenAI-compatible audio endpoints.
+- **An endpoint for devices.** A wall panel or voice satellite sends a
+  recording and gets spoken audio back.
 
-A third endpoint, `POST /voice/turn`, is the audio-in/audio-out HTTP
-contract for integrations: a wall panel, voice satellite or bridge
-sends a recording, somora runs STT + a normal agent turn + TTS, and
-returns spoken audio. See [api.md](api.md#voice) for the wire format.
+## Set it up
 
-## Configuration
-
-Voice features are opt-in. Add the blocks below to `~/.somora/config.yaml`
-— omit them entirely if you don't want voice.
-
-### Speech-to-Text (STT)
+Voice is off until you add the two blocks below to
+`~/.somora/config.yaml`. Leave out the one you do not need.
 
 ```yaml
 stt:
   enabled: true
-  provider: omlx                              # references providers.omlx
+  provider: omlx                              # an entry of your providers block
   model: mlx-community/whisper-large-v3-turbo
-  language: de                                # optional default hint
+  language: de                                # optional hint
+
+tts:
+  enabled: true
+  provider: omlx
+  model: fish-audio-s2-pro-8bit               # whatever your upstream calls it
+  language: de
 ```
 
-`provider` must reference an `openai-compatible` entry from your
-`providers` block — Somora reuses its `baseUrl` and `apiKey`. The STT
-model is intentionally NOT listed under `providers.<x>.models` (it's
-not a chat model the agent can pick).
+Then restart somora. Changes under `stt` and `tts` only apply after a
+restart.
 
-### Text-to-Speech (TTS)
+Three things to know:
+
+- `provider` must name an entry of your `providers` block whose engine
+  is `openai-compatible`. somora reuses its `baseUrl` and `apiKey`.
+  Servers that fit include oMLX, faster-whisper-server and OpenAI.
+- Do not list the speech models under `providers.<name>.models`. They
+  are not chat models an agent can pick.
+- The browser only allows the microphone on a secure address. Serve
+  somora over HTTPS, or open it on `localhost`.
+
+## Dictating a message
+
+1. Tap the microphone. It turns red while it records.
+2. Tap again. The recording is transcribed.
+3. The text is appended to the text field. Edit it, then send.
+
+Dictation never sends by itself.
+
+The web client hides the microphone when `stt.enabled` is off or the
+browser cannot record. The mobile app shows it greyed out in the same
+cases.
+
+## Spoken replies
+
+A reply is spoken only when all four of these hold:
+
+1. `tts.enabled` is `true`.
+2. You dictated the message. Text that came from the microphone marks
+   the message as voice, also when you edited it before sending.
+3. The auto-play toggle of the chat is on.
+4. The reply is speakable. See "What gets read aloud" below.
+
+If one of them fails, no audio is made and the chat behaves as text
+only.
+
+| You do this | Result |
+|---|---|
+| Type a message | Never a spoken reply. |
+| Dictate, toggle off | No audio. The toggle is how you control cost. |
+| Dictate, toggle on, reply is mostly code | No audio. |
+| Dictate, toggle on, reply is prose | Spoken, with a Play button for replay. |
+
+The audio is made after the text reply is complete, so the text shows
+first and the voice follows a moment later.
+
+## The auto-play toggle
+
+The chat header shows a `🔊`/`🔇` toggle when `tts.enabled` is `true`
+and `allowUserOverride` is `true` for that client.
+
+| Client | Remembered per | First value |
+|---|---|---|
+| Web | agent and session, in the browser | `tts.clients.web.autoPlayVoiceReplies` |
+| Mobile | agent, on the phone | `tts.clients.mobile.autoPlayVoiceReplies` |
+
+Turning the toggle off silences future replies. Play buttons on earlier
+replies keep working.
+
+With `allowUserOverride: false` the toggle is hidden and the configured
+value applies. Use this for a kiosk.
+
+## Playing a reply again
+
+A Play button appears on a reply only when audio was made for that turn.
+It never creates audio for an old typed turn. Tap to play, tap again to
+stop.
+
+The buttons come back when you reload the history, because the audio is
+recorded in the session log and the file sits in the cache.
+
+## What gets read aloud
+
+Before a reply is spoken, somora turns the Markdown into plain speech.
+
+| In the reply | What is spoken |
+|---|---|
+| Bold, italics, headings, list markers, inline code marks | Removed, the words stay. |
+| A code block | `[Codeblock]` |
+| A web address | `[Link]` |
+| A table | `[table omitted]` |
+
+A reply is not spoken at all when:
+
+- 40 percent or more of it is code blocks,
+- it has more than 6 table rows,
+- fewer than 8 characters are left after cleaning.
+
+Text beyond 2000 characters is cut off, at the end of a sentence when
+one is close.
+
+## A voice per agent
+
+Many open-source speech engines ignore the OpenAI `voice` field. Fish
+Audio S2 Pro is one of them. They pick the speaker from tags inside the
+text. For those, somora can put a prefix in front of every text it
+sends.
 
 ```yaml
 tts:
-  enabled: true
-  provider: omlx                              # references providers.omlx
-  model: fish-audio-s2-pro-8bit               # whatever your upstream calls it
-  language: de
-  # voice: <id>                               # optional OpenAI-style speaker selector (sent as `alloy` when unset)
-  textPrefix: "<|speaker:0|>"                 # inline prefix prepended to every input
-  agentVoices:                                # optional per-agent override map
-    <agent-a>: "[deep male voice] "
-    <agent-b>: "<|speaker:7|>[male voice] "
-    <agent-c>: "<|speaker:2|>"
-  cache:
-    retentionDays: 7                          # 0 disables GC
-    maxSizeMB: 500
-  reencode:
-    enabled: true                             # ffmpeg on for opus/m4a output
-    opusBitrateKbps: 24
-  clients:
-    web:
-      autoPlayVoiceReplies: false             # initial toggle state for new sessions
-      allowUserOverride: true                 # show the 🔊/🔇 toggle in chat header
-    mobile:
-      autoPlayVoiceReplies: false
-      allowUserOverride: true
+  textPrefix: "<|speaker:0|>"
+  agentVoices:
+    ada: "[deep male voice] "
+    bea: "<|speaker:7|>[male voice] "
+    cleo: "<|speaker:2|>"
 ```
 
-Required dependency for re-encoding: a system `ffmpeg` on the somora
-host's `$PATH`. WAV passthrough works without ffmpeg, but mobile
-clients usually prefer opus/m4a for bandwidth.
+Which prefix is used:
 
-### Voice steering — `textPrefix` and `agentVoices`
+1. `agentVoices.<agent>`, if the agent has an entry.
+2. Otherwise `textPrefix`, if set.
+3. Otherwise none.
 
-Many open-source TTS engines (Fish Audio S2 Pro on mlx-audio is the
-canonical example) don't honor the OpenAI-compatible `voice` JSON field
-— they steer voice via inline tags in the **text itself**. To support
-that, somora prepends a configurable prefix to every TTS input.
-
-The `voice` field is still always sent on the wire (`alloy` when
-`tts.voice` is unset): the OpenAI speech spec requires it, and routers
-such as LiteLLM reject requests without it (`Router.aspeech() missing
-1 required positional argument: 'voice'` → 500) even though the engine
-behind them would have ignored the value.
-
-Lookup at synth time:
-
-1. `agentVoices[<agent>]` if the agent has an explicit override → use it.
-2. Otherwise `textPrefix` if set → use it.
-3. Otherwise no prefix.
-
-Examples of useful prefixes for Fish Audio S2 Pro:
+Examples for Fish Audio S2 Pro:
 
 | Prefix | Effect |
 |---|---|
-| `"<\|speaker:0\|>"` | Lock to speaker ID 0 (the model has many) |
-| `"[deep male voice] "` | Style tag — pushes voice character |
-| `"[calm] "` | Emotion tag |
-| `"<\|speaker:7\|>[male voice] "` | Combined speaker + style |
+| `"<\|speaker:0\|>"` | Locks speaker 0. The model has many. |
+| `"[deep male voice] "` | A style tag that shapes the voice. |
+| `"[calm] "` | An emotion tag. |
+| `"<\|speaker:7\|>[male voice] "` | Speaker and style combined. |
 
-To find which IDs and tags work for your model, generate a few samples
-and listen — the wide-tag space means trial-and-error works well. Save
-to a scratch dir and play back to compare. The prefix flows into the
-cache-key, so different speakers get different cached audio files for
-the same reply text — no voice-collision in cache.
+To find tags that work with your model, make a few samples and listen.
 
-This mechanism is engine-agnostic at the somora layer: an engine that
-ignores the tags will just speak them as text, which sounds odd but
-won't crash. Engines that use the OpenAI-compatible `voice` field can
-keep using `tts.voice` instead.
+An engine that does not know the tags speaks them as words. That sounds
+odd but breaks nothing. For an engine that honours the `voice` field,
+set `tts.voice` instead.
 
-## Auto-play gating
+> **Note:** somora always sends a `voice` field, with the value `alloy`
+> when `tts.voice` is not set. The OpenAI speech format requires it, and
+> routers such as LiteLLM reject a request without it.
 
-The auto-TTS hook in chat is gated by **four conditions, all must hold**:
+## The audio cache
 
-1. `tts.enabled` is true in config.
-2. The user message arrived via voice (`input_modality: 'voice'` — set
-   automatically when the client filled the draft via the mic button).
-3. The per-session auto-play toggle is on (the chat header `🔊` toggle,
-   sticky in localStorage; default seeded from
-   `tts.clients.<web|mobile>.autoPlayVoiceReplies`).
-4. The assistant text is speakable (the sanitizer skips replies with
-   heavy code blocks, large tables, or too little prose).
+Generated audio is stored in `~/.somora/tts-cache/` as
+`<sha256>.<ext>`. The name is a hash of the text with its prefix, the
+voice, the model and the format. The same reply in the same voice is
+made once and then served from the file.
 
-If any gate fails, no TTS is generated and no Play-button appears. The
-chat behaves text-only.
+Two rules keep the folder small. They run when somora starts and once a
+day after that.
 
-This means:
-- Typed turns → never get a spoken reply.
-- Mic turns + toggle off → no spoken reply (toggle controls cost).
-- Mic turns + toggle on, mostly-code reply → silenced by sanitizer.
-- Mic turns + toggle on, prose reply → spoken, with a Play-button for
-  replay.
+| Setting | What it does |
+|---|---|
+| `tts.cache.retentionDays` | Files older than this are removed. `0` turns this rule off. |
+| `tts.cache.maxSizeMB` | Above this total size the oldest files are removed until the folder fits. Always active. |
 
-## Per-session toggle behaviour
-
-The chat header in web and mobile shows a `🔊`/`🔇` toggle when
-`tts.enabled` is true and `clients.<web|mobile>.allowUserOverride` is
-true. Tapping flips the state, persisted in `localStorage` under a key
-scoped to `<agent>:<session>`.
-
-A fresh chat seeds from the config default. Switching agents preserves
-each agent's own setting. Disabling the toggle mid-conversation means
-future replies are silent; existing Play-buttons on past bubbles still
-work.
-
-## Manual playback
-
-The Play-button on an assistant bubble appears **only when audio for
-that turn was already generated** (auto-play was on, or the turn ran
-through `/voice/turn`). It does not generate-on-demand for past
-typed-only turns. Tap to play; tap again to stop.
-
-History reload restores the buttons for past turns where audio
-existed — assistant-audio events are persisted in the session JSONL
-and the cache file is content-addressed, so the same audio file
-serves repeated plays.
-
-## Cache & GC
-
-Generated audio is cached at `~/.somora/tts-cache/<sha256>.<ext>`,
-where the hash is `sha256(text + voice + model + format)`. Identical
-replies (same text + same voice + same format) reuse the file —
-playing the same answer twice doesn't hit the TTS upstream twice.
-
-Two policies trim the cache:
-
-- **`retentionDays`** — files older than this are removed at the next
-  sweep tick. Sweeper runs at boot and once per day. Set to `0` to
-  disable.
-- **`maxSizeMB`** — when total size exceeds the cap, the oldest files
-  are evicted until size is back under.
-
-GC is best-effort; failures log a warning and continue.
+A file that cannot be removed is logged as a warning and the sweep goes
+on.
 
 ## Audio formats
 
-Somora content-negotiates the wire format from the client's `Accept`
-header:
+| Format | Sent as | Details |
+|---|---|---|
+| Opus | `audio/opus`, file `.opus` | Smallest. 24 kbit/s by default, set with `tts.reencode.opusBitrateKbps`. |
+| AAC | `audio/mp4`, file `.m4a` | 64 kbit/s. |
+| WAV | `audio/wav`, file `.wav` | As the speech server delivered it, not converted. |
 
-- `audio/opus` — preferred for mobile (24 kbps Opus VBR, smallest).
-- `audio/mp4` / `audio/m4a` — AAC fallback (64 kbps).
-- `audio/wav` — passthrough from the upstream (no re-encode).
+Spoken replies in the chat are Opus. With `tts.reencode.enabled: false`
+they are WAV.
 
-If `tts.reencode.enabled` is false, only WAV is served regardless of
-Accept. No Accept header ⇒ WAV.
+`POST /tts/synthesize` and `POST /voice/turn` choose by the `Accept`
+header: `audio/opus` wins, then `audio/mp4`, `audio/m4a` or `audio/aac`,
+otherwise WAV. No `Accept` header means WAV. With
+`tts.reencode.enabled: false` it is always WAV.
 
-## /voice/turn endpoint
+> **Note:** Opus and AAC need `ffmpeg` on the `$PATH` of the machine
+> that runs somora. WAV works without it.
 
-The audio-in/audio-out endpoint for integrations:
+## Audio in and audio out for integrations
+
+`POST /voice/turn` is for clients without a screen: a wall panel, a
+voice satellite, a bridge. They send a recording. somora transcribes it,
+runs a normal agent turn and returns the answer as audio. Both `stt` and
+`tts` must be enabled.
 
 ```http
 POST /voice/turn
@@ -214,21 +227,29 @@ Content-Type: multipart/form-data
 Accept: audio/opus, audio/wav;q=0.5
 
 agent=<name>
-session=<name>          # "main" or an exact id or a new slug to create
+session=<name>
 audio=@recording.webm
-voice=<voice-id>        # optional
-language=<lang>         # optional
+voice=<voice-id>
+language=<lang>
 ```
 
-Returns JSON:
+| Field | Required | Meaning |
+|---|---|---|
+| `audio` | yes | The recording. |
+| `agent` | no | Agent name. Without it the default agent answers. |
+| `session` | no | `main` (the default), an exact session id, or a new name, which creates that session. |
+| `voice` | no | Voice for the spoken answer. Default: `tts.voice`. |
+| `language` | no | Language for the spoken answer. Default: `tts.language`. The transcription always uses `stt.language`. |
+
+The answer is JSON:
 
 ```json
 {
   "ok": true,
   "agent": "<your-agent>",
   "session": "main",
-  "transcript": "Wie spät ist es?",
-  "text": "Es ist 10:29 Uhr.",
+  "transcript": "What time is it?",
+  "text": "It is 10:29.",
   "audio": {
     "url": "/tts/cache/abc123….opus",
     "mime": "audio/opus",
@@ -238,51 +259,145 @@ Returns JSON:
 }
 ```
 
-Notes:
+Fetch the audio from `audio.url`. `durationMs` is only present for WAV.
 
-- The session lock is `priority: user` — same as `/chat/send` (this is
-  human input, just audio).
-- No timeout of its own: the response waits for the whole turn. Long
-  voice turns break the UX premise — pick a fast model for voice agents.
-- Always generates TTS regardless of per-chat toggles. The endpoint is
-  meant for display-less clients that need spoken output unconditionally.
-- The assistant text is also broadcast on the session's SSE stream and
-  persisted in the session JSONL — so a web client watching the same
-  session sees the voice turn live, with the Play-button armed.
+Good to know:
 
-## Persona advice
+- The turn counts as a message from a person, with the same priority as
+  one sent through `/chat/send`.
+- There is no timeout of its own. The response waits for the whole
+  turn, so pick a fast model for an agent that is reached by voice.
+- Audio is always made, whatever the chat toggles say.
+- A reply that cannot be read aloud is replaced by a short spoken
+  sentence that points to the chat history. The `text` field still
+  holds the full reply.
+- The turn appears live in web and mobile clients that have the session
+  open, with the Play button ready, and is stored in the session log.
 
-The default persona for a "voice agent" should ask for short, natural
-spoken answers and avoid Markdown / code / tables. Add something like
-the following to the agent's `AGENTS.md`:
+## Writing for the ear
+
+An agent that is often reached by voice should answer briefly and
+without Markdown. Add something like this to its `AGENTS.md`:
 
 ```text
 This agent is often reached via voice.
 Answer briefly, naturally and conversationally.
 Avoid Markdown formatting, code blocks, tables, and long bullet
-lists in spoken contexts — they read aloud poorly.
+lists in spoken contexts. They read aloud poorly.
 ```
 
-You don't need a dedicated voice-only agent — the sanitizer handles
-the "what's speakable" question. A persona that's already concise
-works fine. Verbose personas will hit the sanitizer's length cap (2000
-chars) and get truncated mid-sentence; tighten the persona before
-flipping auto-play on for them.
+You do not need a separate agent for voice. An agent that is already
+concise works fine. A wordy one runs into the 2000-character limit and
+its spoken reply stops early, so tighten the persona before you turn
+auto-play on.
+
+## Settings
+
+```yaml
+stt:
+  enabled: false
+  provider: <name>              # required, no default
+  model: <model-id>             # required, no default
+  # language: de
+
+tts:
+  enabled: false
+  provider: <name>              # required, no default
+  model: <model-id>             # required, no default
+  # voice: <id>
+  # language: de
+  # textPrefix: "<|speaker:0|>"
+  agentVoices: {}
+  cache:
+    retentionDays: 7
+    maxSizeMB: 500
+  reencode:
+    enabled: true
+    opusBitrateKbps: 24
+  clients:
+    web:
+      autoPlayVoiceReplies: false
+      allowUserOverride: true
+    mobile:
+      autoPlayVoiceReplies: false
+      allowUserOverride: true
+```
+
+Both blocks are optional. A block that is present must have `provider`
+and `model`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `stt.enabled` | `false` | Turns dictation on. Off: no usable microphone button, `/stt/transcribe` answers 503. |
+| `stt.provider` | required | Name of an `openai-compatible` entry in `providers`. |
+| `stt.model` | required | Model id the speech-to-text server expects. |
+| `stt.language` | not set | Language hint such as `de` or `en`. Without it the model detects the language. A hint is faster and safer for short recordings. |
+| `tts.enabled` | `false` | Turns spoken replies on. Off: no toggle, no Play buttons, `/tts/synthesize` answers 503. |
+| `tts.provider` | required | Name of an `openai-compatible` entry in `providers`. |
+| `tts.model` | required | Model id the text-to-speech server expects. |
+| `tts.voice` | not set | Speaker for engines that use the OpenAI `voice` field. Sent as `alloy` when not set. |
+| `tts.language` | not set | Language hint, passed on as `language`. |
+| `tts.textPrefix` | not set | Text put in front of everything that is spoken. |
+| `tts.agentVoices` | `{}` | Prefix per agent name. Replaces `textPrefix` for that agent. |
+| `tts.cache.retentionDays` | `7` | Days a cached file is kept. `0` keeps files regardless of age. Range 0 to 3650. |
+| `tts.cache.maxSizeMB` | `500` | Size limit of the cache folder. Minimum 1. |
+| `tts.reencode.enabled` | `true` | Convert to Opus or AAC with `ffmpeg`. Off: WAV only. |
+| `tts.reencode.opusBitrateKbps` | `24` | Opus bitrate. Range 8 to 256. |
+| `tts.clients.web.autoPlayVoiceReplies` | `false` | First value of the toggle in the web client. |
+| `tts.clients.web.allowUserOverride` | `true` | Show the toggle in the web client. |
+| `tts.clients.mobile.autoPlayVoiceReplies` | `false` | First value of the toggle in the mobile app. |
+| `tts.clients.mobile.allowUserOverride` | `true` | Show the toggle in the mobile app. |
+
+## Routes
+
+| Route | What it does |
+|---|---|
+| `GET /stt/config` | `{ enabled, language }`. Clients use it to decide about the microphone button. |
+| `POST /stt/transcribe` | Multipart with `file` (the audio) and optional `language`. Returns `{ text }`. |
+| `GET /tts/config` | `{ enabled, formats, language, voice, clients }`. Clients use it for the toggle. |
+| `POST /tts/synthesize` | JSON with `text` (at most 4000 characters) and optional `voice`, `language`, `agent`. Returns the audio. |
+| `GET /tts/cache/:filename` | Serves a cached file. Supports range requests for seeking. |
+| `POST /voice/turn` | Audio in, audio out. See above. |
+
+The web and mobile clients mark a dictated message on `POST /chat/send`
+with `input_modality: "voice"` and ask for audio with
+`auto_play_requested: true`. When the audio is ready, the session's
+event stream carries an `assistant_audio` event with its address.
 
 ## Troubleshooting
 
-- **No mic button in web/mobile** — `/stt/config` returns
-  `enabled:false`, or the browser lacks MediaRecorder/getUserMedia
-  (e.g. plain HTTP — Secure Context required for mic access; use the
-  Tailscale TLS path).
-- **No 🔊 toggle in header** — `/tts/config` returns `enabled:false`,
-  or `clients.<…>.allowUserOverride: false`.
-- **TTS request returns 502 "TTS upstream returned …"** — the model
-  name is wrong, the upstream isn't running, or the upstream rejects
-  the request shape. Tail somora server logs for `tts.upstream_error`
-  with the upstream's response body for diagnostics.
-- **ffmpeg failed messages** — install ffmpeg system-wide or set
-  `tts.reencode.enabled: false` (WAV-only).
-- **No Play-button on a mic turn with auto-play on** — the sanitizer
-  likely skipped a non-speakable reply (heavy code/tables). Log line:
-  `turn.auto_tts_skipped` with the reason.
+**No microphone button, or it is greyed out.** `GET /stt/config`
+returns `enabled: false`: `stt.enabled` is off, or `stt.provider` is
+not an `openai-compatible` provider. Or the browser cannot record, which
+is the case on plain HTTP. Use HTTPS.
+
+**Nothing happens after recording.** The speech-to-text server did not
+answer or returned an error. Look for `stt.upstream_unreachable` or
+`stt.upstream_error` in the server log.
+
+**No 🔊 toggle in the header.** `GET /tts/config` returns
+`enabled: false`, or `allowUserOverride` is `false` for this client.
+
+**No Play button on a dictated turn with auto-play on.** The reply was
+judged not speakable. The log line `turn.auto_tts_skipped` gives the
+reason. If creating the audio failed, the line is `turn.auto_tts_failed`.
+
+**A request fails with 502 and "TTS upstream returned …".** The model
+name is wrong, the speech server is down, or it rejects the request. The
+log line `tts.upstream_error` contains the server's answer.
+
+**"TTS re-encode failed" or `ffmpeg` messages.** Install `ffmpeg` on the
+machine that runs somora, or set `tts.reencode.enabled: false` to use
+WAV only.
+
+**A changed setting has no effect.** Restart somora. `stt` and `tts`
+are read at start.
+
+## See also
+
+- [Realtime voice](realtime-voice.md): live calls with an agent
+- [Setup](setup.md): providers, speech-to-text, HTTPS via Tailscale
+- [Mobile app](mobile.md): voice on the phone
+- [Web client](web.md): the chat window and its header
+- [API](api.md#voice): wire format of all voice routes and the
+  `assistant_audio` event

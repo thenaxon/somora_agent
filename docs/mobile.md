@@ -116,8 +116,8 @@ attachments without text.
 
 **Dictating.** Tap the microphone. It turns red while recording. Tap
 again and the transcript lands in the text field for you to check. It
-is never sent by itself. The button is hidden when `stt.enabled` is off
-or the browser cannot record.
+is never sent by itself. The button is greyed out when `stt.enabled` is
+off or the browser cannot record.
 
 **Spoken replies.** With text-to-speech configured, the header shows a
 `🔊`/`🔇` toggle. When it is on and you sent the message by voice, the
@@ -235,7 +235,7 @@ curl -k https://<your-host>.<your-tailnet>.ts.net:18737/healthz
 and open it again. If it still looks old, do it a second time. As a last
 resort remove the app from the home screen and install it again.
 
-**Microphone button missing or greyed out.** `stt.enabled` is `false`,
+**Microphone button greyed out.** `stt.enabled` is `false`,
 or no speech-to-text provider is configured. Set it up and restart
 somora. On iOS, allow the microphone the first time the phone asks.
 

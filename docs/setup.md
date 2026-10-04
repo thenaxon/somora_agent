@@ -635,7 +635,7 @@ Two flows are wired:
 - **Normal chat auto-TTS** — voice input → spoken reply on web + mobile.
 - **`POST /voice/turn`** — independent audio-in/audio-out endpoint
   for panel/satellite/bridge integrations; always generates audio
-  regardless of toggles. See [voice.md](voice.md#voiceturn-endpoint).
+  regardless of toggles. See [voice.md](voice.md#audio-in-and-audio-out-for-integrations).
 
 System dependency: `ffmpeg` on `$PATH` if you want `tts.reencode.enabled`
 (opus/m4a output). Without ffmpeg, set `reencode.enabled: false` and
