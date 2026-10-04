@@ -1,6 +1,6 @@
 {
   "name": "somora",
-  "version": "2026.1004.3",
+  "version": "2026.1004.4",
   "description": "A self-hosted multi-agent harness: your agents, your models, one server — with memory, a shared wiki, a web desktop, a phone app and a terminal client.",
   "type": "module",
   "license": "MIT",

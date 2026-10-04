@@ -134,6 +134,8 @@ export async function getConnection(
     });
     resolveReady(client);
   });
+  // Set by the host-key check below when it refuses the server's key.
+  let hostKeyRefusal: string | null = null;
   client.on('error', (err) => {
     entry.closed = true;
     logger.warn({
@@ -141,7 +143,10 @@ export async function getConnection(
       resource: resourceName,
       err: err.message,
     });
-    rejectReady(err);
+    // ssh2 reports a refused host key as "Host denied (verification
+    // failed)". The reason — which key was expected, and what to do —
+    // belongs in the error the caller sees, not only in the log.
+    rejectReady(hostKeyRefusal ? new Error(`ssh: ${hostKeyRefusal}`) : err);
   });
   client.on('close', () => {
     entry.closed = true;
@@ -189,6 +194,7 @@ export async function getConnection(
         expected: resource.hostKey,
       });
       if (!result.ok) {
+        hostKeyRefusal = result.reason;
         logger.warn({
           msg: 'ssh.host_key.refused',
           resource: resourceName,
