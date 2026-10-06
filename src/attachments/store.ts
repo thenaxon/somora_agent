@@ -9,6 +9,7 @@
 // existing magic-bytes sniffer (multimodal/mime.ts) — extensions are
 // untrusted (a `screenshot.txt` could be a renamed PNG).
 
+import { fitImageFileForModel, imageSourceCap } from '../multimodal/model-image.ts';
 import { createHash } from 'node:crypto';
 import {
   createWriteStream,
@@ -56,7 +57,9 @@ function extForMime(mime: DetectedMime): string {
 }
 
 function capForKind(mime: DetectedMime, config: AttachmentsConfig): number {
-  if (mime.kind === 'image') return config.maxImageBytes;
+  // With scaling on, a big screenshot is accepted and scaled before it
+  // reaches a model (src/multimodal/model-image.ts).
+  if (mime.kind === 'image') return imageSourceCap(config);
   if (mime.kind === 'pdf') return config.maxPdfBytes;
   if (mime.kind === 'text') return config.maxTextBytes;
   // unknown → reject at caller side; use the smallest cap as a
@@ -187,6 +190,21 @@ export async function resolveAttachmentByHash(args: {
     }
   }
   throw new Error(`attachment ${args.hash} not found in ~/.somora/attachments/`);
+}
+
+/** resolveAttachmentByHash for an attachment that goes to a model: an
+ *  image is swapped for its scaled copy (attachments.maxImageEdge), made
+ *  once next to the original and reused by every later replay. */
+export async function resolveAttachmentForModel(args: {
+  hash: string;
+  expectedMime: string;
+  maxImageEdge: number;
+}): Promise<{ path: string; mime: DetectedMime; size: number }> {
+  const r = await resolveAttachmentByHash(args);
+  if (r.mime.kind !== 'image') return r;
+  const fitted = await fitImageFileForModel(r.path, r.mime.mimeType, args.maxImageEdge);
+  if (!fitted.resized) return r;
+  return { path: fitted.path, mime: { ...r.mime, mimeType: fitted.mimeType }, size: fitted.size };
 }
 
 async function listCandidatePaths(hash: string): Promise<string[]> {

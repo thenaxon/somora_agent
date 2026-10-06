@@ -260,6 +260,9 @@ export interface TurnInput {
    * (openai-compatible) reconstruct the full content array per turn.
    */
   attachments?: ResolvedAttachment[];
+  /** attachments.maxImageEdge — engines that replay past attachments
+   *  from disk scale them the same way. */
+  maxImageEdge?: number;
 }
 
 export interface AgentEngine {

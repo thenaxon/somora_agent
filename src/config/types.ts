@@ -1975,8 +1975,15 @@ export const AttachmentsConfigSchema = z
     maxPdfBytes: z.number().int().positive().default(32 * 1024 * 1024),
     maxTextBytes: z.number().int().positive().default(1 * 1024 * 1024),
     maxPerTurn: z.number().int().positive().default(10),
+    /** Longest side, in pixels, of an image sent to a model; larger
+     *  images are scaled down first (src/multimodal/model-image.ts).
+     *  0 = send images as they are. With scaling on, a source image may
+     *  be up to IMAGE_SOURCE_BYTES before scaling; maxImageBytes then
+     *  applies to what is sent. */
+    maxImageEdge: z.number().int().min(0).max(16384).default(2048),
   })
   .default({
+    maxImageEdge: 2048,
     maxImageBytes: 5 * 1024 * 1024,
     maxPdfBytes: 32 * 1024 * 1024,
     maxTextBytes: 1 * 1024 * 1024,

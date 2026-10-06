@@ -22,7 +22,10 @@ import type { MultimodalToolResult, ToolContext, ToolDefinition } from '../types
 import { localList, localPatch, localRead, localSearch, localWrite } from './local.ts';
 import { lspAfterWrite, lspTouch } from './lsp-hook.ts';
 import { WRITE_SCOPE_QUESTION_TIMEOUT_MS } from './write-scope.ts';
-import { remoteList, remotePatch, remoteRead, remoteSearch, remoteWrite } from './remote.ts';
+import { remoteFetch, remoteList, remotePatch, remoteSearch, remoteTextResult, remoteWrite } from './remote.ts';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ─────────────────────────────────────────────────────────────────────
 // Multimodal helpers for file_read polymorph (image, PDF)
@@ -35,14 +38,17 @@ async function readImageAsContentBlock(
   absolutePath: string,
   mimeType: string,
   ctx: ToolContext,
+  /** What the model asked for — a remote file is read via a local temp copy. */
+  shown: { label: string; remote: boolean } = { label: absolutePath, remote: false },
 ): Promise<MultimodalToolResult> {
   if (!ctx.activeModel || !ctx.activeModel.model.capabilities.includes('image')) {
     throw new Error(
-      `file_read: '${absolutePath}' is ${mimeType} but the active model ` +
+      `file_read: '${shown.label}' is ${mimeType} but the active model ` +
         `${ctx.activeModel ? `'${ctx.activeModel.providerName}/${ctx.activeModel.modelId}'` : '(unknown)'} ` +
-        `lacks 'image' capability. Use analyze_file({path:"${absolutePath}"}) ` +
-        `to dispatch to the configured vision worker, or switch to a ` +
-        `vision-capable model.`,
+        `lacks 'image' capability. ` +
+        (shown.remote
+          ? 'analyze_file reads files on this machine only: copy the file here first, then analyze_file it, or switch to a vision-capable model.'
+          : `Use analyze_file({path:"${absolutePath}"}) to dispatch to the configured vision worker, or switch to a vision-capable model.`),
     );
   }
   const { loadAttachment } = await import('../../multimodal/load.ts');
@@ -52,6 +58,7 @@ async function readImageAsContentBlock(
   // and dump PNG bytes into the model context (2026-09-05 report).
   const att = await loadAttachment(absolutePath, {
     maxImageBytes: ctx.config.attachments?.maxImageBytes,
+    maxImageEdge: ctx.config.attachments?.maxImageEdge,
   });
   return {
     _somoraMultimodal: true,
@@ -74,10 +81,11 @@ async function readImageAsContentBlock(
 async function readPdfAsContentBlocks(
   absolutePath: string,
   ctx: ToolContext,
+  shown: { label: string; remote: boolean } = { label: absolutePath, remote: false },
 ): Promise<MultimodalToolResult> {
   if (!ctx.activeModel || !ctx.activeModel.model.capabilities.includes('image')) {
     throw new Error(
-      `file_read: '${absolutePath}' is a PDF but the active model ` +
+      `file_read: '${shown.label}' is a PDF but the active model ` +
         `${ctx.activeModel ? `'${ctx.activeModel.providerName}/${ctx.activeModel.modelId}'` : '(unknown)'} ` +
         `lacks 'image' capability (PDFs are rendered to PNG-pages and ` +
         `delivered as images). Use analyze_file({path:"${absolutePath}"}) ` +
@@ -183,12 +191,14 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
     'Use this INSTEAD of running `cat`, `head`, or `tail` via exec — file_read paginates safely, ' +
     'enforces the read-blacklist, and never gets caught by shell quoting. ' +
     '\n\n' +
-    'Multimodal behavior (local files only):\n' +
-    '  - PNG / JPEG / WebP / GIF → returned as image content block. Active model must ' +
+    'Multimodal behavior (local files and remote resources alike):\n' +
+    '  - PNG / JPEG / WebP / GIF → returned as image content block, scaled down when its ' +
+    'longer side exceeds the configured limit (text stays readable). Active model must ' +
     'have `image` capability; if not, you get an error pointing at `analyze_file`.\n' +
     '  - PDF → each page rendered to PNG (max 20 pages by default), returned as ' +
     'image-array. Same `image`-capability gate. Token cost: ~1300 tokens per page on ' +
     'Anthropic models.\n' +
+    '  - Video / audio → error; extract a frame with ffmpeg via exec and read that.\n' +
     '  - Unknown binary → error with a hint to inspect with `exec` first.\n\n' +
     'If your model can see images, look yourself — that is more reliable than a ' +
     'second-hand description. `analyze_file` exists for models that cannot, and is only ' +
@@ -226,8 +236,7 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
       //   - pdf → render pages to PNG, return image-array
       //     (MultimodalToolResult). Same capability gate.
       //   - unknown → clear error explaining the situation
-      // Remote reads skip this for now — would require an extra SFTP
-      // round-trip + remote PDF rendering; v2 work.
+      // Remote reads do the same after downloading (below).
       // Read policy FIRST, outside the try below: the image/PDF branch
       // returns file content without ever reaching localRead (which has
       // its own check), so an image or PDF under a blocked directory
@@ -249,6 +258,9 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
         }
         if (mime.kind === 'pdf') {
           return await readPdfAsContentBlocks(absolute, ctx);
+        }
+        if (mime.kind === 'video' || mime.kind === 'audio') {
+          throw new Error(mediaRefusal(input.path, mime.mimeType));
         }
         if (mime.kind === 'unknown') {
           throw new Error(
@@ -278,16 +290,46 @@ export const fileRead: ToolDefinition<z.infer<typeof ReadInput>> = {
         limit: input.limit,
       });
     }
+    // Remote: download once, then treat it like a local file of the same
+    // kind. A picture or PDF used to come back as its bytes decoded as
+    // text — hundreds of thousands of characters of noise in the model's
+    // context, and a vision model that could not see it (2026-10-06).
     const resource = await resolveSshTarget({ ctx, target: input.target });
-    return remoteRead({
-      resourceName: input.target,
-      resource,
-      path: input.path,
-      offset: input.offset,
-      limit: input.limit,
-    });
+    const { remotePath, buf } = await remoteFetch({ resourceName: input.target, resource, path: input.path });
+    const { detectMimeFromBuffer } = await import('../../multimodal/mime.ts');
+    const mime = detectMimeFromBuffer(buf);
+    const label = `${input.target}:${remotePath}`;
+    if (mime.kind === 'image' || mime.kind === 'pdf') {
+      const dir = await mkdtemp(join(tmpdir(), 'somora-remote-read-'));
+      const local = join(dir, mime.kind === 'pdf' ? 'file.pdf' : `file.${mime.mimeType.split('/')[1]}`);
+      try {
+        await writeFile(local, buf);
+        return mime.kind === 'image'
+          ? await readImageAsContentBlock(local, mime.mimeType, ctx, { label, remote: true })
+          : await readPdfAsContentBlocks(local, ctx, { label, remote: true });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+    if (mime.kind === 'video' || mime.kind === 'audio') throw new Error(mediaRefusal(label, mime.mimeType));
+    if (mime.kind === 'unknown') {
+      throw new Error(
+        `file_read: '${label}' is a binary file (${mime.mimeType}), not text, an image or a PDF. ` +
+          `Inspect it on the remote with exec (e.g. \`file ${remotePath}\`).`,
+      );
+    }
+    return remoteTextResult(remotePath, buf, input.offset, input.limit);
   },
 };
+
+/** file_read shows text, images and PDFs; video and audio have no form
+ *  a model reads from a file_read result. */
+function mediaRefusal(path: string, mimeType: string): string {
+  return (
+    `file_read: '${path}' is ${mimeType}. file_read shows text, images and PDFs, not video or audio. ` +
+    'For a look at a video, extract frames with exec (e.g. `ffmpeg -ss 12 -i in.mov -frames:v 1 frame.jpg`) and file_read the frame.'
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // file_write

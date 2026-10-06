@@ -41,7 +41,8 @@ import type { ModelCapability } from '../config/types.ts';
 import { withFromAgentHeader } from './a2a.ts';
 import type { AgentEngine, ResolvedAttachment, TurnInput } from './types.ts';
 import { buildOpenAiUserContent } from '../multimodal/user-content.ts';
-import { resolveAttachmentByHash } from '../attachments/store.ts';
+import { resolveAttachmentForModel } from '../attachments/store.ts';
+import { DEFAULT_MAX_IMAGE_EDGE } from '../multimodal/model-image.ts';
 import { openAiReasoningState, withReasoningRetry } from './reasoning-retry.ts';
 import { formatSampling, isSamplingParamError, samplingBody } from './sampling.ts';
 import { insideOpenThink, splitInlineThink } from './inline-think.ts';
@@ -317,6 +318,9 @@ export async function buildMessages(
    *  reintroduce the bug this parameter exists to prevent — replaying
    *  image blocks at a model that cannot accept them. */
   caps: readonly ModelCapability[],
+  /** attachments.maxImageEdge: replayed images go out scaled, like the
+   *  turn they were first sent in. */
+  maxImageEdge: number = DEFAULT_MAX_IMAGE_EDGE,
 ): Promise<ChatMessage[]> {
   // The latest compaction summary is appended to the ONE leading system
   // message instead of travelling as a second `system` entry. Strict
@@ -437,7 +441,7 @@ export async function buildMessages(
         const resolved: ResolvedAttachment[] = [];
         for (const a of ev.attachments) {
           try {
-            const r = await resolveAttachmentByHash({ hash: a.hash, expectedMime: a.mime });
+            const r = await resolveAttachmentForModel({ hash: a.hash, expectedMime: a.mime, maxImageEdge });
             resolved.push({
               hash: a.hash,
               path: r.path,
@@ -831,6 +835,7 @@ export const openAiCompatibleEngine: AgentEngine = {
       compactions,
       pdfMode,
       resolvedModel.model.capabilities,
+      input.maxImageEdge,
     );
     const estTokens = estimateTokens(messages);
     const ctxRatio = estTokens / resolvedModel.model.contextWindow;

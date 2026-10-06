@@ -53,7 +53,7 @@ import { claimWorkdir, describeClaim, noteToolCall, workdirClaimedBy } from './b
 import { originKind, type TurnOrigin } from './turn-origin-kind.ts';
 import { assembleSystemPrompt } from './prompt-assembly.ts';
 import type { ResolvedAttachment } from '../engine/types.ts';
-import { resolveAttachmentByHash } from '../attachments/store.ts';
+import { resolveAttachmentForModel } from '../attachments/store.ts';
 import { listRecords as listMediaRecords, readRecord as readMediaRecord } from '../media/records.ts';
 import {
   buildReviewLoopBlock,
@@ -651,7 +651,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
       );
     }
     for (const a of attachments) {
-      const r = await resolveAttachmentByHash({ hash: a.hash, expectedMime: a.mime });
+      const r = await resolveAttachmentForModel({ hash: a.hash, expectedMime: a.mime, maxImageEdge: deps.config.attachments.maxImageEdge });
       resolvedAttachments.push({
         hash: a.hash,
         path: r.path,
@@ -690,6 +690,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
             maxImageBytes: deps.config.attachments.maxImageBytes,
             maxPdfBytes: deps.config.attachments.maxPdfBytes,
             maxTextBytes: deps.config.attachments.maxTextBytes,
+            maxImageEdge: deps.config.attachments.maxImageEdge,
           });
           described = await describeMedia({
             att,
@@ -1036,6 +1037,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<ChatTurnResult
         captureThinking: deps.config.thinkingContent.capture,
         ...(signal ? { signal } : {}),
         ...(resolvedAttachments.length > 0 ? { attachments: resolvedAttachments } : {}),
+        maxImageEdge: deps.config.attachments.maxImageEdge,
       },
     });
 

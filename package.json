@@ -86,6 +86,7 @@
     "pino-roll": "^4.0.0",
     "playwright-core": "^1.63.0",
     "react": "^19.2.5",
+    "sharp": "^0.35.5",
     "sqlite-vec": "^0.1.9",
     "ssh2": "^1.17.0",
     "tsx": "^4.21.0",

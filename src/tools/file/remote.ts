@@ -297,28 +297,49 @@ function sftpMkdirP(sftp: SFTPWrapper, path: string): Promise<void> {
   });
 }
 
-export async function remoteRead(args: {
+/** Largest remote file file_read downloads (images and PDFs are scaled
+ *  or rendered afterwards; text is paged). */
+export const REMOTE_READ_MAX_BYTES = 64 * 1024 * 1024;
+
+/** Download a remote file for file_read, after the same read policy the
+ *  text path applies. Refuses files over REMOTE_READ_MAX_BYTES before
+ *  transferring anything. */
+export async function remoteFetch(args: {
   resourceName: string;
   resource: SshResource;
   path: string;
-  offset?: number;
-  limit?: number;
-}): Promise<ReadResult> {
+}): Promise<{ remotePath: string; buf: Buffer }> {
   const client = await getConnection(args.resourceName, args.resource);
   const remotePath = await resolveRemotePath(args.path, args.resourceName, args.resource);
-  // Read-blacklist against the REMOTE home — same protection localRead
-  // applies, which the remote path skipped entirely before the
-  // Juni-Audit 2026-06 fix (see checkRemoteReadAllowed).
   const remoteHome = await getResourceHome(args.resourceName, args.resource);
   const policy = checkRemoteReadAllowed(remotePath, remoteHome);
   if (!policy.ok) throw new Error(policy.reason);
-  const buf = await withSftp(client, (sftp) => sftpReadFile(sftp, remotePath));
-  const formatted = formatRead(buf.toString('utf8'), args.offset, args.limit);
+  const buf = await withSftp(client, async (sftp) => {
+    const st = await new Promise<Stats>((resolve, reject) =>
+      sftp.stat(remotePath, (err, s) =>
+        err
+          ? reject(/no such file/i.test(String(err.message)) ? new Error(`file_read: no such file: ${args.resourceName}:${remotePath}`) : err)
+          : resolve(s),
+      ),
+    );
+    if (st.size > REMOTE_READ_MAX_BYTES) {
+      throw new Error(
+        `file_read: ${remotePath} on ${args.resourceName} is ${st.size} bytes, more than file_read downloads (${REMOTE_READ_MAX_BYTES}). ` +
+          'Narrow it on the remote first (head, tail, grep, ffmpeg for a frame) and read the result.',
+      );
+    }
+    return sftpReadFile(sftp, remotePath);
+  });
+  return { remotePath, buf };
+}
+
+/** A downloaded remote text file, shaped like localRead's result. */
+export function remoteTextResult(remotePath: string, buf: Buffer, offset?: number, limit?: number): ReadResult {
   return {
     path: remotePath,
     workspace_relative: null, // remote workspace not tracked the same way
     bytes: buf.length,
-    ...formatted,
+    ...formatRead(buf.toString('utf8'), offset, limit),
   };
 }
 

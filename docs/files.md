@@ -60,8 +60,9 @@ are handled by the server.
 { "name": "file_search", "input": { "pattern": "TODO", "path": "src/", "target": "<resource-name>" } }
 ```
 
-Three things are local only: showing images and PDFs, the persona
-backup, and the builder write scope.
+Images and PDFs work the same on a resource: the file is downloaded
+and shown like a local one. Two things are local only: the persona
+backup and the builder write scope.
 
 ## How paths resolve
 
@@ -174,8 +175,9 @@ characters.
 
 ## Images and PDFs
 
-`file_read` looks at the first bytes of a local file, not at its name,
-and answers by kind:
+`file_read` looks at the first bytes of a file, not at its name, and
+answers by kind. This works the same for a file on an SSH resource.
+The file is downloaded first, up to 64 MB.
 
 | File | Active model has `image` | Result |
 |---|---|---|
@@ -183,9 +185,31 @@ and answers by kind:
 | PNG, JPEG, WebP, GIF | yes | The image itself. The model sees it. |
 | PDF | yes | The first 20 pages as images, rendered at 1.5 times page size. |
 | Image or PDF | no | An error that points to `analyze_file`. |
+| Video or audio | any | An error with the hint to extract a frame with `ffmpeg`. |
 | Unknown binary | any | An error with the hint to inspect the file with `exec`. |
 
-An image may be up to `attachments.maxImageBytes` in size. PDF pages
+### Images are scaled before they reach the model
+
+An image whose longer side is above `attachments.maxImageEdge` (2048
+pixels by default) is scaled down to it before it goes to the model.
+The file itself is not changed. This holds for every image a model
+gets:
+
+- `file_read`, local and on a resource
+- chat attachments, also the screenshot button in the web client
+- the review image after `image_generate`
+- images from external MCP tools
+- attachments replayed from earlier turns
+
+Text in screenshots stays readable. A 4K or Retina screenshot is
+scaled by about half, which brings its text to the size it has on an
+ordinary screen. The large providers scale big images down themselves,
+so a bigger image costs more without showing more. Set
+`maxImageEdge: 0` to send images as they are, or raise it when a model
+of yours needs finer detail.
+
+With scaling on, a source image may be up to 50 MB.
+`attachments.maxImageBytes` then applies to the scaled image. PDF pages
 cost tokens: roughly 1300 per page on Anthropic models. A PDF with more
 than 20 pages comes with a note that only the first 20 were rendered.
 
@@ -412,6 +436,7 @@ vision:
   timeoutCooldownMs: 10000
 
 attachments:
+  maxImageEdge: 2048        # longer side in pixels, 0 = no scaling
   maxImageBytes: 5242880    # 5 MB
   maxPdfBytes: 33554432     # 32 MB
   maxTextBytes: 1048576     # 1 MB
@@ -433,7 +458,8 @@ providers:
 | `vision.maxOutputTokens` | `1500` | Output limit for a worker answer. |
 | `vision.healthCacheMs` | `60000` | How long a failed worker is skipped. `0` turns this off. |
 | `vision.timeoutCooldownMs` | `10000` | How long a worker is skipped after a timeout. `0` turns this off. |
-| `attachments.maxImageBytes` | `5242880` | Largest image for uploads, `file_read` and `analyze_file`. |
+| `attachments.maxImageEdge` | `2048` | Longest side in pixels of an image sent to a model. Larger images are scaled down first. `0` sends images as they are. |
+| `attachments.maxImageBytes` | `5242880` | Largest image sent to a model. With scaling on it applies after scaling, and a source image may be up to 50 MB. Without scaling it is the limit for uploads, `file_read` and `analyze_file`. |
 | `attachments.maxPdfBytes` | `33554432` | Largest PDF for uploads and `analyze_file`. |
 | `attachments.maxTextBytes` | `1048576` | Largest text attachment. |
 | `attachments.maxPerTurn` | `10` | Attachments per message. |
@@ -441,8 +467,6 @@ providers:
 
 The size defaults match the strictest supported provider, so they are
 safe with every engine. Providers may also limit PDFs to 100 pages.
-Raise `maxImageBytes` when agents should look at large images, such as
-generated 2K or 4K pictures, which often have 6 to 9 MB.
 
 ## Tools
 

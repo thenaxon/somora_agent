@@ -10,6 +10,7 @@
 // Tools are registered once at server boot. Registration is idempotent
 // per name (re-register replaces — useful for dev:server hot reload).
 
+import { DEFAULT_MAX_IMAGE_EDGE, fitImageForModel } from '../multimodal/model-image.ts';
 import { isLoopHolder } from '../dream/loop-state.ts';
 import { logger } from '../server/logger.ts';
 import { saveToolOutput } from './tool-output.ts';
@@ -250,6 +251,18 @@ export class ToolRegistry {
       // unhelpfully. Per-modality byte caps are enforced upstream by
       // the loader (`src/multimodal/load.ts`).
       if (isMultimodalToolResult(data)) {
+        // Every image a tool hands to a model goes out scaled
+        // (attachments.maxImageEdge): file_read, image_generate's
+        // review, external MCP tools — whatever produced it.
+        const maxEdge = ctx.config?.attachments?.maxImageEdge ?? DEFAULT_MAX_IMAGE_EDGE;
+        let scaled = 0;
+        for (const block of data.contentBlocks) {
+          if (block.type !== 'image' || block.source.kind !== 'base64') continue;
+          const fitted = await fitImageForModel(Buffer.from(block.source.data, 'base64'), block.source.mediaType, maxEdge);
+          if (!fitted.resized) continue;
+          block.source = { kind: 'base64', mediaType: fitted.mimeType, data: fitted.bytes.toString('base64') };
+          scaled += 1;
+        }
         logger.info({
           msg: 'tool.invoked',
           name,
@@ -257,6 +270,7 @@ export class ToolRegistry {
           ms: Date.now() - start,
           multimodal: true,
           blocks: data.contentBlocks.length,
+          ...(scaled > 0 ? { images_scaled: scaled } : {}),
         });
         return { ok: true, contentBlocks: data.contentBlocks };
       }

@@ -151,6 +151,7 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
         maxImageBytes: ctx.config.attachments.maxImageBytes,
         maxPdfBytes: ctx.config.attachments.maxPdfBytes,
         maxTextBytes: ctx.config.attachments.maxTextBytes,
+        maxImageEdge: ctx.config.attachments.maxImageEdge,
       });
     } catch (err) {
       const e = err as NodeJS.ErrnoException;

@@ -13,6 +13,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { detectMimeFromPath, type DetectedMime } from './mime.ts';
+import { fitImageForModel, imageSourceCap } from './model-image.ts';
 
 export interface LoadedAttachment {
   /** Absolute path that was read (caller-provided). */
@@ -33,6 +34,11 @@ export interface LoadOptions {
   /** Max bytes for text files (so file_read does not OOM on a 1 GB log).
    *  Default 1 MB; use file_read's existing line/offset paging for bigger. */
   maxTextBytes?: number;
+  /** Scale images down to this longest side before they are returned
+   *  (attachments.maxImageEdge). 0 = as they are. When set, a source
+   *  image may be up to IMAGE_SOURCE_BYTES; maxImageBytes applies to
+   *  the scaled result. */
+  maxImageEdge?: number;
 }
 
 const DEFAULT_MAX_IMAGE = 5 * 1024 * 1024;
@@ -44,6 +50,8 @@ export async function loadAttachment(
   options: LoadOptions = {},
 ): Promise<LoadedAttachment> {
   const maxImage = options.maxImageBytes ?? DEFAULT_MAX_IMAGE;
+  const maxEdge = options.maxImageEdge ?? 0;
+  const maxImageSource = imageSourceCap({ maxImageBytes: maxImage, maxImageEdge: maxEdge });
   const maxPdf = options.maxPdfBytes ?? DEFAULT_MAX_PDF;
   const maxText = options.maxTextBytes ?? DEFAULT_MAX_TEXT;
 
@@ -53,7 +61,7 @@ export async function loadAttachment(
   }
   // Cheap pre-check before we even sniff bytes — if the file is bigger
   // than the largest cap we'd ever apply, reject without reading.
-  const absoluteMax = Math.max(maxImage, maxPdf, maxText);
+  const absoluteMax = Math.max(maxImageSource, maxPdf, maxText);
   if (s.size > absoluteMax) {
     throw new Error(
       `multimodal: '${path}' is ${s.size} bytes, exceeds the largest configured cap (${absoluteMax})`,
@@ -65,7 +73,7 @@ export async function loadAttachment(
   // Per-kind size enforcement. We DO this before the full read so a
   // mid-sized text file (5 MB) doesn't pass image validation just
   // because the absolute-max ceiling is bigger.
-  if (mime.kind === 'image' && s.size > maxImage) {
+  if (mime.kind === 'image' && s.size > maxImageSource) {
     throw new Error(
       `multimodal: image '${path}' is ${s.size} bytes, exceeds image cap ${maxImage} ` +
         `(raise config.attachments.maxImageBytes, or downscale first — ` +
@@ -82,5 +90,16 @@ export async function loadAttachment(
   }
 
   const bytes = await readFile(path);
+  if (mime.kind === 'image') {
+    const fitted = await fitImageForModel(bytes, mime.mimeType, maxEdge);
+    if (fitted.bytes.length > maxImage) {
+      throw new Error(
+        `multimodal: image '${path}' is ${fitted.bytes.length} bytes${fitted.resized ? ' after scaling' : ''}, exceeds image cap ${maxImage} ` +
+          `(raise config.attachments.maxImageBytes, or lower attachments.maxImageEdge)`,
+      );
+    }
+    const fittedMime = fitted.mimeType === mime.mimeType ? mime : { ...mime, mimeType: fitted.mimeType };
+    return { path, bytes: fitted.bytes, mime: fittedMime, size: fitted.bytes.length };
+  }
   return { path, bytes, mime, size: bytes.length };
 }
