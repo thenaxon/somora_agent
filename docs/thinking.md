@@ -55,8 +55,10 @@ removes the session's level, and the next source applies.
 "Nothing set" is not "off". Many reasoning models think by default,
 Qwen 3.x among them, so an agent without a level runs them
 at full depth. Every client shows this state as **model decides**,
-never as off. To make "off" (or any level) the rule for a model, give
-it a default:
+never as off. What "nothing set" means per model family, and which
+default fits, is listed under
+[When no level is set](models.md#when-no-level-is-set). To make "off"
+(or any level) the rule for a model, give it a default:
 
 ```yaml
 providers:

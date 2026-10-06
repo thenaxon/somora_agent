@@ -368,6 +368,32 @@ Details that matter when you pick a mapping:
 > with a one line prompt: the reasoning must be empty. The `none` that
 > switches Qwen off means full reasoning on GLM.
 
+### When no level is set
+
+With no level for the session, the agent or the model, somora sends
+nothing and the backend decides. What that means differs per family.
+A `reasoning.default` on the model makes the choice visible in every
+client. Set it to the level that matches what the model does anyway,
+or on purpose to a different one.
+
+| Model family | Nothing set | Default worth setting |
+|---|---|---|
+| DeepSeek V4 Flash, Vision-Exp | No reasoning. | Only when the agent should think. `default: medium` sends `high`. |
+| DeepSeek V4.1 Flash | Unchecked. | Leave it unset until you have compared the lengths. |
+| GLM-5.3-Flash | Unchecked. An unknown word becomes `max`, which is expensive. | Compare first. `default: medium` sends `high`. |
+| Qwen3.8-Flash-Next | Reasons as much as with `xhigh`. | `default: high`: the same behaviour, now shown as `high`. |
+| Gemma 4 | No reasoning capability. | None. |
+
+```yaml
+- id: qwen3.8-flash-next
+  reasoning:
+    levels: { "off": low, high: xhigh }
+    default: high            # what the model does without a level
+```
+
+An agent's `thinking:` in `agent.yaml` and a session's `/thinking` still
+come first. The [thinking guide](thinking.md) lists the order.
+
 ### Notes per family
 
 | Model family | Vision | Tool calls and other notes |

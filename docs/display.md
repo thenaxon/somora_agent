@@ -75,6 +75,7 @@ list while you type a `/`, the input, and a line of hints.
 | `🧠 thinking` | The model's reasoning, only with `/verbose thinking on`. |
 | `[image] <file>` or `[video] <file> (4.0s)` | The reply produced a picture or a video. The terminal shows the file name. |
 | `i`, `!`, `✗` | A notice from the client: info in gray, warning in yellow, error in red. |
+| `✗ config.yaml does not validate …` | `config.yaml` has a mistake. somora keeps running on the last valid version, the line lists the problems. See [A broken config file](setup.md#a-broken-config-file). |
 
 ### Turns nobody typed
 
@@ -223,16 +224,18 @@ A path only works after the format word.
 | `/help` | Lists all commands. |
 | `/agents` | Lists the agents. `*` marks the current one. |
 | `/agent <name> [session]` | Switches to another agent, into its `main` session unless you name one. |
-| `/sessions` | Lists the current agent's sessions with message count and last activity. `📬` marks unread, `📁` a pinned project. |
-| `/session <slug-or-id>` | Switches to another session of the current agent. |
+| `/sessions` | Lists the current agent's sessions with message count and last activity, in your local time. `📬` marks unread, `📁` a pinned project. |
+| `/sessions archived` | Lists the archived sessions, newest first, with the time they were archived and their id. |
+| `/session <slug-or-id>` | Switches to another session of the current agent. An archived one is not opened: the client names the `/unarchive` that brings it back. |
+| `/unarchive <slug-or-id>` | Brings an archived session back as a normal session and switches to it. A session `/reset` archived comes back as `<name>-archive`. When several archives share the name, the client lists their ids: run it again with the id. |
 | `/new <slug>` | Creates a session and switches to it. |
 | `/main` | Returns to the `main` session. |
-| `/reset [YES]` | Without `YES`: explains what would happen. With `YES`: archives the current session and starts it fresh. The archive can be opened again with `/session <id>`. |
+| `/reset [YES]` | Without `YES`: explains what would happen. With `YES`: archives the current session and starts it fresh. `/unarchive` brings the archive back. |
 | `/models` | Lists the configured models with alias, engine, context size and capabilities. |
 | `/model [<alias>\|default]` | No argument: shows the model in effect and where it comes from. An alias or `provider/id`: sets it for this session. `default` or `-`: back to the agent's own model. |
 | `/show [memory\|tools] [on\|off]` | Line visibility, see "The two switches". |
 | `/verbose [tools\|memory\|system\|thinking] [on\|off]` | Detail level, see "The two switches". |
-| `/thinking [off\|low\|medium\|high\|default]` | No argument: shows the thinking depth in effect and its source. A level: sets it for this session. `default` or `-`: clears the session's own setting. |
+| `/thinking [off\|low\|medium\|high\|default]` | No argument: shows the thinking depth in effect and its source: the session, the agent's default or the model's default. With nothing set it says `model decides`: nothing is sent, and reasoning models usually think. A level: sets it for this session. `default` or `-`: clears the session's own setting. |
 | `/reload` | Reads `~/.somora/config.yaml` again without a restart. Reports what changed and what needs a restart. |
 | `/restart [YES]` | With `YES`: restarts the somora service. Every open stream drops and the client reconnects. Without `YES`: asks you to confirm. |
 | `/sampling [key=value …\|default]` | No argument: shows the sampling parameters in effect. `key=value` pairs set them for this session, the value `-` removes a key. `default` or `-` clears the session's own setting. |
@@ -331,6 +334,9 @@ Routes the client uses for the features on this page:
 | `POST /spawn-cancel` | `/queue rm` on a running sub-agent. |
 | `POST /chat/abort` | Esc, and `/queue rm` on a running question. |
 | `GET /agents/:agent/sessions/:session/export?format=…` | `/export`, with `format` being `json` or `markdown`. |
+| `GET /agents/:agent/sessions?include_archived=true` | `/sessions archived`, `/unarchive` with a name. |
+| `POST /agents/:agent/sessions/:session/unarchive` | `/unarchive`. |
+| `GET /config/status` | The `config.yaml does not validate` line. |
 | `POST /config/reload` | `/reload`. |
 | `POST /server/restart` | `/restart YES`. |
 

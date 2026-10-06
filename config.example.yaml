@@ -110,6 +110,11 @@ providers:
     engine: openai-compatible
     baseUrl: http://localhost:11434/v1
     apiKey: lm-studio
+    # After a pause this long, earlier memory blocks leave the replayed
+    # history (docs/memory.md — "Old blocks after a pause"). Default 60,
+    # about when a paid provider's cache has expired; a server of your
+    # own can use less.
+    # dropMemoryBlocksAfterIdleMinutes: 10
     models:
       - id: gemma-4-31b-it-8bit
         alias: gemma4big
@@ -119,6 +124,17 @@ providers:
         alias: gemma4small
         contextWindow: 131072
         capabilities: [text, image]
+      # A reasoning model: its words for the levels, and the level used
+      # when neither session nor agent sets one (docs/models.md —
+      # "When no level is set"). Without `default` nothing is sent and
+      # the model decides.
+      # - id: qwen3.8-flash-next
+      #   alias: qwen
+      #   contextWindow: 524288
+      #   capabilities: [text, image, reasoning]
+      #   reasoning:
+      #     levels: { "off": low, high: xhigh }
+      #     default: high
 
   # Same engine, different host — totally fine.
   # ollama:
@@ -140,6 +156,7 @@ providers:
   #   engine: openai-compatible
   #   baseUrl: https://openrouter.ai/api/v1
   #   apiKey: <YOUR_OPENROUTER_KEY>
+  #   dropMemoryBlocksAfterIdleMinutes: 60   # the default, shown for completeness
   #   models:
   #     - id: anthropic/claude-haiku-4.5
   #       alias: orhaiku
@@ -153,6 +170,11 @@ providers:
   #       alias: kimi25
   #       contextWindow: 262144
   #       capabilities: [text]
+
+# Attachments and images sent to a model (docs/files.md).
+# attachments:
+#   maxImageBytes: 5242880                # largest image sent, after scaling
+#   maxImageEdge: 2048                    # longer side in pixels; larger images are scaled down first, 0 = off
 
 # Vision / multimodal worker (Phase Y). Optional. When set, the
 # `analyze_file` tool dispatches images and PDFs to the worker model
@@ -722,6 +744,7 @@ providers:
 #     historyWeightEmpty: 0.8             # … when it has none ("you should know that, right?")
 #     historyTurnChars: 800               # chars taken from each history turn
 #     shortQueryBm25Weight: 0.5           # BM25 weight for 1–2-word messages (null = hybrid.bm25Weight)
+#     skipRepeats: true                   # a section the model still has in context is not injected again
 #   hybrid:
 #     vectorWeight: 0.7                   # weight of vector similarity in fused score
 #     bm25Weight: 0.3                     # weight of BM25/FTS5 in fused score

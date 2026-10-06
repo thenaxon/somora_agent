@@ -60,10 +60,22 @@ switch. **+ New** asks for a name and opens the new session. If the
 name exists already, that session opens. A dot marks a session with
 something unread, `running` one that is working right now.
 
+**Archived.** The last row of the list. Tap it to see the agent's
+archived sessions, newest first, each with the time it was archived.
+**Restore** brings one back as a normal session and opens it, with its
+whole history. A session `/reset` archived comes back as
+`<name>-archive`. Several archives can share that name, for example one
+per reset of `main`: the time tells them apart.
+
 **Model for this session.** Tap a model to use it for this session
 only. The agent's own model is tagged `default`. Choosing it again
 removes the session's own choice. A model somora cannot reach at the
 moment is tagged `unreachable`.
+
+Above the models, a reasoning model shows its thinking level and where
+it comes from: `set for this session`, `agent's default`,
+`model's default`, or `model decides` with `nothing set`. The
+[thinking guide](thinking.md) explains the order.
 
 Good to know:
 
@@ -75,6 +87,7 @@ Good to know:
   model with `⇄` in the warning colour.
 
 Renaming, archiving and resetting a session are done in the web client.
+Restoring an archived one works here too.
 
 ## Sending messages
 
@@ -160,6 +173,13 @@ The unread dot covers every session of an agent except the one on
 screen. The session sheet shows which session it is. Opening the session
 clears the dot on all your clients, the web client and the TUI included.
 The state survives a server restart.
+
+## When config.yaml has a mistake
+
+A red banner at the top says that `config.yaml` does not validate.
+somora keeps running on the last valid version until the file is
+fixed, then the banner goes away. See
+[A broken config file](setup.md#a-broken-config-file).
 
 ## When the connection drops
 

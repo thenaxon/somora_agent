@@ -157,7 +157,12 @@ The entry reads `changed on disk` when the file is newer than what the
 server loaded. Restart is greyed out when somora does not run as a
 background service (the systemd user unit on Linux, the LaunchAgent on
 macOS). `agent.yaml` needs neither: it is read on every
-turn. The terminal client has the same actions as `/reload` and
+turn.
+
+When `config.yaml` has a mistake, the gear turns red with a `!` and
+its menu lists the problems. somora keeps running on the last valid
+version until the file is fixed. See
+[A broken config file](setup.md#a-broken-config-file). The terminal client has the same actions as `/reload` and
 `/restart YES`.
 
 ### When an agent restarts somora
@@ -190,7 +195,8 @@ turn runs and the work badge. The second line reads from left to right:
 | Session | The session name, with the full id beside it in grey when the two differ. |
 | Model | The model the next turn uses. |
 | `⇄ <model>` | The last turn was answered by a backup model, the agent's `fallback:` in `agent.yaml`. The tooltip says why. |
-| `🧠 <level>` | The thinking level. `(dormant)` means the model cannot reason, so the level has no effect. |
+| `🧠 <level>` | The thinking level. `(dormant)` means the model cannot reason, so the level has no effect. Hidden at `off`. |
+| `🧠 auto` | No level is set for the session, the agent or the model. Nothing is sent and the model decides: reasoning models usually think. See the [thinking guide](thinking.md). |
 | **tools** | Shows or hides tool calls, tool results and the engine's own plan rows. |
 | **memory** | Shows or hides the line that lists the notes recalled for a turn. |
 | **voice** | Spoken replies on or off. Only when text-to-speech is configured. |

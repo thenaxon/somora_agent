@@ -444,6 +444,11 @@ What a client sees, in order:
 | The turn is already finishing | It becomes an ordinary queued turn. Nothing is lost. |
 | The message carries `agent_ask_call_id` | Never steered: such a question needs a turn of its own. |
 
+On `claude-cli` a message steered while the model writes its final
+answer is answered in the same turn. The model finishes the answer,
+then replies to the message in a new paragraph. The turn ends once
+every steered message has had its answer.
+
 Sub-agent and voice turns can be steered like any other. The web
 client offers a steer or queue switch next to Send. Its starting
 position is the agent's `steering:` setting in `agent.yaml`, reported
@@ -1016,6 +1021,9 @@ A reset archive keeps its id and is listed under the name in that id,
 for example `main-archive` or `trip-archive`. The original name stays
 with the fresh session. The history is untouched, and REM does not read
 the archived part a second time.
+
+The web client's Sessions window, the mobile app's session sheet and
+the TUI's `/unarchive` all use this route.
 
 ### `POST /agents/:agent/sessions/:session/reset`
 
