@@ -106,6 +106,12 @@ export interface ModelCapabilities {
    * something to show and `analyze_file` something to read.
    */
   variants?: string[];
+  /** The endpoint's own words about the model and its parameters — the
+   *  catalog's `note` and `supported_parameters.<field>.note`. Passed to
+   *  the agent as they are: they explain behaviour somora cannot know,
+   *  such as an edit model taking its shape from the first reference. */
+  endpointNote?: string;
+  paramNotes?: Record<string, string>;
 }
 
 /** Does this model accept `field`? Unknown counts as yes — see the note

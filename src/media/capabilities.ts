@@ -67,6 +67,7 @@ interface ParamSpec {
   also_accepts?: unknown;
   min?: unknown;
   max?: unknown;
+  note?: unknown;
 }
 
 function supportedParameters(raw: Record<string, unknown>): Record<string, ParamSpec> | null {
@@ -284,7 +285,14 @@ export async function resolveCapabilities(
     if (hint) recommended[field] = hint;
   }
   const sizeAlsoAccepts = asStringArray(params?.size?.also_accepts);
+  const endpointNote = typeof row.raw.note === 'string' && row.raw.note.trim() ? row.raw.note.trim().slice(0, 1500) : undefined;
+  const paramNotes: Record<string, string> = {};
+  for (const [field, spec] of Object.entries(params ?? {})) {
+    if (typeof spec?.note === 'string' && spec.note.trim()) paramNotes[field] = spec.note.trim().slice(0, 500);
+  }
   return {
+    ...(endpointNote ? { endpointNote } : {}),
+    ...(Object.keys(paramNotes).length > 0 ? { paramNotes } : {}),
     known: true,
     source: 'catalog',
     values,

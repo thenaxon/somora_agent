@@ -94,6 +94,35 @@ export class ImageGenError extends Error {
   }
 }
 
+/** Why the image came back in another size than asked for. Edit models
+ *  commonly take their canvas from the first reference image and use
+ *  `size` only as a pixel budget; when the result has that reference's
+ *  shape, say so instead of guessing at caps and rounding — the guess
+ *  sent an agent hunting for a model bug (2026-10-05). */
+export function sizeSubstitutionNote(
+  requested: { width: number; height: number },
+  got: { width: number; height: number },
+  firstReference: { width: number; height: number } | null,
+  referenceCount: number,
+): string {
+  const head = `Requested ${requested.width}x${requested.height} but the image came back ${got.width}x${got.height}.`;
+  const ratio = (d: { width: number; height: number }) => d.width / d.height;
+  if (firstReference && Math.abs(ratio(got) / ratio(firstReference) - 1) < 0.03) {
+    return (
+      `${head} It has the shape of the first reference image (${firstReference.width}x${firstReference.height}): ` +
+      'this edit model takes its canvas from reference image 1, and size only sets the pixel budget. ' +
+      `For a ${requested.width}x${requested.height} result, pass a first reference with that aspect ratio.`
+    );
+  }
+  if (referenceCount > 0) {
+    return (
+      `${head} Reference images were passed — edit models often take the shape of the first reference; ` +
+      "check the model's endpoint_note in image_models. Otherwise the endpoint capped or rounded the size."
+    );
+  }
+  return `${head} The endpoint substituted a size — it may cap dimensions or round to sizes it supports.`;
+}
+
 function ensureEnabled(config: Config): void {
   if (!config.imageGen?.enabled) {
     throw new ImageGenError(
@@ -531,11 +560,7 @@ async function generateOnce(
   const firstDims = readDimensions(decoded[0]!.bytes);
   if (requested && firstDims &&
       (requested.width !== firstDims.width || requested.height !== firstDims.height)) {
-    warnings.push(
-      `Requested ${requested.width}x${requested.height} but the image came back ` +
-        `${firstDims.width}x${firstDims.height}. The endpoint substituted a size — ` +
-        `it may cap dimensions or round to sizes it supports.`,
-    );
+    warnings.push(sizeSubstitutionNote(requested, firstDims, references[0] ? readDimensions(references[0].bytes) : null, references.length));
     logger.info({
       msg: 'imagegen.size_substituted',
       model: entry.name,

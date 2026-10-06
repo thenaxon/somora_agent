@@ -179,7 +179,10 @@ render squares, and still answer with a perfectly good image. somora
 measures the returned picture itself:
 
 - **Size.** Explicit pixels were requested and others came back: the
-  result names both.
+  result names both. When reference images were passed and the result
+  has the shape of the first one, the note says so: many edit models
+  take their canvas from reference image 1 and use `size` only as a
+  pixel budget. Pass a first reference in the shape you want.
 - **Shape.** A ratio was requested and the picture is more than 1 %
   off: the result names the ratio and the real dimensions.
 
@@ -386,6 +389,12 @@ free text shows as `any value`. Values the catalog suggests
 (`supported_parameters.<field>.recommended`) appear under
 `recommended`: not a restriction, but a value outside that list is the
 usual reason for a provider error.
+
+What the catalog says about the model in its own words (`note`) comes
+through as `endpoint_note`, and
+its notes on single settings (`supported_parameters.<field>.note`) as
+`param_notes`. They explain behaviour somora cannot know, for example
+that an edit model takes its shape from the first reference image.
 
 `media_list` exists because a path in a tool result does not survive
 context compaction. Its filters: `type` (`image` or `video`), `query`

@@ -484,6 +484,10 @@ interface ModelRow {
   max_n?: number;
   capability_source?: string;
   note?: string;
+  /** What the endpoint's catalog says about this model, verbatim. */
+  endpoint_note?: string;
+  /** The catalog's notes on single parameters, verbatim. */
+  param_notes?: Record<string, string>;
 }
 
 /**
@@ -577,6 +581,8 @@ export const imageModels: ToolDefinition<ModelsArgs, { models: ModelRow[] }> = {
             }
             if (caps.maxReferences !== undefined) row.max_references = caps.maxReferences;
             if (caps.maxN !== undefined) row.max_n = caps.maxN;
+            if (caps.endpointNote) row.endpoint_note = caps.endpointNote;
+            if (caps.paramNotes) row.param_notes = caps.paramNotes;
             row.capability_source = caps.source;
           } catch (err) {
             // A catalog outage must not make this tool useless — the
