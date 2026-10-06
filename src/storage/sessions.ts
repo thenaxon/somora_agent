@@ -402,7 +402,19 @@ export interface SessionSummary {
  *  writing it forward), or the id ends in `-archive` (legacy /reset output
  *  before the explicit flag — backward-compat detect). */
 function metaIsArchived(id: string, meta: SessionMeta): boolean {
-  return meta.archived === true || id.endsWith('-archive');
+  return isSessionArchived(id, meta);
+}
+
+/** A reset archive's id: `<ts>_<name>-archive`, or `-archive-N` when two
+ *  resets landed in the same second. */
+const RESET_ARCHIVE_ID = /-archive(?:-\d+)?$/;
+
+/** Archived = flagged, or a reset archive by its id — unless the session
+ *  was restored, which writes `archived: false` explicitly. */
+export function isSessionArchived(id: string, meta: SessionMeta): boolean {
+  if (meta.archived === true) return true;
+  if (meta.archived === false) return false;
+  return RESET_ARCHIVE_ID.test(id);
 }
 
 interface CachedStats {
@@ -587,16 +599,27 @@ export async function archiveSession(
   }));
 }
 
-/** Clear the archived flag. The id-suffix detection (`-archive`) still
- *  fires for legacy reset-archives, so unarchiving one of those is a no-op
- *  for visibility purposes — the suffix check overrides the meta flag.
- *  We still clear the meta flag for consistency. */
-export async function unarchiveSession(agent: string, session: string): Promise<void> {
-  await sessionMetaStore.update(agent, session, (current) => {
-    const next = { ...current };
-    delete next.archived;
-    delete next.archivedAt;
-    delete next.archiveReason;
-    return next;
+/** Bring a session back from the archive, as a normal session to work
+ *  in. A reset archive is archived by its id (`…-archive`), so clearing a
+ *  flag is not enough: it gets `archived: false`, which beats the id rule,
+ *  and the name its id shows (`main-archive`, `trip-archive`) instead of
+ *  the name of the session it was reset from — that name belongs to the
+ *  fresh session. REM's read marker stays, so the archived part is not
+ *  dreamed a second time. Returns the session's name and state after. */
+export async function unarchiveSession(agent: string, session: string): Promise<{ slug: string; isArchived: boolean }> {
+  const resetArchive = RESET_ARCHIVE_ID.test(session);
+  const derivedSlug = session.match(/^\d{8}-\d{6}_(.+)$/)?.[1] ?? session;
+  const next = await sessionMetaStore.update(agent, session, (current) => {
+    const out = { ...current };
+    delete out.archived;
+    delete out.archivedAt;
+    delete out.archiveReason;
+    if (resetArchive) {
+      out.archived = false;
+      out.slug = derivedSlug;
+      out.restoredAt = new Date().toISOString();
+    }
+    return out;
   });
+  return { slug: session === 'main' ? 'main' : derivedSlug, isArchived: isSessionArchived(session, next) };
 }

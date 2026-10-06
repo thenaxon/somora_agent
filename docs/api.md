@@ -1004,8 +1004,18 @@ cannot be archived. `main` cannot: reset it instead.
 
 ### `POST /agents/:agent/sessions/:session/unarchive`
 
-Brings an archived session back. Returns
-`{archived: false, agent, session}`.
+Brings an archived session back as a normal session, also one that
+`/reset` archived. Returns the state after the call:
+
+| Status | Body |
+|---|---|
+| `200` | `{archived: false, agent, session, slug}`. `slug` is the name the session is listed under. |
+| `409` | `{error, archived: true}`. The session is still archived. |
+
+A reset archive keeps its id and is listed under the name in that id,
+for example `main-archive` or `trip-archive`. The original name stays
+with the fresh session. The history is untouched, and REM does not read
+the archived part a second time.
 
 ### `POST /agents/:agent/sessions/:session/reset`
 

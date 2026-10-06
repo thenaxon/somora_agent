@@ -2441,9 +2441,12 @@ app.post('/agents/:agent/sessions/:session/unarchive', async (c) => {
   const session = await resolveSessionId(agent, sessionRef);
   if (!session) return c.json({ error: `session '${sessionRef}' not found` }, 404);
   try {
-    await unarchiveSession(agent, session);
-    logger.info({ msg: 'session.unarchive', agent, session });
-    return c.json({ archived: false, agent, session });
+    const after = await unarchiveSession(agent, session);
+    logger.info({ msg: 'session.unarchive', agent, session, slug: after.slug, archived: after.isArchived });
+    // The state after the call, computed the way the session list does —
+    // never a success that did not happen.
+    if (after.isArchived) return c.json({ error: `session '${session}' is still archived`, archived: true, agent, session }, 409);
+    return c.json({ archived: false, agent, session, slug: after.slug });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 400);
   }

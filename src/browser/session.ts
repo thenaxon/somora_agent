@@ -1,4 +1,4 @@
-import { resolveSessionId, sessionMetaStore } from '../storage/sessions.ts';
+import { isSessionArchived, resolveSessionId, sessionMetaStore } from '../storage/sessions.ts';
 import { loadPersona } from '../persona/loader.ts';
 import { BrowserOpError } from './service.ts';
 
@@ -8,7 +8,7 @@ export async function resolveBrowserSession(agent: string, ref: string): Promise
   const session = await resolveSessionId(agent, ref);
   if (!session) throw new BrowserOpError('BROWSER_ACTION_FAILED', `session '${ref}' not found — create it first`);
   const meta = await sessionMetaStore.get(agent, session);
-  if (meta.archived === true || session.endsWith('-archive')) {
+  if (isSessionArchived(session, meta)) {
     throw new BrowserOpError('BROWSER_ACTION_FAILED', `session '${session}' is archived — restore it before continuing`);
   }
   return session;

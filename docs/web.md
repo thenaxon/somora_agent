@@ -397,7 +397,7 @@ run.
 | Filters | Agent, engine, REM state (`dreamed`, `partial`, `never`) and a text search over slug, agent and id. |
 | Column headers | Agent, Last activity, Msgs and Size sort. Click again to reverse. |
 | Click a row | Opens the chat window of that session. |
-| Archive button | Archives or unarchives the session. Not offered for `main`: use `/reset` there. |
+| Archive button | Archives or unarchives the session. Not offered for `main`: use `/reset` there. A session `/reset` archived comes back as `<name>-archive`, with its whole history, ready to continue. |
 | Checkboxes | Select several sessions and archive them together. |
 | Two download buttons | Export as a readable Markdown transcript or as the raw JSONL file. Works for archived sessions too. |
 | Reload and auto-refresh | Reload by hand. The list also refreshes every 60 seconds unless you switch that off. |
