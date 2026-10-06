@@ -11,11 +11,19 @@
 > turn what they learn into a shared long-term wiki while they sleep.
 > Run. Rest. Dream.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Status: active dev](https://img.shields.io/badge/status-active%20dev-green.svg)](#status)
-[![Node ≥22](https://img.shields.io/badge/node-%E2%89%A522-brightgreen.svg)](#requirements)
+<p align="center">
+  <a href="https://somora.ai"><img src="https://img.shields.io/badge/Website-2ea44f?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Website: somora.ai" /></a>
+  <a href="https://docs.somora.ai"><img src="https://img.shields.io/badge/Docs-0a7ea4?style=for-the-badge&logo=readthedocs&logoColor=white" alt="Documentation: docs.somora.ai" /></a>
+  <a href="https://www.npmjs.com/package/somora"><img src="https://img.shields.io/npm/v/somora?style=for-the-badge&logo=npm&label=npm&color=cb3837" alt="npm: somora" /></a>
+  <a href="https://somora.ai/discord"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord" /></a>
+  <a href="https://x.com/somora_ai"><img src="https://img.shields.io/badge/@somora__ai-000000?style=for-the-badge&logo=x&logoColor=white" alt="X: @somora_ai" /></a>
+</p>
 
-**[Website](https://somora.ai) · [Documentation](https://docs.somora.ai) · [npm](https://www.npmjs.com/package/somora)**
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+  <a href="#status"><img src="https://img.shields.io/badge/status-active%20dev-green.svg" alt="Status: active development" /></a>
+  <a href="#requirements"><img src="https://img.shields.io/badge/node-%E2%89%A522.13-brightgreen.svg" alt="Node 22.13 or newer" /></a>
+</p>
 
 ## Install
 
@@ -81,8 +89,9 @@ A small server you run on your machine that hosts your agents. You chat
 with them from the terminal, the browser, or your phone; they remember
 things across sessions; they use the same typed tools — memory, files
 (numbered reads, tolerant patches, filtered search), web, shell, tmux,
-attachments, sub-agents — regardless of which LLM you point them at. Everything an agent is asked to do — a question from you, a
-question from another agent, a sub-agent, a scheduled trigger, a voice
+attachments, sub-agents — regardless of which LLM you point them at.
+Everything an agent is asked to do — a question from you, a question
+from another agent, a sub-agent, a scheduled trigger, a voice
 call — goes through one queue per session that you can see and take back
 from in every client.
 
@@ -101,7 +110,7 @@ one you give a repository to.
 | **Memory** | Notices facts, dreams them into notes and the wiki | Reads memory, never writes it; does not dream |
 | **Works in** | Its workspace | The pinned project's folder, and only there |
 | **Window** | Chat | Chat plus a task panel: mode, plan → Go, tasks, questions, running time |
-| **Made how** | `somora agent create`, or an agent creates one | The same, with `kind: builder` — fixed for life |
+| **Made how** | `somora setup agent`, or a folder with an `AGENTS.md` and an `agent.yaml` | A folder whose `agent.yaml` says `kind: builder` — fixed for life |
 
 You can talk to a builder directly — describe the project, let it plan,
 press Go — or let a chat agent hand it the order in one call and be
@@ -133,18 +142,13 @@ On top of chat and memory, each optional and off until configured:
   that wake an agent on a schedule ([docs/sentinel.md](docs/sentinel.md)).
 - **External MCP servers** — one config entry, all engines see the tools,
   gateable per agent ([docs/mcp.md](docs/mcp.md)).
-- **Builders** — agents of a second kind that are coding harnesses: a
-  short coding tool set, harness rules instead of a persona, long turns,
-  a task panel with the plan, the task list and the questions they ask
-  you. Describe a project, let the builder plan, press Go — or let
-  another agent hand over the order in one call and be woken with the
-  report; one builder per folder at a time, and the hand-over procedure
-  ships as a skill ([docs/builder.md](docs/builder.md)). With a
-language server installed, every write comes back with the compiler's
-errors for the file ([docs/lsp.md](docs/lsp.md)).
+- **Language servers** — with one installed, every file a builder
+  writes comes back with the compiler's errors for that file, so it
+  fixes them in the same step ([docs/lsp.md](docs/lsp.md)).
 - **Steering** — type into a running turn instead of behind it: the
-  model reads your message at its next step and changes course, on every
-  engine ([docs/api.md → Steering](docs/api.md#steering)).
+  model reads your message at its next step and changes course. Works on
+  the Claude, Codex and OpenAI-compatible engines; on Grok the message
+  waits for the next turn ([docs/api.md → Steering](docs/api.md#steering)).
 
 ## Requirements
 
@@ -154,9 +158,9 @@ Hard:
   older Node every `somora` command stops with the upgrade steps.
 - **tmux** — for the `tmux` tool (long-lived terminal sessions for agents)
   and the web tmux app.
-- **At least one LLM backend:** the Claude Code binary (Claude
-  subscription, engine `claude-cli`); a ChatGPT subscription (engine
-  `codex-cli` — Codex is bundled, `somora codex login`); the Grok Build CLI
+- **At least one LLM backend:** a Claude subscription (engine
+  `claude-cli` — Claude Code is bundled, `somora auth login`); a ChatGPT
+  subscription (engine `codex-cli` — Codex is bundled, `somora codex login`); the Grok Build CLI
   (SuperGrok/Premium, engine `grok-cli`); or any OpenAI-compatible HTTP
   server (Ollama, LM Studio, vLLM, oMLX, OpenRouter, …).
 
@@ -353,7 +357,7 @@ Three first-party clients, all hitting the same local server:
 |---|---|---|
 | **TUI** | `somora tui` | Terminal multi-agent chat with full keyboard control, the session's queue (`/queue`), memory and tool detail toggles. |
 | **Web** | `https://<host>.<tailnet>.ts.net:18737/web/` | A browser desktop: one window per agent, drag-and-drop attachments and screenshots, tmux app and shell terminal, Wiki Explorer with link graph, Media gallery, Sessions browser, the agent's Chromium window, server log, Abilities matrix (which tools and skills each agent may use), Team and Agent windows, a queue badge per session (what runs, what waits, what is arriving — take back or stop from there), dictation and spoken replies, and a voice window for a live call. HTTPS required; LAN-trust, no auth. [docs/web.md](docs/web.md) |
-| **Mobile (PWA)** | `…:18737/mobile/`, then "Add to Home Screen" | The phone app: avatar row to switch agent, one chat per agent, the same queue sheet, voice input and spoken replies, photo/PDF attachments via the native picker. [docs/mobile.md](docs/mobile.md) |
+| **Mobile (PWA)** | `…:18737/mobile/`, then "Add to Home Screen" | The phone app: avatar row to switch agent, a sheet in the header to switch session and model or restore an archived session, the same queue sheet, voice input and spoken replies, photo/PDF attachments via the native picker. [docs/mobile.md](docs/mobile.md) |
 
 Anything else can talk to the server the same way the clients do:
 [docs/api.md](docs/api.md) is the HTTP + SSE + WebSocket reference.
