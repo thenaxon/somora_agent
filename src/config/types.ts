@@ -996,14 +996,16 @@ const WorkerRefSchema = z.union([z.string().min(1), z.array(z.string().min(1)).m
 export const VisionConfigSchema = z
   .object({
     /** Worker(s) for image + PDF analysis, `<provider>/<modelId>` each.
-     *  A worker MUST have `image` capability; PDF use also requires
-     *  `pdf` (or set `pdfWorker` to a model that has it). Entries that
+     *  A worker MUST have `image` capability. A PDF goes to a worker
+     *  with `pdf` as the document, to one with only `image` as page
+     *  images (first 20 pages). Entries that
      *  lack the needed capability are skipped, not fatal — the point of
      *  a chain is that it survives one entry being unusable. */
     worker: WorkerRefSchema.optional(),
     /** Override for PDF dispatch only. When unset, PDF uses `worker`.
-     *  Use case: a cheap image-only worker plus a separate PDF-capable
-     *  one for cost control. */
+     *  Use case: images to a cheap or local worker, PDFs to a model
+     *  that reads the document itself (its text, not only page
+     *  pictures) — better for long or text-heavy PDFs. */
     pdfWorker: WorkerRefSchema.optional(),
     /** Per-attempt budget. A worker that hasn't answered by then counts
      *  as down and the chain moves on. Generous by default because a

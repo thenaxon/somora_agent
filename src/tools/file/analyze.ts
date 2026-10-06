@@ -6,6 +6,8 @@
 //
 // Worker is configured globally in `config.vision.{worker, pdfWorker}`.
 // PDF dispatches use `pdfWorker` if set, else fall back to `worker`.
+// A worker with `pdf` gets the document itself; one with only `image`
+// gets the pages as images, like file_read hands PDFs to such models.
 // Both workers must be on `openai-compatible` engine in v1 (same
 // constraint as Dream-Mode) — Anthropic-direct support is future work.
 //
@@ -20,7 +22,8 @@ import { workerChain, resolveAnyRef, type Config, type ResolvedModel } from '../
 import { logger } from '../../server/logger.ts';
 import { loadAttachment, type LoadedAttachment } from '../../multimodal/load.ts';
 import { samplingBody } from '../../engine/sampling.ts';
-import { toOpenAiContent } from '../../multimodal/blocks.ts';
+import { pdfPagesToOpenAiContent, toOpenAiContent } from '../../multimodal/blocks.ts';
+import { renderPdfToPngs } from '../../multimodal/pdf-render.ts';
 import { checkReadAllowed, realpathSafeAncestor, resolveLocalPath } from './policy.ts';
 import type { ToolDefinition } from '../types.ts';
 
@@ -92,8 +95,8 @@ export const analyzeFile: ToolDefinition<z.infer<typeof AnalyzeInput>, AnalyzeOu
     'A described image is a second-hand account: quote what the worker reported, do not ' +
     'claim to have seen the file yourself.\n\n' +
     'Worker model is configured globally in `config.vision.worker` (and optional ' +
-    '`config.vision.pdfWorker` override for PDFs). Returns an error if the file type is ' +
-    'unsupported. Image cap 5 MB, PDF cap 32 MB.',
+    '`config.vision.pdfWorker` override for PDFs). A worker that cannot read PDFs but sees ' +
+    'images gets the first 20 pages as images. Returns an error if the file type is unsupported.',
   inputSchema: AnalyzeInput,
   jsonSchema: {
     type: 'object',
@@ -238,8 +241,22 @@ export async function describeMedia(args: {
         `openai-compatible engine.`,
     );
   }
-  const requiredCap = att.mime.kind === 'pdf' ? 'pdf' : 'image';
+  const isPdf = att.mime.kind === 'pdf';
   const content = toOpenAiContent(att, args.prompt);
+  // Rendered once, on the first worker that needs the pages.
+  let pages: { content: ReturnType<typeof pdfPagesToOpenAiContent>; count: number } | { error: string } | null = null;
+  const pageContent = async () => {
+    if (pages) return pages;
+    try {
+      const r = await renderPdfToPngs(att.path, { maxPages: PDF_PAGE_LIMIT, scale: 1.5 });
+      if (r.pages.length === 0) throw new Error('no renderable pages');
+      const note = r.truncated ? `[The PDF has ${r.totalPages} pages; only the first ${r.pages.length} are included.]` : undefined;
+      pages = { content: pdfPagesToOpenAiContent(r.pages, args.prompt, note), count: r.pages.length };
+    } catch (err) {
+      pages = { error: `could not render the PDF to pages: ${(err as Error).message}` };
+    }
+    return pages;
+  };
   const start = Date.now();
   const deadline = start + visionConfig.totalBudgetMs;
 
@@ -255,8 +272,12 @@ export async function describeMedia(args: {
       skipped.push(`${ref}: not a known model in config.yaml`);
       continue;
     }
-    if (!worker.model.capabilities.includes(requiredCap)) {
-      skipped.push(`${ref}: lacks '${requiredCap}' capability`);
+    const caps = worker.model.capabilities;
+    // A PDF goes as the document to a worker that reads PDFs, as page
+    // images to one that only sees images.
+    const pdfAs: 'document' | 'pages' | null = !isPdf ? null : caps.includes('pdf') ? 'document' : caps.includes('image') ? 'pages' : null;
+    if (isPdf ? pdfAs === null : !caps.includes('image')) {
+      skipped.push(`${ref}: lacks '${isPdf ? 'pdf' : 'image'}' capability${isPdf ? " and 'image' for the pages" : ''}`);
       continue;
     }
     const cooling = failedUntil.get(ref);
@@ -272,6 +293,17 @@ export async function describeMedia(args: {
       continue;
     }
     const attemptMs = Math.min(visionConfig.timeoutMs, remaining);
+    let messageContent: unknown = content;
+    let pageCount: number | undefined;
+    if (pdfAs === 'pages') {
+      const p = await pageContent();
+      if ('error' in p) {
+        skipped.push(`${ref}: ${p.error}`);
+        continue;
+      }
+      messageContent = p.content;
+      pageCount = p.count;
+    }
 
     attempts += 1;
     const label = `${worker.providerName}/${worker.modelId}`;
@@ -285,6 +317,8 @@ export async function describeMedia(args: {
       attempt: attempts,
       chainLength: chain.length,
       attemptMs,
+      ...(pdfAs ? { pdfAs } : {}),
+      ...(pageCount !== undefined ? { pages: pageCount } : {}),
     });
     try {
       const completion = await buildClient(worker).chat.completions.create(
@@ -292,7 +326,7 @@ export async function describeMedia(args: {
           model: worker.modelId,
           messages: [
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            { role: 'user', content: content as any },
+            { role: 'user', content: messageContent as any },
           ],
           // A caption is not a chat answer. The worker model's own cap
           // is a chat cap (16k and up is normal), which lets a reasoning
@@ -367,6 +401,10 @@ export async function describeMedia(args: {
       skipped.map((s2) => `  - ${s2}`).join('\n'),
   );
 }
+
+/** Pages of a PDF sent as images to a worker without `pdf`, same cap
+ *  as file_read. */
+const PDF_PAGE_LIMIT = 20;
 
 /** An aborted attempt, however the client dressed it up. */
 function isTimeout(err: unknown): boolean {

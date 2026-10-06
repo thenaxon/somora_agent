@@ -546,12 +546,14 @@ startClaudeCredentialSyncWatcher();
         worker: ref,
       });
     }
-    if (requirePdf && !m.model.capabilities.includes('pdf')) {
+    // A worker without `pdf` still reads a PDF as page images, so only
+    // one that has neither can do nothing with a PDF.
+    if (requirePdf && !m.model.capabilities.includes('pdf') && !m.model.capabilities.includes('image')) {
       logger.warn({
         msg: 'vision.worker.no_pdf_capability',
         label,
         worker: ref,
-        hint: 'set config.vision.pdfWorker to a pdf-capable model, or analyze_file on PDFs will error',
+        hint: "reads neither PDFs nor images — analyze_file passes it over for PDFs; give it 'pdf' or 'image', or remove it",
       });
     }
   };

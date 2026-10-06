@@ -255,8 +255,10 @@ Rules for the chain:
 
 - A worker must be on an `openai-compatible` provider. Use a proxy such
   as OpenRouter to reach a Claude or GPT model.
-- A worker needs the `image` capability for images and the `pdf`
-  capability for PDFs. One that lacks it is skipped for that file.
+- A worker needs the `image` capability for images. For a PDF, a worker
+  with `pdf` gets the document itself. A worker with only `image` gets
+  the pages as images, at most the first 20, and the prompt says when
+  more exist. A worker with neither is skipped for that file.
 - A worker that failed is skipped for `vision.healthCacheMs`. After a
   mere timeout it is skipped for the shorter `vision.timeoutCooldownMs`,
   because slow is not the same as gone.
@@ -269,6 +271,12 @@ Rules for the chain:
 `vision.maxOutputTokens` replaces the worker model's own output limit.
 A description is short, and a reasoning model with a large limit can
 think past the timeout. Raise it when you ask for long transcriptions.
+
+**When `vision.pdfWorker` helps.** Without it, PDFs take the same
+chain as images, so a local vision model reads them as page pictures.
+Set `pdfWorker` when PDFs should go to a model that reads the document
+itself. It gets the text, not only pictures of the pages, which is more
+exact for long or text-heavy files and not limited to 20 pages.
 
 > **Note:** A worker name that is not a model in `config.yaml` stops the
 > server at start with a clear message. A missing capability or the
@@ -452,7 +460,7 @@ providers:
 |---|---|---|
 | `workspace.default` | `~/somoraworkspace` | Root for relative paths. Per agent: `workspace.path` in `agent.yaml`. |
 | `vision.worker` | unset | Vision worker, or an ordered list of them. Without it `analyze_file` is hidden. |
-| `vision.pdfWorker` | unset | Worker or list for PDFs only. Falls back to `vision.worker`. |
+| `vision.pdfWorker` | unset | Worker or list for PDFs only. Falls back to `vision.worker`, whose image-only workers read PDFs as page images. |
 | `vision.timeoutMs` | `60000` | Time limit for one worker attempt. |
 | `vision.totalBudgetMs` | `90000` | Time limit for the whole chain. |
 | `vision.maxOutputTokens` | `1500` | Output limit for a worker answer. |
@@ -537,7 +545,8 @@ extension get a delete followed by a rename.
 | `analyze_file` is missing from the tool list | `vision.worker` is unset, or the active model can see images itself. |
 | `no vision worker could handle this ...` | Every worker in the chain failed. The message lists each one with its reason. |
 | `worker produced no text within ... output tokens` | The worker spent its output on thinking. Raise `vision.maxOutputTokens` or use another worker. |
-| `vision.worker.no_image_capability` or `vision.worker.no_pdf_capability` in the log at start | A worker lacks a capability. Add it to the model, or set `vision.pdfWorker`. |
+| `vision.worker.no_image_capability` in the log at start | A worker cannot see images. Add `image` to the model if it has vision, or remove it from the chain. |
+| `vision.worker.no_pdf_capability` in the log at start | A worker that may get PDFs has neither `pdf` nor `image`, so it can do nothing with a PDF. |
 | `multipart uploads are not supported` | Send the raw file bytes as the body of `POST /attachments`. |
 | A file ended up in `<workspace>/<workspace-name>/...` | The relative path started with the workspace folder's name. Drop that prefix. |
 

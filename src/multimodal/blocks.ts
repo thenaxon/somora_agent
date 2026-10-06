@@ -94,6 +94,20 @@ export function toOpenAiContent(att: LoadedAttachment, prompt?: string) {
   return [{ type: 'text' as const, text: userText }];
 }
 
+/** A PDF for a worker that sees images but cannot read PDFs: its pages
+ *  as PNG images, the way file_read and chat attachments hand PDFs to
+ *  such models. `note` says when only the first pages are included. */
+export function pdfPagesToOpenAiContent(pagesBase64: string[], prompt: string | undefined, note?: string) {
+  const userText = (prompt ?? defaultPromptFor('pdf')) + (note ? `\n\n${note}` : '');
+  return [
+    { type: 'text' as const, text: userText },
+    ...pagesBase64.map((data) => ({
+      type: 'image_url' as const,
+      image_url: { url: `data:image/png;base64,${data}` },
+    })),
+  ];
+}
+
 function defaultPromptFor(kind: DetectedKind): string {
   if (kind === 'image') return 'Describe this image in detail.';
   if (kind === 'pdf') return 'Summarize this document in detail.';

@@ -194,6 +194,10 @@ providers:
 # when the local worker sits on a GPU box that runs one profile at a
 # time: without a chain, a profile switch takes analyze_file down for
 # every agent at once, and quietly.
+#
+# PDFs take the same chain: a worker with `pdf` gets the document, one
+# with only `image` the first 20 pages as images. `pdfWorker` is only
+# needed when PDFs should go to a model that reads the document itself.
 # vision:
 #   worker: openrouter/anthropic/claude-haiku-4-5    # single model, still valid
 #   pdfWorker: openrouter/anthropic/claude-sonnet-4-6  # optional override for PDFs
