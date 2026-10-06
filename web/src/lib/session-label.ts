@@ -9,7 +9,9 @@
 // window (pure string formatting of a documented id shape, no logic
 // duplicated from the server).
 
-const EXACT_ID_PREFIX = /^\d{8}-\d{6}_/;
+// A restored reset archive keeps its original id after the archive
+// stamp (`<ts>_<ts>_trip-archive`), so the prefix can repeat.
+const EXACT_ID_PREFIX = /^(?:\d{8}-\d{6}_)+/;
 
 /** Human-facing name for a session id: the slug part of a
  *  `<ts>_<slug>` id, or the id itself when it has no timestamp prefix

@@ -605,7 +605,7 @@ function BubbleTimestamp({
 
 /** `20260906-172957_craftbox` → `craftbox`; `main` stays. */
 function sessionSlug(sessionId: string): string {
-  const m = /^\d{8}-\d{6}_(.+)$/.exec(sessionId);
+  const m = /^(?:\d{8}-\d{6}_)+(.+)$/.exec(sessionId);
   return m ? m[1]! : sessionId;
 }
 

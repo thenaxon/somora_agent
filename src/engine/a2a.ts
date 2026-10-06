@@ -12,7 +12,7 @@ const HEADER_PREFIX = '[Message from agent ';
 /** Agent-facing slug of a session id: `20260906-172957_craftbox`
  *  → `craftbox`, `main` stays `main`. Unknown shapes pass through. */
 export function sessionSlugOf(sessionId: string): string {
-  const m = /^\d{8}-\d{6}_(.+)$/.exec(sessionId);
+  const m = /^(?:\d{8}-\d{6}_)+(.+)$/.exec(sessionId);
   return m ? m[1]! : sessionId;
 }
 

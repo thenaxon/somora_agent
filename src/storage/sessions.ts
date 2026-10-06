@@ -215,7 +215,7 @@ export async function findLiveSessionsBySlug(agent: string, slug: string): Promi
     if (isEnoent(err)) return [];
     throw err;
   }
-  const re = new RegExp(`^\\d{8}-\\d{6}_${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:-\\d+)?$`);
+  const re = new RegExp(`^(?:\\d{8}-\\d{6}_)+${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:-\\d+)?$`);
   const out: string[] = [];
   for (const f of entries.sort()) {
     if (!f.endsWith('.jsonl')) continue;
@@ -223,7 +223,7 @@ export async function findLiveSessionsBySlug(agent: string, slug: string): Promi
     if (!re.test(id)) continue;
     const meta = await sessionMetaStore.get(agent, id);
     if (metaIsArchived(id, meta)) continue;
-    if ((meta.slug ?? id.replace(/^\d{8}-\d{6}_/, '')) !== slug) continue;
+    if ((meta.slug ?? id.replace(/^(?:\d{8}-\d{6}_)+/, '')) !== slug) continue;
     out.push(id);
   }
   return out;
@@ -510,7 +510,9 @@ export async function listSessions(
   const summaries: SessionSummary[] = [];
   for (const id of ids) {
     const isMain = id === 'main';
-    const slug = isMain ? 'main' : (id.match(/^\d{8}-\d{6}_(.+)$/)?.[1] ?? id);
+    // A reset archive of a named session has two timestamps
+    // (`<reset>_<created>_trip-archive`); its name is `trip-archive`.
+    const slug = isMain ? 'main' : (id.match(/^(?:\d{8}-\d{6}_)+(.+)$/)?.[1] ?? id);
     const meta = await sessionMetaStore.get(agent, id);
     const isArchived = metaIsArchived(id, meta);
     if (isArchived && !includeArchived) continue;
@@ -608,7 +610,7 @@ export async function archiveSession(
  *  dreamed a second time. Returns the session's name and state after. */
 export async function unarchiveSession(agent: string, session: string): Promise<{ slug: string; isArchived: boolean }> {
   const resetArchive = RESET_ARCHIVE_ID.test(session);
-  const derivedSlug = session.match(/^\d{8}-\d{6}_(.+)$/)?.[1] ?? session;
+  const derivedSlug = session.match(/^(?:\d{8}-\d{6}_)+(.+)$/)?.[1] ?? session;
   const next = await sessionMetaStore.update(agent, session, (current) => {
     const out = { ...current };
     delete out.archived;

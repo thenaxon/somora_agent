@@ -45,6 +45,9 @@ test('a reset archive of a named session does not take the fresh session\'s name
   await s.unarchiveSession(agent, r!.archivedId);
   assert.deepEqual(await s.findLiveSessionsBySlug(agent, 'trip'), [id], 'the name trip still means the fresh session');
   assert.equal(await s.resolveSessionId(agent, 'trip-archive'), r!.archivedId);
+  const row = (await s.listSessions(agent)).find((x) => x.id === r!.archivedId);
+  assert.equal(row?.slug, 'trip-archive', 'listed under its short name, not with the second timestamp');
+  assert.deepEqual(await s.findLiveSessionsBySlug(agent, 'trip-archive'), [r!.archivedId], 'an agent asking for trip-archive finds it');
 });
 
 test('archiving a restored session works again; a flag-archived session restores as before', async () => {
