@@ -116,3 +116,10 @@ test('the focus reaches the summary prompt, and only when given', async () => {
   assert.ok(focused.user.includes('<focus>\nkeep paths\n</focus>'));
   assert.ok(focused.user.endsWith('Write the seven sections now.'));
 });
+
+test('a token count of zero is left out instead of shown', async () => {
+  const { d } = deps({ codex: async () => ({ status: 'compacted', tokensBefore: 0 }) });
+  const o = await compactSessionByHand(d, args('codex-cli'));
+  assert.deepEqual(o, { status: 'compacted', engine: 'codex-cli' });
+  assert.equal(manualCompactionText(o as never), 'Compacted by hand: Codex compacted its session.');
+});

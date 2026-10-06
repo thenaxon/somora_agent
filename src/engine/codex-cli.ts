@@ -1053,7 +1053,8 @@ export async function compactCodexThread(args: {
       const p = params as { item?: { type?: string }; turn?: { status?: string }; tokenUsage?: { last?: { inputTokens?: number } } };
       if (method === 'item/completed' && p.item?.type === 'contextCompaction') compactedItem = true;
       if (method === 'thread/compacted') compactedItem = true;
-      if (method === 'thread/tokenUsage/updated' && typeof p.tokenUsage?.last?.inputTokens === 'number') tokensBefore = p.tokenUsage.last.inputTokens;
+      // Codex may report 0 here; a size of zero says nothing, so it is left out.
+      if (method === 'thread/tokenUsage/updated' && (p.tokenUsage?.last?.inputTokens ?? 0) > 0) tokensBefore = p.tokenUsage!.last!.inputTokens;
       if (method === 'turn/completed') settle?.(p.turn?.status === 'completed' ? 'done' : 'failed');
     },
   });

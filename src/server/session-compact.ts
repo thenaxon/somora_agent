@@ -116,8 +116,8 @@ export async function compactSessionByHand(
 
 function pickTokens(r: { tokensBefore?: number; tokensAfter?: number }): { tokensBefore?: number; tokensAfter?: number } {
   return {
-    ...(typeof r.tokensBefore === 'number' ? { tokensBefore: r.tokensBefore } : {}),
-    ...(typeof r.tokensAfter === 'number' ? { tokensAfter: r.tokensAfter } : {}),
+    ...(typeof r.tokensBefore === 'number' && r.tokensBefore > 0 ? { tokensBefore: r.tokensBefore } : {}),
+    ...(typeof r.tokensAfter === 'number' && r.tokensAfter > 0 ? { tokensAfter: r.tokensAfter } : {}),
   };
 }
 
